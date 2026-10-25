@@ -4,9 +4,7 @@
 package lst
 
 import (
-	"crypto/sha256"
 	"fmt"
-	"html"
 	"slices"
 	"strings"
 
@@ -14,111 +12,96 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func assetQuestionKey(subject api.TrackerValidationSubject, key string) string {
-	if key == "screenshot_preservation" {
-		return trackers.LanguageQuestionKey(subject, key+"_"+string(subject.AssetFacts.ScreenshotFingerprint))
-	}
-	if key == "hybrid_will_add" {
-		// A source-specific promise must survive later screenshot/hosting stages.
-		return trackers.LanguageQuestionKey(
-			subject,
-			fmt.Sprintf("%s_%x", key, sha256.Sum256([]byte(fmt.Sprintf("%#v|%#v", subject.HDRFacts, subject.ReleaseFeatures)))),
-		)
-	}
-	return trackers.LanguageQuestionKey(
-		subject,
-		fmt.Sprintf("%s_%x", key, sha256.Sum256([]byte(fmt.Sprintf("%s|%#v|%#v", subject.PreparedResourceFingerprint, subject.HDRFacts, subject.AssetFacts)))),
-	)
-}
-
 func hybridAssetsRequired(subject api.TrackerValidationSubject) bool {
 	return slices.Contains(subject.ReleaseFeatures, api.ReleaseFeatureHybrid) &&
 		(slices.Contains(subject.HDRFacts.Formats, api.HDRFormatDolbyVision) || slices.Contains(subject.HDRFacts.Formats, api.HDRFormatHDR10Plus))
 }
 
-func assetReviewQuestions(subject api.TrackerValidationSubject) []api.TrackerQuestionnaireField {
-	var fields []api.TrackerQuestionnaireField
-	if subject.AssetFacts.HostedScreenshots.Ready {
-		fields = append(fields, api.TrackerQuestionnaireField{
-			Key:      assetQuestionKey(subject, "screenshot_preservation"),
-			Label:    "Review hosted screenshot preservation",
-			Kind:     "select",
-			Options:  []string{"unresolved", "lossless_preserved", "lossy_or_changed"},
-			Required: true,
-			Help:     "Inspect the full-resolution hosted images against the prepared screenshots. Confirm their lossless format and preservation; a filename or thumbnail alone is insufficient.",
-		})
-	}
-	if tracks := tracksMissingLanguages(subject); len(tracks) > 0 {
-		fields = append(
-			fields,
-			api.TrackerQuestionnaireField{
-				Key:      assetQuestionKey(subject, "track_notes"),
-				Label:    "Clarify tracks with missing languages",
-				Kind:     "text",
-				Required: true,
-				Help:     "Identify the language and role of each track with a missing language tag: " + strings.Join(tracks, ", "),
-			},
-		)
-	}
-	if hybridAssetsRequired(subject) && !generatedHybridEvidenceIncluded(subject, subject.DescriptionOverride) {
-		fields = append(fields, api.TrackerQuestionnaireField{
-			Key:                assetQuestionKey(subject, "hybrid_will_add"),
-			Label:              "Include hybrid HDR evidence",
-			Kind:               "select",
-			Options:            []string{"unresolved", "will_add_required_data"},
-			Required:           subject.DescriptionGroupsFinal,
-			HDRGradeComparison: true,
-			Help:               "Confirm that you will add the grade comparison and HDR10+ plot for this source to the description. If upbrr has already generated and included both, no confirmation is needed.",
-		})
-	}
-	for i := range fields {
-		value := strings.TrimSpace(subject.QuestionnaireAnswers[fields[i].Key])
-		fields[i].Value = value
-		fields[i].NeedsReview = fields[i].Required && (value == "" || value == "unresolved" || value == "lossy_or_changed" || value == "source_mismatch")
-	}
-	return fields
-}
-
 func assetReviewFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
+	subject = withImportedReferenceFacts(subject)
 	var failures []api.RuleFailure
 	images := subject.AssetFacts.Screenshots
-	if subject.AssetFacts.HostedScreenshots.Ready && images.LosslessCount < 3 {
+	hosted := subject.AssetFacts.HostedScreenshots
+	inspected := images.Ready && images.Status == api.MetadataEvidenceStatusComplete && images.Count > 0 && images.InspectedFormatCount == images.Count
+	if (subject.AssetFacts.Status == api.MetadataEvidenceStatusComplete || subject.ImportedScreenshotEvidence != nil) &&
+		(!images.Ready || images.Status != api.MetadataEvidenceStatusComplete || images.LosslessCount < 3 ||
+			!hosted.Ready || hosted.Status != api.MetadataEvidenceStatusComplete || hosted.Count < 3) {
 		status := api.MetadataEvidenceStatusPartial
-		if images.Ready && images.InspectedFormatCount == images.Count {
+		disposition := api.RuleDispositionAdvisory
+		if inspected && hosted.Status == api.MetadataEvidenceStatusComplete {
 			status = api.MetadataEvidenceStatusComplete
+			disposition = api.RuleDispositionWaivable
 		}
-		failures = append(
-			failures,
-			trackers.NewEvidenceRuleFailure(
-				"lst_screenshot_format",
-				"three decoded lossless screenshots are required; unknown formats require inspection",
-				api.RuleDispositionStrict,
-				status,
-			),
-		)
+		rule := "guidance_lst_screenshot_format"
+		if disposition == api.RuleDispositionWaivable {
+			rule = "lst_screenshot_format"
+		}
+		reason := "Screenshot format evidence is incomplete."
+		if images.Status == api.MetadataEvidenceStatusComplete {
+			reason = fmt.Sprintf("%d of %d prepared screenshots have verified lossless image data (%d confirmed JPEG, %d format unknown).",
+				images.LosslessCount, images.Count, images.InspectedFormatCount-images.LosslessCount, images.Count-images.InspectedFormatCount)
+		}
+		if hosted.Status == api.MetadataEvidenceStatusComplete {
+			reason += fmt.Sprintf(" %d distinct screenshots have usable hosted images.", hosted.Count)
+		} else {
+			reason += " Hosted screenshot evidence is incomplete."
+		}
+		reason += " LST asks for at least three lossless images; review the available evidence before upload."
+		failures = append(failures, trackers.NewEvidenceRuleFailure(rule, reason, disposition, status))
+		failures[len(failures)-1].EvidenceFingerprint, _ = api.CanonicalWorkflowFingerprint(struct {
+			Identity    api.ExternalIdentity
+			Screenshots api.WorkflowFingerprint
+			Evidence    api.AssetEvidence
+			Hosted      api.AssetEvidence
+		}{subject.Identity, subject.AssetFacts.ScreenshotFingerprint, images, hosted})
 	}
-	for _, field := range assetReviewQuestions(subject) {
-		// Hybrid evidence is enforced against the final payload description, with
-		// a recoverable late question when generated evidence is not included.
-		if field.HDRGradeComparison {
-			continue
+	if subject.DescriptionGroupsFinal {
+		count := countDescriptionScreenshotReferences(subject.AssetFacts.ScreenshotReferences, subject.DescriptionOverride)
+		if count < 3 {
+			rule := "guidance_lst_screenshot_description"
+			disposition := api.RuleDispositionAdvisory
+			status := api.MetadataEvidenceStatusPartial
+			reason := "The available screenshot references do not establish three distinct prepared images in the final description."
+			if inspected && hosted.Status == api.MetadataEvidenceStatusComplete && screenshotFullImageReferencesKnown(subject.AssetFacts.ScreenshotReferences) {
+				rule = "lst_screenshot_description"
+				disposition = api.RuleDispositionWaivable
+				status = api.MetadataEvidenceStatusComplete
+				reason = fmt.Sprintf(
+					"The final description includes %d distinct prepared screenshots; LST asks for at least three full images or linked thumbnails.",
+					count,
+				)
+			}
+			failure := trackers.NewEvidenceRuleFailure(rule, reason, disposition, status)
+			failure.EvidenceFingerprint, _ = api.CanonicalWorkflowFingerprint(struct {
+				Identity    api.ExternalIdentity
+				Screenshots api.WorkflowFingerprint
+				References  []api.ScreenshotReference
+				Description string
+			}{subject.Identity, subject.AssetFacts.ScreenshotFingerprint, subject.AssetFacts.ScreenshotReferences, subject.DescriptionOverride})
+			failures = append(failures, failure)
 		}
-		value := strings.TrimSpace(subject.QuestionnaireAnswers[field.Key])
-		valid := value != "" && value != "unresolved" && value != "lossy_or_changed" && value != "source_mismatch"
-		if field.Kind == "text" {
-			valid = value != ""
-		} else {
-			valid = valid && slices.Contains(field.Options, value)
+	}
+	if hybridAssetsRequired(subject) && !generatedHybridEvidenceIncluded(subject, subject.DescriptionOverride) {
+		disposition := api.RuleDispositionAdvisory
+		status := api.MetadataEvidenceStatusPartial
+		reason := "Include source-linked hybrid grade comparisons and HDR10+ plots in the description; the available evidence does not establish their inclusion or comparative quality."
+		if subject.DescriptionGroupsFinal && subject.HDRFacts.Status == api.HDREvidenceComplete && len(subject.AssetFacts.HDRArtifacts) > 0 &&
+			!slices.ContainsFunc(subject.AssetFacts.HDRArtifacts, func(a api.HDRArtifactEvidence) bool { return !a.GenerationComplete }) {
+			disposition = api.RuleDispositionWaivable
+			status = api.MetadataEvidenceStatusComplete
+			reason = "The final description does not include the complete selected source-linked hybrid grade comparison and HDR10+ plot set; include the generated artifacts before upload."
 		}
-		if valid {
-			continue
+		rule := "guidance_lst_hybrid_hdr_evidence"
+		if disposition == api.RuleDispositionWaivable {
+			rule = "lst_hybrid_hdr_evidence"
 		}
-		failure := trackers.NewQuestionnaireRuleFailure("lst_asset_review", field.Label+" requires current source-bound evidence and review")
-		if value == "lossy_or_changed" || value == "source_mismatch" {
-			failure.EvidenceStatus = api.MetadataEvidenceStatusComplete
-		} else {
-			failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
-		}
+		failure := trackers.NewEvidenceRuleFailure(rule, reason, disposition, status)
+		failure.EvidenceFingerprint, _ = api.CanonicalWorkflowFingerprint(struct {
+			Identity    api.ExternalIdentity
+			HDR         api.HDRFacts
+			Assets      api.AssetFacts
+			Description string
+		}{subject.Identity, subject.HDRFacts, subject.AssetFacts, subject.DescriptionOverride})
 		failures = append(failures, failure)
 	}
 	if !slices.Contains(subject.ReleaseFeatures, api.ReleaseFeatureHybrid) &&
@@ -127,7 +110,7 @@ func assetReviewFailures(subject api.TrackerValidationSubject) []api.RuleFailure
 		failures = append(
 			failures,
 			trackers.NewEvidenceRuleFailure(
-				"lst_hybrid_hdr_guidance",
+				"guidance_lst_hybrid_hdr",
 				"DV+HDR does not establish hybrid provenance. If this release is a hybrid, select Hybrid in Release features and include the required source-linked HDR evidence in its description.",
 				api.RuleDispositionAdvisory,
 				api.MetadataEvidenceStatusPartial,
@@ -140,12 +123,22 @@ func assetReviewFailures(subject api.TrackerValidationSubject) []api.RuleFailure
 	return failures
 }
 
-func escapedDescriptionEvidence(value string) string {
-	return strings.NewReplacer("[", "&#91;", "]", "&#93;").Replace(html.EscapeString(value))
-}
-
-func requiredAssetDescription(subject api.TrackerValidationSubject) string {
-	return escapedDescriptionEvidence(strings.TrimSpace(subject.QuestionnaireAnswers[assetQuestionKey(subject, "track_notes")]))
+// screenshotFullImageReferencesKnown requires a full URL for each hosted image
+// identity. An additional thumbnail-only variant does not remove known evidence.
+func screenshotFullImageReferencesKnown(references []api.ScreenshotReference) bool {
+	known := make(map[api.WorkflowFingerprint]bool)
+	for _, image := range references {
+		if strings.TrimSpace(string(image.ID)) == "" {
+			return false
+		}
+		known[image.ID] = known[image.ID] || validScreenshotFullURL(image.RawURL)
+	}
+	for _, hasFullURL := range known {
+		if !hasFullURL {
+			return false
+		}
+	}
+	return len(known) > 0
 }
 
 func tracksMissingLanguages(subject api.TrackerValidationSubject) []string {

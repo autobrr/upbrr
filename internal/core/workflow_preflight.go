@@ -54,6 +54,10 @@ func (b workflowPreflightBuilder) hasReusableTrackerImages(
 	projection api.TrackerReleaseProjection,
 ) bool {
 	required := projection.Artifacts.ScreenshotCount
+	if required == 0 && projection.Artifacts.DVDMenuCount == 0 {
+		filtered := trackers.FilterImportedScreenshotEvidenceForTrackerWithRegistry(b.registry, b.config, string(projection.TrackerID), subject)
+		return filtered.CurrentImportedScreenshotEvidence() != nil
+	}
 	if b.images == nil || required <= 0 || strings.TrimSpace(subject.SourcePath) == "" {
 		return false
 	}
@@ -145,7 +149,13 @@ func (b workflowPreflightBuilder) Build(
 			if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
 				continue
 			}
-			validationSubject := api.NewTrackerValidationSubject(checkedSubject, string(projection.TrackerID))
+			trackerSubject := trackers.FilterImportedScreenshotEvidenceForTrackerWithRegistry(
+				b.registry,
+				b.config,
+				string(projection.TrackerID),
+				checkedSubject,
+			)
+			validationSubject := api.NewTrackerValidationSubject(trackerSubject, string(projection.TrackerID))
 			validationSubject.FinalizedUploadName = projection.UploadReleaseName
 			if projection.QuestionnaireAnswers != nil {
 				validationSubject.QuestionnaireAnswers = maps.Clone(projection.QuestionnaireAnswers)

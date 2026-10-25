@@ -337,6 +337,12 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		Resources:   collectedResources(meta),
 	}
 	facts.Media.LanguageFacts = mediafacts.ResolveLanguages(facts.Media)
+	for _, record := range meta.TrackerData {
+		if record.ImportedScreenshotEvidence != nil {
+			facts.ImportedScreenshotEvidence = record.ImportedScreenshotEvidence.Clone()
+			break
+		}
+	}
 	facts.Media.MediaFileFacts = mediafacts.ResolveFiles(facts.Media, facts.Naming.Resolution)
 	return facts
 }

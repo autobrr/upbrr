@@ -7,13 +7,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
@@ -56,6 +59,7 @@ func (h *workflowHybridHost) Upload(ctx context.Context, subject api.ImageHostin
 
 type workflowHybridUploadValidator struct {
 	workflowRetainedUploadServiceFake
+	failures []api.RuleFailure
 }
 
 func (v *workflowHybridUploadValidator) PrepareRetainedUploadPlan(ctx context.Context, subject api.UploadSubject, projections []api.TrackerReleaseProjection) (workflowRetainedUploadPlan, error) {
@@ -64,22 +68,85 @@ func (v *workflowHybridUploadValidator) PrepareRetainedUploadPlan(ctx context.Co
 	if err := lst.Profile().Site.ValidateFinalDescription(subject, body, "MediaInfo", ""); err != nil {
 		return nil, fmt.Errorf("validate final Hybrid description: %w", err)
 	}
+	failures, err := lst.Profile().ValidationPolicy.Check(ctx, api.NewTrackerValidationSubject(subject, "LST"), api.NopLogger{})
+	if err != nil {
+		return nil, fmt.Errorf("validate Hybrid evidence: %w", err)
+	}
+	v.failures = failures
+	for _, projection := range projections {
+		failure, err := trackers.FirstBlockingRuleFailure("LST", failures, "", &projection)
+		if err != nil {
+			return nil, fmt.Errorf("validate Hybrid warning authority: %w", err)
+		}
+		if failure != nil {
+			return nil, fmt.Errorf("unacknowledged LST rule %s: %s", failure.Rule, failure.Reason)
+		}
+	}
 	return v.workflowRetainedUploadServiceFake.PrepareRetainedUploadPlan(ctx, subject, projections)
+}
+
+func requireWorkflowHybridFinding(t *testing.T, failures []api.RuleFailure, disposition api.RuleDisposition) {
+	t.Helper()
+	var hybrid []api.RuleFailure
+	for _, failure := range failures {
+		if strings.Contains(failure.Rule, "lst_hybrid_hdr_evidence") {
+			hybrid = append(hybrid, failure)
+		}
+	}
+	if disposition == "" {
+		if len(hybrid) != 0 {
+			t.Fatalf("included complete evidence still needs review: %+v", hybrid)
+		}
+		return
+	}
+	rule, status := "guidance_lst_hybrid_hdr_evidence", api.MetadataEvidenceStatusPartial
+	if disposition == api.RuleDispositionWaivable {
+		rule, status = "lst_hybrid_hdr_evidence", api.MetadataEvidenceStatusComplete
+	}
+	if len(hybrid) != 1 || hybrid[0].Rule != rule || hybrid[0].Disposition != disposition || hybrid[0].EvidenceStatus != status ||
+		hybrid[0].QuestionnaireInput || hybrid[0].EvidenceFingerprint == "" {
+		t.Fatalf("Hybrid finding must be %s/%s, not reassurance: %+v", rule, status, hybrid)
+	}
 }
 
 func TestWorkflowHybridEvidenceSurvivesDescriptionAndFinalUpload(t *testing.T) {
 	root := t.TempDir()
 	release := api.ReleaseRef{SourcePath: filepath.Join(root, "Synthetic.Hybrid.mkv"), Generation: 1}
+	mediaInfo := filepath.Join(root, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfo, []byte("General\nFormat : Matroska\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	subject := api.UploadSubject{
-		SourcePath:      release.SourcePath,
-		Identity:        api.ExternalIdentity{Generation: release.Generation},
-		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureHybrid},
-		HDRFacts:        api.HDRFacts{Status: api.HDREvidenceComplete, Formats: []api.HDRFormat{api.HDRFormatHDR10Plus}},
+		SourcePath:        release.SourcePath,
+		Identity:          api.ExternalIdentity{SourcePath: release.SourcePath, Generation: release.Generation},
+		Container:         "mkv",
+		Type:              "WEBDL",
+		MediaInfoTextPath: mediaInfo,
+		ReleaseFeatures:   []api.ReleaseFeature{api.ReleaseFeatureHybrid},
+		HDRFacts:          api.HDRFacts{Status: api.HDREvidenceComplete, Formats: []api.HDRFormat{api.HDRFormatHDR10Plus}},
+		LanguageFacts: mediafacts.ResolveLanguages(api.MediaFacts{
+			OriginalLanguage:      "English",
+			TrackCoverageComplete: true,
+			Tracks: []api.MediaTrackFacts{{
+				ID:           "audio-0",
+				Kind:         api.MediaTrackAudio,
+				Role:         api.AudioRoleProgramme,
+				Languages:    []string{"English"},
+				Codec:        "AAC",
+				DefaultKnown: true,
+				Default:      true,
+			}},
+		}),
 	}
 	questionnaire := lst.Profile().Site.ProjectionQuestionnaire(trackers.PreparationInput{Meta: subject})
-	if !slices.ContainsFunc(questionnaire.Fields, func(field api.TrackerQuestionnaireField) bool { return field.HDRGradeComparison }) {
-		t.Fatal("source-only projection silently claimed automatic evidence")
+	if questionnaire != nil {
+		t.Fatalf("source-only projection restored retired reassurance questions: %+v", questionnaire)
 	}
+	failures, err := lst.Profile().ValidationPolicy.Check(t.Context(), api.NewTrackerValidationSubject(subject, "LST"), api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireWorkflowHybridFinding(t, failures, api.RuleDispositionAdvisory)
 	resolver := workflowHybridResolver{subject: subject}
 	registry := trackerimpl.MustNewRegistry()
 	descriptor, _ := registry.LookupDescriptor("LST")
@@ -198,7 +265,10 @@ func TestWorkflowHybridEvidenceSurvivesDescriptionAndFinalUpload(t *testing.T) {
 	}
 	body := generated.Descriptions[0].Source
 	for _, evidence := range generated.HDRArtifacts["LST"] {
-		if len(evidence.ImageURLs) != 1 || !strings.Contains(body, evidence.ImageURLs[0]) {
+		artifact := slices.IndexFunc(target.Artifacts, func(artifact api.HDRTypedArtifact) bool { return artifact.ID == evidence.ArtifactID })
+		if artifact < 0 || evidence.Analysis != (api.HDRAnalysisRef{ID: analysis.ID, Revision: analysis.Revision}) ||
+			evidence.TargetID != target.TargetID || evidence.Kind != target.Artifacts[artifact].Kind || !evidence.GenerationComplete ||
+			len(evidence.ImageURLs) != 1 || !strings.Contains(body, evidence.ImageURLs[0]) {
 			t.Fatalf("generated evidence was not embedded: %+v body=%s", evidence, body)
 		}
 	}
@@ -207,6 +277,11 @@ func TestWorkflowHybridEvidenceSurvivesDescriptionAndFinalUpload(t *testing.T) {
 	if err != nil || len(inconclusive.Descriptions) != 1 || len(inconclusive.HDRArtifacts["LST"]) != 2 {
 		t.Fatalf("inconclusive selected plot must remain renderable: %+v err=%v", inconclusive, err)
 	}
+	if !slices.ContainsFunc(inconclusive.HDRArtifacts["LST"], func(evidence api.HDRArtifactEvidence) bool {
+		return evidence.ArtifactID == "grade" && !evidence.GenerationComplete
+	}) {
+		t.Fatal("inconclusive grade plot manufactured completed evidence")
+	}
 	analysis.Targets[0].Decoded[0].State = api.HDRDecodedComplete
 	resources.HDRArtifacts = generated.HDRArtifacts
 	resources.HDR = func(context.Context) (api.HDRAnalysisResult, releaseworkflow.RetainedHDRAnalysisResource, error) {
@@ -214,14 +289,16 @@ func TestWorkflowHybridEvidenceSurvivesDescriptionAndFinalUpload(t *testing.T) {
 		return api.HDRAnalysisResult{}, nil, nil
 	}
 	for _, test := range []struct {
-		name, body string
-		valid      bool
+		name, body  string
+		disposition api.RuleDisposition
 	}{
-		{"generated", body, true},
-		{"inconclusive generation", inconclusive.Descriptions[0].Source, false},
-		{"saved final", body + "\nReviewed source notes", true},
-		{"removed grade", strings.ReplaceAll(body, "[img=350]https://images.example/grade.png[/img]", ""), false},
-		{"literal grade", strings.ReplaceAll(body, "[img=350]https://images.example/grade.png[/img]", "[code][img=350]https://images.example/grade.png[/img][/code]"), false},
+		{"generated", body, ""},
+		{"inconclusive generation", inconclusive.Descriptions[0].Source, api.RuleDispositionAdvisory},
+		{"saved final", body + "\nReviewed source notes", ""},
+		{"removed grade", strings.ReplaceAll(body, "[img=350]https://images.example/grade.png[/img]", ""), api.RuleDispositionWaivable},
+		{"literal grade", strings.ReplaceAll(body, "[img=350]https://images.example/grade.png[/img]", "[code][img=350]https://images.example/grade.png[/img][/code]"), api.RuleDispositionWaivable},
+		{"stale grade URL", strings.ReplaceAll(body, "https://images.example/grade.png", "https://images.example/stale-grade.png"), api.RuleDispositionWaivable},
+		{"unbound URLs", body, api.RuleDispositionAdvisory},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			descriptions := generated
@@ -236,9 +313,12 @@ func TestWorkflowHybridEvidenceSurvivesDescriptionAndFinalUpload(t *testing.T) {
 					Final:      true,
 				}}
 				descriptions, err = builder.Build(t.Context(), release, projections, media, resources, instructions, time.Now())
-				if err != nil || len(descriptions.HDRArtifacts["LST"]) != 2 {
+				if err != nil || !reflect.DeepEqual(descriptions.HDRArtifacts["LST"], generated.HDRArtifacts["LST"]) {
 					t.Fatalf("final edit lost retained image associations: %+v err=%v", descriptions, err)
 				}
+			}
+			if test.name == "unbound URLs" {
+				descriptions.HDRArtifacts = nil
 			}
 			validation := &workflowHybridUploadValidator{}
 			upload := workflowUploadPlanBuilder{
@@ -246,31 +326,72 @@ func TestWorkflowHybridEvidenceSurvivesDescriptionAndFinalUpload(t *testing.T) {
 				trackers: validation,
 				torrents: &workflowTorrentServiceCapture{},
 			}
-			_, execution, buildErr := upload.Build(t.Context(), projections,
-				api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
-					TrackerID: "LST",
-					Decision:  api.DupeDecisionNoMatch,
-					Status:    api.StageStatusCompleted,
-				}}},
-				workflowDupePrivateEvidence{}, media, private, descriptions, instructions, releaseworkflow.UploadPlanBuildOptions{}, time.Now())
-			if execution != nil {
-				_ = execution.Release()
+			currentProjections := projections
+			currentProjections.Projections = slices.Clone(projections.Projections)
+			build := func() error {
+				_, execution, buildErr := upload.Build(t.Context(), currentProjections,
+					api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+						TrackerID: "LST",
+						Decision:  api.DupeDecisionNoMatch,
+						Status:    api.StageStatusCompleted,
+					}}},
+					workflowDupePrivateEvidence{}, media, private, descriptions, instructions, releaseworkflow.UploadPlanBuildOptions{}, time.Now())
+				if execution != nil {
+					_ = execution.Release()
+				}
+				return buildErr
 			}
-			if (buildErr == nil) != test.valid || !test.valid && !strings.Contains(buildErr.Error(), "source-linked grade comparison") {
-				t.Fatalf("final upload valid=%v err=%v body=%s", test.valid, buildErr, test.body)
+			buildErr := build()
+			warning := test.disposition == api.RuleDispositionWaivable
+			if (buildErr != nil) != warning || warning && !strings.Contains(buildErr.Error(), "lst_hybrid_hdr_evidence") {
+				t.Fatalf("final upload warning=%v err=%v body=%s", warning, buildErr, test.body)
 			}
-			if validation.subject.ExactMedia == nil || validation.subject.ExactMedia.HDRAnalysis != nil || len(validation.subject.HDRArtifactEvidence("LST")) != 2 {
+			requireWorkflowHybridFinding(t, validation.failures, test.disposition)
+			if validation.subject.ExactMedia == nil || validation.subject.ExactMedia.HDRAnalysis != nil ||
+				!reflect.DeepEqual(validation.subject.HDRArtifactEvidence("LST"), descriptions.HDRArtifacts["LST"]) {
 				t.Fatal("final upload did not consume retained path-free evidence")
 			}
 			questionnaire := lst.Profile().Site.ProjectionQuestionnaire(trackers.PreparationInput{Meta: validation.subject})
-			if needs := slices.ContainsFunc(questionnaire.Fields, func(field api.TrackerQuestionnaireField) bool { return field.HDRGradeComparison }); needs == test.valid {
-				t.Fatalf("current final description questionnaire needs evidence=%v", needs)
+			if questionnaire != nil {
+				t.Fatalf("final description restored retired reassurance questions: %+v", questionnaire)
 			}
-			if test.valid {
-				withoutEvidence := validation.subject
-				withoutEvidence.TrackerHDRArtifacts = nil
-				if err := lst.Profile().Site.ValidateFinalDescription(withoutEvidence, test.body, "MediaInfo", ""); err == nil {
-					t.Fatal("unbound image URLs alone satisfied Hybrid evidence")
+			fingerprint, err := trackers.WaivableRuleFailureFingerprint("LST", validation.failures)
+			if err != nil || (fingerprint != "") != warning {
+				t.Fatalf("unexpected warning authority %q: %v failures=%+v", fingerprint, err, validation.failures)
+			}
+			if warning {
+				projection := &currentProjections.Projections[0]
+				projection.WaivableRuleFingerprint = fingerprint
+				if err := build(); err == nil {
+					t.Fatal("warning fingerprint alone authorized upload")
+				}
+				projection.RuleAuthorizationFingerprint = fingerprint
+				if err := build(); err != nil {
+					t.Fatalf("exact warning acknowledgement did not authorize upload: %v", err)
+				}
+				for _, changed := range []string{"description", "evidence"} {
+					t.Run("stale acknowledgement after "+changed, func(t *testing.T) {
+						updated, err := descriptions.Clone()
+						if err != nil {
+							t.Fatal(err)
+						}
+						if changed == "description" {
+							updated.Descriptions[0].Source += "\nChanged source notes"
+						} else {
+							updated.HDRArtifacts["LST"][0].Analysis.Revision++
+						}
+						original := descriptions
+						descriptions = updated
+						err = build()
+						descriptions = original
+						if err == nil || !strings.Contains(err.Error(), "lst_hybrid_hdr_evidence") {
+							t.Fatalf("stale warning authority accepted changed %s: %v", changed, err)
+						}
+						changedFingerprint, err := trackers.WaivableRuleFailureFingerprint("LST", validation.failures)
+						if err != nil || changedFingerprint == "" || changedFingerprint == fingerprint {
+							t.Fatalf("changed %s retained warning fingerprint %q: %v", changed, changedFingerprint, err)
+						}
+					})
 				}
 			}
 		})

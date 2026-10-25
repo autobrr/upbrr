@@ -119,6 +119,7 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		EditionDisplay: strings.TrimSpace(req.EditionDisplay),
 		Repack:         repack,
 		Resolution:     resolution,
+		Downscale:      strings.TrimSpace(req.Downscale),
 		Region:         region,
 		Source:         source,
 		UHD:            uhd,
@@ -875,6 +876,7 @@ type retainedReleaseNameValues struct {
 	Hybrid         string
 	Repack         string
 	Resolution     string
+	Downscale      string
 	Region         string
 	Source         string
 	UHD            string
@@ -969,6 +971,11 @@ func retainUnavailableReleaseNameComponents(
 		{
 			role:  api.NameRoleResolution,
 			value: values.Resolution,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleDownscale,
+			value: values.Downscale,
 			join:  " ",
 		},
 		{
@@ -1086,7 +1093,7 @@ func retainedReleaseNameAnchors(role api.ReleaseNameRole) []api.ReleaseNameRole 
 		api.NameRoleSeason, api.NameRoleEpisode, api.NameRoleDailyDate, api.NameRoleEpisodeTitle,
 		api.NameRolePart, api.NameRoleThreeD, api.NameRoleEditionSet, api.NameRoleCut, api.NameRoleEdition, api.NameRoleEditionDisplay,
 		api.NameRolePresentation, api.NameRoleHybrid,
-		api.NameRoleRepack, api.NameRoleResolution, api.NameRoleRegion, api.NameRoleSource,
+		api.NameRoleRepack, api.NameRoleResolution, api.NameRoleDownscale, api.NameRoleRegion, api.NameRoleSource,
 	}
 	if index := slices.Index(order, role); index >= 0 {
 		return order[index+1:]
@@ -1347,6 +1354,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		AltTitle:              altTitle,
 		Year:                  year,
 		Resolution:            meta.Release.Resolution,
+		Downscale:             downscaleFromRelease(meta.Release),
 		Audio:                 meta.Audio,
 		Service:               meta.Service,
 		Season:                strings.TrimSpace(meta.SeasonStr),

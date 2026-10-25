@@ -928,16 +928,19 @@ type ClaimPolicyProvider interface {
 	ClaimPolicy() *ClaimPolicy
 }
 
-// WorkflowMediaRequirements declares genuine tracker-owned media minimums.
+// WorkflowMediaRequirements declares tracker-owned media minimums and reuse policy.
 // Capture preferences and global caps do not belong here.
 type WorkflowMediaRequirements struct {
 	// DVDMenuCount is the minimum selected DVD-menu image count.
 	DVDMenuCount int
+	// AllowImportedScreenshotReferences permits current, host-compatible imported
+	// references to replace default screenshot capture, but not explicit requests.
+	AllowImportedScreenshotReferences bool
 }
 
-// WorkflowMediaRequirementsProvider declares tracker-owned workflow media minimums.
+// WorkflowMediaRequirementsProvider declares tracker-owned media requirements and reuse.
 type WorkflowMediaRequirementsProvider interface {
-	// WorkflowMediaRequirements returns the tracker's explicit media minimums.
+	// WorkflowMediaRequirements returns the tracker's media minimums and reuse policy.
 	WorkflowMediaRequirements() *WorkflowMediaRequirements
 }
 
@@ -963,7 +966,7 @@ type Descriptor struct {
 	EditionFeatures EditionFeatureResolver
 	// UploadContentMode identifies the shared content object consumed before preparation.
 	UploadContentMode UploadContentMode
-	// WorkflowMedia contains explicit tracker-owned media minimums.
+	// WorkflowMedia contains tracker-owned media minimums and reuse policy.
 	WorkflowMedia *WorkflowMediaRequirements
 	// Rules contains optional tracker-owned validation rules.
 	Rules *RuleSet

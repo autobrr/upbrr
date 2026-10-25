@@ -137,15 +137,18 @@ type FileMetadata struct {
 }
 
 type TrackerMetadata struct {
-	SourcePath string
-	Tracker    string
-	TrackerID  string
-	TorrentURL string
-	InfoHash   string
-	TMDBID     int
-	IMDBID     int
-	TVDBID     int
-	MALID      int
+	// ImportedScreenshotEvidence is collection-only. Source-cache persistence
+	// must not retain it; canonical preparation captures the selected receipt.
+	ImportedScreenshotEvidence *ImportedScreenshotEvidence `json:"-"`
+	SourcePath                 string
+	Tracker                    string
+	TrackerID                  string
+	TorrentURL                 string
+	InfoHash                   string
+	TMDBID                     int
+	IMDBID                     int
+	TVDBID                     int
+	MALID                      int
 	// Category is site-reported movie/TV evidence consumed only by canonical
 	// external-identity resolution; unsupported values are ignored.
 	Category      Category

@@ -56,13 +56,13 @@ func TestTrackerAudioOrderRecommendationsRespectPersonalPolicy(t *testing.T) {
 					continue
 				}
 				found = true
-				strict := tracker == "LST" && personal
+				waivable := tracker == "LST"
 				want := api.RuleDispositionAdvisory
-				if strict {
-					want = api.RuleDispositionStrict
+				if waivable {
+					want = api.RuleDispositionWaivable
 				}
 				for _, acknowledged := range []bool{false, true} {
-					if failure.Disposition != want || trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, acknowledged) != strict {
+					if failure.Disposition != want || trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, acknowledged) != (waivable && !acknowledged) {
 						t.Fatalf("%s personal=%t acknowledgement=%t changed ordering policy: %+v", tracker, personal, acknowledged, failure)
 					}
 				}

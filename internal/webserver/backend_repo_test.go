@@ -339,7 +339,7 @@ func TestStartupReconcilesStoredConfigChanges(t *testing.T) {
 	}
 }
 
-func TestStartupDiscardsUnresolvedWorkflowEffectsBeforeActivation(t *testing.T) {
+func TestStartupPreservesUnresolvedWorkflowEffectsBeforeActivation(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		changedConfig bool
@@ -385,27 +385,40 @@ func TestStartupDiscardsUnresolvedWorkflowEffectsBeforeActivation(t *testing.T) 
 					t.Fatal(err)
 				}
 			}
+			if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO submission_fences (
+				content_version, content_digest, content_scope, content_json, tracker_site,
+				owner_id, workflow_id, operation_id, effect_id, status, started_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "1", "synthetic-content", "file", []byte(`{}`), "TEST",
+				"owner", "workflow", "operation", "unknown-effect", api.WorkflowEffectStatusUnknown, now, now); err != nil {
+				t.Fatal(err)
+			}
 			current := previous
 			if test.changedConfig {
 				current.Metadata.KeepImages = !previous.Metadata.KeepImages
 			}
 			activation, err := InitializeRuntimeConfigActivation(ctx, repo, current, nil)
-			if err != nil {
-				t.Fatalf("startup activation with interrupted effects: %v", err)
-			}
-			wantGeneration := initial.ActiveGeneration
 			if test.changedConfig {
-				wantGeneration++
+				if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+					t.Fatalf("changed-config startup with interrupted effects: %v", err)
+				}
+			} else if err != nil || activation.ActiveGeneration != initial.ActiveGeneration {
+				t.Fatalf("unchanged-config startup = %#v, err=%v", activation, err)
 			}
-			if activation.ActiveGeneration != wantGeneration {
-				t.Fatalf("activation generation = %d, want %d", activation.ActiveGeneration, wantGeneration)
+			persisted, err := repo.LoadConfigActivation(ctx)
+			if err != nil || persisted.ActiveGeneration != initial.ActiveGeneration || persisted.Fingerprint != initial.Fingerprint {
+				t.Fatalf("startup changed activation with uncertain effects: %#v, err=%v", persisted, err)
+			}
+			var fenceStatus string
+			if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM submission_fences WHERE content_digest = ?`,
+				"synthetic-content").Scan(&fenceStatus); err != nil || fenceStatus != string(api.WorkflowEffectStatusUnknown) {
+				t.Fatalf("uncertain submission fence = %q, err=%v", fenceStatus, err)
 			}
 			for _, effect := range []struct {
 				id     string
 				status api.WorkflowEffectStatus
 			}{
-				{id: "started-effect", status: api.WorkflowEffectStatusFailed},
-				{id: "unknown-effect", status: api.WorkflowEffectStatusFailed},
+				{id: "started-effect", status: api.WorkflowEffectStatusStarted},
+				{id: "unknown-effect", status: api.WorkflowEffectStatusUnknown},
 				{id: "succeeded-effect", status: api.WorkflowEffectStatusSucceeded},
 			} {
 				var status string
@@ -418,7 +431,7 @@ func TestStartupDiscardsUnresolvedWorkflowEffectsBeforeActivation(t *testing.T) 
 	}
 }
 
-func TestStartupWaitsForLiveInputBeforeDiscardingUnresolvedEffect(t *testing.T) {
+func TestStartupWaitsForLiveInputWithoutDiscardingUnresolvedEffect(t *testing.T) {
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
 	repo, err := db.OpenContext(ctx, repoPath)
@@ -471,16 +484,20 @@ func TestStartupWaitsForLiveInputBeforeDiscardingUnresolvedEffect(t *testing.T) 
 	current.Metadata.KeepImages = !previous.Metadata.KeepImages
 	startupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	activation, err := InitializeRuntimeConfigActivation(startupCtx, repo, current, nil)
-	if err != nil {
-		t.Fatalf("startup activation after input lease expires: %v", err)
+	_, err = InitializeRuntimeConfigActivation(startupCtx, repo, current, nil)
+	if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		t.Fatalf("startup after input lease expires: %v", err)
 	}
-	if activation.ActiveGeneration != initial.ActiveGeneration+1 {
-		t.Fatalf("activation generation = %d, want %d", activation.ActiveGeneration, initial.ActiveGeneration+1)
+	if time.Now().Before(slot.LeaseExpiresAt) {
+		t.Fatal("startup skipped the live input lease")
+	}
+	activation, err := repo.LoadConfigActivation(ctx)
+	if err != nil || activation.ActiveGeneration != initial.ActiveGeneration {
+		t.Fatalf("blocked activation = %#v, err=%v", activation, err)
 	}
 	var effectStatus string
 	if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM release_workflow_effects WHERE effect_id = 'effect'`).Scan(&effectStatus); err != nil ||
-		effectStatus != string(api.WorkflowEffectStatusFailed) {
+		effectStatus != string(api.WorkflowEffectStatusUnknown) {
 		t.Fatalf("effect after startup = %q, err=%v", effectStatus, err)
 	}
 }

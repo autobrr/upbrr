@@ -146,6 +146,8 @@ remain unchanged. Reuse these components instead of inserting tokens into a rend
 Exact-name and display-title policies retain their own contracts; an unknown resolution must
 not be inferred from the source label.
 
+Explicit source downscale evidence is retained as a hidden naming component. Tracker policies may project it without inferring source dimensions from output resolution or reparsing rendered names. Preserve independent cuts and presentation facts when ordering a destination’s source block. Optional ordering must not discard an available component merely because another component is absent or manually omitted.
+
 Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete supported role set is:
 
 | Name object                                      | Role                         |
@@ -166,6 +168,7 @@ Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete suppo
 | Hybrid marker                                    | `api.NameRoleHybrid`         |
 | Repack marker                                    | `api.NameRoleRepack`         |
 | Resolution                                       | `api.NameRoleResolution`     |
+| Source downscale marker                          | `api.NameRoleDownscale`      |
 | Region                                           | `api.NameRoleRegion`         |
 | UHD marker                                       | `api.NameRoleUHD`            |
 | Source                                           | `api.NameRoleSource`         |
@@ -1342,9 +1345,31 @@ quality and hypothetical subtitle concerns are passive advisories, not questionn
 answer gates. Keep unknown facts unknown; warnings
 must not assert source compliance or grant staff permission, replacement qualification, or an
 exception to independent measured constraints. Use inspected languages, titles, default/forced
-flags and container order before asking for genuinely missing upload input. Use an advisory
+flags and container order before asking for genuinely missing upload input. Retiring a question
+also requires removing its saved-answer consumers and late preparation gates; stale answers
+must not suppress guidance or replace measured facts. Explicit encoder settings may establish
+rate control, but generic bitrate mode or settings presence does not. Count distinct selected
+image identities separately from inspected formats and hosted references. Unknown image bytes
+or unavailable originals do not establish preservation or a format violation. Bind description
+warnings to tracker-usable full-image references and the final description, and keep late payload
+checks from reintroducing an acknowledged image-policy warning. Use an advisory
 `guidance_` rule code for non-language guidance that should appear in the collapsed WebUI
 Guidance panel; language guidance retains its existing `language_` codes.
+
+Reference-only imported screenshots require an explicit tracker workflow capability and a
+current source/generation-bound inspection receipt. Keep them separate from local screenshot
+artifacts: accepted URL checks do not prove image format, dimensions, preservation, or a complete
+download. Local format evidence requires a successful full decode of at most 20 MiB and
+35,389,440 total pixels, processed one image at a time. The pixel budget is independent of
+aspect ratio. Larger, malformed or unreadable images keep unknown format; this evidence
+limit must not reject otherwise accepted references or force new screenshots. Preserve existing
+URL, redirect, public-address, response and byte-limit checks; legacy metadata and generic
+request failures are not receipts. Apply the normal tracker host
+policy before using references for capture planning, preflight, descriptions or guidance.
+The capability may suppress automatic capture defaults, not explicit screenshot requests or
+another selected tracker's requirements. Retain receipts atomically with their prepared generation;
+never reconstruct acceptance from a saved description or mutate canonical evidence while filtering
+an operation-local view.
 
 Audio sample-depth guidance uses the inspected track's `BitDepth`, codec and channel
 count, never video bit depth or an aggregate naming label. Zero sample depth is unknown;

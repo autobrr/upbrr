@@ -114,6 +114,14 @@ func TestInspectedAudioLanguagesDriveTrackerEligibility(t *testing.T) {
 				}
 				if test.wantOriginal {
 					for _, failure := range failures {
+						if tracker == "LST" && (failure.Rule == "language_original_order" || failure.Rule == "language_original_default") {
+							if failure.Disposition != api.RuleDispositionWaivable ||
+								!trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) ||
+								trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, true) {
+								t.Fatalf("LST evidenced presentation finding must require a waivable acknowledgement: %+v", failure)
+							}
+							continue
+						}
 						if tracker == "LST" && failure.Rule == "language_lst_audio_layout_evidence" && failure.EvidenceStatus == api.MetadataEvidenceStatusPartial {
 							continue
 						}

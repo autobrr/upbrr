@@ -28,28 +28,29 @@ const (
 )
 
 type compositeUploadSession struct {
-	ComparisonSelection      *api.HDRComparisonSelection                 `json:"comparisonSelection,omitempty"`
-	Version                  int                                         `json:"version"`
-	RequestFingerprint       api.WorkflowFingerprint                     `json:"requestFingerprint"`
-	Intent                   api.WorkflowIntent                          `json:"intent"`
-	Goal                     api.WorkflowGoal                            `json:"goal"`
-	Confirm                  bool                                        `json:"confirm"`
-	PreparedRelease          api.ReleaseWorkflowPreparedReleaseMode      `json:"preparedRelease,omitempty"`
-	DuplicateDisposition     api.ReleaseWorkflowDuplicateDisposition     `json:"duplicateDisposition"`
-	RemoveTrackers           []api.TrackerID                             `json:"removeTrackers,omitempty"`
-	DefaultProjection        *api.ReleaseWorkflowUploadTrackerProjection `json:"defaultProjection,omitempty"`
-	RequestedScreenshotCount *int                                        `json:"requestedScreenshotCount,omitempty"`
-	ManualMedia              compositeUploadManualMedia                  `json:"manualMedia,omitempty"`
-	ActiveOperationID        api.WorkflowOperationID                     `json:"activeOperationId,omitempty"`
-	LastOperationID          api.WorkflowOperationID                     `json:"lastOperationId,omitempty"`
-	LastCommittedRevision    api.WorkflowRevision                        `json:"lastCommittedRevision"`
-	Cursor                   string                                      `json:"cursor,omitempty"`
-	ApprovedDryRun           *api.UploadDryRunResultRef                  `json:"approvedDryRun,omitempty"`
-	ApprovedFingerprint      api.WorkflowFingerprint                     `json:"approvedFingerprint,omitempty"`
-	ApprovedTrackerIDs       []api.TrackerID                             `json:"approvedTrackerIds,omitempty"`
-	FeedbackSequence         uint64                                      `json:"feedbackSequence,omitempty"`
-	FeedbackReceipts         map[string]compositeUploadFeedbackReceipt   `json:"feedbackReceipts,omitempty"`
-	TerminalReason           string                                      `json:"terminalReason,omitempty"`
+	ComparisonSelection               *api.HDRComparisonSelection                 `json:"comparisonSelection,omitempty"`
+	Version                           int                                         `json:"version"`
+	RequestFingerprint                api.WorkflowFingerprint                     `json:"requestFingerprint"`
+	Intent                            api.WorkflowIntent                          `json:"intent"`
+	Goal                              api.WorkflowGoal                            `json:"goal"`
+	Confirm                           bool                                        `json:"confirm"`
+	PreparedRelease                   api.ReleaseWorkflowPreparedReleaseMode      `json:"preparedRelease,omitempty"`
+	DuplicateDisposition              api.ReleaseWorkflowDuplicateDisposition     `json:"duplicateDisposition"`
+	RemoveTrackers                    []api.TrackerID                             `json:"removeTrackers,omitempty"`
+	DefaultProjection                 *api.ReleaseWorkflowUploadTrackerProjection `json:"defaultProjection,omitempty"`
+	RequestedScreenshotCount          *int                                        `json:"requestedScreenshotCount,omitempty"`
+	RequestedScreenshotCountIsDefault bool                                        `json:"requestedScreenshotCountIsDefault,omitempty"`
+	ManualMedia                       compositeUploadManualMedia                  `json:"manualMedia,omitempty"`
+	ActiveOperationID                 api.WorkflowOperationID                     `json:"activeOperationId,omitempty"`
+	LastOperationID                   api.WorkflowOperationID                     `json:"lastOperationId,omitempty"`
+	LastCommittedRevision             api.WorkflowRevision                        `json:"lastCommittedRevision"`
+	Cursor                            string                                      `json:"cursor,omitempty"`
+	ApprovedDryRun                    *api.UploadDryRunResultRef                  `json:"approvedDryRun,omitempty"`
+	ApprovedFingerprint               api.WorkflowFingerprint                     `json:"approvedFingerprint,omitempty"`
+	ApprovedTrackerIDs                []api.TrackerID                             `json:"approvedTrackerIds,omitempty"`
+	FeedbackSequence                  uint64                                      `json:"feedbackSequence,omitempty"`
+	FeedbackReceipts                  map[string]compositeUploadFeedbackReceipt   `json:"feedbackReceipts,omitempty"`
+	TerminalReason                    string                                      `json:"terminalReason,omitempty"`
 	// DuplicateAllowUpload retains request-level policy across evidence refreshes.
 	DuplicateAllowUpload []api.TrackerID `json:"duplicateAllowUpload,omitempty"`
 }
@@ -419,7 +420,7 @@ func normalizeCompositeUploadRequest(
 			return slices.Contains(normalizeCompositeTrackerIDs(request.Trackers.Remove), id)
 		})
 	}
-	projections = compositeUploadScreenshotCountInstructions(projections, trackerIDs, request.Media.Screenshots.Count)
+	projections = compositeUploadScreenshotCountInstructions(projections, trackerIDs, request.Media.Screenshots.Count, request.Media.Screenshots.CountIsDefault)
 	checkCount := uint8(1)
 	if request.Duplicates.CheckCount != nil && *request.Duplicates.CheckCount == 2 {
 		checkCount = 2
@@ -464,19 +465,20 @@ func normalizeCompositeUploadRequest(
 		}
 	}
 	session := &compositeUploadSession{
-		ComparisonSelection:      request.HDRComparisonSelection,
-		Version:                  compositeUploadSessionVersion,
-		RequestFingerprint:       fingerprint,
-		Intent:                   intent,
-		Goal:                     goal,
-		Confirm:                  request.Unattended.Confirm,
-		PreparedRelease:          request.Execution.PreparedRelease,
-		DuplicateDisposition:     onEvidence,
-		DuplicateAllowUpload:     allowUpload,
-		RemoveTrackers:           normalizeCompositeTrackerIDs(request.Trackers.Remove),
-		DefaultProjection:        cloneCompositeUploadProjection(request.Trackers.DefaultProjection),
-		RequestedScreenshotCount: cloneIntPointer(request.Media.Screenshots.Count),
-		FeedbackReceipts:         make(map[string]compositeUploadFeedbackReceipt),
+		ComparisonSelection:               request.HDRComparisonSelection,
+		Version:                           compositeUploadSessionVersion,
+		RequestFingerprint:                fingerprint,
+		Intent:                            intent,
+		Goal:                              goal,
+		Confirm:                           request.Unattended.Confirm,
+		PreparedRelease:                   request.Execution.PreparedRelease,
+		DuplicateDisposition:              onEvidence,
+		DuplicateAllowUpload:              allowUpload,
+		RemoveTrackers:                    normalizeCompositeTrackerIDs(request.Trackers.Remove),
+		DefaultProjection:                 cloneCompositeUploadProjection(request.Trackers.DefaultProjection),
+		RequestedScreenshotCount:          cloneIntPointer(request.Media.Screenshots.Count),
+		RequestedScreenshotCountIsDefault: request.Media.Screenshots.CountIsDefault,
+		FeedbackReceipts:                  make(map[string]compositeUploadFeedbackReceipt),
 	}
 	return session, instructions, nil
 }
@@ -707,6 +709,7 @@ func compositeUploadScreenshotCountInstructions(
 	instructions map[api.TrackerID]api.TrackerProjectionInstructions,
 	trackerIDs []api.TrackerID,
 	count *int,
+	countIsDefault bool,
 ) map[api.TrackerID]api.TrackerProjectionInstructions {
 	if count == nil || len(trackerIDs) == 0 {
 		return instructions
@@ -717,6 +720,7 @@ func compositeUploadScreenshotCountInstructions(
 	for _, trackerID := range trackerIDs {
 		instruction := instructions[trackerID]
 		instruction.ScreenshotCount = cloneIntPointer(count)
+		instruction.ScreenshotCountIsDefault = countIsDefault
 		instructions[trackerID] = instruction
 	}
 	return instructions
@@ -1418,6 +1422,7 @@ func (m *Module) applyCompositeAutomaticPolicy(
 			}
 			if session.RequestedScreenshotCount != nil {
 				merged.ScreenshotCount = cloneIntPointer(session.RequestedScreenshotCount)
+				merged.ScreenshotCountIsDefault = session.RequestedScreenshotCountIsDefault
 			}
 			after, fingerprintErr := api.CanonicalWorkflowFingerprint(merged)
 			if fingerprintErr != nil {
@@ -1445,12 +1450,16 @@ func (m *Module) applyCompositeAutomaticPolicy(
 		return false, err
 	} else if len(artifactIDs) > 0 {
 		if _, err := m.execute(ctx, ownerID, SetMediaSelectionCommand{
-			WorkflowID:       current.Workflow.ID,
-			ExpectedRevision: current.Workflow.Revision,
-			Media:            *current.Workflow.Media,
-			ArtifactIDs:      artifactIDs,
-			Selected:         false,
-			IdempotencyKey:   compositeUploadOperationKey(string(session.RequestFingerprint)+":trim-screenshots", uint64(current.Workflow.Revision)),
+			preserveAutomaticScreenshotSelection: session.RequestedScreenshotCountIsDefault,
+			WorkflowID:                           current.Workflow.ID,
+			ExpectedRevision:                     current.Workflow.Revision,
+			Media:                                *current.Workflow.Media,
+			ArtifactIDs:                          artifactIDs,
+			Selected:                             false,
+			IdempotencyKey: compositeUploadOperationKey(
+				string(session.RequestFingerprint)+":trim-screenshots",
+				uint64(current.Workflow.Revision),
+			),
 		}); err != nil {
 			return false, fmt.Errorf("release workflow trim composite screenshots: %w", err)
 		}
@@ -2261,6 +2270,7 @@ func (m *Module) applyCompositeUploadFeedback(
 			instruction := mapped[command.Response.TrackerID]
 			if state.Composite.RequestedScreenshotCount != nil {
 				instruction.ScreenshotCount = cloneIntPointer(state.Composite.RequestedScreenshotCount)
+				instruction.ScreenshotCountIsDefault = state.Composite.RequestedScreenshotCountIsDefault
 			}
 			state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID] = instruction
 			var projections *api.TrackerReleaseProjectionSet

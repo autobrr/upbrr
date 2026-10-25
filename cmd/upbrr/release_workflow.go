@@ -80,21 +80,22 @@ type cliReleaseWorkflowCore interface {
 }
 
 type cliWorkflowSession struct {
-	core                 cliReleaseWorkflowCore
-	logger               api.Logger
-	current              releaseworkflow.CommandResult
-	intent               cliWorkflowIntent
-	uploadRequest        api.Request
-	idempotencyRun       string
-	intentSequence       uint64
-	printedProgress      map[api.OperationKind]struct{}
-	projectionsPrinted   bool
-	submissionSuppressed bool
-	eventLogState        cliWorkflowEventLogState
-	progressWriter       io.Writer
-	streams              cliIO
-	inputBaseline        cliInputSlotBaseline
-	inputClaim           cliInputSlotClaim
+	core                     cliReleaseWorkflowCore
+	logger                   api.Logger
+	current                  releaseworkflow.CommandResult
+	intent                   cliWorkflowIntent
+	uploadRequest            api.Request
+	screenshotCountIsDefault bool
+	idempotencyRun           string
+	intentSequence           uint64
+	printedProgress          map[api.OperationKind]struct{}
+	projectionsPrinted       bool
+	submissionSuppressed     bool
+	eventLogState            cliWorkflowEventLogState
+	progressWriter           io.Writer
+	streams                  cliIO
+	inputBaseline            cliInputSlotBaseline
+	inputClaim               cliInputSlotClaim
 }
 
 type cliInputSlotBaseline struct {
@@ -642,6 +643,7 @@ func runCLIWorkflowInteractive(
 		if err != nil {
 			return err
 		}
+		replacement.screenshotCountIsDefault = !currentVisited["screens"]
 		if session != nil && replacement.inputClaim.workflowID == "" {
 			replacement.inputClaim = session.inputClaim
 		}
@@ -675,26 +677,48 @@ func runCLIWorkflowInteractive(
 			return err
 		}
 		preview := cliWorkflowMetadataPreview(session.current)
-		printMetadataPreview(streams.out, preview, currentOpts.Debug)
-		if currentOpts.InputOnly || currentOpts.interactionMode() == api.InteractionModeUnattended {
+		printMetadataPreview(streams.out, preview, session.current.Release.Release, currentOpts.Debug)
+		missing := session.current.Release.Release.MissingRequiredUploadFacts()
+		if len(missing) > 0 {
+			fmt.Fprintln(streams.out, "Missing fields")
+			for _, field := range missing {
+				fmt.Fprintf(streams.out, "--%s <value>\n", field)
+			}
+		}
+		if currentOpts.InputOnly {
+			break
+		}
+		if currentOpts.interactionMode() == api.InteractionModeUnattended {
+			if len(missing) > 0 {
+				return exitError(2, errors.New("required release facts are missing in unattended mode; apply the listed correction arguments"))
+			}
 			break
 		}
 		var metadataEvidence strings.Builder
-		printMetadataPreview(&metadataEvidence, preview, currentOpts.Debug)
+		printMetadataPreview(&metadataEvidence, preview, session.current.Release.Release, currentOpts.Debug)
 		bindCLIQuestion(ctx, streams.out, session.current.Workflow.ID, session.current.Workflow.Revision, "", metadataEvidence.String())
-		confirmed, promptErr := promptYesNo(reader, streams.out, "Metadata correct? [Y/n]: ", true)
-		if promptErr != nil {
-			return promptErr
+		if len(missing) == 0 {
+			confirmed, promptErr := promptYesNo(reader, streams.out, "Metadata correct? [Y/n]: ", true)
+			if promptErr != nil {
+				return promptErr
+			}
+			if confirmed {
+				break
+			}
 		}
-		if confirmed {
-			break
+		prompt := "Input args that need correction, or 'continue': "
+		if len(missing) > 0 {
+			prompt = "Input args to correct the missing fields: "
 		}
-		editArgs, promptErr := promptLine(reader, streams.out, "Input args that need correction, or 'continue': ")
+		editArgs, promptErr := promptLine(reader, streams.out, prompt)
 		if promptErr != nil {
 			return promptErr
 		}
 		if strings.EqualFold(strings.TrimSpace(editArgs), "continue") {
-			break
+			if len(missing) == 0 {
+				break
+			}
+			continue
 		}
 		editTokens, splitErr := splitInteractiveCLIArgs(editArgs)
 		if splitErr != nil {
@@ -1575,6 +1599,7 @@ func runCLIWorkflowUploadOnly(
 	batch cliPreparationBatch,
 	debug bool,
 	queueMode bool,
+	screenshotCountIsDefault bool,
 	cfg config.Config,
 	streams cliIO,
 	logger api.Logger,
@@ -1593,6 +1618,7 @@ func runCLIWorkflowUploadOnly(
 		if err != nil {
 			return err
 		}
+		session.screenshotCountIsDefault = screenshotCountIsDefault
 		defer session.releaseActiveInput(itemCtx)
 		count, err := session.complete(itemCtx, debug, reader, cfg, logger)
 		uploaded += count
@@ -1622,6 +1648,7 @@ func runCLIWorkflowSiteCheck(
 	if err != nil {
 		return err
 	}
+	session.screenshotCountIsDefault = !visited["screens"]
 	defer session.releaseActiveInput(ctx)
 	fmt.Fprintf(streams.out, "\n[Site Check] %s\n", formatPathLabel(item.originalPath))
 	_, err = session.complete(ctx, true, reader, cfg, logger)

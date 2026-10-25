@@ -336,9 +336,11 @@ type RetainedAudioAnalysisLocalPath interface {
 	LocalArtifactPath(api.AudioAnalysisResult, api.PublicResourceID) (string, error)
 }
 
-// DescriptionResources carries the current owner-scoped analysis alongside
-// retained media. HDR authority is resolved only for descriptions using automatic assets.
+// DescriptionResources carries current owner-scoped analysis and derived selection
+// policy alongside retained media. HDR authority is resolved only for automatic assets.
 type DescriptionResources struct {
+	// SuppressImportedScreenshotReferences is derived afresh from exact retained selection intent.
+	SuppressImportedScreenshotReferences map[string]bool
 	// HDRArtifacts preserves validated current image associations for final editor overrides.
 	HDRArtifacts  map[api.TrackerID][]api.HDRArtifactEvidence
 	HDR           func(context.Context) (api.HDRAnalysisResult, RetainedHDRAnalysisResource, error)
@@ -1083,12 +1085,14 @@ func (c CaptureMediaCommand) commandFingerprint() (api.WorkflowFingerprint, erro
 
 // SetMediaSelectionCommand changes selection state for opaque retained media.
 type SetMediaSelectionCommand struct {
-	WorkflowID       api.WorkflowID
-	ExpectedRevision api.WorkflowRevision
-	Media            api.MediaArtifactSetRef
-	ArtifactIDs      []api.PublicResourceID
-	Selected         bool
-	IdempotencyKey   string
+	// Automatic composite trimming must not turn a default count into manual selection.
+	preserveAutomaticScreenshotSelection bool
+	WorkflowID                           api.WorkflowID
+	ExpectedRevision                     api.WorkflowRevision
+	Media                                api.MediaArtifactSetRef
+	ArtifactIDs                          []api.PublicResourceID
+	Selected                             bool
+	IdempotencyKey                       string
 }
 
 func (SetMediaSelectionCommand) commandName() string              { return "set_media_selection" }
@@ -1096,11 +1100,12 @@ func (SetMediaSelectionCommand) userIntent()                      {}
 func (SetMediaSelectionCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
 func (c SetMediaSelectionCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
 	return canonicalCommandFingerprint(struct {
-		ExpectedRevision api.WorkflowRevision
-		Media            api.MediaArtifactSetRef
-		ArtifactIDs      []api.PublicResourceID
-		Selected         bool
-	}{c.ExpectedRevision, c.Media, c.ArtifactIDs, c.Selected})
+		ExpectedRevision                     api.WorkflowRevision
+		Media                                api.MediaArtifactSetRef
+		ArtifactIDs                          []api.PublicResourceID
+		Selected                             bool
+		PreserveAutomaticScreenshotSelection bool `json:",omitempty"`
+	}{c.ExpectedRevision, c.Media, c.ArtifactIDs, c.Selected, c.preserveAutomaticScreenshotSelection})
 }
 
 // DeleteMediaArtifactsCommand deletes owner-scoped retained media by opaque ID.

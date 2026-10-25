@@ -21,6 +21,7 @@ import { LanguageListInput } from "./LanguageListInput";
 import { settingsStyle } from "../../settings/style";
 import { CorrectionSearch, CorrectionSelect } from "./CorrectionChoice";
 import correctionChoices from "./correctionChoices.json";
+import { missingRequiredFacts } from "./requiredFacts";
 
 const hasOwn = (value: object, key: PropertyKey) =>
   Object.prototype.hasOwnProperty.call(value, key);
@@ -232,6 +233,7 @@ function CorrectionRow({
   trackId,
   grouped = false,
   readOnly = false,
+  missing = false,
   onAuto,
   onConfirm,
   children,
@@ -243,6 +245,7 @@ function CorrectionRow({
   trackId?: string;
   grouped?: boolean;
   readOnly?: boolean;
+  missing?: boolean;
   onAuto: () => void;
   onConfirm: () => void;
   children: ReactNode;
@@ -274,6 +277,11 @@ function CorrectionRow({
         {status}
         {stale && !readOnly ? " · Saved value needs confirmation" : ""}
       </span>
+      {missing ? (
+        <span id={`correction-${field}-missing`} className="text-xs text-destructive-text">
+          Required fact missing from saved metadata.
+        </span>
+      ) : null}
       {stale && !readOnly ? (
         <Button type="button" onClick={onConfirm}>
           Confirm saved {label}
@@ -364,14 +372,14 @@ const releaseStringFields: ReadonlyArray<{
     label: "Type",
     key: "Type",
     choices: correctionChoices.Type,
-    automatic: (r) => r?.Naming?.Type || "",
+    automatic: (r) => r?.Media?.Type || "",
   },
   {
     field: "release_name.source",
     label: "Source",
     key: "Source",
     choices: correctionChoices.Source,
-    automatic: (r) => r?.Naming?.Source || "",
+    automatic: (r) => r?.Media?.Source || "",
   },
   {
     field: "release_name.resolution",
@@ -883,6 +891,7 @@ export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>
 export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>) {
   const { view } = facet;
   const release = view.release;
+  const missingFacts = missingRequiredFacts(release);
   const category = (view.intent.releaseName.Category ?? "").trim().toLowerCase();
   const isTV =
     ["tv", "television", "series", "episode"].includes(category) ||
@@ -965,6 +974,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         <div className={settingsStyle.title}>Release name</div>
         <div className={inputGridClass}>
           {releaseStringFields.map(({ field, label, key, automatic, choices, searchable }) => {
+            const missing = missingFacts.includes(field);
             const readOnly = key === "ManualYear" && isTV;
             const manual = !readOnly && view.intent.releaseName[key] != null;
             const rawValue = manual ? view.intent.releaseName[key] : automatic(release);
@@ -979,6 +989,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 label={label}
                 status={statusFor(field, manual)}
                 readOnly={readOnly}
+                missing={missing}
                 grouped={key === "ReleaseFeatures"}
                 stale={staleFields.has(field)}
                 onAuto={() => reset(field)}
@@ -997,6 +1008,8 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     label={label}
                     value={value}
                     options={choices}
+                    invalid={missing}
+                    describedBy={missing ? `correction-${field}-missing` : undefined}
                     onChange={(next) => setReleaseName(key, next)}
                   />
                 ) : key === "Repack" ? (

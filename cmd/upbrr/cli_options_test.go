@@ -1250,13 +1250,13 @@ func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
 			Severity: api.DiagnosticSeverityWarning,
 			Message:  "Season pack contains mixed group tags (ALT, GRP); trackers with mixed-origin support will use Mixed.",
 		}},
-	}, true)
+	}, api.PreparedRelease{Media: api.MediaFacts{Type: "ENCODE", Source: "BluRay"}, Naming: api.NamingFacts{Resolution: "720p"}}, true)
 	output := outputBuffer.String()
 
 	for _, expected := range []string{
 		"Release details",
 		"Debug mode: validates the end-to-end workflow while suppressing tracker submission.",
-		"Source: [local path]",
+		"Path: [local path]\nType: ENCODE\nResolution: 720p\nSource: BluRay\n\nUpload name:",
 		"Upload name: Example Release 2026 S01 1080p WEB-DL H.264-GRP",
 		"Database info",
 		"Title: Example Release (2026)",
@@ -1802,7 +1802,7 @@ func TestPrintMetadataPreviewAlwaysShowsEffectiveCommentary(t *testing.T) {
 	t.Parallel()
 	for _, commentary := range []bool{true, false} {
 		var output strings.Builder
-		printMetadataPreview(&output, api.MetadataPreview{Display: api.PreparedReleaseDisplay{Commentary: commentary}}, false)
+		printMetadataPreview(&output, api.MetadataPreview{Display: api.PreparedReleaseDisplay{Commentary: commentary}}, api.PreparedRelease{}, false)
 		if !strings.Contains(output.String(), "Commentary: "+strconv.FormatBool(commentary)+"\n") {
 			t.Fatalf("metadata preview omitted effective commentary: %q", output.String())
 		}
@@ -1817,12 +1817,12 @@ func TestPrintMetadataPreviewShowsSourceSeasonEvidence(t *testing.T) {
 		Code:     "multiple_source_seasons",
 		Severity: api.DiagnosticSeverityWarning,
 		Message:  warning,
-	}}}, false)
+	}}}, api.PreparedRelease{}, false)
 	if !strings.Contains(output.String(), warning) {
 		t.Fatalf("source season warning missing: %s", output.String())
 	}
 	output.Reset()
-	printMetadataPreview(&output, api.MetadataPreview{}, false)
+	printMetadataPreview(&output, api.MetadataPreview{}, api.PreparedRelease{}, false)
 	if strings.Contains(output.String(), "Multiple seasons") {
 		t.Fatalf("stale source season warning: %s", output.String())
 	}

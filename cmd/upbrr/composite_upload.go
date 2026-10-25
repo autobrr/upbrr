@@ -36,7 +36,7 @@ func (s *cliWorkflowSession) completeComposite(
 	cfg config.Config,
 	logger api.Logger,
 ) (int, error) {
-	request, err := mapCLICompositeUploadRequest(s.uploadRequest, debug, s.nextIdempotencyKey("upload"))
+	request, err := mapCLICompositeUploadRequest(s.uploadRequest, debug, s.nextIdempotencyKey("upload"), s.screenshotCountIsDefault)
 	if err != nil {
 		return 0, err
 	}
@@ -873,6 +873,7 @@ func mapCLICompositeUploadRequest(
 	request api.Request,
 	debug bool,
 	idempotencyKey string,
+	screenshotCountIsDefault bool,
 ) (api.CreateReleaseWorkflowUploadRequest, error) {
 	preparation, err := api.MapPreparationRequest(request, api.PreparationIntentUpload)
 	if err != nil {
@@ -956,6 +957,8 @@ func mapCLICompositeUploadRequest(
 		onEvidence = api.ReleaseWorkflowDuplicateUpload
 	}
 	screenshotCount := request.Options.Screens
+	automaticScreenshots := screenshotCountIsDefault && len(request.ScreenshotOverrides.ManualFrames) == 0 &&
+		len(request.ScreenshotOverrides.ComparisonPaths) == 0
 	captureMenus := request.Options.CaptureDVDMenus
 	return api.CreateReleaseWorkflowUploadRequest{
 		Source: api.ReleaseWorkflowUploadSource{Path: preparation.SourcePath},
@@ -992,6 +995,7 @@ func mapCLICompositeUploadRequest(
 		Media: api.ReleaseWorkflowUploadMedia{
 			Screenshots: api.ReleaseWorkflowUploadScreenshots{
 				Count:                  &screenshotCount,
+				CountIsDefault:         automaticScreenshots,
 				Frames:                 append([]int(nil), request.ScreenshotOverrides.ManualFrames...),
 				ComparisonPaths:        append([]string(nil), request.ScreenshotOverrides.ComparisonPaths...),
 				ComparisonPrimaryIndex: cloneCLIIntPointer(request.ScreenshotOverrides.ComparisonPrimaryIndex),

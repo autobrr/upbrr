@@ -260,6 +260,14 @@ Omit a flag to retain a saved correction. Use `--reset-input release_name.presen
 
 If `--use-season-episode` has neither an explicit season/episode nor a matching TMDB episode, an existing daily date is retained with a warning. `--use-season-episode=false` selects daily-date naming when a date is available.
 
+### Required release facts
+
+Category, Type, Source, and Resolution must be present in the saved prepared metadata before upload. The release preview labels the filesystem location **Path**, then shows Type, Resolution, and Source above Upload name. A recognizable filename or provider summary does not replace a missing saved fact.
+
+If any are missing, **Missing fields** replaces the metadata confirmation and lists only the correction arguments you need: `--category <value>`, `--type <value>`, `--source <value>`, or `--resolution <value>`. Enter the listed corrections to prepare the input again. The normal **Metadata correct?** confirmation returns when all four saved facts are present; answering yes or entering `continue` cannot bypass missing facts.
+
+Strict `--unattended` reports the missing facts and exits without prompting. Interactive mode and `--unattended_confirm` (`--uac`) allow corrections. `--input-only` still prepares incomplete input for inspection and reports its readiness without uploading.
+
 ## Metadata IDs
 
 | Option          | Aliases   | Purpose             |

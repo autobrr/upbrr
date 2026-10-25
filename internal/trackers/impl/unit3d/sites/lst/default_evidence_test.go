@@ -46,7 +46,11 @@ func TestLSTDefaultCountUsesKnownFlags(t *testing.T) {
 				}
 				return
 			}
-			if i < 0 || failures[i].EvidenceStatus != test.want || failures[i].Disposition != api.RuleDispositionStrict {
+			wantDisposition := api.RuleDispositionAdvisory
+			if test.want == api.MetadataEvidenceStatusComplete {
+				wantDisposition = api.RuleDispositionWaivable
+			}
+			if i < 0 || failures[i].EvidenceStatus != test.want || failures[i].Disposition != wantDisposition {
 				t.Fatalf("wrong count evidence: %+v", failures)
 			}
 		})
@@ -64,7 +68,7 @@ func TestOrdinaryLanguagePreferenceMissingEvidenceIsAdvisory(t *testing.T) {
 		for _, failure := range failures {
 			if failure.Rule == "language_original_evidence" {
 				found = true
-				if (failure.Disposition == api.RuleDispositionStrict) != personal || failure.EvidenceStatus != api.MetadataEvidenceStatusPartial {
+				if failure.Disposition != api.RuleDispositionAdvisory || failure.EvidenceStatus != api.MetadataEvidenceStatusPartial {
 					t.Fatalf("wrong preference priority: %+v", failure)
 				}
 			}

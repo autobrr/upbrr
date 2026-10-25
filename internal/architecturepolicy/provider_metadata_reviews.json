@@ -1416,24 +1416,20 @@
     "sha256": "575f25eae2122199087f1dcecdbf31ffc4ef964348bf315add1d80a2fb04d4f3"
   },
   "internal/trackers/impl/unit3d/sites/lst/questionnaire.go:languageQuestionnaire": {
-    "reason": "LST compatibility and description confirmation review: removes independent compatibility-origin attestation after valid track association; measured codec, language, resource, ambiguity and manual assignment checks remain. Source documentation uses a source/name/generation-bound promise to include references in the description; ordinary guidance and personal priority remain. Answered automatic fields remain in the post-answer schema for valid API ingestion. Finalized facts, manual overrides and provider scope guards are unchanged.",
-    "sha256": "e8fc7e1bbca3cdef6826e02580f4bb94ff23e849e097a79993bf78c0dab750bb"
+    "reason": "Reviewed remaining inputs and all removed answer consumers: only unresolved measured track association and genuine exception explanation remain. Existing finalized fact ownership, explicit association semantics, manual metadata precedence and prepared-generation identity are preserved.",
+    "sha256": "fa5cb489d8d13fbf2dbcd27a86116762df04a555e43435a28796ef4cea50c996"
   },
   "internal/trackers/impl/unit3d/sites/lst/source_validation.go:endedLSTSeries": {
     "reason": "Uses finalized canonical facts and current scoped review answers; provider series status is consumed only after source and identity validation, with no manual series-status field to override.",
     "sha256": "80ee885d2191b5435842907ac71bca1924004cf45ed9c6c50020e946cefa4709"
   },
-  "internal/trackers/impl/unit3d/sites/lst/source_validation.go:sourceReviewQuestions": {
-    "reason": "LST guidance review: missing audio titles, known-service WEB naming and source stream processing no longer require reassurance answers. Source and encode prohibitions, ended-series current-source/generation provider checks, finalized facts and manual metadata precedence remain unchanged; questionnaire and validation callers were reviewed together.",
-    "sha256": "f22f58cdf13e7facc66e23927af5003239c4276bc983a6987c9527b5cf3ebbf0"
-  },
   "internal/trackers/impl/unit3d/sites/lst/source_validation.go:sourceValidationFailures": {
-    "reason": "LST guidance review: missing audio titles, known-service WEB naming and source stream processing no longer require reassurance answers. Source and encode prohibitions, ended-series current-source/generation provider checks, finalized facts and manual metadata precedence remain unchanged; questionnaire and validation callers were reviewed together.",
-    "sha256": "56baf71f9f4aec05330cb6fd02ed0258398f0de81324939f6920b6061769006d"
+    "reason": "Reviewed builders and downstream consumers together. Unknown source history is guidance; measured findings use existing evidence-bound warnings. Current-source provider checks, manual metadata precedence, independent prohibited-source and payload contracts remain explicit.",
+    "sha256": "e3fb973e891ec2739ae27e111a9e9f59894c63be7b5fe0bc9390bd2f78d0e21a"
   },
   "internal/trackers/impl/unit3d/sites/lst/validation.go:validationPolicy": {
-    "reason": "Advances LST policy for source-reference inclusion confirmation and compatibility determined from measured matching track evidence, without independent origin attestation. All existing finalized-fact, manual precedence, source/generation and provider-scope guards remain; independent media eligibility and required language checks are unchanged.",
-    "sha256": "8557a50a3e8d882ad3556244872fba0de3b28021d5f8185310dd308da0cb14b9"
+    "reason": "LST receipt review: tracker-filtered source/generation-bound reference-only evidence adds unknown-format counts without local artifacts, source compliance assertions or changes to parser requirements; existing inspected-image warnings and exact-description acknowledgement binding remain independent.",
+    "sha256": "0cb30c915f2085e91231bae05a3ac905a984db92a46a157cdbbd6c3d042367b8"
   },
   "internal/trackers/impl/unit3d/sites/lume/name.go:applyLumeTVDBDisambiguation": {
     "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
@@ -1610,5 +1606,9 @@
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
     "reason": "Annotation-display review: copies canonical ReleaseFeatures and the ordered display-only projection into detached slices. Existing provider snapshot, identity, manual provenance and validation mappings remain unchanged; display text is not semantic evidence.",
     "sha256": "0631a672653bf72afb4214c9c8e3cfb771c050f4a98ce7cf926124acc15b47ec"
+  },
+  "internal/trackers/impl/unit3d/sites/lst/source_validation.go:sourceQuestionKey": {
+    "reason": "Reviewed fingerprint dependencies for current source, generation, finalized per-resource technical evidence and source-scoped provider metadata. Provider data binds warning freshness, never replaces inspected technical facts or manual identity authority.",
+    "sha256": "9bf5af60a7fdb181c45d0a612062c0e780ccfa2a409a065a37609f33bce87b7c"
   }
 }

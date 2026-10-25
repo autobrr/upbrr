@@ -81,34 +81,35 @@ func TestBluRayRegionPreparationAndReadiness(t *testing.T) {
 		t.Run(tc.region, func(t *testing.T) {
 			name := "Example Release 2026-GRP"
 			subject := api.UploadSubject{
-Assessments: api.ReleaseAssessments{MediaInfoEncodeSettings: api.EncodeSettingsStatusPresent},
- SourcePath: filepath.Join(dir, "Example"),
- ReleaseName: name,
-				Type: "DISC",
- DiscType: "BDMV",
- Region: tc.region,
+				Assessments:       api.ReleaseAssessments{MediaInfoEncodeSettings: api.EncodeSettingsStatusPresent},
+				SourcePath:        filepath.Join(dir, "Example"),
+				ReleaseName:       name,
+				Type:              "DISC",
+				DiscType:          "BDMV",
+				Region:            tc.region,
 				MediaInfoTextPath: report,
- TorrentPath: torrent,
-				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
-				Release:  api.ReleaseInfo{
-Title: "Example",
- Year: 2026,
- Resolution: "1080p",
-},
+				TorrentPath:       torrent,
+				Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
+				Release: api.ReleaseInfo{
+					Title:      "Example",
+					Year:       2026,
+					Resolution: "1080p",
+				},
 			}
 			for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
 				plan, failure := definition.Prepare(t.Context(), trackers.PreparationInput{
-					Intent: trackers.PreparationIntentDryRun,
- Tracker: "ULCX",
- Logger: api.NopLogger{},
- ExecutionMode: mode,
+					Intent:              trackers.PreparationIntentDryRun,
+					Tracker:             "ULCX",
+					Logger:              api.NopLogger{},
+					ExecutionMode:       mode,
 					RequestedUploadName: &name,
- TrackerConfig: config.TrackerConfig{APIKey: "test-key"},
-					Assets: &trackers.DescriptionAssets{Description: "Synthetic description", Final: true},
- Meta: subject,
+					TrackerConfig:       config.TrackerConfig{APIKey: "test-key"},
+					Assets:              &trackers.DescriptionAssets{Description: "Synthetic description", Final: true},
+					Meta:                subject,
 				})
 				if tc.want == "" {
-					if failure == nil || !strings.Contains(failure.Error(), "ulcx_bluray_region") {
+					if failure == nil || !strings.Contains(failure.Error(), "ulcx_bluray_region: ULCX Blu-ray discs require a region") ||
+						strings.Count(failure.Error(), "trackers: ULCX:") != 1 {
 						t.Fatalf("invalid region was not blocked: %v", failure)
 					}
 				} else {

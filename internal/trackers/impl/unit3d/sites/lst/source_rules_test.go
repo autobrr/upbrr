@@ -175,10 +175,10 @@ func TestLSTSubtitleGuidanceCannotClearIndependentBlocks(t *testing.T) {
 	subject.PersonalRelease = true
 	subject.LanguageFacts.Tracks[1].Default = false
 	failures := languageAssessment(subject)
-	requireLSTSourceFailure(t, failures, "language_subtitle_default", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	requireLSTSourceFailure(t, failures, "language_subtitle_default", api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete)
 	for _, failure := range failures {
-		if failure.Rule == "language_subtitle_default" && !trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, true) {
-			t.Fatal("subtitle guidance cleared personal requirement")
+		if failure.Rule == "language_subtitle_default" && trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, true) {
+			t.Fatal("acknowledged subtitle presentation warning still blocked")
 		}
 	}
 	subject.LanguageFacts.Tracks[1].ResourceID = ""
@@ -229,7 +229,7 @@ func TestLSTKnownHardcodedEnglishIsNotExternal(t *testing.T) {
 		t.Fatalf("known burned-in English requires a false source answer: %+v", questionnaire)
 	}
 	subject.PersonalRelease = true
-	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_default", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	requireLSTSourceFailure(t, languageAssessment(subject), "language_subtitle_default", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 }
 
 func TestLSTSubtitlePresentationCoversEveryProgrammeResource(t *testing.T) {

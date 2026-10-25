@@ -352,7 +352,20 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	validated := []bbcode.Image(nil)
 	var imageErr error
 	if keepImages {
-		validated, imageErr = PrepareDescriptionImages(ctx, c.http, tracker, logger, images)
+		validated, result.UninspectedImages, imageErr = prepareDescriptionImages(ctx, c.http, tracker, logger, images)
+		if len(images) > 0 && ctx.Err() == nil {
+			rawURLs := make([]string, 0, len(images))
+			for _, selected := range images {
+				if rawURL := imagehost.DirectImageURL(selected.RawURL); rawURL != "" {
+					rawURLs = append(rawURLs, rawURL)
+				}
+			}
+			result.ImportedImagePolicyVersion = api.ImportedScreenshotEvidencePolicyVersion
+			result.ImportedImageDescriptionFingerprint, _ = api.CanonicalWorkflowFingerprint(struct {
+				Description string
+				RawURLs     []string
+			}{Description: attrs.description, RawURLs: rawURLs})
+		}
 		images = validated
 	} else {
 		images = nil
@@ -390,8 +403,15 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 // Dropped nonempty entries return an error alongside any usable images;
 // cancellation preserves its context cause. An empty image list succeeds.
 func PrepareDescriptionImages(ctx context.Context, client *http.Client, tracker string, logger api.Logger, images []bbcode.Image) ([]bbcode.Image, error) {
+	validated, _, err := prepareDescriptionImages(ctx, client, tracker, logger, images)
+	return validated, err
+}
+
+func prepareDescriptionImages(
+	ctx context.Context, client *http.Client, tracker string, logger api.Logger, images []bbcode.Image,
+) ([]bbcode.Image, []api.ImportedScreenshotReference, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("trackerdata: image preparation canceled: %w", err)
+		return nil, nil, fmt.Errorf("trackerdata: image preparation canceled: %w", err)
 	}
 	expected := 0
 	for _, image := range images {
@@ -412,9 +432,9 @@ func PrepareDescriptionImages(ctx context.Context, client *http.Client, tracker 
 			images[index].WebURL = images[index].RawURL
 		}
 	}
-	validated := validateImages(ctx, safeClient, images, tracker, logger)
+	validated, uninspected := validateImagesWithReferences(ctx, safeClient, images, tracker, logger)
 	if err := ctx.Err(); err != nil {
-		return validated, fmt.Errorf("trackerdata: image preparation canceled: %w", err)
+		return validated, nil, fmt.Errorf("trackerdata: image preparation canceled: %w", err)
 	}
 	for _, image := range validated {
 		if image != (bbcode.Image{}) {
@@ -422,9 +442,9 @@ func PrepareDescriptionImages(ctx context.Context, client *http.Client, tracker 
 		}
 	}
 	if expected != 0 {
-		return validated, errors.New("trackerdata: description image preparation failed")
+		return validated, uninspected, errors.New("trackerdata: description image preparation failed")
 	}
-	return validated, nil
+	return validated, uninspected, nil
 }
 
 func convertCleanedUnit3DImages(images []descriptionunit3d.Image) []bbcode.Image {
@@ -1182,15 +1202,19 @@ func usesUnit3DPendingSearch(tracker string) bool {
 	return strings.EqualFold(tracker, "CBR")
 }
 
-func validateImages(ctx context.Context, client *http.Client, images []bbcode.Image, tracker string, logger api.Logger) []bbcode.Image {
+func validateImagesWithReferences(
+	ctx context.Context, client *http.Client, images []bbcode.Image, tracker string, logger api.Logger,
+) ([]bbcode.Image, []api.ImportedScreenshotReference) {
 	if len(images) == 0 {
-		return nil
+		return nil, nil
 	}
 	client = Unit3DImageHTTPClient(client)
+	allowReferences := Unit3DImageClientSupportsReferences(client)
 
 	results := make([]bbcode.Image, len(images))
 	valid := make([]bool, len(images))
 	failures := make([]string, len(images))
+	uninspected := make([]api.ImportedScreenshotReference, len(images))
 	sem := make(chan struct{}, imageConcurrency)
 	var wg sync.WaitGroup
 
@@ -1201,11 +1225,13 @@ func validateImages(ctx context.Context, client *http.Client, images []bbcode.Im
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			if reason := checkImage(ctx, client, img.RawURL); reason == "" {
+			reason, acceptedRawURL := checkImage(ctx, client, img.RawURL, allowReferences)
+			if reason == "" {
 				results[idx] = img
 				valid[idx] = true
 			} else {
 				failures[idx] = reason
+				uninspected[idx] = api.ImportedScreenshotReference{RawURL: acceptedRawURL}
 			}
 		})
 	}
@@ -1219,44 +1245,63 @@ func validateImages(ctx context.Context, client *http.Client, images []bbcode.Im
 			logger.Debugf("trackerdata: image validation rejected tracker=%s index=%d reason=%s", tracker, idx+1, failures[idx])
 		}
 	}
+	uninspected = slices.DeleteFunc(uninspected, func(reference api.ImportedScreenshotReference) bool { return reference.RawURL == "" })
 	if validatedCount == 0 {
-		return nil
+		return nil, uninspected
 	}
-	return results
+	return results, uninspected
 }
 
-func checkImage(ctx context.Context, client *http.Client, rawURL string) string {
+func checkImage(ctx context.Context, client *http.Client, rawURL string, allowReference bool) (reason, uninspectedRawURL string) {
 	trimmed := imagehost.DirectImageURL(rawURL)
 	if trimmed == "" {
-		return "empty_or_invalid_image_url"
+		return "empty_or_invalid_image_url", ""
 	}
 	if err := ValidateUnit3DImageURL(ctx, trimmed); err != nil {
-		return "invalid_or_nonpublic_url"
+		return "invalid_or_nonpublic_url", ""
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, trimmed, nil)
 	if err != nil {
-		return "invalid_request"
+		return "invalid_request", ""
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "request_failed"
+		return "request_failed", ""
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Sprintf("http_status_%d", resp.StatusCode)
+		return fmt.Sprintf("http_status_%d", resp.StatusCode), ""
 	}
 	if resp.ContentLength > 0 && resp.ContentLength > maxImageBytes {
-		return "image_too_large"
+		return "image_too_large", ""
 	}
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	if contentType != "" && !strings.Contains(contentType, "image") {
-		return "non_image_content_type"
+		return "non_image_content_type", ""
 	}
-	limited := io.LimitReader(resp.Body, maxImageBytes)
+	limited := &io.LimitedReader{R: resp.Body, N: maxImageBytes}
 	if _, _, err := image.DecodeConfig(limited); err != nil {
-		return "image_decode_failed"
+		// A receipt establishes the accepted request policy, not valid image
+		// bytes or a complete response within the inspection limit.
+		if allowReference && limited.N > 0 && ctx.Err() == nil &&
+			resp.Request != nil && resp.Request.Context().Err() == nil {
+			return "image_decode_failed", trimmed
+		}
+		return "image_decode_failed", ""
 	}
-	return ""
+	return "", ""
+}
+
+// Unit3DImageClientSupportsReferences checks a Unit3DImageHTTPClient clone for
+// custom transport, TLS-dial, or TLS-protocol bypasses. Call before requests can
+// initialize protocol maps. This does not validate a URL or response.
+func Unit3DImageClientSupportsReferences(client *http.Client) bool {
+	if client == nil {
+		return false
+	}
+	transport, standardTransport := client.Transport.(*http.Transport)
+	//nolint:staticcheck // SA1019: Legacy DialTLS bypasses the public-IP DialContext guard and must disqualify reference receipts.
+	return standardTransport && transport.DialTLS == nil && transport.DialTLSContext == nil && len(transport.TLSNextProto) == 0
 }
 
 // Unit3DImageHTTPClient returns a clone that rejects non-public image redirects and,

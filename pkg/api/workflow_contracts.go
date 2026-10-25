@@ -115,12 +115,17 @@ type TrackerProjectionInstructions struct {
 	// The server issues it after a valid review action; public input may only
 	// retain an already-issued marker, never create confirmation authority.
 	ConfirmedNameFingerprint WorkflowFingerprint `json:"confirmedNameFingerprint,omitempty"`
-	// ScreenshotCount overrides the global screenshot fallback. Zero disables that fallback, while a tracker ImageCount remains a minimum.
-	ScreenshotCount *int                   `json:"screenshotCount,omitempty"`
-	AdditionalNames map[string]*string     `json:"additionalNames,omitempty"`
-	Questionnaire   map[string]*string     `json:"questionnaire,omitempty"`
-	TrackerConfig   TrackerConfigOverrides `json:"trackerConfig,omitempty"`
-	TrackerSite     TrackerSiteOverrides   `json:"trackerSite,omitempty"`
+	// ScreenshotCount overrides the global fallback; zero disables that fallback.
+	// Tracker ImageCount remains a minimum unless permitted imported references
+	// replace an automatic count.
+	ScreenshotCount *int `json:"screenshotCount,omitempty"`
+	// ScreenshotCountIsDefault permits tracker policy to replace this automatic
+	// count with imported references. Omitted and false keep the count explicit.
+	ScreenshotCountIsDefault bool                   `json:"screenshotCountIsDefault,omitempty"`
+	AdditionalNames          map[string]*string     `json:"additionalNames,omitempty"`
+	Questionnaire            map[string]*string     `json:"questionnaire,omitempty"`
+	TrackerConfig            TrackerConfigOverrides `json:"trackerConfig,omitempty"`
+	TrackerSite              TrackerSiteOverrides   `json:"trackerSite,omitempty"`
 }
 
 // TrackerProjectionInstructionSnapshot retains tracker-local projection instructions.
@@ -581,14 +586,17 @@ type MediaCaptureInstructions struct {
 
 // MediaArtifactSet retains generation- and projection-bound media results.
 type MediaArtifactSet struct {
-	ID                 MediaArtifactSetID             `json:"id"`
-	WorkflowID         WorkflowID                     `json:"workflowId"`
-	Revision           WorkflowRevision               `json:"revision"`
-	Release            ReleaseSnapshotRef             `json:"release"`
-	ReleaseRef         ReleaseRef                     `json:"releaseRef"`
-	ProjectionSet      TrackerReleaseProjectionSetRef `json:"projectionSet"`
-	TrackerApproval    *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
-	CaptureFingerprint WorkflowFingerprint            `json:"captureFingerprint"`
+	// AutomaticScreenshotSelection records known automatic screenshot intent.
+	// False includes legacy/unknown and explicit selections; imported references must not expand those selections.
+	AutomaticScreenshotSelection bool                           `json:"automaticScreenshotSelection,omitempty"`
+	ID                           MediaArtifactSetID             `json:"id"`
+	WorkflowID                   WorkflowID                     `json:"workflowId"`
+	Revision                     WorkflowRevision               `json:"revision"`
+	Release                      ReleaseSnapshotRef             `json:"release"`
+	ReleaseRef                   ReleaseRef                     `json:"releaseRef"`
+	ProjectionSet                TrackerReleaseProjectionSetRef `json:"projectionSet"`
+	TrackerApproval              *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
+	CaptureFingerprint           WorkflowFingerprint            `json:"captureFingerprint"`
 	// SavedImagePlanID retains the reviewed import plan across workflow continuation.
 	SavedImagePlanID        MediaPlanID          `json:"savedImagePlanId,omitempty"`
 	RequirementsFingerprint WorkflowFingerprint  `json:"requirementsFingerprint"`
