@@ -152,7 +152,7 @@ test("API uploads one collection torrent for two DVD discs", async () => {
   }
 });
 
-test("confirm composite resolves duplicate and approval feedback after restart", async () => {
+test("confirm composite requires explicit reopening after restart", async () => {
   const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   workspace.env.UPBRR_E2E_DUPLICATE_TRACKERS = releaseWorkflowParityFixture.trackerID;
   let app = await startApp(workspace);
@@ -180,28 +180,33 @@ test("confirm composite resolves duplicate and approval feedback after restart",
     duplicateBlocked = (await restartedResponse.json()) as WorkflowV1Current;
     duplicateAction = pendingAction(duplicateBlocked, "review_duplicates");
 
-    const stale = await client.raw(`/uploads/${duplicateBlocked.workflow.id}/feedback`, {
-      method: "POST",
-      revision: duplicateBlocked.workflow.revision - 1,
-      idempotencyKey: "confirm-duplicate-stale",
-      body: {
-        action: {
-          id: duplicateAction.id,
-          workflowRevision: duplicateBlocked.workflow.revision - 1,
-        },
-        response: {
-          kind: "duplicateReview",
-          duplicateReview: {
-            trackerId: releaseWorkflowParityFixture.trackerID,
-            decision: "ignored",
+    // Neither stale nor current feedback may reopen the previous process's input.
+    for (const revision of [
+      duplicateBlocked.workflow.revision - 1,
+      duplicateBlocked.workflow.revision,
+    ]) {
+      const stale = await client.raw(`/uploads/${duplicateBlocked.workflow.id}/feedback`, {
+        method: "POST",
+        revision,
+        idempotencyKey: `confirm-duplicate-stale-${revision}`,
+        body: {
+          action: {
+            id: duplicateAction.id,
+            workflowRevision: revision,
+          },
+          response: {
+            kind: "duplicateReview",
+            duplicateReview: {
+              trackerId: releaseWorkflowParityFixture.trackerID,
+              decision: "ignored",
+            },
           },
         },
-      },
-    });
-    expect(stale.status).toBe(409);
+      });
+      expect(stale.status, await stale.clone().text()).toBe(409);
+    }
 
-    // Stale feedback is rejected before admission. Explicitly resume the expired
-    // coordinator, then re-read its recovered revision before reviewed feedback.
+    // Retained workflow authority alone cannot reopen the source either.
     const resumed = await client.raw("/continuations", {
       method: "POST",
       idempotencyKey: "confirm-duplicate-recover",
@@ -215,10 +220,18 @@ test("confirm composite resolves duplicate and approval feedback after restart",
       },
     });
     expect(resumed.status, await resumed.clone().text()).toBe(409);
-    const recoveredResponse = await client.get(duplicateBlocked.workflow.id);
-    expect(recoveredResponse.status).toBe(200);
-    duplicateBlocked = (await recoveredResponse.json()) as WorkflowV1Current;
+    const retainedWorkflowID = duplicateBlocked.workflow.id;
+    const reopened = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "confirm-duplicate-reopen",
+      body: uploadBody(workspace.sourcePath, { confirm: true, mode: "upload", noSeed: true }),
+    });
+    expect(reopened.status, await reopened.clone().text()).toBe(202);
+    duplicateBlocked = await client.accepted(reopened);
+    expect(duplicateBlocked.workflow.id).not.toBe(retainedWorkflowID);
     duplicateAction = pendingAction(duplicateBlocked, "review_duplicates");
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
 
     const duplicateFeedback = await client.raw(
       `/uploads/${duplicateBlocked.workflow.id}/feedback`,
@@ -880,15 +893,23 @@ test("restart interrupts an uncertain client effect without replay", async () =>
     const currentResponse = await client.get(accepted.workflow.id);
     expect(currentResponse.status).toBe(200);
     const current = (await currentResponse.json()) as WorkflowV1Current;
+    expect(current.workflow.id).toBe(accepted.workflow.id);
     expect(recoveredOperation.status).toBe("interrupted");
     expect(recoveredOperation.failures).toEqual([
       expect.objectContaining({
         failure: expect.objectContaining({ Code: "stale_review", Recovery: "retry" }),
       }),
     ]);
-    expect(current.workflow.requiredActions ?? []).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ kind: "reconcile_submission" })]),
-    );
+    // An empty active session must not authorize retrying the uncertain effect.
+    const retry = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "uncertain-client-effect-retry",
+      body: uploadBody(workspace.sourcePath, { confirm: false, mode: "debug", noSeed: false }),
+    });
+    expect(retry.status, await retry.clone().text()).toBe(409);
+    expect(await retry.json()).toMatchObject({
+      failure: { Code: "unknown_submission_outcome", Recovery: "confirm" },
+    });
     expect(workspace.fake.counters.clientInjections).toBe(1);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {

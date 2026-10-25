@@ -167,17 +167,17 @@ func (cliCompositeProjectionFixture) Build(_ context.Context, _ api.ReleaseSnaps
 		}},
 	}
 	return catalog, api.TrackerRuntimeSnapshot{RuntimeGeneration: "fixture-v1", Trackers: []api.TrackerRuntimeEntry{{
-			TrackerID:         "BETA",
-			Configured:        true,
-			ConfigFingerprint: fingerprint,
-		}}}, api.TrackerSelection{TrackerIDs: slices.Clone(trackers)}, api.TrackerReleaseProjectionSet{
-			InputFingerprint:  fingerprint,
-			PolicyFingerprint: fingerprint,
-			ExecutionMode:     execution,
-			Projections:       []api.TrackerReleaseProjection{projection},
-			RequiredActions:   actions,
-			Status:            api.StageStatusReady,
-		}, nil
+		TrackerID:         "BETA",
+		Configured:        true,
+		ConfigFingerprint: fingerprint,
+	}}}, api.TrackerSelection{TrackerIDs: slices.Clone(trackers)}, api.TrackerReleaseProjectionSet{
+		InputFingerprint:  fingerprint,
+		PolicyFingerprint: fingerprint,
+		ExecutionMode:     execution,
+		Projections:       []api.TrackerReleaseProjection{projection},
+		RequiredActions:   actions,
+		Status:            api.StageStatusReady,
+	}, nil
 }
 
 type cliCompositePreflightFixture struct{ proceed <-chan struct{} }
@@ -225,7 +225,14 @@ func TestCompositePollingRefreshesActualQuestionnaireAndStageSnapshots(t *testin
 				return api.PrepareResult{Release: api.PreparedRelease{
 					Generation: 1,
 					Source:     api.SourceManifest{SourcePath: input.SourcePath},
-					Naming:     api.NamingFacts{ReleaseName: cliCompositeOldName},
+					Naming: api.NamingFacts{
+						ReleaseName: cliCompositeOldName,
+						Type:        "ENCODE",
+						Source:      "BluRay",
+						Resolution:  "1080p",
+					},
+					Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+					Media:    api.MediaFacts{Type: "ENCODE", Source: "BluRay"},
 				}}, nil
 			},
 			DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {

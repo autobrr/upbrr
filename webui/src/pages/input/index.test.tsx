@@ -312,6 +312,8 @@ const preparedRelease = () =>
       DailyDate: "2026-09-09",
     },
     Media: {
+      Type: "encode",
+      Source: "BluRay",
       Service: "Example Service",
       Edition: "Director's Cut",
       Region: "A",
@@ -2777,3 +2779,169 @@ it.each([
     expect(facet.changeReleaseName).not.toHaveBeenCalled();
   },
 );
+
+describe("required saved release facts", () => {
+  const fields = ["Category", "Type", "Source", "Resolution"] as const;
+  const warning = "Required facts missing, please edit release details.";
+  const helper = "Review release facts, source options, and selected tracker input.";
+
+  it("does not flag a release before any saved generation exists", () => {
+    render(<InputPage facet={readyInputFacet(1)} {...inputPageProps()} />);
+    expect(screen.queryByText(warning)).not.toBeInTheDocument();
+    expect(screen.getByText(helper)).toBeVisible();
+  });
+
+  it.each(fields)(
+    "marks only missing saved %s, including whitespace and absent values",
+    (field) => {
+      const base = readyInputFacet(1);
+      const release = preparedRelease();
+      const facet: InputFacet = { ...base, view: { ...base.view, release } };
+      const { rerender } = render(<InputPage facet={facet} {...inputPageProps()} />);
+      fireEvent.click(screen.getByText("Edit Release Details"));
+      expect(screen.getByText(helper)).toBeVisible();
+      for (const value of [
+        "",
+        " \t\n",
+        undefined,
+        ...(field === "Category" ? ["unknown", " UNKNOWN "] : []),
+      ]) {
+        if (field === "Category") {
+          release.Identity.Category = value as typeof release.Identity.Category;
+        } else if (field === "Resolution") {
+          release.Naming.Resolution = value as string;
+        } else {
+          release.Media[field] = value as string;
+        }
+        rerender(<InputPage facet={{ ...facet, view: { ...facet.view } }} {...inputPageProps()} />);
+        expect(screen.getByText(warning)).toHaveClass("text-destructive-text");
+        expect(screen.queryByText(helper)).not.toBeInTheDocument();
+        for (const name of fields) {
+          const control = screen.getByRole("combobox", { name });
+          if (name === field) {
+            expect(control).toHaveAttribute("aria-invalid", "true");
+            expect(control).toHaveAccessibleDescription(
+              "Required fact missing from saved metadata.",
+            );
+            expect(control).toHaveClass("border-destructive");
+          } else {
+            expect(control).not.toHaveAttribute("aria-invalid", "true");
+          }
+        }
+      }
+    },
+  );
+
+  it("uses upload media facts even when naming facts disagree", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    release.Media.Type = "";
+    release.Media.Source = "";
+    const facet: InputFacet = { ...base, view: { ...base.view, release } };
+    const { rerender } = render(<InputPage facet={facet} {...inputPageProps()} />);
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    expect(screen.getByText(warning)).toBeVisible();
+    for (const name of ["Type", "Source"]) {
+      expect(screen.getByRole("combobox", { name })).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("combobox", { name })).toHaveValue("");
+    }
+    const complete = preparedRelease();
+    complete.Naming.Type = "";
+    complete.Naming.Source = "";
+    rerender(
+      <InputPage
+        facet={{ ...facet, view: { ...facet.view, release: complete } }}
+        {...inputPageProps()}
+      />,
+    );
+    expect(screen.queryByText(warning)).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("ENCODE");
+    expect(screen.getByRole("combobox", { name: "Source" })).toHaveValue("BluRay");
+    for (const name of ["Type", "Source"]) {
+      expect(screen.getByRole("combobox", { name })).not.toHaveAttribute("aria-invalid", "true");
+    }
+  });
+
+  it("retains missing facts through drafts and failed refresh, clearing only saved corrections", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    release.Identity.Category = "unknown";
+    release.Media.Type = "";
+    release.Media.Source = "";
+    release.Naming.Resolution = "";
+    const facet: InputFacet = { ...base, view: { ...base.view, release } };
+    const { rerender, unmount } = render(<InputPage facet={facet} {...inputPageProps()} />);
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    for (const name of fields)
+      expect(screen.getByRole("combobox", { name })).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Source" }), {
+      target: { value: "BluRay" },
+    });
+    expect(facet.changeReleaseName).toHaveBeenCalledWith({ Source: "BluRay" });
+    const draft: InputFacet = {
+      ...facet,
+      view: {
+        ...facet.view,
+        correctionDirty: true,
+        intent: {
+          ...facet.view.intent,
+          releaseName: { Category: "movie", Type: "ENCODE", Source: "BluRay", Resolution: "1080p" },
+        },
+      },
+    };
+    rerender(<InputPage facet={draft} {...inputPageProps()} />);
+    for (const name of fields)
+      expect(screen.getByRole("combobox", { name })).toHaveAttribute("aria-invalid", "true");
+    const failed: InputFacet = {
+      ...draft,
+      view: { ...draft.view, status: "error", error: "Refresh failed" },
+    };
+    rerender(<InputPage facet={failed} {...inputPageProps()} />);
+    expect(screen.getByText(warning)).toBeVisible();
+    for (const name of fields)
+      expect(screen.getByRole("combobox", { name })).toHaveAttribute("aria-invalid", "true");
+
+    const partial: InputFacet = {
+      ...facet,
+      view: {
+        ...facet.view,
+        release: { ...release, Generation: 2, Media: { ...release.Media, Source: "BluRay" } },
+      },
+    };
+    rerender(<InputPage facet={partial} {...inputPageProps()} />);
+    expect(screen.getByText(warning)).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Source" })).not.toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    for (const name of ["Category", "Type", "Resolution"])
+      expect(screen.getByRole("combobox", { name })).toHaveAttribute("aria-invalid", "true");
+    unmount();
+    render(<InputPage facet={partial} {...inputPageProps()} />);
+    expect(screen.getByText(warning)).toBeVisible();
+  });
+
+  it("restores the normal helper when a refreshed saved generation has complete automatic facts", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    release.Media.Source = "";
+    const facet: InputFacet = { ...base, view: { ...base.view, release } };
+    const { rerender } = render(<InputPage facet={facet} {...inputPageProps()} />);
+    expect(screen.getByText(warning)).toBeVisible();
+    rerender(
+      <InputPage
+        facet={{
+          ...facet,
+          view: { ...facet.view, release: { ...preparedRelease(), Generation: 2 } },
+        }}
+        {...inputPageProps()}
+      />,
+    );
+    expect(screen.getByText(helper)).toBeVisible();
+    expect(screen.queryByText(warning)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    for (const name of fields)
+      expect(screen.getByRole("combobox", { name })).not.toHaveAttribute("aria-invalid", "true");
+  });
+});

@@ -145,10 +145,16 @@ func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 				}
 				preparer := releaseworkflow.ReleasePreparerFunc{
 					PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+						category := api.CanonicalCategoryMovie
+						if test.pack {
+							category = api.CanonicalCategoryTV
+						}
 						return api.PrepareResult{Release: api.PreparedRelease{
 							Generation: 1,
 							Source:     api.SourceManifest{SourcePath: input.SourcePath},
-							Naming:     api.NamingFacts{ReleaseName: releaseName},
+							Naming:     api.NamingFacts{ReleaseName: releaseName, Resolution: "1080p"},
+							Identity:   api.ExternalIdentity{Category: category},
+							Media:      api.MediaFacts{Type: "WEBDL", Source: "Web"},
 						}}, nil
 					},
 					DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {

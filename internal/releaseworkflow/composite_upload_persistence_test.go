@@ -224,6 +224,13 @@ func TestCompositeInputFailureSurvivesRestart(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "composite-input-stop.sqlite")
 	first, _, database, firstUploads := newCompositeSQLiteTestModule(t, databasePath)
 	preparer := testPreparer()
+	prepare := preparer.PrepareFunc
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		result, err := prepare(ctx, input)
+		result.Release.Media.Source = ""
+		result.Release.Media.Type = ""
+		return result, err
+	}
 	preparer.SubjectFunc = func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
 		return api.UploadSubject{
 			SourcePath:  input.Release.SourcePath,
@@ -277,6 +284,11 @@ func TestCompositeInputFailureSurvivesRestart(t *testing.T) {
 	if _, err := restarted.Operation(t.Context(), "other-owner", stopped.Workflow.ID, stopped.Operation.ID); !errors.Is(err, ErrWorkflowNotFound) {
 		t.Fatalf("foreign operation read = %v", err)
 	}
+	current = executeCommand(t, restarted, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: request.Source.Path, Force: true},
+	})
 	request.Authority = &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision - 1}
 	request.IdempotencyKey = "corrected-durable-input"
 	if _, err := restarted.StartUpload(t.Context(), testOwnerID, request); !errors.Is(err, ErrRevisionConflict) {
