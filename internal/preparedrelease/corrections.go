@@ -82,6 +82,7 @@ func (m *Module) resolveInput(
 		// Explicit updates own new version writes; raw instructions may be retained
 		// workflow state that the update replaces or resets.
 		values.ReleaseName.Repack = nil
+		values.ReleaseName.ThreeD = nil
 		values.ReleaseName.Presentation = nil
 		values.ReleaseName.ReleaseFeatures = nil
 	}

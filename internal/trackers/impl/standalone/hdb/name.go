@@ -38,7 +38,7 @@ func uploadTorrentFilename(name string) string {
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v7", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v13", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
@@ -208,6 +208,7 @@ func hdbSourceElement(meta api.UploadSubject) string {
 	if source == "" {
 		source = normalizedHDBElement(meta.Release.Source)
 	}
+	source = meta.ThreeDSourceName(source)
 	typeValue := resolveHDBType(meta)
 	switch typeValue {
 	case "WEBDL":
@@ -237,13 +238,16 @@ func hdbSourceElement(meta api.UploadSubject) string {
 		}
 	}
 	region := normalizedHDBElement(meta.Region)
+	threeD := meta.ThreeDName()
+	parts := []string{threeD, source}
 	if source != "" && region != "" {
-		if disc || typeValue == "REMUX" {
-			return region + " " + source
+		if disc || typeValue == "REMUX" || threeD != "" {
+			parts = append([]string{region}, parts...)
+		} else {
+			parts = append(parts, region)
 		}
-		return source + " " + region
 	}
-	return source
+	return strings.Join(nonEmptyHDBElements(parts), " ")
 }
 
 func hdbAudioBeforeVideo(meta api.UploadSubject) bool {

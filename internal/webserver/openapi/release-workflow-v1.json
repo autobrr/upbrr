@@ -6806,6 +6806,16 @@
               }
             ]
           },
+          "ThreeD": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "Type": {
             "anyOf": [
               {
@@ -8683,6 +8693,16 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "threeD": {
+            "anyOf": [
+              {
+                "type": "boolean"
               },
               {
                 "type": "null"

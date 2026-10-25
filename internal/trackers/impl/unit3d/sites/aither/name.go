@@ -17,7 +17,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v10", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v12", trackers.StructuredNamePolicy{
 		Defaults: applyAitherNameDefaults,
 	})
 }
@@ -127,7 +127,11 @@ func applyAitherDVDRipNameOrder(editor *trackers.NameEditor) error {
 		if err := editor.Include(api.NameRoleResolution); err != nil {
 			return fmt.Errorf("include AITHER DVDRip resolution: %w", err)
 		}
-		if err := editor.MoveBefore(api.NameRoleResolution, api.NameRoleVideoFormat); err != nil {
+		anchor := api.NameRoleVideoFormat
+		if slices.Contains(editor.PresentRoles(), api.NameRoleThreeD) {
+			anchor = api.NameRoleThreeD
+		}
+		if err := editor.MoveBefore(api.NameRoleResolution, anchor); err != nil {
 			return fmt.Errorf("move AITHER DVDRip resolution: %w", err)
 		}
 	}
@@ -166,7 +170,7 @@ func applyAitherDVDNameOrder(editor *trackers.NameEditor, meta api.UploadSubject
 		if err := editor.Include(api.NameRoleResolution); err != nil {
 			return fmt.Errorf("include AITHER DVD resolution: %w", err)
 		}
-		anchors := []api.ReleaseNameRole{api.NameRoleSource, api.NameRoleDVDSystem, api.NameRoleDVDSize, api.NameRoleVideoFormat}
+		anchors := []api.ReleaseNameRole{api.NameRoleDVDSystem, api.NameRoleThreeD, api.NameRoleSource, api.NameRoleDVDSize, api.NameRoleVideoFormat}
 		if unit3d.IsDiscType(meta.DiscType) && strings.TrimSpace(meta.Region) != "" {
 			anchors = append([]api.ReleaseNameRole{api.NameRoleRegion}, anchors...)
 		}
@@ -194,12 +198,12 @@ func addAitherLanguageMarker(editor *trackers.NameEditor, meta api.UploadSubject
 	}
 	anchor := firstAitherPresentRole(
 		editor.PresentRoles(),
-		api.NameRoleThreeD,
 		api.NameRoleEditionSet, api.NameRoleCut,
 		api.NameRoleEdition,
 		api.NameRolePresentation,
 		api.NameRoleRepack,
 		api.NameRoleResolution,
+		api.NameRoleThreeD,
 		api.NameRoleSource,
 		api.NameRoleVideoFormat,
 	)

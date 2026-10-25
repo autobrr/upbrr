@@ -233,7 +233,7 @@ func TestDVDRipNamingHonorsResolutionCorrections(t *testing.T) {
 	}
 }
 
-func TestBuildReleaseNameTVSeparatesSeasonEpisodeWithAttachmentFallback(t *testing.T) {
+func TestBuildReleaseNameTVKeepsThreeDIndependentOfSeasonEpisode(t *testing.T) {
 	t.Parallel()
 
 	request := api.ReleaseNameRequest{
@@ -250,13 +250,13 @@ func TestBuildReleaseNameTVSeparatesSeasonEpisodeWithAttachmentFallback(t *testi
 		Audio:    "DD 5.1",
 	}
 	result := BuildReleaseName(request, api.NopLogger{})
-	if got, want := result.NameNoTag, "Example Show S01E023D DVD9 DD 5.1"; got != want {
+	if got, want := result.NameNoTag, "Example Show S01E02 3D DVD9 DD 5.1"; got != want {
 		t.Fatalf("NameNoTag = %q, want %q", got, want)
 	}
 	season, _ := result.GeneratedName.Component(api.NameRoleSeason)
 	episode, _ := result.GeneratedName.Component(api.NameRoleEpisode)
 	threeD, _ := result.GeneratedName.Component(api.NameRoleThreeD)
-	if episode.AttachTo[0] != api.NameRoleSeason || threeD.AttachTo[0] != api.NameRoleEpisode {
+	if len(episode.AttachTo) != 1 || episode.AttachTo[0] != api.NameRoleSeason || len(threeD.AttachTo) != 0 {
 		t.Fatalf("attachment layout season=%#v episode=%#v 3D=%#v", season, episode, threeD)
 	}
 

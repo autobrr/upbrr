@@ -72,7 +72,7 @@ func TestAitherRequiresThreeScreenshots(t *testing.T) {
 func TestAitherValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-aither-policy-v9/languages-v2" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-aither-policy-v11/languages-v2" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }

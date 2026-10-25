@@ -759,6 +759,11 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 		OmitSeasonEpisode:  nameRequest.NoSeason,
 		UseDailyDate:       nameRequest.ManualDate,
 	}
+	// Keep ResolvedNaming.Source factual; only the rendered copy drops an
+	// explicitly suppressed 3D annotation from the known source label.
+	if threeD := meta.ReleaseNameOverrides.ThreeD; threeD != nil && !*threeD {
+		nameRequest.Source = api.SourceNameWithoutThreeD(nameRequest.Source)
+	}
 	nameResult := BuildReleaseName(nameRequest, logger)
 	mergeGeneratedNameAvailability(nameResult.GeneratedName, meta.AvailableGeneratedName, meta, nameRequest)
 	meta.ReleaseNameNoTag = nameResult.NameNoTag
@@ -782,6 +787,9 @@ func captureAvailableGeneratedName(meta *preparationstate.State, logger api.Logg
 	request := releaseNameRequestFromMeta(available, logger)
 	request = applyMetadataNamingOverrides(request, available.MetadataOverrides)
 	request = applyReleaseNameOverrides(request, available.ReleaseNameOverrides, logger)
+	if threeD := available.ReleaseNameOverrides.ThreeD; threeD != nil && !*threeD {
+		request.Source = api.SourceNameWithoutThreeD(request.Source)
+	}
 	meta.AvailableGeneratedName = BuildReleaseName(request, logger).GeneratedName.Clone()
 }
 
@@ -990,6 +998,8 @@ func releaseNameRoleIsManual(role api.ReleaseNameRole, overrides api.ReleaseName
 	case api.NameRoleHybrid:
 		return overrides.ReleaseFeatures != nil || overrides.NoEdition != nil ||
 			overrides.Edition != nil && slices.Contains(manualEditionParts(*overrides.Edition).Features, api.ReleaseFeatureHybrid)
+	case api.NameRoleThreeD:
+		return overrides.ThreeD != nil
 	case api.NameRoleRepack:
 		return overrides.Repack != nil || overrides.NoEdition != nil
 	case api.NameRoleRegion:
@@ -1008,7 +1018,7 @@ func releaseNameRoleIsManual(role api.ReleaseNameRole, overrides api.ReleaseName
 		return overrides.NoDual != nil || overrides.DualAudio != nil
 	case api.NameRoleGroup:
 		return overrides.Tag != nil || overrides.NoTag != nil
-	case api.NameRoleTitle, api.NameRolePart, api.NameRoleThreeD,
+	case api.NameRoleTitle, api.NameRolePart,
 		api.NameRoleUHD, api.NameRoleDVDSystem, api.NameRoleDVDSize, api.NameRoleVideoFormat, api.NameRoleHDR,
 		api.NameRoleVideoCodec, api.NameRoleVideoEncode, api.NameRoleLanguageMarker,
 		api.NameRoleLocale, api.NameRoleDistributor, api.NameRoleSubtitleMarker, api.NameRoleOriginalGroup, api.NameRoleDownscale:

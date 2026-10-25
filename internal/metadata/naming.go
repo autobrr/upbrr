@@ -76,9 +76,12 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	episode := strings.TrimSpace(req.Episode)
 	part := strings.TrimSpace(req.Part)
 	repack := strings.TrimSpace(req.Repack)
-	threeD := strings.TrimSpace(req.ThreeD)
+	threeD := api.ThreeDName(req.ThreeD, nil)
 	tag := strings.TrimSpace(req.Tag)
 	source := strings.TrimSpace(req.Source)
+	if threeD != "" {
+		source = api.SourceNameWithoutThreeD(source)
+	}
 	if matchType == "ENCODE" && sourceIn(source, "DVD", "PAL DVD", "NTSC DVD") {
 		source = "DVDRip"
 	}
@@ -730,6 +733,26 @@ func generatedReleaseNameDocument(
 		}
 	}
 	components = retainUnavailableReleaseNameComponents(components, retained)
+	// The independent 3D role belongs immediately before source in every
+	// automatic format, after resolution and any applicable country component.
+	if index := releaseNameComponentSliceIndex(components, api.NameRoleThreeD); index >= 0 {
+		component := components[index]
+		components = slices.Delete(components, index, index+1)
+		component.Present = strings.TrimSpace(threeD) != ""
+		component.Join, component.AttachTo = " ", nil
+		sourceIndex := releaseNameComponentSliceIndex(components, api.NameRoleSource)
+		// Web formats render their source token as VideoFormat, retaining any
+		// raw Source only as a non-present component for tracker projections.
+		if formatIndex := releaseNameComponentSliceIndex(components, api.NameRoleVideoFormat); formatIndex >= 0 && components[formatIndex].Present &&
+			(sourceIndex < 0 || !components[sourceIndex].Present) {
+			sourceIndex = formatIndex
+		}
+		if sourceIndex >= 0 {
+			components = slices.Insert(components, sourceIndex, component)
+		} else {
+			components = append(components, component)
+		}
+	}
 	components = withReleaseNameAudioMarkers(components, audioMarkers)
 	appendComponents(releaseNameDocumentValue{role: api.NameRoleGroup, value: tag})
 	return &api.ReleaseNameDocument{Version: api.ReleaseNameDocumentVersionV1, Components: components}
@@ -1341,7 +1364,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		Episode:               strings.TrimSpace(meta.EpisodeStr),
 		Part:                  "",
 		Repack:                meta.Repack,
-		ThreeD:                meta.Is3D,
+		ThreeD:                api.ThreeDName(meta.Is3D, meta.ReleaseFeatures),
 		Tag:                   meta.Tag,
 		Source:                source,
 		UHD:                   meta.UHD,
@@ -1361,7 +1384,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		ManualEdition:         meta.ReleaseNameOverrides.Edition != nil,
 		ManualPresentation:    meta.ReleaseNameOverrides.Presentation != nil,
 		ManualReleaseFeatures: meta.ReleaseNameOverrides.ReleaseFeatures != nil,
-		EditionDisplay:        api.EditionDisplayText(meta.EditionDisplay),
+		EditionDisplay:        api.EditionNamingText(meta.EditionDisplay),
 		SearchYear:            searchYear,
 		DailyDate:             dailyDate,
 		ManualDate:            manualDate,

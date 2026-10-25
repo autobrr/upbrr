@@ -147,6 +147,8 @@ type ReleaseNameResult struct {
 }
 
 type ReleaseNameOverrides struct {
+	// ThreeD sets or clears effective 3D; nil restores detection and true preserves a detected subtype.
+	ThreeD     *bool
 	Category   *string
 	Type       *string
 	Source     *string

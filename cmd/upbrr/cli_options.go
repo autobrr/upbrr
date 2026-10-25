@@ -55,6 +55,7 @@ type cliOptions struct {
 	Distributor                string
 	OriginalLanguage           string
 	Edition                    string
+	ThreeD                     bool
 	Presentation               string
 	ReleaseFeatures            []string
 	Season                     string
@@ -247,6 +248,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.OriginalLanguage, "original-language", "", "Override original language")
 	fs.StringVar(&opts.OriginalLanguage, "ol", "", "Override original language")
 	fs.StringVar(&opts.Edition, "edition", "", "Override edition text")
+	fs.BoolVar(&opts.ThreeD, "3d", false, "Set effective 3D; --3d=false clears, reset-input release_name.three_d restores Auto")
 	fs.StringVar(&opts.Presentation, "presentation", "", "Override presentation (IMAX, Open Matte, IMAX Open Matte); empty clears")
 	fs.StringSliceVar(&opts.ReleaseFeatures, "release-features", nil, "Override release features with comma-separated supported IDs; empty clears")
 	fs.StringVar(&opts.Edition, "repack", "", "Override edition text")
@@ -1109,6 +1111,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 			Tag:              opts.Tag,
 			Service:          opts.Service,
 			Edition:          opts.Edition,
+			ThreeD:           opts.ThreeD,
 			Presentation:     opts.Presentation,
 			ReleaseFeatures:  opts.ReleaseFeatures,
 			Season:           opts.Season,
@@ -1246,6 +1249,7 @@ func hasCLIInputCorrections(visited map[string]bool) bool {
 func isCLIInputCorrectionFlag(name string) bool {
 	return slices.Contains([]string{
 		"tmdb", "imdb", "tvdb", "tvmaze", "mal", "category", "type", "source", "resolution", "tag", "service", "edition", "presentation", "release-features",
+		"3d",
 		"season", "episode", "episode-title", "manual-year", "daily", "use-season-episode", "no-season", "no-year", "no-aka", "no-tag",
 		"no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio", "region", "distributor",
 		"original-language", "commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "alternate-title",
@@ -1449,6 +1453,7 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		Tag:              opts.Tag,
 		Service:          opts.Service,
 		Edition:          opts.Edition,
+		ThreeD:           opts.ThreeD,
 		Presentation:     opts.Presentation,
 		ReleaseFeatures:  opts.ReleaseFeatures,
 		Season:           opts.Season,

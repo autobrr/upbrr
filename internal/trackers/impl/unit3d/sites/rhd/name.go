@@ -63,16 +63,18 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 			parts = append(parts, "iNCOMPLETE")
 		}
 	}
+	namingSubject := meta
+	namingSubject.EditionDisplay = nil
+	if text := api.EditionNamingText(meta.EditionDisplay); text != "" {
+		namingSubject.EditionDisplay = []api.EditionDisplayPart{{Text: text}}
+	}
 	if meta.EditionSet != "" {
 		parts = append(parts, meta.EditionSet)
-	} else if edition := meta.EditionDisplayLabel(); edition != "" {
+	} else if edition := namingSubject.EditionDisplayLabel(); edition != "" {
 		parts = append(parts, edition)
 	}
 	if slices.Contains(meta.ReleaseFeatures, api.ReleaseFeatureHybrid) {
 		parts = append(parts, "Hybrid")
-	}
-	if meta.Is3D != "" {
-		parts = append(parts, meta.Is3D)
 	}
 	if !fullDisc {
 		parts = append(parts, resolveLanguage(meta))
@@ -136,8 +138,8 @@ func typeAndSource(meta api.UploadSubject) []string {
 	if name == "" && unit3d.IsDiscType(meta.DiscType) {
 		name = "DISC"
 	}
-	if name == "" {
-		return nil
+	if threeD := meta.ThreeDName(); threeD != "" && !strings.EqualFold(name, "DISC") {
+		parts = append(parts, threeD)
 	}
 	switch strings.ToUpper(name) {
 	case "WEBDL":
@@ -146,17 +148,20 @@ func typeAndSource(meta api.UploadSubject) []string {
 		name = "WEBRip"
 	case "ENCODE":
 		if meta.Source != "" {
-			parts = append(parts, meta.Source)
+			parts = append(parts, meta.ThreeDSourceName(meta.Source))
 			name = ""
 		}
 	case "REMUX":
 		if meta.Source != "" {
-			parts = append(parts, meta.Source)
+			parts = append(parts, meta.ThreeDSourceName(meta.Source))
 		}
 	case "DISC":
 		parts = append(parts, "COMPLETE")
 		if meta.Region != "" {
 			parts = append(parts, meta.Region)
+		}
+		if threeD := meta.ThreeDName(); threeD != "" {
+			parts = append(parts, threeD)
 		}
 		source := strings.TrimSpace(meta.Release.Source)
 		size := strings.TrimSpace(meta.Release.Size)
@@ -166,7 +171,7 @@ func typeAndSource(meta api.UploadSubject) []string {
 			source = strings.TrimSpace(source[:len(source)-len("DVD")])
 		}
 		if source != "" {
-			parts = append(parts, source)
+			parts = append(parts, meta.ThreeDSourceName(source))
 		}
 		if size != "" {
 			parts = append(parts, size)

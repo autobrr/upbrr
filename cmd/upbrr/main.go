@@ -1231,6 +1231,7 @@ func resolveExportDBPath(configPath string, configProvided bool) (string, error)
 }
 
 type releaseOverrideInput struct {
+	ThreeD           bool
 	Category         string
 	Type             string
 	Source           string
@@ -1261,6 +1262,9 @@ type releaseOverrideInput struct {
 
 func buildReleaseNameOverrides(visited map[string]bool, input releaseOverrideInput) api.ReleaseNameOverrides {
 	overrides := api.ReleaseNameOverrides{}
+	if visited["3d"] {
+		overrides.ThreeD = new(input.ThreeD)
+	}
 	if visited["category"] {
 		overrides.Category = stringPtr(input.Category)
 	}
