@@ -294,6 +294,8 @@ Client and Torrent:
       Force generation of a fresh torrent
 
 Other:
+  -3d, --3d
+      Set effective 3D; --3d=false clears, reset-input release_name.three_d restores Auto
   -hdr-active-area, --hdr-active-area
       Measure decoded picture borders against Dolby Vision active areas
   -hdr-all-audio-tracks, --hdr-all-audio-tracks

@@ -497,6 +497,25 @@ describe("sessionReducer upload intent", () => {
     expect(state.correctionValueFields).toEqual([]);
   });
 
+  it("tracks 3D Set, Clear and Auto independently of Edition", () => {
+    let state = initialSessionState();
+    for (const ThreeD of [true, false]) {
+      state = sessionReducer(state, {
+        type: "release_name_changed",
+        value: { Edition: "Extended", ThreeD },
+      });
+      expect(
+        correctionValuesFor(state.preparationIntent, state.correctionValueFields).ReleaseName,
+      ).toEqual({ Edition: "Extended", ThreeD });
+    }
+    state = sessionReducer(state, {
+      type: "correction_reset",
+      field: { field: "release_name.three_d" },
+    });
+    expect(state.preparationIntent.releaseName).toEqual({ Edition: "Extended" });
+    expect(state.correctionResetFields).toEqual([{ field: "release_name.three_d" }]);
+  });
+
   it("tracks Repack values, confirmation, and Auto independently of Edition", () => {
     let state = initialSessionState();
     state = sessionReducer(state, {

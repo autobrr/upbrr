@@ -101,6 +101,7 @@ func cloneReleaseNameOverrides(value ReleaseNameOverrides) ReleaseNameOverrides 
 		EpisodeTitle:     cloneString(value.EpisodeTitle),
 		ManualYear:       cloneInt(value.ManualYear),
 		ManualDate:       cloneString(value.ManualDate),
+		ThreeD:           cloneBool(value.ThreeD),
 		UseSeasonEpisode: cloneBool(value.UseSeasonEpisode),
 		NoSeason:         cloneBool(value.NoSeason),
 		NoYear:           cloneBool(value.NoYear),

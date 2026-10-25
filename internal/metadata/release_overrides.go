@@ -5,6 +5,7 @@ package metadata
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ func hasReleaseNameOverrides(overrides api.ReleaseNameOverrides) bool {
 		overrides.Service != nil ||
 		overrides.Edition != nil ||
 		overrides.Repack != nil ||
+		overrides.ThreeD != nil ||
 		overrides.Presentation != nil ||
 		overrides.ReleaseFeatures != nil ||
 		overrides.Season != nil ||
@@ -181,6 +183,15 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	}
 	if overrides.ReleaseFeatures != nil {
 		applyManualReleaseFeatures(meta, *overrides.ReleaseFeatures)
+	}
+	if overrides.ThreeD != nil {
+		if !*overrides.ThreeD {
+			meta.Is3D = ""
+			meta.ReleaseFeatures = slices.DeleteFunc(slices.Clone(meta.ReleaseFeatures), api.IsThreeDSubtype)
+			meta.EditionDisplay = api.EditionDisplayWithoutThreeD(meta.EditionDisplay)
+		} else if strings.TrimSpace(meta.Is3D) == "" {
+			meta.Is3D = "3D"
+		}
 	}
 	// Explicit version corrections take precedence over legacy NoEdition suppression.
 	if overrides.Repack != nil {

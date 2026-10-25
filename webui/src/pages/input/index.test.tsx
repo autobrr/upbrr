@@ -1981,6 +1981,30 @@ describe("InputPage", () => {
     });
   });
 
+  it("sets, clears and restores Auto for 3D independently", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: { ...base.view.intent, releaseName: { Edition: "Extended" } },
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+    const control = screen.getByRole("combobox", { name: "3D" });
+    expect(control).toHaveValue("auto");
+    fireEvent.change(control, { target: { value: "yes" } });
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ Edition: "Extended", ThreeD: true });
+    fireEvent.change(control, { target: { value: "no" } });
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      Edition: "Extended",
+      ThreeD: false,
+    });
+    fireEvent.change(control, { target: { value: "auto" } });
+    expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "release_name.three_d" });
+  });
+
   it("renders the complete source-level correction inventory", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {
@@ -2015,6 +2039,7 @@ describe("InputPage", () => {
       "release_name.manual_date",
       "release_name.region",
       "release_name.use_season_episode",
+      "release_name.three_d",
       "release_name.no_season",
       "release_name.no_year",
       "release_name.no_aka",

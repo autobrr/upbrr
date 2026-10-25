@@ -1727,6 +1727,7 @@ export type ReleaseNameOverrides = Readonly<{
   Service?: string | null;
   Source?: string | null;
   Tag?: string | null;
+  ThreeD?: boolean | null;
   Type?: string | null;
   UseSeasonEpisode?: boolean | null;
 }>;
@@ -2075,6 +2076,7 @@ export type ReleaseWorkflowUploadReleaseName = Readonly<{
   service?: string | null;
   source?: string | null;
   tag?: string | null;
+  threeD?: boolean | null;
   type?: string | null;
   useSeasonEpisode?: boolean | null;
 }>;

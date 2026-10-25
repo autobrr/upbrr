@@ -28,6 +28,7 @@ describe("normalizeOverrides", () => {
 describe("normalizeReleaseOverrides", () => {
   it("keeps every override field including nullish, false, and empty-string values", () => {
     const overrides: ReleaseNameOverrides = {
+      ThreeD: false,
       Category: "",
       Type: null,
       Source: "BluRay",
@@ -57,6 +58,7 @@ describe("normalizeReleaseOverrides", () => {
       Region: undefined,
     };
     const allFields: Record<keyof ReleaseNameOverrides, true> = {
+      ThreeD: true,
       Category: true,
       Type: true,
       Source: true,

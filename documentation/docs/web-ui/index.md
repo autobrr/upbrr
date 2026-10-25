@@ -95,6 +95,8 @@ The **Edition** field shows the detected cut and edition, or just `2in1` for a t
 
 Recognized compounds such as `Director's Cut / Hybrid` split into the cut and independent feature. Every slash-separated fragment must be recognized; custom wording remains intact. Presentation/features appear immediately after Edition, or in its position when Edition is absent, subject to each tracker's naming policy. Complete manual names retain their existing authority. Feature annotations do not change measured media facts.
 
+The **3D** control offers Auto, Yes and No. Auto restores detected evidence; Yes establishes effective 3D, and No clears it without changing Edition or release version. No also suppresses effective stereoscopic subtype annotations while preserving saved feature selections for Auto. Complete recognized subtype labels appear in the dedicated 3D naming position, immediately before Source rather than beside Edition. Explicit complete upload-name overrides remain unchanged.
+
 A solitary Theatrical cut or edition is ignored; compound editions retain it. Review the effective selections and supporting evidence alongside the payload preview. See [editions and commentary](../trackers/index.md#editions-and-commentary) for manual corrections.
 
 Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.

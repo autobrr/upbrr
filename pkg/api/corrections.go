@@ -82,6 +82,7 @@ const (
 	CorrectionFieldReleaseNamePresentation     CorrectionField = "release_name.presentation"
 	CorrectionFieldReleaseNameReleaseFeatures  CorrectionField = "release_name.release_features"
 	CorrectionFieldReleaseNameRepack           CorrectionField = "release_name.repack"
+	CorrectionFieldReleaseNameThreeD           CorrectionField = "release_name.three_d"
 	CorrectionFieldReleaseNameSeason           CorrectionField = "release_name.season"
 	CorrectionFieldReleaseNameEpisode          CorrectionField = "release_name.episode"
 	CorrectionFieldReleaseNameEpisodeTitle     CorrectionField = "release_name.episode_title"
@@ -450,6 +451,7 @@ func correctionValueRefs(values ReleaseCorrectionValues) (map[string]CorrectionF
 		{CorrectionFieldReleaseNameNoEpisodeTitle, values.ReleaseName.NoEpisodeTitle != nil}, {CorrectionFieldReleaseNameNoDistributor, values.ReleaseName.NoDistributor != nil},
 		{CorrectionFieldReleaseNameNoEdition, values.ReleaseName.NoEdition != nil}, {CorrectionFieldReleaseNameNoDub, values.ReleaseName.NoDub != nil},
 		{CorrectionFieldReleaseNameNoDual, values.ReleaseName.NoDual != nil}, {CorrectionFieldReleaseNameDualAudio, values.ReleaseName.DualAudio != nil},
+		{CorrectionFieldReleaseNameThreeD, values.ReleaseName.ThreeD != nil},
 		{CorrectionFieldReleaseNameRegion, values.ReleaseName.Region != nil}, {CorrectionFieldMetadataDistributor, values.Metadata.Distributor != nil},
 		{CorrectionFieldMetadataOriginalLanguage, values.Metadata.OriginalLanguage != nil}, {CorrectionFieldMetadataPersonalRelease, values.Metadata.PersonalRelease != nil},
 		{CorrectionFieldMetadataCommentary, values.Metadata.Commentary != nil}, {CorrectionFieldMetadataWebDV, values.Metadata.WebDV != nil},
@@ -613,6 +615,7 @@ var allCorrectionFields = []CorrectionField{
 	CorrectionFieldReleaseNamePresentation,
 	CorrectionFieldReleaseNameReleaseFeatures,
 	CorrectionFieldReleaseNameRepack,
+	CorrectionFieldReleaseNameThreeD,
 	CorrectionFieldReleaseNameSeason,
 	CorrectionFieldReleaseNameEpisode,
 	CorrectionFieldReleaseNameEpisodeTitle,
@@ -721,7 +724,7 @@ func applyReleaseNameOverrides(destination *ReleaseNameOverrides, source Release
 		destination **bool
 		source      *bool
 	}{
-		{&destination.UseSeasonEpisode, source.UseSeasonEpisode}, {&destination.NoSeason, source.NoSeason}, {&destination.NoYear, source.NoYear}, {&destination.NoAKA, source.NoAKA},
+		{&destination.ThreeD, source.ThreeD}, {&destination.UseSeasonEpisode, source.UseSeasonEpisode}, {&destination.NoSeason, source.NoSeason}, {&destination.NoYear, source.NoYear}, {&destination.NoAKA, source.NoAKA},
 		{&destination.NoTag, source.NoTag}, {&destination.NoEpisodeTitle, source.NoEpisodeTitle}, {&destination.NoDistributor, source.NoDistributor},
 		{&destination.NoEdition, source.NoEdition}, {&destination.NoDub, source.NoDub}, {&destination.NoDual, source.NoDual}, {&destination.DualAudio, source.DualAudio},
 	} {
@@ -819,6 +822,8 @@ func resetStoredCorrectionField(stored *StoredReleaseCorrectionsV1, ref Correcti
 		stored.ReleaseName.ReleaseFeatures = nil
 	case CorrectionFieldReleaseNameEdition:
 		stored.ReleaseName.Edition = nil
+	case CorrectionFieldReleaseNameThreeD:
+		stored.ReleaseName.ThreeD = nil
 	case CorrectionFieldReleaseNameRepack:
 		stored.ReleaseName.Repack = nil
 	case CorrectionFieldReleaseNameSeason:

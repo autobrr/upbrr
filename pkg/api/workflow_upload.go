@@ -154,6 +154,7 @@ type ReleaseWorkflowUploadExternalIDs struct {
 
 // ReleaseWorkflowUploadReleaseName contains presence-aware naming overrides.
 type ReleaseWorkflowUploadReleaseName struct {
+	ThreeD           *bool   `json:"threeD,omitempty"`
 	Category         *string `json:"category,omitempty"`
 	Type             *string `json:"type,omitempty"`
 	Source           *string `json:"source,omitempty"`

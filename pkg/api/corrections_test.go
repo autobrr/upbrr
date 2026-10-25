@@ -63,8 +63,8 @@ func TestReleaseCorrectionPatchAcceptsClosedResetFields(t *testing.T) {
 	if err := (ReleaseCorrectionPatch{ResetFields: refs}).Validate(); err != nil {
 		t.Fatalf("full reset enum validation: %v", err)
 	}
-	if len(refs) != 49 {
-		t.Fatalf("reset enum count = %d, want 49", len(refs))
+	if len(refs) != 50 {
+		t.Fatalf("reset enum count = %d, want 50", len(refs))
 	}
 }
 

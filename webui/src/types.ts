@@ -394,6 +394,8 @@ export type ExternalIDOverrides = {
 };
 
 export type ReleaseNameOverrides = {
+  /** Null restores detection; false clears effective 3D. */
+  ThreeD?: boolean | null;
   Category?: string | null;
   Type?: string | null;
   Source?: string | null;

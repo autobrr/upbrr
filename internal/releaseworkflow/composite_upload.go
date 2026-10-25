@@ -625,6 +625,7 @@ func compositeUploadFactInstructions(
 			Service:          cloneStringPointer(releaseName.Service),
 			Edition:          cloneStringPointer(releaseName.Edition),
 			Repack:           cloneStringPointer(releaseName.Repack),
+			ThreeD:           cloneBoolPointer(releaseName.ThreeD),
 			Season:           cloneStringPointer(releaseName.Season),
 			Episode:          cloneStringPointer(releaseName.Episode),
 			EpisodeTitle:     cloneStringPointer(releaseName.EpisodeTitle),

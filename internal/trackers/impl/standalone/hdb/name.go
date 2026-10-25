@@ -38,7 +38,7 @@ func uploadTorrentFilename(name string) string {
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v7", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v8", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
@@ -140,7 +140,7 @@ func buildGeneratedHDBName(meta api.UploadSubject, originalTitle string) string 
 	} else {
 		parts = append(parts, hdbIMDbYear(meta))
 	}
-	parts = append(parts, meta.Repack, normalizedHDBElement(meta.Release.Resolution), hdbSourceElement(meta))
+	parts = append(parts, meta.Repack, normalizedHDBElement(meta.Release.Resolution), api.ThreeDName(meta.Is3D, meta.ReleaseFeatures), hdbSourceElement(meta))
 	video := hdbVideoCodecElement(meta)
 	audio := hdbAudioElement(meta)
 	if hdbAudioBeforeVideo(meta) {

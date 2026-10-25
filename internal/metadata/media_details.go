@@ -990,6 +990,8 @@ func releaseNameRoleIsManual(role api.ReleaseNameRole, overrides api.ReleaseName
 	case api.NameRoleHybrid:
 		return overrides.ReleaseFeatures != nil || overrides.NoEdition != nil ||
 			overrides.Edition != nil && slices.Contains(manualEditionParts(*overrides.Edition).Features, api.ReleaseFeatureHybrid)
+	case api.NameRoleThreeD:
+		return overrides.ThreeD != nil
 	case api.NameRoleRepack:
 		return overrides.Repack != nil || overrides.NoEdition != nil
 	case api.NameRoleRegion:
@@ -1008,7 +1010,7 @@ func releaseNameRoleIsManual(role api.ReleaseNameRole, overrides api.ReleaseName
 		return overrides.NoDual != nil || overrides.DualAudio != nil
 	case api.NameRoleGroup:
 		return overrides.Tag != nil || overrides.NoTag != nil
-	case api.NameRoleTitle, api.NameRolePart, api.NameRoleThreeD,
+	case api.NameRoleTitle, api.NameRolePart,
 		api.NameRoleUHD, api.NameRoleDVDSystem, api.NameRoleDVDSize, api.NameRoleVideoFormat, api.NameRoleHDR,
 		api.NameRoleVideoCodec, api.NameRoleVideoEncode, api.NameRoleLanguageMarker,
 		api.NameRoleLocale, api.NameRoleDistributor, api.NameRoleSubtitleMarker, api.NameRoleOriginalGroup:

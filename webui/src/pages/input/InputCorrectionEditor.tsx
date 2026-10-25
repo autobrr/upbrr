@@ -470,6 +470,7 @@ const releaseBooleanFields: ReadonlyArray<{
     label: "Use season and episode",
     key: "UseSeasonEpisode",
   },
+  { field: "release_name.three_d", label: "3D", key: "ThreeD" },
   { field: "release_name.no_season", label: "No season", key: "NoSeason" },
   { field: "release_name.no_year", label: "No year", key: "NoYear" },
   { field: "release_name.no_aka", label: "No AKA", key: "NoAKA" },
