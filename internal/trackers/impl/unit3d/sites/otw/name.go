@@ -15,7 +15,7 @@ import (
 )
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.NewReleaseNamePolicy("unit3d/otw/v11", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+	return trackers.NewReleaseNamePolicy("unit3d/otw/v12", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 		if input.RequestedName != nil {
 			return trackers.ResolvedReleaseNames{Upload: *input.RequestedName}, nil
 		}
@@ -159,7 +159,7 @@ func otwSource(meta api.UploadSubject) string {
 		strings.EqualFold(source, "WEB") {
 		return ""
 	}
-	return source
+	return meta.ThreeDSourceName(source)
 }
 
 func otwType(meta api.UploadSubject) string {

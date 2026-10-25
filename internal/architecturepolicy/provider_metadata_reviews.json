@@ -1460,8 +1460,8 @@
     "sha256": "31f03c020b50ac67eecc6fa7d688fb167cb03619651bb0d8b4992339e46e7450"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:releaseNamePolicy": {
-    "reason": "Advances automatic naming policy for dedicated generic 3D placement while retaining typed subtype facts. Existing complete upload-name overrides and independent automatic search names remain unchanged.",
-    "sha256": "3e911b9b394d27606d826e51fed55ff0d2b2ed58bfc902a2b74cd6041faf576f"
+    "reason": "Advances the source-alias display policy without changing provider overrides, retained source evidence, or complete upload-name authority.",
+    "sha256": "865f2e37c1be58c672e5c807397582d26259cc56a677116fdf6b53a4004e9916"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
     "reason": "Wires the OTW v7 release-name policy that preserves explicit upload names and finalized manual title, year and edition corrections. Existing TMDB selection, required metadata, language validation, season-zero behavior and duplicate policy remain unchanged.",
@@ -1497,7 +1497,7 @@
   },
   "internal/trackers/impl/unit3d/sites/rhd/profile.go:Profile": {
     "reason": "3D correction naming review: only the naming policy version advances to invalidate old projections. Provider selectors, callback bindings, metadata requirements, validation and duplicate policy remain unchanged.",
-    "sha256": "512678688d93ff056c85641d9fd436a647c7a0b42b40a4ada992e2df7e76565a"
+    "sha256": "bbadb6bdb85e912e936f384411ef0eee700113e49a6295894390d719e0706a26"
   },
   "internal/trackers/impl/unit3d/sites/rmc/name.go:applyRMCNameDefaults": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",

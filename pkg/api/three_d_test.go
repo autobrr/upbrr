@@ -111,3 +111,47 @@ func TestSubjectThreeDNameHonorsOnlyExplicitComponentOmission(t *testing.T) {
 		})
 	}
 }
+
+func TestThreeDSourceDisplayPreservesEvidence(t *testing.T) {
+	for _, test := range []struct {
+		source string
+		want   string
+	}{
+		{"Blu-ray 3D", "Blu-ray"},
+		{"  BLU-RAY 3d  ", "BLU-RAY"},
+		{"Custom 3D Source", "Custom 3D Source"},
+		{"Blu-ray 3D Edition", "Blu-ray 3D Edition"},
+		{"BluRay", "BluRay"},
+		{" Custom 3D Source ", " Custom 3D Source "},
+		{" ", " "},
+	} {
+		if got := SourceNameWithoutThreeD(test.source); got != test.want {
+			t.Fatalf("source=%q, got %q, want %q", test.source, got, test.want)
+		}
+	}
+	subject := UploadSubject{Source: "Blu-ray 3D"}
+	if got := subject.ThreeDSourceName(subject.Source); got != "Blu-ray 3D" || subject.Is3D != "" {
+		t.Fatalf("source-only Auto changed: %q", got)
+	}
+	subject.Is3D = "3D"
+	if got := subject.ThreeDSourceName("Custom 3D Source"); got != "Custom 3D Source" {
+		t.Fatalf("opaque source changed: %q", got)
+	}
+	subject.GeneratedName = &ReleaseNameDocument{
+		Components: []ReleaseNameComponent{
+			{
+				Role:           NameRoleSource,
+				Value:          "Handwritten Source",
+				AvailableValue: "Blu-ray 3D",
+				Manual:         true,
+				Present:        true,
+			},
+		},
+	}
+	if got := subject.ThreeDSourceName(subject.Source); got != "Blu-ray" {
+		t.Fatalf("display did not deduplicate the source alias: %q", got)
+	}
+	if subject.Source != "Blu-ray 3D" || subject.Is3D != "3D" || subject.GeneratedName.Components[0].Value != "Handwritten Source" {
+		t.Fatal("display changed canonical facts or manual component")
+	}
+}

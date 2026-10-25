@@ -759,6 +759,11 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 		OmitSeasonEpisode:  nameRequest.NoSeason,
 		UseDailyDate:       nameRequest.ManualDate,
 	}
+	// Keep ResolvedNaming.Source factual; only the rendered copy drops an
+	// explicitly suppressed 3D annotation from the known source label.
+	if threeD := meta.ReleaseNameOverrides.ThreeD; threeD != nil && !*threeD {
+		nameRequest.Source = api.SourceNameWithoutThreeD(nameRequest.Source)
+	}
 	nameResult := BuildReleaseName(nameRequest, logger)
 	mergeGeneratedNameAvailability(nameResult.GeneratedName, meta.AvailableGeneratedName, meta, nameRequest)
 	meta.ReleaseNameNoTag = nameResult.NameNoTag
@@ -782,6 +787,9 @@ func captureAvailableGeneratedName(meta *preparationstate.State, logger api.Logg
 	request := releaseNameRequestFromMeta(available, logger)
 	request = applyMetadataNamingOverrides(request, available.MetadataOverrides)
 	request = applyReleaseNameOverrides(request, available.ReleaseNameOverrides, logger)
+	if threeD := available.ReleaseNameOverrides.ThreeD; threeD != nil && !*threeD {
+		request.Source = api.SourceNameWithoutThreeD(request.Source)
+	}
 	meta.AvailableGeneratedName = BuildReleaseName(request, logger).GeneratedName.Clone()
 }
 

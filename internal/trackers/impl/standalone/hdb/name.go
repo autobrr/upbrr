@@ -38,7 +38,7 @@ func uploadTorrentFilename(name string) string {
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v11", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v12", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
@@ -238,6 +238,7 @@ func hdbSourceElement(meta api.UploadSubject) string {
 	}
 	region := normalizedHDBElement(meta.Region)
 	threeD := meta.ThreeDName()
+	source = meta.ThreeDSourceName(source)
 	parts := []string{threeD, source}
 	if source != "" && region != "" {
 		if disc || typeValue == "REMUX" || threeD != "" {

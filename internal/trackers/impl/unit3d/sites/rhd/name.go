@@ -148,12 +148,12 @@ func typeAndSource(meta api.UploadSubject) []string {
 		name = "WEBRip"
 	case "ENCODE":
 		if meta.Source != "" {
-			parts = append(parts, meta.Source)
+			parts = append(parts, meta.ThreeDSourceName(meta.Source))
 			name = ""
 		}
 	case "REMUX":
 		if meta.Source != "" {
-			parts = append(parts, meta.Source)
+			parts = append(parts, meta.ThreeDSourceName(meta.Source))
 		}
 	case "DISC":
 		parts = append(parts, "COMPLETE")
@@ -171,7 +171,7 @@ func typeAndSource(meta api.UploadSubject) []string {
 			source = strings.TrimSpace(source[:len(source)-len("DVD")])
 		}
 		if source != "" {
-			parts = append(parts, source)
+			parts = append(parts, meta.ThreeDSourceName(source))
 		}
 		if size != "" {
 			parts = append(parts, size)

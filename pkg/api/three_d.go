@@ -39,6 +39,34 @@ func (s UploadSubject) ThreeDName() string {
 	return ThreeDName(s.Is3D, s.ReleaseFeatures)
 }
 
+// SourceNameWithoutThreeD separates the recognized Blu-ray 3D source label for
+// display only. Callers retain the original source fact and decide when its
+// marker is rendered separately or explicitly suppressed.
+func SourceNameWithoutThreeD(source string) string {
+	trimmed := strings.TrimSpace(source)
+	if strings.EqualFold(trimmed, "Blu-ray 3D") {
+		return trimmed[:len(trimmed)-len(" 3D")]
+	}
+	return source
+}
+
+// ThreeDSourceName avoids a duplicate or explicitly omitted marker in the known
+// source label used by legacy renderers. Source-only Auto annotations are retained;
+// this does not project manual Source components or change canonical facts.
+func (s UploadSubject) ThreeDSourceName(source string) string {
+	if !strings.EqualFold(strings.TrimSpace(source), "Blu-ray 3D") {
+		return source
+	}
+	omitted := s.ReleaseNameOverrides.ThreeD != nil && !*s.ReleaseNameOverrides.ThreeD
+	if component, ok := s.GeneratedName.Component(NameRoleThreeD); ok && component.Manual && !component.Present {
+		omitted = true
+	}
+	if s.ThreeDName() != "" || omitted {
+		return SourceNameWithoutThreeD(source)
+	}
+	return source
+}
+
 // EditionNamingText omits subtype fragments rendered by the independent 3D role.
 // Other display consumers can still use the complete EditionDisplayText.
 func EditionNamingText(parts []EditionDisplayPart) string {
