@@ -26,8 +26,8 @@ github.com/at-wat/ebml-go v0.19.4 h1:6F767ThzH/JqNUsF79PwRFP0pwUF5ALXWJ6pXuiolI8
 github.com/at-wat/ebml-go v0.19.4/go.mod h1:wu3fQj+DWo6SOOl9c4yDi+gFs9Oa96Z2B5qxo1OxFYY=
 github.com/atotto/clipboard v0.1.4 h1:EH0zSVneZPSuFR11BlR9YppQTVDbh5+16AmcJi4g1z4=
 github.com/atotto/clipboard v0.1.4/go.mod h1:ZY9tmq7sm5xIbd9bOK4onWV4S6X0u6GY7Vn0Yu86PYI=
-github.com/autobrr/go-mediainfo v0.8.1-0.20260911072119-0b32d930ae1f h1:I4MbK8P/U9toVGuygnD1U6deGwRLJz7SVoi4yHjXQHk=
-github.com/autobrr/go-mediainfo v0.8.1-0.20260911072119-0b32d930ae1f/go.mod h1:P3LGxIPznO2TLKV/e58YgN0/ozP5pLCAncFzsdxMDcY=
+github.com/autobrr/go-mediainfo v0.8.1-0.20261020113756-56fa5814c646 h1:MANFR1JVx1Z/bVU3rNDd1SwLe/fUHafka/p82F71ADA=
+github.com/autobrr/go-mediainfo v0.8.1-0.20261020113756-56fa5814c646/go.mod h1:P3LGxIPznO2TLKV/e58YgN0/ozP5pLCAncFzsdxMDcY=
 github.com/autobrr/go-qbittorrent v1.19.0 h1:gjR34fXbfsoAzlZ0TXJ6u4ARZN31v1oxgmbLIqyohlg=
 github.com/autobrr/go-qbittorrent v1.19.0/go.mod h1:5uSG7nI6+dvhjvywkxzqooBAH1RDZxGtoRacDRfOtTQ=
 github.com/autobrr/go-torrent v1.1.1 h1:Vc5R3QGZlmAEoEyEYqT2B9j/CX7to82GzFlHhXbphCw=
