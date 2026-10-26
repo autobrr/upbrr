@@ -92,7 +92,7 @@ Pull request and manual workflow:
 - An always-present Linux gate tests `scripts/ci/e2e-scope.mjs` and reads the full base-to-head merge-base diff. Relevant changes run Ubuntu 24.04 E2E; unrelated/docs-only changes skip it without leaving an absent required check. Unreadable diffs or gate failures run the full suite; cancellation stays canceled. Manual dispatch always runs all projects.
 - Each shard builds frontend + embedded assets + CLI with `make e2e-build`.
 - Installs Playwright Chromium.
-- Installs and verifies FFmpeg for the real audio-analysis decoder.
+- Installs and verifies FFmpeg for the real audio-analysis decoder, using the runner's Ubuntu archive fallbacks to avoid the slow Azure mirror.
 - Runs `playwright test --shard=N/4` with the existing two-worker limit. `fullyParallel` distributes individual tests, including those in the large upload spec. All shards finish even if another fails.
 - Uploads JSON test timings for every completed shard and uniquely named reports/traces on failure.
 - Uses read-only repository permissions and local fakes; fork PRs need no repository secrets.
