@@ -182,8 +182,13 @@ func TestAudioEvidenceAndProcessing(t *testing.T) {
 	track.ChannelsKnown = true
 	track.ResourceID = "episode-a"
 	failures := audioTierFailures(s)
-	if len(failures) != 1 || failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
-		t.Fatalf("count-only accepted: %+v", failures)
+	if len(failures) != 1 || failures[0].Rule != "language_lst_audio_layout_assumed" ||
+		failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial || failures[0].Disposition != api.RuleDispositionAdvisory ||
+		trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, false) {
+		t.Fatalf("count-only FLAC needs one non-blocking assumption warning: %+v", failures)
+	}
+	if track.ChannelLayout != "" || exactAudioLayout(*track) != "" {
+		t.Fatal("eligibility assumption changed measured layout evidence")
 	}
 	track.ChannelLayout = "5.1"
 	if got := audioTierFailures(s); len(got) != 0 {
@@ -206,6 +211,66 @@ func TestAudioEvidenceAndProcessing(t *testing.T) {
 	track.Channels = 2
 	if exactAudioLayout(*track) != "" {
 		t.Fatal("contradictory count/layout accepted")
+	}
+}
+
+func TestAudioLayoutAssumptionPreservesEligibilityBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name, codec, layout, wantRule string
+		channels                     int
+		channelsKnown, animeKnown    bool
+		anime                        bool
+	}{
+		{"non-anime", "FLAC", "", "language_lst_audio_layout", 6, true, true, false},
+		{"unknown anime", "FLAC", "", "language_lst_audio_anime_evidence", 6, true, false, true},
+		{"unknown count", "FLAC", "", "language_lst_audio_layout_evidence", 6, false, true, true},
+		{"contradictory count", "FLAC", "2.0", "language_lst_audio_layout_evidence", 6, true, true, true},
+		{"unrecognized explicit layout", "FLAC", "L R C Lb Rb Cb", "language_lst_audio_layout_evidence", 6, true, true, true},
+		{"other lossless codec", "LPCM", "", "language_lst_audio_codec", 6, true, true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := lstValidationSubject()
+			s.Type = "ENCODE"
+			s.Release.Resolution = "1080p"
+			s.Anime = test.anime
+			s.AnimeKnown = test.animeKnown
+			track := &s.LanguageFacts.Tracks[0]
+			track.Codec = test.codec
+			track.BitDepth = 16
+			track.ChannelLayout = test.layout
+			track.Channels = test.channels
+			track.ChannelsKnown = test.channelsKnown
+			if !slices.ContainsFunc(audioTierFailures(s), func(f api.RuleFailure) bool {
+				return f.Rule == test.wantRule && trackers.RuleFailureBlocksExecution(f, api.WorkflowExecutionModeNormal, true)
+			}) {
+				t.Fatalf("eligibility boundary bypassed: %+v", audioTierFailures(s))
+			}
+		})
+	}
+}
+
+func TestAudioLayoutAssumptionIsReleaseScoped(t *testing.T) {
+	s := lstValidationSubject()
+	s.Anime = true
+	track := s.LanguageFacts.Tracks[0]
+	track.Codec = "FLAC"
+	track.BitDepth = 16
+	track.Channels = 6
+	track.ChannelsKnown = true
+	track.ID, track.ResourceID = "audio-a", "episode-a"
+	s.LanguageFacts.Tracks = []api.MediaTrackFacts{track}
+	track.ID, track.ResourceID = "audio-b", "episode-b"
+	s.LanguageFacts.Tracks = append(s.LanguageFacts.Tracks, track)
+	track.ID, track.ResourceID, track.ChannelLayout = "audio-c", "episode-c", "6.0"
+	s.LanguageFacts.Tracks = append(s.LanguageFacts.Tracks, track)
+	failures := audioTierFailures(s)
+	if len(failures) != 2 {
+		t.Fatalf("expected one assumption warning and the explicit layout violation: %+v", failures)
+	}
+	requireLSTValidationFailure(t, failures, "language_lst_audio_layout", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+	requireLSTValidationFailure(t, failures, "language_lst_audio_layout_assumed", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	if !strings.Contains(failures[1].Reason, "2 six-channel FLAC") {
+		t.Fatalf("warning omitted affected stream count: %+v", failures[1])
 	}
 }
 

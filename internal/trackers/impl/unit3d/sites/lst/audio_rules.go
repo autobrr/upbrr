@@ -132,6 +132,7 @@ func audioTierFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		))
 	}
 	releaseHD := hdEncodeAudio(subject)
+	assumedLayouts := 0
 	if releaseHD && !subject.LanguageFacts.TrackCoverageComplete {
 		failures = append(
 			failures,
@@ -154,6 +155,11 @@ func audioTierFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		}
 		codec := strings.ToUpper(strings.TrimSpace(track.Codec))
 		layout := exactAudioLayout(track)
+		if codec == "FLAC" && strings.TrimSpace(track.ChannelLayout) == "" && track.ChannelsKnown && track.Channels == 6 {
+			// shortcut: count-only FLAC is assumed 5.1 for eligibility; an explicit layout must take precedence when available.
+			layout = "5.1"
+			assumedLayouts++
+		}
 		if hd && !losslessAudio(codec) && !lossyAudio(codec) {
 			add(track, "codec_evidence", "audio codec compression class is unresolved", trackers.LanguageUnresolved)
 		}
@@ -210,6 +216,16 @@ func audioTierFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 			}
 			add(track, "stereo_codec", "stereo lossless audio should use FLAC", outcome)
 		}
+	}
+	if assumedLayouts > 0 {
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"lst_audio_layout_assumed",
+			fmt.Sprintf("assuming 5.1 for %d six-channel FLAC audio streams without a reported layout; speaker positions are unverified", assumedLayouts),
+			trackers.LanguageAdvisory,
+		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	return failures
 }
