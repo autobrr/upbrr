@@ -2078,7 +2078,7 @@ func TestValidateBTNClientSessionKeepsBodyReadFailureSafeAndTransient(t *testing
 	}
 }
 
-func TestValidateBTNClientSessionClassifiesInvalidBeforeBodyRead(t *testing.T) {
+func TestValidateBTNClientSessionPreservesInvalidOnBodyReadFailure(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
