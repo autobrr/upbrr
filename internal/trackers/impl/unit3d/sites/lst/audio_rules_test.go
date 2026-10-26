@@ -181,14 +181,17 @@ func TestAudioEvidenceAndProcessing(t *testing.T) {
 	track.Channels = 6
 	track.ChannelsKnown = true
 	track.ResourceID = "episode-a"
-	failures := audioTierFailures(s)
-	if len(failures) != 1 || failures[0].Rule != "language_lst_audio_layout_assumed" ||
-		failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial || failures[0].Disposition != api.RuleDispositionAdvisory ||
-		trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, false) {
-		t.Fatalf("count-only FLAC needs one non-blocking assumption warning: %+v", failures)
-	}
-	if track.ChannelLayout != "" || exactAudioLayout(*track) != "" {
-		t.Fatal("eligibility assumption changed measured layout evidence")
+	for _, layout := range []string{"", "0", " 0X00000000 "} {
+		track.ChannelLayout = layout
+		failures := audioTierFailures(s)
+		if len(failures) != 1 || failures[0].Rule != "language_lst_audio_layout_assumed" ||
+			failures[0].EvidenceStatus != api.MetadataEvidenceStatusPartial || failures[0].Disposition != api.RuleDispositionAdvisory ||
+			trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, false) {
+			t.Fatalf("layout %q needs one non-blocking assumption warning: %+v", layout, failures)
+		}
+		if track.ChannelLayout != layout || exactAudioLayout(*track) != "" {
+			t.Fatal("eligibility assumption changed measured layout evidence")
+		}
 	}
 	track.ChannelLayout = "5.1"
 	if got := audioTierFailures(s); len(got) != 0 {
@@ -217,14 +220,15 @@ func TestAudioEvidenceAndProcessing(t *testing.T) {
 func TestAudioLayoutAssumptionPreservesEligibilityBoundaries(t *testing.T) {
 	for _, test := range []struct {
 		name, codec, layout, wantRule string
-		channels                     int
-		channelsKnown, animeKnown    bool
-		anime                        bool
+		channels                      int
+		channelsKnown, animeKnown     bool
+		anime                         bool
 	}{
 		{"non-anime", "FLAC", "", "language_lst_audio_layout", 6, true, true, false},
 		{"unknown anime", "FLAC", "", "language_lst_audio_anime_evidence", 6, true, false, true},
 		{"unknown count", "FLAC", "", "language_lst_audio_layout_evidence", 6, false, true, true},
 		{"contradictory count", "FLAC", "2.0", "language_lst_audio_layout_evidence", 6, true, true, true},
+		{"nonzero mask", "FLAC", "0x0000003F", "language_lst_audio_layout_evidence", 6, true, true, true},
 		{"unrecognized explicit layout", "FLAC", "L R C Lb Rb Cb", "language_lst_audio_layout_evidence", 6, true, true, true},
 		{"other lossless codec", "LPCM", "", "language_lst_audio_codec", 6, true, true, true},
 	} {

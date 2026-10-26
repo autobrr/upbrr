@@ -66,6 +66,15 @@ func lossyAudio(codec string) bool {
 	)
 }
 
+// blankChannelLayout treats MediaInfo zero channel masks as absent speaker positions.
+func blankChannelLayout(layout string) bool {
+	switch strings.ToLower(strings.TrimSpace(layout)) {
+	case "", "0", "0x00000000":
+		return true
+	}
+	return false
+}
+
 // exactAudioLayout never promotes a channel count to an evidenced multichannel layout.
 func exactAudioLayout(track api.MediaTrackFacts) string {
 	layout := strings.Join(strings.Fields(strings.ToUpper(track.ChannelLayout)), " ")
@@ -155,7 +164,7 @@ func audioTierFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		}
 		codec := strings.ToUpper(strings.TrimSpace(track.Codec))
 		layout := exactAudioLayout(track)
-		if codec == "FLAC" && strings.TrimSpace(track.ChannelLayout) == "" && track.ChannelsKnown && track.Channels == 6 {
+		if codec == "FLAC" && blankChannelLayout(track.ChannelLayout) && track.ChannelsKnown && track.Channels == 6 {
 			// shortcut: count-only FLAC is assumed 5.1 for eligibility; an explicit layout must take precedence when available.
 			layout = "5.1"
 			assumedLayouts++
