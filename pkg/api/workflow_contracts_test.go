@@ -709,7 +709,7 @@ func assertWorkflowTypeHasNoForbiddenFields(t *testing.T, contractType reflect.T
 	}
 	seen[contractType] = true
 	for field := range contractType.Fields() {
-		name := strings.ToLower(field.Name)
+		name := strings.ToLower(field.Name + "," + strings.Split(field.Tag.Get("json"), ",")[0])
 		for _, value := range forbidden {
 			if strings.Contains(name, value) {
 				t.Fatalf("public contract %s declares forbidden field %s", contractType, field.Name)
