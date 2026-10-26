@@ -179,7 +179,7 @@ func TestOriginalAudioOrderUsesMeasuredEvidence(t *testing.T) {
 	}
 }
 
-func TestDefaultAudioNameRejectsUnknownContender(t *testing.T) {
+func TestDefaultAudioNamePreservesFinalizedLabelForUnknownContender(t *testing.T) {
 	for _, truthy := range []bool{false, true} {
 		doc := &api.ReleaseNameDocument{Version: api.ReleaseNameDocumentVersionV1, Components: []api.ReleaseNameComponent{{
 			Role:    api.NameRoleAudio,
@@ -199,13 +199,19 @@ func TestDefaultAudioNameRejectsUnknownContender(t *testing.T) {
 			Codec:      "AAC",
 			AudioLabel: "AAC 2.0",
 		}}}
-		if err := ApplyDefaultAudioName(&NameEditor{document: doc}, api.UploadSubject{Type: "WEBDL", LanguageFacts: facts}); err == nil {
-			t.Fatal("unknown secondary default accepted as unique")
+		if err := ApplyDefaultAudioName(&NameEditor{document: doc}, api.UploadSubject{Type: "WEBDL", LanguageFacts: facts}); err != nil {
+			t.Fatal(err)
+		}
+		if audio, _ := doc.Component(api.NameRoleAudio); audio.Value != "AAC 2.0" {
+			t.Fatal("unknown contender replaced the finalized audio label")
 		}
 		facts.Tracks[1].Default = false
 		facts.Tracks[1].DefaultKnown = true
 		if err := ApplyDefaultAudioName(&NameEditor{document: doc}, api.UploadSubject{Type: "WEBDL", LanguageFacts: facts}); err != nil {
 			t.Fatal(err)
+		}
+		if audio, _ := doc.Component(api.NameRoleAudio); audio.Value != "FLAC 2.0" {
+			t.Fatal("known unique default did not supply the audio label")
 		}
 	}
 }

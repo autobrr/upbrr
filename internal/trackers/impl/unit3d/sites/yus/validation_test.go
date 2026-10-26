@@ -43,7 +43,7 @@ func TestYUSNamingEvidenceRequiresKnownLanguageCount(t *testing.T) {
 			meta.ProviderMetadata.TMDB.OriginalLanguage = "English"
 			failures := yusNamingEvidenceFailures(t, meta)
 			requireYUSNamingEvidenceFailure(t, failures)
-			if got := yusName(t, meta, nil); strings.Contains(got, "Multi-Audio") {
+			if got := yusName(t, meta, nil); strings.Contains(got, "Multi-Audio") || strings.Contains(got, "Dual-Audio") {
 				t.Fatalf("unresolved facts guessed a marker: %q", got)
 			}
 		})
@@ -63,7 +63,8 @@ func TestYUSNamingEvidenceNeedsNoOriginalLanguageOrWhitelist(t *testing.T) {
 		if failures := yusNamingEvidenceFailures(t, meta); len(failures) != 0 {
 			t.Fatalf("known languages %v acquired an eligibility restriction: %+v", languages, failures)
 		}
-		if got := yusName(t, meta, nil); strings.Contains(got, "Multi-Audio") != (len(languages) >= 2) {
+		got := yusName(t, meta, nil)
+		if strings.Contains(got, "Dual-Audio") != (len(languages) == 2) || strings.Contains(got, "Multi-Audio") != (len(languages) > 2) {
 			t.Fatalf("known language count selected incorrect marker: %q", got)
 		}
 	}
@@ -74,9 +75,9 @@ func TestYUSNamingEvidenceNeedsNoOriginalLanguageOrWhitelist(t *testing.T) {
 		t.Fatal("fixture must preserve the unresolved extra track")
 	}
 	if failures := yusNamingEvidenceFailures(t, meta); len(failures) != 0 {
-		t.Fatalf("two established languages already prove Multi-Audio: %+v", failures)
+		t.Fatalf("two established languages already prove Dual-Audio: %+v", failures)
 	}
-	if got := yusName(t, meta, nil); !strings.Contains(got, "Multi-Audio") {
+	if got := yusName(t, meta, nil); !strings.Contains(got, "Dual-Audio") || strings.Contains(got, "Multi-Audio") {
 		t.Fatalf("known positive evidence lost its marker: %q", got)
 	}
 	meta, media = yusNamingEvidenceSubject(t, "English", "French")
@@ -85,7 +86,7 @@ func TestYUSNamingEvidenceNeedsNoOriginalLanguageOrWhitelist(t *testing.T) {
 	if failures := yusNamingEvidenceFailures(t, meta); len(failures) != 0 {
 		t.Fatalf("known commentary language made programme count unresolved: %+v", failures)
 	}
-	if got := yusName(t, meta, nil); strings.Contains(got, "Multi-Audio") {
+	if got := yusName(t, meta, nil); strings.Contains(got, "Multi-Audio") || strings.Contains(got, "Dual-Audio") {
 		t.Fatalf("commentary created a programme marker: %q", got)
 	}
 	meta.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{AudioAbsent: true, TrackCoverageComplete: true})

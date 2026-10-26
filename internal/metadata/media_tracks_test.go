@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -429,17 +430,17 @@ func TestOrdinaryAudioLanguageDoesNotRequireRecognizedTitle(t *testing.T) {
 	}
 }
 
-func TestDefaultAudioNamingRejectsMissingInspectedCodec(t *testing.T) {
+func TestDefaultAudioNamingKeepsFinalizedLabelWithoutInspectedCodec(t *testing.T) {
 	for _, channels := range []string{"", "2"} {
 		t.Run(channels, func(t *testing.T) {
 			doc := mediaInfoDoc{}
 			doc.Media.Track = []map[string]any{{
-"@type": "Audio",
- "Default": "Yes",
- "Title": "Main",
- "Language": "eng",
- "Channels": channels,
-}}
+				"@type":    "Audio",
+				"Default":  "Yes",
+				"Title":    "Main",
+				"Language": "eng",
+				"Channels": channels,
+			}}
 			facts, _, _, _, err := mediaTrackFacts(preparationstate.State{SourcePath: "source", VideoPath: "source"}, doc)
 			if err != nil {
 				t.Fatal(err)
@@ -448,28 +449,30 @@ func TestDefaultAudioNamingRejectsMissingInspectedCodec(t *testing.T) {
 				t.Fatalf("unexpected producer evidence: %+v", facts)
 			}
 			name := BuildReleaseName(api.ReleaseNameRequest{
-Category: "MOVIE",
- Type: "WEBDL",
- Source: "WEB",
- Resolution: "1080p",
- VideoEncode: "H.265",
- Tag: "-GRP",
- Title: "Example",
- Year: 2026,
- Audio: "AAC 2.0",
-}, api.NopLogger{})
+				Category:    "MOVIE",
+				Type:        "WEBDL",
+				Source:      "WEB",
+				Resolution:  "1080p",
+				VideoEncode: "H.265",
+				Tag:         "-GRP",
+				Title:       "Example",
+				Year:        2026,
+				Audio:       "AAC 2.0",
+			}, api.NopLogger{})
 			subject := api.UploadSubject{
-ReleaseName: name.Name,
- GeneratedName: name.GeneratedName,
- LanguageFacts: api.LanguageFacts{Tracks: facts},
-}
+				ReleaseName:   name.Name,
+				GeneratedName: name.GeneratedName,
+				LanguageFacts: api.LanguageFacts{Tracks: facts},
+			}
 			binding := trackers.StructuredReleaseNamePolicy("test/default-audio/v1", trackers.StructuredNamePolicy{Defaults: func(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
 				return trackers.ApplyDefaultAudioName(editor, meta)
 			}})
-			_, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "DP", Meta: subject}, binding)
-			var rule *trackers.NameRuleError
-			if failure == nil || !errors.As(failure, &rule) {
-				t.Fatalf("missing codec was accepted for default naming: %+v %v cause=%v", facts, failure, failure.Unwrap())
+			prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "DP", Meta: subject}, binding)
+			if failure != nil {
+				t.Fatalf("missing default codec blocked finalized naming: %v", failure)
+			}
+			if got := prepared.Projection.UploadReleaseName; !strings.Contains(got, "AAC 2.0") {
+				t.Fatalf("incomplete default evidence replaced finalized audio: %q", got)
 			}
 		})
 	}
