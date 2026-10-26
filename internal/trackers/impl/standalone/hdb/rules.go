@@ -24,18 +24,26 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	animated := subject.Anime ||
 		slices.ContainsFunc(subject.EffectiveMetadata.Genres, func(genre string) bool { return strings.EqualFold(genre, "Animation") })
 	facts := subject.LanguageFacts
-	if !animated && (!remux || facts.HasOriginalAudio()) && facts.OriginalLanguagesKnown && !slices.Contains(facts.OriginalLanguages, "English") &&
-		!slices.Contains(facts.OriginalLanguages, "ZXX") &&
+	englishDub := facts.HasEnglishDub()
+	if !animated && (!remux || facts.HasOriginalAudio()) && facts.OriginalLanguagesKnown &&
+		!slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX") &&
 		slices.Contains(facts.ProgrammeLanguages, "English") {
 		englishSubject := subject
-		englishSubject.LanguageFacts.Tracks = slices.DeleteFunc(slices.Clone(facts.Tracks), func(track api.MediaTrackFacts) bool {
-			return !slices.Contains(track.Languages, "English")
-		})
+		englishSubject.LanguageFacts.Tracks = nil
+		for _, track := range facts.Tracks {
+			if slices.Contains(track.Languages, "English") {
+				// Resolve missing origins before discarding paired original-language evidence.
+				if track.AudioOrigin == "" {
+					track.AudioOrigin = facts.ProgrammeAudioOrigin(track)
+				}
+				englishSubject.LanguageFacts.Tracks = append(englishSubject.LanguageFacts.Tracks, track)
+			}
+		}
 		if len(englishSubject.LanguageFacts.Tracks) > 0 {
 			failures = append(failures, trackers.ProgrammeAudioOriginFailures(englishSubject)...)
 		}
 	}
-	if facts.HasEnglishDub() && !animated {
+	if englishDub && !animated {
 		outcome := trackers.LanguageProhibited
 		if len(subject.EffectiveMetadata.Genres) == 0 {
 			outcome = trackers.LanguageUnresolved

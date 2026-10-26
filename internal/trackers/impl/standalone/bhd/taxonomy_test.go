@@ -49,7 +49,7 @@ func TestBHDLanguageTagsAreIndependentFromPresentation(t *testing.T) {
 		{[]string{"Japanese", "English", "German"}, api.TrackAudioDubbed, true, true},
 		{[]string{"English"}, api.TrackAudioDubbed, false, true},
 		{[]string{"Japanese", "German"}, "", false, false},
-		{[]string{"Japanese", "English"}, "", false, false},
+		{[]string{"Japanese", "English"}, "", true, true},
 	} {
 		media := api.MediaFacts{OriginalLanguage: "Japanese", TrackCoverageComplete: true}
 		for _, language := range test.languages {

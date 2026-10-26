@@ -17,7 +17,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "standalone-hdb-constructibility-v8",
+		ID:    "standalone-hdb-constructibility-v9",
 		Check: checkRequirements,
 	}
 }

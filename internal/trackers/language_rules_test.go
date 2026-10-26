@@ -123,7 +123,11 @@ func TestLanguagePersonalAnimationAndDiscBoundaries(t *testing.T) {
 		for _, disc := range []string{"DVD", "BDMV", "Blu-Ray"} {
 			subject := languageSubject("Japanese", "Japanese", "English", "German")
 			subject.DiscType, subject.LanguageFacts.SubtitleLanguages = disc, nil
-			if got := languageFailures(t, tracker, subject); len(got) != 0 {
+			got := languageFailures(t, tracker, subject)
+			if tracker == "BHD" && len(got) == 1 && got[0].Rule == "language_foreign_dialogue_subtitles" && got[0].Disposition == api.RuleDispositionAdvisory {
+				continue
+			}
+			if len(got) != 0 {
 				t.Fatalf("%s %s disc affected: %#v", tracker, disc, got)
 			}
 		}
@@ -163,8 +167,9 @@ func TestStaffUploadTokenIsScopedSecretAndNotAuthorization(t *testing.T) {
 func TestCanonicalDiscTypeAndRemuxBoundary(t *testing.T) {
 	subject := languageSubject("Japanese", "Japanese", "German")
 	subject.Type = "DISC"
-	if failures := languageFailures(t, "BHD", subject); len(failures) > 0 {
-		t.Fatalf("canonical DISC assessed: %#v", failures)
+	if failures := languageFailures(t, "BHD", subject); len(failures) != 1 || failures[0].Rule != "language_foreign_dialogue_subtitles" ||
+		trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, false) {
+		t.Fatalf("canonical DISC must have subtitle guidance without restrictions: %#v", failures)
 	}
 	subject.Type, subject.DiscType = "REMUX", "BDMV"
 	if failures := languageFailures(t, "BHD", subject); len(failures) == 0 {

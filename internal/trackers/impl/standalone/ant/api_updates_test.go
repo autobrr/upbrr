@@ -288,8 +288,12 @@ func TestANTEnglishDubUsesProgrammeLanguagesAndExcludesDiscs(t *testing.T) {
 			},
 		},
 	}}
+	if !slices.Contains(resolveFlags(meta), "EnglishDub") {
+		t.Fatal("separate original and English audio missing inferred EnglishDub")
+	}
+	meta.LanguageFacts.Tracks[1].AudioOrigin = api.TrackAudioUnresolved
 	if slices.Contains(resolveFlags(meta), "EnglishDub") {
-		t.Fatal("unclassified English audio tagged EnglishDub")
+		t.Fatal("explicit unresolved origin overridden by EnglishDub inference")
 	}
 	meta.LanguageFacts.Tracks[1].AudioOrigin = api.TrackAudioDubbed
 	if !slices.Contains(resolveFlags(meta), "EnglishDub") {

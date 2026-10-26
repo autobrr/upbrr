@@ -224,6 +224,7 @@ func TestOriginalFirstWitnessSurvivesUnknownAdditionalOriginalOrder(t *testing.T
 			{
 				ID:                  "unclassified",
 				ManifestFingerprint: "current",
+				AudioOrigin:         api.TrackAudioUnresolved,
 				Kind:                api.MediaTrackAudio,
 				Role:                api.AudioRoleProgramme,
 				Languages:           []string{"English"},

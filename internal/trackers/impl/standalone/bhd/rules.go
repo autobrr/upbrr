@@ -30,9 +30,6 @@ func languagePolicy() trackers.LanguagePolicy {
 
 func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure {
 	failures := trackers.EvaluateLanguagePolicy(subject, languagePolicy())
-	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
-		return failures
-	}
 	facts := subject.LanguageFacts
 	// Source comparisons remain partial-evidence guidance; saved answers cannot
 	// establish source history or semantic equivalence between programme mixes.
@@ -40,6 +37,15 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		failure := trackers.LanguageRuleFailure(subject, key, reason, trackers.LanguageAdvisory)
 		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
 		failures = append(failures, failure)
+	}
+	if needsForeignDialogueReview(facts) {
+		addGuidance(
+			"foreign_dialogue_subtitles",
+			"English subtitles for foreign dialogue should be separate and forced when needed; track metadata does not establish dialogue coverage",
+		)
+	}
+	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
+		return failures
 	}
 	addGuidance(
 		"existing_release",
@@ -66,12 +72,6 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			"source_extras",
 			"available source subtitles, commentary and chapters should accompany the remux; source availability and retention are not established",
 		)
-		if needsForeignDialogueReview(facts) {
-			addGuidance(
-				"foreign_dialogue_subtitles",
-				"English subtitles for foreign dialogue should be separate and forced when needed; track metadata does not establish dialogue coverage",
-			)
-		}
 	}
 	return failures
 }

@@ -81,17 +81,14 @@ func TestInspectedAudioLanguagesDriveTrackerEligibility(t *testing.T) {
 			if tracks[1].Role != test.wantRole || tracks[2].Role != api.AudioRoleCommentary || primary != tracks[0].ID {
 				t.Fatalf("roles or primary changed: second=%q third=%q primary=%q", tracks[1].Role, tracks[2].Role, primary)
 			}
-			// This fixture tests original-track recognition with a separately reviewed English dub.
-			tracks[0].AudioOrigin = api.TrackAudioDubbed
-			tracks[0].AudioOriginProvenance = api.FactProvenanceManual
 			facts := mediafacts.ResolveLanguages(api.MediaFacts{
 				OriginalLanguage:      "Japanese",
 				TrackCoverageComplete: true,
 				Tracks:                tracks,
 				PrimaryAudioTrackID:   primary,
 			})
-			if facts.ProgrammeStatus != test.wantStatus || facts.HasOriginalAudio() != test.wantOriginal {
-				t.Fatalf("programme=%v status=%s original=%v", facts.ProgrammeLanguages, facts.ProgrammeStatus, facts.HasOriginalAudio())
+			if facts.ProgrammeStatus != test.wantStatus || facts.HasOriginalAudio() != test.wantOriginal || facts.HasEnglishDub() != test.wantOriginal {
+				t.Fatalf("programme=%v status=%s original=%v English dub=%v", facts.ProgrammeLanguages, facts.ProgrammeStatus, facts.HasOriginalAudio(), facts.HasEnglishDub())
 			}
 			for _, tracker := range []string{"AITHER", "BHD", "LST"} {
 				failures, err := trackers.EvaluateTrackerValidationWithRegistry(t.Context(), registry, tracker, api.TrackerValidationSubject{
