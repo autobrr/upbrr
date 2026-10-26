@@ -51,9 +51,9 @@ func ApplyEnglishAudioNameDefaults(editor *NameEditor, meta api.UploadSubject) e
 	return nil
 }
 
-// ApplyDefaultAudioName uses the unique inspected default audio track.
-// Automatic naming remains unresolved without that evidence; manual components
-// and full-disc names retain their existing presentation authority.
+// ApplyDefaultAudioName uses agreeing inspected default audio labels when available.
+// Missing or ambiguous defaults retain the finalized audio name; tracker-specific
+// default-flag requirements belong to validation, independently of language eligibility.
 func ApplyDefaultAudioName(editor *NameEditor, meta api.UploadSubject) error {
 	if IsFullDiscUpload(meta.DiscType, meta.Type) {
 		return nil
@@ -67,39 +67,30 @@ func ApplyDefaultAudioName(editor *NameEditor, meta api.UploadSubject) error {
 		}
 		return nil
 	}
-	var selected *api.MediaTrackFacts
+	selectedLabel := ""
 	for i := range meta.LanguageFacts.Tracks {
 		track := &meta.LanguageFacts.Tracks[i]
 		if track.Kind != api.MediaTrackAudio {
 			continue
 		}
 		if !track.DefaultKnown {
-			return &NameRuleError{
-				Rule:   "default_audio",
-				Role:   api.NameRoleAudio,
-				Reason: "Unresolved default audio naming: every inspected audio default flag must be known",
-			}
+			return nil
 		}
 		if !track.Default {
 			continue
 		}
-		if selected != nil {
-			return &NameRuleError{
-				Rule:   "default_audio",
-				Role:   api.NameRoleAudio,
-				Reason: "Unresolved default audio naming: multiple inspected audio tracks are marked default",
-			}
+		if strings.TrimSpace(track.Codec) == "" || strings.EqualFold(track.Codec, "Unknown") || track.AudioLabel == "" {
+			return nil
 		}
-		selected = track
-	}
-	if selected == nil || strings.TrimSpace(selected.Codec) == "" || strings.EqualFold(selected.Codec, "Unknown") || selected.AudioLabel == "" {
-		return &NameRuleError{
-			Rule:   "default_audio",
-			Role:   api.NameRoleAudio,
-			Reason: "Unresolved default audio naming: an inspected default audio track and technical label are required",
+		if selectedLabel != "" && selectedLabel != track.AudioLabel {
+			return nil
 		}
+		selectedLabel = track.AudioLabel
 	}
-	if err := editor.Set(api.NameRoleAudio, selected.AudioLabel); err != nil {
+	if selectedLabel == "" {
+		return nil
+	}
+	if err := editor.Set(api.NameRoleAudio, selectedLabel); err != nil {
 		return fmt.Errorf("set default audio label: %w", err)
 	}
 	return nil

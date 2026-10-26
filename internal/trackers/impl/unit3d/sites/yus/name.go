@@ -14,7 +14,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v10", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v12", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
 }
 
 func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -27,8 +27,12 @@ func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _
 				return fmt.Errorf("omit YUS audio-language marker: %w", err)
 			}
 		}
-		if trackers.KnownProgrammeLanguageCount(meta.LanguageFacts) >= 2 {
-			if err := editor.InsertBefore(api.NameRoleDualAudio, "Multi-Audio", api.NameRoleAudio); err != nil {
+		if count := trackers.KnownProgrammeLanguageCount(meta.LanguageFacts); count >= 2 {
+			marker := "Dual-Audio"
+			if count > 2 {
+				marker = "Multi-Audio"
+			}
+			if err := editor.InsertBefore(api.NameRoleDualAudio, marker, api.NameRoleAudio); err != nil {
 				return fmt.Errorf("set YUS audio-language marker: %w", err)
 			}
 		}

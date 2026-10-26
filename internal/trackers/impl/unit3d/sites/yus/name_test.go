@@ -84,7 +84,7 @@ func TestYUSStructuredName(t *testing.T) {
 }
 func TestYUSPolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/yus/v10" || p.Structured == nil {
+	if p.ID != "unit3d/yus/v12" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }
@@ -433,17 +433,22 @@ func TestYUSProgrammeLanguageAndDefaultAudioNaming(t *testing.T) {
 		languages             []string
 		status                api.MetadataEvidenceStatus
 		discType, releaseType string
-		wantMulti             bool
+		wantMarker            string
 	}{
 		{
-			name:      "two unrelated languages",
-			languages: []string{"German", "French"},
-			wantMulti: true,
+			name:       "two unrelated languages",
+			languages:  []string{"German", "French"},
+			wantMarker: "Dual-Audio",
 		},
 		{
-			name:      "three languages",
-			languages: []string{"Japanese", "English", "German"},
-			wantMulti: true,
+			name:       "original and English dub",
+			languages:  []string{"Japanese", "English"},
+			wantMarker: "Dual-Audio",
+		},
+		{
+			name:       "three languages",
+			languages:  []string{"Japanese", "English", "German"},
+			wantMarker: "Multi-Audio",
 		},
 		{name: "one language", languages: []string{"Japanese"}},
 		{
@@ -466,7 +471,7 @@ func TestYUSProgrammeLanguageAndDefaultAudioNaming(t *testing.T) {
 			languages:   []string{"Japanese", "English"},
 			discType:    "BDMV",
 			releaseType: "REMUX",
-			wantMulti:   true,
+			wantMarker:  "Dual-Audio",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -496,8 +501,10 @@ func TestYUSProgrammeLanguageAndDefaultAudioNaming(t *testing.T) {
 				}},
 			}
 			got := yusName(t, s, nil)
-			if strings.Contains(got, "Multi-Audio") != test.wantMulti {
-				t.Fatalf("marker mismatch: %s", got)
+			for _, marker := range []string{"Dual-Audio", "Multi-Audio"} {
+				if strings.Contains(got, marker) != (marker == test.wantMarker) {
+					t.Fatalf("audio-language marker in %q, want %q", got, test.wantMarker)
+				}
 			}
 			wantAudio := "DD+ 5.1"
 			if test.releaseType == "DISC" {

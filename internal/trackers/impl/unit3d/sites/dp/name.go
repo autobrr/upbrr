@@ -16,7 +16,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v12", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v13", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -331,8 +331,7 @@ func applyDPSourceBlockOrder(editor *trackers.NameEditor, meta api.UploadSubject
 		roles = append(roles, api.NameRoleRegion)
 	}
 	roles = append(roles, api.NameRoleThreeD)
-	for index := len(roles) - 1; index >= 0; index-- {
-		role := roles[index]
+	for _, role := range slices.Backward(roles) {
 		component, exists := editor.Component(role)
 		if !exists || !component.Present || component.Manual {
 			continue

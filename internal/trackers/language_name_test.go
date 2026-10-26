@@ -4,20 +4,18 @@
 package trackers
 
 import (
-	"errors"
-	"github.com/autobrr/upbrr/pkg/api"
-	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestDefaultAudioNameRequiresUniqueInspectedDefault(t *testing.T) {
+func TestDefaultAudioNameUsesAvailableInspectedDefault(t *testing.T) {
 	for _, test := range []struct {
 		name           string
 		tracks         []api.MediaTrackFacts
 		absent, manual bool
 		releaseType    string
 		want           string
-		wantErr        bool
 	}{
 		{
 			name: "default commentary is still default audio",
@@ -31,7 +29,7 @@ func TestDefaultAudioNameRequiresUniqueInspectedDefault(t *testing.T) {
 			}},
 			want: "AC-3 2.0",
 		},
-		{name: "missing evidence", wantErr: true},
+		{name: "missing evidence", want: "AAC 2.0"},
 		{
 			name: "no default",
 			tracks: []api.MediaTrackFacts{{
@@ -39,7 +37,24 @@ func TestDefaultAudioNameRequiresUniqueInspectedDefault(t *testing.T) {
 				Codec:      "DTS",
 				AudioLabel: "DTS 5.1",
 			}},
-			wantErr: true,
+			want: "AAC 2.0",
+		},
+		{
+			name: "matching defaults",
+			tracks: []api.MediaTrackFacts{{
+				Kind:         api.MediaTrackAudio,
+				Default:      true,
+				DefaultKnown: true,
+				Codec:        "DD+",
+				AudioLabel:   "DD+ 5.1",
+			}, {
+				Kind:         api.MediaTrackAudio,
+				Default:      true,
+				DefaultKnown: true,
+				Codec:        "DD+",
+				AudioLabel:   "DD+ 5.1",
+			}},
+			want: "DD+ 5.1",
 		},
 		{
 			name: "two defaults",
@@ -56,12 +71,12 @@ func TestDefaultAudioNameRequiresUniqueInspectedDefault(t *testing.T) {
 				Codec:        "DD",
 				AudioLabel:   "AC-3 2.0",
 			}},
-			wantErr: true,
+			want: "AAC 2.0",
 		},
 		{
-			name:    "missing technical label",
-			tracks:  []api.MediaTrackFacts{{Kind: api.MediaTrackAudio, Default: true}},
-			wantErr: true,
+			name:   "missing technical label",
+			tracks: []api.MediaTrackFacts{{Kind: api.MediaTrackAudio, Default: true}},
+			want:   "AAC 2.0",
 		},
 		{
 			name:   "manual audio preserved",
@@ -84,15 +99,8 @@ func TestDefaultAudioNameRequiresUniqueInspectedDefault(t *testing.T) {
 			}}}
 			editor := &NameEditor{document: doc}
 			err := ApplyDefaultAudioName(editor, api.UploadSubject{Type: test.releaseType, LanguageFacts: api.LanguageFacts{Tracks: test.tracks, AudioAbsent: test.absent}})
-			if (err != nil) != test.wantErr {
-				t.Fatalf("error=%v wantErr=%t", err, test.wantErr)
-			}
-			if test.wantErr {
-				var rule *NameRuleError
-				if !errors.As(err, &rule) || !strings.HasPrefix(rule.Reason, "Unresolved default audio naming") {
-					t.Fatalf("missing safe actionable naming failure: %v", err)
-				}
-				return
+			if err != nil {
+				t.Fatalf("default evidence blocked naming: %v", err)
 			}
 			audio, _ := editor.Component(api.NameRoleAudio)
 			if test.absent {

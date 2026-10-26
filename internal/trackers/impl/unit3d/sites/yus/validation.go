@@ -16,7 +16,7 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 }
 
 // checkNamingEvidence needs only enough programme evidence to decide whether
-// Multi-Audio applies. Original-language metadata is irrelevant to YUS naming.
+// an audio-language marker applies. Original-language metadata is irrelevant to YUS naming.
 func checkNamingEvidence(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
@@ -33,6 +33,9 @@ func checkNamingEvidence(ctx context.Context, subject api.TrackerValidationSubje
 		return nil, nil
 	}
 	return []api.RuleFailure{trackers.LanguageRuleFailure(
-		subject, "naming_evidence", "programme language or track-role evidence cannot establish whether Multi-Audio is required", trackers.LanguageUnresolved,
+		subject,
+		"naming_evidence",
+		"programme language or track-role evidence cannot establish whether Dual-Audio or Multi-Audio is required",
+		trackers.LanguageUnresolved,
 	)}, nil
 }
