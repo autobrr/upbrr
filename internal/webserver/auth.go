@@ -453,6 +453,7 @@ func (m *sessionManager) persistRetained() error {
 	}
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	retained := make([]session, 0, len(m.sessions))
 	now := time.Now().UTC()
 	for _, current := range m.sessions {
@@ -460,8 +461,6 @@ func (m *sessionManager) persistRetained() error {
 			retained = append(retained, current)
 		}
 	}
-	m.mu.Unlock()
-
 	return m.store.Save(retained)
 }
 

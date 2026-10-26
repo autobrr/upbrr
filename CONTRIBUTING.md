@@ -86,6 +86,14 @@ Notes:
 - Prefer `make build` for full local builds. It dispatches to `scripts/build.sh` on macOS/Linux and `scripts/build.ps1` on Windows; use the scripts directly only when debugging script behavior.
 - Line endings are normalised via `.gitattributes` and `.editorconfig`.
 
+Pull-request Go checks use seven shards on Linux, Windows, and macOS: general
+core, native HDR core, decoded core, workflow, media, metadata/config/database, and
+the remaining packages. Core tests are partitioned by their top-level names; all
+other packages enter exactly one shard. New packages default to the remaining
+packages shard unless they match an existing owner; `scripts/ci/go-test-packages.ps1 -Shard <name>` lists
+its packages. Linux shards use the race detector; Windows and macOS shards run native tests. `make test-go` still runs the full race suite locally.
+Go ownership/policy checks and golangci-lint run on separate runners.
+
 ## How to contribute
 
 - **Fork and clone:** [Fork the upbrr repository](https://github.com/autobrr/upbrr/fork) and clone it to start working on your changes.

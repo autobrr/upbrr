@@ -39,6 +39,7 @@ pnpm --dir webui run build
 - User-driven logic: handlers. Fetch effects: cleanup/abort guards.
 - Shared request shapes, upload options, prepared metadata changes: preserve CLI/WebUI behavior.
 - Match existing component state patterns before new abstractions.
+- Apply the root test-value rules: assert visible behavior, authority, error recovery, and accessibility; remove CSS-class, static-markup, and direct-delegation boilerplate. A mock call matters when its arguments or ordering establish a real boundary, not merely that delegation occurred.
 
 ## Release Session / Workflow Ownership
 

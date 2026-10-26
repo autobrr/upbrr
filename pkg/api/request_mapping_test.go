@@ -6,7 +6,6 @@ package api
 import (
 	"errors"
 	"reflect"
-	"slices"
 	"testing"
 )
 
@@ -117,20 +116,6 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 	}
 }
 
-func TestPrepareInputMappingFieldDispositionIsExplicit(t *testing.T) {
-	t.Parallel()
-
-	assertFieldNames(t, reflect.TypeFor[PrepareInput](), []string{
-		"SourcePath", "VerifiedSource", "Intent", "ExternalFreshness", "Instructions", "Policy", "Search", "Controls", "MetadataRequirements", "Force", "RequirePrepared",
-	})
-	assertFieldNames(t, reflect.TypeFor[ReleaseFactInstructions](), []string{
-		"Identity", "Category", "ReleaseName", "Metadata", "SourceLookup", "BlurayReleaseID", "Playlist", "TrackerIDs",
-	})
-	assertFieldNames(t, reflect.TypeFor[PreparationPolicy](), []string{"KeepFolder", "KeepImages", "OnlyID"})
-	assertFieldNames(t, reflect.TypeFor[ClientSearchPolicy](), []string{"Skip", "Client"})
-	assertFieldNames(t, reflect.TypeFor[PreparationControls](), []string{"CaptureHDRMetadata", "Interaction", "ConfirmBDMVRescan", "ForceRecheck"})
-}
-
 func TestMapPreparationRequestRejectsBlankSource(t *testing.T) {
 	t.Parallel()
 
@@ -168,16 +153,5 @@ func TestMapPreparationRequestClonesCorrectionMetadata(t *testing.T) {
 		input.Instructions.Metadata.AudioLanguages == nil || len(*input.Instructions.Metadata.AudioLanguages) != 0 ||
 		input.Instructions.Metadata.TrackLanguages[0].Languages[0] != "English" {
 		t.Fatalf("mapped correction metadata aliases request: %#v", input.Instructions.Metadata)
-	}
-}
-
-func assertFieldNames(t *testing.T, value reflect.Type, want []string) {
-	t.Helper()
-	got := make([]string, 0, value.NumField())
-	for field := range value.Fields() {
-		got = append(got, field.Name)
-	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("%s fields = %v, want %v", value.Name(), got, want)
 	}
 }

@@ -572,6 +572,14 @@ func TestWorkflowPublicContractsDeclareNoSecretOrExecutionFields(t *testing.T) {
 	for _, contractType := range types {
 		assertWorkflowTypeHasNoForbiddenFields(t, contractType, forbidden, map[reflect.Type]bool{})
 	}
+	for _, contractType := range []reflect.Type{
+		reflect.TypeFor[WorkflowResourceRef](),
+		reflect.TypeFor[MediaPlan](),
+		reflect.TypeFor[UploadDryRunResult](),
+	} {
+		assertWorkflowTypeHasNoForbiddenFields(t, contractType,
+			[]string{"sourcepath", "localpath", "token", "credential", "cookie"}, map[reflect.Type]bool{})
+	}
 }
 
 func TestReadyTrackerProjectionRequiresDeclaredSearchName(t *testing.T) {

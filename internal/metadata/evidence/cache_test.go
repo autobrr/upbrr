@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -350,29 +351,34 @@ func TestLookupWithoutRepositoryPreservesDirectClient(t *testing.T) {
 
 func TestLookupCoalescesConcurrentQueries(t *testing.T) {
 	t.Parallel()
-	store := &memoryEvidenceStore{}
-	ctx, _ := WithScope(t.Context(), store, filepath.Join(t.TempDir(), "Example.Release.mkv"), "fingerprint", api.ExternalFreshnessLoad, nil)
-	var calls atomic.Int32
-	start := make(chan struct{})
-	var workers sync.WaitGroup
-	for range 16 {
-		workers.Go(func() {
-			<-start
-			got, err := Lookup(ctx, "provider.metadata", 11, func() (string, error) {
-				calls.Add(1)
-				time.Sleep(20 * time.Millisecond)
-				return "Provider title", nil
-			}, nil)
-			if err != nil || got != "Provider title" {
-				t.Errorf("concurrent result = %q, %v", got, err)
-			}
-		})
-	}
-	close(start)
-	workers.Wait()
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("concurrent identical requests = %d, want 1", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		store := &memoryEvidenceStore{}
+		ctx, _ := WithScope(t.Context(), store, filepath.Join(t.TempDir(), "Example.Release.mkv"), "fingerprint", api.ExternalFreshnessLoad, nil)
+		var calls atomic.Int32
+		start := make(chan struct{})
+		release := make(chan struct{})
+		var workers sync.WaitGroup
+		for range 16 {
+			workers.Go(func() {
+				<-start
+				got, err := Lookup(ctx, "provider.metadata", 11, func() (string, error) {
+					calls.Add(1)
+					<-release
+					return "Provider title", nil
+				}, nil)
+				if err != nil || got != "Provider title" {
+					t.Errorf("concurrent result = %q, %v", got, err)
+				}
+			})
+		}
+		close(start)
+		synctest.Wait()
+		close(release)
+		workers.Wait()
+		if got := calls.Load(); got != 1 {
+			t.Fatalf("concurrent identical requests = %d, want 1", got)
+		}
+	})
 }
 
 func TestLookupUnrelatedQueriesRemainConcurrent(t *testing.T) {
