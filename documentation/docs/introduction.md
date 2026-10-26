@@ -31,7 +31,7 @@ The published site updates through the release workflow and is built from the ex
 
 Use your installed binary's `--help` and embedded [OpenAPI reference](./api/index.md) for its exact CLI and API contracts.
 
-See the [v0.4.0 changelog](./changelog/v0.4.0.md) for changes since `v0.3.5.1`.
+See the [v0.4.1 changelog](./changelog/v0.4.1.md) for changes since `v0.4.0`.
 
 ## What upbrr does
 
