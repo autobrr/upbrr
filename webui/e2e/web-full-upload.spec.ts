@@ -2108,11 +2108,29 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await page.getByRole("button", { name: "Dupe Check" }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
-    await runDuplicateCheck(page);
+    const checked = await runDuplicateCheck(page);
+    const workflowID = checked.workflow.id;
     await expect(page.getByText("Example.Release.2026.1080p-GRP")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Screenshots" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Screenshots" })).toBeDisabled();
+    const restored = waitForAppMethod(page, "GetActiveInput");
+    await page.goto(new URL("screenshots", app.url).toString());
+    const current = await activeCurrentFromResponse(await restored);
+    expect(current.workflow.id).toBe(workflowID);
+    expect(
+      current.continuation?.availableGoals.find((goal) => goal.goal === "media_ready"),
+    ).toMatchObject({ available: false, reasonCode: "duplicates_required" });
+    await expect(page.getByRole("heading", { name: "View unavailable" })).toBeVisible();
+    await page.getByRole("button", { name: "Open Dupe Checking" }).click();
     await page.getByLabel("Ignore dupes for HDS").click();
     await expect(page.getByText("1 potential dupe · acknowledged")).toBeVisible();
+    const accepted = await page
+      .context()
+      .request.get(new URL("api/app/GetActiveInput", app.url).toString());
+    const snapshot = (await accepted.json()) as ActiveInputSnapshot;
+    expect(snapshot.current?.workflow.id).toBe(workflowID);
+    expect(
+      snapshot.current?.dupes?.results.find((result) => result.trackerId === "HDS")?.decision,
+    ).toBe("ignored");
 
     await page.getByRole("button", { name: "Screenshots" }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();

@@ -578,7 +578,13 @@ export function ReleaseSessionProvider({
       const next = await awaitWorkflowCommand(continued, signal, expectedSlot);
       if (next.workflow.revision === current.workflow.revision) return next;
       current = next;
-      const { correctionPatch: _acceptedPatch, ...remainingIntent } = nextIntent;
+      // Review decisions acknowledge one assessment; a refresh requires another review.
+      const {
+        correctionPatch: _acceptedPatch,
+        duplicateDecisions: _reviewedDecisions,
+        staffTokenConfirmations: _reviewedTokens,
+        ...remainingIntent
+      } = nextIntent;
       nextIntent = remainingIntent;
       if (nextIntent.preparation && current.factInstructions) {
         nextIntent = {
@@ -3173,6 +3179,7 @@ export function ReleaseSessionProvider({
           (match) => match.reason?.trim().toLowerCase() === "in_client",
         );
         const hasReviewableEvidence =
+          Boolean(result.reviewReasons?.length) ||
           Boolean(result.matches?.length) ||
           (Boolean(result.search?.pages) && result.search?.complete === false);
         const canOverride =
