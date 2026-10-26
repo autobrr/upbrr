@@ -14,7 +14,7 @@ pnpm --dir webui run test:e2e:full
 
 `make e2e` is preferred full local command. Installs frontend deps, builds frontend, syncs embedded assets, builds `dist/upbrr-e2e` (`.exe` on Windows) with `e2e` tag, runs all Playwright projects.
 
-CI runs tests fully in parallel with two workers; the local default is eight. Developers on smaller or busy systems should reduce workers with `--workers=2` or `--workers=1`. The audio-analysis scenarios require FFmpeg on `PATH` (`ffmpeg -version`); CI installs the Ubuntu distribution package. To compare test-level parallel execution locally, build once with `make e2e-build`, then run these commands separately:
+CI splits the full suite across four Playwright test shards, each fully parallel with two workers; the local default is eight workers. Developers on smaller or busy systems should reduce workers with `--workers=2` or `--workers=1`. The audio-analysis scenarios require FFmpeg on `PATH` (`ffmpeg -version`); CI installs the Ubuntu distribution package. To compare test-level parallel execution locally, build once with `make e2e-build`, then run these commands separately:
 
 ```bash
 pnpm --dir webui exec playwright test --workers=1
@@ -90,10 +90,10 @@ Pull request and manual workflow:
 - `.github/workflows/e2e.yml`
 - `pull_request` (opened, reopened, and updated) and `workflow_dispatch`.
 - An always-present Linux gate tests `scripts/ci/e2e-scope.mjs` and reads the full base-to-head merge-base diff. Relevant changes run Ubuntu 24.04 E2E; unrelated/docs-only changes skip it without leaving an absent required check. Unreadable diffs or gate failures run the full suite; cancellation stays canceled. Manual dispatch always runs all projects.
-- Builds frontend + embedded assets + CLI.
+- Each shard builds frontend + embedded assets + CLI with `make e2e-build`.
 - Installs Playwright Chromium.
 - Installs and verifies FFmpeg for the real audio-analysis decoder.
-- Runs `make e2e`.
-- Uploads report/traces on failure.
+- Runs `playwright test --shard=N/4` with the existing two-worker limit. `fullyParallel` distributes individual tests, including those in the large upload spec. All shards finish even if another fails.
+- Uploads JSON test timings for every completed shard and uniquely named reports/traces on failure.
 - Uses read-only repository permissions and local fakes; fork PRs need no repository secrets.
 - Cancels obsolete runs for the same PR and retains the 45-minute job timeout.

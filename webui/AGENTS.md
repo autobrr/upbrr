@@ -28,7 +28,7 @@ pnpm --dir webui run build
 - Bundle/import/env: `pnpm --dir webui run build`.
 - Visual/embedded: rebuild/sync embedded assets; inspect `http://localhost:7480`; avoid Vite `5173` for parity.
 - E2E selection: inspect the PR-target merge-base diff and staged/unstaged/untracked work first (`CONTRIBUTING.md`). Docs-only changes need no browser run. Use the affected project or `--grep` for narrow browser changes; use all five projects for shared workflow/API/build changes. Explicit full-suite requests still run in full.
-- Normal local E2E runs use eight parallel workers; CI uses two. Developers on smaller or busy machines should lower this with `--workers=2` or `--workers=1`. See `e2e/AGENTS.md` for commands; separate visual suites keep their own configuration.
+- Normal local E2E runs use eight parallel workers; CI uses four test shards with two workers each. Developers on smaller or busy machines should lower this with `--workers=2` or `--workers=1`. See `e2e/AGENTS.md` for commands; separate visual suites keep their own configuration.
 
 `make test-frontend` runs lint, dead-code, typecheck, unit, format; not Stylelint. Run Stylelint explicitly for CSS.
 
