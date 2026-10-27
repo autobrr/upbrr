@@ -341,7 +341,18 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
         }
         break;
       case "duplicates_decided":
-        if (step === 0) {
+        // Current-evidence decisions do not reproject or repeat duplicate checking.
+        if (
+          request.intent.duplicateDecisions &&
+          Object.keys(request.intent.duplicateDecisions).length > 0
+        ) {
+          next = await activePorts.decideDuplicates(
+            current,
+            request.intent.duplicateDecisions,
+            request.idempotencyKey,
+            signal,
+          );
+        } else if (step === 0) {
           next = await activePorts.project(
             current,
             request.intent.trackerIds || [],
@@ -355,17 +366,6 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
           next = await activePorts.checkDuplicates(
             current,
             request.intent.skipRemoteDuplicates || false,
-            request.idempotencyKey,
-            signal,
-          );
-        } else if (
-          step === 3 &&
-          request.intent.duplicateDecisions &&
-          Object.keys(request.intent.duplicateDecisions).length > 0
-        ) {
-          next = await activePorts.decideDuplicates(
-            current,
-            request.intent.duplicateDecisions,
             request.idempotencyKey,
             signal,
           );
@@ -7902,9 +7902,14 @@ describe("useReleaseSession", () => {
     expect(result.current.duplicates.view.status).toBe("ready");
   });
 
-  it.each([false, true])(
-    "keeps duplicate acknowledgement authoritative when rejected=%s",
-    async (rejected) => {
+  it.each([
+    { rejected: false, inClient: false, refreshed: false },
+    { rejected: true, inClient: false, refreshed: false },
+    { rejected: false, inClient: true, refreshed: false },
+    { rejected: false, inClient: false, refreshed: true },
+  ])(
+    "keeps duplicate acknowledgement authoritative when rejected=$rejected inClient=$inClient refreshed=$refreshed",
+    async ({ rejected, inClient, refreshed }) => {
       const fixture = workflowPorts();
       const checkDuplicates = vi.fn(
         async (
@@ -7921,6 +7926,14 @@ describe("useReleaseSession", () => {
           );
           return {
             ...checked,
+            continuation: {
+              ...checked.continuation!,
+              availableGoals: checked.continuation!.availableGoals.map((goal) =>
+                goal.goal === "media_ready"
+                  ? { ...goal, available: false, reason: "Review current duplicate evidence." }
+                  : goal,
+              ),
+            },
             dupes: {
               ...checked.dupes!,
               status: "blocked",
@@ -7928,10 +7941,13 @@ describe("useReleaseSession", () => {
                 {
                   trackerId: "AITHER",
                   uploadReleaseName: "Example.Release.2026.1080p-GRP",
-                  matches: [],
+                  matches: inClient ? [{ id: "existing", reason: "in_client" }] : [],
+                  reviewReasons: [
+                    { code: "policy_review", message: "Review current policy evidence." },
+                  ],
                   search: {
-                    complete: false,
-                    pages: 2,
+                    complete: true,
+                    pages: 1,
                     candidateCount: 0,
                     scope: "work_identity",
                     warnings: ["Search pagination is incomplete."],
@@ -7947,6 +7963,12 @@ describe("useReleaseSession", () => {
       const decideDuplicates = vi.fn(
         async (current: ReleaseWorkflowCurrent): Promise<ReleaseWorkflowCurrent> => ({
           ...current,
+          continuation: {
+            ...current.continuation!,
+            availableGoals: current.continuation!.availableGoals.map((goal) =>
+              goal.goal === "media_ready" ? { ...goal, available: true, reason: "" } : goal,
+            ),
+          },
           dupes: {
             ...current.dupes!,
             status: "completed",
@@ -7959,7 +7981,15 @@ describe("useReleaseSession", () => {
         }),
       );
       if (rejected) decideDuplicates.mockRejectedValue(new Error("Acknowledgement rejected."));
+      if (refreshed) {
+        decideDuplicates.mockImplementationOnce(async (current) => ({
+          ...current,
+          workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+          dupes: { ...current.dupes!, id: "renewed-policy-evidence" },
+        }));
+      }
       const workflow = workflowPorts({ checkDuplicates, decideDuplicates });
+      const mediaPlan = vi.spyOn(workflow, "mediaPlan");
       const { result } = renderHook(useReleaseSession, {
         wrapper: wrapperFor(portsFor({ workflow })),
       });
@@ -7969,7 +7999,26 @@ describe("useReleaseSession", () => {
       await act(() => result.current.input.prepare());
       await act(() => result.current.duplicates.run());
 
+      const workflowID = result.current.workflow.view.current?.workflow.id;
+      expect(result.current.navigation.open("screenshots")).toBe(false);
+      expect(result.current.navigation.view.access.screenshots.reason).toBe(
+        "Review current duplicate evidence.",
+      );
+
+      let loaded = true;
+      await act(async () => {
+        loaded = await result.current.screenshots.load();
+      });
+      expect(loaded).toBe(false);
+      expect(mediaPlan).not.toHaveBeenCalled();
+      expect(result.current.screenshots.view.error).toBe("Review current duplicate evidence.");
+
       act(() => result.current.duplicates.setIgnored("AITHER", true));
+      if (inClient) {
+        expect(decideDuplicates).not.toHaveBeenCalled();
+        expect(result.current.navigation.open("screenshots")).toBe(false);
+        return;
+      }
       await waitFor(() =>
         expect(decideDuplicates).toHaveBeenCalledWith(
           expect.anything(),
@@ -7982,14 +8031,31 @@ describe("useReleaseSession", () => {
         await waitFor(() => expect(result.current.workflow.view.status).toBe("error"));
         expect(result.current.workflow.view.current?.dupes?.results[0].decision).toBe("pending");
         expect(result.current.duplicates.view.assessment?.results[0].decision).not.toBe("ignored");
+        expect(result.current.navigation.open("screenshots")).toBe(false);
+        return;
+      }
+      if (refreshed) {
+        await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+        expect(decideDuplicates).toHaveBeenCalledOnce();
+        expect(result.current.workflow.view.current?.dupes?.results[0].decision).toBe("pending");
+        expect(result.current.navigation.open("screenshots")).toBe(false);
         return;
       }
       await waitFor(() => {
+        expect(result.current.workflow.view.current?.workflow.id).toBe(workflowID);
+        expect(result.current.navigation.open("screenshots")).toBe(true);
         expect(result.current.workflow.view.current?.dupes?.status).toBe("completed");
         expect(result.current.workflow.view.current?.dupes?.results[0]).toEqual(
           expect.objectContaining({ decision: "ignored", status: "completed" }),
         );
       });
+      loaded = false;
+      await act(async () => {
+        loaded = await result.current.screenshots.load();
+      });
+      expect(loaded).toBe(true);
+      expect(mediaPlan).toHaveBeenCalledWith(workflowID, expect.any(AbortSignal));
+      expect(result.current.screenshots.view.error).toBe("");
     },
   );
 

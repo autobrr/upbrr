@@ -95,6 +95,7 @@ func TestInspectedAudioLanguagesDriveTrackerEligibility(t *testing.T) {
 					Tracker:       tracker,
 					Type:          "ENCODE",
 					Anime:         true,
+					AnimeKnown:    true,
 					LanguageFacts: facts,
 				}, api.NopLogger{})
 				if err != nil {
@@ -117,9 +118,6 @@ func TestInspectedAudioLanguagesDriveTrackerEligibility(t *testing.T) {
 								trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, true) {
 								t.Fatalf("LST evidenced presentation finding must require a waivable acknowledgement: %+v", failure)
 							}
-							continue
-						}
-						if tracker == "LST" && failure.Rule == "language_lst_audio_layout_evidence" && failure.EvidenceStatus == api.MetadataEvidenceStatusPartial {
 							continue
 						}
 						if strings.HasPrefix(failure.Rule, "language_") && trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {

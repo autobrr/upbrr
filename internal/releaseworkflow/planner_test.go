@@ -668,6 +668,14 @@ func TestContinueExpiredDupesReplansBeforePersistedMediaRecovery(t *testing.T) {
 	repository.states[state.Workflow.ID] = &memoryState{State: state}
 	repository.mu.Unlock()
 
+	expired, err := module.Current(t.Context(), testOwnerID, state.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findGoalAvailability(t, expired.Continuation.AvailableGoals, api.WorkflowGoalMediaReady); got.Available {
+		t.Fatalf("expired duplicate evidence allowed media navigation: %#v", got)
+	}
+
 	base := module.dupeBuilder
 	entered := make(chan struct{})
 	release := make(chan struct{})

@@ -400,12 +400,10 @@ func TestCompositeUploadInitialOpenRequestsExternalProviderLoad(t *testing.T) {
 		}, nil
 	}
 	t.Cleanup(func() {
-		module.activeMu.Lock()
-		cancel, done := module.activeCancel, module.activeDone
-		module.activeMu.Unlock()
-		if cancel != nil {
-			cancel()
-			<-done
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := module.Shutdown(ctx); err != nil {
+			t.Errorf("shutdown composite upload module: %v", err)
 		}
 	})
 	_, err = module.StartUpload(t.Context(), testOwnerID, compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "composite-open-refresh"))

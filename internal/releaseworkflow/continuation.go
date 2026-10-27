@@ -18,6 +18,7 @@ const (
 	goalReasonWorkflowComplete     = "workflow_complete"
 	goalReasonPreparationRequired  = "preparation_required"
 	goalReasonTrackersRequired     = "trackers_required"
+	goalReasonDuplicatesRequired   = "duplicates_required"
 	goalReasonMediaRequired        = "media_required"
 	goalReasonDescriptionsRequired = "descriptions_required"
 )
@@ -47,7 +48,7 @@ func projectWorkflowContinuationForState(
 		Refs:            exactRefs(current.Workflow),
 		TrackerOutcomes: lanes,
 		RequiredActions: actions,
-		AvailableGoals:  projectAvailableGoals(current),
+		AvailableGoals:  projectAvailableGoals(current, now),
 		Events:          projectWorkflowEvents(current),
 	}
 }
@@ -504,7 +505,7 @@ func reduceWorkflowOutcome(
 	return api.OperationLifecycleReady, api.WorkflowDispositionNone
 }
 
-func projectAvailableGoals(current CommandResult) []api.GoalAvailability {
+func projectAvailableGoals(current CommandResult, now time.Time) []api.GoalAvailability {
 	goals := []api.WorkflowGoal{
 		api.WorkflowGoalPrepared,
 		api.WorkflowGoalInputReady,
@@ -519,7 +520,7 @@ func projectAvailableGoals(current CommandResult) []api.GoalAvailability {
 	}
 	available := make([]api.GoalAvailability, 0, len(goals))
 	for _, goal := range goals {
-		allowed, code, reason := goalAvailability(current, goal)
+		allowed, code, reason := goalAvailability(current, goal, now)
 		available = append(available, api.GoalAvailability{
 			Goal:       goal,
 			Available:  allowed,
@@ -530,7 +531,7 @@ func projectAvailableGoals(current CommandResult) []api.GoalAvailability {
 	return available
 }
 
-func goalAvailability(current CommandResult, goal api.WorkflowGoal) (bool, string, string) {
+func goalAvailability(current CommandResult, goal api.WorkflowGoal, now time.Time) (bool, string, string) {
 	if current.Workflow.Status == api.WorkflowStatusCanceled {
 		return false, goalReasonWorkflowCanceled, "Workflow is canceled."
 	}
@@ -559,6 +560,29 @@ func goalAvailability(current CommandResult, goal api.WorkflowGoal) (bool, strin
 	case api.WorkflowGoalMediaReady:
 		if current.Projections == nil {
 			return false, goalReasonTrackersRequired, "Select and assess trackers first."
+		}
+		if current.Dupes == nil {
+			return false, goalReasonDuplicatesRequired, "Run duplicate checking first."
+		}
+		if !now.IsZero() && (!continuationPreflightCurrent(current, now) ||
+			current.Dupes.ProjectionSet.ID != current.Projections.ID ||
+			current.Dupes.ProjectionSet.Revision != current.Projections.Revision || !current.Dupes.ExpiresAt.After(now)) {
+			return false, goalReasonDuplicatesRequired, "Refresh tracker assessment and duplicate checking in Dupe Checking."
+		}
+		if !dupesAllowContinuation(current.Projections, current.Dupes) {
+			for _, lane := range projectTrackerLaneOutcomes(current) {
+				for _, action := range lane.RequiredActions {
+					if action.Status == "" || action.Status == api.RequiredActionStatusPending {
+						if prompt := strings.TrimSpace(action.Prompt); prompt != "" {
+							return false, goalReasonDuplicatesRequired, prompt
+						}
+					}
+				}
+				if detail := strings.TrimSpace(lane.UploadSkipDetail); detail != "" {
+					return false, goalReasonDuplicatesRequired, detail + " Review tracker restrictions in Dupe Checking."
+				}
+			}
+			return false, goalReasonDuplicatesRequired, "No tracker can proceed. Review tracker restrictions and duplicate decisions in Dupe Checking."
 		}
 	case api.WorkflowGoalDescriptionsReady:
 		if current.Projections == nil {

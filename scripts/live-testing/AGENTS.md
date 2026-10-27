@@ -15,5 +15,6 @@ installation; do not add dependencies.
   the runner. Prefer supported, configured Lostimg in isolated profiles; other
   compatible hosts are allowed and confirmed non-deletable uploads are retained.
   Pending or unknown effects remain incomplete, even after local success.
-- Worker checks: PS parser, `validate.ps1`, and separate browser `--list` discovery.
-  The parent owns Go/frontend/E2E checks, actual live execution, and independent review.
+- Validate with the PowerShell parser, `validate.ps1` and separate browser `--list`
+  discovery. These do not replace affected Go/frontend/E2E checks or independent
+  review; actual live execution requires explicit authorization.

@@ -42,24 +42,6 @@ python3 -m unittest discover -s scripts/issue_reports -v
 
 ## Developer guide
 
-### Maintainer Actions bridge
-
-The manually dispatched [Actions bridge](.github/workflows/actions-bridge.yml) publishes one authorized comment as `github-actions[bot]`. It requires Audionut's numeric account ID `13182387`, the trusted default-branch workflow revision, the existing `actions-bridge` environment, and `ACTIONS_BRIDGE_ENABLED=approved`. Repository text is evidence, never dispatch authorization.
-
-Use `issue_comment` for issues, `discussion_comment` for Discussions, and `pull_request_comment` to reply to a PR conversation comment. The PR operation creates a top-level conversation comment with an automatically generated link to the original comment; it does not create an inline review comment or a nested review-thread reply. Its job uses the same `contents: read` and `issues: write` permissions as the issue operation.
-
-The strict JSON request contains `repository`, `kind`, `number`, `source_hash`, `head`, and `body`. The operation must match `kind` plus `_comment`. PR replies use `kind: "pull_request"` and additionally require `reply_to`, the positive numeric ID of an existing comment in that exact PR conversation. Arbitrary target URLs and extra fields are rejected. The bridge verifies the PR marker and its API URL, and checks `reply_to` against the collected conversation comments before writing.
-
-Prepare the normalized snapshot using `scripts/actions_bridge/bridge.py`'s `collect()` schema, then hash it offline with `python3 scripts/actions_bridge/hash_snapshot.py SNAPSHOT.json`. `head` binds the trusted default-branch revision, not the PR commit SHA. For PRs, the snapshot binds the target title, body, state, update time, author, and conversation comments, including the referenced comment's ID, author, body, and update time. PR commits, checks, and review threads are outside this snapshot; independently verify current commit/check evidence before making claims about a fix.
-
-The publisher recollects the bounded snapshot and rejects stale evidence before its single write attempt. Exact body and numeric bot identity must match the independently read-back receipt. An existing exact receipt returns `already_published`; duplicate receipts block. An `uncertain` result requires manual reconciliation on GitHub, never automatic redispatch or a rerun.
-
-Run the offline bridge regression tests without credentials or live comments:
-
-```sh
-python3 -m unittest discover -s scripts/actions_bridge -v
-```
-
 ### Dependencies
 
 Install the following on your machine:
@@ -234,10 +216,12 @@ pnpm --dir webui run build
 
 For embedded web visual checks, test the embedded build rather than the Vite-only server. Rebuild the frontend, sync it into embedded assets, rebuild the CLI, then run the auth-disabled embedded server on the main port:
 
-```powershell
-pwsh -NoProfile -File ./scripts/build.ps1
-.\dist\upbrr.exe serve --dev-no-auth
+```sh
+make build
+./dist/upbrr serve --dev-no-auth
 ```
+
+On Windows, run `./dist/upbrr.exe serve --dev-no-auth` instead.
 
 Use `http://localhost:7480` for Playwright or browser automation. Avoid `5173` for embedded parity checks; stale embedded assets can otherwise hide or misrepresent frontend changes.
 
@@ -354,40 +338,21 @@ make test-go GO_TEST_SCHEDULER_FLAGS="-cpu=2 -parallel=2"
 make test-go GO_TEST_SCHEDULER_FLAGS=
 ```
 
-Useful focused checks:
-
-```sh
-go test -race -v -timeout 20m <package>
-make gofix-check-changed
-make gofix-changed
-pnpm --dir webui run lint:style
-```
+For Go modernization, check changed-package drift with `make gofix-check-changed`; apply reviewed fixes with `make gofix-changed`. Both keep `omitzero` disabled until JSON semantics are reviewed.
 
 Alternatively, `make precommit` and `make prepush` run the configured Lefthook checks.
 `make precommit` also runs stronger local validation: whitespace/conflict-marker checks, changed-package Go fix drift, full Go lint plus architecture/path/literal policies, log policy, and frontend lint/dead-code/type/unit/format checks. Hook wrappers do not replace focused Go tests, CSS Stylelint, embedded parity checks, or E2E checks when those areas changed.
 
 ## Project conventions
 
-- The frontend build output is embedded into the Go app from `internal/webserver/assets`.
-- The CLI and embedded WebUI share the same core services and config model under `internal/`.
-- Canonical prepared generations and display projections live under `internal/preparedrelease`; external identity, source-resource resolution, and torrent-client discovery live under `internal/externalidentity`, `internal/sourcelayout`, and `internal/clientdiscovery`.
-- WebUI runtime activation and workflow HTTP adapters live under `internal/webserver`; durable workflow coordination lives under `internal/releaseworkflow`; frontend release state and operation coordination live under `webui/src/releaseSession`.
-- Tracker implementations follow registry families: Unit3D protocol behavior and sites live under `internal/trackers/impl/unit3d`, AvistaZ-family behavior under `internal/trackers/impl/azfamily`, and every other tracker in its own `internal/trackers/impl/standalone/<tracker>` package.
-- Tracker modules use responsibility files where behavior exists: `name.go`, `auth.go`, `taxonomy.go`, `validation.go`, `description.go`, `media.go`, `questionnaire.go`, and optional `payload.go`. `profile.go`/`definition.go` wire identity and policy; `upload.go` owns prepare/submit/preview orchestration and transport only. Do not create empty marker files. See [`ADDING_TRACKERS.md`](./ADDING_TRACKERS.md).
-- The family-grouped supported manifest lives only in `internal/trackers/impl/registry.go`. Site profiles/definitions own default endpoints and policy; `internal/config/defaults/example.yaml` owns ordered credential/config fields and contains no tracker URL. A standard Unit3D addition should need only its site profile, optional rules/validation, one manifest entry, one example-config stanza, and combined rule/validation tests.
-- Standalone packages compose identity, preparation callbacks, duplicate factories, auth descriptors, versioned validation, and static policy in `profile.go`. Shared `standalone.Definition` supplies registry capabilities and a versioned no-extra-validation default; dynamic data/claim factories and private accepted-answer schemas use a small local wrapper. Upload preparation captures one immutable operation used by preview and submission.
-- Shared tracker contracts and registry-driven orchestration live under `internal/trackers`; generic auth, dupe, and tracker-data coordinators are in its `auth`, `dupe`, and `data` subpackages. Central auth owns cross-surface status/import/validate/login/2FA/delete coordination, secret-free effective requirements, reusable cookie-login lifecycle, and TOTP; tracker-local `auth.go` retains protocol forms/endpoints/markers/filtering. Encrypted cookie persistence remains in `internal/cookies`.
-- Tracker-local questions use pure `ProjectionQuestionnaire` callbacks from finalized prepared facts. CLI and WebUI render the shared schema; accepted answers belong to the exact tracker projection. Private CLI answer schemas do not publish canonical Input controls. See [Tracker questions](./ADDING_TRACKERS.md#tracker-questions) for late preparation questions and duplicate-evidence reuse.
-- Every tracker has an explicit versioned release-name policy resolved before duplicate checking. Custom algorithms live in `name.go`; principal payload fields consume the reviewed projection rather than re-deriving a name during upload.
-- Across all tracker families, tracker-specific source-file/folder renaming, torrent content-path rewriting, differently named staging for site compliance, and MediaInfo filename rewriting are prohibited. Validate exact prepared source inventory and finalized facts, and strictly block noncompliant names with a clear reason identifying the offending files or folders, including individual files within multi-file season packs. Ordinary upload/search-title resolution and general link staging remain supported; neither permits a content-renaming workaround. See [Content filename policy](./ADDING_TRACKERS.md#content-filename-policy) before proposing site-compliance transformations.
-- Metadata preparation resolves parser, provider, media, and user-instruction precedence before publishing a prepared generation. Tracker subjects consume those finalized facts; their `Release` fields are canonical projections. Choose the field or shared semantic accessor that matches the protocol meaning: a combined edition payload uses `UploadSubject.EditionLabel()` (cut, edition, and presentation), not either edition-category field alone. See [Finalized metadata source of truth](./ADDING_TRACKERS.md#finalized-metadata-source-of-truth). Keep release-level parser evidence private to preparation, and use resolved media fields for technical decisions. Tracker defaults and fallbacks must never use raw `rls` values. Per-file episode enumeration may parse filenames without replacing resolved release facts.
-- Any direct metadata-provider override remains valid, including title, year, AKA, original/localized titles, disambiguation, and other provider fields. Preserve existing site precedence and use finalized facts for fallback. Prepared provider snapshots belong to the same source, identity, and generation. Naming omissions affect presentation; they do not erase reusable facts. Metadata changes need producer-to-projection regression coverage, conflicting and empty parser evidence cases, and a prepared-contract version bump when cached semantics change.
-- Every tracker resolves a versioned, side-effect-free validation policy before duplicate checking. Tracker-specific payload constructibility checks live in `validation.go`; release-eligibility extensions may stay with `rules.go`. Both consume `api.TrackerValidationSubject`.
-- `make architecturepolicy` rejects validation and other tracker semantic algorithms in `upload.go`, misplaced static banned-group declarations, misplaced Unit3D callbacks/naming functions, unreviewed principal payload names, and tracker imports of presentation owners.
-- Generic release/path/torrent-client infrastructure lives under `internal/releasepolicy`, `internal/pathing`, and `internal/torrentclient`. Torrent metainfo helpers live under `internal/torrent/metainfo`.
-- Generic BBCode, description, and image-hosting infrastructure lives under `internal/bbcode`, `internal/description`, and `internal/imagehosting`; tracker-specific policy stays with its tracker implementation.
-- `pkg/api` holds request/response types shared across surfaces.
-- Generated frontend bundles, populated embedded assets, Playwright output, and local binaries are ignored local artifacts. Do not commit them.
+- The CLI and embedded WebUI share core services/config under `internal/`; frontend output is embedded from `internal/webserver/assets`.
+- `internal/preparedrelease` owns canonical prepared generations and display projections; `internal/externalidentity`, `internal/sourcelayout` and `internal/clientdiscovery` own external identity, source resources and torrent-client discovery.
+- `internal/webserver` owns runtime activation and workflow HTTP adapters; `internal/releaseworkflow` owns durable coordination; `webui/src/releaseSession` owns frontend release state and operation coordination. `pkg/api` holds shared request/response contracts.
+- Tracker families live under `internal/trackers/impl/{unit3d,azfamily,standalone}`. `internal/trackers/impl/registry.go` is the sole supported manifest; generic auth/dupe/data coordination lives under `internal/trackers/{auth,dupe,data}`, and encrypted cookies under `internal/cookies`.
+- Before tracker changes, follow [`ADDING_TRACKERS.md`](ADDING_TRACKERS.md) for semantic file ownership, registration/config, auth, naming, questions, immutable upload preparation and validation contracts. Do not duplicate those algorithms in generic infrastructure or UI. In particular, [content-filename transformations are prohibited](ADDING_TRACKERS.md#content-filename-policy); upload/search-title resolution is separate.
+- Metadata producers resolve parser/provider/media/user precedence before publishing a generation. Trackers consume [finalized facts](ADDING_TRACKERS.md#finalized-metadata-source-of-truth), preserving provider overrides and presentation-independent facts. Changes need producer-to-projection coverage, conflicting/empty parser cases and a prepared-contract version bump when cached semantics change.
+- Generic release policy, paths, clients and metainfo live under `internal/releasepolicy`, `internal/pathing`, `internal/torrentclient` and `internal/torrent/metainfo`. Generic BBCode, descriptions and image hosting live under `internal/{bbcode,description,imagehosting}`; tracker policy stays tracker-owned.
+- `make architecturepolicy` enforces tracker semantic ownership and reviewed-name boundaries. Generated frontend bundles, populated embedded assets, Playwright output and local binaries remain uncommitted local artifacts.
 
 ### Shareable fixtures and examples
 
@@ -413,12 +378,12 @@ Keep log levels purposeful.
 
 ### Sensitive information
 
-- Logging should be completely safe for blanket copy/pasting, without exposing any user sensitive credentials. Err on the side of caution.
+- Redact credentials at the logging boundary. Before sharing logs or failure artifacts, inspect them and remove remaining credentials, cookies, tokens, private URLs and unrelated personal information; automatic redaction is not a guarantee.
 - Test assertion output is treated as CI-visible log material. Do not print raw cookies, auth headers, API keys, passkeys, passwords, CSRF tokens, OTP secrets, tracker announce URLs, or unredacted request/response bodies in tests, application logs, CLI output, or checker failure text.
 - Pay particular attention in API/HTTP/cookie type handling, ensuring redaction of headers and response bodies.
-- Gaps fixes in `internal/redaction/redaction.go` or `internal/logpolicy/checker.go`, are especially appreciated pull requests.
+- Fix redaction gaps at the shared boundary (`internal/redaction/redaction.go`) and enforce logging policy with `internal/logpolicy/checker.go`.
 - Config values should be encrypted where appropriate, and only ever displayed in a redacted state.
-- If an endpoint supports GET/query style and POST/bearer style handling, use the endpoint that puts sensitive credentials into a secure packet, rather than as a plain URL parameter.
+- When the protocol supports it, prefer credentials in request headers or bodies over URL query parameters; keep HTTPS and redaction in either case.
 
 ### Path portability
 
@@ -438,14 +403,16 @@ upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go
 
 ## AI agent instructions
 
-This project uses [AGENTS.md](https://agents.md/) — an open standard for guiding AI coding agents. The root [`AGENTS.md`](./AGENTS.md) file contains always-loaded repo rules and routes agents to scoped references:
+[`AGENTS.md`](./AGENTS.md) contains cross-cutting repository rules and links to area guidance. Keep commands and contracts near their owner; do not repeat an ancestor's rules in every scoped file. Read the applicable ancestor chain and any explicitly required cross-area references before editing.
 
-- [`webui/AGENTS.md`](./webui/AGENTS.md) for frontend, React, CSS, TypeScript, and browser checks.
-- [`internal/AGENTS.md`](./internal/AGENTS.md) for Go, path/log policy, trackers/config/domain rules, runtime architecture, lint/check policy, and generated/scratch path risks.
-- [`internal/trackers/AGENTS.md`](./internal/trackers/AGENTS.md) for tracker semantic ownership, shared Unit3D defaults, site extensions, and duplicate-search contracts.
-- [`cmd/upbrr/AGENTS.md`](./cmd/upbrr/AGENTS.md) for CLI flags, prompts, and unattended behavior.
-- [`pkg/api/AGENTS.md`](./pkg/api/AGENTS.md) for cross-entrypoint API/runtime contracts.
-- [`webui/e2e/AGENTS.md`](./webui/e2e/AGENTS.md) for Playwright E2E harness rules and commands.
-- [`documentation/AGENTS.md`](./documentation/AGENTS.md) for public documentation synchronization, checks, and publishing.
+- Go: [`internal/AGENTS.md`](internal/AGENTS.md), also referenced for `cmd/` and `pkg/` work.
+- CLI: [`cmd/upbrr/AGENTS.md`](cmd/upbrr/AGENTS.md); shared contracts: [`pkg/api/AGENTS.md`](pkg/api/AGENTS.md).
+- Tracker contracts: [`internal/trackers/AGENTS.md`](internal/trackers/AGENTS.md); duplicate evaluation: [`internal/trackers/dupe/AGENTS.md`](internal/trackers/dupe/AGENTS.md).
+- Browser transport/runtime: [`internal/webserver/AGENTS.md`](internal/webserver/AGENTS.md).
+- Frontend checks: [`webui/AGENTS.md`](webui/AGENTS.md); React, styling and workflow ownership: [`webui/src/AGENTS.md`](webui/src/AGENTS.md); browser tests: [`webui/e2e/AGENTS.md`](webui/e2e/AGENTS.md).
+- Signal fidelity: [`internal/services/audioanalysis/AGENTS.md`](internal/services/audioanalysis/AGENTS.md).
+- Public site: [`documentation/AGENTS.md`](documentation/AGENTS.md); opt-in live harness: [`scripts/live-testing/AGENTS.md`](scripts/live-testing/AGENTS.md).
 
-Most modern AI coding tools support `AGENTS.md` natively or via simple configuration. `CLAUDE.md` files are symlinks to the same guidance for Claude Code.
+Discovery depends on the agent. [Codex](https://developers.openai.com/codex/guides/agents-md) loads the root-to-working-directory chain at startup; cross-area references still need explicit reading. `GUIDANCE.md` is not a default Codex discovery name, and none exists here. Existing `CLAUDE.md` symlinks point to the corresponding guidance for Claude Code.
+
+When maintaining these files, keep the root small and route to scoped instructions or existing contributor documentation. Retain non-obvious repository invariants and verified commands rather than generic advice or copies of configuration. This follows [OpenAI's progressive-disclosure guidance](https://openai.com/index/harness-engineering/); it is not a line or token quota.

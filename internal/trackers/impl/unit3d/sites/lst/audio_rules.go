@@ -66,6 +66,15 @@ func lossyAudio(codec string) bool {
 	)
 }
 
+// blankChannelLayout treats MediaInfo zero channel masks as absent speaker positions.
+func blankChannelLayout(layout string) bool {
+	switch strings.ToLower(strings.TrimSpace(layout)) {
+	case "", "0", "0x00000000":
+		return true
+	}
+	return false
+}
+
 // exactAudioLayout never promotes a channel count to an evidenced multichannel layout.
 func exactAudioLayout(track api.MediaTrackFacts) string {
 	layout := strings.Join(strings.Fields(strings.ToUpper(track.ChannelLayout)), " ")
@@ -132,6 +141,7 @@ func audioTierFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		))
 	}
 	releaseHD := hdEncodeAudio(subject)
+	assumedLayouts := 0
 	if releaseHD && !subject.LanguageFacts.TrackCoverageComplete {
 		failures = append(
 			failures,
@@ -154,6 +164,11 @@ func audioTierFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		}
 		codec := strings.ToUpper(strings.TrimSpace(track.Codec))
 		layout := exactAudioLayout(track)
+		if codec == "FLAC" && blankChannelLayout(track.ChannelLayout) && track.ChannelsKnown && track.Channels == 6 {
+			// shortcut: count-only FLAC is assumed 5.1 for eligibility; an explicit layout must take precedence when available.
+			layout = "5.1"
+			assumedLayouts++
+		}
 		if hd && !losslessAudio(codec) && !lossyAudio(codec) {
 			add(track, "codec_evidence", "audio codec compression class is unresolved", trackers.LanguageUnresolved)
 		}
@@ -210,6 +225,16 @@ func audioTierFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 			}
 			add(track, "stereo_codec", "stereo lossless audio should use FLAC", outcome)
 		}
+	}
+	if assumedLayouts > 0 {
+		failure := trackers.LanguageRuleFailure(
+			subject,
+			"lst_audio_layout_assumed",
+			fmt.Sprintf("assuming 5.1 for %d six-channel FLAC audio streams without a reported layout; speaker positions are unverified", assumedLayouts),
+			trackers.LanguageAdvisory,
+		)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	return failures
 }
