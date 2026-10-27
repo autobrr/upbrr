@@ -357,8 +357,8 @@ test("embedded settings generates and revokes a persistent API token", async ({ 
     await page.getByRole("button", { name: "API Tokens" }).click();
     await expect(page.getByRole("heading", { name: "Generate API token" })).toBeVisible();
 
-    await page.getByLabel("Name").fill("WebUI automation");
-    await page.getByLabel("Owner").fill("webui-owner");
+    await page.getByLabel("Name", { exact: true }).fill("WebUI automation");
+    await page.getByLabel("Owner", { exact: true }).fill("webui-owner");
     await page.getByRole("button", { name: "Generate token" }).click();
     const generatedInput = page.getByLabel("Generated API token");
     await expect(generatedInput).toBeVisible();
@@ -443,7 +443,7 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
     ]) {
       await expect(bluCard.getByLabel(label, { exact: true })).toBeVisible();
     }
-    await bluCard.getByLabel("API key").fill("e2e-blu-activation");
+    await bluCard.getByLabel("API key", { exact: true }).fill("e2e-blu-activation");
 
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Settings saved and applied.")).toBeVisible();
@@ -575,7 +575,12 @@ test.describe("Settings help", () => {
       const help = page.getByRole("button", { name: "Help for Show tracker icons", exact: true });
       const save = page.getByRole("button", { name: "Save", exact: true });
       await expect(save).toBeDisabled();
+      await help.scrollIntoViewIfNeeded();
+      const touchAnchor = await help.boundingBox();
       await help.tap();
+      const openedTouchAnchor = await help.boundingBox();
+      expect(openedTouchAnchor!.x).toBeCloseTo(touchAnchor!.x, 1);
+      expect(openedTouchAnchor!.y).toBeCloseTo(touchAnchor!.y, 1);
       await expect(help).toHaveAttribute("aria-expanded", "true");
       const helpId = await help.getAttribute("aria-controls");
       const text = page.locator(`[id=${JSON.stringify(helpId)}]`);
@@ -595,8 +600,13 @@ test.describe("Settings help", () => {
       await expect(text).toBeHidden();
       await page.setViewportSize({ width: 1280, height: 900 });
       await control.focus();
+      await help.scrollIntoViewIfNeeded();
+      const hoverAnchor = await help.boundingBox();
       await help.hover();
       await expect(text).toBeVisible();
+      const openedHoverAnchor = await help.boundingBox();
+      expect(openedHoverAnchor!.x).toBeCloseTo(hoverAnchor!.x, 1);
+      expect(openedHoverAnchor!.y).toBeCloseTo(hoverAnchor!.y, 1);
       await text.hover();
       await expect(text).toBeVisible();
       await page.keyboard.press("Escape");

@@ -246,7 +246,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     const displayLabel = meta?.label ?? formatLabel(label);
     const typeHint = meta?.type;
     const heading = (
-      <span className="flex min-w-0 flex-wrap items-center gap-1">
+      <span className="flex min-w-0 flex-1 flex-wrap items-start self-start gap-1">
         <label
           htmlFor={Array.isArray(value) && !meta?.commaSeparated ? `${controlId}-0` : controlId}
         >
@@ -767,7 +767,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                             className={`${settingsStyle.switchRow} col-span-full border-t border-foreground/10 pt-4`}
                             key={`TorrentClients-${name}-QbitDirect`}
                           >
-                            <span className="min-w-0">
+                            <span className="min-w-0 flex-1 self-start">
                               <label htmlFor={`qbit-direct-${encodeURIComponent(name)}`}>
                                 Configure direct qBittorrent connection
                               </label>

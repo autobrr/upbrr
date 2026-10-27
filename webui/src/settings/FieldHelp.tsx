@@ -4,7 +4,7 @@
 import { useEffect, useId, useState } from "react";
 import type { ReactNode } from "react";
 
-/** Inline help stays in document flow so it cannot cover inputs or validation messages. */
+/** Inline help reserves its row so opening text cannot move the hover target or cover inputs. */
 export function FieldHelp({
   label,
   id,
@@ -27,7 +27,7 @@ export function FieldHelp({
   }, [open]);
   return (
     <span
-      className="inline-flex min-w-0 flex-wrap items-center gap-1"
+      className="flex w-full min-w-0 flex-col items-start self-start gap-1"
       onPointerEnter={(event) => {
         if (event.pointerType !== "touch") setOpen(true);
       }}

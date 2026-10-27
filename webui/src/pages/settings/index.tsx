@@ -546,10 +546,10 @@ export default function SettingsPage(props: Props) {
                 <FieldHelp
                   label={`${capability.displayName || capability.trackerID} authentication actions`}
                 >
-                  These actions take effect immediately, without Save. Import loads prepared
-                  Netscape or JSON cookies from the server's configured cookie location. Check Auth
-                  contacts the tracker when supported. Delete Auth removes stored authentication
-                  state; it does not delete your tracker account.
+                  These actions take effect immediately, without Save. Import opens a browser file
+                  picker and uploads the selected Netscape or JSON cookie file's contents. Check
+                  Auth contacts the tracker when supported. Delete Auth removes stored
+                  authentication state; it does not delete your tracker account.
                 </FieldHelp>
                 <div className="flex flex-wrap items-center gap-2">
                   {capability.supportsCookieFile ? (
@@ -923,7 +923,7 @@ export default function SettingsPage(props: Props) {
                 </h2>
                 {showAdvancedToggle ? (
                   <div className={`${settingsStyle.switchRow} self-start gap-6`}>
-                    <span>
+                    <span className="min-w-0 flex-1 self-start">
                       <label htmlFor="settings-advanced">Show advanced</label>
                       <FieldHelp label="Show advanced" id="settings-advanced-help">
                         Show additional controls in this section. Hiding them does not reset their

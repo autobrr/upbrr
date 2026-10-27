@@ -165,7 +165,7 @@ export default function APITokensSettings() {
           {supportedScopes.map((scope) => (
             <div
               key={scope.value}
-              className="flex min-h-9 items-center gap-2 rounded-md border border-border bg-card px-3 text-sm text-card-foreground"
+              className="flex min-h-9 flex-wrap items-start gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-card-foreground"
             >
               <input
                 id={`token-scope-${scope.value}`}
@@ -175,10 +175,10 @@ export default function APITokensSettings() {
                 onChange={() => toggleScope(scope.value)}
               />
               <label htmlFor={`token-scope-${scope.value}`}>{scope.label}</label>
+              <code className="ml-auto text-xs text-muted-foreground">{scope.value}</code>
               <FieldHelp label={scope.label} id={`token-scope-help-${scope.value}`}>
                 {scope.help}
               </FieldHelp>
-              <code className="ml-auto text-xs text-muted-foreground">{scope.value}</code>
             </div>
           ))}
         </fieldset>

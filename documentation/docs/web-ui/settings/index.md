@@ -9,7 +9,7 @@ The Web UI **Settings** page edits runtime configuration and manages related sec
 
 ## Field help
 
-Use the **?** beside a setting to read its effect, constraints and relevant defaults. Help opens on pointer hover or keyboard focus; select it to keep it open on touch devices. Press Escape or move focus away to dismiss it. Help stays in the page layout rather than covering inputs. Opening help does not change the setting.
+Use the **?** near a setting to read its effect, constraints and relevant defaults. Help opens on pointer hover or keyboard focus; select it to keep it open on touch devices. Press Escape or move focus away to dismiss it. Help stays in the page layout rather than covering inputs. Opening help does not change the setting.
 
 Display names may differ from imported configuration keys. Keys, saved values and API fields are unchanged. Compatibility-only preferences are identified individually; they remain stored but do not implement the named feature. Changing them can still invalidate derived configuration state.
 
