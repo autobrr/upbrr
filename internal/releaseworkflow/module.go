@@ -584,7 +584,7 @@ func (m *Module) cleanupUncommittedResult(ownerID string, prior api.ReleaseWorkf
 	if result.DryRun != nil {
 		m.private.Delete(ownerID, workflowID, uploadPlanPrivateResourceID(result.DryRun.ID))
 	}
-	if result.UploadResult != nil {
+	if result.UploadResult != nil && (prior.UploadResult == nil || prior.UploadResult.ID != result.UploadResult.ID) {
 		m.private.Delete(ownerID, workflowID, registeredArtifactAuthorityPrivateResourceID(result.UploadResult.ID))
 	}
 }
@@ -8850,7 +8850,7 @@ func (m *Module) resolveAction(
 			return result, nil
 		}
 		if action.EffectKind == api.WorkflowExternalEffectClientInjection &&
-			strings.HasPrefix(action.EffectScopeID, "upload:") {
+			strings.HasPrefix(action.EffectScopeID, "upload:") && state.Workflow.UploadResult != nil {
 			reconciled, err := m.reconcileClientInjectionResult(ownerID, state, nextRevision, now, action)
 			if err != nil {
 				return CommandResult{}, err
@@ -8952,7 +8952,9 @@ func (m *Module) reconcileClientInjectionResult(
 		updated = true
 	}
 	if !updated {
-		return api.UploadResult{}, fmt.Errorf("%w: reconciled client injection outcome is stale", ErrInvalidTransition)
+		// An interrupted retry can persist its effect before publishing a new
+		// aggregate. Its prior submitted result remains authoritative.
+		return prior, nil
 	}
 	snapshot.Status = derivedUploadResultStatus(snapshot.Results)
 	if err := snapshot.Validate(); err != nil {
@@ -8995,12 +8997,6 @@ func (m *Module) resolveImageHostingAction(
 		finishUnavailableImageHostingReconciliation(&state.Workflow, action)
 		return CommandResult{}, nil
 	}
-	actionIndex := slices.IndexFunc(snapshot.RequiredActions, func(candidate api.RequiredAction) bool {
-		return candidate.ID == action.ID && candidate.Kind == api.RequiredActionReconcileSubmission
-	})
-	if actionIndex < 0 {
-		return CommandResult{}, fmt.Errorf("%w: reconciled media action is stale", ErrInvalidTransition)
-	}
 	value, err := m.private.Get(ownerID, state.Workflow.ID, mediaPrivateResourceID(mediaRef.ID), now)
 	if err != nil {
 		if errors.Is(err, ErrPrivateResourceUnavailable) || errors.Is(err, ErrPrivateResourceConsumed) {
@@ -9013,6 +9009,12 @@ func (m *Module) resolveImageHostingAction(
 	if !ok {
 		finishUnavailableImageHostingReconciliation(&state.Workflow, action)
 		return CommandResult{}, nil
+	}
+	actionIndex := slices.IndexFunc(snapshot.RequiredActions, func(candidate api.RequiredAction) bool {
+		return candidate.ID == action.ID && candidate.Kind == api.RequiredActionReconcileSubmission
+	})
+	if actionIndex < 0 {
+		return CommandResult{}, fmt.Errorf("%w: reconciled media action is stale", ErrInvalidTransition)
 	}
 	snapshot.RequiredActions = slices.Delete(snapshot.RequiredActions, actionIndex, actionIndex+1)
 	snapshot.Failures = slices.DeleteFunc(snapshot.Failures, func(failure api.WorkflowFailure) bool {

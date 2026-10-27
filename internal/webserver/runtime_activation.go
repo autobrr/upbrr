@@ -221,6 +221,12 @@ func InitializeRuntimeConfigActivation(
 				busy,
 				logging.SanitizeMessage(activationErr.Error()),
 			)
+			if errors.Is(activationErr, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+				activationErr = fmt.Errorf(
+					"%w; run 'upbrr recover' with the same database configuration to reconcile interrupted effects after checking their remote outcome",
+					activationErr,
+				)
+			}
 			switch stage {
 			case "initialize":
 				return api.ConfigActivation{}, fmt.Errorf("initialize runtime config activation fingerprint: %w", activationErr)
