@@ -415,6 +415,7 @@ func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPl
 		Episode:               release.Episode.Episode,
 		Release:               releaseInfo(release),
 		SelectedBDMVPlaylists: selectedPlaylists,
+		KeepImages:            resources.policy.KeepImages,
 		DefaultCount:          input.Count,
 		ManualFrames:          append([]int(nil), input.Options.ManualFrames...),
 		Discs:                 discs,

@@ -281,7 +281,7 @@ for (const tracker of ["ANT", "BTN"] as const) {
           await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
           await page.getByRole("button", { name: "Screenshots" }).click();
           await page.getByRole("button", { name: "Generate screenshots" }).click();
-          await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+          await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
           await expect(page.getByRole("button", { name: "Descriptions" })).toBeEnabled();
           await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
           await page.getByRole("button", { name: "Upload Images" }).click();
@@ -1655,6 +1655,53 @@ test("embedded web selects a Blu-ray candidate through the authoritative workflo
   }
 });
 
+test("embedded screenshots automatically adopt description images and preserve removal across reloads", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ screenshotCount: 3 });
+  workspace.env.UPBRR_E2E_SAVED_DESCRIPTION_IMAGE = "1";
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
+    await expect(page.getByRole("note")).toContainText("chronological order cannot be determined");
+    await expect(page.getByRole("button", { name: "Use saved images" })).toHaveCount(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+
+    await page.getByRole("button", { name: "Unselect Screenshot 1", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Select Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    await page.reload();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Select Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    await page.getByRole("button", { name: "Generate screenshots", exact: true }).click();
+    await expect(page.getByText("4 retained screenshot(s)")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Select Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      page.getByText("Existing description image · capture timestamp and provenance unknown"),
+    ).toHaveCount(1);
+    await page.getByRole("button", { name: "Delete Screenshot 1", exact: true }).click();
+    await expect(page.getByText("3 retained screenshot(s)")).toBeVisible();
+    await page.reload();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await page.getByRole("button", { name: "Load suggestions", exact: true }).click();
+    await expect(page.getByText("3 retained screenshot(s)")).toBeVisible();
+    await expect(page.getByRole("note")).toHaveCount(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded web runs image upload, direct tracker upload, and history", async ({ page }) => {
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
@@ -1693,7 +1740,7 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     );
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect((await captureResponse).ok()).toBe(true);
-    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
     await expect(page.getByAltText("Screenshot 1")).toBeVisible();
     const frameSelection = page.getByText(/^Frame Selection · 1 frame$/);
     await expect(frameSelection).toBeVisible();
@@ -1856,7 +1903,7 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
     await runDuplicateCheck(page);
     await page.getByRole("button", { name: "Screenshots" }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
-    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("4 retained screenshot(s)")).toBeVisible();
     const reordered = waitForAppMethod(page, "ReorderReleaseWorkflowMedia");
     await page
       .getByAltText("Screenshot 3")
@@ -1914,7 +1961,7 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
         .sort(),
     ).toEqual(savedURLs);
     await page.getByRole("button", { name: "Screenshots" }).click();
-    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("4 retained screenshot(s)")).toBeVisible();
     await expect(page.getByAltText("Screenshot 1")).toBeVisible();
     await page.getByRole("button", { name: "Upload Images" }).click();
     await expect(page.getByText("3 saved")).toBeVisible();
@@ -1959,7 +2006,7 @@ test("embedded HDR description opens a full-size lightbox without a saved previe
     await runDuplicateCheck(page);
     await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
-    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
     await page.getByRole("button", { name: "Upload Images", exact: true }).click();
     await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
     await expect(page.getByText("1 saved")).toBeVisible();
@@ -2032,7 +2079,7 @@ test("embedded web restores edited descriptions after reopening an input", async
     await runDuplicateCheck(page);
     await page.getByRole("button", { name: "Screenshots" }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
-    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
     await page.getByRole("button", { name: "Upload Images" }).click();
     await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
     await expect(page.getByText("1 saved")).toBeVisible();
@@ -2178,7 +2225,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
 
     await page.getByRole("button", { name: "Screenshots" }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
-    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
     await page.getByRole("button", { name: "Descriptions" }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
@@ -2354,7 +2401,7 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     );
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect((await screenshotCaptureResponse).ok()).toBe(true);
-    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("4 retained screenshot(s)")).toBeVisible();
     await expect(page.getByAltText(/^Disc [12] screenshot \d$/)).toHaveCount(4);
     await expect(page.getByRole("heading", { name: "Disc 1" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Disc 2" })).toBeVisible();
@@ -2392,7 +2439,7 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
 
     await page.reload();
     await page.getByRole("button", { name: "Screenshots" }).click();
-    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("4 retained screenshot(s)")).toBeVisible();
     await expect(page.getByAltText(/^Disc [12] screenshot \d$/)).toHaveCount(4);
 
     await page.getByRole("button", { name: "Upload Images" }).click();

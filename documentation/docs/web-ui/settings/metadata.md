@@ -18,7 +18,7 @@ Use **Settings → Metadata** to control how preparation gathers reusable torren
 | **Bluray score**                 | `94.5`  | Sets the normal blu-ray.com candidate score threshold.                                                 |
 | **Bluray single score**          | `89.5`  | Sets the threshold used when only one candidate is available.                                          |
 
-**Keep images** and **Only ID** work independently. With both enabled, supported trackers can still supply images while omitting description text. Imported comparison blocks stay in descriptions and are excluded from the ordinary screenshot set. To reuse eligible saved screenshots, open **Screenshots** and choose **Use saved images** when offered.
+**Keep images** and **Only ID** work independently. With both enabled, supported trackers can still supply images while omitting description text. Imported comparison blocks stay in descriptions and are excluded from the ordinary screenshot set. Eligible existing description images are loaded automatically when you open **Screenshots**. Review them in the normal screenshot list, where you can unselect, delete or reorder them. Their capture timestamps and provenance are unknown, including their chronological order relative to new captures.
 
 ## Verify the change
 

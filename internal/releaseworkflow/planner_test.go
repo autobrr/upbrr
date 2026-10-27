@@ -5,6 +5,7 @@ package releaseworkflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -2421,6 +2422,16 @@ func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 			},
 		},
 	}
+	// Persisted workflow requests omit empty selection slices. Import authority
+	// must survive that wire round trip instead of becoming automatic capture.
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = api.ContinueReleaseWorkflowRequest{}
+	if err := json.Unmarshal(encoded, &request); err != nil {
+		t.Fatal(err)
+	}
 	for _, status := range []api.StageStatus{api.StageStatusBlocked, api.StageStatusCompleted} {
 		current.Media.Status = status
 		command, stage := planContinuationCommand(request, current, now)
@@ -2468,6 +2479,16 @@ func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 	command, stage = planContinuationCommand(request, current, now)
 	if command != nil || stage != "" {
 		t.Fatalf("hosted saved image import planned another capture: stage=%q command=%#v", stage, command)
+	}
+	for index := range current.Media.Artifacts {
+		current.Media.Artifacts[index].Selected = false
+	}
+	if !continuationGoalReached(current, request) {
+		t.Fatal("unselecting adopted images made the completed import pending")
+	}
+	command, stage = planContinuationCommand(request, current, now)
+	if command != nil || stage != "" {
+		t.Fatalf("unselected saved images planned another capture: stage=%q command=%#v", stage, command)
 	}
 	originalArtifacts := current.Media.Artifacts
 	current.Media.Artifacts = []api.MediaArtifact{

@@ -7347,52 +7347,55 @@ describe("useReleaseSession", () => {
 
   it("publishes and reorders opaque final screenshots through workflow commands", async () => {
     const sourcePath = "C:\\media\\Example";
-    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => {
-      const revision = current.workflow.revision + 1;
-      return {
-        ...current,
-        workflow: {
-          ...current.workflow,
-          revision,
-          media: { id: "media-final", revision },
-        },
-        media: {
-          id: "media-final",
-          workflowId: current.workflow.id,
-          revision,
-          release: current.workflow.release!,
-          releaseRef: { SourcePath: sourcePath, Generation: 1 },
-          projectionSet: current.workflow.trackerProjections!,
-          captureFingerprint: "5".repeat(64),
-          requirementsFingerprint: "6".repeat(64),
-          imageRequirementsPrepared: false,
-          artifacts: [
-            {
-              id: "screen-existing",
-              discId: "disc-one",
-              discName: "Disc 1",
-              kind: "screenshot" as const,
-              purpose: "final" as const,
-              selected: true,
-              order: 0,
-              index: 0,
-            },
-            {
-              id: "screen-generated",
-              discId: "disc-two",
-              discName: "Disc 2",
-              kind: "screenshot" as const,
-              purpose: "final" as const,
-              selected: true,
-              order: 1,
-              index: 1,
-            },
-          ],
-          status: "completed" as const,
-          createdAt: "2026-07-20T00:00:00Z",
-        },
-      };
-    });
+    const captureMedia = vi.fn(
+      async (current: ReleaseWorkflowCurrent, instructions: MediaCaptureInstructions) => {
+        const revision = current.workflow.revision + 1;
+        return {
+          ...current,
+          workflow: {
+            ...current.workflow,
+            revision,
+            media: { id: "media-final", revision },
+          },
+          media: {
+            savedImagePlanId: instructions.savedImagePlanId,
+            id: "media-final",
+            workflowId: current.workflow.id,
+            revision,
+            release: current.workflow.release!,
+            releaseRef: { SourcePath: sourcePath, Generation: 1 },
+            projectionSet: current.workflow.trackerProjections!,
+            captureFingerprint: "5".repeat(64),
+            requirementsFingerprint: "6".repeat(64),
+            imageRequirementsPrepared: false,
+            artifacts: [
+              {
+                id: "screen-existing",
+                discId: "disc-one",
+                discName: "Disc 1",
+                kind: "screenshot" as const,
+                purpose: "final" as const,
+                selected: true,
+                order: 0,
+                index: 0,
+              },
+              {
+                id: "screen-generated",
+                discId: "disc-two",
+                discName: "Disc 2",
+                kind: "screenshot" as const,
+                purpose: "final" as const,
+                selected: true,
+                order: 1,
+                index: 1,
+              },
+            ],
+            status: "completed" as const,
+            createdAt: "2026-07-20T00:00:00Z",
+          },
+        };
+      },
+    );
     const reorderMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
@@ -7455,6 +7458,7 @@ describe("useReleaseSession", () => {
                   Source: "auto",
                 },
               ],
+              autoAdoptSavedImages: true,
               savedTrackerImages: [
                 {
                   trackerId: "AITHER",
@@ -7487,7 +7491,6 @@ describe("useReleaseSession", () => {
       },
     ]);
     expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe("media-plan-1");
-    await act(() => result.current.screenshots.generate("final", []));
     expect(captureMedia).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: "workflow-new" }) }),
       expect.objectContaining({
@@ -7499,6 +7502,7 @@ describe("useReleaseSession", () => {
       expect.any(AbortSignal),
     );
     await act(() => result.current.screenshots.load());
+    expect(captureMedia).toHaveBeenCalledTimes(1);
     await act(() => result.current.screenshots.generate("final"));
 
     expect(captureMedia).toHaveBeenCalledWith(
@@ -8387,9 +8391,12 @@ describe("saved-image plan authority", () => {
     "tracker reassessment",
     "another tab",
     "another tab during plan load",
+    "collection disabled",
+    "collection flag absent",
   ])("refreshes saved-image authority after %s without resetting frame drafts", async (change) => {
     const sourcePath = "C:\\media\\Example.Release.2026.mkv";
     let planID = "plan-before";
+    let autoAdoptSavedImages: boolean | undefined = true;
     let externalSnapshot: ActiveInputSnapshot = { state: "empty", revision: 0 };
     let notifyChange: () => void = () => undefined;
     const deferredPlan =
@@ -8411,6 +8418,7 @@ describe("saved-image plan authority", () => {
         suggestedSelections: [
           { DiscID: "", Index: 0, TimestampSeconds: 10, Frame: 240, Source: "auto" },
         ],
+        autoAdoptSavedImages,
         savedTrackerImages: [
           { trackerId: "AITHER", host: "imgbb", url: "https://images.example.invalid/saved.png" },
         ],
@@ -8464,6 +8472,9 @@ describe("saved-image plan authority", () => {
         });
       }
       planID = "plan-after";
+      if (change.startsWith("collection")) {
+        autoAdoptSavedImages = change === "collection disabled" ? false : undefined;
+      }
       if (change.startsWith("another tab")) {
         const current = result.current.workflow.view.current!;
         const active = result.current.input.view.activeInput;
@@ -8503,15 +8514,18 @@ describe("saved-image plan authority", () => {
       }
       expect(result.current.screenshots.view.selections).toEqual(selections);
       expect(mediaPlan).toHaveBeenCalledTimes(pendingLoad ? 3 : 2);
-      fireEvent.click(screen.getByRole("button", { name: "Use saved images" }));
-      await waitFor(() =>
-        expect(captureMedia).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.objectContaining({ savedImagePlanId: "plan-after", selections: [] }),
-          expect.any(String),
-          expect.any(AbortSignal),
-        ),
-      );
+      if (change.startsWith("collection")) {
+        expect(captureMedia).toHaveBeenCalledTimes(1);
+      } else {
+        await waitFor(() =>
+          expect(captureMedia).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ savedImagePlanId: "plan-after", selections: [] }),
+            expect.any(String),
+            expect.any(AbortSignal),
+          ),
+        );
+      }
     } finally {
       unmount();
     }

@@ -52,6 +52,32 @@ func TestMediaPlanSavedImagesRetainsPreviewURL(t *testing.T) {
 	}
 }
 
+func TestWorkflowMediaPlanKeepsCollectionPolicySeparateFromCachedImages(t *testing.T) {
+	t.Parallel()
+	imagePath := filepath.Join(t.TempDir(), "cached.png")
+	plan := api.ScreenshotPlan{
+		FinalSelections: []api.ScreenshotImage{{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}},
+		TrackerImageLinks: []api.ScreenshotLinkedImage{{
+			Tracker: "AITHER",
+			Path:    imagePath,
+			Host:    "imgbb",
+			URL:     "https://images.example.invalid/cached.png",
+		}},
+	}
+	for _, keepImages := range []bool{true, false} {
+		builder := workflowMediaBuilder{
+			resolver:    workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{KeepImages: keepImages}},
+			screenshots: &workflowScreenshotFake{plan: &plan},
+		}
+		result, err := builder.Plan(t.Context(), api.ReleaseRef{}, api.TrackerReleaseProjectionSet{
+			Projections: []api.TrackerReleaseProjection{{Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}}},
+		}, time.Now())
+		if err != nil || result.AutoAdoptSavedImages != keepImages || len(result.SavedTrackerImages) != 1 {
+			t.Fatalf("keepImages=%t: plan=%#v err=%v", keepImages, result, err)
+		}
+	}
+}
+
 type workflowMediaResolverFake struct {
 	screenshotSubject *api.ScreenshotSubject
 }
@@ -3452,6 +3478,24 @@ func TestWorkflowMediaBuilderRetainsImportedScreenshotsAndSourceURLs(t *testing.
 		countMediaArtifacts(withSuggested.Artifacts, api.MediaArtifactHostedImage) != 2 {
 		t.Fatalf("explicit capture with imported images = %#v captures=%d err=%v", withSuggested, screenshots.captures, err)
 	}
+	// Adding captures must preserve a deliberately unselected imported image.
+	snapshot.Artifacts[0].Selected = false
+	combined, _, err := builder.BuildIncremental(t.Context(), api.ReleaseRef{SourcePath: filepath.Join(root, "Example.Release.2026-GRP.mkv"), Generation: 1},
+		api.TrackerReleaseProjectionSet{
+			ID:          "imported",
+			Revision:    1,
+			Projections: []api.TrackerReleaseProjection{{TrackerID: "AITHER", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}}},
+		},
+		api.MediaCaptureInstructions{
+			Purpose:         api.ScreenshotPurposeFinal,
+			ScreenshotCount: 2,
+			Selections:      plan.SuggestedSelections,
+		},
+		&snapshot, private, time.Now())
+	if err != nil || countMediaArtifacts(combined.Artifacts, api.MediaArtifactScreenshot) != 4 ||
+		combined.Artifacts[0].ID != snapshot.Artifacts[0].ID || combined.Artifacts[0].Selected {
+		t.Fatalf("capture restored an unselected import: artifacts=%#v err=%v", combined.Artifacts, err)
+	}
 }
 
 func TestWorkflowMediaBuilderKeepsSourceOnlyImagesLocal(t *testing.T) {
@@ -3550,6 +3594,39 @@ func TestWorkflowMediaSavedImagePlanIDIgnoresCaptureOverrides(t *testing.T) {
 		countMediaArtifacts(snapshot.Artifacts, api.MediaArtifactHostedImage) != 1 || !hasReviewedHost ||
 		len(screenshots.selections) != 1 || screenshots.selections[0].Index != 2 {
 		t.Fatalf("capture with reviewed saved images = %#v selections=%#v err=%v", snapshot, screenshots.selections, err)
+	}
+
+	// Automatic adoption must not fill the tracker minimum with new captures.
+	projections.Projections[0].Artifacts.ScreenshotCount = 2
+	reviewed, err = builder.Plan(t.Context(), release, projections, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID, err = api.MediaPlanContentID(release, projections, reviewed.SuggestedSelections, reviewed.SavedTrackerImages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, explicitImport := range []bool{false, true} {
+		screenshots.selections = nil
+		instructions := api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal}
+		wantImages := 2
+		if explicitImport {
+			instructions.SavedImagePlanID = planID
+			instructions.Selections = []api.ScreenshotSelection{}
+			wantImages = 1
+		}
+		encoded, err := json.Marshal(instructions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded api.MediaCaptureInstructions
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		snapshot, _, err = builder.Build(t.Context(), release, projections, decoded, time.Now())
+		if err != nil || countMediaArtifacts(snapshot.Artifacts, api.MediaArtifactScreenshot) != wantImages || len(screenshots.selections) != wantImages-1 {
+			t.Fatalf("import-only=%t: images=%#v captured=%#v err=%v", explicitImport, snapshot.Artifacts, screenshots.selections, err)
+		}
 	}
 }
 
@@ -3749,6 +3826,15 @@ func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing
 				t.Fatalf("updated imported media = %#v err=%v", updatedAssets, err)
 			}
 		}
+	}
+	for index := range restored.Artifacts {
+		restored.Artifacts[index].Selected = false
+	}
+	combined, _, err := builder.BuildIncremental(t.Context(), nextRelease, projections,
+		api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal}, &restored, restoredPrivate, time.Now())
+	if err != nil || countMediaArtifacts(combined.Artifacts, api.MediaArtifactScreenshot) != 1 ||
+		combined.Artifacts[0].ID != restored.Artifacts[0].ID || combined.Artifacts[0].Selected {
+		t.Fatalf("readoption restored an unselected import: artifacts=%#v err=%v", combined.Artifacts, err)
 	}
 	if err := os.WriteFile(imagePath, []byte("different screenshot"), 0o600); err != nil {
 		t.Fatal(err)

@@ -92,9 +92,11 @@ type ScreenshotSubject struct {
 	Episode               int
 	Release               ReleaseInfo
 	SelectedBDMVPlaylists []PlaylistInfo
-	DefaultCount          int
-	ManualFrames          []int
-	Discs                 []ScreenshotDiscSubject
+	// KeepImages is the effective image-collection policy for this prepared generation.
+	KeepImages   bool
+	DefaultCount int
+	ManualFrames []int
+	Discs        []ScreenshotDiscSubject
 }
 
 // ScreenshotDiscSubject contains private capture inputs for one ordered disc.
