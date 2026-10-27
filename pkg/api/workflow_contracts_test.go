@@ -572,6 +572,42 @@ func TestWorkflowPublicContractsDeclareNoSecretOrExecutionFields(t *testing.T) {
 	for _, contractType := range types {
 		assertWorkflowTypeHasNoForbiddenFields(t, contractType, forbidden, map[reflect.Type]bool{})
 	}
+	privateAuthority := []string{"sourcepath", "localpath", "token", "credential", "cookie"}
+	for _, contractType := range []reflect.Type{
+		reflect.TypeFor[WorkflowResourceRef](),
+		reflect.TypeFor[MediaPlan](),
+		reflect.TypeFor[UploadDryRunResult](),
+	} {
+		assertWorkflowTypeHasNoForbiddenFields(t, contractType, privateAuthority, map[reflect.Type]bool{})
+	}
+	// Check actual output too, including custom marshalers not described by field tags.
+	for _, value := range []any{
+		WorkflowResourceRef{
+			ID:          "resource-1",
+			ContentType: "image/png",
+			SizeBytes:   42,
+		},
+		MediaPlan{
+			ID:         "plan-1",
+			WorkflowID: "workflow-1",
+			Revision:   3,
+		},
+		UploadDryRunResult{
+			ID:         "dry-run-1",
+			WorkflowID: "workflow-1",
+			Revision:   4,
+		},
+	} {
+		payload, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal public contract %T: %v", value, err)
+		}
+		for _, forbidden := range privateAuthority {
+			if strings.Contains(strings.ToLower(string(payload)), forbidden) {
+				t.Fatalf("public contract %T serialized forbidden authority %q: %s", value, forbidden, payload)
+			}
+		}
+	}
 }
 
 func TestReadyTrackerProjectionRequiresDeclaredSearchName(t *testing.T) {
@@ -701,7 +737,7 @@ func assertWorkflowTypeHasNoForbiddenFields(t *testing.T, contractType reflect.T
 	}
 	seen[contractType] = true
 	for field := range contractType.Fields() {
-		name := strings.ToLower(field.Name)
+		name := strings.ToLower(field.Name + "," + strings.Split(field.Tag.Get("json"), ",")[0])
 		for _, value := range forbidden {
 			if strings.Contains(name, value) {
 				t.Fatalf("public contract %s declares forbidden field %s", contractType, field.Name)

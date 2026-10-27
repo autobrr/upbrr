@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,94 +18,6 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-func TestNewRegistryIncludesHDB(t *testing.T) {
-	registry, err := NewRegistry()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, ok := registry.Lookup("HDB"); !ok {
-		t.Fatal("expected HDB definition to be registered")
-	}
-	if _, ok := registry.Lookup("ANT"); !ok {
-		t.Fatal("expected ANT definition to be registered")
-	}
-	if _, ok := registry.Lookup("MTV"); ok {
-		t.Fatal("did not expect MTV definition to be registered")
-	}
-	if _, ok := registry.Lookup("AR"); !ok {
-		t.Fatal("expected AR definition to be registered")
-	}
-	if _, ok := registry.Lookup("ASC"); !ok {
-		t.Fatal("expected ASC definition to be registered")
-	}
-	if _, ok := registry.Lookup("BHD"); !ok {
-		t.Fatal("expected BHD definition to be registered")
-	}
-	if _, ok := registry.Lookup("BHDTV"); !ok {
-		t.Fatal("expected BHDTV definition to be registered")
-	}
-	if _, ok := registry.Lookup("BJS"); !ok {
-		t.Fatal("expected BJS definition to be registered")
-	}
-	if _, ok := registry.Lookup("BT"); !ok {
-		t.Fatal("expected BT definition to be registered")
-	}
-	if _, ok := registry.Lookup("DC"); !ok {
-		t.Fatal("expected DC definition to be registered")
-	}
-	if _, ok := registry.Lookup("FF"); !ok {
-		t.Fatal("expected FF definition to be registered")
-	}
-	if _, ok := registry.Lookup("FL"); !ok {
-		t.Fatal("expected FL definition to be registered")
-	}
-	if _, ok := registry.Lookup("GPW"); !ok {
-		t.Fatal("expected GPW definition to be registered")
-	}
-	if _, ok := registry.Lookup("ACM"); !ok {
-		t.Fatal("expected ACM definition to be registered")
-	}
-	if _, ok := registry.Lookup("HDS"); !ok {
-		t.Fatal("expected HDS definition to be registered")
-	}
-	if _, ok := registry.Lookup("HDT"); !ok {
-		t.Fatal("expected HDT definition to be registered")
-	}
-	if _, ok := registry.Lookup("IS"); !ok {
-		t.Fatal("expected IS definition to be registered")
-	}
-	if _, ok := registry.Lookup("NBL"); !ok {
-		t.Fatal("expected NBL definition to be registered")
-	}
-	if _, ok := registry.Lookup("PTS"); !ok {
-		t.Fatal("expected PTS definition to be registered")
-	}
-	if _, ok := registry.Lookup("RTF"); !ok {
-		t.Fatal("expected RTF definition to be registered")
-	}
-	if _, ok := registry.Lookup("SPD"); !ok {
-		t.Fatal("expected SPD definition to be registered")
-	}
-	if _, ok := registry.Lookup("THR"); ok {
-		t.Fatal("obsolete THR definition must not be registered")
-	}
-	if _, ok := registry.Lookup("TL"); !ok {
-		t.Fatal("expected TL definition to be registered")
-	}
-	if _, ok := registry.Lookup("TVC"); !ok {
-		t.Fatal("expected TVC definition to be registered")
-	}
-	if _, ok := registry.Lookup("AZ"); !ok {
-		t.Fatal("expected AZ definition to be registered")
-	}
-	if _, ok := registry.Lookup("CZ"); !ok {
-		t.Fatal("expected CZ definition to be registered")
-	}
-	if _, ok := registry.Lookup("PHD"); !ok {
-		t.Fatal("expected PHD definition to be registered")
-	}
-}
 
 func TestNameProvidersFollowTrackerMetadataAuthority(t *testing.T) {
 	t.Parallel()
@@ -717,8 +630,10 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if !slices.Equal(names, want) {
 		t.Fatalf("registered trackers = %v, want %v", names, want)
 	}
-	if slices.Contains(names, "MANUAL") {
-		t.Fatal("MANUAL must not be registered")
+	for _, excluded := range []string{"MANUAL", "MTV", "THR"} {
+		if slices.Contains(names, excluded) {
+			t.Fatalf("%s must not be registered", excluded)
+		}
 	}
 	specialModes := map[string]trackers.UploadContentMode{
 		"BTN": trackers.UploadContentModeNone,
@@ -726,6 +641,13 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 		"RTF": trackers.UploadContentModeScreenshots,
 	}
 	for _, name := range names {
+		descriptor, ok := registry.LookupDescriptor(name)
+		if !ok || !validationPolicyIDIsVersioned(descriptor.Validation.ID) {
+			t.Fatalf("%s validation policy is not explicitly versioned: %q", name, descriptor.Validation.ID)
+		}
+		if policy, ok := registry.LookupDupePolicy(name); !ok || strings.TrimSpace(policy.ID) == "" {
+			t.Fatalf("%s versioned duplicate policy missing", name)
+		}
 		mode, ok := registry.LookupUploadContentMode(name)
 		if !ok || !mode.Valid() {
 			t.Fatalf("%s upload content mode = %q, %t", name, mode, ok)
@@ -769,73 +691,6 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v6" ||
 		policy.EvidenceID != "ant-slots-staff-overrides" || policy.TargetSlot == nil || !policy.StaffTokenOverride {
 		t.Fatalf("ANT dupe policy = %#v, %t", policy, ok)
-	}
-}
-
-func TestNewRegistryMigrationInventoryClassifiesEveryBuiltIn(t *testing.T) {
-	registry, err := NewRegistry()
-	if err != nil {
-		t.Fatalf("new registry: %v", err)
-	}
-
-	familyCounts := map[trackers.Family]int{}
-	for _, name := range registry.Names() {
-		descriptor, ok := registry.LookupDescriptor(name)
-		if !ok {
-			t.Fatalf("%s descriptor missing", name)
-		}
-		definition, ok := registry.Lookup(name)
-		if !ok {
-			t.Fatalf("%s definition missing", name)
-		}
-		if (descriptor.ReleaseNamePolicy.Resolver == nil && descriptor.ReleaseNamePolicy.Structured == nil) || strings.TrimSpace(descriptor.ReleaseNamePolicy.ID) == "" ||
-			strings.TrimSpace(descriptor.ProjectorVersion) == "" {
-			t.Fatalf("%s versioned release projector missing", name)
-		}
-		if policy, ok := registry.LookupDupePolicy(name); !ok || strings.TrimSpace(policy.ID) == "" {
-			t.Fatalf("%s versioned duplicate policy missing", name)
-		}
-
-		var namingAndTaxonomyOwner string
-		switch descriptor.Family {
-		case trackers.FamilyUnit3D:
-			namingAndTaxonomyOwner = "unit3d-site-profile"
-		case trackers.FamilyAZFamily:
-			namingAndTaxonomyOwner = "azfamily-site-definition"
-		case trackers.FamilyStandalone:
-			namingAndTaxonomyOwner = "standalone-prepared-operation"
-		case trackers.FamilyUnknown:
-			t.Fatalf("%s family is unclassified", name)
-		}
-		familyCounts[descriptor.Family]++
-
-		_, hasDupeAdapter := definition.(dupe.Factory)
-		t.Logf(
-			"tracker=%s family=%s naming_taxonomy=%s dupe_adapter=%t metadata=%t rules=%t audio=%t artifacts=%t upload_artifact=%t images=%t description_group=%q auth=%t claim=%t banned_static=%t banned_live=%t localized_metadata=%t content_mode=%s",
-			name,
-			descriptor.Family,
-			namingAndTaxonomyOwner,
-			hasDupeAdapter,
-			descriptor.Metadata != nil,
-			descriptor.Rules != nil,
-			descriptor.AudioPolicy != nil,
-			descriptor.Artifact != nil,
-			descriptor.UploadArtifact != nil,
-			descriptor.ImageHost != nil,
-			descriptor.DescriptionGroup,
-			descriptor.AuthCapability != nil || descriptor.AuthResolver != nil,
-			descriptor.ClaimPolicy != nil || descriptor.ClaimFactory != nil,
-			len(descriptor.BannedGroups) > 0,
-			descriptor.BannedPolicy != nil,
-			descriptor.MetadataLocale != "",
-			descriptor.UploadContentMode,
-		)
-	}
-
-	for _, family := range []trackers.Family{trackers.FamilyUnit3D, trackers.FamilyAZFamily, trackers.FamilyStandalone} {
-		if familyCounts[family] == 0 {
-			t.Fatalf("migration inventory has no %s definitions", family)
-		}
 	}
 }
 
@@ -1106,33 +961,39 @@ func TestNewRegistryIncludesAuthResolvers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	for _, tracker := range []string{"AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF"} {
-		if _, ok := registry.LookupAuthSessionResolver(tracker); !ok {
-			t.Errorf("expected %s tracker-owned auth resolver", tracker)
-		}
-		capability, ok := registry.LookupAuthCapability(tracker)
-		if !ok || capability.TrackerID != tracker {
-			t.Errorf("%s auth capability = %#v, %t", tracker, capability, ok)
-		}
-		if tracker != "AZ" && tracker != "CZ" && tracker != "HDB" && tracker != "HDT" && tracker != "PHD" && !capability.SupportsLogin {
-			t.Errorf("expected %s login capability", tracker)
-		}
-	}
-}
-
-func TestNewRegistryIncludesAuthCapabilities(t *testing.T) {
-	registry, err := NewRegistry()
-	if err != nil {
-		t.Fatalf("new registry: %v", err)
-	}
 	for _, tracker := range registry.Names() {
+		wantMode := "api_key"
+		switch tracker {
+		case "AZ", "CZ", "PHD":
+			wantMode = "form"
+		case "AR", "FF", "FL":
+			wantMode = "cookies_or_login"
+		case "ASC", "BJS", "BT", "HDS", "HDT", "IS", "PTS":
+			wantMode = "cookies"
+		case "BTN", "PTP":
+			wantMode = "api_and_upload_session"
+		case "CZT":
+			wantMode = "passkey"
+		case "HDB":
+			wantMode = "passkey_cookie"
+		case "RTF":
+			wantMode = "api_key_or_refresh"
+		case "TL":
+			wantMode = "form_upload"
+		}
+		wantLogin := slices.Contains([]string{"AR", "BTN", "FF", "FL", "PTP", "RTF"}, tracker)
+		wantResolver := slices.Contains([]string{"AR", "AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF"}, tracker)
+		want2FA := tracker == "BTN" || tracker == "PTP"
 		capability, ok := registry.LookupAuthCapability(tracker)
-		if !ok || capability.TrackerID != tracker {
+		if !ok || capability.TrackerID != tracker || capability.SupportsLogin != wantLogin {
 			t.Errorf("%s auth capability = %#v, %t", tracker, capability, ok)
 		}
 		requirements, ok := registry.ResolveEffectiveAuthRequirements(tracker, config.Config{}, config.TrackerConfig{})
-		if !ok || len(requirements.Alternatives) == 0 {
+		if !ok || len(requirements.Alternatives) == 0 || requirements.Mode != wantMode || requirements.Supports2FA != want2FA {
 			t.Errorf("%s effective auth requirements = %#v, %t", tracker, requirements, ok)
+		}
+		if _, ok := registry.LookupAuthSessionResolver(tracker); ok != wantResolver {
+			t.Errorf("%s auth resolver = %t, want %t", tracker, ok, wantResolver)
 		}
 	}
 }
@@ -1275,9 +1136,30 @@ func TestNewRegistryDeclaresDescriptionGroups(t *testing.T) {
 	if got := trackers.DescriptionOverrideGroupForTrackerWithRegistry("AITHER", registry); got != "unit3d" {
 		t.Fatalf("AITHER description group = %q", got)
 	}
+	for _, name := range registry.Names() {
+		descriptor, _ := registry.LookupDescriptor(name)
+		want := ""
+		if descriptor.Family == trackers.FamilyStandalone || slices.Contains([]string{"ACM", "OE", "SP"}, name) {
+			want = strings.ToLower(name)
+		}
+		if descriptor.DescriptionGroup != want {
+			t.Errorf("%s description group = %q, want %q", name, descriptor.DescriptionGroup, want)
+		}
+	}
 	if policy, ok := registry.LookupClaimPolicy("AITHER"); !ok || !policy.APIBacked {
 		t.Fatalf("AITHER claim policy = %#v, %t", policy, ok)
 	}
+}
+
+func validationPolicyIDIsVersioned(id string) bool {
+	for component := range strings.SplitSeq(id, "+") {
+		prefix, versionText, ok := strings.CutLast(component, "-v")
+		version, err := strconv.Atoi(versionText)
+		if !ok || prefix == "" || err != nil || version < 1 {
+			return false
+		}
+	}
+	return true
 }
 
 func TestSavedDescriptionGroupPreservesGeneratedContent(t *testing.T) {

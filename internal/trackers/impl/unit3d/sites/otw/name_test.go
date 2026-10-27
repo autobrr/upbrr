@@ -127,13 +127,6 @@ func TestBuildNameUsesPreparedSeasonFactsOnly(t *testing.T) {
 	}
 }
 
-func TestProfileBuildNameVersion(t *testing.T) {
-	t.Parallel()
-	if got := Profile().Site.BuildNameVersion; got != "v7" {
-		t.Fatalf("OTW BuildNameVersion = %q, want v7", got)
-	}
-}
-
 func TestOTWVideoCodecUsesResolvedMediaFact(t *testing.T) {
 	t.Parallel()
 

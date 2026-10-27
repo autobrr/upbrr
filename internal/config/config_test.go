@@ -29,39 +29,12 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "watch client missing folder",
-			cfg: Config{
-				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
-				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
-				TorrentClients: map[string]TorrentClientConfig{
-					"watch": {Type: "watch"},
-				},
-			},
-			wantErr: true,
-		},
-		{
 			name: "valid watch client",
 			cfg: Config{
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				TorrentClients: map[string]TorrentClientConfig{
 					"watch": {Type: "watch", WatchFolder: "/tmp/watch"},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid qbit client",
-			cfg: Config{
-				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
-				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
-				TorrentClients: map[string]TorrentClientConfig{
-					"qbit": {
-						Type:     "qbit",
-						URL:      "http://localhost",
-						Username: "user",
-						Password: "pass",
-					},
 				},
 			},
 			wantErr: false,

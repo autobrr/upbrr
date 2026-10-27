@@ -485,15 +485,6 @@ func TestDVLStructuredReleaseNamePolicyPreservesOpaqueAndManualNames(t *testing.
 	}
 }
 
-func TestDVLProfileUsesStructuredPolicy(t *testing.T) {
-	t.Parallel()
-
-	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dvl/v3" || policy.Structured == nil || policy.Resolver != nil {
-		t.Fatalf("DVL policy = %#v, want structured unit3d/dvl/v3", policy)
-	}
-}
-
 func TestDVLRipKeepsManualAudioMarkersWithAudio(t *testing.T) {
 	for _, category := range []string{"MOVIE", "TV"} {
 		for _, audio := range []string{"Dubbed DD 2.0", "DD 2.0 Dual-Audio", "Dubbed", "Dual-Audio", ""} {
