@@ -119,19 +119,24 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 						FileList:      derived.FileList,
 						Type:          derived.Type,
 						Anime:         true,
+						AnimeKnown:    true,
 						LanguageFacts: facts,
 					}, api.NopLogger{})
 					if err != nil {
 						t.Fatal(err)
 					}
+					assumptions := 0
 					for _, failure := range failures {
-						if tracker == "LST" && failure.Rule == "language_lst_audio_layout_evidence" && failure.EvidenceStatus == api.MetadataEvidenceStatusPartial {
-							continue
+						if failure.Rule == "language_lst_audio_layout_assumed" {
+							assumptions++
 						}
 						if tracker != "LST" && failure.Rule == "language_evidence" ||
 							strings.HasPrefix(failure.Rule, "language_") && trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
 							t.Errorf("%s blocked the selected report's ordinary English/Japanese audio: %+v", tracker, failure)
 						}
+					}
+					if tracker == "LST" && assumptions != 1 {
+						t.Fatalf("pack needs one layout assumption warning: %+v", failures)
 					}
 					if !reflect.DeepEqual(facts, before) {
 						t.Fatal("tracker eligibility mutated canonical partial pack facts")
