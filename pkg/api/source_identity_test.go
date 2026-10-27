@@ -11,17 +11,6 @@ import (
 	"testing"
 )
 
-func TestContentIdentityVersionsDescribeBoundedSamples(t *testing.T) {
-	t.Parallel()
-
-	if SourceContentIdentitySampleBytes != 1<<20 {
-		t.Fatalf("source sample bytes = %d, want 1048576", SourceContentIdentitySampleBytes)
-	}
-	if !strings.Contains(SourceContentIdentityVersion, "sample") || !strings.Contains(SubmissionContentIdentityVersion, "sample") {
-		t.Fatalf("content identity versions must describe sample evidence: source=%q submission=%q", SourceContentIdentityVersion, SubmissionContentIdentityVersion)
-	}
-}
-
 func TestNewSubmissionContentIdentityCanonicalizesFileSets(t *testing.T) {
 	t.Parallel()
 

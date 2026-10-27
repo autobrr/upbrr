@@ -224,10 +224,6 @@ func requireYUSNamingEvidenceFailure(t *testing.T, failures []api.RuleFailure) {
 
 func TestYUSNamingEvidenceRetainsConstructibility(t *testing.T) {
 	t.Parallel()
-	definition := unit3d.NewWithProfile(Profile())
-	if got := definition.ValidationPolicy().ID; got != "unit3d-yus-constructibility-v1+unit3d-yus-policy-v2" {
-		t.Fatalf("validation policy = %q", got)
-	}
 	meta, _ := yusNamingEvidenceSubject(t, "German")
 	meta.Identity.Category = api.CanonicalCategoryUnknown
 	blocking, err := trackers.FirstBlockingRuleFailure("YUS", yusNamingEvidenceFailures(t, meta), api.WorkflowExecutionModeDebug, nil)

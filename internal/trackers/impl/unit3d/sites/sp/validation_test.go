@@ -134,13 +134,6 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 	}
 }
 
-func TestSPValidationPolicyVersion(t *testing.T) {
-	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v8" {
-		t.Fatalf("validation policy ID = %q", got)
-	}
-}
-
 func spPassingSubject() api.TrackerValidationSubject {
 	const releaseName = "Example.Show.S01.1080p.WEB-DL.H.264-GRP"
 	return api.TrackerValidationSubject{

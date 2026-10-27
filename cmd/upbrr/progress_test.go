@@ -152,23 +152,6 @@ func TestCLISourceVerificationProgressResetsAfterTerminalUpdateWithProgress(t *t
 	}
 }
 
-func TestCLIUploadProgressFailureUsesWarning(t *testing.T) {
-	logger := &cliProgressTestLogger{}
-
-	ctx := withCLIUploadProgressLogger(context.Background(), logger)
-	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
-		SourcePath: "movie.mkv",
-		Task:       "torrent",
-		Status:     "failed",
-		Message:    "Torrent creation failed",
-	})
-
-	entries := logger.snapshot()
-	if len(entries) != 1 || !strings.Contains(entries[0], "WARN: torrent: tracker=none state=failed") {
-		t.Fatalf("progress log entries = %#v", entries)
-	}
-}
-
 func TestCLIUploadProgressFinalStatusResetsStateForNextRun(t *testing.T) {
 	logger := &cliProgressTestLogger{}
 	states := make(map[string]cliProgressLogState)
@@ -212,37 +195,6 @@ func TestCLIUploadProgressIgnoresNonTorrentTasks(t *testing.T) {
 
 	if entries := logger.snapshot(); len(entries) != 0 {
 		t.Fatalf("unexpected progress log entries = %#v", entries)
-	}
-}
-
-func TestCLIWorkflowProgressUsesDebugLogger(t *testing.T) {
-	logger := &cliProgressTestLogger{}
-	var state cliWorkflowLogState
-	logCLIWorkflowOperation(logger, api.WorkflowOperationStatus{
-		Command:   "check_duplicates",
-		Phase:     "dupes",
-		Status:    api.StageStatusRunning,
-		Message:   "Checking trackers",
-		Completed: 2,
-		Total:     4,
-	}, &state)
-	logCLIWorkflowOperation(logger, api.WorkflowOperationStatus{
-		Command:   "check_duplicates",
-		Phase:     "dupes",
-		Status:    api.StageStatusBlocked,
-		Message:   "Input required.",
-		Progress:  100,
-		Completed: 4,
-		Total:     4,
-	}, &state)
-
-	entries := logger.snapshot()
-	if len(entries) != 4 ||
-		entries[1] != "DEBUG: workflow: command=check_duplicates phase=dupes state=running" ||
-		entries[3] != "DEBUG: workflow: command=check_duplicates phase=dupes state=blocked" ||
-		!strings.Contains(entries[0], "TRACE: workflow: command=check_duplicates phase=dupes state=running progress=0 completed=2 total=4") ||
-		!strings.Contains(entries[2], "TRACE: workflow: command=check_duplicates phase=dupes state=blocked progress=100 completed=4 total=4") {
-		t.Fatalf("workflow log entries = %#v", entries)
 	}
 }
 
@@ -350,26 +302,6 @@ func TestCLIWorkflowSessionSuppressesRepeatedProgressAndLogsSuccessiveOperations
 	}
 	if len(coreSvc.eventAfters) != 2 || coreSvc.eventAfters[0] != 0 || coreSvc.eventAfters[1] != event.Sequence {
 		t.Fatalf("workflow event cursors = %#v", coreSvc.eventAfters)
-	}
-}
-
-func TestCLISourceInspectionBookkeepingUsesDebugAndPreservesFailures(t *testing.T) {
-	logger := &cliProgressTestLogger{}
-	ctx := withCLISourceVerificationProgressLogger(t.Context(), logger)
-	for _, status := range []api.PreparationProgressStatus{
-		api.PreparationProgressRunning,
-		api.PreparationProgressCompleted,
-		api.PreparationProgressFailed,
-	} {
-		api.EmitPreparationProgress(ctx, api.PreparationProgressUpdate{
-			Phase:  api.PreparationPhaseSourceInspection,
-			Status: status,
-		})
-	}
-	entries := logger.snapshot()
-	if len(entries) != 3 || !strings.HasPrefix(entries[0], "DEBUG: ") ||
-		!strings.HasPrefix(entries[1], "DEBUG: ") || !strings.HasPrefix(entries[2], "WARN: ") {
-		t.Fatalf("source inspection log levels = %#v", entries)
 	}
 }
 

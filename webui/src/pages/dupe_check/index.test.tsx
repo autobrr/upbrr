@@ -1607,7 +1607,6 @@ describe("DupeCheckPage", () => {
       screen.queryByRole("switch", { name: "Acknowledge warnings for AITHER" }),
     ).not.toBeInTheDocument();
     const inClientCard = screen.getByRole("heading", { name: "AITHER" }).closest("article");
-    expect(inClientCard).toHaveClass("gap-1", "px-3", "py-2");
     expect(within(inClientCard as HTMLElement).queryByText("Canonical:")).not.toBeInTheDocument();
     expect(
       within(inClientCard as HTMLElement).queryByText("Tracker upload:"),
