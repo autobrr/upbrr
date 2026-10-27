@@ -3081,3 +3081,75 @@ func TestHardcodedCoveragePreservesCustomBareNames(t *testing.T) {
 		}
 	}
 }
+
+func TestDeriveMediaFactsResolutionHeightFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		parsed     string
+		manual     *string
+		discType   string
+		scan       string
+		resolution string
+	}{
+		{name: "dimension fallback", resolution: "720p"},
+		{
+			name:       "lower filename",
+			parsed:     "540p",
+			resolution: "720p",
+		},
+		{
+			name:       "higher filename",
+			parsed:     "1080p",
+			resolution: "1080p",
+		},
+		{
+			name:       "manual correction",
+			parsed:     "540p",
+			manual:     new("480p"),
+			resolution: "480p",
+		},
+		{
+			name:     "unsupported DVD interlaced floor clears filename",
+			parsed:   "540i",
+			discType: "DVD",
+			scan:     "Interlaced",
+		},
+		{
+			name:       "manual DVD correction",
+			parsed:     "540i",
+			manual:     new("540i"),
+			discType:   "DVD",
+			scan:       "Interlaced",
+			resolution: "540i",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			miPath := filepath.Join(t.TempDir(), "mediainfo.json")
+			scan := tc.scan
+			if scan == "" {
+				scan = "Progressive"
+			}
+			payload := `{"media":{"track":[{"@type":"Video","Format":"AVC","Width":"960","Height":"720","ScanType":"` + scan + `"}]}}`
+			if err := os.WriteFile(miPath, []byte(payload), 0o600); err != nil {
+				t.Fatalf("write mediainfo: %v", err)
+			}
+			svc := NewService(&stubRepo{}, WithConfig(config.Config{}))
+			meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
+				SourcePath:           filepath.Join(t.TempDir(), "source.mkv"),
+				MediaInfoJSONPath:    miPath,
+				Release:              api.ReleaseInfo{Title: "Example Film", Resolution: tc.parsed},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Resolution: tc.manual},
+				DiscType:             tc.discType,
+			})
+			if err != nil {
+				t.Fatalf("derive media facts: %v", err)
+			}
+			if meta.Release.Resolution != tc.resolution || meta.ResolvedNaming.Resolution != tc.resolution {
+				t.Fatalf("resolution=%q resolved=%q, want %q", meta.Release.Resolution, meta.ResolvedNaming.Resolution, tc.resolution)
+			}
+			if tc.discType == "" && !strings.Contains(meta.ReleaseName, tc.resolution) {
+				t.Fatalf("release name %q lacks %q", meta.ReleaseName, tc.resolution)
+			}
+		})
+	}
+}

@@ -338,7 +338,7 @@ func mapDVDResolution(res string, guessed string, width int, scan string) string
 
 	widthMap := map[string]string{
 		"3840p":  "2160p",
-		"2560p":  "1550p",
+		"2560p":  "1440p",
 		"1920p":  "1080p",
 		"1920i":  "1080i",
 		"1280p":  "720p",
@@ -350,7 +350,8 @@ func mapDVDResolution(res string, guessed string, width int, scan string) string
 		"854i":   "480i",
 		"720p":   "576p",
 		"720i":   "576i",
-		"15360p": "4320p",
+		"7680p":  "4320p",
+		"15360p": "8640p",
 		"OTHERp": "OTHER",
 	}
 
@@ -374,32 +375,52 @@ func snapAndMapResolution(width int, height int, scan string, guessed string) (i
 	closestHeight := closestDVDValue(canonicalResolutionHeights, height)
 	resKey := fmt.Sprintf("%dx%d%s", closestWidth, closestHeight, scan)
 	resolution := mapDVDResolution(resKey, guessed, closestWidth, scan)
-	return closestWidth, closestHeight, resolution
+	return closestWidth, closestHeight, resolutionWithHeightFloor(resolution, height, scan)
 }
 
-// resolutionFromMediaInfo derives a standard resolution string from a MediaInfo
-// document for non-DVD content. It mirrors the Python get_resolution() logic:
-// read Width/Height from the video track, snap each using the same Python
-// closest() helper semantics, compose a WxHscan key, and map it through the
-// same resolution table used for DVD content. Returns "" when
-// the video track is absent or either dimension is zero.
-func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string) string {
+// resolutionWithHeightFloor preserves width-based cropped-video classifications,
+// but never assigns a tier below the highest known tier reached by the measured
+// height. Unsupported scan/tier
+// combinations remain unknown rather than being relabeled as progressive.
+func resolutionWithHeightFloor(resolution string, height int, scan string) string {
+	minimum := 0
+	for _, tier := range canonicalResolutionHeights {
+		if tier <= height && tier > minimum {
+			minimum = tier
+		}
+	}
+	current, _ := strconv.Atoi(strings.TrimRight(strings.ToLower(strings.TrimSpace(resolution)), "pi"))
+	if minimum == 0 || current >= minimum {
+		return resolution
+	}
+	return mapDVDResolution("", fmt.Sprintf("%d%s", minimum, scan), 0, scan)
+}
+
+// resolutionFromMediaInfo retains filename evidence when dimensions are missing.
+// Otherwise it floors automatic filename or dimension-based classifications at
+// the measured height tier. Explicit manual corrections are applied later.
+func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string, guessed string) string {
 	_, videoTracks, _ := splitMediaInfoTracks(doc)
 	if len(videoTracks) == 0 {
-		return ""
+		return guessed
 	}
 	track := videoTracks[0]
 
 	width := trackNumericInt(track, "Width")
 	height := trackNumericInt(track, "Height")
 	if width == 0 || height == 0 {
-		return ""
+		return guessed
 	}
 
 	scanType := strings.TrimSpace(trackString(track, "ScanType"))
 	scan := normalizeDVDScan(scanType, sourcePath)
 
-	_, _, resolution := snapAndMapResolution(width, height, scan, "")
+	resolution := strings.TrimSpace(guessed)
+	if resolution == "" {
+		_, _, resolution = snapAndMapResolution(width, height, scan, "")
+	} else {
+		resolution = resolutionWithHeightFloor(resolution, height, scan)
+	}
 	if resolution == "OTHER" {
 		return ""
 	}

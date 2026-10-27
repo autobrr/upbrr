@@ -198,7 +198,9 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	}
 	if strings.EqualFold(meta.DiscType, "DVD") {
 		dvdDetails := extractDVDMediaInfo(meta)
-		if strings.TrimSpace(dvdDetails.Resolution) != "" && !strings.EqualFold(dvdDetails.Resolution, "OTHER") {
+		if strings.EqualFold(dvdDetails.Resolution, "OTHER") {
+			meta.Release.Resolution = ""
+		} else if strings.TrimSpace(dvdDetails.Resolution) != "" {
 			meta.Release.Resolution = dvdDetails.Resolution
 		}
 		dvdDetails.SourcePath = meta.SourcePath
@@ -213,11 +215,10 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 			return preparationstate.State{}, fmt.Errorf("metadata: persist dvd mediainfo details: %w", err)
 		}
 	}
-	// For non-DVD content, if rls did not parse a resolution from the filename,
-	// fall back to deriving it from the MediaInfo video track dimensions —
-	// matching the Python get_resolution() behaviour.
-	if strings.TrimSpace(meta.Release.Resolution) == "" && !strings.EqualFold(meta.DiscType, "DVD") {
-		if res := resolutionFromMediaInfo(miDoc, meta.SourcePath); res != "" {
+	// Measured height constrains automatic filename evidence as well as the
+	// dimension fallback. Explicit resolution corrections are applied later.
+	if !strings.EqualFold(meta.DiscType, "DVD") {
+		if res := resolutionFromMediaInfo(miDoc, meta.SourcePath, meta.Release.Resolution); res != meta.Release.Resolution {
 			meta.Release.Resolution = res
 			logger.Debugf("metadata: resolution derived from mediainfo %q", res)
 		}
