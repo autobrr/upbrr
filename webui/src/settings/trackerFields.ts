@@ -37,6 +37,7 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   }),
   FaviconURL: stringField("FaviconURL", { label: "Favicon URL", advanced: true }),
   UploaderName: stringField("UploaderName", { label: "Uploader name" }),
+  GuruTrump: boolField("GuruTrump", { label: "Guru+ intended trump uploads" }),
   UploaderStatus: boolField("UploaderStatus", { label: "Uploader status" }),
   CustomLayout: stringField("CustomLayout", { label: "Custom layout" }),
   TagForCustomRelease: stringField("TagForCustomRelease", { label: "Tag for custom release" }),
@@ -87,3 +88,4 @@ export const trackerFieldPresentation = (key: string): FieldMeta => {
   if (!field) throw new Error(`Unsupported tracker config field: ${key}`);
   return field;
 };
+

@@ -544,6 +544,9 @@ type DupePolicy struct {
 	// StaffTokenOverride requires owner attestation of staff-token possession to
 	// override duplicate or incomplete-search evidence. No token value is retained.
 	StaffTokenOverride bool `json:",omitempty"`
+	// StaffTokenOverrideRequired optionally resolves attestation against the reviewed
+	// release and evaluated candidates. It does not change duplicate relations.
+	StaffTokenOverrideRequired func(config.TrackerConfig, api.DuplicateSubject, []api.DupeCandidateEvaluation) bool `json:"-"`
 	// ID is the stable versioned comparison-policy identifier.
 	ID string
 	// EvidenceID identifies the policy evidence backing automatic
@@ -1029,3 +1032,4 @@ func (input PreparationInput) StaffUploadToken() api.StaffUploadToken {
 	}
 	return selected
 }
+

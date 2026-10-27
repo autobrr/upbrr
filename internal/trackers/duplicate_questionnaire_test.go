@@ -10,6 +10,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// regression: #803
 func TestDuplicateQuestionnairesUseEvaluatedCandidatesAndReviewedAnswers(t *testing.T) {
 	registry := NewRegistry()
 	if err := registry.RegisterDescriptor(Descriptor{
@@ -18,6 +19,9 @@ func TestDuplicateQuestionnairesUseEvaluatedCandidatesAndReviewedAnswers(t *test
 		Family:      FamilyStandalone,
 		Definition:  projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}},
 		DupePolicy: &DupePolicy{ID: "example/v1", Questionnaire: func(input PreparationInput) []api.TrackerQuestionnaireField {
+			if !input.TrackerConfig.GuruTrump {
+				t.Fatal("effective tracker configuration was omitted")
+			}
 			candidates := input.Meta.TrackerDuplicateReviewCandidates["EXAMPLE"]
 			if len(candidates) != 1 || candidates[0].ID != "actual" || candidates[0].EvidenceFingerprint != "current" {
 				t.Fatalf("unbound candidates: %+v", candidates)
@@ -35,7 +39,7 @@ func TestDuplicateQuestionnairesUseEvaluatedCandidatesAndReviewedAnswers(t *test
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projector, err := NewWorkflowProjector(registry, config.Config{}, api.NopLogger{})
+	projector, err := NewWorkflowProjector(registry, config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"EXAMPLE": {GuruTrump: true}}}}, api.NopLogger{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,3 +120,4 @@ func TestDuplicateQuestionnairesUseEffectivePersonalRelease(t *testing.T) {
 		})
 	}
 }
+

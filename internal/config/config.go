@@ -320,6 +320,7 @@ type TrackerConfig struct {
 	AnnounceURL         string `yaml:"announce_url" json:"AnnounceURL"`
 	MyAnnounceURL       string `yaml:"my_announce_url" json:"MyAnnounceURL"`
 	FaviconURL          string `yaml:"favicon_url" json:"FaviconURL"`
+	GuruTrump           bool   `yaml:"guru_trump" json:"GuruTrump"`
 	UploaderStatus      bool   `yaml:"uploader_status" json:"UploaderStatus"`
 	CustomLayout        string `yaml:"custom_layout" json:"CustomLayout"`
 	TagForCustomRelease string `yaml:"tag_for_custom_release" json:"TagForCustomRelease"`
@@ -1542,3 +1543,4 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+

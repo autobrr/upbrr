@@ -86,6 +86,8 @@ On **Dupe Checking**, open **Tracker questions** for a selected tracker, review 
 
 Questions remain for genuine upload inputs, naming choices and ambiguous track associations that available metadata cannot supply. Available provider genres can supply genre tags automatically; unsupported or missing defaults may use a supported fallback provider. Explicit tag answers and genre corrections, including clears, take precedence. An optional tag field may remain empty when the destination can obtain genres from its metadata provider. Required fields with supplied values are identified separately from missing answers; optional controls do not require a response. Correct missing canonical facts on **Input**. An answer cannot waive an independent prohibited or staff-only finding. Existing debug-mode policy bypasses also leave eligibility-only questions optional; evidence needed to construct names, payloads or required descriptions remains necessary.
 
+Where supported, an opt-in class-based replacement setting exposes an explicit intended-replacement choice and optional reason in tracker questions. The setting alone does not approve a replacement: review the current release and duplicate evidence, then confirm upload as usual. Changing the source generation requires a fresh intention. Exact duplicates and files already present in the client keep their existing protections. Staff-managed authorization remains site-side and requires no token value in these controls. Unattended operation does not supply missing confirmations.
+
 ## Names and payloads
 
 Automatic downscale markers require explicit evidence in the source name; output resolution alone does not establish a downscaled source. A destination may omit or position an evidenced marker differently. Review the projected name, and use a complete name override when a source does not provide enough evidence.
@@ -135,3 +137,4 @@ Trackers can restrict usable image hosts or select tracker-specific image/client
 Tracker implementation work requires registry, auth, naming, duplicate-search, validation, payload, and test contracts. Read [ADDING_TRACKERS.md](https://github.com/autobrr/upbrr/blob/main/ADDING_TRACKERS.md) before changing code.
 
 For a tracker defect, report the smallest sanitized reproduction. Omit private rules, credentials, response bodies, and private URLs unless tracker staff have authorized publication.
+

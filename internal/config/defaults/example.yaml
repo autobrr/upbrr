@@ -153,6 +153,7 @@ trackers:
     api_key: ""
     announce_url: ""
     anon: false
+    guru_trump: false
   AR:
     link_dir_name: ""
     username: ""
@@ -486,3 +487,4 @@ torrent_clients:
     automatic_management_paths:
       - ""
     verify_webui_certificate: true
+
