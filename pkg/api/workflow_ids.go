@@ -325,6 +325,8 @@ type RequiredActionOption struct {
 
 // RequiredAction is a transport-safe backend-defined manual action.
 type RequiredAction struct {
+	// ReleaseRule identifies a shared release-policy confirmation, never a tracker waiver.
+	ReleaseRule            string                     `json:"releaseRule,omitempty"`
 	CorrectionConfirmation *CorrectionConfirmation    `json:"correctionConfirmation,omitempty"`
 	ID                     RequiredActionID           `json:"id"`
 	Kind                   RequiredActionKind         `json:"kind"`

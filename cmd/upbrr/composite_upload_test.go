@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"io"
 	"slices"
@@ -1201,6 +1202,40 @@ func TestCLICompositeDuplicateComparisonIsOptional(t *testing.T) {
 				}
 			} else if feedback.Response.DuplicateReview == nil || feedback.Response.DuplicateReview.Decision != api.DupeDecisionAccepted || feedback.Response.Questionnaire != nil {
 				t.Fatalf("ordinary duplicate decision changed: %+v", feedback)
+			}
+		})
+	}
+}
+
+func TestCLISharedModifiedReleaseConfirmationSubmitsOneDecision(t *testing.T) {
+	for _, test := range []struct {
+		name, input string
+		mode        api.InteractionMode
+		want        bool
+		prompt      bool
+	}{
+		{"yes", "y\n", api.InteractionModeInteractive, true, true},
+		{"no", "n\n", api.InteractionModeInteractive, false, true},
+		{"unattended", "", api.InteractionModeUnattended, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			session := &cliWorkflowSession{intent: cliWorkflowIntent{interaction: test.mode}, streams: cliIO{out: &output}}
+			action := api.RequiredAction{
+Kind: api.RequiredActionAuthorizeRules,
+ ReleaseRule: "modified_release",
+ Prompt: "Verify source provenance for all selected trackers?",
+}
+			feedback, declined, err := session.collectCompositeRuleOverrideFeedback(bufio.NewReader(strings.NewReader(test.input)), action, api.ReleaseWorkflowUploadFeedback{})
+			if err != nil || declined || feedback.Response.RuleAuthorization == nil || feedback.Response.RuleAuthorization.Confirmed != test.want {
+				t.Fatalf("shared answer=%#v declined=%v error=%v", feedback, declined, err)
+			}
+			wantPrompts := 0
+			if test.prompt {
+				wantPrompts = 1
+			}
+			if got := strings.Count(output.String(), action.Prompt); got != wantPrompts {
+				t.Fatalf("prompts=%d, want %d", got, wantPrompts)
 			}
 		})
 	}
