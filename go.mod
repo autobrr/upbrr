@@ -21,7 +21,7 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/frustra/bbcode v0.0.0-20201127003707-6ef347fbe1c8
-	github.com/go-fft/fft v0.0.0-20260831114610-598cacbd5c9a
+	github.com/go-fft/fft v0.28.1
 	github.com/muesli/cancelreader v0.2.2
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/spf13/cobra v1.10.2

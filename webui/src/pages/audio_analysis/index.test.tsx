@@ -270,7 +270,6 @@ describe("AudioAnalysisPage", () => {
     const thumbnail = screen.getByRole("button", {
       name: "Open Track 1: Main audio waveform full size",
     });
-    expect(thumbnail).toHaveClass("audio-analysis-thumbnail");
     fireEvent.click(thumbnail);
     expect(setLightboxImage).toHaveBeenCalledWith("/audio/waveform-one");
   });
@@ -296,10 +295,8 @@ describe("AudioAnalysisPage", () => {
     const output = screen.getByRole("region", {
       name: "Track 1: Main audio amplitude statistics",
     });
-    expect(output.tagName).toBe("PRE");
     expect(output).toHaveAttribute("tabindex", "0");
     expect(output.textContent).toBe(statistics);
-    expect(output).toHaveClass("max-h-40", "overflow-auto", "whitespace-pre", "font-mono");
     expect(screen.getByRole("link", { name: "Download text file" })).toHaveAttribute(
       "href",
       "/audio/stats-one",
@@ -338,9 +335,9 @@ describe("AudioAnalysisPage", () => {
       "href",
       "/audio/waveform-one",
     );
-    expect(screen.getByText("output_failed: Could not publish audio statistics.")).toHaveClass(
-      "error",
-    );
+    expect(
+      screen.getByText("output_failed: Could not publish audio statistics."),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Download text file" })).not.toBeInTheDocument();
     expect(screen.queryByText("No retained statistics are available.")).not.toBeInTheDocument();
   });

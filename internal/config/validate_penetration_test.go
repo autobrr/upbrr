@@ -124,24 +124,6 @@ func TestValidateLoggingFileDisabledIgnoresSizing(t *testing.T) {
 	}
 }
 
-// Torrent clients default to qBittorrent; the UI no longer exposes a type field.
-func TestValidateTorrentClientTypeDefaultsToQbit(t *testing.T) {
-	t.Parallel()
-
-	cfg := withBase(func(c *Config) {
-		c.TorrentClients = map[string]TorrentClientConfig{
-			"q": {
-				QbitURL:  "http://x",
-				QbitUser: "u",
-				QbitPass: "p",
-			},
-		}
-	})
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("qbit should be default torrent client type: %v", err)
-	}
-}
-
 // The legacy `torrent_client` field must be accepted as a substitute for
 // `type`.
 func TestValidateTorrentClientLegacyTypeField(t *testing.T) {

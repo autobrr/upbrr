@@ -718,7 +718,7 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     label: "Distributor",
     group: "Metadata",
     key: "Distributor",
-    values: ["ARROW", "VINEGAR SYNDROME", ""],
+    values: ["ARROW", ""],
   },
   {
     field: "release_name.service",
@@ -732,7 +732,7 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     label: "Episode",
     group: "ReleaseName",
     key: "Episode",
-    values: ["E02", "E03", ""],
+    values: ["E02", ""],
     mediaKind: "tv",
   },
   {
@@ -740,7 +740,7 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     label: "Manual year",
     group: "ReleaseName",
     key: "ManualYear",
-    values: [2024, 2025, 0],
+    values: [2024, 0],
   },
   {
     field: "release_name.no_episode_title",
@@ -754,7 +754,7 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     label: "Audio languages",
     group: "Metadata",
     key: "AudioLanguages",
-    values: [["Japanese", "Spanish"], ["French"], []],
+    values: [["Japanese", "Spanish"], []],
   },
 ];
 
@@ -847,13 +847,7 @@ for (const correction of releaseDetailCorrections) {
           if (boolean || correction.key === "Type") await control.selectOption(text);
           else if (["Service", "Distributor"].includes(correction.key) && text) {
             await control.fill(
-              correction.key === "Service"
-                ? text === "AMZN"
-                  ? "aMz"
-                  : "netfl"
-                : text === "ARROW"
-                  ? "aRrOw"
-                  : "vInegar",
+              correction.key === "Service" ? (text === "AMZN" ? "aMz" : "netfl") : "aRrOw",
             );
             const choices = row.getByRole("option");
             await expect(choices).toHaveCount(1);

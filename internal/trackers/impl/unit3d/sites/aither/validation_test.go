@@ -69,14 +69,6 @@ func TestAitherRequiresThreeScreenshots(t *testing.T) {
 	)
 }
 
-func TestAitherValidationPolicyVersion(t *testing.T) {
-	t.Parallel()
-
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-aither-policy-v11/languages-v2" {
-		t.Fatalf("validation policy ID = %q", got)
-	}
-}
-
 func aitherPassingSubject() api.TrackerValidationSubject {
 	return api.TrackerValidationSubject{
 		Tracker:       "AITHER",

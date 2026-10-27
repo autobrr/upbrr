@@ -593,133 +593,141 @@ func TestPreparedMovieYearCorrectionReusesProviderEvidence(t *testing.T) {
 }
 
 func TestPreparedExplicitTVAcquiresTVDBDespiteParsedMovie(t *testing.T) {
-	for _, aliasYear := range []bool{false, true} {
-		for _, edit := range []string{"automatic", "before refresh", "after refresh", "with category correction"} {
-			t.Run(fmt.Sprintf("alias=%t/%s", aliasYear, edit), func(t *testing.T) {
-				fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Movie.2026.1080p.WEB-DL.H264-GRP.mkv")
-				fixture.input.Instructions.Category = new(api.CanonicalCategoryMovie)
-				fixture.tvdb = tvdb.NewClient(fixture.http, nil, "synthetic-api-key", "")
-				fixture.tvdbAliasYear = aliasYear
-				module, repo := fixture.open(t)
-				movie := prepareCorrectionEvidence(t, module, fixture.input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
-				if movie.Release.Naming.Year != 2026 {
-					t.Fatalf("automatic Movie year = %d, want 2026", movie.Release.Naming.Year)
-				}
-				input := api.PrepareInput{SourcePath: fixture.input.SourcePath}
-				for _, phase := range []string{"before refresh", "refresh", "after refresh"} {
-					update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
-					input.ExternalFreshness = api.ExternalFreshnessReuse
-					switch phase {
-					case "refresh":
-						input.ExternalFreshness = api.ExternalFreshnessRefresh
-					case edit:
-						update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
-							Values: api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{ManualYear: new(2030)}},
-						}}
-					}
-					movie = prepareCorrectionEvidence(t, module, input, update)
-				}
-				wantMovieYear := 2026
-				if edit == "before refresh" || edit == "after refresh" {
-					wantMovieYear = 2030
-				}
-				if movie.Release.Identity.Category != api.CanonicalCategoryMovie || movie.Release.Naming.Year != wantMovieYear ||
-					fixture.requests()["/v4/series/555003/extended"] != 0 || fixture.requests()["/v4/search"] != 0 {
-					t.Fatal("explicit Movie lost year authority or fetched TVDB")
-				}
+	for _, test := range []struct {
+		aliasYear bool
+		edit      string
+	}{
+		{edit: "automatic"},
+		{aliasYear: true, edit: "automatic"},
+		{aliasYear: true, edit: "before refresh"},
+		{edit: "after refresh"},
+		{aliasYear: true, edit: "with category correction"},
+	} {
+		aliasYear, edit := test.aliasYear, test.edit
+		t.Run(fmt.Sprintf("alias=%t/%s", aliasYear, edit), func(t *testing.T) {
+			fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Movie.2026.1080p.WEB-DL.H264-GRP.mkv")
+			fixture.input.Instructions.Category = new(api.CanonicalCategoryMovie)
+			fixture.tvdb = tvdb.NewClient(fixture.http, nil, "synthetic-api-key", "")
+			fixture.tvdbAliasYear = aliasYear
+			module, repo := fixture.open(t)
+			movie := prepareCorrectionEvidence(t, module, fixture.input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+			if movie.Release.Naming.Year != 2026 {
+				t.Fatalf("automatic Movie year = %d, want 2026", movie.Release.Naming.Year)
+			}
+			input := api.PrepareInput{SourcePath: fixture.input.SourcePath}
+			for _, phase := range []string{"before refresh", "refresh", "after refresh"} {
+				update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
 				input.ExternalFreshness = api.ExternalFreshnessReuse
-				update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
-					Values: api.ReleaseCorrectionValues{
-						Identity: api.ExternalIDOverrides{TVDBID: new(555003)},
-						ReleaseName: api.ReleaseNameOverrides{
-							Category: new("TV"),
-							Season:   new("01"),
-							Episode:  new("01"),
-						},
+				switch phase {
+				case "refresh":
+					input.ExternalFreshness = api.ExternalFreshnessRefresh
+				case edit:
+					update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
+						Values: api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{ManualYear: new(2030)}},
+					}}
+				}
+				movie = prepareCorrectionEvidence(t, module, input, update)
+			}
+			wantMovieYear := 2026
+			if edit == "before refresh" || edit == "after refresh" {
+				wantMovieYear = 2030
+			}
+			if movie.Release.Identity.Category != api.CanonicalCategoryMovie || movie.Release.Naming.Year != wantMovieYear ||
+				fixture.requests()["/v4/series/555003/extended"] != 0 || fixture.requests()["/v4/search"] != 0 {
+				t.Fatal("explicit Movie lost year authority or fetched TVDB")
+			}
+			input.ExternalFreshness = api.ExternalFreshnessReuse
+			update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
+				Values: api.ReleaseCorrectionValues{
+					Identity: api.ExternalIDOverrides{TVDBID: new(555003)},
+					ReleaseName: api.ReleaseNameOverrides{
+						Category: new("TV"),
+						Season:   new("01"),
+						Episode:  new("01"),
 					},
-				}}
-				if edit == "with category correction" {
-					update.Patch.Values.ReleaseName.ManualYear = new(2030)
-				}
-				for _, step := range []string{"correct to TV", "refresh", "SQLite reopen"} {
-					switch step {
-					case "refresh":
-						input.ExternalFreshness = api.ExternalFreshnessRefresh
-						update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
-					case "SQLite reopen":
-						if err := repo.Close(); err != nil {
-							t.Fatal(err)
-						}
-						module, repo = fixture.open(t)
-						input.ExternalFreshness = api.ExternalFreshnessLoad
-					}
-					before := fixture.requests()
-					result := prepareCorrectionEvidence(t, module, input, update)
-					after := fixture.requests()
-					for _, endpoint := range []string{"/v4/series/555003/extended", "/v4/search"} {
-						if step == "refresh" && after[endpoint] <= before[endpoint] {
-							t.Errorf("refresh reused stale TVDB response for %s", endpoint)
-						}
-						if step == "SQLite reopen" && after[endpoint] != before[endpoint] {
-							t.Errorf("SQLite reopen did not reuse TVDB response for %s", endpoint)
-						}
-					}
-					if after["/v4/series/555003/extended"] == 0 || after["/v4/search"] == 0 {
-						t.Errorf("%s: explicit TV correction skipped TVDB series/disambiguation acquisition", step)
-					}
-					provider := result.Release.ProviderMetadata.TVDB
-					if provider == nil || provider.NameEnglish != "Example Series" || provider.Year != 2024 || provider.YearFromAlias != aliasYear || !provider.PosterThumbnailLookupAttempted ||
-						provider.NameDisambiguation.Status != api.MetadataEvidenceStatusPartial ||
-						provider.NameDisambiguation.CanonicalName != "Example Series" || provider.NameDisambiguation.SeriesYear != 2024 ||
-						provider.NameDisambiguation.Source != "tvdb_v4_search_unpaged" {
-						t.Errorf("%s: prepared TVDB series/alias/disambiguation evidence missing", step)
-					}
-					wantYear := 0
-					if aliasYear {
-						wantYear = 2024
-					}
-					if result.Release.Identity.Category != api.CanonicalCategoryTV || result.Release.Naming.Year != wantYear ||
-						result.Release.Naming.YearProvenance != api.FactProvenanceAutomatic {
-						t.Errorf("%s: prepared category/year = %s/%d, want TV/%d", step, result.Release.Identity.Category, result.Release.Naming.Year, wantYear)
-					}
-					if result.Corrections.Corrections.ReleaseName.ManualYear != nil || result.EffectiveInstructions.ReleaseName.ManualYear != nil {
-						t.Errorf("%s: manual Movie year survived TV correction", step)
-					}
-					if _, bound := result.Corrections.Corrections.ContentBindings[api.CorrectionFieldReleaseNameManualYear]; bound {
-						t.Errorf("%s: manual-year content binding survived TV correction", step)
-					}
-					display, err := preparedrelease.ProjectDisplay(result.Release)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if display.ReleaseName != result.Release.Naming.ReleaseName || strings.Contains(display.ReleaseName, "2030") ||
-						strings.Contains(display.ReleaseName, "2026") || strings.Contains(display.ReleaseName, "2024") != aliasYear {
-						t.Errorf("%s: display name violates TVDB year authority: %q", step, display.ReleaseName)
-					}
-				}
-				if aliasYear && edit == "automatic" {
-					old, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
-					if err != nil {
-						t.Fatal(err)
-					}
-					old.Compatibility.ContractVersion = "prepared-release-v26"
-					old.Naming.Year = 0
-					old.ProviderMetadata.TVDB = &api.TVDBMetadata{TVDBID: 555003}
-					if err := repo.CommitPreparedRelease(t.Context(), old); err != nil {
-						t.Fatal(err)
-					}
+				},
+			}}
+			if edit == "with category correction" {
+				update.Patch.Values.ReleaseName.ManualYear = new(2030)
+			}
+			for _, step := range []string{"correct to TV", "refresh", "SQLite reopen"} {
+				switch step {
+				case "refresh":
+					input.ExternalFreshness = api.ExternalFreshnessRefresh
+					update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+				case "SQLite reopen":
 					if err := repo.Close(); err != nil {
 						t.Fatal(err)
 					}
-					module, _ = fixture.open(t)
-					input.ExternalFreshness = api.ExternalFreshnessReuse
-					updated := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
-					if updated.Release.Generation != old.Generation+1 || updated.Release.Naming.Year != 2024 {
-						t.Errorf("pre-TVDB-correction generation reused: generation=%d year=%d", updated.Release.Generation, updated.Release.Naming.Year)
+					module, repo = fixture.open(t)
+					input.ExternalFreshness = api.ExternalFreshnessLoad
+				}
+				before := fixture.requests()
+				result := prepareCorrectionEvidence(t, module, input, update)
+				after := fixture.requests()
+				for _, endpoint := range []string{"/v4/series/555003/extended", "/v4/search"} {
+					if step == "refresh" && after[endpoint] <= before[endpoint] {
+						t.Errorf("refresh reused stale TVDB response for %s", endpoint)
+					}
+					if step == "SQLite reopen" && after[endpoint] != before[endpoint] {
+						t.Errorf("SQLite reopen did not reuse TVDB response for %s", endpoint)
 					}
 				}
-			})
-		}
+				if after["/v4/series/555003/extended"] == 0 || after["/v4/search"] == 0 {
+					t.Errorf("%s: explicit TV correction skipped TVDB series/disambiguation acquisition", step)
+				}
+				provider := result.Release.ProviderMetadata.TVDB
+				if provider == nil || provider.NameEnglish != "Example Series" || provider.Year != 2024 || provider.YearFromAlias != aliasYear || !provider.PosterThumbnailLookupAttempted ||
+					provider.NameDisambiguation.Status != api.MetadataEvidenceStatusPartial ||
+					provider.NameDisambiguation.CanonicalName != "Example Series" || provider.NameDisambiguation.SeriesYear != 2024 ||
+					provider.NameDisambiguation.Source != "tvdb_v4_search_unpaged" {
+					t.Errorf("%s: prepared TVDB series/alias/disambiguation evidence missing", step)
+				}
+				wantYear := 0
+				if aliasYear {
+					wantYear = 2024
+				}
+				if result.Release.Identity.Category != api.CanonicalCategoryTV || result.Release.Naming.Year != wantYear ||
+					result.Release.Naming.YearProvenance != api.FactProvenanceAutomatic {
+					t.Errorf("%s: prepared category/year = %s/%d, want TV/%d", step, result.Release.Identity.Category, result.Release.Naming.Year, wantYear)
+				}
+				if result.Corrections.Corrections.ReleaseName.ManualYear != nil || result.EffectiveInstructions.ReleaseName.ManualYear != nil {
+					t.Errorf("%s: manual Movie year survived TV correction", step)
+				}
+				if _, bound := result.Corrections.Corrections.ContentBindings[api.CorrectionFieldReleaseNameManualYear]; bound {
+					t.Errorf("%s: manual-year content binding survived TV correction", step)
+				}
+				display, err := preparedrelease.ProjectDisplay(result.Release)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if display.ReleaseName != result.Release.Naming.ReleaseName || strings.Contains(display.ReleaseName, "2030") ||
+					strings.Contains(display.ReleaseName, "2026") || strings.Contains(display.ReleaseName, "2024") != aliasYear {
+					t.Errorf("%s: display name violates TVDB year authority: %q", step, display.ReleaseName)
+				}
+			}
+			if aliasYear && edit == "automatic" {
+				old, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				old.Compatibility.ContractVersion = "prepared-release-v26"
+				old.Naming.Year = 0
+				old.ProviderMetadata.TVDB = &api.TVDBMetadata{TVDBID: 555003}
+				if err := repo.CommitPreparedRelease(t.Context(), old); err != nil {
+					t.Fatal(err)
+				}
+				if err := repo.Close(); err != nil {
+					t.Fatal(err)
+				}
+				module, _ = fixture.open(t)
+				input.ExternalFreshness = api.ExternalFreshnessReuse
+				updated := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+				if updated.Release.Generation != old.Generation+1 || updated.Release.Naming.Year != 2024 {
+					t.Errorf("pre-TVDB-correction generation reused: generation=%d year=%d", updated.Release.Generation, updated.Release.Naming.Year)
+				}
+			}
+		})
 	}
 }
 

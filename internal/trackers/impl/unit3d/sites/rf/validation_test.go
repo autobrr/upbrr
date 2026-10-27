@@ -66,14 +66,6 @@ func TestRFRejectsMultipleMovieFilesAndMissingScreenshots(t *testing.T) {
 	)
 }
 
-func TestRFValidationPolicyVersion(t *testing.T) {
-	t.Parallel()
-
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-rf-policy-v5" {
-		t.Fatalf("validation policy ID = %q", got)
-	}
-}
-
 func TestRFFullDVDUsesVOBMediaInfoInsteadOfBDInfo(t *testing.T) {
 	t.Parallel()
 

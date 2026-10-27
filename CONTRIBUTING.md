@@ -86,6 +86,14 @@ Notes:
 - Prefer `make build` for full local builds. It dispatches to `scripts/build.sh` on macOS/Linux and `scripts/build.ps1` on Windows; use the scripts directly only when debugging script behavior.
 - Line endings are normalised via `.gitattributes` and `.editorconfig`.
 
+Pull-request Go checks use seven shards on Linux, Windows, and macOS: general
+core, native HDR core, decoded core, workflow, media, metadata/config/database, and
+the remaining packages. Core tests are partitioned by their top-level names; all
+other packages enter exactly one shard. New packages default to the remaining
+packages shard unless they match an existing owner; `scripts/ci/go-test-packages.ps1 -Shard <name>` lists
+its packages. Linux shards use the race detector; Windows and macOS shards run native tests. `make test-go` still runs the full race suite locally.
+Go ownership/policy checks and golangci-lint run on separate runners.
+
 ## How to contribute
 
 - **Fork and clone:** [Fork the upbrr repository](https://github.com/autobrr/upbrr/fork) and clone it to start working on your changes.
@@ -289,7 +297,7 @@ git ls-files --others --exclude-standard
 
 Skip local E2E for documentation-only or unrelated changes. Run the affected project or `--grep` for a narrow browser/test change; shared runtime, workflow/API, build, and dependency changes need all five projects. A unit-test-only edit needs its unit checks and E2E only when its behavior also warrants an integration check. Selector-only changes need `node --test scripts/ci/e2e-scope.test.mjs` and workflow validation. These are selection guidelines: an explicit `make e2e`, full validation request, or benchmark command still runs the complete requested suite, even with no diff.
 
-`make e2e` builds the embedded application and runs all five projects against isolated local fake services. Install FFmpeg on `PATH` for the audio-analysis scenarios; no real service credentials are needed. Normal local runs default to eight fully parallel workers, while CI uses two. Developers on smaller or busy systems may need fewer workers: after `make e2e-build`, use `pnpm --dir webui exec playwright test --workers=2` or `--workers=1`. Rebuild when runtime, embedded assets, or build inputs change; test-only runs may reuse a matching build. The [E2E workflow](.github/workflows/e2e.yml) uploads reports and test results on failure. The separate visual suites retain their own configuration.
+`make e2e` builds the embedded application and runs all five projects against isolated local fake services. Install FFmpeg on `PATH` for the audio-analysis scenarios; no real service credentials are needed. Normal local runs default to eight fully parallel workers. CI distributes individual tests across four Ubuntu jobs using Playwright's `--shard=N/4`, each with two workers and its own embedded build. Developers on smaller or busy systems may need fewer workers: after `make e2e-build`, use `pnpm --dir webui exec playwright test --workers=2` or `--workers=1`. Rebuild when runtime, embedded assets, or build inputs change; test-only runs may reuse a matching build. The [E2E workflow](.github/workflows/e2e.yml) uploads JSON test timings from each completed shard, plus uniquely named reports and test results on failure. The separate visual suites retain their own configuration.
 
 ### Other checks
 
