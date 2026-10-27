@@ -2,38 +2,12 @@
 
 Scope: backend Go under `internal/`; root repo rules apply.
 
-## Source Of Truth
+## Checks
 
-- Go lint: `.golangci.yml`
-- Hooks: `lefthook.yml`
-- Make targets: `Makefile`
-- API/runtime: `pkg/api`, `cmd/upbrr`, `internal/webserver`, `webui`
-
-Tool output/config override prose.
-
-## Commands
-
-```bash
-make backend
-make test-go
-make lint
-make logpolicy
-make pathpolicy
-make gofix-check-changed
-go test -race -v -timeout 20m ./cmd/upbrr ./internal/core ./pkg/api
-go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api
-```
-
-## Check Selection
-
-- Touched Go package: `go test -race -v -timeout 20m <package>`.
-- CLI behavior/flags/prompts: `go test -race -v -timeout 20m ./cmd/upbrr ./internal/core ./pkg/api` + touched services/trackers; then `make backend`.
-- Core upload, tracker orchestration, config, DB, API contracts: focused package tests; add `make test-go` when shared behavior may regress broadly.
-- WebUI/API contracts: `go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api`; add frontend `typecheck`/unit checks for request/response or browser-client changes.
-- Tracker changes: test implementation + touched shared tracker packages; include config/default/catalog tests when definitions or auth material change.
-- Logging/internal Go: `make logpolicy`.
-- Path/local FS: `make pathpolicy`; pre-commit `make lint`.
-- Go modernization: `make gofix-check-changed`; reviewed packages only: `go fix -omitzero=false <packages>`.
+- Touched packages: `go test -race -v -timeout 20m <packages>`; shared core, config, DB or API risk: add `make test-go` (full race suite).
+- Run `make lint` (architecture, path, literal, workflow-contract and correction-choice checks plus golangci-lint); `make logpolicy` for internal/logging changes; `make pathpolicy` for filesystem changes.
+- Before committing Go changes, run `make gofix-check-changed`. `make fmt-go` applies 160-column formatting and expands keyed composite literals with at least three elements.
+- CLI, API, tracker and browser-specific check sets live in their scoped guidance; shared changes require the affected callers' checks too. See `CONTRIBUTING.md` for hooks and setup.
 
 ## Runtime Flow
 
@@ -50,12 +24,9 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 
 ## Config / Runtime Ownership
 
-- Runtime config may change after `SaveConfig` delegates activation to `RuntimeActivator`.
-- Read WebUI config/core/logger through `currentConfig()`, `requireRuntime()`, or snapshots.
-- Never read `Backend.cfg` directly outside helpers.
+- Runtime activation and WebUI snapshots: read `internal/webserver/AGENTS.md` before changing those contracts, including callers.
 - Production metadata service views must retain the required `MetadataEvidenceRepository` from validated `RepositoryCapabilities`; verify default Core construction for both owned CLI and borrowed WebUI repositories when changing these seams.
-- `Server.cfg` is startup-only.
-- Config schema changes require `internal/config.Config`, embedded defaults, import/export, relevant env overrides, settings UI/web parity, secret redaction/encryption review.
+- Config schema changes require `internal/config.Config`, embedded defaults, import/export, relevant env overrides, settings UI/web parity and secret redaction/encryption review.
 
 ## Canonical Release Ownership
 
@@ -67,14 +38,9 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 
 ## Go Rules
 
-- Match repo style; narrow changes; root-cause fixes; tests for changed behavior.
-- Satisfy `.golangci.yml`; avoid broad `nolint`.
-- Wrap external/interface errors when lint requires.
-- No unchecked assertions.
-- Use `testing` helpers.
-- Test writes: `0o600` unless testing mode bits.
-- No wholesale `go fix`; prefer `make gofix-check-changed`, then package-scoped `go fix -omitzero=false <packages>`.
-- Keep `omitzero` disabled unless JSON semantics reviewed.
+- Satisfy `.golangci.yml`; do not weaken checks or add broad `nolint` to hide failures. Test writes use `0o600` unless testing mode bits.
+- No wholesale `go fix`: use `make gofix-check-changed`, then reviewed-package `go fix -omitzero=false <packages>`. Keep `omitzero` disabled unless JSON semantics are reviewed.
+- Synchronize test goroutines with channels; use `testing/synctest` for timer behavior, not real `time.Sleep` as proof that work ran or completed. Preserve real process/filesystem boundaries where integration tests require them.
 
 ## Logging / Redaction
 
@@ -97,14 +63,6 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 - Tests: `t.TempDir`, `filepath.Join`, `filepath.ToSlash`; no hardcoded OS-rooted literals/raw slash assertions for local FS.
 - `cmd/pathpolicy` detects wrong APIs, string-built local paths, slash-data FS calls/assertions, custom guards. Rare exception: same/previous-line `//pathpolicy:allow <reason>`.
 
-## Lint / Hook Policy
-
-- Pre-commit: Go format, log/path policies, frontend Prettier/ESLint on staged files.
-- Pre-push: `make lint` + frontend typecheck.
-- Do not rely on `make prepush` before a commit exists; run relevant checks pre-commit.
-- `make lint`: architecture, path, literal, workflow-contract, correction-choice checks + full `golangci-lint run --timeout=5m ./...`.
-- Fix failures in smallest relevant scope; never weaken checks, remove tests, or add broad `nolint` to hide failures.
-
 ## Generated / Scratch Path Risk
 
 `.gitignore` does not prevent Go package discovery; `golangci-lint run ./...` and other Go tools can find ignored repo-local `.go` files.
@@ -113,8 +71,6 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 - Expected generated/scratch `.go` files under ignored dirs require tool exclusion, e.g. `.golangci.yml` `linters.exclusions.paths`.
 - After generated dirs or broad Go tooling, run `make lint` pre-commit.
 - Exclude generated artifacts from commits unless explicitly updating them.
-
-Expected local/generated ignores: `dist/`, `webui/dist/`, `internal/webserver/assets/*` except `.keep`, `webui/playwright-report/`, `webui/test-results/`, `tmp/`.
 
 ## Domain Guardrails
 
@@ -125,4 +81,3 @@ Tracker definitions, registration, auth, naming, validation, and duplicate behav
 - Successful submission returns registration authority through `api.UploadSummary.UploadedTorrents`. Preserve direct tracker page in `TorrentURL`; retain exact tracker-returned torrent in `TorrentPath` when available. Reconstruct only when protocol makes it deterministic after confirmed success. Client injection uses registered authority, never pre-upload prepared torrent. Local artifact failure never reclassifies successful remote upload.
 - DB schema changes: stable, additive, forward-only, idempotent SQLite migrations where practical; preserve `schema_migrations` and legacy `user_version` bridge.
 - WebUI client changes require matching `/api/app/*` routes, typed requests, unit/embedded-browser verification.
-- Generated/built outputs are mostly ignored; never commit populated `internal/webserver/assets` unless intentionally updating generated artifacts.

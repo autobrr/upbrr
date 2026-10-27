@@ -56,7 +56,7 @@ Scoped rules for the shared duplicate-search coordinator and evaluator. Root, `i
 
 ## Checks
 
-Keep one focused regression for every rule boundary, both directions where directional. Run:
+Cover changed rule boundaries and both directions of directional behavior with distinct regressions; reuse sufficient existing coverage. Run:
 
 ```powershell
 go test -race -v -timeout 20m ./internal/trackers/dupe

@@ -1,90 +1,41 @@
-# Project Guidelines
+# Repository Guidelines
 
-Always-loaded AI-agent repo rules. Keep short; nearest scoped `AGENTS.md` owns area detail.
+Keep this file cross-cutting; put area-specific instructions in the nearest `AGENTS.md`. Paths and commands below are relative to the repository root.
 
-## Source Of Truth
+## Find the applicable guidance
 
-- Authority: `Makefile`, `lefthook.yml`, `.golangci.yml`, `webui/package.json`, `documentation/package.json`, and active `.github/workflows/*.yml` files. `.yml22` files are disabled templates.
-- Setup/commands: `CONTRIBUTING.md`.
-- Conflict: follow tools; update stale prose.
+- Setup, supported tool versions, hooks and check selection: [CONTRIBUTING.md](CONTRIBUTING.md). Command/config sources are `Makefile`, `lefthook.yml`, `.golangci.yml`, package manifests and active `.github/workflows/*.yml`; `.yml22` files are disabled templates. Reconcile stale prose with these sources rather than weakening checks.
+- All Go work, including `cmd/` and `pkg/`: [internal/AGENTS.md](internal/AGENTS.md).
+- CLI flags, prompts and unattended behavior: [cmd/upbrr/AGENTS.md](cmd/upbrr/AGENTS.md).
+- Shared request, preparation and runtime contracts: [pkg/api/AGENTS.md](pkg/api/AGENTS.md).
+- Tracker definitions, registration, auth, naming, validation or duplicate contracts, including callers outside the subtree: [internal/trackers/AGENTS.md](internal/trackers/AGENTS.md).
+- Browser transport/runtime: [internal/webserver/AGENTS.md](internal/webserver/AGENTS.md). Frontend: [webui/AGENTS.md](webui/AGENTS.md). Browser tests: [webui/e2e/AGENTS.md](webui/e2e/AGENTS.md).
+- Public site: [documentation/AGENTS.md](documentation/AGENTS.md). Opt-in live testing: [scripts/live-testing/AGENTS.md](scripts/live-testing/AGENTS.md).
 
-## Scoped References
+Read the relevant scoped instructions before editing that area; do not load every reference for unrelated work. Preserve ancestor rules when following a scoped file.
 
-- Backend/Go, path/log policy, trackers/config/domain, runtime architecture, lint/checks: `internal/AGENTS.md`.
-- Tracker definitions, registration, auth, naming, validation, and duplicate contracts, including callers changing them: `internal/trackers/AGENTS.md`.
-- CLI flags/prompts/unattended behavior: `cmd/upbrr/AGENTS.md`.
-- Shared API/runtime contracts: `pkg/api/AGENTS.md`.
-- Frontend/React/CSS/TypeScript/browser checks: `webui/AGENTS.md`.
-- Playwright E2E, fake services, reports, CI workflow: `webui/e2e/AGENTS.md`.
-- Public Docusaurus content, synchronization, checks, and publishing: `documentation/AGENTS.md`.
+## Shared behavior and safety
 
-Read scoped file before area edits. Simple grep/read-only work: load extra instructions only when needed.
+- Preserve shared CLI/WebUI workflow behavior unless intentionally changing one entrypoint.
+- Debug mode is not a non-mutating dry run. It suppresses tracker submission but may bypass policy gates such as banned-group blocking so later stages remain testable. Client injection remains default; CLI `-ns` and WebUI Upload skip-client-injection are explicit opt-outs. Do not classify these semantics as defects.
+- Never expose credentials, tokens, API keys, cookies or secret payloads in logs, UI, diagnostics or fixtures; use the existing redaction boundaries.
+- Use synthetic media titles, release names and content identifiers in shareable examples and fixtures. Exclude private URLs and identifiable user data. Public service names, provider codes, format labels and production mappings are allowed. Prefer `GRP` for incidental groups; retain actual groups when behavior depends on them.
+- Never commit generated/local output: `dist/`, `webui/dist/`, `documentation/build/`, populated `internal/webserver/assets`, Playwright reports/results or repo-local scratch files.
+- Follow explicit maintainer PR-body instructions when provided; otherwise use `.github/pull_request_template.md`. Formatting exceptions do not waive validation or truthful disclosures.
 
-## Quick Commands
+## Test value
 
-```bash
-make help                # supported targets
-make backend             # fast CLI build sanity
-make test-go             # full Go race tests
-make test-frontend       # frontend lint/dead-code/type/unit/format
-pnpm --dir documentation run check # public documentation format/type/build
-make lint                # architecture/path/literal/contracts/correction-choice checks + full Go lint
-make precommit           # strong local validation before commit; no Go tests
-make prepush             # Lefthook pre-push wrapper
-git diff --check         # whitespace/conflict markers
-```
+- Test observable outcomes, not repeated types/constants, delegation without an outcome, unchanged dependency errors, duplicate branches or CSS/static-markup snapshots.
+- Preserve distinct wiring, serialization, persistence, compatibility, accessibility and failure-boundary coverage. Before removing a regression test, identify retained coverage that catches the same defect.
+- Reuse sufficient coverage and remove redundant setup or unused fixtures. Log wording/level and constant-only changes do not need tests merely to restate the change. Explain meaningful removals and retained guarantees.
 
-Start narrow; expand for shared behavior, release, WebUI/API parity, or safety-sensitive changes. Area checks below cannot be replaced by hook wrappers.
+## Logging levels
 
-## Area Checks
+- `INFO`: concise end-user progress and outcomes for uploads and top-level workflows, not only final errors. Warnings identify failed/blocked outcomes needing attention.
+- `DEBUG`: finalized effective facts (including compatible cached generations), concise provider outcomes and one bounded outcome per tracker/client check. Keep empty facts explicit; provider availability does not imply a new fetch.
+- `TRACE`: repeated cache decisions, parser intermediates, per-candidate evidence, pagination and detailed lifecycle/counters.
+- Use stable searchable fields, e.g. `tracker=%s state=%s decision=%s count=%d`.
 
-- Backend/Go: touched packages: focused `go test -race -v -timeout 20m <packages>`; shared core/broad regression risk: `make test-go`; always `make lint`; logging/internal: `make logpolicy`; paths: `make pathpolicy`.
-- CLI: `go test -race -v -timeout 20m ./cmd/upbrr ./internal/core ./pkg/api`; add touched service/tracker packages; build sanity: `make backend`.
-- WebUI/API: `go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api`; request/response or browser-client changes: add frontend `typecheck`/unit checks.
-- Frontend: `pnpm --dir webui run lint`, `lint:dead`, `typecheck`, `test:unit`, `format:check`; CSS: `lint:style`; bundle/runtime: `build`.
-- E2E/browser: first inspect the PR-target merge-base diff plus staged, unstaged, and untracked files as described in `CONTRIBUTING.md`. Skip unrelated/docs-only changes; choose focused projects for narrow changes and all five for shared runtime/build changes. Read `webui/e2e/AGENTS.md`; runtime-sensitive UI requires embedded-web, not Vite-only, checks. Honor explicit full-suite requests regardless of diff.
-- Public documentation: read `documentation/AGENTS.md`; run `pnpm --dir documentation run check`.
+## Validation
 
-Before commit: `git diff --check`, changed-package `make gofix-check-changed`, optionally relevant hooks. `make fmt-go` applies 160-column formatting and expands keyed composite literals containing at least three elements. If Go files, generated dirs, or scratch paths affect package discovery, run `make lint`.
-
-## Repo Map
-
-- CLI `cmd/upbrr`; workflow `internal/releaseworkflow`; domain adapters `internal/core`; config `internal/config`; other domain services `internal/services`.
-- Prepared generations/display `internal/preparedrelease`; external identity `internal/externalidentity`; source resources `internal/sourcelayout`; client discovery `internal/clientdiscovery`.
-- Tracker contracts/orchestration `internal/trackers`; families `internal/trackers/impl/{unit3d,azfamily,standalone}`; standalone trackers `internal/trackers/impl/standalone/<tracker>`; Unit3D sites `internal/trackers/impl/unit3d/sites/<tracker>`.
-- Tracker semantic modules: `name.go`, `auth.go`, `taxonomy.go`, `validation.go`, `description.go`, `media.go`, `questionnaire.go` when applicable. Tracker `upload.go`: prepare/submit/preview orchestration and transport only.
-- Tracker auth/dupe/data coordinators `internal/trackers/{auth,dupe,data}`; encrypted cookies `internal/cookies`; generic BBCode/description/image hosting `internal/{bbcode,description,imagehosting}`.
-- Paths `internal/pathing`, with `layout` and checker-only `policy`; torrent clients `internal/torrentclient`; metainfo `internal/torrent/metainfo`; release policy `internal/releasepolicy`.
-- WebUI server/API host `internal/webserver`; API contracts `pkg/api`; frontend workflow state/operation ownership `webui/src/releaseSession`.
-- Public documentation site `documentation`; production publishing `.github/workflows/release.yml`.
-
-## Logging Levels
-
-- Purposeful levels across CLI, WebUI, tests, tooling.
-- Log operator-visible progress/decisions, not only final errors: operation start, external/local check, decision, affected count.
-- `INFO`: concise, relevant end-user progress/outcomes for uploads and top-level workflows.
-- Warnings: failed/blocked outcomes requiring attention.
-- `DEBUG`: finalized effective facts (including compatible cached generations), concise provider outcomes, and one bounded outcome per tracker/client check. Empty facts stay explicit; provider availability does not imply a new fetch.
-- `TRACE`: near-complete operational flow, including repeated cache decisions, parser intermediates, per-candidate evidence, pagination, and detailed workflow lifecycle/counters.
-- Prefer searchable, stable key/value message fields: `tracker=%s state=%s decision=%s count=%d`.
-
-## Test Value and Waiting
-
-- Test observable application outcomes. Do not add tests that only repeat types/constants, assert mock calls without an outcome, relay unchanged dependency errors, repeat the same branch without a distinct risk, or pin CSS classes/static markup.
-- Preserve tests of wiring, serialization, persistence, compatibility, accessibility, and failure boundaries when they protect distinct behavior. Before removing a regression test, identify retained coverage that catches the same defect. Mark bug regressions with `// regression: #N` when an issue or PR number is known; never invent an ID.
-- Synchronize goroutines with channels. Test timer behavior with `testing/synctest`; do not use real `time.Sleep` as evidence that concurrent work ran or completed. Keep real process and filesystem boundaries in integration tests that require them.
-- Reuse sufficient coverage, trim redundant setup/cases, and remove unused fixtures. Tests for log wording/levels or a constant-only change are unnecessary. Explain meaningful removals and retained guarantees.
-
-## Non-Negotiables
-
-- Narrow changes; fix root cause; never revert user changes.
-- Complete `.github/pull_request_template.md` unless the repository maintainer provides explicit alternative PR-body instructions. All validation and publication requirements still apply.
-- Preserve shared CLI/WebUI workflow behavior.
-- Debug mode validates end-to-end flow, not a non-mutating dry run. It suppresses tracker submission but may bypass policy gates such as banned-group blocking, keeping screenshots, descriptions, tracker preparation, and later stages testable. Client injection remains default; CLI `-ns` and WebUI Upload skip-client-injection are explicit opt-outs. Report defects only when behavior diverges from these semantics.
-- Centrally resolve versioned tracker upload/search names before duplicate checks. Principal payload fields use `PreparationInput.ReviewedUploadName()`; custom naming algorithms belong in `name.go`.
-- Trackers consume resolved facts from their exact prepared generation. Any direct metadata-provider override is allowed, including title, year, AKA, and original title; other defaults and fallbacks must use finalized facts, never raw `rls` output. Resolve parser evidence during preparation.
-- Preserve CLI `--unattended` / `--unattended_confirm` (`--uac`) safety: `--unattended` never prompts; `--unattended_confirm` may request required confirmation/manual input. No hidden prompts/confirms or ambiguous fallthrough.
-- Never log credentials, tokens, API keys, cookies, or secret payloads; follow repo redaction/logging policy.
-- Use synthetic media titles, release names, and content identifiers in shareable examples and fixtures. Exclude credentials, private URLs, and identifiable user data. Public service names, provider codes, format labels, and production mappings are allowed without special justification. Prefer `GRP` for incidental release groups; retain actual groups when behavior depends on them. Do not request cosmetic substitutions of harmless public identifiers.
-- Never commit generated/local output: `dist/`, `webui/dist/`, `documentation/build/`, populated `internal/webserver/assets`, Playwright reports/results, repo-local `tmp/`.
-- `.github/workflows/*.yml` files active; `.yml22` files disabled templates.
+Start with affected checks from the scoped guidance and `CONTRIBUTING.md`; expand for shared behavior or safety-sensitive changes. Hook wrappers do not replace area checks. Honor explicit full-suite requests; unrelated/docs-only changes do not require browser tests. Run `git diff --check` before committing. Report passed, failed, blocked and unrun checks separately.
