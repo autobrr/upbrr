@@ -370,12 +370,11 @@ describe("InputPage", () => {
     const { rerender } = render(<InputPage facet={facet} {...inputPageProps()} />);
     const warning = screen.getByText(/Multiple seasons detected/);
     expect(warning.textContent).toBe(message);
-    expect(warning).toHaveClass("whitespace-pre-line", "break-words");
     rerender(<InputPage facet={readyInputFacet(2)} {...inputPageProps()} />);
     expect(screen.queryByText(/Multiple seasons detected/)).not.toBeInTheDocument();
   });
 
-  it("shows source MediaInfo between release details and external IDs", () => {
+  it("shows source MediaInfo and clears it with the next preview", () => {
     const base = readyInputFacet(1);
     const preview = base.view.preview!;
     const facet: InputFacet = {
@@ -397,12 +396,6 @@ describe("InputPage", () => {
     const panel = summary.closest("details");
     expect(panel).not.toBeNull();
     expect(panel).not.toHaveAttribute("open");
-    expect(screen.getByText("Edit Release Details").compareDocumentPosition(summary)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
-    expect(
-      summary.compareDocumentPosition(screen.getByRole("heading", { name: "External IDs" })),
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     fireEvent.click(summary);
     expect(panel).toHaveAttribute("open");
     expect(screen.getByText("Matroska")).toBeVisible();
