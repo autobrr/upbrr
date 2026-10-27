@@ -12579,6 +12579,9 @@
       "UploadDryRunResult": {
         "type": "object",
         "properties": {
+          "clientInjectionRequested": {
+            "type": "boolean"
+          },
           "createdAt": {
             "type": "string"
           },

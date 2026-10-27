@@ -188,4 +188,6 @@ Imported application config does not change browse roots. The Web UI route accep
 
 Use **Dry Run** on the Upload page and disable client injection for the first test. Compare every tracker tab with the tracker's current upload form and rules before allowing submission.
 
+**Dry Run** never submits to a tracker, but it injects the prepared torrent into your configured client unless **Skip client injection** is enabled. Review any injection failure in the dry-run result before proceeding. The automatic review before a live upload instead waits for successful tracker registration before injecting.
+
 See [Upload workflow](../workflow/index.md) for stage ownership and review boundaries.

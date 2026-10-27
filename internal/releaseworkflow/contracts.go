@@ -516,7 +516,9 @@ type RegisteredArtifactAuthority struct {
 // UploadPlanBuildOptions controls side effects and execution policy for one
 // retained upload preparation.
 type UploadPlanBuildOptions struct {
-	DryRun               bool
+	DryRun bool
+	// ReviewOnly defers client injection until a registered tracker torrent exists.
+	ReviewOnly           bool
 	NoSeed               bool
 	TrackerIDs           []api.TrackerID
 	TrackerApproval      *api.TrackerApprovalSnapshotRef
@@ -1312,6 +1314,8 @@ type descriptionsPublication struct {
 
 // DryRunUploadsCommand prepares sanitized reports without tracker submission.
 type DryRunUploadsCommand struct {
+	// ReviewOnly prepares a live-upload review without injecting the prepared torrent.
+	ReviewOnly       bool
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	NoSeed           bool
@@ -1327,7 +1331,8 @@ func (c DryRunUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, err
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool
 		TrackerIDs       []api.TrackerID
-	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs})
+		ReviewOnly       bool
+	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs, c.ReviewOnly})
 }
 
 // ExecuteUploadsCommand directly prepares and executes eligible trackers.

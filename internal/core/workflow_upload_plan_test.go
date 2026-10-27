@@ -836,7 +836,7 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 		clients:  clientService,
 	}
 	projections := api.TrackerReleaseProjectionSet{
-		ExecutionMode: api.WorkflowExecutionModeDebug,
+		ExecutionMode: api.WorkflowExecutionModeNormal,
 		ReleaseRef:    api.ReleaseRef{SourcePath: "C:\\media\\Example.Release.2026", Generation: 1},
 		Projections: []api.TrackerReleaseProjection{
 			{
@@ -1535,7 +1535,7 @@ func TestWorkflowLiveReviewDefersInjectionUntilRegisteredTorrentExists(t *testin
 		workflowMediaPrivateArtifacts{},
 		descriptions,
 		api.DescriptionInstructions{Options: api.UploadOptions{SkipAutoTorrent: true}},
-		releaseworkflow.UploadPlanBuildOptions{DryRun: true},
+		releaseworkflow.UploadPlanBuildOptions{DryRun: true, ReviewOnly: true},
 		time.Now(),
 	)
 	if err != nil {

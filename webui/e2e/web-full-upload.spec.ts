@@ -2191,10 +2191,8 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await expect(page.getByRole("heading", { name: "Tracker uploads" })).toBeVisible();
     await expect(page.getByText("HDS").first()).toBeVisible();
     await page.getByRole("button", { name: "Expand HDS" }).click();
-    await expect(
-      page.getByText(/Client injection: skipped · Client injection deferred/),
-    ).toBeVisible();
-    expect(workspace.fake.counters.clientInjections).toBe(0);
+    await expect(page.getByText(/Client injection: completed/)).toBeVisible();
+    expect(workspace.fake.counters.clientInjections).toBe(1);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
 
     await page.getByLabel("Skip client injection").check();
@@ -2202,7 +2200,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await expect(
       page.getByText(/Client injection: skipped · Client injection disabled/),
     ).toBeVisible();
-    expect(workspace.fake.counters.clientInjections).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(1);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {
     await app?.stop();

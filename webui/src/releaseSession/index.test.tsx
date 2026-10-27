@@ -391,6 +391,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
           );
         }
         break;
+      case "upload_reviewed":
       case "dry_run":
         if (step === 0) {
           next = await activePorts.dryRunUploads(
@@ -3924,14 +3925,13 @@ describe("useReleaseSession", () => {
       },
     };
     const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const workflow = workflowPorts({ current: async () => retained, executeUploads });
+    const continueWorkflow = vi.spyOn(workflow, "continue");
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
           resumeWorkflowID: workflowID,
-          workflow: workflowPorts({
-            current: async () => retained,
-            executeUploads,
-          }),
+          workflow,
         }),
       ),
     });
@@ -3942,6 +3942,10 @@ describe("useReleaseSession", () => {
       expect(await result.current.upload.start()).toBe(true);
     });
 
+    const goals = continueWorkflow.mock.calls.map(([request]) => request.goal);
+    expect(goals).toContain("upload_reviewed");
+    expect(goals).not.toContain("dry_run");
+    expect(goals[goals.length - 1]).toBe("uploaded");
     expect(executeUploads).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: workflowID }) }),
       false,

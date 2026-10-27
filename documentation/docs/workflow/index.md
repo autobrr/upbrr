@@ -176,6 +176,8 @@ Tracker preparation captures an immutable operation. Payload preview and live su
 - **Dry run** and upload review can prepare a preview but cannot submit it.
 - **Upload** consumes the approved operation once.
 
+An explicit **Dry Run** injects the prepared torrent into the configured client unless **Skip client injection** is enabled. It never submits to the tracker. Automatic review before a live upload does not inject the prepared torrent; live uploads wait for the tracker-registered torrent.
+
 Short-lived remote tokens can still be acquired at submission time when required by a tracker.
 
 ## 7. Submit and retain registered torrents

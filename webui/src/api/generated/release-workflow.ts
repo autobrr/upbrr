@@ -3095,6 +3095,7 @@ export type UploadApproval = Readonly<{
 }>;
 
 export type UploadDryRunResult = Readonly<{
+  clientInjectionRequested?: boolean;
   createdAt: string;
   descriptions: DescriptionSetRef;
   dupes: DupeAssessmentRef;

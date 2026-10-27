@@ -385,8 +385,7 @@ func (b workflowUploadPlanBuilder) Build(
 		DiscType:        subject.DiscType,
 		ClientOverrides: descriptionInstructions.Client,
 	}
-	injectPreparedTorrent := options.DryRun &&
-		api.NormalizeWorkflowExecutionMode(projections.ExecutionMode) == api.WorkflowExecutionModeDebug
+	injectPreparedTorrent := options.DryRun && !options.ReviewOnly
 	dryRunInjected := make(map[api.TrackerID]struct{})
 	readyCount := 0
 	skippedCount := 0
