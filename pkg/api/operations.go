@@ -71,9 +71,11 @@ type DescriptionInput struct {
 // generation. Selected images are supplied separately to keep the subject
 // contract independent from transport payloads.
 type ImageHostingInput struct {
-	Release       ReleaseRef
-	Trackers      []string
-	Host          string
+	Release  ReleaseRef
+	Trackers []string
+	Host     string
+	// PreferredHost applies automatic tracker host policy without selecting an explicit single-host action.
+	PreferredHost *string
 	Scope         string
 	ExcludedHosts []string
 }

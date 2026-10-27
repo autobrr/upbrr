@@ -606,6 +606,8 @@ type MediaArtifactSet struct {
 	// ImageRequirementsPrepared records that required image preparation is satisfied
 	// through hosting or explicit skip. Status still determines overall media readiness.
 	ImageRequirementsPrepared bool `json:"imageRequirementsPrepared"`
+	// ImageHostPreference records the automatic hosting policy used for the completed barrier.
+	ImageHostPreference *string `json:"imageHostPreference,omitempty"`
 	// ImageHostUploadSkipped records preparation without new host uploads. Cached
 	// links remain reusable, and unknown external outcomes still require reconciliation.
 	ImageHostUploadSkipped bool              `json:"imageHostUploadSkipped,omitempty"`

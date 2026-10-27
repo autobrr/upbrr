@@ -2211,6 +2211,7 @@ func (b workflowMediaBuilder) UploadImages(
 	artifactIDs []api.PublicResourceID,
 	host string,
 	retry bool,
+	preferredHost *string,
 	now time.Time,
 ) (api.MediaArtifactSet, releaseworkflow.RetainedMediaResource, []api.HostedImageAttempt, error) {
 	if b.media == nil {
@@ -2271,6 +2272,7 @@ func (b workflowMediaBuilder) UploadImages(
 		Release:       release,
 		Trackers:      trackerNames,
 		Host:          host,
+		PreferredHost: preferredHost,
 		ExcludedHosts: excludedHosts,
 	}
 	subject, targets, err := b.media.resolveAcceptedImageUpload(ctx, imageInput)
@@ -2305,6 +2307,7 @@ func (b workflowMediaBuilder) UploadImages(
 		ArtifactIDs   []api.PublicResourceID
 		Host          string
 		Retry         bool
+		PreferredHost *string `json:",omitempty"`
 	}{
 		Release:       release,
 		ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
@@ -2312,6 +2315,7 @@ func (b workflowMediaBuilder) UploadImages(
 		ArtifactIDs:   artifactIDs,
 		Host:          host,
 		Retry:         retry,
+		PreferredHost: preferredHost,
 	})
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, nil, fmt.Errorf("workflow image hosting effect fingerprint: %w", err)

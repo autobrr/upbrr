@@ -433,6 +433,7 @@ type MediaArtifactMutator interface {
 		[]api.PublicResourceID,
 		string,
 		bool,
+		*string,
 		time.Time,
 	) (api.MediaArtifactSet, RetainedMediaResource, []api.HostedImageAttempt, error)
 	RemoveHostedImages(
@@ -1182,7 +1183,9 @@ type UploadMediaImagesCommand struct {
 	// empty Host, explicit IDs replace local selection without changing hosted selection.
 	ArtifactIDs []api.PublicResourceID
 	// Host selects one host; an empty value prepares all required image hosts.
-	Host           string
+	Host string
+	// PreferredHost preserves automatic policy precedence and compatible saved-link reuse.
+	PreferredHost  *string
 	Retry          bool
 	SkipUpload     bool
 	IdempotencyKey string
@@ -1204,7 +1207,8 @@ func (c UploadMediaImagesCommand) commandFingerprint() (api.WorkflowFingerprint,
 		ArtifactIDs      []api.PublicResourceID
 		Host             string
 		Retry            bool
-		SkipUpload       bool `json:",omitempty"`
+		SkipUpload       bool    `json:",omitempty"`
+		PreferredHost    *string `json:",omitempty"`
 	}{
 		ExpectedRevision: c.ExpectedRevision,
 		Media:            c.Media,
@@ -1212,6 +1216,7 @@ func (c UploadMediaImagesCommand) commandFingerprint() (api.WorkflowFingerprint,
 		Host:             c.Host,
 		Retry:            c.Retry,
 		SkipUpload:       c.SkipUpload,
+		PreferredHost:    c.PreferredHost,
 	}
 	return canonicalCommandFingerprint(payload)
 }
