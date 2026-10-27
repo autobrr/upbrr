@@ -17,16 +17,21 @@ concurrency:
 
 jobs:
   test-go:
-    name: Go tests (${{ matrix.os }})
+    name: Go tests (${{ matrix.os }} / ${{ matrix.shard }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        shard: [core, core-hdr, core-decoded, workflow, media, metadata, other]
+        include:
+          - { os: ubuntu-latest, mode: race }
+          - { os: windows-latest, mode: native }
+          - { os: macos-latest, mode: native }
+          - { shard: core, skip: '^Test.*(HDR|Native|Decoded).*$' }
+          - { shard: core-hdr, run: '^Test.*(HDR|Native).*$', skip: '^Test.*Decoded.*$' }
+          - { shard: core-decoded, run: '^Test.*Decoded.*$' }
 
     steps:
       - name: Checkout
@@ -56,17 +61,17 @@ jobs:
           restore-keys: |
             go-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-
 
-      # Keep race-test outputs separate from other Go jobs. Restore the latest
-      # compatible snapshot, then save refreshed results under this commit's key.
+      # Each shard retains its own test results. Native platform runs keep a
+      # separate cache from Linux race builds; module downloads remain shared.
       - name: Restore Go test results
         id: go-tests
         uses: actions/cache/restore@v4
         with:
           path: ${{ steps.go-cache-paths.outputs.build }}
-          key: go-tests-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-race-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          key: go-tests-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.mode }}-${{ matrix.shard }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
           restore-keys: |
-            go-tests-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-race-${{ hashFiles('go.sum') }}-
-            go-tests-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-race-
+            go-tests-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.mode }}-${{ matrix.shard }}-${{ hashFiles('go.sum') }}-
+            go-tests-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ matrix.mode }}-${{ matrix.shard }}-
 
       - name: Report Go cache restores
         shell: pwsh
@@ -83,7 +88,7 @@ jobs:
         run: |
           Write-Host "Cache scope: $env:CACHE_REF (default-branch fallback is also eligible)"
           Write-Host "Modules: primary=$env:MODULE_PRIMARY matched=$env:MODULE_MATCHED exact=$env:MODULE_EXACT"
-          Write-Host "Race build: primary=$env:BUILD_PRIMARY matched=$env:BUILD_MATCHED exact=$env:BUILD_EXACT"
+          Write-Host "Test build: primary=$env:BUILD_PRIMARY matched=$env:BUILD_MATCHED exact=$env:BUILD_EXACT"
           Write-Host "Cache paths: modules=$env:MODULE_PATH build=$env:BUILD_PATH"
           Write-Host "An archive restore does not guarantee Go package test-result cache hits."
 
@@ -103,11 +108,21 @@ jobs:
       - name: Run Go tests
         id: tests
         shell: pwsh
-        # These flags limit each package's test binary; package concurrency keeps Go's default -p.
+        env:
+          TEST_SHARD: ${{ matrix.shard }}
+          TEST_MODE: ${{ matrix.mode }}
+          TEST_RUN: ${{ matrix.run }}
+          TEST_SKIP: ${{ matrix.skip }}
+        # These limits apply per test binary; package concurrency keeps Go's default -p.
         run: |
-          # Native stdout redirection avoids processing every test event through
-          # PowerShell and the Actions live logger. The full log is uploaded below.
-          go test -race -json -cpu=4 -parallel=4 -timeout 20m ./... > "$env:RUNNER_TEMP/go-tests.jsonl"
+          $packages = @(pwsh -NoProfile -File scripts/ci/go-test-packages.ps1 -Shard $env:TEST_SHARD)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $testFlags = @('-json', '-cpu=4', '-parallel=4', '-timeout', '20m')
+          if ($env:TEST_MODE -eq 'race') { $testFlags += '-race' }
+          if ($env:TEST_RUN) { $testFlags += @('-run', $env:TEST_RUN) }
+          if ($env:TEST_SKIP) { $testFlags += @('-skip', $env:TEST_SKIP) }
+          # Native redirection keeps test events out of PowerShell's pipeline/logger.
+          go test @testFlags @packages > "$env:RUNNER_TEMP/go-tests.jsonl"
           exit $LASTEXITCODE
 
       # Go caches successful compile actions even if another package/test fails.
@@ -130,7 +145,7 @@ jobs:
         if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
         shell: pwsh
         env:
-          TIMING_LABEL: ${{ runner.os }}-${{ runner.arch }}
+          TIMING_LABEL: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.mode }}-${{ matrix.shard }}
         run: |
           node --test scripts/ci/go-test-summary.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -141,7 +156,7 @@ jobs:
         if: ${{ !cancelled() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
-          name: go-test-timings-${{ runner.os }}-${{ runner.arch }}
+          name: go-test-timings-${{ runner.os }}-${{ runner.arch }}-${{ matrix.mode }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/go-tests.jsonl
           retention-days: 7
 

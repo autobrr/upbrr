@@ -26,6 +26,25 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.14.0
+          args: --timeout=5m
+
+  policies:
+    name: Go policy checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
       - name: Run architecture ownership policy
         run: go run ./cmd/architecturepolicy
 
@@ -38,8 +57,5 @@ jobs:
       - name: Validate release workflow contracts
         run: go run ./cmd/workflowcontractgen -check
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.14.0
-          args: --timeout=5m
+      - name: Validate Input correction choices
+        run: go run ./cmd/correctionchoicesgen -check

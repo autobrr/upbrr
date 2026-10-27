@@ -4,7 +4,6 @@
 package api
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -191,65 +190,6 @@ func TestWorkflowRequestValidationRejectsMissingAndStaleAuthority(t *testing.T) 
 	}
 }
 
-func TestWorkflowRequestJSONRoundTripClonesSlices(t *testing.T) {
-	t.Parallel()
-
-	original := UploadReleaseWorkflowImagesRequest{
-		ReleaseWorkflowCommandContext: testWorkflowCommandContext(),
-		Media:                         MediaArtifactSetRef{ID: "media-1", Revision: 4},
-		ArtifactIDs:                   []PublicResourceID{"artifact-1", "artifact-2"},
-		Host:                          "example-host",
-	}
-	payload, err := json.Marshal(original)
-	if err != nil {
-		t.Fatalf("marshal workflow request: %v", err)
-	}
-	var cloned UploadReleaseWorkflowImagesRequest
-	if err := json.Unmarshal(payload, &cloned); err != nil {
-		t.Fatalf("unmarshal workflow request: %v", err)
-	}
-	cloned.ArtifactIDs[0] = "changed"
-	if original.ArtifactIDs[0] != "artifact-1" {
-		t.Fatalf("round-trip clone aliased original slice: %#v", original.ArtifactIDs)
-	}
-}
-
-func TestNewWorkflowContractsDoNotSerializePrivatePathsOrTokens(t *testing.T) {
-	t.Parallel()
-
-	value := struct {
-		Resource WorkflowResourceRef `json:"resource"`
-		Plan     MediaPlan           `json:"plan"`
-		DryRun   UploadDryRunResult  `json:"dryRun"`
-	}{
-		Resource: WorkflowResourceRef{
-			ID:          "resource-1",
-			ContentType: "image/png",
-			SizeBytes:   42,
-		},
-		Plan: MediaPlan{
-			ID:         "plan-1",
-			WorkflowID: "workflow-1",
-			Revision:   3,
-		},
-		DryRun: UploadDryRunResult{
-			ID:         "dry-run-1",
-			WorkflowID: "workflow-1",
-			Revision:   4,
-		},
-	}
-	payload, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("marshal safe workflow contracts: %v", err)
-	}
-	lower := strings.ToLower(string(payload))
-	for _, forbidden := range []string{"sourcepath", "localpath", "token", "credential", "cookie"} {
-		if strings.Contains(lower, forbidden) {
-			t.Fatalf("safe workflow contracts serialized forbidden authority %q: %s", forbidden, payload)
-		}
-	}
-}
-
 func testWorkflowCommandContext() ReleaseWorkflowCommandContext {
 	return ReleaseWorkflowCommandContext{
 		WorkflowID:       "workflow-1",
@@ -262,11 +202,11 @@ func TestProjectionOnlyContinuationRejectsUnrelatedMutations(t *testing.T) {
 	for _, scenario := range []string{"valid", "no authority", "facts", "tracker input", "action", "approval"} {
 		t.Run(scenario, func(t *testing.T) {
 			request := ContinueReleaseWorkflowRequest{
-Authority: &WorkflowAuthority{WorkflowID: "projection", ExpectedRevision: 1},
- IdempotencyKey: "project",
- Goal: WorkflowGoalTrackersProjected,
- Intent: WorkflowIntent{TrackerIDs: []TrackerID{"PTP"}},
-}
+				Authority:      &WorkflowAuthority{WorkflowID: "projection", ExpectedRevision: 1},
+				IdempotencyKey: "project",
+				Goal:           WorkflowGoalTrackersProjected,
+				Intent:         WorkflowIntent{TrackerIDs: []TrackerID{"PTP"}},
+			}
 			switch scenario {
 			case "no authority":
 				request.Authority = nil

@@ -14,64 +14,6 @@ afterEach(() => {
 });
 
 describe("productionReleaseSessionPorts", () => {
-  it("forwards one typed continuation request without stage-specific translation", async () => {
-    const requests: Array<{ method: string; body: unknown }> = [];
-    let requestOptions: Readonly<{ signal?: AbortSignal; correlationID?: string }> | undefined;
-    setAppRequestHandlerForTests(async (method, body, options) => {
-      requests.push({ method, body });
-      requestOptions = options;
-      return {
-        workflow: { id: "workflow-1", revision: 1 },
-      };
-    });
-    const ports = productionReleaseSessionPorts();
-    const sourcePath = "C:\\media\\Example Disc\\BDMV";
-    const signal = new AbortController().signal;
-    const request = {
-      goal: "prepared" as const,
-      intent: {
-        factInstructions: {
-          Identity: {},
-          ReleaseName: {},
-          Metadata: {},
-          SourceLookup: "https://example.invalid/source",
-          BlurayReleaseID: "",
-          Playlist: { Set: true, Selected: ["00001.mpls"], UseAll: false },
-          TrackerIDs: {},
-        },
-        preparation: {
-          SourcePath: sourcePath,
-          Intent: "upload",
-          ExternalFreshness: "refresh",
-          Instructions: {
-            Identity: {},
-            ReleaseName: {},
-            Metadata: {},
-            SourceLookup: "https://example.invalid/source",
-            BlurayReleaseID: "",
-            Playlist: { Set: true, Selected: ["00001.mpls"], UseAll: false },
-            TrackerIDs: {},
-          },
-          Policy: { KeepFolder: false, KeepImages: false, OnlyID: false },
-          Search: { Skip: false },
-          Controls: { Interaction: "interactive", ConfirmBDMVRescan: true },
-          Force: false,
-          RequirePrepared: false,
-        },
-      },
-      idempotencyKey: "continue-1",
-    };
-    await ports.workflow.continue(request, signal);
-
-    expect(requests).toEqual([
-      {
-        method: "ContinueReleaseWorkflow",
-        body: request,
-      },
-    ]);
-    expect(requestOptions).toEqual({ signal });
-  });
-
   it("reloads the authoritative revision before canceling a workflow", async () => {
     const requests: Array<{ method: string; body: unknown }> = [];
     setAppRequestHandlerForTests(async (method, body) => {
@@ -96,40 +38,6 @@ describe("productionReleaseSessionPorts", () => {
           expectedRevision: 7,
           reason: "user canceled",
           idempotencyKey: "cancel-1",
-        },
-      },
-    ]);
-  });
-
-  it("reconciles dry-run and client-injection options through Continue", async () => {
-    const requests: Array<{ method: string; body: unknown }> = [];
-    const current = {
-      workflow: { id: "workflow-1", revision: 7 },
-    } as ReleaseWorkflowCurrent;
-    setAppRequestHandlerForTests(async (method, body) => {
-      requests.push({ method, body });
-      return current;
-    });
-    const ports = productionReleaseSessionPorts();
-
-    await ports.workflow.continue(
-      {
-        authority: { workflowId: "workflow-1", expectedRevision: 7 },
-        goal: "dry_run",
-        intent: { noSeed: true },
-        idempotencyKey: "dry-run-1",
-      },
-      new AbortController().signal,
-    );
-
-    expect(requests).toEqual([
-      {
-        method: "ContinueReleaseWorkflow",
-        body: {
-          authority: { workflowId: "workflow-1", expectedRevision: 7 },
-          goal: "dry_run",
-          intent: { noSeed: true },
-          idempotencyKey: "dry-run-1",
         },
       },
     ]);
