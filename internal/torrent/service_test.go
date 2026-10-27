@@ -326,6 +326,31 @@ func TestCreateFolderPackEscapesWantedFilePatterns(t *testing.T) {
 	assertStringSliceEqual(t, files, []string{"Show, [S01E01].mkv", "Show.{S01E02}.mkv"})
 }
 
+func TestCreateDiscImagePreservesSingleFileLayout(t *testing.T) {
+	t.Parallel()
+	for _, reuse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reuse=%t", reuse), func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "Example.Movie.2026.iso")
+			writeTestFile(t, source, "disc image")
+			if reuse {
+				createTestTorrentFromExisting(t, source, source+".torrent")
+			}
+			service := NewService(api.NopLogger{}, t.TempDir())
+			result, err := service.Create(t.Context(), api.TorrentSubject{SourcePath: source, DiscType: "BDMV"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			name, files := loadTorrentShape(t, result.Path)
+			if name != filepath.Base(source) || len(files) != 0 {
+				t.Fatalf("disc image layout = %q %v", name, files)
+			}
+			if reuse && result.Path != source+".torrent" {
+				t.Fatalf("disc image candidate was not reused: %s", result.Path)
+			}
+		})
+	}
+}
+
 func TestCreateDiscFolderIgnoresWantedFileList(t *testing.T) {
 	t.Parallel()
 

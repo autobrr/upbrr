@@ -854,7 +854,8 @@ func validateTorrentContent(path string, meta api.TorrentSubject) error {
 	if nameOK && info.BestName() != expectedName {
 		return errors.New("torrent: candidate name mismatch")
 	}
-	if (scope == api.SubmissionContentScopeSingleFile) != (len(info.Files) == 0) {
+	if (scope == api.SubmissionContentScopeSingleFile && len(info.Files) != 0) ||
+		(scope == api.SubmissionContentScopeFileSet && len(info.Files) == 0) {
 		return errors.New("torrent: candidate folder layout mismatch")
 	}
 	actual := torrentContentPaths(info)
