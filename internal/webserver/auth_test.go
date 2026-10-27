@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"golang.org/x/crypto/argon2"
@@ -207,35 +208,33 @@ func TestAuthStoreUpdateRecordPersistsOptionalPolicyFields(t *testing.T) {
 }
 
 func TestSessionManagerDeletesExpiredSessionsInBackground(t *testing.T) {
-	manager := &sessionManager{
-		ttl:          time.Minute,
-		cleanupEvery: 10 * time.Millisecond,
-		stopCh:       make(chan struct{}),
-		doneCh:       make(chan struct{}),
-		sessions: map[string]session{
-			"expired": {
-				ID:        "expired",
-				Username:  "tester",
-				CSRFToken: "csrf",
-				ExpiresAt: time.Now().UTC().Add(-time.Second),
+	synctest.Test(t, func(t *testing.T) {
+		manager := &sessionManager{
+			ttl:          time.Minute,
+			cleanupEvery: 10 * time.Millisecond,
+			stopCh:       make(chan struct{}),
+			doneCh:       make(chan struct{}),
+			sessions: map[string]session{
+				"expired": {
+					ID:        "expired",
+					Username:  "tester",
+					CSRFToken: "csrf",
+					ExpiresAt: time.Now().UTC().Add(-time.Second),
+				},
 			},
-		},
-	}
-	go manager.cleanupLoop()
-	defer manager.Close()
+		}
+		go manager.cleanupLoop()
+		defer manager.Close()
 
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
+		time.Sleep(manager.cleanupEvery)
+		synctest.Wait()
 		manager.mu.Lock()
 		_, exists := manager.sessions["expired"]
 		manager.mu.Unlock()
-		if !exists {
-			return
+		if exists {
+			t.Fatal("expected expired session to be removed by background cleanup")
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	t.Fatal("expected expired session to be removed by background cleanup")
+	})
 }
 
 func TestSessionManagerPersistsRetainedSessionsAcrossRestart(t *testing.T) {
@@ -248,6 +247,10 @@ func TestSessionManagerPersistsRetainedSessionsAcrossRestart(t *testing.T) {
 	current, err := manager.Create("tester", true)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
+	}
+	nonRetained, err := manager.Create("tester", false)
+	if err != nil {
+		t.Fatalf("Create non-retained: %v", err)
 	}
 	manager.Close()
 
@@ -267,28 +270,7 @@ func TestSessionManagerPersistsRetainedSessionsAcrossRestart(t *testing.T) {
 	if !restored.Retain {
 		t.Fatal("expected restored session to remain marked as retained")
 	}
-}
-
-func TestSessionManagerDoesNotPersistNonRetainedSessions(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
-
-	manager, err := newSessionManager(60, dbPath)
-	if err != nil {
-		t.Fatalf("newSessionManager: %v", err)
-	}
-	current, err := manager.Create("tester", false)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	manager.Close()
-
-	reloaded, err := newSessionManager(60, dbPath)
-	if err != nil {
-		t.Fatalf("newSessionManager reload: %v", err)
-	}
-	defer reloaded.Close()
-
-	if _, ok := reloaded.Get(current.ID); ok {
+	if _, ok := reloaded.Get(nonRetained.ID); ok {
 		t.Fatal("expected non-retained session to be discarded after restart")
 	}
 }

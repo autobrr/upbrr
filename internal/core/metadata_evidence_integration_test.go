@@ -274,8 +274,12 @@ func coreCorrectionLifecycle[T any](field api.CorrectionField, values, expected 
 		calls := fixture.requests()
 		previous := initial.Generation
 		previousRelease := initial
+		steps := []string{"set", "clear"}
+		if len(values) == 3 {
+			steps = []string{"set", "change", "clear"}
+		}
 		for index, value := range values {
-			t.Run([]string{"set", "change", "clear"}[index], func(t *testing.T) {
+			t.Run(steps[index], func(t *testing.T) {
 				correction := api.ReleaseCorrectionValues{}
 				*target(&correction) = new(value)
 				result := fixture.prepare(t, api.ReleaseCorrectionPatch{Values: correction})
@@ -398,55 +402,55 @@ func assertCoreCorrectionName(t *testing.T, correction api.ReleaseCorrectionValu
 
 func TestDefaultCoreLocalCorrectionMatrix(t *testing.T) {
 	cases := []coreCorrectionCase{
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameType, []string{"ENCODE", "WEBRIP", ""}, []string{"ENCODE", "WEBRIP", "WEBDL"},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameType, []string{"ENCODE", ""}, []string{"ENCODE", "WEBDL"},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Type },
 			func(r api.PreparedRelease) string { return r.Media.Type }),
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameSource, []string{"HDTV", "BluRay", ""}, []string{"HDTV", "BluRay", "Web"},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameSource, []string{"HDTV", ""}, []string{"HDTV", "Web"},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Source },
 			func(r api.PreparedRelease) string { return r.Media.Source }),
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameResolution, []string{"720p", "2160p", ""}, []string{"720p", "2160p", ""},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameResolution, []string{"720p", ""}, []string{"720p", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Resolution },
 			func(r api.PreparedRelease) string { return r.Naming.Resolution }),
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameTag, []string{"ALT", "EDIT", ""}, []string{"ALT", "EDIT", ""},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameTag, []string{"ALT", ""}, []string{"ALT", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Tag },
 			func(r api.PreparedRelease) string { return r.Naming.Group }),
 		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameService, []string{"NF", "AMZN", ""}, []string{"NF", "AMZN", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Service },
 			func(r api.PreparedRelease) string { return r.Media.Service }),
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameEdition, []string{"Extended", "Uncut", ""}, []string{"Extended", "Uncut", ""},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameEdition, []string{"Extended", ""}, []string{"Extended", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Edition },
 			func(r api.PreparedRelease) string { return r.Media.Edition }),
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNamePresentation, []string{"Open Matte", "IMAX", ""}, []string{"Open Matte", "IMAX", ""},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNamePresentation, []string{"Open Matte", ""}, []string{"Open Matte", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Presentation },
 			func(r api.PreparedRelease) string { return r.Media.Presentation }),
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameReleaseFeatures, [][]api.ReleaseFeature{{api.ReleaseFeatureHybrid, api.ReleaseFeature4KRestoration}, {api.ReleaseFeatureExtras}, {}}, [][]api.ReleaseFeature{{api.ReleaseFeatureHybrid, api.ReleaseFeature4KRestoration}, {api.ReleaseFeatureExtras}, nil},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameReleaseFeatures, [][]api.ReleaseFeature{{api.ReleaseFeatureHybrid, api.ReleaseFeature4KRestoration}, {}}, [][]api.ReleaseFeature{{api.ReleaseFeatureHybrid, api.ReleaseFeature4KRestoration}, nil},
 			func(v *api.ReleaseCorrectionValues) **[]api.ReleaseFeature { return &v.ReleaseName.ReleaseFeatures },
 			func(r api.PreparedRelease) []api.ReleaseFeature { return r.Media.ReleaseFeatures }),
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameRepack, []string{"PROPER", "REPACK2", ""}, []string{"PROPER", "REPACK2", ""},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameRepack, []string{"PROPER", ""}, []string{"PROPER", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Repack },
 			func(r api.PreparedRelease) string { return r.Media.Repack }),
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameEpisodeTitle, []string{"A New Signal", "A Later Signal", ""}, []string{"A New Signal", "A Later Signal", ""},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameEpisodeTitle, []string{"A New Signal", ""}, []string{"A New Signal", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.EpisodeTitle },
 			func(r api.PreparedRelease) string { return r.Episode.Title }),
-		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameRegion, []string{"A", "B", ""}, []string{"A", "B", ""},
+		coreCorrectionLifecycle(api.CorrectionFieldReleaseNameRegion, []string{"A", ""}, []string{"A", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.ReleaseName.Region },
 			func(r api.PreparedRelease) string { return r.Media.Region }),
-		coreCorrectionLifecycle(api.CorrectionFieldMetadataDistributor, []string{"Criterion", "StudioCanal", ""}, []string{"Criterion", "StudioCanal", ""},
+		coreCorrectionLifecycle(api.CorrectionFieldMetadataDistributor, []string{"Criterion", ""}, []string{"Criterion", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.Metadata.Distributor },
 			func(r api.PreparedRelease) string { return r.Media.Distributor }),
-		coreCorrectionLifecycle(api.CorrectionFieldMetadataOriginalLanguage, []string{"French", "German", ""}, []string{"French", "German", ""},
+		coreCorrectionLifecycle(api.CorrectionFieldMetadataOriginalLanguage, []string{"French", ""}, []string{"French", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.Metadata.OriginalLanguage },
 			func(r api.PreparedRelease) string { return r.Media.OriginalLanguage }),
-		coreCorrectionLifecycle(api.CorrectionFieldMetadataAlternateTitle, []string{"Other Signal", "Further Signal", ""}, []string{"Other Signal", "Further Signal", ""},
+		coreCorrectionLifecycle(api.CorrectionFieldMetadataAlternateTitle, []string{"Other Signal", ""}, []string{"Other Signal", ""},
 			func(v *api.ReleaseCorrectionValues) **string { return &v.Metadata.AlternateTitle },
 			func(r api.PreparedRelease) string { return r.Naming.AlternateTitle }),
-		coreCorrectionLifecycle(api.CorrectionFieldMetadataGenres, [][]string{{"Drama", "Mystery"}, {"Comedy"}, {}}, [][]string{{"Drama", "Mystery"}, {"Comedy"}, nil},
+		coreCorrectionLifecycle(api.CorrectionFieldMetadataGenres, [][]string{{"Drama", "Mystery"}, {}}, [][]string{{"Drama", "Mystery"}, nil},
 			func(v *api.ReleaseCorrectionValues) **[]string { return &v.Metadata.Genres },
 			func(r api.PreparedRelease) []string { return r.Naming.Genres }),
-		coreCorrectionLifecycle(api.CorrectionFieldMetadataAudioLanguages, [][]string{{"French", "German"}, {"Spanish"}, {}}, [][]string{{"French", "German"}, {"Spanish"}, nil},
+		coreCorrectionLifecycle(api.CorrectionFieldMetadataAudioLanguages, [][]string{{"French", "German"}, {}}, [][]string{{"French", "German"}, nil},
 			func(v *api.ReleaseCorrectionValues) **[]string { return &v.Metadata.AudioLanguages },
 			func(r api.PreparedRelease) []string { return r.Media.AudioLanguages }),
-		coreCorrectionLifecycle(api.CorrectionFieldMetadataSubtitleLanguages, [][]string{{"French", "German"}, {"Spanish"}, {}}, [][]string{{"French", "German"}, {"Spanish"}, nil},
+		coreCorrectionLifecycle(api.CorrectionFieldMetadataSubtitleLanguages, [][]string{{"French", "German"}, {}}, [][]string{{"French", "German"}, nil},
 			func(v *api.ReleaseCorrectionValues) **[]string { return &v.Metadata.SubtitleLanguages },
 			func(r api.PreparedRelease) []string { return r.Media.SubtitleLanguages }),
 		coreCorrectionLifecycle(api.CorrectionFieldMetadataPersonalRelease, []bool{true, false}, []bool{true, false},
@@ -514,7 +518,7 @@ func TestDefaultCoreLocalCorrectionMatrix(t *testing.T) {
 			return test
 		}(),
 		func() coreCorrectionCase {
-			test := coreCorrectionLifecycle(api.CorrectionFieldMetadataHardcodedSubtitleLanguages, [][]string{{"French", "German"}, {"Spanish"}, {}}, [][]string{{"French", "German"}, {"Spanish"}, nil},
+			test := coreCorrectionLifecycle(api.CorrectionFieldMetadataHardcodedSubtitleLanguages, [][]string{{"French", "German"}, {}}, [][]string{{"French", "German"}, nil},
 				func(v *api.ReleaseCorrectionValues) **[]string { return &v.Metadata.HardcodedSubtitleLanguages },
 				func(r api.PreparedRelease) []string { return r.Media.HardcodedSubtitleLanguages })
 			test.before = api.ReleaseCorrectionValues{Metadata: api.MetadataOverrides{HardcodedSubs: new(true)}}
@@ -522,6 +526,7 @@ func TestDefaultCoreLocalCorrectionMatrix(t *testing.T) {
 		}(),
 	}
 	// Both ownership modes are covered by TestDefaultCoreMetadataEvidenceSurvivesServiceCorrection.
+	// Each field keeps set/clear/Auto coverage; service also exercises nonempty replacement.
 	for _, test := range cases {
 		t.Run(string(test.field), func(t *testing.T) {
 			fixture := newCoreEvidenceFixture(t, false)

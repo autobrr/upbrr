@@ -15,6 +15,8 @@ upbrr ships as a single binary with the Web UI embedded. Release automation buil
 
 Release Docker images are published for Linux amd64 and arm64.
 
+Intel Xeon Phi processors without AVX-512DQ, including Knights Landing and Knights Mill, are unsupported for audio spectrogram generation. The FFT dependency can select unsupported instructions on these CPUs and terminate upbrr with an illegal-instruction error.
+
 ## Release binary
 
 1. Open [GitHub Releases](https://github.com/autobrr/upbrr/releases).

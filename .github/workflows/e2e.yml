@@ -43,11 +43,15 @@ jobs:
           echo "e2e=$scope" >> "$GITHUB_OUTPUT"
 
   e2e:
-    name: Playwright E2E
+    name: Playwright E2E (${{ matrix.shard }}/4)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout
@@ -71,12 +75,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: webui/pnpm-lock.yaml
 
-      - name: Install frontend dependencies
-        working-directory: webui
-        run: pnpm install --frozen-lockfile
-
       - name: Install FFmpeg
         run: |
+          # Azure's mirror intermittently stalls downloads (actions/runner-images#12949).
+          sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg
 
@@ -86,18 +88,31 @@ jobs:
           printf 'Runner capacity: %s logical CPUs\n' "$(nproc)"
           free --human
 
+      - name: Build embedded E2E application
+        run: make e2e-build
+
       - name: Install Playwright browser
         working-directory: webui
         run: pnpm exec playwright install --with-deps --only-shell chromium
 
       - name: Run E2E
-        run: make e2e
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/results.json
+        run: pnpm --dir webui exec playwright test --shard=${{ matrix.shard }}/4 --reporter=list,html,json
+
+      - name: Upload Playwright timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-timings-${{ matrix.shard }}
+          path: webui/test-results/results.json
+          if-no-files-found: ignore
 
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: webui/playwright-report
           if-no-files-found: ignore
 
@@ -105,6 +120,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-test-results
+          name: playwright-test-results-${{ matrix.shard }}
           path: webui/test-results
           if-no-files-found: ignore

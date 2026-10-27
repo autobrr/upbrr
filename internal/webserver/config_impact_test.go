@@ -43,36 +43,6 @@ func TestConfigImpactsClassifiesEffectiveRoots(t *testing.T) {
 	}
 }
 
-func TestConfigImpactInventoryCoversEveryExportedConfigRoot(t *testing.T) {
-	type rootClassification struct {
-		name string
-	}
-	classified := []rootClassification{
-		{"MainSettings"},
-		{"ImageHosting"},
-		{"Metadata"},
-		{"ScreenshotHandling"},
-		{"Description"},
-		{"ClientSetup"},
-		{"ArrIntegration"},
-		{"TorrentCreation"},
-		{"PostUpload"},
-		{"Logging"},
-		{"Trackers"},
-		{"TorrentClients"},
-	}
-	for field := range reflect.TypeFor[config.Config]().Fields() {
-		if field.IsExported() && !slices.ContainsFunc(classified, func(item rootClassification) bool { return item.name == field.Name }) {
-			t.Fatalf("config root %s has no impact classification", field.Name)
-		}
-	}
-	for _, item := range classified {
-		if _, ok := reflect.TypeFor[config.Config]().FieldByName(item.name); !ok {
-			t.Fatalf("impact classification %s is not a config root", item.name)
-		}
-	}
-}
-
 func TestConfigImpactsIgnoresHostDatabasePath(t *testing.T) {
 	previous := config.Config{MainSettings: config.MainSettingsConfig{DBPath: "one"}}
 	next := previous

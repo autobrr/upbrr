@@ -68,6 +68,13 @@ Before commit: `git diff --check`, changed-package `make gofix-check-changed`, o
 - `TRACE`: near-complete operational flow, including repeated cache decisions, parser intermediates, per-candidate evidence, pagination, and detailed workflow lifecycle/counters.
 - Prefer searchable, stable key/value message fields: `tracker=%s state=%s decision=%s count=%d`.
 
+## Test Value and Waiting
+
+- Test observable application outcomes. Do not add tests that only repeat types/constants, assert mock calls without an outcome, relay unchanged dependency errors, repeat the same branch without a distinct risk, or pin CSS classes/static markup.
+- Preserve tests of wiring, serialization, persistence, compatibility, accessibility, and failure boundaries when they protect distinct behavior. Before removing a regression test, identify retained coverage that catches the same defect. Mark bug regressions with `// regression: #N` when an issue or PR number is known; never invent an ID.
+- Synchronize goroutines with channels. Test timer behavior with `testing/synctest`; do not use real `time.Sleep` as evidence that concurrent work ran or completed. Keep real process and filesystem boundaries in integration tests that require them.
+- Reuse sufficient coverage, trim redundant setup/cases, and remove unused fixtures. Tests for log wording/levels or a constant-only change are unnecessary. Explain meaningful removals and retained guarantees.
+
 ## Non-Negotiables
 
 - Narrow changes; fix root cause; never revert user changes.
