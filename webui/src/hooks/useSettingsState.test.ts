@@ -536,7 +536,9 @@ describe("torrent creation settings", () => {
 
     render(createElement(TorrentCreationHarness));
 
-    expect(await screen.findByLabelText("Prefer reusable torrents up to 16 MiB")).not.toBeChecked();
+    expect(
+      await screen.findByLabelText("Prefer reusable torrents with pieces up to 16 MiB"),
+    ).not.toBeChecked();
   });
 });
 
@@ -601,32 +603,48 @@ describe("renderTorrentClientsSection", () => {
     expect(watchScope.getByRole("button", { name: "Remove watcher" })).toBeInTheDocument();
     expect(qbitScope.getByRole("button", { name: "Remove qbit" })).toBeInTheDocument();
 
-    expect(watchScope.getByLabelText("Type")).toHaveValue("watch");
-    expect(watchScope.getByLabelText("Watch folder")).toHaveValue("/watch");
-    expect(watchScope.getByLabelText("Storage directory")).toHaveValue("/storage");
-    expect(qbitScope.getByLabelText("qBit URL")).toHaveValue("http://localhost:8080");
-    expect(qbitScope.getByLabelText("Automatic management paths 1")).toHaveValue("/media");
-    expect(qbitScope.getByLabelText("Automatic management paths 2")).toHaveValue("/archive");
+    expect(watchScope.getByLabelText("Client type")).toHaveValue("watch");
+    const watchHelp = watchScope.getByRole("button", { name: "Help for Client type" });
+    const qbitHelp = qbitScope.getByRole("button", { name: "Help for Client type" });
+    expect(watchHelp.getAttribute("aria-controls")).not.toBe(
+      qbitHelp.getAttribute("aria-controls"),
+    );
+    await userEvent.click(watchHelp);
+    expect(watchScope.getByLabelText("Client type")).toHaveValue("watch");
+    expect(qbitScope.getByLabelText("Client type")).toHaveValue("qbit");
+    expect(watchScope.getByLabelText("Torrent watch folder")).toHaveValue("/watch");
+    expect(watchScope.getByLabelText("Torrent storage directory (compatibility)")).toHaveValue(
+      "/storage",
+    );
+    expect(qbitScope.getByLabelText("qBittorrent WebUI URL")).toHaveValue("http://localhost:8080");
+    expect(qbitScope.getByLabelText("Automatic-management source roots 1")).toHaveValue("/media");
+    expect(qbitScope.getByLabelText("Automatic-management source roots 2")).toHaveValue("/archive");
     expect(
-      qbitScope.getByRole("button", { name: "Remove Automatic management paths 1" }),
+      qbitScope.getByRole("button", { name: "Remove Automatic-management source roots 1" }),
     ).toBeInTheDocument();
     expect(
-      qbitScope.getByRole("button", { name: "Remove Automatic management paths 2" }),
+      qbitScope.getByRole("button", { name: "Remove Automatic-management source roots 2" }),
     ).toBeInTheDocument();
-    expect(qbitScope.getByRole("button", { name: "Add Linked folder item" })).toBeInTheDocument();
-    expect(qbitScope.getByRole("button", { name: "Add Local path item" })).toBeInTheDocument();
-    expect(qbitScope.getByRole("button", { name: "Add Remote path item" })).toBeInTheDocument();
     expect(
-      qbitScope.getByRole("button", { name: "Add Automatic management paths item" }),
+      qbitScope.getByRole("button", { name: "Add Link staging folders item" }),
     ).toBeInTheDocument();
-    expect(qbitScope.getByLabelText("qBit direct")).toBeChecked();
+    expect(
+      qbitScope.getByRole("button", { name: "Add Local path mapping roots item" }),
+    ).toBeInTheDocument();
+    expect(
+      qbitScope.getByRole("button", { name: "Add Client path mapping roots item" }),
+    ).toBeInTheDocument();
+    expect(
+      qbitScope.getByRole("button", { name: "Add Automatic-management source roots item" }),
+    ).toBeInTheDocument();
+    expect(qbitScope.getByLabelText("Configure direct qBittorrent connection")).toBeChecked();
 
-    fireEvent.change(watchScope.getByLabelText("Watch folder"), {
+    fireEvent.change(watchScope.getByLabelText("Torrent watch folder"), {
       target: { value: "/watch/new" },
     });
 
     await waitFor(() =>
-      expect(watchScope.getByLabelText("Watch folder")).toHaveValue("/watch/new"),
+      expect(watchScope.getByLabelText("Torrent watch folder")).toHaveValue("/watch/new"),
     );
 
     const payload = readPayload<{
@@ -737,9 +755,11 @@ describe("ClientSetup client selectors", () => {
 
     render(createElement(ClientSetupHarness));
 
-    await waitFor(() => expect(screen.getByLabelText("Default client")).toHaveValue(""));
+    await waitFor(() => expect(screen.getByLabelText("Default torrent client")).toHaveValue(""));
 
-    const defaultClientSelect = screen.getByLabelText("Default client") as HTMLSelectElement;
+    const defaultClientSelect = screen.getByLabelText(
+      "Default torrent client",
+    ) as HTMLSelectElement;
     expect(Array.from(defaultClientSelect.options).map((option) => option.value)).toEqual([
       "",
       "qbit",
@@ -791,19 +811,25 @@ describe("ClientSetup client selectors", () => {
 
     render(createElement(ClientSetupHarness));
 
-    await waitFor(() => expect(screen.getByLabelText("Default client")).toHaveValue("qbit"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Default torrent client")).toHaveValue("qbit"),
+    );
 
-    expect(screen.getByLabelText("Injected clients 1")).toHaveValue("qbit");
-    expect(screen.getByLabelText("Searching clients 1")).toHaveValue("watcher");
+    expect(screen.getByLabelText("Clients receiving torrents 1")).toHaveValue("qbit");
+    expect(screen.getByLabelText("Clients searched for existing torrents 1")).toHaveValue(
+      "watcher",
+    );
 
-    fireEvent.change(screen.getByLabelText("Default client"), {
+    fireEvent.change(screen.getByLabelText("Default torrent client"), {
       target: { value: "watcher" },
     });
-    fireEvent.change(screen.getByLabelText("Injected clients 1"), {
+    fireEvent.change(screen.getByLabelText("Clients receiving torrents 1"), {
       target: { value: "watcher" },
     });
 
-    await waitFor(() => expect(screen.getByLabelText("Default client")).toHaveValue("watcher"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Default torrent client")).toHaveValue("watcher"),
+    );
 
     const payload = readPayload<{
       ClientSetup?: {
@@ -859,7 +885,7 @@ describe("Tracker client selectors", () => {
 
     expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Passkey")).toHaveValue("[REDACTED]");
+    expect(screen.getByLabelText("Account passkey")).toHaveValue("[REDACTED]");
 
     const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
@@ -972,20 +998,28 @@ describe("Tracker client selectors", () => {
     );
     fireEvent.click(screen.getByText("AITHER", { selector: ".settings-card__summary-name" }));
 
-    await waitFor(() => expect(screen.getByLabelText("Torrent client")).toHaveValue("qbit"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Client receiving this tracker's torrents")).toHaveValue("qbit"),
+    );
 
-    const torrentClientSelect = screen.getByLabelText("Torrent client") as HTMLSelectElement;
+    const torrentClientSelect = screen.getByLabelText(
+      "Client receiving this tracker's torrents",
+    ) as HTMLSelectElement;
     expect(Array.from(torrentClientSelect.options).map((option) => option.textContent)).toEqual([
       "",
       "qbit",
       "watcher",
     ]);
 
-    fireEvent.change(screen.getByLabelText("Torrent client"), {
+    fireEvent.change(screen.getByLabelText("Client receiving this tracker's torrents"), {
       target: { value: "watcher" },
     });
 
-    await waitFor(() => expect(screen.getByLabelText("Torrent client")).toHaveValue("watcher"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Client receiving this tracker's torrents")).toHaveValue(
+        "watcher",
+      ),
+    );
 
     const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
@@ -1124,6 +1158,10 @@ describe("Tracker client selectors", () => {
     fireEvent.click(screen.getByText("BTN", { selector: ".settings-card__summary-name" }));
 
     expect(screen.getByLabelText("API key")).toHaveValue("[REDACTED]");
+    await userEvent.click(screen.getByRole("button", { name: "Help for API key" }));
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("false");
+    expect(screen.getByLabelText("API key")).toHaveValue("[REDACTED]");
+    await userEvent.keyboard("{Escape}");
 
     let payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
@@ -1146,7 +1184,9 @@ describe("Tracker client selectors", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() => expect(screen.getByLabelText("API key")).toHaveValue("[REDACTED]"));
-    await waitFor(() => expect(screen.getByLabelText("Username")).toHaveValue("normalized-user"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Account username")).toHaveValue("normalized-user"),
+    );
     expect(savedAPIKeys).toEqual(["replacement-api-key"]);
 
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
@@ -1184,7 +1224,7 @@ describe("Tracker client selectors", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(2));
 
-    fireEvent.click(screen.getByLabelText("Anonymous"));
+    fireEvent.click(screen.getByLabelText("Anonymous upload"));
     expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("true");
     expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
 
@@ -1255,8 +1295,8 @@ describe("Tracker client selectors", () => {
     await userEvent.click(
       await screen.findByText("AITHER", { selector: ".settings-card__summary-name" }),
     );
-    fireEvent.click(screen.getByLabelText("Anonymous"));
-    fireEvent.click(screen.getByLabelText("Anonymous"));
+    fireEvent.click(screen.getByLabelText("Anonymous upload"));
+    fireEvent.click(screen.getByLabelText("Anonymous upload"));
     expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("false");
     expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
 
@@ -1318,7 +1358,7 @@ describe("Tracker client selectors", () => {
     await waitFor(() => expect(getActivation).toHaveBeenCalledOnce());
     vi.useFakeTimers();
     try {
-      fireEvent.click(screen.getByLabelText("Anonymous"));
+      fireEvent.click(screen.getByLabelText("Anonymous upload"));
       fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
       await act(async () => Promise.resolve());
 
@@ -1528,7 +1568,7 @@ describe("Tracker client selectors", () => {
     getActivation.mockClear();
     vi.useFakeTimers();
     try {
-      fireEvent.click(screen.getByLabelText("Anonymous"));
+      fireEvent.click(screen.getByLabelText("Anonymous upload"));
       fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
       await act(async () => Promise.resolve());
       expect(screen.getByTestId("settings-dirty")).toHaveTextContent("false");
@@ -1543,7 +1583,7 @@ describe("Tracker client selectors", () => {
         "Settings could not be applied during runtime configuration validation. Review the settings and save again.",
       );
       expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
-      expect(screen.getByLabelText("Anonymous")).toBeChecked();
+      expect(screen.getByLabelText("Anonymous upload")).toBeChecked();
       expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("true");
       expect(screen.getByTestId("active-anonymous")).toHaveTextContent("false");
 
@@ -1552,7 +1592,7 @@ describe("Tracker client selectors", () => {
       });
       expect(getActivation).toHaveBeenCalledOnce();
 
-      fireEvent.click(screen.getByLabelText("Anonymous"));
+      fireEvent.click(screen.getByLabelText("Anonymous upload"));
       fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
       await act(async () => Promise.resolve());
       expect(saveCalls).toBe(2);
@@ -1602,7 +1642,7 @@ describe("Tracker client selectors", () => {
     getActivation.mockClear();
     vi.useFakeTimers();
     try {
-      fireEvent.click(screen.getByLabelText("Anonymous"));
+      fireEvent.click(screen.getByLabelText("Anonymous upload"));
       expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
 
       fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
@@ -1612,7 +1652,7 @@ describe("Tracker client selectors", () => {
       );
       expect(screen.getByTestId("settings-dirty")).toHaveTextContent("false");
 
-      fireEvent.click(screen.getByLabelText("Anonymous"));
+      fireEvent.click(screen.getByLabelText("Anonymous upload"));
       expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
 
       fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
@@ -1630,7 +1670,7 @@ describe("Tracker client selectors", () => {
         "Earlier changes applied. Newer edits remain unsaved.",
       );
       expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
-      expect(screen.getByLabelText("Anonymous")).not.toBeChecked();
+      expect(screen.getByLabelText("Anonymous upload")).not.toBeChecked();
     } finally {
       vi.useRealTimers();
     }
@@ -1679,7 +1719,7 @@ describe("Tracker client selectors", () => {
     );
     fireEvent.click(screen.getByText("BTN", { selector: ".settings-card__summary-name" }));
 
-    expect(screen.getByLabelText("Announce URL")).toHaveValue("");
+    expect(screen.getByLabelText("Personal announce URL")).toHaveValue("");
   });
 
   it("hides LST image host selection when Lostimg is enabled", async () => {
@@ -1728,7 +1768,9 @@ describe("Tracker client selectors", () => {
     );
     fireEvent.click(screen.getByText("LST", { selector: ".settings-card__summary-name" }));
 
-    expect(screen.queryByLabelText("Image host")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Preferred image host for this tracker"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows configured global hosts for LST when Lostimg is disabled", async () => {
@@ -1779,7 +1821,7 @@ describe("Tracker client selectors", () => {
     fireEvent.click(screen.getByText("LST", { selector: ".settings-card__summary-name" }));
 
     const values = Array.from(
-      (screen.getByLabelText("Image host") as HTMLSelectElement).options,
+      (screen.getByLabelText("Preferred image host for this tracker") as HTMLSelectElement).options,
     ).map((option) => option.value);
     expect(values).toContain("imgbb");
     expect(values).not.toContain("lostimg");
@@ -1831,7 +1873,9 @@ describe("Tracker client selectors", () => {
     );
     fireEvent.click(screen.getByText("RF", { selector: ".settings-card__summary-name" }));
 
-    expect(screen.queryByLabelText("Image host")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Preferred image host for this tracker"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Image API")).not.toBeInTheDocument();
   });
 
@@ -1881,7 +1925,7 @@ describe("Tracker client selectors", () => {
     fireEvent.click(screen.getByText("RF", { selector: ".settings-card__summary-name" }));
 
     const values = Array.from(
-      (screen.getByLabelText("Image host") as HTMLSelectElement).options,
+      (screen.getByLabelText("Preferred image host for this tracker") as HTMLSelectElement).options,
     ).map((option) => option.value);
     expect(values).toContain("imgbb");
     expect(values).not.toContain("reelflix");
@@ -2007,19 +2051,15 @@ describe("tracker catalog interactions", () => {
       await screen.findByText("EXAMPLE", { selector: ".settings-card__summary-name" })
     ).closest(".settings-card");
     expect(card).toBeTruthy();
-    const labels = Array.from(
-      (card as HTMLElement).querySelectorAll<HTMLSpanElement>("label.settings-field > span"),
-    ).map((label) => label.textContent);
-    expect(labels).toEqual(["API key", "Uploader name", "Image host"]);
     const tracker = within(card as HTMLElement);
     expect(tracker.getByRole("region", { name: "Connection and credentials" })).toContainElement(
       tracker.getByLabelText("API key"),
     );
     expect(tracker.getByRole("region", { name: "Upload preferences" })).toContainElement(
-      tracker.getByLabelText("Uploader name"),
+      tracker.getByLabelText("Displayed uploader name"),
     );
     expect(tracker.getByRole("region", { name: "Images and descriptions" })).toContainElement(
-      tracker.getByLabelText("Image host"),
+      tracker.getByLabelText("Preferred image host for this tracker"),
     );
   });
 
@@ -2244,16 +2284,16 @@ describe("tracker catalog interactions", () => {
     fireEvent.click(cardName);
 
     expect(screen.queryByLabelText("Internal")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Duplicate bypass groups")).toHaveValue("NTb");
-    fireEvent.blur(screen.getByLabelText("Duplicate bypass groups"));
+    expect(screen.getByLabelText("Same-group duplicate-check groups")).toHaveValue("NTb");
+    fireEvent.blur(screen.getByLabelText("Same-group duplicate-check groups"));
     expect(screen.getByTestId("settings-dirty")).toHaveTextContent("false");
-    fireEvent.change(screen.getByLabelText("Duplicate bypass groups"), {
+    fireEvent.change(screen.getByLabelText("Same-group duplicate-check groups"), {
       target: { value: " NTb, -GRP, ntb " },
     });
-    fireEvent.blur(screen.getByLabelText("Duplicate bypass groups"));
+    fireEvent.blur(screen.getByLabelText("Same-group duplicate-check groups"));
 
     await waitFor(() =>
-      expect(screen.getByLabelText("Duplicate bypass groups")).toHaveValue("NTb, GRP"),
+      expect(screen.getByLabelText("Same-group duplicate-check groups")).toHaveValue("NTb, GRP"),
     );
     const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
@@ -2264,9 +2304,9 @@ describe("tracker catalog interactions", () => {
   });
 
   it.each([
-    ["Duplicate bypass groups", "DupeBypassGroups"],
+    ["Same-group duplicate-check groups", "DupeBypassGroups"],
     ["Personal release groups", "PersonalReleaseGroups"],
-    ["Internal groups", "InternalGroups"],
+    ["Internal release groups", "InternalGroups"],
   ] as const)("enables and saves while typing in %s", async (label, key) => {
     const user = userEvent.setup();
     let saved: Record<string, unknown> | undefined;
@@ -2354,7 +2394,7 @@ describe("tracker catalog interactions", () => {
     render(createElement(TrackerSettingsHarness));
 
     await user.click(await screen.findByText("NBL", { selector: ".settings-card__summary-name" }));
-    const input = screen.getByLabelText("Internal groups");
+    const input = screen.getByLabelText("Internal release groups");
     await user.type(input, ", GRP2");
 
     expect(input).toHaveValue("GRP, GRP2");
@@ -2438,11 +2478,13 @@ describe("tracker advanced fields", () => {
     );
     fireEvent.click(screen.getByText("BTN", { selector: ".settings-card__summary-name" }));
 
-    expect(screen.queryByLabelText("Favicon URL")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Link dir name")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Skip if rehash")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Announce URL")).toBeInTheDocument();
-    expect(screen.getByLabelText("OTP URI")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Custom tracker icon URL")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Link staging subfolder")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Skip when torrent regeneration is needed"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Personal announce URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Authenticator setup URI")).toBeInTheDocument();
   });
 });
 
@@ -2457,7 +2499,7 @@ describe("Image hosting settings", () => {
 
     render(createElement(ImageHostingHarness));
 
-    const hostOne = await screen.findByRole("combobox", { name: "Host 1" });
+    const hostOne = await screen.findByRole("combobox", { name: "Image host priority 1" });
     expect(hostOne).toHaveValue("lostimg");
     expect(within(hostOne).getByRole("option", { name: "lostimg (saved)" })).toBeInTheDocument();
     expect(readPayload<{ ImageHosting: { Host1: string } }>().ImageHosting.Host1).toBe("lostimg");
@@ -2485,17 +2527,17 @@ describe("Image hosting settings", () => {
 
     render(createElement(ImageHostingHarness));
 
-    await waitFor(() => expect(screen.getByLabelText("Lostimg enabled")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("Enable Lostimg")).toBeInTheDocument());
 
-    const hostOne = screen.getByLabelText("Host 1") as HTMLSelectElement;
+    const hostOne = screen.getByLabelText("Image host priority 1") as HTMLSelectElement;
     expect(Array.from(hostOne.options).map((option) => option.value)).not.toContain("lostimg");
 
-    fireEvent.click(screen.getByLabelText("Lostimg enabled"));
-    fireEvent.change(screen.getByLabelText("API key"), {
+    fireEvent.click(screen.getByLabelText("Enable Lostimg"));
+    fireEvent.change(screen.getByLabelText("Lostimg API key"), {
       target: { value: "secret" },
     });
 
-    await waitFor(() => expect(screen.getByLabelText("Lostimg enabled")).toBeChecked());
+    await waitFor(() => expect(screen.getByLabelText("Enable Lostimg")).toBeChecked());
 
     const payload = readPayload<{
       ImageHosting?: {
@@ -2529,17 +2571,17 @@ describe("Image hosting settings", () => {
 
     render(createElement(ImageHostingHarness));
 
-    await waitFor(() => expect(screen.getByLabelText("Host 1")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("Image host priority 1")).toBeInTheDocument());
 
-    const hostOne = screen.getByLabelText("Host 1") as HTMLSelectElement;
+    const hostOne = screen.getByLabelText("Image host priority 1") as HTMLSelectElement;
     expect(Array.from(hostOne.options).map((option) => option.value)).not.toContain("reelflix");
 
-    fireEvent.click(screen.getByLabelText("ReelFliX enabled"));
+    fireEvent.click(screen.getByLabelText("Enable ReelFliX"));
     fireEvent.change(screen.getByLabelText("ReelFliX API key"), {
       target: { value: "secret" },
     });
 
-    await waitFor(() => expect(screen.getByLabelText("ReelFliX enabled")).toBeChecked());
+    await waitFor(() => expect(screen.getByLabelText("Enable ReelFliX")).toBeChecked());
 
     const payload = readPayload<{
       ImageHosting?: {

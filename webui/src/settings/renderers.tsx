@@ -10,6 +10,8 @@ import { Select } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { trackerFieldPresentation } from "./trackerFields";
 import { settingsStyle } from "./style";
+import { FieldHelp } from "./FieldHelp";
+import { settingsFieldPresentation } from "./fieldPresentation";
 import { SettingsFieldGroups } from "./FieldGroups";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
 import {
@@ -47,12 +49,21 @@ const normalizeCommaSeparatedGroups = (value: string): string[] => {
 
 type CommaSeparatedInputProps = {
   label: string;
+  id: string;
+  describedBy?: string;
   value: ConfigValue[];
   onChange: (value: string[]) => void;
   onInput: () => void;
 };
 
-const CommaSeparatedInput = ({ label, value, onChange, onInput }: CommaSeparatedInputProps) => {
+const CommaSeparatedInput = ({
+  label,
+  id,
+  describedBy,
+  value,
+  onChange,
+  onInput,
+}: CommaSeparatedInputProps) => {
   const serialized = value.map((item) => String(item ?? "")).join(", ");
   const [draft, setDraft] = useState(serialized);
   useEffect(() => setDraft(serialized), [serialized]);
@@ -60,6 +71,8 @@ const CommaSeparatedInput = ({ label, value, onChange, onInput }: CommaSeparated
   return (
     <input
       aria-label={label}
+      id={id}
+      aria-describedby={describedBy}
       className={settingsInputClass}
       type="text"
       value={draft}
@@ -162,6 +175,12 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           <div className={settingsStyle.header} key={`${path.join(".")}-${index}`}>
             {options.length > 0 ? (
               <Select
+                id={`setting-${encodeURIComponent(JSON.stringify(path))}-${index}`}
+                aria-describedby={
+                  meta?.help
+                    ? `setting-${encodeURIComponent(JSON.stringify(path))}-help`
+                    : undefined
+                }
                 aria-label={displayLabel ? `${displayLabel} ${index + 1}` : undefined}
                 value={optionValueFor(entry)}
                 onChange={(event) => {
@@ -178,6 +197,12 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
               </Select>
             ) : (
               <input
+                id={`setting-${encodeURIComponent(JSON.stringify(path))}-${index}`}
+                aria-describedby={
+                  meta?.help
+                    ? `setting-${encodeURIComponent(JSON.stringify(path))}-help`
+                    : undefined
+                }
                 aria-label={displayLabel ? `${displayLabel} ${index + 1}` : undefined}
                 className={settingsInputClass}
                 value={optionValueFor(entry)}
@@ -215,25 +240,45 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
   };
 
   const renderField = (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => {
+    meta = { ...meta, ...settingsFieldPresentation[path[0]]?.[label], key: label };
+    const controlId = `setting-${encodeURIComponent(JSON.stringify(path))}`;
+    const helpId = `${controlId}-help`;
     const displayLabel = meta?.label ?? formatLabel(label);
     const typeHint = meta?.type;
+    const heading = (
+      <span className="flex min-w-0 flex-wrap items-center gap-1">
+        <label
+          htmlFor={Array.isArray(value) && !meta?.commaSeparated ? `${controlId}-0` : controlId}
+        >
+          {displayLabel}
+        </label>
+        {meta?.help ? (
+          <FieldHelp label={displayLabel} id={helpId}>
+            {meta.help}
+          </FieldHelp>
+        ) : null}
+      </span>
+    );
+    const controlProps = { id: controlId, "aria-describedby": meta?.help ? helpId : undefined };
     if (Array.isArray(value)) {
       if (meta?.commaSeparated) {
         return (
-          <label className={settingsStyle.field} key={path.join(".")}>
-            <span>{displayLabel}</span>
+          <div className={settingsStyle.field} key={path.join(".")}>
+            {heading}
             <CommaSeparatedInput
               label={displayLabel}
+              id={controlId}
+              describedBy={meta?.help ? helpId : undefined}
               value={value}
               onChange={(next) => updateConfigValue(path, next)}
               onInput={markSettingsChanged}
             />
-          </label>
+          </div>
         );
       }
       return (
         <div className={settingsStyle.field} key={path.join(".")}>
-          <span>{displayLabel}</span>
+          {heading}
           {renderArrayEditor(value, path, meta, displayLabel)}
         </div>
       );
@@ -244,9 +289,10 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
         ? meta.options
         : [...meta.options, { value: selectedValue, label: selectedValue }];
       return (
-        <label className={settingsStyle.field} key={path.join(".")}>
-          <span>{displayLabel}</span>
+        <div className={settingsStyle.field} key={path.join(".")}>
+          {heading}
           <Select
+            {...controlProps}
             value={selectedValue}
             onChange={(event) => updateConfigValue(path, event.target.value)}
           >
@@ -256,33 +302,35 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
               </option>
             ))}
           </Select>
-        </label>
+        </div>
       );
     }
     if (typeHint === "boolean" || typeof value === "boolean") {
       return (
-        <label className={settingsStyle.switchRow} key={path.join(".")}>
-          <span>{displayLabel}</span>
+        <div className={settingsStyle.switchRow} key={path.join(".")}>
+          {heading}
           <Switch
+            {...controlProps}
             aria-label={displayLabel}
             checked={Boolean(value)}
             onChange={(event) => updateConfigValue(path, event.target.checked)}
           />
-        </label>
+        </div>
       );
     }
     if (typeHint === "number" || typeof value === "number") {
       const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
       return (
-        <label className={settingsStyle.field} key={path.join(".")}>
-          <span>{displayLabel}</span>
+        <div className={settingsStyle.field} key={path.join(".")}>
+          {heading}
           <input
+            {...controlProps}
             className={settingsInputClass}
             type="number"
             value={numericValue}
             onChange={(event) => updateConfigValue(path, Number(event.target.value))}
           />
-        </label>
+        </div>
       );
     }
     if (value && typeof value === "object") {
@@ -308,13 +356,14 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
         "CustomSignature",
       ].includes(label);
     return (
-      <label
+      <div
         className={`${settingsStyle.field}${descriptionHeader ? " col-span-full" : ""}`}
         key={path.join(".")}
       >
-        <span>{displayLabel}</span>
+        {heading}
         {descriptionHeader ? (
           <textarea
+            {...controlProps}
             className={`${settingsInputClass} w-full resize-y`}
             rows={3}
             value={value === null ? "" : String(value ?? "")}
@@ -322,12 +371,13 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           />
         ) : (
           <input
+            {...controlProps}
             className={settingsInputClass}
             value={value === null ? "" : String(value ?? "")}
             onChange={(event) => updateConfigValue(path, event.target.value)}
           />
         )}
-      </label>
+      </div>
     );
   };
 
@@ -646,24 +696,14 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                       ],
                       [
                         "AllowFallback",
-                        !watchClient ? (
-                          <label
-                            className={settingsStyle.switchRow}
-                            key={`TorrentClients-${name}-AllowFallback`}
-                          >
-                            <span>Allow link fallback</span>
-                            <Switch
-                              aria-label="Allow link fallback"
-                              checked={Boolean(client.AllowFallback ?? true)}
-                              onChange={(event) =>
-                                updateConfigValue(
-                                  ["TorrentClients", name, "AllowFallback"],
-                                  event.target.checked,
-                                )
-                              }
-                            />
-                          </label>
-                        ) : null,
+                        !watchClient
+                          ? renderField(
+                              "AllowFallback",
+                              Boolean(client.AllowFallback ?? true),
+                              ["TorrentClients", name, "AllowFallback"],
+                              meta.AllowFallback,
+                            )
+                          : null,
                       ],
                       [
                         "LinkedFolder",
@@ -723,17 +763,31 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                       [
                         "QbitDirect",
                         !watchClient ? (
-                          <label
+                          <div
                             className={`${settingsStyle.switchRow} col-span-full border-t border-foreground/10 pt-4`}
                             key={`TorrentClients-${name}-QbitDirect`}
                           >
-                            <span>qBit direct</span>
+                            <span className="min-w-0">
+                              <label htmlFor={`qbit-direct-${encodeURIComponent(name)}`}>
+                                Configure direct qBittorrent connection
+                              </label>
+                              <FieldHelp
+                                label="Configure direct qBittorrent connection"
+                                id={`qbit-direct-help-${encodeURIComponent(name)}`}
+                              >
+                                Show direct connection fields, using loopback and port 8080 when
+                                empty. A configured qui proxy still takes precedence. Turning this
+                                off clears direct, legacy and proxy connection fields.
+                              </FieldHelp>
+                            </span>
                             <Switch
-                              aria-label="qBit direct"
+                              id={`qbit-direct-${encodeURIComponent(name)}`}
+                              aria-describedby={`qbit-direct-help-${encodeURIComponent(name)}`}
+                              aria-label="Configure direct qBittorrent connection"
                               checked={directEnabled}
                               onChange={(event) => setQbitDirect(name, event.target.checked)}
                             />
-                          </label>
+                          </div>
                         ) : null,
                       ],
                       [
@@ -907,6 +961,11 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
               </span>
             </summary>
             <div className="pt-0">
+              <FieldHelp label="Default trackers">
+                Trackers selected by default for new releases. Select only configured trackers you
+                want considered; individual workflow selection can differ. Removing a tracker clears
+                its default selection.
+              </FieldHelp>
               {trackerNames.length === 0 ? (
                 <p className="text-muted-foreground">Add tracker entries to select defaults.</p>
               ) : (
@@ -934,6 +993,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
               <div className={settingsStyle.mapControls}>
                 <Select
                   aria-label="Preferred tracker data source"
+                  aria-describedby="preferred-tracker-help"
                   value={preferredTracker}
                   onChange={(event) => updatePreferredTracker(event.target.value)}
                 >
@@ -955,18 +1015,25 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                   Clear
                 </Button>
               </div>
-              <p className="text-muted-foreground" style={{ marginTop: "0.5rem" }}>
-                Moves the selected tracker to the top of tracker-data lookup and qBit tracker
-                priority when present.
-              </p>
+              <FieldHelp label="Preferred tracker data source" id="preferred-tracker-help">
+                Move this tracker to the top of tracker-data lookup and qBittorrent tracker priority
+                when present. None keeps the normal order; this does not add an unconfigured
+                tracker.
+              </FieldHelp>
             </div>
           </details>
 
+          <FieldHelp label="Tracker entries" id="add-tracker-help">
+            Add a supported tracker to edit its account and preferences. Save applies configuration
+            changes. Remove resets its settings and clears default/preferred selection; it does not
+            delete the account on the tracker.
+          </FieldHelp>
           <div className={`settings-map__header ${settingsStyle.header}`}>
             <p className={pageStyle.label}>Entries</p>
             <div className={settingsStyle.mapControls}>
               <Select
                 aria-label="Add tracker entry"
+                aria-describedby="add-tracker-help"
                 value={trackerAddSelection}
                 onChange={(event) => setTrackerAddSelection(event.target.value)}
                 disabled={availableTrackers.length === 0}
@@ -1131,29 +1198,25 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
         <div className={settingsStyle.subgroup}>
           <div className={settingsStyle.title}>Host Priority</div>
           <div className={settingsStyle.grid}>
-            {hostFields.map((field, index) => {
-              const selected = String(imageCfg[field] ?? "");
-              return (
-                <label className={settingsStyle.field} key={field}>
-                  <span>{`Host ${index + 1}`}</span>
-                  <Select
-                    value={selected}
-                    onChange={(event) =>
-                      updateConfigValue(["ImageHosting", field], event.target.value)
-                    }
-                  >
-                    {selected && !imageHostOptions.some((option) => option.value === selected) ? (
-                      <option value={selected}>{selected} (saved)</option>
-                    ) : null}
-                    {imageHostOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-              );
-            })}
+            {hostFields.map((field, index) =>
+              renderField(field, imageCfg[field] ?? "", ["ImageHosting", field], {
+                key: field,
+                label: `Image host priority ${index + 1}`,
+                options:
+                  imageHostOptions.some(
+                    (option) => option.value === String(imageCfg[field] ?? ""),
+                  ) || !imageCfg[field]
+                    ? imageHostOptions
+                    : [
+                        ...imageHostOptions,
+                        {
+                          value: String(imageCfg[field]),
+                          label: `${String(imageCfg[field])} (saved)`,
+                        },
+                      ],
+                help: `Global image-host candidate in priority position ${index + 1}. Blank and duplicate entries are ignored. Tracker policy can restrict candidates; a tracker-specific host choice takes precedence. Failed eligible hosts can fall back to the next candidate.`,
+              }),
+            )}
           </div>
         </div>
 
@@ -1175,16 +1238,16 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           <div className={settingsStyle.grid}>
             <section className="grid min-w-0 content-start gap-3" aria-label="Lostimg">
               <h3 className="m-0 text-sm font-semibold">Lostimg</h3>
-              <label className={settingsStyle.switchRow}>
-                <span>Lostimg enabled</span>
-                <Switch
-                  aria-label="Lostimg enabled"
-                  checked={Boolean(imageCfg.LostimgEnabled)}
-                  onChange={(event) =>
-                    updateConfigValue(["ImageHosting", "LostimgEnabled"], event.target.checked)
-                  }
-                />
-              </label>
+              {renderField(
+                "LostimgEnabled",
+                Boolean(imageCfg.LostimgEnabled),
+                ["ImageHosting", "LostimgEnabled"],
+                {
+                  key: "LostimgEnabled",
+                  label: "Enable Lostimg",
+                  help: "Enable this tracker-owned image host where its tracker advertises support. Requires its API key; it is not a general global fallback host.",
+                },
+              )}
               {renderField(
                 "LostimgAPI",
                 (imageCfg.LostimgAPI as ConfigValue) ?? "",
@@ -1194,16 +1257,16 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
             </section>
             <section className="grid min-w-0 content-start gap-3" aria-label="ReelFliX">
               <h3 className="m-0 text-sm font-semibold">ReelFliX</h3>
-              <label className={settingsStyle.switchRow}>
-                <span>ReelFliX enabled</span>
-                <Switch
-                  aria-label="ReelFliX enabled"
-                  checked={Boolean(imageCfg.ReelflixEnabled)}
-                  onChange={(event) =>
-                    updateConfigValue(["ImageHosting", "ReelflixEnabled"], event.target.checked)
-                  }
-                />
-              </label>
+              {renderField(
+                "ReelflixEnabled",
+                Boolean(imageCfg.ReelflixEnabled),
+                ["ImageHosting", "ReelflixEnabled"],
+                {
+                  key: "ReelflixEnabled",
+                  label: "Enable ReelFliX",
+                  help: "Enable this tracker-owned image host where its tracker advertises support. Requires its API key; it is not a general global fallback host.",
+                },
+              )}
               {renderField(
                 "ReelflixAPI",
                 (imageCfg.ReelflixAPI as ConfigValue) ?? "",
@@ -1213,16 +1276,16 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
             </section>
             <section className="grid min-w-0 content-start gap-3" aria-label="Samaritano">
               <h3 className="m-0 text-sm font-semibold">Samaritano</h3>
-              <label className={settingsStyle.switchRow}>
-                <span>Samaritano enabled</span>
-                <Switch
-                  aria-label="Samaritano enabled"
-                  checked={Boolean(imageCfg.SamaritanoEnabled)}
-                  onChange={(event) =>
-                    updateConfigValue(["ImageHosting", "SamaritanoEnabled"], event.target.checked)
-                  }
-                />
-              </label>
+              {renderField(
+                "SamaritanoEnabled",
+                Boolean(imageCfg.SamaritanoEnabled),
+                ["ImageHosting", "SamaritanoEnabled"],
+                {
+                  key: "SamaritanoEnabled",
+                  label: "Enable Samaritano",
+                  help: "Enable this tracker-owned image host where its tracker advertises support. Requires its API key; it is not a general global fallback host.",
+                },
+              )}
               {renderField(
                 "SamaritanoAPI",
                 (imageCfg.SamaritanoAPI as ConfigValue) ?? "",

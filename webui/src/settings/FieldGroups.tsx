@@ -258,7 +258,7 @@ export function SettingsFieldGroups({
                 settingsStyle.grid,
                 ((section === "Description" && title === "Content") ||
                   section === "ArrIntegration") &&
-                  "[&>label:has([role=switch])]:col-span-full [&>label:has([role=switch])]:border-b [&>label:has([role=switch])]:border-foreground/10",
+                  "[&>.settings-field--switch]:col-span-full [&>.settings-field--switch]:border-b [&>.settings-field--switch]:border-foreground/10",
               )}
             >
               {fields.map(([, field]) => field)}

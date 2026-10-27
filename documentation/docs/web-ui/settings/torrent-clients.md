@@ -5,11 +5,11 @@ description: Configure qBittorrent, qui proxy, watch-folder, staging-link, and p
 
 # Torrent Clients settings
 
-Use **Settings → Torrent Clients** to create named clients. Those names become choices under [Client Handling](./client-handling.md) and tracker-specific **Torrent client** fields.
+Use **Settings → Torrent Clients** to create named clients. Those names become choices under [Client Handling](./client-handling.md) and tracker-specific **Client receiving this tracker's torrents** fields.
 
 ## Add an entry
 
-Select **Add entry**, enter a unique name, then choose its **Type**:
+Select **Add entry**, enter a unique name, then choose its **Client type**:
 
 - **qBit** connects through a qui proxy URL or directly to qBittorrent WebUI.
 - **Watch** copies a returned torrent file into a watched folder.
@@ -18,15 +18,15 @@ Select **Add entry**, enter a unique name, then choose its **Type**:
 
 Choose one connection method per entry:
 
-| Field                        | Purpose                                                                                            |
-| ---------------------------- | -------------------------------------------------------------------------------------------------- |
-| **Qui proxy URL**            | Base URL for a qui-backed qBittorrent proxy. A nonblank value takes precedence over direct fields. |
-| **qBit direct**              | Shows or clears the direct qBittorrent connection fields.                                          |
-| **qBit URL / port**          | Direct qBittorrent WebUI address. `http://` is added when the scheme is omitted.                   |
-| **qBit user / pass**         | Use the credentials required by your qBittorrent server; either field may be empty.                |
-| **Verify WebUI certificate** | Verifies HTTPS certificates. Keep enabled unless a trusted self-signed setup requires otherwise.   |
+| Field                                       | Purpose                                                                                            |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| **Qui proxy URL**                           | Base URL for a qui-backed qBittorrent proxy. A nonblank value takes precedence over direct fields. |
+| **Configure direct qBittorrent connection** | Shows or clears the direct qBittorrent connection fields.                                          |
+| **qBit URL / port**                         | Direct qBittorrent WebUI address. `http://` is added when the scheme is omitted.                   |
+| **qBit user / pass**                        | Use the credentials required by your qBittorrent server; either field may be empty.                |
+| **Verify WebUI certificate**                | Verifies HTTPS certificates. Keep enabled unless a trusted self-signed setup requires otherwise.   |
 
-To switch from qui proxy to direct qBittorrent, clear **Qui proxy URL**, enable **qBit direct**, and fill the direct fields. Turning **qBit direct** off clears both direct and proxy connection fields.
+To switch from qui proxy to direct qBittorrent, clear **Qui proxy URL**, enable **Configure direct qBittorrent connection**, and fill the direct fields. Turning **Configure direct qBittorrent connection** off clears both direct and proxy connection fields.
 
 For a direct connection, the URL is required. Leave user and password empty only when qBittorrent permits authentication bypass for the address it sees from upbrr (for example, an explicitly allowed local subnet). A username with an empty password is also passed through to the server. Empty fields do not enable bypass in qBittorrent: authentication failures and HTTPS certificate verification still apply. Keep WebUI authentication enabled for untrusted networks.
 
@@ -34,33 +34,33 @@ Stored proxy URLs and credentials are encrypted in configuration transport and a
 
 ### Watch folder
 
-**Watch folder** is required and must be writable by the upbrr process. URL-only tracker results cannot be delivered to a watch folder because no torrent file exists to copy.
+**Torrent watch folder** is required and must be writable by the upbrr process. URL-only tracker results cannot be delivered to a watch folder because no torrent file exists to copy.
 
-**Storage directory** remains visible for configuration compatibility but has no current runtime reader.
+**Torrent storage directory (compatibility)** remains visible for configuration compatibility but has no current runtime reader.
 
 ## qBittorrent add options
 
-| Field                          | Effect                                                                                                                     |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| **qBit category**              | Category for normal injections.                                                                                            |
-| **qBit tag**                   | Comma-separated tag value for normal injections.                                                                           |
-| **qBit cross category/tag**    | Overrides category or tag for torrents marked as cross-seeds.                                                              |
-| **Use tracker as tag**         | Uses the tracker name only when no configured tag applies.                                                                 |
-| **Automatic management paths** | Enables qBittorrent automatic management when the original local save path is under a listed root and linking is not used. |
+| Field                                 | Effect                                                                                                                     |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **qBit category**                     | Category for normal injections.                                                                                            |
+| **qBit tag**                          | Comma-separated tag value for normal injections.                                                                           |
+| **qBit cross category/tag**           | Overrides category or tag for torrents marked as cross-seeds.                                                              |
+| **Use tracker as tag**                | Uses the tracker name only when no configured tag applies.                                                                 |
+| **Automatic-management source roots** | Enables qBittorrent automatic management when the original local save path is under a listed root and linking is not used. |
 
 ## Link staging and path mapping
 
 **Linking** can stage source files as `hardlink`, `reflink`, or `symlink` before injection. Leave it as **None** for direct source-path injection.
 
-| Field                   | Effect                                                                                                |
-| ----------------------- | ----------------------------------------------------------------------------------------------------- |
-| **Linked folder**       | One or more roots where per-tracker staged layouts can be created. Required when linking is enabled.  |
-| **Allow link fallback** | Falls back to the original source path when staging or torrent-layout validation cannot be completed. |
-| **Local path**          | upbrr-visible path prefix. Entries pair by position with **Remote path**.                             |
-| **Remote path**         | Corresponding qBittorrent-visible prefix used for save paths.                                         |
+| Field                         | Effect                                                                                                |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| **Link staging folders**      | One or more roots where per-tracker staged layouts can be created. Required when linking is enabled.  |
+| **Allow link fallback**       | Falls back to the original source path when staging or torrent-layout validation cannot be completed. |
+| **Local path mapping roots**  | upbrr-visible path prefix. Entries pair by position with **Client path mapping roots**.               |
+| **Client path mapping roots** | Corresponding qBittorrent-visible prefix used for save paths.                                         |
 
 Hardlinks require source and destination on the same filesystem. Reflinks require supported storage and same-filesystem cloning. Symlinks require the needed OS permissions and a path qBittorrent can resolve. Turn off fallback when silently using the original path would be unsafe.
 
 ## Verify the entry
 
-Save, select it under **Searching clients**, and prepare a known source to test read-only discovery. There is no connection-test button. Injection writes or links data, so verify mappings and permissions before the first controlled upload.
+Save, select it under **Clients searched for existing torrents**, and prepare a known source to test read-only discovery. There is no connection-test button. Injection writes or links data, so verify mappings and permissions before the first controlled upload.

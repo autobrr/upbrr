@@ -11,13 +11,28 @@ import {
   type APITokenScope,
   type CreatedAPIToken,
 } from "../../api/app";
+import { FieldHelp } from "../../settings/FieldHelp";
 import { Button } from "../../components/ui/button";
 import { confirmationDialogStyle, settingsStyle } from "../../settings/style";
 
-const supportedScopes: ReadonlyArray<Readonly<{ value: APITokenScope; label: string }>> = [
-  { value: "workflow:read", label: "Read workflows" },
-  { value: "workflow:write", label: "Prepare and update workflows" },
-  { value: "workflow:execute", label: "Execute upload plans" },
+const supportedScopes: ReadonlyArray<
+  Readonly<{ value: APITokenScope; label: string; help: string }>
+> = [
+  {
+    value: "workflow:read",
+    label: "Read workflows",
+    help: "Permit reading workflows visible to this token owner. Does not permit changes or execution.",
+  },
+  {
+    value: "workflow:write",
+    label: "Prepare and update workflows",
+    help: "Permit workflow preparation and updates for this token owner. Upload-plan execution requires the separate execution permission.",
+  },
+  {
+    value: "workflow:execute",
+    label: "Execute upload plans",
+    help: "Permit executing upload plans, including external tracker/client effects allowed by the workflow. Grant only to trusted automation.",
+  },
 ];
 
 const inputClass =
@@ -104,21 +119,38 @@ export default function APITokensSettings() {
         <div>
           <h2 className="m-0 text-base font-semibold text-foreground">Generate API token</h2>
           <p className="helper">Token hashes persist in web-auth.json; plaintext is shown once.</p>
+          <FieldHelp label="Generate API token">
+            Generate creates an active token immediately, without Save. Select only needed
+            permissions and copy the secret when shown; it cannot be retrieved later. Keep it
+            private. Revocation takes effect on the next API request and cannot be undone.
+          </FieldHelp>
         </div>
         <div className={settingsStyle.grid}>
-          <label className={settingsStyle.field}>
-            <span>Name</span>
+          <div className={settingsStyle.field}>
+            <label htmlFor="api-token-name">Name</label>
+            <FieldHelp label="Token name" id="api-token-name-help">
+              A descriptive name for identifying this token later, up to 100 characters. It is not
+              the token secret.
+            </FieldHelp>
             <input
+              id="api-token-name"
+              aria-describedby="api-token-name-help"
               className={inputClass}
               value={name}
               maxLength={100}
               onChange={(event) => setName(event.target.value)}
               placeholder="Automation"
             />
-          </label>
-          <label className={settingsStyle.field}>
-            <span>Owner</span>
+          </div>
+          <div className={settingsStyle.field}>
+            <label htmlFor="api-token-owner">Owner</label>
+            <FieldHelp label="Token owner" id="api-token-owner-help">
+              Owner identifier, up to 100 characters. Tokens with the same owner share owner-scoped
+              workflows; use distinct owners when workflows should be isolated.
+            </FieldHelp>
             <input
+              id="api-token-owner"
+              aria-describedby="api-token-owner-help"
               className={inputClass}
               value={ownerId}
               maxLength={100}
@@ -126,23 +158,28 @@ export default function APITokensSettings() {
               placeholder="default"
             />
             <span className="helper">Tokens with the same owner share owner-scoped workflows.</span>
-          </label>
+          </div>
         </div>
         <fieldset className="m-0 grid gap-2 border-0 p-0">
           <legend className="mb-1 text-sm font-medium text-muted-foreground">Scopes</legend>
           {supportedScopes.map((scope) => (
-            <label
+            <div
               key={scope.value}
               className="flex min-h-9 items-center gap-2 rounded-md border border-border bg-card px-3 text-sm text-card-foreground"
             >
               <input
+                id={`token-scope-${scope.value}`}
+                aria-describedby={`token-scope-help-${scope.value}`}
                 type="checkbox"
                 checked={scopes.includes(scope.value)}
                 onChange={() => toggleScope(scope.value)}
               />
-              <span>{scope.label}</span>
+              <label htmlFor={`token-scope-${scope.value}`}>{scope.label}</label>
+              <FieldHelp label={scope.label} id={`token-scope-help-${scope.value}`}>
+                {scope.help}
+              </FieldHelp>
               <code className="ml-auto text-xs text-muted-foreground">{scope.value}</code>
-            </label>
+            </div>
           ))}
         </fieldset>
         <div>

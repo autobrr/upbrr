@@ -433,16 +433,16 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
       .locator("details.settings-card")
       .filter({ has: page.locator("summary", { hasText: "BLU" }) });
     await expect(bluCard).toBeVisible();
-    await expect(
-      bluCard.locator("label.settings-field > span, .settings-switch-row > span"),
-    ).toHaveText([
+    for (const label of [
       "API key",
-      "Anonymous",
-      "Image host",
-      "Duplicate bypass groups",
+      "Anonymous upload",
+      "Preferred image host for this tracker",
+      "Same-group duplicate-check groups",
       "Personal release groups",
-      "Internal groups",
-    ]);
+      "Internal release groups",
+    ]) {
+      await expect(bluCard.getByLabel(label, { exact: true })).toBeVisible();
+    }
     await bluCard.getByLabel("API key").fill("e2e-blu-activation");
 
     await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -557,3 +557,59 @@ for (const rootCount of [1, 2]) {
     }
   });
 }
+
+test.describe("Settings help", () => {
+  test.use({ hasTouch: true });
+
+  test("supports touch, focus and dismissal without changing settings on narrow screens", async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace();
+    let app: AppServer | undefined;
+    try {
+      app = await startApp(workspace);
+      await page.setViewportSize({ width: 360, height: 780 });
+      await page.goto(new URL("settings", app.url).toString());
+      const control = page.getByRole("switch", { name: "Show tracker icons", exact: true });
+      const checked = await control.isChecked();
+      const help = page.getByRole("button", { name: "Help for Show tracker icons", exact: true });
+      const save = page.getByRole("button", { name: "Save", exact: true });
+      await expect(save).toBeDisabled();
+      await help.tap();
+      await expect(help).toHaveAttribute("aria-expanded", "true");
+      const helpId = await help.getAttribute("aria-controls");
+      const text = page.locator(`[id=${JSON.stringify(helpId)}]`);
+      await expect(text).toBeVisible();
+      const box = await text.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(360);
+      await expect(control).toBeChecked({ checked });
+      await expect(save).toBeDisabled();
+      await help.press("Escape");
+      await expect(text).toBeHidden();
+      await control.focus();
+      await help.focus();
+      await expect(text).toBeVisible();
+      await help.press("Escape");
+      await expect(text).toBeHidden();
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await control.focus();
+      await help.hover();
+      await expect(text).toBeVisible();
+      await text.hover();
+      await expect(text).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(text).toBeHidden();
+      await page.getByRole("heading", { name: "Settings", exact: true }).hover();
+      await help.hover();
+      await expect(text).toBeVisible();
+      await page.getByRole("heading", { name: "Settings", exact: true }).hover();
+      await expect(text).toBeHidden();
+      await expect(save).toBeDisabled();
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+});
