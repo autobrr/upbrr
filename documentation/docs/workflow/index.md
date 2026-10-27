@@ -182,7 +182,7 @@ Short-lived remote tokens can still be acquired at submission time when required
 
 ## 7. Submit and retain registered torrents
 
-After confirmed tracker success, upbrr records the tracker result and attempts to retain the tracker-registered torrent. Client injection consumes that registered artifact, not the pre-upload torrent.
+After confirmed tracker success, upbrr records the tracker result and attempts to retain the tracker-registered torrent. Client injection consumes that registered artifact, not the pre-upload torrent, even if an earlier explicit dry run already injected the prepared torrent.
 
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
 
