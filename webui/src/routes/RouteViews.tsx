@@ -94,6 +94,11 @@ function GuardedReleaseView({
     <section className={pageStyle.panel} role="status">
       <h2 className="text-lg font-semibold">View unavailable</h2>
       <p>{access.reason || "This view is not available for the active release."}</p>
+      {access.reasonCode === "duplicates_required" && (
+        <button className="ghost" type="button" onClick={() => navigateTo("dupes")}>
+          Open Dupe Checking
+        </button>
+      )}
       <button className="ghost" type="button" onClick={() => navigateTo("input")}>
         Open Input
       </button>
