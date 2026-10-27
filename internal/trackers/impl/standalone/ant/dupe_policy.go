@@ -234,7 +234,6 @@ func slotContradictsTitle(slot []string, name string) bool {
 	return false
 }
 
-
 // requiresStaffToken preserves staff attestation for exact matches and ordinary
 // uploads. Guru intent changes only that attestation, never the duplicate result.
 func requiresStaffToken(cfg config.TrackerConfig, subject api.DuplicateSubject, evaluations []api.DupeCandidateEvaluation) bool {

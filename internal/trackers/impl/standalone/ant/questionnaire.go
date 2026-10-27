@@ -98,7 +98,6 @@ func requestID(answers map[string]string) (string, error) {
 	return strconv.FormatUint(id, 10), nil
 }
 
-
 // trumpQuestionKeys bind an explicit upload intention to this source generation.
 // Candidate review remains independently bound by the duplicate assessment.
 func trumpQuestionKeys(source string, identity api.ExternalIdentity) (string, string) {

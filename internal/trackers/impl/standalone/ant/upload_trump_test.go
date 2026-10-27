@@ -29,112 +29,112 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		key, expires,
 	)
 	for _, tc := range []struct {
-		name, first, second                                  string
-		intended, networkFailure, emptyReason                bool
+		name, first, second                                   string
+		intended, networkFailure, emptyReason                 bool
 		firstStatus, secondStatus, wantRequests, wantUploaded int
 	}{
 		{
-			name: "challenge succeeds",
-			first: challenge,
-			second: `{"status":"success","view":"https://anthelion.me/torrents.php?torrentid=8"}`,
-			intended: true,
-			firstStatus: 409,
+			name:         "challenge succeeds",
+			first:        challenge,
+			second:       `{"status":"success","view":"https://anthelion.me/torrents.php?torrentid=8"}`,
+			intended:     true,
+			firstStatus:  409,
 			secondStatus: 200,
 			wantRequests: 2,
 			wantUploaded: 1,
 		},
 		{
-			name: "challenge succeeds without optional reason",
-			first: challenge,
-			second: `{"status":"success","view":"https://anthelion.me/torrents.php?torrentid=8"}`,
-			intended: true,
-			emptyReason: true,
-			firstStatus: 409,
+			name:         "challenge succeeds without optional reason",
+			first:        challenge,
+			second:       `{"status":"success","view":"https://anthelion.me/torrents.php?torrentid=8"}`,
+			intended:     true,
+			emptyReason:  true,
+			firstStatus:  409,
 			secondStatus: 200,
 			wantRequests: 2,
 			wantUploaded: 1,
 		},
 		{
-			name: "staff token accepted immediately",
-			first: `{"status":"success"}`,
-			firstStatus: 200,
+			name:         "staff token accepted immediately",
+			first:        `{"status":"success"}`,
+			firstStatus:  200,
 			wantRequests: 1,
 			wantUploaded: 1,
 		},
 		{
-			name: "staff token with Guru intent",
-			first: `{"status":"success"}`,
-			intended: true,
-			firstStatus: 200,
+			name:         "staff token with Guru intent",
+			first:        `{"status":"success"}`,
+			intended:     true,
+			firstStatus:  200,
 			wantRequests: 1,
 			wantUploaded: 1,
 		},
 		{
-			name: "no intended class flow",
-			first: challenge,
-			firstStatus: 409,
+			name:         "no intended class flow",
+			first:        challenge,
+			firstStatus:  409,
 			wantRequests: 1,
 		},
 		{
-			name: "ordinary conflict",
-			first: `{"error":"Duplicate"}`,
-			intended: true,
-			firstStatus: 409,
+			name:         "ordinary conflict",
+			first:        `{"error":"Duplicate"}`,
+			intended:     true,
+			firstStatus:  409,
 			wantRequests: 1,
 		},
 		{
-			name: "wrong status",
-			first: challenge,
-			intended: true,
-			firstStatus: 403,
+			name:         "wrong status",
+			first:        challenge,
+			intended:     true,
+			firstStatus:  403,
 			wantRequests: 1,
 		},
 		{
-			name: "invalid key",
-			first: strings.Replace(challenge, key, "short", 1),
-			intended: true,
-			firstStatus: 409,
+			name:         "invalid key",
+			first:        strings.Replace(challenge, key, "short", 1),
+			intended:     true,
+			firstStatus:  409,
 			wantRequests: 1,
 		},
 		{
-			name: "expired key",
-			first: strings.Replace(challenge, expires, "2000-01-01T00:00:00Z", 1),
-			intended: true,
-			firstStatus: 409,
+			name:         "expired key",
+			first:        strings.Replace(challenge, expires, "2000-01-01T00:00:00Z", 1),
+			intended:     true,
+			firstStatus:  409,
 			wantRequests: 1,
 		},
 		{
-			name: "rejected initial key",
-			first: challenge[:len(challenge)-1] + `,"key_error":true}`,
-			intended: true,
-			firstStatus: 409,
+			name:         "rejected initial key",
+			first:        challenge[:len(challenge)-1] + `,"key_error":true}`,
+			intended:     true,
+			firstStatus:  409,
 			wantRequests: 1,
 		},
 		{
-			name: "replacement key is not retried",
-			first: challenge,
-			second: challenge[:len(challenge)-1] + `,"key_error":"expired"}`,
-			intended: true,
-			firstStatus: 409,
+			name:         "replacement key is not retried",
+			first:        challenge,
+			second:       challenge[:len(challenge)-1] + `,"key_error":"expired"}`,
+			intended:     true,
+			firstStatus:  409,
 			secondStatus: 409,
 			wantRequests: 2,
 		},
 		{
-			name: "retry rejected",
-			first: challenge,
-			second: `{"error":"Rejected key synthetic-key-12"}`,
-			intended: true,
-			firstStatus: 409,
+			name:         "retry rejected",
+			first:        challenge,
+			second:       `{"error":"Rejected key synthetic-key-12"}`,
+			intended:     true,
+			firstStatus:  409,
 			secondStatus: 403,
 			wantRequests: 2,
 		},
 		{
-			name: "uncertain retry",
-			first: challenge,
-			intended: true,
+			name:           "uncertain retry",
+			first:          challenge,
+			intended:       true,
 			networkFailure: true,
-			firstStatus: 409,
-			wantRequests: 2,
+			firstStatus:    409,
+			wantRequests:   2,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,7 +157,11 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 				if err := req.ParseMultipartForm(1 << 20); err != nil {
 					t.Fatal(err)
 				}
-				defer req.MultipartForm.RemoveAll()
+				defer func() {
+					if err := req.MultipartForm.RemoveAll(); err != nil {
+						t.Errorf("remove multipart temporary files: %v", err)
+					}
+				}()
 				file, _, err := req.FormFile("file_input")
 				if err != nil {
 					t.Fatal(err)
@@ -177,8 +181,8 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 					}
 					return &http.Response{
 						StatusCode: tc.firstStatus,
-						Header: make(http.Header),
-						Body: io.NopCloser(strings.NewReader(tc.first)),
+						Header:     make(http.Header),
+						Body:       io.NopCloser(strings.NewReader(tc.first)),
 					}, nil
 				}
 				if requests != 2 || req.FormValue("trump_key") != key || req.FormValue("trump_reason") != reason || req.FormValue("api_key") != "test-key" {
@@ -194,8 +198,8 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 				}
 				return &http.Response{
 					StatusCode: tc.secondStatus,
-					Header: make(http.Header),
-					Body: io.NopCloser(strings.NewReader(tc.second)),
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(tc.second)),
 				}, nil
 			})
 			summary, err := submitPreparedUpload(t.Context(), api.NopLogger{}, uploadState{trumpRetry: tc.intended, trumpReason: reason}, body, contentType, "", "")

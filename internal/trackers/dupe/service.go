@@ -1223,4 +1223,3 @@ func (s *Service) RebindEquivalentMetadata(
 	}
 	return assessment.rebindEquivalentMetadata(subject, s.cfg, previous, projections)
 }
-

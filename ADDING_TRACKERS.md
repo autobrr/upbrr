@@ -1553,4 +1553,3 @@ pnpm --dir webui run format:check
 
 Do not commit generated frontend assets, local binaries, Playwright output, or populated
 `internal/webserver/assets`.
-

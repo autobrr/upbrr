@@ -120,4 +120,3 @@ func TestDuplicateQuestionnairesUseEffectivePersonalRelease(t *testing.T) {
 		})
 	}
 }
-

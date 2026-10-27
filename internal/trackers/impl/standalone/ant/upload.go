@@ -184,11 +184,12 @@ func postPreparedUpload(ctx context.Context, client *http.Client, body []byte, c
 	httpReq.Header.Set("User-Agent", "upbrr")
 	response, err := commonhttp.ExecuteUpload(client, httpReq, commonhttp.UploadExecutionOptions{
 		Tracker: "ANT",
-		// Challenges need their unredacted key for this one operation, not for diagnostics.
-		SuccessStatus: func(status int) bool { return status >= 200 && status < 300 || status == http.StatusConflict },
+		// Retain bounded structured bodies for every status: errors may carry a
+		// duplicate view link or challenge key. Status acceptance is checked below.
+		SuccessStatus: func(int) bool { return true },
 	})
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, nil, nil, fmt.Errorf("trackers: ANT submit captured upload: %w", err)
 	}
 	bodyBytes := response.Body
 	payload := map[string]any{}
@@ -513,4 +514,3 @@ func dedupeStrings(values []string) []string {
 	}
 	return result
 }
-

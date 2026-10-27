@@ -52,4 +52,3 @@ func (p *WorkflowProjector) DuplicateQuestionnaires(
 	}
 	return assessment
 }
-

@@ -88,4 +88,3 @@ export const trackerFieldPresentation = (key: string): FieldMeta => {
   if (!field) throw new Error(`Unsupported tracker config field: ${key}`);
   return field;
 };
-

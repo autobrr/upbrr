@@ -487,4 +487,3 @@ torrent_clients:
     automatic_management_paths:
       - ""
     verify_webui_certificate: true
-
