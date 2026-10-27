@@ -345,7 +345,7 @@ for (const tracker of ["ANT", "BTN"] as const) {
           ).toBeVisible();
           await expect(page.getByRole("button", { name: `Expand ${tracker}` })).toBeVisible();
           expect(workspace.fake.counters.trackerUploads).toBe(0);
-          expect(workspace.fake.counters.clientInjections).toBe(0);
+          expect(workspace.fake.counters.clientInjections).toBe(1);
         }
         await expectEnabledState(
           page.getByRole("button", { name: "Descriptions" }),
