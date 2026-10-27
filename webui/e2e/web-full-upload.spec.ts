@@ -1664,6 +1664,10 @@ test("embedded screenshots automatically adopt description images and preserve r
   try {
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    await runDuplicateCheck(page);
     await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
     await expect(page.getByRole("note")).toContainText("chronological order cannot be determined");
