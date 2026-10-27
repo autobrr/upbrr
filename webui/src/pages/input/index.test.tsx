@@ -20,6 +20,38 @@ import InputPage from "./index";
 
 afterEach(cleanup);
 
+it("keeps aggregate language corrections independent", () => {
+  const base = readyInputFacet(1);
+  const metadata = {
+    AudioLanguages: ["French", "Example Dialect"],
+    SubtitleLanguages: ["Japanese"],
+    Genres: ["Drama"],
+  };
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      release: preparedRelease(),
+      intent: { ...base.view.intent, metadata },
+    },
+  };
+  render(<InputCorrectionEditor facet={facet} />);
+  expect(screen.getByRole("button", { name: "Audio languages" })).toHaveTextContent(
+    "French, Example Dialect",
+  );
+  expect(screen.getByRole("button", { name: "Subtitle languages" })).toHaveTextContent("Japanese");
+  fireEvent.click(screen.getByRole("button", { name: "Audio languages" }));
+  expect(screen.getByRole("checkbox", { name: "Example Dialect" })).toBeChecked();
+  fireEvent.click(screen.getByRole("checkbox", { name: "French" }));
+  expect(facet.changeMetadata).toHaveBeenLastCalledWith({
+    ...metadata,
+    AudioLanguages: ["Example Dialect"],
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Subtitle languages" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear Subtitle languages" }));
+  expect(facet.changeMetadata).toHaveBeenLastCalledWith({ ...metadata, SubtitleLanguages: [] });
+});
+
 it("shows the used tracker source ID while preserving an edited or cleared draft", () => {
   const base = inputFacet();
   const facet: InputFacet = {
@@ -1423,7 +1455,7 @@ describe("InputPage", () => {
     expect(screen.getByLabelText("TMDB ID")).toHaveValue("");
     expect(screen.getByRole("button", { name: "Remove TMDB ID" })).toBeDisabled();
     expect(screen.getByLabelText("Original language")).toHaveValue("");
-    expect(screen.getByLabelText("Audio languages")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Audio languages" })).toHaveTextContent("None");
     expect(screen.queryByLabelText("Hardcoded subtitles")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Hardcoded subtitle languages")).toHaveValue("");
   });
@@ -1435,11 +1467,20 @@ describe("InputPage", () => {
         facet={{ ...base, view: { ...base.view, release: preparedRelease() } }}
       />,
     );
-    const automatic = screen.getByLabelText("Audio languages").getAttribute("value") || "";
-    fireEvent.focus(screen.getByLabelText("Audio languages"));
-    fireEvent.change(screen.getByLabelText("Audio languages"), { target: { value: "English, " } });
+    fireEvent.click(screen.getByRole("button", { name: "Audio languages" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search Audio languages" }), {
+      target: { value: "Example Dialect" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Auto Audio languages" }));
-    expect(screen.getByLabelText("Audio languages")).toHaveValue(automatic);
+    expect(screen.getByRole("button", { name: "Audio languages" })).toHaveTextContent("Japanese");
+    expect(
+      screen.queryByRole("searchbox", { name: "Search Audio languages" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Audio languages" }));
+    expect(screen.getByRole("searchbox", { name: "Search Audio languages" })).toHaveValue("");
+    expect(screen.getByRole("checkbox", { name: "Japanese" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "French" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Subtitle languages" })).toHaveTextContent("English");
   });
 
   it("keeps the pending metadata notice visible when release details are collapsed", () => {
@@ -1515,15 +1556,13 @@ describe("InputPage", () => {
       field: "metadata.original_language",
     });
 
-    fireEvent.change(screen.getByLabelText("Audio languages"), {
-      target: { value: "English, Brazilian Portuguese, , English" },
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Audio languages" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "English" }));
     expect(facet.changeMetadata).toHaveBeenCalledWith({
-      AudioLanguages: ["English", "Brazilian Portuguese", "English"],
+      AudioLanguages: ["Japanese", "English"],
     });
-    fireEvent.change(screen.getByLabelText("Subtitle languages"), {
-      target: { value: " , " },
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Subtitle languages" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear Subtitle languages" }));
     expect(facet.changeMetadata).toHaveBeenCalledWith({ SubtitleLanguages: [] });
   });
 
