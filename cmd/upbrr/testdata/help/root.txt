@@ -281,7 +281,7 @@ Client and Torrent:
   -skip_auto_torrent, --skip_auto_torrent, -sat
       Skip automated torrent client searching
   -keep-folder, --keep-folder, -kf
-      Keep a supplied folder instead of processing its selected video file directly
+      Keep the supplied folder around one movie or episode video, excluding sidecars
   -onlyID, --onlyID
       Only grab tracker metadata IDs
   -infohash, --infohash, -th, -torrenthash string

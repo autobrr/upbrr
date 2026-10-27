@@ -80,3 +80,68 @@ func TestSourcePathForLinkingIgnoresRelativeFileListEntryMatchingCWDFile(t *test
 		t.Fatalf("expected relative FileList entry to fall back to source path %q, got %q", sourcePath, got)
 	}
 }
+
+func TestKeptSingleVideoFolderUsesFolderSavePathAndLinksOnlyVideo(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	folder := filepath.Join(root, "Movie.2026")
+	video := filepath.Join(folder, "Movie.2026.mkv")
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Movie.2026.mkv", "sample.mkv", "release.nfo", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(folder, name), []byte("media"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	subject := api.ClientSubject{
+		SourcePath: folder,
+		FileList:   []string{video},
+		KeepFolder: true,
+	}
+	source, err := sourcePathForLinking(subject)
+	if err != nil || source != folder {
+		t.Fatalf("link source = %q, %v", source, err)
+	}
+	save, mapped, err := qbitSavePathForSource(subject, []string{root}, []string{"/downloads"})
+	if err != nil || !mapped || save != "/downloads/" {
+		t.Fatalf("save path = %q mapped=%t err=%v", save, mapped, err)
+	}
+	torrentPath := filepath.Join(root, "kept.torrent")
+	writeQbitTestTorrent(t, torrentPath, filepath.Base(folder), map[string]string{filepath.Base(video): video}, true)
+	plan, err := buildTorrentLinkPlan(t.Context(), torrentPath, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(filepath.Base(folder), filepath.Base(video))
+	if len(plan.files) != 1 || plan.files[0].destRel != want {
+		t.Fatalf("link plan = %+v", plan)
+	}
+	staging := filepath.Join(root, "linked")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := createTorrentLinkPlan(t.Context(), staging, plan, "hardlink"); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(staging, filepath.Base(folder)))
+	if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(video) {
+		t.Fatalf("staged files = %v, %v", entries, err)
+	}
+	original, err := os.Stat(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := os.Stat(filepath.Join(staging, want))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(original, linked) {
+		t.Fatal("selected video was not hardlinked")
+	}
+	subject.KeepFolder = false
+	save, mapped, err = qbitSavePathForSource(subject, []string{root}, []string{"/downloads"})
+	if err != nil || !mapped || save != "/downloads/Movie.2026/" {
+		t.Fatalf("ordinary save path = %q mapped=%t err=%v", save, mapped, err)
+	}
+}

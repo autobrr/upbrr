@@ -6,6 +6,7 @@ package torrent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	slashpath "path" //nolint:depguard // Joins torrent-internal slash-delimited metainfo paths.
 	"path/filepath"
@@ -191,28 +192,50 @@ func TestCreateTrustsPTPPieceProfile(t *testing.T) {
 
 func TestCreateFolderWithSingleWantedVideoHashesFile(t *testing.T) {
 	t.Parallel()
-
-	dir := t.TempDir()
-	sourceDir := filepath.Join(dir, "Movie.2026.1080p.WEB-DL-GRP")
-	video := filepath.Join(sourceDir, "Movie.2026.1080p.WEB-DL-GRP.mkv")
-	writeTestFile(t, video, "video")
-	writeTestFile(t, filepath.Join(sourceDir, "proof.jpg"), "proof")
-
-	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.TorrentSubject{
-		SourcePath: sourceDir,
-		FileList:   []string{video},
-	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	name, files := loadTorrentShape(t, result.Path)
-	if name != filepath.Base(video) {
-		t.Fatalf("expected single-file torrent name %q, got %q", filepath.Base(video), name)
-	}
-	if len(files) != 0 {
-		t.Fatalf("expected single-file torrent file list to be empty, got %#v", files)
+	for _, folderName := range []string{"Example.Movie.2026.1080p.WEB-DL-GRP", "Example.Movie.2026.1080p.WEB-DL-GRP.mkv"} {
+		for _, keep := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s keep=%t", folderName, keep), func(t *testing.T) {
+				sourceDir := filepath.Join(t.TempDir(), folderName)
+				video := filepath.Join(sourceDir, "Example.Movie.2026.1080p.WEB-DL-GRP.mkv")
+				writeTestFile(t, video, "video")
+				for _, name := range []string{"sample.mkv", "release.nfo", "notes.txt", "proof.jpg"} {
+					writeTestFile(t, filepath.Join(sourceDir, name), "sidecar")
+				}
+				service := NewService(api.NopLogger{}, t.TempDir())
+				subject := api.TorrentSubject{
+					SourcePath: sourceDir,
+					FileList:   []string{video},
+					KeepFolder: keep,
+				}
+				result, err := service.Create(t.Context(), subject)
+				if err != nil {
+					t.Fatal(err)
+				}
+				name, files := loadTorrentShape(t, result.Path)
+				if keep {
+					if name != filepath.Base(sourceDir) || len(files) != 1 || files[0] != filepath.Base(video) {
+						t.Fatalf("kept folder layout = %q %v", name, files)
+					}
+				} else if name != filepath.Base(video) || len(files) != 0 {
+					t.Fatalf("single-file layout = %q %v", name, files)
+				}
+				inventory, ok, err := ResolveSubmissionContentInventory(subject)
+				if err != nil || !ok || len(inventory.Files) != 1 || inventory.Files[0].LocalPath != video {
+					t.Fatalf("selected content inventory = %+v ok=%t err=%v", inventory, ok, err)
+				}
+				wantScope := api.SubmissionContentScopeSingleFile
+				if keep {
+					wantScope = api.SubmissionContentScopeFileSet
+				}
+				if inventory.Scope != wantScope {
+					t.Fatalf("scope=%s want=%s", inventory.Scope, wantScope)
+				}
+				subject.KeepFolder = !keep
+				if err := validateTorrentContent(result.Path, subject); err == nil {
+					t.Fatal("opposite folder layout accepted for reuse")
+				}
+			})
+		}
 	}
 }
 
@@ -591,9 +614,9 @@ func TestCreateNoHashRequiresVerifiedClientDataToSkipBytes(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name         string
-		verified     bool
-		missingHash  bool
+		name        string
+		verified    bool
+		missingHash bool
 	}{
 		{name: "verified", verified: true},
 		{name: "unverified"},

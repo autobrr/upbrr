@@ -20,6 +20,52 @@ import InputPage from "./index";
 
 afterEach(cleanup);
 
+it("offers folder preservation only when the backend marks the source eligible", () => {
+  const base = readyInputFacet(1);
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      preview: {
+        ...base.view.preview!,
+        Display: { ...base.view.preview!.Display, CanKeepFolder: true },
+      },
+      intent: {
+        ...base.view.intent,
+        policy: { keepFolder: false, keepImages: true, onlyID: false },
+      },
+    },
+  };
+  const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+  fireEvent.click(screen.getByText("Source options", { exact: true }));
+  const checkbox = screen.getByRole("checkbox", { name: "Keep source folder" });
+  expect(checkbox).not.toBeChecked();
+  fireEvent.click(checkbox);
+  expect(facet.changePreparationPolicy).toHaveBeenLastCalledWith({
+    keepFolder: true,
+    keepImages: true,
+    onlyID: false,
+  });
+
+  for (const CanKeepFolder of [false, undefined]) {
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            preview: {
+              ...facet.view.preview!,
+              Display: { ...facet.view.preview!.Display, CanKeepFolder },
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.queryByRole("checkbox", { name: "Keep source folder" })).not.toBeInTheDocument();
+  }
+});
+
 it("keeps aggregate language corrections independent", () => {
   const base = readyInputFacet(1);
   const metadata = {

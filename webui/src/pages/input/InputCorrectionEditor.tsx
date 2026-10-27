@@ -1385,19 +1385,27 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
               />
             </div>
           ))}
-          <label className={settingsStyle.toggle}>
-            <span>Keep source folder</span>
-            <input
-              type="checkbox"
-              checked={view.intent.policy.keepFolder}
-              onChange={(event) =>
-                facet.changePreparationPolicy({
-                  ...view.intent.policy,
-                  keepFolder: event.target.checked,
-                })
-              }
-            />
-          </label>
+          {view.preview?.Display.CanKeepFolder && (
+            <div className="grid gap-1.5">
+              <label className={settingsStyle.toggle}>
+                <span>Keep source folder</span>
+                <input
+                  type="checkbox"
+                  aria-describedby="keep-source-folder-help"
+                  checked={view.intent.policy.keepFolder}
+                  onChange={(event) =>
+                    facet.changePreparationPolicy({
+                      ...view.intent.policy,
+                      keepFolder: event.target.checked,
+                    })
+                  }
+                />
+              </label>
+              <p id="keep-source-folder-help" className="text-xs text-muted-foreground">
+                Keep this movie or episode inside its source folder; extra files are not included.
+              </p>
+            </div>
+          )}
           <label className={settingsStyle.toggle}>
             <span>Keep images</span>
             <input

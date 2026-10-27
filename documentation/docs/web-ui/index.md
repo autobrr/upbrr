@@ -75,6 +75,12 @@ See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and t
 
 Click **Generate**, then inspect each format and picture/audio outcome. Native plots and selected audio images/statistics are included in descriptions by default. Select individual picture-check images to include them. Successful artifacts remain inspectable after partial attempts; a sampled or bounded result does not establish whole-video picture coverage. See [HDR analysis](../workflow/hdr-analysis.md) for source requirements, comparison sources, retries, and colour-thumbnail interpretation.
 
+### Keep a single video in its folder
+
+Choose **Browse folder**, select a folder containing one eligible movie or episode video, and fetch its metadata. Under **Input → Edit Release Details → Source options**, enable **Keep source folder**, then apply **Refresh metadata**. The torrent keeps that folder as its root but includes only the selected video, not samples, NFOs, text files, or other sidecars. With the option off, the same input uses a single-file torrent.
+
+The option is not shown for direct file inputs, season packs, multi-video folders, or discs; their existing handling is unchanged.
+
 ### Correct Input facts
 
 Use **Input** to correct provider IDs, genre, release naming fields, and languages before duplicate checking. **Title** and **Original title** are read-only; **Manual year** is editable for movies and locked for TV. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. Category, Type, Source, and Resolution must be present in the saved prepared metadata before upload. When any are missing, Input shows **Required facts missing, please edit release details.** and outlines only the missing controls in red. Draft edits do not clear these indicators: apply **Refresh metadata** successfully to save each correction. A failed refresh leaves the existing indicators in place. **Auto** is complete only when its saved, derived value is present.
