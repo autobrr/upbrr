@@ -1428,8 +1428,8 @@
     "sha256": "e3fb973e891ec2739ae27e111a9e9f59894c63be7b5fe0bc9390bd2f78d0e21a"
   },
   "internal/trackers/impl/unit3d/sites/lst/validation.go:validationPolicy": {
-    "reason": "LST receipt review: tracker-filtered source/generation-bound reference-only evidence adds unknown-format counts without local artifacts, source compliance assertions or changes to parser requirements; existing inspected-image warnings and exact-description acknowledgement binding remain independent.",
-    "sha256": "0cb30c915f2085e91231bae05a3ac905a984db92a46a157cdbbd6c3d042367b8"
+    "reason": "LST audio eligibility review: only the policy ID changes here. Six-channel FLAC with no reported layout uses a local 5.1 assumption and one advisory, preserving measured facts, anime classification and explicit-layout checks. Provider consumers, manual metadata precedence, source/generation binding and independent validation remain unchanged.",
+    "sha256": "4cae757e9816b5d5d705c358b60c324a812de73a4ef45562fe51af301daec816"
   },
   "internal/trackers/impl/unit3d/sites/lume/name.go:applyLumeTVDBDisambiguation": {
     "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",

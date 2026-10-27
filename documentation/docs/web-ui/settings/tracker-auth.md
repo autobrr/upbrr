@@ -129,6 +129,8 @@ Distinguish local parsing/storage errors from a tracker rejecting the session, p
 
 Cookies do not replace other required credentials. Follow the tracker card's requirements and returned remediation message rather than removing required fields.
 
+If the error explicitly reports that the connection's IP is banned indefinitely, resolve the restriction through the tracker's support process. Changing credentials, importing cookies, or submitting another 2FA code does not remove an IP restriction. When this feedback is recognized, upbrr stops automatic login fallback and preserves stored cookies because the ban alone does not prove that they expired. A generic forbidden response does not by itself identify an IP ban.
+
 For a report, include the upbrr version/build, installation type, tracker ID, import route, status/count, and shortest sanitized error or log excerpt around the failed action. Check both the auth message and **Logging** yourself before sharing; remove cookie values, credentials, private URLs, and account details. Never include the export, database, key material, or raw tracker responses. See [Safe issue reports](../../troubleshooting/index.md#safe-issue-reports).
 
 ## Storage recovery

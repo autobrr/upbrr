@@ -32,6 +32,8 @@ When an allowed host fails, upbrr can try the next eligible configured host. A h
 
 Imported tracker images still follow the destination's host policy. upbrr resolves supported thumbnail and proxy URLs to full-size sources where possible. Links tied to the source tracker, including PTP-hosted images when uploading elsewhere, require an eligible image host; this also applies to images inside imported comparison blocks. If a required image cannot be downloaded or rehosted, preparation reports the failure instead of treating the source URL as a valid destination upload.
 
+For size-limited batch uploads, upbrr respects both the host’s file-count and encoded-size limits, including multipart overhead, by splitting images into separate requests. If one image cannot fit by itself, reduce its file size before retrying. The same limits apply to CLI and Web UI uploads.
+
 ## Additional hosts
 
 **Lostimg**, **ReelFliX**, and **Samaritano** are conditional, tracker-owned integrations. Enable one and enter its API key only when the corresponding tracker advertises support. They are not general global fallback slots; Samaritano is available only for SAM.

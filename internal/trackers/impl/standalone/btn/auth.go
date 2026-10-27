@@ -211,6 +211,9 @@ func loginBTNSession(ctx context.Context, cfg config.TrackerConfig, baseURL stri
 	if readErr != nil {
 		return nil, fmt.Errorf("trackers: BTN read login response: %w", readErr)
 	}
+	if err := btnIPBanError(string(body)); err != nil {
+		return nil, err
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		if strings.TrimSpace(login.Code) != "" && resp.StatusCode == http.StatusForbidden {
 			return nil, fmt.Errorf("trackers: BTN login failed status=%d: %w", resp.StatusCode, ErrSubmitted2FARejected)
@@ -236,8 +239,9 @@ func loginBTNSession(ctx context.Context, cfg config.TrackerConfig, baseURL stri
 }
 
 // validateBTNClientSession confirms the client can reach BTN's upload page.
-// Only HTTP authorization failures and an exact login-page redirect prove a
-// stored session invalid. Other remote and layout failures stay transient.
+// Explicit IP-ban feedback preserves the stored session and blocks login
+// fallback. Otherwise HTTP authorization failures and an exact login-page
+// redirect prove it invalid; other remote and layout failures stay transient.
 func validateBTNClientSession(ctx context.Context, client *http.Client, baseURL string) error {
 	if client == nil {
 		return errors.New("trackers: BTN session client missing")
@@ -258,6 +262,10 @@ func validateBTNClientSession(ctx context.Context, client *http.Client, baseURL 
 		finalPath = resp.Request.URL.Path
 		finalURL = resp.Request.URL.String()
 	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, btnAuthResponseMaxBytes+1))
+	if err := btnIPBanError(string(body)); err != nil {
+		return err
+	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || finalPath == btnLoginPath {
 		message := btnAuthLoginDiagnostic(resp.StatusCode, finalURL)
 		return &trackers.AuthResolutionError{
@@ -267,7 +275,6 @@ func validateBTNClientSession(ctx context.Context, client *http.Client, baseURL 
 			Err:              btnSafeError{message: message, cause: errBTNSessionConfirmedInvalid},
 		}
 	}
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, btnAuthResponseMaxBytes+1))
 	if readErr != nil {
 		return newBTNTransientAuthError("trackers: BTN upload auth response read failed", readErr)
 	}
@@ -291,6 +298,18 @@ func validateBTNClientSession(ctx context.Context, client *http.Client, baseURL 
 		)
 	}
 	return nil
+}
+
+// btnIPBanError recognizes only the reported indefinite-IP-ban phrase. The
+// response itself is never exposed, and a ban is not evidence of bad cookies.
+func btnIPBanError(body string) *trackers.AuthResolutionError {
+	if !strings.Contains(strings.ToLower(body), "your ip is banned indefinitely") {
+		return nil
+	}
+	return newBTNTransientAuthError(
+		"BTN has banned this connection's IP indefinitely. Resolve the restriction through BTN's support process; changing credentials, importing cookies, or submitting another 2FA code will not resolve it.",
+		nil,
+	)
 }
 
 type btnSafeError struct {

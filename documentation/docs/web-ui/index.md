@@ -45,6 +45,8 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+**Screenshots** requires at least one tracker eligible to continue after duplicate checking. If all trackers are blocked, return to **Dupe Checking** and resolve the displayed prerequisite or acknowledge an available policy review. The accepted server response updates navigation for the same workflow; independently eligible trackers can continue while others remain blocked. An acknowledgement does not remove strict restrictions or replace renewed review when evidence changes or expires.
+
 Background workflow updates preserve an unsubmitted **Source path**, unsaved **Descriptions** text, and the selected TVDB preview language for the same input. Description drafts are cleared when the active input, prepared generation, or selected trackers change. **Render** previews the current editor text without saving it. Use **Save group** to retain the complete edited description, including image order and custom text placement, without adding generated sections again. **Reset group** replaces that group with its generated description.
 
 On **Input**, focus **Source path** to choose a recently used path from this browser, if available. [Input history limit](./settings/main.md) controls how many paths the browser keeps; setting it to `0` clears the list.
@@ -101,7 +103,7 @@ A solitary Theatrical cut or edition is ignored; compound editions retain it. Re
 
 Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.
 
-Audio languages accept comma-separated values. Subtitle and hardcoded-subtitle languages use editable, searchable rows with **Remove** controls and an empty row for adding another language; custom names and comma-separated entries are accepted. Hardcoded English choices distinguish **English (Full)** from **English (Forced)**. Individual track edits apply only to the selected inspected track. Release-level language lists affect the aggregate without assigning languages to each track. Uninspected collection members remain marked as incomplete coverage.
+**Audio languages**, **Subtitle languages**, and **Hardcoded subtitle languages** show a compact comma-separated summary. Open a dropdown to browse or search its language choices and select or deselect the checkboxes. Custom saved names remain selectable; to add a new custom name, enter it in the search box and choose **Add**. **Clear selections** keeps an explicit empty correction, while **Auto** restores automatic detection. Use **Tab** to move between the search, actions, and checkboxes, **Space** to toggle a checkbox, and **Escape** to close the dropdown. Hardcoded English choices distinguish **English (Full)** from **English (Forced)**. Individual track edits apply only to the selected inspected track. Release-level language lists affect the aggregate without assigning languages to each track. Uninspected collection members remain marked as incomplete coverage.
 
 Changing Movie/TV with the same TMDB ID loads metadata from the correct category. If the source or provider identity changes, saved content corrections may require confirmation, replacement, or reset. A changed track manifest requires selecting a current track again.
 
