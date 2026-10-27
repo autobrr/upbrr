@@ -756,6 +756,20 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     key: "AudioLanguages",
     values: [["Japanese", "Spanish"], []],
   },
+  {
+    field: "metadata.subtitle_languages",
+    label: "Subtitle languages",
+    group: "Metadata",
+    key: "SubtitleLanguages",
+    values: [["Japanese", "Spanish"], ["French"], []],
+  },
+  {
+    field: "metadata.hardcoded_subtitle_languages",
+    label: "Hardcoded subtitle languages",
+    group: "Metadata",
+    key: "HardcodedSubtitleLanguages",
+    values: [["English (Forced)", "Spanish"], ["English (Full)"], []],
+  },
 ];
 
 test("embedded Input finite choices support keyboard selection without custom or blank entry", async ({
@@ -810,15 +824,25 @@ for (const correction of releaseDetailCorrections) {
       await page.getByText("Edit Release Details", { exact: true }).click();
       const row = page.locator(`[data-correction-field="${correction.field}"]`);
       const boolean = typeof correction.values[0] === "boolean";
+      const languages = Array.isArray(correction.values[0]);
+      const hardcoded = correction.key === "HardcodedSubtitleLanguages";
       const control = row.getByRole(
-        boolean || ["Type", "Service", "Distributor"].includes(correction.key)
-          ? "combobox"
-          : correction.key === "ManualYear"
-            ? "spinbutton"
-            : "textbox",
+        languages
+          ? "button"
+          : boolean || ["Type", "Service", "Distributor"].includes(correction.key)
+            ? "combobox"
+            : correction.key === "ManualYear"
+              ? "spinbutton"
+              : "textbox",
         { name: correction.label, exact: true },
       );
-      const automaticValue = await control.inputValue();
+      const automaticValue = languages
+        ? await control.locator("span").first().innerText()
+        : await control.inputValue();
+      const expectControlValue = async (value: string) => {
+        if (languages) await expect(control).toHaveAccessibleDescription(value || "None");
+        else await expect(control).toHaveValue(value);
+      };
       const storedGroup = correction.group === "ReleaseName" ? "releaseName" : "metadata";
       const expectPersisted = (
         current: ReleaseWorkflowCurrent | null | undefined,
@@ -832,6 +856,17 @@ for (const correction of releaseDetailCorrections) {
           correction.key,
           value,
         );
+        if (hardcoded) {
+          const enabled = value === null ? null : Array.isArray(value) && value.length > 0;
+          expect(current?.corrections?.corrections.metadata).toHaveProperty(
+            "HardcodedSubs",
+            enabled,
+          );
+          expect(current?.factInstructions?.instructions.Metadata).toHaveProperty(
+            "HardcodedSubs",
+            enabled,
+          );
+        }
       };
       for (const value of correction.values) {
         await test.step(`apply ${JSON.stringify(value)} and reload`, async () => {
@@ -844,7 +879,16 @@ for (const correction of releaseDetailCorrections) {
               : value === 0
                 ? ""
                 : String(value);
-          if (boolean || correction.key === "Type") await control.selectOption(text);
+          if (Array.isArray(value)) {
+            await control.click();
+            await row
+              .getByRole("button", { name: `Clear ${correction.label}`, exact: true })
+              .click();
+            for (const language of value) {
+              await row.getByRole("checkbox", { name: language, exact: true }).check();
+            }
+            await control.press("Escape");
+          } else if (boolean || correction.key === "Type") await control.selectOption(text);
           else if (["Service", "Distributor"].includes(correction.key) && text) {
             await control.fill(
               correction.key === "Service" ? (text === "AMZN" ? "aMz" : "netfl") : "aRrOw",
@@ -853,7 +897,7 @@ for (const correction of releaseDetailCorrections) {
             await expect(choices).toHaveCount(1);
             await control.press("ArrowDown");
             await control.press("Enter");
-            await expect(control).toHaveValue(text);
+            await expectControlValue(text);
           } else await control.fill(text);
           await expect(row.getByText("Manual change pending", { exact: true })).toBeVisible();
           const saved = waitForAppMethod(page, "OpenActiveInput");
@@ -867,7 +911,10 @@ for (const correction of releaseDetailCorrections) {
               Identity: {},
               ReleaseName: {},
               Metadata: {},
-              [correction.group]: { [correction.key]: value },
+              [correction.group]: {
+                [correction.key]: value,
+                ...(hardcoded ? { HardcodedSubs: Array.isArray(value) && value.length > 0 } : {}),
+              },
             },
             resetFields: [],
             confirmFields: [],
@@ -876,13 +923,13 @@ for (const correction of releaseDetailCorrections) {
           snapshot = await waitForMetadataReady(page, app!.url);
           expectPersisted(snapshot.current, value);
           await expect(row.getByText("Manual value · Applied", { exact: true })).toBeVisible();
-          await expect(control).toHaveValue(text);
+          await expectControlValue(text);
           const restored = waitForAppMethod(page, "GetActiveInput");
           await page.reload();
           snapshot = await activeInputFromResponse(await restored);
           expectPersisted(snapshot.current, value);
           await page.getByText("Edit Release Details", { exact: true }).click();
-          await expect(control).toHaveValue(text);
+          await expectControlValue(text);
           await expect(row.getByText("Manual value · Applied", { exact: true })).toBeVisible();
         });
       }
@@ -899,21 +946,24 @@ for (const correction of releaseDetailCorrections) {
       );
       expect((resetCommand.intent as { correctionPatch: unknown }).correctionPatch).toEqual({
         values: { Identity: {}, ReleaseName: {}, Metadata: {} },
-        resetFields: [{ field: correction.field }],
+        resetFields: [
+          { field: correction.field },
+          ...(hardcoded ? [{ field: "metadata.hardcoded_subs" }] : []),
+        ],
         confirmFields: [],
         expectedRevision: snapshot.current?.corrections?.revision ?? 0,
       });
       snapshot = await waitForMetadataReady(page, app.url);
       expectPersisted(snapshot.current, null);
       await expect(row.getByText(/^Automatic value/)).toBeVisible();
-      await expect(control).toHaveValue(automaticValue);
+      await expectControlValue(automaticValue);
       const resetReload = waitForAppMethod(page, "GetActiveInput");
       await page.reload();
       snapshot = await activeInputFromResponse(await resetReload);
       expectPersisted(snapshot.current, null);
       await page.getByText("Edit Release Details", { exact: true }).click();
       await expect(row.getByText(/^Automatic value/)).toBeVisible();
-      await expect(control).toHaveValue(automaticValue);
+      await expectControlValue(automaticValue);
       expect(workspace.fake.counters).toEqual(initialCounters);
     } finally {
       await app?.stop();
