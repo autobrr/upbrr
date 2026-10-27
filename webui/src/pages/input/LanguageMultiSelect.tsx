@@ -6,13 +6,15 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import correctionChoices from "./correctionChoices.json";
 
-/** Compact aggregate-language corrections retain custom values without changing other fields. */
+/** Compact language corrections retain custom names and optional hardcoded coverage choices. */
 export function LanguageMultiSelect({
   id,
   label,
   value,
   onChange,
+  coverage = false,
 }: Readonly<{
+  coverage?: boolean;
   id: string;
   label: string;
   value: readonly string[] | null | undefined;
@@ -23,13 +25,13 @@ export function LanguageMultiSelect({
   const trigger = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const selected = value || [];
+  const choices = coverage
+    ? correctionChoices.HardcodedSubtitleLanguages
+    : correctionChoices.SubtitleLanguages;
   const options = [
-    ...correctionChoices.SubtitleLanguages,
+    ...choices,
     ...[...new Set(selected)]
-      .filter(
-        (language) =>
-          !correctionChoices.SubtitleLanguages.some((option) => option.value === language),
-      )
+      .filter((language) => !choices.some((option) => option.value === language))
       .map((language) => ({ value: language, label: language })),
   ];
   const search = query.trim();
@@ -109,12 +111,7 @@ export function LanguageMultiSelect({
                       ? [...selected, option.value]
                       : selected.filter((language) => language !== option.value),
                   );
-                  if (
-                    !checked &&
-                    !correctionChoices.SubtitleLanguages.some(
-                      (choice) => choice.value === option.value,
-                    )
-                  ) {
+                  if (!checked && !choices.some((choice) => choice.value === option.value)) {
                     searchInput.current?.focus();
                   }
                 }}

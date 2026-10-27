@@ -17,7 +17,6 @@ import type { PreparedRelease } from "../../types";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
-import { LanguageListInput } from "./LanguageListInput";
 import { LanguageMultiSelect } from "./LanguageMultiSelect";
 import { settingsStyle } from "../../settings/style";
 import { CorrectionSearch, CorrectionSelect } from "./CorrectionChoice";
@@ -1125,11 +1124,9 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
               hasOwn(view.intent.metadata, key) ||
               (hardcoded && hasOwn(view.intent.metadata, "HardcodedSubs"));
             const ListInput =
-              key === "AudioLanguages" || key === "SubtitleLanguages"
+              key === "AudioLanguages" || key === "SubtitleLanguages" || hardcoded
                 ? LanguageMultiSelect
-                : hardcoded
-                  ? LanguageListInput
-                  : CommaListInput;
+                : CommaListInput;
             const value =
               hardcoded && view.intent.metadata.HardcodedSubs === false
                 ? []

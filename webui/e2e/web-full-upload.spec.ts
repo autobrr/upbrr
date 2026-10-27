@@ -763,6 +763,13 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     key: "SubtitleLanguages",
     values: [["Japanese", "Spanish"], ["French"], []],
   },
+  {
+    field: "metadata.hardcoded_subtitle_languages",
+    label: "Hardcoded subtitle languages",
+    group: "Metadata",
+    key: "HardcodedSubtitleLanguages",
+    values: [["English (Forced)", "Spanish"], ["English (Full)"], []],
+  },
 ];
 
 test("embedded Input finite choices support keyboard selection without custom or blank entry", async ({
@@ -818,6 +825,7 @@ for (const correction of releaseDetailCorrections) {
       const row = page.locator(`[data-correction-field="${correction.field}"]`);
       const boolean = typeof correction.values[0] === "boolean";
       const languages = Array.isArray(correction.values[0]);
+      const hardcoded = correction.key === "HardcodedSubtitleLanguages";
       const control = row.getByRole(
         languages
           ? "button"
@@ -848,6 +856,17 @@ for (const correction of releaseDetailCorrections) {
           correction.key,
           value,
         );
+        if (hardcoded) {
+          const enabled = value === null ? null : Array.isArray(value) && value.length > 0;
+          expect(current?.corrections?.corrections.metadata).toHaveProperty(
+            "HardcodedSubs",
+            enabled,
+          );
+          expect(current?.factInstructions?.instructions.Metadata).toHaveProperty(
+            "HardcodedSubs",
+            enabled,
+          );
+        }
       };
       for (const value of correction.values) {
         await test.step(`apply ${JSON.stringify(value)} and reload`, async () => {
@@ -892,7 +911,10 @@ for (const correction of releaseDetailCorrections) {
               Identity: {},
               ReleaseName: {},
               Metadata: {},
-              [correction.group]: { [correction.key]: value },
+              [correction.group]: {
+                [correction.key]: value,
+                ...(hardcoded ? { HardcodedSubs: Array.isArray(value) && value.length > 0 } : {}),
+              },
             },
             resetFields: [],
             confirmFields: [],
@@ -924,7 +946,10 @@ for (const correction of releaseDetailCorrections) {
       );
       expect((resetCommand.intent as { correctionPatch: unknown }).correctionPatch).toEqual({
         values: { Identity: {}, ReleaseName: {}, Metadata: {} },
-        resetFields: [{ field: correction.field }],
+        resetFields: [
+          { field: correction.field },
+          ...(hardcoded ? [{ field: "metadata.hardcoded_subs" }] : []),
+        ],
         confirmFields: [],
         expectedRevision: snapshot.current?.corrections?.revision ?? 0,
       });

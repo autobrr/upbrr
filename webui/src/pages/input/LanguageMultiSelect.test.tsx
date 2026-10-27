@@ -9,10 +9,15 @@ import { LanguageMultiSelect } from "./LanguageMultiSelect";
 
 afterEach(cleanup);
 
-function Languages({ initial = ["English", "Example Dialect"], onChange = vi.fn() }) {
+function Languages({
+  initial = ["English", "Example Dialect"],
+  onChange = vi.fn(),
+  coverage = false,
+}) {
   const [value, setValue] = useState<readonly string[]>(initial);
   return (
     <LanguageMultiSelect
+      coverage={coverage}
       id="languages"
       label="Languages"
       value={value}
@@ -32,6 +37,8 @@ it("keeps a compact marked summary while searching, selecting, deselecting by la
   const trigger = screen.getByRole("button", { name: "Languages" });
   expect(trigger).toHaveTextContent(selected.join(", "));
   await user.click(trigger);
+  expect(screen.queryByRole("checkbox", { name: "English (Forced)" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "English (Full)" })).not.toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Example Dialect" })).toBeChecked();
   const search = screen.getByRole("searchbox", { name: "Search Languages" });
   await user.click(search);
@@ -74,4 +81,22 @@ it("supports keyboard navigation and retains focus when custom controls disappea
   await user.keyboard("{Escape}");
   expect(trigger).toHaveFocus();
   expect(trigger).toHaveAttribute("aria-expanded", "false");
+});
+
+it("preserves hardcoded coverage choices and custom names independently", async () => {
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  render(
+    <Languages initial={["English (Forced)", "Example Dialect"]} coverage onChange={onChange} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Languages" }));
+  expect(screen.getByRole("checkbox", { name: "English (Forced)" })).toBeChecked();
+  await user.click(screen.getByRole("checkbox", { name: "English (Full)" }));
+  expect(onChange).toHaveBeenLastCalledWith([
+    "English (Forced)",
+    "Example Dialect",
+    "English (Full)",
+  ]);
+  await user.click(screen.getByRole("checkbox", { name: "English (Forced)" }));
+  expect(onChange).toHaveBeenLastCalledWith(["Example Dialect", "English (Full)"]);
 });
