@@ -1532,7 +1532,8 @@ describe("InputPage", () => {
     expect(facet.resetCorrection).toHaveBeenCalledWith({ field: "metadata.hardcoded_subs" });
   });
 
-  it("keeps explicit false, empty, and Auto correction intents distinct", () => {
+  it("keeps explicit false, empty, and Auto correction intents distinct", async () => {
+    const user = userEvent.setup();
     const base = readyInputFacet(1);
     const facet: InputFacet = {
       ...base,
@@ -1545,9 +1546,10 @@ describe("InputPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Enter digits only.");
     expect(facet.changeIdentity).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Hardcoded subtitle languages" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Spanish" }));
-    fireEvent.click(screen.getByRole("button", { name: "Clear Hardcoded subtitle languages" }));
+    await user.click(screen.getByRole("button", { name: "Hardcoded subtitle languages" }));
+    await user.click(screen.getByRole("checkbox", { name: "Spanish" }));
+    await user.click(screen.getByRole("button", { name: "Clear Hardcoded subtitle languages" }));
+    await user.keyboard("{Escape}");
     expect(facet.changeMetadata).toHaveBeenCalledWith({
       HardcodedSubs: false,
       HardcodedSubtitleLanguages: [],
