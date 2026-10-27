@@ -1453,23 +1453,24 @@ describe("InputPage", () => {
     expect(screen.getByLabelText("Hardcoded subtitle languages")).toHaveValue("");
   });
 
-  it("clears only the selected language-list draft on Auto", () => {
+  it("clears only the selected language-list draft on Auto", async () => {
+    const user = userEvent.setup();
     const base = readyInputFacet(1);
     render(
       <InputCorrectionEditor
         facet={{ ...base, view: { ...base.view, release: preparedRelease() } }}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Audio languages" }));
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search Audio languages" }), {
-      target: { value: "Example Dialect" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Auto Audio languages" }));
+    await user.click(screen.getByRole("button", { name: "Audio languages" }));
+    const search = screen.getByRole("searchbox", { name: "Search Audio languages" });
+    await user.type(search, "Example Dialect");
+    expect(search).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Auto Audio languages" }));
     expect(screen.getByRole("button", { name: "Audio languages" })).toHaveTextContent("Japanese");
     expect(
       screen.queryByRole("searchbox", { name: "Search Audio languages" }),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Audio languages" }));
+    await user.click(screen.getByRole("button", { name: "Audio languages" }));
     expect(screen.getByRole("searchbox", { name: "Search Audio languages" })).toHaveValue("");
     expect(screen.getByRole("checkbox", { name: "Japanese" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "French" })).not.toBeChecked();
