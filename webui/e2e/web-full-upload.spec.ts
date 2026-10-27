@@ -756,6 +756,13 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     key: "AudioLanguages",
     values: [["Japanese", "Spanish"], ["French"], []],
   },
+  {
+    field: "metadata.subtitle_languages",
+    label: "Subtitle languages",
+    group: "Metadata",
+    key: "SubtitleLanguages",
+    values: [["Japanese", "Spanish"], ["French"], []],
+  },
 ];
 
 test("embedded Input finite choices support keyboard selection without custom or blank entry", async ({
