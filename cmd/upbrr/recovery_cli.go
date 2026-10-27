@@ -94,6 +94,11 @@ func runRecoverCommand(ctx context.Context, configPath string, configProvided bo
 	reader := bufio.NewReader(streams.in)
 	for _, scope := range scopes {
 		retained, err := recovery.Recover(ctx, scope)
+		if errors.Is(err, releaseworkflow.ErrManualRecoveryRequired) {
+			fmt.Fprintf(streams.out, "Workflow %s requires manual recovery; retained state and fences were not changed.\n",
+				safeDiagnosticText(string(scope.WorkflowID)))
+			continue
+		}
 		if err != nil {
 			return fmt.Errorf("recover interrupted workflow: %w", err)
 		}

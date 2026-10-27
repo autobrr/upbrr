@@ -279,6 +279,35 @@ func checkRecoveryCLIPublishedClientResult(t *testing.T, publishedUnknown, failS
 	}
 }
 
+func TestRecoverCommandContinuesPastManualRecoveryScopes(t *testing.T) {
+	t.Parallel()
+	repo, cfg, configPath := newRecoveryCLIFixture(t)
+	for _, id := range []string{"a-fence-only", "b-stateless", "c-recoverable"} {
+		insertRecoveryCLIWorkflow(t, repo, "cli", id, "tracker_submission", api.WorkflowEffectStatusUnknown)
+	}
+	if _, err := repo.RawDB().ExecContext(t.Context(), `DELETE FROM release_workflow_effects WHERE workflow_id = 'a-fence-only'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(t.Context(), `DELETE FROM release_workflow_states WHERE workflow_id = 'b-stateless'`); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err := executeCLI(t.Context(), []string{"recover", "--config", configPath}, cliIO{in: strings.NewReader("yes\n"), out: &output})
+	if err == nil || !strings.Contains(err.Error(), "retain the database for manual recovery") {
+		t.Fatalf("manual recovery guidance missing: %v", err)
+	}
+	if strings.Count(output.String(), "Confirm it did not complete?") != 1 {
+		t.Fatalf("later recoverable scope was not confirmed: %s", output.String())
+	}
+	scopes, err := repo.ListReleaseWorkflowRecoveryScopes(t.Context())
+	if err != nil || len(scopes) != 2 || scopes[0].WorkflowID != "a-fence-only" || scopes[1].WorkflowID != "b-stateless" {
+		t.Fatalf("manual scopes changed or recoverable scope remains: %#v, err=%v", scopes, err)
+	}
+	if _, _, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), api.NopLogger{}); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		t.Fatalf("manual scopes lost activation protection: %v", err)
+	}
+}
+
 func TestRecoverCommandDeclineRetainsBlocker(t *testing.T) {
 	for _, input := range []string{"no\n", ""} {
 		t.Run(input, func(t *testing.T) {

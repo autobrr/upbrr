@@ -48,7 +48,9 @@ Startup retains completed operation checkpoints and marks unfinished operations 
 
 For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup retains unresolved external attempts as uncertain and keeps their retry blocks; an interrupted operation is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
 
-If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Resolve the uncertainty before activating the changed configuration.
+If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Stop other upbrr instances, then run `upbrr recover` with the same database configuration and environment (including `--config` when normally used). Wait for prior-process leases to expire if recovery reports busy. Recovery does not activate configuration or repeat external actions. Confirm that each displayed effect did not complete only after checking its remote outcome; answer No if it completed or remains uncertain.
+
+Recovery leaves scopes that lack the retained workflow state or uncertain effect needed for confirmation untouched, and continues with other recoverable scopes. If it finishes by reporting that manual recovery is required, retain the database for investigation; do not delete its state or fences to bypass the block. After successful recovery, restart upbrr with the unchanged configuration.
 
 If **Legacy workflow recovery** still appears, inspect each listed remote outcome. Choose **Confirmed not completed; allow a fresh exact attempt** only after confirming it did not complete. Do not delete History simply to bypass an uncertain outcome: deletion also removes local repeat-submission protection.
 

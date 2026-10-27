@@ -19,6 +19,10 @@ type Recovery struct {
 	module *Module
 }
 
+// ErrManualRecoveryRequired marks retained scopes without the state and uncertain
+// effect needed for exact-action reconciliation. Their fences remain untouched.
+var ErrManualRecoveryRequired = errors.New("release workflow: retained scope requires manual recovery")
+
 // RecoveryWorkflow identifies the retained source and its manual recovery actions.
 type RecoveryWorkflow struct {
 	Workflow   api.ReleaseWorkflow
@@ -43,6 +47,19 @@ func NewRecovery(repository Repository, activeInputs api.ActiveInputRepository, 
 // Recover fences expired prior-process work and exposes its reconciliation actions.
 // Live input and work leases remain protected, and source files are not inspected.
 func (r *Recovery) Recover(ctx context.Context, scope api.WorkflowScope) (RecoveryWorkflow, error) {
+	if _, err := r.module.repository.Load(ctx, scope.OwnerID, scope.WorkflowID); err != nil {
+		if errors.Is(err, ErrWorkflowNotFound) {
+			return RecoveryWorkflow{}, ErrManualRecoveryRequired
+		}
+		return RecoveryWorkflow{}, fmt.Errorf("load recovery workflow: %w", err)
+	}
+	workflowIDs, err := r.module.durability.ListLegacyRecoveryWorkflowIDs(ctx, scope.OwnerID)
+	if err != nil {
+		return RecoveryWorkflow{}, fmt.Errorf("inspect recovery effects: %w", err)
+	}
+	if !slices.Contains(workflowIDs, scope.WorkflowID) {
+		return RecoveryWorkflow{}, ErrManualRecoveryRequired
+	}
 	if err := r.module.ResetIdleInputOnStartup(ctx); err != nil {
 		return RecoveryWorkflow{}, fmt.Errorf("reset interrupted input for recovery: %w", err)
 	}
