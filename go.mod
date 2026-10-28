@@ -74,6 +74,6 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-replace github.com/autobrr/go-bdinfo => github.com/Audionut/go-bdinfo v0.2.1-0.20261019003536-42be7cb0c64c
+replace github.com/autobrr/go-bdinfo => github.com/Audionut/go-bdinfo v0.2.1-0.20261028065013-d14ed9d1f24d
 
 replace github.com/Audionut/go-hdr10-plus => github.com/Audionut/go-hdr10-plus v0.0.0-20261012140645-34d94903fa8c
