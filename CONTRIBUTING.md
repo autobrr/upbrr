@@ -106,9 +106,12 @@ Production documentation is built from the exact release tag and published only 
 
 #### Blu-ray collector development pin
 
-The temporary go-bdinfo fork pin follows the reviewed head of
+The go-bdinfo collector API baseline follows the reviewed head of
 [upstream PR #46](https://github.com/autobrr/go-bdinfo/pull/46), currently
-`42be7cb0c64c29cec8c7abf8ab9e12c77ea5bf95`. The HDR bridge and native consumers use
+`42be7cb0c64c29cec8c7abf8ab9e12c77ea5bf95`. ISO support additionally pins
+[the fork ISO fix](https://github.com/Audionut/go-bdinfo/pull/1) at
+`d14ed9d1f24ddfa8e172d09c5062ac09e7e7a228`; preserve that fix when reconciling
+subsequent upstream updates. The HDR bridge and native consumers use
 the first entry in each nonempty `Angles` list, the scanner's supported default;
 this does not provide configurable angle selection or separate Dolby Vision
 base/enhancement-layer support. Preserve strict clock, packet, range and completion
