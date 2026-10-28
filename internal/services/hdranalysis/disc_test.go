@@ -71,6 +71,9 @@ func discOutcomeFixture() *bridge.Outcome {
 
 func TestDiscExtractionAuthorityAndRetainedClockEvidence(t *testing.T) {
 	outcome := discOutcomeFixture()
+	// Additional angles must not replace the scanner's supported default path.
+	item := &outcome.Report.Timelines[0].Items[0]
+	item.Angles = append(item.Angles, bd.Angle{Err: errors.New("unsupported alternate")})
 	sidecar, err := DiscExtraction(outcome, "00001.MPLS")
 	if err != nil || len(sidecar.Timeline) != 1 || sidecar.Timeline[0].Mapping.PID != 4113 {
 		t.Fatalf("disc authority=%#v %v", sidecar, err)
@@ -91,7 +94,7 @@ func TestDiscExtractionAuthorityAndRetainedClockEvidence(t *testing.T) {
 	}
 	cases := map[string]func(*bridge.Outcome){
 		"metadata discovery": func(o *bridge.Outcome) { o.Report.Timelines[0].Scanned = false },
-		"alternate angle":    func(o *bridge.Outcome) { o.Report.Timelines[0].SelectedAngle = 1 },
+		"missing angles":     func(o *bridge.Outcome) { o.Report.Timelines[0].Items[0].Angles = nil },
 		"secondary stream":   func(o *bridge.Outcome) { o.Report.Timelines[0].Items[0].Angles[0].Video[0].Role = video.Secondary },
 		"ssif":               func(o *bridge.Outcome) { o.Report.Timelines[0].Items[0].Angles[0].Source.Kind = "ssif" },
 		"missing stc":        func(o *bridge.Outcome) { o.Report.Timelines[0].Items[0].Angles[0].STC = nil },

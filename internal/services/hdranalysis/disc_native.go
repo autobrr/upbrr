@@ -326,7 +326,7 @@ func (c *discConsumers) Finish(end video.End) error {
 func assembleDiscDV(ctx context.Context, source string, timeline bd.PlaylistTimeline, collectors map[dv.StreamKey]*discConsumers,
 	exhausted bool, budget *dv.MemoryBudget, allowance int64,
 ) (*dv.Extraction, error) {
-	if timeline.SelectedAngle != 0 || len(timeline.Items) > 8192 {
+	if len(timeline.Items) > 8192 {
 		return nil, dv.ErrUnsupportedInput
 	}
 	charge, err := budget.Reserve(int64(len(timeline.Items)) * 2048)

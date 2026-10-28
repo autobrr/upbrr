@@ -103,11 +103,11 @@ func discTimeline(report *bd.Result, playlistName string) ([]TimelineItem, map[s
 			continue
 		}
 		timelineFound = true
-		if !timeline.Complete || !timeline.Scanned || timeline.SelectedAngle != 0 || timeline.Err != nil {
+		if !timeline.Complete || !timeline.Scanned || timeline.Err != nil {
 			return nil, nil, errors.Join(extract.ErrUnsupportedInput, timeline.Err)
 		}
 		for _, item := range timeline.Items {
-			if item.Err != nil || item.SelectedAlternative != 0 || len(item.Angles) == 0 {
+			if item.Err != nil || len(item.Angles) == 0 {
 				return nil, nil, extract.ErrUnsupportedInput
 			}
 			angle := item.Angles[0]
