@@ -194,6 +194,10 @@ Deleting a release from History removes its associated local workflow, effect, a
 
 Client injection is enabled by default when configured. Disable it explicitly with CLI `--no-seed` or the corresponding Web UI upload option.
 
+An explicit dry run reports client injection as skipped when no enabled client is selected. Tracker preparation remains eligible; a skipped or empty client selection is not a completed injection.
+
+Workflow injection into qBittorrent verifies that the torrent's infohash and required announce URLs are present in the client. An existing torrent with the same infohash can still have different trackers; upbrr does not change tracker-merging settings or edit its trackers. Verification requires a local v1 torrent artifact. URL-only artifacts cannot be verified and report an injection failure separately from the successful tracker submission. If an add was sent but verification remains uncertain, inspect and reconcile the client outcome before retrying; upbrr keeps the attempt blocked against another add.
+
 A successful draft can be injected before publication when the tracker integration supplies registered torrent authority. It remains unpublished on the tracker. If that artifact is unavailable or injection fails, the result reports the local failure separately from the completed submission.
 
 Check save path, category, tags, automatic management, staging mode, and source-file access. Hardlink, reflink, and symlink staging have filesystem-specific requirements.

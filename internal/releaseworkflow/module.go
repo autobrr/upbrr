@@ -1062,7 +1062,10 @@ func (m *Module) markOperationResultStale(
 	ctx context.Context,
 	record api.ReleaseWorkflowOperationRecord,
 ) (api.WorkflowOperationStatus, error) {
-	status, err := m.mutateOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID, func(status *api.WorkflowOperationStatus) {
+	status, err := m.mutateOperationIf(ctx, record.OwnerID, record.WorkflowID, record.OperationID, func(status *api.WorkflowOperationStatus) bool {
+		if status.Status == api.StageStatusStale {
+			return false
+		}
 		now := m.clock.Now().UTC()
 		status.Status = api.StageStatusStale
 		status.Message = "The operation result is no longer current. Reprepare the workflow."
@@ -1077,6 +1080,7 @@ func (m *Module) markOperationResultStale(
 				Recovery:  api.OperationRecoveryReprepare,
 			},
 		}}
+		return true
 	})
 	if err != nil {
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow mark stale operation result: %w", err)

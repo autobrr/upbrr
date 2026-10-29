@@ -1334,6 +1334,14 @@ func (DryRunUploadsCommand) commandName() string              { return "dry_run_
 func (DryRunUploadsCommand) userIntent()                      {}
 func (DryRunUploadsCommand) operationKind() api.OperationKind { return api.OperationKindUploadDryRun }
 func (c DryRunUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	// The default payload must keep receipts written before ReviewOnly existed.
+	if !c.ReviewOnly {
+		return canonicalCommandFingerprint(struct {
+			ExpectedRevision api.WorkflowRevision
+			NoSeed           bool
+			TrackerIDs       []api.TrackerID
+		}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs})
+	}
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool

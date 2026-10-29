@@ -1854,6 +1854,13 @@ func TestWorkflowUploadExecutionPendingRegisteredDraft(t *testing.T) {
 			wantCalls:  1,
 		},
 		{
+			name:       "unverified client outcome preserves submission",
+			artifact:   "valid",
+			clientErr:  api.ErrReleaseWorkflowEffectOutcomeUnknown,
+			wantStatus: api.StageStatusFailed,
+			wantCalls:  1,
+		},
+		{
 			name:             "submission fence",
 			artifact:         "valid",
 			alreadySucceeded: true,

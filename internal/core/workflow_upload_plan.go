@@ -834,6 +834,17 @@ func injectWorkflowDryRunClient(
 	}
 	effectFingerprint, err := workflowClientInjectionFingerprint(clients, subject, trackerID, torrentPath, false)
 	if err != nil {
+		if errors.Is(err, api.ErrNoClientInjectionDestination) {
+			emitWorkflowClientInjectionProgress(
+				ctx,
+				projection,
+				api.StageStatusSkipped,
+				processedAfter,
+				total,
+				"Dry-run client injection has no enabled destination.",
+			)
+			return api.StageStatusSkipped, "Client injection skipped because no enabled client destination is selected.", "", nil
+		}
 		emitWorkflowClientInjectionProgress(
 			ctx,
 			projection,
@@ -893,7 +904,18 @@ func injectWorkflowDryRunClient(
 		total,
 		"Injecting dry-run torrent into the client.",
 	)
-	injectErr := clients.Inject(ctx, subject, api.TorrentResult{Path: torrentPath, Tracker: string(trackerID)})
+	injectErr := clients.Inject(ctx, subject, api.TorrentResult{
+		Path:            torrentPath,
+		Tracker:         string(trackerID),
+		VerifyInjection: true,
+	})
+	if errors.Is(injectErr, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		emitWorkflowClientInjectionProgress(ctx, projection, api.StageStatusFailed, processedAfter, total, "Dry-run client injection outcome is unknown.")
+		return api.StageStatusFailed,
+			"Client injection could not verify the required torrent trackers. Verify the client before retrying.",
+			api.OperationFailureUnknownOutcome,
+			nil
+	}
 	receiptErr := api.CompleteWorkflowExternalEffect(ctx, effectReceipt, injectErr == nil)
 	if receiptErr != nil {
 		emitWorkflowClientInjectionProgress(
@@ -975,15 +997,17 @@ func workflowClientInjectionFingerprint(
 	}
 	sum := sha256.Sum256(payload)
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Tracker     api.TrackerID
-		Torrent     string
-		CrossSeed   bool
-		Destination api.WorkflowFingerprint
+		Tracker         api.TrackerID
+		Torrent         string
+		CrossSeed       bool
+		Destination     api.WorkflowFingerprint
+		VerifyInjection bool
 	}{
-		Tracker:     trackerID,
-		Torrent:     hex.EncodeToString(sum[:]),
-		CrossSeed:   crossSeed,
-		Destination: destination,
+		Tracker:         trackerID,
+		Torrent:         hex.EncodeToString(sum[:]),
+		CrossSeed:       crossSeed,
+		Destination:     destination,
+		VerifyInjection: true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("workflow client injection fingerprint: %w", err)
@@ -1422,7 +1446,12 @@ func injectWorkflowClientWithFence(
 	if receipt.AlreadySucceeded {
 		return true, "", "", nil
 	}
+	torrent.VerifyInjection = true
 	injectErr := clients.Inject(ctx, subject, torrent)
+	if errors.Is(injectErr, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		return false, api.OperationFailureUnknownOutcome,
+			"Client injection could not verify the required torrent trackers. Verify the client before retrying.", nil
+	}
 	if err := api.CompleteWorkflowExternalEffect(ctx, receipt, injectErr == nil); err != nil {
 		return false,
 			api.OperationFailureUnknownOutcome,
@@ -1459,13 +1488,15 @@ func workflowClientEffectFingerprint(
 		return "", errors.New("workflow client effect exact torrent identity is unavailable")
 	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Tracker   api.TrackerID
-		Torrent   string
-		CrossSeed bool
+		Tracker         api.TrackerID
+		Torrent         string
+		CrossSeed       bool
+		VerifyInjection bool
 	}{
-		Tracker:   trackerID,
-		Torrent:   torrentIdentity,
-		CrossSeed: crossSeed,
+		Tracker:         trackerID,
+		Torrent:         torrentIdentity,
+		CrossSeed:       crossSeed,
+		VerifyInjection: true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("workflow client effect fingerprint: %w", err)
