@@ -311,7 +311,6 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 | `--personalrelease`   | `-personalrelease`, `-pr`    | Explicitly set personal-release handling.                               |
 | `--stream`            | `-stream`, `-st`             | Mark release as stream optimized.                                       |
 | `--webdv`             | `-webdv`                     | Mark release as WEB-DV.                                                 |
-| `--not-anime`         | `-not-anime`                 | Force release to be treated as not anime.                               |
 | `--anime`             | `-anime`                     | Explicitly set anime handling; `false` clears the anime classification. |
 | `--anon`              | `-anon`, `-a`                | Upload anonymously.                                                     |
 | `--draft`             | `-draft`, `-dr`              | Send to drafts where supported.                                         |
@@ -319,7 +318,7 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 
 `--personalrelease=true` and `--personalrelease=false` are both explicit choices and override tracker group defaults. Omit the option to leave **Personal Release** on **Auto**, where each tracker's configured personal-release groups can supply the default.
 
-Duplicate options do not bypass authoritative client blocks or the workflow's explicit tracker-approval requirement. Strict `--unattended` still cannot answer that approval prompt. `--anime` and `--not-anime` cannot be combined, even with explicit false values.
+Duplicate options do not bypass authoritative client blocks or the workflow's explicit tracker-approval requirement. Strict `--unattended` still cannot answer that approval prompt. Use `--anime=false` to explicitly classify a release as non-anime. The obsolete `--not-anime` flag has been removed and is rejected as an unknown option.
 
 TIK `--disctype` accepts `BD100`, `BD66`, `BD50`, `BD25`, `NTSC DVD9`, `NTSC DVD5`, `PAL DVD9`, `PAL DVD5`, `CUSTOM`, or `3D`. Quote values containing spaces.
 

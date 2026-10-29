@@ -95,7 +95,6 @@ type cliOptions struct {
 	StreamOptimized            bool
 	WebDV                      bool
 	ConfirmBDMVRescan          bool
-	NotAnime                   bool
 	Anime                      bool
 	UseSeasonEpisode           bool
 	InputOnly                  bool
@@ -380,7 +379,6 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.StreamOptimized, "st", false, "Mark release as stream optimized")
 	fs.BoolVar(&opts.StreamOptimized, "stream", false, "Mark release as stream optimized")
 	fs.BoolVar(&opts.WebDV, "webdv", false, "Mark release as WEB-DV")
-	fs.BoolVar(&opts.NotAnime, "not-anime", false, "Force release to be treated as not anime")
 	fs.BoolVar(&opts.Anime, "anime", false, "Force release to be treated as anime")
 	fs.BoolVar(&opts.UseSeasonEpisode, "use-season-episode", false, "Use the explicit season and episode values")
 	fs.BoolVar(&opts.InputOnly, "input-only", false, "Prepare and evaluate local tracker input without remote tracker work")
@@ -471,9 +469,6 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 	}
 	if visited["nohash"] && visited["rehash"] {
 		return errors.New("nohash and rehash cannot be used together")
-	}
-	if visited["anime"] && visited["not-anime"] {
-		return errors.New("anime and not-anime cannot be used together")
 	}
 	if visited["manual_frames"] {
 		if _, err := parseManualFrames(opts.ManualFrames); err != nil {
@@ -953,7 +948,7 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
 		{title: "Tracker Overrides", names: []string{
 			"skip-dupe-check", "skip-dupe-asking", "double-dupe-check", "foreign", "opera", "asian", "disctype",
-			"commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "anon", "draft", "modq", "channel",
+			"commentary", "personalrelease", "stream", "webdv", "anime", "anon", "draft", "modq", "channel",
 		}},
 		{title: "Screenshots and Images", names: []string{
 			"screens",
@@ -1200,9 +1195,6 @@ func buildMetadataOverrides(opts cliOptions, visited map[string]bool) api.Metada
 	if visited["webdv"] {
 		overrides.WebDV = boolPtr(opts.WebDV)
 	}
-	if visited["not-anime"] {
-		overrides.Anime = boolPtr(false)
-	}
 	if visited["anime"] {
 		overrides.Anime = boolPtr(opts.Anime)
 	}
@@ -1252,7 +1244,7 @@ func isCLIInputCorrectionFlag(name string) bool {
 		"3d",
 		"season", "episode", "episode-title", "manual-year", "daily", "use-season-episode", "no-season", "no-year", "no-aka", "no-tag",
 		"no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio", "region", "distributor",
-		"original-language", "commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "alternate-title",
+		"original-language", "commentary", "personalrelease", "stream", "webdv", "anime", "alternate-title",
 		"genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
 		"track-languages", "track-audio-origin", "reset-input", "confirm-input",
 	}, name)
