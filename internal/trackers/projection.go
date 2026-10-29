@@ -375,7 +375,11 @@ func (r *Registry) ProjectRelease(
 		failure := NewPreparationFailure(input.Tracker, "not_supported", "tracker release projection is not supported", nil)
 		return blockedReleaseProjection(input, failure.Message()), failure
 	}
+	descriptor = descriptor.ForCategory(input.Meta.Identity.Category)
 	projection := pureReleaseProjection(input)
+	if descriptor.DupePolicy != nil && descriptor.DupePolicy.TargetTVScope != nil {
+		projection.DuplicateTarget.TVScope = descriptor.DupePolicy.TargetTVScope(input.Meta)
+	}
 	if descriptor.EditionFeatures != nil {
 		projection.EditionFeatures = slices.Clone(descriptor.EditionFeatures(input.Meta))
 	}

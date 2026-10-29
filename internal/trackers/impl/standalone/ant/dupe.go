@@ -40,7 +40,7 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 		cfg:      cfg,
 		http:     httpClient,
 		logger:   logger,
-		endpoint: "https://anthelion.me/api.php",
+		endpoint: antAPIURL,
 		maxPages: deps.MaxPages(100),
 	}
 }
@@ -57,13 +57,19 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing api_key for tracker", nil)
 	}
 	params := url.Values{"t": {"search"}, "o": {"json"}}
+	if meta.Identity.Category == api.CanonicalCategoryTV {
+		params.Set("t", "tvsearch")
+		params.Set("cat", "5000")
+	}
 	switch {
+	case meta.Identity.Category == api.CanonicalCategoryTV && meta.Identity.TVDBID != 0:
+		params.Set("tvdbid", strconv.Itoa(meta.Identity.TVDBID))
 	case meta.Identity.TMDBID != 0:
 		params.Set("tmdbid", strconv.Itoa(meta.Identity.TMDBID))
 	case meta.Identity.IMDBID != 0:
 		params.Set("imdbid", providerid.IMDb(meta.Identity.IMDBID).Digits())
 	default:
-		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing tmdb/imdb id for ANT dupe search", nil)
+		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing tvdb/tmdb/imdb id for ANT dupe search", nil)
 	}
 	const pageLimit = 100
 	params.Set("limit", strconv.Itoa(pageLimit))
@@ -95,6 +101,8 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		dupe.TraceSearchRequest(s.logger, "ANT", req.Method, "/api.php", map[string]any{
 			"t":      pageParams.Get("t"),
 			"o":      pageParams.Get("o"),
+			"cat":    pageParams.Get("cat"),
+			"tvdbid": pageParams.Get("tvdbid"),
 			"tmdbid": pageParams.Get("tmdbid"),
 			"imdbid": pageParams.Get("imdbid"),
 			"limit":  pageParams.Get("limit"),
@@ -118,6 +126,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		}
 
 		pageEntries := antDupeEntries(payload)
+		pageEntries = filterANTWork(pageEntries, meta.Identity)
 		entries = append(entries, pageEntries...)
 		pages++
 		itemCount := antItemCount(payload)
@@ -216,6 +225,13 @@ func antDupeEntries(payload map[string]any) []api.DupeEntry {
 			Container:     container,
 			Group:         antString(item["releaseGroup"]),
 		}
+		entry.Category = antCategory(item)
+		entry.ProviderIDs = antProviderIDs(item)
+		if entry.Category == "tv" {
+			entry.Season = int(antInt(item["season"]))
+			entry.Episode = int(antInt(item["episode"]))
+			entry.TVScope = antTVScope(item, files, fileCount)
+		}
 		if size := antInt(item["size"]); size > 0 {
 			entry.SizeKnown, entry.SizeBytes = true, size
 		}
@@ -252,7 +268,9 @@ func antDupeEntries(payload map[string]any) []api.DupeEntry {
 				entry.CanonicalType = "ENCODE"
 			}
 		}
-		entry.TrackerSlot = antSlot(entry.CanonicalType, entry.Source, entry.Res, entry.Codec, entry.Flags, entry.Region, entry.FlagsComplete)
+		if entry.Category != "tv" {
+			entry.TrackerSlot = antSlot(entry.CanonicalType, entry.Source, entry.Res, entry.Codec, entry.Flags, entry.Region, entry.FlagsComplete)
+		}
 		entries = append(entries, entry)
 	}
 	return entries

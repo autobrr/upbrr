@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package nbl
+package ant
 
 import (
 	"context"
@@ -11,14 +11,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.WithLanguagePolicy(trackers.ValidationPolicyBinding{
-		ID:    "standalone-nbl-policy-v5",
-		Check: checkEvidenceRules,
-	}, languagePolicy())
-}
-
-func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
+func checkTVEvidenceRules(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
@@ -26,41 +19,31 @@ func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubjec
 	failures = append(failures, trackers.ValidatePackageExtensions(
 		subject.PackageFacts,
 		trackers.PackageExtensionPolicy{
-			Evidence:      nblEvidencePolicy("nbl_archive"),
+			Evidence:      tvEvidencePolicy("ant_tv_archive"),
 			BlockArchives: true,
 		},
 	)...)
 	if !trackers.IsDiscType(subject.DiscType) {
 		failures = append(failures, trackers.ValidateMediaOnlyPackage(
 			subject.PackageFacts,
-			nblEvidencePolicy("nbl_media_only"),
+			tvEvidencePolicy("ant_tv_media_only"),
 		)...)
 	}
-	if !subject.TVPack {
+	if !subject.TVPack && !subject.MultipleEpisodes {
 		failures = append(failures, trackers.ValidateSingleFileFolder(
 			subject.PackageFacts,
-			nblEvidencePolicy("nbl_episode_layout"),
+			tvEvidencePolicy("ant_tv_episode_layout"),
 		)...)
 	}
 	failures = append(failures, trackers.ValidateMultiSeasonPackage(
 		subject.PackageFacts,
-		nblEvidencePolicy("nbl_multi_season"),
-	)...)
-	failures = append(failures, trackers.ValidateRequiredAssets(
-		subject.AssetFacts,
-		trackers.RequiredAssetPolicy{
-			Evidence: nblEvidencePolicy("nbl_asset"),
-			Requirements: []trackers.AssetRequirement{{
-				Kind:         trackers.AssetKindMediaInfoText,
-				MinimumCount: 1,
-			}},
-		},
+		tvEvidencePolicy("ant_tv_multi_season"),
 	)...)
 
-	return append(failures, fullDiscLanguageFailures(subject)...), nil
+	return failures, nil
 }
 
-func nblEvidencePolicy(rule string) trackers.EvidencePredicatePolicy {
+func tvEvidencePolicy(rule string) trackers.EvidencePredicatePolicy {
 	return trackers.EvidencePredicatePolicy{
 		Rule:                       rule,
 		ViolationDisposition:       api.RuleDispositionStrict,

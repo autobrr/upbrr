@@ -39,7 +39,7 @@ func (s *Service) prepareUploadContent(
 	preloaded *preloadedDescriptionAssetData,
 	preflight imageHostPreflight,
 ) preparedUploadContent {
-	mode, ok := s.registry.LookupUploadContentMode(tracker)
+	mode, ok := s.registry.LookupUploadContentModeForCategory(tracker, meta.Identity.Category)
 	if !ok {
 		return failedPreparedUploadContent(tracker, UploadContentModeDescription, errors.New("tracker upload content capability is unavailable"))
 	}

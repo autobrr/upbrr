@@ -630,14 +630,13 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if !slices.Equal(names, want) {
 		t.Fatalf("registered trackers = %v, want %v", names, want)
 	}
-	for _, excluded := range []string{"MANUAL", "MTV", "THR"} {
+	for _, excluded := range []string{"MANUAL", "MTV", "THR", "NBL"} {
 		if slices.Contains(names, excluded) {
 			t.Fatalf("%s must not be registered", excluded)
 		}
 	}
 	specialModes := map[string]trackers.UploadContentMode{
 		"BTN": trackers.UploadContentModeNone,
-		"NBL": trackers.UploadContentModeNone,
 		"RTF": trackers.UploadContentModeScreenshots,
 	}
 	for _, name := range names {
@@ -679,7 +678,7 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if _, ok := registry.LookupRules("ANT"); !ok {
 		t.Fatal("expected ANT tracker-owned rules")
 	}
-	if groups, ok := registry.LookupBannedGroups("ANT"); !ok || len(groups) != 57 || !slices.Contains(groups, "Flights") || slices.Contains(groups, "ZMNT") {
+	if groups, ok := registry.LookupBannedGroups("ANT"); !ok || len(groups) != 116 || !slices.Contains(groups, "Flights") || !slices.Contains(groups, "ZMNT") {
 		t.Fatalf("ANT banned groups = %#v, %t", groups, ok)
 	}
 	if policy, ok := registry.LookupUploadArtifactPolicy("ANT"); !ok || policy.Source != "ANT" || !policy.RequireAnnounce {
@@ -688,7 +687,7 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if _, ok := registry.LookupMetadataPolicy("ANT"); !ok {
 		t.Fatal("expected ANT tracker-owned metadata policy")
 	}
-	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v6" ||
+	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v7" ||
 		policy.EvidenceID != "ant-slots-staff-overrides" || policy.TargetSlot == nil || !policy.StaffTokenOverride {
 		t.Fatalf("ANT dupe policy = %#v, %t", policy, ok)
 	}
@@ -756,7 +755,6 @@ func TestNewRegistryOwnsUploadArtifactPolicies(t *testing.T) {
 		"HDS": {Source: "HD-Space", RequireAnnounce: true},
 		"HDT": {Source: "hd-torrents.org", RequireAnnounce: true},
 		"IS":  {Source: "https://immortalseed.me", RequireAnnounce: true},
-		"NBL": {Source: "NBL", RequireAnnounce: true},
 		"PHD": {Source: "PrivateHD", DefaultAnnounce: "https://tracker.privatehd.to/announce"},
 		"PTS": {Source: "[www.ptskit.org] PTSKIT", RequireAnnounce: true},
 		"RTF": {Source: "sunshine", RequireAnnounce: true},
@@ -777,7 +775,7 @@ func TestNewRegistryOwnsMetadataPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	for _, name := range []string{"AR", "AZ", "BJS", "CZ", "CZT", "NBL", "PHD", "PTP", "SPD", "TL", "TVC", "AITHER"} {
+	for _, name := range []string{"AR", "AZ", "BJS", "CZ", "CZT", "PHD", "PTP", "SPD", "TL", "TVC", "AITHER"} {
 		if _, ok := registry.LookupMetadataPolicy(name); !ok {
 			t.Errorf("expected %s tracker-owned metadata policy", name)
 		}

@@ -613,10 +613,10 @@ func goalAvailability(current CommandResult, goal api.WorkflowGoal, now time.Tim
 }
 
 func workflowRequiresDescriptions(current CommandResult) bool {
-	if current.Projections != nil && slices.ContainsFunc(current.Projections.Projections, func(projection api.TrackerReleaseProjection) bool {
-		return projection.Artifacts.Description && projection.Readiness != api.ReadinessStatusIneligible
-	}) {
-		return true
+	if current.Projections != nil {
+		return slices.ContainsFunc(current.Projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+			return projection.Artifacts.Description && projection.Readiness != api.ReadinessStatusIneligible
+		})
 	}
 	if current.Catalog == nil || current.Selection == nil {
 		return false

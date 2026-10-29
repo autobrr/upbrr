@@ -129,7 +129,7 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 		default:
 		}
 
-		mode, ok := s.registry.LookupUploadContentMode(tracker)
+		mode, ok := s.registry.LookupUploadContentModeForCategory(tracker, meta.Identity.Category)
 		if !ok || !mode.UsesImages() {
 			continue
 		}
@@ -257,7 +257,7 @@ func (s *Service) preloadUploadContentData(
 	needsImages := false
 	needsDescription := false
 	for _, tracker := range trackerNames {
-		mode, ok := s.registry.LookupUploadContentMode(tracker)
+		mode, ok := s.registry.LookupUploadContentModeForCategory(tracker, meta.Identity.Category)
 		if !ok {
 			continue
 		}
@@ -308,7 +308,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 	contentFailures := make([]api.TrackerContentFailure, 0)
 	descriptionTrackers := make([]string, 0, len(resolved))
 	for _, tracker := range resolved {
-		mode, ok := s.registry.LookupUploadContentMode(tracker)
+		mode, ok := s.registry.LookupUploadContentModeForCategory(tracker, meta.Identity.Category)
 		if !ok {
 			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, errors.New("tracker upload content capability is unavailable"))
 			contentFailures = append(contentFailures, *failed.Failure)
@@ -734,7 +734,7 @@ func (s *Service) buildUploadPreview(
 			results = append(results, entry)
 			continue
 		}
-		mode, _ := s.registry.LookupUploadContentMode(tracker)
+		mode, _ := s.registry.LookupUploadContentModeForCategory(tracker, meta.Identity.Category)
 		contentPreloadErr := screenshotPreloadErr
 		if contentPreloadErr == nil && mode.UsesDescription() {
 			contentPreloadErr = descriptionPreloadErr

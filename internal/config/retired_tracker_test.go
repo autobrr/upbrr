@@ -16,10 +16,10 @@ func TestRemovedTrackerConfigImport(t *testing.T) {
 	t.Parallel()
 	for name, decode := range map[string]func(*Config) error{
 		"json": func(cfg *Config) error {
-			return json.Unmarshal([]byte(`{"Trackers":{"DefaultTrackers":["AITHER"," thr "],"PreferredTracker":"ThR","Trackers":{"tHr":{"Password":"upbrr-enc:v1:invalid","PronfoAPIKey":"synthetic-retired-secret"},"RETIRED":{"PronfoRAPIID":"synthetic-retired-secret","keep_me":"retained","ImgAPI":"synthetic-shared-secret"}}}}`), cfg)
+			return json.Unmarshal([]byte(`{"Trackers":{"DefaultTrackers":["AITHER"," thr "," nBl "],"PreferredTracker":"ThR","Trackers":{"nBl":{"APIKey":"upbrr-enc:v1:invalid"},"tHr":{"Password":"upbrr-enc:v1:invalid","PronfoAPIKey":"synthetic-retired-secret"},"RETIRED":{"PronfoRAPIID":"synthetic-retired-secret","keep_me":"retained","ImgAPI":"synthetic-shared-secret"}}}}`), cfg)
 		},
 		"yaml": func(cfg *Config) error {
-			return yaml.Unmarshal([]byte("trackers:\n  default_trackers: [AITHER, ' thr ']\n  preferred_tracker: ThR\n  tHr:\n    password: upbrr-enc:v1:invalid\n    pronfo_api_key: synthetic-retired-secret\n  RETIRED:\n    pronfo_rapi_id: synthetic-retired-secret\n    keep_me: retained\n    img_api: synthetic-shared-secret\n"), cfg)
+			return yaml.Unmarshal([]byte("trackers:\n  default_trackers: [AITHER, ' thr ', ' nBl ']\n  preferred_tracker: ThR\n  nBl:\n    api_key: upbrr-enc:v1:invalid\n  tHr:\n    password: upbrr-enc:v1:invalid\n    pronfo_api_key: synthetic-retired-secret\n  RETIRED:\n    pronfo_rapi_id: synthetic-retired-secret\n    keep_me: retained\n    img_api: synthetic-shared-secret\n"), cfg)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -27,7 +27,7 @@ func TestRemovedTrackerConfigImport(t *testing.T) {
 			if err := decode(&cfg); err != nil {
 				t.Fatal(err)
 			}
-			if _, ok := cfg.Trackers.Trackers["tHr"]; ok {
+			if len(cfg.Trackers.Trackers) != 1 {
 				t.Fatal("removed tracker retained")
 			}
 			if !slices.Equal(cfg.Trackers.DefaultTrackers, CSVList{"AITHER"}) || cfg.Trackers.PreferredTracker != "" {
@@ -56,7 +56,7 @@ func TestRemovedTrackerEncryptedImportAndBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(map[string]any{"Trackers": map[string]any{"Trackers": map[string]any{"THR": map[string]any{"Password": envelope, "PronfoAPIKey": envelope}}}})
+	payload, err := json.Marshal(map[string]any{"Trackers": map[string]any{"Trackers": map[string]any{"THR": map[string]any{"Password": envelope, "PronfoAPIKey": envelope}, "NBL": map[string]any{"APIKey": envelope}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

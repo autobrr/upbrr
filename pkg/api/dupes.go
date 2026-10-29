@@ -4,11 +4,15 @@
 package api
 
 import (
+	"slices"
 	"time"
 )
 
 // DupeEntry is one backend adapter's private duplicate-search hit.
 type DupeEntry struct {
+	// TVScope preserves explicit season zero and bounded episode membership.
+	// Nil permits legacy title fallback; an empty scope means membership is unknown.
+	TVScope  *DupeTVScope
 	Evidence DupeReleaseEvidence
 	// EnglishSubtitles records positive inspected subtitle-language evidence, never a title inference.
 	EnglishSubtitles      bool
@@ -53,6 +57,29 @@ type DupeEntry struct {
 	MediaInfo     string
 	BDInfo        string
 	Description   string
+}
+
+// DupeTVScope records numbered TV membership without inferring a whole season.
+// A nil Season is unknown. Empty Episodes means membership is unknown, and
+// nonempty Episodes is the complete known set, including gaps.
+type DupeTVScope struct {
+	Season   *int  `json:"season,omitempty"`
+	Episodes []int `json:"episodes,omitempty"`
+	// FromFiles retains the partial provenance of filename-derived membership.
+	FromFiles bool `json:"fromFiles,omitempty"`
+}
+
+// Clone detaches mutable numbered scope evidence at operation boundaries.
+func (s *DupeTVScope) Clone() *DupeTVScope {
+	if s == nil {
+		return nil
+	}
+	clone := *s
+	if s.Season != nil {
+		clone.Season = new(*s.Season)
+	}
+	clone.Episodes = slices.Clone(s.Episodes)
+	return &clone
 }
 
 // DupeRelation is one directional proposed-to-candidate relationship.

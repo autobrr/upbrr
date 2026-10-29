@@ -135,6 +135,8 @@ const (
 )
 
 type contentScope struct {
+	SeasonKnown  bool
+	Episodes     []int
 	Kind         contentScopeKind
 	Season       int
 	EpisodeStart int
@@ -282,6 +284,9 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 		),
 	}
+	if target.TVScope != nil {
+		facts.Content = numberedTVScope(target.TVScope, FactOriginTargetMedia)
+	}
 	if target.VideoEncode != "" && target.VideoCodec != "" && canonicalCodec(target.VideoEncode) != canonicalCodec(target.VideoCodec) {
 		facts.Codec.Status = FactContradictory
 		facts.Codec.Contradictions = append(facts.Codec.Contradictions, canonicalCodec(target.VideoCodec))
@@ -412,7 +417,9 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 	}
 	// Coordinate enrichment remains useful for scope comparison, but a title
 	// cannot prove complete collection membership for an automatic vacant slot.
-	if candidate.contentFromTitle {
+	if candidate.TVScope != nil {
+		facts.Content = numberedTVScope(candidate.TVScope, FactOriginTrackerAPI)
+	} else if candidate.contentFromTitle {
 		facts.Content.Origin = FactOriginTrackerTitle
 	}
 	if candidate.SizeKnown && candidate.SizeBytes > 0 {
@@ -1275,13 +1282,7 @@ func compareContentScopes(target contentScope, candidate contentScope) contentOv
 		return contentUnknown
 	}
 	if target.EpisodeStart > 0 && candidate.EpisodeStart > 0 {
-		if target.EpisodeEnd < candidate.EpisodeStart || candidate.EpisodeEnd < target.EpisodeStart {
-			return contentDefinitelyDisjoint
-		}
-		if target.EpisodeStart == candidate.EpisodeStart && target.EpisodeEnd == candidate.EpisodeEnd {
-			return contentEqual
-		}
-		return contentOverlaps
+		return compareEpisodeMembership(target, candidate)
 	}
 	if target.Kind == contentScopeUnknownTV || candidate.Kind == contentScopeUnknownTV {
 		return contentUnknown
@@ -1294,7 +1295,7 @@ func contentSeasonKnown(scope contentScope) bool {
 	case contentScopeEpisode, contentScopeEpisodeRange, contentScopeSeasonPack:
 		return true
 	case contentScopeUnknownTV:
-		return scope.Season > 0
+		return scope.SeasonKnown || scope.Season > 0
 	case contentScopeWork, contentScopeDaily, contentScopeCompleteSeries:
 		return false
 	}

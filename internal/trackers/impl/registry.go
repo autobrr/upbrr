@@ -25,7 +25,6 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hds"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdt"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/is"
-	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/nbl"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/pts"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/rtf"
@@ -172,7 +171,6 @@ func standaloneDefinitions() []trackers.Definition {
 		hds.New(),
 		hdt.New(),
 		is.New(),
-		nbl.New(),
 		ptp.New(),
 		pts.New(),
 		rtf.New(),

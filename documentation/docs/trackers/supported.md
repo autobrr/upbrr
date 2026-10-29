@@ -44,7 +44,6 @@ upbrr supports the trackers listed below. For configuration and authentication, 
 - LST
 - Luminarr
 - MidnightScene
-- Nebulance
 - Oldtoons
 - OnlyEncodes+
 - PassThePopcorn

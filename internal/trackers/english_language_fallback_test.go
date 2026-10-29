@@ -161,7 +161,7 @@ func TestEnglishLanguageFallbackPreservesContainerAndSpecificPolicies(t *testing
 			t.Fatalf("BLU lost independent %s: %#v", rule, failures)
 		}
 	}
-	for _, tracker := range []string{"AITHER", "BHD", "LST", "HHD", "ULCX", "LUME", "HDB", "BTN", "PTP", "NBL", "AZ", "CZ", "OE", "DP", "RAS", "RHD", "TOS", "TTR", "ANT"} {
+	for _, tracker := range []string{"AITHER", "BHD", "LST", "HHD", "ULCX", "LUME", "HDB", "BTN", "PTP", "AZ", "CZ", "OE", "DP", "RAS", "RHD", "TOS", "TTR", "ANT"} {
 		descriptor, ok := registry.LookupDescriptor(tracker)
 		if !ok || strings.Contains(descriptor.Validation.ID, "english-fallback") {
 			t.Fatalf("%s specific policy replaced: %#v", tracker, descriptor.Validation)

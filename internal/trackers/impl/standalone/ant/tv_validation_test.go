@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package nbl
+package ant
 
 import (
 	"context"
@@ -11,50 +11,60 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestNBLEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
+func TestANTTVEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 	t.Parallel()
 
-	subject := nblPassingSubject()
-	failures := evaluateNBLEvidence(t, subject)
+	subject := antTVPassingSubject()
+	failures := evaluateANTTVEvidence(t, subject)
 	if len(failures) != 0 {
 		t.Fatalf("passing subject failures: %+v", failures)
 	}
 
 	subject.PackageFacts.ArchiveFileCount = 1
-	assertNBLFailure(
+	assertANTTVFailure(
 		t,
-		evaluateNBLEvidence(t, subject),
-		"nbl_archive",
+		evaluateANTTVEvidence(t, subject),
+		"ant_tv_archive",
 		api.RuleDispositionStrict,
 		api.MetadataEvidenceStatusComplete,
 	)
 
-	subject = nblPassingSubject()
+	subject = antTVPassingSubject()
 	subject.PackageFacts.Status = api.MetadataEvidenceStatusPartial
-	assertNBLFailure(
+	assertANTTVFailure(
 		t,
-		evaluateNBLEvidence(t, subject),
-		"nbl_archive",
+		evaluateANTTVEvidence(t, subject),
+		"ant_tv_archive",
 		api.RuleDispositionAdvisory,
 		api.MetadataEvidenceStatusPartial,
 	)
 }
 
-func TestNBLRejectsEpisodeFolder(t *testing.T) {
+func TestANTTVFolderLayoutFollowsAPICategory(t *testing.T) {
 	t.Parallel()
-
-	subject := nblPassingSubject()
-	subject.PackageFacts.SingleFileFolder = true
-	assertNBLFailure(
-		t,
-		evaluateNBLEvidence(t, subject),
-		"nbl_episode_layout",
-		api.RuleDispositionStrict,
-		api.MetadataEvidenceStatusComplete,
-	)
+	for _, test := range []struct {
+		name                 string
+		pack, batch, blocked bool
+	}{
+		{name: "episode", blocked: true},
+		{name: "season", pack: true},
+		{name: "batch", batch: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := antTVPassingSubject()
+			subject.PackageFacts.SingleFileFolder = true
+			subject.TVPack, subject.MultipleEpisodes = test.pack, test.batch
+			failures := evaluateANTTVEvidence(t, subject)
+			if test.blocked {
+				assertANTTVFailure(t, failures, "ant_tv_episode_layout", api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete)
+			} else if len(failures) != 0 {
+				t.Fatalf("season category received episode layout restriction: %+v", failures)
+			}
+		})
+	}
 }
 
-func TestNBLIgnoresScreenshotEvidence(t *testing.T) {
+func TestANTTVIgnoresScreenshotEvidence(t *testing.T) {
 	t.Parallel()
 
 	for _, evidence := range []api.AssetEvidence{
@@ -67,40 +77,34 @@ func TestNBLIgnoresScreenshotEvidence(t *testing.T) {
 			Count:  4,
 		},
 	} {
-		subject := nblPassingSubject()
+		subject := antTVPassingSubject()
 		subject.AssetFacts.Screenshots = evidence
 		subject.AssetFacts.HostedScreenshots = evidence
-		if failures := evaluateNBLEvidence(t, subject); len(failures) != 0 {
-			t.Errorf("screenshot evidence %+v affected NBL validation: %+v", evidence, failures)
+		if failures := evaluateANTTVEvidence(t, subject); len(failures) != 0 {
+			t.Errorf("screenshot evidence %+v affected ANTTV validation: %+v", evidence, failures)
 		}
 	}
 }
 
-func TestNBLDoesNotApplyMediaOnlyPackageRuleToDiscs(t *testing.T) {
+func TestANTTVDoesNotApplyMediaOnlyPackageRuleToDiscs(t *testing.T) {
 	t.Parallel()
 
-	subject := nblPassingSubject()
+	subject := antTVPassingSubject()
 	subject.DiscType = "DVD"
 	subject.PackageFacts.KnownFileCount = 3
 	subject.PackageFacts.MediaFileCount = 1
-	for _, failure := range evaluateNBLEvidence(t, subject) {
-		if failure.Rule == "nbl_media_only" {
+	for _, failure := range evaluateANTTVEvidence(t, subject) {
+		if failure.Rule == "ant_tv_media_only" {
 			t.Fatalf("disc package received media-only failure: %+v", failure)
 		}
 	}
 }
 
-func TestNBLValidationPolicyVersion(t *testing.T) {
-	t.Parallel()
-
-	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v5/languages-v2" {
-		t.Fatalf("validation policy ID = %q", got)
-	}
-}
-
-func nblPassingSubject() api.TrackerValidationSubject {
+func antTVPassingSubject() api.TrackerValidationSubject {
 	return api.TrackerValidationSubject{
-		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		MediaInfoTextReady: true,
+		Identity:           api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		LanguageFacts:      api.LanguageFacts{SubtitleLanguages: []string{"English"}},
 		PackageFacts: api.PackageFacts{
 			Status:          api.MetadataEvidenceStatusComplete,
 			KnownFileCount:  1,
@@ -128,16 +132,16 @@ func nblPassingSubject() api.TrackerValidationSubject {
 	}
 }
 
-func evaluateNBLEvidence(t *testing.T, subject api.TrackerValidationSubject) []api.RuleFailure {
+func evaluateANTTVEvidence(t *testing.T, subject api.TrackerValidationSubject) []api.RuleFailure {
 	t.Helper()
-	failures, err := checkEvidenceRules(context.Background(), subject, api.NopLogger{})
+	failures, err := validationPolicy().Check(context.Background(), subject, api.NopLogger{})
 	if err != nil {
-		t.Fatalf("evaluate NBL evidence: %v", err)
+		t.Fatalf("evaluate ANTTV evidence: %v", err)
 	}
 	return failures
 }
 
-func assertNBLFailure(
+func assertANTTVFailure(
 	t *testing.T,
 	failures []api.RuleFailure,
 	rule string,
@@ -156,7 +160,7 @@ func assertNBLFailure(
 	t.Fatalf("missing rule %q: %+v", rule, failures)
 }
 
-func TestNBLFinalizedLanguageAccessibility(t *testing.T) {
+func TestANTTVFinalizedLanguageAccessibility(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name                            string
@@ -206,9 +210,10 @@ func TestNBLFinalizedLanguageAccessibility(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			subject := nblPassingSubject()
-			subject.Tracker = "NBL"
+			subject := antTVPassingSubject()
+			subject.Tracker = "ANT"
 			subject.DiscType, subject.Type = tt.discType, tt.uploadType
+			subject.BDInfoReady = tt.discType == "BDMV"
 			subject.LanguageFacts = api.LanguageFacts{
 				ProgrammeLanguages: tt.audio,
 				SubtitleLanguages:  tt.subtitles,
@@ -224,13 +229,13 @@ func TestNBLFinalizedLanguageAccessibility(t *testing.T) {
 					t.Fatalf("unexpected failures: %+v", failures)
 				}
 			} else {
-				assertNBLFailure(t, failures, "language_subtitles", api.RuleDispositionStrict, tt.wantStatus)
+				assertANTTVFailure(t, failures, "language_subtitles", api.RuleDispositionStrict, tt.wantStatus)
 			}
 		})
 	}
 }
 
-func TestNBLContradictoryEnglishCorrectionDoesNotEstablishAccessibility(t *testing.T) {
+func TestANTTVContradictoryEnglishCorrectionDoesNotEstablishAccessibility(t *testing.T) {
 	t.Parallel()
 	media := api.MediaFacts{
 		AudioLanguages:           []string{"English"},
@@ -251,8 +256,8 @@ func TestNBLContradictoryEnglishCorrectionDoesNotEstablishAccessibility(t *testi
 			},
 		},
 	}
-	subject := nblPassingSubject()
-	subject.Tracker = "NBL"
+	subject := antTVPassingSubject()
+	subject.Tracker = "ANT"
 	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
 	if subject.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory {
 		t.Fatal("regression fixture did not preserve contradiction")
@@ -261,7 +266,7 @@ func TestNBLContradictoryEnglishCorrectionDoesNotEstablishAccessibility(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertNBLFailure(t, failures, "language_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	assertANTTVFailure(t, failures, "language_subtitles", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
 	subject.LanguageFacts.SubtitleLanguages = []string{"English"}
 	failures, err = validationPolicy().Check(context.Background(), subject, api.NopLogger{})
 	if err != nil || len(failures) != 0 {

@@ -5,14 +5,13 @@ package ant
 
 import (
 	"path/filepath"
-	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestProjectionOmitsQuestionnaireForTVShort(t *testing.T) {
+func TestProjectionOptionalRequestIDCorrection(t *testing.T) {
 	t.Parallel()
 	registry := trackers.NewRegistry()
 	if err := registry.Register(New()); err != nil {
@@ -22,16 +21,9 @@ func TestProjectionOmitsQuestionnaireForTVShort(t *testing.T) {
 		name     string
 		category api.CanonicalCategory
 		imdbType string
-		blocked  bool
 		request  string
 		review   bool
 	}{
-		{
-			name:     "TV short",
-			category: api.CanonicalCategoryTV,
-			imdbType: "tv short",
-			blocked:  true,
-		},
 		{
 			name:     "movie short",
 			category: api.CanonicalCategoryMovie,
@@ -63,13 +55,6 @@ func TestProjectionOmitsQuestionnaireForTVShort(t *testing.T) {
 			imdbType: "short",
 			request:  "42",
 		},
-		{
-			name:     "TV short invalid request",
-			category: api.CanonicalCategoryTV,
-			imdbType: "tv short",
-			request:  "0",
-			blocked:  true,
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
@@ -87,16 +72,6 @@ func TestProjectionOmitsQuestionnaireForTVShort(t *testing.T) {
 			}, "input", "catalog", "config")
 			if failure != nil {
 				t.Fatal(failure)
-			}
-			if test.blocked {
-				if projection.Readiness != api.ReadinessStatusIneligible || projection.DupeReady || projection.UploadReady ||
-					len(projection.Questionnaire) != 0 || len(projection.RequiredActions) != 0 ||
-					!slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
-						return decision.Code == "unsupported_type" && decision.Blocking
-					}) {
-					t.Fatalf("blocked TV short exposed tracker inputs: %+v", projection)
-				}
-				return
 			}
 			if len(projection.Questionnaire) != 1 || projection.Questionnaire[0].NeedsReview != test.review ||
 				projection.Questionnaire[0].Key != "requestid" || projection.Questionnaire[0].Required {

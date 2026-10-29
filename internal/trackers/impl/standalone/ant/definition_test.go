@@ -104,29 +104,16 @@ func TestFilmTypeAnswersRequireMovieEligibility(t *testing.T) {
 		{
 			name:     "movie short without IMDb",
 			answer:   "Short Film",
-			wantID:   "1",
+			wantID:   "2",
 			category: api.CanonicalCategoryMovie,
 			tmdbType: "Movie",
 		},
 		{
 			name:     "movie feature with missing IMDb type",
 			answer:   "Feature Film",
-			wantID:   "0",
+			wantID:   "1",
 			category: api.CanonicalCategoryMovie,
 			tmdbType: "Movie",
-			imdb:     &api.IMDBMetadata{},
-		},
-		{
-			name:     "TMDB television cannot become a movie short",
-			answer:   "Short Film",
-			category: api.CanonicalCategoryTV,
-			tmdbType: "Scripted",
-		},
-		{
-			name:     "TMDB miniseries cannot become a feature film",
-			answer:   "Feature Film",
-			category: api.CanonicalCategoryTV,
-			tmdbType: "Miniseries",
 			imdb:     &api.IMDBMetadata{},
 		},
 		{
@@ -137,15 +124,9 @@ func TestFilmTypeAnswersRequireMovieEligibility(t *testing.T) {
 			imdb:     &api.IMDBMetadata{Type: "short"},
 		},
 		{
-			name:     "TMDB TV category cannot be relabeled without programme type",
-			answer:   "Feature Film",
-			category: api.CanonicalCategoryTV,
-			imdb:     &api.IMDBMetadata{Type: "tv movie"},
-		},
-		{
 			name:     "made for TV movie uses a film TMDB record",
 			answer:   "Feature Film",
-			wantID:   "0",
+			wantID:   "1",
 			category: api.CanonicalCategoryMovie,
 			tmdbType: "Movie",
 			imdb:     &api.IMDBMetadata{Type: "tv movie"},

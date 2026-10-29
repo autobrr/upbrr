@@ -33,7 +33,6 @@ import (
 	hdsimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/hds"
 	hdtimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdt"
 	isimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/is"
-	nblimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/nbl"
 	ptpimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	ptsimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/pts"
 	rtfimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/rtf"
@@ -384,18 +383,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 			enumerated: true,
 			effective:  true,
 		},
-		{
-			name:    "NBL",
-			tracker: "NBL",
-			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{TVmazeID: 81}, SourcePath: "x"},
-			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
-				return dupe.NewAdapter(nblimpl.New(), "NBL", cfg, client, api.NopLogger{})
-			},
-			validate:   validateNoEntries,
-			scope:      dupe.WorkScopeProviderID,
-			enumerated: true,
-			effective:  true,
-		},
+
 		{
 			name:    "PTP",
 			tracker: "PTP",
@@ -509,9 +497,6 @@ func TestSiteHandlersSearch(t *testing.T) {
 					return
 				case "HDB":
 					_, _ = w.Write([]byte(`{"status":0,"data":[]}`))
-					return
-				case "NBL":
-					_, _ = w.Write([]byte(`{"current_page":0,"total_pages":0,"count":0,"total_results":0,"items":[]}`))
 					return
 				case "PTP":
 					_, _ = w.Write([]byte(`{"TotalResults":"0","Movies":[],"Page":"1"}`))

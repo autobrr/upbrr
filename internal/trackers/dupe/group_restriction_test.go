@@ -175,13 +175,13 @@ func TestDuplicatePolicyResolvesRestrictionPerTracker(t *testing.T) {
 	t.Parallel()
 
 	service := &Service{cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-		"NBL": {DupeBypassGroups: config.CSVList{"NTb"}},
+		"ANT": {DupeBypassGroups: config.CSVList{"NTb"}},
 		"BTN": {InternalGroups: config.CSVList{"NTb"}},
 		"HDB": {PersonalReleaseGroups: config.CSVList{"NTb"}},
 	}}}}
 	meta := api.DuplicateSubject{Tag: "-NTb"}
-	if policy := service.duplicatePolicy("NBL", meta); !policy.GroupRestriction.Enabled || policy.GroupRestriction.Group != "NTb" {
-		t.Fatalf("NBL restriction = %#v", policy.GroupRestriction)
+	if policy := service.duplicatePolicy("ANT", meta); !policy.GroupRestriction.Enabled || policy.GroupRestriction.Group != "NTb" {
+		t.Fatalf("ANT restriction = %#v", policy.GroupRestriction)
 	}
 	if policy := service.duplicatePolicy("BTN", meta); !policy.GroupRestriction.Enabled {
 		t.Fatalf("BTN internal restriction = %#v", policy.GroupRestriction)

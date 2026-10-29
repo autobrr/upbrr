@@ -399,8 +399,8 @@ func TestANTDiscCandidatesOccupyDistinctSlots(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, filename, container, source, resolution, codec, targetType string
-		wantContainer                                                 string
-		want                                                          api.DupeRelation
+		wantContainer                                                    string
+		want                                                             api.DupeRelation
 	}{
 		{"DVD API container", "Example.2026.SD.DVD.VOBIFO.123.torrent", "VOBIFO", "DVD", "SD", "MPEG2", "ENCODE", "VOBIFO", api.DupeRelationCoexists},
 		{"DVD torrent filename", "Example.2026.SD.DVD.VOBIFO.123.torrent", "", "DVD", "SD", "MPEG2", "ENCODE", "vobifo", api.DupeRelationCoexists},
@@ -474,7 +474,7 @@ func TestANTDiscSearchResultsFilterIncompatibleVariants(t *testing.T) {
 	})
 	for _, tc := range []struct {
 		name, kind, source, resolution, codec, matchName string
-		want                                           api.DupeRelation
+		want                                             api.DupeRelation
 	}{
 		{"encode exact match", "ENCODE", "BluRay", "1080p", "H264", filename, api.DupeRelationExactDuplicate},
 		{"Blu-ray disc", "DISC", "BluRay", "1080p", "H264", "Example.2026.1080p.BluRay.m2ts.124.torrent", api.DupeRelationManualReview},

@@ -457,7 +457,7 @@ Ready-empty content is valid and differs from failed content. Generic coordinato
 failure from empty text or zero selected images.
 
 All Unit3D and AvistaZ-family definitions currently declare `description` once at family level.
-Standalone profiles must set `UploadContentMode` explicitly. Current protocol examples are BTN/NBL
+Standalone profiles must set `UploadContentMode` explicitly. Current protocol examples are BTN
 for `none`, RTF for `screenshots`, and ANT and most other standalone trackers for `description`.
 Changing a standalone tracker's workflow later should require only its profile and tracker-local
 adapter implementation; do not add tracker-name branches to core or tracker orchestration.

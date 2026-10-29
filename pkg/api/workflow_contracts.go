@@ -198,6 +198,8 @@ type TrackerDuplicateCriteria struct {
 // TrackerDuplicateTarget is the projection-bound proposed release used only
 // for local duplicate policy evaluation.
 type TrackerDuplicateTarget struct {
+	// TVScope retains exact numbered membership when a site's season category also includes batches.
+	TVScope     *DupeTVScope             `json:"tvScope,omitempty"`
 	Evidence    DupeReleaseEvidence      `json:"evidence"`
 	Comparisons []DupeComparisonEvidence `json:"comparisons,omitempty"`
 

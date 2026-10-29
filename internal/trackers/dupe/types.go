@@ -386,6 +386,7 @@ func cloneNotes(notes []string) []string {
 func cloneEntries(entries []api.DupeEntry) []api.DupeEntry {
 	out := make([]api.DupeEntry, len(entries))
 	for idx, entry := range entries {
+		entry.TVScope = entry.TVScope.Clone()
 		entry.Files = append([]string(nil), entry.Files...)
 		entry.ProviderIDs = append([]api.TrackerProviderID(nil), entry.ProviderIDs...)
 		entry.Flags = append([]string(nil), entry.Flags...)

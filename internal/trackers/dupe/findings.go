@@ -82,7 +82,8 @@ func collectCandidateFindings(
 	findings = append(findings, collectExactFindings(target, candidate)...)
 	targetTitleScope := parseBestTitle(target.Names).Content
 	candidateTitleScope := parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content
-	if contentScopesContradict(targetFacts.Content, targetTitleScope) || contentScopesContradict(candidateFacts.Content, candidateTitleScope) {
+	if numberedScopeContradictsTitle(targetFacts.Content, targetTitleScope, target.TVScope != nil) ||
+		numberedScopeContradictsTitle(candidateFacts.Content, candidateTitleScope, candidate.TVScope != nil) {
 		findings = append(findings, RuleFinding{
 			RuleID:         GeneralPolicyID + "/content_scope",
 			Source:         "general",
@@ -254,8 +255,13 @@ func sameKnownContentScope(target contentScope, candidate contentScope) bool {
 		}
 	case contentScopeWork, contentScopeDaily, contentScopeCompleteSeries:
 	}
-	target.Origin = candidate.Origin
-	return target == candidate
+	if target.Kind != candidate.Kind || target.Season != candidate.Season || target.Date != candidate.Date {
+		return false
+	}
+	if target.Kind == contentScopeEpisode || target.Kind == contentScopeEpisodeRange {
+		return compareEpisodeMembership(target, candidate) == contentEqual
+	}
+	return target.EpisodeStart == candidate.EpisodeStart && target.EpisodeEnd == candidate.EpisodeEnd
 }
 
 func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, policy trackerspkg.DupePolicy, workScope WorkScope) []RuleFinding {

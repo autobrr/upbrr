@@ -24,6 +24,7 @@ type Profile struct {
 	DescriptionGroup        string
 	LocalizedMetadataLocale string
 	UploadContentMode       trackers.UploadContentMode
+	CategoryPolicies        map[api.CanonicalCategory]trackers.CategoryPolicy
 	// UsesMenuImages reports whether this tracker's description consumes selected DVD menus.
 	UsesMenuImages bool
 	// SourceOnlyImageReusable lets the tracker accept its own source-only URL.

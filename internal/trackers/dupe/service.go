@@ -938,7 +938,7 @@ func dupeCandidateLogValue(value string) string {
 func (s *Service) duplicatePolicy(tracker string, meta api.DuplicateSubject) trackerspkg.DupePolicy {
 	var policy trackerspkg.DupePolicy
 	if s != nil && s.registry != nil {
-		policy, _ = s.registry.LookupDupePolicy(tracker)
+		policy, _ = s.registry.LookupDupePolicyForCategory(tracker, meta.Identity.Category)
 	}
 	if strings.TrimSpace(policy.ID) == "" {
 		if meta.Projection != nil && strings.TrimSpace(meta.Projection.DuplicatePolicyID) != "" {

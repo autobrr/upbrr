@@ -10,20 +10,39 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const (
+	antHost    = "anthelion.dev"
+	antBaseURL = "https://" + antHost
+	antAPIURL  = antBaseURL + "/api.php"
+)
+
 // Profile returns ANT identity, preparation, dupe, rules, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		UsesMenuImages:          true,
-		Name:                    "ANT",
-		BaseURL:                 "https://anthelion.me",
-		DescriptionGroup:        "ant",
-		UploadContentMode:       trackers.UploadContentModeDescription,
+		UsesMenuImages:    true,
+		Name:              "ANT",
+		BaseURL:           antBaseURL,
+		DescriptionGroup:  "ant",
+		UploadContentMode: trackers.UploadContentModeDescription,
+		CategoryPolicies: map[api.CanonicalCategory]trackers.CategoryPolicy{
+			api.CanonicalCategoryTV: {
+				UploadContentMode: trackers.UploadContentModeNone,
+				DupePolicy: &trackers.DupePolicy{
+					ID:             "ant/tv-duplicate/v2",
+					TargetTVScope:  resolveTargetTVScope,
+					EvidenceID:     "ant-combined-api-nbl-tv-rules",
+					SearchScope:    trackers.DupeSearchScope{MaxPages: 100},
+					SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionHDR},
+					HDRSlotMode:    trackers.DupeHDRSlotModeGeneric,
+				},
+			},
+		},
 		AuthCapability:          authcontract.APIKeyCapability("ANT"),
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
 		ProjectionQuestionnaire: projectionQuestionnaire,
 		ReleaseNamePolicy: trackers.WithMovieYearProvider(
-			trackers.SimpleSubjectReleaseNamePolicy("standalone/ant/v2", resolveUploadName),
+			trackers.SimpleSubjectReleaseNamePolicy("standalone/ant/v3", resolveUploadName),
 			api.IdentityProviderTMDB,
 		),
 		NewDuplicateAdapter:  newDuplicateAdapter,
@@ -39,14 +58,18 @@ func Profile() standalone.Profile {
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
-				Scope:       trackers.MetadataScopeAny,
+				Scope:       trackers.MetadataScopeMovie,
 				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB},
+				Disposition: api.RuleDispositionStrict,
+			}, {
+				Scope:       trackers.MetadataScopeTV,
+				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTVDB, trackers.MetadataFieldTMDB},
 				Disposition: api.RuleDispositionStrict,
 			}},
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
-			TrackerURLPatterns: []string{"tracker.anthelion.me"},
-			CommentURLPatterns: []string{"anthelion.me/torrents.php"},
+			TrackerURLPatterns: []string{"tracker." + antHost},
+			CommentURLPatterns: []string{antHost + "/torrents.php"},
 			DetailIDPattern:    `(?i)[?&]torrentid=(\d+)`,
 			WorkingTrackerID:   "1",
 		},

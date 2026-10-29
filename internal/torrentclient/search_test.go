@@ -978,12 +978,17 @@ func TestExtractTrackerMatchesIncludesPatternsOutsidePriority(t *testing.T) {
 func TestExtractTrackerMatchesPrefersANTCommentID(t *testing.T) {
 	t.Parallel()
 
+	registry := trackerPatternRegistry(t)
+	descriptor, ok := registry.LookupDescriptor("ANT")
+	if !ok {
+		t.Fatal("ANT is not registered")
+	}
 	matches, found := extractTrackerMatchesWithPatterns(
-		"https://anthelion.me/torrents.php?torrentid=12345",
-		[]string{"https://tracker.anthelion.me/redacted/announce"},
+		descriptor.BaseURL+"/torrents.php?torrentid=12345",
+		[]string{strings.Replace(descriptor.BaseURL, "://", "://tracker.", 1) + "/redacted/announce"},
 		true,
 		[]string{"ant"},
-		buildTrackerIDPatterns(trackerPatternRegistry(t)),
+		buildTrackerIDPatterns(registry),
 	)
 
 	if !found {
@@ -997,12 +1002,17 @@ func TestExtractTrackerMatchesPrefersANTCommentID(t *testing.T) {
 func TestExtractTrackerMatchesFallsBackToANTWorkingID(t *testing.T) {
 	t.Parallel()
 
+	registry := trackerPatternRegistry(t)
+	descriptor, ok := registry.LookupDescriptor("ANT")
+	if !ok {
+		t.Fatal("ANT is not registered")
+	}
 	matches, found := extractTrackerMatchesWithPatterns(
 		"",
-		[]string{"https://tracker.anthelion.me/redacted/announce"},
+		[]string{strings.Replace(descriptor.BaseURL, "://", "://tracker.", 1) + "/redacted/announce"},
 		true,
 		[]string{"ant"},
-		buildTrackerIDPatterns(trackerPatternRegistry(t)),
+		buildTrackerIDPatterns(registry),
 	)
 
 	if !found {

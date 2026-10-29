@@ -314,10 +314,6 @@ trackers:
     link_dir_name: ""
     api_key: ""
     anon: false
-  NBL:
-    link_dir_name: ""
-    api_key: ""
-    announce_url: ""
   OE:
     link_dir_name: ""
     api_key: ""

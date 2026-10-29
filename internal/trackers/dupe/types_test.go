@@ -6,7 +6,22 @@ package dupe
 import (
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestAdapterResultDetachesNumberedTVScope(t *testing.T) {
+	t.Parallel()
+	entry := api.DupeEntry{TVScope: &api.DupeTVScope{Season: new(0), Episodes: []int{1, 3}}}
+	result := Resolved([]api.DupeEntry{entry}, nil)
+	*entry.TVScope.Season, entry.TVScope.Episodes[0] = 1, 2
+	returned := result.Entries()
+	*returned[0].TVScope.Season, returned[0].TVScope.Episodes[0] = 2, 4
+	retained := result.Entries()[0].TVScope
+	if *retained.Season != 0 || retained.Episodes[0] != 1 {
+		t.Fatal("caller mutations changed retained API scope evidence")
+	}
+}
 
 func TestResolvedPreservesUnknownSearchCompleteness(t *testing.T) {
 	t.Parallel()

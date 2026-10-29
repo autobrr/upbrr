@@ -25,13 +25,14 @@ func TestANTRegisteredDownloadAndMissingView(t *testing.T) {
 	previous := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = previous })
 	torrent := []byte("d4:infod6:lengthi1e4:name7:Example12:piece lengthi16384e6:pieces20:abcdefghijklmnopqrstee")
+	downloadURL := antBaseURL + "/download.php?id=7"
 	for _, tc := range []struct {
 		name, response string
 		downloadStatus int
 		wantArtifact   bool
 	}{
-		{"modified download", `{"status":"success","message":"Torrent modified","download":"https://anthelion.me/download.php?id=7"}`, 200, true},
-		{"download denied", `{"status":"success","message":"Torrent modified","download":"https://anthelion.me/download.php?id=7"}`, 403, false},
+		{"modified download", `{"status":"success","message":"Torrent modified","download":"` + downloadURL + `"}`, 200, true},
+		{"download denied", `{"status":"success","message":"Torrent modified","download":"` + downloadURL + `"}`, 403, false},
 		{"modified without download scope", `{"status":"success","message":"Torrent modified"}`, 0, false},
 		{"foreign download", `{"status":"success","download":"https://example.invalid/download"}`, 0, false},
 	} {
@@ -39,7 +40,7 @@ func TestANTRegisteredDownloadAndMissingView(t *testing.T) {
 			http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				body, status := tc.response, http.StatusOK
 				if req.Method == http.MethodGet {
-					if req.URL.Host != "anthelion.me" || req.Header.Get("X-Api-Key") != "test-key" {
+					if req.URL.Host != antHost || req.Header.Get("X-Api-Key") != "test-key" {
 						t.Error("unsafe registered download")
 						return nil, errors.New("unsafe registered download")
 					}

@@ -23,6 +23,7 @@ var (
 
 // TrackerCandidate is protocol-independent private candidate evidence.
 type TrackerCandidate struct {
+	TVScope           *api.DupeTVScope
 	Evidence          api.DupeReleaseEvidence
 	SourceFingerprint api.WorkflowFingerprint
 
@@ -68,6 +69,7 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 	source.Download, source.Link = "", ""
 	sourceFingerprint, _ := api.CanonicalWorkflowFingerprint(source)
 	candidate := TrackerCandidate{
+		TVScope:           entry.TVScope.Clone(),
 		SourceFingerprint: sourceFingerprint,
 		Evidence:          entry.Evidence,
 		TrackerSlot:       entry.TrackerSlot,
@@ -103,6 +105,15 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 	}
 	if candidate.FileCount == 0 {
 		candidate.FileCount = len(candidate.Files)
+	}
+	if candidate.TVScope != nil {
+		candidate.Pack = false
+		if candidate.TVScope.Season != nil {
+			candidate.Season = *candidate.TVScope.Season
+		}
+		if len(candidate.TVScope.Episodes) > 0 {
+			candidate.Episode = candidate.TVScope.Episodes[0]
+		}
 	}
 	if candidate.HDR.Status == "" {
 		candidate.HDR = NormalizeTrackerHDRFlags(entry.Flags, entry.FlagsPresent, entry.FlagsComplete)
@@ -159,7 +170,7 @@ func NormalizeTrackerHDRFlags(flags []string, present bool, complete bool) api.H
 }
 
 func enrichCandidateCoordinatesFromTitle(candidate *TrackerCandidate) {
-	if candidate == nil {
+	if candidate == nil || candidate.TVScope != nil {
 		return
 	}
 	if candidate.Season == 0 || (!candidate.Pack && candidate.Episode == 0) {

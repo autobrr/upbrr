@@ -29,7 +29,7 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	return &dataLookup{
 		cfg:      cfg,
 		http:     httpClient,
-		endpoint: "https://anthelion.me/api.php",
+		endpoint: antAPIURL,
 	}
 }
 
@@ -51,6 +51,7 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		"filename": {fileName},
 		"o":        {"json"},
 	}
+	params.Set("cat", "100000")
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, l.endpoint, nil)
 	if err != nil {
 		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: ant request: %w", err)
@@ -83,6 +84,8 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		TorrentURL: antString(item["guid"]),
 		IMDBID:     antIMDB(item["imdb"]),
 		TMDBID:     int(antInt(item["tmdb"])),
+		TVDBID:     int(antInt(item["tvdbid"])),
+		Category:   antCategory(item),
 	}, nil
 }
 

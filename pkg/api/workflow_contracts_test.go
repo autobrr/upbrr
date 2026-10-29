@@ -20,6 +20,39 @@ func workflowTestFingerprint(t *testing.T, value any) WorkflowFingerprint {
 	return fingerprint
 }
 
+func TestNumberedTVScopeSurvivesProjectionPersistenceAndClone(t *testing.T) {
+	t.Parallel()
+	snapshot := TrackerReleaseProjectionSet{Projections: []TrackerReleaseProjection{{
+		TrackerID: "ANT",
+		DuplicateTarget: TrackerDuplicateTarget{TVScope: &DupeTVScope{
+Season: new(0),
+ Episodes: []int{1, 3},
+ FromFiles: true,
+}},
+	}}}
+	clone, err := snapshot.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := clone.Projections[0].DuplicateTarget.TVScope
+	if scope == nil || scope.Season == nil || *scope.Season != 0 || !reflect.DeepEqual(scope.Episodes, []int{1, 3}) || !scope.FromFiles {
+		t.Fatalf("projection persistence lost explicit specials or bounded membership: %+v", scope)
+	}
+	*scope.Season, scope.Episodes[0] = 1, 2
+	original := snapshot.Projections[0].DuplicateTarget.TVScope
+	if *original.Season != 0 || original.Episodes[0] != 1 {
+		t.Fatal("cloned projection changed retained duplicate authority")
+	}
+	if workflowTestFingerprint(t, clone) == workflowTestFingerprint(t, snapshot) {
+		t.Fatal("numbered membership did not contribute to retained authority")
+	}
+	clone.Projections[0].DuplicateTarget.TVScope.Season = nil
+	clone.Projections[0].DuplicateTarget.TVScope.Episodes[0] = 1
+	if workflowTestFingerprint(t, clone) == workflowTestFingerprint(t, snapshot) {
+		t.Fatal("unknown season collided with explicit season zero")
+	}
+}
+
 func TestMediaInfoDisplayPreservesLegacySnapshotFingerprint(t *testing.T) {
 	t.Parallel()
 	legacy := struct {

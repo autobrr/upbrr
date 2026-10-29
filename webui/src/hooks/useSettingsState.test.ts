@@ -2213,7 +2213,7 @@ describe("tracker catalog interactions", () => {
             DefaultTrackers: [],
             PreferredTracker: "",
             Trackers: {
-              NBL: {
+              ANT: {
                 APIKey: "tracker-token",
                 Internal: false,
                 DupeBypassGroups: ["NTb"],
@@ -2226,7 +2226,7 @@ describe("tracker catalog interactions", () => {
       GetDefaultConfig: async () => JSON.stringify({}),
       ListTrackerCatalog: async () =>
         trackerCatalog(
-          trackerCatalogEntry("NBL", [
+          trackerCatalogEntry("ANT", [
             ["APIKey", "", true],
             ["DupeBypassGroups", []],
             ["PersonalReleaseGroups", []],
@@ -2238,7 +2238,7 @@ describe("tracker catalog interactions", () => {
 
     render(createElement(TrackerSettingsHarness));
 
-    const cardName = await screen.findByText("NBL", {
+    const cardName = await screen.findByText("ANT", {
       selector: ".settings-card__summary-name",
     });
     fireEvent.click(cardName);
@@ -2258,8 +2258,8 @@ describe("tracker catalog interactions", () => {
     const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
     }>();
-    expect(payload.Trackers?.Trackers?.NBL?.DupeBypassGroups).toEqual(["NTb", "GRP"]);
-    expect(payload.Trackers?.Trackers?.NBL?.Internal).toBe(false);
+    expect(payload.Trackers?.Trackers?.ANT?.DupeBypassGroups).toEqual(["NTb", "GRP"]);
+    expect(payload.Trackers?.Trackers?.ANT?.Internal).toBe(false);
     expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
   });
 
@@ -2277,7 +2277,7 @@ describe("tracker catalog interactions", () => {
             DefaultTrackers: [],
             PreferredTracker: "",
             Trackers: {
-              NBL: {
+              ANT: {
                 APIKey: "tracker-token",
                 DupeBypassGroups: [],
                 PersonalReleaseGroups: [],
@@ -2289,7 +2289,7 @@ describe("tracker catalog interactions", () => {
       GetDefaultConfig: async () => JSON.stringify({}),
       ListTrackerCatalog: async () =>
         trackerCatalog(
-          trackerCatalogEntry("NBL", [
+          trackerCatalogEntry("ANT", [
             ["APIKey", "", true],
             ["DupeBypassGroups", []],
             ["PersonalReleaseGroups", []],
@@ -2301,7 +2301,7 @@ describe("tracker catalog interactions", () => {
         const config = JSON.parse(payload) as {
           Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
         };
-        saved = config.Trackers?.Trackers?.NBL;
+        saved = config.Trackers?.Trackers?.ANT;
         return {
           status: "active",
           activeGeneration: 2,
@@ -2313,7 +2313,7 @@ describe("tracker catalog interactions", () => {
 
     render(createElement(TrackerSettingsHarness));
 
-    const cardName = await screen.findByText("NBL", {
+    const cardName = await screen.findByText("ANT", {
       selector: ".settings-card__summary-name",
     });
     await user.click(cardName);
@@ -2337,13 +2337,13 @@ describe("tracker catalog interactions", () => {
           Trackers: {
             DefaultTrackers: [],
             PreferredTracker: "",
-            Trackers: { NBL: { APIKey: "tracker-token", InternalGroups: ["GRP"] } },
+            Trackers: { ANT: { APIKey: "tracker-token", InternalGroups: ["GRP"] } },
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
       ListTrackerCatalog: async () =>
         trackerCatalog(
-          trackerCatalogEntry("NBL", [
+          trackerCatalogEntry("ANT", [
             ["APIKey", "", true],
             ["InternalGroups", []],
           ]),
@@ -2353,7 +2353,7 @@ describe("tracker catalog interactions", () => {
 
     render(createElement(TrackerSettingsHarness));
 
-    await user.click(await screen.findByText("NBL", { selector: ".settings-card__summary-name" }));
+    await user.click(await screen.findByText("ANT", { selector: ".settings-card__summary-name" }));
     const input = screen.getByLabelText("Internal groups");
     await user.type(input, ", GRP2");
 
@@ -2361,8 +2361,8 @@ describe("tracker catalog interactions", () => {
     expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
     fireEvent.blur(input);
     expect(
-      readPayload<{ Trackers?: { Trackers?: { NBL?: { InternalGroups?: string[] } } } }>().Trackers
-        ?.Trackers?.NBL?.InternalGroups,
+      readPayload<{ Trackers?: { Trackers?: { ANT?: { InternalGroups?: string[] } } } }>().Trackers
+        ?.Trackers?.ANT?.InternalGroups,
     ).toEqual(["GRP", "GRP2"]);
   });
 

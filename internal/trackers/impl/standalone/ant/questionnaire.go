@@ -43,6 +43,9 @@ func buildQuestionnaire(meta api.UploadSubject, state uploadState) *api.TrackerQ
 	if _, answered := current["tags"]; strings.TrimSpace(state.tags) == "" || answered {
 		// ANT can obtain genres from TMDB when an explicit tag value is omitted.
 		required := meta.ProviderMetadata.TMDB == nil || genreTags(meta.ProviderMetadata.TMDB.Genres) == ""
+		if meta.Identity.Category == api.CanonicalCategoryTV && meta.ProviderMetadata.TVDB != nil && normalizeTags(meta.ProviderMetadata.TVDB.Genres) != "" {
+			required = false
+		}
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:         "tags",
 			Label:       "Tags",
@@ -53,7 +56,7 @@ func buildQuestionnaire(meta api.UploadSubject, state uploadState) *api.TrackerQ
 			Required:    required,
 		})
 	}
-	if _, answered := current["adult_screens"]; state.adultContent || answered {
+	if _, answered := current["adult_screens"]; movieContent(meta) && (state.adultContent || answered) {
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:         "adult_screens",
 			Label:       "Upload Screenshots",

@@ -197,11 +197,11 @@ func TestEvaluateANTPartialGenericHDRDoesNotConfirmSameSlot(t *testing.T) {
 	}
 }
 
-func TestEvaluateNBLUsesCoarseSDRHDRDVSlots(t *testing.T) {
+func TestEvaluateANTUsesCoarseSDRHDRDVSlots(t *testing.T) {
 	t.Parallel()
 
 	policy := trackerspkg.DupePolicy{
-		ID:             "nbl/duplicate/v2",
+		ID:             "ant/tv-duplicate/v1",
 		SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
 		HDRSlotMode:    trackerspkg.DupeHDRSlotModeGeneric,
 	}
@@ -253,7 +253,7 @@ func TestEvaluateNBLUsesCoarseSDRHDRDVSlots(t *testing.T) {
 				SearchEvidence{Complete: true},
 			)
 			if got := evaluation.Candidates[0].Relation; got != test.want {
-				t.Fatalf("NBL HDR relation = %q, want %q", got, test.want)
+				t.Fatalf("ANT HDR relation = %q, want %q", got, test.want)
 			}
 		})
 	}

@@ -4,7 +4,9 @@
 package ant
 
 import (
+	"errors"
 	"slices"
+	"strconv"
 	"strings"
 
 	"golang.org/x/text/language"
@@ -14,9 +16,15 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// resolveType maps supported movie content to ANT's feature or short-film type.
+// resolveType maps finalized content to the combined API categories.
 // Unsupported content returns an empty name; callers must reject it before upload.
 func resolveType(meta api.UploadSubject, answers map[string]string) (string, int) {
+	if meta.Identity.Category == api.CanonicalCategoryTV {
+		if meta.TVPack || meta.MultipleEpisodes {
+			return "Season", 3
+		}
+		return "Episode", 4
+	}
 	if !movieContent(meta) {
 		return "", 0
 	}
@@ -29,11 +37,11 @@ func resolveType(meta api.UploadSubject, answers map[string]string) (string, int
 		switch imdbType {
 		case "movie", "tv movie", "tvmovie":
 			if runtime >= 45 || runtime == 0 {
-				return "Feature Film", 0
+				return "Feature Film", 1
 			}
-			return "Short Film", 1
+			return "Short Film", 2
 		case "short":
-			return "Short Film", 1
+			return "Short Film", 2
 		}
 	}
 	runtime := 0
@@ -41,14 +49,46 @@ func resolveType(meta api.UploadSubject, answers map[string]string) (string, int
 		runtime = meta.ProviderMetadata.TMDB.Runtime
 	}
 	if runtime >= 45 || runtime == 0 {
-		return "Feature Film", 0
+		return "Feature Film", 1
 	}
-	return "Short Film", 1
+	return "Short Film", 2
+}
+
+// tvCoordinates sends only finalized TVDb numbering. Unnumbered and daily
+// releases are left for ANT's torrent/file inspection, including anime batches.
+func tvCoordinates(meta api.UploadSubject) (map[string]string, error) {
+	fields := make(map[string]string)
+	if meta.SeasonInt < 0 || meta.EpisodeInt < 0 {
+		return nil, errors.New("ANT season and episode must be non-negative whole numbers")
+	}
+	if meta.DailyEpisodeDate != "" {
+		return fields, nil
+	}
+	knownSeason := meta.SeasonInt > 0 || strings.TrimSpace(meta.SeasonStr) != ""
+	if meta.TVPack && meta.EpisodeInt > 0 && !meta.MultipleEpisodes {
+		return nil, errors.New("ANT Season uploads cannot specify an episode")
+	}
+	if !meta.TVPack && !meta.MultipleEpisodes && meta.EpisodeInt > 0 && !knownSeason {
+		return nil, errors.New("ANT Episode uploads need a season")
+	}
+	if knownSeason {
+		fields["season"] = strconv.Itoa(meta.SeasonInt)
+		if !meta.TVPack && !meta.MultipleEpisodes {
+			if meta.EpisodeInt == 0 {
+				return nil, errors.New("ANT Episode uploads with a season need an episode")
+			}
+			fields["episode"] = strconv.Itoa(meta.EpisodeInt)
+		}
+	}
+	return fields, nil
 }
 
 // movieContent requires film evidence and rejects known TMDB television records.
 // Explicit IMDb programme types take precedence over the canonical category fallback.
 func movieContent(meta api.UploadSubject) bool {
+	if meta.Identity.Category == api.CanonicalCategoryTV {
+		return false
+	}
 	if tmdb := meta.ProviderMetadata.TMDB; tmdb != nil {
 		if strings.EqualFold(strings.TrimSpace(tmdb.Category), "tv") ||
 			(strings.TrimSpace(tmdb.TMDBType) != "" && !strings.EqualFold(strings.TrimSpace(tmdb.TMDBType), "Movie")) {
@@ -91,7 +131,11 @@ func resolveFlags(meta api.UploadSubject) []string {
 		}
 		if legacy ||
 			candidate == "4KRemaster" && slices.Contains(meta.ReleaseFeatures, api.ReleaseFeature4KRemaster) {
-			flags = append(flags, candidate)
+			if candidate == "4KRemaster" {
+				flags = append(flags, "Remastered")
+			} else {
+				flags = append(flags, candidate)
+			}
 		}
 	}
 	if !fullDisc(meta) && meta.LanguageFacts.HasEnglishDub() && meta.LanguageFacts.HasOriginalAudio() {
@@ -130,6 +174,11 @@ func resolveTags(meta api.UploadSubject, answers map[string]string) (string, boo
 	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
 		tags := genreTags(trackers.PreferredGenreText(meta, ""))
 		return tags, tags == ""
+	}
+	if meta.Identity.Category == api.CanonicalCategoryTV && meta.ProviderMetadata.TVDB != nil {
+		if tags := normalizeTags(meta.ProviderMetadata.TVDB.Genres); tags != "" {
+			return tags, false
+		}
 	}
 	if meta.ProviderMetadata.TMDB != nil {
 		if tags := genreTags(meta.ProviderMetadata.TMDB.Genres); tags != "" {
@@ -215,9 +264,9 @@ func resolveAdultScreensAllowed(answers map[string]string, adultContent bool) bo
 func antTypeID(value string) int {
 	switch normalizeTypeName(value) {
 	case "Short Film":
-		return 1
+		return 2
 	default:
-		return 0
+		return 1
 	}
 }
 
@@ -295,4 +344,15 @@ func splitTags(value string) []string {
 		}
 	}
 	return result
+}
+
+func resolveReleaseGroup(tag string) (string, bool) {
+	trimmed := strings.TrimSpace(strings.TrimPrefix(tag, "-"))
+	if trimmed == "" {
+		return "", false
+	}
+	if isBannedReleaseGroup(trimmed) {
+		return "", false
+	}
+	return trimmed, true
 }

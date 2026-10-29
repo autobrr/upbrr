@@ -2062,6 +2062,30 @@
           "pages"
         ]
       },
+      "DupeTVScope": {
+        "type": "object",
+        "properties": {
+          "episodes": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "fromFiles": {
+            "type": "boolean"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "EditionDisplayPart": {
         "type": "object",
         "properties": {
@@ -11414,6 +11438,16 @@
           },
           "trackerSlot": {
             "type": "string"
+          },
+          "tvScope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DupeTVScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "type": {
             "type": "string"

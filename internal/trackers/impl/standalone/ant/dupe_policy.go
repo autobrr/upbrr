@@ -17,13 +17,24 @@ import (
 
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
-		ID:                 "ant/duplicate/v6",
+		ID:                 "ant/duplicate/v7",
 		EvidenceID:         "ant-slots-staff-overrides",
 		SearchScope:        trackers.DupeSearchScope{MaxPages: 100},
 		TargetSlot:         resolveTargetSlot,
 		CompareSlots:       compareSlots,
 		StaffTokenOverride: true,
 	}
+}
+
+func resolveTargetTVScope(meta api.UploadSubject) *api.DupeTVScope {
+	if !meta.TVPack || !meta.MultipleEpisodes {
+		return nil
+	}
+	var season *int
+	if meta.SeasonInt > 0 || strings.TrimSpace(meta.SeasonStr) != "" {
+		season = new(meta.SeasonInt)
+	}
+	return dupe.NumberedTVScopeFromFiles(meta.FileList, len(meta.FileList), season)
 }
 
 func resolveTargetSlot(meta api.UploadSubject) string {
@@ -124,6 +135,9 @@ func slotFlags(flags []string) ([]string, bool) {
 	upperFlags := make([]string, 0, len(flags))
 	for _, flag := range flags {
 		upper := strings.ToUpper(flag)
+		if upper == "REMASTERED" {
+			upper = "4KREMASTER"
+		}
 		switch upper {
 		case "DIRECTORS",
 			"EXTENDED",
@@ -220,6 +234,9 @@ func slotContradictsTitle(slot []string, name string) bool {
 	}
 	meta.Edition = strings.Join(editions, " ")
 	for _, flag := range resolveFlags(meta) {
+		if flag == "Remastered" {
+			flag = "4KRemaster"
+		}
 		if flag == "3D" {
 			if slot[0] != "3D" {
 				return true

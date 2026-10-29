@@ -14,8 +14,8 @@ import (
 )
 
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{
-		ID: "standalone-ant-constructibility-v5",
+	return trackers.WithLanguageAssessment(trackers.ValidationPolicyBinding{
+		ID: "standalone-ant-constructibility-v6-tv-v1",
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, fmt.Errorf("context canceled: %w", err)
@@ -26,7 +26,7 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 			if strings.TrimSpace(typeName) == "" {
 				failures = append(failures, trackers.NewRuleFailure(
 					"unsupported_type",
-					"ANT supports movies and TV movies, including movie shorts; TV shorts are not supported",
+					"ANT requires a movie, TV season, or TV episode",
 					api.RuleDispositionStrict,
 				))
 			}
@@ -40,7 +40,22 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 					api.RuleDispositionStrict,
 				))
 			}
+			if subject.Identity.Category == api.CanonicalCategoryTV {
+				if _, err := tvCoordinates(meta); err != nil {
+					failures = append(failures, trackers.NewRuleFailure("invalid_tv_coordinates", err.Error(), api.RuleDispositionStrict))
+				}
+				tvFailures, err := checkTVEvidenceRules(ctx, subject, nil)
+				if err != nil {
+					return nil, err
+				}
+				failures = append(failures, tvFailures...)
+			}
 			return failures, nil
 		},
-	}
+	}, func(subject api.TrackerValidationSubject) []api.RuleFailure {
+		if subject.Identity.Category != api.CanonicalCategoryTV {
+			return nil
+		}
+		return append(trackers.EvaluateLanguagePolicy(subject, languagePolicy()), fullDiscLanguageFailures(subject)...)
+	})
 }

@@ -531,6 +531,12 @@ export type DupeSearchEvidence = Readonly<{
   wrongWorkCount?: number;
 }>;
 
+export type DupeTVScope = Readonly<{
+  episodes?: readonly number[];
+  fromFiles?: boolean;
+  season?: number | null;
+}>;
+
 export type EditionDisplayPart = Readonly<{
   Feature?: ReleaseFeature;
   Text: string;
@@ -2775,6 +2781,7 @@ export type TrackerDuplicateTarget = Readonly<{
   source?: string;
   threeD?: string;
   trackerSlot?: string;
+  tvScope?: DupeTVScope | null;
   type?: string;
   videoCodec?: string;
   videoEncode?: string;

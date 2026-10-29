@@ -19,16 +19,19 @@ import (
 func TestDataLookupSendsAPIKeyHeader(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("apikey") != "" || r.URL.Query().Get("t") != "search" || r.URL.Query().Get("filename") != "Example.Release.mkv" {
+		if r.URL.Query().Get("apikey") != "" || r.URL.Query().Get("t") != "search" || r.URL.Query().Get("filename") != "Example.Release.mkv" ||
+			r.URL.Query().Get("cat") != "100000" {
 			t.Errorf("unexpected query: %s", r.URL.RawQuery)
 		}
 		if r.Header.Get("X-Api-Key") != "token" || r.Header.Get("User-Agent") == "" {
 			t.Error("unexpected request headers")
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"item": []map[string]any{{
-			"imdb": "tt1234567",
-			"tmdb": 765,
-			"guid": "https://anthelion.me/torrents.php?id=42",
+			"imdb":     "tt1234567",
+			"tmdb":     765,
+			"tvdbid":   100001,
+			"category": []int{5000, 100004},
+			"guid":     "https://anthelion.me/torrents.php?id=42",
 		}}})
 	}))
 	defer server.Close()
@@ -42,7 +45,8 @@ func TestDataLookupSendsAPIKeyHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
-	if result.IMDBID != 1234567 || result.TMDBID != 765 || result.TorrentURL != "https://anthelion.me/torrents.php?id=42" || result.TrackerID != "" {
+	if result.IMDBID != 1234567 || result.TMDBID != 765 || result.TVDBID != 100001 || result.Category != "tv" ||
+		result.TorrentURL != "https://anthelion.me/torrents.php?id=42" || result.TrackerID != "" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
