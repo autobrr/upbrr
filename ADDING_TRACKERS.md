@@ -796,7 +796,10 @@ Choose dispositions deliberately:
 - `waivable` records an upload warning; exact user approval permits that tracker, while no response leaves only that tracker excluded; debug mode bypasses it automatically;
 - `strict` blocks normal uploads and cannot be acknowledged. An explicitly marked `RuleFailure.DebugBypass` may preserve a tracker eligibility bypass in debug mode; unrelated strict constructibility checks still block.
 
-The workflow emits one tracker-scoped override for the exact current warning set. WebUI places it
+The workflow emits one tracker-scoped override for the exact current tracker warning set.
+The shared heuristic `modified_release` warning is separate: one generation-bound release
+confirmation applies across selected trackers and never authorizes another waivable rule.
+Authoritative scene-rename failures remain strict. WebUI places it
 on that tracker's duplicate-review card as a reversible acknowledgement toggle; interactive CLI
 prompts for it. A changed warning set or prepared generation invalidates that authority and requires
 new approval. Revocation clears dependent checks and preparation through the shared workflow.

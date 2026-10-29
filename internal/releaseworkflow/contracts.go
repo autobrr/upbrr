@@ -631,8 +631,15 @@ type Application interface {
 
 // State is the repository value owned exclusively by the workflow module.
 // Snapshots are immutable; maps retain prior revisions for exact-reference reads.
+type modifiedReleaseDecision struct {
+	Release   api.ReleaseRef
+	Confirmed bool
+}
+
 type State struct {
-	OwnerID string
+	// ModifiedReleaseDecision is invalid outside its exact prepared generation.
+	ModifiedReleaseDecision *modifiedReleaseDecision `json:",omitempty"`
+	OwnerID                 string
 	// descriptionReuse accompanies one atomic save and is never durable workflow payload.
 	descriptionReuse *api.ReusableDescriptionRecord
 	// SourcePath durably binds this workflow to its source before preparation.

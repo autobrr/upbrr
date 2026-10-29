@@ -127,3 +127,46 @@ func projectionRuleAuthorizations(projections api.TrackerReleaseProjectionSet) m
 	}
 	return authorizations
 }
+
+// authorizeModifiedRelease records one decision for this exact source generation,
+// without granting any tracker-local waiver or weakening authoritative scene rules.
+func (m *Module) authorizeModifiedRelease(
+	ctx context.Context, ownerID string, state *State, nextRevision api.WorkflowRevision, now time.Time,
+	projections api.TrackerReleaseProjectionSet, action api.RequiredAction, answer api.RequiredActionAnswer,
+) (CommandResult, error) {
+	if action.Status != api.RequiredActionStatusPending || answer.Confirmed == nil || answer.TextValue != nil || len(answer.SelectedValues) > 0 {
+		return CommandResult{}, fmt.Errorf("%w: modified-release confirmation requires a current yes/no answer", ErrInvalidTransition)
+	}
+	workflow := state.Workflow
+	if workflow.Release == nil || workflow.Selection == nil || workflow.ProjectionInstructions == nil || workflow.TrackerProjections == nil ||
+		workflow.TrackerProjections.ID != projections.ID || workflow.TrackerProjections.Revision != projections.Revision || projections.Release != *workflow.Release ||
+		!slices.ContainsFunc(workflow.RequiredActions, func(candidate api.RequiredAction) bool {
+			return candidate.ID == action.ID && candidate.Status == api.RequiredActionStatusPending
+		}) {
+		return CommandResult{}, fmt.Errorf("%w: modified-release confirmation dependencies are stale", ErrInvalidTransition)
+	}
+	selection, ok := state.Selections[workflow.Selection.ID]
+	instructions, instructionsOK := state.ProjectionInstructions[workflow.ProjectionInstructions.ID]
+	if !ok || !instructionsOK || selection.Revision != workflow.Selection.Revision || instructions.Revision != workflow.ProjectionInstructions.Revision {
+		return CommandResult{}, fmt.Errorf("%w: modified-release confirmation dependencies are unavailable", ErrInvalidTransition)
+	}
+	state.ModifiedReleaseDecision = &modifiedReleaseDecision{Release: projections.ReleaseRef, Confirmed: *answer.Confirmed}
+	if workflow.Dupes != nil {
+		state.PendingDuplicateReuse = &PendingDuplicateReuse{Assessment: *workflow.Dupes}
+	}
+	if state.PendingDuplicateReuse != nil {
+		state.PendingDuplicateReuse.InvalidatedTrackers = slices.Clone(selection.TrackerIDs)
+	}
+	logging.FromContext(ctx, m.logger).Infof("release workflow: modified-release confirmation accepted=%t", *answer.Confirmed)
+	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, ProjectTrackersCommand{
+		WorkflowID:       workflow.ID,
+		ExpectedRevision: workflow.Revision,
+		TrackerIDs:       slices.Clone(selection.TrackerIDs),
+		Instructions:     instructions.Instructions,
+		ExecutionMode:    projections.ExecutionMode,
+	}, projectionRuleAuthorizations(projections))
+}
+
+func isModifiedReleaseAction(action api.RequiredAction) bool {
+	return action.Kind == api.RequiredActionAuthorizeRules && action.ReleaseRule == "modified_release" && action.TrackerID == ""
+}

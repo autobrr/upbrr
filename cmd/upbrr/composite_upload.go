@@ -336,6 +336,9 @@ func (s *cliWorkflowSession) collectCompositeRuleOverrideFeedback(
 		return feedback, false, nil
 	}
 	trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(string(action.TrackerID))))
+	if action.ReleaseRule == "modified_release" {
+		return feedback, false, nil
+	}
 	if !s.hasTrackerAfterRuleSkip(trackerID) {
 		return feedback, true, nil
 	}
