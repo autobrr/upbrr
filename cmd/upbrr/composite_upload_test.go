@@ -1113,6 +1113,7 @@ func TestCLICompositeTrackerApprovalDefaults(t *testing.T) {
 				status   api.StageStatus
 				complete bool
 				staff    bool
+				reasons  []api.DupeReason
 				input    string
 				want     bool
 			}{
@@ -1172,6 +1173,14 @@ func TestCLICompositeTrackerApprovalDefaults(t *testing.T) {
 					staff:    true,
 					input:    "\n",
 				},
+				{
+					name:     "review reasons",
+					decision: api.DupeDecisionNoMatch,
+					status:   api.StageStatusCompleted,
+					complete: true,
+					reasons:  []api.DupeReason{{Code: "source_review", Message: "Verify source eligibility."}},
+					input:    "\n",
+				},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					t.Parallel()
@@ -1193,6 +1202,7 @@ func TestCLICompositeTrackerApprovalDefaults(t *testing.T) {
 								Status:             tc.status,
 								Search:             api.DupeSearchEvidence{Complete: tc.complete},
 								RequiresStaffToken: tc.staff,
+								ReviewReasons:      tc.reasons,
 							}}},
 						},
 					}
