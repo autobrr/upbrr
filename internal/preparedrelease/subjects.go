@@ -37,6 +37,8 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 	if len(selectedPlaylists) == 0 {
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
+	options := input.Options
+	options.KeepFolder = resources.policy.KeepFolder
 	subject := api.UploadSubject{
 		MediaFileFacts:              release.Media.MediaFileFacts.Clone(),
 		SourceIdentity:              release.SourceIdentity,
@@ -64,7 +66,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		DescriptionGroupsFinal:      input.DescriptionGroupsFinal,
 		DescriptionTemplate:         resources.descriptionTemplate,
 		Trackers:                    append([]string(nil), input.Trackers...),
-		Options:                     input.Options,
+		Options:                     options,
 		Tag:                         release.Naming.Tag,
 		Release:                     releaseInfo(release),
 		TrackerConfigOverrides:      input.TrackerConfigOverrides,

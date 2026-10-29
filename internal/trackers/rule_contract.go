@@ -228,10 +228,14 @@ func inputReadinessRuleFailures(subject api.UploadSubject, definition Definition
 	return failures
 }
 
+// sharedModifiedReleaseFailure excludes authoritative scene failures from shared confirmation.
+func sharedModifiedReleaseFailure(failure api.RuleFailure) bool {
+	return strings.TrimSpace(failure.Rule) == "modified_release" && api.NormalizeRuleDisposition(failure.Disposition) == api.RuleDispositionWaivable
+}
+
 // FirstBlockingRuleFailure returns the first input failure that blocks tracker
-// preparation. Projection authorization applies only when both stored
-// fingerprints match the current normalized waivable failures; nil means no
-// failure blocks.
+// preparation. Tracker-local authorization requires matching warning fingerprints;
+// the modified-release decision is separate. Nil means no failure blocks.
 func FirstBlockingRuleFailure(
 	tracker string,
 	failures []api.RuleFailure,
@@ -240,7 +244,8 @@ func FirstBlockingRuleFailure(
 ) (*api.RuleFailure, error) {
 	authorized := false
 	if projection != nil && projection.RuleAuthorizationFingerprint != "" {
-		fingerprint, err := WaivableRuleFailureFingerprint(tracker, failures)
+		trackerFailures := slices.DeleteFunc(slices.Clone(failures), sharedModifiedReleaseFailure)
+		fingerprint, err := WaivableRuleFailureFingerprint(tracker, trackerFailures)
 		if err != nil {
 			return nil, err
 		}
@@ -249,7 +254,11 @@ func FirstBlockingRuleFailure(
 			projection.RuleAuthorizationFingerprint == fingerprint
 	}
 	for index := range failures {
-		if RuleFailureBlocksExecution(failures[index], mode, authorized) {
+		ruleAuthorized := authorized
+		if sharedModifiedReleaseFailure(failures[index]) {
+			ruleAuthorized = projection != nil && projection.ModifiedReleaseDecision != nil && *projection.ModifiedReleaseDecision
+		}
+		if RuleFailureBlocksExecution(failures[index], mode, ruleAuthorized) {
 			return &failures[index], nil
 		}
 	}

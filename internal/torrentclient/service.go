@@ -163,14 +163,8 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 		return nil
 	}
 
-	clientOverrides, trackerClientOverride := s.resolveInjectClientOverrides(meta.ClientOverrides, torrent.Tracker)
-	clients := resolveInjectClients(s.cfg, clientOverrides, trackerClientOverride)
-	// Tracker-scoped torrent_client is an effective client override; URL
-	// fallback is only for global/default selections that cannot consume URLs.
+	clientOverrides, clients := s.resolveInjectionDestinations(meta, torrent)
 	effectiveClientOverride := clientOverrides.Client != nil && strings.TrimSpace(*clientOverrides.Client) != ""
-	if torrentPath == "" && torrentURL != "" && !effectiveClientOverride {
-		clients = withURLCapableInjectFallback(clients, s.cfg.TorrentClients)
-	}
 	if len(clients) == 0 {
 		logger.Debugf("clients: no matching torrent clients selected, skipping injection")
 		return nil
@@ -227,6 +221,33 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 
 	logger.Debugf("clients: injection dispatch complete for %s", meta.SourcePath)
 	return nil
+}
+
+// InjectionDestinationFingerprint binds receipts to the same resolved clients
+// and effective configuration used by Inject. Secret-bearing configuration is
+// hashed in memory; only its digest is returned, without client I/O.
+func (s *Service) InjectionDestinationFingerprint(meta api.ClientSubject, torrent api.TorrentResult) (api.WorkflowFingerprint, error) {
+	overrides, clients := s.resolveInjectionDestinations(meta, torrent)
+	for name, client := range clients {
+		clients[name] = applyClientOverrides(client, overrides)
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint(clients)
+	if err != nil {
+		return "", fmt.Errorf("clients: injection destination fingerprint: %w", err)
+	}
+	return fingerprint, nil
+}
+
+func (s *Service) resolveInjectionDestinations(meta api.ClientSubject, torrent api.TorrentResult) (api.ClientOverrides, map[string]config.TorrentClientConfig) {
+	overrides, trackerOverride := s.resolveInjectClientOverrides(meta.ClientOverrides, torrent.Tracker)
+	clients := resolveInjectClients(s.cfg, overrides, trackerOverride)
+	// Tracker-scoped torrent_client is an effective client override; URL
+	// fallback is only for global/default selections that cannot consume URLs.
+	explicit := overrides.Client != nil && strings.TrimSpace(*overrides.Client) != ""
+	if strings.TrimSpace(torrent.Path) == "" && strings.TrimSpace(torrent.URL) != "" && !explicit {
+		clients = withURLCapableInjectFallback(clients, s.cfg.TorrentClients)
+	}
+	return overrides, clients
 }
 
 func (s *Service) resolveInjectClientOverrides(overrides api.ClientOverrides, tracker string) (api.ClientOverrides, bool) {

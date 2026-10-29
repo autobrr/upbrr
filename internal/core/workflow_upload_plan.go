@@ -832,7 +832,7 @@ func injectWorkflowDryRunClient(
 		)
 		return api.StageStatusFailed, "Client injection failed because no prepared tracker torrent is available.", api.OperationFailureMissingExactTorrent, nil
 	}
-	effectFingerprint, err := workflowClientInjectionFingerprint(trackerID, torrentPath, false)
+	effectFingerprint, err := workflowClientInjectionFingerprint(clients, subject, trackerID, torrentPath, false)
 	if err != nil {
 		emitWorkflowClientInjectionProgress(
 			ctx,
@@ -959,23 +959,31 @@ func emitWorkflowClientInjectionProgress(
 }
 
 func workflowClientInjectionFingerprint(
+	clients api.ClientService,
+	subject api.ClientSubject,
 	trackerID api.TrackerID,
 	torrentPath string,
 	crossSeed bool,
 ) (api.WorkflowFingerprint, error) {
+	destination, err := clients.InjectionDestinationFingerprint(subject, api.TorrentResult{Path: torrentPath, Tracker: string(trackerID)})
+	if err != nil {
+		return "", fmt.Errorf("workflow client injection destination: %w", err)
+	}
 	payload, err := os.ReadFile(strings.TrimSpace(torrentPath))
 	if err != nil {
 		return "", fmt.Errorf("workflow client injection read exact torrent: %w", err)
 	}
 	sum := sha256.Sum256(payload)
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Tracker   api.TrackerID
-		Torrent   string
-		CrossSeed bool
+		Tracker     api.TrackerID
+		Torrent     string
+		CrossSeed   bool
+		Destination api.WorkflowFingerprint
 	}{
-		Tracker:   trackerID,
-		Torrent:   hex.EncodeToString(sum[:]),
-		CrossSeed: crossSeed,
+		Tracker:     trackerID,
+		Torrent:     hex.EncodeToString(sum[:]),
+		CrossSeed:   crossSeed,
+		Destination: destination,
 	})
 	if err != nil {
 		return "", fmt.Errorf("workflow client injection fingerprint: %w", err)

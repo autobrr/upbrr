@@ -85,6 +85,10 @@ func (s *dryRunClientService) Inject(_ context.Context, _ api.ClientSubject, tor
 	return s.injectErr
 }
 
+func (*dryRunClientService) InjectionDestinationFingerprint(api.ClientSubject, api.TorrentResult) (api.WorkflowFingerprint, error) {
+	return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil
+}
+
 func (s *dryRunClientService) SearchPathedTorrents(context.Context, api.ClientSubject) (api.ClientSearchResult, error) {
 	s.searches++
 	return api.ClientSearchResult{}, nil

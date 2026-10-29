@@ -28,6 +28,10 @@ func (*metadataClientRecorder) Inject(context.Context, api.ClientSubject, api.To
 	return nil
 }
 
+func (*metadataClientRecorder) InjectionDestinationFingerprint(api.ClientSubject, api.TorrentResult) (api.WorkflowFingerprint, error) {
+	return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil
+}
+
 func (c *metadataClientRecorder) SearchPathedTorrents(_ context.Context, input api.ClientSubject) (api.ClientSearchResult, error) {
 	c.calls++
 	c.input = input
@@ -118,6 +122,10 @@ type pipelineClientRecorder struct {
 
 func (*pipelineClientRecorder) Inject(context.Context, api.ClientSubject, api.TorrentResult) error {
 	return nil
+}
+
+func (*pipelineClientRecorder) InjectionDestinationFingerprint(api.ClientSubject, api.TorrentResult) (api.WorkflowFingerprint, error) {
+	return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil
 }
 
 func (c *pipelineClientRecorder) SearchPathedTorrents(context.Context, api.ClientSubject) (api.ClientSearchResult, error) {

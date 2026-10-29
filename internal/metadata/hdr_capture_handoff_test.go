@@ -226,6 +226,10 @@ func (hdrCancelClient) Inject(context.Context, api.ClientSubject, api.TorrentRes
 	return nil
 }
 
+func (hdrCancelClient) InjectionDestinationFingerprint(api.ClientSubject, api.TorrentResult) (api.WorkflowFingerprint, error) {
+	return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil
+}
+
 func (client hdrCancelClient) SearchPathedTorrents(context.Context, api.ClientSubject) (api.ClientSearchResult, error) {
 	client.cancel()
 	return api.ClientSearchResult{}, context.Canceled

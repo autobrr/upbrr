@@ -2127,3 +2127,21 @@ func TestPreparedReleaseFeaturesRemainDistinctAndDetached(t *testing.T) {
 		subject.EditionDisplay[1].Text = "mutated"
 	}
 }
+
+func TestUploadSubjectUsesCurrentPreparationFolderPolicy(t *testing.T) {
+	source := writePreparedTestFile(t, "source.mkv", "video")
+	module := newTestModule(t, newMemoryStore(), &recordingCollector{})
+	for _, keep := range []bool{true, false} {
+		result, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: source, Policy: api.PreparationPolicy{KeepFolder: keep}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		subject, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: source, Generation: result.Release.Generation}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if subject.Options.KeepFolder != keep || api.NewTrackerValidationSubject(subject, "ALPHA").CheckSourceFolder != keep {
+			t.Fatalf("current keep-folder policy %v was lost", keep)
+		}
+	}
+}
