@@ -13,7 +13,7 @@ Use bounded scene synchronization to inspect pictures near selected metadata bou
 
 Prepared upload targets support MKV, MP4, TS, and M2TS files with a unique HEVC video track, and selected primary HEVC playlists from ordinary, unencrypted Blu-ray content roots at angle 0. ISO files, SSIF mappings, and ambiguous video bindings are unsupported. A filename alone does not establish that dynamic metadata is present. Static HDR10 and HLG do not supply HDR10+ or Dolby Vision metadata.
 
-For a non-disc TV pack, preparation reuses the selected first episode’s MediaInfo report for the pack’s HDR facts and target eligibility. Only that episode is offered as a prepared HDR target. Later episodes are not inspected, even if their HDR properties differ; an ineligible first episode does not trigger a search through the pack.
+For a non-disc TV pack, preparation reuses the selected first episode’s MediaInfo report for the pack’s HDR facts and target eligibility. Only that episode is offered as a prepared HDR target. Later episodes do not supply the pack’s HDR facts or HDR targets, even if their HDR properties differ; an ineligible first episode does not trigger a search through the pack.
 
 Standalone analysis also accepts raw `.hevc` and `.h265` files. Raw HEVC support does not make those files prepared upload targets. Use metadata-only analysis when decoded checks are unavailable for the source.
 
