@@ -232,20 +232,19 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 }
 
 // InjectionDestinationFingerprint binds receipts to the same resolved clients
-// and effective configuration used by Inject. Secret-bearing configuration is
-// hashed in memory; only its digest is returned, without client I/O.
+// and effective configuration used by Inject, excluding disabled destinations.
+// Secret-bearing configuration is hashed in memory; only its digest is returned,
+// without client I/O.
 func (s *Service) InjectionDestinationFingerprint(meta api.ClientSubject, torrent api.TorrentResult) (api.WorkflowFingerprint, error) {
 	overrides, clients := s.resolveInjectionDestinations(meta, torrent)
-	enabled := false
 	for name, client := range clients {
 		clients[name] = applyClientOverrides(client, overrides)
 		switch strings.ToLower(strings.TrimSpace(clients[name].ClientType())) {
 		case "none", "disabled":
-		default:
-			enabled = true
+			delete(clients, name)
 		}
 	}
-	if !enabled {
+	if len(clients) == 0 {
 		return "", api.ErrNoClientInjectionDestination
 	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(clients)

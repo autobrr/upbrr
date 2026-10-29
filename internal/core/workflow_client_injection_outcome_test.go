@@ -30,7 +30,7 @@ func newInjectionOutcomeReporter(t *testing.T) *dryRunInjectionReporter {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
+	if err := repo.MigrateContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -225,7 +225,7 @@ func TestWorkflowQbitInjectionVerifiesRequiredTrackers(t *testing.T) {
 					torrent.Announce, torrent.AnnounceList = "", nil
 				}
 				torrentPath := filepath.Join(root, "registered.torrent")
-				file, err := os.Create(torrentPath)
+				file, err := os.OpenFile(torrentPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 				if err != nil {
 					t.Fatal(err)
 				}

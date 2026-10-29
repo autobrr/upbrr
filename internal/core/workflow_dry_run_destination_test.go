@@ -85,7 +85,7 @@ func (r *dryRunInjectionReporter) Complete(ctx context.Context, _ api.WorkflowEx
 
 func TestDryRunClientInjectionReceiptBindsResolvedDestination(t *testing.T) {
 	t.Parallel()
-	for _, selection := range []string{"explicit", "tracker", "default", "injection list", "same client new destination"} {
+	for _, selection := range []string{"explicit", "tracker", "default", "injection list", "same client new destination", "mixed enabled and disabled"} {
 		t.Run(selection, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -99,33 +99,17 @@ func TestDryRunClientInjectionReceiptBindsResolvedDestination(t *testing.T) {
 			if err := os.WriteFile(torrentPath, payload, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			repository, err := db.Open(filepath.Join(root, "receipts.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = repository.Close() })
-			if err := repository.MigrateContext(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			now := time.Now().UTC()
-			if _, _, err := repository.CreateReleaseWorkflowState(t.Context(), api.ReleaseWorkflowStateRecord{
-				OwnerID:             "owner",
-				WorkflowID:          "workflow",
-				Revision:            1,
-				Status:              api.WorkflowStatusActive,
-				CreationFingerprint: "create",
-				Payload:             []byte(`{"revision":1}`),
-				CreatedAt:           now,
-				UpdatedAt:           now,
-			}); err != nil {
-				t.Fatal(err)
-			}
-			reporter := &dryRunInjectionReporter{repository: repository}
+			reporter := newInjectionOutcomeReporter(t)
 			ctx := api.WithWorkflowExternalEffectReporter(t.Context(), reporter)
 			cfg := config.Config{TorrentClients: map[string]config.TorrentClientConfig{
 				"first":  {Type: "watch", WatchFolder: filepath.Join(root, "first")},
 				"second": {Type: "watch", WatchFolder: filepath.Join(root, "second")},
 			}}
+			if selection == "mixed enabled and disabled" {
+				cfg.ClientSetup.InjectClients = []string{"first", "inactive-none", "inactive-disabled"}
+				cfg.TorrentClients["inactive-none"] = config.TorrentClientConfig{Type: "none"}
+				cfg.TorrentClients["inactive-disabled"] = config.TorrentClientConfig{Type: "disabled"}
+			}
 			subject := api.ClientSubject{}
 			// Receipts before destination binding used these exact three fields.
 			sum := sha256.Sum256(payload)
@@ -164,7 +148,7 @@ func TestDryRunClientInjectionReceiptBindsResolvedDestination(t *testing.T) {
 					cfg.ClientSetup.DefaultClient = name
 				case "injection list":
 					cfg.ClientSetup.InjectClients = []string{name}
-				case "same client new destination":
+				case "same client new destination", "mixed enabled and disabled":
 					cfg.TorrentClients["first"] = config.TorrentClientConfig{Type: "watch", WatchFolder: filepath.Join(root, name)}
 				}
 			}
@@ -203,6 +187,20 @@ func TestDryRunClientInjectionReceiptBindsResolvedDestination(t *testing.T) {
 			}
 			if _, err := os.Stat(firstCopy); !os.IsNotExist(err) {
 				t.Fatalf("unchanged destination repeated the write: %v", err)
+			}
+			if selection == "mixed enabled and disabled" {
+				for _, name := range []string{"inactive-none", "inactive-disabled"} {
+					client := cfg.TorrentClients[name]
+					client.Category = name
+					cfg.TorrentClients[name] = client
+					inject(api.StageStatusCompleted)
+					if !reporter.deduped {
+						t.Fatalf("editing disabled client %s did not reuse the succeeded receipt", name)
+					}
+					if _, err := os.Stat(firstCopy); !os.IsNotExist(err) {
+						t.Fatalf("editing disabled client %s repeated the enabled write: %v", name, err)
+					}
+				}
 			}
 			selectDestination("second")
 			inject(api.StageStatusCompleted)
