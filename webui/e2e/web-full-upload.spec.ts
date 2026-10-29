@@ -2263,6 +2263,11 @@ for (const scenario of [
         await upload.click();
         await expect(page.getByRole("heading", { name: "Workflow upload result" })).toBeVisible();
         expect(workspace.fake.counters.trackerUploads).toBe(1);
+        expect(
+          workspace.fake.trackerUploadBodies.map(
+            (body) => /name="tracker"\r\n\r\n([^\r\n]+)/.exec(body.toString("latin1"))?.[1],
+          ),
+        ).toEqual(["BTN"]);
         expect(workspace.fake.counters.clientInjections).toBe(0);
         expect(await readFile(attemptsPath, "utf8")).toBe("attempt\n".repeat(scenario.attempts));
       }
