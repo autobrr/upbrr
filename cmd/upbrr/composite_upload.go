@@ -91,6 +91,11 @@ func (s *cliWorkflowSession) completeComposite(
 		if !s.submissionSuppressed && s.current.UploadResult != nil {
 			return printCLIWorkflowUploadResult(s.streams.out, s.current.UploadResult)
 		}
+		if operation := s.current.Operation; operation != nil && operation.Status == api.StageStatusCompleted &&
+			operation.Result != nil && operation.Result.Kind == api.WorkflowOperationResultDupes {
+			fmt.Fprintln(s.streams.out, "All trackers skipped after duplicate checks.")
+			return 0, nil
+		}
 		if s.current.Selection != nil && len(s.current.Selection.TrackerIDs) == 0 {
 			fmt.Fprintf(s.streams.out, "No trackers configured for %s\n", formatPathLabel(s.intent.sourcePath))
 			return 0, nil
@@ -218,7 +223,8 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 		)
 	}
 	if s.intent.interaction == api.InteractionModeUnattended &&
-		action.Kind != api.RequiredActionAuthorizeRules && action.Kind != api.RequiredActionResolveTrackerPreparation {
+		action.Kind != api.RequiredActionAuthorizeRules && action.Kind != api.RequiredActionResolveTrackerPreparation &&
+		action.Kind != api.RequiredActionApproveTrackers {
 		return feedback, false, fmt.Errorf("upbrr: strict unattended upload requires global action %s: %s", action.Kind, action.Prompt)
 	}
 	s.bindAction(ctx, action, action.Prompt)
@@ -424,7 +430,10 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		if tracker == "" {
 			tracker = string(trackerID)
 		}
-		dupe := dupeByTracker[trackerID]
+		dupe, ok := dupeByTracker[trackerID]
+		if !ok {
+			return feedback, false, fmt.Errorf("upbrr: tracker approval candidate %s has no current duplicate assessment", trackerID)
+		}
 		var evidence strings.Builder
 		// Capture evidence before console output, which may fail independently.
 		output := io.MultiWriter(&evidence, s.streams.out)
@@ -471,10 +480,23 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 				projection.Artifacts.Description,
 			)
 		}
-		prompt := fmt.Sprintf("Use %s as %q? [y/N]: ", tracker, projection.UploadReleaseName)
-		confirmed, err := promptYesNo(reader, s.streams.out, prompt, false)
-		if err != nil {
-			return feedback, false, err
+		// Only a completed clear check grants affirmative authorization by default.
+		// Duplicate overrides remain a separate decision, including in unattended mode.
+		defaultYes := releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, true) &&
+			dupe.Decision == api.DupeDecisionNoMatch && dupe.Status == api.StageStatusCompleted &&
+			dupe.Search.Complete && !dupe.RequiresStaffToken && !cliDupeRequiresRiskAcknowledgement(dupe)
+		confirmed := defaultYes
+		if s.intent.interaction != api.InteractionModeUnattended {
+			choice := "[y/N]"
+			if defaultYes {
+				choice = "[Y/n]"
+			}
+			prompt := fmt.Sprintf("Use %s as %q? %s: ", tracker, projection.UploadReleaseName, choice)
+			var err error
+			confirmed, err = promptYesNo(reader, s.streams.out, prompt, defaultYes)
+			if err != nil {
+				return feedback, false, err
+			}
 		}
 		if confirmed {
 			approved = append(approved, trackerID)
@@ -957,7 +979,7 @@ func mapCLICompositeUploadRequest(
 	remoteCheck := !request.SkipDupeCheck
 	onEvidence := api.ReleaseWorkflowDuplicateDisposition("")
 	if request.SkipDupeAsActual {
-		onEvidence = api.ReleaseWorkflowDuplicateUpload
+		onEvidence = api.ReleaseWorkflowDuplicateBlock
 	}
 	screenshotCount := request.Options.Screens
 	automaticScreenshots := screenshotCountIsDefault && len(request.ScreenshotOverrides.ManualFrames) == 0 &&
