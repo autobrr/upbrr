@@ -44,7 +44,16 @@ type TorrentService interface {
 	Create(ctx context.Context, subject TorrentSubject) (TorrentResult, error)
 }
 
+// ErrNoClientInjectionDestination reports that selection resolved no enabled
+// clients. Explicit dry runs must not retain a successful injection receipt.
+var ErrNoClientInjectionDestination = errors.New("api: no enabled client injection destination")
+
 type ClientService interface {
+	// InjectionDestinationFingerprint identifies the effective selected clients
+	// without performing client I/O. Only the digest may enter workflow receipts;
+	// resolved client configuration can contain credentials and private endpoints.
+	// ErrNoClientInjectionDestination distinguishes an empty or disabled selection.
+	InjectionDestinationFingerprint(subject ClientSubject, torrent TorrentResult) (WorkflowFingerprint, error)
 	Inject(ctx context.Context, subject ClientSubject, torrent TorrentResult) error
 	SearchPathedTorrents(ctx context.Context, subject ClientSubject) (ClientSearchResult, error)
 }
@@ -2740,6 +2749,11 @@ type TorrentResult struct {
 	URL       string
 	Tracker   string
 	CrossSeed bool
+	// VerifyInjection requires proof that qBittorrent has the local artifact's
+	// infohash and required announce URLs instead of trusting its add response.
+	// URL-only qBittorrent adds cannot provide that proof. Workflow callers set
+	// this explicitly; false preserves legacy qBittorrent add behavior.
+	VerifyInjection bool
 	// RehashedTrackers lists selected trackers whose preparation required the
 	// created base torrent and should be scheduled after reusable uploads.
 	RehashedTrackers []string

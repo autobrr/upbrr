@@ -5,6 +5,7 @@ package releaseworkflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -1034,7 +1035,8 @@ func TestContinuationGoalReachedReconcilesImageHostSkipMode(t *testing.T) {
 			}},
 		},
 		DryRun: &api.UploadDryRunResult{
-			Status: api.StageStatusCompleted,
+			Status:                   api.StageStatusCompleted,
+			ClientInjectionRequested: true,
 		},
 	}
 	for _, goal := range []api.WorkflowGoal{
@@ -2549,5 +2551,45 @@ func TestStrictUnattendedSkipsTrackerReleaseNameConfirmation(t *testing.T) {
 		Interaction: api.InteractionModeUnattendedConfirm,
 	}, action) {
 		t.Fatal("unattended-confirm mode skipped interactive release-name confirmation")
+	}
+}
+
+func TestContinuationSeparatesExplicitDryRunFromLiveReview(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted}
+	current.Descriptions = &api.DescriptionSet{Status: api.StageStatusSkipped}
+
+	for _, goal := range []api.WorkflowGoal{api.WorkflowGoalDryRun, api.WorkflowGoalUploadReviewed, api.WorkflowGoalUploaded} {
+		t.Run(string(goal), func(t *testing.T) {
+			var request api.ContinueReleaseWorkflowRequest
+			// This is the normal-mode request sent by the WebUI, not CLI debug mode.
+			if err := json.Unmarshal([]byte(`{"goal":"`+string(goal)+`","intent":{"noSeed":false}}`), &request); err != nil {
+				t.Fatal(err)
+			}
+			command, stage := planContinuationCommand(request, current, now)
+			dryRun, ok := command.(DryRunUploadsCommand)
+			if !ok || stage != "review-uploads" || dryRun.NoSeed || dryRun.ReviewOnly != (goal != api.WorkflowGoalDryRun) {
+				t.Fatalf("request planned stage=%q command=%#v", stage, command)
+			}
+		})
+	}
+	current.DryRun = &api.UploadDryRunResult{Status: api.StageStatusCompleted, TrackerIDs: []api.TrackerID{"ALPHA"}}
+	request := api.ContinueReleaseWorkflowRequest{Goal: api.WorkflowGoalDryRun}
+	if continuationGoalReached(current, request) {
+		t.Fatal("live review incorrectly satisfied explicit client-injection request")
+	}
+	command, _ := planContinuationCommand(request, current, now)
+	if dryRun, ok := command.(DryRunUploadsCommand); !ok || dryRun.ReviewOnly {
+		t.Fatalf("explicit dry run after review = %#v", command)
+	}
+	current.DryRun.ClientInjectionRequested = true
+	if !continuationGoalReached(current, request) {
+		t.Fatal("completed explicit dry run was not reusable")
+	}
+	command, stage := planContinuationCommand(request, current, now)
+	if command != nil || stage != "" {
+		t.Fatalf("completed dry run repeated side effects: %q %#v", stage, command)
 	}
 }

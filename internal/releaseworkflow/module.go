@@ -1062,7 +1062,10 @@ func (m *Module) markOperationResultStale(
 	ctx context.Context,
 	record api.ReleaseWorkflowOperationRecord,
 ) (api.WorkflowOperationStatus, error) {
-	status, err := m.mutateOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID, func(status *api.WorkflowOperationStatus) {
+	status, err := m.mutateOperationIf(ctx, record.OwnerID, record.WorkflowID, record.OperationID, func(status *api.WorkflowOperationStatus) bool {
+		if status.Status == api.StageStatusStale {
+			return false
+		}
 		now := m.clock.Now().UTC()
 		status.Status = api.StageStatusStale
 		status.Message = "The operation result is no longer current. Reprepare the workflow."
@@ -1077,6 +1080,7 @@ func (m *Module) markOperationResultStale(
 				Recovery:  api.OperationRecoveryReprepare,
 			},
 		}}
+		return true
 	})
 	if err != nil {
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow mark stale operation result: %w", err)
@@ -7703,12 +7707,16 @@ func (m *Module) dryRunUploads(
 	now time.Time,
 	command DryRunUploadsCommand,
 ) (CommandResult, error) {
+	if m.liveTest != nil {
+		command.NoSeed = true
+	}
 	prepared, err := m.prepareUploads(
 		ctx,
 		ownerID,
 		state,
 		UploadPlanBuildOptions{
 			DryRun:     true,
+			ReviewOnly: command.ReviewOnly,
 			NoSeed:     command.NoSeed,
 			TrackerIDs: command.TrackerIDs,
 		},
@@ -7734,23 +7742,24 @@ func (m *Module) dryRunUploads(
 		return CommandResult{}, err
 	}
 	snapshot := api.UploadDryRunResult{
-		ID:               api.UploadDryRunResultID(id),
-		WorkflowID:       state.Workflow.ID,
-		Revision:         nextRevision,
-		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: prepared.projections.ID, Revision: prepared.projections.Revision},
-		Dupes:            api.DupeAssessmentRef{ID: prepared.dupes.ID, Revision: prepared.dupes.Revision},
-		TrackerApproval:  prepared.plan.TrackerApproval,
-		Media:            api.MediaArtifactSetRef{ID: prepared.media.ID, Revision: prepared.media.Revision},
-		Descriptions:     api.DescriptionSetRef{ID: prepared.descriptions.ID, Revision: prepared.descriptions.Revision},
-		InputFingerprint: prepared.plan.InputFingerprint,
-		NoSeed:           command.NoSeed,
-		TrackerIDs:       append([]api.TrackerID(nil), prepared.trackerIDs...),
-		Reports:          reports,
-		SucceededCount:   succeededCount,
-		FailedCount:      failedCount,
-		SkippedCount:     skippedCount,
-		Status:           status,
-		CreatedAt:        now,
+		ID:                       api.UploadDryRunResultID(id),
+		WorkflowID:               state.Workflow.ID,
+		Revision:                 nextRevision,
+		ProjectionSet:            api.TrackerReleaseProjectionSetRef{ID: prepared.projections.ID, Revision: prepared.projections.Revision},
+		Dupes:                    api.DupeAssessmentRef{ID: prepared.dupes.ID, Revision: prepared.dupes.Revision},
+		TrackerApproval:          prepared.plan.TrackerApproval,
+		Media:                    api.MediaArtifactSetRef{ID: prepared.media.ID, Revision: prepared.media.Revision},
+		Descriptions:             api.DescriptionSetRef{ID: prepared.descriptions.ID, Revision: prepared.descriptions.Revision},
+		InputFingerprint:         prepared.plan.InputFingerprint,
+		NoSeed:                   command.NoSeed,
+		ClientInjectionRequested: !command.ReviewOnly && !command.NoSeed,
+		TrackerIDs:               append([]api.TrackerID(nil), prepared.trackerIDs...),
+		Reports:                  reports,
+		SucceededCount:           succeededCount,
+		FailedCount:              failedCount,
+		SkippedCount:             skippedCount,
+		Status:                   status,
+		CreatedAt:                now,
 	}
 	if err := snapshot.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow publish upload dry run: %w", err)

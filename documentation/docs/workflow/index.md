@@ -178,11 +178,13 @@ Tracker preparation captures an immutable operation. Payload preview and live su
 - **Dry run** and upload review can prepare a preview but cannot submit it.
 - **Upload** consumes the approved operation once.
 
+An explicit **Dry Run** injects the prepared torrent into the configured client unless **Skip client injection** is enabled. It never submits to the tracker. Automatic review before a live upload does not inject the prepared torrent; live uploads wait for the tracker-registered torrent.
+
 Short-lived remote tokens can still be acquired at submission time when required by a tracker.
 
 ## 7. Submit and retain registered torrents
 
-After confirmed tracker success, upbrr records the tracker result and attempts to retain the tracker-registered torrent. Client injection consumes that registered artifact, not the pre-upload torrent.
+After confirmed tracker success, upbrr records the tracker result and attempts to retain the tracker-registered torrent. Client injection consumes that registered artifact, not the pre-upload torrent, even if an earlier explicit dry run already injected the prepared torrent.
 
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
 
@@ -191,6 +193,12 @@ Deleting a release from History removes its associated local workflow, effect, a
 ## 8. Inject into clients
 
 Client injection is enabled by default when configured. Disable it explicitly with CLI `--no-seed` or the corresponding Web UI upload option.
+
+An explicit dry run reports client injection as skipped when no enabled client is selected. Tracker preparation remains eligible; a skipped or empty client selection is not a completed injection.
+
+Completed dry-run receipts identify only enabled destinations, so editing a selected disabled client does not repeat delivery. Older receipts that included disabled destinations can permit another client action on a later explicit request after upgrading; watch-folder delivery can repeat. An unresolved attempt still blocks another injection.
+
+Workflow injection into qBittorrent verifies that the torrent's infohash and required announce URLs are present in the client. An existing torrent with the same infohash can still have different trackers; upbrr does not change tracker-merging settings or edit its trackers. Verification requires a local v1 torrent artifact. URL-only artifacts cannot be verified and report an injection failure separately from the successful tracker submission. If an add was sent but verification remains uncertain, inspect and reconcile the client outcome before retrying; upbrr keeps the attempt blocked against another add.
 
 A successful draft can be injected before publication when the tracker integration supplies registered torrent authority. It remains unpublished on the tracker. If that artifact is unavailable or injection fails, the result reports the local failure separately from the completed submission.
 

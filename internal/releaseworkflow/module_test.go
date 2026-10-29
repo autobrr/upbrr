@@ -859,7 +859,7 @@ func (f *uploadPlanBuilderFake) Build(
 		if options.DryRun {
 			clientStatus = api.StageStatusCompleted
 			clientMessage = "Client injection completed."
-			if options.NoSeed {
+			if options.NoSeed || options.ReviewOnly {
 				clientStatus = api.StageStatusSkipped
 				clientMessage = "Client injection disabled by the skip option."
 			}
@@ -2342,7 +2342,7 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	}
 	dryRun := executeCommand(t, module, dryRunCommand)
 	if dryRun.DryRun == nil || dryRun.DryRun.Status != api.StageStatusCompleted || len(dryRun.DryRun.Reports) != 1 ||
-		dryRun.DryRun.Reports[0].ClientInjection.Status != api.StageStatusSkipped || uploadPlans.builds != 1 {
+		dryRun.DryRun.Reports[0].ClientInjection.Status != api.StageStatusSkipped || dryRun.DryRun.ClientInjectionRequested || uploadPlans.builds != 1 {
 		t.Fatalf("direct dry run = %#v builds=%d", dryRun.DryRun, uploadPlans.builds)
 	}
 	repeatedDryRun := executeCommand(t, module, dryRunCommand)

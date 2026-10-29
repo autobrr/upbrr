@@ -876,6 +876,14 @@ type e2eClientService struct {
 	endpoint string
 }
 
+func (s e2eClientService) InjectionDestinationFingerprint(api.ClientSubject, api.TorrentResult) (api.WorkflowFingerprint, error) {
+	fingerprint, err := api.CanonicalWorkflowFingerprint(strings.TrimRight(strings.TrimSpace(s.endpoint), "/"))
+	if err != nil {
+		return "", fmt.Errorf("e2e client: destination fingerprint: %w", err)
+	}
+	return fingerprint, nil
+}
+
 func (s e2eClientService) Inject(ctx context.Context, _ api.ClientSubject, _ api.TorrentResult) error {
 	endpoint := strings.TrimRight(strings.TrimSpace(s.endpoint), "/")
 	if endpoint == "" {

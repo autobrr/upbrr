@@ -2138,7 +2138,7 @@ export function ReleaseSessionProvider({
       if (!current.dryRun) {
         current = await continueBackendGoal(
           current,
-          "dry_run",
+          "upload_reviewed",
           backendResolvedUploadIntent(current),
           `${commandID}-review`,
           controller.signal,

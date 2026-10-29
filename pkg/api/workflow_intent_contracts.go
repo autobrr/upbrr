@@ -162,23 +162,25 @@ type TrackerDryRunReport struct {
 
 // UploadDryRunResult retains one report per applicable tracker.
 type UploadDryRunResult struct {
-	ID               UploadDryRunResultID           `json:"id"`
-	WorkflowID       WorkflowID                     `json:"workflowId"`
-	Revision         WorkflowRevision               `json:"revision"`
-	ProjectionSet    TrackerReleaseProjectionSetRef `json:"projectionSet"`
-	Dupes            DupeAssessmentRef              `json:"dupes"`
-	TrackerApproval  *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
-	Media            MediaArtifactSetRef            `json:"media"`
-	Descriptions     DescriptionSetRef              `json:"descriptions"`
-	InputFingerprint WorkflowFingerprint            `json:"inputFingerprint"`
-	NoSeed           bool                           `json:"noSeed"`
-	TrackerIDs       []TrackerID                    `json:"trackerIds"`
-	Reports          []TrackerDryRunReport          `json:"reports"`
-	SucceededCount   int                            `json:"succeededCount"`
-	FailedCount      int                            `json:"failedCount"`
-	SkippedCount     int                            `json:"skippedCount"`
-	Status           StageStatus                    `json:"status"`
-	CreatedAt        time.Time                      `json:"createdAt" ts_type:"string"`
+	// ClientInjectionRequested distinguishes an explicit dry run from a live-upload review.
+	ClientInjectionRequested bool                           `json:"clientInjectionRequested,omitempty"`
+	ID                       UploadDryRunResultID           `json:"id"`
+	WorkflowID               WorkflowID                     `json:"workflowId"`
+	Revision                 WorkflowRevision               `json:"revision"`
+	ProjectionSet            TrackerReleaseProjectionSetRef `json:"projectionSet"`
+	Dupes                    DupeAssessmentRef              `json:"dupes"`
+	TrackerApproval          *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
+	Media                    MediaArtifactSetRef            `json:"media"`
+	Descriptions             DescriptionSetRef              `json:"descriptions"`
+	InputFingerprint         WorkflowFingerprint            `json:"inputFingerprint"`
+	NoSeed                   bool                           `json:"noSeed"`
+	TrackerIDs               []TrackerID                    `json:"trackerIds"`
+	Reports                  []TrackerDryRunReport          `json:"reports"`
+	SucceededCount           int                            `json:"succeededCount"`
+	FailedCount              int                            `json:"failedCount"`
+	SkippedCount             int                            `json:"skippedCount"`
+	Status                   StageStatus                    `json:"status"`
+	CreatedAt                time.Time                      `json:"createdAt" ts_type:"string"`
 }
 
 // FailedTrackerRetryRef targets only failed trackers from one exact prior result.
