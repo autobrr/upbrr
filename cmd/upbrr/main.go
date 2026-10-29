@@ -342,6 +342,35 @@ func runUploadDriver(
 	ctx = withCLIUploadProgressLogger(ctx, logger)
 	ctx = withCLISourceVerificationProgressLogger(ctx, logger)
 	// Phase 1: core init + cleanup + delete-tmp run under cliSetupTimeout.
+	var queue *cliNamedQueue
+	if opts.QueueName != "" {
+		if len(paths) != 1 {
+			return exitError(2, errors.New("--queue requires exactly one queue root path"))
+		}
+		queue, err = openCLINamedQueue(ctx, dbPath, opts.QueueName, paths[0], opts.RefreshQueue, streams.out)
+		if err != nil {
+			return exitError(1, err)
+		}
+		defer func() { result = errors.Join(result, queue.Close()) }()
+		defer queue.printProgress(streams.out)
+		paths = queue.paths(opts.RetryQueue, opts.LimitQueue)
+		if len(paths) == 0 {
+			unfinished := 0
+			for _, item := range queue.inventory.Items {
+				if item.Status != "completed" {
+					unfinished++
+				}
+			}
+			if unfinished > 0 {
+				return exitError(
+					1,
+					fmt.Errorf("queue has %d failed, interrupted or skipped item(s); inspect the saved file and use --retry-queue to retry", unfinished),
+				)
+			}
+			fmt.Fprintln(streams.out, "Queue complete: no remaining items. Use --refresh-queue to add new members.")
+			return nil
+		}
+	}
 	setupCtx, setupCancel := context.WithTimeout(ctx, cliSetupTimeout)
 	defer setupCancel()
 	configGeneration, configFingerprint, err := cliConfigActivation(setupCtx, cfg, dbPath, logger)
@@ -380,22 +409,6 @@ func runUploadDriver(
 		return nil
 	}
 
-	if strings.TrimSpace(opts.QueueName) != "" {
-		if len(paths) != 1 {
-			return exitError(2, errors.New("--queue requires exactly one queue root path"))
-		}
-		gatherCtx, gatherCancel := context.WithTimeout(ctx, cliQueueGatherTimeout)
-		queuePaths, err := filesystem.GatherQueuePaths(gatherCtx, paths[0])
-		gatherCancel()
-		if err != nil {
-			return exitError(1, err)
-		}
-		paths = filesystem.LimitQueuePaths(queuePaths, opts.LimitQueue)
-		if len(paths) == 0 {
-			return exitError(1, fmt.Errorf("queue %q resolved to no upload candidates", opts.QueueName))
-		}
-	}
-
 	if opts.DeleteTmp {
 		paths, err = normalizeCLIPaths(setupCtx, paths)
 		if err != nil {
@@ -407,6 +420,7 @@ func runUploadDriver(
 	}
 
 	batch := newCLIPreparationBatch(api.Request{}, paths)
+	batch.queue = queue
 
 	if opts.UploadOnly {
 		uploadReq, err := buildCLIRequest(opts, visitedFlags, paths, screens)
@@ -419,26 +433,33 @@ func runUploadDriver(
 	}
 
 	queueMode := strings.TrimSpace(opts.QueueName) != ""
-	return processCLIPreparationItems(ctx, batch, queueMode, cliItemTimeout, logger, func(itemCtx context.Context, item cliPreparationItem) (itemResult error) {
-		itemCtx = withCLIItemPresentation(itemCtx, streams, item.originalPath, len(batch.items))
-		defer func() { publishCLIItemResult(streams, itemResult) }()
-		if opts.SiteCheck {
-			return runCLIWorkflowSiteCheck(itemCtx, coreSvc, opts, visitedFlags, item, screens, cfg, streams, logger)
-		}
-		return runCLIWorkflowInteractive(
-			itemCtx,
-			coreSvc,
-			originalArgs,
-			opts,
-			visitedFlags,
-			item.originalPath,
-			item.playlistInstruction,
-			screens,
-			cfg,
-			streams,
-			logger,
-		)
-	})
+	return processCLIPreparationItems(
+		ctx,
+		batch,
+		queueMode,
+		cliItemTimeout,
+		logger,
+		func(itemCtx context.Context, item cliPreparationItem) (outcome cliQueueOutcome, itemResult error) {
+			itemCtx = withCLIItemPresentation(itemCtx, streams, item.originalPath, len(batch.items))
+			defer func() { publishCLIItemResult(streams, itemResult) }()
+			if opts.SiteCheck {
+				return runCLIWorkflowSiteCheck(itemCtx, coreSvc, opts, visitedFlags, item, screens, cfg, streams, logger)
+			}
+			return runCLIWorkflowInteractive(
+				itemCtx,
+				coreSvc,
+				originalArgs,
+				opts,
+				visitedFlags,
+				item.originalPath,
+				item.playlistInstruction,
+				screens,
+				cfg,
+				streams,
+				logger,
+			)
+		},
+	)
 }
 
 // processCLIPaths runs process for each input path under its own itemTimeout. In
@@ -480,6 +501,9 @@ func processCLIPaths(
 		err := runCLIPathWithTimeout(ctx, itemTimeout, sourcePath, process)
 		if err == nil {
 			continue
+		}
+		if _, checkpointFailed := errors.AsType[*cliQueueCheckpointError](err); checkpointFailed {
+			return exitError(1, err)
 		}
 		// A failure caused by parent cancellation/expiry must abort immediately
 		// rather than be recorded as an item failure. This also covers the final
@@ -1419,6 +1443,7 @@ type cliPreparationItem struct {
 type cliPreparationBatch struct {
 	defaults api.Request
 	items    []cliPreparationItem
+	queue    *cliNamedQueue
 }
 
 // cloneCLIPlaylistInstruction detaches the selected-playlist slice.
@@ -1483,7 +1508,7 @@ func processCLIPreparationItems(
 	queueMode bool,
 	itemTimeout time.Duration,
 	logger api.Logger,
-	process func(context.Context, cliPreparationItem) error,
+	process func(context.Context, cliPreparationItem) (cliQueueOutcome, error),
 ) error {
 	paths := make([]string, 0, len(batch.items))
 	for _, item := range batch.items {
@@ -1493,7 +1518,22 @@ func processCLIPreparationItems(
 	return processCLIPaths(ctx, paths, queueMode, itemTimeout, logger, func(itemCtx context.Context, _ string) error {
 		item := batch.items[index]
 		index++
-		return process(itemCtx, item)
+		queueIndex := 0
+		if batch.queue != nil {
+			var err error
+			queueIndex, err = batch.queue.start(item.originalPath)
+			if err != nil {
+				return &cliQueueCheckpointError{err: err}
+			}
+		}
+		outcome, err := process(itemCtx, item)
+		err = errors.Join(err, itemCtx.Err())
+		if batch.queue != nil {
+			if saveErr := batch.queue.finish(queueIndex, outcome, err); saveErr != nil {
+				return &cliQueueCheckpointError{err: errors.Join(err, saveErr)}
+			}
+		}
+		return err
 	})
 }
 

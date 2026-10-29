@@ -32,6 +32,8 @@ type cliOptions struct {
 	ShowVersion                bool
 	QueueName                  string
 	LimitQueue                 int
+	RefreshQueue               bool
+	RetryQueue                 bool
 	SiteCheck                  bool
 	SiteUpload                 string
 	Trackers                   string
@@ -201,9 +203,11 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.LiveTest, "live-test", false, "Use an isolated live-test profile with tracker and client writes disabled")
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
 	fs.BoolVar(&opts.ShowVersion, "version", false, "Show version and exit")
-	fs.StringVar(&opts.QueueName, "queue", "", "Process an entire folder queue")
-	fs.IntVar(&opts.LimitQueue, "limit-queue", 0, "Limit the number of queued items to process")
-	fs.IntVar(&opts.LimitQueue, "lq", 0, "Limit the number of queued items to process")
+	fs.StringVar(&opts.QueueName, "queue", "", "Create or resume a saved queue in the active data directory")
+	fs.IntVar(&opts.LimitQueue, "limit-queue", 0, "Limit remaining eligible queue items (zero means unlimited)")
+	fs.IntVar(&opts.LimitQueue, "lq", 0, "Limit remaining eligible queue items (zero means unlimited)")
+	fs.BoolVar(&opts.RefreshQueue, "refresh-queue", false, "Add newly discovered queue members while retaining progress (requires --queue)")
+	fs.BoolVar(&opts.RetryQueue, "retry-queue", false, "Include failed, interrupted and skipped items (requires --queue; workflow safety checks still apply)")
 	fs.BoolVar(&opts.SiteCheck, "site-check", false, "Search/check sites without uploading")
 	fs.BoolVar(&opts.SiteCheck, "sc", false, "Search/check sites without uploading")
 	fs.StringVar(&opts.SiteUpload, "site-upload", "", "Process a single tracker upload flow")
@@ -532,6 +536,12 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 			return errors.New("--queue requires a non-empty queue name")
 		}
 		opts.QueueName = trimmed
+	}
+	if (visited["refresh-queue"] || visited["retry-queue"]) && opts.QueueName == "" {
+		return errors.New("--refresh-queue and --retry-queue require --queue")
+	}
+	if opts.QueueName != "" && (opts.Cleanup || opts.DeleteTmp) {
+		return errors.New("saved queues cannot be combined with --cleanup or --delete-tmp; manage stored releases separately")
 	}
 	if opts.ExportConfigPlaintext && !visited["export-config"] {
 		return errors.New("--export-config-plaintext requires --export-config")
@@ -890,6 +900,8 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Execution", names: []string{
 			"queue",
 			"limit-queue",
+			"refresh-queue",
+			"retry-queue",
 			"site-check",
 			"site-upload",
 			"debug",

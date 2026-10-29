@@ -33,9 +33,13 @@ Application:
 
 Execution:
   -queue, --queue string
-      Process an entire folder queue
+      Create or resume a saved queue in the active data directory
   -limit-queue, --limit-queue, -lq int
-      Limit the number of queued items to process
+      Limit remaining eligible queue items (zero means unlimited)
+  -refresh-queue, --refresh-queue
+      Add newly discovered queue members while retaining progress (requires --queue)
+  -retry-queue, --retry-queue
+      Include failed, interrupted and skipped items (requires --queue; workflow safety checks still apply)
   -site-check, --site-check, -sc
       Search/check sites without uploading
   -site-upload, --site-upload, -su string

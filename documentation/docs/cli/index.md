@@ -48,13 +48,31 @@ Run duplicate and site checks without uploading:
 .\upbrr.exe --site-check "D:\releases\Example.Release.2026.1080p-GRP"
 ```
 
-Process at most five entries from a queue folder:
+Create or resume a named queue, processing at most five pending entries:
 
 ```powershell
 .\upbrr.exe --queue uploads --limit-queue 5 "D:\upload-queue"
 ```
 
-`--queue` supplies a non-empty queue name. Supply exactly one queue-root path separately. The CLI gathers first-level media files and release folders in sorted order, then applies `--limit-queue`; `0` means no limit. An item failure does not stop later queue entries, but the command returns a nonzero summary result if any item failed. Cancellation stops the queue.
+Supply a non-empty queue name and exactly one queue-root path. The first invocation saves the sorted first-level media files and release folders. Reusing that name with the same root loads its saved membership and progress. `--limit-queue` applies after filtering progress; `0` means unlimited, so repeated limited runs advance through the queue. An item failure does not stop later entries, but the command returns a nonzero summary result if any item failed. Cancellation stops the queue.
+
+The CLI prints the saved file's location on creation and resume. Files live in `queues/<name-hash>.json` beside the active `db.sqlite` (including a custom database location). The hash is the SHA-256 of the exact, trimmed queue name; names have independent progress even when their filesystem-safe spellings would collide. The private JSON contains the name, root, member paths, attempt counts, workflow IDs and per-item progress. It contains no tracker credentials or submission payloads. Protect these local paths when sharing the file. An OS lock excludes concurrent writers and releases on process exit; keep its adjacent `.lock` file in place.
+
+Each item is saved before processing and after its outcome. States are `pending`, `running`, `completed`, `failed`, `interrupted` and `skipped`. A leftover `running` checkpoint becomes `interrupted` when you explicitly resume the queue. Normal resume selects pending items only. To include failed, interrupted and skipped items, inspect their outcomes and run:
+
+```powershell
+.\upbrr.exe --queue uploads --retry-queue --limit-queue 5 "D:\upload-queue"
+```
+
+Retry selection does not bypass input ownership, confirmed-upload exclusions or uncertain-submission reconciliation. A tracker submission with an unknown outcome still requires the existing recovery process; no remote submission is retried automatically. Confirmed tracker uploads are recorded separately from item progress, including partial failures. `completed` means the requested processing finished: Input-only and debug/site-check runs can complete without uploading. Skips and declined actions do not prove an upload. Use a different queue name when starting a different task, such as switching a completed Input-only queue to uploads.
+
+Membership stays unchanged until explicitly refreshed:
+
+```powershell
+.\upbrr.exe --queue uploads --refresh-queue "D:\upload-queue"
+```
+
+Refresh adds newly discovered members and preserves existing progress, including missing sources and failed items. It does not reset completed items, remove old members, or change the saved root. Missing members fail when processed while other entries continue. A queue with no remaining work reports completion; retained failed, interrupted or skipped items remain inspectable and require `--retry-queue`. Queue processing never starts automatically when the application or Web UI starts. Saved queues cannot be combined with `--cleanup` or `--delete-tmp`; perform stored-release maintenance separately, preserving any unresolved remote effects.
 
 ### Multi-disc folders
 
@@ -113,20 +131,22 @@ The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic 
 
 ## Execution
 
-| Option                        | Aliases                       | Purpose                                                                                  |
-| ----------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------- |
-| `--queue <name>`              | `-queue`                      | Name a queue; supply its root as the single input path.                                  |
-| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit queued items processed; defaults to `0` (unlimited). Negative values are rejected. |
-| `--site-check`                | `-site-check`, `-sc`          | Search/check sites without uploading.                                                    |
-| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                         |
-| `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                        |
-| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.    |
-| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                |
-| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                               |
-| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                             |
-| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                  |
-| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                     |
-| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                            |
+| Option                        | Aliases                       | Purpose                                                                                    |
+| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------ |
+| `--queue <name>`              | `-queue`                      | Create or resume a saved queue; supply its original root as the single input path.         |
+| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit remaining eligible items; defaults to `0` (unlimited). Negative values are rejected. |
+| `--refresh-queue`             | `-refresh-queue`              | Add new members without resetting progress; requires `--queue`.                            |
+| `--retry-queue`               | `-retry-queue`                | Include failed, interrupted and skipped items; requires `--queue`.                         |
+| `--site-check`                | `-site-check`, `-sc`          | Search/check sites without uploading.                                                      |
+| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                           |
+| `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                          |
+| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.      |
+| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                  |
+| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                                 |
+| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                               |
+| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                    |
+| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                       |
+| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                              |
 
 `--live-test` and `--live-test-max-images` are development options described under [`live-test`](#live-test). There is no `--dry-run` option; use `--debug --no-seed` for preparation without tracker submission or client injection.
 

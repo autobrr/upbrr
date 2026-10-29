@@ -67,10 +67,10 @@ func (s *cliWorkflowSession) completeComposite(
 	s.current = current
 	s.publishPresentation(ctx)
 	current, err = s.waitForCompositeUpload(ctx, current)
+	s.current = current
 	if err != nil {
 		return 0, err
 	}
-	s.current = current
 	s.publishPresentation(ctx)
 
 	printProjections := cliWorkflowProjectionOutputEnabled(
@@ -123,10 +123,10 @@ func (s *cliWorkflowSession) completeComposite(
 			return 0, fmt.Errorf("upbrr: submit composite upload feedback: %w", submitErr)
 		}
 		next, err = s.waitForCompositeUpload(ctx, next)
+		s.current = next
 		if err != nil {
 			return 0, err
 		}
-		s.current = next
 		s.publishPresentation(ctx)
 	}
 	return 0, errors.New("upbrr: composite upload exceeded the transition limit")
@@ -183,11 +183,12 @@ func (s *cliWorkflowSession) waitForCompositeUpload(
 	if waitErr != nil {
 		if err == nil {
 			printCLIHDRResult(s.streams.out, latest)
+			return latest, waitErr
 		}
-		return releaseworkflow.CommandResult{}, waitErr
+		return current, waitErr
 	}
 	if err != nil {
-		return releaseworkflow.CommandResult{}, fmt.Errorf("upbrr: load composite upload workflow: %w", err)
+		return current, fmt.Errorf("upbrr: load composite upload workflow: %w", err)
 	}
 	latest.Operation = &completed
 	printCLIHDRResult(s.streams.out, latest)

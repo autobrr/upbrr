@@ -1400,7 +1400,7 @@ func TestCLIWorkflowCompletionUsesOneCompositeDebugRequest(t *testing.T) {
 			},
 		},
 	}
-	if _, err := session.complete(
+	if err := session.complete(
 		context.Background(),
 		true,
 		nil,
@@ -1688,7 +1688,7 @@ func TestCLIWorkflowAudioAnalysisPartialStopsBeforeUploadSideEffects(t *testing.
 		},
 		streams: cliIO{out: &output, errOut: &errorOutput},
 	}
-	_, err := session.complete(t.Context(), false, nil, config.Config{}, api.NopLogger{})
+	err := session.complete(t.Context(), false, nil, config.Config{}, api.NopLogger{})
 	if err == nil || !strings.Contains(err.Error(), "status partial") {
 		t.Fatalf("partial analysis error = %v", err)
 	}
@@ -1880,7 +1880,7 @@ func TestCLITrackCorrectionsRequireRetainedHistory(t *testing.T) {
 					t.Fatal(err)
 				}
 				coreSvc := &cliWorkflowCoreFake{inputHistoryErr: history.err}
-				err = runCLIWorkflowInteractive(
+				_, err = runCLIWorkflowInteractive(
 					t.Context(), coreSvc, args, opts, visited, "example.mkv", api.PlaylistInstruction{}, 0,
 					config.Config{}, cliIO{
 						in:     strings.NewReader(""),
@@ -1927,7 +1927,7 @@ func TestCLIInputOnlyDoesNotStartCompositeUpload(t *testing.T) {
 		return coreSvc.current, nil
 	}
 	var output strings.Builder
-	if err := runCLIWorkflowInteractive(
+	if _, err := runCLIWorkflowInteractive(
 		t.Context(),
 		coreSvc,
 		[]string{"--input-only", "--tracker-input", "OE:source_notes=Example source", "example.mkv"},
@@ -2001,7 +2001,7 @@ func TestCLIInteractiveCorrectionTransfersActiveInputClaim(t *testing.T) {
 	}
 
 	var output strings.Builder
-	err = runCLIWorkflowInteractive(
+	_, err = runCLIWorkflowInteractive(
 		t.Context(),
 		coreSvc,
 		[]string{"example.mkv"},
@@ -2208,7 +2208,7 @@ func TestCLIConfirmInputUsesCanonicalSourceForNoTrackerCompletion(t *testing.T) 
 		return coreSvc.current, nil
 	}
 	var output strings.Builder
-	if err := runCLIWorkflowInteractive(
+	if _, err := runCLIWorkflowInteractive(
 		t.Context(),
 		coreSvc,
 		[]string{"--confirm-input", "metadata.title", "--unattended", rawSource},
@@ -2412,7 +2412,7 @@ func TestCLIInteractiveCommentaryCorrectionUsesExistingLoop(t *testing.T) {
 		return coreSvc.current, nil
 	}
 	var output strings.Builder
-	err = runCLIWorkflowInteractive(
+	_, err = runCLIWorkflowInteractive(
 		t.Context(),
 		coreSvc,
 		[]string{"example.mkv"},
