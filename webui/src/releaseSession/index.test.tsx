@@ -3561,6 +3561,80 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it.each(["completed", "partial", "failed", "skipped"] as const)(
+    "ends one explicit dry-run action on a new %s report, not its stale predecessor",
+    async (status) => {
+      const workflowID = `workflow-one-dry-run-${status}`;
+      const base = workflowCurrent(workflowID, 7);
+      const report = (revision: number): NonNullable<ReleaseWorkflowCurrent["dryRun"]> => ({
+        id: `attempt-${revision}`,
+        workflowId: workflowID,
+        revision,
+        projectionSet: { id: "projections", revision: 1 },
+        dupes: { id: "dupes", revision: 1 },
+        media: { id: "media", revision: 1 },
+        descriptions: { id: "descriptions", revision: 1 },
+        inputFingerprint: "2".repeat(64),
+        noSeed: true,
+        trackerIds: ["AITHER"],
+        reports: [
+          {
+            trackerId: "AITHER",
+            displayName: "AITHER",
+            uploadReleaseName: "Example.Release.2026-GRP",
+            semanticFingerprint: "3".repeat(64),
+            clientInjection: { status: "skipped" },
+            status,
+          },
+        ],
+        succeededCount: status === "completed" ? 1 : 0,
+        failedCount: status === "failed" || status === "partial" ? 1 : 0,
+        skippedCount: status === "skipped" ? 1 : 0,
+        status,
+        createdAt: "2026-10-28T00:00:00Z",
+      });
+      let current: ReleaseWorkflowCurrent = { ...base, dryRun: report(6) };
+      let builds = 0;
+      const continueWorkflow = vi.fn(async (request: ContinueReleaseWorkflowRequest) => {
+        expect(request.goal).toBe("dry_run");
+        expect(request.intent.noSeed).toBe(true);
+        const revision = current.workflow.revision + 1;
+        // First advance a prerequisite without replacing the retained old assessment.
+        if (revision > 8) builds++;
+        current = {
+          ...current,
+          workflow: { ...current.workflow, revision },
+          dryRun: revision === 8 ? current.dryRun : report(revision),
+        };
+        return current;
+      });
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({ current: async () => current, continue: continueWorkflow }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+      act(() => result.current.upload.changeOptions({ noSeed: true }));
+      await act(async () => {
+        expect(await result.current.upload.runDryRun()).toBe(true);
+      });
+      expect(builds).toBe(1);
+      expect(continueWorkflow).toHaveBeenCalledTimes(2);
+      expect(result.current.upload.view.workflowBusy).toBe(false);
+      expect(result.current.upload.view.dryRunResult).toEqual(report(9));
+      await act(async () => {
+        expect(await result.current.upload.runDryRun()).toBe(true);
+      });
+      expect(builds).toBe(2);
+      expect(continueWorkflow).toHaveBeenCalledTimes(3);
+      expect(result.current.upload.view.dryRunResult).toEqual(report(10));
+      unmount();
+    },
+  );
+
   it("passes the current skip-client option to an explicit workflow dry run", async () => {
     const workflowID = "workflow-dry-run-options";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);

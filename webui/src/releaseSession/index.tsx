@@ -576,6 +576,14 @@ export function ReleaseSessionProvider({
         throw new DOMException("Active input changed.", "AbortError");
       }
       const next = await awaitWorkflowCommand(continued, signal, expectedSlot);
+      // A dry-run action owns one assessment; partial results need an explicit retry.
+      if (
+        goal === "dry_run" &&
+        next.dryRun &&
+        (next.dryRun.id !== current.dryRun?.id || next.dryRun.revision !== current.dryRun?.revision)
+      ) {
+        return next;
+      }
       if (next.workflow.revision === current.workflow.revision) return next;
       current = next;
       // Review decisions acknowledge one assessment; a refresh requires another review.
