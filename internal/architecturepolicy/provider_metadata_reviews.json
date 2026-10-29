@@ -176,8 +176,8 @@
     "sha256": "5e7451f9faf3fed9241d74928416ce5519193d3ff75dd9b542b48f76c0b82366"
   },
   "internal/trackers/impl/standalone/ar/description.go:buildDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "c9cb1cc5c3a1e647205bff122d94fde13b4b35b2b6141ad1f597ec3a093e9e75"
+    "reason": "AR center-tag conversion applies only to completed generated or final descriptions. Title, database-link, overview, genre, and YouTube provider selection and manual precedence remain unchanged, including PreferredGenreText and the final-description bypass of generated sections.",
+    "sha256": "4de27b74d49c2f673337f13bb1c635d8428bce3f97ef9d0b6f729cf1d7aa65f8"
   },
   "internal/trackers/impl/standalone/ar/description.go:resolveOverview": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

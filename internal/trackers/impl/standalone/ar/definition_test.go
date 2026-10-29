@@ -50,6 +50,49 @@ func TestBuildDescriptionRemovesKnownSignatures(t *testing.T) {
 	}
 }
 
+func TestBuildDescriptionConvertsCenterTags(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "single section",
+			input: "[center]Example description[/center]",
+			want:  "[align=center]Example description[/align]",
+		},
+		{
+			name: "multiple sections and unrelated formatting",
+			input: "[center][b]First & second[/b]\nLine two[/center]\n" +
+				"[align=center][i]Already aligned[/i][/align]\n" +
+				"[left]Left[/left][right]Right[/right]\n" +
+				"[center][url=https://images.example.invalid/view][img]https://images.example.invalid/image.png[/img][/url][/center]",
+			want: "[align=center][b]First & second[/b]\nLine two[/align]\n" +
+				"[align=center][i]Already aligned[/i][/align]\n" +
+				"[left]Left[/left][right]Right[/right]\n" +
+				"[align=center][url=https://images.example.invalid/view][img]https://images.example.invalid/image.png[/img][/url][/align]",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, final := range []bool{false, true} {
+				want := tt.want
+				if !final {
+					want = "[color=green][size=6]Example.Release.2026[/size][/color]\n\n[color=red][size=4]Notes[/size][/color]\n" + want
+				}
+				got := buildDescription(api.UploadSubject{ReleaseName: "Example.Release.2026"}, "", trackers.DescriptionAssets{
+					Description: tt.input,
+					Final:       final,
+				})
+				if got != want {
+					t.Errorf("final=%t: description = %q, want %q", final, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestResolveTypeID(t *testing.T) {
 	t.Parallel()
 
