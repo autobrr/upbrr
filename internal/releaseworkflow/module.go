@@ -2557,7 +2557,29 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 			return CommandResult{}, err
 		}
 	}
+	operation, operationErr := m.operations.LoadLatestOperation(ctx, ownerID, workflowID)
+	if operationErr == nil {
+		if isTerminalProgressStatus(operation.Status.Status) {
+			if err := m.waitForOperationCleanup(ctx, operation.OperationID); err != nil {
+				return CommandResult{}, err
+			}
+			// The worker may have published its final workflow checkpoint after
+			// our first read. Project actions from that state, not its predecessor.
+			state, err = m.repository.Load(ctx, ownerID, workflowID)
+			if err != nil {
+				return CommandResult{}, fmt.Errorf("release workflow current terminal query: %w", err)
+			}
+		}
+		if len(operation.Status.Events) == 0 {
+			operation.Status.Events = projectOperationEvents(operation.Status)
+		}
+	} else if !errors.Is(operationErr, ErrWorkflowNotFound) {
+		return CommandResult{}, fmt.Errorf("release workflow current operation query: %w", operationErr)
+	}
 	result := CommandResult{Workflow: state.Workflow}
+	if operationErr == nil {
+		result.Operation = &operation.Status
+	}
 	result.FactInstructions = currentSnapshot(state.FactInstructions, state.Workflow.FactInstructions.ID)
 	if ref := state.Workflow.Release; ref != nil {
 		result.Release = currentSnapshot(state.Releases, ref.ID)
@@ -2627,20 +2649,6 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 	}
 	if ref := state.Workflow.UploadResult; ref != nil {
 		result.UploadResult = currentSnapshot(state.UploadResults, ref.ID)
-	}
-	operation, operationErr := m.operations.LoadLatestOperation(ctx, ownerID, workflowID)
-	if operationErr == nil {
-		if isTerminalProgressStatus(operation.Status.Status) {
-			if err := m.waitForOperationCleanup(ctx, operation.OperationID); err != nil {
-				return CommandResult{}, err
-			}
-		}
-		if len(operation.Status.Events) == 0 {
-			operation.Status.Events = projectOperationEvents(operation.Status)
-		}
-		result.Operation = &operation.Status
-	} else if !errors.Is(operationErr, ErrWorkflowNotFound) {
-		return CommandResult{}, fmt.Errorf("release workflow current operation query: %w", operationErr)
 	}
 	result.Continuation = projectWorkflowContinuationForState(result, &state, m.clock.Now().UTC())
 	result.Workflow.RequiredActions = append(
