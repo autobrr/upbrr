@@ -233,7 +233,7 @@ func TestExportToYAMLConcurrent(t *testing.T) {
 	}
 }
 
-// Concurrent export and import on the same path must not panic or race.
+// Concurrent imports must observe a complete export, never partial or empty YAML.
 func TestExportImportYAMLConcurrent(t *testing.T) {
 	t.Parallel()
 
@@ -265,8 +265,11 @@ func TestExportImportYAMLConcurrent(t *testing.T) {
 	wg.Go(func() {
 		defer close(importErrCh)
 		for i := range 100 {
-			if _, err := ImportFromYAML(path); err != nil {
+			loaded, err := ImportFromYAML(path)
+			if err != nil {
 				importErrCh <- errors.New("import iteration " + strconv.Itoa(i) + ": " + err.Error())
+			} else if loaded.ScreenshotHandling.Screens != cfg.ScreenshotHandling.Screens {
+				importErrCh <- errors.New("import returned an incomplete config")
 			}
 		}
 		close(done)
@@ -281,10 +284,6 @@ func TestExportImportYAMLConcurrent(t *testing.T) {
 
 	for err := range importErrCh {
 		if err == nil {
-			continue
-		}
-		msg := err.Error()
-		if strings.Contains(msg, "cannot unmarshal") || strings.Contains(msg, "did not find expected") || strings.Contains(msg, "EOF") {
 			continue
 		}
 		t.Fatalf("unexpected concurrent import error: %v", err)
