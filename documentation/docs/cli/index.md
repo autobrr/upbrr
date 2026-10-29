@@ -8,6 +8,7 @@ description: Commands, interaction modes, aliases, and upload preparation flags 
 ```text
 upbrr [options] <input path>...
 upbrr serve [options]
+upbrr recover [options]
 upbrr api-token <list|revoke> [options]
 upbrr auth <password|browse-roots> [options]
 upbrr live-test <init|cleanup> [options]
@@ -15,7 +16,7 @@ upbrr live-test <init|cleanup> [options]
 
 On Windows, examples use `upbrr.exe`. Put options before input paths for consistent behavior across commands. Use `--` to end option parsing when a path begins with a hyphen or could be mistaken for an option value.
 
-Upload, `serve`, `auth`, and `api-token` options accept either one or two leading hyphens, including the aliases below. The exception is `--console-log-level`, which requires two hyphens for its full name; `-cll` and `--cll` also work. Boolean options can use `=true` or `=false`; use the equals sign instead of a separate value. The `-hc` language shorthand has additional forms described under [Subtitle review](#subtitle-review).
+Upload, `serve`, `recover`, `auth`, and `api-token` options accept either one or two leading hyphens, including the aliases below. The exception is `--console-log-level`, which requires two hyphens for its full name; `-cll` and `--cll` also work. Boolean options can use `=true` or `=false`; use the equals sign instead of a separate value. The `-hc` language shorthand has additional forms described under [Subtitle review](#subtitle-review).
 
 Omitted correction flags preserve saved values, and omitted configuration overrides use the active configuration. Workflow switches such as `--debug`, `--no-seed`, and `--unattended` are off unless enabled. Numeric and audio-selection defaults are noted below.
 
@@ -24,6 +25,7 @@ Use `--help` (also `-h`) as the exact option-name reference for your installed v
 ```powershell
 .\upbrr.exe --help
 .\upbrr.exe serve --help
+.\upbrr.exe recover --help
 .\upbrr.exe api-token list --help
 .\upbrr.exe auth password --help
 ```
@@ -457,6 +459,23 @@ upbrr serve [options]
 | `--dev-no-auth`            | Disable Web auth for local development on loopback only.                   |
 
 `--addr` cannot be combined with `--host` or `--port`. Without overrides, the listener defaults to `localhost:7480`; environment variables and saved settings can change it. `--live-test` and `--live-test-max-images` also apply to `serve`. See [Web server and reverse proxy](../configuration/web-server.md) for precedence and proxy examples.
+
+## `recover`
+
+```text
+upbrr recover [options]
+```
+
+Reconcile interrupted external effects when configuration changes block normal startup. Stop every upbrr process using the database first. Recovery records explicit confirmations that individual effects did not complete; it does not check remote outcomes, repeat external calls, upload, inject torrents, or activate configuration.
+
+| Option            | Purpose                                             |
+| ----------------- | --------------------------------------------------- |
+| `--config <path>` | Select the existing database through a config file. |
+| `--help`, `-h`    | Print recovery usage and exit.                      |
+
+Use the same config file, working directory, state volume, and environment as normal startup. `--config` accepts YAML, JSON, and supported Python config files. Omitting it follows normal startup's database selection; see [state location](../configuration/index.md#state-location). Recovery requires an existing filesystem database; missing databases, in-memory databases, and opaque SQLite URI configurations are unsupported. It does not save configuration.
+
+The command takes no input paths or upload/execution flags, including `--debug`, `--unattended`, and `--yes`. Each pending effect needs an interactive confirmation. See [startup recovery](../troubleshooting/index.md#configuration-changes-block-startup) for native and Docker Compose steps, confirmation rules, and manual recovery limits.
 
 ## `auth`
 

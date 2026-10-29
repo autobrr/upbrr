@@ -48,11 +48,45 @@ Startup retains completed operation checkpoints and marks unfinished operations 
 
 For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup retains unresolved external attempts as uncertain and keeps their retry blocks; an interrupted operation is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
 
-If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Stop other upbrr instances, then run `upbrr recover` with the same database configuration and environment (including `--config` when normally used). Wait for prior-process leases to expire if recovery reports busy. Recovery does not activate configuration or repeat external actions. Confirm that each displayed effect did not complete only after checking its remote outcome; answer No if it completed or remains uncertain.
-
-Recovery leaves scopes that lack the retained workflow state or uncertain effect needed for confirmation untouched, and continues with other recoverable scopes. If it finishes by reporting that manual recovery is required, retain the database for investigation; do not delete its state or fences to bypass the block. After successful recovery, restart upbrr with the unchanged configuration.
-
 If **Legacy workflow recovery** still appears, inspect each listed remote outcome. Choose **Confirmed not completed; allow a fresh exact attempt** only after confirming it did not complete. Do not delete History simply to bypass an uncertain outcome: deletion also removes local repeat-submission protection.
+
+### Configuration changes block startup
+
+If startup reports `reason=unresolved_workflow_effect` after configuration changed, use [`upbrr recover`](../cli/index.md#recover) to reconcile the retained effects before normal startup activates configuration. Use a binary or image that includes the command; check `recover --help`. Keep the configuration changes and the existing database, state volume, working directory, and environment. Recovery does not require the original source files to be available.
+
+1. Stop the ordinary upbrr process and every other instance sharing its database. For Docker Compose, replace `upbrr` below if your service has another name:
+
+   ```sh
+   docker compose stop upbrr
+   ```
+
+2. With a native binary, run:
+
+   ```sh
+   ./upbrr recover
+   ```
+
+   On Windows, use `.\upbrr.exe recover`. If your normal command uses `--config`, pass the same path after `recover`, for example `./upbrr recover --config ./config.yaml`.
+
+   With Docker Compose, run the maintenance command using the same service, image, mounted state volume, and environment:
+
+   ```sh
+   docker compose run --rm --no-deps upbrr recover
+   ```
+
+   If the ordinary container uses `--config`, append that option and the same container path after `recover`. Pass only recovery options; omit `serve`, input paths, and upload flags. If recovery reports busy, keep all other instances stopped and retry after prior-process leases expire.
+
+3. Check each displayed source and exact effect against the tracker, image host, or torrent client. At `Confirm it did not complete? [y/N]:`, answer **yes only after verifying that particular action did not complete**. Answer **No** if it completed or remains uncertain; this stops recovery and retains that block. Recovery cannot mark an action as confirmed completed or verify its remote outcome, and never repeats the external call.
+
+4. After recovery reports success, explicitly rerun the original CLI command or restart the ordinary service with the unchanged configuration. For Docker Compose:
+
+   ```sh
+   docker compose up -d upbrr
+   ```
+
+Recovery exits after reconciliation without starting an upload or client injection. Confirmed successful submissions and their repeat-submission blocks remain intact; normal workflow approvals still apply after restart.
+
+Scopes without the retained workflow state or uncertain effect needed for confirmation are left untouched while recovery continues with other recoverable scopes. If it reports that manual recovery is required, retain the database and adjacent state for investigation. Do not delete History, state, or submission fences to bypass the block. Database, lease, and cancellation errors stop recovery; investigate the reported error before continuing.
 
 ## FFmpeg is not found
 
