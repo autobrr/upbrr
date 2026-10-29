@@ -74,6 +74,13 @@ func TestBuildDescriptionConvertsCenterTags(t *testing.T) {
 				"[left]Left[/left][right]Right[/right]\n" +
 				"[align=center][url=https://images.example.invalid/view][img]https://images.example.invalid/image.png[/img][/url][/align]",
 		},
+		{
+			name: "literal code and pre blocks",
+			input: "[center]Before [CoDe][center]Literal\n[/center][/CoDe][/center]\n" +
+				"[pre][center]Literal pre[/center][/pre]\n[center]After[/center]",
+			want: "[align=center]Before [CoDe][center]Literal\n[/center][/CoDe][/align]\n" +
+				"[pre][center]Literal pre[/center][/pre]\n[align=center]After[/align]",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, final := range []bool{false, true} {
@@ -90,6 +97,26 @@ func TestBuildDescriptionConvertsCenterTags(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildDescriptionPreservesLiteralMediaInfo(t *testing.T) {
+	t.Parallel()
+
+	const mediaText = "Complete name: [center]Example[/center].mkv\nComment: [center]literal[/center]"
+	mediaPath := filepath.Join(t.TempDir(), "mediainfo.txt")
+	if err := os.WriteFile(mediaPath, []byte(mediaText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := buildDescription(api.UploadSubject{
+		ReleaseName:       "Example.Release.2026",
+		MediaInfoTextPath: mediaPath,
+	}, "", trackers.DescriptionAssets{Description: "[center]Release notes[/center]"})
+	want := "[color=green][size=6]Example.Release.2026[/size][/color]\n\n" +
+		"[color=red][size=4]MEDIAINFO[/size][/color]\n[hide][code]" + mediaText + "[/code][/hide]\n\n" +
+		"[color=red][size=4]Notes[/size][/color]\n[align=center]Release notes[/align]"
+	if got != want {
+		t.Fatalf("description = %q, want %q", got, want)
 	}
 }
 
