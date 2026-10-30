@@ -246,11 +246,15 @@ for (const scenario of [
   });
 }
 
-for (const tracker of ["ANT", "BTN"] as const) {
+for (const { tracker, emptyDescription } of [
+  { tracker: "ANT", emptyDescription: false },
+  { tracker: "ANT", emptyDescription: true },
+  { tracker: "BTN", emptyDescription: false },
+] as const) {
   for (const action of ["Run dry run", "Start upload"] as const) {
     const contentFlow =
       tracker === "ANT"
-        ? "reviews saved descriptions and retains hosted screenshots"
+        ? `${emptyDescription ? "reviews an empty saved description" : "reviews saved descriptions"} and retains hosted screenshots`
         : "prepares content without the description editor";
     test(`embedded web ${tracker} ${action} ${contentFlow}`, async ({ page }) => {
       const workspace = await createE2EWorkspace({
@@ -293,15 +297,18 @@ for (const tracker of ["ANT", "BTN"] as const) {
           await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
           const editor = page.getByRole("textbox", { name: "Raw description for ANT" });
           await expect(editor).toHaveValue("E2E description fixture.");
-          const editedDescription =
-            "[b]ANT release notes[/b]\n[quote]Screenshots are hosted separately.[/quote]";
+          const editedDescription = emptyDescription
+            ? ""
+            : "[b]ANT release notes[/b]\n[quote]Screenshots are hosted separately.[/quote]";
           await editor.fill(editedDescription);
           await page.getByRole("button", { name: "Render ANT", exact: true }).click();
           const rendered = page.locator(".tracker-description.rendered");
-          await expect(rendered.locator("b")).toHaveText("ANT release notes");
-          await expect(rendered.locator("blockquote")).toHaveText(
-            "QuoteScreenshots are hosted separately.",
-          );
+          if (!emptyDescription) {
+            await expect(rendered.locator("b")).toHaveText("ANT release notes");
+            await expect(rendered.locator("blockquote")).toHaveText(
+              "QuoteScreenshots are hosted separately.",
+            );
+          }
           const saved = waitForAppMethod(page, "SaveReleaseWorkflowDescriptionOverride");
           await page.getByRole("button", { name: "Save group ANT", exact: true }).click();
           expect((await saved).ok()).toBe(true);
@@ -325,7 +332,9 @@ for (const tracker of ["ANT", "BTN"] as const) {
           await page.getByRole("button", { name: "Descriptions" }).click();
           await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
           await expect(editor).toHaveValue(editedDescription);
-          await expect(rendered.locator("b")).toHaveText("ANT release notes");
+          if (!emptyDescription) {
+            await expect(rendered.locator("b")).toHaveText("ANT release notes");
+          }
           await page.getByRole("button", { name: "Upload Images" }).click();
           await expect(page.getByText("1 saved")).toBeVisible();
         } else {
@@ -458,6 +467,73 @@ test("embedded web reviews default tracker questions before dupes and retains co
     await workspace.cleanup();
   }
 });
+
+for (const checkFirst of [false, true]) {
+  test(`embedded web retains ANT trump answers with duplicate check first=${checkFirst}`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace({ preparedMediaInfo: true });
+    workspace.env.UPBRR_E2E_DUPE_SCENARIOS = "ANT=manual";
+    let app: AppServer | undefined;
+    try {
+      const config = await readFile(workspace.configPath, "utf8");
+      await writeFile(
+        workspace.configPath,
+        config.replace(
+          '  ANT:\n    api_key: "e2e"',
+          '  ANT:\n    guru_trump: true\n    api_key: "e2e"',
+        ),
+      );
+      app = await startApp(workspace);
+      await fetchMetadata(page, app.url, workspace.sourcePath);
+      await page.getByRole("button", { name: "Dupe Check" }).click();
+      await page.getByRole("checkbox", { name: "BTN", exact: true }).uncheck();
+      await page.getByRole("checkbox", { name: "ANT", exact: true }).check();
+      const questions = antQuestionPanel(page);
+      await questions.locator("summary").click();
+      await questions.getByRole("textbox", { name: "Tags *", exact: true }).fill("drama");
+      if (checkFirst) await runDuplicateCheck(page, "blocked");
+
+      const choice = questions.getByRole("combobox", { name: "Intended ANT trump", exact: true });
+      const reason = questions.getByRole("textbox", { name: "ANT trump reason", exact: true });
+      await choice.selectOption("yes");
+      await reason.fill("verified improvement");
+      const applied = await applyTrackerAnswers(page);
+      const fields = applied.projections!.projections[0].questionnaire!;
+      const choiceKey = fields.find((field) => field.label === "Intended ANT trump")!.key;
+      const reasonKey = fields.find((field) => field.label === "ANT trump reason")!.key;
+      expect(applied.projections!.projections[0].questionnaireAnswers).toMatchObject({
+        [choiceKey]: "yes",
+        [reasonKey]: "verified improvement",
+      });
+      await expect(choice).toHaveValue("yes");
+      await expect(reason).toHaveValue("verified improvement");
+      const checked = await runDuplicateCheck(page, "blocked");
+      expect(checked.projections!.projections[0].questionnaireAnswers).toMatchObject({
+        [choiceKey]: "yes",
+        [reasonKey]: "verified improvement",
+      });
+      await expect(choice).toHaveValue("yes");
+      await expect(reason).toHaveValue("verified improvement");
+      await expect(questions.locator("summary")).not.toContainText("Unapplied changes");
+      await page.getByLabel("Acknowledge dupe risk for ANT").click();
+      await expect(page.getByText("1 potential dupe · acknowledged")).toBeVisible();
+      await expect(choice).toHaveValue("yes");
+      await expect(reason).toHaveValue("verified improvement");
+      await reason.fill("reviewed improvement");
+      const updated = await applyTrackerAnswers(page);
+      expect(updated.projections!.projections[0].questionnaireAnswers).toMatchObject({
+        [choiceKey]: "yes",
+        [reasonKey]: "reviewed improvement",
+      });
+      await expect(choice).toHaveValue("yes");
+      await expect(reason).toHaveValue("reviewed improvement");
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}
 
 test("embedded web reload restores the authoritative prepared workflow", async ({ page }) => {
   const workspace = await createE2EWorkspace({ preparedMediaInfo: true });

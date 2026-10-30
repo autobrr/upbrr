@@ -1026,7 +1026,7 @@ func (s UploadSubject) TrackerDescriptionOverride(tracker string) (string, bool)
 		if !matchesTracker {
 			continue
 		}
-		if description := strings.TrimSpace(group.Source()); description != "" {
+		if description := strings.TrimSpace(group.Source()); description != "" || s.DescriptionGroupsFinal || group.Final {
 			return description, s.DescriptionGroupsFinal || group.Final
 		}
 	}

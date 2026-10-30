@@ -2101,6 +2101,52 @@ func TestContinuationPlannerAdvancesRunnableSiblingPastPendingDupe(t *testing.T)
 	}
 }
 
+func TestContinuationAcceptsTrackerEditsBeforeDuplicateReview(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []TrackerDecisionMode{TrackerDecisionModePostDupeGate, TrackerDecisionModeWebUIControls} {
+		t.Run(string(mode), func(t *testing.T) {
+			current := readyContinuationPlannerResult(t, time.Now())
+			current.Workflow.RequiredActions = []api.RequiredAction{{
+				Kind:      api.RequiredActionReviewDuplicates,
+				Status:    api.RequiredActionStatusPending,
+				TrackerID: "ALPHA",
+			}}
+			current.Dupes.Status = api.StageStatusBlocked
+			current.Dupes.Results[0].Status = api.StageStatusBlocked
+			current.Dupes.Results[0].Decision = api.DupeDecisionPending
+			request := api.ContinueReleaseWorkflowRequest{
+				Goal: api.WorkflowGoalTrackersAssessed,
+				Intent: api.WorkflowIntent{
+					TrackerIDs: []api.TrackerID{"ALPHA"},
+					ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{
+						"ALPHA": {Questionnaire: map[string]*string{"upload_intent": new("yes")}},
+					},
+				},
+			}
+			module := &Module{}
+			_, handled, err := module.resolveContinuationAnswer(t.Context(), testOwnerID, request, current, mode)
+			if err != nil || handled {
+				t.Fatalf("duplicate review blocked tracker edits: handled=%t err=%v", handled, err)
+			}
+			command, stage := planContinuationCommand(request, current, time.Now())
+			if _, ok := command.(ProjectTrackersCommand); !ok || stage != "project-trackers" {
+				t.Fatalf("tracker edits were not planned: stage=%q command=%#v", stage, command)
+			}
+			if current.Dupes.Results[0].Decision != api.DupeDecisionPending {
+				t.Fatal("editing tracker inputs resolved duplicate review")
+			}
+
+			current.ProjectionInstructions.Instructions = request.Intent.ProjectionInstructions
+			request.Goal = api.WorkflowGoalMediaReady
+			_, handled, err = module.resolveContinuationAnswer(t.Context(), testOwnerID, request, current, mode)
+			if err != nil || !handled {
+				t.Fatalf("unchanged answers bypassed duplicate review: handled=%t err=%v", handled, err)
+			}
+		})
+	}
+}
+
 func TestContinuationPlannerPreservesAuthBlockedLaneWhileCheckingReadySibling(t *testing.T) {
 	t.Parallel()
 

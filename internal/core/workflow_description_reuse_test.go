@@ -302,6 +302,34 @@ func TestWorkflowDescriptionReuseSkipsIncompleteSnapshotsAndFreshOverrides(t *te
 	}
 }
 
+func TestWorkflowDescriptionReuseRetainsOptionalEmptyText(t *testing.T) {
+	t.Parallel()
+	fixture := newWorkflowDescriptionReuseFixture(t)
+	fixture.snapshot.Descriptions[0].Source = ""
+	fixture.snapshot.Descriptions[0].Rendered = ""
+	if err := fixture.recordReusableDescriptions(t, fixture.oldRelease, fixture.oldMedia, fixture.oldPrivate, fixture.snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.repository.saves != 0 {
+		t.Fatal("required empty description was reused")
+	}
+	fixture.projections.Projections[1].Artifacts.AllowEmptyDescription = true
+	if err := fixture.recordReusableDescriptions(t, fixture.oldRelease, fixture.oldMedia, fixture.oldPrivate, fixture.snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.repository.saves != 1 {
+		t.Fatal("optional empty description was not saved")
+	}
+	fixture.resolver.subject = reusableDescriptionSubjectForFixture(fixture.currentRelease, 2)
+	instructions := fixture.instructions
+	instructions.Overrides = nil
+	restored, _, err := fixture.builder.RestoreCompatibleDescriptions(t.Context(), fixture.currentRelease, fixture.projections,
+		fixture.currentMedia, fixture.currentPrivate, instructions)
+	if err != nil || len(restored.Descriptions) != 2 || restored.Descriptions[0].Source != "" || restored.Descriptions[0].Rendered != "" {
+		t.Fatalf("optional empty description restore = %+v, err=%v", restored, err)
+	}
+}
+
 func newWorkflowDescriptionReuseFixture(t *testing.T) workflowDescriptionReuseFixture {
 	t.Helper()
 	root := t.TempDir()

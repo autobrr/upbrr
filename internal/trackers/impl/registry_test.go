@@ -91,7 +91,7 @@ func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
 
 	for _, tracker := range registry.Names() {
 		mode, ok := registry.LookupUploadContentMode(tracker)
-		if !ok || mode != trackers.UploadContentModeDescription {
+		if !ok || !mode.UsesDescription() {
 			continue
 		}
 		definition, ok := registry.Lookup(tracker)
@@ -636,6 +636,7 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 		}
 	}
 	specialModes := map[string]trackers.UploadContentMode{
+		"ANT": trackers.UploadContentModeOptionalDescription,
 		"BTN": trackers.UploadContentModeNone,
 		"NBL": trackers.UploadContentModeNone,
 		"RTF": trackers.UploadContentModeScreenshots,
