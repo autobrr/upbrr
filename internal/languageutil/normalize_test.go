@@ -129,7 +129,7 @@ func TestLanguageCorrectionsPreserveUnresolvedTags(t *testing.T) {
 }
 
 func TestProducerNamesDoNotBecomeConflictingCodes(t *testing.T) {
-	for _, tt := range []struct{ name, want string }{{"Ga", "gaa"}, {"Kru", "kro"}, {"Malay", "ms"}} {
+	for _, tt := range []struct{ name, want string }{{"Ga", "gaa"}, {"ga", "ga"}, {"Kru", "kro"}, {"kru", "kru"}, {"Malay", "ms"}} {
 		labels := NormalizeLanguageNames([]string{tt.name})
 		if len(labels) != 1 || NormalizeLanguageCode(labels[0]) != tt.want {
 			t.Errorf("producer name %q became %q, want %q", tt.name, labels, tt.want)

@@ -248,6 +248,9 @@ func normalizedAudioLanguages(values []string) []string {
 			key = base.String()
 		}
 		key = strings.ToLower(key)
+		if key == "und" {
+			continue
+		}
 		if isGerman(key) {
 			key = "de"
 		}

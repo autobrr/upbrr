@@ -79,16 +79,16 @@ func TestMediaInfoLanguageFormatsRetainCodeAndNameIdentity(t *testing.T) {
 func TestBDInfoTracksRetainUnresolvedAndNamedLanguages(t *testing.T) {
 	meta := preparationstate.State{DiscType: "BDMV", Discs: []preparationstate.DiscResource{{ID: "disc", Reports: []preparationstate.DiscReportResource{{
 		Playlist: api.PlaylistInfo{ID: "00001"},
-		Summary:  "Audio: Custom Dialect / DTS / 5.1 / 48 kHz / 1000 kbps / 24-bit\nAudio: Ga / DTS / 5.1 / 48 kHz / 1000 kbps / 24-bit\nAudio: Kru / DTS / 5.1 / 48 kHz / 1000 kbps / 24-bit",
+		Summary:  "Audio: Custom Dialect / DTS / 5.1 / 48 kHz / 1000 kbps / 24-bit\nAudio: Ga / DTS / 5.1 / 48 kHz / 1000 kbps / 24-bit\nAudio: Kru / DTS / 5.1 / 48 kHz / 1000 kbps / 24-bit\nAudio: ga / DTS / 5.1 / 48 kHz / 1000 kbps / 24-bit",
 	}}}}}
 	tracks, err := bdInfoAudioTrackFacts(meta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tracks) != 3 {
+	if len(tracks) != 4 {
 		t.Fatalf("tracks=%d", len(tracks))
 	}
-	for index, want := range []string{"Custom Dialect", "Ga [gaa]", "Kru languages"} {
+	for index, want := range []string{"Custom Dialect", "Ga [gaa]", "Kru languages", "Irish"} {
 		if !slices.Equal(tracks[index].Languages, []string{want}) || !slices.Equal(tracks[index].DetectedLanguages, []string{want}) {
 			t.Errorf("track %d languages=%q detected=%q, want %q", index, tracks[index].Languages, tracks[index].DetectedLanguages, want)
 		}

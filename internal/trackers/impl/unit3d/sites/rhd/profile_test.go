@@ -308,7 +308,7 @@ func TestProfileResolutionAndLanguages(t *testing.T) {
 	for _, test := range []struct {
 		values []string
 		want   string
-	}{{[]string{"", "French", "   "}, "FRENCH"}, {[]string{"English", "eng", "English"}, "ENGLISH"}, {[]string{"German", "deu", "de-DE"}, "GERMAN"}, {[]string{"English", "French"}, "ENGLISH DL"}, {[]string{"Custom Dialect"}, "CUSTOM DIALECT"}, {[]string{"phi"}, "PHILIPPINE LANGUAGES"}, {nil, ""}} {
+	}{{[]string{"", "French", "   "}, "FRENCH"}, {[]string{"English", "eng", "English"}, "ENGLISH"}, {[]string{"German", "deu", "de-DE"}, "GERMAN"}, {[]string{"English", "French"}, "ENGLISH DL"}, {[]string{"Custom Dialect"}, "CUSTOM DIALECT"}, {[]string{"phi"}, "PHILIPPINE LANGUAGES"}, {[]string{"und", "German"}, "GERMAN"}, {[]string{"Undetermined"}, ""}, {nil, ""}} {
 		if got := resolveLanguage(api.UploadSubject{AudioLanguages: test.values}); got != test.want {
 			t.Fatalf("language = %q, want %q", got, test.want)
 		}

@@ -55,7 +55,7 @@ func NormalizeLanguageList(values []string) []string {
 }
 
 // NormalizeLanguageNames interprets human-name fields such as BDInfo language
-// columns before trying codes. This distinguishes names like Ga/Kru from ga/kru.
+// columns, retaining lowercase codes. It distinguishes Ga/Kru from ga/kru.
 func NormalizeLanguageNames(values []string) []string {
 	return normalizeLanguageList(values, NormalizeLanguageName)
 }
@@ -98,10 +98,15 @@ func NormalizeLanguageLabel(value string) string {
 	return qualifiedLanguageLabel(tag, coverage)
 }
 
-// NormalizeLanguageName resolves an explicit human-name field, then a code if
-// no name matches. Canonical labels retain tags where a name alone is ambiguous.
+// NormalizeLanguageName resolves lowercase codes before human names, preserving
+// Ga/Kru as names and ga/kru as codes. Ambiguous labels retain canonical tags.
 func NormalizeLanguageName(value string) string {
 	base, coverage := SubtitleLanguageParts(value)
+	if base == strings.ToLower(base) {
+		if tag, ok := parseLanguageCode(base); ok {
+			return qualifiedLanguageLabel(tag, coverage)
+		}
+	}
 	languageNameMapOnce.Do(buildLanguageNameMap)
 	if code := languageNameMap[languageNameKey(base)]; code != "" {
 		if tag, ok := parseLanguageCode(code); ok {
