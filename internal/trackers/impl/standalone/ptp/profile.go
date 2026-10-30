@@ -39,7 +39,7 @@ func Profile() standalone.Profile {
 		Rules:               &trackers.RuleSet{RequireMovieOnly: true},
 		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
-		DataPolicy:          &trackers.DataLookupPolicy{Cooldown: time.Minute},
+		DataPolicy:          &trackers.DataLookupPolicy{Cooldown: time.Minute, LegacyExternalIDsNeedRefresh: true},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{Requirements: []trackers.MetadataRequirement{{
 			Scope:       trackers.MetadataScopeAny,
 			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly},

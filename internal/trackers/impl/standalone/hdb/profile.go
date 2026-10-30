@@ -6,6 +6,7 @@ package hdb
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -31,6 +32,7 @@ func Profile() standalone.Profile {
 			return prepareUploadAt(ctx, req, hdbBaseURL, nil)
 		},
 		NewDuplicateAdapter: func(deps dupe.Dependencies) dupe.Adapter { return newDuplicateAdapterAt(deps, hdbBaseURL) },
+		DataPolicy:          &trackers.DataLookupPolicy{Cooldown: 15 * time.Second, LegacyExternalIDsNeedRefresh: true},
 		DupePolicy: &trackers.DupePolicy{
 			ID:         "hdb/duplicate/v5",
 			EvidenceID: "hdb-rules",

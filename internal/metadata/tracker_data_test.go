@@ -27,6 +27,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/imdb"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -349,7 +350,14 @@ func TestEnrichTrackerDataPreferredTrackerOverridesStaticPriority(t *testing.T) 
 }
 
 func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing.T) {
-	repo := &fakeRepo{}
+	source := filepath.Join(t.TempDir(), "Example.Movie.2026.BluRay.1080p.DTS.x264-GRP")
+	repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{{
+		SourcePath:  source,
+		Tracker:     "ANT",
+		TrackerID:   "101",
+		InfoHash:    "source-hash",
+		Description: "Retained notes",
+	}}}
 	lookup := &stubTrackerLookup{
 		results: map[string]trackerdata.Result{
 			"ANT": {
@@ -375,8 +383,11 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
-		SourcePath:       `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
+		SourcePath:       source,
 		EvidenceTrackers: []string{"ANT", "HDB"},
+		StoredDataFresh:  true,
+		InfoHash:         "source-hash",
+		Identity:         api.ExternalIdentity{SourcePath: source, Resolution: api.IdentityResolutionKey{ContractVersion: externalidentity.ContractVersion}},
 	}
 
 	result, err := svc.collectTrackerEvidence(context.Background(), meta)
@@ -390,6 +401,9 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 	}
 	if winner.TMDBID == 0 && winner.IMDBID == 0 && winner.TVDBID == 0 {
 		t.Fatalf("expected metadata ids on winner record")
+	}
+	if !slices.ContainsFunc(result.TrackerData, func(record api.TrackerMetadata) bool { return record.Description == "Retained notes" }) {
+		t.Fatalf("concurrent winner discarded retained assets: %+v", result.TrackerData)
 	}
 }
 
@@ -835,6 +849,7 @@ func TestFreshSnapshotUsesTrackerIDsBeforeProviderNameSearch(t *testing.T) {
 			state := preparationstate.State{
 				SourcePath:        sourcePath,
 				StoredDataFresh:   true,
+				Identity:          api.ExternalIdentity{SourcePath: sourcePath, Resolution: api.IdentityResolutionKey{ContractVersion: externalidentity.ContractVersion}},
 				InfoHash:          infoHash,
 				TrackerIDs:        map[string]string{"ant": trackerID},
 				EvidenceTrackers:  []string{"ANT"},
@@ -1507,6 +1522,7 @@ func TestFreshSnapshotPreservesPreferredTrackerIDPriority(t *testing.T) {
 		wantTMDBID  int
 		wantIMDBID  int
 		wantLookups []string
+		cooling     bool
 	}{
 		{
 			name:       "preferred record cached after lower-priority record",
@@ -1533,9 +1549,35 @@ func TestFreshSnapshotPreservesPreferredTrackerIDPriority(t *testing.T) {
 			wantIMDBID:  24,
 			wantLookups: []string{"HDB"},
 		},
+		{
+			name:       "preferred lookup cooldown retains lower-priority cached IDs",
+			stored:     []api.TrackerMetadata{cachedANT},
+			wantTMDBID: 42,
+			wantIMDBID: 24,
+			cooling:    true,
+		},
+		{
+			name: "preferred assets do not hide lower-priority cached IDs",
+			stored: []api.TrackerMetadata{
+				{
+					SourcePath:  sourcePath,
+					Tracker:     "HDB",
+					TrackerID:   "202",
+					InfoHash:    infoHash,
+					Description: "Retained notes",
+				},
+				cachedANT,
+			},
+			wantTMDBID:  42,
+			wantIMDBID:  24,
+			wantLookups: []string{"HDB"},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			repo := &fakeRepo{trackerMetadata: test.stored}
+			if test.cooling {
+				repo.trackerTimestamps = []api.TrackerTimestamp{{Tracker: "HDB", UpdatedAt: time.Now()}}
+			}
 			lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{"HDB": test.hdbResult}}
 			tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Example Movie", Year: 2026}}
 			imdbClient := &stubIMDB{infoFn: func(id string) imdb.Info {
@@ -1561,6 +1603,7 @@ func TestFreshSnapshotPreservesPreferredTrackerIDPriority(t *testing.T) {
 			state := preparationstate.State{
 				SourcePath:        sourcePath,
 				StoredDataFresh:   true,
+				Identity:          api.ExternalIdentity{SourcePath: sourcePath, Resolution: api.IdentityResolutionKey{ContractVersion: externalidentity.ContractVersion}},
 				InfoHash:          infoHash,
 				TrackerIDs:        map[string]string{"ant": "101", "hdb": "202"},
 				Policy:            preparationstate.CollectionPolicy{OnlyID: true},

@@ -5,6 +5,8 @@ package metadata
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -15,16 +17,54 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+type trackerLookupEvidence struct {
+	trackerdata.Result
+	ExternalIDVersion int
+}
+
+// UnmarshalJSON expires pre-fix normalized IDs without changing the query key:
+// successful evidence is recollected, while failed partials stay suppressed.
+func (e *trackerLookupEvidence) UnmarshalJSON(data []byte) error {
+	type payload trackerLookupEvidence
+	var value payload
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("decode tracker lookup evidence: %w", err)
+	}
+	if value.ExternalIDVersion != 1 {
+		return errors.New("obsolete tracker external ID evidence")
+	}
+	*e = trackerLookupEvidence(value)
+	return nil
+}
+
 // lookupTrackerDataEvidence reuses tracker metadata without promoting replayed
 // image acceptance into a new collection. Descriptor provenance alone is not a receipt.
-func lookupTrackerDataEvidence(ctx context.Context, query any, onlyID, keepImages bool, fetch func() (trackerdata.Result, error)) (trackerdata.Result, error) {
+func lookupTrackerDataEvidence(
+	ctx context.Context,
+	query any,
+	refreshLegacyIDs, onlyID, keepImages bool,
+	fetch func() (trackerdata.Result, error),
+) (trackerdata.Result, error) {
 	collected := false
-	result, err := evidence.Lookup(ctx, "tracker.lookup", query, func() (trackerdata.Result, error) {
+	fetchCurrent := func() (trackerdata.Result, error) {
 		collected = true
 		return fetch()
-	}, func(value trackerdata.Result) bool {
+	}
+	empty := func(value trackerdata.Result) bool {
 		return !value.HasData() || !onlyID && strings.TrimSpace(value.Description) == "" || keepImages && len(value.Images) == 0
-	})
+	}
+	var result trackerdata.Result
+	var err error
+	if refreshLegacyIDs {
+		var retained trackerLookupEvidence
+		retained, err = evidence.Lookup(ctx, "tracker.lookup", query, func() (trackerLookupEvidence, error) {
+			result, err := fetchCurrent()
+			return trackerLookupEvidence{Result: result, ExternalIDVersion: 1}, err
+		}, func(value trackerLookupEvidence) bool { return empty(value.Result) })
+		result = retained.Result
+	} else {
+		result, err = evidence.Lookup(ctx, "tracker.lookup", query, fetchCurrent, empty)
+	}
 	if !collected {
 		result.UninspectedImages = nil
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -175,7 +176,9 @@ func (l *dataLookup) request(ctx context.Context, endpoint string, payload map[s
 		return nil, fmt.Errorf("trackerdata: bhd request failed status=%d", resp.StatusCode)
 	}
 	result := map[string]any{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	decoder := json.NewDecoder(resp.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
 		return nil, fmt.Errorf("trackerdata: bhd decode: %w", err)
 	}
 	if bhdInt(result["status_code"]) != 1 {
@@ -193,14 +196,14 @@ func parseTMDB(value any) (string, int) {
 		return "", 0
 	}
 	if after, ok := strings.CutPrefix(raw, "tv/"); ok {
-		return "TV", int(bhdInt(after))
+		return "TV", providerid.ParseDecimal(after)
 	}
 	if after, ok := strings.CutPrefix(raw, "movie/"); ok {
-		return "MOVIE", int(bhdInt(after))
+		return "MOVIE", providerid.ParseDecimal(after)
 	}
-	return "", int(bhdInt(raw))
+	return "", providerid.ParseDecimal(raw)
 }
 
 func bhdIMDBInt(value any) int {
-	return int(bhdInt(strings.TrimPrefix(strings.ToLower(bhdString(value)), "tt")))
+	return providerid.ParseDecimal(strings.TrimPrefix(strings.ToLower(bhdString(value)), "tt"))
 }
