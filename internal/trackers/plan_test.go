@@ -34,6 +34,7 @@ func (r *trackerEffectReporterStub) Begin(
 	}
 	return api.WorkflowExternalEffectReceipt{
 		EffectID:         "effect-1",
+		OperationID:      "operation-1",
 		AlreadySucceeded: r.alreadySucceeded,
 	}, nil
 }
@@ -198,6 +199,9 @@ func TestLegacyTrackerSubmissionDisconnectDoesNotRecordKnownFailure(t *testing.T
 	(&Service{logger: api.NopLogger{}}).submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "synthetic"}, slots)
 	if reporter.completeCalls != 0 || slots[0].failure == nil || slots[0].failure.Code != "unknown_outcome" {
 		t.Fatalf("unclassified legacy attempt completed=%d failure=%#v", reporter.completeCalls, slots[0].failure)
+	}
+	if slots[0].submissionReceiptID != "effect-1" || slots[0].submissionOperationID != "operation-1" {
+		t.Fatalf("legacy attempt lost receipt identity: effect=%q operation=%q", slots[0].submissionReceiptID, slots[0].submissionOperationID)
 	}
 }
 

@@ -6,6 +6,7 @@ package rtf
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -17,22 +18,27 @@ import (
 func TestUploadSubmissionOutcomes(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		body    string
-		outcome submission.Outcome
+		name      string
+		status    int
+		body      string
+		outcome   submission.Outcome
+		torrentID string
 	}{
-		{`{`, submission.Unknown},
-		{`{}`, submission.Unknown},
-		{`{"error":false,"torrent":{"id":0}}`, submission.Unknown},
-		{`{"error":false,"torrent":{"id":{}}}`, submission.Unknown},
-		{`{"error":true,"message":"Invalid torrent"}`, submission.Rejected},
-		{`{"error":false,"torrent":{"id":123}}`, submission.Accepted},
-		{`{"error":false,"torrent":{"id":1234567}}`, submission.Accepted},
+		{"malformed", http.StatusCreated, `{`, submission.Unknown, ""},
+		{"missing identity", http.StatusCreated, `{}`, submission.Unknown, ""},
+		{"zero identity", http.StatusCreated, `{"error":false,"torrent":{"id":0}}`, submission.Unknown, ""},
+		{"object identity", http.StatusCreated, `{"error":false,"torrent":{"id":{}}}`, submission.Unknown, ""},
+		{"rejected with success status", http.StatusCreated, `{"error":true,"message":"Invalid torrent"}`, submission.Rejected, ""},
+		{"complete rejection", http.StatusBadRequest, `{"error":true,"message":"Invalid torrent"}`, submission.Rejected, ""},
+		{"truncated rejection prefix", http.StatusBadRequest, `{"error":true}` + strings.Repeat(" ", 1<<20) + `incomplete trailing data`, submission.Unknown, ""},
+		{"numeric identity", http.StatusCreated, `{"error":false,"torrent":{"id":123}}`, submission.Accepted, "123"},
+		{"large numeric identity", http.StatusCreated, `{"error":false,"torrent":{"id":1234567}}`, submission.Accepted, "1234567"},
 	} {
-		t.Run(test.body, func(t *testing.T) {
+		t.Run(test.name, func(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests.Add(1)
-				w.WriteHeader(http.StatusCreated)
+				w.WriteHeader(test.status)
 				_, _ = w.Write([]byte(test.body))
 			}))
 			defer server.Close()
@@ -44,7 +50,7 @@ func TestUploadSubmissionOutcomes(t *testing.T) {
 			if (summary.Uploaded == 1) != (test.outcome == submission.Accepted) {
 				t.Fatalf("uploaded=%d", summary.Uploaded)
 			}
-			if test.outcome == submission.Accepted && summary.UploadedTorrents[0].TorrentID != "123" && summary.UploadedTorrents[0].TorrentID != "1234567" {
+			if test.outcome == submission.Accepted && summary.UploadedTorrents[0].TorrentID != test.torrentID {
 				t.Fatalf("numeric identity=%q", summary.UploadedTorrents[0].TorrentID)
 			}
 		})

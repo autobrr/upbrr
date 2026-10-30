@@ -335,8 +335,9 @@ func ApplyCookies(req *http.Request, cookies []*http.Cookie) {
 
 // ReadUploadResponseBody reads a full success-candidate response and a bounded,
 // unredacted preview. Non-success responses return up to 1 MiB of raw body and
-// a compact, redacted preview that can include late error messages. On a failed
-// non-success read, the returned body and preview retain partial diagnostics.
+// a compact, redacted preview that can include late error messages. A truncated
+// or failed non-success read returns an error; its body and preview remain
+// partial diagnostics, not complete protocol evidence.
 func ReadUploadResponseBody(resp *http.Response, successCandidate bool, previewLimit int64) ([]byte, []byte, error) {
 	if previewLimit <= 0 {
 		previewLimit = DefaultResponsePreviewBytes
@@ -349,7 +350,7 @@ func ReadUploadResponseBody(resp *http.Response, successCandidate bool, previewL
 		return body, ResponseBodyPreview(body, previewLimit), nil
 	}
 
-	body, preview, _, err := readHTTPErrorResponse(resp.Body, previewLimit)
+	body, preview, _, err := readExecutedUploadBody(resp.Body, false, BoundedSuccessBody, 0, previewLimit)
 	if err != nil {
 		return body, preview, fmt.Errorf("read upload response body: %w", err)
 	}

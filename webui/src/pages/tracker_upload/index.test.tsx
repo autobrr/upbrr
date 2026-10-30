@@ -573,6 +573,12 @@ describe("TrackerUploadPage", () => {
             },
           ],
         },
+        {
+          trackerId: "OTHER",
+          status: "failed",
+          submissionStatus: "failed",
+          failures: [{ failure: { Code: "receipt_retention", Operation: "upload_execute" } }],
+        },
       ],
     } as unknown as NonNullable<UploadFacet["view"]["result"]>;
     renderPage(uploadFacet({ dryRunStatus: "ready", dryRunResult, result }, { retry }));
