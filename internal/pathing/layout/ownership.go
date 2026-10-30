@@ -119,7 +119,7 @@ func claimReleaseDirectory(tmpRoot, source string, release api.ReleaseInfo) (str
 	}
 	// Shared layout metadata is not a release artifact. The OS releases the short
 	// claim lock on process exit; it must not be unlinked while another process waits.
-	lock, err := filelock.Acquire(filepath.Join(tmpRoot, ".release-layout.lock"))
+	lock, err := filelock.AcquireBlocking(filepath.Join(tmpRoot, ".release-layout.lock"))
 	if err != nil {
 		return "", "", fmt.Errorf("paths: claim release directory: %w", err)
 	}

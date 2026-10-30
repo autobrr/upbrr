@@ -603,10 +603,11 @@ func TestHistoryDeleteProtectsActiveLegacyTempCollision(t *testing.T) {
 	t.Parallel()
 
 	for _, scenario := range []struct {
-		name       string
-		activeName string
-		blocked    bool
-		claimed    bool
+		name        string
+		activeName  string
+		blocked     bool
+		claimed     bool
+		activeFirst bool
 	}{
 		{
 			name:       "same sanitized basename",
@@ -615,10 +616,16 @@ func TestHistoryDeleteProtectsActiveLegacyTempCollision(t *testing.T) {
 		},
 		{name: "different basename", activeName: "Other.Release.2026.mkv"},
 		{
-name: "same basename with distinct owners",
- activeName: "Example.Release.2026.mkv",
- claimed: true,
-},
+			name:       "same basename with distinct owners",
+			activeName: "Example.Release.2026.mkv",
+			claimed:    true,
+		},
+		{
+			name:        "active owner claimed first",
+			activeName:  "Example.Release.2026.mkv",
+			claimed:     true,
+			activeFirst: true,
+		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
@@ -653,15 +660,30 @@ name: "same basename with distinct owners",
 				t.Fatal(err)
 			}
 			capturePath := filepath.Join(tmpRoot, paths.ReleaseTempBaseFor(activeSource, api.ReleaseInfo{}), "capture.png")
+			historyArtifact := ""
 			if scenario.claimed {
-				if _, _, err := paths.ReleaseTempDirFor(tmpRoot, historySource, api.ReleaseInfo{}); err != nil {
-					t.Fatal(err)
+				sources := []string{historySource, activeSource}
+				if scenario.activeFirst {
+					sources[0], sources[1] = sources[1], sources[0]
+				}
+				for _, source := range sources {
+					if _, _, err := paths.ReleaseTempDirFor(tmpRoot, source, api.ReleaseInfo{}); err != nil {
+						t.Fatal(err)
+					}
 				}
 				activeDir, _, err := paths.ReleaseTempDirFor(tmpRoot, activeSource, api.ReleaseInfo{})
 				if err != nil {
 					t.Fatal(err)
 				}
 				capturePath = filepath.Join(activeDir, "capture.png")
+				historyDir, _, err := paths.ReleaseTempPathFor(tmpRoot, historySource, api.ReleaseInfo{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				historyArtifact = filepath.Join(historyDir, "mediainfo.txt")
+				if err := os.WriteFile(historyArtifact, []byte("owned report"), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := os.MkdirAll(filepath.Dir(capturePath), 0o700); err != nil {
 				t.Fatal(err)
@@ -686,6 +708,11 @@ name: "same basename with distinct owners",
 			}
 			if _, err := os.Stat(capturePath); err != nil {
 				t.Fatalf("active unpersisted capture changed: %v", err)
+			}
+			if historyArtifact != "" {
+				if _, err := os.Stat(historyArtifact); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("deleted History owner's report remains: %v", err)
+				}
 			}
 			active, err := repo.LoadActiveInput(ctx)
 			if err != nil {

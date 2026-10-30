@@ -13,7 +13,10 @@ func TestReleaseArtifactOwnership(t *testing.T) {
 		{"independent feature root", `func write(dbPath string) { root,_:=db.Subdir(dbPath,"tmp"); dir:=filepath.Join(root,"renamed-cache",key); os.MkdirAll(dir,0700) }`, true},
 		{"request root", `func write(req Request) { dir:=filepath.Join(req.TempRoot,"other-feature"); os.WriteFile(dir,data,0600) }`, true},
 		{"aliased root", `func write(tmpRoot string) { var renamed=tmpRoot; os.MkdirTemp(renamed,"different-cache-") }`, true},
+		{"direct database tmp", `func write(dbPath string) { os.MkdirAll(filepath.Join(filepath.Dir(dbPath),"tmp","renamed-cache"),0700) }`, true},
+		{"nested database tmp", `func write(cfg Config) { dir:=filepath.Join(filepath.Join(filepath.Dir(cfg.MainSettings.DBPath),"tmp"),"renamed-cache"); os.MkdirAll(dir,0700) }`, true},
 		{"owned nested directory", `func write(tmpRoot,source string) { owner,_,_:=paths.ReleaseTempDirFor(tmpRoot,source,release); dir:=filepath.Join(owner,"analysis",generation);os.MkdirAll(dir,0700) }`, false},
+		{"owned nested tmp", `func write(dbPath,source string) { root:=filepath.Join(filepath.Dir(dbPath),"tmp"); owner,_,_:=paths.ReleaseTempDirFor(root,source,release); os.MkdirAll(filepath.Join(owner,"tmp","scratch"),0700) }`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()

@@ -92,12 +92,33 @@ func rawArtifactRoot(expr ast.Expr, roots map[string]bool) bool {
 	case *ast.SelectorExpr:
 		return artifactRootName(value.Sel.Name) || value.Sel.Name == "TempRoot"
 	case *ast.CallExpr:
-		if sel, ok := value.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Subdir" && len(value.Args) > 1 {
+		if sel, ok := value.Fun.(*ast.SelectorExpr); ok && len(value.Args) > 1 {
+			if sel.Sel.Name == "Join" && rawArtifactRoot(value.Args[0], roots) {
+				return true
+			}
 			if literal, ok := value.Args[1].(*ast.BasicLit); ok {
 				text, _ := strconv.Unquote(literal.Value)
-				return text == "tmp"
+				return text == "tmp" && (sel.Sel.Name == "Subdir" || sel.Sel.Name == "Join" && databaseDirectory(value.Args[0]))
 			}
 		}
+	}
+	return false
+}
+
+func databaseDirectory(expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Dir" {
+		return false
+	}
+	switch path := call.Args[0].(type) {
+	case *ast.Ident:
+		return strings.EqualFold(path.Name, "dbPath")
+	case *ast.SelectorExpr:
+		return strings.EqualFold(path.Sel.Name, "dbPath")
 	}
 	return false
 }

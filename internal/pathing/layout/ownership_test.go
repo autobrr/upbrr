@@ -8,9 +8,39 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/autobrr/upbrr/internal/filelock"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestReleaseDirectoryWaitsForClaim(t *testing.T) {
+	root := t.TempDir()
+	lock, err := filelock.Acquire(filepath.Join(root, ".release-layout.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lock.Close() })
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		_, _, err := ReleaseTempDirFor(root, filepath.Join(root, "Example.mkv"), api.ReleaseInfo{})
+		done <- err
+	}()
+	<-started
+	select {
+	case err := <-done:
+		t.Fatalf("directory claim returned before the existing owner released it: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestReleaseDirectoriesIsolateSameBasenameOwners(t *testing.T) {
 	root := t.TempDir()
@@ -31,9 +61,9 @@ func TestReleaseDirectoriesIsolateSameBasenameOwners(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b, filenameBase+".torrent"), []byte("torrent"), 0o600); err != nil {
 		t.Fatalf("collision directory expanded an otherwise valid artifact filename: %v", err)
 	}
-	for _, source := range []string{first, second} {
+	for source, want := range map[string]string{first: a, second: b} {
 		dir, _, err := ReleaseTempDirFor(root, source, api.ReleaseInfo{})
-		if err != nil || (dir != a && dir != b) {
+		if err != nil || dir != want {
 			t.Fatalf("owner lost across reopen: %s %v", dir, err)
 		}
 	}
