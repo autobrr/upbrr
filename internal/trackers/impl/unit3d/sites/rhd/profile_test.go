@@ -125,10 +125,11 @@ func TestBuildNamePreservesStructuredEditionParts(t *testing.T) {
 			Year:       2026,
 			Resolution: "1080p",
 		},
-		Type:        "WEBDL",
-		VideoEncode: "H.264",
-		Tag:         "-GRP",
-		Edition:     "Extended Collector's Open Matte",
+		Type:           "WEBDL",
+		VideoEncode:    "H.264",
+		Tag:            "-GRP",
+		Edition:        "Extended Collector's Open Matte",
+		AudioLanguages: []string{"English"},
 	}
 	structured := legacy
 	structured.Cut, structured.Edition, structured.Presentation = "Extended", "Collector's", "Open Matte"
@@ -154,13 +155,14 @@ func TestBuildNamePrefersEditionSet(t *testing.T) {
 			Year:       2026,
 			Resolution: "1080p",
 		},
-		Type:         "WEBDL",
-		VideoEncode:  "H.264",
-		Tag:          "-GRP",
-		EditionSet:   "2in1",
-		Cut:          "Extended",
-		Edition:      "Collector's",
-		Presentation: "Open Matte",
+		Type:           "WEBDL",
+		VideoEncode:    "H.264",
+		Tag:            "-GRP",
+		EditionSet:     "2in1",
+		AudioLanguages: []string{"English"},
+		Cut:            "Extended",
+		Edition:        "Collector's",
+		Presentation:   "Open Matte",
 	}
 	if got, want := buildName(subject, config.TrackerConfig{}), "2in1 Extended Collector's Open Matte Story 2026 2in1 ENGLISH 1080p WEB-DL H.264-GRP"; got != want {
 		t.Fatalf("edition set = %q, want %q", got, want)
@@ -306,7 +308,7 @@ func TestProfileResolutionAndLanguages(t *testing.T) {
 	for _, test := range []struct {
 		values []string
 		want   string
-	}{{[]string{"", "French", "   "}, "FRENCH"}, {[]string{"English", "eng", "English"}, "ENGLISH"}, {[]string{"German", "deu", "de-DE"}, "GERMAN"}, {[]string{"English", "French"}, "ENGLISH DL"}} {
+	}{{[]string{"", "French", "   "}, "FRENCH"}, {[]string{"English", "eng", "English"}, "ENGLISH"}, {[]string{"German", "deu", "de-DE"}, "GERMAN"}, {[]string{"English", "French"}, "ENGLISH DL"}, {[]string{"Custom Dialect"}, "CUSTOM DIALECT"}, {[]string{"phi"}, "PHILIPPINE LANGUAGES"}, {nil, ""}} {
 		if got := resolveLanguage(api.UploadSubject{AudioLanguages: test.values}); got != test.want {
 			t.Fatalf("language = %q, want %q", got, test.want)
 		}

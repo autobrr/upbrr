@@ -373,11 +373,3 @@ func TestValidateLanguageCombinationAcceptsCompleteScottishGaelicLabel(t *testin
 		t.Fatalf("Scottish Gaelic language combination failed: %+v", failures)
 	}
 }
-
-func TestNormalizedLanguageSetPreservesCompleteScottishGaelicLabel(t *testing.T) {
-	t.Parallel()
-
-	if got, ok := normalizedLanguageSet([]string{"gd", "Scottish Gaelic"}); !ok || got != "scottish gaelic" {
-		t.Fatalf("normalized Scottish Gaelic set = (%q, %t)", got, ok)
-	}
-}

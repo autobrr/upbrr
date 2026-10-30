@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/text/language"
+
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -327,55 +329,51 @@ func ptpHasEnglishLanguage(values []string) bool {
 }
 
 func ptpEnglishLanguage(value string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	return languageutil.NormalizeLanguageCode(value) == "en" || strings.HasPrefix(normalized, "english")
+	return languageutil.SameLanguage(value, "en") || strings.EqualFold(strings.TrimSpace(value), "English intertitles")
 }
 
+// Subtitle IDs are keyed by language identity, not display spelling.
 var subtitleIDs = map[string]int{
-	"arabic":               22,
-	"brazilian portuguese": 49,
-	"bulgarian":            29,
-	"chinese":              14,
-	"croatian":             23,
-	"czech":                30,
-	"danish":               10,
-	"dutch":                9,
-	"english":              3,
-	"english - forced":     50,
-	"english forced":       50,
-	"english intertitles":  51,
-	"estonian":             38,
-	"finnish":              15,
-	"french":               5,
-	"german":               6,
-	"greek":                26,
-	"hebrew":               40,
-	"hindi":                41,
-	"hungarian":            24,
-	"icelandic":            28,
-	"indonesian":           47,
-	"italian":              16,
-	"japanese":             8,
-	"korean":               19,
-	"latvian":              37,
-	"lithuanian":           39,
-	"malay":                54,
-	"norwegian":            12,
-	"persian":              52,
-	"polish":               17,
-	"portuguese":           21,
-	"romanian":             13,
-	"russian":              7,
-	"serbian":              31,
-	"slovak":               42,
-	"slovenian":            43,
-	"spanish":              4,
-	"swedish":              11,
-	"thai":                 20,
-	"turkish":              18,
-	"ukrainian":            34,
-	"vietnamese":           25,
-	"welsh":                55,
+	"ar": 22,
+	"bg": 29,
+	"cs": 30,
+	"cy": 55,
+	"da": 10,
+	"de": 6,
+	"el": 26,
+	"en": 3,
+	"es": 4,
+	"et": 38,
+	"fa": 52,
+	"fi": 15,
+	"fr": 5,
+	"he": 40,
+	"hi": 41,
+	"hr": 23,
+	"hu": 24,
+	"id": 47,
+	"is": 28,
+	"it": 16,
+	"ja": 8,
+	"ko": 19,
+	"lt": 39,
+	"lv": 37,
+	"ms": 54,
+	"nl": 9,
+	"no": 12,
+	"pl": 17,
+	"pt": 21,
+	"ro": 13,
+	"ru": 7,
+	"sk": 42,
+	"sl": 43,
+	"sr": 31,
+	"sv": 11,
+	"th": 20,
+	"tr": 18,
+	"uk": 34,
+	"vi": 25,
+	"zh": 14,
 }
 
 // reviewedSubtitles follows the owner-supplied PTP selection and call-site
@@ -478,13 +476,29 @@ func reviewedSubtitles(meta api.UploadSubject, answers map[string]string) ([]int
 
 func subtitleID(value string) (int, bool) {
 	base, coverage := languageutil.SubtitleLanguageParts(value)
-	if normalized := languageutil.NormalizeLanguageLabel(base); normalized != "" {
-		base = normalized
+	if strings.EqualFold(base, "English intertitles") {
+		return 51, true
 	}
-	if strings.EqualFold(base, "English") && coverage == "Forced" {
+	tag, ok := languageutil.LanguageTag(base)
+	if !ok {
+		return 0, false
+	}
+	// Preserve the site's existing grouped taxonomy without merging media identities.
+	tag, _ = language.All.Canonicalize(tag)
+	identity, _, region := tag.Raw()
+	code := identity.String()
+	if code == "en" && coverage == "Forced" {
 		return 50, true
 	}
-	id, ok := subtitleIDs[strings.ToLower(strings.TrimSpace(base))]
+	switch code {
+	case "nn":
+		return 12, true
+	case "pt":
+		if region.String() == "BR" {
+			return 49, true
+		}
+	}
+	id, ok := subtitleIDs[code]
 	return id, ok
 }
 

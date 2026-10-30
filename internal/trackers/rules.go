@@ -6,6 +6,7 @@ package trackers
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
@@ -529,6 +530,9 @@ func evaluateLanguageRule(meta api.RuleSubject, rule *LanguageRule) (bool, strin
 	audioLanguages := normalizeStrings(meta.AudioLanguages)
 	subLanguages := normalizeStrings(meta.SubtitleLanguages)
 	required := normalizeStrings(rule.Languages)
+	hasRequired := func(values []string) bool {
+		return slices.ContainsFunc(required, func(value string) bool { return languageutil.ContainsLanguage(values, value) })
+	}
 	if len(required) == 0 {
 		return true, ""
 	}
@@ -536,7 +540,7 @@ func evaluateLanguageRule(meta api.RuleSubject, rule *LanguageRule) (bool, strin
 		if len(audioLanguages) == 0 && len(subLanguages) == 0 {
 			return false, "missing disc language data"
 		}
-		if containsAny(audioLanguages, required) || containsAny(subLanguages, required) {
+		if hasRequired(audioLanguages) || hasRequired(subLanguages) {
 			return true, ""
 		}
 		return false, "disc requires audio or subtitles in " + strings.Join(required, ", ")
@@ -547,14 +551,14 @@ func evaluateLanguageRule(meta api.RuleSubject, rule *LanguageRule) (bool, strin
 		return false, "missing language data"
 	}
 
-	audioOK := !checkAudio || containsAny(audioLanguages, required)
-	subOK := !checkSubs || containsAny(subLanguages, required)
+	audioOK := !checkAudio || hasRequired(audioLanguages)
+	subOK := !checkSubs || hasRequired(subLanguages)
 
 	originalOK := false
 	if rule.AllowOriginal {
 		original := resolveOriginalLanguage(meta)
 		if original != "" {
-			originalOK = containsAny(audioLanguages, []string{original})
+			originalOK = languageutil.ContainsLanguage(audioLanguages, original)
 		}
 	}
 

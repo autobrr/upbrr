@@ -6,13 +6,15 @@ package yus
 import (
 	"context"
 	"fmt"
+	"slices"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-yus-policy-v2", Check: checkNamingEvidence}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-yus-policy-v3", Check: checkNamingEvidence}
 }
 
 // checkNamingEvidence needs only enough programme evidence to decide whether
@@ -26,7 +28,9 @@ func checkNamingEvidence(ctx context.Context, subject api.TrackerValidationSubje
 	}
 	facts := subject.LanguageFacts
 	count := trackers.KnownProgrammeLanguageCount(facts)
-	if facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && count == len(facts.ProgrammeLanguages) && (count > 0 || facts.AudioAbsent) {
+	if facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
+		!slices.ContainsFunc(facts.ProgrammeLanguages, func(value string) bool { return !languageutil.IsIdentifiedLanguage(value) }) &&
+		(count > 0 || facts.AudioAbsent) {
 		return nil, nil
 	}
 	if facts.ProgrammeStatus == api.MetadataEvidenceStatusPartial && count >= 2 {

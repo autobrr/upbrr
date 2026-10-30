@@ -139,6 +139,7 @@ func TestRegistryCanonicalThreeDNames(t *testing.T) {
 		for _, authority := range []string{"automatic", "manual include", "manual omission"} {
 			t.Run(tc.tracker+"/"+authority, func(t *testing.T) {
 				subject := providerNameSubject(api.CanonicalCategoryMovie)
+				subject.AudioLanguages = []string{"English"}
 				subject.ProviderMetadata.IMDB.AKA = "IMDb Signal"
 				subject.Repack, subject.Is3D = "REPACK2", "3D"
 				subject.ReleaseFeatures = []api.ReleaseFeature{api.ReleaseFeature3DHalfSBS}

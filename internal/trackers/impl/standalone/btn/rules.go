@@ -27,7 +27,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
 	if !remux && facts.OriginalLanguagesKnown &&
-		(slices.Contains(facts.OriginalLanguages, "English") || (!subject.Anime && !facts.HasOriginalAudio())) {
+		(languageutil.ContainsLanguage(facts.OriginalLanguages, "English") || (!subject.Anime && !facts.HasOriginalAudio())) {
 		failures = append(failures, trackers.ProgrammeAudioOriginFailures(subject)...)
 	}
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
@@ -44,7 +44,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	} else if !isBTNEnglishLanguage(language) && btnPrimaryCountryID(subject) == "" {
 		add("primary_country", "select the BTN country matching the primary "+language+" programme audio", trackers.LanguageUnresolved)
 	}
-	english := slices.Contains(facts.ProgrammeLanguages, "English")
+	english := languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English")
 	if !facts.OriginalLanguagesKnown {
 		if !remux {
 			add("original_evidence", "original language is unresolved for the programme dub assessment", trackers.LanguageUnresolved)
@@ -55,19 +55,19 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 				continue
 			}
 			for _, language := range track.Languages {
-				code := languageutil.NormalizeLanguageCode(language)
-				if code == "" || code == "und" || code == "mul" || slices.Contains(facts.OriginalLanguages, language) {
+				if !languageutil.IsIdentifiedLanguage(language) || languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
 					continue
 				}
-				if slices.Contains(facts.OriginalLanguages, "English") {
+				if languageutil.ContainsLanguage(facts.OriginalLanguages, "English") {
 					add("staff_dub", "dubs of English-original shows require staff approval", trackers.LanguageStaffException)
-				} else if language != "English" {
+				} else if !languageutil.SameLanguage(language, "English") {
 					add("optional_dub", "other non-English dubs should be omitted", trackers.LanguageAdvisory)
 				}
 			}
 		}
 	}
-	if subject.Anime && !english && (!slices.Contains(facts.ProgrammeLanguages, "Japanese") || !slices.Contains(facts.SubtitleLanguages, "English")) {
+	if subject.Anime && !english &&
+		(!languageutil.ContainsLanguage(facts.ProgrammeLanguages, "Japanese") || !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English")) {
 		outcome := trackers.LanguageProhibited
 		if programmeStatus != api.MetadataEvidenceStatusComplete || facts.SubtitleStatus != api.MetadataEvidenceStatusComplete {
 			outcome = trackers.LanguageUnresolved
@@ -75,7 +75,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		add("anime_audio", "anime requires Japanese audio with English subtitles or English programme audio", outcome)
 	}
 	if !subject.Anime && !remux && facts.OriginalLanguagesKnown &&
-		programmeStatus == api.MetadataEvidenceStatusComplete && !slices.Contains(facts.OriginalLanguages, "English") && !facts.HasUnresolvedProgrammeAudioOrigin() && !facts.HasOriginalAudio() {
+		programmeStatus == api.MetadataEvidenceStatusComplete && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && !facts.HasUnresolvedProgrammeAudioOrigin() && !facts.HasOriginalAudio() {
 		add("original_pack", "a foreign non-anime release lacking original audio can be replaced by an original-audio pack", trackers.LanguageTrumpable)
 	}
 	return append(failures, sourceLanguageFailures(subject)...)
@@ -166,11 +166,12 @@ func sourceKindKnown(subject api.TrackerValidationSubject) bool {
 }
 
 func foreignOriginal(facts api.LanguageFacts) bool {
-	return facts.OriginalLanguagesKnown && !slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX")
+	return facts.OriginalLanguagesKnown && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
+		!languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX")
 }
 
 func needsRetailEnglishDubReview(subject api.TrackerValidationSubject) bool {
 	animated := subject.Anime || slices.ContainsFunc(subject.EffectiveMetadata.Genres, func(genre string) bool { return strings.EqualFold(genre, "Animation") })
 	return animated && foreignOriginal(subject.LanguageFacts) && subject.LanguageFacts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
-		!slices.Contains(subject.LanguageFacts.ProgrammeLanguages, "English")
+		!languageutil.ContainsLanguage(subject.LanguageFacts.ProgrammeLanguages, "English")
 }

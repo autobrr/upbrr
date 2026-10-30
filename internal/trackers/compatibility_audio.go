@@ -48,7 +48,7 @@ func KnownCompatibilityLanguages(languages []string) []string {
 	codes := make([]string, 0, len(languages))
 	for _, language := range languages {
 		code := languageutil.NormalizeLanguageCode(language)
-		if code == "" || code == "und" || code == "mul" {
+		if !languageutil.IsIdentifiedLanguage(language) {
 			return nil
 		}
 		codes = append(codes, code)

@@ -68,7 +68,7 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 			trackKey = manifest + ":" + strconv.Itoa(ordinal)
 		}
 		title := trackString(track, "Title", "Title_String", "Title_String2", "Title_String3")
-		detected := languageutil.NormalizeLanguageList([]string{trackString(track, "Language", "Language_String", "Language_String2", "Language_String3")})
+		detected := mediaInfoTrackLanguages(track)
 
 		role := mediafacts.AudioRole(title)
 		// Ordinary audio contributes its inspected language without requiring a
@@ -166,7 +166,7 @@ func bdInfoAudioTrackFacts(meta preparationstate.State) ([]api.MediaTrackFacts, 
 				return nil, fmt.Errorf("metadata: fingerprint BDInfo audio manifest: %w", err)
 			}
 			for index, audio := range info.Audio {
-				languages := languageutil.NormalizeLanguageList([]string{languageutil.NormalizeLanguageLabel(audio.Language)})
+				languages := languageutil.NormalizeLanguageNames([]string{audio.Language})
 				tracks = append(tracks, api.MediaTrackFacts{
 					ID:                   opaqueMediaTrackID(resourceID, api.MediaTrackAudio, string(manifest)+":"+strconv.Itoa(index+1)),
 					Kind:                 api.MediaTrackAudio,

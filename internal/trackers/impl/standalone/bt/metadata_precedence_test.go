@@ -36,7 +36,7 @@ func TestAnimeSearchAndAudioPreferManualFacts(t *testing.T) {
 	if got := resolveLanguage(meta); got != "" {
 		t.Fatalf("manual-empty original language = %q", got)
 	}
-	if got := resolveLanguage(api.UploadSubject{AudioLanguages: []string{"Portuguese"}}); got != "portuguese" {
+	if got := resolveLanguage(api.UploadSubject{AudioLanguages: []string{"Portuguese"}}); got != "Português" {
 		t.Fatalf("automatic audio language fallback = %q", got)
 	}
 	meta.EffectiveMetadata.Title = ""
@@ -72,7 +72,7 @@ func TestResolveLanguagePreservesAutomaticTMDBAndAudioPrecedence(t *testing.T) {
 		ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: ""}},
 		EffectiveMetadata: api.EffectiveMetadata{OriginalLanguage: "Japanese"},
 	}
-	if got := resolveLanguage(meta); got != "portuguese" {
+	if got := resolveLanguage(meta); got != "Português" {
 		t.Fatalf("automatic effective language changed audio fallback = %q", got)
 	}
 	meta.EffectiveMetadata.OriginalLanguage = "Japanese"

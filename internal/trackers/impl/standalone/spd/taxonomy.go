@@ -6,6 +6,8 @@ package spd
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -60,10 +62,8 @@ func resolveCategory(meta api.UploadSubject) string {
 }
 
 func hasRomanian(meta api.UploadSubject) bool {
-	for _, value := range append([]string{}, append(meta.AudioLanguages, meta.SubtitleLanguages...)...) {
-		if strings.EqualFold(strings.TrimSpace(value), "romanian") {
-			return true
-		}
+	if languageutil.ContainsLanguage(meta.AudioLanguages, "ro") || languageutil.ContainsLanguage(meta.SubtitleLanguages, "ro") {
+		return true
 	}
 	if meta.ProviderMetadata.TMDB != nil {
 		for _, code := range meta.ProviderMetadata.TMDB.OriginCountry {

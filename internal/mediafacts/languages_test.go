@@ -194,16 +194,88 @@ func TestSecondaryUnknownLanguageDoesNotInvalidateProgrammeFacts(t *testing.T) {
 }
 
 func TestUnknownOriginalDoesNotCreateDubFacts(t *testing.T) {
-	facts := ResolveLanguages(api.MediaFacts{
-		OriginalLanguage:      "unrecognized",
-		TrackCoverageComplete: true,
-		Tracks: []api.MediaTrackFacts{{
-			Kind:      api.MediaTrackAudio,
-			Role:      api.AudioRoleProgramme,
-			Languages: []string{"English"},
-		}},
-	})
-	if facts.OriginalLanguagesKnown || facts.HasEnglishDub() {
-		t.Fatalf("unknown original created English dub: %#v", facts)
+	for _, original := range []string{"unrecognized", "phi", "mis", "und", "mul"} {
+		facts := ResolveLanguages(api.MediaFacts{
+			OriginalLanguage:      original,
+			TrackCoverageComplete: true,
+			Tracks: []api.MediaTrackFacts{{
+				Kind:      api.MediaTrackAudio,
+				Role:      api.AudioRoleProgramme,
+				Languages: []string{"English"},
+			}},
+		})
+		if facts.OriginalLanguagesKnown || facts.HasEnglishDub() {
+			t.Fatalf("unknown original created English dub: %#v", facts)
+		}
+	}
+}
+
+func TestLanguageIdentityPreservesOriginalAndDubBoundaries(t *testing.T) {
+	for _, tt := range []struct {
+		original, programme, english string
+		wantOriginal                 bool
+	}{
+		{"ja", "Japanese [ja-JP]", "English [en-US]", true},
+		{"tl", "tgl", "English [en-GB]", true},
+		{"fil", "tgl", "English", false},
+		{"zh", "cmn", "English", false},
+	} {
+		facts := ResolveLanguages(api.MediaFacts{
+			OriginalLanguage:      tt.original,
+			TrackCoverageComplete: true,
+			Tracks: []api.MediaTrackFacts{
+				{
+					ID:         "original",
+					ResourceID: "same-file",
+					Kind:       api.MediaTrackAudio,
+					Role:       api.AudioRoleProgramme,
+					Languages:  []string{tt.programme},
+				},
+				{
+					ID:         "english",
+					ResourceID: "same-file",
+					Kind:       api.MediaTrackAudio,
+					Role:       api.AudioRoleProgramme,
+					Languages:  []string{tt.english},
+				},
+			},
+		})
+		if facts.HasOriginalAudio() != tt.wantOriginal || facts.HasEnglishDub() != tt.wantOriginal {
+			t.Errorf("original=%q programme=%q: original=%t dub=%t, want %t", tt.original, tt.programme, facts.HasOriginalAudio(), facts.HasEnglishDub(), tt.wantOriginal)
+		}
+	}
+	media := api.MediaFacts{
+		OriginalLanguage:         "Japanese",
+		TrackCoverageComplete:    true,
+		AudioLanguages:           []string{"Japanese", "English"},
+		AudioLanguagesProvenance: api.FactProvenanceManual,
+		Tracks: []api.MediaTrackFacts{
+			{
+				ID:         "original",
+				ResourceID: "file",
+				Kind:       api.MediaTrackAudio,
+				Role:       api.AudioRoleProgramme,
+				Languages:  []string{"Japanese"},
+			},
+			{
+				ID:         "us",
+				ResourceID: "file",
+				Kind:       api.MediaTrackAudio,
+				Role:       api.AudioRoleProgramme,
+				Languages:  []string{"English [en-US]"},
+			},
+			{
+				ID:         "gb",
+				ResourceID: "file",
+				Kind:       api.MediaTrackAudio,
+				Role:       api.AudioRoleProgramme,
+				Languages:  []string{"English [en-GB]"},
+			},
+		},
+	}
+	facts := ResolveLanguages(media)
+	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || !facts.HasOriginalAudio() || !facts.HasEnglishDub() ||
+		!slices.Equal(facts.Tracks[1].Languages, []string{"English [en-US]"}) {
+		t.Fatalf("aggregate base-language correction conflicted with or rewrote track variants: %+v", facts)
 	}
 }

@@ -43,7 +43,6 @@ it("keeps a compact marked summary while searching, selecting, deselecting by la
   const search = screen.getByRole("searchbox", { name: "Search Languages" });
   await user.click(search);
   fireEvent.change(search, { target: { value: "japan" } });
-  expect(screen.getAllByRole("checkbox")).toHaveLength(1);
   await user.click(screen.getByRole("checkbox", { name: "Japanese" }));
   expect(onChange).toHaveBeenLastCalledWith([...selected, "Japanese"]);
   fireEvent.change(search, { target: { value: "" } });

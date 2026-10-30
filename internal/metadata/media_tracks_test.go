@@ -52,6 +52,49 @@ func TestMediaTrackFactsMeasuredStreamOrder(t *testing.T) {
 	}
 }
 
+func TestMediaInfoLanguageFormatsRetainCodeAndNameIdentity(t *testing.T) {
+	doc := mediaInfoDoc{}
+	doc.Media.Track = []map[string]any{
+		{"@type": "Audio", "Language": "ga"},
+		{"@type": "Audio", "Language": "tgl"},
+		{"@type": "Text", "Language_String": "Ga"},
+		{"@type": "Text", "Language_String": "Philippine (Other)"},
+	}
+	tracks, _, audio, subs, err := mediaTrackFacts(preparationstate.State{}, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(audio, []string{"Irish", "Tagalog"}) || !slices.Equal(subs, []string{"Ga [gaa]", "Philippine languages"}) {
+		t.Fatalf("track languages changed source identities: audio=%q subtitles=%q", audio, subs)
+	}
+	if !slices.Equal(tracks[2].DetectedLanguages, []string{"Ga [gaa]"}) {
+		t.Fatalf("detected language=%q", tracks[2].DetectedLanguages)
+	}
+	fallbackAudio, fallbackSubs := extractMediaInfoLanguages(doc)
+	if !slices.Equal(audio, fallbackAudio) || !slices.Equal(subs, fallbackSubs) {
+		t.Fatalf("aggregate fallback disagrees with tracks: %q %q", fallbackAudio, fallbackSubs)
+	}
+}
+
+func TestBDInfoTracksRetainUnresolvedAndNamedLanguages(t *testing.T) {
+	meta := preparationstate.State{DiscType: "BDMV", Discs: []preparationstate.DiscResource{{ID: "disc", Reports: []preparationstate.DiscReportResource{{
+		Playlist: api.PlaylistInfo{ID: "00001"},
+		Summary:  "Audio: Custom Dialect / DTS / 5.1 / 48 kHz / 1000 kbps / 24-bit\nAudio: Ga / DTS / 5.1 / 48 kHz / 1000 kbps / 24-bit\nAudio: Kru / DTS / 5.1 / 48 kHz / 1000 kbps / 24-bit",
+	}}}}}
+	tracks, err := bdInfoAudioTrackFacts(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracks) != 3 {
+		t.Fatalf("tracks=%d", len(tracks))
+	}
+	for index, want := range []string{"Custom Dialect", "Ga [gaa]", "Kru languages"} {
+		if !slices.Equal(tracks[index].Languages, []string{want}) || !slices.Equal(tracks[index].DetectedLanguages, []string{want}) {
+			t.Errorf("track %d languages=%q detected=%q, want %q", index, tracks[index].Languages, tracks[index].DetectedLanguages, want)
+		}
+	}
+}
+
 func TestMediaTrackFactsStreamOrderEvidence(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

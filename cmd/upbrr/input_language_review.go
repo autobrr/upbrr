@@ -124,8 +124,7 @@ func collectCLIInputLanguages(
 		}
 		languages := languageutil.NormalizeLanguageList([]string{answer})
 		if len(languages) == 0 || slices.ContainsFunc(languages, func(value string) bool {
-			code := languageutil.NormalizeLanguageCode(value)
-			return code == "" || code == "und" || code == "mul"
+			return !languageutil.IsIdentifiedLanguage(value)
 		}) {
 			return nil, fmt.Errorf("upbrr: programme track %s requires identified languages, not unknown or unspecified multilingual evidence", track.ID)
 		}

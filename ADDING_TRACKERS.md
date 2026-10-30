@@ -1334,6 +1334,15 @@ programme-language gate. Keep canonical language statuses and `TrackCoverageComp
 they still describe collection-wide evidence and protect naming, source binding and independent
 requirements. Do not rewrite language facts to bypass coverage; questionnaire keys use those facts.
 
+Use `internal/languageutil` for shared language identity and complete labels. Compare
+with `SameLanguage`/`ContainsLanguage`, not display spelling. Source fields containing
+human names use `NormalizeLanguageNames`; code fields use `NormalizeLanguageList`.
+Keep regional/script variants, subtitle coverage, custom values and collective tags
+in canonical facts. Apply intentional site grouping only in the owning taxonomy;
+provider request locales are a separate contract. Refresh the bundled IANA vocabulary
+with `python3 scripts/languages/update-registry.py <downloaded-registry-file> > internal/languageutil/language_registry.tsv` and
+regenerate correction choices when changing it.
+
 Use `WithLanguagePolicy` or `WithLanguageAssessment` to expose the same pure language predicate
 through `ValidationPolicyBinding.LanguageAssessment` for source-level readiness. A custom binding
 wrapper must preserve that callback when composing validation. Missing programme-language findings

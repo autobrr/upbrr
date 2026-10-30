@@ -70,7 +70,7 @@ func resolveLanguage(meta api.UploadSubject) string {
 func resolveSubtitle(meta api.UploadSubject) string {
 	for _, lang := range meta.SubtitleLanguages {
 		lower := strings.ToLower(strings.TrimSpace(lang))
-		if lower == "portuguese" || lower == "português" || lower == "pt" {
+		if languageutil.SameLanguage(lang, "pt") || lower == "português" {
 			return "Embutida"
 		}
 	}
@@ -271,8 +271,8 @@ func categoryOf(meta api.UploadSubject) string {
 func resolveAudio(meta api.UploadSubject) string {
 	for _, lang := range meta.AudioLanguages {
 		lower := strings.ToLower(strings.TrimSpace(lang))
-		if lower == "portuguese" || lower == "português" || lower == "pt" {
-			if len(meta.AudioLanguages) > 1 {
+		if languageutil.SameLanguage(lang, "pt") || lower == "português" {
+			if languageutil.LanguageIdentityCount(meta.AudioLanguages) > 1 {
 				return "Dual Áudio"
 			}
 			return "Dublado"

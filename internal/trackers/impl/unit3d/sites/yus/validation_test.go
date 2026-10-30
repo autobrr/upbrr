@@ -55,7 +55,7 @@ func TestYUSNamingEvidenceRequiresKnownLanguageCount(t *testing.T) {
 
 func TestYUSNamingEvidenceNeedsNoOriginalLanguageOrWhitelist(t *testing.T) {
 	t.Parallel()
-	for _, languages := range [][]string{{"English"}, {"German"}, {"German", "French"}, {"Japanese", "English", "German"}} {
+	for _, languages := range [][]string{{"English"}, {"German"}, {"German", "French"}, {"Japanese", "English", "German"}, {"en-US", "en-GB"}} {
 		meta, _ := yusNamingEvidenceSubject(t, languages...)
 		if meta.LanguageFacts.OriginalLanguagesKnown || len(meta.LanguageFacts.OriginalLanguages) != 0 {
 			t.Fatal("fixture must not supply original-language metadata")
@@ -64,7 +64,7 @@ func TestYUSNamingEvidenceNeedsNoOriginalLanguageOrWhitelist(t *testing.T) {
 			t.Fatalf("known languages %v acquired an eligibility restriction: %+v", languages, failures)
 		}
 		got := yusName(t, meta, nil)
-		if strings.Contains(got, "Dual-Audio") != (len(languages) == 2) || strings.Contains(got, "Multi-Audio") != (len(languages) > 2) {
+		if strings.Contains(got, "Dual-Audio") != (trackers.KnownProgrammeLanguageCount(meta.LanguageFacts) == 2) || strings.Contains(got, "Multi-Audio") != (trackers.KnownProgrammeLanguageCount(meta.LanguageFacts) > 2) {
 			t.Fatalf("known language count selected incorrect marker: %q", got)
 		}
 	}

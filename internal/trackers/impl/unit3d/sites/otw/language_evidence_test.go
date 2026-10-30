@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -41,6 +42,18 @@ func TestOTWLanguageNamingEvidence(t *testing.T) {
 			original:  "Japanese",
 			languages: []string{"Japanese", "English"},
 			marker:    "Dual Audio ",
+		},
+		{
+			name:      "regional original variants retain dual",
+			original:  "French",
+			languages: []string{"French [fr-FR]", "French [fr-CA]", "English [en-US]"},
+			marker:    "Dual Audio ",
+		},
+		{
+			name:      "regional English variants retain dubbed",
+			original:  "Japanese",
+			languages: []string{"English [en-US]", "English [en-GB]"},
+			marker:    "Dubbed ",
 		},
 		{
 			name:      "complete two dubs without original audio",
@@ -209,7 +222,7 @@ func TestOTWLanguageNamingUnavailableEvidenceAndDiscBoundary(t *testing.T) {
 
 func TestOTWLanguageNamingCompleteInvalidProgrammeFacts(t *testing.T) {
 	t.Parallel()
-	for _, languages := range [][]string{nil, {"Unknown"}, {"English", "Multiple Languages"}, {"French", "und"}, {"English", "English"}} {
+	for _, languages := range [][]string{nil, {"Unknown"}, {"English", "Multiple Languages"}, {"French", "und"}} {
 		t.Run(strings.Join(languages, "+"), func(t *testing.T) {
 			t.Parallel()
 			subject := otwPassingSubject()
@@ -296,7 +309,7 @@ func otwLanguageMedia(original string, languages ...string) api.MediaFacts {
 	// Existing naming rows describe reviewed programme dubs, not tag-only guesses.
 	for index := range media.Tracks {
 		track := &media.Tracks[index]
-		if len(track.Languages) == 1 && track.Languages[0] != original && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" {
+		if len(track.Languages) == 1 && !languageutil.SameLanguage(track.Languages[0], original) && languageutil.IsIdentifiedLanguage(track.Languages[0]) {
 			track.AudioOrigin = api.TrackAudioDubbed
 		}
 	}
