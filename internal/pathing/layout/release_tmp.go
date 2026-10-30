@@ -22,7 +22,7 @@ func ReleaseTempDir(tmpRoot string, meta preparationstate.State, source string) 
 
 // ReleaseTempDirFor creates missing release-specific directories below tmpRoot
 // with mode 0700, claims its source owner, and returns the full path and stable
-// filename base. A conflicting directory basename receives a canonical-source
+// filename base. A conflicting directory basename receives a normalized-source
 // suffix without extending artifact filenames.
 func ReleaseTempDirFor(tmpRoot string, source string, release api.ReleaseInfo) (string, string, error) {
 	return claimReleaseDirectory(tmpRoot, source, release)

@@ -22,8 +22,8 @@ const releaseOwnerFile = ".release-owner"
 
 var releaseDirectoryMu sync.Mutex
 
-// CanonicalSourcePath resolves existing aliases and normalizes host path semantics.
-// Missing sources retain their absolute path so explicit History deletion works.
+// CanonicalSourcePath resolves existing aliases for report validation. Missing
+// sources retain their absolute spelling until they can be analyzed.
 func CanonicalSourcePath(source string) (string, error) {
 	if strings.TrimSpace(source) == "" {
 		return "", errors.New("paths: source is required")
@@ -45,15 +45,20 @@ func CanonicalSourcePath(source string) (string, error) {
 	return value, nil
 }
 
+// Directory ownership follows the release's stable source reference, even if
+// media or aliases disappear. Canonical report identity is validated separately.
 func releaseOwner(source string) (string, error) {
 	if strings.TrimSpace(source) == "" {
 		return "", nil
 	}
-	canonical, err := CanonicalSourcePath(source)
+	ownerPath, err := filepath.Abs(source)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("paths: resolve release owner: %w", err)
 	}
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(canonical))), nil
+	if runtime.GOOS == "windows" {
+		ownerPath = strings.ToLower(ownerPath)
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(ownerPath))), nil
 }
 
 // ReleaseTempPathFor resolves ownership without creating files. The usual basename

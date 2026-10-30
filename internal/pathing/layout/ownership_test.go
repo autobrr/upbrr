@@ -45,3 +45,45 @@ func TestReleaseDirectoriesIsolateSameBasenameOwners(t *testing.T) {
 		t.Fatalf("deleting the first owner changed the second owner's root: %s %v", reopened, err)
 	}
 }
+
+func TestReleaseDirectoryOwnerSurvivesAliasedSourceChanges(t *testing.T) {
+	physical := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "source-alias")
+	if err := os.Symlink(physical, alias); err != nil {
+		t.Skipf("directory symlink unavailable: %v", err)
+	}
+	source := filepath.Join(alias, "Example.Release.mkv")
+	root := t.TempDir()
+	before, _, err := ReleaseTempDirFor(root, source, api.ReleaseInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("synthetic media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	after, _, err := ReleaseTempDirFor(root, source, api.ReleaseInfo{})
+	if err != nil || after != before {
+		t.Fatalf("creating source through alias changed owner: before=%s after=%s err=%v", before, after, err)
+	}
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	deleted, _, err := ReleaseTempPathFor(root, source, api.ReleaseInfo{})
+	if err != nil || deleted != before {
+		t.Fatalf("missing source changed cleanup owner: before=%s after=%s err=%v", before, deleted, err)
+	}
+	target := filepath.Join(physical, "target.mkv")
+	if err := os.WriteFile(target, []byte("synthetic media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, source); err != nil {
+		t.Skipf("file symlink unavailable: %v", err)
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	dangling, _, err := ReleaseTempPathFor(root, source, api.ReleaseInfo{})
+	if err != nil || dangling != before {
+		t.Fatalf("dangling source changed cleanup owner: before=%s after=%s err=%v", before, dangling, err)
+	}
+}
