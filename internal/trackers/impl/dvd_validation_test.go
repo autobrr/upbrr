@@ -29,10 +29,14 @@ func TestPTPFullDVDValidation(t *testing.T) {
 		{"PAL DVD9", "PTP", "DVD", "DISC", "PAL DVD", 7 << 30, true},
 		{"NTSC DVD5", "PTP", "DVD", "DISC", "NTSC DVD", 4 << 30, true},
 		{"NTSC DVD9", "PTP", "DVD", "DISC", "NTSC DVD", 7 << 30, true},
+		{"DVD disc without disc label", "PTP", "", "DISC", "DVD", 4 << 30, true},
+		{"PAL disc without disc label", "PTP", "", "DISC", "PAL DVD", 4 << 30, true},
+		{"NTSC disc without disc label", "PTP", "", "DISC", "NTSC", 7 << 30, true},
 		{"DVD encode", "PTP", "", "DVDRIP", "DVD", 1 << 30, false},
 		{"DVD remux", "PTP", "", "REMUX", "DVD", 4 << 30, false},
 		{"DVD remux retaining disc label", "PTP", "DVD", "REMUX", "DVD", 4 << 30, false},
 		{"Blu-ray disc", "PTP", "BDMV", "DISC", "BluRay", 20 << 30, false},
+		{"HD DVD disc without disc label", "PTP", "", "DISC", "HD DVD", 20 << 30, false},
 		{"other tracker DVD", "AITHER", "DVD", "DISC", "PAL DVD", 4 << 30, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

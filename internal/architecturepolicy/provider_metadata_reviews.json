@@ -1140,8 +1140,8 @@
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "reason": "Full-DVD eligibility review: the new strict check consumes finalized DiscType and release Type through the existing full-disc predicate; DVD-derived remuxes/encodes remain distinct. Current-source provider selectors, explicit manual metadata precedence, language assessment and taxonomy are unchanged. The policy version invalidates retained approvals.",
-    "sha256": "d8cddbc6fd20d9c7caccfd4128b5736ed8e756dec1b71b90635f72ec38b78aeb"
+    "reason": "Full-DVD eligibility review: the strict check consumes finalized DiscType and release Type through the existing full-disc predicate; an absent disc label uses the finalized DVD/PAL/NTSC source family. HD DVD and DVD-derived remuxes/encodes remain distinct. Current-source provider selectors, explicit manual metadata precedence, language assessment and taxonomy are unchanged. The policy version invalidates retained approvals.",
+    "sha256": "dab9c110e00abf54258827ea08b1670f36d532268ff6d3ad4596b7b38f1cf670"
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
