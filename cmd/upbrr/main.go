@@ -133,9 +133,8 @@ const cliItemTimeout = 30 * time.Minute
 // queue gather / BDMV discovery, which have their own phase-scoped deadlines.
 const cliSetupTimeout = 30 * time.Minute
 
-// cliQueueGatherTimeout bounds queue discovery (GatherQueuePaths) so a stuck
-// filesystem walk over a large queue root fails fast instead of consuming the
-// shared setup deadline that init/cleanup/delete-tmp also need.
+// cliQueueGatherTimeout bounds queue loading, discovery and membership checks
+// independently of the setup deadline used by core initialization and maintenance.
 const cliQueueGatherTimeout = 10 * time.Minute
 
 // cliHistoryReleaseDeleter deletes stored history for one source path.
@@ -438,10 +437,9 @@ func runUploadDriver(
 		batch,
 		queueMode,
 		cliItemTimeout,
+		streams,
 		logger,
-		func(itemCtx context.Context, item cliPreparationItem) (outcome cliQueueOutcome, itemResult error) {
-			itemCtx = withCLIItemPresentation(itemCtx, streams, item.originalPath, len(batch.items))
-			defer func() { publishCLIItemResult(streams, itemResult) }()
+		func(itemCtx context.Context, item cliPreparationItem) (cliQueueOutcome, error) {
 			if opts.SiteCheck {
 				return runCLIWorkflowSiteCheck(itemCtx, coreSvc, opts, visitedFlags, item, screens, cfg, streams, logger)
 			}
@@ -1501,12 +1499,14 @@ func (b cliPreparationBatch) withDefaults(defaults api.Request) cliPreparationBa
 }
 
 // processCLIPreparationItems delegates timeout and queue policy while preserving
-// each item's source-scoped instructions.
+// each item's source-scoped instructions. Item presentation includes the result
+// of the durable checkpoint; persistence failures stop the batch.
 func processCLIPreparationItems(
 	ctx context.Context,
 	batch cliPreparationBatch,
 	queueMode bool,
 	itemTimeout time.Duration,
+	streams cliIO,
 	logger api.Logger,
 	process func(context.Context, cliPreparationItem) (cliQueueOutcome, error),
 ) error {
@@ -1515,13 +1515,15 @@ func processCLIPreparationItems(
 		paths = append(paths, item.originalPath)
 	}
 	index := 0
-	return processCLIPaths(ctx, paths, queueMode, itemTimeout, logger, func(itemCtx context.Context, _ string) error {
+	return processCLIPaths(ctx, paths, queueMode, itemTimeout, logger, func(itemCtx context.Context, _ string) (itemErr error) {
 		item := batch.items[index]
 		index++
+		itemCtx = withCLIItemPresentation(itemCtx, streams, item.originalPath, len(batch.items))
+		defer func() { publishCLIItemResult(streams, itemErr) }()
 		queueIndex := 0
 		if batch.queue != nil {
 			var err error
-			queueIndex, err = batch.queue.start(item.originalPath)
+			queueIndex, err = batch.queue.start(itemCtx, item.originalPath)
 			if err != nil {
 				return &cliQueueCheckpointError{err: err}
 			}
@@ -1531,6 +1533,9 @@ func processCLIPreparationItems(
 		if batch.queue != nil {
 			if saveErr := batch.queue.finish(queueIndex, outcome, err); saveErr != nil {
 				return &cliQueueCheckpointError{err: errors.Join(err, saveErr)}
+			}
+			if err == nil && (outcome.Status == "failed" || outcome.Status == "interrupted") {
+				return fmt.Errorf("queue item ended with status %s", outcome.Status)
 			}
 		}
 		return err

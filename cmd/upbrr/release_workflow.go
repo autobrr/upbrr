@@ -1615,17 +1615,16 @@ func runCLIWorkflowUploadOnly(
 		batch,
 		queueMode,
 		cliItemTimeout,
+		streams,
 		logger,
-		func(itemCtx context.Context, item cliPreparationItem) (outcome cliQueueOutcome, itemResult error) {
-			itemCtx = withCLIItemPresentation(itemCtx, streams, item.originalPath, len(batch.items))
-			defer func() { publishCLIItemResult(streams, itemResult) }()
+		func(itemCtx context.Context, item cliPreparationItem) (cliQueueOutcome, error) {
 			request := batch.defaults
 			request.SourcePath = item.originalPath
 			request.ExternalIDOverrides = item.externalIDs
 			request.PlaylistInstruction = item.playlistInstruction
 			session, err := newCLIWorkflowSession(itemCtx, coreSvc, request, api.PreparationIntentUpload, reader, cfg, streams, logger)
 			if err != nil {
-				return outcome, err
+				return cliQueueOutcome{}, err
 			}
 			session.screenshotCountIsDefault = screenshotCountIsDefault
 			defer session.releaseActiveInput(itemCtx)

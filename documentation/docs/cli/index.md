@@ -58,7 +58,7 @@ Supply a non-empty queue name and exactly one queue-root path. The first invocat
 
 The CLI prints the saved file's location on creation and resume. Files live in `queues/<name-hash>.json` beside the active `db.sqlite` (including a custom database location). The hash is the SHA-256 of the exact, trimmed queue name; names have independent progress even when their filesystem-safe spellings would collide. The private JSON contains the name, root, member paths, attempt counts, workflow IDs and per-item progress. It contains no tracker credentials or submission payloads. Protect these local paths when sharing the file. An OS lock excludes concurrent writers and releases on process exit; keep its adjacent `.lock` file in place.
 
-Each item is saved before processing and after its outcome. States are `pending`, `running`, `completed`, `failed`, `interrupted` and `skipped`. A leftover `running` checkpoint becomes `interrupted` when you explicitly resume the queue. Normal resume selects pending items only. To include failed, interrupted and skipped items, inspect their outcomes and run:
+Each item is saved before processing and after its outcome. A checkpoint write failure stops the queue and reports the item as failed. States are `pending`, `running`, `completed`, `failed`, `interrupted` and `skipped`. Failed or partial debug/site-check reports remain retryable failures. A leftover `running` checkpoint becomes `interrupted` when you explicitly resume the queue. Normal resume selects pending items only. To include failed, interrupted and skipped items, inspect their outcomes and run:
 
 ```powershell
 .\upbrr.exe --queue uploads --retry-queue --limit-queue 5 "D:\upload-queue"

@@ -57,14 +57,15 @@ type cliNamedQueue struct {
 // openCLINamedQueue is called only by explicit --queue invocations. Refresh adds
 // discovered paths; it never resets existing progress or removes missing members.
 func openCLINamedQueue(ctx context.Context, dbPath, name, root string, refresh bool, output io.Writer) (_ *cliNamedQueue, result error) {
-	root = strings.TrimSpace(root)
-	if root == "" {
+	if strings.TrimSpace(root) == "" {
 		return nil, errors.New("--queue requires a non-empty queue root path")
 	}
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve queue root: %w", err)
 	}
+	ctx, cancel := context.WithTimeout(ctx, cliQueueGatherTimeout)
+	defer cancel()
 	dir, err := db.Subdir(dbPath, "queues")
 	if err != nil {
 		return nil, fmt.Errorf("queue directory: %w", err)
@@ -97,7 +98,7 @@ func openCLINamedQueue(ctx context.Context, dbPath, name, root string, refresh b
 		if err := json.Unmarshal(payload, &queue.inventory); err != nil {
 			return nil, fmt.Errorf("decode saved queue; file left unchanged: %w", err)
 		}
-		if err := queue.validate(name, root); err != nil {
+		if err := queue.validate(ctx, name, root); err != nil {
 			return nil, err
 		}
 		for index := range queue.inventory.Items {
@@ -107,14 +108,16 @@ func openCLINamedQueue(ctx context.Context, dbPath, name, root string, refresh b
 		}
 	}
 	if created || refresh {
-		gatherCtx, cancel := context.WithTimeout(ctx, cliQueueGatherTimeout)
-		paths, err := filesystem.GatherQueuePaths(gatherCtx, root)
-		cancel()
+		paths, err := filesystem.GatherQueuePaths(ctx, root)
 		if err != nil {
 			return nil, fmt.Errorf("discover queue members: %w", err)
 		}
 		for _, path := range paths {
-			if !slices.ContainsFunc(queue.inventory.Items, func(item cliQueueItem) bool { return pathing.SamePath(item.Path, path) }) {
+			index, err := cliQueueItemIndex(ctx, queue.inventory.Items, path)
+			if err != nil {
+				return nil, fmt.Errorf("merge queue members: %w", err)
+			}
+			if index < 0 {
 				queue.inventory.Items = append(queue.inventory.Items, cliQueueItem{
 					Path:      path,
 					Status:    "pending",
@@ -122,6 +125,9 @@ func openCLINamedQueue(ctx context.Context, dbPath, name, root string, refresh b
 				})
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("open saved queue canceled: %w", err)
 	}
 	if err := queue.save(); err != nil {
 		return nil, err
@@ -137,16 +143,18 @@ func openCLINamedQueue(ctx context.Context, dbPath, name, root string, refresh b
 	return queue, nil
 }
 
-func (q *cliNamedQueue) validate(name, root string) error {
+func (q *cliNamedQueue) validate(ctx context.Context, name, root string) error {
 	if q.inventory.Version != 1 || q.inventory.Name != name || !pathing.SamePath(q.inventory.Root, root) {
 		return errors.New("saved queue version, name or root differs; use the original root or a different queue name")
 	}
-	seen := make(map[string]bool, len(q.inventory.Items))
-	for _, item := range q.inventory.Items {
-		if !filepath.IsAbs(item.Path) || seen[item.Path] {
+	for index, item := range q.inventory.Items {
+		previous, err := cliQueueItemIndex(ctx, q.inventory.Items[:index], item.Path)
+		if err != nil {
+			return fmt.Errorf("validate queue members: %w", err)
+		}
+		if !filepath.IsAbs(item.Path) || previous >= 0 {
 			return errors.New("saved queue has invalid or repeated members; file left unchanged")
 		}
-		seen[item.Path] = true
 		switch item.Status {
 		case "pending", "running", "completed", "failed", "interrupted", "skipped":
 		default:
@@ -154,6 +162,21 @@ func (q *cliNamedQueue) validate(name, root string) error {
 		}
 	}
 	return nil
+}
+
+func cliQueueItemIndex(ctx context.Context, items []cliQueueItem, path string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return -1, fmt.Errorf("queue membership check canceled: %w", err)
+	}
+	for index, item := range items {
+		if err := ctx.Err(); err != nil {
+			return -1, fmt.Errorf("queue membership check canceled: %w", err)
+		}
+		if pathing.SamePath(item.Path, path) {
+			return index, nil
+		}
+	}
+	return -1, nil
 }
 
 // Close releases process ownership without removing the stable lock file.
@@ -179,8 +202,11 @@ func (q *cliNamedQueue) paths(retry bool, limit int) []string {
 	return filesystem.LimitQueuePaths(paths, limit)
 }
 
-func (q *cliNamedQueue) start(path string) (int, error) {
-	index := slices.IndexFunc(q.inventory.Items, func(item cliQueueItem) bool { return pathing.SamePath(item.Path, path) })
+func (q *cliNamedQueue) start(ctx context.Context, path string) (int, error) {
+	index, err := cliQueueItemIndex(ctx, q.inventory.Items, path)
+	if err != nil {
+		return 0, err
+	}
 	if index < 0 {
 		return 0, errors.New("queue item is outside saved membership")
 	}
@@ -264,8 +290,14 @@ func cliQueueWorkflowOutcome(session *cliWorkflowSession, inputOnly bool) cliQue
 		return outcome
 	}
 	outcome.WorkflowID = session.current.Workflow.ID
-	if inputOnly || session.submissionSuppressed && session.current.DryRun != nil {
+	if inputOnly {
 		outcome.Status = "completed"
+	}
+	if session.submissionSuppressed && session.current.DryRun != nil {
+		outcome.Status = "completed"
+		if status := session.current.DryRun.Status; status == api.StageStatusFailed || status == api.StageStatusPartial {
+			outcome.Status = "failed"
+		}
 	}
 	if !session.submissionSuppressed && session.current.UploadResult != nil {
 		for _, tracker := range session.current.UploadResult.Results {

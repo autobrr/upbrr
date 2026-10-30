@@ -51,7 +51,7 @@ func TestNamedQueueProcessKill(t *testing.T) {
 		batch := newCLIPreparationBatch(api.Request{}, queue.paths(false, 0))
 		batch.queue = queue
 		calls := 0
-		err = processCLIPreparationItems(t.Context(), batch, true, time.Minute, api.NopLogger{}, func(context.Context, cliPreparationItem) (cliQueueOutcome, error) {
+		err = processCLIPreparationItems(t.Context(), batch, true, time.Minute, cliIO{}, api.NopLogger{}, func(context.Context, cliPreparationItem) (cliQueueOutcome, error) {
 			calls++
 			if calls == 3 {
 				fmt.Fprintln(os.Stdout, "ready")
@@ -131,7 +131,7 @@ func TestNamedQueueCheckpointFailureStopsBeforeMoreWork(t *testing.T) {
 				blockSave()
 			}
 			calls := 0
-			err = processCLIPreparationItems(t.Context(), batch, true, time.Minute, api.NopLogger{}, func(context.Context, cliPreparationItem) (cliQueueOutcome, error) {
+			err = processCLIPreparationItems(t.Context(), batch, true, time.Minute, cliIO{}, api.NopLogger{}, func(context.Context, cliPreparationItem) (cliQueueOutcome, error) {
 				calls++
 				blockSave()
 				return cliQueueOutcome{Status: "completed"}, nil
@@ -225,7 +225,7 @@ func TestNamedQueueResumesRemainingLimitsAndRefreshesExplicitly(t *testing.T) {
 	}
 	batch := newCLIPreparationBatch(api.Request{}, queue.paths(false, 2))
 	batch.queue = queue
-	err := processCLIPreparationItems(t.Context(), batch, true, time.Minute, api.NopLogger{}, func(context.Context, cliPreparationItem) (cliQueueOutcome, error) {
+	err := processCLIPreparationItems(t.Context(), batch, true, time.Minute, cliIO{}, api.NopLogger{}, func(context.Context, cliPreparationItem) (cliQueueOutcome, error) {
 		return cliQueueOutcome{Status: "completed"}, nil
 	})
 	if err != nil {
@@ -277,7 +277,7 @@ func TestNamedQueueMixedOutcomesAndInterruptedRestart(t *testing.T) {
 	batch := newCLIPreparationBatch(api.Request{}, paths)
 	batch.queue = queue
 	failed := errors.New("synthetic failure")
-	err = processCLIPreparationItems(parent, batch, true, time.Minute, api.NopLogger{}, func(_ context.Context, item cliPreparationItem) (cliQueueOutcome, error) {
+	err = processCLIPreparationItems(parent, batch, true, time.Minute, cliIO{}, api.NopLogger{}, func(_ context.Context, item cliPreparationItem) (cliQueueOutcome, error) {
 		switch item.originalPath {
 		case paths[0]:
 			return cliQueueOutcome{Status: "completed", ConfirmedUploads: []api.TrackerID{"ALPHA"}}, failed
@@ -368,6 +368,27 @@ func TestNamedQueueRejectsEmptyRoot(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(filepath.Dir(dbPath), "queues")); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("invalid root created queue state: %v", err)
 		}
+	}
+}
+
+func TestNamedQueuePreservesRawRoot(t *testing.T) {
+	base := t.TempDir()
+	t.Chdir(base)
+	for _, root := range []string{" media", "media"} {
+		if err := os.Mkdir(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "episode.mkv"), []byte("synthetic media"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queue, err := openCLINamedQueue(t.Context(), filepath.Join(base, "db.sqlite"), "raw-root", " media", false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer queue.Close()
+	if queue.inventory.Root != filepath.Join(base, " media") || !reflect.DeepEqual(queue.paths(false, 0), []string{filepath.Join(base, " media", "episode.mkv")}) {
+		t.Fatalf("wrong saved root: %+v", queue.inventory)
 	}
 }
 
@@ -482,8 +503,144 @@ func TestNamedQueueAlreadyUploadedIsSkippedWithoutInventingNewSubmission(t *test
 		t.Fatal(err)
 	}
 	item := queue.inventory.Items[0]
-	if item.Status != "skipped" || len(item.ConfirmedUploads) != 0 || !strings.Contains(output.String(), "Already uploaded") {
+	if item.Status != "skipped" || len(item.ConfirmedUploads) != 0 || !strings.Contains(output.String(), "Already uploaded") || len(coreSvc.uploadRequests) != 1 {
 		t.Fatalf("history exclusion became new upload: %+v %s", item, output.String())
+	}
+}
+
+func TestNamedQueueCheckpointFailureReachesTUI(t *testing.T) {
+	dbPath, root, _ := queueFixture(t)
+	queue, err := openCLINamedQueue(t.Context(), dbPath, "tui-checkpoint", root, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer queue.Close()
+	prepared := requiredFactsCLIResult()
+	coreSvc := &cliWorkflowCoreFake{current: prepared}
+	coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return prepared, nil }
+	coreSvc.startUploadFn = func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
+		queue.path = filepath.Dir(queue.path)
+		completed := prepared
+		completed.UploadResult = &api.UploadResult{Results: []api.UploadTrackerResult{{TrackerID: "ALPHA", SubmissionStatus: api.StageStatusCompleted}}}
+		return completed, nil
+	}
+	bridge := newCLITUIBridge()
+	streams := cliIO{out: &cliPresentationWriter{Writer: io.Discard, presenter: bridge}, presenter: bridge}
+	batch := newCLIPreparationBatch(api.Request{}, queue.paths(false, 2))
+	batch.queue = queue
+	err = runCLIWorkflowUploadOnly(t.Context(), coreSvc, batch, false, true, true, config.Config{}, streams, api.NopLogger{})
+	if _, ok := errors.AsType[*cliQueueCheckpointError](err); !ok {
+		t.Fatalf("checkpoint failure not returned: %v", err)
+	}
+	if !bridge.latest.ItemFailed || strings.Contains(bridge.latest.Result, "Item completed") || !strings.Contains(bridge.summary(err), "1 failed") {
+		t.Fatalf("TUI hid checkpoint failure: %+v %s", bridge.latest, bridge.summary(err))
+	}
+}
+
+func TestNamedQueueFailedDryRunsRemainRetryable(t *testing.T) {
+	for _, status := range []api.StageStatus{api.StageStatusCompleted, api.StageStatusFailed, api.StageStatusPartial} {
+		t.Run(string(status), func(t *testing.T) {
+			dbPath, root, paths := queueFixture(t)
+			queue, err := openCLINamedQueue(t.Context(), dbPath, "dry-run", root, false, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer queue.Close()
+			prepared := requiredFactsCLIResult()
+			coreSvc := &cliWorkflowCoreFake{current: prepared}
+			coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return prepared, nil }
+			coreSvc.startUploadFn = func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
+				result := prepared
+				result.DryRun = &api.UploadDryRunResult{
+					Status:         status,
+					SucceededCount: 1,
+					Reports:        []api.TrackerDryRunReport{{TrackerID: "ALPHA", Status: api.StageStatusCompleted}},
+				}
+				if status != api.StageStatusCompleted {
+					result.DryRun.FailedCount = 1
+					result.DryRun.Reports = append(result.DryRun.Reports, api.TrackerDryRunReport{TrackerID: "BETA", Status: api.StageStatusFailed})
+					if status == api.StageStatusFailed {
+						result.DryRun.SucceededCount = 0
+						result.DryRun.Reports = result.DryRun.Reports[1:]
+					}
+				}
+				return result, nil
+			}
+			batch := newCLIPreparationBatch(api.Request{}, queue.paths(false, 1))
+			batch.queue = queue
+			err = runCLIWorkflowUploadOnly(t.Context(), coreSvc, batch, true, true, true, config.Config{}, cliIO{}, api.NopLogger{})
+			want := "failed"
+			if status == api.StageStatusCompleted {
+				want = "completed"
+			}
+			item := queue.inventory.Items[0]
+			if item.Status != want || len(item.ConfirmedUploads) != 0 || (err != nil) != (want == "failed") {
+				t.Fatalf("dry run outcome=%+v err=%v", item, err)
+			}
+			if got := queue.paths(true, 1); want == "failed" && !reflect.DeepEqual(got, paths[:1]) || want == "completed" && reflect.DeepEqual(got, paths[:1]) {
+				t.Fatalf("dry-run retry=%v", got)
+			}
+		})
+	}
+}
+
+func TestNamedQueueCanceledLoadDoesNotRewriteCheckpoint(t *testing.T) {
+	dbPath, root, _ := queueFixture(t)
+	queue, err := openCLINamedQueue(t.Context(), dbPath, "canceled-load", root, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue.inventory.Items[0].Status = "running"
+	if err := queue.save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(queue.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if opened, err := openCLINamedQueue(ctx, dbPath, "canceled-load", root, false, io.Discard); !errors.Is(err, context.Canceled) {
+		if opened != nil {
+			_ = opened.Close()
+		}
+		t.Fatalf("canceled queue load proceeded: %v", err)
+	}
+	after, err := os.ReadFile(queue.path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("canceled load rewrote interrupted progress")
+	}
+}
+
+func TestNamedQueueRejectsEquivalentSavedMembers(t *testing.T) {
+	dbPath, root, paths := queueFixture(t)
+	queue, err := openCLINamedQueue(t.Context(), dbPath, "aliases", root, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Retain the dot segment that filepath.Join would clean away.
+	alias := root + string(filepath.Separator) + "." + string(filepath.Separator) + filepath.Base(paths[0])
+	queue.inventory.Items = []cliQueueItem{{Path: paths[0], Status: "pending"}, {Path: alias, Status: "pending"}}
+	if err := queue.save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(queue.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := openCLINamedQueue(t.Context(), dbPath, "aliases", root, false, io.Discard); err == nil {
+		_ = reopened.Close()
+		t.Fatal("equivalent saved members were accepted")
+	}
+	after, err := os.ReadFile(queue.path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("rejected inventory was rewritten")
 	}
 }
 
