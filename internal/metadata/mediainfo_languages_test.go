@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
@@ -48,16 +49,18 @@ func TestExtractMediaInfoLanguagesSkipsCompatibility(t *testing.T) {
 func TestExtractBDInfoLanguages(t *testing.T) {
 	audio, subs := extractBDInfoLanguages(&discparse.BDInfo{
 		Audio: []discparse.BDAudio{
-			{Language: "en"},
+			{Language: " English "},
 			{Language: "French"},
 			{Language: "English"},
+			{Language: "Gaelic"},
+			{Language: "Custom Dialect"},
 		},
-		Subtitles: []string{"es", "Spanish"},
+		Subtitles: []string{"Spanish", "spanish", "phi", "pt-BR"},
 	})
-	if len(audio) != 2 || audio[0] != "English" || audio[1] != "French" {
+	if !slices.Equal(audio, []string{"English", "French", "Scottish Gaelic", "Custom Dialect"}) {
 		t.Fatalf("unexpected audio languages: %#v", audio)
 	}
-	if len(subs) != 1 || subs[0] != "Spanish" {
+	if !slices.Equal(subs, []string{"Spanish", "Philippine languages", "Portuguese [pt-BR]"}) {
 		t.Fatalf("unexpected subtitle languages: %#v", subs)
 	}
 }

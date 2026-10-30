@@ -6,6 +6,8 @@ package unit3d
 import (
 	"golang.org/x/text/language"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -43,13 +45,15 @@ func TMDBGenres(meta api.UploadSubject) string { return resolveTMDBGenres(meta) 
 func IMDBGenres(meta api.UploadSubject) string { return resolveIMDBGenres(meta) }
 
 // HasEnglishLanguage reports whether languages contains an English marker.
-func HasEnglishLanguage(languages []string) bool { return hasEnglishLanguage(languages) }
+func HasEnglishLanguage(languages []string) bool {
+	return languageutil.ContainsLanguage(languages, "en")
+}
 
 // HasAdultToken reports whether value contains a common adult-content marker.
 func HasAdultToken(value string) bool { return hasAdultToken(value) }
 
 // ParseLanguageTag resolves common language names and codes.
-func ParseLanguageTag(value string) (language.Tag, bool) { return parseLanguageTag(value) }
+func ParseLanguageTag(value string) (language.Tag, bool) { return languageutil.LanguageTag(value) }
 
 // IsNoGroupTag reports whether tag is a no-group placeholder.
 func IsNoGroupTag(tag string) bool { return isNoGroupTag(tag) }

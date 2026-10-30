@@ -26,12 +26,12 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	facts := subject.LanguageFacts
 	englishDub := facts.HasEnglishDub()
 	if !animated && (!remux || facts.HasOriginalAudio()) && facts.OriginalLanguagesKnown &&
-		!slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX") &&
-		slices.Contains(facts.ProgrammeLanguages, "English") {
+		!languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
+		languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") {
 		englishSubject := subject
 		englishSubject.LanguageFacts.Tracks = nil
 		for _, track := range facts.Tracks {
-			if slices.Contains(track.Languages, "English") {
+			if languageutil.ContainsLanguage(track.Languages, "English") {
 				// Resolve missing origins before discarding paired original-language evidence.
 				if track.AudioOrigin == "" {
 					track.AudioOrigin = facts.ProgrammeAudioOrigin(track)
@@ -84,7 +84,8 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 }
 
 func needsForeignDialogueReview(facts api.LanguageFacts) bool {
-	return !facts.AudioAbsent && (facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || !slices.Equal(facts.ProgrammeLanguages, []string{"ZXX"}))
+	return !facts.AudioAbsent && (facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || len(facts.ProgrammeLanguages) == 0 ||
+		slices.ContainsFunc(facts.ProgrammeLanguages, func(value string) bool { return !languageutil.SameLanguage(value, "zxx") }))
 }
 
 // forcedDefaultSubtitleEvidence checks only forced tracks supported by current
@@ -96,9 +97,8 @@ func forcedDefaultSubtitleEvidence(facts api.LanguageFacts) (hasForced, defaultP
 		}
 		eligible := slices.ContainsFunc(track.Languages, func(value string) bool {
 			language, coverage := languageutil.SubtitleLanguageParts(value)
-			code := languageutil.NormalizeLanguageCode(language)
-			return code != "" && code != "und" && code != "mul" &&
-				(track.Forced || strings.EqualFold(coverage, "Forced")) && slices.Contains(facts.SubtitleLanguages, language)
+			return languageutil.IsIdentifiedLanguage(language) &&
+				(track.Forced || strings.EqualFold(coverage, "Forced")) && languageutil.ContainsLanguage(facts.SubtitleLanguages, language)
 		})
 		if !eligible {
 			continue

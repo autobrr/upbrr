@@ -15,7 +15,7 @@ import (
 )
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.NewReleaseNamePolicy("unit3d/otw/v12", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+	return trackers.NewReleaseNamePolicy("unit3d/otw/v13", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 		if input.RequestedName != nil {
 			return trackers.ResolvedReleaseNames{Upload: *input.RequestedName}, nil
 		}
@@ -220,7 +220,7 @@ func otwAudio(meta api.UploadSubject) string {
 			marker = "MULTI"
 		case facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && facts.HasEnglishDub() && facts.HasOriginalAudio():
 			marker = "Dual Audio"
-		case facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && facts.HasEnglishDub() && len(facts.ProgrammeLanguages) == 1:
+		case facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && facts.HasEnglishDub() && trackers.KnownProgrammeLanguageCount(facts) == 1:
 			marker = "Dubbed"
 		}
 		if value := meta.ReleaseNameOverrides.NoDual; value != nil && *value && slices.Contains([]string{"Dual Audio", "MULTI"}, marker) {

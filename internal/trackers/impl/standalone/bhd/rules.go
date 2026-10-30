@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -58,8 +60,11 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		)
 	}
 	animated := subject.Anime || slices.ContainsFunc(subject.EffectiveMetadata.Genres, func(genre string) bool { return strings.EqualFold(genre, "Animation") })
-	if animated && facts.OriginalLanguagesKnown && !slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX") &&
-		facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && facts.HasOriginalAudio() && !facts.HasEnglishDub() {
+	if animated && facts.OriginalLanguagesKnown && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
+		!languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
+		facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
+		facts.HasOriginalAudio() &&
+		!facts.HasEnglishDub() {
 		failures = append(failures, trackers.LanguageRuleFailure(
 			subject,
 			"animated_dual_audio",
@@ -86,7 +91,7 @@ func needsProgrammeMixReview(facts api.LanguageFacts) bool {
 			continue
 		}
 		for _, language := range track.Languages {
-			if slices.Contains(seen[track.ResourceID], language) {
+			if languageutil.ContainsLanguage(seen[track.ResourceID], language) {
 				return true
 			}
 		}

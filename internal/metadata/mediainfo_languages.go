@@ -55,19 +55,20 @@ func extractMediaInfoLanguages(doc mediaInfoDoc) ([]string, []string) {
 			if isCommentaryOrCompatibilityAudioValue(trackString(track, "Title", "Title_String", "Title_String2", "Title_String3")) {
 				continue
 			}
-			language := normalizeLanguage(trackString(track, "Language", "Language_String", "Language_String2", "Language_String3"))
-			if language != "" {
-				audio = append(audio, language)
-			}
+			audio = append(audio, mediaInfoTrackLanguages(track)...)
 		case "text":
-			language := normalizeLanguage(trackString(track, "Language", "Language_String", "Language_String2", "Language_String3"))
-			if language != "" {
-				subs = append(subs, language)
-			}
+			subs = append(subs, mediaInfoTrackLanguages(track)...)
 		}
 	}
 
-	return uniqueStrings(audio), uniqueStrings(subs)
+	return languageutil.NormalizeLanguageList(audio), languageutil.NormalizeLanguageList(subs)
+}
+
+func mediaInfoTrackLanguages(track map[string]any) []string {
+	if code := trackString(track, "Language"); code != "" {
+		return languageutil.NormalizeLanguageList([]string{code})
+	}
+	return languageutil.NormalizeLanguageNames([]string{trackString(track, "Language_String", "Language_String2", "Language_String3")})
 }
 
 // extractBDInfoLanguages returns normalized, case-insensitively deduplicated
@@ -81,33 +82,7 @@ func extractBDInfoLanguages(info *discparse.BDInfo) ([]string, []string) {
 		if isBDInfoCommentary(track) {
 			continue
 		}
-		audio = append(audio, normalizeLanguage(track.Language))
+		audio = append(audio, track.Language)
 	}
-	subs := make([]string, 0, len(info.Subtitles))
-	for _, language := range info.Subtitles {
-		subs = append(subs, normalizeLanguage(language))
-	}
-	return uniqueStrings(audio), uniqueStrings(subs)
-}
-
-func normalizeLanguage(value string) string {
-	return languageutil.NormalizeLanguageDisplay(value)
-}
-
-func uniqueStrings(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			continue
-		}
-		key := strings.ToLower(trimmed)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, trimmed)
-	}
-	return out
+	return languageutil.NormalizeLanguageNames(audio), languageutil.NormalizeLanguageNames(info.Subtitles)
 }

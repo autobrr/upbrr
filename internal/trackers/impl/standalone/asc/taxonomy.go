@@ -6,6 +6,10 @@ package asc
 import (
 	"strings"
 
+	"golang.org/x/text/language"
+
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -140,9 +144,9 @@ func resolveAudioCodec(meta api.UploadSubject) string {
 func resolveAudio(meta api.UploadSubject) string {
 	original := strings.ToLower(strings.TrimSpace(resolveOriginalLanguage(meta)))
 	audioLangs := lowerStrings(meta.AudioLanguages)
-	hasPTAudio := containsAny(audioLangs, []string{"portuguese", "português", "pt"})
+	hasPTAudio := languageutil.ContainsLanguage(audioLangs, "pt") || containsAny(audioLangs, []string{"português"})
 	hasPTSubs := resolveSubtitle(meta) == "Embutida"
-	isOriginalPT := containsAny([]string{original}, []string{"portuguese", "português", "pt"})
+	isOriginalPT := languageutil.SameLanguage(original, "pt") || original == "português"
 	switch {
 	case hasPTAudio && isOriginalPT:
 		return "4"
@@ -158,7 +162,7 @@ func resolveAudio(meta api.UploadSubject) string {
 }
 
 func resolveSubtitle(meta api.UploadSubject) string {
-	if containsAny(lowerStrings(meta.SubtitleLanguages), []string{"portuguese", "português", "pt", "brazilian portuguese"}) {
+	if languageutil.ContainsLanguage(meta.SubtitleLanguages, "pt") || containsAny(lowerStrings(meta.SubtitleLanguages), []string{"português"}) {
 		return "Embutida"
 	}
 	return "S_legenda"
@@ -233,6 +237,11 @@ func boolFlag(ok bool) string {
 
 func mapLanguage(value string, mappings map[string]string, fallback string) string {
 	key := strings.ToLower(strings.TrimSpace(value))
+	if tag, ok := languageutil.LanguageTag(value); ok {
+		tag, _ = language.All.Canonicalize(tag)
+		base, _, _ := tag.Raw()
+		key = base.String()
+	}
 	if mapped, ok := mappings[key]; ok {
 		return mapped
 	}
@@ -253,7 +262,7 @@ func lowerStrings(values []string) []string {
 func countNonPortuguese(values []string) int {
 	count := 0
 	for _, value := range values {
-		if !containsAny([]string{value}, []string{"portuguese", "português", "pt"}) {
+		if languageutil.IsIdentifiedLanguage(value) && !languageutil.SameLanguage(value, "pt") {
 			count++
 		}
 	}

@@ -5,11 +5,35 @@ package ptp
 
 import (
 	"context"
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 	"slices"
 	"testing"
 )
+
+func TestCanonicalSubtitleTaxonomyPreservesVariants(t *testing.T) {
+	for _, tt := range []struct {
+		value string
+		want  int
+	}{
+		{"nb", 12}, {"Norwegian Bokmål", 12}, {"pt-BR", 49}, {"Brazilian Portuguese", 49},
+		{"pt-PT", 21}, {"English (Forced)", 50}, {"English (Full)", 3},
+		{"ms", 54}, {"Malay", 54}, {"English intertitles", 51},
+	} {
+		values := languageutil.NormalizeLanguageList([]string{tt.value})
+		if len(values) != 1 {
+			t.Fatalf("input %q lost its language: %q", tt.value, values)
+		}
+		got, ok := subtitleID(values[0])
+		if !ok || got != tt.want {
+			t.Errorf("input %q projected %q to (%d, %t), want %d", tt.value, values[0], got, ok, tt.want)
+		}
+	}
+	if _, ok := subtitleID("Philippine languages"); ok {
+		t.Fatal("collective language acquired an unsupported member subtitle ID")
+	}
+}
 
 func TestPTPReviewedSubtitlePayload(t *testing.T) {
 	for _, tt := range []struct {

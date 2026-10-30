@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/text/language"
+
 	"github.com/autobrr/upbrr/internal/logging"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -627,7 +629,9 @@ func audioLanguagePrefix(meta preparationstate.State, tracks []map[string]any) s
 
 	languages := make([]string, 0, len(filtered))
 	for _, track := range filtered {
-		languages = append(languages, trackString(track, "Language", "Language_String", "Language_String2", "Language_String3"))
+		if values := mediaInfoTrackLanguages(track); len(values) == 1 {
+			languages = append(languages, values[0])
+		}
 	}
 	return audioLanguagePrefixFromLanguages(meta, languages)
 }
@@ -637,7 +641,11 @@ func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []s
 		return ""
 	}
 
-	original := canonicalAudioLanguage(originalAudioLanguage(meta))
+	originalValue := originalAudioLanguage(meta)
+	if !languageutil.IsIdentifiedLanguage(originalValue) {
+		return ""
+	}
+	original := canonicalAudioLanguage(originalValue)
 	if original == "" || original == "unknown" {
 		return ""
 	}
@@ -646,6 +654,9 @@ func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []s
 	hasOriginal := false
 	hasOther := false
 	for _, value := range languages {
+		if !languageutil.IsIdentifiedLanguage(value) {
+			continue
+		}
 		language := canonicalAudioLanguage(value)
 		if language == "" || language == "unknown" {
 			continue
@@ -661,7 +672,7 @@ func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []s
 		}
 	}
 
-	if len(languages) > 1 && ((hasEnglish && (hasOriginal || hasOther)) || (hasOriginal && hasOther)) {
+	if languageutil.LanguageIdentityCount(languages) > 1 && ((hasEnglish && (hasOriginal || hasOther)) || (hasOriginal && hasOther)) {
 		return "Dual-Audio"
 	}
 	if hasEnglish && !hasOriginal && original != "english" {
@@ -682,40 +693,27 @@ func originalAudioLanguage(meta preparationstate.State) string {
 	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.OriginalLanguage) != "":
 		return meta.ProviderMetadata.TVDB.OriginalLanguage
 	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Language) != "":
-		return meta.ProviderMetadata.TVmaze.Language
+		value := meta.ProviderMetadata.TVmaze.Language
+		if normalized := languageutil.NormalizeLanguageName(value); normalized != "" {
+			return normalized
+		}
+		return value
 	default:
 		return ""
 	}
 }
 
 func canonicalAudioLanguage(value string) string {
-	token := strings.ToLower(strings.TrimSpace(value))
-	if token == "" {
-		return ""
-	}
-	for _, separator := range []string{"-", "_", ",", " "} {
-		if index := strings.Index(token, separator); index >= 0 {
-			token = token[:index]
-			break
-		}
-	}
-	switch token {
-	case "en", "eng", "english":
-		return "english"
-	case "zh", "zho", "chi", "cn", "cmn", "chinese", "mandarin":
-		return "chinese"
-	case "no", "nor", "nb", "nob", "norwegian":
-		return "norwegian"
-	case "zxx", "xx", "und":
+	if value == "xx" || languageutil.NormalizeLanguageCode(value) == "und" || languageutil.NormalizeLanguageCode(value) == "zxx" {
 		return "unknown"
 	}
-	if normalized := languageutil.NormalizeLanguageLabel(value); normalized != "" {
-		return strings.ToLower(normalized)
+	tag, ok := languageutil.LanguageTag(value)
+	if !ok {
+		return ""
 	}
-	if normalized := strings.ToLower(strings.TrimSpace(languageutil.NormalizeLanguageDisplay(value))); normalized != "" {
-		return normalized
-	}
-	return token
+	// Historical naming groups stay local; canonical media identities do not merge.
+	tag, _ = language.All.Canonicalize(tag)
+	return strings.ToLower(languageutil.NormalizeLanguageDisplay(tag.String()))
 }
 
 func isCommentaryOrCompatibilityAudioValue(value string) bool {

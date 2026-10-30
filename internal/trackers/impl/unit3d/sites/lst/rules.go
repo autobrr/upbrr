@@ -8,6 +8,8 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/mediafacts"
 
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -139,8 +141,8 @@ func presentationLanguageFailures(subject api.TrackerValidationSubject, resource
 		// Missing canonical language facts still require correction when no known
 		// English coverage makes those facts irrelevant to LST acceptance.
 		canonicalEvidence := failure.Rule == "language_evidence" || failure.Rule == "language_original_evidence"
-		englishCoverage := (subject.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory && slices.Contains(subject.LanguageFacts.ProgrammeLanguages, "English")) ||
-			(subject.LanguageFacts.SubtitleStatus != api.MetadataEvidenceStatusContradictory && slices.Contains(subject.LanguageFacts.SubtitleLanguages, "English"))
+		englishCoverage := (subject.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory && languageutil.ContainsLanguage(subject.LanguageFacts.ProgrammeLanguages, "English")) ||
+			(subject.LanguageFacts.SubtitleStatus != api.MetadataEvidenceStatusContradictory && languageutil.ContainsLanguage(subject.LanguageFacts.SubtitleLanguages, "English"))
 		if !canonicalEvidence || englishCoverage {
 			failure.Disposition = api.RuleDispositionAdvisory
 		}
@@ -156,7 +158,7 @@ func presentationLanguageFailures(subject api.TrackerValidationSubject, resource
 			}
 		case "language_subtitle_default":
 			if slices.ContainsFunc(subject.LanguageFacts.Tracks, func(track api.MediaTrackFacts) bool {
-				return track.Kind == api.MediaTrackSubtitle && slices.Contains(track.Languages, "English")
+				return track.Kind == api.MediaTrackSubtitle && languageutil.ContainsLanguage(track.Languages, "English")
 			}) {
 				reason = "no English subtitle track is marked default for foreign content; set the appropriate English subtitle default flag"
 			}
@@ -275,8 +277,10 @@ func resourceLanguageFacts(subject api.TrackerValidationSubject, resource string
 }
 
 func resourceNeedsEnglishSubtitles(facts api.LanguageFacts) bool {
-	return facts.OriginalLanguagesKnown && !slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX") &&
-		(facts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory || !slices.Contains(facts.ProgrammeLanguages, "English")) && (facts.SubtitleStatus == api.MetadataEvidenceStatusContradictory || !slices.Contains(facts.SubtitleLanguages, "English"))
+	return facts.OriginalLanguagesKnown && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
+		!languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
+		(facts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory || !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English")) &&
+		(facts.SubtitleStatus == api.MetadataEvidenceStatusContradictory || !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English"))
 }
 
 func resourceTitleSearchRequired(subject api.TrackerValidationSubject) bool {

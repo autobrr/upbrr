@@ -4,7 +4,7 @@
 package hhd
 
 import (
-	"slices"
+	"github.com/autobrr/upbrr/internal/languageutil"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -36,8 +36,8 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		if track.Kind != api.MediaTrackAudio {
 			continue
 		}
-		if (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) && slices.Contains(track.Languages, "English") &&
-			!slices.Contains(facts.OriginalLanguages, "English") {
+		if (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) && languageutil.ContainsLanguage(track.Languages, "English") &&
+			!languageutil.ContainsLanguage(facts.OriginalLanguages, "English") {
 			englishDubs++
 		}
 	}

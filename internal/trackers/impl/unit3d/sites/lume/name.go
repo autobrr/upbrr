@@ -9,13 +9,14 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v7", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v8", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
 }
 
 func applyLumeNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -24,7 +25,9 @@ func applyLumeNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, 
 			return fmt.Errorf("apply LUME language markers: %w", err)
 		}
 		languageCount := trackers.KnownProgrammeLanguageCount(meta.LanguageFacts)
-		if languageCount >= 2 && languageCount == len(meta.LanguageFacts.ProgrammeLanguages) && meta.LanguageFacts.HasOriginalAudio() &&
+		if languageCount >= 2 &&
+			!slices.ContainsFunc(meta.LanguageFacts.ProgrammeLanguages, func(value string) bool { return !languageutil.IsIdentifiedLanguage(value) }) &&
+			meta.LanguageFacts.HasOriginalAudio() &&
 			(languageCount != 2 || !meta.LanguageFacts.HasEnglishDub()) {
 			if err := editor.InsertBefore(api.NameRoleDualAudio, "Multi", api.NameRoleAudio); err != nil {
 				return fmt.Errorf("set LUME multi-language marker: %w", err)

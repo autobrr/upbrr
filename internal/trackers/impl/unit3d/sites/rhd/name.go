@@ -8,8 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"golang.org/x/text/language"
-	"golang.org/x/text/language/display"
+	"github.com/autobrr/upbrr/internal/languageutil"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -196,7 +195,7 @@ func resolveLanguage(meta api.UploadSubject) string {
 	case len(languages) > 0:
 		base = languageName(languages[0])
 	default:
-		base = "ENGLISH"
+		return ""
 	}
 	if rhdHasAudio(meta, "ac3d", "line") || rhdHasOther(meta, "LD", "MD", "MIC") ||
 		slices.ContainsFunc(meta.Release.Language, func(value string) bool {
@@ -239,13 +238,17 @@ func normalizedAudioLanguages(values []string) []string {
 	out := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
-		tag, ok := unit3d.ParseLanguageTag(value)
-		if !ok {
+		key := strings.TrimSpace(value)
+		if key == "" {
 			continue
 		}
-		base, _ := tag.Base()
-		key := base.String()
-		if key == "" || key == "und" {
+		tag, ok := unit3d.ParseLanguageTag(value)
+		if ok {
+			base, _, _ := tag.Raw()
+			key = base.String()
+		}
+		key = strings.ToLower(key)
+		if key == "und" {
 			continue
 		}
 		if isGerman(key) {
@@ -270,11 +273,7 @@ func isGerman(value string) bool {
 }
 
 func languageName(value string) string {
-	tag, ok := unit3d.ParseLanguageTag(value)
-	if !ok {
-		return strings.ToUpper(strings.TrimSpace(value))
-	}
-	name := display.Languages(language.English).Name(tag)
+	name := languageutil.NormalizeLanguageDisplay(value)
 	if name == "" {
 		return strings.ToUpper(strings.TrimSpace(value))
 	}

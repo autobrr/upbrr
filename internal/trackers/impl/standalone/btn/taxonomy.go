@@ -23,8 +23,7 @@ func btnPrimaryProgrammeLanguage(facts api.LanguageFacts) string {
 			(track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) || len(track.Languages) != 1 {
 			continue
 		}
-		code := languageutil.NormalizeLanguageCode(track.Languages[0])
-		if code == "" || code == "und" || code == "mul" {
+		if !languageutil.IsIdentifiedLanguage(track.Languages[0]) {
 			return ""
 		}
 		return languageutil.NormalizeLanguageLabel(track.Languages[0])
@@ -47,7 +46,7 @@ func btnOriginalAudioCountryID(subject api.TrackerValidationSubject) string {
 	language := btnPrimaryProgrammeLanguage(facts)
 	metadata := subject.ProviderMetadata
 	if language == "" || !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) != 1 ||
-		language != facts.OriginalLanguages[0] || !metadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
+		!languageutil.SameLanguage(language, facts.OriginalLanguages[0]) || !metadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
 		return ""
 	}
 	var countries []string
@@ -497,12 +496,7 @@ func resolveBTNOriginalLanguage(meta api.UploadSubject) string {
 // isBTNEnglishLanguage reports whether a provider language value represents
 // English and should therefore not trigger BTN's foreign flag.
 func isBTNEnglishLanguage(language string) bool {
-	switch strings.ToLower(strings.TrimSpace(language)) {
-	case "en", "eng", "english":
-		return true
-	default:
-		return false
-	}
+	return languageutil.SameLanguage(language, "en")
 }
 
 // normalizeBTNCountryAlias lowercases and collapses punctuation so metadata

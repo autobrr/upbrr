@@ -3877,6 +3877,10 @@
       "label": "Afrikaans"
     },
     {
+      "value": "Afro-Asiatic languages",
+      "label": "Afro-Asiatic languages"
+    },
+    {
       "value": "Aghem",
       "label": "Aghem"
     },
@@ -3885,20 +3889,60 @@
       "label": "Akan"
     },
     {
+      "value": "Alacalufan languages",
+      "label": "Alacalufan languages"
+    },
+    {
       "value": "Albanian",
       "label": "Albanian"
+    },
+    {
+      "value": "Albanian languages",
+      "label": "Albanian languages"
+    },
+    {
+      "value": "Algic languages",
+      "label": "Algic languages"
+    },
+    {
+      "value": "Algonquian languages",
+      "label": "Algonquian languages"
+    },
+    {
+      "value": "Altaic languages",
+      "label": "Altaic languages"
     },
     {
       "value": "Amharic",
       "label": "Amharic"
     },
     {
+      "value": "Apache languages",
+      "label": "Apache languages"
+    },
+    {
       "value": "Arabic",
       "label": "Arabic"
     },
     {
+      "value": "Arauan languages",
+      "label": "Arauan languages"
+    },
+    {
+      "value": "Arawakan languages",
+      "label": "Arawakan languages"
+    },
+    {
       "value": "Armenian",
       "label": "Armenian"
+    },
+    {
+      "value": "Armenian (family)",
+      "label": "Armenian (family)"
+    },
+    {
+      "value": "Artificial languages",
+      "label": "Artificial languages"
     },
     {
       "value": "Assamese",
@@ -3909,8 +3953,28 @@
       "label": "Asturian"
     },
     {
-      "value": "Asu",
-      "label": "Asu"
+      "value": "Asu [asa]",
+      "label": "Asu [asa]"
+    },
+    {
+      "value": "Athapascan languages",
+      "label": "Athapascan languages"
+    },
+    {
+      "value": "Atlantic-Congo languages",
+      "label": "Atlantic-Congo languages"
+    },
+    {
+      "value": "Australian languages",
+      "label": "Australian languages"
+    },
+    {
+      "value": "Austro-Asiatic languages",
+      "label": "Austro-Asiatic languages"
+    },
+    {
+      "value": "Austronesian languages",
+      "label": "Austronesian languages"
     },
     {
       "value": "Azerbaijani",
@@ -3921,12 +3985,28 @@
       "label": "Bafia"
     },
     {
+      "value": "Baltic languages",
+      "label": "Baltic languages"
+    },
+    {
       "value": "Bambara",
       "label": "Bambara"
     },
     {
+      "value": "Bamileke languages",
+      "label": "Bamileke languages"
+    },
+    {
+      "value": "Banda languages",
+      "label": "Banda languages"
+    },
+    {
       "value": "Bangla",
       "label": "Bangla"
+    },
+    {
+      "value": "Bantu languages",
+      "label": "Bantu languages"
     },
     {
       "value": "Basaa",
@@ -3935,6 +4015,14 @@
     {
       "value": "Basque",
       "label": "Basque"
+    },
+    {
+      "value": "Basque (family)",
+      "label": "Basque (family)"
+    },
+    {
+      "value": "Batak languages",
+      "label": "Batak languages"
     },
     {
       "value": "Belarusian",
@@ -3947,6 +4035,14 @@
     {
       "value": "Bena",
       "label": "Bena"
+    },
+    {
+      "value": "Berber languages",
+      "label": "Berber languages"
+    },
+    {
+      "value": "Bihari languages",
+      "label": "Bihari languages"
     },
     {
       "value": "Bodo",
@@ -3969,12 +4065,28 @@
       "label": "Burmese"
     },
     {
+      "value": "Caddoan languages",
+      "label": "Caddoan languages"
+    },
+    {
       "value": "Cantonese",
       "label": "Cantonese"
     },
     {
       "value": "Catalan",
       "label": "Catalan"
+    },
+    {
+      "value": "Caucasian languages",
+      "label": "Caucasian languages"
+    },
+    {
+      "value": "Celtic languages",
+      "label": "Celtic languages"
+    },
+    {
+      "value": "Central American Indian languages",
+      "label": "Central American Indian languages"
     },
     {
       "value": "Central Atlas Tamazight",
@@ -3985,8 +4097,24 @@
       "label": "Central Kurdish"
     },
     {
+      "value": "Central Malayo-Polynesian languages",
+      "label": "Central Malayo-Polynesian languages"
+    },
+    {
+      "value": "Central Sudanic languages",
+      "label": "Central Sudanic languages"
+    },
+    {
+      "value": "Chadic languages",
+      "label": "Chadic languages"
+    },
+    {
       "value": "Chakma",
       "label": "Chakma"
+    },
+    {
+      "value": "Chamic languages",
+      "label": "Chamic languages"
     },
     {
       "value": "Chechen",
@@ -3997,12 +4125,20 @@
       "label": "Cherokee"
     },
     {
+      "value": "Chibchan languages",
+      "label": "Chibchan languages"
+    },
+    {
       "value": "Chiga",
       "label": "Chiga"
     },
     {
       "value": "Chinese",
       "label": "Chinese"
+    },
+    {
+      "value": "Chinese (family)",
+      "label": "Chinese (family)"
     },
     {
       "value": "Colognian",
@@ -4013,8 +4149,16 @@
       "label": "Cornish"
     },
     {
+      "value": "Creoles and pidgins",
+      "label": "Creoles and pidgins"
+    },
+    {
       "value": "Croatian",
       "label": "Croatian"
+    },
+    {
+      "value": "Cushitic languages",
+      "label": "Cushitic languages"
     },
     {
       "value": "Czech",
@@ -4023,6 +4167,10 @@
     {
       "value": "Danish",
       "label": "Danish"
+    },
+    {
+      "value": "Dravidian languages",
+      "label": "Dravidian languages"
     },
     {
       "value": "Duala",
@@ -4035,6 +4183,26 @@
     {
       "value": "Dzongkha",
       "label": "Dzongkha"
+    },
+    {
+      "value": "East Germanic languages",
+      "label": "East Germanic languages"
+    },
+    {
+      "value": "East Slavic languages",
+      "label": "East Slavic languages"
+    },
+    {
+      "value": "Eastern Malayo-Polynesian languages",
+      "label": "Eastern Malayo-Polynesian languages"
+    },
+    {
+      "value": "Eastern Sudanic languages",
+      "label": "Eastern Sudanic languages"
+    },
+    {
+      "value": "Egyptian languages",
+      "label": "Egyptian languages"
     },
     {
       "value": "Embu",
@@ -4051,6 +4219,14 @@
     {
       "value": "English (Full)",
       "label": "English (Full)"
+    },
+    {
+      "value": "English-based creoles and pidgins",
+      "label": "English-based creoles and pidgins"
+    },
+    {
+      "value": "Eskimo-Aleut languages",
+      "label": "Eskimo-Aleut languages"
     },
     {
       "value": "Esperanto",
@@ -4081,8 +4257,20 @@
       "label": "Finnish"
     },
     {
+      "value": "Finno-Ugrian languages",
+      "label": "Finno-Ugrian languages"
+    },
+    {
+      "value": "Formosan languages",
+      "label": "Formosan languages"
+    },
+    {
       "value": "French",
       "label": "French"
+    },
+    {
+      "value": "French-based creoles and pidgins",
+      "label": "French-based creoles and pidgins"
     },
     {
       "value": "Friulian",
@@ -4109,8 +4297,16 @@
       "label": "German"
     },
     {
+      "value": "Germanic languages",
+      "label": "Germanic languages"
+    },
+    {
       "value": "Greek",
       "label": "Greek"
+    },
+    {
+      "value": "Greek languages",
+      "label": "Greek languages"
     },
     {
       "value": "Gujarati",
@@ -4133,8 +4329,20 @@
       "label": "Hebrew"
     },
     {
+      "value": "Himachali languages",
+      "label": "Himachali languages"
+    },
+    {
       "value": "Hindi",
       "label": "Hindi"
+    },
+    {
+      "value": "Hmong-Mien languages",
+      "label": "Hmong-Mien languages"
+    },
+    {
+      "value": "Hokan languages",
+      "label": "Hokan languages"
     },
     {
       "value": "Hungarian",
@@ -4149,24 +4357,56 @@
       "label": "Igbo"
     },
     {
+      "value": "Ijo languages",
+      "label": "Ijo languages"
+    },
+    {
       "value": "Inari Sami",
       "label": "Inari Sami"
+    },
+    {
+      "value": "Indic languages",
+      "label": "Indic languages"
+    },
+    {
+      "value": "Indo-European languages",
+      "label": "Indo-European languages"
+    },
+    {
+      "value": "Indo-Iranian languages",
+      "label": "Indo-Iranian languages"
     },
     {
       "value": "Indonesian",
       "label": "Indonesian"
     },
     {
+      "value": "Iranian languages",
+      "label": "Iranian languages"
+    },
+    {
       "value": "Irish",
       "label": "Irish"
+    },
+    {
+      "value": "Iroquoian languages",
+      "label": "Iroquoian languages"
     },
     {
       "value": "Italian",
       "label": "Italian"
     },
     {
+      "value": "Italic languages",
+      "label": "Italic languages"
+    },
+    {
       "value": "Japanese",
       "label": "Japanese"
+    },
+    {
+      "value": "Japanese (family)",
+      "label": "Japanese (family)"
     },
     {
       "value": "Jola-Fonyi",
@@ -4201,6 +4441,10 @@
       "label": "Kannada"
     },
     {
+      "value": "Karen languages",
+      "label": "Karen languages"
+    },
+    {
       "value": "Kashmiri",
       "label": "Kashmiri"
     },
@@ -4213,6 +4457,10 @@
       "label": "Khmer"
     },
     {
+      "value": "Khoisan languages",
+      "label": "Khoisan languages"
+    },
+    {
       "value": "Kikuyu",
       "label": "Kikuyu"
     },
@@ -4221,8 +4469,12 @@
       "label": "Kinyarwanda"
     },
     {
-      "value": "Konkani",
-      "label": "Konkani"
+      "value": "Konkani (macrolanguage)",
+      "label": "Konkani (macrolanguage)"
+    },
+    {
+      "value": "Kordofanian languages",
+      "label": "Kordofanian languages"
     },
     {
       "value": "Korean",
@@ -4237,6 +4489,10 @@
       "label": "Koyraboro Senni"
     },
     {
+      "value": "Kru languages",
+      "label": "Kru languages"
+    },
+    {
       "value": "Kwasio",
       "label": "Kwasio"
     },
@@ -4247,6 +4503,10 @@
     {
       "value": "Lakota",
       "label": "Lakota"
+    },
+    {
+      "value": "Land Dayak languages",
+      "label": "Land Dayak languages"
     },
     {
       "value": "Langi",
@@ -4309,16 +4569,28 @@
       "label": "Malagasy"
     },
     {
-      "value": "Malay",
-      "label": "Malay"
+      "value": "Malay (macrolanguage)",
+      "label": "Malay (macrolanguage)"
     },
     {
       "value": "Malayalam",
       "label": "Malayalam"
     },
     {
+      "value": "Malayo-Polynesian languages",
+      "label": "Malayo-Polynesian languages"
+    },
+    {
       "value": "Maltese",
       "label": "Maltese"
+    },
+    {
+      "value": "Mande languages",
+      "label": "Mande languages"
+    },
+    {
+      "value": "Manobo languages",
+      "label": "Manobo languages"
     },
     {
       "value": "Manx",
@@ -4333,6 +4605,10 @@
       "label": "Masai"
     },
     {
+      "value": "Mayan languages",
+      "label": "Mayan languages"
+    },
+    {
       "value": "Mazanderani",
       "label": "Mazanderani"
     },
@@ -4345,24 +4621,44 @@
       "label": "Metaʼ"
     },
     {
+      "value": "Mon-Khmer languages",
+      "label": "Mon-Khmer languages"
+    },
+    {
       "value": "Mongolian",
       "label": "Mongolian"
+    },
+    {
+      "value": "Mongolian languages",
+      "label": "Mongolian languages"
     },
     {
       "value": "Morisyen",
       "label": "Morisyen"
     },
     {
+      "value": "Munda languages",
+      "label": "Munda languages"
+    },
+    {
       "value": "Mundang",
       "label": "Mundang"
+    },
+    {
+      "value": "Na-Dene languages",
+      "label": "Na-Dene languages"
+    },
+    {
+      "value": "Nahuatl languages",
+      "label": "Nahuatl languages"
     },
     {
       "value": "Nama",
       "label": "Nama"
     },
     {
-      "value": "Nepali",
-      "label": "Nepali"
+      "value": "Nepali (macrolanguage)",
+      "label": "Nepali (macrolanguage)"
     },
     {
       "value": "Ngiemboon",
@@ -4371,6 +4667,26 @@
     {
       "value": "Ngomba",
       "label": "Ngomba"
+    },
+    {
+      "value": "Niger-Kordofanian languages",
+      "label": "Niger-Kordofanian languages"
+    },
+    {
+      "value": "Nilo-Saharan languages",
+      "label": "Nilo-Saharan languages"
+    },
+    {
+      "value": "North American Indian languages",
+      "label": "North American Indian languages"
+    },
+    {
+      "value": "North Caucasian languages",
+      "label": "North Caucasian languages"
+    },
+    {
+      "value": "North Germanic languages",
+      "label": "North Germanic languages"
     },
     {
       "value": "North Ndebele",
@@ -4385,12 +4701,16 @@
       "label": "Northern Sami"
     },
     {
-      "value": "Norwegian Bokmål",
-      "label": "Norwegian Bokmål"
+      "value": "Norwegian",
+      "label": "Norwegian"
     },
     {
       "value": "Norwegian Nynorsk",
       "label": "Norwegian Nynorsk"
+    },
+    {
+      "value": "Nubian languages",
+      "label": "Nubian languages"
     },
     {
       "value": "Nuer",
@@ -4401,8 +4721,12 @@
       "label": "Nyankole"
     },
     {
-      "value": "Odia",
-      "label": "Odia"
+      "value": "Omotic languages",
+      "label": "Omotic languages"
+    },
+    {
+      "value": "Oriya (macrolanguage)",
+      "label": "Oriya (macrolanguage)"
     },
     {
       "value": "Oromo",
@@ -4413,12 +4737,24 @@
       "label": "Ossetic"
     },
     {
-      "value": "Pashto",
-      "label": "Pashto"
+      "value": "Oto-Manguean languages",
+      "label": "Oto-Manguean languages"
+    },
+    {
+      "value": "Otomian languages",
+      "label": "Otomian languages"
+    },
+    {
+      "value": "Papuan languages",
+      "label": "Papuan languages"
     },
     {
       "value": "Persian",
       "label": "Persian"
+    },
+    {
+      "value": "Philippine languages",
+      "label": "Philippine languages"
     },
     {
       "value": "Polish",
@@ -4429,6 +4765,14 @@
       "label": "Portuguese"
     },
     {
+      "value": "Portuguese-based creoles and pidgins",
+      "label": "Portuguese-based creoles and pidgins"
+    },
+    {
+      "value": "Prakrit languages",
+      "label": "Prakrit languages"
+    },
+    {
       "value": "Prussian",
       "label": "Prussian"
     },
@@ -4437,8 +4781,20 @@
       "label": "Punjabi"
     },
     {
+      "value": "Pushto",
+      "label": "Pushto"
+    },
+    {
       "value": "Quechua",
       "label": "Quechua"
+    },
+    {
+      "value": "Quechuan (family)",
+      "label": "Quechuan (family)"
+    },
+    {
+      "value": "Romance languages",
+      "label": "Romance languages"
     },
     {
       "value": "Romanian",
@@ -4461,16 +4817,28 @@
       "label": "Russian"
     },
     {
-      "value": "Rwa",
-      "label": "Rwa"
+      "value": "Rwa [rwk]",
+      "label": "Rwa [rwk]"
     },
     {
       "value": "Sakha",
       "label": "Sakha"
     },
     {
+      "value": "Salishan languages",
+      "label": "Salishan languages"
+    },
+    {
       "value": "Samburu",
       "label": "Samburu"
+    },
+    {
+      "value": "Sami languages",
+      "label": "Sami languages"
+    },
+    {
+      "value": "Samoyedic languages",
+      "label": "Samoyedic languages"
     },
     {
       "value": "Sango",
@@ -4483,6 +4851,10 @@
     {
       "value": "Scottish Gaelic",
       "label": "Scottish Gaelic"
+    },
+    {
+      "value": "Semitic languages",
+      "label": "Semitic languages"
     },
     {
       "value": "Sena",
@@ -4505,12 +4877,28 @@
       "label": "Sichuan Yi"
     },
     {
+      "value": "Sign languages",
+      "label": "Sign languages"
+    },
+    {
       "value": "Sindhi",
       "label": "Sindhi"
     },
     {
       "value": "Sinhala",
       "label": "Sinhala"
+    },
+    {
+      "value": "Sino-Tibetan languages",
+      "label": "Sino-Tibetan languages"
+    },
+    {
+      "value": "Siouan languages",
+      "label": "Siouan languages"
+    },
+    {
+      "value": "Slavic languages",
+      "label": "Slavic languages"
     },
     {
       "value": "Slovak",
@@ -4529,6 +4917,26 @@
       "label": "Somali"
     },
     {
+      "value": "Songhai languages",
+      "label": "Songhai languages"
+    },
+    {
+      "value": "Sorbian languages",
+      "label": "Sorbian languages"
+    },
+    {
+      "value": "South American Indian languages",
+      "label": "South American Indian languages"
+    },
+    {
+      "value": "South Caucasian languages",
+      "label": "South Caucasian languages"
+    },
+    {
+      "value": "South Slavic languages",
+      "label": "South Slavic languages"
+    },
+    {
       "value": "Spanish",
       "label": "Spanish"
     },
@@ -4537,8 +4945,8 @@
       "label": "Standard Moroccan Tamazight"
     },
     {
-      "value": "Swahili",
-      "label": "Swahili"
+      "value": "Swahili (macrolanguage)",
+      "label": "Swahili (macrolanguage)"
     },
     {
       "value": "Swedish",
@@ -4551,6 +4959,10 @@
     {
       "value": "Tachelhit",
       "label": "Tachelhit"
+    },
+    {
+      "value": "Tai languages",
+      "label": "Tai languages"
     },
     {
       "value": "Taita",
@@ -4589,12 +5001,32 @@
       "label": "Tibetan"
     },
     {
+      "value": "Tibeto-Burman languages",
+      "label": "Tibeto-Burman languages"
+    },
+    {
       "value": "Tigrinya",
       "label": "Tigrinya"
     },
     {
       "value": "Tongan",
       "label": "Tongan"
+    },
+    {
+      "value": "Trans-New Guinea languages",
+      "label": "Trans-New Guinea languages"
+    },
+    {
+      "value": "Tungus languages",
+      "label": "Tungus languages"
+    },
+    {
+      "value": "Tupi languages",
+      "label": "Tupi languages"
+    },
+    {
+      "value": "Turkic languages",
+      "label": "Turkic languages"
     },
     {
       "value": "Turkish",
@@ -4613,8 +5045,16 @@
       "label": "Upper Sorbian"
     },
     {
+      "value": "Uralic languages",
+      "label": "Uralic languages"
+    },
+    {
       "value": "Urdu",
       "label": "Urdu"
+    },
+    {
+      "value": "Uto-Aztecan languages",
+      "label": "Uto-Aztecan languages"
     },
     {
       "value": "Uyghur",
@@ -4637,6 +5077,10 @@
       "label": "Vunjo"
     },
     {
+      "value": "Wakashan languages",
+      "label": "Wakashan languages"
+    },
+    {
       "value": "Walser",
       "label": "Walser"
     },
@@ -4645,8 +5089,20 @@
       "label": "Welsh"
     },
     {
+      "value": "West Germanic languages",
+      "label": "West Germanic languages"
+    },
+    {
+      "value": "West Slavic languages",
+      "label": "West Slavic languages"
+    },
+    {
       "value": "Western Frisian",
       "label": "Western Frisian"
+    },
+    {
+      "value": "Western Malayo-Polynesian languages",
+      "label": "Western Malayo-Polynesian languages"
     },
     {
       "value": "Wolof",
@@ -4663,6 +5119,14 @@
     {
       "value": "Yoruba",
       "label": "Yoruba"
+    },
+    {
+      "value": "Yupik languages",
+      "label": "Yupik languages"
+    },
+    {
+      "value": "Zande languages",
+      "label": "Zande languages"
     },
     {
       "value": "Zarma",
@@ -6835,6 +7299,10 @@
       "label": "Afrikaans"
     },
     {
+      "value": "Afro-Asiatic languages",
+      "label": "Afro-Asiatic languages"
+    },
+    {
       "value": "Aghem",
       "label": "Aghem"
     },
@@ -6843,20 +7311,60 @@
       "label": "Akan"
     },
     {
+      "value": "Alacalufan languages",
+      "label": "Alacalufan languages"
+    },
+    {
       "value": "Albanian",
       "label": "Albanian"
+    },
+    {
+      "value": "Albanian languages",
+      "label": "Albanian languages"
+    },
+    {
+      "value": "Algic languages",
+      "label": "Algic languages"
+    },
+    {
+      "value": "Algonquian languages",
+      "label": "Algonquian languages"
+    },
+    {
+      "value": "Altaic languages",
+      "label": "Altaic languages"
     },
     {
       "value": "Amharic",
       "label": "Amharic"
     },
     {
+      "value": "Apache languages",
+      "label": "Apache languages"
+    },
+    {
       "value": "Arabic",
       "label": "Arabic"
     },
     {
+      "value": "Arauan languages",
+      "label": "Arauan languages"
+    },
+    {
+      "value": "Arawakan languages",
+      "label": "Arawakan languages"
+    },
+    {
       "value": "Armenian",
       "label": "Armenian"
+    },
+    {
+      "value": "Armenian (family)",
+      "label": "Armenian (family)"
+    },
+    {
+      "value": "Artificial languages",
+      "label": "Artificial languages"
     },
     {
       "value": "Assamese",
@@ -6867,8 +7375,28 @@
       "label": "Asturian"
     },
     {
-      "value": "Asu",
-      "label": "Asu"
+      "value": "Asu [asa]",
+      "label": "Asu [asa]"
+    },
+    {
+      "value": "Athapascan languages",
+      "label": "Athapascan languages"
+    },
+    {
+      "value": "Atlantic-Congo languages",
+      "label": "Atlantic-Congo languages"
+    },
+    {
+      "value": "Australian languages",
+      "label": "Australian languages"
+    },
+    {
+      "value": "Austro-Asiatic languages",
+      "label": "Austro-Asiatic languages"
+    },
+    {
+      "value": "Austronesian languages",
+      "label": "Austronesian languages"
     },
     {
       "value": "Azerbaijani",
@@ -6879,12 +7407,28 @@
       "label": "Bafia"
     },
     {
+      "value": "Baltic languages",
+      "label": "Baltic languages"
+    },
+    {
       "value": "Bambara",
       "label": "Bambara"
     },
     {
+      "value": "Bamileke languages",
+      "label": "Bamileke languages"
+    },
+    {
+      "value": "Banda languages",
+      "label": "Banda languages"
+    },
+    {
       "value": "Bangla",
       "label": "Bangla"
+    },
+    {
+      "value": "Bantu languages",
+      "label": "Bantu languages"
     },
     {
       "value": "Basaa",
@@ -6893,6 +7437,14 @@
     {
       "value": "Basque",
       "label": "Basque"
+    },
+    {
+      "value": "Basque (family)",
+      "label": "Basque (family)"
+    },
+    {
+      "value": "Batak languages",
+      "label": "Batak languages"
     },
     {
       "value": "Belarusian",
@@ -6905,6 +7457,14 @@
     {
       "value": "Bena",
       "label": "Bena"
+    },
+    {
+      "value": "Berber languages",
+      "label": "Berber languages"
+    },
+    {
+      "value": "Bihari languages",
+      "label": "Bihari languages"
     },
     {
       "value": "Bodo",
@@ -6927,12 +7487,28 @@
       "label": "Burmese"
     },
     {
+      "value": "Caddoan languages",
+      "label": "Caddoan languages"
+    },
+    {
       "value": "Cantonese",
       "label": "Cantonese"
     },
     {
       "value": "Catalan",
       "label": "Catalan"
+    },
+    {
+      "value": "Caucasian languages",
+      "label": "Caucasian languages"
+    },
+    {
+      "value": "Celtic languages",
+      "label": "Celtic languages"
+    },
+    {
+      "value": "Central American Indian languages",
+      "label": "Central American Indian languages"
     },
     {
       "value": "Central Atlas Tamazight",
@@ -6943,8 +7519,24 @@
       "label": "Central Kurdish"
     },
     {
+      "value": "Central Malayo-Polynesian languages",
+      "label": "Central Malayo-Polynesian languages"
+    },
+    {
+      "value": "Central Sudanic languages",
+      "label": "Central Sudanic languages"
+    },
+    {
+      "value": "Chadic languages",
+      "label": "Chadic languages"
+    },
+    {
       "value": "Chakma",
       "label": "Chakma"
+    },
+    {
+      "value": "Chamic languages",
+      "label": "Chamic languages"
     },
     {
       "value": "Chechen",
@@ -6955,12 +7547,20 @@
       "label": "Cherokee"
     },
     {
+      "value": "Chibchan languages",
+      "label": "Chibchan languages"
+    },
+    {
       "value": "Chiga",
       "label": "Chiga"
     },
     {
       "value": "Chinese",
       "label": "Chinese"
+    },
+    {
+      "value": "Chinese (family)",
+      "label": "Chinese (family)"
     },
     {
       "value": "Colognian",
@@ -6971,8 +7571,16 @@
       "label": "Cornish"
     },
     {
+      "value": "Creoles and pidgins",
+      "label": "Creoles and pidgins"
+    },
+    {
       "value": "Croatian",
       "label": "Croatian"
+    },
+    {
+      "value": "Cushitic languages",
+      "label": "Cushitic languages"
     },
     {
       "value": "Czech",
@@ -6981,6 +7589,10 @@
     {
       "value": "Danish",
       "label": "Danish"
+    },
+    {
+      "value": "Dravidian languages",
+      "label": "Dravidian languages"
     },
     {
       "value": "Duala",
@@ -6995,12 +7607,40 @@
       "label": "Dzongkha"
     },
     {
+      "value": "East Germanic languages",
+      "label": "East Germanic languages"
+    },
+    {
+      "value": "East Slavic languages",
+      "label": "East Slavic languages"
+    },
+    {
+      "value": "Eastern Malayo-Polynesian languages",
+      "label": "Eastern Malayo-Polynesian languages"
+    },
+    {
+      "value": "Eastern Sudanic languages",
+      "label": "Eastern Sudanic languages"
+    },
+    {
+      "value": "Egyptian languages",
+      "label": "Egyptian languages"
+    },
+    {
       "value": "Embu",
       "label": "Embu"
     },
     {
       "value": "English",
       "label": "English"
+    },
+    {
+      "value": "English-based creoles and pidgins",
+      "label": "English-based creoles and pidgins"
+    },
+    {
+      "value": "Eskimo-Aleut languages",
+      "label": "Eskimo-Aleut languages"
     },
     {
       "value": "Esperanto",
@@ -7031,8 +7671,20 @@
       "label": "Finnish"
     },
     {
+      "value": "Finno-Ugrian languages",
+      "label": "Finno-Ugrian languages"
+    },
+    {
+      "value": "Formosan languages",
+      "label": "Formosan languages"
+    },
+    {
       "value": "French",
       "label": "French"
+    },
+    {
+      "value": "French-based creoles and pidgins",
+      "label": "French-based creoles and pidgins"
     },
     {
       "value": "Friulian",
@@ -7059,8 +7711,16 @@
       "label": "German"
     },
     {
+      "value": "Germanic languages",
+      "label": "Germanic languages"
+    },
+    {
       "value": "Greek",
       "label": "Greek"
+    },
+    {
+      "value": "Greek languages",
+      "label": "Greek languages"
     },
     {
       "value": "Gujarati",
@@ -7083,8 +7743,20 @@
       "label": "Hebrew"
     },
     {
+      "value": "Himachali languages",
+      "label": "Himachali languages"
+    },
+    {
       "value": "Hindi",
       "label": "Hindi"
+    },
+    {
+      "value": "Hmong-Mien languages",
+      "label": "Hmong-Mien languages"
+    },
+    {
+      "value": "Hokan languages",
+      "label": "Hokan languages"
     },
     {
       "value": "Hungarian",
@@ -7099,24 +7771,56 @@
       "label": "Igbo"
     },
     {
+      "value": "Ijo languages",
+      "label": "Ijo languages"
+    },
+    {
       "value": "Inari Sami",
       "label": "Inari Sami"
+    },
+    {
+      "value": "Indic languages",
+      "label": "Indic languages"
+    },
+    {
+      "value": "Indo-European languages",
+      "label": "Indo-European languages"
+    },
+    {
+      "value": "Indo-Iranian languages",
+      "label": "Indo-Iranian languages"
     },
     {
       "value": "Indonesian",
       "label": "Indonesian"
     },
     {
+      "value": "Iranian languages",
+      "label": "Iranian languages"
+    },
+    {
       "value": "Irish",
       "label": "Irish"
+    },
+    {
+      "value": "Iroquoian languages",
+      "label": "Iroquoian languages"
     },
     {
       "value": "Italian",
       "label": "Italian"
     },
     {
+      "value": "Italic languages",
+      "label": "Italic languages"
+    },
+    {
       "value": "Japanese",
       "label": "Japanese"
+    },
+    {
+      "value": "Japanese (family)",
+      "label": "Japanese (family)"
     },
     {
       "value": "Jola-Fonyi",
@@ -7151,6 +7855,10 @@
       "label": "Kannada"
     },
     {
+      "value": "Karen languages",
+      "label": "Karen languages"
+    },
+    {
       "value": "Kashmiri",
       "label": "Kashmiri"
     },
@@ -7163,6 +7871,10 @@
       "label": "Khmer"
     },
     {
+      "value": "Khoisan languages",
+      "label": "Khoisan languages"
+    },
+    {
       "value": "Kikuyu",
       "label": "Kikuyu"
     },
@@ -7171,8 +7883,12 @@
       "label": "Kinyarwanda"
     },
     {
-      "value": "Konkani",
-      "label": "Konkani"
+      "value": "Konkani (macrolanguage)",
+      "label": "Konkani (macrolanguage)"
+    },
+    {
+      "value": "Kordofanian languages",
+      "label": "Kordofanian languages"
     },
     {
       "value": "Korean",
@@ -7187,6 +7903,10 @@
       "label": "Koyraboro Senni"
     },
     {
+      "value": "Kru languages",
+      "label": "Kru languages"
+    },
+    {
       "value": "Kwasio",
       "label": "Kwasio"
     },
@@ -7197,6 +7917,10 @@
     {
       "value": "Lakota",
       "label": "Lakota"
+    },
+    {
+      "value": "Land Dayak languages",
+      "label": "Land Dayak languages"
     },
     {
       "value": "Langi",
@@ -7259,16 +7983,28 @@
       "label": "Malagasy"
     },
     {
-      "value": "Malay",
-      "label": "Malay"
+      "value": "Malay (macrolanguage)",
+      "label": "Malay (macrolanguage)"
     },
     {
       "value": "Malayalam",
       "label": "Malayalam"
     },
     {
+      "value": "Malayo-Polynesian languages",
+      "label": "Malayo-Polynesian languages"
+    },
+    {
       "value": "Maltese",
       "label": "Maltese"
+    },
+    {
+      "value": "Mande languages",
+      "label": "Mande languages"
+    },
+    {
+      "value": "Manobo languages",
+      "label": "Manobo languages"
     },
     {
       "value": "Manx",
@@ -7283,6 +8019,10 @@
       "label": "Masai"
     },
     {
+      "value": "Mayan languages",
+      "label": "Mayan languages"
+    },
+    {
       "value": "Mazanderani",
       "label": "Mazanderani"
     },
@@ -7295,24 +8035,44 @@
       "label": "Metaʼ"
     },
     {
+      "value": "Mon-Khmer languages",
+      "label": "Mon-Khmer languages"
+    },
+    {
       "value": "Mongolian",
       "label": "Mongolian"
+    },
+    {
+      "value": "Mongolian languages",
+      "label": "Mongolian languages"
     },
     {
       "value": "Morisyen",
       "label": "Morisyen"
     },
     {
+      "value": "Munda languages",
+      "label": "Munda languages"
+    },
+    {
       "value": "Mundang",
       "label": "Mundang"
+    },
+    {
+      "value": "Na-Dene languages",
+      "label": "Na-Dene languages"
+    },
+    {
+      "value": "Nahuatl languages",
+      "label": "Nahuatl languages"
     },
     {
       "value": "Nama",
       "label": "Nama"
     },
     {
-      "value": "Nepali",
-      "label": "Nepali"
+      "value": "Nepali (macrolanguage)",
+      "label": "Nepali (macrolanguage)"
     },
     {
       "value": "Ngiemboon",
@@ -7321,6 +8081,26 @@
     {
       "value": "Ngomba",
       "label": "Ngomba"
+    },
+    {
+      "value": "Niger-Kordofanian languages",
+      "label": "Niger-Kordofanian languages"
+    },
+    {
+      "value": "Nilo-Saharan languages",
+      "label": "Nilo-Saharan languages"
+    },
+    {
+      "value": "North American Indian languages",
+      "label": "North American Indian languages"
+    },
+    {
+      "value": "North Caucasian languages",
+      "label": "North Caucasian languages"
+    },
+    {
+      "value": "North Germanic languages",
+      "label": "North Germanic languages"
     },
     {
       "value": "North Ndebele",
@@ -7335,12 +8115,16 @@
       "label": "Northern Sami"
     },
     {
-      "value": "Norwegian Bokmål",
-      "label": "Norwegian Bokmål"
+      "value": "Norwegian",
+      "label": "Norwegian"
     },
     {
       "value": "Norwegian Nynorsk",
       "label": "Norwegian Nynorsk"
+    },
+    {
+      "value": "Nubian languages",
+      "label": "Nubian languages"
     },
     {
       "value": "Nuer",
@@ -7351,8 +8135,12 @@
       "label": "Nyankole"
     },
     {
-      "value": "Odia",
-      "label": "Odia"
+      "value": "Omotic languages",
+      "label": "Omotic languages"
+    },
+    {
+      "value": "Oriya (macrolanguage)",
+      "label": "Oriya (macrolanguage)"
     },
     {
       "value": "Oromo",
@@ -7363,12 +8151,24 @@
       "label": "Ossetic"
     },
     {
-      "value": "Pashto",
-      "label": "Pashto"
+      "value": "Oto-Manguean languages",
+      "label": "Oto-Manguean languages"
+    },
+    {
+      "value": "Otomian languages",
+      "label": "Otomian languages"
+    },
+    {
+      "value": "Papuan languages",
+      "label": "Papuan languages"
     },
     {
       "value": "Persian",
       "label": "Persian"
+    },
+    {
+      "value": "Philippine languages",
+      "label": "Philippine languages"
     },
     {
       "value": "Polish",
@@ -7379,6 +8179,14 @@
       "label": "Portuguese"
     },
     {
+      "value": "Portuguese-based creoles and pidgins",
+      "label": "Portuguese-based creoles and pidgins"
+    },
+    {
+      "value": "Prakrit languages",
+      "label": "Prakrit languages"
+    },
+    {
       "value": "Prussian",
       "label": "Prussian"
     },
@@ -7387,8 +8195,20 @@
       "label": "Punjabi"
     },
     {
+      "value": "Pushto",
+      "label": "Pushto"
+    },
+    {
       "value": "Quechua",
       "label": "Quechua"
+    },
+    {
+      "value": "Quechuan (family)",
+      "label": "Quechuan (family)"
+    },
+    {
+      "value": "Romance languages",
+      "label": "Romance languages"
     },
     {
       "value": "Romanian",
@@ -7411,16 +8231,28 @@
       "label": "Russian"
     },
     {
-      "value": "Rwa",
-      "label": "Rwa"
+      "value": "Rwa [rwk]",
+      "label": "Rwa [rwk]"
     },
     {
       "value": "Sakha",
       "label": "Sakha"
     },
     {
+      "value": "Salishan languages",
+      "label": "Salishan languages"
+    },
+    {
       "value": "Samburu",
       "label": "Samburu"
+    },
+    {
+      "value": "Sami languages",
+      "label": "Sami languages"
+    },
+    {
+      "value": "Samoyedic languages",
+      "label": "Samoyedic languages"
     },
     {
       "value": "Sango",
@@ -7433,6 +8265,10 @@
     {
       "value": "Scottish Gaelic",
       "label": "Scottish Gaelic"
+    },
+    {
+      "value": "Semitic languages",
+      "label": "Semitic languages"
     },
     {
       "value": "Sena",
@@ -7455,12 +8291,28 @@
       "label": "Sichuan Yi"
     },
     {
+      "value": "Sign languages",
+      "label": "Sign languages"
+    },
+    {
       "value": "Sindhi",
       "label": "Sindhi"
     },
     {
       "value": "Sinhala",
       "label": "Sinhala"
+    },
+    {
+      "value": "Sino-Tibetan languages",
+      "label": "Sino-Tibetan languages"
+    },
+    {
+      "value": "Siouan languages",
+      "label": "Siouan languages"
+    },
+    {
+      "value": "Slavic languages",
+      "label": "Slavic languages"
     },
     {
       "value": "Slovak",
@@ -7479,6 +8331,26 @@
       "label": "Somali"
     },
     {
+      "value": "Songhai languages",
+      "label": "Songhai languages"
+    },
+    {
+      "value": "Sorbian languages",
+      "label": "Sorbian languages"
+    },
+    {
+      "value": "South American Indian languages",
+      "label": "South American Indian languages"
+    },
+    {
+      "value": "South Caucasian languages",
+      "label": "South Caucasian languages"
+    },
+    {
+      "value": "South Slavic languages",
+      "label": "South Slavic languages"
+    },
+    {
       "value": "Spanish",
       "label": "Spanish"
     },
@@ -7487,8 +8359,8 @@
       "label": "Standard Moroccan Tamazight"
     },
     {
-      "value": "Swahili",
-      "label": "Swahili"
+      "value": "Swahili (macrolanguage)",
+      "label": "Swahili (macrolanguage)"
     },
     {
       "value": "Swedish",
@@ -7501,6 +8373,10 @@
     {
       "value": "Tachelhit",
       "label": "Tachelhit"
+    },
+    {
+      "value": "Tai languages",
+      "label": "Tai languages"
     },
     {
       "value": "Taita",
@@ -7539,12 +8415,32 @@
       "label": "Tibetan"
     },
     {
+      "value": "Tibeto-Burman languages",
+      "label": "Tibeto-Burman languages"
+    },
+    {
       "value": "Tigrinya",
       "label": "Tigrinya"
     },
     {
       "value": "Tongan",
       "label": "Tongan"
+    },
+    {
+      "value": "Trans-New Guinea languages",
+      "label": "Trans-New Guinea languages"
+    },
+    {
+      "value": "Tungus languages",
+      "label": "Tungus languages"
+    },
+    {
+      "value": "Tupi languages",
+      "label": "Tupi languages"
+    },
+    {
+      "value": "Turkic languages",
+      "label": "Turkic languages"
     },
     {
       "value": "Turkish",
@@ -7563,8 +8459,16 @@
       "label": "Upper Sorbian"
     },
     {
+      "value": "Uralic languages",
+      "label": "Uralic languages"
+    },
+    {
       "value": "Urdu",
       "label": "Urdu"
+    },
+    {
+      "value": "Uto-Aztecan languages",
+      "label": "Uto-Aztecan languages"
     },
     {
       "value": "Uyghur",
@@ -7587,6 +8491,10 @@
       "label": "Vunjo"
     },
     {
+      "value": "Wakashan languages",
+      "label": "Wakashan languages"
+    },
+    {
       "value": "Walser",
       "label": "Walser"
     },
@@ -7595,8 +8503,20 @@
       "label": "Welsh"
     },
     {
+      "value": "West Germanic languages",
+      "label": "West Germanic languages"
+    },
+    {
+      "value": "West Slavic languages",
+      "label": "West Slavic languages"
+    },
+    {
       "value": "Western Frisian",
       "label": "Western Frisian"
+    },
+    {
+      "value": "Western Malayo-Polynesian languages",
+      "label": "Western Malayo-Polynesian languages"
     },
     {
       "value": "Wolof",
@@ -7613,6 +8533,14 @@
     {
       "value": "Yoruba",
       "label": "Yoruba"
+    },
+    {
+      "value": "Yupik languages",
+      "label": "Yupik languages"
+    },
+    {
+      "value": "Zande languages",
+      "label": "Zande languages"
     },
     {
       "value": "Zarma",

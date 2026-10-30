@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/text/language"
+
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -44,6 +46,17 @@ func resolveSubtitle(meta api.UploadSubject) (string, []string) {
 
 	for _, lang := range meta.SubtitleLanguages {
 		cleanLang := strings.ToLower(strings.TrimSpace(lang))
+		if tag, ok := languageutil.LanguageTag(lang); ok {
+			tag, _ = language.All.Canonicalize(tag)
+			base, _, _ := tag.Raw()
+			cleanLang = strings.ToLower(tag.String())
+			if _, mapped := sourceAliasMap[cleanLang]; !mapped {
+				cleanLang = strings.ToLower(languageutil.NormalizeLanguageDisplay(base.String()))
+			}
+		}
+		if base, coverage := languageutil.SubtitleLanguageParts(lang); coverage == "Forced" && languageutil.SameLanguage(base, "en") {
+			cleanLang = "english - forçada"
+		}
 
 		targetKey, ok := sourceAliasMap[cleanLang]
 		if !ok {
@@ -338,9 +351,6 @@ func resolveLanguage(meta api.UploadSubject) string {
 	lang := ""
 	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
 		lang = trackers.PreferredOriginalLanguage(meta, "")
-		if normalized := languageutil.NormalizeLanguageCode(lang); normalized != "" {
-			lang = normalized
-		}
 	} else {
 		if meta.ProviderMetadata.TMDB != nil {
 			lang = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)
@@ -348,6 +358,9 @@ func resolveLanguage(meta api.UploadSubject) string {
 		if lang == "" && len(meta.AudioLanguages) > 0 {
 			lang = meta.AudioLanguages[0]
 		}
+	}
+	if normalized := languageutil.NormalizeLanguageCode(lang); normalized != "" {
+		lang = normalized
 	}
 	lang = strings.ToLower(lang)
 	if lang == "" {
@@ -369,7 +382,7 @@ func resolveAudio(meta api.UploadSubject) string {
 	pt := false
 	for _, lang := range meta.AudioLanguages {
 		lower := strings.ToLower(strings.TrimSpace(lang))
-		if lower == "portuguese" || lower == "português" || lower == "pt" {
+		if languageutil.SameLanguage(lang, "pt") || lower == "português" {
 			pt = true
 			break
 		}
@@ -388,7 +401,7 @@ func resolveAudio(meta api.UploadSubject) string {
 		if strings.EqualFold(strings.TrimSpace(orig), "pt") {
 			return "Nacional"
 		}
-		if len(meta.AudioLanguages) > 1 {
+		if languageutil.LanguageIdentityCount(meta.AudioLanguages) > 1 {
 			return "Dual Audio"
 		}
 		return "Dublado"
