@@ -29,9 +29,9 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		key, expires,
 	)
 	for _, tc := range []struct {
-		name, first, second, wantReason, returnedKey          string
-		intended, networkFailure, emptyReason                 bool
-		firstStatus, secondStatus, wantRequests, wantUploaded int
+		name, first, second, wantReason, returnedKey, encodedReturnedKey string
+		intended, networkFailure, emptyReason                            bool
+		firstStatus, secondStatus, wantRequests, wantUploaded            int
 	}{
 		{
 			name:         "challenge succeeds",
@@ -181,15 +181,16 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			wantReason:   "Rejected key [REDACTED]; retain unknown-token",
 		},
 		{
-			name:         "retry rejected with URL escaped replacement key",
-			returnedKey:  "synthet/ic?key1)",
-			first:        challenge,
-			second:       `{"error":"Retry rejected","trump_key":"synthet/ic?key1)","view":"https://example.invalid/failure/synthet/ic%3fkey1)?ref=unknown-token&value=synthet%2fic%3fkey1)"}`,
-			intended:     true,
-			firstStatus:  409,
-			secondStatus: 403,
-			wantRequests: 2,
-			wantReason:   "Retry rejected (https://example.invalid/failure/[REDACTED]?ref=unknown-token&value=[REDACTED])",
+			name:               "retry rejected with URL escaped replacement key",
+			returnedKey:        "synthet/ic?key1)",
+			encodedReturnedKey: "synthet%2fic%3fkey1)",
+			first:              challenge,
+			second:             `{"error":"Retry rejected","trump_key":"synthet/ic?key1)","view":"https://example.invalid/failure/synthet/ic%3fkey1)?ref=unknown-token&value=synthet%2fic%3fkey1)"}`,
+			intended:           true,
+			firstStatus:        409,
+			secondStatus:       403,
+			wantRequests:       2,
+			wantReason:         "Retry rejected (https://example.invalid/failure/[REDACTED]?ref=unknown-token&value=[REDACTED])",
 		},
 		{
 			name:         "retry rejected with nested JSON key",
@@ -203,7 +204,7 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			wantReason:   `Rejected {"[REDACTED]":"[REDACTED]","ref":"unknown-token"}`,
 		},
 		{
-			name:         "query fields do not combine into a known key",
+			name:         "query fields cannot reveal a known key",
 			first:        challenge,
 			second:       `{"error":"Retry rejected; see https://example.invalid/failure?ref=%73ynthet&num=123).","trump_key":"synthet&num=123)"}`,
 			returnedKey:  "synthet&num=123)",
@@ -211,7 +212,19 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			firstStatus:  409,
 			secondStatus: 403,
 			wantRequests: 2,
-			wantReason:   "Retry rejected; see https://example.invalid/failure?num=123&ref=synthet).",
+			wantReason:   "Retry rejected; see https://example.invalid/failure?[REDACTED]",
+		},
+		{
+			name:               "repeated secret query keys retain unrelated context",
+			first:              challenge,
+			second:             `{"error":"Retry rejected","trump_key":"abcdefghijklmnop","view":"https://example.invalid/failure?%61bcdefghijklmnop=one&%61bcdefghijklmnop=two&ref=unknown-token"}`,
+			returnedKey:        "abcdefghijklmnop",
+			encodedReturnedKey: "%61bcdefghijklmnop",
+			intended:           true,
+			firstStatus:        409,
+			secondStatus:       403,
+			wantRequests:       2,
+			wantReason:         "Retry rejected (https://example.invalid/failure?[REDACTED]=one&[REDACTED]=two&ref=unknown-token)",
 		},
 		{
 			name:         "fragment decoding retains known key punctuation",
@@ -222,7 +235,7 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			firstStatus:  409,
 			secondStatus: 403,
 			wantRequests: 2,
-			wantReason:   "Retry rejected (https://example.invalid/failure#a=[REDACTED].)",
+			wantReason:   "Retry rejected (https://example.invalid/failure#[REDACTED])",
 		},
 		{
 			name:         "trimming cannot make a secret-bearing malformed query valid",
@@ -318,6 +331,9 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			}
 			if err != nil && tc.returnedKey != "" && strings.Contains(err.Error(), tc.returnedKey) {
 				t.Fatal("returned challenge key exposed")
+			}
+			if err != nil && tc.encodedReturnedKey != "" && strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.encodedReturnedKey)) {
+				t.Fatal("encoded returned challenge key exposed")
 			}
 			if tc.wantReason != "" && (err == nil || !strings.Contains(err.Error(), tc.wantReason)) {
 				t.Fatalf("retry diagnostic = %v, want %q", err, tc.wantReason)

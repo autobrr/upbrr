@@ -252,24 +252,21 @@ func redactURL(raw string, sensitiveKeys map[string]struct{}, secrets ...string)
 // urlSecretCount detects whether trimming URL punctuation would split a known secret.
 func urlSecretCount(value *url.URL, secret string) int {
 	count := strings.Count(value.Path, secret)
-	// Count literal semicolons as data; the sanitizer still rejects malformed queries.
-	query, _ := url.ParseQuery(strings.ReplaceAll(value.RawQuery, ";", "%3B"))
-	queries := []url.Values{query}
-	if strings.ContainsAny(value.Fragment, "=&") {
-		fragment, _ := url.ParseQuery(strings.ReplaceAll(value.Fragment, ";", "%3B"))
-		queries = append(queries, fragment)
-		if decoded, err := url.PathUnescape(fragment.Encode()); err == nil {
-			count += strings.Count(decoded, secret)
-		}
-	} else {
-		count += strings.Count(value.Fragment, secret)
+	if decoded, err := url.QueryUnescape(value.RawQuery); err == nil {
+		count += strings.Count(decoded, secret)
 	}
-	for _, query := range queries {
-		for key, items := range query {
-			count += strings.Count(key, secret)
-			for _, item := range items {
-				count += strings.Count(item, secret)
-			}
+	if !strings.ContainsAny(value.Fragment, "=&") {
+		return count + strings.Count(value.Fragment, secret)
+	}
+	// Count literal semicolons as data; the sanitizer still rejects malformed queries.
+	fragment, _ := url.ParseQuery(strings.ReplaceAll(value.Fragment, ";", "%3B"))
+	if decoded, err := url.PathUnescape(fragment.Encode()); err == nil {
+		count += strings.Count(decoded, secret)
+	}
+	for key, items := range fragment {
+		count += strings.Count(key, secret)
+		for _, item := range items {
+			count += strings.Count(item, secret)
 		}
 	}
 	return count
@@ -289,6 +286,23 @@ func redactURLValues(raw string, sensitiveKeys map[string]struct{}, secrets ...s
 	values, err := url.ParseQuery(raw)
 	if err != nil {
 		return "", false
+	}
+	decoded, _ := url.QueryUnescape(raw)
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		count := strings.Count(decoded, secret)
+		for key, items := range values {
+			count -= strings.Count(key, secret) * len(items)
+			for _, item := range items {
+				count -= strings.Count(item, secret)
+			}
+		}
+		// A complete token spanning fields cannot be removed as one component.
+		if count > 0 {
+			return "", false
+		}
 	}
 	redacted := make(url.Values, len(values))
 	for key, items := range values {
