@@ -10,6 +10,8 @@ Commands:
       Manage the WebUI password and browse policy locally
   live-test <init|cleanup> [options]
       Create an isolated profile or clean up its owned hosted images
+  recover [options]
+      Reconcile interrupted external effects without activating configuration
 
 Options:
 

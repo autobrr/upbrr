@@ -839,6 +839,8 @@ func formatFlagUsage(fs *pflag.FlagSet, usage string) string {
 		fmt.Fprint(&builder, "      Manage the WebUI password and browse policy locally\n")
 		fmt.Fprint(&builder, "  live-test <init|cleanup> [options]\n")
 		fmt.Fprint(&builder, "      Create an isolated profile or clean up its owned hosted images\n")
+		fmt.Fprint(&builder, "  recover [options]\n")
+		fmt.Fprint(&builder, "      Reconcile interrupted external effects without activating configuration\n")
 	}
 	fmt.Fprint(&builder, "\nOptions:\n")
 	sections := cliHelpSections(fs.Name())

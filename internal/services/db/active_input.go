@@ -141,6 +141,16 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 		}
 		acquiring := current.State == api.ActiveInputEmpty || !current.LeaseExpiresAt.After(now)
 		legacyRecoveryAcquire := current.State == api.ActiveInputEmpty && next.State == api.ActiveInputRecovering
+		if legacyRecoveryAcquire {
+			var leased int
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_work
+				WHERE completed_at IS NULL AND lease_expires_at > ?)`, formatWorkflowStateTime(now)).Scan(&leased); err != nil {
+				return fmt.Errorf("db inspect legacy recovery work leases: %w", err)
+			}
+			if leased != 0 {
+				return api.ErrActiveInputBusy
+			}
+		}
 		if acquiring {
 			if next.Fence != current.Fence+1 || next.CoordinatorID == "" || next.OwnerID == "" || !next.LeaseExpiresAt.After(now) {
 				return api.ErrActiveInputLeaseLost

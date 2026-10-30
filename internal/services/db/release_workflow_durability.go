@@ -535,6 +535,33 @@ func (r *SQLiteRepository) RecoverLegacyReleaseWorkflowEffects(
 	return effects, nil
 }
 
+// ListReleaseWorkflowRecoveryScopes lists uncertain workflows for local database
+// maintenance. Browser and ordinary workflow reads remain owner-scoped.
+func (r *SQLiteRepository) ListReleaseWorkflowRecoveryScopes(ctx context.Context) ([]api.WorkflowScope, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT owner_id, workflow_id FROM release_workflow_effects WHERE status IN ('started', 'unknown')
+		UNION
+		SELECT owner_id, workflow_id FROM submission_fences WHERE status IN ('started', 'unknown')
+		ORDER BY owner_id, workflow_id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("db list recovery scopes: %w", err)
+	}
+	defer rows.Close()
+	var scopes []api.WorkflowScope
+	for rows.Next() {
+		var scope api.WorkflowScope
+		if err := rows.Scan(&scope.OwnerID, &scope.WorkflowID); err != nil {
+			return nil, fmt.Errorf("db read recovery scope: %w", err)
+		}
+		scopes = append(scopes, scope)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db iterate recovery scopes: %w", err)
+	}
+	return scopes, nil
+}
+
 // ListLegacyReleaseWorkflowRecoveryWorkflowIDs returns only the caller's
 // workflows with effects that need a migrated-slot reconciliation.
 func (r *SQLiteRepository) ListLegacyReleaseWorkflowRecoveryWorkflowIDs(ctx context.Context, ownerID string) ([]api.WorkflowID, error) {
