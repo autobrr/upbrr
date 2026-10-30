@@ -248,7 +248,9 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 			}
 			return result, nil
 		}
-		result.TrackerData = append(result.TrackerData, cached)
+		if !slices.ContainsFunc(result.TrackerData, func(record api.TrackerMetadata) bool { return strings.EqualFold(record.Tracker, cached.Tracker) }) {
+			result.TrackerData = append(result.TrackerData, cached)
+		}
 		return result, nil
 	}
 
@@ -262,6 +264,7 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 // compatibleTrackerMetadata invalidates affected adapter IDs before advancing
 // identity compatibility, including unselected rows. Description/image assets
 // and site torrent identities remain available through cooldowns and failures.
+// Current exact-query evidence preserves repairs from interrupted preparations.
 func (s *Service) compatibleTrackerMetadata(ctx context.Context, meta preparationstate.State) ([]api.TrackerMetadata, error) {
 	identity := meta.Identity
 	if identity.SourcePath == "" {
@@ -286,7 +289,23 @@ func (s *Service) compatibleTrackerMetadata(ctx context.Context, meta preparatio
 			if !policy.LegacyExternalIDsNeedRefresh || !hasTrackerMetadataIDs(*record) {
 				continue
 			}
-			record.IMDBID, record.TMDBID, record.TVDBID, record.MALID = 0, 0, 0, 0
+			var current trackerdata.Result
+			if meta.StoredDataFresh && s.tracker != nil {
+				ids := []string{record.TrackerID}
+				if record.TrackerID != "" {
+					ids = append(ids, "")
+				}
+				for _, id := range ids {
+					query := s.tracker.CacheKey(record.Tracker, id, trackerLookupSubject(meta),
+						trackerLookupFileName(meta, s.cfg.Metadata.SkipTrackerFilenameLookup), meta.Policy.OnlyID, meta.Policy.KeepImages)
+					result, ok := retainedTrackerDataIDs(ctx, query)
+					if ok && (id != "" || result.TrackerID == record.TrackerID) {
+						current = result
+						break
+					}
+				}
+			}
+			record.IMDBID, record.TMDBID, record.TVDBID, record.MALID = current.IMDBID, current.TMDBID, current.TVDBID, current.MALID
 			if err := s.repo.SaveTrackerMetadata(ctx, *record); err != nil {
 				return nil, fmt.Errorf("metadata: clear obsolete tracker IDs: %w", err)
 			}

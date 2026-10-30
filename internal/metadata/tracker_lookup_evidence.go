@@ -37,6 +37,16 @@ func (e *trackerLookupEvidence) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// retainedTrackerDataIDs reads current normalized evidence without fetching or
+// changing failed-query suppression. Assets still require their own provenance.
+func retainedTrackerDataIDs(ctx context.Context, query any) (trackerdata.Result, bool) {
+	var retained trackerLookupEvidence
+	if !evidence.Retained(ctx, "tracker.lookup", query, &retained) {
+		return trackerdata.Result{}, false
+	}
+	return retained.Result, true
+}
+
 // lookupTrackerDataEvidence reuses tracker metadata without promoting replayed
 // image acceptance into a new collection. Descriptor provenance alone is not a receipt.
 func lookupTrackerDataEvidence(

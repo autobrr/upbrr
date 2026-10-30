@@ -21,12 +21,28 @@ import (
 
 func TestTrackerIDUpgradeRetainsFailuresAndAssetsAcrossRestart(t *testing.T) {
 	for _, test := range []struct {
-		name          string
-		failed, empty bool
+		name                                                  string
+		failed, empty, description, partial, onlyID, filename bool
 	}{
-		{name: "successful legacy lookup"},
-		{name: "empty replacement", empty: true},
-		{name: "failed legacy partial", failed: true},
+		{name: "successful legacy lookup", onlyID: true},
+		{
+			name:   "empty replacement",
+			empty:  true,
+			onlyID: true,
+		},
+		{
+			name:   "failed legacy partial",
+			failed: true,
+			onlyID: true,
+		},
+		{name: "fresh description without IDs", description: true},
+		{name: "current partial IDs", partial: true},
+		{name: "current IDs with missing description"},
+		{
+			name:     "current filename lookup with legacy direct alias",
+			onlyID:   true,
+			filename: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "state.sqlite")
@@ -45,9 +61,15 @@ func TestTrackerIDUpgradeRetainsFailuresAndAssetsAcrossRestart(t *testing.T) {
 				if test.empty {
 					return trackerdata.Result{}, nil
 				}
+				if test.description {
+					return trackerdata.Result{TrackerID: "42", Description: "Fresh notes"}, nil
+				}
+				if test.partial {
+					return trackerdata.Result{TrackerID: "42", IMDBID: 12345678}, errors.New("description unavailable")
+				}
 				return trackerdata.Result{TrackerID: "42", IMDBID: 12345678}, nil
 			})
-			query := lookup.CacheKey("HDB", "42", api.UploadSubject{}, "", true, false)
+			query := lookup.CacheKey("HDB", "42", api.UploadSubject{}, "", test.onlyID, false)
 			ctx, scope := evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessReuse, nil)
 			_, err = evidence.Lookup(ctx, "tracker.lookup", query, func() (trackerdata.Result, error) {
 				var err error
@@ -68,6 +90,9 @@ func TestTrackerIDUpgradeRetainsFailuresAndAssetsAcrossRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, tracker := range []string{"HDB", "ANT"} {
+				if test.filename && tracker == "HDB" {
+					continue
+				}
 				if err := repo.SaveTrackerMetadata(t.Context(), api.TrackerMetadata{
 					SourcePath:  source,
 					Tracker:     tracker,
@@ -91,11 +116,15 @@ func TestTrackerIDUpgradeRetainsFailuresAndAssetsAcrossRestart(t *testing.T) {
 					"HDB": {Username: "synthetic-user", Passkey: "synthetic-key"},
 				}}}))
 			meta := preparationstate.State{
-				SourcePath:      source,
-				StoredDataFresh: true,
-				Identity:        legacy,
-				TrackerIDs:      map[string]string{"hdb": "42"},
-				Policy:          preparationstate.CollectionPolicy{OnlyID: true},
+				SourcePath:       source,
+				StoredDataFresh:  true,
+				Identity:         legacy,
+				TrackerIDs:       map[string]string{"hdb": "42"},
+				EvidenceTrackers: []string{"HDB"},
+				Policy:           preparationstate.CollectionPolicy{OnlyID: test.onlyID},
+			}
+			if test.filename {
+				meta.TrackerIDs = nil
 			}
 			ctx, scope = evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessReuse, nil)
 			got, err := service.collectTrackerEvidence(ctx, meta)
@@ -103,13 +132,30 @@ func TestTrackerIDUpgradeRetainsFailuresAndAssetsAcrossRestart(t *testing.T) {
 				t.Fatalf("upgrade: records=%+v error=%v persistence=%v", got.TrackerData, err, scope.Err())
 			}
 			wantID, wantCalls := 12345678, 1
-			if test.failed {
+			wantDescription, wantImages := "Retained notes", 1
+			switch {
+			case test.failed:
 				wantID, wantCalls = 0, 0
-			} else if test.empty {
+			case test.empty:
 				wantID = 0
+			case test.description:
+				wantID, wantDescription, wantImages = 0, "Fresh notes", 0
+			case test.filename:
+				wantDescription, wantImages = "", 0
 			}
-			if got.TrackerData[0].IMDBID != wantID || calls != wantCalls || got.TrackerData[0].Description != "Retained notes" || len(got.TrackerData[0].ImageURLs) != 1 {
+			if got.TrackerData[0].IMDBID != wantID || calls != wantCalls || got.TrackerData[0].Description != wantDescription || len(got.TrackerData[0].ImageURLs) != wantImages {
 				t.Fatalf("old IDs revived, assets lost or failure retried: records=%+v calls=%d", got.TrackerData, calls)
+			}
+			// Preparation can stop after tracker persistence but before canonical publication.
+			// The next attempt must retain current exact IDs even while requests are cooling down.
+			if err := repo.SaveTrackerTimestamp(t.Context(), api.TrackerTimestamp{Tracker: "HDB", UpdatedAt: time.Now().Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+			meta.TrackerIDs = map[string]string{"hdb": "42"}
+			ctx, _ = evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessLoad, nil)
+			retried, err := service.collectTrackerEvidence(ctx, meta)
+			if err != nil || len(retried.TrackerData) != 1 || retried.TrackerData[0].IMDBID != wantID || calls != wantCalls {
+				t.Fatalf("retry before canonical publication lost current IDs: records=%+v calls=%d err=%v", retried.TrackerData, calls, err)
 			}
 			// Unselected adapter rows must also be repaired before the identity epoch advances.
 			rows, err := repo.ListTrackerMetadataByPath(t.Context(), source)
@@ -131,7 +177,7 @@ func TestTrackerIDUpgradeRetainsFailuresAndAssetsAcrossRestart(t *testing.T) {
 			}
 			ctx, _ = evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessLoad, nil)
 			replayed, err := service.collectTrackerEvidence(ctx, meta)
-			if test.empty {
+			if test.empty || !test.onlyID && !test.partial && !test.description {
 				wantCalls++
 			}
 			if err != nil || len(replayed.TrackerData) != 1 || replayed.TrackerData[0].IMDBID != wantID || calls != wantCalls {

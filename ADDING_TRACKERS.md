@@ -1469,8 +1469,13 @@ documented provider prefix is removed. Do not convert IDs through floating point
 accept a scanned prefix, or ignore range errors. Preserve the adapter's supported
 wire representations; a missing or invalid ID must not become a different ID.
 Adapters repairing previously inexact IDs opt into `LegacyExternalIDsNeedRefresh`
-in their `DataLookupPolicy`; this expires obsolete normalized IDs while keeping
-failed-query suppression and compatible description/image assets.
+in their `DataLookupPolicy` to expire obsolete normalized lookup payloads. Also
+advance `externalidentity.ContractVersion` and the prepared-release compatibility
+contract when repairing retained automatic identity: the policy flag alone does
+not invalidate a current-contract canonical identity. Incompatible automatic
+identity triggers cleanup of affected aggregate tracker IDs; current exact-query
+evidence preserves already repaired IDs if preparation was interrupted. Failed
+queries remain suppressed, and compatible description/image assets are retained.
 
 For auth:
 
