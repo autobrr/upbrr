@@ -6,6 +6,7 @@ package pathing
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 )
@@ -127,5 +128,28 @@ func TestSamePathResolvesSymlinkAliases(t *testing.T) {
 
 	if !SamePath(root, alias) {
 		t.Fatalf("expected symlink alias to match root")
+	}
+	if !SamePath(filepath.Join(root, "missing.txt"), filepath.Join(alias, "missing.txt")) {
+		t.Fatal("missing paths under equivalent existing prefixes did not match")
+	}
+}
+
+func TestLocalPathWhitespacePreservesIdentityAndContainment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ordinary Windows paths do not preserve trailing spaces")
+	}
+	t.Parallel()
+	base := t.TempDir()
+	plain, spaced := filepath.Join(base, "root"), filepath.Join(base, "root ")
+	for _, dir := range []string{plain, spaced} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if SamePath(plain, spaced) || !SamePath(spaced, spaced) {
+		t.Fatal("literal trailing whitespace changed path identity")
+	}
+	if !IsWithinRoot(spaced, filepath.Join(spaced, "child")) || IsWithinRoot(spaced, filepath.Join(plain, "child")) {
+		t.Fatal("literal root whitespace changed containment")
 	}
 }

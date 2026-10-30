@@ -609,7 +609,7 @@ func runCLIWorkflowInteractive(
 	cfg config.Config,
 	streams cliIO,
 	logger api.Logger,
-) error {
+) (outcome cliQueueOutcome, result error) {
 	streams = streams.normalized()
 	reader := bufio.NewReader(streams.in)
 	currentArgs := append([]string(nil), baseArgs...)
@@ -621,27 +621,30 @@ func runCLIWorkflowInteractive(
 		inputTracks []api.MediaTrackFacts
 		err         error
 	)
-	defer func() { session.releaseActiveInput(ctx) }()
+	defer func() {
+		outcome = cliQueueWorkflowOutcome(session, currentOpts.InputOnly)
+		session.releaseActiveInput(ctx)
+	}()
 	for {
 		publishCLIInvocation(streams, currentArgs, currentOpts.Debug || currentOpts.SiteCheck || coreSvc.LiveTestEnabled())
 		if (len(currentOpts.TrackLanguages) > 0 || len(currentOpts.TrackAudioOrigins) > 0) && inputTracks == nil {
 			history, historyErr := coreSvc.GetInputHistory(ctx, sourcePath)
 			if historyErr != nil || len(history.Tracks) == 0 {
 				if historyErr != nil {
-					return fmt.Errorf("upbrr: track corrections require retained input history; run --input-only first: %w", historyErr)
+					return outcome, fmt.Errorf("upbrr: track corrections require retained input history; run --input-only first: %w", historyErr)
 				}
-				return errors.New("upbrr: track corrections require retained input history; run --input-only first")
+				return outcome, errors.New("upbrr: track corrections require retained input history; run --input-only first")
 			}
 			inputTracks = history.Tracks
 		}
 		request, err = buildCLIRequest(currentOpts, currentVisited, []string{sourcePath}, screens)
 		if err != nil {
-			return err
+			return outcome, err
 		}
 		request.PlaylistInstruction = cloneCLIPlaylistInstruction(playlist)
 		replacement, err := newCLIWorkflowSession(ctx, coreSvc, request, api.PreparationIntentPreview, reader, cfg, streams, logger)
 		if err != nil {
-			return err
+			return outcome, err
 		}
 		replacement.screenshotCountIsDefault = !currentVisited["screens"]
 		if session != nil && replacement.inputClaim.workflowID == "" {
@@ -649,13 +652,13 @@ func runCLIWorkflowInteractive(
 		}
 		session = replacement
 		if err := applyCLIInputCorrections(ctx, session, currentOpts, currentVisited, inputTracks); err != nil {
-			return err
+			return outcome, err
 		}
 		if session.current.Release != nil {
 			session.intent.sourcePath = session.current.Release.Release.Source.SourcePath
 		}
 		if err := applyCLITrackerInput(ctx, session, currentOpts.TrackerInput); err != nil {
-			return err
+			return outcome, err
 		}
 		if action := pendingCLIWorkflowAction(session.current.Workflow.RequiredActions, api.RequiredActionConfirmCorrections); action != nil {
 			fmt.Fprintln(streams.out, action.Prompt)
@@ -671,10 +674,10 @@ func runCLIWorkflowInteractive(
 					fmt.Fprintf(streams.out, "Confirm with --confirm-input %s or reset with --reset-input %s\n", field, field)
 				}
 			}
-			return exitError(2, errors.New("saved input corrections require confirmation"))
+			return outcome, exitError(2, errors.New("saved input corrections require confirmation"))
 		}
 		if err := session.reviewInputLanguages(ctx, reader, currentOpts.Debug || coreSvc.LiveTestEnabled(), cfg.Trackers.DefaultTrackers); err != nil {
-			return err
+			return outcome, err
 		}
 		preview := cliWorkflowMetadataPreview(session.current)
 		printMetadataPreview(streams.out, preview, session.current.Release.Release, currentOpts.Debug)
@@ -690,7 +693,7 @@ func runCLIWorkflowInteractive(
 		}
 		if currentOpts.interactionMode() == api.InteractionModeUnattended {
 			if len(missing) > 0 {
-				return exitError(2, errors.New("required release facts are missing in unattended mode; apply the listed correction arguments"))
+				return outcome, exitError(2, errors.New("required release facts are missing in unattended mode; apply the listed correction arguments"))
 			}
 			break
 		}
@@ -700,7 +703,7 @@ func runCLIWorkflowInteractive(
 		if len(missing) == 0 {
 			confirmed, promptErr := promptYesNo(reader, streams.out, "Metadata correct? [Y/n]: ", true)
 			if promptErr != nil {
-				return promptErr
+				return outcome, promptErr
 			}
 			if confirmed {
 				break
@@ -712,7 +715,7 @@ func runCLIWorkflowInteractive(
 		}
 		editArgs, promptErr := promptLine(reader, streams.out, prompt)
 		if promptErr != nil {
-			return promptErr
+			return outcome, promptErr
 		}
 		if strings.EqualFold(strings.TrimSpace(editArgs), "continue") {
 			if len(missing) == 0 {
@@ -738,10 +741,10 @@ func runCLIWorkflowInteractive(
 		currentArgs, currentOpts, currentVisited = nextArgs, nextOpts, nextVisited
 	}
 	if currentOpts.InputOnly {
-		return completeCLIInputOnly(ctx, session, streams.out)
+		return outcome, completeCLIInputOnly(ctx, session, streams.out)
 	}
-	_, err = session.complete(ctx, currentOpts.Debug, reader, cfg, logger)
-	return err
+	err = session.complete(ctx, currentOpts.Debug, reader, cfg, logger)
+	return outcome, err
 }
 
 func applyCLIInputCorrections(
@@ -893,20 +896,21 @@ func (s *cliWorkflowSession) complete(
 	reader *bufio.Reader,
 	cfg config.Config,
 	logger api.Logger,
-) (int, error) {
+) error {
 	s.streams = s.streams.normalized()
 	if s.progressWriter == nil {
 		s.progressWriter = s.streams.out
 	}
 	if strings.TrimSpace(s.uploadRequest.SourcePath) == "" {
-		return 0, errors.New("upbrr: composite upload source is unavailable")
+		return errors.New("upbrr: composite upload source is unavailable")
 	}
 	if s.uploadRequest.Options.AudioAnalysis {
 		if err := s.completeAudioAnalysis(ctx); err != nil {
-			return 0, err
+			return err
 		}
 	}
-	return s.completeComposite(ctx, debug, reader, cfg, logger)
+	_, err := s.completeComposite(ctx, debug, reader, cfg, logger)
+	return err
 }
 
 func (s *cliWorkflowSession) completeAudioAnalysis(ctx context.Context) error {
@@ -1610,24 +1614,28 @@ func runCLIWorkflowUploadOnly(
 ) error {
 	streams = streams.normalized()
 	reader := bufio.NewReader(streams.in)
-	uploaded := 0
-	return processCLIPreparationItems(ctx, batch, queueMode, cliItemTimeout, logger, func(itemCtx context.Context, item cliPreparationItem) (itemResult error) {
-		itemCtx = withCLIItemPresentation(itemCtx, streams, item.originalPath, len(batch.items))
-		defer func() { publishCLIItemResult(streams, itemResult) }()
-		request := batch.defaults
-		request.SourcePath = item.originalPath
-		request.ExternalIDOverrides = item.externalIDs
-		request.PlaylistInstruction = item.playlistInstruction
-		session, err := newCLIWorkflowSession(itemCtx, coreSvc, request, api.PreparationIntentUpload, reader, cfg, streams, logger)
-		if err != nil {
-			return err
-		}
-		session.screenshotCountIsDefault = screenshotCountIsDefault
-		defer session.releaseActiveInput(itemCtx)
-		count, err := session.complete(itemCtx, debug, reader, cfg, logger)
-		uploaded += count
-		return err
-	})
+	return processCLIPreparationItems(
+		ctx,
+		batch,
+		queueMode,
+		cliItemTimeout,
+		streams,
+		logger,
+		func(itemCtx context.Context, item cliPreparationItem) (cliQueueOutcome, error) {
+			request := batch.defaults
+			request.SourcePath = item.originalPath
+			request.ExternalIDOverrides = item.externalIDs
+			request.PlaylistInstruction = item.playlistInstruction
+			session, err := newCLIWorkflowSession(itemCtx, coreSvc, request, api.PreparationIntentUpload, reader, cfg, streams, logger)
+			if err != nil {
+				return cliQueueOutcome{}, err
+			}
+			session.screenshotCountIsDefault = screenshotCountIsDefault
+			defer session.releaseActiveInput(itemCtx)
+			err = session.complete(itemCtx, debug, reader, cfg, logger)
+			return cliQueueWorkflowOutcome(session, false), err
+		},
+	)
 }
 
 func runCLIWorkflowSiteCheck(
@@ -1640,21 +1648,21 @@ func runCLIWorkflowSiteCheck(
 	cfg config.Config,
 	streams cliIO,
 	logger api.Logger,
-) error {
+) (cliQueueOutcome, error) {
 	request, err := buildCLIRequest(opts, visited, []string{item.originalPath}, screens)
 	if err != nil {
-		return err
+		return cliQueueOutcome{}, err
 	}
 	request.PlaylistInstruction = item.playlistInstruction
 	streams = streams.normalized()
 	reader := bufio.NewReader(streams.in)
 	session, err := newCLIWorkflowSession(ctx, coreSvc, request, api.PreparationIntentDryRun, reader, cfg, streams, logger)
 	if err != nil {
-		return err
+		return cliQueueOutcome{}, err
 	}
 	session.screenshotCountIsDefault = !visited["screens"]
 	defer session.releaseActiveInput(ctx)
 	fmt.Fprintf(streams.out, "\n[Site Check] %s\n", formatPathLabel(item.originalPath))
-	_, err = session.complete(ctx, true, reader, cfg, logger)
-	return err
+	err = session.complete(ctx, true, reader, cfg, logger)
+	return cliQueueWorkflowOutcome(session, false), err
 }

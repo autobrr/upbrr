@@ -52,11 +52,12 @@ func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection 
 	target := duplicateTarget(input.Meta)
 	target.Names = append([]string{canonicalName}, target.Names...)
 	projection := api.TrackerReleaseProjection{
-		QuestionnaireAnswers: answers,
-		TrackerID:            api.TrackerID(strings.ToUpper(strings.TrimSpace(input.Tracker))),
-		DisplayName:          strings.ToUpper(strings.TrimSpace(input.Tracker)),
-		CanonicalReleaseName: canonicalName,
-		UploadReleaseName:    canonicalName,
+		ModifiedReleaseDecision: input.Meta.ModifiedReleaseDecision,
+		QuestionnaireAnswers:    answers,
+		TrackerID:               api.TrackerID(strings.ToUpper(strings.TrimSpace(input.Tracker))),
+		DisplayName:             strings.ToUpper(strings.TrimSpace(input.Tracker)),
+		CanonicalReleaseName:    canonicalName,
+		UploadReleaseName:       canonicalName,
 		Taxonomy: api.TrackerTaxonomy{
 			Category:   category,
 			Type:       typeValue,
@@ -719,7 +720,8 @@ func ApplyProjectionRuleFailures(
 	})
 	projection.WaivableRuleFingerprint = ""
 	projection.RuleAuthorizationFingerprint = ""
-	waivableFingerprint, err := WaivableRuleFailureFingerprint(string(projection.TrackerID), failures)
+	trackerFailures := slices.DeleteFunc(slices.Clone(failures), sharedModifiedReleaseFailure)
+	waivableFingerprint, err := WaivableRuleFailureFingerprint(string(projection.TrackerID), trackerFailures)
 	if err != nil {
 		return err
 	}
@@ -728,11 +730,18 @@ func ApplyProjectionRuleFailures(
 	if authorized {
 		projection.RuleAuthorizationFingerprint = waivableFingerprint
 	}
+	hasModified := false
 	hasStrict := false
 	hasQuestionnaireInput := false
 	for _, failure := range failures {
 		disposition := api.NormalizeRuleDisposition(failure.Disposition)
-		blocking := RuleFailureBlocksExecution(failure, executionMode, authorized)
+		shared := sharedModifiedReleaseFailure(failure)
+		hasModified = hasModified || shared
+		ruleAuthorized := authorized
+		if shared {
+			ruleAuthorized = projection.ModifiedReleaseDecision != nil && *projection.ModifiedReleaseDecision
+		}
+		blocking := RuleFailureBlocksExecution(failure, executionMode, ruleAuthorized)
 		decision := string(disposition)
 		switch {
 		case disposition == api.RuleDispositionStrict && !blocking:
@@ -759,7 +768,7 @@ func ApplyProjectionRuleFailures(
 				},
 				TrackerID: projection.TrackerID,
 			})
-		case disposition == api.RuleDispositionWaivable && authorized:
+		case disposition == api.RuleDispositionWaivable && ruleAuthorized:
 			decision = "authorized"
 		case disposition == api.RuleDispositionWaivable && !blocking:
 			decision = "bypassed"
@@ -792,6 +801,33 @@ func ApplyProjectionRuleFailures(
 		projection.UploadReady = false
 		return nil
 	}
+	if hasModified && api.NormalizeWorkflowExecutionMode(executionMode) != api.WorkflowExecutionModeDebug {
+		if projection.ModifiedReleaseDecision == nil {
+			projection.Readiness = api.ReadinessStatusBlocked
+			projection.DupeReady, projection.UploadReady = false, false
+			projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
+				Kind:        api.RequiredActionAuthorizeRules,
+				Status:      api.RequiredActionStatusPending,
+				ReleaseRule: "modified_release",
+				Prompt:      "The selected release appears renamed or modified. Have you verified its file hashes and source provenance and want to continue for all selected trackers?",
+			})
+		} else if !*projection.ModifiedReleaseDecision {
+			projection.Readiness = api.ReadinessStatusIneligible
+			projection.DupeReady, projection.UploadReady = false, false
+			projection.Failures = append(projection.Failures, api.WorkflowFailure{
+				TrackerID: projection.TrackerID,
+				Failure: api.OperationFailure{
+					Code:      api.OperationFailureNoEligibleTrackers,
+					Operation: api.OperationKindDuplicateCheck,
+					Message:   "Modified-release confirmation was declined for this release.",
+					Recovery:  api.OperationRecoverySelectTrackers,
+				},
+			})
+			projection.RequiredActions = nil
+			projection.Questionnaire = nil
+			return nil
+		}
+	}
 	if hasQuestionnaireInput {
 		projection.Readiness = api.ReadinessStatusBlocked
 		projection.DupeReady = false
@@ -809,7 +845,7 @@ func ApplyProjectionRuleFailures(
 			Kind:      api.RequiredActionAuthorizeRules,
 			Status:    status,
 			TrackerID: projection.TrackerID,
-			Prompt:    waivableRuleAuthorizationPrompt(*projection, failures),
+			Prompt:    waivableRuleAuthorizationPrompt(*projection, trackerFailures),
 		})
 	}
 	return nil

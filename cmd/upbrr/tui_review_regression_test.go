@@ -332,7 +332,7 @@ func TestLocalDeclinesPublishTruthfulTerminalOutcomes(t *testing.T) {
 			if err != nil || len(coreSvc.uploadFeedback) != 0 {
 				t.Fatal("declining a required action submitted feedback or failed")
 			}
-			publishCLIItemResult(session.streams, nil)
+			publishCLIItemResult(session.streams, nil, "skipped")
 			summary := bridge.summary(nil)
 			if strings.Contains(summary, "Awaiting decision") || strings.Contains(summary, "Item completed.") {
 				t.Fatal("decline was relabeled completed or left awaiting decision")

@@ -128,13 +128,17 @@ func TestHDRInventoryUsesSelectedPlaylistsAndMatchingCapture(t *testing.T) {
 	}
 }
 
-func TestHDRFileInventoryRequiresPerTargetMediaInfoConfirmation(t *testing.T) {
+func TestHDRFileInventoryUsesOnlySelectedPrimaryEvidence(t *testing.T) {
 	first, second := filepath.Join(t.TempDir(), "Synthetic.HDR10+.mkv"), filepath.Join(t.TempDir(), "Synthetic.HDR10+.mkv")
-	owned := envelope{resources: preparationResources{hdrFileEligibility: map[string]bool{canonicalSourceKey(first): true}}}
+	owned := envelope{resources: preparationResources{
+videoPath: second,
+ hdrFileEligibility: map[string]bool{canonicalSourceKey(first): true},
+ hdrFileEvidence: map[string]api.HDRSourceEvidence{canonicalSourceKey(second): {UniqueHEVC: true}},
+}}
 	owned.result.Release.Source.Entries = []api.SourceManifestEntry{{Type: api.SourceEntryTypeFile, Path: first}, {Type: api.SourceEntryTypeFile, Path: second}}
 	targets := hdrTargetSubjects(owned)
-	if len(targets) != 2 || !targets[0].Target.Supported || targets[1].Target.Supported || targets[1].Target.Reason == "" {
-		t.Fatalf("per-file gate=%#v", targets)
+	if len(targets) != 1 || targets[0].Path != second || !targets[0].Target.Supported || targets[0].Target.Evidence.HDR10Plus {
+		t.Fatalf("primary gate=%#v", targets)
 	}
 }
 

@@ -750,8 +750,8 @@ func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubje
 }
 
 // projectedRuleFailureRecords converts rule decisions into persisted audit
-// rows. A waivable decision is marked authorized only when both projection
-// fingerprints match exactly. It returns nil when no decision qualifies.
+// rows. Waivable decisions require their matching tracker-local authorization
+// or shared modified-release decision. It returns nil when no decision qualifies.
 func projectedRuleFailureRecords(projection api.TrackerReleaseProjection) []api.TrackerRuleFailure {
 	records := make([]api.TrackerRuleFailure, 0, len(projection.PolicyDecisions))
 	authorized := projection.RuleAuthorizationFingerprint != "" &&
@@ -766,7 +766,8 @@ func projectedRuleFailureRecords(projection api.TrackerReleaseProjection) []api.
 			Rule:        strings.TrimSpace(decision.Code),
 			Reason:      strings.TrimSpace(decision.Message),
 			Disposition: disposition,
-			Authorized:  disposition == api.RuleDispositionWaivable && authorized,
+			Authorized: disposition == api.RuleDispositionWaivable &&
+				((decision.Code == "modified_release" && projection.ModifiedReleaseDecision != nil && *projection.ModifiedReleaseDecision) || (decision.Code != "modified_release" && authorized)),
 		})
 	}
 	if len(records) == 0 {

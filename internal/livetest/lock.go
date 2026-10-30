@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/autobrr/upbrr/internal/filelock"
 )
 
 // Lock serializes live processes and cleanup. The OS releases it on process exit.
@@ -19,13 +21,9 @@ func Lock() (*os.File, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("live-test create private root: %w", err)
 	}
-	file, err := os.OpenFile(filepath.Join(root, "process.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := filelock.Acquire(filepath.Join(root, "process.lock"))
 	if err != nil {
 		return nil, fmt.Errorf("live-test open process lock: %w", err)
-	}
-	if err := lockFile(file); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("live-test another process owns the test root: %w", err)
 	}
 	return file, nil
 }

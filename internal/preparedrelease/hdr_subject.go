@@ -154,6 +154,9 @@ func hdrTargetSubjects(owned envelope) []api.HDRAnalysisTargetSubject {
 		return targets
 	}
 	for _, entry := range owned.result.Release.Source.Entries {
+		if owned.resources.videoPath != "" && canonicalSourceKey(entry.Path) != canonicalSourceKey(owned.resources.videoPath) {
+			continue
+		}
 		extension := strings.ToLower(filepath.Ext(entry.Path))
 		if entry.Type != api.SourceEntryTypeFile || extension != ".mkv" && extension != ".mp4" && extension != ".ts" && extension != ".m2ts" {
 			continue
@@ -336,7 +339,8 @@ func hdrTargetAudioSubject(
 }
 
 // HDRAnalysisTargets exposes selection policy and opaque target IDs for one exact generation.
-// File eligibility comes from MediaInfo; extraction establishes actual dynamic metadata presence.
+// Non-disc targets use only the selected primary MediaInfo resource; extraction
+// establishes actual dynamic metadata presence.
 func (m *Module) HDRAnalysisTargets(ctx context.Context, release api.ReleaseRef) ([]api.HDRAnalysisTarget, error) {
 	owned, err := m.resolveEnvelope(ctx, release)
 	if err != nil {
