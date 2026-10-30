@@ -101,7 +101,7 @@ func submitPreparedUpload(
 			return api.UploadSummary{}, err
 		}
 		logger.Infof("trackers: tracker=ANT state=retrying reason=reviewed_trump_challenge")
-		status, payload, bodyBytes, err = postPreparedUpload(ctx, client, body, contentType)
+		status, payload, bodyBytes, err = postPreparedUpload(ctx, client, body, contentType, key)
 		if err != nil {
 			return api.UploadSummary{}, fmt.Errorf("trackers: ANT trump retry: %w", trumpRetryError{cause: err, key: key})
 		}
@@ -169,13 +169,13 @@ type trumpRetryError struct {
 }
 
 func (e trumpRetryError) Error() string {
-	return commonhttp.RedactErrorDetail(strings.ReplaceAll(e.cause.Error(), e.key, "[REDACTED]"))
+	return commonhttp.RedactErrorDetail(e.cause.Error(), e.key)
 }
 
 func (e trumpRetryError) Unwrap() error { return e.cause }
 
 // postPreparedUpload sends one captured request without transport-level retries.
-func postPreparedUpload(ctx context.Context, client *http.Client, body []byte, contentType string) (int, map[string]any, []byte, error) {
+func postPreparedUpload(ctx context.Context, client *http.Client, body []byte, contentType string, secrets ...string) (int, map[string]any, []byte, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, antUploadURL, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("trackers: ANT request build: %w", err)
@@ -195,7 +195,7 @@ func postPreparedUpload(ctx context.Context, client *http.Client, body []byte, c
 	payload := map[string]any{}
 	if len(bodyBytes) > 0 {
 		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			return 0, nil, nil, antUploadError(response.StatusCode, payload, bodyBytes)
+			return 0, nil, nil, antUploadError(response.StatusCode, payload, bodyBytes, secrets...)
 		}
 	}
 	return response.StatusCode, payload, bodyBytes, nil
@@ -463,20 +463,9 @@ func antUploadError(status int, payload map[string]any, body []byte, secrets ...
 	if key, ok := payload["trump_key"].(string); ok && key != "" {
 		secrets = append(secrets, key)
 	}
-	for _, secret := range secrets {
-		if secret != "" {
-			// Also suppress a key echoed inside human-readable error text.
-			body = bytes.ReplaceAll(body, []byte(secret), []byte("[REDACTED]"))
-		}
-	}
-	if detail := commonhttp.ExtractHTTPErrorDetail(body); detail != "" {
+	if detail := commonhttp.ExtractHTTPErrorDetail(body, secrets...); detail != "" {
 		if viewURL := strings.TrimSpace(stringValue(payload["view"])); viewURL != "" {
-			for _, secret := range secrets {
-				if secret != "" {
-					viewURL = strings.ReplaceAll(viewURL, secret, "[REDACTED]")
-				}
-			}
-			detail += " (" + commonhttp.RedactErrorDetail(viewURL) + ")"
+			detail += " (" + commonhttp.RedactErrorDetail(viewURL, secrets...) + ")"
 		}
 		return fmt.Errorf("trackers: ANT upload failed status=%d: %s", status, detail)
 	}
