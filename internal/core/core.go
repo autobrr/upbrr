@@ -467,7 +467,7 @@ func newCoreWithHooks(
 		releaseworkflow.WithLogger(logger),
 	)
 	if inspector, ok := services.Metadata.(interface {
-		InspectHDRComparison(context.Context, string, string) (api.HDRSourceEvidence, error)
+		InspectHDRComparison(context.Context, api.ReleaseRef, string, string) (api.HDRSourceEvidence, error)
 	}); ok {
 		workflowOptions = append(workflowOptions, releaseworkflow.WithHDRComparisonInspector(inspector.InspectHDRComparison))
 	}

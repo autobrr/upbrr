@@ -5,17 +5,17 @@ package mediainfo
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
-
 	gomediainfo "github.com/autobrr/go-mediainfo"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/filelock"
 	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -34,7 +34,12 @@ type Request struct {
 	DiscType   string
 	VideoPath  string
 	TempRoot   string
-	// ArtifactDir optionally selects a namespaced directory within TempRoot.
+	// OwnerSource binds a secondary/disc report to its release, not its analyzed file.
+	OwnerSource       string
+	SourceFingerprint string
+	// Secondary keeps explicit file inspections separate from the primary reports.
+	Secondary bool
+	// ArtifactDir optionally selects a directory within the owning release folder.
 	ArtifactDir string
 	Release     api.ReleaseInfo
 }
@@ -84,13 +89,9 @@ func NewService(logger api.Logger, analyzer Analyzer) *Service {
 	return &Service{logger: logger, analyzer: analyzer}
 }
 
-// Export writes mode-0600 text and JSON reports beneath the release temporary
-// directory. Text reports reduce the analyzed target path to its basename;
-// JSON reports retain the analyzer output. Existing artifacts are reused only
-// when both files exist and the JSON has no conformance error. Reuse cleans
-// cached text and reapplies mode 0600 without rewriting JSON. DVD VOB evidence
-// is analyzed on every call. Errors return no Result, although a failed JSON
-// write may leave the text file.
+// Export publishes private reports and their source identity beneath the owning
+// release directory. Reuse requires matching source/fingerprint and both report
+// digests. A failed or canceled publication cannot validate a partial pair.
 func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 	logger := logging.FromContext(ctx, s.logger)
 
@@ -108,25 +109,44 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 		return Result{}, errors.New("mediainfo: empty target")
 	}
 
-	tmpDir := strings.TrimSpace(req.ArtifactDir)
-	if tmpDir == "" {
-		tmpDir, _, err = paths.ReleaseTempDir(req.TempRoot, preparationstate.State{Release: req.Release}, req.SourcePath)
-		if err != nil {
-			return Result{}, fmt.Errorf("metadata: %w", err)
+	owner := req.OwnerSource
+	if owner == "" {
+		owner = req.SourcePath
+	}
+	releaseDir, _, err := paths.ReleaseTempDirFor(req.TempRoot, owner, req.Release)
+	if err != nil {
+		return Result{}, fmt.Errorf("mediainfo: resolve release directory: %w", err)
+	}
+	tmpDir := releaseDir
+	if req.Secondary {
+		canonical, canonicalErr := paths.CanonicalSourcePath(target.AnalyzePath)
+		if canonicalErr != nil {
+			return Result{}, fmt.Errorf("mediainfo: resolve secondary source: %w", canonicalErr)
 		}
-	} else {
-		tmpDir = filepath.Clean(tmpDir)
-		if !pathutil.IsWithinRoot(req.TempRoot, tmpDir) {
-			return Result{}, errors.New("mediainfo: artifact directory escapes temporary root")
-		}
-		if err := os.MkdirAll(tmpDir, 0o700); err != nil {
-			return Result{}, fmt.Errorf("mediainfo: create artifact directory: %w", err)
-		}
+		tmpDir = filepath.Join(releaseDir, "mediainfo", fmt.Sprintf("%x", sha256.Sum256([]byte(canonical))))
+	}
+	if req.ArtifactDir != "" {
+		tmpDir = filepath.Clean(req.ArtifactDir)
+	}
+	if !pathutil.IsWithinRoot(releaseDir, tmpDir) {
+		return Result{}, errors.New("mediainfo: artifact directory escapes owning release")
+	}
+	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+		return Result{}, fmt.Errorf("mediainfo: create report directory: %w", err)
+	}
+	lock, err := filelock.Acquire(filepath.Join(tmpDir, ".mediainfo.lock"))
+	if err != nil {
+		return Result{}, fmt.Errorf("mediainfo: report already in use: %w", err)
+	}
+	defer lock.Close()
+	identity, err := mediaInfoIdentity(target.AnalyzePath, req.SourceFingerprint)
+	if err != nil {
+		return Result{}, err
 	}
 	textPath := filepath.Join(tmpDir, "mediainfo.txt")
 	jsonPath := filepath.Join(tmpDir, "MediaInfo.json")
-	logger.Debugf("mediainfo: checking cache at %s (text=%v json=%v)", tmpDir, fileExists(textPath), fileExists(jsonPath))
-	if fileExists(textPath) && fileExists(jsonPath) {
+	logger.Tracef("mediainfo: checking cache at %s (text=%v json=%v)", tmpDir, fileExists(textPath), fileExists(jsonPath))
+	if matchingReports(tmpDir, identity) {
 		hasErrors, err := conformanceError(jsonPath, req.DiscType)
 		if err == nil && !hasErrors {
 			textOutput, err := os.ReadFile(textPath)
@@ -135,9 +155,16 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 			}
 			cleanText := cleanMediaInfoText(string(textOutput), target.AnalyzePath)
 			if cleanText != string(textOutput) {
-				if err := writeMediaInfoText(textPath, []byte(cleanText)); err != nil {
+				data, readErr := os.ReadFile(jsonPath)
+				if readErr != nil {
+					return Result{}, fmt.Errorf("mediainfo: read cached JSON: %w", readErr)
+				}
+				if err := commitReports(ctx, tmpDir, identity, []byte(cleanText), data); err != nil {
 					return Result{}, fmt.Errorf("mediainfo: write cached text: %w", err)
 				}
+			}
+			if err := os.Chmod(jsonPath, 0o600); err != nil {
+				return Result{}, fmt.Errorf("mediainfo: chmod cached JSON: %w", err)
 			}
 			if err := os.Chmod(textPath, 0o600); err != nil {
 				return Result{}, fmt.Errorf("mediainfo: chmod cached text: %w", err)
@@ -146,7 +173,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 			if err != nil {
 				return Result{}, err
 			}
-			logger.Debugf("mediainfo: reusing existing artifacts from %s", tmpDir)
+			logger.Debugf("mediainfo: state=ready decision=reuse directory=%s", tmpDir)
 			return Result{
 				JSONPath: jsonPath,
 				TextPath: textPath,
@@ -173,14 +200,18 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 
 	cleanText := cleanMediaInfoText(textOutput, target.AnalyzePath)
 
-	if err := os.WriteFile(textPath, []byte(cleanText), 0o600); err != nil {
-		return Result{}, fmt.Errorf("mediainfo: write text: %w", err)
+	current, err := mediaInfoIdentity(target.AnalyzePath, req.SourceFingerprint)
+	if err != nil {
+		return Result{}, err
 	}
-	if err := os.WriteFile(jsonPath, jsonOutput, 0o600); err != nil {
-		return Result{}, fmt.Errorf("mediainfo: write json: %w", err)
+	if current != identity {
+		return Result{}, errors.New("mediainfo: source changed during analysis")
+	}
+	if err := commitReports(ctx, tmpDir, identity, []byte(cleanText), jsonOutput); err != nil {
+		return Result{}, err
 	}
 
-	logger.Debugf("mediainfo: exported to %s", tmpDir)
+	logger.Debugf("mediainfo: state=ready decision=publish directory=%s", tmpDir)
 
 	vobText, vobJSON, err := analyzeVOB(ctx, s.analyzer, target.VOBPath)
 	if err != nil {

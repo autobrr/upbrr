@@ -28,7 +28,7 @@ type HDRComparisonSource struct {
 
 // HDRComparisonInspector probes a canonical local path and its verified source fingerprint.
 // Returned facts describe decoder eligibility without granting primary-input ownership.
-type HDRComparisonInspector func(context.Context, string, string) (api.HDRSourceEvidence, error)
+type HDRComparisonInspector func(context.Context, api.ReleaseRef, string, string) (api.HDRSourceEvidence, error)
 
 // WithHDRComparisonInspector supplies per-file evidence for explicit comparison selection.
 func WithHDRComparisonInspector(inspector HDRComparisonInspector) Option {
@@ -136,7 +136,7 @@ func (m *Module) selectHDRComparison(
 	if err != nil {
 		return CommandResult{}, err
 	}
-	evidence, err := m.hdrComparisonInspector(ctx, record.CanonicalPath, record.SourceVersion)
+	evidence, err := m.hdrComparisonInspector(ctx, ref, record.CanonicalPath, record.SourceVersion)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("inspect HDR comparison: %w", err)
 	}

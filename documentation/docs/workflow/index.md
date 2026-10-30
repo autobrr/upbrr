@@ -188,6 +188,8 @@ A failure to download or persist the registered torrent does not turn a confirme
 
 Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. While an unknown outcome is retained, it requires reconciliation and is never treated as confirmed success. Restarting does not clear its retry block; verify and reconcile the remote outcome before another attempt.
 
+Automatically managed reports, screenshots, descriptions, torrent exports and analysis files share the release's `tmp/<release>/` folder in the active state directory. Analysis and secondary-file reports may use nested folders. Compatible source evidence is reused; changing the source requires fresh evidence. History deletion includes these nested files and preserves active or shared ownership. See the [v0.4.2 artifact notice](../changelog/v0.4.2.md) for legacy cache removal.
+
 ## 8. Inject into clients
 
 Client injection is enabled by default when configured. Disable it explicitly with CLI `--no-seed` or the corresponding Web UI upload option.

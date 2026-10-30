@@ -139,6 +139,7 @@ func TestCanonicalEvidencePipelineUsesClientTrackerIDBeforeProviderResolution(t 
 	cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 		"ANT": {APIKey: "synthetic-api-key"},
 	}}}
+	cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "db.sqlite")
 	service := NewService(
 		&fakeRepo{},
 		WithConfig(cfg),

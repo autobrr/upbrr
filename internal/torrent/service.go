@@ -759,7 +759,11 @@ func stageWantedFiles(tmpRoot string, root string, files []string) (string, stri
 	if err != nil {
 		return "", "", err
 	}
-	stageParent, err := os.MkdirTemp(tmpRoot, "wanted-files-*")
+	releaseRoot, _, err := paths.ReleaseTempDirFor(tmpRoot, root, api.ReleaseInfo{})
+	if err != nil {
+		return "", "", fmt.Errorf("torrent: resolve staging owner: %w", err)
+	}
+	stageParent, err := os.MkdirTemp(releaseRoot, "wanted-files-*")
 	if err != nil {
 		return "", "", fmt.Errorf("torrent: create wanted file staging dir: %w", err)
 	}
