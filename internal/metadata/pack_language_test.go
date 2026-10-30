@@ -34,13 +34,7 @@ type packLanguageAnalyzer struct{ packAnalyzer }
 
 func (a *packLanguageAnalyzer) Analyze(ctx context.Context, target string) (string, []byte, error) {
 	text, _, err := a.packAnalyzer.Analyze(ctx, target)
-	report := packLanguageReport
-	if len(a.targets) > 1 {
-		// HDR-only probes must not replace the selected report's programme languages.
-		report = strings.ReplaceAll(report, `"Language":"eng"`, `"Language":"deu"`)
-		report = strings.ReplaceAll(report, `"Language":"jpn"`, `"Language":"ita"`)
-	}
-	return text, []byte(report), err
+	return text, []byte(packLanguageReport), err
 }
 
 func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
@@ -84,7 +78,7 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantProbes := append([]string{selected.VideoPath}, selected.FileList...)
+			wantProbes := []string{selected.VideoPath}
 			if !selected.TVPack || len(selected.FileList) != 12 || slices.Contains(selected.FileList, extra) ||
 				!slices.Equal(analyzer.targets, wantProbes) {
 				t.Fatalf("pack selection changed: pack=%t files=%v video=%q probes=%v", selected.TVPack, selected.FileList, selected.VideoPath, analyzer.targets)

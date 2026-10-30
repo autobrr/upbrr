@@ -2557,7 +2557,29 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 			return CommandResult{}, err
 		}
 	}
+	operation, operationErr := m.operations.LoadLatestOperation(ctx, ownerID, workflowID)
+	if operationErr == nil {
+		if isTerminalProgressStatus(operation.Status.Status) {
+			if err := m.waitForOperationCleanup(ctx, operation.OperationID); err != nil {
+				return CommandResult{}, err
+			}
+			// The worker may have published its final workflow checkpoint after
+			// our first read. Project actions from that state, not its predecessor.
+			state, err = m.repository.Load(ctx, ownerID, workflowID)
+			if err != nil {
+				return CommandResult{}, fmt.Errorf("release workflow current terminal query: %w", err)
+			}
+		}
+		if len(operation.Status.Events) == 0 {
+			operation.Status.Events = projectOperationEvents(operation.Status)
+		}
+	} else if !errors.Is(operationErr, ErrWorkflowNotFound) {
+		return CommandResult{}, fmt.Errorf("release workflow current operation query: %w", operationErr)
+	}
 	result := CommandResult{Workflow: state.Workflow}
+	if operationErr == nil {
+		result.Operation = &operation.Status
+	}
 	result.FactInstructions = currentSnapshot(state.FactInstructions, state.Workflow.FactInstructions.ID)
 	if ref := state.Workflow.Release; ref != nil {
 		result.Release = currentSnapshot(state.Releases, ref.ID)
@@ -2627,20 +2649,6 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 	}
 	if ref := state.Workflow.UploadResult; ref != nil {
 		result.UploadResult = currentSnapshot(state.UploadResults, ref.ID)
-	}
-	operation, operationErr := m.operations.LoadLatestOperation(ctx, ownerID, workflowID)
-	if operationErr == nil {
-		if isTerminalProgressStatus(operation.Status.Status) {
-			if err := m.waitForOperationCleanup(ctx, operation.OperationID); err != nil {
-				return CommandResult{}, err
-			}
-		}
-		if len(operation.Status.Events) == 0 {
-			operation.Status.Events = projectOperationEvents(operation.Status)
-		}
-		result.Operation = &operation.Status
-	} else if !errors.Is(operationErr, ErrWorkflowNotFound) {
-		return CommandResult{}, fmt.Errorf("release workflow current operation query: %w", operationErr)
 	}
 	result.Continuation = projectWorkflowContinuationForState(result, &state, m.clock.Now().UTC())
 	result.Workflow.RequiredActions = append(
@@ -4848,6 +4856,10 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve tracker projection subject: %w", err)
 	}
+	if decision := state.ModifiedReleaseDecision; decision != nil &&
+		decision.Release == (api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}) {
+		subject.ModifiedReleaseDecision = new(decision.Confirmed)
+	}
 	subject.SuppressImportedScreenshotReferences = screenshotReferenceSuppression(state, command.TrackerIDs, command.Instructions)
 	subject.TrackerDuplicateReviewCandidates = questionnaireDuplicateCandidates(state, release, now)
 	applyDescriptionHDRQuestionnaireEvidence(&subject, state)
@@ -5168,7 +5180,9 @@ func mergePreflightActions(assessment *api.TrackerPreflightAssessment, finalized
 		seen := make(map[string]struct{})
 		actions := make([]api.RequiredAction, 0, len(result.RequiredActions)+len(projectionActions[result.TrackerID]))
 		for _, action := range slices.Concat(result.RequiredActions, projectionActions[result.TrackerID]) {
-			action.TrackerID = result.TrackerID
+			if !isModifiedReleaseAction(action) {
+				action.TrackerID = result.TrackerID
+			}
 			key := "id:" + string(action.ID)
 			if action.ID == "" {
 				fingerprint, err := api.CanonicalWorkflowFingerprint(action)
@@ -5322,10 +5336,16 @@ func (m *Module) stampProjectionActions(
 	now time.Time,
 ) error {
 	actions := make([]api.RequiredAction, 0)
+	var shared *api.RequiredAction
 	for projectionIndex := range snapshot.Projections {
 		projection := &snapshot.Projections[projectionIndex]
 		for actionIndex := range projection.RequiredActions {
 			action := &projection.RequiredActions[actionIndex]
+			global := isModifiedReleaseAction(*action)
+			if global && shared != nil {
+				*action = *shared
+				continue
+			}
 			if action.ID == "" {
 				id, err := m.newID("action")
 				if err != nil {
@@ -5337,9 +5357,15 @@ func (m *Module) stampProjectionActions(
 				action.Status = api.RequiredActionStatusPending
 			}
 			action.WorkflowRevision = revision
-			action.TrackerID = projection.TrackerID
+			if !global {
+				action.TrackerID = projection.TrackerID
+			}
 			action.CreatedAt = now
 			actions = append(actions, *action)
+			if global {
+				sharedAction := *action
+				shared = &sharedAction
+			}
 		}
 	}
 	snapshot.RequiredActions = actions
@@ -5351,10 +5377,16 @@ func (m *Module) stampPreflightActions(
 	revision api.WorkflowRevision,
 	now time.Time,
 ) error {
+	var shared *api.RequiredAction
 	for resultIndex := range assessment.Results {
 		result := &assessment.Results[resultIndex]
 		for actionIndex := range result.RequiredActions {
 			action := &result.RequiredActions[actionIndex]
+			global := isModifiedReleaseAction(*action)
+			if global && shared != nil {
+				*action = *shared
+				continue
+			}
 			if action.ID == "" {
 				id, err := m.newID("action")
 				if err != nil {
@@ -5366,9 +5398,15 @@ func (m *Module) stampPreflightActions(
 				action.Status = api.RequiredActionStatusPending
 			}
 			action.WorkflowRevision = revision
-			action.TrackerID = result.TrackerID
+			if !isModifiedReleaseAction(*action) {
+				action.TrackerID = result.TrackerID
+			}
 			action.CreatedAt = now
-			if action.ExpiresAt == nil {
+			if global {
+				action.ExpiresAt = nil
+				sharedAction := *action
+				shared = &sharedAction
+			} else if action.ExpiresAt == nil {
 				expiresAt := result.FreshUntil
 				action.ExpiresAt = &expiresAt
 			}
@@ -5403,7 +5441,11 @@ func preflightStageStatus(results []api.TrackerPreflightResult) api.StageStatus 
 func collectPreflightActions(results []api.TrackerPreflightResult) []api.RequiredAction {
 	var actions []api.RequiredAction
 	for _, result := range results {
-		actions = append(actions, result.RequiredActions...)
+		for _, action := range result.RequiredActions {
+			if !slices.ContainsFunc(actions, func(existing api.RequiredAction) bool { return existing.ID == action.ID }) {
+				actions = append(actions, action)
+			}
+		}
 	}
 	return actions
 }
@@ -8789,6 +8831,13 @@ func (m *Module) resolveAction(
 			return CommandResult{}, fmt.Errorf("%w: required action is stale or unknown", ErrInvalidTransition)
 		}
 		return m.reviewTrackerReleaseName(ctx, ownerID, state, nextRevision, now, action, command.Answer)
+	}
+	if currentProjections != nil {
+		for _, action := range currentProjections.RequiredActions {
+			if action.ID == command.Answer.ActionID && isModifiedReleaseAction(action) {
+				return m.authorizeModifiedRelease(ctx, ownerID, state, nextRevision, now, *currentProjections, action, command.Answer)
+			}
+		}
 	}
 	if projection, action, ok := projectionRuleAuthorizationAction(currentProjections, command.Answer.ActionID); ok {
 		if strictDuplicateForTracker(currentDupes, action.TrackerID) {

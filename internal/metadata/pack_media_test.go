@@ -27,7 +27,7 @@ func (a *packAnalyzer) Analyze(_ context.Context, target string) (string, []byte
 	return "General\nComplete name : " + target, []byte(packMediaReport), nil
 }
 
-func TestSPPackPreparationPreservesPrimaryMediaAndCachesHDRTrackChecks(t *testing.T) {
+func TestSPPackPreparationReusesOnlyPrimaryMediaReport(t *testing.T) {
 	t.Parallel()
 	for _, releaseType := range []string{"WEB-DL", "BluRay.REMUX"} {
 		t.Run(releaseType, func(t *testing.T) {
@@ -36,7 +36,7 @@ func TestSPPackPreparationPreservesPrimaryMediaAndCachesHDRTrackChecks(t *testin
 			if err := os.MkdirAll(source, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			for episode := 1; episode <= 3; episode++ {
+			for episode := 1; episode <= 13; episode++ {
 				path := filepath.Join(source, fmt.Sprintf("Example.Show.S01E%02d.1080p.%s-GRP.mkv", episode, releaseType))
 				if err := os.WriteFile(path, []byte("synthetic video"), 0o600); err != nil {
 					t.Fatal(err)
@@ -54,9 +54,9 @@ func TestSPPackPreparationPreservesPrimaryMediaAndCachesHDRTrackChecks(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !first.TVPack || len(first.FileList) != 3 || len(analyzer.targets) != 4 || analyzer.targets[0] != first.VideoPath ||
+			if !first.TVPack || len(first.FileList) != 13 || len(analyzer.targets) != 1 || analyzer.targets[0] != first.VideoPath ||
 				first.MediaInfoJSONPath == "" ||
-				len(first.HDRFileEligibility) != 3 {
+				len(first.HDRFileEligibility) != 1 || len(first.HDRFileEvidence) != 1 {
 				t.Fatalf(
 					"ordinary primary preparation: pack=%t files=%v probes=%v report=%q",
 					first.TVPack,
@@ -82,7 +82,7 @@ func TestSPPackPreparationPreservesPrimaryMediaAndCachesHDRTrackChecks(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(analyzer.targets) != 4 || selected.MediaInfoJSONPath != first.MediaInfoJSONPath || len(selected.MediaFileFacts.Files) != 0 {
+			if len(analyzer.targets) != 1 || selected.MediaInfoJSONPath != first.MediaInfoJSONPath || len(selected.MediaFileFacts.Files) != 0 {
 				t.Fatalf(
 					"SP guidance triggered extra probes or invented pack evidence: probes=%v report=%q facts=%+v",
 					analyzer.targets,

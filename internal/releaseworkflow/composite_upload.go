@@ -2368,8 +2368,8 @@ func (m *Module) applyCompositeUploadFeedback(
 		}
 		state.Composite.Intent.Preparation.Force = true
 	case api.ReleaseWorkflowUploadFeedbackRuleAuthorization:
-		if command.Response.Confirmed {
-			confirmed := true
+		if command.Response.Confirmed || isModifiedReleaseAction(action) {
+			confirmed := command.Response.Confirmed
 			if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
 				WorkflowID:       command.WorkflowID,
 				ExpectedRevision: command.ExpectedRevision,

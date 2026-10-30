@@ -656,7 +656,7 @@ func (s TrackerReleaseProjectionSet) Validate() error {
 				hasWaivableDecision = true
 			}
 			if projection.RuleAuthorizationFingerprint != "" &&
-				disposition == RuleDispositionWaivable && decision.Blocking {
+				disposition == RuleDispositionWaivable && decision.Code != "modified_release" && decision.Blocking {
 				return fmt.Errorf("tracker projection %s has blocking waivable rule authority", id)
 			}
 		}

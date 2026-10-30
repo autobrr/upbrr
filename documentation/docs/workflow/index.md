@@ -122,6 +122,8 @@ Tracker group policies are evaluated separately for each selected tracker and tr
 
 Tracker rules and constructibility checks can mark a lane ready, blocked, skipped, or requiring manual review. A tracker-specific block need not stop other eligible trackers.
 
+The renamed/modified-source check examines the selected media files, not an otherwise unused containing folder. With `--keep-folder`, it checks both that folder and the selected filenames. A heuristic warning asks one release-wide yes/no question across the selected trackers. Verify file hashes and source provenance before continuing; declining applies to every selected tracker. The answer belongs to the current prepared generation, so preparing changed source facts requires a new decision. Authoritative scene-rename failures remain strict.
+
 For warnings that permit an override, turn on **Acknowledge tracker warnings** on the tracker's **Dupe Check** card or answer the CLI prompt. Approval covers the current warnings. Turn the toggle off to withdraw approval. Changed warnings or a new prepared generation require renewed approval. Strict failures cannot be overridden. See [tracker warning approval](../trackers/index.md#approve-tracker-warnings) for unattended and debug behavior.
 
 Continuing after an acknowledgement keeps your selected trackers. If their metadata requirements are already covered by the prepared facts, continuation reuses that generation and its current acknowledgement. Missing metadata can require refreshed preparation; if the refreshed facts need another decision, review the new action before continuing.

@@ -20,7 +20,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
+func TestCompositeUploadStrictUnattendedRequiresBoundTrackerApprovalFeedback(t *testing.T) {
 	t.Parallel()
 
 	module, repository, uploads := newCompositeUploadTestModule(t)
@@ -51,6 +51,15 @@ func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
 	if state.Composite == nil || state.Composite.ActiveOperationID != "" ||
 		state.Composite.TerminalReason != "feedback_required" || state.Workflow.TrackerApproval != nil {
 		t.Fatalf("composite terminal session = %#v", state.Composite)
+	}
+	// The CLI can supply its prompt-free defaults through this same authority path.
+	completed := approveCompositeUploadTrackers(t, module, current, []api.TrackerID{"ALPHA"}, "approve-clear-subset")
+	if completed.TrackerApproval == nil || completed.Workflow.TrackerApproval == nil ||
+		completed.TrackerApproval.Dupes != *current.Workflow.Dupes ||
+		completed.TrackerApproval.ProjectionSet != *current.Workflow.TrackerProjections ||
+		!slices.Equal(completed.TrackerApproval.ApprovedTrackerIDs, []api.TrackerID{"ALPHA"}) ||
+		uploads.execution == nil || !slices.Equal(uploads.execution.selected, []api.TrackerID{"ALPHA"}) {
+		t.Fatalf("prompt-free feedback lost exact evidence-bound authority: approval=%+v execution=%+v", completed.TrackerApproval, uploads.execution)
 	}
 }
 
@@ -1487,6 +1496,69 @@ func TestCompositeUploadStrictExcludesDuplicateBlockedSibling(t *testing.T) {
 			if current.TrackerApproval == nil ||
 				!slices.Equal(current.TrackerApproval.ApprovedTrackerIDs, []api.TrackerID{"ALPHA"}) {
 				t.Fatalf("duplicate-blocked tracker authority = %#v", current.TrackerApproval)
+			}
+		})
+	}
+}
+
+func TestCompositeUploadDuplicateBlockPreservesExplicitAllowUpload(t *testing.T) {
+	t.Parallel()
+	for _, reason := range []string{"same release", "in_client"} {
+		t.Run(reason, func(t *testing.T) {
+			t.Parallel()
+			module, _, uploads := newCompositeUploadTestModule(t)
+			base := compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA", reason)
+			module.dupeBuilder = dupeAssessmentBuilderFunc(func(ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet, preflight api.TrackerPreflightAssessment, now time.Time, skip bool) (api.DupeAssessment, any, error) {
+				assessment, private, err := base.Build(ctx, subject, projections, preflight, now, skip)
+				if err != nil {
+					return assessment, private, fmt.Errorf("build explicit duplicate override assessment: %w", err)
+				}
+				if reason != "in_client" {
+					result := &assessment.Results[1]
+					result.Decision = api.DupeDecisionPending
+					result.Status = api.StageStatusBlocked
+					result.RequiredActions = []api.RequiredAction{{
+						Kind:      api.RequiredActionReviewDuplicates,
+						Status:    api.RequiredActionStatusPending,
+						TrackerID: "BETA",
+					}}
+					assessment.Status = api.StageStatusBlocked
+				}
+				return assessment, private, nil
+			})
+			request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeUpload, "explicit-dupe-override")
+			request.Duplicates.OnEvidence = api.ReleaseWorkflowDuplicateBlock
+			request.Duplicates.AllowUpload = []api.TrackerID{"BETA"}
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			approved := []api.TrackerID{"ALPHA"}
+			wantDecision := api.DupeDecisionAccepted
+			if reason != "in_client" {
+				approved = append(approved, "BETA")
+				wantDecision = api.DupeDecisionIgnored
+			}
+			if blocked.Dupes == nil || blocked.Dupes.Results[1].Decision != wantDecision {
+				t.Fatalf("explicit override precedence: dupes=%+v", blocked.Dupes)
+			}
+			action := pendingCompositeTrackerApproval(t, blocked)
+			if len(action.Options) != len(approved) {
+				t.Fatalf("override approval candidates = %+v", action.Options)
+			}
+			completed := approveCompositeUploadTrackers(t, module, blocked, approved, "approve-explicit-override")
+			if completed.TrackerApproval == nil || !slices.Equal(completed.TrackerApproval.ApprovedTrackerIDs, approved) {
+				t.Fatalf("explicit override approval = %+v", completed.TrackerApproval)
+			}
+			if reason == "in_client" {
+				if completed.Operation == nil || completed.Operation.Status != api.StageStatusFailed || uploads.execution != nil {
+					t.Fatal("invalid in-client override must fail without uploading")
+				}
+				return
+			}
+			if uploads.execution == nil || !slices.Equal(uploads.execution.selected, approved) {
+				t.Fatalf("explicit override upload authority: approval=%+v execution=%+v", completed.TrackerApproval, uploads.execution)
 			}
 		})
 	}

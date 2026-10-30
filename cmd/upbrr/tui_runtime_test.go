@@ -342,7 +342,7 @@ func TestQueueSnapshotsRetainResultsAndExcludedTrackerRows(t *testing.T) {
 	if len(bridge.latest.Lanes) != 2 || bridge.latest.Lanes[1].State != "Skipped" {
 		t.Fatal("excluded tracker disappeared or acquired valid status")
 	}
-	publishCLIItemResult(streams, errors.New("synthetic failure"))
+	publishCLIItemResult(streams, errors.New("synthetic failure"), "")
 	withCLIItemPresentation(ctx, streams, "Example.Two.mkv", 2)
 	if bridge.latest.Item != 2 || bridge.latest.ItemsTotal != 2 || len(bridge.results) != 1 || !strings.Contains(bridge.results[0], "failed or interrupted") || bridge.latest.Result != "" {
 		t.Fatal("queue item authority or retained results lost")

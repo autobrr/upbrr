@@ -91,6 +91,19 @@ export preserves secret values in encrypted form:
 .\upbrr.exe --export-config ".\config-export.yaml"
 ```
 
+On macOS and Linux, stored-settings YAML file exports are staged privately in the
+same directory before replacing the destination. Readers see either the old complete
+file or the new one; a failed write or replacement leaves the previous export intact.
+Existing destinations must be regular files with owner read/write permissions.
+Symbolic links and more restrictive files are rejected without changing them; choose
+a regular writable destination instead. Successful replacements restrict permissions
+to `0600`.
+
+Windows retains in-place file writes to preserve existing security metadata. upbrr
+coordinates its own config imports and exports to prevent partial reads, but this
+does not make exports atomic for other applications or protect the previous contents
+if a Windows write fails.
+
 Plaintext export is explicit:
 
 ```powershell

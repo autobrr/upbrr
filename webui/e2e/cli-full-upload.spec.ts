@@ -33,7 +33,7 @@ test("CLI full upload approves trackers before downstream work", async () => {
     );
     expect(result.code, result.output).toBe(0);
     expect(result.output).toContain("Duplicate check:");
-    expect(result.output).toMatch(/Use .* as .*\? \[y\/N\]:/);
+    expect(result.output).toMatch(/Use .* as .*\? \[Y\/n\]:/);
     expect(result.output).toMatch(/uploaded|complete|Upload/i);
     expect(workspace.fake.counters.trackerUploads).toBe(
       releaseWorkflowParityFixture.expectedTrackerUploads,
@@ -116,7 +116,7 @@ test("CLI skips an auth-blocked tracker while uploading a ready sibling", async 
   }
 });
 
-test("CLI strict unattended stops before downstream work", async () => {
+test("CLI strict unattended approves a clear tracker without input", async () => {
   const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   try {
     const result = await runCLI(
@@ -131,11 +131,69 @@ test("CLI strict unattended stops before downstream work", async () => {
       ],
       workspace.env,
     );
-    expect(result.code, result.output).not.toBe(0);
-    expect(result.output).toContain(
-      "strict unattended upload requires global action approve_trackers",
+    expect(result.code, result.output).toBe(0);
+    expect(result.output).not.toMatch(/\[[yY]\/[nN]\]/);
+    expect(workspace.fake.counters.trackerUploads).toBe(1);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+for (const mode of ["interactive", "confirmation", "unattended"] as const) {
+  test(`CLI ${mode} skips duplicates and uploads the clear sibling`, async () => {
+    const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+    workspace.env.UPBRR_E2E_DUPLICATE_TRACKERS = "HDS";
+    try {
+      const modeArgs = mode === "interactive" ? [] : [mode === "confirmation" ? "-uac" : "-ua"];
+      const result = await runCLI(
+        [
+          "--config",
+          workspace.configPath,
+          "--trackers",
+          "BTN,HDS",
+          "--no-seed",
+          "-sda",
+          ...modeArgs,
+          workspace.sourcePath,
+        ],
+        workspace.env,
+        mode === "unattended" ? "" : "y\n\n",
+      );
+      expect(result.code, result.output).toBe(0);
+      expect(result.output).not.toContain("despite duplicate evidence?");
+      expect(result.output).not.toContain("Use HDS");
+      expect(workspace.fake.counters.trackerUploads).toBe(1);
+      expect(workspace.fake.trackerUploadBodies[0].toString()).toContain("BTN");
+      expect(workspace.fake.counters.clientInjections).toBe(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+}
+
+test("CLI unattended skips all duplicate trackers without downstream work", async () => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  workspace.env.UPBRR_E2E_DUPLICATE_TRACKERS = releaseWorkflowParityFixture.trackerID;
+  try {
+    const result = await runCLI(
+      [
+        "--config",
+        workspace.configPath,
+        "--trackers",
+        releaseWorkflowParityFixture.trackerID,
+        "-ua",
+        "-sda",
+        "--no-seed",
+        workspace.sourcePath,
+      ],
+      workspace.env,
     );
+    expect(result.code, result.output).toBe(0);
+    expect(result.output).toContain("All trackers skipped after duplicate checks.");
+    expect(result.output).not.toMatch(/\[[yY]\/[nN]\]/);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
     expect(workspace.fake.counters.clientInjections).toBe(0);
   } finally {
     await workspace.cleanup();

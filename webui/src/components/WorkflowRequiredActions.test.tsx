@@ -270,6 +270,28 @@ describe("WorkflowRequiredActions", () => {
     );
   });
 
+  it("offers one shared modified-release yes/no decision", () => {
+    const confirm = vi.fn();
+    const shared = action({
+      kind: "authorize_rules",
+      trackerId: undefined,
+      releaseRule: "modified_release",
+      prompt: "Verify source provenance for all selected trackers?",
+    });
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([shared])}
+        onConfirm={confirm}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Decline upload" }));
+    expect(confirm).toHaveBeenCalledWith(shared, false);
+    fireEvent.click(screen.getByRole("button", { name: "Continue upload" }));
+    expect(confirm).toHaveBeenLastCalledWith(shared, true);
+  });
+
   it("offers both tracker preparation decisions", () => {
     const confirm = vi.fn();
     render(

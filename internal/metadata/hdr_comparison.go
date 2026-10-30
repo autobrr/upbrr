@@ -49,12 +49,11 @@ func inspectFileMediaInfo(ctx context.Context, exporter mediainfo.Exporter, path
 func inspectFileMediaInfoReports(ctx context.Context, exporter mediainfo.Exporter, path, fingerprint, root string) (mediaInfoDoc, mediainfo.Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	key := sha256.Sum256([]byte(path + "\x00" + fingerprint))
 	result, err := exporter.Export(ctx, mediainfo.Request{
 		SourcePath:  path,
 		VideoPath:   path,
 		TempRoot:    root,
-		ArtifactDir: filepath.Join(root, "hdr-mediainfo", hex.EncodeToString(key[:])),
+		ArtifactDir: fileMediaInfoArtifactDir(root, path, fingerprint),
 		Release:     ParseReleaseInfo(path),
 	})
 	if err != nil {
@@ -81,4 +80,9 @@ func inspectFileMediaInfoReports(ctx context.Context, exporter mediainfo.Exporte
 		return mediaInfoDoc{}, mediainfo.Result{}, fmt.Errorf("decode HDR file inspection: %w", err)
 	}
 	return doc, result, nil
+}
+
+func fileMediaInfoArtifactDir(root, path, fingerprint string) string {
+	key := sha256.Sum256([]byte(path + "\x00" + fingerprint))
+	return filepath.Join(root, "hdr-mediainfo", hex.EncodeToString(key[:]))
 }

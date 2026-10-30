@@ -66,7 +66,8 @@ func resolveWithinRoot(root string, target string) (string, string, bool) {
 	return rootReal, targetReal, isWithinCleanRoot(rootReal, targetReal)
 }
 
-// SamePath compares local filesystem paths with the host OS path semantics.
+// SamePath compares local filesystem paths with the host OS path semantics,
+// preserving literal whitespace in Unix names.
 func SamePath(left string, right string) bool {
 	leftAbs, leftOK := cleanAbs(left)
 	rightAbs, rightOK := cleanAbs(right)
@@ -99,11 +100,13 @@ func normalizeCleanLocalPath(value string) string {
 }
 
 func cleanAbs(value string) (string, bool) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
+	if strings.TrimSpace(value) == "" {
 		return "", false
 	}
-	abs, err := filepath.Abs(filepath.Clean(trimmed))
+	if runtime.GOOS == "windows" {
+		value = strings.TrimSpace(value)
+	}
+	abs, err := filepath.Abs(filepath.Clean(value))
 	if err != nil {
 		return "", false
 	}

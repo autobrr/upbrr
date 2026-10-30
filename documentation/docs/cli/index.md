@@ -48,13 +48,35 @@ Run duplicate and site checks without uploading:
 .\upbrr.exe --site-check "D:\releases\Example.Release.2026.1080p-GRP"
 ```
 
-Process at most five entries from a queue folder:
+Create or resume a named queue, processing at most five pending entries:
 
 ```powershell
 .\upbrr.exe --queue uploads --limit-queue 5 "D:\upload-queue"
 ```
 
-`--queue` supplies a non-empty queue name. Supply exactly one queue-root path separately. The CLI gathers first-level media files and release folders in sorted order, then applies `--limit-queue`; `0` means no limit. An item failure does not stop later queue entries, but the command returns a nonzero summary result if any item failed. Cancellation stops the queue.
+Supply a non-empty queue name and exactly one queue-root path. The first invocation saves the sorted first-level media files and release folders. Reusing that name with the same root loads its saved membership and progress. `--limit-queue` applies after filtering progress; `0` means unlimited, so repeated limited runs advance through the queue. An item failure does not stop later entries, but the command returns a nonzero summary result if any item failed. Cancellation stops the queue.
+
+The CLI prints the saved file's location on creation and resume. Files live in `queues/<name-hash>.json` beside the active `db.sqlite` (including a custom database location). The hash is the SHA-256 of the exact, trimmed queue name; names have independent progress even when their filesystem-safe spellings would collide. The private JSON contains the name, root, member paths, attempt counts, workflow IDs and per-item progress. It contains no tracker credentials or submission payloads. Protect these local paths when sharing the file. An OS lock excludes concurrent writers and releases on process exit; keep its adjacent `.lock` file in place.
+
+Each item is saved before processing and after its outcome. The checkpoint's temporary file is flushed before replacement. Unix also flushes the queue directory and its ancestors before queue work, then the containing directory after each replacement. Windows flushes the writable destination after replacement; Microsoft documents directory-structure persistence for this operation on NTFS, without an equivalent guarantee for other Windows filesystems. These barriers depend on the filesystem and storage honoring flush requests; they do not establish unconditional power-loss or exactly-once tracker submission guarantees.
+
+A checkpoint write or sync failure stops the queue and reports the item as failed. If replacement succeeded before a sync error, the saved file may already contain the new progress. The command reports durability as unconfirmed, retains the file and does not automatically repeat the write or work. Reopen the named queue to load and flush its retained state before deciding whether to retry an interrupted item. Do not assume that an error means no checkpoint was written.
+
+States are `pending`, `running`, `completed`, `failed`, `interrupted` and `skipped`. The TUI reports skipped items without replacing more specific recovery messages. Failed or partial debug/site-check reports remain retryable failures. A leftover `running` checkpoint becomes `interrupted` when you explicitly resume the queue. Normal resume selects pending items only. To include failed, interrupted and skipped items, inspect their outcomes and run:
+
+```powershell
+.\upbrr.exe --queue uploads --retry-queue --limit-queue 5 "D:\upload-queue"
+```
+
+Retry selection does not bypass input ownership, confirmed-upload exclusions or uncertain-submission reconciliation. A tracker submission with an unknown outcome still requires the existing recovery process; no remote submission is retried automatically. Confirmed tracker uploads are recorded separately from item progress, including partial failures. `completed` means the requested processing finished: Input-only and debug/site-check runs can complete without uploading. Skips and declined actions do not prove an upload. Use a different queue name when starting a different task, such as switching a completed Input-only queue to uploads.
+
+Membership stays unchanged until explicitly refreshed:
+
+```powershell
+.\upbrr.exe --queue uploads --refresh-queue "D:\upload-queue"
+```
+
+Refresh adds newly discovered members and preserves existing progress, including missing sources and failed items. It does not reset completed items, remove old members, or change the saved root. Missing members fail when processed while other entries continue. A queue with no remaining work reports completion; retained failed, interrupted or skipped items remain inspectable and require `--retry-queue`. Queue processing never starts automatically when the application or Web UI starts. Saved queues cannot be combined with `--cleanup` or `--delete-tmp`; perform stored-release maintenance separately, preserving any unresolved remote effects.
 
 ### Multi-disc folders
 
@@ -113,20 +135,22 @@ The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic 
 
 ## Execution
 
-| Option                        | Aliases                       | Purpose                                                                                  |
-| ----------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------- |
-| `--queue <name>`              | `-queue`                      | Name a queue; supply its root as the single input path.                                  |
-| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit queued items processed; defaults to `0` (unlimited). Negative values are rejected. |
-| `--site-check`                | `-site-check`, `-sc`          | Search/check sites without uploading.                                                    |
-| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                         |
-| `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                        |
-| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.    |
-| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                |
-| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                               |
-| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                             |
-| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                  |
-| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                     |
-| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                            |
+| Option                        | Aliases                       | Purpose                                                                                    |
+| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------ |
+| `--queue <name>`              | `-queue`                      | Create or resume a saved queue; supply its original root as the single input path.         |
+| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit remaining eligible items; defaults to `0` (unlimited). Negative values are rejected. |
+| `--refresh-queue`             | `-refresh-queue`              | Add new members without resetting progress; requires `--queue`.                            |
+| `--retry-queue`               | `-retry-queue`                | Include failed, interrupted and skipped items; requires `--queue`.                         |
+| `--site-check`                | `-site-check`, `-sc`          | Search/check sites without uploading.                                                      |
+| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                           |
+| `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                          |
+| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.      |
+| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                  |
+| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                                 |
+| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                               |
+| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                    |
+| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                       |
+| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                              |
 
 `--live-test` and `--live-test-max-images` are development options described under [`live-test`](#live-test). There is no `--dry-run` option; use `--debug --no-seed` for preparation without tracker submission or client injection.
 
@@ -207,7 +231,7 @@ Custom names are allowed: use the attached form `-hc="Custom Dialect"` (quote mu
 
 Bare `-hc` or `-hc=""` explicitly marks unknown hardcoded languages, clearing saved language choices and leaving that evidence unresolved. Legacy boolean forms such as `-hc=true`, `-hc=false`, and `--hardcoded-subs=false` remain supported; explicit false disables hardcoded handling.
 
-The review is tracker-specific. Strict `--unattended` never prompts and skips a tracker when its required review is unanswered; other eligible trackers remain available. `--unattended_confirm` permits the required questions. Existing global tracker-approval requirements still apply.
+The review is tracker-specific. Strict `--unattended` never prompts and skips a tracker when its required review is unanswered; other eligible trackers remain available. `--unattended_confirm` permits the required questions. The workflow still records the approved tracker subset before downstream work.
 
 ### Naming fields
 
@@ -305,13 +329,12 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 | Option                | Aliases                      | Purpose                                                                 |
 | --------------------- | ---------------------------- | ----------------------------------------------------------------------- |
 | `--skip-dupe-check`   | `-skip-dupe-check`, `-sdc`   | Skip remote tracker duplicate searches.                                 |
-| `--skip-dupe-asking`  | `-skip-dupe-asking`, `-sda`  | Choose upload when duplicate evidence needs a decision.                 |
+| `--skip-dupe-asking`  | `-skip-dupe-asking`, `-sda`  | Skip trackers with duplicate evidence without asking.                   |
 | `--double-dupe-check` | `-double-dupe-check`, `-ddc` | Request two duplicate checks instead of one.                            |
 | `--commentary`        | `-commentary`, `-mc`         | Mark release as containing commentary.                                  |
 | `--personalrelease`   | `-personalrelease`, `-pr`    | Explicitly set personal-release handling.                               |
 | `--stream`            | `-stream`, `-st`             | Mark release as stream optimized.                                       |
 | `--webdv`             | `-webdv`                     | Mark release as WEB-DV.                                                 |
-| `--not-anime`         | `-not-anime`                 | Force release to be treated as not anime.                               |
 | `--anime`             | `-anime`                     | Explicitly set anime handling; `false` clears the anime classification. |
 | `--anon`              | `-anon`, `-a`                | Upload anonymously.                                                     |
 | `--draft`             | `-draft`, `-dr`              | Send to drafts where supported.                                         |
@@ -319,7 +342,9 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 
 `--personalrelease=true` and `--personalrelease=false` are both explicit choices and override tracker group defaults. Omit the option to leave **Personal Release** on **Auto**, where each tracker's configured personal-release groups can supply the default.
 
-Duplicate options do not bypass authoritative client blocks or the workflow's explicit tracker-approval requirement. Strict `--unattended` still cannot answer that approval prompt. `--anime` and `--not-anime` cannot be combined, even with explicit false values.
+After duplicate checks, trackers with completed clear results default to **Yes** (`[Y/n]`). Strict `--unattended` applies this default without prompting and records only that exact eligible subset for preparation and upload. Duplicate results and separately overridden duplicate evidence default to **No**; other viable trackers can continue. Missing prerequisites, incomplete or failed checks, rule waivers and staff-token requirements never become automatic Yes decisions.
+
+`--skip-dupe-asking` skips trackers with duplicate evidence; it does not authorize duplicate uploads. Separate explicit per-tracker duplicate overrides take precedence over this skip policy, but still require tracker authorization and any staff-token confirmation. Duplicate options never bypass authoritative client blocks. Use `--anime=false` to explicitly classify a release as non-anime. The obsolete `--not-anime` flag has been removed and is rejected as an unknown option.
 
 TIK `--disctype` accepts `BD100`, `BD66`, `BD50`, `BD25`, `NTSC DVD9`, `NTSC DVD5`, `PAL DVD9`, `PAL DVD5`, `CUSTOM`, or `3D`. Quote values containing spaces.
 

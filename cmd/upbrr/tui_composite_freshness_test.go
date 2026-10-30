@@ -10,6 +10,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -217,9 +218,79 @@ func (b cliCompositePreflightFixture) Build(ctx context.Context, _ api.UploadSub
 	}, slices.Clone(initial.Projections), nil
 }
 
+// terminalSnapshotRepository pauses a real questionnaire checkpoint until Current
+// has read it, then lets the worker publish its terminal revision before polling
+// reads the operation. The retained revisions are never changed by the fixture.
+type terminalSnapshotRepository struct {
+	*releaseworkflow.MemoryRepository
+	questionnaireSaved chan struct{}
+	stateCaptured      chan struct{}
+	terminalSaved      chan struct{}
+	checkpointOnce     sync.Once
+	captureOnce        sync.Once
+	terminalOnce       sync.Once
+}
+
+type terminalSnapshotReadKey struct{}
+
+func (r *terminalSnapshotRepository) Save(ctx context.Context, owner string, expected api.WorkflowRevision, state releaseworkflow.State) error {
+	if err := r.MemoryRepository.Save(ctx, owner, expected, state); err != nil {
+		return fmt.Errorf("save questionnaire checkpoint: %w", err)
+	}
+	for _, action := range state.Workflow.RequiredActions {
+		if action.Kind == api.RequiredActionAnswerQuestionnaire && action.Status == api.RequiredActionStatusPending {
+			r.checkpointOnce.Do(func() {
+				close(r.questionnaireSaved)
+				select {
+				case <-r.stateCaptured:
+				case <-ctx.Done():
+				}
+			})
+			break
+		}
+	}
+	return nil
+}
+
+func (r *terminalSnapshotRepository) Load(ctx context.Context, owner string, id api.WorkflowID) (releaseworkflow.State, error) {
+	state, err := r.MemoryRepository.Load(ctx, owner, id)
+	if err != nil {
+		return state, fmt.Errorf("load polling checkpoint: %w", err)
+	}
+	if ctx.Value(terminalSnapshotReadKey{}) == true {
+		r.captureOnce.Do(func() {
+			close(r.stateCaptured)
+			select {
+			case <-r.terminalSaved:
+			case <-ctx.Done():
+			}
+		})
+		if err := ctx.Err(); err != nil {
+			return releaseworkflow.State{}, fmt.Errorf("wait for terminal checkpoint: %w", err)
+		}
+	}
+	return state, nil
+}
+
+func (r *terminalSnapshotRepository) SaveOperation(ctx context.Context, sequence uint64, record api.ReleaseWorkflowOperationRecord) error {
+	if err := r.MemoryRepository.SaveOperation(ctx, sequence, record); err != nil {
+		return fmt.Errorf("save terminal operation: %w", err)
+	}
+	if isTerminalCLIWorkflowOperation(record.Status.Status) {
+		r.terminalOnce.Do(func() { close(r.terminalSaved) })
+	}
+	return nil
+}
+
 func TestCompositePollingRefreshesActualQuestionnaireAndStageSnapshots(t *testing.T) {
 	preflightProceed := make(chan struct{})
-	module, err := releaseworkflow.New(releaseworkflow.NewMemoryRepository(), releaseworkflow.NewMemoryPrivateResourceStore(),
+	repo := &terminalSnapshotRepository{
+		MemoryRepository:   releaseworkflow.NewMemoryRepository(),
+		questionnaireSaved: make(chan struct{}),
+		stateCaptured:      make(chan struct{}),
+		terminalSaved:      make(chan struct{}),
+	}
+	module, err := releaseworkflow.New(repo, releaseworkflow.NewMemoryPrivateResourceStore(),
 		releaseworkflow.ReleasePreparerFunc{
 			PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 				return api.PrepareResult{Release: api.PreparedRelease{
@@ -269,24 +340,27 @@ func TestCompositePollingRefreshesActualQuestionnaireAndStageSnapshots(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	var blocked releaseworkflow.CommandResult
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		blocked, err = module.Current(t.Context(), cliWorkflowOwnerID, started.Workflow.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if blocked.Operation != nil && isTerminalCLIWorkflowOperation(blocked.Operation.Status) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("composite producer never reached its questionnaire")
-		}
-		time.Sleep(10 * time.Millisecond)
+	ctxRead, cancelRead := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancelRead()
+	select {
+	case <-repo.questionnaireSaved:
+	case <-ctxRead.Done():
+		t.Fatal("composite producer never reached its questionnaire")
+	}
+	blocked, err := module.Current(context.WithValue(ctxRead, terminalSnapshotReadKey{}, true), cliWorkflowOwnerID, started.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked.Operation == nil || !isTerminalCLIWorkflowOperation(blocked.Operation.Status) {
+		t.Fatal("composite producer did not publish its terminal operation")
 	}
 	action := firstPendingCLICompositeAction(blocked.Continuation.RequiredActions)
 	if action == nil || action.Kind != api.RequiredActionAnswerQuestionnaire || blocked.Projections == nil {
 		t.Fatalf("composite producer did not retain questionnaire projections: status=%s actions=%v", blocked.Operation.Status, blocked.Continuation.RequiredActions)
+	}
+	if blocked.Workflow.Revision < blocked.Operation.ResultRevision || action.WorkflowRevision != blocked.Workflow.Revision {
+		t.Fatalf("terminal snapshot has stale authority: workflow=%d action=%d operation=%d",
+			blocked.Workflow.Revision, action.WorkflowRevision, blocked.Operation.ResultRevision)
 	}
 	bridge := newCLITUIBridge()
 	streams := cliIO{out: &cliPresentationWriter{
@@ -328,7 +402,7 @@ func TestCompositePollingRefreshesActualQuestionnaireAndStageSnapshots(t *testin
 			t.Error("composite presentation poller failed to join")
 		}
 	}()
-	deadline = time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		bridge.mu.Lock()
 		view := bridge.latest

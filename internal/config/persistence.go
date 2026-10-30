@@ -12,14 +12,21 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 )
+
+// configFileMu prevents in-process imports from reading a Windows export
+// mid-write. Windows keeps in-place writes to preserve security
+// metadata; Unix replaces a staged file. Encryption stays outside this lock.
+var configFileMu sync.RWMutex
 
 type exportFormat int
 
@@ -29,13 +36,17 @@ const (
 )
 
 // ExportToYAML writes YAML with known secret fields encrypted. It creates the
-// parent directory and writes the destination with mode 0600.
+// parent directory and uses mode 0600 for new files. On Unix it replaces a
+// staged complete file; existing destinations must be regular and owner-readable/
+// writable. Windows retains in-place writes and security metadata. In-process
+// imports are coordinated on every platform.
 func ExportToYAML(cfg *Config, path string) error {
 	return exportToFile(cfg, path, exportFormatYAML, true)
 }
 
 // ExportToPlaintextYAML writes YAML without encrypting secret fields. It still
-// uses mode 0600, but callers must treat the file as secret-bearing.
+// uses the same publication and file permissions as ExportToYAML,
+// but callers must treat the file as secret-bearing.
 func ExportToPlaintextYAML(cfg *Config, path string) error {
 	return exportToFile(cfg, path, exportFormatYAML, false)
 }
@@ -77,11 +88,58 @@ func exportToFile(cfg *Config, path string, format exportFormat, encryptSecrets 
 		return errors.New("config export: unknown format")
 	}
 
-	// Write to file.
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("config export: write file: %w", err)
+	if runtime.GOOS == "windows" {
+		configFileMu.Lock()
+		defer configFileMu.Unlock()
+		// Replacing the directory entry could discard a custom Windows security
+		// descriptor. Preserve it by retaining the existing in-place write.
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			return fmt.Errorf("config export: write file: %w", err)
+		}
+		return nil
 	}
 
+	file, err := os.CreateTemp(dir, ".config-export-*")
+	if err != nil {
+		return fmt.Errorf("config export: create temporary file: %w", err)
+	}
+	defer func() { _ = os.Remove(file.Name()) }()
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("config export: write temporary file: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("config export: sync temporary file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("config export: close temporary file: %w", err)
+	}
+
+	configFileMu.Lock()
+	defer configFileMu.Unlock()
+	info, err := os.Lstat(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("config export: inspect destination: %w", err)
+	}
+	if err == nil {
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0o600 != 0o600 {
+			return errors.New("config export: destination must be a regular owner-readable and writable file")
+		}
+		// Directory replacement rights must not bypass the destination's write
+		// permissions. Check without truncating or changing the original file.
+		existing, openErr := os.OpenFile(path, os.O_WRONLY, 0)
+		if openErr != nil {
+			return fmt.Errorf("config export: open existing destination: %w", openErr)
+		}
+		if closeErr := existing.Close(); closeErr != nil {
+			return fmt.Errorf("config export: close existing destination: %w", closeErr)
+		}
+	}
+	// Never remove the destination first: failed replacement must retain it.
+	if err := os.Rename(file.Name(), path); err != nil {
+		return fmt.Errorf("config export: publish file: %w", err)
+	}
 	return nil
 }
 
@@ -93,7 +151,9 @@ func ImportFromYAML(path string) (*Config, error) {
 		return nil, errors.New("config import: empty path")
 	}
 
+	configFileMu.RLock()
 	data, err := os.ReadFile(path)
+	configFileMu.RUnlock()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, internalerrors.ErrNotFound

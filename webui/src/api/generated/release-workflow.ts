@@ -2226,6 +2226,7 @@ export type RequiredAction = Readonly<{
   kind: RequiredActionKind;
   options?: readonly RequiredActionOption[];
   prompt: string;
+  releaseRule?: string;
   status: RequiredActionStatus;
   trackerId?: TrackerID;
   workflowRevision: WorkflowRevision;
@@ -2970,6 +2971,7 @@ export type TrackerReleaseProjection = Readonly<{
   failures?: readonly WorkflowFailure[];
   inputFingerprint: WorkflowFingerprint;
   metadataLocale?: string;
+  modifiedReleaseDecision?: boolean | null;
   namingElementPolicyVersion: string;
   namingFingerprint: WorkflowFingerprint;
   namingPolicyId: string;
