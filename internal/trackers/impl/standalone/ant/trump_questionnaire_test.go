@@ -25,6 +25,9 @@ func TestIntendedTrumpRequiresCurrentExplicitAnswer(t *testing.T) {
 	if len(fields) != 2 || fields[0].Value != "no" {
 		t.Fatalf("unexpected defaults: %#v", fields)
 	}
+	if review := duplicateTrumpQuestionnaireFields(input); len(review) != 2 || !review[0].NeedsReview || !review[1].NeedsReview || fields[0].NeedsReview {
+		t.Fatal("trump intent must be requested during duplicate review without blocking the initial projection")
+	}
 	input.Meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"ANT": {choice: "yes", reason: "  verified improvement  "}}
 	if got, explanation := intendedTrump(input); !got || explanation != "verified improvement" {
 		t.Fatalf("current explicit answer not consumed: %t %q", got, explanation)
@@ -37,9 +40,15 @@ func TestIntendedTrumpRequiresCurrentExplicitAnswer(t *testing.T) {
 	if got, _ := intendedTrump(input); !got {
 		t.Fatal("reviewed answer was ignored")
 	}
+	if len(duplicateTrumpQuestionnaireFields(input)) != 0 {
+		t.Fatal("saved trump choice must not repeat the duplicate questionnaire")
+	}
 	input.Meta.Identity.Generation++
 	if got, _ := intendedTrump(input); got {
 		t.Fatal("stale generation answer was accepted")
+	}
+	if len(duplicateTrumpQuestionnaireFields(input)) != 2 {
+		t.Fatal("a new source generation must require a fresh trump choice")
 	}
 	input.Meta.Identity.Generation--
 	input.Meta.SourcePath = "/synthetic/other"

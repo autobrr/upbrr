@@ -25,7 +25,8 @@ func duplicatePolicy() *trackers.DupePolicy {
 		CompareSlots:               compareSlots,
 		StaffTokenOverride:         true,
 		StaffTokenOverrideRequired: requiresStaffToken,
-		Questionnaire:              trumpQuestionnaireFields,
+		DecisionInputs:             trumpDecisionInputs,
+		Questionnaire:              duplicateTrumpQuestionnaireFields,
 	}
 }
 

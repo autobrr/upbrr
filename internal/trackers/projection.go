@@ -457,16 +457,24 @@ func (r *Registry) ProjectRelease(
 	projection.NamingFingerprint = projection.ProjectorFingerprint
 	group, sameGroupOnly := TrackerGroupRestriction(input.TrackerConfig, input.Meta.Tag)
 	groupRestriction := DupeGroupRestriction{Enabled: sameGroupOnly, Group: group}
+	var decisionInputs map[string]string
+	if descriptor.DupePolicy != nil && descriptor.DupePolicy.DecisionInputs != nil {
+		decisionInput := input
+		decisionInput.Projection = &projection
+		decisionInputs = descriptor.DupePolicy.DecisionInputs(decisionInput)
+	}
 	projection.DuplicatePolicyFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
 		GeneralPolicyID  string
 		ID               string
 		Policy           *DupePolicy
 		GroupRestriction DupeGroupRestriction
+		DecisionInputs   map[string]string `json:",omitempty"`
 	}{
 		GeneralPolicyID:  GeneralDuplicatePolicyID,
 		ID:               projection.DuplicatePolicyID,
 		Policy:           descriptor.DupePolicy,
 		GroupRestriction: groupRestriction,
+		DecisionInputs:   decisionInputs,
 	})
 	if err != nil {
 		failure = NewPreparationFailure(input.Tracker, "fingerprint", "tracker duplicate policy fingerprint failed", err)

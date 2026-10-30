@@ -711,16 +711,22 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		writer.question.Evidence = safeTerminalText(evidence.String())
 	}
 	if len(result.Questionnaire) > 0 && s.intent.interaction != api.InteractionModeUnattended {
-		review, reviewErr := promptYesNo(reader, s.streams.out, "Review comparison evidence before deciding? [y/N]: ", false)
-		if reviewErr != nil {
-			return feedback, false, reviewErr
+		review := slices.ContainsFunc(result.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+			return field.NeedsReview || (field.Required && strings.TrimSpace(field.Value) == "")
+		})
+		if !review {
+			var reviewErr error
+			review, reviewErr = promptYesNo(reader, s.streams.out, "Review comparison evidence before deciding? [y/N]: ", false)
+			if reviewErr != nil {
+				return feedback, false, reviewErr
+			}
 		}
 		if review {
 			projections := cliTrackerQuestionnaireProjection(s.current, action.TrackerID)
 			if projections == nil {
 				return feedback, false, errors.New("upbrr: comparison questionnaire projection is unavailable")
 			}
-			// The operator opted into these optional fields; other tracker inputs keep their normal prompt policy.
+			// Review these duplicate-stage fields; other tracker inputs keep their normal prompt policy.
 			for index := range projections.Projections[0].Questionnaire {
 				field := &projections.Projections[0].Questionnaire[index]
 				if slices.ContainsFunc(result.Questionnaire, func(question api.TrackerQuestionnaireRequirement) bool { return question.Key == field.Key }) {

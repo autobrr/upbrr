@@ -1152,19 +1152,23 @@ func collectCLIWorkflowQuestionnaires(
 			if field.Help != "" {
 				fmt.Fprintln(output, field.Help)
 			}
-			if field.Kind == "multiselect" {
+			yesNo := field.Kind == "select" && len(field.Options) == 2 && slices.Contains(field.Options, "yes") && slices.Contains(field.Options, "no")
+			switch {
+			case field.Kind == "multiselect":
 				for index, option := range field.Options {
 					fmt.Fprintf(output, "  %d. %s\n", index+1, option)
 				}
 				label += " (comma-separated numbers or labels)"
-			} else if len(field.Options) > 0 {
+			case yesNo:
+				label += " [y/n]"
+			case len(field.Options) > 0:
 				label += " [" + strings.Join(field.Options, "/") + "]"
 			}
 			prompt := cliPrompt{
 				Kind:     cliPromptText,
 				Question: fmt.Sprintf("%s %s: ", projection.TrackerID, label),
 				Help:     field.Help,
-				Required: true,
+				Required: field.Required,
 			}
 			if len(field.Options) > 0 {
 				prompt.Kind = cliPromptSelect
@@ -1186,7 +1190,7 @@ func collectCLIWorkflowQuestionnaires(
 			if strings.TrimSpace(answer) == "" && field.Required {
 				return false, fmt.Errorf("upbrr: tracker input %s for %s is required", field.Key, projection.TrackerID)
 			}
-			if field.Kind == "select" && len(field.Options) == 2 && slices.Contains(field.Options, "yes") && slices.Contains(field.Options, "no") {
+			if yesNo {
 				switch strings.ToLower(strings.TrimSpace(answer)) {
 				case "y", "yes":
 					answer = "yes"

@@ -128,6 +128,13 @@ func intendedTrump(input trackers.PreparationInput) (bool, string) {
 	return true, strings.TrimSpace(answers[reason])
 }
 
+func trumpDecisionInputs(input trackers.PreparationInput) map[string]string {
+	if intended, _ := intendedTrump(input); intended {
+		return map[string]string{"intended_trump": "yes"}
+	}
+	return nil
+}
+
 func trumpQuestionnaireFields(input trackers.PreparationInput) []api.TrackerQuestionnaireField {
 	if !input.TrackerConfig.GuruTrump {
 		return nil
@@ -158,4 +165,23 @@ func trumpQuestionnaireFields(input trackers.PreparationInput) []api.TrackerQues
 			Help:  "Optional explanation sent only for an explicitly intended Guru+ trump.",
 		},
 	}
+}
+
+// duplicateTrumpQuestionnaireFields collects upload intent once, independently of comparison evidence.
+func duplicateTrumpQuestionnaireFields(input trackers.PreparationInput) []api.TrackerQuestionnaireField {
+	fields := trumpQuestionnaireFields(input)
+	if len(fields) == 0 {
+		return nil
+	}
+	answers := standalone.QuestionnaireAnswers(input.Meta, "ANT")
+	if input.Projection != nil {
+		answers = input.Projection.QuestionnaireAnswers
+	}
+	if answers[fields[0].Key] == "yes" || answers[fields[0].Key] == "no" {
+		return nil
+	}
+	for index := range fields {
+		fields[index].NeedsReview = true
+	}
+	return fields
 }
