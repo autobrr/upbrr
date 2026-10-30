@@ -265,7 +265,8 @@ func (q *cliNamedQueue) save() error {
 	tmpPath := file.Name()
 	defer func() {
 		_ = file.Close()
-		_ = os.Remove(tmpPath) //nolint:gosec // OS-generated temporary name under the trusted queue directory.
+		// #nosec G703 -- OS-generated temporary name under the trusted queue directory.
+		_ = os.Remove(tmpPath)
 	}()
 	if _, err := file.Write(append(payload, '\n')); err != nil {
 		return fmt.Errorf("write queue checkpoint: %w", err)
@@ -276,7 +277,8 @@ func (q *cliNamedQueue) save() error {
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close queue checkpoint: %w", err)
 	}
-	if err := os.Rename(tmpPath, q.path); err != nil { //nolint:gosec // OS-generated temporary name and hashed destination under the trusted queue directory.
+	// #nosec G703 -- OS-generated temporary name and hashed destination under the trusted queue directory.
+	if err := os.Rename(tmpPath, q.path); err != nil {
 		return fmt.Errorf("replace queue checkpoint: %w", err)
 	}
 	return nil
