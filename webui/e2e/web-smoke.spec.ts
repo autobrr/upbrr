@@ -577,18 +577,38 @@ test.describe("Settings help", () => {
       await expect(save).toBeDisabled();
       await help.scrollIntoViewIfNeeded();
       const touchAnchor = await help.boundingBox();
+      const controlAnchor = await control.boundingBox();
+      const formHeight = await page
+        .getByTestId("settings-page")
+        .evaluate((element) => element.scrollHeight);
       await help.tap();
       const openedTouchAnchor = await help.boundingBox();
       expect(openedTouchAnchor!.x).toBeCloseTo(touchAnchor!.x, 1);
       expect(openedTouchAnchor!.y).toBeCloseTo(touchAnchor!.y, 1);
       await expect(help).toHaveAttribute("aria-expanded", "true");
-      const helpId = await help.getAttribute("aria-controls");
-      const text = page.locator(`[id=${JSON.stringify(helpId)}]`);
+      const text = page.getByTestId("field-help-content");
       await expect(text).toBeVisible();
       const box = await text.boundingBox();
       expect(box).not.toBeNull();
       expect(box!.x).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(360);
+      expect(box!.width).toBeLessThanOrEqual(320);
+      expect(await control.boundingBox()).toEqual(controlAnchor);
+      expect(
+        await page.getByTestId("settings-page").evaluate((element) => element.scrollHeight),
+      ).toBe(formHeight);
+      // Floating content occupies a different vertical band from its trigger.
+      expect(
+        box!.y + box!.height <= touchAnchor!.y || box!.y >= touchAnchor!.y + touchAnchor!.height,
+      ).toBe(true);
+      await help.tap();
+      await expect(text).toBeHidden();
+      await help.tap();
+      await expect(text).toBeVisible();
+      await page.getByRole("heading", { name: "Settings", exact: true }).tap();
+      await expect(text).toBeHidden();
+      await help.tap();
+      await expect(text).toBeVisible();
       await expect(control).toBeChecked({ checked });
       await expect(save).toBeDisabled();
       await help.press("Escape");
@@ -602,6 +622,12 @@ test.describe("Settings help", () => {
       await control.focus();
       await help.scrollIntoViewIfNeeded();
       const hoverAnchor = await help.boundingBox();
+      // Hovering the label/row must not open optional help.
+      await page
+        .locator("label[for]")
+        .filter({ hasText: /^Show tracker icons$/ })
+        .hover();
+      await expect(text).toBeHidden();
       await help.hover();
       await expect(text).toBeVisible();
       const openedHoverAnchor = await help.boundingBox();
@@ -614,7 +640,12 @@ test.describe("Settings help", () => {
       await page.getByRole("heading", { name: "Settings", exact: true }).hover();
       await help.hover();
       await expect(text).toBeVisible();
-      await page.getByRole("heading", { name: "Settings", exact: true }).hover();
+      const heading = await page
+        .getByRole("heading", { name: "Settings", exact: true })
+        .boundingBox();
+      await page.mouse.move(heading!.x + heading!.width / 2, heading!.y + heading!.height / 2, {
+        steps: 10,
+      });
       await expect(text).toBeHidden();
       await expect(save).toBeDisabled();
     } finally {

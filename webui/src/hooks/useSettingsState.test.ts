@@ -605,9 +605,8 @@ describe("renderTorrentClientsSection", () => {
 
     expect(watchScope.getByLabelText("Client type")).toHaveValue("watch");
     const watchHelp = watchScope.getByRole("button", { name: "Help for Client type" });
-    const qbitHelp = qbitScope.getByRole("button", { name: "Help for Client type" });
-    expect(watchHelp.getAttribute("aria-controls")).not.toBe(
-      qbitHelp.getAttribute("aria-controls"),
+    expect(watchScope.getByLabelText("Client type").getAttribute("aria-describedby")).not.toBe(
+      qbitScope.getByLabelText("Client type").getAttribute("aria-describedby"),
     );
     await userEvent.click(watchHelp);
     expect(watchScope.getByLabelText("Client type")).toHaveValue("watch");

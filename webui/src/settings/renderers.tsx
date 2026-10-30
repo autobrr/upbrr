@@ -10,7 +10,7 @@ import { Select } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { trackerFieldPresentation } from "./trackerFields";
 import { settingsStyle } from "./style";
-import { FieldHelp } from "./FieldHelp";
+import { FieldHelp } from "../components/ui/field-help";
 import { settingsFieldPresentation } from "./fieldPresentation";
 import { SettingsFieldGroups } from "./FieldGroups";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
@@ -158,6 +158,8 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     meta?: FieldMeta,
     displayLabel?: string,
   ) => {
+    const controlId = `setting-${encodeURIComponent(JSON.stringify(path))}`;
+    const describedBy = meta?.help ? `${controlId}-help` : undefined;
     const options = meta?.options ?? [];
     const optionValueFor = (entry: ConfigValue) => (entry === null ? "" : String(entry ?? ""));
     const optionsFor = (entry: ConfigValue) => {
@@ -175,12 +177,8 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           <div className={settingsStyle.header} key={`${path.join(".")}-${index}`}>
             {options.length > 0 ? (
               <Select
-                id={`setting-${encodeURIComponent(JSON.stringify(path))}-${index}`}
-                aria-describedby={
-                  meta?.help
-                    ? `setting-${encodeURIComponent(JSON.stringify(path))}-help`
-                    : undefined
-                }
+                id={`${controlId}-${index}`}
+                aria-describedby={describedBy}
                 aria-label={displayLabel ? `${displayLabel} ${index + 1}` : undefined}
                 value={optionValueFor(entry)}
                 onChange={(event) => {
@@ -197,12 +195,8 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
               </Select>
             ) : (
               <input
-                id={`setting-${encodeURIComponent(JSON.stringify(path))}-${index}`}
-                aria-describedby={
-                  meta?.help
-                    ? `setting-${encodeURIComponent(JSON.stringify(path))}-help`
-                    : undefined
-                }
+                id={`${controlId}-${index}`}
+                aria-describedby={describedBy}
                 aria-label={displayLabel ? `${displayLabel} ${index + 1}` : undefined}
                 className={settingsInputClass}
                 value={optionValueFor(entry)}
@@ -246,7 +240,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     const displayLabel = meta?.label ?? formatLabel(label);
     const typeHint = meta?.type;
     const heading = (
-      <span className="flex min-w-0 flex-1 flex-wrap items-start self-start gap-1">
+      <span className="flex min-w-0 flex-1 flex-wrap items-center self-start gap-1">
         <label
           htmlFor={Array.isArray(value) && !meta?.commaSeparated ? `${controlId}-0` : controlId}
         >
@@ -768,21 +762,28 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                             key={`TorrentClients-${name}-QbitDirect`}
                           >
                             <span className="min-w-0 flex-1 self-start">
-                              <label htmlFor={`qbit-direct-${encodeURIComponent(name)}`}>
-                                Configure direct qBittorrent connection
-                              </label>
-                              <FieldHelp
-                                label="Configure direct qBittorrent connection"
-                                id={`qbit-direct-help-${encodeURIComponent(name)}`}
+                              <span className="flex flex-wrap items-center gap-1">
+                                <label htmlFor={`qbit-direct-${encodeURIComponent(name)}`}>
+                                  Configure direct qBittorrent connection
+                                </label>
+                                <FieldHelp
+                                  label="Configure direct qBittorrent connection"
+                                  id={`qbit-direct-help-${encodeURIComponent(name)}`}
+                                >
+                                  Show direct connection fields, using loopback and port 8080 when
+                                  empty. A configured proxy connection still takes precedence.
+                                </FieldHelp>
+                              </span>
+                              <span
+                                id={`qbit-direct-warning-${encodeURIComponent(name)}`}
+                                className="mt-1 block text-sm font-normal text-muted-foreground"
                               >
-                                Show direct connection fields, using loopback and port 8080 when
-                                empty. A configured qui proxy still takes precedence. Turning this
-                                off clears direct, legacy and proxy connection fields.
-                              </FieldHelp>
+                                Turning this off clears direct, legacy and proxy connection fields.
+                              </span>
                             </span>
                             <Switch
                               id={`qbit-direct-${encodeURIComponent(name)}`}
-                              aria-describedby={`qbit-direct-help-${encodeURIComponent(name)}`}
+                              aria-describedby={`qbit-direct-help-${encodeURIComponent(name)} qbit-direct-warning-${encodeURIComponent(name)}`}
                               aria-label="Configure direct qBittorrent connection"
                               checked={directEnabled}
                               onChange={(event) => setQbitDirect(name, event.target.checked)}
@@ -953,19 +954,21 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
             }}
           >
             <summary
+              aria-labelledby="default-trackers-label"
               className={`tracker-summary-heading ${settingsStyle.summary} px-2.5 py-2 text-sm`}
             >
-              <span>Default trackers</span>
+              <span className="inline-flex items-center gap-1">
+                <span id="default-trackers-label">Default trackers</span>
+                <FieldHelp label="Default trackers">
+                  Trackers selected by default for new releases. Select only configured trackers you
+                  want considered; individual workflow selection can differ.
+                </FieldHelp>
+              </span>
               <span className="tracker-summary-count inline-flex min-w-12 items-center justify-center rounded-full border border-current px-2 py-0.5 text-[0.76rem] font-bold tracking-[0.03em] text-inherit">
                 {selectedDefaultTrackerCount}/{trackerNames.length}
               </span>
             </summary>
             <div className="pt-0">
-              <FieldHelp label="Default trackers">
-                Trackers selected by default for new releases. Select only configured trackers you
-                want considered; individual workflow selection can differ. Removing a tracker clears
-                its default selection.
-              </FieldHelp>
               {trackerNames.length === 0 ? (
                 <p className="text-muted-foreground">Add tracker entries to select defaults.</p>
               ) : (
@@ -988,7 +991,16 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
           </details>
 
           <details className={settingsStyle.collapsible}>
-            <summary className={settingsStyle.title}>Preferred tracker data source</summary>
+            <summary className={settingsStyle.title} aria-labelledby="preferred-tracker-label">
+              <span className="inline-flex items-center gap-1">
+                <span id="preferred-tracker-label">Preferred tracker data source</span>
+                <FieldHelp label="Preferred tracker data source" id="preferred-tracker-help">
+                  Move this tracker to the top of tracker-data lookup and qBittorrent tracker
+                  priority when present. None keeps the normal order; this does not add an
+                  unconfigured tracker.
+                </FieldHelp>
+              </span>
+            </summary>
             <div style={{ paddingTop: "0.5rem" }}>
               <div className={settingsStyle.mapControls}>
                 <Select
@@ -1015,21 +1027,20 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                   Clear
                 </Button>
               </div>
-              <FieldHelp label="Preferred tracker data source" id="preferred-tracker-help">
-                Move this tracker to the top of tracker-data lookup and qBittorrent tracker priority
-                when present. None keeps the normal order; this does not add an unconfigured
-                tracker.
-              </FieldHelp>
             </div>
           </details>
 
-          <FieldHelp label="Tracker entries" id="add-tracker-help">
-            Add a supported tracker to edit its account and preferences. Save applies configuration
-            changes. Remove resets its settings and clears default/preferred selection; it does not
-            delete the account on the tracker.
-          </FieldHelp>
+          <p className="helper">
+            Removing a tracker resets its settings and clears its default and preferred selection.
+          </p>
           <div className={`settings-map__header ${settingsStyle.header}`}>
-            <p className={pageStyle.label}>Entries</p>
+            <div className="flex items-center gap-1">
+              <p className={pageStyle.label}>Entries</p>
+              <FieldHelp label="Tracker entries" id="add-tracker-help">
+                Add a supported tracker to edit its account and preferences. Save applies
+                configuration changes; removing an entry does not delete the account on the tracker.
+              </FieldHelp>
+            </div>
             <div className={settingsStyle.mapControls}>
               <Select
                 aria-label="Add tracker entry"

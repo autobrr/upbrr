@@ -11,7 +11,7 @@ import {
   type APITokenScope,
   type CreatedAPIToken,
 } from "../../api/app";
-import { FieldHelp } from "../../settings/FieldHelp";
+import { FieldHelp } from "../../components/ui/field-help";
 import { Button } from "../../components/ui/button";
 import { confirmationDialogStyle, settingsStyle } from "../../settings/style";
 
@@ -117,21 +117,28 @@ export default function APITokensSettings() {
     <div className="flex flex-col gap-3">
       <section className={settingsStyle.subgroup}>
         <div>
-          <h2 className="m-0 text-base font-semibold text-foreground">Generate API token</h2>
+          <div className="flex flex-wrap items-center gap-1">
+            <h2 className="m-0 text-base font-semibold text-foreground">Generate API token</h2>
+            <FieldHelp label="Generate API token">
+              Generate creates an active token immediately, without Save. Select only needed
+              permissions and copy the secret when shown; it cannot be retrieved later. Keep it
+              private. Revocation takes effect on the next API request and cannot be undone.
+            </FieldHelp>
+          </div>
+          <p className="helper">
+            Tokens are active immediately. Copy the secret when shown; it cannot be retrieved later.
+          </p>
           <p className="helper">Token hashes persist in web-auth.json; plaintext is shown once.</p>
-          <FieldHelp label="Generate API token">
-            Generate creates an active token immediately, without Save. Select only needed
-            permissions and copy the secret when shown; it cannot be retrieved later. Keep it
-            private. Revocation takes effect on the next API request and cannot be undone.
-          </FieldHelp>
         </div>
         <div className={settingsStyle.grid}>
           <div className={settingsStyle.field}>
-            <label htmlFor="api-token-name">Name</label>
-            <FieldHelp label="Token name" id="api-token-name-help">
-              A descriptive name for identifying this token later, up to 100 characters. It is not
-              the token secret.
-            </FieldHelp>
+            <span className="flex flex-wrap items-center gap-1">
+              <label htmlFor="api-token-name">Name</label>
+              <FieldHelp label="Token name" id="api-token-name-help">
+                A descriptive name for identifying this token later, up to 100 characters. It is not
+                the token secret.
+              </FieldHelp>
+            </span>
             <input
               id="api-token-name"
               aria-describedby="api-token-name-help"
@@ -143,11 +150,13 @@ export default function APITokensSettings() {
             />
           </div>
           <div className={settingsStyle.field}>
-            <label htmlFor="api-token-owner">Owner</label>
-            <FieldHelp label="Token owner" id="api-token-owner-help">
-              Owner identifier, up to 100 characters. Tokens with the same owner share owner-scoped
-              workflows; use distinct owners when workflows should be isolated.
-            </FieldHelp>
+            <span className="flex flex-wrap items-center gap-1">
+              <label htmlFor="api-token-owner">Owner</label>
+              <FieldHelp label="Token owner" id="api-token-owner-help">
+                Owner identifier, up to 100 characters. Tokens with the same owner share
+                owner-scoped workflows; use distinct owners when workflows should be isolated.
+              </FieldHelp>
+            </span>
             <input
               id="api-token-owner"
               aria-describedby="api-token-owner-help"
@@ -175,10 +184,10 @@ export default function APITokensSettings() {
                 onChange={() => toggleScope(scope.value)}
               />
               <label htmlFor={`token-scope-${scope.value}`}>{scope.label}</label>
-              <code className="ml-auto text-xs text-muted-foreground">{scope.value}</code>
               <FieldHelp label={scope.label} id={`token-scope-help-${scope.value}`}>
                 {scope.help}
               </FieldHelp>
+              <code className="ml-auto text-xs text-muted-foreground">{scope.value}</code>
             </div>
           ))}
         </fieldset>
