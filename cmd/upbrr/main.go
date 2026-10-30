@@ -1217,9 +1217,11 @@ func exportDefaultConfigToYAML(outputPath string) error {
 	if len(data) == 0 {
 		return errors.New("upbrr: embedded default config is empty")
 	}
+	// #nosec G703 -- Local CLI export uses the user's explicitly selected destination for embedded defaults.
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return fmt.Errorf("upbrr: config export: mkdir: %w", err)
 	}
+	// #nosec G703 -- Local CLI export writes embedded defaults to the user's explicitly selected destination.
 	if err := os.WriteFile(outputPath, data, 0o600); err != nil {
 		return fmt.Errorf("upbrr: config export: write file: %w", err)
 	}
@@ -1519,7 +1521,8 @@ func processCLIPreparationItems(
 		item := batch.items[index]
 		index++
 		itemCtx = withCLIItemPresentation(itemCtx, streams, item.originalPath, len(batch.items))
-		defer func() { publishCLIItemResult(streams, itemErr) }()
+		itemStatus := ""
+		defer func() { publishCLIItemResult(streams, itemErr, itemStatus) }()
 		queueIndex := 0
 		if batch.queue != nil {
 			var err error
@@ -1534,6 +1537,7 @@ func processCLIPreparationItems(
 			if saveErr := batch.queue.finish(queueIndex, outcome, err); saveErr != nil {
 				return &cliQueueCheckpointError{err: errors.Join(err, saveErr)}
 			}
+			itemStatus = outcome.Status
 			if err == nil && (outcome.Status == "failed" || outcome.Status == "interrupted") {
 				return fmt.Errorf("queue item ended with status %s", outcome.Status)
 			}

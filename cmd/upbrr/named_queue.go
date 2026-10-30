@@ -49,14 +49,29 @@ type cliQueueOutcome struct {
 }
 
 type cliNamedQueue struct {
-	path      string
-	lock      *os.File
-	inventory cliQueueInventory
+	path                  string
+	lock                  *os.File
+	inventory             cliQueueInventory
+	syncCheckpoint        func(string) error
+	durabilityUnconfirmed bool
 }
 
 // openCLINamedQueue is called only by explicit --queue invocations. Refresh adds
 // discovered paths; it never resets existing progress or removes missing members.
-func openCLINamedQueue(ctx context.Context, dbPath, name, root string, refresh bool, output io.Writer) (_ *cliNamedQueue, result error) {
+func openCLINamedQueue(ctx context.Context, dbPath, name, root string, refresh bool, output io.Writer) (*cliNamedQueue, error) {
+	return openCLINamedQueueWithSync(ctx, dbPath, name, root, refresh, output, cliQueueSync{
+		hierarchy:  syncCLIQueueHierarchy,
+		checkpoint: syncCLIQueueCheckpoint,
+	})
+}
+
+func openCLINamedQueueWithSync(
+	ctx context.Context,
+	dbPath, name, root string,
+	refresh bool,
+	output io.Writer,
+	syncs cliQueueSync,
+) (_ *cliNamedQueue, result error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, errors.New("--queue requires a non-empty queue root path")
 	}
@@ -66,9 +81,15 @@ func openCLINamedQueue(ctx context.Context, dbPath, name, root string, refresh b
 	}
 	ctx, cancel := context.WithTimeout(ctx, cliQueueGatherTimeout)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("open saved queue canceled: %w", err)
+	}
 	dir, err := db.Subdir(dbPath, "queues")
 	if err != nil {
 		return nil, fmt.Errorf("queue directory: %w", err)
+	}
+	if err := syncs.hierarchy(dir); err != nil {
+		return nil, fmt.Errorf("sync queue directory hierarchy before opening queue: %w", err)
 	}
 	key := sha256.Sum256([]byte(name))
 	path := filepath.Join(dir, hex.EncodeToString(key[:])+".json")
@@ -76,7 +97,11 @@ func openCLINamedQueue(ctx context.Context, dbPath, name, root string, refresh b
 	if err != nil {
 		return nil, fmt.Errorf("lock saved queue: %w", err)
 	}
-	queue := &cliNamedQueue{path: path, lock: lock}
+	queue := &cliNamedQueue{
+		path:           path,
+		lock:           lock,
+		syncCheckpoint: syncs.checkpoint,
+	}
 	defer func() {
 		if result != nil {
 			_ = queue.Close()
@@ -211,14 +236,16 @@ func (q *cliNamedQueue) start(ctx context.Context, path string) (int, error) {
 		return 0, errors.New("queue item is outside saved membership")
 	}
 	item := &q.inventory.Items[index]
+	previous := *item
 	item.Status = "running"
 	item.Attempts++
 	item.UpdatedAt = time.Now().UTC()
-	return index, q.save()
+	return index, q.saveItem(index, previous)
 }
 
 func (q *cliNamedQueue) finish(index int, outcome cliQueueOutcome, attemptErr error) error {
 	item := &q.inventory.Items[index]
+	previous := *item
 	item.Status = outcome.Status
 	if item.Status == "" {
 		item.Status = "skipped"
@@ -239,10 +266,27 @@ func (q *cliNamedQueue) finish(index int, outcome cliQueueOutcome, attemptErr er
 		item.WorkflowID = outcome.WorkflowID
 	}
 	item.UpdatedAt = time.Now().UTC()
-	return q.save()
+	return q.saveItem(index, previous)
+}
+
+// saveItem restores only changes known not to have replaced the checkpoint.
+// After replacement, retained progress must be reloaded instead of rolled back.
+func (q *cliNamedQueue) saveItem(index int, previous cliQueueItem) error {
+	err := q.save()
+	if err != nil && !q.durabilityUnconfirmed {
+		q.inventory.Items[index] = previous
+	}
+	return err
 }
 
 func (q *cliNamedQueue) printProgress(output io.Writer) {
+	if q.durabilityUnconfirmed {
+		fmt.Fprintln(
+			output,
+			"Queue progress durability is unconfirmed; the saved file may already contain newer progress. Reopen the named queue before retrying work.",
+		)
+		return
+	}
 	counts := make(map[string]int)
 	for _, item := range q.inventory.Items {
 		counts[item.Status]++
@@ -251,8 +295,9 @@ func (q *cliNamedQueue) printProgress(output io.Writer) {
 		counts["pending"], counts["completed"], counts["failed"], counts["interrupted"], counts["skipped"])
 }
 
-// save replaces the checkpoint from a synced mode-0600 file in the same directory.
-// Failures stop the queue before another item can perform work.
+// save syncs a mode-0600 temporary file, replaces the checkpoint, then applies
+// the platform metadata barrier. A post-replacement error retains the published
+// checkpoint with durability unconfirmed; callers stop without retrying the write.
 func (q *cliNamedQueue) save() error {
 	payload, err := json.MarshalIndent(q.inventory, "", "  ")
 	if err != nil {
@@ -281,6 +326,11 @@ func (q *cliNamedQueue) save() error {
 	if err := os.Rename(tmpPath, q.path); err != nil {
 		return fmt.Errorf("replace queue checkpoint: %w", err)
 	}
+	q.durabilityUnconfirmed = true
+	if err := q.syncCheckpoint(q.path); err != nil {
+		return fmt.Errorf("queue checkpoint replaced, but durability is unconfirmed; reopen the saved queue before retrying work: %w", err)
+	}
+	q.durabilityUnconfirmed = false
 	return nil
 }
 

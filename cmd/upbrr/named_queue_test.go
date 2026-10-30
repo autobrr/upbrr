@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -153,7 +154,179 @@ func TestNamedQueueCheckpointFailureStopsBeforeMoreWork(t *testing.T) {
 			if len(retained.Items) != len(paths) || retained.Items[1].Status != "pending" {
 				t.Fatalf("failed save lost progress: %+v", retained)
 			}
+			if got, want := queue.inventory.Items[0], retained.Items[0]; got.Status != want.Status || got.Attempts != want.Attempts || !got.UpdatedAt.Equal(want.UpdatedAt) {
+				t.Fatalf("failed replacement left unpersisted progress in memory: got=%+v want=%+v", got, want)
+			}
 		})
+	}
+}
+
+func TestNamedQueueSyncFailuresRetainPublishedStateAndStopWork(t *testing.T) {
+	for _, phase := range []string{"hierarchy", "initial checkpoint", "before item", "after item"} {
+		t.Run(phase, func(t *testing.T) {
+			dbPath, root, paths := queueFixture(t)
+			dbPath = filepath.Join(filepath.Dir(dbPath), "new-data", "nested", "db.sqlite")
+			fault := errors.New("injected sync failure")
+			var events []string
+			var savedPath string
+			checks := 0
+			syncs := cliQueueSync{
+				hierarchy: func(dir string) error {
+					events = append(events, "hierarchy")
+					if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+						t.Fatalf("hierarchy sync preceded directory creation: %v", err)
+					}
+					if phase == "hierarchy" {
+						return fault
+					}
+					return syncCLIQueueHierarchy(dir)
+				},
+				checkpoint: func(path string) error {
+					checks++
+					savedPath = path
+					payload, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatalf("sync preceded replacement: %v", err)
+					}
+					var current cliQueueInventory
+					if err := json.Unmarshal(payload, &current); err != nil {
+						t.Fatalf("sync observed incomplete checkpoint: %v", err)
+					}
+					events = append(events, current.Items[0].Status)
+					if phase == "initial checkpoint" && checks == 1 || phase == "before item" && checks == 2 || phase == "after item" && checks == 3 {
+						return fault
+					}
+					return syncCLIQueueCheckpoint(path)
+				},
+			}
+			var output bytes.Buffer
+			queue, err := openCLINamedQueueWithSync(t.Context(), dbPath, "sync-failure", root, false, &output, syncs)
+			if phase == "hierarchy" || phase == "initial checkpoint" {
+				if !errors.Is(err, fault) || queue != nil || output.Len() != 0 {
+					t.Fatalf("failed initialization admitted queue: queue=%v err=%v output=%s", queue, err, output.String())
+				}
+				if phase == "hierarchy" {
+					if checks != 0 || !reflect.DeepEqual(events, []string{"hierarchy"}) {
+						t.Fatalf("failed hierarchy sync published a checkpoint: %v", events)
+					}
+					return
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				bridge := newCLITUIBridge()
+				streams := cliIO{out: &cliPresentationWriter{Writer: io.Discard, presenter: bridge}, presenter: bridge}
+				batch := newCLIPreparationBatch(api.Request{}, paths)
+				batch.queue = queue
+				calls := 0
+				err = processCLIPreparationItems(t.Context(), batch, true, time.Minute, streams, api.NopLogger{}, func(context.Context, cliPreparationItem) (cliQueueOutcome, error) {
+					calls++
+					events = append(events, "work")
+					return cliQueueOutcome{Status: "completed"}, nil
+				})
+				if _, ok := errors.AsType[*cliQueueCheckpointError](err); !ok || !errors.Is(err, fault) {
+					t.Fatalf("sync failure not terminal: %v", err)
+				}
+				wantCalls := 0
+				if phase == "after item" {
+					wantCalls = 1
+				}
+				if calls != wantCalls || !bridge.latest.ItemFailed || strings.Contains(bridge.latest.Result, "Item completed") {
+					t.Fatalf("sync failure admitted work or success: calls=%d result=%+v", calls, bridge.latest)
+				}
+				var progress bytes.Buffer
+				queue.printProgress(&progress)
+				if !strings.Contains(progress.String(), "durability is unconfirmed") || strings.Contains(progress.String(), " completed") {
+					t.Fatalf("sync failure advertised durable progress: %s", progress.String())
+				}
+				if err := queue.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !strings.Contains(err.Error(), "replaced") || !strings.Contains(err.Error(), "durability is unconfirmed") {
+				t.Fatalf("post-rename failure implied no write: %v", err)
+			}
+			wantEvents := []string{"hierarchy", "pending"}
+			wantStatus := "pending"
+			if phase != "initial checkpoint" {
+				wantEvents = append(wantEvents, "running")
+				wantStatus = "interrupted"
+			}
+			if phase == "after item" {
+				wantEvents = append(wantEvents, "work", "completed")
+				wantStatus = "completed"
+			}
+			if !reflect.DeepEqual(events, wantEvents) {
+				t.Fatalf("publication was reordered or retried: %v", events)
+			}
+			if _, err := os.Stat(savedPath); err != nil {
+				t.Fatalf("post-rename failure removed destination: %v", err)
+			}
+			resumed, err := openCLINamedQueue(t.Context(), dbPath, "sync-failure", root, false, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resumed.Close()
+			if resumed.inventory.Items[0].Status != wantStatus {
+				t.Fatalf("resume discarded published state: %+v", resumed.inventory.Items[0])
+			}
+			if got := resumed.paths(false, 1); phase != "initial checkpoint" && !reflect.DeepEqual(got, paths[1:2]) {
+				t.Fatalf("resume blindly retried published work: %v", got)
+			}
+		})
+	}
+}
+
+func TestCLIQueueAncestorSyncIncludesPreviouslyCreatedParents(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(base, "data", "nested", "queues")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var visited []string
+	fault := errors.New("parent sync failed")
+	err = syncCLIQueueAncestors(dir, func(path string) error {
+		visited = append(visited, path)
+		if path == base {
+			return fault
+		}
+		return nil
+	})
+	want := []string{dir, filepath.Dir(dir), filepath.Join(base, "data"), base}
+	if !errors.Is(err, fault) || !reflect.DeepEqual(visited, want) {
+		t.Fatalf("ancestor sync lost an earlier-created parent or continued after failure: visited=%v err=%v", visited, err)
+	}
+}
+
+func TestCLIQueueAncestorSyncFollowsDataRootSymlink(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical := filepath.Join(base, "physical")
+	dir := filepath.Join(physical, "data", "queues")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(filepath.Join(physical, "data"), alias); err != nil {
+		t.Skipf("filesystem does not permit the symlink fixture: %v", err)
+	}
+	var visited []string
+	fault := errors.New("physical parent sync failed")
+	err = syncCLIQueueAncestors(filepath.Join(alias, "queues"), func(path string) error {
+		visited = append(visited, path)
+		if path == physical {
+			return fault
+		}
+		return nil
+	})
+	if !errors.Is(err, fault) || !reflect.DeepEqual(visited, []string{dir, filepath.Join(physical, "data"), physical}) {
+		t.Fatalf("physical ancestor was not synchronized: visited=%v err=%v", visited, err)
 	}
 }
 
@@ -389,6 +562,69 @@ func TestNamedQueuePreservesRawRoot(t *testing.T) {
 	defer queue.Close()
 	if queue.inventory.Root != filepath.Join(base, " media") || !reflect.DeepEqual(queue.paths(false, 0), []string{filepath.Join(base, " media", "episode.mkv")}) {
 		t.Fatalf("wrong saved root: %+v", queue.inventory)
+	}
+	if err := queue.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := openCLINamedQueue(t.Context(), filepath.Join(base, "db.sqlite"), "raw-root", "media", false, io.Discard); err == nil || !strings.Contains(err.Error(), "root differs") {
+		if reopened != nil {
+			_ = reopened.Close()
+		}
+		t.Fatalf("whitespace-distinct sibling root was accepted: %v", err)
+	}
+}
+
+func TestNamedQueueSkippedOutcomeIsPresentedAsSkipped(t *testing.T) {
+	dbPath, root, paths := queueFixture(t)
+	queue, err := openCLINamedQueue(t.Context(), dbPath, "skipped", root, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer queue.Close()
+	bridge := newCLITUIBridge()
+	streams := cliIO{out: &cliPresentationWriter{Writer: io.Discard, presenter: bridge}, presenter: bridge}
+	batch := newCLIPreparationBatch(api.Request{}, paths[:1])
+	batch.queue = queue
+	err = processCLIPreparationItems(t.Context(), batch, true, time.Minute, streams, api.NopLogger{}, func(context.Context, cliPreparationItem) (cliQueueOutcome, error) {
+		return cliQueueOutcome{Status: "skipped"}, nil
+	})
+	if err != nil || bridge.latest.ItemFailed || !strings.Contains(bridge.latest.Result, "Item skipped") || queue.inventory.Items[0].Status != "skipped" {
+		t.Fatalf("skipped item looked completed: view=%+v item=%+v err=%v", bridge.latest, queue.inventory.Items[0], err)
+	}
+}
+
+func TestNamedQueueRetainsWhitespaceDistinctMembers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ordinary Windows paths do not preserve trailing spaces")
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "sources")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join(root, "movie.mkv"), filepath.Join(root, "movie.mkv ")}
+	for _, path := range want {
+		if err := os.WriteFile(path, []byte("synthetic media"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queue, err := openCLINamedQueue(t.Context(), filepath.Join(base, "db.sqlite"), "literal-members", root, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer queue.Close()
+	if got := queue.paths(false, 0); !reflect.DeepEqual(got, want) {
+		t.Fatalf("literal members collapsed: %v", got)
+	}
+	batch := newCLIPreparationBatch(api.Request{}, want)
+	batch.queue = queue
+	var processed []string
+	err = processCLIPreparationItems(t.Context(), batch, true, time.Minute, cliIO{}, api.NopLogger{}, func(_ context.Context, item cliPreparationItem) (cliQueueOutcome, error) {
+		processed = append(processed, item.originalPath)
+		return cliQueueOutcome{Status: "completed"}, nil
+	})
+	if err != nil || !reflect.DeepEqual(processed, want) || queue.inventory.Items[0].Status != "completed" || queue.inventory.Items[1].Status != "completed" {
+		t.Fatalf("distinct members did not advance independently: processed=%v items=%+v err=%v", processed, queue.inventory.Items, err)
 	}
 }
 
