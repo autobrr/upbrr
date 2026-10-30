@@ -479,7 +479,7 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 		},
 		streams: cliIO{out: &output},
 	}
-	_, err := session.complete(
+	err := session.complete(
 		context.Background(),
 		false,
 		bufio.NewReader(strings.NewReader("y\nn\n")),

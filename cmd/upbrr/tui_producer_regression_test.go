@@ -64,7 +64,7 @@ func TestAttachedAudioArtifactsSurviveTerminalRestorationAndQueueAdvance(t *test
 							uploadRequest: api.Request{Options: api.UploadOptions{AudioTracks: "primary", AudioImages: "waveform"}},
 						}
 						err := session.completeAudioAnalysis(itemCtx)
-						publishCLIItemResult(streams, err)
+						publishCLIItemResult(streams, err, "")
 						if err != nil {
 							return err
 						}
@@ -313,7 +313,7 @@ func TestSubmissionExclusionsRemainTruthfulForDefaultAndMixedSelections(t *testi
 			}
 			session := &cliWorkflowSession{current: current, streams: cliIO{out: writer, presenter: bridge}}
 			session.publishPresentation(t.Context())
-			publishCLIItemResult(session.streams, nil)
+			publishCLIItemResult(session.streams, nil, "")
 			if !strings.Contains(bridge.summary(nil), "ALPHA: Already uploaded (already_uploaded)") {
 				t.Fatal("confirmed exclusion disappeared with cleared downstream selection")
 			}
