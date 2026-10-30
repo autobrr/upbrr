@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/torrent"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -711,6 +712,7 @@ func workflowDryRunClientFailure(
 		api.OperationFailureImageHostUnavailable,
 		api.OperationFailureAudioAnalysis,
 		api.OperationFailureHDRAnalysis,
+		api.OperationFailureReceiptRetention,
 		api.OperationFailureInternal:
 	}
 	return api.WorkflowFailure{
@@ -1112,6 +1114,57 @@ func (e *workflowUploadExecution) Execute(
 	public := make([]api.UploadTrackerResult, 0, len(results))
 	for _, result := range results {
 		trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(result.Tracker)))
+		if result.ReceiptFailure != nil {
+			outcome := api.UploadTrackerResult{
+				TrackerID:             trackerID,
+				SubmissionStatus:      api.StageStatusUnavailable,
+				ClientInjectionStatus: api.StageStatusPending,
+				SubmissionReceiptID:   result.SubmissionReceiptID,
+				SubmissionOperationID: result.SubmissionOperationID,
+				Failures: []api.WorkflowFailure{{
+					TrackerID: trackerID,
+					Resource:  result.SubmissionReceiptID,
+					Failure: api.OperationFailure{
+						Code:      api.OperationFailureReceiptRetention,
+						Operation: api.OperationKindUploadExecute,
+						Message: "The submission result is known, but its local receipt could not be retained. Retry remains blocked. " + logging.SanitizeMessage(
+							result.ReceiptFailure.Message,
+						),
+						Recovery: api.OperationRecoveryNone,
+					},
+				}},
+			}
+			switch result.SubmissionOutcome {
+			case submission.Accepted:
+				outcome.SubmissionStatus = api.StageStatusCompleted
+				outcome.ClientInjectionStatus = api.StageStatusUnavailable
+				outcome.ClientInjectionMessage = "Client injection deferred because the submission receipt could not be retained."
+				if e.noSeed {
+					outcome.ClientInjectionStatus = api.StageStatusSkipped
+					outcome.ClientInjectionMessage = "Client injection skipped by request."
+				}
+				if uploaded, ok := selectWorkflowRegisteredTorrent(trackerID, result.Summary.UploadedTorrents); ok {
+					outcome.RemoteID = strings.TrimSpace(uploaded.TorrentID)
+					outcome.RemoteURL = sanitizeWorkflowRemoteURL(uploaded.TorrentURL)
+					if torrent, available := workflowRegisteredTorrentResult(trackerID, uploaded); available {
+						if e.registeredArtifacts == nil {
+							e.registeredArtifacts = make(map[api.TrackerID]api.TorrentResult)
+						}
+						e.registeredArtifacts[trackerID] = torrent
+					}
+				}
+			case submission.NotSent, submission.Rejected:
+				outcome.SubmissionStatus = api.StageStatusFailed
+				if result.Failure != nil {
+					outcome.Failures[0].Failure.Message += " " + logging.SanitizeMessage(result.Failure.Message)
+				}
+			case submission.Unknown:
+				outcome.Failures[0].Failure.Message = "The submission outcome and its local receipt remain unresolved. Retry remains blocked."
+			}
+			outcome.Status = outcome.DerivedStatus()
+			public = append(public, outcome)
+			continue
+		}
 		if result.Failure != nil {
 			failureCode := api.OperationFailureInternal
 			recovery := api.OperationRecoveryRetry
@@ -1131,6 +1184,8 @@ func (e *workflowUploadExecution) Execute(
 			}
 			public = append(public, api.UploadTrackerResult{
 				TrackerID:             trackerID,
+				SubmissionReceiptID:   result.SubmissionReceiptID,
+				SubmissionOperationID: result.SubmissionOperationID,
 				Status:                api.StageStatusFailed,
 				SubmissionStatus:      submissionStatus,
 				ClientInjectionStatus: api.StageStatusPending,
@@ -1147,8 +1202,10 @@ func (e *workflowUploadExecution) Execute(
 			continue
 		}
 		outcome := api.UploadTrackerResult{
-			TrackerID:        trackerID,
-			SubmissionStatus: api.StageStatusCompleted,
+			TrackerID:             trackerID,
+			SubmissionReceiptID:   result.SubmissionReceiptID,
+			SubmissionOperationID: result.SubmissionOperationID,
+			SubmissionStatus:      api.StageStatusCompleted,
 		}
 		if result.AlreadySucceeded {
 			outcome.ClientInjectionStatus = api.StageStatusSkipped
@@ -1199,6 +1256,8 @@ func (e *workflowUploadExecution) Execute(
 			injected.RemoteURL = sanitizeWorkflowRemoteURL(uploaded.TorrentURL)
 			outcome = injected
 		}
+		outcome.SubmissionReceiptID = result.SubmissionReceiptID
+		outcome.SubmissionOperationID = result.SubmissionOperationID
 		outcome.Status = outcome.DerivedStatus()
 		public = append(public, outcome)
 	}
@@ -1393,6 +1452,7 @@ func workflowClientFailureRecovery(code api.OperationFailureCode) api.OperationR
 		api.OperationFailureImageHostUnavailable,
 		api.OperationFailureAudioAnalysis,
 		api.OperationFailureHDRAnalysis,
+		api.OperationFailureReceiptRetention,
 		api.OperationFailureInternal,
 		"":
 		return api.OperationRecoveryNone

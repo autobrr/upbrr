@@ -8553,7 +8553,10 @@ func (m *Module) publishUploadResult(
 		return CommandResult{}, fmt.Errorf("release workflow record upload result: %w", err)
 	}
 	if len(authority.Torrents) > 0 && slices.ContainsFunc(results, func(result api.UploadTrackerResult) bool {
-		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed
+		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed ||
+			slices.ContainsFunc(result.Failures, func(failure api.WorkflowFailure) bool {
+				return failure.Failure.Code == api.OperationFailureReceiptRetention
+			})
 	}) {
 		if err := m.private.Put(
 			ownerID,
@@ -8597,6 +8600,10 @@ func (m *Module) publishUploadResult(
 			if actionErr != nil {
 				return CommandResult{}, actionErr
 			}
+			if effectKind == api.WorkflowExternalEffectTrackerSubmission {
+				action.EffectID = result.SubmissionReceiptID
+				action.EffectOperationID = result.SubmissionOperationID
+			}
 			state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
 			state.Workflow.Failures = append(state.Workflow.Failures, failure)
 		}
@@ -8615,7 +8622,7 @@ func derivedUploadResultStatus(results []api.UploadTrackerResult) api.StageStatu
 		return api.StageStatusFailed
 	}
 	if slices.ContainsFunc(results, func(result api.UploadTrackerResult) bool {
-		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed
+		return result.DerivedStatus() == api.StageStatusPartial
 	}) {
 		return api.StageStatusPartial
 	}
@@ -8875,6 +8882,10 @@ func (m *Module) resolveAction(
 		if action.EffectKind == "" || strings.TrimSpace(action.EffectScopeID) == "" {
 			return CommandResult{}, fmt.Errorf("%w: reconciliation effect identity is unavailable", ErrInvalidTransition)
 		}
+		var expected []api.WorkflowExternalEffectReceipt
+		if action.EffectID != "" || action.EffectOperationID != "" {
+			expected = []api.WorkflowExternalEffectReceipt{{EffectID: action.EffectID, OperationID: action.EffectOperationID}}
+		}
 		if err := m.durability.ResolveEffectUnknown(
 			ctx,
 			ownerID,
@@ -8882,6 +8893,7 @@ func (m *Module) resolveAction(
 			action.EffectKind,
 			action.EffectScopeID,
 			now,
+			expected...,
 		); err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow reconcile external effect: %w", err)
 		}

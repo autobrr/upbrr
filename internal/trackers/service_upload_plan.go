@@ -18,6 +18,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -80,6 +81,10 @@ type trackerPlanSlot struct {
 	alreadySucceeded         bool
 	resolving                bool
 	summary                  api.UploadSummary
+	submissionOutcome        submission.Outcome
+	submissionReceiptID      string
+	submissionOperationID    api.WorkflowOperationID
+	receiptFailure           *TrackerFailure
 	ruleFailures             []api.TrackerRuleFailure
 	canceledDuringSubmission bool
 }
@@ -320,6 +325,11 @@ type RetainedTrackerResult struct {
 	Tracker string
 	Summary api.UploadSummary
 	Failure *TrackerFailure
+	// SubmissionOutcome is independent of retaining the local terminal receipt.
+	SubmissionOutcome     submission.Outcome
+	SubmissionReceiptID   string
+	SubmissionOperationID api.WorkflowOperationID
+	ReceiptFailure        *TrackerFailure
 	// AlreadySucceeded reports a durable tracker submission completed before this plan executed.
 	AlreadySucceeded bool
 }
@@ -562,13 +572,20 @@ func (p *RetainedUploadPlan) execute(
 	results := make([]RetainedTrackerResult, 0, len(selectedSlots))
 	for _, slot := range selectedSlots {
 		result := RetainedTrackerResult{
-			Tracker:          slot.tracker,
-			Summary:          slot.summary,
-			AlreadySucceeded: slot.alreadySucceeded,
+			Tracker:               slot.tracker,
+			Summary:               slot.summary,
+			AlreadySucceeded:      slot.alreadySucceeded,
+			SubmissionOutcome:     slot.submissionOutcome,
+			SubmissionReceiptID:   slot.submissionReceiptID,
+			SubmissionOperationID: slot.submissionOperationID,
 		}
 		if slot.failure != nil {
 			failure := *slot.failure
 			result.Failure = &failure
+		}
+		if slot.receiptFailure != nil {
+			failure := *slot.receiptFailure
+			result.ReceiptFailure = &failure
 		}
 		results = append(results, result)
 	}
@@ -802,7 +819,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				continue
 			}
 			emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "running", "Uploading to tracker")
-			submission, submissionErr := s.submissionFenceAuthority(ctx, meta, slot.tracker)
+			submissionAuthority, submissionErr := s.submissionFenceAuthority(ctx, meta, slot.tracker)
 			if submissionErr != nil {
 				slot.failure = trackerFailure(slot.tracker, "submission_scope", submissionErr)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "failed")
@@ -831,7 +848,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				Kind:                api.WorkflowExternalEffectTrackerSubmission,
 				ScopeID:             slot.tracker,
 				SemanticFingerprint: effectFingerprint,
-				Submission:          submission,
+				Submission:          submissionAuthority,
 			})
 			if effectErr != nil {
 				code := "effect_fence"
@@ -844,7 +861,10 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				phase.Done()
 				continue
 			}
+			slot.submissionReceiptID = effectReceipt.EffectID
+			slot.submissionOperationID = effectReceipt.OperationID
 			if effectReceipt.AlreadySucceeded {
+				slot.submissionOutcome = submission.Accepted
 				slot.alreadySucceeded = true
 				slot.summary = api.UploadSummary{Uploaded: 1}
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "uploaded")
@@ -854,24 +874,27 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 			}
 			summary, err := slot.plan.Submit(ctx)
 			slot.canceledDuringSubmission = ctx.Err() != nil
-			// A tracker plan returning an error cannot prove that the remote did
-			// not accept the request. Preserve the started submission fence for
-			// authorized reconciliation instead of releasing it for retry.
+			outcome := submission.OutcomeOf(err)
+			slot.submissionOutcome = outcome
+			knownFailure := outcome == submission.NotSent || outcome == submission.Rejected
+			if err == nil {
+				// Receipt persistence failure must not erase established acceptance.
+				slot.summary = summary
+			}
+			// Only adapter-owned evidence can release a failed submission fence.
+			// Unclassified errors retain exact-attempt protection for reconciliation.
 			receiptErr := error(nil)
-			if err == nil || submission == nil {
+			if err == nil || knownFailure {
 				receiptErr = api.CompleteWorkflowExternalEffect(ctx, effectReceipt, err == nil)
 			}
 			if receiptErr != nil {
-				slot.failure = trackerFailure(slot.tracker, "unknown_outcome", receiptErr)
-				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "unknown_outcome")
-				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
-				phase.Done()
-				continue
+				slot.receiptFailure = trackerFailure(slot.tracker, "receipt_retention", receiptErr)
+				s.logger.Warnf("trackers: upload tracker=%s state=receipt_pending reason=%s", slot.tracker, slot.receiptFailure.Message)
 			}
 			if err != nil {
 				code := "submit"
 				recordStatus := "failed"
-				if submission != nil {
+				if !knownFailure {
 					code = "unknown_outcome"
 					recordStatus = code
 				}
@@ -879,7 +902,6 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, recordStatus)
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 			} else {
-				slot.summary = summary
 				if summary.PendingPublication {
 					s.logger.Infof(
 						"trackers: upload tracker=%s state=pending_publication decision=submission_completed count=%d",
@@ -1109,6 +1131,9 @@ func trackerPlanFailures(slots []trackerPlanSlot) []TrackerFailure {
 	for _, slot := range slots {
 		if slot.failure != nil && slot.failure.Code != "canceled" && slot.failure.Code != PreparationFailureCodeSkipped {
 			failures = append(failures, *slot.failure)
+		}
+		if slot.receiptFailure != nil {
+			failures = append(failures, *slot.receiptFailure)
 		}
 	}
 	return failures

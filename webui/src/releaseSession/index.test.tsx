@@ -1908,6 +1908,57 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it("blocks both retry entrypoints while submission receipt retention is unresolved", async () => {
+    const workflowID = "workflow-pending-receipt";
+    const retained = {
+      ...workflowCurrent(workflowID, 7),
+      uploadResult: {
+        id: "receipt-result",
+        revision: 1,
+        results: [
+          {
+            trackerId: "EXAMPLE",
+            status: "failed",
+            submissionStatus: "failed",
+            failures: [{ failure: { Code: "receipt_retention" } }],
+          },
+          {
+            trackerId: "OTHER",
+            status: "partial",
+            submissionStatus: "completed",
+            clientInjectionStatus: "failed",
+            clientFailureCode: "client_injection_failed",
+            failures: [{ failure: { Code: "receipt_retention" } }],
+          },
+        ],
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const retryFailedUploads = vi.fn(async () => retained);
+    const retryClientInjections = vi.fn(async () => retained);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => retained,
+            retryFailedUploads,
+            retryClientInjections,
+          }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    await act(async () => {
+      expect(await result.current.upload.retry()).toBe(false);
+      expect(await result.current.workflow.retryFailedUploads()).toBe(false);
+      expect(await result.current.upload.retryClientInjection()).toBe(false);
+      expect(await result.current.workflow.retryClientInjections()).toBe(false);
+    });
+    expect(retryFailedUploads).not.toHaveBeenCalled();
+    expect(retryClientInjections).not.toHaveBeenCalled();
+    unmount();
+  });
+
   it.each([true, false])("blocks retained mutation actions with liveTest=%s", async (liveTest) => {
     const workflowID = "workflow-live-test";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);

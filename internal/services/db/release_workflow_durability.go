@@ -575,6 +575,7 @@ func (r *SQLiteRepository) ResolveReleaseWorkflowEffectUnknown(
 	kind api.WorkflowExternalEffectKind,
 	scopeID string,
 	now time.Time,
+	expected ...api.WorkflowExternalEffectReceipt,
 ) error {
 	ownerID = strings.TrimSpace(ownerID)
 	scopeID = strings.TrimSpace(scopeID)
@@ -588,6 +589,27 @@ func (r *SQLiteRepository) ResolveReleaseWorkflowEffectUnknown(
 		latest, err := loadLatestReleaseWorkflowEffect(ctx, tx, ownerID, workflowID, string(kind), scopeID)
 		if err != nil {
 			return err
+		}
+		if (kind == api.WorkflowExternalEffectTrackerSubmission && len(expected) != 1) || len(expected) > 1 || (len(expected) == 1 &&
+			(expected[0].EffectID != latest.EffectID || expected[0].OperationID != latest.OperationID)) {
+			return api.ErrReleaseWorkflowEffectConflict
+		}
+		if kind == api.WorkflowExternalEffectTrackerSubmission {
+			state, loadErr := loadWorkflowState(ctx, tx, ownerID, workflowID)
+			if loadErr != nil {
+				return loadErr
+			}
+			var retained struct {
+				UploadResults map[api.UploadResultID]api.UploadResult
+			}
+			if err := json.Unmarshal(state.Payload, &retained); err != nil {
+				return fmt.Errorf("db read retained submission evidence: %w", err)
+			}
+			for _, result := range retained.UploadResults {
+				if result.ConfirmsSubmission(latest) {
+					return api.ErrReleaseWorkflowEffectConflict
+				}
+			}
 		}
 		switch latest.Status {
 		case api.WorkflowEffectStatusFailed:

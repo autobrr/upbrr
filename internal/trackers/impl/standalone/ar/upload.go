@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -80,7 +81,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, arUploadURL, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: AR request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: AR request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", arUserAgent)
@@ -96,10 +97,10 @@ func submitPreparedUpload(
 		finalURL = resp.Request.URL.String()
 	}
 	bodyBytes, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusOK, commonhttp.DefaultResponsePreviewBytes)
-	if err != nil {
+	groupID, torrentID := parseUploadIDs(finalURL, string(bodyBytes))
+	if err != nil && (resp.StatusCode != http.StatusOK || groupID == "") {
 		return api.UploadSummary{}, fmt.Errorf("trackers: AR read upload response: %w", err)
 	}
-	groupID, torrentID := parseUploadIDs(finalURL, string(bodyBytes))
 	if resp.StatusCode == http.StatusOK && groupID != "" {
 		torrentURL := buildTorrentURL(groupID, torrentID)
 		downloadURL := buildDownloadURL(torrentID, torrentURL)

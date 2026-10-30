@@ -307,12 +307,13 @@ func (r *PersistentRepository) ResolveEffectUnknown(
 	kind api.WorkflowExternalEffectKind,
 	scopeID string,
 	now time.Time,
+	expected ...api.WorkflowExternalEffectReceipt,
 ) error {
 	if r.durability == nil {
 		return errors.New("release workflow: durable effect repository is unavailable")
 	}
 	return mapPersistentRepositoryError(
-		r.durability.ResolveReleaseWorkflowEffectUnknown(ctx, ownerID, workflowID, kind, scopeID, now),
+		r.durability.ResolveReleaseWorkflowEffectUnknown(ctx, ownerID, workflowID, kind, scopeID, now, expected...),
 	)
 }
 

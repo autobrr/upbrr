@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -140,7 +140,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, strings.NewReader(string(body)))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: RTF create upload request: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: RTF create upload request: %w", err))
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -151,12 +151,17 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: RTF upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusCreated, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: RTF read upload response: %w", err)
+	}
 
 	var decoded uploadResponse
-	_ = json.Unmarshal(responseBody, &decoded)
+	if err := json.Unmarshal(responseBody, &decoded); err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: RTF decode upload response: %w", err)
+	}
 	if resp.StatusCode == http.StatusCreated && !decoded.Error {
-		id := strings.TrimSpace(fmt.Sprint(decoded.Torrent.ID))
+		id := commonhttp.PositiveTorrentID(decoded.Torrent.ID)
 		if id == "" {
 			return api.UploadSummary{}, errors.New("trackers: RTF upload succeeded but torrent id missing")
 		}
@@ -176,15 +181,19 @@ func submitPreparedUpload(
 		}, nil
 	}
 
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "RTF", "upload_failure", responseBody, ".json")
-	return api.UploadSummary{}, fmt.Errorf(
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "RTF", "upload_failure", responsePreview, ".json")
+	failure := fmt.Errorf(
 		"trackers: RTF %s",
 		metautil.FirstNonEmptyTrimmed(
-			commonhttp.ExtractHTTPErrorDetail(responseBody),
+			commonhttp.ExtractHTTPErrorDetail(responsePreview),
 			commonhttp.RedactErrorDetail(decoded.Message),
 			fmt.Sprintf("upload failed with status %d", resp.StatusCode),
 		),
 	)
+	if decoded.Error {
+		return api.UploadSummary{}, submission.NewError(submission.Rejected, failure)
+	}
+	return api.UploadSummary{}, failure
 }
 
 func buildUploadPreview(state uploadState, baseURL string) (api.TrackerDryRunEntry, error) {

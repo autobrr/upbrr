@@ -48,6 +48,8 @@ Startup retains completed operation checkpoints and marks unfinished operations 
 
 For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup retains unresolved external attempts as uncertain and keeps their retry blocks; an interrupted operation is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
 
+A tracker response that explicitly rejects an upload is a failed submission, rather than an unknown outcome. Correct the reported problem before preparing and reviewing a new attempt. An accepted upload remains accepted if retrieving its torrent or injecting it into the client fails. If the local submission receipt could not be saved, the result reports that bookkeeping failure separately and keeps retries blocked. Do not confirm that an accepted submission did not complete to bypass this block.
+
 If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Resolve the uncertainty before activating the changed configuration.
 
 If **Legacy workflow recovery** still appears, inspect each listed remote outcome. Choose **Confirmed not completed; allow a fresh exact attempt** only after confirming it did not complete. Do not delete History simply to bypass an uncertain outcome: deletion also removes local repeat-submission protection.

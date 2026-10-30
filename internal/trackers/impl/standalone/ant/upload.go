@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -81,7 +82,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, antUploadURL, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: ANT request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: ANT request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -110,8 +111,17 @@ func submitPreparedUpload(
 			return api.UploadSummary{}, antUploadError(resp.StatusCode, payload, bodyBytes)
 		}
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !antUploadSuccess(payload) {
-		return api.UploadSummary{}, antUploadError(resp.StatusCode, payload, bodyBytes)
+	accepted := antUploadSuccess(payload)
+	errorMessage, _ := payload["error"].(string)
+	hasError := strings.TrimSpace(errorMessage) != ""
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !accepted || hasError {
+		err := antUploadError(resp.StatusCode, payload, bodyBytes)
+		success, hasSuccess := payload["success"]
+		explicitFailure := hasSuccess && (success == false || strings.EqualFold(antString(success), "false"))
+		if !accepted && (explicitFailure || hasError) {
+			return api.UploadSummary{}, submission.NewError(submission.Rejected, err)
+		}
+		return api.UploadSummary{}, err
 	}
 
 	viewURL := antString(payload["view"])

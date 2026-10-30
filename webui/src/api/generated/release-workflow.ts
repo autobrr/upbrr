@@ -2213,7 +2213,9 @@ export type RequiredAction = Readonly<{
   allowsFreeText?: boolean;
   correctionConfirmation?: CorrectionConfirmation | null;
   createdAt: string;
+  effectId?: string;
   effectKind?: WorkflowExternalEffectKind;
+  effectOperationId?: WorkflowOperationID;
   effectScopeId?: string;
   expiresAt?: string;
   id: RequiredActionID;
@@ -3195,6 +3197,8 @@ export type UploadTrackerResult = Readonly<{
   remoteId?: string;
   remoteUrl?: string;
   status: StageStatus;
+  submissionOperationId?: WorkflowOperationID;
+  submissionReceiptId?: string;
   submissionStatus?: StageStatus;
   trackerId: TrackerID;
 }>;

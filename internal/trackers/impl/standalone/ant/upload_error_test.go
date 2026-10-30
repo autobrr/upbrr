@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -18,6 +19,7 @@ func TestANTUploadPreservesAPIErrorReason(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, wantReason string
 		status                 int
+		unknown                bool
 	}{
 		{
 			name:       "duplicate infohash",
@@ -50,7 +52,15 @@ func TestANTUploadPreservesAPIErrorReason(t *testing.T) {
 			status:     http.StatusOK,
 		},
 		{
+			name:       "contradictory success and error",
+			body:       `{"success":true,"error":"Invalid torrent"}`,
+			wantReason: "Invalid torrent",
+			status:     http.StatusOK,
+			unknown:    true,
+		},
+		{
 			name:       "non-JSON API reason with HTTP success",
+			unknown:    true,
 			body:       `Reason: {"error":"The selected category is not permitted."}`,
 			wantReason: "The selected category is not permitted.",
 			status:     http.StatusOK,
@@ -63,6 +73,7 @@ func TestANTUploadPreservesAPIErrorReason(t *testing.T) {
 		},
 		{
 			name:       "empty response fallback",
+			unknown:    true,
 			wantReason: "ANT wrong API key or insufficient permissions",
 			status:     http.StatusForbidden,
 		},
@@ -78,6 +89,13 @@ func TestANTUploadPreservesAPIErrorReason(t *testing.T) {
 			summary, err := submitPreparedUpload(t.Context(), api.NopLogger{}, uploadState{}, nil, "application/json", "", "")
 			if err == nil || !strings.Contains(err.Error(), tc.wantReason) {
 				t.Fatalf("upload error = %v, want reason %q", err, tc.wantReason)
+			}
+			wantOutcome := submission.Rejected
+			if tc.unknown {
+				wantOutcome = submission.Unknown
+			}
+			if got := submission.OutcomeOf(err); got != wantOutcome {
+				t.Fatalf("outcome=%v want=%v", got, wantOutcome)
 			}
 			if strings.Contains(err.Error(), "never-print-this") {
 				t.Fatal("upload error exposed an API key")

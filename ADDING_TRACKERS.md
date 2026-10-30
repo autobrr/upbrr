@@ -1102,6 +1102,31 @@ preview but cannot submit. Upload submits the captured state once. A submit clos
 short-lived CSRF token, but must not rebuild canonical fields, rerun image uploads, or reread
 mutable prepared-release inputs. `Release` owns temporary resources and is exact-once.
 
+#### Report submission evidence
+
+Return success only after the tracker protocol establishes acceptance. A successful HTTP status,
+missing error field or nonempty response alone is insufficient. Keep missing, contradictory,
+malformed and incomplete evidence uncertain unless an independent response marker proves the
+outcome, such as a recognized acceptance redirect.
+
+Use `submission.NewError(submission.NotSent, cause)` when this attempt provably could not send
+the submission, or `submission.NewError(submission.Rejected, cause)` for an explicit protocol
+rejection. The package is `internal/trackers/submission`; sanitize the diagnostic cause using the
+existing tracker helpers. Unclassified transport and response errors retain uncertainty and
+must not authorize another submission. Never infer these dispositions from diagnostic strings
+or classify every response with a particular HTTP status alike.
+
+`commonhttp.ExecuteUpload` retains private protocol bytes separately from its redacted
+diagnostics. Check `BodyComplete` before relying on a response body; available headers or the
+final URL can still establish acceptance after a body-read failure. Do not publish protocol
+bytes or treat its HTTP `Success` candidate as the final upload outcome. Shared orchestration
+owns durable receipt completion and exact-attempt fencing.
+
+Keep remote acceptance separate from local receipt-retention failure. Retained results carry
+the exact operation/effect binding even when the terminal write fails. Tracker reconciliation
+requires that binding and rejects stale attempts or attempts with retained acceptance evidence;
+an effect ID in a diagnostic resource is correlation, never permission to complete or retry it.
+
 #### Preserve registered torrent authority
 
 After confirmed remote success, return one `api.UploadedTorrent` per successful tracker upload in

@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -102,7 +103,10 @@ func submitPreparedUpload(
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: GPW upload request build: %s", commonhttp.RedactErrorDetail(err.Error()))
+		return api.UploadSummary{}, submission.NewError(
+			submission.NotSent,
+			fmt.Errorf("trackers: GPW upload request build: %s", commonhttp.RedactErrorDetail(err.Error())),
+		)
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -128,8 +132,11 @@ func submitPreparedUpload(
 	}
 	id := extractTorrentID(decoded.Response)
 	status := strings.ToLower(strings.TrimSpace(fmt.Sprint(decoded.Status)))
-	if (status == "success" || status == "ok" || status == "200") && id != "" {
-		tURL := torrentURL + id
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && (status == "success" || status == "ok" || (status == "200" && id != "")) {
+		tURL := ""
+		if id != "" {
+			tURL = torrentURL + id
+		}
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
 			req.Logger, "GPW", state.torrentPath, artifactPath, announceURL, sourceFlag,
 		)
@@ -317,13 +324,13 @@ func extractTorrentID(value any) string {
 	switch typed := value.(type) {
 	case map[string]any:
 		if torrentID, ok := typed["torrent_id"]; ok {
-			return strings.TrimSpace(fmt.Sprint(torrentID))
+			return commonhttp.PositiveTorrentID(torrentID)
 		}
 	case []any:
 		if len(typed) > 0 {
 			if first, ok := typed[0].(map[string]any); ok {
 				if torrentID, ok := first["torrent_id"]; ok {
-					return strings.TrimSpace(fmt.Sprint(torrentID))
+					return commonhttp.PositiveTorrentID(torrentID)
 				}
 			}
 		}

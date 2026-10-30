@@ -777,6 +777,7 @@ func TestLegacyRecoveryAllowsOwnersToReconcileSequentially(t *testing.T) {
 	}
 	if err := repo.ResolveReleaseWorkflowEffectUnknown(
 		firstCtx, first.OwnerID, first.WorkflowID, api.WorkflowExternalEffectTrackerSubmission, firstEffect.ScopeID, now.Add(2*time.Second),
+		api.WorkflowExternalEffectReceipt{EffectID: firstEffect.EffectID, OperationID: firstEffect.OperationID},
 	); err != nil {
 		t.Fatalf("resolve first legacy effect: %v", err)
 	}

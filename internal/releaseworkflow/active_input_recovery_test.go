@@ -1405,7 +1405,8 @@ func TestResetIdleInputOnStartupWaitsForPriorLegacyRecoveryLease(t *testing.T) {
 	}
 	authorityCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: claimed.CoordinatorID, Fence: claimed.Fence})
 	if err := repo.ResolveReleaseWorkflowEffectUnknown(authorityCtx, testOwnerID, created.Workflow.ID,
-		api.WorkflowExternalEffectTrackerSubmission, effect.ScopeID, time.Now().UTC()); err != nil {
+		api.WorkflowExternalEffectTrackerSubmission, effect.ScopeID, time.Now().UTC(),
+		api.WorkflowExternalEffectReceipt{EffectID: effect.EffectID, OperationID: effect.OperationID}); err != nil {
 		t.Fatal(err)
 	}
 	claimed.LeaseExpiresAt = time.Now().UTC().Add(400 * time.Millisecond)

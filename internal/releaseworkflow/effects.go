@@ -73,13 +73,14 @@ func (r *durableExternalEffectReporter) Begin(
 	if idempotent && record.Status == api.WorkflowEffectStatusSucceeded {
 		return api.WorkflowExternalEffectReceipt{
 			EffectID:         record.EffectID,
+			OperationID:      record.OperationID,
 			AlreadySucceeded: true,
 		}, nil
 	}
 	r.mu.Lock()
 	r.attempts[record.EffectID] = record
 	r.mu.Unlock()
-	return api.WorkflowExternalEffectReceipt{EffectID: record.EffectID}, nil
+	return api.WorkflowExternalEffectReceipt{EffectID: record.EffectID, OperationID: record.OperationID}, nil
 }
 
 func (r *durableExternalEffectReporter) Complete(

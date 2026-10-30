@@ -26,6 +26,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -86,7 +87,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.uploadURL, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: ASC request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: ASC request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", userAgent)
@@ -106,10 +107,10 @@ func submitPreparedUpload(
 		finalURL = resp.Request.URL.String()
 	}
 	bodyBytes, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusOK, commonhttp.DefaultResponsePreviewBytes)
-	if err != nil {
+	torrentID := parseUploadID(finalURL, string(bodyBytes))
+	if err != nil && (resp.StatusCode != http.StatusOK || torrentID == "") {
 		return api.UploadSummary{}, fmt.Errorf("trackers: ASC read upload response: %w", err)
 	}
-	torrentID := parseUploadID(finalURL, string(bodyBytes))
 	if resp.StatusCode == http.StatusOK && torrentID != "" {
 		torrentURL := baseURL + "/torrents-details.php?id=" + url.QueryEscape(torrentID)
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(

@@ -349,7 +349,7 @@ func ReadUploadResponseBody(resp *http.Response, successCandidate bool, previewL
 		return body, ResponseBodyPreview(body, previewLimit), nil
 	}
 
-	body, preview, err := readHTTPErrorResponse(resp.Body, previewLimit)
+	body, preview, _, err := readHTTPErrorResponse(resp.Body, previewLimit)
 	if err != nil {
 		return body, preview, fmt.Errorf("read upload response body: %w", err)
 	}
@@ -760,7 +760,7 @@ func compactHTTPErrorText(text string) string {
 	return strings.TrimSpace(text[:maxHTTPErrorDetailLength]) + "..."
 }
 
-func readHTTPErrorResponse(reader io.Reader, previewLimit int64) ([]byte, []byte, error) {
+func readHTTPErrorResponse(reader io.Reader, previewLimit int64) ([]byte, []byte, bool, error) {
 	if previewLimit <= 0 {
 		previewLimit = DefaultResponsePreviewBytes
 	}
@@ -771,9 +771,9 @@ func readHTTPErrorResponse(reader io.Reader, previewLimit int64) ([]byte, []byte
 	}
 	preview := ResponseBodyPreview(failureResponseDetail(body, exceeded, err != nil), previewLimit)
 	if err != nil {
-		return body, preview, fmt.Errorf("%s: %w", preview, safeWrappedError(err))
+		return body, preview, false, fmt.Errorf("%s: %w", preview, safeWrappedError(err))
 	}
-	return body, preview, nil
+	return body, preview, !exceeded, nil
 }
 
 func failureResponseDetail(body []byte, exceeded bool, readFailed bool) []byte {

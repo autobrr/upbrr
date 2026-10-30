@@ -162,10 +162,48 @@ func (m *Module) publishLegacyRecoveryActions(
 	now := m.clock.Now().UTC()
 	changed := false
 	for _, effect := range effects {
-		if slices.ContainsFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+		accepted := false
+		for _, result := range state.UploadResults {
+			if result.ConfirmsSubmission(effect) {
+				accepted = true
+				break
+			}
+		}
+		if accepted {
+			if !slices.ContainsFunc(state.Workflow.Failures, func(failure api.WorkflowFailure) bool {
+				return failure.Failure.Code == api.OperationFailureReceiptRetention && failure.Resource == effect.EffectID
+			}) {
+				state.Workflow.Failures = append(state.Workflow.Failures, api.WorkflowFailure{
+					TrackerID: api.TrackerID(effect.ScopeID),
+					Resource:  effect.EffectID,
+					Failure: api.OperationFailure{
+						Code:      api.OperationFailureReceiptRetention,
+						Operation: api.OperationKindUploadExecute,
+						Message:   "Tracker submission was accepted; its local receipt remains unresolved. Retry is blocked.",
+						Recovery:  api.OperationRecoveryNone,
+					},
+				})
+				changed = true
+			}
+			before := len(state.Workflow.RequiredActions)
+			state.Workflow.RequiredActions = slices.DeleteFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+				return action.Kind == api.RequiredActionReconcileSubmission && action.EffectKind == api.WorkflowExternalEffectKind(effect.Kind) &&
+					action.EffectScopeID == effect.ScopeID && ((action.EffectID == "" && action.EffectOperationID == "") ||
+					(action.EffectID == effect.EffectID && action.EffectOperationID == effect.OperationID))
+			})
+			changed = changed || len(state.Workflow.RequiredActions) != before
+			continue
+		}
+		if index := slices.IndexFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
 			return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending &&
 				action.EffectKind == api.WorkflowExternalEffectKind(effect.Kind) && action.EffectScopeID == effect.ScopeID
-		}) {
+		}); index >= 0 {
+			if state.Workflow.RequiredActions[index].EffectID != effect.EffectID ||
+				state.Workflow.RequiredActions[index].EffectOperationID != effect.OperationID {
+				state.Workflow.RequiredActions[index].EffectID = effect.EffectID
+				state.Workflow.RequiredActions[index].EffectOperationID = effect.OperationID
+				changed = true
+			}
 			continue
 		}
 		trackerID := api.TrackerID("")
@@ -185,6 +223,7 @@ func (m *Module) publishLegacyRecoveryActions(
 		if actionErr != nil {
 			return fmt.Errorf("release workflow create legacy recovery action: %w", actionErr)
 		}
+		action.EffectID, action.EffectOperationID = effect.EffectID, effect.OperationID
 		state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
 		changed = true
 	}

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -116,8 +117,21 @@ func TestTrackerPlanReleaseBeforeSubmitRejectsSubmission(t *testing.T) {
 	if err := plan.Release(); err != nil {
 		t.Fatalf("release: %v", err)
 	}
-	if _, err := plan.Submit(context.Background()); !errors.Is(err, ErrPlanReleased) {
+	if _, err := plan.Submit(context.Background()); !errors.Is(err, ErrPlanReleased) || submission.OutcomeOf(err) != submission.NotSent {
 		t.Fatalf("submit after release error = %v", err)
+	}
+}
+
+func TestTrackerPlanCanceledBeforeSubmitDoesNotSend(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	plan := NewUploadPlan("EXAMPLE", api.TrackerDryRunEntry{}, func(context.Context) (api.UploadSummary, error) {
+		t.Fatal("canceled attempt invoked the submission callback")
+		return api.UploadSummary{}, nil
+	}, nil)
+	if _, err := plan.Submit(ctx); !errors.Is(err, context.Canceled) || submission.OutcomeOf(err) != submission.NotSent {
+		t.Fatalf("submission error=%v", err)
 	}
 }
 
@@ -149,7 +163,7 @@ func TestTrackerSubmissionFencePreventsRetryAfterUnknownOutcome(t *testing.T) {
 	}
 }
 
-func TestTrackerSubmissionReceiptFailureBecomesUnknownOutcome(t *testing.T) {
+func TestTrackerSubmissionReceiptFailureRetainsAcceptedSummary(t *testing.T) {
 	t.Parallel()
 
 	var submits atomic.Int32
@@ -167,9 +181,23 @@ func TestTrackerSubmissionReceiptFailureBecomesUnknownOutcome(t *testing.T) {
 			nil,
 		),
 	}}
-	(&Service{}).submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "C:\\synthetic"}, slots)
-	if submits.Load() != 1 || slots[0].failure == nil || slots[0].failure.Code != "unknown_outcome" {
+	(&Service{logger: api.NopLogger{}}).submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "C:\\synthetic"}, slots)
+	if submits.Load() != 1 || slots[0].failure != nil || slots[0].receiptFailure == nil || slots[0].receiptFailure.Code != "receipt_retention" || slots[0].submissionOutcome != submission.Accepted || slots[0].summary.Uploaded != 1 {
 		t.Fatalf("unretained tracker receipt submits=%d failure=%#v", submits.Load(), slots[0].failure)
+	}
+}
+
+func TestLegacyTrackerSubmissionDisconnectDoesNotRecordKnownFailure(t *testing.T) {
+	t.Parallel()
+	reporter := &trackerEffectReporterStub{}
+	ctx := api.WithWorkflowExternalEffectReporter(t.Context(), reporter)
+	slots := []trackerPlanSlot{{tracker: "EXAMPLE", plan: NewUploadPlan("EXAMPLE", api.TrackerDryRunEntry{},
+		func(context.Context) (api.UploadSummary, error) {
+			return api.UploadSummary{}, errors.New("synthetic disconnect after sending")
+		}, nil)}}
+	(&Service{logger: api.NopLogger{}}).submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "synthetic"}, slots)
+	if reporter.completeCalls != 0 || slots[0].failure == nil || slots[0].failure.Code != "unknown_outcome" {
+		t.Fatalf("unclassified legacy attempt completed=%d failure=%#v", reporter.completeCalls, slots[0].failure)
 	}
 }
 

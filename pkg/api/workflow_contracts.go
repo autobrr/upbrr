@@ -742,6 +742,10 @@ type UploadPlan struct {
 
 // UploadTrackerResult is one safe immutable tracker submission outcome.
 type UploadTrackerResult struct {
+	// SubmissionReceiptID and SubmissionOperationID correlate protocol evidence to one exact persisted attempt.
+	// They never authorize completion or a retry by themselves.
+	SubmissionReceiptID    string               `json:"submissionReceiptId,omitempty"`
+	SubmissionOperationID  WorkflowOperationID  `json:"submissionOperationId,omitempty"`
 	TrackerID              TrackerID            `json:"trackerId"`
 	Status                 StageStatus          `json:"status"`
 	SubmissionStatus       StageStatus          `json:"submissionStatus,omitempty"`
