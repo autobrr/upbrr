@@ -1311,6 +1311,9 @@ incomplete answer retains only a private reuse baseline, with no current duplica
 authority. Rebinding never extends duplicate freshness. Canonical prepared-release contract versions do not change for
 tracker-only questionnaire semantics; version the tracker projector instead.
 
+Non-disc TV-pack HDR facts and prepared HDR targets use only the selected primary video's existing
+MediaInfo report. Do not request a pack-wide HDR sweep or attribute inspected evidence to siblings.
+
 By default, non-disc TV-pack preparation uses the selected primary video's MediaInfo report. A typed
 metadata requirement may request per-resource inspection for an explicit site policy; preserve
 resource identity and incomplete coverage. The following passive guidance defaults do not override

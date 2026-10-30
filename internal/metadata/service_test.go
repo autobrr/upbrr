@@ -474,7 +474,7 @@ func TestCollectTVPackSelectsFirstEpisodeForMediaInfoAndScreenshots(t *testing.T
 				t.Fatal(err)
 			}
 			want := filepath.Join(source, test.want)
-			if !meta.TVPack || meta.VideoPath != want || mediaInfo.requests[0].VideoPath != want || len(mediaInfo.requests) != len(test.files)+1 {
+			if !meta.TVPack || meta.VideoPath != want || mediaInfo.requests[0].VideoPath != want || len(mediaInfo.requests) != 1 {
 				t.Fatalf(
 					"expected pack media/screenshot source %q, got pack=%t video=%q mediainfo=%q",
 					want,
