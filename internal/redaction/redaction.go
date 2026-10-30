@@ -203,15 +203,22 @@ func normalizeSecretText(value string) string {
 // redactURL preserves ordinary URL context while structurally redacting known
 // sensitive userinfo, path, query, and fragment values.
 func redactURL(raw string, sensitiveKeys map[string]struct{}, secrets ...string) string {
-	trimmed := raw
-	// A known secret can contain trailing URL punctuation; match the full component.
-	if !slices.ContainsFunc(secrets, func(secret string) bool { return secret != "" }) {
-		trimmed = strings.TrimRight(raw, ".,;:)")
-	}
+	trimmed := strings.TrimRight(raw, ".,;:)")
 	suffix := strings.TrimPrefix(raw, trimmed)
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Host == "" {
 		return "[REDACTED]" + suffix
+	}
+	if suffix != "" && len(secrets) > 0 {
+		full, fullErr := url.Parse(raw)
+		if fullErr == nil {
+			for _, secret := range secrets {
+				if secret != "" && urlSecretCount(full, secret) > urlSecretCount(parsed, secret) {
+					parsed, suffix = full, ""
+					break
+				}
+			}
+		}
 	}
 	if parsed.User != nil {
 		parsed.User = url.User("[REDACTED]")
@@ -240,6 +247,32 @@ func redactURL(raw string, sensitiveKeys map[string]struct{}, secrets ...string)
 	parsed.Fragment = redactKnownSecrets(parsed.Fragment, secrets)
 	parsed.RawFragment = ""
 	return strings.ReplaceAll(parsed.String(), url.QueryEscape("[REDACTED]"), "[REDACTED]") + suffix
+}
+
+// urlSecretCount detects whether trimming URL punctuation would split a known secret.
+func urlSecretCount(value *url.URL, secret string) int {
+	count := strings.Count(value.Path, secret)
+	// Count literal semicolons as data; the sanitizer still rejects malformed queries.
+	query, _ := url.ParseQuery(strings.ReplaceAll(value.RawQuery, ";", "%3B"))
+	queries := []url.Values{query}
+	if strings.ContainsAny(value.Fragment, "=&") {
+		fragment, _ := url.ParseQuery(strings.ReplaceAll(value.Fragment, ";", "%3B"))
+		queries = append(queries, fragment)
+		if decoded, err := url.PathUnescape(fragment.Encode()); err == nil {
+			count += strings.Count(decoded, secret)
+		}
+	} else {
+		count += strings.Count(value.Fragment, secret)
+	}
+	for _, query := range queries {
+		for key, items := range query {
+			count += strings.Count(key, secret)
+			for _, item := range items {
+				count += strings.Count(item, secret)
+			}
+		}
+	}
+	return count
 }
 
 func redactURLPath(path string) string {

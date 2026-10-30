@@ -29,7 +29,7 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		key, expires,
 	)
 	for _, tc := range []struct {
-		name, first, second, wantReason                       string
+		name, first, second, wantReason, returnedKey          string
 		intended, networkFailure, emptyReason                 bool
 		firstStatus, secondStatus, wantRequests, wantUploaded int
 	}{
@@ -132,15 +132,16 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		{
 			name:         "retry rejected with JSON escaped key",
 			first:        challenge,
-			second:       `{"error":"Rejected key synthetic\u002dkey\u002d12; retain unknown-token"}`,
+			second:       `{"error":"Rejected key synthetic\u002dkey\u002d12; see (https://example.invalid/failure?ref=123)."}`,
 			intended:     true,
 			firstStatus:  409,
 			secondStatus: 403,
 			wantRequests: 2,
-			wantReason:   "Rejected key [REDACTED]; retain unknown-token",
+			wantReason:   "Rejected key [REDACTED]; see (https://example.invalid/failure?ref=123).",
 		},
 		{
 			name:         "retry rejected with HTML escaped keys",
+			returnedKey:  "synthetic-key-34",
 			first:        challenge,
 			second:       `{"error":"Rejected keys synthetic&#45;key&#45;12 and synthetic&#45;key&#45;34; retain unknown-token","trump_key":"synthetic-key-34"}`,
 			intended:     true,
@@ -181,6 +182,7 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		},
 		{
 			name:         "retry rejected with URL escaped replacement key",
+			returnedKey:  "synthet/ic?key1)",
 			first:        challenge,
 			second:       `{"error":"Retry rejected","trump_key":"synthet/ic?key1)","view":"https://example.invalid/failure/synthet/ic%3fkey1)?ref=unknown-token&value=synthet%2fic%3fkey1)"}`,
 			intended:     true,
@@ -191,6 +193,7 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		},
 		{
 			name:         "retry rejected with nested JSON key",
+			returnedKey:  "synthetic<key<12",
 			first:        challenge,
 			second:       `{"error":"Rejected {\"synthetic\\u003ckey\\u003c12\":\"synthetic\\u003ckey\\u003c12\",\"ref\":\"unknown-token\"}","trump_key":"synthetic<key<12"}`,
 			intended:     true,
@@ -198,6 +201,39 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			secondStatus: 403,
 			wantRequests: 2,
 			wantReason:   `Rejected {"[REDACTED]":"[REDACTED]","ref":"unknown-token"}`,
+		},
+		{
+			name:         "query fields do not combine into a known key",
+			first:        challenge,
+			second:       `{"error":"Retry rejected; see https://example.invalid/failure?ref=%73ynthet&num=123).","trump_key":"synthet&num=123)"}`,
+			returnedKey:  "synthet&num=123)",
+			intended:     true,
+			firstStatus:  409,
+			secondStatus: 403,
+			wantRequests: 2,
+			wantReason:   "Retry rejected; see https://example.invalid/failure?num=123&ref=synthet).",
+		},
+		{
+			name:         "fragment decoding retains known key punctuation",
+			first:        challenge,
+			second:       `{"error":"Retry rejected","trump_key":"synthe<&num=123)","view":"https://example.invalid/failure#a=synthe%253C&num=123)."}`,
+			returnedKey:  "synthe<&num=123)",
+			intended:     true,
+			firstStatus:  409,
+			secondStatus: 403,
+			wantRequests: 2,
+			wantReason:   "Retry rejected (https://example.invalid/failure#a=[REDACTED].)",
+		},
+		{
+			name:         "trimming cannot make a secret-bearing malformed query valid",
+			first:        challenge,
+			second:       `{"error":"Retry rejected","trump_key":"synthet?c-key12;","view":"https://example.invalid/failure?x=synthet%3Fc-key12;"}`,
+			returnedKey:  "synthet?c-key12;",
+			intended:     true,
+			firstStatus:  409,
+			secondStatus: 403,
+			wantRequests: 2,
+			wantReason:   "Retry rejected (https://example.invalid/failure?[REDACTED])",
 		},
 		{
 			name:           "uncertain retry",
@@ -280,6 +316,9 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			if err != nil && strings.Contains(err.Error(), key) {
 				t.Fatal("challenge key exposed")
 			}
+			if err != nil && tc.returnedKey != "" && strings.Contains(err.Error(), tc.returnedKey) {
+				t.Fatal("returned challenge key exposed")
+			}
 			if tc.wantReason != "" && (err == nil || !strings.Contains(err.Error(), tc.wantReason)) {
 				t.Fatalf("retry diagnostic = %v, want %q", err, tc.wantReason)
 			}
@@ -301,7 +340,7 @@ func TestTrumpRetryErrorRedactsWithoutLosingCause(t *testing.T) {
 	const key = "synthetic-key-12"
 	cause := fmt.Errorf("response read failed at https://example.invalid/%%73ynthetic-key-12: %w", io.ErrUnexpectedEOF)
 	err := trumpRetryError{cause: cause, key: key}
-	if strings.Contains(err.Error(), key) || !errors.Is(err, io.ErrUnexpectedEOF) {
+	if strings.Contains(err.Error(), key) || strings.Contains(err.Error(), "%73ynthetic-key-12") || !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatal("retry error must redact the key and preserve its failure cause")
 	}
 }
