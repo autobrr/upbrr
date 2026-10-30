@@ -272,7 +272,22 @@ func checkRecoveryCLIPublishedClientResult(t *testing.T, publishedUnknown, failS
 		t.Fatal("current result no longer identifies the registered tracker torrent")
 	}
 	if failSave {
-		return
+		scopes, err := repo.ListReleaseWorkflowRecoveryScopes(t.Context())
+		if err != nil || len(scopes) != 1 || scopes[0].WorkflowID != "retry" {
+			t.Fatalf("failed confirmation lost its recovery scope: %#v, err=%v", scopes, err)
+		}
+		var status api.WorkflowEffectStatus
+		if err := repo.RawDB().QueryRowContext(t.Context(),
+			`SELECT status FROM release_workflow_effects WHERE workflow_id = 'retry' AND kind = 'client_injection'`).Scan(&status); err != nil ||
+			status != api.WorkflowEffectStatusUnknown {
+			t.Fatalf("failed confirmation resolved its effect: status=%s err=%v", status, err)
+		}
+		if _, err := repo.RawDB().ExecContext(t.Context(), `DROP TRIGGER reject_recovery_confirmation`); err != nil {
+			t.Fatal(err)
+		}
+		if err := executeCLI(t.Context(), []string{"recover", "--config", configPath}, cliIO{in: strings.NewReader("yes\n")}); err != nil {
+			t.Fatalf("retry failed confirmation: %v", err)
+		}
 	}
 	if _, _, err := cliConfigActivation(t.Context(), cfg, repo.DBPath(), api.NopLogger{}); err != nil {
 		t.Fatalf("same build after client retry recovery: %v", err)

@@ -603,50 +603,57 @@ func (r *SQLiteRepository) ResolveReleaseWorkflowEffectUnknown(
 	scopeID string,
 	now time.Time,
 ) error {
+	return r.withWriteTx(ctx, "resolve unknown release workflow effect", func(tx *sql.Tx) error {
+		return resolveReleaseWorkflowEffectUnknown(ctx, tx, ownerID, workflowID, kind, scopeID, now)
+	})
+}
+
+func resolveReleaseWorkflowEffectUnknown(
+	ctx context.Context, tx *sql.Tx, ownerID string, workflowID api.WorkflowID,
+	kind api.WorkflowExternalEffectKind, scopeID string, now time.Time,
+) error {
 	ownerID = strings.TrimSpace(ownerID)
 	scopeID = strings.TrimSpace(scopeID)
 	if ownerID == "" || workflowID == "" || kind == "" || scopeID == "" || now.IsZero() {
 		return errors.New("db: release workflow effect reconciliation identity and timestamp are required")
 	}
-	return r.withWriteTx(ctx, "resolve unknown release workflow effect", func(tx *sql.Tx) error {
-		if err := requireWorkflowInputMutation(ctx, tx, ownerID, workflowID, true); err != nil {
-			return err
-		}
-		latest, err := loadLatestReleaseWorkflowEffect(ctx, tx, ownerID, workflowID, string(kind), scopeID)
-		if err != nil {
-			return err
-		}
-		switch latest.Status {
-		case api.WorkflowEffectStatusFailed:
-			return nil
-		case api.WorkflowEffectStatusUnknown:
-		case api.WorkflowEffectStatusStarted, api.WorkflowEffectStatusSucceeded:
-			return api.ErrReleaseWorkflowEffectConflict
-		}
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM submission_fences
-			WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
-		`, ownerID, workflowID, latest.OperationID, latest.EffectID, api.WorkflowEffectStatusUnknown); err != nil {
-			return fmt.Errorf("db resolve unknown submission fence: %w", err)
-		}
-		result, err := tx.ExecContext(ctx, `
-			UPDATE release_workflow_effects
-			SET status = ?, updated_at = ?, completed_at = ?
-			WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
-		`, api.WorkflowEffectStatusFailed, formatWorkflowStateTime(now), formatWorkflowStateTime(now),
-			ownerID, workflowID, latest.OperationID, latest.EffectID, api.WorkflowEffectStatusUnknown)
-		if err != nil {
-			return fmt.Errorf("db resolve unknown release workflow effect: %w", err)
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("db resolve unknown release workflow effect rows: %w", err)
-		}
-		if rows != 1 {
-			return api.ErrReleaseWorkflowEffectConflict
-		}
+	if err := requireWorkflowInputMutation(ctx, tx, ownerID, workflowID, true); err != nil {
+		return err
+	}
+	latest, err := loadLatestReleaseWorkflowEffect(ctx, tx, ownerID, workflowID, string(kind), scopeID)
+	if err != nil {
+		return err
+	}
+	switch latest.Status {
+	case api.WorkflowEffectStatusFailed:
 		return nil
-	})
+	case api.WorkflowEffectStatusUnknown:
+	case api.WorkflowEffectStatusStarted, api.WorkflowEffectStatusSucceeded:
+		return api.ErrReleaseWorkflowEffectConflict
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM submission_fences
+		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
+	`, ownerID, workflowID, latest.OperationID, latest.EffectID, api.WorkflowEffectStatusUnknown); err != nil {
+		return fmt.Errorf("db resolve unknown submission fence: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE release_workflow_effects
+		SET status = ?, updated_at = ?, completed_at = ?
+		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
+	`, api.WorkflowEffectStatusFailed, formatWorkflowStateTime(now), formatWorkflowStateTime(now),
+		ownerID, workflowID, latest.OperationID, latest.EffectID, api.WorkflowEffectStatusUnknown)
+	if err != nil {
+		return fmt.Errorf("db resolve unknown release workflow effect: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("db resolve unknown release workflow effect rows: %w", err)
+	}
+	if rows != 1 {
+		return api.ErrReleaseWorkflowEffectConflict
+	}
+	return nil
 }
 
 func loadReleaseWorkflowIntent(

@@ -407,15 +407,7 @@ func newCoreWithHooks(
 	var workflowPrivateResources releaseworkflow.PrivateResourceStore = releaseworkflow.NewMemoryPrivateResourceStore()
 	var workflowPrivateVault *releaseworkflow.PrivateArtifactVault
 	if sqliteRepo, ok := repoOwner.(*db.SQLiteRepository); ok && strings.TrimSpace(sqliteRepo.DBPath()) != "" {
-		vault, vaultErr := releaseworkflow.NewPrivateArtifactVault(
-			releaseworkflow.PrivateArtifactVaultRoot(sqliteRepo.DBPath()),
-			append(
-				workflowPrivateResourceCodecs(workflowMediaArtifacts, workflowAudioAnalysis),
-				hdrResourceCodec(audioTmpRoot, "analysis"),
-				hdrResourceCodec(audioTmpRoot, "extraction"),
-				hdrResourceCodec(audioTmpRoot, "measurement"),
-			)...,
-		)
+		vault, vaultErr := newWorkflowPrivateArtifactVault(sqliteRepo.DBPath(), workflowMediaArtifacts, workflowAudioAnalysis)
 		if vaultErr != nil {
 			return nil, fmt.Errorf("core: release workflow private artifact vault: %w", vaultErr)
 		}

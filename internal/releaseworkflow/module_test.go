@@ -4834,6 +4834,9 @@ func TestResolveReconciliationRequiresExactAnswerAndForcesFreshReview(t *testing
 
 	valid := invalid
 	valid.Answer.SelectedValues = []string{api.RequiredActionReconcileNotCompleted}
+	if _, _, err := repository.Create(ctx, testOwnerID, "", "", state); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := module.resolveAction(ctx, testOwnerID, &state, 3, now.Add(4*time.Second), valid); err != nil {
 		t.Fatalf("resolve reconciliation: %v", err)
 	}
@@ -4841,6 +4844,14 @@ func TestResolveReconciliationRequiresExactAnswerAndForcesFreshReview(t *testing
 		state.Workflow.DryRun != nil || state.Workflow.UploadResult != nil || len(state.Workflow.RequiredActions) != 0 ||
 		len(state.Workflow.Failures) != 0 || state.Workflow.Status != api.WorkflowStatusActive {
 		t.Fatalf("reconciled workflow=%#v", state.Workflow)
+	}
+	if _, _, err := repository.BeginEffect(ctx, probe); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		t.Fatalf("confirmation unfenced an uncommitted workflow: %v", err)
+	}
+	state.Workflow.Revision = 3
+	state.Workflow.UpdatedAt = now.Add(4 * time.Second)
+	if err := repository.Save(ctx, testOwnerID, 2, state); err != nil {
+		t.Fatal(err)
 	}
 	retry := started
 	retry.EffectID = "effect-retry"
@@ -5276,12 +5287,25 @@ func TestResolveTrackerPreparationReplacesRetainedDryRun(t *testing.T) {
 
 func TestResolveImageHostingReconciliationInvalidatesMissingPrivateMedia(t *testing.T) {
 	t.Parallel()
-	for _, available := range []bool{false, true} {
-		name := "unavailable dupes"
-		if available {
-			name = "current dupes"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name                                       string
+		available, privateMedia, unpublishedAction bool
+	}{
+		{name: "unavailable dupes"},
+		{name: "current dupes", available: true},
+		{
+name: "stale media dependencies",
+ available: true,
+ privateMedia: true,
+},
+		{
+name: "ledger precedes snapshot",
+ available: true,
+ privateMedia: true,
+ unpublishedAction: true,
+},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			module, repository := newTestModule(t, testPreparer())
 			ctx := context.Background()
 			now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
@@ -5348,10 +5372,24 @@ func TestResolveImageHostingReconciliationInvalidatesMissingPrivateMedia(t *test
 					},
 				},
 			}
-			if available {
+			if tc.unpublishedAction {
+				snapshot := state.Media["media-1"]
+				snapshot.RequiredActions = nil
+				state.Media["media-1"] = snapshot
+			}
+			if tc.privateMedia {
+				if err := module.private.Put(testOwnerID, workflowID, mediaPrivateResourceID("media-1"),
+					&retainedMediaResourceFake{stats: &retainedMediaResourceStats{}}, now.Add(time.Hour)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.available {
 				if err := module.private.Put(testOwnerID, workflowID, dupePrivateResourceID(state.Workflow.Dupes.ID), "current evidence", now.Add(time.Hour)); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if _, _, err := repository.Create(ctx, testOwnerID, "", "", state); err != nil {
+				t.Fatal(err)
 			}
 			_, err := module.resolveAction(ctx, testOwnerID, &state, 3, now.Add(2*time.Second), ResolveActionCommand{
 				WorkflowID:       workflowID,
@@ -5365,10 +5403,15 @@ func TestResolveImageHostingReconciliationInvalidatesMissingPrivateMedia(t *test
 			if err != nil {
 				t.Fatalf("resolve missing private image-host reconciliation: %v", err)
 			}
-			if (state.Workflow.Dupes != nil) != available || state.Workflow.Media != nil || state.Workflow.Descriptions != nil ||
+			if (state.Workflow.Dupes != nil) != tc.available || state.Workflow.Media != nil || state.Workflow.Descriptions != nil ||
 				state.Workflow.DryRun != nil || len(state.Workflow.RequiredActions) != 0 || len(state.Workflow.Failures) != 0 ||
 				state.Workflow.Status != api.WorkflowStatusActive {
 				t.Fatalf("reconciled image-host workflow=%#v", state.Workflow)
+			}
+			state.Workflow.Revision = 3
+			state.Workflow.UpdatedAt = now.Add(2 * time.Second)
+			if err := repository.Save(ctx, testOwnerID, 2, state); err != nil {
+				t.Fatal(err)
 			}
 			retry := started
 			retry.EffectID = "effect-image-retry"

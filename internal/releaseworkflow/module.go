@@ -502,6 +502,9 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, fmt.Errorf("release workflow save: %w", err)
 	}
+	if state.effectResolution != nil && priorWorkflow.DryRun != nil && state.Workflow.DryRun == nil {
+		m.private.Delete(ownerID, state.Workflow.ID, uploadPlanPrivateResourceID(priorWorkflow.DryRun.ID))
+	}
 	if legacyRecovery {
 		if err := m.finishLegacyInputRecovery(commitCtx, ownerID, workflowID); err != nil {
 			return CommandResult{}, err
@@ -8875,15 +8878,8 @@ func (m *Module) resolveAction(
 		if action.EffectKind == "" || strings.TrimSpace(action.EffectScopeID) == "" {
 			return CommandResult{}, fmt.Errorf("%w: reconciliation effect identity is unavailable", ErrInvalidTransition)
 		}
-		if err := m.durability.ResolveEffectUnknown(
-			ctx,
-			ownerID,
-			state.Workflow.ID,
-			action.EffectKind,
-			action.EffectScopeID,
-			now,
-		); err != nil {
-			return CommandResult{}, fmt.Errorf("release workflow reconcile external effect: %w", err)
+		state.effectResolution = &api.ReleaseWorkflowEffectResolution{
+			Kind: action.EffectKind, ScopeID: action.EffectScopeID,
 		}
 		if action.EffectKind == api.WorkflowExternalEffectImageHosting {
 			result, err := m.resolveImageHostingAction(ctx, ownerID, state, nextRevision, now, action)
@@ -8906,9 +8902,6 @@ func (m *Module) resolveAction(
 			}
 			resolvedUploadResult = &reconciled
 		} else {
-			if state.Workflow.DryRun != nil {
-				m.private.Delete(ownerID, state.Workflow.ID, uploadPlanPrivateResourceID(state.Workflow.DryRun.ID))
-			}
 			invalidateUploadPlan(&state.Workflow)
 		}
 		state.Workflow.Failures = slices.DeleteFunc(state.Workflow.Failures, func(failure api.WorkflowFailure) bool {
@@ -9062,17 +9055,23 @@ func (m *Module) resolveImageHostingAction(
 	actionIndex := slices.IndexFunc(snapshot.RequiredActions, func(candidate api.RequiredAction) bool {
 		return candidate.ID == action.ID && candidate.Kind == api.RequiredActionReconcileSubmission
 	})
-	if actionIndex < 0 {
-		return CommandResult{}, fmt.Errorf("%w: reconciled media action is stale", ErrInvalidTransition)
+	// A crash may retain the effect before its media action was published.
+	if actionIndex >= 0 {
+		snapshot.RequiredActions = slices.Delete(snapshot.RequiredActions, actionIndex, actionIndex+1)
 	}
-	snapshot.RequiredActions = slices.Delete(snapshot.RequiredActions, actionIndex, actionIndex+1)
 	snapshot.Failures = slices.DeleteFunc(snapshot.Failures, func(failure api.WorkflowFailure) bool {
 		return failure.Failure.Code == api.OperationFailureUnknownOutcome &&
 			failure.Failure.Operation == api.OperationKindImageHosting &&
 			failure.Resource == action.EffectScopeID
 	})
 	snapshot.ImageRequirementsPrepared = false
-	return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
+	result, err := m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
+	if errors.Is(err, ErrInvalidTransition) {
+		// Stale downstream authority still requires fresh preparation after recovery.
+		finishUnavailableImageHostingReconciliation(&state.Workflow, action)
+		return CommandResult{}, nil
+	}
+	return result, err
 }
 
 func finishUnavailableImageHostingReconciliation(workflow *api.ReleaseWorkflow, action api.RequiredAction) {

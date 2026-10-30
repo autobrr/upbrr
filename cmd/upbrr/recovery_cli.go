@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/autobrr/upbrr/internal/configstore"
+	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -81,7 +82,7 @@ func runRecoverCommand(ctx context.Context, configPath string, configProvided bo
 	if err != nil {
 		return fmt.Errorf("open retained workflow state: %w", err)
 	}
-	vault, err := releaseworkflow.NewPrivateArtifactVault(releaseworkflow.PrivateArtifactVaultRoot(repo.DBPath()))
+	vault, err := core.NewRecoveryPrivateArtifactVault(repo)
 	if err != nil {
 		return fmt.Errorf("open retained workflow artifacts: %w", err)
 	}
