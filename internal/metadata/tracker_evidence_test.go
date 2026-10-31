@@ -41,7 +41,7 @@ func TestTrackerEvidenceStoredIDsRespectLookupConfiguration(t *testing.T) {
 			Description: "Example release notes",
 		}, nil
 	})
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "metadata.sqlite")}, Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"ANT": {APIKey: "synthetic-key"}}}}),
 		WithTrackerRegistry(trackerDataTestRegistry(t)), WithTrackerDataLookup(keyedEvidenceTrackerLookup{evidenceTrackerLookup: fetch, key: "first-config"}))
 	meta := preparationstate.State{
@@ -99,7 +99,7 @@ func TestTrackerEvidenceRetainsFailuresAndRetriesEmptyDemandOnlyOnLoad(t *testin
 				}
 				return trackerdata.Result{TrackerID: "42", TMDBID: 73}, nil
 			})
-			svc := NewService(repo, WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "metadata.sqlite")}}), WithTrackerDataLookup(lookup))
+			svc := newTestService(t, repo, WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "metadata.sqlite")}}), WithTrackerDataLookup(lookup))
 			meta := preparationstate.State{SourcePath: source, TrackerIDs: map[string]string{"aither": "42"}}
 			run := func(mode api.ExternalFreshness) {
 				t.Helper()
@@ -148,7 +148,7 @@ func TestTrackerEvidenceRetainsPartialIDsWithFailedDescription(t *testing.T) {
 	}
 	source := filepath.Join(root, "Example.Movie.2026-GRP.mkv")
 	calls := 0
-	svc := NewService(repo, WithTrackerDataLookup(evidenceTrackerLookup(func(context.Context) (trackerdata.Result, error) {
+	svc := newTestService(t, repo, WithTrackerDataLookup(evidenceTrackerLookup(func(context.Context) (trackerdata.Result, error) {
 		calls++
 		return trackerdata.Result{TrackerID: "42", IMDBID: 1234567}, errors.New("description unavailable")
 	})))

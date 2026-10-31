@@ -239,7 +239,7 @@ func TestCustomDescriptionGroupsIncludeTrackerScreenshots(t *testing.T) {
 					"source_notes":      "Example BluRay source",
 				}}
 			}
-			cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: imageHost}}
+			cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}, ImageHosting: config.ImageHostingConfig{Host1: imageHost}}
 			service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, registry)
 			preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), []string{tracker})
 			if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 1 {
@@ -1203,7 +1203,7 @@ func TestSavedDescriptionGroupPreservesGeneratedContent(t *testing.T) {
 		EpisodeOverview:  synopsis,
 		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Logo: logo}},
 	}
-	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "ptscreens"}}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}, ImageHosting: config.ImageHostingConfig{Host1: "ptscreens"}}
 	cfg.Description.AddLogo = true
 	cfg.Description.EpisodeOverview = true
 	cfg.Description.LogoSize = 300

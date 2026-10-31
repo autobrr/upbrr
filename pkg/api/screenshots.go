@@ -76,6 +76,10 @@ type ScreenshotOverrides struct {
 // ScreenshotSubject contains only source facts required to plan and manage
 // screenshots. Workflow modules build it from an exact prepared generation.
 type ScreenshotSubject struct {
+	// BluRayISO requires an explicit selected playlist against the original ISO.
+	BluRayISO bool
+	// BDInfoSummary is the prepared primary ISO playlist summary, not a transport payload.
+	BDInfoSummary string
 	// MediaBinding owns persisted media for one exact prepared generation.
 	MediaBinding PreparedMediaBinding
 	SourcePath   string
@@ -101,9 +105,13 @@ type ScreenshotSubject struct {
 
 // ScreenshotDiscSubject contains private capture inputs for one ordered disc.
 type ScreenshotDiscSubject struct {
-	ID   string
-	Name string
-	Type string
+	// BluRayISO identifies a validated image rather than an extracted disc tree.
+	BluRayISO bool
+	// BDInfoSummary is the prepared primary ISO playlist summary, not a transport payload.
+	BDInfoSummary string
+	ID            string
+	Name          string
+	Type          string
 	// Root is the private filesystem root for this disc.
 	Root                  string
 	VideoPath             string

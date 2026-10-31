@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -203,6 +204,27 @@ type cliFailingFrames struct{}
 
 func (cliFailingFrames) Write([]byte) (int, error) { return 0, errors.New("synthetic output failure") }
 
+// cliCancelGateContext never cancels. Its AfterFunc stop gate pauses cancellation
+// after the first child closes Done, allowing worker completion to run first.
+type cliCancelGateContext struct {
+	context.Context
+	done, stopping, release chan struct{}
+	once                    sync.Once
+}
+
+func (c *cliCancelGateContext) Done() <-chan struct{} { return c.done }
+
+func (c *cliCancelGateContext) AfterFunc(func()) func() bool {
+	var stopped atomic.Bool
+	return func() bool {
+		if !stopped.CompareAndSwap(false, true) {
+			return false
+		}
+		c.once.Do(func() { close(c.stopping); <-c.release })
+		return true
+	}
+}
+
 func TestUIStartupFailureNeverDispatchesForcedWork(t *testing.T) {
 	var calls atomic.Int32
 	err := runCLIPresentation(t.Context(), cliIO{
@@ -217,31 +239,126 @@ func TestUIStartupFailureNeverDispatchesForcedWork(t *testing.T) {
 }
 
 func TestAutomaticStartupFallbackPreservesInvocationInterrupt(t *testing.T) {
+	// Keep a terminal query queued so the first failed write precedes frame locking.
+	t.Setenv("TERM", "xterm-ghostty")
 	invocation, cancel := context.WithCancelCause(t.Context())
 	cancel(errCLIUserInterrupt)
 	if t.Context().Err() != nil || cliStartupFallbackAllowed(t.Context(), invocation, false) {
 		t.Fatal("invocation-owned interrupt permitted fallback with an uncanceled parent")
 	}
 	for _, forced := range []bool{false, true} {
-		var calls atomic.Int32
-		err := runCLIPresentation(t.Context(), cliIO{
-			in:     strings.NewReader(""),
-			out:    cliFailingFrames{},
-			errOut: io.Discard,
-		}, cliTerminalCapabilities{Width: 120, Height: 40}, true, true, forced, nil, nil, false, false,
-			func(context.Context, []string, []string, cliIO) error { calls.Add(1); return nil })
-		if forced {
-			if err == nil || calls.Load() != 0 {
-				t.Fatal("forced startup failure dispatched work")
-			}
-		} else if err != nil || calls.Load() != 1 {
-			t.Fatalf("ordinary automatic startup failure did not fall back once: %v calls=%d", err, calls.Load())
-		}
+		t.Run(strconv.FormatBool(forced), func(t *testing.T) {
+			testCLIPresentationTime(t, func(t *testing.T) {
+				ctx := &cliCancelGateContext{
+					Context:  context.WithoutCancel(t.Context()),
+					done:     make(chan struct{}),
+					stopping: make(chan struct{}),
+					release:  make(chan struct{}),
+				}
+				release := sync.OnceFunc(func() { close(ctx.release) })
+				defer release()
+				var calls atomic.Int32
+				done := make(chan error, 1)
+				go func() {
+					done <- runCLIPresentation(ctx, cliIO{
+						in:     strings.NewReader(""),
+						out:    cliFailingFrames{},
+						errOut: io.Discard,
+					}, cliTerminalCapabilities{
+						Width:   120,
+						Height:  40,
+						NoColor: true,
+					}, true, true, forced, nil, nil, false, false,
+						func(context.Context, []string, []string, cliIO) error { calls.Add(1); return nil })
+				}()
+				<-ctx.stopping
+				synctest.Wait()
+				release()
+				err := <-done
+				if forced {
+					if err == nil || calls.Load() != 0 {
+						t.Fatal("forced startup failure dispatched work")
+					}
+				} else if err != nil || calls.Load() != 1 {
+					t.Fatalf("ordinary automatic startup failure did not fall back once: %v calls=%d", err, calls.Load())
+				}
+			})
+		})
 	}
 	parent, cancelParent := context.WithCancel(t.Context())
 	cancelParent()
 	if cliStartupFallbackAllowed(parent, parent, false) {
 		t.Fatal("parent cancellation permitted startup fallback")
+	}
+}
+
+func TestPresentationSignalsPreserveInvocationState(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	for _, test := range []struct {
+		name                 string
+		failOutput, keepOpen bool
+	}{
+		{"output failure", true, false},
+		{"output failure with open dashboard", true, true},
+		{"completed dashboard", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testCLIPresentationTime(t, func(t *testing.T) {
+				ctx := context.WithValue(t.Context(), cliProductionContextKey{}, true)
+				var output io.Writer = &cliSynchronizedOutput{}
+				var gate *cliCancelGateContext
+				release := func() {}
+				if test.failOutput {
+					gate = &cliCancelGateContext{
+						Context:  context.WithoutCancel(ctx),
+						done:     make(chan struct{}),
+						stopping: make(chan struct{}),
+						release:  make(chan struct{}),
+					}
+					ctx, output = gate, cliFailingFrames{}
+					release = sync.OnceFunc(func() { close(gate.release) })
+				}
+				defer release()
+				interrupts := make(chan os.Signal)
+				completed := make(chan struct{})
+				done := make(chan error, 1)
+				var calls atomic.Int32
+				go func() {
+					done <- runCLIPresentation(ctx, cliIO{
+						in:         strings.NewReader(""),
+						out:        output,
+						errOut:     io.Discard,
+						interrupts: interrupts,
+						keepOpen:   test.keepOpen,
+					}, cliTerminalCapabilities{Width: 120, Height: 40}, true, test.failOutput, false, nil, nil, false, false,
+						func(context.Context, []string, []string, cliIO) error {
+							calls.Add(1)
+							close(completed)
+							return nil
+						})
+				}()
+				if gate != nil {
+					<-gate.stopping
+				} else {
+					<-completed
+				}
+				synctest.Wait()
+				// The unbuffered send confirms the controller selected the signal.
+				// Its own shutdown join then finishes handling it before fallback.
+				interrupts <- os.Interrupt
+				release()
+				err := <-done
+				if test.failOutput {
+					exit, ok := errors.AsType[*cliExitError](err)
+					if !ok || exit.code != 130 || !errors.Is(err, errCLIUserInterrupt) || calls.Load() != 0 {
+						t.Fatalf("interrupt after output failure = %v calls=%d", err, calls.Load())
+					}
+				} else if err != nil || calls.Load() != 1 {
+					t.Fatalf("completed dashboard signal = %v calls=%d", err, calls.Load())
+				}
+				close(interrupts)
+			})
+		})
 	}
 }
 
@@ -342,7 +459,7 @@ func TestQueueSnapshotsRetainResultsAndExcludedTrackerRows(t *testing.T) {
 	if len(bridge.latest.Lanes) != 2 || bridge.latest.Lanes[1].State != "Skipped" {
 		t.Fatal("excluded tracker disappeared or acquired valid status")
 	}
-	publishCLIItemResult(streams, errors.New("synthetic failure"))
+	publishCLIItemResult(streams, errors.New("synthetic failure"), "")
 	withCLIItemPresentation(ctx, streams, "Example.Two.mkv", 2)
 	if bridge.latest.Item != 2 || bridge.latest.ItemsTotal != 2 || len(bridge.results) != 1 || !strings.Contains(bridge.results[0], "failed or interrupted") || bridge.latest.Result != "" {
 		t.Fatal("queue item authority or retained results lost")

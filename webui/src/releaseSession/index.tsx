@@ -2820,7 +2820,9 @@ export function ReleaseSessionProvider({
         if (
           !runtimeInfoReady ||
           (action.kind !== "authorize_rules" && action.kind !== "resolve_tracker_preparation") ||
-          (action.kind === "authorize_rules" && !confirmed)
+          (action.kind === "authorize_rules" &&
+            !confirmed &&
+            action.releaseRule !== "modified_release")
         ) {
           return Promise.resolve(false);
         }

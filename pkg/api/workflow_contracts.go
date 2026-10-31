@@ -287,6 +287,8 @@ type TrackerPolicyDecision struct {
 
 // TrackerReleaseProjection is one exact tracker-local interpretation of a release.
 type TrackerReleaseProjection struct {
+	// ModifiedReleaseDecision applies only to the shared heuristic rename warning.
+	ModifiedReleaseDecision *bool `json:"modifiedReleaseDecision,omitempty"`
 	// TitleSearchEvidence retains tracker-scoped, generation-bound rule evidence.
 	TitleSearchEvidence *TrackerTitleSearchEvidence `json:"titleSearchEvidence,omitempty"`
 	// QuestionnaireAnswers owns exact tracker-scoped answers after projection instructions.
@@ -321,7 +323,7 @@ type TrackerReleaseProjection struct {
 	NamingFingerprint WorkflowFingerprint     `json:"namingFingerprint"`
 	PolicyDecisions   []TrackerPolicyDecision `json:"policyDecisions,omitempty"`
 	// WaivableRuleFingerprint identifies the normalized, tracker-local current set
-	// of waivable failures. It is empty when no waiver is required.
+	// of waivable failures, excluding shared modified-release confirmation.
 	WaivableRuleFingerprint WorkflowFingerprint `json:"waivableRuleFingerprint,omitempty"`
 	// RuleAuthorizationFingerprint records exact user authorization and is valid
 	// only while it matches WaivableRuleFingerprint.

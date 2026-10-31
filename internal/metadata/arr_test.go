@@ -46,7 +46,7 @@ func TestApplyArrDataUsesSonarrForTV(t *testing.T) {
 		},
 	}
 	radarr := &stubArrClient{}
-	svc := NewService(
+	svc := newTestService(t,
 		repo,
 		WithConfig(config.Config{
 			ArrIntegration: config.ArrIntegrationConfig{
@@ -103,7 +103,7 @@ func TestResolveExternalIDsPrefersArrBeforeSearch(t *testing.T) {
 			Year:   2021,
 		},
 	}
-	svc := NewService(
+	svc := newTestService(t,
 		repo,
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "token"}}),
 		WithTMDBClient(tmdbClient),
@@ -139,7 +139,7 @@ func TestResolveExternalIDsDoesNotOverwriteExplicitOverridesWithArr(t *testing.T
 	repo := &fakeRepo{}
 	overrideTMDB := 555
 	overrideIMDB := 777
-	svc := NewService(
+	svc := newTestService(t,
 		repo,
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "token"}}),
 		WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{Title: "Example", Year: 2022}}),

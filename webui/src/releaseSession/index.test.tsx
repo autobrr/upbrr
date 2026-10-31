@@ -3907,6 +3907,54 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it("submits a release-wide modified-source refusal once", async () => {
+    const workflowID = "workflow-modified-release";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const action = {
+      createdAt: "2026-07-20T00:00:00Z",
+      id: "action-modified-release",
+      kind: "authorize_rules" as const,
+      releaseRule: "modified_release",
+      prompt: "Verify source provenance for all selected trackers?",
+      status: "pending" as const,
+      workflowRevision: 7,
+    };
+    const base = workflowCurrent(workflowID, 7);
+    const retained: ReleaseWorkflowCurrent = {
+      ...base,
+      workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
+      continuation: { ...base.continuation, requiredActions: [action] },
+    };
+    const continueWorkflow = vi.fn(async () => retained);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => retained,
+            continue: continueWorkflow,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    await act(async () => {
+      expect(await result.current.workflow.confirmAction(action, false)).toBe(true);
+    });
+    expect(continueWorkflow).toHaveBeenCalledTimes(1);
+    expect(continueWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "uploaded",
+        answers: [{ actionId: action.id, workflowRevision: 7, confirmed: false }],
+      }),
+      expect.any(AbortSignal),
+    );
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
   it("executes a direct upload through one workflow command", async () => {
     const workflowID = "workflow-skipped-upload";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);

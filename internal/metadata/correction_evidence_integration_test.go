@@ -888,7 +888,7 @@ func (f *correctionEvidenceFixture) open(t *testing.T) (*preparedrelease.Module,
 	if err := repo.MigrateContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(repo,
+	service := newTestService(t, repo,
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: f.dbPath}}),
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(newSRRDBDetector(f.http, "https://scene.example.invalid", "", "")),

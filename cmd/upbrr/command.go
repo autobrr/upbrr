@@ -27,8 +27,10 @@ type cliIO struct {
 	// terminalResult carries one deferred artifact report for output after
 	// terminal restoration; the driver must not send multiple reports.
 	terminalResult chan<- func(io.Writer) error
-	dashboard      bool
-	keepOpen       bool
+	// interrupts borrows notifications; nil lets production own OS registration.
+	interrupts <-chan os.Signal
+	dashboard  bool
+	keepOpen   bool
 }
 
 func (streams cliIO) normalized() cliIO {

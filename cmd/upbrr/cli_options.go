@@ -32,6 +32,8 @@ type cliOptions struct {
 	ShowVersion                bool
 	QueueName                  string
 	LimitQueue                 int
+	RefreshQueue               bool
+	RetryQueue                 bool
 	SiteCheck                  bool
 	SiteUpload                 string
 	Trackers                   string
@@ -95,7 +97,6 @@ type cliOptions struct {
 	StreamOptimized            bool
 	WebDV                      bool
 	ConfirmBDMVRescan          bool
-	NotAnime                   bool
 	Anime                      bool
 	UseSeasonEpisode           bool
 	InputOnly                  bool
@@ -202,9 +203,11 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.LiveTest, "live-test", false, "Use an isolated live-test profile with tracker and client writes disabled")
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
 	fs.BoolVar(&opts.ShowVersion, "version", false, "Show version and exit")
-	fs.StringVar(&opts.QueueName, "queue", "", "Process an entire folder queue")
-	fs.IntVar(&opts.LimitQueue, "limit-queue", 0, "Limit the number of queued items to process")
-	fs.IntVar(&opts.LimitQueue, "lq", 0, "Limit the number of queued items to process")
+	fs.StringVar(&opts.QueueName, "queue", "", "Create or resume a saved queue in the active data directory")
+	fs.IntVar(&opts.LimitQueue, "limit-queue", 0, "Limit remaining eligible queue items (zero means unlimited)")
+	fs.IntVar(&opts.LimitQueue, "lq", 0, "Limit remaining eligible queue items (zero means unlimited)")
+	fs.BoolVar(&opts.RefreshQueue, "refresh-queue", false, "Add newly discovered queue members while retaining progress (requires --queue)")
+	fs.BoolVar(&opts.RetryQueue, "retry-queue", false, "Include failed, interrupted and skipped items (requires --queue; workflow safety checks still apply)")
 	fs.BoolVar(&opts.SiteCheck, "site-check", false, "Search/check sites without uploading")
 	fs.BoolVar(&opts.SiteCheck, "sc", false, "Search/check sites without uploading")
 	fs.StringVar(&opts.SiteUpload, "site-upload", "", "Process a single tracker upload flow")
@@ -369,8 +372,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.UnattendedConfirm, "unattended_confirm", false, "Unattended mode with prompts")
 	fs.BoolVar(&opts.SkipDupeCheck, "sdc", false, "Skip dupe check")
 	fs.BoolVar(&opts.SkipDupeCheck, "skip-dupe-check", false, "Skip dupe check")
-	fs.BoolVar(&opts.SkipDupeAsActual, "sda", false, "Skip dupe asking")
-	fs.BoolVar(&opts.SkipDupeAsActual, "skip-dupe-asking", false, "Skip dupe asking")
+	fs.BoolVar(&opts.SkipDupeAsActual, "sda", false, "Skip trackers with duplicate evidence without asking")
+	fs.BoolVar(&opts.SkipDupeAsActual, "skip-dupe-asking", false, "Skip trackers with duplicate evidence without asking")
 	fs.BoolVar(&opts.DoubleDupeCheck, "ddc", false, "Double dupe check")
 	fs.BoolVar(&opts.DoubleDupeCheck, "double-dupe-check", false, "Double dupe check")
 	fs.BoolVar(&opts.Commentary, "mc", false, "Mark release as containing commentary")
@@ -380,7 +383,6 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.StreamOptimized, "st", false, "Mark release as stream optimized")
 	fs.BoolVar(&opts.StreamOptimized, "stream", false, "Mark release as stream optimized")
 	fs.BoolVar(&opts.WebDV, "webdv", false, "Mark release as WEB-DV")
-	fs.BoolVar(&opts.NotAnime, "not-anime", false, "Force release to be treated as not anime")
 	fs.BoolVar(&opts.Anime, "anime", false, "Force release to be treated as anime")
 	fs.BoolVar(&opts.UseSeasonEpisode, "use-season-episode", false, "Use the explicit season and episode values")
 	fs.BoolVar(&opts.InputOnly, "input-only", false, "Prepare and evaluate local tracker input without remote tracker work")
@@ -472,9 +474,6 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 	if visited["nohash"] && visited["rehash"] {
 		return errors.New("nohash and rehash cannot be used together")
 	}
-	if visited["anime"] && visited["not-anime"] {
-		return errors.New("anime and not-anime cannot be used together")
-	}
 	if visited["manual_frames"] {
 		if _, err := parseManualFrames(opts.ManualFrames); err != nil {
 			return err
@@ -537,6 +536,12 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 			return errors.New("--queue requires a non-empty queue name")
 		}
 		opts.QueueName = trimmed
+	}
+	if (visited["refresh-queue"] || visited["retry-queue"]) && opts.QueueName == "" {
+		return errors.New("--refresh-queue and --retry-queue require --queue")
+	}
+	if opts.QueueName != "" && (opts.Cleanup || opts.DeleteTmp) {
+		return errors.New("saved queues cannot be combined with --cleanup or --delete-tmp; manage stored releases separately")
 	}
 	if opts.ExportConfigPlaintext && !visited["export-config"] {
 		return errors.New("--export-config-plaintext requires --export-config")
@@ -895,6 +900,8 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Execution", names: []string{
 			"queue",
 			"limit-queue",
+			"refresh-queue",
+			"retry-queue",
 			"site-check",
 			"site-upload",
 			"debug",
@@ -953,7 +960,7 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
 		{title: "Tracker Overrides", names: []string{
 			"skip-dupe-check", "skip-dupe-asking", "double-dupe-check", "foreign", "opera", "asian", "disctype",
-			"commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "anon", "draft", "modq", "channel",
+			"commentary", "personalrelease", "stream", "webdv", "anime", "anon", "draft", "modq", "channel",
 		}},
 		{title: "Screenshots and Images", names: []string{
 			"screens",
@@ -1200,9 +1207,6 @@ func buildMetadataOverrides(opts cliOptions, visited map[string]bool) api.Metada
 	if visited["webdv"] {
 		overrides.WebDV = boolPtr(opts.WebDV)
 	}
-	if visited["not-anime"] {
-		overrides.Anime = boolPtr(false)
-	}
 	if visited["anime"] {
 		overrides.Anime = boolPtr(opts.Anime)
 	}
@@ -1252,7 +1256,7 @@ func isCLIInputCorrectionFlag(name string) bool {
 		"3d",
 		"season", "episode", "episode-title", "manual-year", "daily", "use-season-episode", "no-season", "no-year", "no-aka", "no-tag",
 		"no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio", "region", "distributor",
-		"original-language", "commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "alternate-title",
+		"original-language", "commentary", "personalrelease", "stream", "webdv", "anime", "alternate-title",
 		"genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
 		"track-languages", "track-audio-origin", "reset-input", "confirm-input",
 	}, name)

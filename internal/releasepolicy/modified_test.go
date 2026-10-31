@@ -4,6 +4,7 @@
 package releasepolicy
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -274,6 +275,48 @@ func TestIsRenamedRelease(t *testing.T) {
 			}
 			if got && reason == "" {
 				t.Fatal("expected a non-empty reason when renamed")
+			}
+		})
+	}
+}
+
+func TestSelectedFileIgnoresContainingLibraryName(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Example (2026) {tmdb-123}")
+	modified, reason := DetectModifiedRelease(ModifiedReleaseSubject{
+		SourcePath: root,
+		VideoPath:  filepath.Join(root, "Example.2026.1080p.WEB-DL-GRP.mkv"),
+		Release:    api.ReleaseInfo{Group: "GRP"},
+	})
+	if modified {
+		t.Fatalf("unselected folder caused modification warning: %s", reason)
+	}
+}
+
+func TestModificationChecksSelectedFilesAndRetainedFolder(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Example {tmdb-123}")
+	clean := filepath.Join(root, "Example.S01E01.1080p.WEB-DL-GRP.mkv")
+	renamed := filepath.Join(root, "Example S01E02 {tvdb-123}.mkv")
+	for _, test := range []struct {
+		name  string
+		files []string
+		keep  bool
+		want  bool
+	}{
+		{"clean selected file", []string{clean}, false, false},
+		{"non-primary selected file", []string{clean, renamed}, false, true},
+		{"retained folder", []string{clean}, true, true},
+		{"retained file", []string{renamed}, true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, _ := DetectModifiedRelease(ModifiedReleaseSubject{
+SourcePath: root,
+ VideoPath: clean,
+ FileList: test.files,
+ CheckSourceFolder: test.keep,
+ Release: api.ReleaseInfo{Group: "GRP"},
+})
+			if got != test.want {
+				t.Fatalf("modified=%v, want %v", got, test.want)
 			}
 		})
 	}

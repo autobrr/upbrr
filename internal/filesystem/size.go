@@ -16,7 +16,8 @@ import (
 )
 
 // SourceSize returns content size in bytes. Disc sources walk the full tree and
-// report traversal errors. Other sources prefer nonblank fileList entries,
+// report traversal errors; a BDMV ISO reports its physical file size. Other
+// sources prefer nonblank fileList entries,
 // fall back to videoPath when none remain, and silently skip missing,
 // inaccessible, or non-regular files.
 func SourceSize(ctx context.Context, sourcePath, discType string, fileList []string, videoPath string) (int64, error) {
@@ -26,7 +27,7 @@ func SourceSize(ctx context.Context, sourcePath, discType string, fileList []str
 	}
 
 	if strings.TrimSpace(discType) != "" {
-		return discTreeSize(ctx, trimmed)
+		return discTreeSize(ctx, trimmed, strings.EqualFold(strings.TrimSpace(discType), "BDMV"))
 	}
 
 	paths := make([]string, 0, len(fileList)+1)
@@ -65,7 +66,10 @@ func SourceSize(ctx context.Context, sourcePath, discType string, fileList []str
 	return total, nil
 }
 
-func discTreeSize(ctx context.Context, root string) (int64, error) {
+func discTreeSize(ctx context.Context, root string, allowImage bool) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context canceled: %w", err)
+	}
 	info, err := os.Stat(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -74,6 +78,9 @@ func discTreeSize(ctx context.Context, root string) (int64, error) {
 		return 0, fmt.Errorf("filesystem: path %q: %w", root, err)
 	}
 	if !info.IsDir() {
+		if allowImage && info.Mode().IsRegular() && strings.EqualFold(filepath.Ext(root), ".iso") {
+			return info.Size(), nil
+		}
 		return 0, nil
 	}
 

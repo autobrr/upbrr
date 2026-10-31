@@ -77,6 +77,15 @@ export function WorkflowRequiredActions({
                   <button className="ghost" type="button" onClick={() => onConfirm(action, true)}>
                     Continue upload
                   </button>
+                  {action.releaseRule === "modified_release" && (
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={() => onConfirm(action, false)}
+                    >
+                      Decline upload
+                    </button>
+                  )}
                 </div>
               ) : action.kind === "reconcile_submission" ? (
                 <div>

@@ -16,6 +16,8 @@ import (
 type ModifiedReleaseSubject struct {
 	SourcePath         string
 	VideoPath          string
+	FileList           []string
+	CheckSourceFolder  bool
 	DiscType           string
 	PersonalRelease    bool
 	SceneRenamed       bool
@@ -48,8 +50,8 @@ type ModifiedReleaseSubject struct {
 // Groups in standardRenameCheckSkippedGroups skip only the heuristic checks;
 // SceneRenamed remains authoritative for those groups.
 //
-// Both the source path (folder) and the primary video file are checked, since the
-// tracker inspects the file (MediaInfo "Complete name") and the in-torrent names.
+// Selected media filenames are checked. The containing folder is checked only
+// when keep-folder retains that name in the torrent.
 func DetectModifiedRelease(meta ModifiedReleaseSubject) (bool, string) {
 	if meta.PersonalRelease {
 		return false, ""
@@ -160,13 +162,20 @@ var mediaFileExtensions = map[string]struct{}{
 }
 
 // candidateReleaseNames returns the on-disk base names that should carry the
-// release name (the source path and the primary video file). A recognized media
+// release name (selected files and an explicitly retained folder). A recognized media
 // file extension is stripped; a directory basename is kept whole so dotted
 // tokens in a renamed folder name are preserved.
 func candidateReleaseNames(meta ModifiedReleaseSubject) []string {
 	names := make([]string, 0, 2)
 	seen := make(map[string]struct{}, 2)
-	for _, candidate := range []string{meta.SourcePath, meta.VideoPath} {
+	candidates := append([]string(nil), meta.FileList...)
+	if len(candidates) == 0 && meta.VideoPath != "" {
+		candidates = append(candidates, meta.VideoPath)
+	}
+	if meta.CheckSourceFolder || len(candidates) == 0 {
+		candidates = append(candidates, meta.SourcePath)
+	}
+	for _, candidate := range candidates {
 		base := strings.TrimSpace(filepath.Base(strings.TrimSpace(candidate)))
 		if base == "" || base == "." || base == string(filepath.Separator) {
 			continue

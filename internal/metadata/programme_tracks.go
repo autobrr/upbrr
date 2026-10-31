@@ -89,7 +89,7 @@ func (s *Service) inspectProgrammeTracks(ctx context.Context, meta preparationst
 			HasEncodeSettings:   settings,
 			EncodeSettingsKnown: len(video) == 1,
 			RateControl:         mediafacts.VideoRateControlFromMediaInfo(doc),
-			Resolution:          resolutionFromMediaInfo(doc, file),
+			Resolution:          resolutionFromMediaInfo(doc, file, ""),
 			VideoCodec:          codec,
 			VideoEncode:         encoder,
 			VideoEncoder:        measuredVideoEncoder(doc),

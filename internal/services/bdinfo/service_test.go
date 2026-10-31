@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	bdrunner "github.com/autobrr/go-bdinfo/pkg/bdinfo"
+	"github.com/autobrr/go-bdinfo/pkg/bdinfo/video"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -339,5 +340,123 @@ func TestEmitDetailedProgressEventFormatsCounts(t *testing.T) {
 	}
 	if lines[0] != "STREAM: 4/10 (50.0%)" {
 		t.Fatalf("unexpected line: %q", lines[0])
+	}
+}
+
+func TestISOScanFailureDoesNotPublishSuccessfulReport(t *testing.T) {
+	original := runBDInfo
+	t.Cleanup(func() { runBDInfo = original })
+	runBDInfo = func(_ context.Context, req runRequest) (bdrunner.Result, error) {
+		result := bdrunner.Result{Report: "QUICK SUMMARY:\nVideo: MPEG-4 MVC Video\n", ReportPath: req.ReportPath}
+		result.Scan.ScanError = "synthetic unreadable image"
+		return result, nil
+	}
+	source := filepath.Join(t.TempDir(), "disc.ISO")
+	if err := os.WriteFile(source, []byte("synthetic image"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "report.txt")
+	if _, err := New(api.NopLogger{}).ExecuteForPlaylist(t.Context(), source, "00800", output, false); err == nil {
+		t.Fatal("incomplete ISO scan accepted")
+	}
+	if _, err := os.Stat(output); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed scan wrote report: %v", err)
+	}
+	// Existing extracted-disc tolerance is outside the ISO admission change.
+	directory := filepath.Join(t.TempDir(), "extracted.iso")
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(api.NopLogger{}).ExecuteForPlaylist(t.Context(), directory, "00800", output, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestISOSelectedFileFailuresDoNotPublishReports(t *testing.T) {
+	original := runBDInfo
+	t.Cleanup(func() { runBDInfo = original })
+	source := filepath.Join(t.TempDir(), "Example.3D.iso")
+	if err := os.WriteFile(source, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, failed := range []string{"00800.MPLS", "00001.CLPI", "00001.M2TS", "00001.SSIF", "00099.CLPI"} {
+		t.Run(failed, func(t *testing.T) {
+			runBDInfo = func(_ context.Context, req runRequest) (bdrunner.Result, error) {
+				if !req.IncludeTimeline {
+					t.Fatal("ISO scan omitted structured error association")
+				}
+				return bdrunner.Result{
+					Report: "QUICK SUMMARY:\nPlaylist: 00800.MPLS\nVideo: MPEG-4 MVC Video\n",
+					Scan:   bdrunner.ScanInfo{FileErrors: map[string]string{failed: "synthetic read failure"}},
+					Timelines: []bdrunner.PlaylistTimeline{{
+						Name: "00800.MPLS",
+						Items: []bdrunner.PlayItem{{Angles: []bdrunner.Angle{{Source: video.Source{
+							Kind:        "ssif",
+							Path:        "BDMV/STREAM/SSIF/00001.SSIF",
+							LogicalClip: "00001.M2TS",
+						}}}}},
+					}},
+				}, nil
+			}
+			output := filepath.Join(t.TempDir(), "report.txt")
+			_, err := New(api.NopLogger{}).ExecuteForPlaylist(t.Context(), source, "00800", output, false)
+			if failed == "00099.CLPI" {
+				if err != nil {
+					t.Fatalf("unrelated warning blocked selected report: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("selected-file failure accepted")
+			}
+			if _, err := os.Stat(output); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("failed selected scan published reusable report: %v", err)
+			}
+		})
+	}
+	runBDInfo = func(context.Context, runRequest) (bdrunner.Result, error) {
+		return bdrunner.Result{
+			Report: "QUICK SUMMARY:\nPlaylist: 00800.MPLS\nVideo: MPEG-4 MVC Video\n",
+			Scan:   bdrunner.ScanInfo{FileErrors: map[string]string{"00099.CLPI": "unassociated failure"}},
+		}, nil
+	}
+	if _, err := New(api.NopLogger{}).ExecuteForPlaylist(t.Context(), source, "00800", filepath.Join(t.TempDir(), "report.txt"), false); err == nil {
+		t.Fatal("unassociated ISO errors accepted without selected-content evidence")
+	}
+}
+
+func TestISOFullScanValidatesOnlySelectedPlaylists(t *testing.T) {
+	original := runBDInfo
+	t.Cleanup(func() { runBDInfo = original })
+	source := filepath.Join(t.TempDir(), "Example.3D.iso")
+	if err := os.WriteFile(source, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, failed := range []string{"00001.M2TS", "00099.M2TS"} {
+		t.Run(failed, func(t *testing.T) {
+			runBDInfo = func(context.Context, runRequest) (bdrunner.Result, error) {
+				result := bdrunner.Result{
+					Report: "synthetic full report",
+					Scan:   bdrunner.ScanInfo{FileErrors: map[string]string{failed: "synthetic failure"}},
+				}
+				for _, pair := range [][2]string{{"00800.MPLS", "00001.M2TS"}, {"00801.MPLS", "00002.M2TS"}, {"00900.MPLS", "00099.M2TS"}} {
+					result.Timelines = append(result.Timelines, bdrunner.PlaylistTimeline{
+						Name: pair[0],
+						Items: []bdrunner.PlayItem{{Angles: []bdrunner.Angle{{Source: video.Source{
+							LogicalClip: pair[1],
+							Path:        "BDMV/STREAM/" + pair[1],
+						}}}}},
+					})
+				}
+				return result, nil
+			}
+			_, err := New(api.NopLogger{}).ExecuteFullScan(t.Context(), source, t.TempDir(), "00800.MPLS", "00801.MPLS")
+			if (err != nil) != (failed == "00001.M2TS") {
+				t.Fatalf("selected-set failure check for %s: %v", failed, err)
+			}
+			if _, err := New(api.NopLogger{}).ExecuteFullScan(t.Context(), source, t.TempDir(), "00700.MPLS", "00801.MPLS"); err == nil {
+				t.Fatal("missing selected playlist association accepted")
+			}
+		})
 	}
 }

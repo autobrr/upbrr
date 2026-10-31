@@ -235,7 +235,7 @@ func TestServicePreparationValidatesExactCombinedWarningSet(t *testing.T) {
 			if change == "generic strict added" {
 				subject.Assessments.MediaInfoUniqueID = api.UniqueIDStatusMissing
 			}
-			service := trackers.NewServiceWithRegistry(config.Config{}, api.NopLogger{}, nil, registry)
+			service := trackers.NewServiceWithRegistry(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}}, api.NopLogger{}, nil, registry)
 			retained, err := service.PrepareRetainedUploadPlan(t.Context(), subject, []api.TrackerReleaseProjection{{
 				TrackerID:                    "COMBINED",
 				Readiness:                    api.ReadinessStatusReady,
