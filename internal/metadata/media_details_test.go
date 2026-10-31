@@ -1916,10 +1916,10 @@ func TestDerivedNamingRequiredOmittedAndUnavailableComponents(t *testing.T) {
 			want:    "Hybrid",
 		},
 		{
-name: "opaque hybrid wording",
- role: api.NameRoleHybrid,
- edition: "Hybrid Uncut",
-},
+			name:    "opaque hybrid wording",
+			role:    api.NameRoleHybrid,
+			edition: "Hybrid Uncut",
+		},
 		{name: "unknown hybrid", role: api.NameRoleHybrid},
 		{name: "unknown repack", role: api.NameRoleRepack},
 		{name: "unknown dual audio", role: api.NameRoleDualAudio},
@@ -3079,5 +3079,126 @@ func TestHardcodedCoveragePreservesCustomBareNames(t *testing.T) {
 		if detail.Coverage != api.SubtitleCoverageUnspecified {
 			t.Fatalf("custom language acquired inferred coverage: %#v", detail)
 		}
+	}
+}
+
+func TestDeriveMediaFactsResolutionHeightFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		parsed     string
+		manual     *string
+		width      int
+		height     int
+		discType   string
+		scan       string
+		resolution string
+	}{
+		{name: "dimension fallback", resolution: "720p"},
+		{
+			name:       "portrait filename retains 1080 tier",
+			parsed:     "1080p",
+			width:      1080,
+			height:     1920,
+			resolution: "1080p",
+		},
+		{
+			name:       "portrait manual correction",
+			manual:     new("480p"),
+			width:      1080,
+			height:     1920,
+			resolution: "480p",
+		},
+		{
+			name:       "cropped DCI dimension fallback",
+			width:      2048,
+			height:     864,
+			resolution: "1080p",
+		},
+		{
+			name:       "lower filename",
+			parsed:     "540p",
+			resolution: "720p",
+		},
+		{
+			name:       "higher filename",
+			parsed:     "1080p",
+			resolution: "1080p",
+		},
+		{
+			name:       "manual correction",
+			parsed:     "540p",
+			manual:     new("480p"),
+			resolution: "480p",
+		},
+		{
+			name:       "explicit interlaced replaces filename scan",
+			parsed:     "1080p",
+			width:      1920,
+			height:     1080,
+			scan:       "Interlaced",
+			resolution: "1080i",
+		},
+		{
+			name:   "unsupported interlaced clears filename",
+			parsed: "720p",
+			scan:   "Interlaced",
+		},
+		{
+			name:       "manual correction overrides explicit scan",
+			parsed:     "720p",
+			manual:     new("720p"),
+			scan:       "Interlaced",
+			resolution: "720p",
+		},
+		{
+			name:     "unsupported DVD interlaced floor clears filename",
+			parsed:   "540i",
+			discType: "DVD",
+			scan:     "Interlaced",
+		},
+		{
+			name:       "manual DVD correction",
+			parsed:     "540i",
+			manual:     new("540i"),
+			discType:   "DVD",
+			scan:       "Interlaced",
+			resolution: "540i",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			miPath := filepath.Join(t.TempDir(), "mediainfo.json")
+			scan := tc.scan
+			if scan == "" {
+				scan = "Progressive"
+			}
+			width, height := tc.width, tc.height
+			if width == 0 {
+				width, height = 960, 720
+			}
+			payload := fmt.Sprintf(`{"media":{"track":[{"@type":"Video","Format":"AVC","Width":"%d","Height":"%d","ScanType":"%s"}]}}`, width, height, scan)
+			if err := os.WriteFile(miPath, []byte(payload), 0o600); err != nil {
+				t.Fatalf("write mediainfo: %v", err)
+			}
+			svc := NewService(&stubRepo{}, WithConfig(config.Config{}))
+			meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
+				SourcePath:           filepath.Join(t.TempDir(), "source.mkv"),
+				MediaInfoJSONPath:    miPath,
+				Release:              api.ReleaseInfo{Title: "Example Film", Resolution: tc.parsed},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Resolution: tc.manual},
+				DiscType:             tc.discType,
+			})
+			if err != nil {
+				t.Fatalf("derive media facts: %v", err)
+			}
+			if meta.Release.Resolution != tc.resolution || meta.ResolvedNaming.Resolution != tc.resolution {
+				t.Fatalf("resolution=%q resolved=%q, want %q", meta.Release.Resolution, meta.ResolvedNaming.Resolution, tc.resolution)
+			}
+			if tc.discType == "" && tc.parsed != "" && tc.parsed != tc.resolution && strings.Contains(meta.ReleaseName, tc.parsed) {
+				t.Fatalf("release name %q retains stale resolution %q", meta.ReleaseName, tc.parsed)
+			}
+			if tc.discType == "" && !strings.Contains(meta.ReleaseName, tc.resolution) {
+				t.Fatalf("release name %q lacks %q", meta.ReleaseName, tc.resolution)
+			}
+		})
 	}
 }
