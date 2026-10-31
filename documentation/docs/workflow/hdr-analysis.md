@@ -27,6 +27,8 @@ Audio and picture checks require FFmpeg. Picture checks also require supported c
 4. Click **Generate**. Review each format, picture check, and audio-track outcome after processing finishes.
 5. Preview or download successful artifacts. Select the picture-check images you want in descriptions, then inspect the generated descriptions before upload.
 
+Information icons beside the target heading, options, actions and results explain scope, units and retained-work behavior. Help supports pointer, keyboard focus and touch, and does not select targets or start work. Required evidence and coverage limitations remain visible inline.
+
 Opening the page does not start analysis. **Cancel** stops active work. **Retry** reuses retained work where compatible; **Resume** appears for a retained pending request.
 
 ### Choose native formats
@@ -38,7 +40,7 @@ Opening the page does not start analysis. **Cancel** stops active work. **Retry*
 | **Dolby Vision only**    | Request Dolby Vision metadata and its L1 brightness plot.                                      |
 | **Require both formats** | Analyze both native formats; a missing format prevents a complete result.                      |
 
-The HDR10+ peak estimator defaults to **Histogram**. Other choices are **Histogram 99th percentile**, **MaxSCL**, and **MaxSCL luminance**. Changing it can reuse complete retained metadata; it does not change decoded pixels or turn metadata into a picture measurement.
+The HDR10+ peak estimator defaults to **Histogram**. Other choices are **Last histogram value**, **Maximum scene component (MaxSCL)**, and **Scene-component luminance (MaxSCL)**. Histogram uses the maximum supplied distribution value; Last histogram value uses the final supplied value without sorting. The MaxSCL choices use the largest supplied component or a luminance estimate weighted from the three RGB components. Changing the estimator can reuse complete retained metadata; it does not change decoded pixels or turn metadata into a picture measurement.
 
 ### Choose the work to perform
 

@@ -231,7 +231,7 @@ for (const scenario of [
         scenario.screenshots,
       );
       await expectEnabledState(
-        page.getByRole("button", { name: "Descriptions" }),
+        page.getByRole("button", { name: "Descriptions", exact: true }),
         scenario.descriptions,
       );
       await expectEnabledState(
@@ -282,13 +282,15 @@ for (const tracker of ["ANT", "BTN"] as const) {
           await page.getByRole("button", { name: "Screenshots" }).click();
           await page.getByRole("button", { name: "Generate screenshots" }).click();
           await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
-          await expect(page.getByRole("button", { name: "Descriptions" })).toBeEnabled();
+          await expect(
+            page.getByRole("button", { name: "Descriptions", exact: true }),
+          ).toBeEnabled();
           await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
           await page.getByRole("button", { name: "Upload Images" }).click();
           await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
           await expect(page.getByText("1 saved")).toBeVisible();
           expect(workspace.fake.counters.imageUploads).toBe(1);
-          await page.getByRole("button", { name: "Descriptions" }).click();
+          await page.getByRole("button", { name: "Descriptions", exact: true }).click();
           await page.getByRole("button", { name: "Refresh descriptions" }).click();
           await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
           const editor = page.getByRole("textbox", { name: "Raw description for ANT" });
@@ -322,14 +324,16 @@ for (const tracker of ["ANT", "BTN"] as const) {
               .filter((artifact) => artifact.kind === "hosted_image")
               .map((artifact) => artifact.url),
           ).toEqual([`${workspace.fake.url}/image/1`]);
-          await page.getByRole("button", { name: "Descriptions" }).click();
+          await page.getByRole("button", { name: "Descriptions", exact: true }).click();
           await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
           await expect(editor).toHaveValue(editedDescription);
           await expect(rendered.locator("b")).toHaveText("ANT release notes");
           await page.getByRole("button", { name: "Upload Images" }).click();
           await expect(page.getByText("1 saved")).toBeVisible();
         } else {
-          await expect(page.getByRole("button", { name: "Descriptions" })).toBeDisabled();
+          await expect(
+            page.getByRole("button", { name: "Descriptions", exact: true }),
+          ).toBeDisabled();
         }
         await page.getByRole("button", { name: "Upload", exact: true }).click();
         await page.getByRole("button", { name: action, exact: true }).click();
@@ -348,7 +352,7 @@ for (const tracker of ["ANT", "BTN"] as const) {
           expect(workspace.fake.counters.clientInjections).toBe(0);
         }
         await expectEnabledState(
-          page.getByRole("button", { name: "Descriptions" }),
+          page.getByRole("button", { name: "Descriptions", exact: true }),
           tracker === "ANT" && action === "Run dry run",
         );
         expect(workspace.fake.counters.imageUploads).toBe(tracker === "ANT" ? 1 : 0);
@@ -744,7 +748,7 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
   },
   {
     field: "release_name.no_episode_title",
-    label: "No episode title",
+    label: "Clear episode title",
     group: "ReleaseName",
     key: "NoEpisodeTitle",
     values: [true, false],
@@ -840,7 +844,10 @@ for (const correction of releaseDetailCorrections) {
         ? await control.locator("span").first().innerText()
         : await control.inputValue();
       const expectControlValue = async (value: string) => {
-        if (languages) await expect(control).toHaveAccessibleDescription(value || "None");
+        if (languages)
+          await expect(control).toHaveAccessibleDescription(
+            new RegExp(`^${RegExp.escape(value || "None")} `),
+          );
         else await expect(control).toHaveValue(value);
       };
       const storedGroup = correction.group === "ReleaseName" ? "releaseName" : "metadata";
@@ -1234,7 +1241,10 @@ test("embedded web applies Release Details source options and persists source ID
     await fetchMetadata(page, app.url, workspace.sourcePath);
     const sourceOptions = page.getByTestId("input-source-options");
     const sourceID = sourceOptions.getByRole("textbox", { name: "BTN source ID", exact: true });
-    const client = sourceOptions.getByRole("textbox", { name: "Client search name", exact: true });
+    const client = sourceOptions.getByRole("textbox", {
+      name: "Torrent client to search",
+      exact: true,
+    });
     const skip = sourceOptions.getByRole("checkbox", { name: "Skip client search", exact: true });
     for (const values of [
       { sourceID: "12345", policy: true, skip: true, client: "example-client" },
@@ -1244,7 +1254,11 @@ test("embedded web applies Release Details source options and persists source ID
       await page.getByText("Edit Release Details", { exact: true }).click();
       await sourceOptions.locator("summary").click();
       await sourceID.fill(values.sourceID);
-      for (const label of ["Keep source folder", "Keep images", "Only resolve IDs"]) {
+      for (const label of [
+        "Keep source folder",
+        "Collect existing tracker images",
+        "Limit tracker lookup to only metadata ids",
+      ]) {
         await sourceOptions
           .getByRole("checkbox", { name: label, exact: true })
           .setChecked(values.policy);
@@ -1288,8 +1302,8 @@ test("embedded web applies Release Details source options and persists source ID
       // Preparation/search options are per-command choices; source IDs are durable facts.
       for (const label of [
         "Keep source folder",
-        "Keep images",
-        "Only resolve IDs",
+        "Collect existing tracker images",
+        "Limit tracker lookup to only metadata ids",
         "Skip client search",
       ]) {
         await expect(
@@ -1322,7 +1336,7 @@ test("embedded web distinguishes a cleared Release Details provider ID from Auto
 
     await page.getByText("Edit Release Details", { exact: true }).click();
     const malRow = page.locator('[data-correction-field="identity.mal"]');
-    const malInput = page.getByRole("textbox", { name: "MAL ID", exact: true });
+    const malInput = page.getByRole("textbox", { name: "MyAnimeList ID", exact: true });
     await expect(malInput).toHaveValue("");
     await expect(malRow.getByText("Automatic value", { exact: true })).toBeVisible();
     await malInput.fill("0");
@@ -1339,7 +1353,7 @@ test("embedded web distinguishes a cleared Release Details provider ID from Auto
     await expect(malInput).toHaveValue("");
     await expect(malRow.getByText("Manual value · Applied", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Auto MAL ID" }).click();
+    await page.getByRole("button", { name: "Auto MyAnimeList ID" }).click();
     const reset = waitForAppMethod(page, "OpenActiveInput");
     await page.getByRole("button", { name: "Refresh metadata" }).click();
     await expect((await reset).ok()).toBe(true);
@@ -1444,7 +1458,7 @@ test("embedded web retains Release Details corrections without downstream workfl
     await page.getByText("Edit Release Details", { exact: true }).click();
     const inputEditor = page.getByTestId("input-correction-editor");
     const dupeCheck = page.getByRole("button", { name: "Dupe Check" });
-    for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze", "MAL"]) {
+    for (const provider of ["TMDB", "IMDb", "TVDB", "TVmaze", "MyAnimeList"]) {
       await expect(
         page.getByRole("button", { name: `Remove ${provider} ID`, exact: true }),
       ).toBeEnabled();
@@ -1616,7 +1630,7 @@ test("embedded web retains Release Details corrections without downstream workfl
     await expect(removeTMDB).toHaveText("Removed");
     await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).toHaveValue("");
     await expect(page.getByRole("button", { name: /^TMDB \d+ Source:/ })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Remove IMDB ID", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Remove IMDb ID", exact: true })).toBeEnabled();
     expect(workspace.fake.counters).toEqual(reopenedCounters);
   } finally {
     await app?.stop();
@@ -2036,7 +2050,7 @@ test("embedded web restores edited descriptions after reopening an input", async
     await page.getByRole("button", { name: "Upload Images" }).click();
     await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
     await expect(page.getByText("1 saved")).toBeVisible();
-    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
@@ -2117,7 +2131,7 @@ test("embedded web restores edited descriptions after reopening an input", async
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
     await runDuplicateCheck(page);
-    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue(editedDescription);
@@ -2179,7 +2193,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await page.getByRole("button", { name: "Screenshots" }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
-    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
@@ -2370,7 +2384,7 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     await expect(page.getByRole("button", { name: "Capture DVD menus" })).toBeVisible();
     await expect(page.getByText("0 captured menu image(s)")).toBeVisible();
 
-    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await expect(page.getByRole("button", { name: "Refresh descriptions" })).toBeEnabled();
     await page.getByRole("button", { name: "Expand" }).click();
@@ -2400,7 +2414,7 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     await expect.poll(() => workspace.fake.counters.imageUploads).toBe(6);
     await expect(page.getByText("6 saved")).toBeVisible();
 
-    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await expect(page.getByRole("button", { name: "Refresh descriptions" })).toBeEnabled();
     await page.getByRole("button", { name: "Expand" }).click();

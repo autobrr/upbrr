@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { FieldHelp } from "../../components/ui/field-help";
 import { pageStyle } from "../../components/ui/pageStyle";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
@@ -1731,11 +1732,28 @@ export default function InputPage(props: Props) {
               <summary className={editDropdownSummaryClass}>Edit Release Details</summary>
               <div className="mt-3 grid gap-[9px]">
                 <InputCorrectionEditor facet={facet} />
-                <div className="flex justify-end">
+                {hasPreview ? (
+                  <p className="helper">
+                    Reset data + refresh forces fresh preparation and renewed downstream review.
+                    Saved corrections remain in effect.
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <FieldHelp
+                    label="Release preparation actions"
+                    id="release-preparation-actions-help"
+                  >
+                    Refresh metadata or Retry metadata verifies the source and applies pending
+                    corrections to a prepared generation. Auto changes take effect at that point
+                    too. Reset data + refresh forces fresh preparation while retaining saved
+                    corrections. Preparation stops before duplicate searches, analysis, upload and
+                    client injection.
+                  </FieldHelp>
                   {hasPreview ? (
                     <button
                       className="ghost"
                       type="button"
+                      aria-describedby="release-preparation-actions-help"
                       onClick={handleResetMetadata}
                       disabled={loading}
                     >
@@ -1745,6 +1763,7 @@ export default function InputPage(props: Props) {
                   <button
                     className="primary"
                     type="button"
+                    aria-describedby="release-preparation-actions-help"
                     onClick={handleRefresh}
                     disabled={refreshDisabled}
                   >

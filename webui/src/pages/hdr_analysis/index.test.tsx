@@ -3,6 +3,7 @@
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import type { HDRAnalysisFacet } from "../../releaseSession/types";
 import HDRAnalysisPage from "./index";
 
@@ -712,4 +713,29 @@ it("restores bounded mode, audio-off, active-area and decoder controls", () => {
   expect(screen.getByLabelText("Analyze audio")).not.toBeChecked();
   expect(screen.getByLabelText("Active-area borders")).toBeChecked();
   expect(screen.getByLabelText("Video decoder threads (0 uses the mode default)")).toHaveValue(4);
+});
+
+it("describes conditional comparison controls and keeps warnings inline while help is open", async () => {
+  const user = userEvent.setup();
+  const value = facet();
+  render(<HDRAnalysisPage facet={value} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  fireEvent.change(screen.getByRole("combobox", { name: "Analysis mode" }), {
+    target: { value: "manual" },
+  });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Brightness grade comparison" }));
+  const offset = screen.getByRole("spinbutton", { name: "Confirmed frame offset (B − A)" });
+  expect(offset).toHaveAccessibleDescription(/B frame = A frame \+ offset/);
+  expect(
+    screen.getByRole("textbox", { name: "Common crop: left,top,width,height" }),
+  ).toHaveAccessibleDescription(/coded pixels/);
+  const help = screen.getByRole("button", { name: "Help for Brightness grade comparison" });
+  await user.hover(help);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("not automatic confirmation");
+  expect(
+    screen.getByText("Select source B and supply an explicit offset and even crop dimensions."),
+  ).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: "Brightness grade comparison" })).toBeChecked();
+  await user.keyboard("{Escape}");
+  expect(value.generate).not.toHaveBeenCalled();
+  expect(value.selectComparison).not.toHaveBeenCalled();
 });

@@ -1158,14 +1158,16 @@ describe("InputPage", () => {
     );
 
     fireEvent.click(screen.getByText("Edit Release Details"));
-    fireEvent.change(screen.getByLabelText("No episode title"), { target: { value: "yes" } });
-    fireEvent.change(screen.getByLabelText("No distributor"), { target: { value: "yes" } });
+    fireEvent.change(screen.getByLabelText("Clear episode title"), { target: { value: "yes" } });
+    fireEvent.change(screen.getByLabelText("Clear distributor"), { target: { value: "yes" } });
 
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(1, { NoEpisodeTitle: true });
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(2, { NoDistributor: true });
-    fireEvent.change(screen.getByLabelText("No edition"), { target: { value: "yes" } });
+    fireEvent.change(screen.getByLabelText("Suppress edition labels"), {
+      target: { value: "yes" },
+    });
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(3, { NoEdition: true });
-    fireEvent.change(screen.getByLabelText("No edition"), { target: { value: "no" } });
+    fireEvent.change(screen.getByLabelText("Suppress edition labels"), { target: { value: "no" } });
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(4, { NoEdition: false });
   });
 
@@ -1186,10 +1188,10 @@ describe("InputPage", () => {
     );
 
     fireEvent.click(screen.getByText("Edit Release Details"));
-    fireEvent.click(screen.getByRole("button", { name: "Remove MAL ID" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove MyAnimeList ID" }));
     expect(facet.changeIdentity).toHaveBeenLastCalledWith({ MALID: 0 });
 
-    for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze"]) {
+    for (const provider of ["TMDB", "IMDb", "TVDB", "TVmaze"]) {
       fireEvent.click(screen.getByRole("button", { name: `Remove ${provider} ID` }));
     }
     expect(facet.changeIdentity).toHaveBeenCalledTimes(5);
@@ -1233,7 +1235,7 @@ describe("InputPage", () => {
     const { rerender } = render(<InputPage facet={facet} {...pageProps} />);
 
     fireEvent.click(screen.getByText("Edit Release Details"));
-    for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze", "MAL"]) {
+    for (const provider of ["TMDB", "IMDb", "TVDB", "TVmaze", "MyAnimeList"]) {
       expect(screen.getByRole("button", { name: `Remove ${provider} ID` })).toBeDisabled();
     }
 
@@ -1344,14 +1346,14 @@ describe("InputPage", () => {
       },
     };
     render(<InputCorrectionEditor facet={facet} />);
-    fireEvent.change(screen.getByLabelText("IMDB ID"), { target: { value: "keep-invalid" } });
+    fireEvent.change(screen.getByLabelText("IMDb ID"), { target: { value: "keep-invalid" } });
     for (const invalid of ["invalid", "invalid-again"]) {
       fireEvent.focus(screen.getByLabelText("TMDB ID"));
       fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: invalid } });
       fireEvent.click(screen.getByRole("button", { name: "Auto TMDB ID" }));
       expect(screen.getByLabelText("TMDB ID")).toHaveValue("101");
       expect(screen.getByLabelText("TMDB ID")).toHaveAttribute("aria-invalid", "false");
-      expect(screen.getByLabelText("IMDB ID")).toHaveValue("keep-invalid");
+      expect(screen.getByLabelText("IMDb ID")).toHaveValue("keep-invalid");
     }
     expect(facet.resetCorrection).toHaveBeenCalledTimes(2);
   });
@@ -2325,7 +2327,7 @@ describe("InputPage", () => {
     fireEvent.click(screen.getByText("Source options", { exact: true }));
     fireEvent.change(screen.getByLabelText("AITHER source ID"), { target: { value: "123" } });
     expect(facet.changeTrackerSourceID).toHaveBeenCalledWith("AITHER", "123");
-    fireEvent.click(screen.getByLabelText("Keep images"));
+    fireEvent.click(screen.getByLabelText("Collect existing tracker images"));
     expect(facet.changePreparationPolicy).toHaveBeenCalledWith({
       keepFolder: false,
       keepImages: true,
@@ -2891,7 +2893,7 @@ describe("required saved release facts", () => {
           if (name === field) {
             expect(control).toHaveAttribute("aria-invalid", "true");
             expect(control).toHaveAccessibleDescription(
-              "Required fact missing from saved metadata.",
+              /Required fact missing from saved metadata\./,
             );
             expect(control).toHaveClass("border-destructive");
           } else {
@@ -3014,4 +3016,35 @@ describe("required saved release facts", () => {
     for (const name of fields)
       expect(screen.getByRole("combobox", { name })).not.toHaveAttribute("aria-invalid", "true");
   });
+});
+
+it("keeps repeated track help independent without changing corrections or preparing Input", async () => {
+  const user = userEvent.setup();
+  const base = readyInputFacet(1);
+  const release = preparedRelease();
+  const first = release.Media.Tracks[0]!;
+  release.Media.Tracks = [first, { ...first, ID: "audio:resource-2:1", ResourceID: "resource-2" }];
+  const facet: InputFacet = { ...base, view: { ...base.view, release } };
+  render(<InputCorrectionEditor facet={facet} />);
+  fireEvent.click(screen.getByText("Inspected tracks", { exact: true }));
+  const controls = screen.getAllByRole("textbox", { name: "Audio track 1 languages" });
+  expect(controls).toHaveLength(2);
+  const descriptions = controls.map((control) => control.getAttribute("aria-describedby"));
+  expect(new Set(descriptions).size).toBe(2);
+  for (const control of controls) {
+    expect(control).toHaveAccessibleDescription(/this inspected track only/);
+  }
+  const helps = screen.getAllByRole("button", { name: "Help for Audio track 1 languages" });
+  await user.pointer([
+    { keys: "[TouchA>]", target: helps[1] },
+    { keys: "[/TouchA]", target: helps[1] },
+  ]);
+  expect(screen.getByRole("tooltip")).toHaveTextContent("bound to its track manifest");
+  expect(helps[0]).toHaveAttribute("aria-expanded", "false");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  expect(controls[1]).toHaveAccessibleDescription(/this inspected track only/);
+  expect(facet.changeMetadata).not.toHaveBeenCalled();
+  expect(facet.resetCorrection).not.toHaveBeenCalled();
+  expect(facet.prepareSource).not.toHaveBeenCalled();
 });
