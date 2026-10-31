@@ -88,6 +88,11 @@ func (a *programmeReportAnalyzer) Analyze(_ context.Context, target string) (str
 func TestProgrammeInspectionRefreshesPrimaryAndRejectsIncompleteReports(t *testing.T) {
 	root := t.TempDir()
 	first, second := filepath.Join(root, "a.mkv"), filepath.Join(root, "b.mkv")
+	for _, file := range []string{first, second} {
+		if err := os.WriteFile(file, []byte("synthetic media"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	analyzer := &programmeReportAnalyzer{report: packMediaReport}
 	service := newTestService(t,
 		&stubRepo{},
@@ -157,6 +162,11 @@ func TestProgrammeDerivationUsesFreshPrimaryTechnicalEvidence(t *testing.T) {
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}),
 	)
 	first, second := filepath.Join(root, "a.mkv"), filepath.Join(root, "b.mkv")
+	for _, file := range []string{first, second} {
+		if err := os.WriteFile(file, []byte("synthetic media"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	state := preparationstate.State{
 		SourcePath:           root,
 		VideoPath:            first,
@@ -188,6 +198,9 @@ func TestProgrammeDerivationUsesFreshPrimaryTechnicalEvidence(t *testing.T) {
 func TestSingleResourceInspectionOverridesMisleadingNames(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "Example.2160p.avi")
+	if err := os.WriteFile(file, []byte("synthetic media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	stale := filepath.Join(root, "old.json")
 	if err := os.WriteFile(stale, []byte(packMediaReport), 0o600); err != nil {
 		t.Fatal(err)

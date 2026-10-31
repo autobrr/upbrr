@@ -32,6 +32,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -795,13 +796,13 @@ type e2eTorrentService struct {
 }
 
 func (s e2eTorrentService) Create(_ context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
-	root := filepath.Dir(strings.TrimSpace(s.dbPath))
-	if root == "." || root == "" {
-		root = os.TempDir()
+	root, err := db.Subdir(s.dbPath, "tmp")
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("e2e torrent: tmp root: %w", err)
 	}
-	dir := filepath.Join(root, "e2e-artifacts")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return api.TorrentResult{}, fmt.Errorf("e2e torrent: mkdir: %w", err)
+	dir, _, err := paths.ReleaseTempDirFor(root, meta.SourcePath, api.ReleaseInfo{})
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("e2e torrent: release owner: %w", err)
 	}
 	info, err := e2eTorrentInfo(meta.SourcePath)
 	if err != nil {
@@ -1304,7 +1305,7 @@ func (s e2eDVDMenuService) Capture(
 	}
 	images := make([]api.DVDMenuCaptureImage, 0, limit)
 	for index, disc := range discs[:limit] {
-		image, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(subject.SourcePath), "menu-"+disc.ID, index+1)
+		image, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, subject.SourcePath, "menu-"+disc.ID, index+1)
 		if err != nil {
 			return api.DVDMenuCaptureResult{}, err
 		}
@@ -1750,7 +1751,7 @@ type e2eImageService struct {
 }
 
 func (s e2eImageService) ListCandidates(_ context.Context, meta api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
-	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), "", 1)
+	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, meta.SourcePath, "", 1)
 	if err != nil {
 		return nil, err
 	}
@@ -1940,14 +1941,15 @@ func (s e2eScreenshotService) PreviewFrame(
 	}, nil
 }
 
-func (s e2eScreenshotService) Delete(ctx context.Context, _ api.ScreenshotSubject, imagePath string) error {
+func (s e2eScreenshotService) Delete(ctx context.Context, subject api.ScreenshotSubject, imagePath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	root, err := filepath.Abs(filepath.Join(s.tmpRoot, "e2e"))
+	root, _, err := paths.ReleaseTempDirFor(s.tmpRoot, subject.SourcePath, subject.Release)
 	if err != nil {
 		return fmt.Errorf("e2e screenshots: resolve managed root: %w", err)
 	}
+	root = filepath.Join(root, "e2e")
 	target, err := filepath.Abs(strings.TrimSpace(imagePath))
 	if err != nil {
 		return fmt.Errorf("e2e screenshots: resolve delete target: %w", err)
@@ -1979,7 +1981,7 @@ func (s e2eScreenshotService) SaveFinalSelections(ctx context.Context, meta api.
 }
 
 func (s e2eScreenshotService) imageAt(meta api.ScreenshotSubject, discID string, index int) (api.ScreenshotImage, error) {
-	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), discID, index)
+	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, meta.SourcePath, discID, index)
 }
 
 func e2eScreenshotDiscName(meta api.ScreenshotSubject, discID string) string {
@@ -2004,10 +2006,7 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, s
 	if err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: read fixture: %w", err)
 	}
-	release := strings.TrimSpace(releaseName)
-	if release == "" {
-		release = "e2e-release"
-	}
+	release := filepath.Base(strings.TrimSpace(releaseName))
 	if strings.TrimSpace(scope) != "" {
 		release += "-" + strings.TrimSpace(scope)
 	}
@@ -2019,7 +2018,11 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, s
 			return r
 		}
 	}, release)
-	managedDir := filepath.Join(root, "e2e", release)
+	owner, _, err := paths.ReleaseTempDirFor(root, releaseName, api.ReleaseInfo{})
+	if err != nil {
+		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: resolve release owner: %w", err)
+	}
+	managedDir := filepath.Join(owner, "e2e", release)
 	if err := os.MkdirAll(managedDir, 0o755); err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: create managed dir: %w", err)
 	}

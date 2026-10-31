@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -102,6 +103,18 @@ func TestHDRPackUsesOnlyPrimaryReportAndTarget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			ownedDir, _, resolveErr := paths.ReleaseTempPathFor(filepath.Join(base, "tmp"), source, api.ReleaseInfo{})
+			if resolveErr != nil {
+				t.Fatal(resolveErr)
+			}
+			for _, report := range []string{"mediainfo.txt", "MediaInfo.json", "mediainfo.identity.json"} {
+				if _, err := os.Stat(filepath.Join(ownedDir, report)); err != nil {
+					t.Fatalf("missing primary report %s: %v", report, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(base, "tmp", "hdr-mediainfo")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("independent cache created: %v", err)
+			}
 			if analyzer.calls[first] != 1 || len(analyzer.calls) != 1 {
 				t.Fatalf("expected only one primary analysis, calls=%v", analyzer.calls)
 			}
@@ -148,16 +161,34 @@ func TestHDRPackUsesOnlyPrimaryReportAndTarget(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(targets, reused) || analyzer.calls[first] != 1 || len(analyzer.calls) != 1 {
 				t.Fatalf("restart changed targets or rescanned media: targets=%+v calls=%v err=%v", reused, analyzer.calls, err)
 			}
+			// Old saved generations must not preserve the external cache layout.
+			previous := prepared.Release
+			previous.Compatibility.ContractVersion = "prepared-release-v54"
+			if err := repo.CommitPreparedRelease(t.Context(), previous); err != nil {
+				t.Fatal(err)
+			}
+			restored, err := preparedrelease.New(repo, identity, collector)
+			if err != nil {
+				t.Fatal(err)
+			}
+			upgraded, err := restored.Prepare(t.Context(), input)
+			if err != nil || upgraded.Release.Generation != previous.Generation+1 || analyzer.calls[first] != 1 {
+				t.Fatalf("legacy generation recovery: generation=%d calls=%v err=%v", upgraded.Release.Generation, analyzer.calls, err)
+			}
 			// Explicit inspection of an unselected file remains available and separately cached.
-			evidence, err := service.InspectHDRComparison(t.Context(), second, prepared.Release.Compatibility.SourceFingerprint)
+			evidence, err := service.InspectHDRComparison(t.Context(), ref, second, prepared.Release.Compatibility.SourceFingerprint)
 			if err != nil || evidence.HDR10Plus == test.hdr10Plus || analyzer.calls[second] != 1 {
 				t.Fatalf("explicit inspection=%+v calls=%v err=%v", evidence, analyzer.calls, err)
+			}
+			primaryReport, err := os.ReadFile(filepath.Join(ownedDir, "MediaInfo.json"))
+			if err != nil || string(primaryReport) != test.report {
+				t.Fatalf("secondary overwrote primary: %s %v", primaryReport, err)
 			}
 			calls := len(analyzer.calls)
 			primaryCalls, secondaryCalls := analyzer.calls[first], analyzer.calls[second]
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			if _, err := service.InspectHDRComparison(ctx, second, "canceled"); !errors.Is(err, context.Canceled) {
+			if _, err := service.InspectHDRComparison(ctx, ref, second, "canceled"); !errors.Is(err, context.Canceled) {
 				t.Fatalf("explicit cancellation=%v", err)
 			}
 			if _, err := service.collectSourceEvidence(ctx, testCollectionRequest(t, api.Request{SourcePath: source})); !errors.Is(err, context.Canceled) {

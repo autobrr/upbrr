@@ -7,15 +7,56 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestE2EArtifactsUseReleaseOwner(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "Example.Release.mkv")
+	if err := os.WriteFile(source, []byte("synthetic media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := t.TempDir()
+	torrent, err := (e2eTorrentService{dbPath: filepath.Join(state, "db.sqlite")}).Create(t.Context(), api.TorrentSubject{SourcePath: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, _, err := paths.ReleaseTempPathFor(filepath.Join(state, "tmp"), source, api.ReleaseInfo{})
+	if err != nil || !pathing.IsWithinRoot(owner, torrent.Path) {
+		t.Fatalf("torrent outside release owner: %s %v", torrent.Path, err)
+	}
+	shotPath := filepath.Join(t.TempDir(), "screenshot.png")
+	if err := os.WriteFile(shotPath, []byte("image fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shot, err := e2eManagedScreenshot(shotPath, filepath.Join(state, "tmp"), source, "scope", 1)
+	if err != nil || !pathing.IsWithinRoot(owner, shot.Path) || filepath.Base(filepath.Dir(shot.Path)) != filepath.Base(source)+"-scope" {
+		t.Fatalf("screenshot outside release scope: %s %v", shot.Path, err)
+	}
+	screenshots := e2eScreenshotService{tmpRoot: filepath.Join(state, "tmp")}
+	subject := api.ScreenshotSubject{SourcePath: source}
+	if err := screenshots.Delete(t.Context(), subject, torrent.Path); err == nil {
+		t.Fatal("screenshot deletion accepted a sibling torrent")
+	}
+	if _, err := os.Stat(torrent.Path); err != nil {
+		t.Fatalf("sibling torrent changed: %v", err)
+	}
+	if err := screenshots.Delete(t.Context(), subject, shot.Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(shot.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("screenshot was not deleted: %v", err)
+	}
+}
 
 func TestE2EMetadataUsesNestedManifestVideos(t *testing.T) {
 	t.Parallel()

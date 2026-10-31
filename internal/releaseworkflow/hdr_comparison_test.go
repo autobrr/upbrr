@@ -38,7 +38,7 @@ func TestCompositeHDRComparisonSelectionIsCheckpointedBeforeAnalysis(t *testing.
 	builder := &hdrBuilderFixture{unavailable: true}
 	module.hdrAnalysisBuilder = builder
 	inspections := 0
-	module.hdrComparisonInspector = func(context.Context, string, string) (api.HDRSourceEvidence, error) {
+	module.hdrComparisonInspector = func(context.Context, api.ReleaseRef, string, string) (api.HDRSourceEvidence, error) {
 		inspections++
 		return api.HDRSourceEvidence{UniqueHEVC: true}, nil
 	}
@@ -110,7 +110,7 @@ func TestHDRComparisonSelectionPreservesPrimaryAndIsolatesAuthority(t *testing.T
 		}, nil
 	}
 	mutate := false
-	module, repo := newTestModule(t, testPreparer(), WithHDRComparisonInspector(func(context.Context, string, string) (api.HDRSourceEvidence, error) {
+	module, repo := newTestModule(t, testPreparer(), WithHDRComparisonInspector(func(context.Context, api.ReleaseRef, string, string) (api.HDRSourceEvidence, error) {
 		if mutate {
 			version = "changed"
 		}

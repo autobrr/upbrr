@@ -123,7 +123,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 			fingerprint = meta.SourceFingerprint
 		}
 		var reports mediainfo.Result
-		miDoc, reports, err = inspectFileMediaInfoReports(ctx, s.mi, meta.VideoPath, fingerprint, root)
+		miDoc, reports, err = inspectReleaseMediaInfoReports(ctx, s.mi, meta, meta.VideoPath, fingerprint, root)
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("primary inspection: %w", err)
 		}
