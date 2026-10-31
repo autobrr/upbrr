@@ -7,21 +7,24 @@ description: Configure runtime logging and use the Web UI live log viewer.
 
 Open **Logging** from the main navigation to configure application logging and inspect recent activity.
 
+Use the information icon beside a label or group heading for contextual help. Focus it with the keyboard or tap it on touch screens; Escape or an outside interaction dismisses it. Help does not change settings or filters.
+
 ## Runtime settings
 
 These edits require **Save** before they become active.
 
-| Field              | Default | Effect                                                                                                          |
-| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------- |
-| **Level**          | `info`  | Sets runtime verbosity from `trace` through `error`. `trace` records the most detail.                           |
-| **File enabled**   | Off     | Writes application logs to the displayed host path.                                                             |
-| **Max total size** | `20 MB` | Sets the approximate total file budget. The per-file rotation threshold is this value divided by **Max files**. |
-| **Max files**      | `3`     | Sets the file-rotation depth used with the total-size budget.                                                   |
+| Field                          | Default | Effect                                                                                                                   |
+| ------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Runtime log level**          | `info`  | Sets runtime verbosity from `trace` through `error`. `trace` records the most detail.                                    |
+| **Write log files**            | Off     | Writes application logs to the displayed host path.                                                                      |
+| **Total log-file budget (MB)** | `20 MB` | Sets the approximate total file budget. The per-file rotation threshold is this value divided by **Retained log files**. |
+| **Retained log files**         | `3`     | Sets the file-rotation depth used with the total-size budget.                                                            |
 
-File logging requires positive **Max total size** and **Max files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled.
+File logging requires positive **Total log-file budget (MB)** and **Retained log files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled.
 
 ## Choosing a level
 
+- **Warn** highlights problems needing attention; **Error** limits output to failures.
 - **Info** shows concise progress and outcomes. Source-inspection bookkeeping without a known byte total is kept at debug; failures remain warnings.
 - **Debug** adds effective prepared-generation facts, including compatible cached results and explicit empty fields, concise provider results, and a bounded outcome for each tracker duplicate check. Provider metadata availability does not mean a new network fetch occurred.
 - **Trace** adds detailed cache decisions, parser intermediates, search pages, candidate evidence, and workflow lifecycle counters. Use it when debug does not answer the specific question being investigated.
@@ -34,12 +37,12 @@ This choice does not save the global logging setting or change another operation
 
 ## Live viewer
 
-**Connected** means the browser is receiving the live stream. The page first loads up to 1,000 recent sanitized entries, then appends new entries.
+**Connected** means the browser has subscribed to the live stream. Up to 1,000 recent sanitized entries load in the background while live events append as they arrive, so rows can appear out of time order while connecting.
 
-- Level checkboxes and search filter only the current display; they do not change runtime logging.
-- **Clear** empties the browser buffer only. It does not delete the log file or clear the backend buffer.
+- **Visible levels** and **Search logs** filter only the current display; they do not change runtime logging. Search is a case-insensitive substring match on message text; an empty search restores messages allowed by the other filters.
+- **Clear viewer** empties the browser buffer only. It does not delete the log file or clear the backend buffer.
 - With **Auto-scroll** enabled, the browser retains the latest 1,000 entries. With it disabled, the buffer can grow to 10,000 entries before dropping the oldest entries and showing a warning.
-- A muted pattern hides exact whole-message matches in the viewer. Adding, clicking, or removing a mute persists it immediately without **Save**; it does not suppress the underlying log event.
+- A muted message hides exact, case-sensitive whole-message matches in the viewer. Saved patterns trim leading and trailing whitespace, so messages with that padding are not matched after reload; clicking a row’s level badge can still hide them in the current view. Adding a message under **Muted messages**, clicking a row’s level badge, or removing a mute persists it immediately without **Save**; it does not suppress the underlying log event.
 
 Torrent-client connection diagnostics omit configured private endpoints and retain safe operation and failure context.
 

@@ -10814,6 +10814,9 @@
       "TrackerArtifactRequirements": {
         "type": "object",
         "properties": {
+          "allowEmptyDescription": {
+            "type": "boolean"
+          },
           "allowedImageHosts": {
             "type": "array",
             "items": {

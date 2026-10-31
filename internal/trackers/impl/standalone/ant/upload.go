@@ -11,12 +11,15 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -36,6 +39,8 @@ type uploadState struct {
 	manualTags   bool
 	typeName     string
 	tags         string
+	trumpRetry   bool
+	trumpReason  string
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
@@ -79,13 +84,6 @@ func submitPreparedUpload(
 	announceURL string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, antUploadURL, bytes.NewReader(body))
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: ANT request build: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", contentType)
-	httpReq.Header.Set("User-Agent", "upbrr")
-
 	client := httpclient.New(httpclient.DefaultTimeout)
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 || req.URL.Scheme != "https" || req.URL.Host != "anthelion.me" {
@@ -93,25 +91,27 @@ func submitPreparedUpload(
 		}
 		return nil
 	}
-	resp, err := client.Do(httpReq)
+	status, payload, bodyBytes, err := postPreparedUpload(ctx, client, body, contentType)
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: ANT upload request: %w", err)
+		return api.UploadSummary{}, err
 	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: ANT read response: %w", err)
-	}
-
-	payload := map[string]any{}
-	if len(bodyBytes) > 0 {
-		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			return api.UploadSummary{}, antUploadError(resp.StatusCode, payload, bodyBytes)
+	if key := trumpChallengeKey(status, payload); state.trumpRetry && key != "" {
+		body, contentType, err = trumpRetryPayload(body, contentType, key, state.trumpReason)
+		if err != nil {
+			return api.UploadSummary{}, err
+		}
+		logger.Infof("trackers: tracker=ANT state=retrying reason=reviewed_trump_challenge")
+		status, payload, bodyBytes, err = postPreparedUpload(ctx, client, body, contentType, key)
+		if err != nil {
+			return api.UploadSummary{}, fmt.Errorf("trackers: ANT trump retry: %w", trumpRetryError{cause: err, key: key})
+		}
+		// A replacement challenge is a failed retry, never permission to submit again.
+		if status < 200 || status >= 300 || !antUploadSuccess(payload) {
+			return api.UploadSummary{}, fmt.Errorf("trackers: ANT trump retry: %w", antUploadError(status, payload, bodyBytes, key))
 		}
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !antUploadSuccess(payload) {
-		return api.UploadSummary{}, antUploadError(resp.StatusCode, payload, bodyBytes)
+	if status < 200 || status >= 300 || !antUploadSuccess(payload) {
+		return api.UploadSummary{}, antUploadError(status, payload, bodyBytes)
 	}
 
 	viewURL := antString(payload["view"])
@@ -159,6 +159,105 @@ func submitPreparedUpload(
 			TorrentPath: registeredPath,
 		}},
 	}, nil
+}
+
+// trumpRetryError hides a challenge key even in transport/body-read diagnostics,
+// while preserving the cause for cancellation and uncertain-outcome classification.
+type trumpRetryError struct {
+	cause error
+	key   string
+}
+
+func (e trumpRetryError) Error() string {
+	return commonhttp.RedactErrorDetail(e.cause.Error(), e.key)
+}
+
+func (e trumpRetryError) Unwrap() error { return e.cause }
+
+// postPreparedUpload sends one captured request without transport-level retries.
+func postPreparedUpload(ctx context.Context, client *http.Client, body []byte, contentType string, secrets ...string) (int, map[string]any, []byte, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, antUploadURL, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("trackers: ANT request build: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", contentType)
+	httpReq.Header.Set("User-Agent", "upbrr")
+	response, err := commonhttp.ExecuteUpload(client, httpReq, commonhttp.UploadExecutionOptions{
+		Tracker: "ANT",
+		// Retain bounded structured bodies for every status: errors may carry a
+		// duplicate view link or challenge key. Status acceptance is checked below.
+		SuccessStatus: func(int) bool { return true },
+	})
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("trackers: ANT submit captured upload: %w", err)
+	}
+	bodyBytes := response.Body
+	payload := map[string]any{}
+	if len(bodyBytes) > 0 {
+		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+			return 0, nil, nil, antUploadError(response.StatusCode, payload, bodyBytes, secrets...)
+		}
+	}
+	return response.StatusCode, payload, bodyBytes, nil
+}
+
+// trumpChallengeKey recognizes a fresh class-based challenge, not a rejected key.
+func trumpChallengeKey(status int, payload map[string]any) string {
+	if status != http.StatusConflict {
+		return ""
+	}
+	if _, rejected := payload["key_error"]; rejected {
+		return ""
+	}
+	key, ok := payload["trump_key"].(string)
+	if !ok || strings.TrimSpace(key) != key || utf8.RuneCountInString(key) != 16 {
+		return ""
+	}
+	expires, err := time.Parse(time.RFC3339, antString(payload["expires"]))
+	if err != nil || !expires.After(time.Now()) || antString(payload["slot"]) == "" || antString(payload["error"]) == "" {
+		return ""
+	}
+	return key
+}
+
+// trumpRetryPayload adds challenge fields to the immutable captured multipart body.
+// In particular, it never reopens the torrent path after the initial submission.
+func trumpRetryPayload(body []byte, contentType, key, reason string) ([]byte, string, error) {
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, "", fmt.Errorf("trackers: ANT retry content type: %w", err)
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	var output bytes.Buffer
+	writer := multipart.NewWriter(&output)
+	for {
+		part, readErr := reader.NextPart()
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return nil, "", fmt.Errorf("trackers: ANT retry read captured payload: %w", readErr)
+		}
+		destination, createErr := writer.CreatePart(part.Header)
+		if createErr != nil {
+			return nil, "", fmt.Errorf("trackers: ANT retry copy part: %w", createErr)
+		}
+		if _, copyErr := io.Copy(destination, part); copyErr != nil {
+			return nil, "", fmt.Errorf("trackers: ANT retry copy captured payload: %w", copyErr)
+		}
+	}
+	if err := writer.WriteField("trump_key", key); err != nil {
+		return nil, "", fmt.Errorf("trackers: ANT retry write key: %w", err)
+	}
+	if reason != "" {
+		if err := writer.WriteField("trump_reason", reason); err != nil {
+			return nil, "", fmt.Errorf("trackers: ANT retry write reason: %w", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", fmt.Errorf("trackers: ANT retry close payload: %w", err)
+	}
+	return output.Bytes(), writer.FormDataContentType(), nil
 }
 
 func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDryRunEntry {
@@ -270,7 +369,10 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		fields["flagchangereason"] = "User prompted to add tags manually"
 	}
 
+	trumpRetry, trumpReason := intendedTrump(req)
 	return uploadState{
+		trumpRetry:   trumpRetry,
+		trumpReason:  trumpReason,
 		torrentPath:  torrentPath,
 		description:  description,
 		releaseName:  releaseName,
@@ -357,10 +459,13 @@ func antUploadSuccess(payload map[string]any) bool {
 
 // antUploadError preserves redacted API rejection details before status fallbacks,
 // including reasons returned in a successful HTTP response.
-func antUploadError(status int, payload map[string]any, body []byte) error {
-	if detail := commonhttp.ExtractHTTPErrorDetail(body); detail != "" {
+func antUploadError(status int, payload map[string]any, body []byte, secrets ...string) error {
+	if key, ok := payload["trump_key"].(string); ok && key != "" {
+		secrets = append(secrets, key)
+	}
+	if detail := commonhttp.ExtractHTTPErrorDetail(body, secrets...); detail != "" {
 		if viewURL := strings.TrimSpace(stringValue(payload["view"])); viewURL != "" {
-			detail += " (" + commonhttp.RedactErrorDetail(viewURL) + ")"
+			detail += " (" + commonhttp.RedactErrorDetail(viewURL, secrets...) + ")"
 		}
 		return fmt.Errorf("trackers: ANT upload failed status=%d: %s", status, detail)
 	}

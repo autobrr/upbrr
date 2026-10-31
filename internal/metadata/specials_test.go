@@ -244,6 +244,12 @@ func TestPreparedSpecialSeasonCorrectionsSurviveRestart(t *testing.T) {
 			label: "S00",
 			title: "The Special Signal",
 		},
+		{
+			name:  "plain manual zero",
+			value: new("0"),
+			label: "S00",
+			title: "The Special Signal",
+		},
 		{name: "explicit clear", value: new("")},
 		{
 			name:  "reset after restart",

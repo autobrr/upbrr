@@ -107,6 +107,12 @@ func (r *SQLiteRepository) SaveReleaseWorkflowState(
 		if err := requireWorkflowInputMutation(ctx, tx, record.OwnerID, record.WorkflowID, true); err != nil {
 			return err
 		}
+		if resolution := record.EffectResolution; resolution != nil {
+			if err := resolveReleaseWorkflowEffectUnknown(ctx, tx, record.OwnerID, record.WorkflowID,
+				resolution.Kind, resolution.ScopeID, record.UpdatedAt); err != nil {
+				return err
+			}
+		}
 		result, err := tx.ExecContext(ctx, `
 			UPDATE release_workflow_states
 			SET revision = ?, status = ?, state_json = ?, updated_at = ?

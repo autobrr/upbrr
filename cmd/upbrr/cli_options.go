@@ -255,7 +255,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.Presentation, "presentation", "", "Override presentation (IMAX, Open Matte, IMAX Open Matte); empty clears")
 	fs.StringSliceVar(&opts.ReleaseFeatures, "release-features", nil, "Override release features with comma-separated supported IDs; empty clears")
 	fs.StringVar(&opts.Edition, "repack", "", "Override edition text")
-	fs.StringVar(&opts.Season, "season", "", "Override season value (two or four digits, such as 05 or S2026)")
+	fs.StringVar(&opts.Season, "season", "", "Override season value (single number such as 5 or S2026)")
 	fs.StringVar(&opts.Episode, "episode", "", "Override episode value (single token such as 5 or E05)")
 	fs.StringVar(&opts.EpisodeTitle, "episode-title", "", "Override episode title")
 	fs.StringVar(&opts.EpisodeTitle, "manual-episode-title", "", "Override episode title")
@@ -839,6 +839,8 @@ func formatFlagUsage(fs *pflag.FlagSet, usage string) string {
 		fmt.Fprint(&builder, "      Manage the WebUI password and browse policy locally\n")
 		fmt.Fprint(&builder, "  live-test <init|cleanup> [options]\n")
 		fmt.Fprint(&builder, "      Create an isolated profile or clean up its owned hosted images\n")
+		fmt.Fprint(&builder, "  recover [options]\n")
+		fmt.Fprint(&builder, "      Reconcile interrupted external effects without activating configuration\n")
 	}
 	fmt.Fprint(&builder, "\nOptions:\n")
 	sections := cliHelpSections(fs.Name())

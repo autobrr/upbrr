@@ -414,6 +414,17 @@ type ReleaseWorkflowStateRecord struct {
 	// DescriptionReuse is a pending cache write coupled to a successful state
 	// update. It is intentionally excluded from transport and state payload JSON.
 	DescriptionReuse *ReusableDescriptionRecord `json:"-"`
+	// EffectResolution commits a verified non-completion and its workflow
+	// checkpoint together. It is not part of transport or state payload JSON.
+	EffectResolution *ReleaseWorkflowEffectResolution `json:"-"`
+}
+
+// ReleaseWorkflowEffectResolution identifies the latest effect whose verified
+// non-completion accompanies a workflow save. Started or succeeded effects reject
+// the entire save, preserving their outcome and submission fence.
+type ReleaseWorkflowEffectResolution struct {
+	Kind    WorkflowExternalEffectKind
+	ScopeID string
 }
 
 // ReleaseWorkflowStateRepository persists safe public workflow state with

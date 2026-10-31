@@ -2618,6 +2618,7 @@ export type TrackerApprovalSnapshotRef = Readonly<{
 }>;
 
 export type TrackerArtifactRequirements = Readonly<{
+  allowEmptyDescription?: boolean;
   allowedImageHosts?: readonly string[];
   bdInfo: boolean;
   description: boolean;

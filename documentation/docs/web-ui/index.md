@@ -53,6 +53,8 @@ On **Input**, focus **Source path** to choose a recently used path from this bro
 
 After a source preview is prepared, open the panel below **Edit Release Details** to inspect its technical report. Blu-ray discs show **BDInfo Preview** with the selected playlist summaries; other sources show **MediaInfo Preview**, where you can expand **Raw MediaInfo** for the original text. If a report is unavailable, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo or BDInfo only when that tracker includes it.
 
+In **Edit Release Details**, Season and Episode accept plain numbers such as `5`; click **Refresh metadata** to apply them. Generated naming uses canonical forms such as `S05E05`. Padded and prefixed values remain supported. This does not change automatic filename detection; see [naming fields](../cli/index.md#naming-fields) for bounds, specials, clearing, and reset behavior.
+
 ### Reuse tracker images
 
 With **Settings → Metadata → Keep images** enabled, preparation can retain validated screenshots from tracker data. Inspect the imported description and images on **Tracker Data**, then open **Screenshots**. When **Saved tracker images** appears, choose **Use saved images** to include those images in the workflow. upbrr can capture additional frames when the retained images do not meet the requested count or tracker requirements.
@@ -83,7 +85,9 @@ The option is not shown for direct file inputs, season packs, multi-video folder
 
 ### Correct Input facts
 
-Use **Input** to correct provider IDs, genre, release naming fields, and languages before duplicate checking. **Title** and **Original title** are read-only; **Manual year** is editable for movies and locked for TV. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. Category, Type, Source, and Resolution must be present in the saved prepared metadata before upload. When any are missing, Input shows **Required facts missing, please edit release details.** and outlines only the missing controls in red. Draft edits do not clear these indicators: apply **Refresh metadata** successfully to save each correction. A failed refresh leaves the existing indicators in place. **Auto** is complete only when its saved, derived value is present.
+In **Edit Release Details**, the information icons explain each field and grouped actions. Open help by hovering over its icon, focusing it with the keyboard, or tapping it. Escape or an outside interaction closes it; moving into the floating text keeps it readable without moving the form. Opening help does not apply edits.
+
+Use **Input** to correct provider IDs, genre, release naming fields, and languages before duplicate checking. **Title** and **Original title** are read-only; **Manual year** is editable for movies and locked for TV. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. Category, Type, Source, and Resolution must be present in the saved prepared metadata before **Dupe Check** becomes selectable. When any are missing, Input shows a prominent **Required facts missing, please edit release details.** alert and outlines only the missing controls in red. Correct the highlighted fields under **Edit Release Details**, then apply **Refresh metadata** successfully to save each correction and enable **Dupe Check**. Draft edits do not clear these indicators or unlock the page. A failed refresh leaves the existing indicators in place. **Auto** is complete only when its saved, derived value is present.
 
 Automatic resolution uses the video's measured dimensions as a minimum known resolution tier, even when the filename specifies a lower tier. Portrait video uses the same tier as its landscape equivalent: 1080×1920 is 1080p, with the original media dimensions preserved. Display and pixel aspect ratios distinguish portrait video from anamorphic landscape video stored with a narrow width. Width-based detection can still retain a higher tier for cropped video: for example, 960×720 progressive video is at least 720p, while a cropped 1920×800 frame can remain 1080p. DCI 2K and 4K widths of 2048 and 4096 pixels map to the 1080p and 2160p families, including cropped frames. An explicit MediaInfo scan type overrides a conflicting filename resolution. If the required tier has no supported label for the measured scan type, automatic resolution stays unknown rather than changing interlaced video to progressive. An explicit **Resolution** correction still takes precedence; choose **Auto** to return to detection. Imported screenshots use the same detected or manually corrected resolution for validation.
 
@@ -91,7 +95,13 @@ Automatic resolution uses the video's measured dimensions as a minimum known res
 
 Edited fields show a pending change until you apply **Refresh metadata**. Applied overrides remain marked **Manual value · Applied** after refresh. **Auto** clears the local draft and queues removal of the saved correction; the field shows **Auto reset pending** until refresh derives the automatic value. The previous prepared value may remain visible while that reset is pending.
 
-Use **Release version** to set `PROPER`, `REPACK`, their supported numbered variants, or `RERIP` independently of **Edition**. Choose **None** to remove the detected version, or **Auto** to restore detection. Leave cut or edition text in **Edition**. The legacy **No edition** option also suppresses an automatic release version; an explicit **Release version** selection takes precedence.
+Use **Release version** to set `PROPER`, `REPACK`, their supported numbered variants, or `RERIP` independently of **Edition**. Choose **None** to remove the detected version, or **Auto** to restore detection. Leave cut or edition text in **Edition**. The legacy **Suppress edition labels** option also suppresses an automatic release version; an explicit **Release version** selection takes precedence.
+
+**Omit alternate title** replaces the abbreviated No AKA name. **Omit season and episode** suppresses both name components. **Clear release group** and **Clear distributor** clear the corresponding prepared facts, so they can also affect tracker checks or payloads. The dubbed and dual-audio marker controls change the naming label; they do not identify track languages or soundtrack origins.
+
+Under **Source options**, **Collect existing tracker images** and **Limit tracker lookup to only metadata ids** use the same terminology as Settings and request those options for this preparation. Globally enabled image collection, metadata-ID-only lookup and automatic-client-search skipping still apply when the corresponding preparation box is unchecked. **Torrent client to search** is the configured client entry name, not a release search phrase; empty uses the default client selection. **Skip client search** affects discovery during preparation, independently of later injection.
+
+**Reset data + refresh** forces fresh preparation and renewed downstream review while retaining saved corrections. Ordinary **Refresh metadata** can reuse compatible results.
 
 Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. An empty list, an empty string, a removed provider ID, or explicit **No** remains a manual value until you choose **Auto**.
 
@@ -101,11 +111,11 @@ Tracker naming policies can declare mandatory rules for specific name components
 
 A complete manual name has no reliable component boundaries. If a mandatory rule cannot safely apply to it, clear the complete-name override and regenerate the automatic name. A tracker policy may explicitly rebuild it instead. Confirm the effective name shown in review: submitting an edit that would be changed by enforcement does not confirm the unseen replacement.
 
-The **Edition** field shows the detected cut and edition, or just `2in1` for a two-edition set. Editing it preserves independent **Presentation** and **Release features**. Presentation supports IMAX, Open Matte, or both; open the **Release features** dropdown to select multiple features, such as Hybrid and 4K Restoration. **None** clears that control; **Auto** restores detection. Apply **Refresh metadata** to save the change. Legacy **No edition** suppresses automatic edition-related labels; explicit presentation/features selections take precedence.
+The **Edition** field shows the detected cut and edition, or just `2in1` for a two-edition set. Editing it preserves independent **Presentation** and **Release features**. Presentation supports IMAX, Open Matte, or both; open the **Release features** dropdown to select multiple features, such as Hybrid and 4K Restoration. **None** clears that control; **Auto** restores detection. Apply **Refresh metadata** to save the change. **Suppress edition labels** suppresses automatic edition-related labels; explicit presentation/features selections take precedence.
 
 Recognized compounds such as `Director's Cut / Hybrid` split into the cut and independent feature. Every slash-separated fragment must be recognized; custom wording remains intact. Presentation/features appear immediately after Edition, or in its position when Edition is absent, subject to each tracker's naming policy. Complete manual names retain their existing authority. Feature annotations do not change measured media facts.
 
-The **3D** control offers Auto, Yes and No. Auto restores detected evidence without turning a subtype annotation into a measured 3D fact; Yes establishes effective 3D. Both preserve detected or manually selected stereoscopic subtype annotations even with legacy No edition enabled. An explicit Release features selection, including None, still takes precedence. No clears 3D without changing Edition or release version. No also suppresses effective stereoscopic subtype annotations while preserving saved feature selections for Auto. Recognized subtype annotations contribute only one literal `3D` marker in the dedicated naming position, immediately before Source rather than beside Edition. Generated names never include Full/Half SBS or OU wording; the underlying subtype facts remain available for tracker payloads. Explicit complete upload-name overrides remain unchanged.
+The **3D** control offers Auto, Yes and No. Auto restores detected evidence without turning a subtype annotation into a measured 3D fact; Yes establishes effective 3D. Both preserve detected or manually selected stereoscopic subtype annotations even with Suppress edition labels enabled. An explicit Release features selection, including None, still takes precedence. No clears 3D without changing Edition or release version. No also suppresses effective stereoscopic subtype annotations while preserving saved feature selections for Auto. Recognized subtype annotations contribute only one literal `3D` marker in the dedicated naming position, immediately before Source rather than beside Edition. Generated names never include Full/Half SBS or OU wording; the underlying subtype facts remain available for tracker payloads. Explicit complete upload-name overrides remain unchanged.
 
 A solitary Theatrical cut or edition is ignored; compound editions retain it. Review the effective selections and supporting evidence alongside the payload preview. See [editions and commentary](../trackers/index.md#editions-and-commentary) for manual corrections.
 
@@ -119,7 +129,7 @@ Input preparation stops after facts and local readiness. It does not run duplica
 
 ### Clear a metadata provider
 
-On **Input**, open **Edit Release Details** and find **Provider IDs**. Click **Remove** beside TMDB, IMDb, TVDB, TVmaze, or MAL. You can also delete an existing ID from its field.
+On **Input**, open **Edit Release Details** and find **Provider IDs**. Click **Remove** beside TMDB, IMDb, TVDB, TVmaze, or MyAnimeList. You can also delete an existing ID from its field.
 
 Click **Refresh metadata** to apply the change. The provider's ID and metadata are removed from the prepared release, and automatic lookups cannot restore them. Other providers remain available.
 
@@ -193,6 +203,8 @@ The host browser lists only configured roots unless unrestricted browsing was ex
 Imported application config does not change browse roots. The Web UI route accepts only the initial browse policy; later password and browse-policy changes require the local CLI.
 
 ## Safe first use
+
+Each **Run dry run** action performs one assessment after its prerequisites finish. Partial and failed results remain visible for review; correct any reported problems and choose **Run dry run** again to retry explicitly. Trackers that are ready in a partial report remain available for upload.
 
 Use **Dry Run** on the Upload page and disable client injection for the first test. Compare every tracker tab with the tracker's current upload form and rules before allowing submission.
 
