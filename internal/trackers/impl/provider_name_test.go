@@ -133,6 +133,35 @@ func TestUnit3DProviderNamesKeepTVDBQualifiers(t *testing.T) {
 	}
 }
 
+func TestTVDBYearDecisionAcrossUnit3DAndBHD(t *testing.T) {
+	registry := MustNewRegistry()
+	for _, tracker := range append(registry.NamesByFamily(trackers.FamilyUnit3D), "BHD") {
+		t.Run(tracker, func(t *testing.T) {
+			var names [2]string
+			for index, include := range []bool{false, true} {
+				subject := providerNameSubject(api.CanonicalCategoryTV)
+				subject.ProviderMetadata.TVDB.NameDisambiguation.IncludeYear = include
+				subject.ProviderMetadata.TVDB.NameDisambiguation.IncludeLocale = false
+				if tracker == "SP" {
+					subject.Scene = true
+				}
+				prepared := prepareProviderName(t, registry, tracker, subject, nil)
+				names[index] = prepared.Projection.UploadReleaseName
+			}
+			switch tracker {
+			case "AITHER", "DP", "HHD", "LUME", "ULCX", "YUS", "BHD":
+				if strings.Contains(names[0], " 1998 ") || !strings.Contains(names[1], " 1998 ") {
+					t.Fatalf("TVDB year decision lost: omitted=%q included=%q", names[0], names[1])
+				}
+			default:
+				if names[0] != names[1] {
+					t.Fatalf("unrelated policy consumed TVDB search decision: %q -> %q", names[0], names[1])
+				}
+			}
+		})
+	}
+}
+
 func TestUnit3DProviderNamesRejectUnboundAutomaticTitles(t *testing.T) {
 	registry := MustNewRegistry()
 	cases := []struct {

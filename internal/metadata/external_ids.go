@@ -1508,9 +1508,10 @@ func usableTVDBMetadata(metadata *api.TVDBMetadata, tvdbID int) bool {
 }
 
 // reusableTVDBNameDisambiguation reports whether collision evidence can support
-// site-specific naming without another TVDB search.
+// site-specific naming without another TVDB search. Older negative decisions
+// must be recomputed when the selected title or alias explicitly carries a year.
 func reusableTVDBNameDisambiguation(metadata *api.TVDBMetadata) bool {
-	if metadata == nil {
+	if metadata == nil || tvdbNameDisambiguationInput(metadata).ExplicitNamingYear && !metadata.NameDisambiguation.IncludeYear {
 		return false
 	}
 	status := metadata.NameDisambiguation.Status
@@ -2433,7 +2434,7 @@ func tvdbNameDisambiguationInput(metadata *api.TVDBMetadata) tvdb.NameDisambigua
 		NameEnglish:        strings.TrimSpace(metadata.NameEnglish),
 		SeriesYear:         metadata.Year,
 		OriginalCountry:    strings.TrimSpace(metadata.OriginalCountry),
-		ExplicitNamingYear: metadata.YearFromAlias,
+		ExplicitNamingYear: metadata.Year > 0 && metadata.YearFromAlias && tvdb.IsExplicitSeriesYearSource(metadata.YearSource),
 	}
 }
 

@@ -233,6 +233,34 @@ func TestBuildNameDisambiguationSearchFailureUsesExplicitYearFallback(t *testing
 	}
 }
 
+func TestNameDisambiguationPreservesExplicitYearAcrossSearchAndCache(t *testing.T) {
+	for _, results := range []string{`[]`, `[{"tvdb_id":"987650001","name":"Example Series","year":"2026"}]`} {
+		t.Run(results, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/login" {
+					_, _ = w.Write([]byte(`{"data":{"token":"synthetic-token"}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"data":` + results + `}`))
+			}))
+			t.Cleanup(server.Close)
+			client := NewClient(server.Client(), nil, "synthetic-key", "")
+			client.baseURL = server.URL
+			for _, explicit := range []bool{false, true, false, true} {
+				got := client.GetNameDisambiguation(t.Context(), NameDisambiguationInput{
+					TVDBID:             987650001,
+					NameEnglish:        "Example Series",
+					SeriesYear:         2026,
+					ExplicitNamingYear: explicit,
+				})
+				if got.IncludeYear != explicit || got.IncludeLocale || got.SameNameSeries != 0 || got.Status != api.MetadataEvidenceStatusPartial {
+					t.Fatalf("explicit=%t: disambiguation=%+v", explicit, got)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildNameDisambiguationComparesOnlyEnglishCandidateNames(t *testing.T) {
 	results := []SeriesSearchResult{
 		{

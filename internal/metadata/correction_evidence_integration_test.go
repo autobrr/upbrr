@@ -785,6 +785,7 @@ type correctionEvidenceFixture struct {
 	input         api.PrepareInput
 	http          *http.Client
 	tvdb          TVDBClient
+	imdb          IMDBClient
 	tvdbAliasYear bool
 	mu            sync.Mutex
 	calls         map[string]int
@@ -825,6 +826,7 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 		},
 		calls: make(map[string]int),
 		tvdb:  &stubTVDB{},
+		imdb:  &stubIMDB{},
 	}
 	fixture.http = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		key := request.URL.Path
@@ -854,6 +856,8 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 					t.Error("TVDB disambiguation did not search the unfiltered canonical series name")
 				}
 				body = `{"data":[{"tvdb_id":"555003","name":"Example Series","primary_language":"eng","year":"2024"}]}`
+			case "/v4/search/remoteid/555001":
+				body = `{"data":[]}`
 			case "/v4/series/555003/episodes/default":
 				body = `{"data":{"episodes":[{"id":555301,"name":"The First Signal","seasonNumber":1,"number":1,"aired":"2024-01-01"}],"slug":"example-series"}}`
 			case "/v4/episodes/555301/translations/eng":
@@ -932,7 +936,7 @@ func (f *correctionEvidenceFixture) open(t *testing.T) (*preparedrelease.Module,
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(newSRRDBDetector(f.http, "https://scene.example.invalid", "", "")),
 		WithTMDBClient(tmdb.NewClient(f.http, nil, "synthetic-api-key")),
-		WithIMDBClient(&stubIMDB{}), WithTVDBClient(f.tvdb), WithTVmazeClient(&stubTVmaze{}))
+		WithIMDBClient(f.imdb), WithTVDBClient(f.tvdb), WithTVmazeClient(&stubTVmaze{}))
 	collector, err := preparedrelease.NewEvidenceCollector(service)
 	if err != nil {
 		t.Fatal(err)
