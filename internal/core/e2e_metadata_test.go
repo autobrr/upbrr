@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,6 +41,20 @@ func TestE2EArtifactsUseReleaseOwner(t *testing.T) {
 	shot, err := e2eManagedScreenshot(shotPath, filepath.Join(state, "tmp"), source, "scope", 1)
 	if err != nil || !pathing.IsWithinRoot(owner, shot.Path) || filepath.Base(filepath.Dir(shot.Path)) != filepath.Base(source)+"-scope" {
 		t.Fatalf("screenshot outside release scope: %s %v", shot.Path, err)
+	}
+	screenshots := e2eScreenshotService{tmpRoot: filepath.Join(state, "tmp")}
+	subject := api.ScreenshotSubject{SourcePath: source}
+	if err := screenshots.Delete(t.Context(), subject, torrent.Path); err == nil {
+		t.Fatal("screenshot deletion accepted a sibling torrent")
+	}
+	if _, err := os.Stat(torrent.Path); err != nil {
+		t.Fatalf("sibling torrent changed: %v", err)
+	}
+	if err := screenshots.Delete(t.Context(), subject, shot.Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(shot.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("screenshot was not deleted: %v", err)
 	}
 }
 

@@ -1949,6 +1949,7 @@ func (s e2eScreenshotService) Delete(ctx context.Context, subject api.Screenshot
 	if err != nil {
 		return fmt.Errorf("e2e screenshots: resolve managed root: %w", err)
 	}
+	root = filepath.Join(root, "e2e")
 	target, err := filepath.Abs(strings.TrimSpace(imagePath))
 	if err != nil {
 		return fmt.Errorf("e2e screenshots: resolve delete target: %w", err)
