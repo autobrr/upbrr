@@ -6,6 +6,13 @@ import type { FieldMeta } from "../types";
 type Presentation = Pick<FieldMeta, "label" | "help">;
 const field = (label: string, help: string): Presentation => ({ label, help });
 
+/** Controls omitted from Settings; stored values and secret metadata remain intact. */
+export const hiddenSettingsFields: Record<string, readonly string[]> = {
+  Metadata: ["BTNAPI"],
+  Description: ["MultiScreens", "PackThumbSize", "CharLimit", "FileLimit", "ProcessLimit"],
+  ArrIntegration: ["EmbyDir", "EmbyTVDir"],
+};
+
 /** Display-only metadata: configuration keys and values remain owned by the existing schema. */
 export const settingsFieldPresentation: Record<string, Record<string, Presentation>> = {
   MainSettings: {
@@ -47,10 +54,6 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
   },
   Metadata: {
-    BTNAPI: field(
-      "Legacy BTN API key",
-      "Compatibility credential migrated into BTN tracker settings when needed. Configure the BTN API key under Trackers instead.",
-    ),
     SkipAutoTorrent: field(
       "Skip automatic torrent-client search",
       "Do not automatically search configured torrent clients for reusable torrents during preparation.",
@@ -68,7 +71,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
       "Collect eligible images from supported tracker descriptions for later reuse. On Screenshots, use saved images when offered; collecting them does not capture new frames. Imported comparison images remain in descriptions.",
     ),
     OnlyID: field(
-      "Limit tracker lookup to identifiers",
+      "Limit tracker lookup to only metadata ids",
       "Request identity fields rather than full description metadata from supported trackers. This restricts normal description/image enrichment; inspect the prepared result when combining with image collection.",
     ),
     UserOverrides: field(
@@ -139,7 +142,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     UseLibplacebo: field(
       "Use Vulkan/libplacebo tone mapping",
-      "Try the FFmpeg Vulkan/libplacebo capture path when tone mapping is enabled and frame overlay is disabled. Failed captures can fall back to software tone mapping.",
+      "Needed for Dolby Vision Profile 5 inputs to avoid green/purple screenshots. Uses FFmpeg Vulkan/libplacebo when tone mapping is enabled and frame overlay is disabled. Requires a compatible FFmpeg/Vulkan setup; failed captures can fall back to software tone mapping.",
     ),
     FFmpegCompression: field(
       "PNG compression level",
@@ -183,26 +186,6 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
       "Tone-mapped screenshot notice",
       "Tracker markup used when every included screenshot is known to be tone mapped. Mixed or unknown processing uses a generated evidence summary instead; the current capture setting alone is not proof.",
     ),
-    MultiScreens: field(
-      "Pack screenshot count (compatibility)",
-      "Retained for configuration compatibility. This value does not currently control season-pack screenshot counts.",
-    ),
-    PackThumbSize: field(
-      "Pack thumbnail width (compatibility)",
-      "Retained for configuration compatibility. This value does not currently resize season-pack thumbnails.",
-    ),
-    CharLimit: field(
-      "Description character limit (compatibility)",
-      "Retained for configuration compatibility. This value does not currently truncate or limit generated descriptions.",
-    ),
-    FileLimit: field(
-      "Description file limit (compatibility)",
-      "Retained for configuration compatibility. This value does not currently limit description files.",
-    ),
-    ProcessLimit: field(
-      "Description process limit (compatibility)",
-      "Retained for configuration compatibility. This value does not control screenshot capture concurrency; use Screenshot capture settings.",
-    ),
     CustomDescriptionHeader: field(
       "Description introduction",
       "Custom tracker markup prepended by supported description builders. Empty adds no custom introduction. Preview each tracker before submission.",
@@ -229,7 +212,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     BlurayImageSize: field(
       "Disc cover width (pixels)",
-      "Rendered Blu-ray.com cover width. Default: 250; non-positive values use 250. Requires available selected-release cover images.",
+      "Rendered Blu-ray.com cover width. These images are usually taller than they are wide; use a smaller width to reduce their height in descriptions. Default: 250; non-positive values use 250. Requires available selected-release cover images.",
     ),
   },
   ArrIntegration: {
@@ -240,14 +223,6 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     UseRadarr: field(
       "Look up movie sources in Radarr",
       "Match movie source paths against configured Radarr instances for IDs and release evidence. Failed or empty lookups do not block preparation.",
-    ),
-    EmbyDir: field(
-      "Emby movie directory (compatibility)",
-      "Retained for configuration compatibility. This path does not currently change source discovery or Emby integration.",
-    ),
-    EmbyTVDir: field(
-      "Emby TV directory (compatibility)",
-      "Retained for configuration compatibility. This path does not currently change TV discovery or Emby integration.",
     ),
   },
   PostUpload: {
@@ -381,11 +356,11 @@ settingsFieldPresentation.TorrentClients = {
   },
   LocalPath: {
     label: "Local path mapping roots",
-    help: "Paths as seen by upbrr, paired by item position with client path roots. Blank or unpaired entries are ignored; the most-specific matching root wins.",
+    help: "Paths as seen by upbrr, paired by item position with client path roots. Needed when upbrr and qBittorrent use different path references, such as Docker setups. Blank or unpaired entries are ignored; the most-specific matching root wins.",
   },
   RemotePath: {
     label: "Client path mapping roots",
-    help: "Corresponding paths as seen by qBittorrent. Keep these in the same item order as local path roots.",
+    help: "Corresponding paths as seen by qBittorrent. Needed when upbrr and qBittorrent use different path references, such as Docker setups. Keep these in the same item order as local path roots.",
   },
   AutomaticManagementPaths: {
     label: "Automatic-management source roots",

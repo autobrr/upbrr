@@ -32,6 +32,8 @@ Frame type reports FFmpeg's picture type (I, P, or B), or **Unknown** when that 
 
 **Cutoff screens** remains in the schema but has no current runtime reader.
 
+For Dolby Vision Profile 5 inputs, enable **Tone map HDR screenshots** and **Use Vulkan/libplacebo tone mapping**, and disable **Show frame information on captures**. Profile 5 needs Dolby Vision-aware processing to avoid green/purple screenshots. This requires a compatible FFmpeg build and Vulkan setup; capture failures can still fall back to software tone mapping. See the [FFmpeg libplacebo documentation](https://ffmpeg.org/ffmpeg-filters.html#libplacebo).
+
 ## Verify the change
 
 Save, open **Screenshots**, generate a small set, and inspect output before uploading. Libplacebo retries and falls back to the software chain when its capture path fails.

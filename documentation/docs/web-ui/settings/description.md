@@ -9,15 +9,15 @@ Use **Settings → Description** to control shared description builders. Tracker
 
 ## Layout and artwork
 
-| Field                                   | Default | Effect                                                                                      |
-| --------------------------------------- | ------- | ------------------------------------------------------------------------------------------- |
-| **Include title logo**                  | Off     | Adds a TMDB logo when one is available. Requires TMDB enrichment.                           |
-| **Logo width (pixels)**                 | `300`   | Sets the rendered logo width; non-positive values resolve to `300`.                         |
-| **Preferred logo languages**            | Empty   | Supplies preferred TMDB logo languages.                                                     |
-| **Screenshot thumbnail width (pixels)** | `350`   | Sets shared screenshot and disc-menu thumbnail width; non-positive values resolve to `350`. |
-| **Screenshots per description row**     | Empty   | Sets images per shared description row. Empty, invalid, or non-positive values use `2`.     |
-| **Include Blu-ray.com cover images**    | Off     | Adds selected blu-ray.com cover images when available.                                      |
-| **Disc cover width (pixels)**           | `250`   | Sets those cover-image widths; non-positive values resolve to `250`.                        |
+| Field                                   | Default | Effect                                                                                                                                                                 |
+| --------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Include title logo**                  | Off     | Adds a TMDB logo when one is available. Requires TMDB enrichment.                                                                                                      |
+| **Logo width (pixels)**                 | `300`   | Sets the rendered logo width; non-positive values resolve to `300`.                                                                                                    |
+| **Preferred logo languages**            | Empty   | Supplies preferred TMDB logo languages.                                                                                                                                |
+| **Screenshot thumbnail width (pixels)** | `350`   | Sets shared screenshot and disc-menu thumbnail width; non-positive values resolve to `350`.                                                                            |
+| **Screenshots per description row**     | Empty   | Sets images per shared description row. Empty, invalid, or non-positive values use `2`.                                                                                |
+| **Include Blu-ray.com cover images**    | Off     | Adds selected blu-ray.com cover images when available.                                                                                                                 |
+| **Disc cover width (pixels)**           | `250`   | Sets those cover-image widths; non-positive values resolve to `250`. Covers are usually portrait-shaped, so a smaller width also reduces their height in descriptions. |
 
 ## Text blocks
 
@@ -41,7 +41,7 @@ Imported comparison blocks remain in the description rather than becoming ordina
 
 :::note Compatibility fields
 
-**Multi screens**, **Pack thumb size**, **Char limit**, **File limit**, and Description's **Process limit** remain in the schema but have no current runtime reader.
+Legacy pack layout and description limit values are retained for configuration compatibility and are not exposed in Settings.
 
 :::
 

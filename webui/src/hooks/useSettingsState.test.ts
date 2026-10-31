@@ -21,6 +21,7 @@ import {
 } from "../test/appRequestMock";
 import type { ConfigMap, ConfigValue, TrackerCatalog, TrackerCatalogEntry } from "../types";
 import { createSettingsRenderers } from "../settings/renderers";
+import { SettingsFieldGroups } from "../settings/FieldGroups";
 import { TrackerCatalogProvider, useTrackerCatalog } from "../trackerCatalog";
 
 import {
@@ -466,6 +467,83 @@ function readPayload<T>() {
   return JSON.parse(latestPayload || "{}") as T;
 }
 
+function SettingsVisibilityHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+  return createElement(
+    "div",
+    null,
+    ...["Metadata", "Description", "ArrIntegration", "ScreenshotHandling"].map((section) =>
+      createElement(SettingsFieldGroups, {
+        key: section,
+        section,
+        fields: Object.entries((state.settingsConfigData?.[section] ?? {}) as ConfigMap).map(
+          ([key, value]) =>
+            [
+              key,
+              state.renderField(key, value, [section, key], state.sectionFieldMeta[section]?.[key]),
+            ] as const,
+        ),
+      }),
+    ),
+    createElement("button", { onClick: state.handleSaveSettings }, "Save settings"),
+  );
+}
+
+it("omits retired settings controls and preserves their saved values", async () => {
+  let persisted: ConfigMap = {
+    Metadata: { BTNAPI: "synthetic-legacy-key", OnlyID: false },
+    Description: {
+      MultiScreens: 7,
+      PackThumbSize: 173,
+      CharLimit: 91,
+      FileLimit: 13,
+      ProcessLimit: 5,
+      BlurayImageSize: 125,
+    },
+    ArrIntegration: { EmbyDir: "/synthetic/movies", EmbyTVDir: "/synthetic/tv", UseSonarr: false },
+    ScreenshotHandling: { UseLibplacebo: true, ProcessLimit: 11 },
+  };
+  const original = structuredClone(persisted);
+  const save = vi.fn(async (payload: string) => {
+    persisted = JSON.parse(payload) as ConfigMap;
+    return {
+      status: "active",
+      activeGeneration: 2,
+      impacts: [],
+      updatedAt: "2026-10-31T00:00:00Z",
+    };
+  });
+  installAppOperationMocks({
+    GetConfig: async () => JSON.stringify(persisted),
+    GetDefaultConfig: async () => JSON.stringify({}),
+    ListTrackerCatalog: async () => trackerCatalog(),
+    GetImageHostPolicyMetadata: async () => ({}),
+    SaveConfig: save,
+  });
+  render(createElement(SettingsVisibilityHarness));
+  const onlyIDs = await screen.findByLabelText("Limit tracker lookup to only metadata ids");
+  expect(screen.queryByLabelText(/^(Legacy BTN API key|BTNAPI)$/)).not.toBeInTheDocument();
+  expect(screen.getAllByRole("spinbutton")).toHaveLength(2);
+  expect(screen.queryByDisplayValue("/synthetic/movies")).not.toBeInTheDocument();
+  expect(screen.queryByDisplayValue("/synthetic/tv")).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Limits and processing" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Media paths" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Concurrent capture processes")).toHaveValue(11);
+  expect(screen.getByLabelText("Use Vulkan/libplacebo tone mapping")).toHaveAccessibleDescription(
+    /Dolby Vision Profile 5.*green\/purple/,
+  );
+  expect(screen.getByLabelText("Disc cover width (pixels)")).toHaveAccessibleDescription(
+    /taller.*smaller width.*height/,
+  );
+  await userEvent.click(onlyIDs);
+  await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
+  expect(persisted).toMatchObject({
+    ...original,
+    Metadata: { BTNAPI: "synthetic-legacy-key", OnlyID: true },
+  });
+});
+
 function AdvancedFieldMetaHarness() {
   const state = useSettingsState({ activeTab: "settings" });
   const advancedBySection = Object.fromEntries(
@@ -578,6 +656,9 @@ describe("renderTorrentClientsSection", () => {
               QbitURL: "http://localhost:8080",
               QbitUser: "user",
               QbitPass: "secret",
+              LinkedFolder: ["/synthetic/links"],
+              LocalPath: ["/synthetic/media"],
+              RemotePath: ["/synthetic/client-media"],
               AutomaticManagementPaths: ["/media", "/archive"],
             },
           },
@@ -618,6 +699,20 @@ describe("renderTorrentClientsSection", () => {
     expect(qbitScope.getByLabelText("qBittorrent WebUI URL")).toHaveValue("http://localhost:8080");
     expect(qbitScope.getByLabelText("Automatic-management source roots 1")).toHaveValue("/media");
     expect(qbitScope.getByLabelText("Automatic-management source roots 2")).toHaveValue("/archive");
+    const linked = qbitScope.getByLabelText("Link staging folders 1");
+    const automatic = qbitScope.getByLabelText("Automatic-management source roots 1");
+    const local = qbitScope.getByLabelText("Local path mapping roots 1");
+    const client = qbitScope.getByLabelText("Client path mapping roots 1");
+    expect(
+      linked.compareDocumentPosition(automatic) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      automatic.compareDocumentPosition(local) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(local.compareDocumentPosition(client) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(local).toHaveAccessibleDescription(/different path references.*Docker/);
+    expect(client).toHaveAccessibleDescription(/different path references.*Docker/);
+
     expect(
       qbitScope.getByRole("button", { name: "Remove Automatic-management source roots 1" }),
     ).toBeInTheDocument();

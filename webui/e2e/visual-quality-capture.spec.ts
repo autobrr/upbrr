@@ -666,7 +666,7 @@ for (const theme of ["minimal", "swizzin"]) {
             await settings.getByRole("switch", { name: "Show advanced" }).click();
             await expect(
               settings.getByRole("heading", { name: "Limits and processing" }),
-            ).toBeVisible();
+            ).toHaveCount(0);
             await expect(header).toHaveValue(text);
             await page.getByRole("button", { name: "Save", exact: true }).click();
             await expect(
@@ -2255,8 +2255,8 @@ test("capture all settings subsections and their visible controls", async ({ pag
       "Tone mapping",
       "Processing and compression",
     ],
-    Description: ["Content", "Screenshot layout", "Custom headers", "Limits and processing"],
-    Arr: ["Sonarr", "Radarr", "Media paths"],
+    Description: ["Content", "Screenshot layout", "Custom headers"],
+    Arr: ["Sonarr", "Radarr"],
     "Post Upload": ["Tracker handling", "Upload output", "Cross-seeding", "Client injection"],
     Trackers: ["Connection and credentials", "Upload preferences", "Client handling"],
     "Torrent Clients": ["Connection", "Folders", "Labels and tags", "Linking and path mapping"],

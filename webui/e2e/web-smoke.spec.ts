@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { expect } from "@playwright/test";
@@ -557,6 +557,98 @@ for (const rootCount of [1, 2]) {
     }
   });
 }
+
+test("embedded settings omit retired controls and keep path mapping pairs together", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    const config = await readFile(workspace.configPath, "utf8");
+    await writeFile(
+      workspace.configPath,
+      config.replace(
+        "torrent_clients: {}",
+        `torrent_clients:
+  layout:
+    type: qbit
+    qbit_url: "http://127.0.0.1"
+    linked_folder: ["/synthetic/links"]
+    automatic_management_paths: ["/synthetic/automatic"]
+    local_path: ["/synthetic/local"]
+    remote_path: ["/synthetic/client"]`,
+      ),
+    );
+    app = await startApp(workspace);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(new URL("settings", app.url).toString());
+    await page.getByRole("button", { name: "Metadata", exact: true }).click();
+    await page.getByLabel("Show advanced", { exact: true }).check();
+    await expect(
+      page.getByRole("switch", { name: "Limit tracker lookup to only metadata ids", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByLabel(/Legacy BTN API key|^BTNAPI$/)).toHaveCount(0);
+    await page.getByRole("button", { name: "Screenshot capture", exact: true }).click();
+    const vulkan = page.getByRole("button", {
+      name: "Help for Use Vulkan/libplacebo tone mapping",
+      exact: true,
+    });
+    await vulkan.hover();
+    await expect(page.getByTestId("field-help-content")).toContainText("Dolby Vision Profile 5");
+    await expect(page.getByTestId("field-help-content")).toContainText("green/purple");
+    await vulkan.press("Escape");
+    await page.getByRole("button", { name: "Description", exact: true }).click();
+    await page.getByLabel("Show advanced", { exact: true }).check();
+    await expect(
+      page.getByRole("heading", { name: "Limits and processing", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByLabel(/Pack screenshot count|Pack thumbnail width/)).toHaveCount(0);
+    const covers = page.getByRole("button", {
+      name: "Help for Disc cover width (pixels)",
+      exact: true,
+    });
+    await covers.hover();
+    await expect(page.getByTestId("field-help-content")).toContainText("smaller width");
+    await covers.press("Escape");
+    await page.getByRole("button", { name: "Sonarr and Radarr", exact: true }).click();
+    await page.getByLabel("Show advanced", { exact: true }).check();
+    await expect(page.getByRole("heading", { name: "Media paths", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Torrent Clients", exact: true }).click();
+    const card = page.getByRole("group", { name: "layout", exact: true });
+    await expect(card).toBeVisible();
+    const bounds = await Promise.all(
+      [
+        "Link staging folders 1",
+        "Automatic-management source roots 1",
+        "Local path mapping roots 1",
+        "Client path mapping roots 1",
+      ].map((label) => card.getByRole("textbox", { name: label, exact: true }).boundingBox()),
+    );
+    const [linked, automatic, local, client] = bounds;
+    expect(linked && automatic && local && client).toBeTruthy();
+    expect(Math.abs(linked!.x - automatic!.x)).toBeLessThan(1);
+    expect(automatic!.y).toBeGreaterThan(linked!.y);
+    expect(Math.abs(local!.x - client!.x)).toBeLessThan(1);
+    expect(client!.y).toBeGreaterThan(local!.y);
+    expect(local!.x).toBeGreaterThan(linked!.x);
+    for (const label of ["Local path mapping roots", "Client path mapping roots"]) {
+      const help = card.getByRole("button", { name: `Help for ${label}`, exact: true });
+      await help.hover();
+      await expect(page.getByTestId("field-help-content")).toContainText("Docker setups");
+      await help.press("Escape");
+    }
+    for (const width of [1280, 1024, 768, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+    }
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
 
 test.describe("Settings help", () => {
   test.use({ hasTouch: true });

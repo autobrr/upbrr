@@ -40,24 +40,26 @@ Stored proxy URLs and credentials are encrypted in configuration transport and a
 
 ## qBittorrent add options
 
-| Field                                         | Effect                                                                                                                     |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **Upload category**                           | Category for normal injections.                                                                                            |
-| **Upload tags**                               | Comma-separated tag value for normal injections.                                                                           |
-| **Cross-seed category** / **Cross-seed tags** | Overrides category or tag for torrents marked as cross-seeds.                                                              |
-| **Use tracker name when tags are empty**      | Uses the tracker name only when no configured tag applies.                                                                 |
-| **Automatic-management source roots**         | Enables qBittorrent automatic management when the original local save path is under a listed root and linking is not used. |
+| Field                                         | Effect                                                        |
+| --------------------------------------------- | ------------------------------------------------------------- |
+| **Upload category**                           | Category for normal injections.                               |
+| **Upload tags**                               | Comma-separated tag value for normal injections.              |
+| **Cross-seed category** / **Cross-seed tags** | Overrides category or tag for torrents marked as cross-seeds. |
+| **Use tracker name when tags are empty**      | Uses the tracker name only when no configured tag applies.    |
 
 ## Link staging and path mapping
 
 **File linking method** can stage source files as `hardlink`, `reflink`, or `symlink` before injection. Leave it as **None** for direct source-path injection.
 
-| Field                         | Effect                                                                                                                                                                            |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Link staging folders**      | One or more roots where per-tracker staged layouts can be created. Required when linking is enabled.                                                                              |
-| **Allow client fallback**     | Allows original-path injection for supported failed or unavailable staging cases, and URL-only fallback when selected clients cannot consume URLs. Path validation still applies. |
-| **Local path mapping roots**  | upbrr-visible path prefix. Entries pair by position with **Client path mapping roots**.                                                                                           |
-| **Client path mapping roots** | Corresponding qBittorrent-visible prefix used for save paths.                                                                                                                     |
+| Field                                 | Effect                                                                                                                                                                            |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Link staging folders**              | One or more roots where per-tracker staged layouts can be created. Required when linking is enabled.                                                                              |
+| **Automatic-management source roots** | Enables qBittorrent automatic management when the original local save path is under a listed root and linking is not used.                                                        |
+| **Allow client fallback**             | Allows original-path injection for supported failed or unavailable staging cases, and URL-only fallback when selected clients cannot consume URLs. Path validation still applies. |
+| **Local path mapping roots**          | upbrr-visible path prefix. Entries pair by position with **Client path mapping roots**.                                                                                           |
+| **Client path mapping roots**         | Corresponding qBittorrent-visible prefix used for save paths.                                                                                                                     |
+
+Use **Local path mapping roots** and **Client path mapping roots** when upbrr and qBittorrent see the same files through different paths, such as Docker bind mounts. Keep each pair in the same item order. The local and client mappings are grouped together, beside link staging and automatic-management roots on wider screens.
 
 Hardlinks require source and destination on the same filesystem. Reflinks require supported storage and same-filesystem cloning. Symlinks require the needed OS permissions and a path qBittorrent can resolve. Turn off fallback when silently using the original path would be unsafe.
 

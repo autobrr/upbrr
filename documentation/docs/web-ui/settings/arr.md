@@ -22,7 +22,7 @@ API keys are secrets and appear as `[REDACTED]` after saving.
 
 :::note Compatibility fields
 
-**Emby dir** and **Emby TV dir** remain in the schema but have no current runtime reader.
+Legacy Emby paths are retained for configuration compatibility and are not exposed in Settings.
 
 :::
 
