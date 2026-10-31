@@ -223,6 +223,18 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",
 		)
 	}
+	// Release-wide image prerequisites cannot be answered through tracker feedback.
+	if action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "" &&
+		s.current.Media != nil && s.current.Media.Status == api.StageStatusBlocked {
+		if len(s.current.Media.Failures) > 0 {
+			return feedback, false, fmt.Errorf(
+				"upbrr: release media blocked (interaction=%s): %w",
+				s.intent.interaction,
+				api.NewOperationError(s.current.Media.Failures[0].Failure, nil),
+			)
+		}
+		return feedback, false, fmt.Errorf("upbrr: release media blocked (interaction=%s): %s", s.intent.interaction, action.Prompt)
+	}
 	if s.intent.interaction == api.InteractionModeUnattended &&
 		action.Kind != api.RequiredActionAuthorizeRules && action.Kind != api.RequiredActionResolveTrackerPreparation &&
 		action.Kind != api.RequiredActionApproveTrackers {
