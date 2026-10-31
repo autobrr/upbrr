@@ -544,7 +544,15 @@ type ReleaseWorkflowDurabilityRepository interface {
 	// reconciliation actions. It never creates a submission fence.
 	RecoverLegacyReleaseWorkflowEffects(context.Context, string, WorkflowID, time.Time) ([]ReleaseWorkflowEffectRecord, error)
 	ListLegacyReleaseWorkflowRecoveryWorkflowIDs(context.Context, string) ([]WorkflowID, error)
-	ResolveReleaseWorkflowEffectUnknown(context.Context, string, WorkflowID, WorkflowExternalEffectKind, string, time.Time) error
+	ResolveReleaseWorkflowEffectUnknown(
+		context.Context,
+		string,
+		WorkflowID,
+		WorkflowExternalEffectKind,
+		string,
+		time.Time,
+		...WorkflowExternalEffectReceipt,
+	) error
 	LoadReleaseWorkflowWork(context.Context, string, WorkflowID, WorkflowOperationID) (ReleaseWorkflowWorkRecord, error)
 	ClaimReleaseWorkflowWork(context.Context, ReleaseWorkflowWorkRecord) error
 	RenewReleaseWorkflowWork(context.Context, ReleaseWorkflowWorkRecord) error

@@ -4776,14 +4776,16 @@ func TestResolveReconciliationRequiresExactAnswerAndForcesFreshReview(t *testing
 		t.Fatalf("mark effect unknown: %v", err)
 	}
 	action := api.RequiredAction{
-		ID:               "action-reconcile",
-		Kind:             api.RequiredActionReconcileSubmission,
-		Status:           api.RequiredActionStatusPending,
-		WorkflowRevision: 2,
-		TrackerID:        "ALPHA",
-		EffectKind:       api.WorkflowExternalEffectTrackerSubmission,
-		EffectScopeID:    "ALPHA",
-		Prompt:           "Verify the external effect.",
+		ID:                "action-reconcile",
+		Kind:              api.RequiredActionReconcileSubmission,
+		Status:            api.RequiredActionStatusPending,
+		WorkflowRevision:  2,
+		TrackerID:         "ALPHA",
+		EffectKind:        api.WorkflowExternalEffectTrackerSubmission,
+		EffectScopeID:     "ALPHA",
+		EffectID:          started.EffectID,
+		EffectOperationID: started.OperationID,
+		Prompt:            "Verify the external effect.",
 		Options: []api.RequiredActionOption{{
 			Value: api.RequiredActionReconcileNotCompleted,
 			Label: "Confirmed not completed",

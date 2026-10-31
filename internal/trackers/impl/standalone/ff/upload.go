@@ -16,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -79,7 +80,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: FF request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: FF request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -92,9 +93,6 @@ func submitPreparedUpload(
 		Tracker:       "FF",
 		SuccessStatus: func(status int) bool { return status == http.StatusFound },
 	})
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: FF execute upload: %w", err)
-	}
 	location := result.Header.Get("Location")
 	match := idPattern.FindStringSubmatch(location)
 	if result.Success && len(match) >= 2 {
@@ -109,6 +107,9 @@ func submitPreparedUpload(
 			TorrentURL:  tURL,
 			TorrentPath: registeredPath,
 		}}}, nil
+	}
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: FF execute upload: %w", err)
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "FF", "upload_failure", result.Preview, ".html")
 	errorResponse := result.Preview

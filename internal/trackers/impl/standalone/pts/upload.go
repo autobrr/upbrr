@@ -15,6 +15,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -84,7 +85,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: PTS request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: PTS request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -102,12 +103,12 @@ func submitPreparedUpload(
 		resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther,
 		commonhttp.DefaultResponsePreviewBytes,
 	)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: PTS read upload response: %w", err)
-	}
 
 	location := strings.TrimSpace(resp.Header.Get("Location"))
 	torrentID := parseUploadID(location, string(responseBody))
+	if err != nil && ((resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusSeeOther) || torrentID == "") {
+		return api.UploadSummary{}, fmt.Errorf("trackers: PTS read upload response: %w", err)
+	}
 	if (resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther) && torrentID != "" {
 		tURL := baseURL + "/details.php?id=" + url.QueryEscape(torrentID)
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(

@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -88,14 +89,14 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/upload", bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: DC request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: DC request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
 	httpReq.Header.Set("X-Api-Key", apiKey)
 
 	result, err := commonhttp.ExecuteUpload(client, httpReq, commonhttp.UploadExecutionOptions{Tracker: "DC"})
-	if err != nil {
+	if err != nil && !result.BodyComplete {
 		return api.UploadSummary{}, fmt.Errorf("trackers: DC execute upload: %w", err)
 	}
 	var decoded uploadResponse
@@ -107,8 +108,8 @@ func submitPreparedUpload(
 			return api.UploadSummary{}, fmt.Errorf("trackers: DC decode response: %s", commonhttp.RedactErrorDetail(err.Error()))
 		}
 	}
-	torrentID := strings.TrimSpace(fmt.Sprint(decoded.ID))
-	if result.Success && torrentID != "" && torrentID != "<nil>" {
+	torrentID := commonhttp.PositiveTorrentID(decoded.ID)
+	if result.Success && torrentID != "" {
 		torrentURL := siteBaseURL + "/torrent/" + torrentID + "/"
 		downloadURL := apiURL + "/download/" + torrentID
 		summary := api.UploadSummary{

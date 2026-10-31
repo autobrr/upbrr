@@ -677,6 +677,7 @@ func (r *MemoryRepository) ResolveEffectUnknown(
 	kind api.WorkflowExternalEffectKind,
 	scopeID string,
 	now time.Time,
+	expected ...api.WorkflowExternalEffectReceipt,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("resolve workflow effect unknown: %w", err)
@@ -702,6 +703,17 @@ func (r *MemoryRepository) ResolveEffectUnknown(
 	}
 	if latestKey == "" {
 		return api.ErrReleaseWorkflowEffectConflict
+	}
+	if (kind == api.WorkflowExternalEffectTrackerSubmission && len(expected) != 1) || len(expected) > 1 || (len(expected) == 1 &&
+		(expected[0].EffectID != latest.EffectID || expected[0].OperationID != latest.OperationID)) {
+		return api.ErrReleaseWorkflowEffectConflict
+	}
+	if state, ok := r.states[workflowID]; ok && state.OwnerID == ownerID {
+		for _, result := range state.UploadResults {
+			if result.ConfirmsSubmission(latest) {
+				return api.ErrReleaseWorkflowEffectConflict
+			}
+		}
 	}
 	switch latest.Status {
 	case api.WorkflowEffectStatusFailed:

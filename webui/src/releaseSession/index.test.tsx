@@ -1908,6 +1908,78 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it.each([false, true])(
+    "scopes retained retries to each tracker, with plain sibling=%s",
+    async (withPlain) => {
+      const workflowID = "workflow-pending-receipt";
+      const retained = {
+        ...workflowCurrent(workflowID, 7),
+        uploadResult: {
+          id: "receipt-result",
+          revision: 1,
+          results: [
+            {
+              trackerId: "EXAMPLE",
+              status: "failed",
+              submissionStatus: "failed",
+              failures: [{ failure: { Code: "receipt_retention" } }],
+            },
+            {
+              trackerId: "OTHER",
+              status: "partial",
+              submissionStatus: "completed",
+              clientInjectionStatus: "failed",
+              clientFailureCode: "client_injection_failed",
+              failures: [{ failure: { Code: "receipt_retention" } }],
+            },
+            ...(withPlain
+              ? [{ trackerId: "PLAIN", status: "failed", submissionStatus: "failed" }]
+              : []),
+          ],
+        },
+      } as unknown as ReleaseWorkflowCurrent;
+      const retryFailedUploads = vi.fn(async () => retained);
+      const retryClientInjections = vi.fn(async () => retained);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({
+              current: async () => retained,
+              retryFailedUploads,
+              retryClientInjections,
+            }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+      await act(async () => {
+        expect(await result.current.upload.retry()).toBe(withPlain);
+        expect(await result.current.workflow.retryFailedUploads()).toBe(withPlain);
+        expect(await result.current.upload.retryClientInjection()).toBe(false);
+        expect(await result.current.workflow.retryClientInjections()).toBe(false);
+      });
+      if (withPlain) {
+        expect(retryFailedUploads).toHaveBeenCalledTimes(2);
+        for (const call of [1, 2]) {
+          expect(retryFailedUploads).toHaveBeenNthCalledWith(
+            call,
+            expect.anything(),
+            { id: "receipt-result", revision: 1 },
+            ["PLAIN"],
+            expect.any(Boolean),
+            expect.any(String),
+            expect.any(AbortSignal),
+          );
+        }
+      } else {
+        expect(retryFailedUploads).not.toHaveBeenCalled();
+      }
+      expect(retryClientInjections).not.toHaveBeenCalled();
+      unmount();
+    },
+  );
+
   it.each([true, false])("blocks retained mutation actions with liveTest=%s", async (liveTest) => {
     const workflowID = "workflow-live-test";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);

@@ -216,6 +216,7 @@ func TestReleaseWorkflowDurabilitySurvivesRestart(t *testing.T) {
 		api.WorkflowExternalEffectTrackerSubmission,
 		"ALPHA",
 		now.Add(7*time.Second),
+		api.WorkflowExternalEffectReceipt{EffectID: uncertain.EffectID, OperationID: uncertain.OperationID},
 	); err != nil {
 		t.Fatalf("resolve uncertain effect: %v", err)
 	}
@@ -226,6 +227,7 @@ func TestReleaseWorkflowDurabilitySurvivesRestart(t *testing.T) {
 		api.WorkflowExternalEffectTrackerSubmission,
 		"ALPHA",
 		now.Add(8*time.Second),
+		api.WorkflowExternalEffectReceipt{EffectID: uncertain.EffectID, OperationID: uncertain.OperationID},
 	); err != nil {
 		t.Fatalf("repeat uncertain effect resolution: %v", err)
 	}

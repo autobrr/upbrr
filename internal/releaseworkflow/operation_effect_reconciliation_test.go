@@ -206,6 +206,9 @@ func TestAsyncSubmissionUnknownOutcomeReconcilesAndAllowsExactRetry(t *testing.T
 	if fence.Status != api.WorkflowEffectStatusUnknown {
 		t.Fatalf("unfinished async submission fence = %#v, want unknown", fence)
 	}
+	if action.EffectID != fence.EffectID || action.EffectOperationID != fence.OperationID {
+		t.Fatalf("recovery action does not bind the exact unknown attempt: %#v", action)
+	}
 
 	reconciled, err := module.Execute(ctx, testOwnerID, ResolveActionCommand{
 		WorkflowID:       blocked.Workflow.ID,
@@ -362,9 +365,11 @@ func (e *submissionUnknownUploadExecution) Execute(ctx context.Context, trackerI
 	}
 	if e.builder.attempts == 1 {
 		return []api.UploadTrackerResult{{
-			TrackerID:        "ALPHA",
-			Status:           api.StageStatusFailed,
-			SubmissionStatus: api.StageStatusFailed,
+			TrackerID:             "ALPHA",
+			SubmissionReceiptID:   receipt.EffectID,
+			SubmissionOperationID: receipt.OperationID,
+			Status:                api.StageStatusFailed,
+			SubmissionStatus:      api.StageStatusFailed,
 			Failures: []api.WorkflowFailure{{
 				TrackerID: "ALPHA",
 				Failure: api.OperationFailure{

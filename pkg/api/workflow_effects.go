@@ -33,6 +33,8 @@ type WorkflowExternalEffect struct {
 // previously persisted attempt_started record.
 type WorkflowExternalEffectReceipt struct {
 	EffectID string
+	// OperationID binds retained protocol evidence to the attempt's originating operation.
+	OperationID WorkflowOperationID
 	// AlreadySucceeded tells the caller to reuse the prior result instead of repeating the external effect.
 	AlreadySucceeded bool
 }

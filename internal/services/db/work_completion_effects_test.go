@@ -89,7 +89,8 @@ func TestWorkCompletionAtomicallyFencesUnresolvedEffects(t *testing.T) {
 		t.Fatalf("successful fence changed: %#v, err=%v", fence, err)
 	}
 	if err := repo.ResolveReleaseWorkflowEffectUnknown(ctx, workflow.OwnerID, workflow.WorkflowID,
-		api.WorkflowExternalEffectTrackerSubmission, uncertain.ScopeID, completed.Add(time.Second)); err != nil {
+		api.WorkflowExternalEffectTrackerSubmission, uncertain.ScopeID, completed.Add(time.Second),
+		api.WorkflowExternalEffectReceipt{EffectID: uncertain.EffectID, OperationID: uncertain.OperationID}); err != nil {
 		t.Fatalf("same-process reconciliation: %v", err)
 	}
 }

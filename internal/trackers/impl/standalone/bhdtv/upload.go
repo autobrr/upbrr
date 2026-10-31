@@ -24,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -44,7 +45,7 @@ type uploadState struct {
 
 type uploadResponse struct {
 	Status  string `json:"status"`
-	Success bool   `json:"success"`
+	Success *bool  `json:"success"`
 	Message string `json:"message"`
 	Data    struct {
 		View string `json:"view"`
@@ -84,7 +85,8 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, err
 	}
 	viewURL := strings.TrimSpace(response.Data.View)
-	if viewURL == "" {
+	rejected := response.Success != nil && !*response.Success
+	if rejected || (viewURL == "" && response.Success == nil) {
 		artifactPath, artifactErr := writeFailureArtifact(req, responseBody, "upload_failure")
 		if artifactErr != nil && req.Logger != nil {
 			req.Logger.Warnf("trackers: BHDTV failure artifact write failed: %v", artifactErr)
@@ -98,7 +100,11 @@ func submitPreparedUpload(
 		if artifactPath != "" {
 			message += " (" + artifactPath + ")"
 		}
-		return api.UploadSummary{}, fmt.Errorf("trackers: BHDTV %s", message)
+		err := fmt.Errorf("trackers: BHDTV %s", message)
+		if rejected {
+			return api.UploadSummary{}, submission.NewError(submission.Rejected, err)
+		}
+		return api.UploadSummary{}, err
 	}
 
 	if strings.TrimSpace(req.TrackerConfig.MyAnnounceURL) != "" {
@@ -203,7 +209,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 func sendUpload(ctx context.Context, body []byte, contentType string) (uploadResponse, []byte, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
-		return uploadResponse{}, nil, fmt.Errorf("trackers: BHDTV request build: %w", err)
+		return uploadResponse{}, nil, submission.NewError(submission.NotSent, fmt.Errorf("trackers: BHDTV request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
