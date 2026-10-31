@@ -1955,7 +1955,7 @@ func TestResolveExternalIDsKeepsAnchoredFilenameMatchAsCandidate(t *testing.T) {
 	}
 }
 
-func TestResolveExternalIDsRejectsTMDBMetadataConflictingWithExplicitIMDb(t *testing.T) {
+func TestResolveExternalIDsReconcilesTMDBMetadataWithExplicitSelections(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		explicitTMDB bool
@@ -2012,17 +2012,17 @@ func TestResolveExternalIDsRejectsTMDBMetadataConflictingWithExplicitIMDb(t *tes
 			if result.Identity.IMDBID != imdbID || result.Identity.TMDBID != tc.wantTMDB {
 				t.Fatalf("explicit identity changed: %#v", result.Identity)
 			}
-			if result.ProviderMetadata.TMDB != nil {
-				t.Fatalf("conflicting TMDB metadata retained: %#v", result.ProviderMetadata.TMDB)
+			if (result.ProviderMetadata.TMDB != nil) != tc.explicitTMDB {
+				t.Fatalf("TMDB metadata authority = %#v", result.ProviderMetadata.TMDB)
 			}
-			if len(result.LookupWarnings) != 1 || !strings.Contains(result.LookupWarnings[0], "Correct one of the supplied provider IDs") {
+			if tc.explicitTMDB && len(result.LookupWarnings) != 0 || !tc.explicitTMDB && len(result.LookupWarnings) != 1 {
 				t.Fatalf("correction warnings = %#v", result.LookupWarnings)
 			}
 		})
 	}
 }
 
-func TestResolveExternalIDsGatesRejectedTMDBFromDownstreamMetadata(t *testing.T) {
+func TestResolveExternalIDsUsesExplicitTMDBForDownstreamMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
 		tmdbIMDbID         int
@@ -2036,12 +2036,17 @@ func TestResolveExternalIDsGatesRejectedTMDBFromDownstreamMetadata(t *testing.T)
 		wantSeason         int
 		wantEpisode        int
 		wantEpisodeTitle   string
-		wantTMDBMetadata   bool
 	}{
 		{
-			name:       "conflicting explicit IDs daily episode",
-			tmdbIMDbID: 7654321,
-			dailyDate:  "2026-09-08",
+			name:               "conflicting explicit IDs daily episode",
+			tmdbIMDbID:         7654321,
+			dailyDate:          "2026-09-08",
+			wantDailyCalls:     1,
+			wantEpisodeCalls:   1,
+			wantLocalizedCalls: 3,
+			wantSeason:         2,
+			wantEpisode:        7,
+			wantEpisodeTitle:   "Matched Episode",
 		},
 		{
 			name:               "matching explicit IDs daily episode",
@@ -2053,14 +2058,16 @@ func TestResolveExternalIDsGatesRejectedTMDBFromDownstreamMetadata(t *testing.T)
 			wantSeason:         2,
 			wantEpisode:        7,
 			wantEpisodeTitle:   "Matched Episode",
-			wantTMDBMetadata:   true,
 		},
 		{
-			name:       "conflicting explicit IDs season pack",
-			tmdbIMDbID: 7654321,
-			tvPack:     true,
-			season:     3,
-			wantSeason: 3,
+			name:               "conflicting explicit IDs season pack",
+			tmdbIMDbID:         7654321,
+			tvPack:             true,
+			season:             3,
+			wantSeasonCalls:    1,
+			wantLocalizedCalls: 2,
+			wantSeason:         3,
+			wantEpisodeTitle:   "Matched Season",
 		},
 		{
 			name:               "matching explicit IDs season pack",
@@ -2071,7 +2078,6 @@ func TestResolveExternalIDsGatesRejectedTMDBFromDownstreamMetadata(t *testing.T)
 			wantLocalizedCalls: 2,
 			wantSeason:         3,
 			wantEpisodeTitle:   "Matched Season",
-			wantTMDBMetadata:   true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2140,7 +2146,7 @@ func TestResolveExternalIDsGatesRejectedTMDBFromDownstreamMetadata(t *testing.T)
 			if result.SeasonInt != tc.wantSeason || result.EpisodeInt != tc.wantEpisode || result.EpisodeTitle != tc.wantEpisodeTitle {
 				t.Fatalf("episode metadata = season:%d episode:%d title:%q", result.SeasonInt, result.EpisodeInt, result.EpisodeTitle)
 			}
-			if (result.ProviderMetadata.TMDB != nil) != tc.wantTMDBMetadata {
+			if result.ProviderMetadata.TMDB == nil {
 				t.Fatalf("TMDB metadata = %#v", result.ProviderMetadata.TMDB)
 			}
 		})
@@ -2260,14 +2266,14 @@ func TestResolveExternalIDsUsesStaleStoredExplicitPinBeforeProviderFacts(t *test
 	if result.Identity.IMDBID != storedIMDBID || result.Identity.Overrides.IMDB != api.OverrideStateValue || result.Identity.TMDBID != tmdbID {
 		t.Fatalf("stored pin identity = %#v", result.Identity)
 	}
-	if result.ProviderMetadata.TMDB != nil {
-		t.Fatalf("conflicting TMDB metadata reached candidate facts: %#v", result.ProviderMetadata.TMDB)
+	if result.ProviderMetadata.TMDB == nil {
+		t.Fatalf("explicit TMDB metadata discarded: %#v", result.ProviderMetadata.TMDB)
 	}
-	if tmdbClient.dailyCalls != 0 || tmdbClient.episodeCalls != 0 || tmdbClient.seasonCalls != 0 || len(tmdbClient.localizedInputs) != 0 {
-		t.Fatalf("conflicting TMDB reached downstream calls: daily=%d episode=%d season=%d localized=%d", tmdbClient.dailyCalls, tmdbClient.episodeCalls, tmdbClient.seasonCalls, len(tmdbClient.localizedInputs))
+	if tmdbClient.dailyCalls != 1 || tmdbClient.episodeCalls != 1 || tmdbClient.seasonCalls != 0 || len(tmdbClient.localizedInputs) != 3 {
+		t.Fatalf("explicit TMDB downstream calls: daily=%d episode=%d season=%d localized=%d", tmdbClient.dailyCalls, tmdbClient.episodeCalls, tmdbClient.seasonCalls, len(tmdbClient.localizedInputs))
 	}
-	if result.SeasonInt != 0 || result.EpisodeInt != 0 || result.EpisodeTitle != "" {
-		t.Fatalf("conflicting TMDB changed episode facts: season=%d episode=%d title=%q", result.SeasonInt, result.EpisodeInt, result.EpisodeTitle)
+	if result.SeasonInt != 2 || result.EpisodeInt != 7 || result.EpisodeTitle != "Conflicting Episode" {
+		t.Fatalf("explicit TMDB episode facts: season=%d episode=%d title=%q", result.SeasonInt, result.EpisodeInt, result.EpisodeTitle)
 	}
 }
 
@@ -2467,15 +2473,27 @@ func TestResolveExternalIDsCategoryResetUsesParsedMovieCategory(t *testing.T) {
 	}
 }
 
-func TestResolveExternalIDsGatesRejectedTVmazeFromEpisodeMetadata(t *testing.T) {
+func TestResolveExternalIDsUsesExplicitTVmazeForEpisodeMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
 		metadataIMDbID   int
+		selectedID       int
 		wantEpisodeCalls int
 		wantEpisodeTitle string
 		wantMetadata     bool
 	}{
-		{name: "conflicting explicit TVmaze", metadataIMDbID: 7654321},
+		{
+			name:             "conflicting explicit TVmaze links",
+			metadataIMDbID:   7654321,
+			wantEpisodeCalls: 1,
+			wantEpisodeTitle: "Matched TVmaze Episode",
+			wantMetadata:     true,
+		},
+		{
+			name:           "wrong requested TVmaze resource",
+			selectedID:     999,
+			metadataIMDbID: 1234567,
+		},
 		{
 			name:             "matching explicit TVmaze",
 			metadataIMDbID:   1234567,
@@ -2487,11 +2505,15 @@ func TestResolveExternalIDsGatesRejectedTVmazeFromEpisodeMetadata(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			imdbID := 1234567
 			tvmazeID := 55
+			selectedID := tc.selectedID
+			if selectedID == 0 {
+				selectedID = tvmazeID
+			}
 			tvmazeClient := &stubTVmaze{
 				result: tvmaze.SearchResult{
-					SelectedID: tvmazeID,
+					SelectedID: selectedID,
 					Candidates: []tvmaze.Candidate{{
-						ID:        tvmazeID,
+						ID:        selectedID,
 						Name:      "Example Series",
 						Externals: tvmaze.Externals{IMDB: formatIMDbID(tc.metadataIMDbID)},
 					}},
@@ -2594,27 +2616,83 @@ func TestResolveExternalIDsAllowsDownstreamTMDBAfterConflictingInferredIDIsRepla
 	}
 }
 
+func TestResolveExternalIDsKeepsManualMetadataWithoutInferringConflictingSibling(t *testing.T) {
+	for _, provider := range []string{"TMDB", "TVmaze"} {
+		t.Run(provider, func(t *testing.T) {
+			overrides := api.ExternalIDOverrides{
+				TMDBID:   new(0),
+				IMDBID:   new(1234567),
+				TVmazeID: new(0),
+			}
+			if provider == "TMDB" {
+				overrides.TMDBID = new(444555)
+			} else {
+				overrides.TVmazeID = new(55)
+			}
+			svc := newTestService(t, &fakeRepo{},
+				WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{
+					Title:          "Example Selected Series",
+					TMDBType:       "Scripted",
+					IMDbID:         7654321,
+					TVDBID:         222333,
+					ExternalIMDbID: 7654321,
+					ExternalTVDBID: 222333,
+				}}),
+				WithTVmazeClient(&stubTVmaze{result: tvmaze.SearchResult{
+					SelectedID: 55,
+					IMDBID:     7654321,
+					TVDBID:     222333,
+					Candidates: []tvmaze.Candidate{{
+						ID:        55,
+						Name:      "Example Selected Series",
+						Externals: tvmaze.Externals{IMDB: "tt7654321", TVDB: 222333},
+					}},
+				}}),
+				WithIMDBClient(&stubIMDB{info: imdb.Info{
+					IMDbID: "tt1234567",
+					Title:  "Example IMDb Selection",
+					Type:   "tvSeries",
+				}}),
+				WithTVDBClient(&stubTVDB{seriesMetadata: tvdb.SeriesMetadata{TVDBID: 222333, Name: "Unverified Sibling"}}),
+			)
+			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath:          "Example.Series.S01E01.1080p-GRP.mkv",
+				MediaInfoCategory:   "TV",
+				ExternalIDOverrides: overrides,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Identity.IMDBID != 1234567 || result.Identity.TVDBID != 0 || result.ProviderMetadata.TVDB != nil {
+				t.Fatalf("contradictory manual-provider links inferred a sibling: %#v", result.Identity)
+			}
+			if provider == "TMDB" && result.ProviderMetadata.TMDB == nil || provider == "TVmaze" && result.ProviderMetadata.TVmaze == nil {
+				t.Fatal("cross-link disagreement discarded manual provider metadata")
+			}
+			if len(result.LookupWarnings) != 0 {
+				t.Fatalf("manual selection blocked: %v", result.LookupWarnings)
+			}
+		})
+	}
+}
+
 func TestResolveExternalIDsReconcilesExplicitTMDBAndTVmazeLinks(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		tvmazeIMDBID   int
 		tvmazeTVDBID   int
 		wantSiblingIDs bool
-		wantMetadata   bool
-		wantCorrection bool
 	}{
 		{
-			name:           "conflicting links",
-			tvmazeIMDBID:   7654321,
-			tvmazeTVDBID:   999888,
-			wantCorrection: true,
+			name:         "conflicting links",
+			tvmazeIMDBID: 7654321,
+			tvmazeTVDBID: 999888,
 		},
 		{
 			name:           "matching links",
 			tvmazeIMDBID:   1234567,
 			tvmazeTVDBID:   222333,
 			wantSiblingIDs: true,
-			wantMetadata:   true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2645,7 +2723,7 @@ func TestResolveExternalIDsReconcilesExplicitTMDBAndTVmazeLinks(t *testing.T) {
 					Title:  "Example Series",
 					Type:   "tvSeries",
 				}}),
-				WithTVDBClient(&stubTVDB{seriesMetadata: tvdb.SeriesMetadata{TVDBID: 222333, Name: "Example Series"}}),
+				WithTVDBClient(&stubTVDB{id: 222333, seriesMetadata: tvdb.SeriesMetadata{TVDBID: 222333, Name: "Example Series"}}),
 				WithTVmazeClient(tvmazeClient),
 			)
 
@@ -2663,13 +2741,13 @@ func TestResolveExternalIDsReconcilesExplicitTMDBAndTVmazeLinks(t *testing.T) {
 			if result.Identity.TMDBID != tmdbID || result.Identity.TVmazeID != tvmazeID {
 				t.Fatalf("explicit anchors changed: %#v", result.Identity)
 			}
-			if got := result.Identity.IMDBID != 0 && result.Identity.TVDBID != 0; got != tc.wantSiblingIDs {
+			if (result.Identity.IMDBID != 0) != tc.wantSiblingIDs || (result.Identity.TVDBID != 0) != tc.wantSiblingIDs {
 				t.Fatalf("sibling identity = %#v", result.Identity)
 			}
-			if got := result.ProviderMetadata.TMDB != nil && result.ProviderMetadata.TVmaze != nil; got != tc.wantMetadata {
+			if result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.TVmaze == nil {
 				t.Fatalf("provider metadata = %#v", result.ProviderMetadata)
 			}
-			if got := len(result.LookupWarnings) > 0; got != tc.wantCorrection {
+			if len(result.LookupWarnings) != 0 {
 				t.Fatalf("lookup warnings = %#v", result.LookupWarnings)
 			}
 		})
@@ -2867,7 +2945,7 @@ func TestResolveExternalIDsReconcilesFreshStoredExplicitAnchorLinks(t *testing.T
 	if second.Identity.TMDBID != tmdbID || second.Identity.TVmazeID != tvmazeID || second.Identity.IMDBID != 0 || second.Identity.TVDBID != 0 {
 		t.Fatalf("reconciled fresh identity = %#v", second.Identity)
 	}
-	if second.ProviderMetadata.TMDB != nil || second.ProviderMetadata.TVmaze != nil || len(second.LookupWarnings) == 0 {
+	if second.ProviderMetadata.TMDB == nil || second.ProviderMetadata.TVmaze == nil || len(second.LookupWarnings) != 0 {
 		t.Fatalf("reconciled fresh metadata=%#v warnings=%#v", second.ProviderMetadata, second.LookupWarnings)
 	}
 }

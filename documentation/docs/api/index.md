@@ -134,6 +134,10 @@ Set `execution.runLogLevel` on `POST /api/v1/uploads` to `error`, `warn`, `info`
 
 The level follows asynchronous work and feedback-driven continuation. Stage-based workflows use `descriptions.options.RunLogLevel` in their continuation intent; upload execution and retries inherit the retained description options when no new run override is supplied. Global settings and the server console threshold are unchanged. See [Logging](../web-ui/logging.md) for application outputs and viewer filters.
 
+## Provider ID selections
+
+Explicit provider IDs select each provider independently, even if returned cross-links disagree. The shared preparation boundary retains successful metadata and the saved selections across refresh and restart. Explicit clears and Auto/reset remain distinct, and inferred IDs still require agreement. See [canonical metadata](../workflow/index.md#2-review-canonical-metadata).
+
 ## Browser session API
 
 Routes below `/api/auth`, `/api/app`, and `/api/events` serve the embedded Web UI and use browser-session authentication. They are not a substitute for the versioned bearer-token API. External integrations should use `/api/v1`.

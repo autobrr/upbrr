@@ -2098,7 +2098,8 @@ func filterRuleFailures(failures []RuleFailure, blocking bool) []RuleFailure {
 
 // ExternalIDOverrides carries caller-supplied ID intent into metadata
 // resolution. Nil means the resolver may fill the provider; a positive value
-// locks that provider to the supplied ID; zero locks an explicit clear for the
+// locks that provider independently, even when provider cross-links disagree;
+// zero locks an explicit clear for the
 // current request.
 type ExternalIDOverrides struct {
 	TMDBID   *int

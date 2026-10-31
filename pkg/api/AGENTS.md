@@ -9,7 +9,7 @@ Shared API contract rules under `pkg/api`. Root + `internal/AGENTS.md` rules sti
 - WebUI server/API: `internal/webserver`
 - Browser clients/types: `webui/src`
 
-Preserve CLI/WebUI behavior unless intentionally changing entrypoint.
+Preserve CLI/WebUI behavior unless intentionally changing entrypoint. Provider override contracts retain the root manual-provider authority rule: independently supplied IDs do not require cross-provider agreement. Keep selection, explicit clear and Auto/reset distinct; reconciliation belongs to the shared metadata owner in `internal/AGENTS.md`.
 
 ## Contract Changes
 

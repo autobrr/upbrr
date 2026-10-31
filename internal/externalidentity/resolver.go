@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v3"
+const ContractVersion = "external-identity-v5"
 
 // Request contains normalized source scope and identity-resolution intent. It
 // carries no gathered MediaInfo, scene, Arr, tracker, or provider evidence.
@@ -294,7 +294,7 @@ func applyCandidateEvidence(
 	authoritativeProviders := hasExplicitProviderCorrection(candidate.Identity)
 	candidateIdentityApplies := hasCandidateIdentity(candidate.Identity) && sourceEvidenceMatches(candidate.Identity.SourcePath, sourcePath)
 	if candidateIdentityApplies {
-		if authoritativeProviders {
+		if authoritativeProviders || hasExplicitProviderCorrection(result.Identity) {
 			applyAuthoritativeCandidateProviders(&result.Identity, candidate.Identity)
 			applyCandidateCategory(&result.Identity, candidate.Identity)
 		} else {
@@ -683,8 +683,9 @@ func invalidateMismatchedMetadata(metadata *api.SourceScopedMetadata, identity a
 		return
 	}
 	if metadata.TMDB != nil && (metadata.TMDB.TMDBID != identity.TMDBID ||
-		lockedProviderIDMismatch(identity.Overrides.IMDB, identity.Provenance.IMDB, identity.IMDBID, metadata.TMDB.IMDBID) ||
-		lockedProviderIDMismatch(identity.Overrides.TVDB, identity.Provenance.TVDB, identity.TVDBID, metadata.TMDB.TVDBID)) {
+		!providerIdentityLocked(identity.Overrides.TMDB, identity.Provenance.TMDB) &&
+			(lockedProviderIDMismatch(identity.Overrides.IMDB, identity.Provenance.IMDB, identity.IMDBID, metadata.TMDB.IMDBID) ||
+				lockedProviderIDMismatch(identity.Overrides.TVDB, identity.Provenance.TVDB, identity.TVDBID, metadata.TMDB.TVDBID))) {
 		metadata.TMDB = nil
 	}
 	if metadata.IMDB != nil && metadata.IMDB.IMDBID != identity.IMDBID {
@@ -694,8 +695,9 @@ func invalidateMismatchedMetadata(metadata *api.SourceScopedMetadata, identity a
 		metadata.TVDB = nil
 	}
 	if metadata.TVmaze != nil && (metadata.TVmaze.TVmazeID != identity.TVmazeID ||
-		lockedProviderIDMismatch(identity.Overrides.IMDB, identity.Provenance.IMDB, identity.IMDBID, metadata.TVmaze.IMDBID) ||
-		lockedProviderIDMismatch(identity.Overrides.TVDB, identity.Provenance.TVDB, identity.TVDBID, metadata.TVmaze.TVDBID)) {
+		!providerIdentityLocked(identity.Overrides.TVmaze, identity.Provenance.TVmaze) &&
+			(lockedProviderIDMismatch(identity.Overrides.IMDB, identity.Provenance.IMDB, identity.IMDBID, metadata.TVmaze.IMDBID) ||
+				lockedProviderIDMismatch(identity.Overrides.TVDB, identity.Provenance.TVDB, identity.TVDBID, metadata.TVmaze.TVDBID))) {
 		metadata.TVmaze = nil
 	}
 	if metadata.AniList != nil && metadata.AniList.MALID != identity.MALID {

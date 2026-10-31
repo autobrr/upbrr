@@ -318,6 +318,8 @@ Strict `--unattended` reports the missing facts and exits without prompting. Int
 | `--tvdb <id>`   | `-tvdb`   | Override TVDB ID.   |
 | `--tvmaze <id>` | `-tvmaze` | Override TVmaze ID. |
 
+Multiple provider flags select each provider independently, even when their returned cross-links disagree. Each successful lookup remains available for preparation. See [manual metadata authority](../workflow/index.md#2-review-canonical-metadata).
+
 TMDB also accepts `movie/<id>`, `tv/<id>`, or a URL ending in the ID; a movie/TV hint overrides the category. IMDb accepts numeric IDs or the `tt` prefix. TVDB, TVmaze, and MAL take numeric IDs, not URLs.
 
 During the **Metadata correct?** loop, correcting the same active input reuses provider lookups for unchanged inputs, including lookups that returned no result. A later run can retry those empty results. Completed fetch failures remain retained until the input is removed from **History**. Changing the source, provider ID, or lookup query requests its own result.

@@ -138,6 +138,7 @@ func TestResolveCrossReferenceMetadataHonorsStoredProvenancePins(t *testing.T) {
 		name               string
 		provider           api.IdentityProvider
 		provenance         api.IdentityProvenance
+		explicitProviders  bool
 		wantTMDBMetadata   bool
 		wantTVmazeMetadata bool
 	}{
@@ -150,6 +151,22 @@ func TestResolveCrossReferenceMetadataHonorsStoredProvenancePins(t *testing.T) {
 			name:       "explicit TVDB provenance with unset override drops conflicting metadata",
 			provider:   api.IdentityProviderTVDB,
 			provenance: api.IdentityProvenanceExplicit,
+		},
+		{
+			name:               "explicit provider provenance retains conflicting IMDb links",
+			provider:           api.IdentityProviderIMDB,
+			provenance:         api.IdentityProvenanceExplicit,
+			explicitProviders:  true,
+			wantTMDBMetadata:   true,
+			wantTVmazeMetadata: true,
+		},
+		{
+			name:               "explicit provider provenance retains conflicting TVDB links",
+			provider:           api.IdentityProviderTVDB,
+			provenance:         api.IdentityProvenanceExplicit,
+			explicitProviders:  true,
+			wantTMDBMetadata:   true,
+			wantTVmazeMetadata: true,
 		},
 		{
 			name:               "provider IMDb provenance retains conflicting metadata",
@@ -180,6 +197,10 @@ func TestResolveCrossReferenceMetadataHonorsStoredProvenancePins(t *testing.T) {
 				identity.TVDBID = storedID
 				identity.Provenance.TVDB = tc.provenance
 				metadataTVDBID = 8888888
+			}
+			if tc.explicitProviders {
+				identity.TMDBID, identity.TVmazeID = 111222, 333444
+				identity.Provenance.TMDB, identity.Provenance.TVmaze = api.IdentityProvenanceExplicit, api.IdentityProvenanceExplicit
 			}
 			resolver := &Resolver{
 				evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
@@ -558,10 +579,9 @@ func TestResolveAuthoritativeCandidatePreservesOrReplacesStoredExplicitSibling(t
 		candidateState   api.OverrideState
 		wantIMDBID       int
 		wantState        api.OverrideState
-		wantTMDBMetadata bool
 	}{
 		{
-			name:             "omitted sibling preserves stored pin and rejects conflicting metadata",
+			name:             "omitted sibling preserves stored pin and independent metadata",
 			candidateIMDBID:  7654321,
 			candidateIMDBRef: 7654321,
 			wantIMDBID:       1234567,
@@ -573,7 +593,6 @@ func TestResolveAuthoritativeCandidatePreservesOrReplacesStoredExplicitSibling(t
 			candidateIMDBRef: 7654321,
 			candidateState:   api.OverrideStateClear,
 			wantState:        api.OverrideStateClear,
-			wantTMDBMetadata: true,
 		},
 		{
 			name:             "explicit replacement replaces stored pin",
@@ -583,7 +602,6 @@ func TestResolveAuthoritativeCandidatePreservesOrReplacesStoredExplicitSibling(t
 			candidateState:   api.OverrideStateValue,
 			wantIMDBID:       7777777,
 			wantState:        api.OverrideStateValue,
-			wantTMDBMetadata: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -639,7 +657,7 @@ func TestResolveAuthoritativeCandidatePreservesOrReplacesStoredExplicitSibling(t
 			if result.Identity.TMDBID != tmdbID || result.Identity.IMDBID != tc.wantIMDBID || result.Identity.Overrides.IMDB != tc.wantState {
 				t.Fatalf("identity = %#v", result.Identity)
 			}
-			if got := result.ProviderMetadata.TMDB != nil; got != tc.wantTMDBMetadata {
+			if result.ProviderMetadata.TMDB == nil {
 				t.Fatalf("TMDB metadata = %#v", result.ProviderMetadata.TMDB)
 			}
 		})
@@ -719,11 +737,11 @@ func TestResolveResetStoredExplicitClearRefreshesCrossReferenceMetadata(t *testi
 				},
 				Metadata: api.SourceScopedMetadata{
 					SourcePath: request.SourcePath,
-					TMDB:       &api.TMDBMetadata{
-TMDBID: 300,
- IMDBID: 400,
- Title: "Refreshed candidate",
-},
+					TMDB: &api.TMDBMetadata{
+						TMDBID: 300,
+						IMDBID: 400,
+						Title:  "Refreshed candidate",
+					},
 				},
 			}, nil
 		}),
@@ -763,10 +781,10 @@ func TestResolveResetKeepsAutomaticStoredEvidenceAndChangesIntentFingerprint(t *
 		now: time.Now,
 	}
 	request := Request{
-SourcePath: sourcePath,
- SourceFingerprint: "source-fingerprint",
- Generation: 1,
-}
+		SourcePath:        sourcePath,
+		SourceFingerprint: "source-fingerprint",
+		Generation:        1,
+	}
 
 	baseline, err := resolver.Resolve(context.Background(), request)
 	if err != nil {
