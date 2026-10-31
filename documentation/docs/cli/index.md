@@ -374,6 +374,8 @@ TIK `--disctype` accepts `BD100`, `BD66`, `BD50`, `BD25`, `NTSC DVD9`, `NTSC DVD
 
 Without `--screens`, the CLI uses `screenshot_handling.screens` when selected trackers require screenshots. Tracker-specific image counts and limits still apply. An override below a tracker's screenshot requirements can block that upload.
 
+When required release images are missing, the CLI stops with the media failure and recovery guidance, or the existing prompt to capture, select, or host images. Resolve that media prerequisite before retrying. This block does not open a tracker questionnaire or prompt for media recovery, including with `--unattended_confirm`; required images continue to block upload in every interaction mode.
+
 | Option                       | Aliases                             | Purpose                                                                        |
 | ---------------------------- | ----------------------------------- | ------------------------------------------------------------------------------ |
 | `--screens <count>`          | `-screens`, `-s`                    | Override the configured screenshot count.                                      |
