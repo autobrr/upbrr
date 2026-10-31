@@ -84,7 +84,7 @@ func TestRehostSourceOnlyComparisonImagesPreservesMarkupAndReusesUploads(t *test
 	if err := registry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
 		t.Fatal(err)
 	}
-	service := NewServiceWithRegistryAndImages(cfg, api.NopLogger{}, repo, registry, images)
+	service := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), api.NopLogger{}, repo, registry, images)
 	skipUpload := true
 	meta := api.UploadSubject{
 		MediaBinding:       trackerTestMediaBinding(source),
@@ -128,15 +128,15 @@ func TestComparisonProxyUsesSupportedSourceHostWithoutUpload(t *testing.T) {
 		want    string
 	}{
 		{
-tracker: "BTN",
- proxy: imgboxProxy,
- want: "https://images2.imgbox.com/13/ae/shot_o.png",
-},
+			tracker: "BTN",
+			proxy:   imgboxProxy,
+			want:    "https://images2.imgbox.com/13/ae/shot_o.png",
+		},
 		{
-tracker: "AITHER",
- proxy: blutopiaProxy,
- want: "https://img.blutopia.cc/2026/06/14/shot.png",
-},
+			tracker: "AITHER",
+			proxy:   blutopiaProxy,
+			want:    "https://img.blutopia.cc/2026/06/14/shot.png",
+		},
 	} {
 		block := "[comparison=Source|Encode]\r\n[img]" + test.proxy + "[/img]\r\n[/comparison]"
 		assets := &DescriptionAssets{Description: "Notes\n" + block + "\nMore notes"}
@@ -187,7 +187,7 @@ func TestComparisonProxyDownloadsSourceWhenRehostingIsRequired(t *testing.T) {
 	}
 	repo := &stubRepo{}
 	images := &stubImageService{repo: repo}
-	service := NewServiceWithRegistryAndImages(cfg, api.NopLogger{}, repo, descriptionAssetsTestRegistry(t), images)
+	service := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), api.NopLogger{}, repo, descriptionAssetsTestRegistry(t), images)
 	description := "[comparison=A|B]\n[img]" + proxy + "[/img]\n[/comparison]"
 	assets := &DescriptionAssets{Description: description}
 	meta := api.UploadSubject{SourcePath: source, MediaBinding: trackerTestMediaBinding(source)}
@@ -260,7 +260,7 @@ func TestRehostPTPComparisonImageWithoutCachedArtifact(t *testing.T) {
 	repo := &stubRepo{}
 	images := &stubImageService{repo: repo}
 	registry := descriptionAssetsTestRegistry(t)
-	service := NewServiceWithRegistryAndImages(cfg, api.NopLogger{}, repo, registry, images)
+	service := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), api.NopLogger{}, repo, registry, images)
 	description := "[comparison=A|B]\n[img]" + rawURL + "[/img]\n[/comparison]"
 	assets := &DescriptionAssets{Description: description}
 	meta := api.UploadSubject{
@@ -436,7 +436,7 @@ func TestScreenshotModePreparationRehostsDVDMenu(t *testing.T) {
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")}}
 	repo := &stubRepo{}
 	images := &stubImageService{repo: repo}
-	service := NewServiceWithRegistryAndImages(cfg, api.NopLogger{}, repo, registry, images)
+	service := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), api.NopLogger{}, repo, registry, images)
 	skipUpload := true
 	meta := api.UploadSubject{
 		SourcePath:   sourcePath,
@@ -482,7 +482,7 @@ func TestRehostUnhostedDVDMenuImage(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	service := NewServiceWithRegistryAndImages(cfg, api.NopLogger{}, repo, registry, images)
+	service := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), api.NopLogger{}, repo, registry, images)
 	skipUpload := true
 	meta := api.UploadSubject{
 		SourcePath:         sourcePath,

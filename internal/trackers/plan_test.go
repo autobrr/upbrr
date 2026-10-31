@@ -232,7 +232,7 @@ func TestTrackerSubmissionFenceCarriesFinalizedScopeForActiveWorkflow(t *testing
 	if err := registry.Register(stubDefinition{name: "PTP"}); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), api.NopLogger{}, nil, registry)
 	svc.submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "C:/synthetic", SubmissionContentIdentity: identity}, slots)
 	if submits.Load() != 1 || len(reporter.begun) != 1 || reporter.begun[0].Submission == nil {
 		t.Fatalf("submits=%d effects=%#v", submits.Load(), reporter.begun)
@@ -259,7 +259,7 @@ func TestTrackerSubmissionFenceRejectsMissingFinalizedScopeForActiveWorkflow(t *
 	if err := registry.Register(stubDefinition{name: "PTP"}); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), api.NopLogger{}, nil, registry)
 	svc.submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "C:/synthetic"}, slots)
 	if submits.Load() != 0 || slots[0].failure == nil || slots[0].failure.Code != "submission_scope" {
 		t.Fatalf("submits=%d failure=%#v", submits.Load(), slots[0].failure)

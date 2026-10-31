@@ -100,6 +100,7 @@ func TestDescriptionHeadersSurvivePreparationWithAnalysis(t *testing.T) {
 						subject.HDR = ""
 					}
 					cfg := config.Config{
+						MainSettings:       config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")},
 						ImageHosting:       config.ImageHostingConfig{Host1: host},
 						ScreenshotHandling: config.ScreenshotHandlingConfig{ToneMap: mode != "disabled"},
 						Description:        config.DescriptionSettingsConfig{ScreenshotHeader: "SCREENSHOT HEADER", TonemappedHeader: "TONEMAPPED HEADER"},

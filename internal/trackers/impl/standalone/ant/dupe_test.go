@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -102,7 +103,7 @@ func TestDupeSearcherConsumesANTOffsetPages(t *testing.T) {
 				}, nil
 			})}
 
-			cfg := antDupeTestConfig()
+			cfg := antDupeTestConfig(t)
 			searcher := dupe.NewAdapter(New(), "ANT", cfg, client, api.NopLogger{})
 			result := searcher.Search(
 				context.Background(),
@@ -181,7 +182,7 @@ func TestANTExactPageTotalRetainsStaffTokenBoundary(t *testing.T) {
 					Body:       io.NopCloser(strings.NewReader(body)),
 				}, nil
 			})
-			service := dupe.NewServiceWithRegistry(antDupeTestConfig(), api.NopLogger{}, registry)
+			service := dupe.NewServiceWithRegistry(antDupeTestConfig(t), api.NopLogger{}, registry)
 			summary, err := service.Check(t.Context(), api.DuplicateSubject{
 				SourcePath: "proposed.mkv",
 				Identity:   api.ExternalIdentity{TMDBID: 123},
@@ -211,7 +212,7 @@ func TestDupeSearcherANTPaginationBoundFailsClosed(t *testing.T) {
 		}, nil
 	})}
 	searcher := &dupeSearcher{
-		cfg:      antDupeTestConfig(),
+		cfg:      antDupeTestConfig(t),
 		http:     client,
 		endpoint: "https://example.invalid/api.php",
 		maxPages: 1,
@@ -247,7 +248,7 @@ func TestDupeSearcherANTTotalChangeFailsClosed(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})}
-	searcher := dupe.NewAdapter(New(), "ANT", antDupeTestConfig(), client, api.NopLogger{})
+	searcher := dupe.NewAdapter(New(), "ANT", antDupeTestConfig(t), client, api.NopLogger{})
 	result := searcher.Search(context.Background(), api.DuplicateSubject{Identity: api.ExternalIdentity{TMDBID: 123}})
 	if search := result.SearchEvidence(); search.Complete || search.Pages != 2 || len(search.Warnings) != 1 || len(result.Entries()) != 101 {
 		t.Fatalf("changed total search=%#v entries=%d", search, len(result.Entries()))
@@ -388,8 +389,9 @@ func antSearchPageJSON(t *testing.T, offset int, total int, count int, includePa
 	return string(encoded)
 }
 
-func antDupeTestConfig() config.Config {
-	return config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+func antDupeTestConfig(t *testing.T) config.Config {
+	t.Helper()
+	return config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}, Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 		"ANT": {APIKey: "token"},
 	}}}
 }
@@ -399,8 +401,8 @@ func TestANTDiscCandidatesOccupyDistinctSlots(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, filename, container, source, resolution, codec, targetType string
-		wantContainer                                                 string
-		want                                                          api.DupeRelation
+		wantContainer                                                    string
+		want                                                             api.DupeRelation
 	}{
 		{"DVD API container", "Example.2026.SD.DVD.VOBIFO.123.torrent", "VOBIFO", "DVD", "SD", "MPEG2", "ENCODE", "VOBIFO", api.DupeRelationCoexists},
 		{"DVD torrent filename", "Example.2026.SD.DVD.VOBIFO.123.torrent", "", "DVD", "SD", "MPEG2", "ENCODE", "vobifo", api.DupeRelationCoexists},
@@ -474,7 +476,7 @@ func TestANTDiscSearchResultsFilterIncompatibleVariants(t *testing.T) {
 	})
 	for _, tc := range []struct {
 		name, kind, source, resolution, codec, matchName string
-		want                                           api.DupeRelation
+		want                                             api.DupeRelation
 	}{
 		{"encode exact match", "ENCODE", "BluRay", "1080p", "H264", filename, api.DupeRelationExactDuplicate},
 		{"Blu-ray disc", "DISC", "BluRay", "1080p", "H264", "Example.2026.1080p.BluRay.m2ts.124.torrent", api.DupeRelationManualReview},
@@ -497,7 +499,7 @@ func TestANTDiscSearchResultsFilterIncompatibleVariants(t *testing.T) {
 			if tc.kind == "ENCODE" {
 				target.Names, target.FileNames = []string{filename}, []string{filename}
 			}
-			service := dupe.NewServiceWithRegistry(antDupeTestConfig(), api.NopLogger{}, registry)
+			service := dupe.NewServiceWithRegistry(antDupeTestConfig(t), api.NopLogger{}, registry)
 			summary, err := service.Check(t.Context(), api.DuplicateSubject{
 				SourcePath: "proposed",
 				Identity:   api.ExternalIdentity{TMDBID: 123},

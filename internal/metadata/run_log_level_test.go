@@ -35,7 +35,7 @@ func TestOperationLoggingPreservesLazyProviderClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbPath := filepath.Join(base, "metadata.sqlite")
-	service := NewService(&fakeRepo{}, WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}), WithLogger(root), WithSRRDBPaths(dbPath), WithTagsPathFromDB(dbPath), WithMediaInfoExporter(stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
+	service := newTestService(t, &fakeRepo{}, WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}), WithLogger(root), WithSRRDBPaths(dbPath), WithTagsPathFromDB(dbPath), WithMediaInfoExporter(stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
 	zero := 0
 	request := testCollectionRequest(t, api.Request{SourcePath: source, ExternalIDOverrides: api.ExternalIDOverrides{
 		TMDBID:   &zero,

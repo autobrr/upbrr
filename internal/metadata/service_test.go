@@ -50,7 +50,7 @@ func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 
 	repo := &stubRepo{existing: db.FileMetadata{Path: videoPath, InfoHash: "hash"}}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
+	service := newTestService(t, repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
 
 	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
 		SourcePath: path,
@@ -100,7 +100,7 @@ func TestCollectSourceEvidenceCarriesExternalFreshness(t *testing.T) {
 	request := testCollectionRequest(t, api.Request{SourcePath: sourcePath})
 	request.Input.ExternalFreshness = api.ExternalFreshnessRefresh
 	request.Input.Instructions.BlurayReleaseID = "selected-disc"
-	service := NewService(&stubRepo{}, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
+	service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
 
 	meta, err := service.collectSourceEvidence(t.Context(), request)
 	if err != nil {
@@ -178,7 +178,7 @@ func TestCollectSourceEvidencePublishesMeasuredDVDCapacity(t *testing.T) {
 
 	repo := &stubRepo{}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
-	service := NewService(repo, WithConfig(cfg), WithMediaInfoExporter(stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
+	service := newTestService(t, repo, WithConfig(cfg), WithMediaInfoExporter(stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
 	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{SourcePath: sourcePath}))
 	if err != nil {
 		t.Fatalf("collect source evidence: %v", err)
@@ -201,7 +201,7 @@ func TestCollectSourceEvidenceRejectsMalformedSeasonEpisodeInstructionsBeforeSou
 	}
 	repo := &stubRepo{}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
+	service := newTestService(t, repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
 
 	tests := []struct {
 		name      string
@@ -236,7 +236,7 @@ func TestCollectSourceEvidenceUsesResolvedInstructionsWithoutHistoryLookup(t *te
 		releaseNameOverridesErr: errors.New("collector must not read correction history"),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
-	service := NewService(repo, WithConfig(cfg))
+	service := newTestService(t, repo, WithConfig(cfg))
 	meta, err := service.collectSourceEvidence(t.Context(), testCollectionRequest(t, api.Request{
 		SourcePath:           sourcePath,
 		ReleaseNameOverrides: incoming,
@@ -254,7 +254,7 @@ func TestApplySceneDetectionCopiesResultAfterRecoverableNFOFailure(t *testing.T)
 	// Scene detection runs during fact derivation; applySceneDetection is the
 	// plumbing that copies the result and surfaces a recoverable NFO side effect.
 	logger := &recordingLogger{}
-	service := NewService(&stubRepo{},
+	service := newTestService(t, &stubRepo{},
 		WithSceneDetector(staticSceneDetector{
 			result: SceneResult{
 				IsScene:   true,
@@ -286,7 +286,7 @@ func TestApplySceneDetectionCopiesResultAfterRecoverableNFOFailure(t *testing.T)
 func TestApplySceneDetectionBackfillsIMDbID(t *testing.T) {
 	t.Parallel()
 
-	service := NewService(&stubRepo{},
+	service := newTestService(t, &stubRepo{},
 		WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, IMDBID: 132245}}),
 	)
 	// No externally resolved ID: scene evidence backfills canonical identity.
@@ -356,7 +356,7 @@ func TestApplySceneDetectionPropagatesCancellation(t *testing.T) {
 
 	// Context cancellation must abort the pipeline, not be swallowed as a soft
 	// srrdb failure that continues into tracker rules.
-	service := NewService(&stubRepo{},
+	service := newTestService(t, &stubRepo{},
 		WithSceneDetector(staticSceneDetector{err: context.Canceled}),
 	)
 	if _, err := service.applySceneDetection(context.Background(), preparationstate.State{}); !errors.Is(err, context.Canceled) {
@@ -379,7 +379,7 @@ func TestPrepareCLIKeepFolderPreservesSingleFileDirectory(t *testing.T) {
 
 	repo := &stubRepo{}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
+	service := newTestService(t, repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
 
 	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
 		SourcePath: path,
@@ -418,7 +418,7 @@ func TestPrepareCLITVPackPreservesDirectory(t *testing.T) {
 
 	repo := &stubRepo{}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
+	service := newTestService(t, repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
 
 	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
 		SourcePath: path,
@@ -467,7 +467,7 @@ func TestCollectTVPackSelectsFirstEpisodeForMediaInfoAndScreenshots(t *testing.T
 				}
 			}
 			mediaInfo := &recordingMediaInfo{}
-			service := NewService(&stubRepo{}, WithMediaInfoExporter(mediaInfo), WithSceneDetector(stubSceneDetector{}),
+			service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(mediaInfo), WithSceneDetector(stubSceneDetector{}),
 				WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}))
 			meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{SourcePath: source}))
 			if err != nil {
@@ -618,7 +618,7 @@ func TestResolveServiceValue(t *testing.T) {
 func TestApplySceneDetectionAppliesServiceFromNFO(t *testing.T) {
 	t.Parallel()
 
-	service := NewService(&stubRepo{},
+	service := newTestService(t, &stubRepo{},
 		WithSceneDetector(staticSceneDetector{result: SceneResult{
 			IsScene:         true,
 			Service:         "iT",
@@ -657,7 +657,7 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	mediaInfo := &recordingMediaInfo{}
-	service := NewService(
+	service := newTestService(t,
 		repo,
 		WithMediaInfoExporter(mediaInfo),
 		WithSceneDetector(stubSceneDetector{}),
@@ -1029,7 +1029,7 @@ func TestCollectDiscEvidenceNamespacesDuplicatePlaylists(t *testing.T) {
 	for _, disc := range layout.Discs {
 		selected = append(selected, disc.ID+":00001.MPLS")
 	}
-	service := NewService(
+	service := newTestService(t,
 		&stubRepo{},
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		WithBDInfoService(bdinfo.New(api.NopLogger{})),
@@ -1342,7 +1342,7 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 		playlistSelectionPath: filepath.ToSlash(filepath.Clean(sourcePath)),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(
+	service := newTestService(t,
 		repo,
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(stubSceneDetector{}),
@@ -1452,7 +1452,7 @@ func TestPrepareBDMVDirectPlaylistInvokesBDInfoForParentAndRoot(t *testing.T) {
 
 	repo := &stubRepo{}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(
+	service := newTestService(t,
 		repo,
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(stubSceneDetector{}),
@@ -1595,7 +1595,7 @@ func TestPrepareBDMVPartialCacheRequiresConfirmation(t *testing.T) {
 		playlistSelectionPath: filepath.ToSlash(filepath.Clean(sourcePath)),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(
+	service := newTestService(t,
 		repo,
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(stubSceneDetector{}),
@@ -1655,7 +1655,7 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 		playlistSelectionPath: filepath.ToSlash(filepath.Clean(sourcePath)),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(
+	service := newTestService(t,
 		repo,
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(stubSceneDetector{}),

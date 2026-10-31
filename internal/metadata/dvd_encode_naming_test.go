@@ -73,7 +73,7 @@ func TestDVDEncodeRefreshKeepsFactCorrectionsFormatable(t *testing.T) {
 				state := dvdEncodeRefreshState(t, source, resolution)
 				state.ReleaseNameOverrides.Edition = new("Uncut")
 				state.ReleaseNameOverrides.NoEdition = new(true)
-				svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+				svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 				for range 2 {
 					var err error
 					state, err = svc.deriveMediaFacts(t.Context(), state)
@@ -122,7 +122,7 @@ func TestDVDEncodeRefreshReachesRegisteredSitePolicies(t *testing.T) {
 	for _, source := range []string{"DVD", "PAL DVD", "NTSC DVD"} {
 		t.Run(source, func(t *testing.T) {
 			state := dvdEncodeRefreshState(t, source, "576p")
-			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			for range 2 {
 				var err error
 				state, err = svc.deriveMediaFacts(t.Context(), state)
@@ -188,7 +188,7 @@ func TestDVDEncodeAuthorityExceptionDoesNotAffectOtherFacts(t *testing.T) {
 			if test.releaseType == "DISC" {
 				state.DiscType = "DVD"
 			}
-			state, err := NewService(&fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), state)
+			state, err := newTestService(t, &fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), state)
 			if err != nil {
 				t.Fatal(err)
 			}
