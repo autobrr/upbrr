@@ -127,7 +127,7 @@ func (f *fakeRepo) SaveExternalIdentity(_ context.Context, ids api.ExternalIdent
 
 func TestResolveExternalIDsCandidateDoesNotPersist(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(repo, WithIMDBClient(&stubIMDB{}))
+	svc := newTestService(t, repo, WithIMDBClient(&stubIMDB{}))
 	tmdbID := 1234567
 
 	result, err := svc.collectExternalIdentityEvidence(context.Background(), preparationstate.State{
@@ -642,7 +642,7 @@ func TestResolveExternalIDsExplicitRefreshReconcilesProvidersWithoutRetainedAuth
 
 	retainedTMDB := &stubTMDB{}
 	retainedIMDB := &stubIMDB{}
-	retained, err := NewService(&fakeRepo{}, WithTMDBClient(retainedTMDB), WithIMDBClient(retainedIMDB)).resolveExternalIdentity(t.Context(), base)
+	retained, err := newTestService(t, &fakeRepo{}, WithTMDBClient(retainedTMDB), WithIMDBClient(retainedIMDB)).resolveExternalIdentity(t.Context(), base)
 	if err != nil {
 		t.Fatalf("resolve retained data: %v", err)
 	}
@@ -660,7 +660,7 @@ func TestResolveExternalIDsExplicitRefreshReconcilesProvidersWithoutRetainedAuth
 		Title:  "Current title",
 		Year:   2026,
 	}}
-	service := NewService(&fakeRepo{}, WithTMDBClient(refreshedTMDB), WithIMDBClient(refreshedIMDB))
+	service := newTestService(t, &fakeRepo{}, WithTMDBClient(refreshedTMDB), WithIMDBClient(refreshedIMDB))
 	base.ExternalFreshness = api.ExternalFreshnessRefresh
 
 	for refresh := 1; refresh <= 2; refresh++ {
@@ -684,7 +684,7 @@ func TestResolveExternalIDsExplicitRefreshReconcilesProvidersWithoutRetainedAuth
 func TestResolveExternalIDsExplicitRefreshDoesNotRetainFailedProviderAuthority(t *testing.T) {
 	const sourcePath = "/media/Example.Movie.2026.1080p-GRP.mkv"
 	tmdbClient := &stubTMDB{metadataErr: errors.New("provider unavailable")}
-	result, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{})).resolveExternalIdentity(t.Context(), preparationstate.State{
+	result, err := newTestService(t, &fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{})).resolveExternalIdentity(t.Context(), preparationstate.State{
 		SourcePath:        sourcePath,
 		ExternalFreshness: api.ExternalFreshnessRefresh,
 		StoredDataFresh:   true,
@@ -731,7 +731,7 @@ func TestResolveExternalIDsExplicitRefreshPropagatesCancellation(t *testing.T) {
 		cancel()
 		return tmdb.MetadataResult{}, context.Canceled
 	}}
-	_, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{})).resolveExternalIdentity(ctx, preparationstate.State{
+	_, err := newTestService(t, &fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{})).resolveExternalIdentity(ctx, preparationstate.State{
 		SourcePath:        "/media/Example.Movie.2026.1080p-GRP.mkv",
 		ExternalFreshness: api.ExternalFreshnessRefresh,
 		MediaInfoTMDBID:   10,
@@ -758,7 +758,7 @@ func TestResolveExternalIDsPrecedence(t *testing.T) {
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -800,7 +800,7 @@ func TestResolveExternalIDsPrecedence(t *testing.T) {
 
 func TestResolveExternalIDsWithoutTMDBAPIKey(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
 		WithTVmazeClient(&stubTVmaze{}),
@@ -851,7 +851,7 @@ func TestResolveExternalIDsPreservesExplicitEpisodeIMDbID(t *testing.T) {
 		}},
 	}}
 	imdbOverride := 7654321
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(&stubTVDB{}),
 		WithTVmazeClient(tvmazeClient),
@@ -880,7 +880,7 @@ func TestResolveExternalIDsPreservesExplicitEpisodeIMDbID(t *testing.T) {
 }
 
 func TestEnsureExternalClientsInitializesKeylessAniListWithoutTMDBAPIKey(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 
 	tmdbClient, anilistClient, _, _, _ := svc.ensureExternalClients(t.Context())
 	if tmdbClient != nil {
@@ -910,7 +910,7 @@ func TestResolveExternalIDsRefreshesAniListWithoutTMDBAPIKey(t *testing.T) {
 			TitleRomaji: "Current Anime",
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithAniListClient(anilistClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -944,7 +944,7 @@ func TestResolveExternalIDsRefreshesAniListWithoutTMDBAPIKey(t *testing.T) {
 func TestResolveExternalIDsDoesNotCreateTVmazePlaceholder(t *testing.T) {
 	repo := &fakeRepo{}
 	tvmazeClient := &stubTVmaze{}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
 		WithTVmazeClient(tvmazeClient),
@@ -1051,7 +1051,7 @@ func TestResolveExternalIDsPreservesCanonicalTrackerIdentity(t *testing.T) {
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -1116,7 +1116,7 @@ func TestResolveExternalIDsPreservesCanonicalTrackerIdentity(t *testing.T) {
 	reuseIMDBClient := &stubIMDB{}
 	reuseTVDBClient := &stubTVDB{}
 	reuseTVmazeClient := &stubTVmaze{}
-	reuseSvc := NewService(repo,
+	reuseSvc := newTestService(t, repo,
 		WithTMDBClient(reuseTMDBClient),
 		WithIMDBClient(reuseIMDBClient),
 		WithTVDBClient(reuseTVDBClient),
@@ -1199,7 +1199,7 @@ func TestResolveExternalIDsExplicitMovieCategoryVetoesEarlierTVCandidate(t *test
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -1251,7 +1251,7 @@ func TestResolveExternalIDsIgnoresUnsupportedTrackerCategory(t *testing.T) {
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -1300,7 +1300,7 @@ func TestResolveExternalIDsSearchAndMetadata(t *testing.T) {
 		TVDBID:     12,
 	}}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -1338,7 +1338,7 @@ func TestResolveExternalIDsFetchesPreviewLogoWithoutDescriptionLogo(t *testing.T
 			TMDBType: "Movie",
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithConfig(config.Config{Description: config.DescriptionSettingsConfig{AddLogo: false, LogoLanguage: "ja,en"}}),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
@@ -1377,7 +1377,7 @@ func TestResolveExternalIDsRefetchesMissingTMDBLogo(t *testing.T) {
 			LogoLookupAttempted: true,
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithConfig(config.Config{Description: config.DescriptionSettingsConfig{AddLogo: false, LogoLanguage: "en"}}),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
@@ -1424,7 +1424,7 @@ func TestResolveExternalIDsUsesSceneTVmazeToResolveIMDb(t *testing.T) {
 		TVDBID:     456789,
 	}}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -1471,7 +1471,7 @@ func TestResolveExternalIDsUsesSceneNFOIDs(t *testing.T) {
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -1521,7 +1521,7 @@ func TestResolveExternalIDsUsesStoredFreshData(t *testing.T) {
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -1606,7 +1606,7 @@ func TestResolveExternalIDsRefreshesCachedTVDBPosterThumbnail(t *testing.T) {
 		PosterThumbnail:                "https://artworks.thetvdb.com/thumbnail.jpg",
 		PosterThumbnailLookupAttempted: true,
 	}}
-	svc := NewService(&fakeRepo{}, WithTVDBClient(tvdbClient), WithIMDBClient(&stubIMDB{}), WithTVmazeClient(&stubTVmaze{}))
+	svc := newTestService(t, &fakeRepo{}, WithTVDBClient(tvdbClient), WithIMDBClient(&stubIMDB{}), WithTVmazeClient(&stubTVmaze{}))
 	state := preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1655,7 +1655,7 @@ func TestResolveExternalIDsRefreshesCachedTVmazeBackdrop(t *testing.T) {
 			BackdropLookupAttempted: true,
 		}},
 	}}
-	svc := NewService(&fakeRepo{}, WithTVmazeClient(tvmazeClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}))
+	svc := newTestService(t, &fakeRepo{}, WithTVmazeClient(tvmazeClient), WithIMDBClient(&stubIMDB{}), WithTVDBClient(&stubTVDB{}))
 	state := preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1741,7 +1741,7 @@ func TestResolveExternalIDsClearsNonExplicitSiblingBeforeAnchoredResolution(t *t
 				state.ArrTMDBID = 999888
 			}
 
-			svc := NewService(&fakeRepo{},
+			svc := newTestService(t, &fakeRepo{},
 				WithTMDBClient(&stubTMDB{}),
 				WithIMDBClient(&stubIMDB{info: imdb.Info{
 					IMDbID: "tt1234567",
@@ -1780,7 +1780,7 @@ func TestResolveExternalIDsRefreshesTVDBDisambiguationWithoutRefetchingSeries(t 
 			Source:         "tvdb_v4_search_unpaged",
 		},
 	}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTVDBClient(tvdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVmazeClient(&stubTVmaze{}),
@@ -1864,7 +1864,7 @@ func TestResolveExternalIDsPrefersTMDBFromIMDbBeforeSearch(t *testing.T) {
 	}}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -1923,7 +1923,7 @@ func TestResolveExternalIDsKeepsAnchoredFilenameMatchAsCandidate(t *testing.T) {
 		},
 		searchOutcome: tmdb.SearchOutcome{TMDBID: 253, Category: "TV"},
 	}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
 			IMDbID: "tt1234567",
@@ -1990,7 +1990,7 @@ func TestResolveExternalIDsRejectsTMDBMetadataConflictingWithExplicitIMDb(t *tes
 					ExternalIMDbID: 7654321,
 				},
 			}
-			svc := NewService(&fakeRepo{},
+			svc := newTestService(t, &fakeRepo{},
 				WithTMDBClient(tmdbClient),
 				WithIMDBClient(&stubIMDB{info: imdb.Info{IMDbID: "tt1234567", Title: "Example Anchor"}}),
 				WithTVDBClient(&stubTVDB{}),
@@ -2098,7 +2098,7 @@ func TestResolveExternalIDsGatesRejectedTMDBFromDownstreamMetadata(t *testing.T)
 					"episode": {"name": "Episódio Localizado", "overview": "Sinopse do episódio"},
 				},
 			}
-			svc := NewService(&fakeRepo{},
+			svc := newTestService(t, &fakeRepo{},
 				WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 				WithTMDBClient(tmdbClient),
 				WithIMDBClient(&stubIMDB{info: imdb.Info{
@@ -2175,7 +2175,7 @@ func TestResolveExternalIDsGatesRejectedTVDBFromEpisodeMetadata(t *testing.T) {
 					Name:         "Matched TVDB Episode",
 				}}},
 			}
-			svc := NewService(&fakeRepo{},
+			svc := newTestService(t, &fakeRepo{},
 				WithTMDBClient(&stubTMDB{}),
 				WithIMDBClient(&stubIMDB{}),
 				WithTVDBClient(tvdbClient),
@@ -2232,7 +2232,7 @@ func TestResolveExternalIDsUsesStaleStoredExplicitPinBeforeProviderFacts(t *test
 		},
 		localizedData: map[string]any{"name": "Conflicting Localized Series"},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
@@ -2343,7 +2343,7 @@ func TestResolveExternalIDsResetStoredTMDBPinAllowsAutomaticLookup(t *testing.T)
 					},
 				},
 			}
-			svc := NewService(repo,
+			svc := newTestService(t, repo,
 				WithTMDBClient(tmdbClient),
 				WithIMDBClient(&stubIMDB{info: imdb.Info{
 					IMDbID: formatIMDbID(storedIMDBID),
@@ -2416,7 +2416,7 @@ func TestResolveExternalIDsCategoryResetUsesParsedMovieCategory(t *testing.T) {
 				metadata:      tmdb.MetadataResult{TMDBType: "Movie", Title: "Example Movie"},
 			}
 			repo := &fakeRepo{ids: stored}
-			service := NewService(repo,
+			service := newTestService(t, repo,
 				WithTMDBClient(tmdbClient),
 				WithIMDBClient(&stubIMDB{}),
 				WithTVDBClient(&stubTVDB{}),
@@ -2502,7 +2502,7 @@ func TestResolveExternalIDsGatesRejectedTVmazeFromEpisodeMetadata(t *testing.T) 
 					EpisodeNumber: 1,
 				},
 			}
-			svc := NewService(&fakeRepo{},
+			svc := newTestService(t, &fakeRepo{},
 				WithTMDBClient(&stubTMDB{}),
 				WithIMDBClient(&stubIMDB{info: imdb.Info{
 					IMDbID: "tt1234567",
@@ -2556,7 +2556,7 @@ func TestResolveExternalIDsAllowsDownstreamTMDBAfterConflictingInferredIDIsRepla
 			"overview": "Sinopse localizada",
 		},
 	}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
@@ -2638,7 +2638,7 @@ func TestResolveExternalIDsReconcilesExplicitTMDBAndTVmazeLinks(t *testing.T) {
 					Externals: tvmaze.Externals{IMDB: formatIMDbID(tc.tvmazeIMDBID), TVDB: tc.tvmazeTVDBID},
 				}},
 			}}
-			svc := NewService(&fakeRepo{},
+			svc := newTestService(t, &fakeRepo{},
 				WithTMDBClient(tmdbClient),
 				WithIMDBClient(&stubIMDB{info: imdb.Info{
 					IMDbID: "tt1234567",
@@ -2686,7 +2686,7 @@ func TestResolveExternalIDsReverifiesFreshStoredExplicitTMDBAnchor(t *testing.T)
 		ExternalIMDbID: 1234567,
 	}}
 	repo := &fakeRepo{}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
 			IMDbID: "tt1234567",
@@ -2748,7 +2748,7 @@ func TestResolveExternalIDsReverifiesFreshStoredExplicitTVmazeAnchor(t *testing.
 		}},
 	}}
 	repo := &fakeRepo{}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(&stubTMDB{}),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
 			IMDbID: "tt1234567",
@@ -2820,7 +2820,7 @@ func TestResolveExternalIDsReconcilesFreshStoredExplicitAnchorLinks(t *testing.T
 		}},
 	}}
 	repo := &fakeRepo{}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
 			IMDbID: "tt1234567",
@@ -2891,7 +2891,7 @@ func TestResolveExternalIDsPreservesUnanchoredProviderResultsWithConflictingLink
 			Externals: tvmaze.Externals{IMDB: "tt7654321", TVDB: 999888},
 		}},
 	}}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
 			IMDbID: "tt1234567",
@@ -2946,7 +2946,7 @@ func TestResolveExternalIDsReplacesTVDBLookupStubWithTMDBLinkedSeriesMetadata(t 
 			Genres:          []string{"Drama", "Mystery"},
 		},
 	}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{
 			TMDBType:       "TV",
 			TVDBID:         canonicalTVDBID,
@@ -3027,7 +3027,7 @@ func TestResolveExternalIDsSQLiteFreshProvenanceOnlyAnchorClearsStoredGuess(t *t
 		t.Fatalf("migrate repository: %v", err)
 	}
 
-	service := NewService(repo,
+	service := newTestService(t, repo,
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(stubSceneDetector{}),
@@ -3132,7 +3132,7 @@ func TestResolveExternalIDsSQLiteStaleAutomaticTVCanDriftFromFallbackMovieNaming
 	imdbClient := &stubIMDB{searchFn: func(imdb.SearchInput) (imdb.SearchResult, error) {
 		return imdb.SearchResult{}, errors.New("imdb unavailable")
 	}}
-	service := NewService(repo,
+	service := newTestService(t, repo,
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(stubSceneDetector{}),
@@ -3234,7 +3234,7 @@ func TestResolveExternalIDsSQLiteStaleProvenanceOnlyClearBlocksSiblingPromotion(
 		ExternalIMDbID: 7654321,
 	}}
 	imdbClient := &stubIMDB{}
-	service := NewService(repo,
+	service := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(&stubTVDB{}),
@@ -3273,7 +3273,7 @@ func TestResolveExternalIDsRejectsInferredTVmazeConflictingWithExplicitTMDB(t *t
 			Externals: tvmaze.Externals{IMDB: "tt7654321", TVDB: 999888},
 		}},
 	}}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
 			IMDbID: "tt1234567",
@@ -3330,7 +3330,7 @@ func TestResolveExternalIDsUsesExplicitTVmazeCrossReferences(t *testing.T) {
 			Externals: tvmaze.Externals{IMDB: "tt1234567", TVDB: 222333},
 		}},
 	}}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
 			IMDbID: "tt1234567",
@@ -3385,7 +3385,7 @@ func TestResolveExternalIDsRejectsInferredTMDBConflictingWithExplicitTVmaze(t *t
 			Externals: tvmaze.Externals{IMDB: "tt1234567", TVDB: 222333},
 		}},
 	}}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
 			IMDbID: "tt1234567",
@@ -3420,7 +3420,7 @@ func TestResolveExternalIDsRejectsUnverifiedTVmazeTitleMatch(t *testing.T) {
 		SelectedID: 55,
 		Candidates: []tvmaze.Candidate{{ID: 55, Name: "Unrelated Title Match"}},
 	}}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(&stubTMDB{findResult: tmdb.FindResult{FilenameSearch: true}}),
 		WithIMDBClient(&stubIMDB{info: imdb.Info{
 			IMDbID: "tt1234567",
@@ -3452,7 +3452,7 @@ func TestResolveExternalIDsRejectsUnverifiedTVmazeTitleMatch(t *testing.T) {
 func TestResolveExternalIDsTMDBAnchorSuppressesTVmazeNameFallback(t *testing.T) {
 	tmdbID := 123
 	tvmazeClient := &stubTVmaze{}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{
 			Title:          "Example Anchor",
 			TMDBType:       "TV",
@@ -3490,7 +3490,7 @@ func TestResolveExternalIDsMALOnlySuppressesTitleSelection(t *testing.T) {
 		searchOutcome:   tmdb.SearchOutcome{TMDBID: 123, Category: "TV"},
 		anilistMetadata: tmdb.AniListMetadataResult{MALID: malID, TitleRomaji: "Example Anime"},
 	}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{searchResult: imdb.SearchResult{IMDbID: 1234567}}),
 		WithTVDBClient(&stubTVDB{}),
@@ -3525,7 +3525,7 @@ func TestResolveExternalIDsEpisodeTypeForcesTVTMDBSearchCategory(t *testing.T) {
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -3585,7 +3585,7 @@ func TestResolveExternalIDsSearchStagesAndUnattendedInteractionMode(t *testing.T
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -3647,7 +3647,7 @@ func TestResolveExternalIDsInteractiveCLIDoesNotForceUnattendedSearch(t *testing
 	imdbClient := &stubIMDB{searchFn: func(_ imdb.SearchInput) (imdb.SearchResult, error) {
 		return imdb.SearchResult{IMDbID: 2424}, nil
 	}}
-	svc := NewService(repo, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
+	svc := newTestService(t, repo, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
 
 	_, err := svc.resolveExternalIdentity(context.Background(), preparationstate.State{
 		SourcePath: "/media/Example.Series.2025.1080p.WEB-DL.mkv",
@@ -3691,7 +3691,7 @@ func TestResolveExternalIDsDailyDateSkipsParsedYearInSearch(t *testing.T) {
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -3738,7 +3738,7 @@ func TestResolveExternalIDsFetchesIMDBAfterTMDBResolvesIt(t *testing.T) {
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -3777,7 +3777,7 @@ func TestResolveExternalIDsDoesNotTreatTMDBMovieWithoutIMDbAsTVMovie(t *testing.
 	tvdbClient := &stubTVDB{idWhenTVMovie: 55, nameWhenTVMovie: "Example TV Movie"}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -3824,7 +3824,7 @@ func TestResolveExternalIDsDoesNotApplyTVDBForMovieCategory(t *testing.T) {
 	tvdbClient := &stubTVDB{idWhenTVMovie: 55, nameWhenTVMovie: "Example TV Movie"}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -3867,7 +3867,7 @@ func TestResolveExternalIDsTVmazeWaitsForIDThenFallsBack(t *testing.T) {
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{SelectedID: 55, TVDBID: 433631}}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -3909,7 +3909,7 @@ func TestResolveExternalIDsOverride(t *testing.T) {
 	tvdbClient := &stubTVDB{id: 55, name: "Tracker"}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -3945,7 +3945,7 @@ func TestResolveExternalIDsOverride(t *testing.T) {
 
 func TestResolveExternalIDsPreservesExplicitTVDBIDForMovieConflict(t *testing.T) {
 	tvdbID := 345678
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(&stubTMDB{}),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -3978,7 +3978,7 @@ func TestResolveExternalIDsRefetchesProviderSnapshotsAfterIDOverride(t *testing.
 	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Current TMDB", TMDBType: "Movie"}}
 	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt0000111", Title: "Current IMDb"}}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(&stubTVDB{}),
@@ -4058,7 +4058,7 @@ func TestResolveExternalIDsRefetchesTMDBMetadataWhenCategoryChangesWithSameID(t 
 					TMDBType: test.freshType,
 				}, nil
 			}}
-			svc := NewService(&fakeRepo{},
+			svc := newTestService(t, &fakeRepo{},
 				WithTMDBClient(tmdbClient),
 				WithIMDBClient(&stubIMDB{}),
 				WithTVDBClient(&stubTVDB{}),
@@ -4109,7 +4109,7 @@ func TestResolveExternalIDsClearIMDBSuppressesTMDBSiblingEnrichment(t *testing.T
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -4152,7 +4152,7 @@ func TestResolveExternalIDsClearTMDBRefreshesDerivedTVDB(t *testing.T) {
 				tvdbClient.id = 401003
 				tvdbClient.name = "Example Series"
 			}
-			svc := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient),
+			svc := newTestService(t, &fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient),
 				WithTVDBClient(tvdbClient), WithTVmazeClient(&stubTVmaze{}))
 			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
 				SourcePath:        sourcePath,
@@ -4221,7 +4221,7 @@ func TestResolveExternalIDsClearTMDBSuppressesRetainedIMDBLookup(t *testing.T) {
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -4262,7 +4262,7 @@ func TestResolveExternalIDsClearTVDBAndTVmazeSuppressesSiblingResolution(t *test
 	}}
 	tvdbClient := &stubTVDB{id: 888}
 	tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{SelectedID: 55}}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(tvdbClient),
@@ -4294,7 +4294,7 @@ func TestResolveExternalIDsClearTVDBAndTVmazeSuppressesSiblingResolution(t *test
 }
 
 func TestResolveExternalIDsMissingRepo(t *testing.T) {
-	svc := NewService(nil)
+	svc := newTestService(t, nil)
 	_, err := svc.resolveExternalIdentity(context.Background(), preparationstate.State{SourcePath: "/media/file.mkv"})
 	if err == nil {
 		t.Fatalf("expected error")
@@ -4365,7 +4365,7 @@ func TestResolveSearchYearIgnoresManualYearForKnownTV(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataDailyMappingMatch(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{dailySeason: 2, dailyEpisode: 7}
 
 	meta := preparationstate.State{
@@ -4387,7 +4387,7 @@ func TestApplyTVEpisodeMetadataDailyMappingMatch(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataDailyMappingNoMatchDoesNotCoerceEpisode(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 
 	meta := preparationstate.State{
@@ -4409,7 +4409,7 @@ func TestApplyTVEpisodeMetadataDailyMappingNoMatchDoesNotCoerceEpisode(t *testin
 }
 
 func TestApplyTVEpisodeMetadataDailyMappingNoMatchDoesNotPersistParsedFallback(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 
 	meta := preparationstate.State{
@@ -4440,7 +4440,7 @@ func TestApplyTVEpisodeMetadataDailyMappingNoMatchDoesNotPersistParsedFallback(t
 }
 
 func TestApplyTVEpisodeMetadataUseSeasonEpisodePrefersTMDBDateMapping(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{dailySeason: 2, dailyEpisode: 7}
 	useSeasonEpisode := true
 
@@ -4473,7 +4473,7 @@ func TestApplyTVEpisodeMetadataManualSeasonEpisodeInstructionsBecomeCanonical(t 
 	for _, season := range []int{2, 2026} {
 		seasonLabel := fmt.Sprintf("S%02d", season)
 		t.Run(seasonLabel, func(t *testing.T) {
-			svc := NewService(&fakeRepo{})
+			svc := newTestService(t, &fakeRepo{})
 			tmdbClient := &stubTMDB{dailySeason: 9, dailyEpisode: 9}
 			tvmazeClient := &stubTVmaze{episodeData: &tvmaze.EpisodeData{SeasonNumber: 7, EpisodeNumber: 8}}
 
@@ -4503,7 +4503,7 @@ func TestApplyTVEpisodeMetadataManualSeasonEpisodeInstructionsBecomeCanonical(t 
 }
 
 func TestApplyTVEpisodeMetadataManualDateInstructionWinsOverParsedDate(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{dailySeason: 2, dailyEpisode: 7}
 
 	meta := preparationstate.State{
@@ -4594,7 +4594,7 @@ func TestMapTVmazeMetadataIncludesRichFields(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataTVDBAliasYearApplied(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{specificAlias: "Le Bureau (2018)"}
 
@@ -4622,7 +4622,7 @@ func TestApplyTVEpisodeMetadataTVDBAliasYearApplied(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataTVDBAliasYearUsesLastYear(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{specificAlias: "Hunter x Hunter (1999) (2011)"}
 
@@ -4682,7 +4682,7 @@ func TestApplyTVEpisodeMetadataTVDBAliasYearPreservesSource(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := NewService(&fakeRepo{})
+			svc := newTestService(t, &fakeRepo{})
 			tmdbClient := &stubTMDB{}
 			tvdbClient := &stubTVDB{
 				episodes: tvdb.EpisodesData{
@@ -4722,7 +4722,7 @@ func TestApplyTVEpisodeMetadataTVDBAliasYearPreservesSource(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataTVDBTitleOnlyAliasAppliedWithoutYear(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{specificAlias: "Cats Eye"}
 
@@ -4753,7 +4753,7 @@ func TestApplyTVEpisodeMetadataTVDBTitleOnlyAliasAppliedWithoutYear(t *testing.T
 }
 
 func TestApplyTVEpisodeMetadataTVDBAliasPreservesNativeTitle(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{specificAlias: "English Show (2021)"}
 
@@ -4789,7 +4789,7 @@ func TestApplyTVEpisodeMetadataTVDBAliasPreservesNativeTitle(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataTVDBEpisodeTranslationApplied(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{
 		episodes: tvdb.EpisodesData{Episodes: []tvdb.Episode{{
@@ -4853,7 +4853,7 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTranslationApplied(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataTVDBMapsSeasonlessAbsoluteWithoutTMDB(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tvdbClient := &stubTVDB{
 		episodes: tvdb.EpisodesData{Episodes: []tvdb.Episode{{
 			ID:             112,
@@ -4887,7 +4887,7 @@ func TestApplyTVEpisodeMetadataTVDBMapsSeasonlessAbsoluteWithoutTMDB(t *testing.
 }
 
 func TestApplyTVEpisodeMetadataIMDbMapsSeasonlessAbsoluteThenUsesTVmaze(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tvmazeClient := &stubTVmaze{episodeData: &tvmaze.EpisodeData{
 		EpisodeName:   "TVmaze Episode Three",
 		Overview:      "TVmaze overview.",
@@ -4945,7 +4945,7 @@ func TestApplyTVEpisodeMetadataIMDbMapsSeasonlessAbsoluteThenUsesTVmaze(t *testi
 }
 
 func TestApplyTVEpisodeMetadataIMDbTitleFallbackWithoutTVmaze(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	meta := preparationstate.State{
 		SourcePath: "Example.Series.S01E02.1080p-GRP.mkv",
 		SeasonInt:  1,
@@ -4972,7 +4972,7 @@ func TestApplyTVEpisodeMetadataIMDbTitleFallbackWithoutTVmaze(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataAnimeTVPackKeepsEpisodeEmpty(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
@@ -4998,7 +4998,7 @@ func TestApplyTVEpisodeMetadataAnimeTVPackKeepsEpisodeEmpty(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataStoresTVDBSeasonEpisodesForPack(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{
 		episodes: tvdb.EpisodesData{Episodes: []tvdb.Episode{
@@ -5047,7 +5047,7 @@ func TestApplyTVEpisodeMetadataStoresTVDBSeasonEpisodesForPack(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataTVDBEpisodeTitleSkipsOriginalWhenEnglishMissing(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{
 		episodes: tvdb.EpisodesData{Episodes: []tvdb.Episode{{
@@ -5084,7 +5084,7 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTitleSkipsOriginalWhenEnglishMissing(t
 }
 
 func TestApplyTVEpisodeMetadataDiscardsSeriesTitleAsEpisodeTitle(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvmazeClient := &stubTVmaze{
 		episodeData: &tvmaze.EpisodeData{
@@ -5121,7 +5121,7 @@ func TestApplyTVEpisodeMetadataDiscardsSeriesTitleAsEpisodeTitle(t *testing.T) {
 }
 
 func TestApplyTVEpisodeMetadataEpisodeTitleBlankedWhenTBA(t *testing.T) {
-	svc := NewService(&fakeRepo{})
+	svc := newTestService(t, &fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{
 		episodes: tvdb.EpisodesData{Episodes: []tvdb.Episode{{
@@ -5230,7 +5230,7 @@ func TestResolveExternalIDsTVDBNoEnglishRefetch(t *testing.T) {
 		},
 	}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -5285,7 +5285,7 @@ func TestResolveExternalIDsTVDBSlugYearNotUsedForNamingYear(t *testing.T) {
 		},
 	}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -5590,7 +5590,7 @@ func TestResolveExternalIDsTVDBExplicitSeriesYearUsedForNamingYear(t *testing.T)
 		},
 	}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -5636,7 +5636,7 @@ func TestResolveExternalIDsAppliesMALOverride(t *testing.T) {
 	imdbClient := &stubIMDB{}
 	tvdbClient := &stubTVDB{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -5673,7 +5673,7 @@ func TestResolveExternalIDsAnchoredTMDBSuppressesUnverifiedMAL(t *testing.T) {
 			Anime:    true,
 		},
 	}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -5716,7 +5716,7 @@ func TestResolveExternalIDsPreservesStoredAniListForSameMALID(t *testing.T) {
 		},
 	}
 	tmdbClient := &stubTMDB{}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -5762,7 +5762,7 @@ func TestResolveExternalIDsRefetchesAniListWhenMALIDChanges(t *testing.T) {
 			TitleRomaji: "Current Anime",
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -5806,7 +5806,7 @@ func TestResolveExternalIDsClearsStaleAniListWhenChangedMALIDHasNoResult(t *test
 		},
 	}
 	tmdbClient := &stubTMDB{}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -5835,7 +5835,7 @@ func TestResolveExternalIDsAniListFetchErrorDoesNotPersistEmptyMetadata(t *testi
 	sourcePath := "/media/Example.Anime.S01E04.mkv"
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{anilistErr: errors.New("graphql metadata error")}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -5871,7 +5871,7 @@ func TestResolveExternalIDsMALFallbacksAndClear(t *testing.T) {
 		MALID:    444,
 		Anime:    true,
 	}}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -5958,7 +5958,7 @@ func TestResolveExternalIDsPreservesProviderEvidenceWithOriginalLanguageOverride
 	}
 	tvdbClient := &stubTVDB{}
 
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient),
@@ -6014,7 +6014,7 @@ func TestResolveExternalIDsSelectedDemandsShareLocalizedFetchWhenTMDBMetadataIsN
 			"overview": "Sinopse Localizada",
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
@@ -6061,7 +6061,7 @@ func TestResolveExternalIDsRefreshesRetainedTMDBForSelectedDemands(t *testing.T)
 		Genres:           "Drama",
 		OriginalLanguage: "en",
 	}}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -6108,7 +6108,7 @@ func TestResolveExternalIDsRefreshesRetainedTVDBYearForSelectedDemand(t *testing
 		Name:   "Refreshed Series",
 		Year:   2024,
 	}}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(&stubTMDB{}),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(tvdbClient),
@@ -6148,7 +6148,7 @@ func TestResolveExternalIDsSkipsSelectedDemandRefreshForCompleteOrManualFacts(t 
 	genres := []string{"Drama"}
 	originalLanguage := "ja"
 	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Unexpected refresh", TMDBType: "Movie"}}
-	svc := NewService(&fakeRepo{},
+	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -6201,7 +6201,7 @@ func TestResolveExternalIDsSkipsIncompleteLocalizedPTBR(t *testing.T) {
 			"overview": "Sinopse sem titulo",
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
@@ -6241,7 +6241,7 @@ func TestResolveExternalIDsStoresEpisodeOverviewWithoutEpisodeTitle(t *testing.T
 			},
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
@@ -6281,7 +6281,7 @@ func TestResolveExternalIDsSkipsEpisodeLocalizedPTBRWithoutScopedOverview(t *tes
 			},
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
@@ -6315,7 +6315,7 @@ func TestResolveExternalIDsMergesLocalizedPTBRWithoutBlankOverwrite(t *testing.T
 			"title": "Titulo novo",
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
@@ -6376,7 +6376,7 @@ func TestResolveExternalIDsPreservesExistingLocalizedPTBRWhenEpisodeFetchFails(t
 			},
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
@@ -6439,7 +6439,7 @@ func TestResolveExternalIDsLocalizedFetchUsesVariantCachePaths(t *testing.T) {
 			"overview": "Sinopse",
 		},
 	}
-	svc := NewService(repo,
+	svc := newTestService(t, repo,
 		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		WithTMDBClient(tmdbClient),

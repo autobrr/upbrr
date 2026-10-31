@@ -139,7 +139,7 @@ func TestCanonicalEvidencePipelineUsesClientTrackerIDBeforeProviderResolution(t 
 	cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 		"ANT": {APIKey: "synthetic-api-key"},
 	}}}
-	service := NewService(
+	service := newTestService(t,
 		&fakeRepo{},
 		WithConfig(cfg),
 		WithMediaInfoExporter(stubMediaInfo{}),

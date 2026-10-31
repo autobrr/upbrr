@@ -43,7 +43,7 @@ func TestSPPackPreparationReusesOnlyPrimaryMediaReport(t *testing.T) {
 				}
 			}
 			analyzer := &packAnalyzer{}
-			service := NewService(
+			service := newTestService(t,
 				&stubRepo{},
 				WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)),
 				WithSceneDetector(stubSceneDetector{}),

@@ -101,7 +101,7 @@ func TestValidateMediaInfoSettingsRequiresVideoSettingsRegardlessOfAudioTracks(t
 }
 
 func TestDeriveMediaFactsReturnsMediaInfoScanFailure(t *testing.T) {
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	_, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
 		SourcePath:        filepath.Join(t.TempDir(), "source.mkv"),
 		MediaInfoJSONPath: filepath.Join(t.TempDir(), "missing.json"),
@@ -167,7 +167,7 @@ func TestDeriveMediaFactsProjectsHardcodedSubtitleLanguageIntent(t *testing.T) {
 					HardcodedSubtitleLanguages: &languages,
 				},
 			}
-			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			meta, err := svc.deriveMediaFacts(t.Context(), input)
 			if err != nil {
 				t.Fatalf("derive media facts: %v", err)
@@ -1146,7 +1146,7 @@ func TestDeriveMediaFactsSuppliesStructuredAudioMarkersToISPolicy(t *testing.T) 
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
 		SourcePath:        "Dubbed.Story.S01E02.1080p.WEB-DL.H.264-GRP.mkv",
 		MediaInfoJSONPath: miPath,
@@ -1295,7 +1295,7 @@ func TestDerivedMetadataCorrectionsPreserveNamingAuthority(t *testing.T) {
 				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"}},
 				MetadataOverrides: test.overrides,
 			}
-			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			if test.trackKind != "" {
 				inspected, err := svc.deriveMediaFacts(t.Context(), state)
 				if err != nil {
@@ -1376,7 +1376,7 @@ func TestDerivedMetadataCorrectionsPreserveNamingAuthority(t *testing.T) {
 }
 
 func TestDeriveMediaFactsFoldsValueInstructionsIntoFactsAndName(t *testing.T) {
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	meta, err := svc.deriveMediaFacts(context.Background(), preparationstate.State{
 		SourcePath: "Example.Movie.2026.1080p.WEB.H.264-GRP.mkv",
 		Release: api.ReleaseInfo{
@@ -1538,7 +1538,7 @@ func TestDeriveMediaFactsRetainsPrePresentationNamingAvailability(t *testing.T) 
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			meta, err := svc.deriveMediaFacts(t.Context(), test.state)
 			if err != nil {
 				t.Fatalf("derive media facts: %v", err)
@@ -1575,7 +1575,7 @@ func TestDeriveMediaFactsRetainsPrePresentationNamingAvailability(t *testing.T) 
 }
 
 func TestDeriveMediaFactsNoEditionRetainsRepackAvailabilityWithoutPublicRepack(t *testing.T) {
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
 		SourcePath: "Example.Movie.2026.REPACK.1080p.WEB-DL.H.264-GRP.mkv",
 		Type:       "WEBDL",
@@ -1726,7 +1726,7 @@ func TestDeriveMediaFactsRetainsAbsentLayoutRolesForMandatoryInclude(t *testing.
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			meta, err := svc.deriveMediaFacts(t.Context(), test.state)
 			if err != nil {
 				t.Fatalf("derive media facts: %v", err)
@@ -1759,7 +1759,7 @@ func TestDeriveMediaFactsRetainsAbsentLayoutRolesForMandatoryInclude(t *testing.
 }
 
 func TestDeriveMediaFactsPreservesOpaqueManualEditionAvailability(t *testing.T) {
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
 		SourcePath: "Example.Movie.2026.DVDRip-GRP.mkv",
 		Type:       "DVDRIP",
@@ -1874,7 +1874,7 @@ func TestDerivedNamingManualAuthorityThroughTrackerDefaults(t *testing.T) {
 				state.DiscType = "DVD"
 				state.Release.Type = "DISC"
 			}
-			meta, err := NewService(&fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), state)
+			meta, err := newTestService(t, &fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), state)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1916,16 +1916,16 @@ func TestDerivedNamingRequiredOmittedAndUnavailableComponents(t *testing.T) {
 			want:    "Hybrid",
 		},
 		{
-name: "opaque hybrid wording",
- role: api.NameRoleHybrid,
- edition: "Hybrid Uncut",
-},
+			name:    "opaque hybrid wording",
+			role:    api.NameRoleHybrid,
+			edition: "Hybrid Uncut",
+		},
 		{name: "unknown hybrid", role: api.NameRoleHybrid},
 		{name: "unknown repack", role: api.NameRoleRepack},
 		{name: "unknown dual audio", role: api.NameRoleDualAudio},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			meta, err := NewService(&fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), preparationstate.State{
+			meta, err := newTestService(t, &fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), preparationstate.State{
 				SourcePath: "Example.Movie.2026.DVDRip-GRP.mkv",
 				Type:       "DVDRIP",
 				Source:     "DVD",
@@ -1969,7 +1969,7 @@ name: "opaque hybrid wording",
 func TestDerivedNamingManualDateReplacesAvailableEvidence(t *testing.T) {
 	for _, prior := range []string{"", "2025-01-02"} {
 		t.Run("prior="+prior, func(t *testing.T) {
-			meta, err := NewService(&fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), preparationstate.State{
+			meta, err := newTestService(t, &fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), preparationstate.State{
 				SourcePath:       "Example.Show.S01E02.WEB-DL-GRP.mkv",
 				Type:             "WEBDL",
 				Source:           "Web",
@@ -2019,7 +2019,7 @@ func TestDeriveMediaFactsManualYearClearOverridesProviderFacts(t *testing.T) {
 		t.Fatalf("reloaded manual year = %#v", reloaded.ReleaseName.ManualYear)
 	}
 
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	meta, err := svc.deriveMediaFacts(context.Background(), preparationstate.State{
 		SourcePath: "Example.Movie.2026.1080p.WEB.H.264-GRP.mkv",
 		Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
@@ -2067,7 +2067,7 @@ func TestDeriveMediaFactsPreservesScanInResolvedNaming(t *testing.T) {
 			if err := os.WriteFile(miPath, []byte(payload), 0o600); err != nil {
 				t.Fatalf("write mediainfo: %v", err)
 			}
-			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
 				SourcePath:        filepath.Join(t.TempDir(), "source.mkv"),
 				MediaInfoJSONPath: miPath,
@@ -2107,7 +2107,7 @@ func TestDeriveMediaFactsResolvesNonDisc3D(t *testing.T) {
 			if err := os.WriteFile(miPath, []byte(`{"media":{"track":[`+tc.tracks+`]}}`), 0o600); err != nil {
 				t.Fatalf("write mediainfo: %v", err)
 			}
-			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
 				SourcePath:        filepath.Join(t.TempDir(), "Example.Movie.3D.mkv"),
 				MediaInfoJSONPath: miPath,
@@ -2193,7 +2193,7 @@ func TestDeriveMediaFactsFromCollectedUHDDiscSummary(t *testing.T) {
 				}},
 			}}
 
-			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			meta, err := svc.deriveMediaFacts(t.Context(), input)
 			if err != nil {
 				t.Fatalf("derive media facts: %v", err)
@@ -2218,7 +2218,7 @@ func TestApplyMediaDetailsTreatsUsableMediaInfoWithoutHDRAsSDR(t *testing.T) {
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	meta, err := svc.deriveMediaFacts(context.Background(), preparationstate.State{
 		SourcePath:        "Movie.2026.[DV].HDR10+.HLG.2160p.WEB-DL.H.265-GRP.mkv",
 		MediaInfoJSONPath: miPath,
@@ -2994,7 +2994,7 @@ func TestDeriveMediaFactsReleaseVersionCorrections(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
 				SourcePath: "Example.Movie.2026.REPACK2.1080p.WEB-DL.H.264-GRP.mkv",
 				Type:       "WEBDL",
@@ -3040,7 +3040,7 @@ func TestEmptyHardcodedLanguagesClearOrRetainExplicitUnknownIntent(t *testing.T)
 			Release:           api.ReleaseInfo{Title: "Example Movie"},
 			MetadataOverrides: api.MetadataOverrides{HardcodedSubs: enabled, HardcodedSubtitleLanguages: &languages},
 		}
-		svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+		svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 		meta, err := svc.deriveMediaFacts(t.Context(), input)
 		if err != nil {
 			t.Fatal(err)
@@ -3079,5 +3079,126 @@ func TestHardcodedCoveragePreservesCustomBareNames(t *testing.T) {
 		if detail.Coverage != api.SubtitleCoverageUnspecified {
 			t.Fatalf("custom language acquired inferred coverage: %#v", detail)
 		}
+	}
+}
+
+func TestDeriveMediaFactsResolutionHeightFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		parsed     string
+		manual     *string
+		width      int
+		height     int
+		discType   string
+		scan       string
+		resolution string
+	}{
+		{name: "dimension fallback", resolution: "720p"},
+		{
+			name:       "portrait filename retains 1080 tier",
+			parsed:     "1080p",
+			width:      1080,
+			height:     1920,
+			resolution: "1080p",
+		},
+		{
+			name:       "portrait manual correction",
+			manual:     new("480p"),
+			width:      1080,
+			height:     1920,
+			resolution: "480p",
+		},
+		{
+			name:       "cropped DCI dimension fallback",
+			width:      2048,
+			height:     864,
+			resolution: "1080p",
+		},
+		{
+			name:       "lower filename",
+			parsed:     "540p",
+			resolution: "720p",
+		},
+		{
+			name:       "higher filename",
+			parsed:     "1080p",
+			resolution: "1080p",
+		},
+		{
+			name:       "manual correction",
+			parsed:     "540p",
+			manual:     new("480p"),
+			resolution: "480p",
+		},
+		{
+			name:       "explicit interlaced replaces filename scan",
+			parsed:     "1080p",
+			width:      1920,
+			height:     1080,
+			scan:       "Interlaced",
+			resolution: "1080i",
+		},
+		{
+			name:   "unsupported interlaced clears filename",
+			parsed: "720p",
+			scan:   "Interlaced",
+		},
+		{
+			name:       "manual correction overrides explicit scan",
+			parsed:     "720p",
+			manual:     new("720p"),
+			scan:       "Interlaced",
+			resolution: "720p",
+		},
+		{
+			name:     "unsupported DVD interlaced floor clears filename",
+			parsed:   "540i",
+			discType: "DVD",
+			scan:     "Interlaced",
+		},
+		{
+			name:       "manual DVD correction",
+			parsed:     "540i",
+			manual:     new("540i"),
+			discType:   "DVD",
+			scan:       "Interlaced",
+			resolution: "540i",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			miPath := filepath.Join(t.TempDir(), "mediainfo.json")
+			scan := tc.scan
+			if scan == "" {
+				scan = "Progressive"
+			}
+			width, height := tc.width, tc.height
+			if width == 0 {
+				width, height = 960, 720
+			}
+			payload := fmt.Sprintf(`{"media":{"track":[{"@type":"Video","Format":"AVC","Width":"%d","Height":"%d","ScanType":"%s"}]}}`, width, height, scan)
+			if err := os.WriteFile(miPath, []byte(payload), 0o600); err != nil {
+				t.Fatalf("write mediainfo: %v", err)
+			}
+			svc := NewService(&stubRepo{}, WithConfig(config.Config{}))
+			meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
+				SourcePath:           filepath.Join(t.TempDir(), "source.mkv"),
+				MediaInfoJSONPath:    miPath,
+				Release:              api.ReleaseInfo{Title: "Example Film", Resolution: tc.parsed},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Resolution: tc.manual},
+				DiscType:             tc.discType,
+			})
+			if err != nil {
+				t.Fatalf("derive media facts: %v", err)
+			}
+			if meta.Release.Resolution != tc.resolution || meta.ResolvedNaming.Resolution != tc.resolution {
+				t.Fatalf("resolution=%q resolved=%q, want %q", meta.Release.Resolution, meta.ResolvedNaming.Resolution, tc.resolution)
+			}
+			if tc.discType == "" && tc.parsed != "" && tc.parsed != tc.resolution && strings.Contains(meta.ReleaseName, tc.parsed) {
+				t.Fatalf("release name %q retains stale resolution %q", meta.ReleaseName, tc.parsed)
+			}
+			if tc.discType == "" && !strings.Contains(meta.ReleaseName, tc.resolution) {
+				t.Fatalf("release name %q lacks %q", meta.ReleaseName, tc.resolution)
+			}
+		})
 	}
 }

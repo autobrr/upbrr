@@ -54,7 +54,7 @@ func TestPreparedIMDbStringSeasonRecollectsV35AfterRestart(t *testing.T) {
 				if err := repo.MigrateContext(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				service := NewService(repo,
+				service := newTestService(t, repo,
 					WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: fixture.dbPath}}),
 					WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}),
 					WithTMDBClient(&stubTMDB{}), WithIMDBClient(imdb.NewClient(httpClient, api.NopLogger{})),
@@ -208,7 +208,7 @@ func TestResolveIMDbSpecialSeasonReplayPreservesOtherEvidence(t *testing.T) {
 				}
 			}
 			tmdbClient := &stubTMDB{}
-			result, err := NewService(&fakeRepo{}, WithIMDBClient(imdbClient), WithTMDBClient(tmdbClient),
+			result, err := newTestService(t, &fakeRepo{}, WithIMDBClient(imdbClient), WithTMDBClient(tmdbClient),
 				WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{})).resolveExternalIdentity(t.Context(), meta)
 			if err != nil {
 				t.Fatal(err)
@@ -245,7 +245,7 @@ func TestIMDbSpecialSeasonReplayRetainsEmptyAndFailedEvidence(t *testing.T) {
 				t.Fatalf("seed IMDb evidence: error=%v persistence=%v calls=%d", err, scope.Err(), calls(""))
 			}
 			ctx, scope = evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessReuse, nil)
-			result, err := NewService(repo, WithIMDBClient(client), WithTMDBClient(&stubTMDB{}),
+			result, err := newTestService(t, repo, WithIMDBClient(client), WithTMDBClient(&stubTMDB{}),
 				WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{})).resolveExternalIdentity(ctx, retainedIMDbSpecialState(source))
 			if err != nil || scope.Err() != nil {
 				t.Fatalf("replay IMDb evidence: error=%v persistence=%v", err, scope.Err())

@@ -26,6 +26,7 @@ import (
 )
 
 type videoInfo struct {
+	Playlist        string
 	SourcePath      string
 	DurationSeconds float64
 	FrameRate       float64
@@ -70,6 +71,9 @@ const dvdSegmentDurationToleranceSeconds = 5.0
 func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot string, logger api.Logger) (videoInfo, error) {
 	logger = screenshotLogger(logger)
 	info := videoInfo{}
+	if meta.BluRayISO {
+		return resolveISOVideoInfo(meta, tmpRoot)
+	}
 
 	basePath := strings.TrimSpace(meta.VideoPath)
 	if basePath == "" {
@@ -277,6 +281,10 @@ func segmentFallbackTimestamp(segment videoSegment) float64 {
 // resolveVideoSource applies the same input-file preference as resolveVideoInfo
 // when callers only need the ffmpeg source path, such as preview generation.
 func resolveVideoSource(ctx context.Context, meta api.ScreenshotSubject, tmpRoot string, logger api.Logger) (string, error) {
+	if meta.BluRayISO {
+		info, err := resolveISOVideoInfo(meta, tmpRoot)
+		return info.SourcePath, err
+	}
 	logger = screenshotLogger(logger)
 	basePath := strings.TrimSpace(meta.VideoPath)
 	if basePath == "" {
@@ -639,6 +647,13 @@ func trackString(track map[string]any, keys ...string) string {
 }
 
 func loadBDInfo(tmpRoot string, meta api.ScreenshotSubject) (*discparse.BDInfo, error) {
+	if meta.BluRayISO {
+		if strings.TrimSpace(meta.BDInfoSummary) == "" {
+			return nil, errors.New("screenshots: prepared ISO playlist summary is unavailable")
+		}
+		return discparse.ParseBDInfoSummary(meta.BDInfoSummary, "", screenshotCaptureRoot(meta)), nil
+	}
+
 	if !strings.EqualFold(meta.DiscType, "BDMV") && !strings.EqualFold(meta.DiscType, "DVD") {
 		return nil, nil
 	}
@@ -1073,4 +1088,49 @@ func abs(x float64) float64 {
 		return -x
 	}
 	return x
+}
+
+// resolveISOVideoInfo binds the entire selected playlist timeline to the ISO.
+// Virtual clip names are evidence, never fallback host paths.
+func resolveISOVideoInfo(meta api.ScreenshotSubject, tmpRoot string) (videoInfo, error) {
+	root := screenshotCaptureRoot(meta)
+	if meta.DiscType != "BDMV" || !strings.EqualFold(filepath.Ext(root), ".iso") {
+		return videoInfo{}, errors.New("screenshots: invalid 3D Blu-ray ISO source")
+	}
+	name := paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists)
+	stem := strings.TrimSuffix(strings.ToUpper(name), ".MPLS")
+	if len(stem) != 5 || strings.Trim(stem, "0123456789") != "" {
+		return videoInfo{}, errors.New("screenshots: 3D Blu-ray ISO requires a valid explicit playlist")
+	}
+	number, err := strconv.Atoi(stem)
+	if err != nil {
+		return videoInfo{}, fmt.Errorf("screenshots: invalid ISO playlist: %w", err)
+	}
+	var duration float64
+	for _, playlist := range meta.SelectedBDMVPlaylists {
+		if strings.EqualFold(playlist.File, name) {
+			duration = playlist.Duration
+			break
+		}
+	}
+	if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+		return videoInfo{}, errors.New("screenshots: selected ISO playlist has no usable duration")
+	}
+	report, err := loadBDInfo(tmpRoot, meta)
+	if err != nil {
+		return videoInfo{}, err
+	}
+	if report == nil || !strings.EqualFold(discparse.NormalizePlaylistName(report.Playlist), name) {
+		return videoInfo{}, errors.New("screenshots: selected ISO playlist report is unavailable or stale")
+	}
+	fps := parseFPS(report)
+	if fps <= 0 {
+		return videoInfo{}, errors.New("screenshots: selected ISO playlist report has no usable frame rate")
+	}
+	return videoInfo{
+		SourcePath:      root,
+		Playlist:        strconv.Itoa(number),
+		DurationSeconds: duration,
+		FrameRate:       fps,
+	}, nil
 }

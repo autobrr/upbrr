@@ -140,6 +140,9 @@ func TestBrowseDirectoryRouteAllowsRemoteSessionsAndSortsEntries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "c-video.mkv"), []byte("video"), 0o600); err != nil {
 		t.Fatalf("write video: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "d-disc.ISO"), []byte("image candidate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	server := testServerWithBackend(t, repo, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 	})
@@ -158,14 +161,17 @@ func TestBrowseDirectoryRouteAllowsRemoteSessionsAndSortsEntries(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("unmarshal browse directory: %v", err)
 	}
-	if len(payload.Entries) < 2 {
-		t.Fatalf("expected at least two entries, got %#v", payload.Entries)
+	if len(payload.Entries) != 3 {
+		t.Fatalf("expected folder, video, and ISO candidate, got %#v", payload.Entries)
 	}
 	if payload.Entries[0].Name != "b-folder" || !payload.Entries[0].IsDir {
 		t.Fatalf("expected folder first, got %#v", payload.Entries)
 	}
 	if payload.Entries[1].Name != "c-video.mkv" || payload.Entries[1].IsDir {
 		t.Fatalf("expected file second, got %#v", payload.Entries)
+	}
+	if payload.Entries[2].Name != "d-disc.ISO" || payload.Entries[2].IsDir {
+		t.Fatalf("ISO candidate missing from authorized browser: %#v", payload.Entries)
 	}
 	for _, entry := range payload.Entries {
 		if entry.Name == "a-file.txt" {

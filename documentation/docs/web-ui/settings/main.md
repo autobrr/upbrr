@@ -1,20 +1,20 @@
 ---
-title: Main settings
+title: General settings
 description: Configure metadata access, input history, tracker icons, and scene detection.
 ---
 
-# Main settings
+# General settings
 
-Use **Settings → Main** for application-wide metadata and Web UI presentation controls.
+Use **Settings → General** for application-wide metadata and Web UI presentation controls.
 
-| Field                       | Default          | Effect                                                                                                              |
-| --------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
-| **TMDB API**                | Empty            | Enables TMDB lookups and enrichment. Other providers and supplied IDs remain available when empty.                  |
-| **Input history limit**     | `20`             | Caps source paths retained in each browser. `0` disables and clears retained history; negative values are rejected. |
-| **DB path**                 | Runtime-selected | Shows the configured SQLite path. Saving cannot move the running instance; choose its path at startup.              |
-| **Use favicons**            | On               | Fetches and displays tracker icons on supported workflow pages.                                                     |
-| **Favicon only**            | Off              | Hides tracker names where an icon is shown. Has no effect when **Use favicons** is off.                             |
-| **Scene detection (srrdb)** | On               | Enables SRRDB scene detection during preparation. Turning it off prevents those SRRDB requests.                     |
+| Field                                | Default          | Effect                                                                                                              |
+| ------------------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **TMDB API key**                     | Empty            | Enables TMDB lookups and enrichment. Other providers and supplied IDs remain available when empty.                  |
+| **Remembered source paths**          | `20`             | Caps source paths retained in each browser. `0` disables and clears retained history; negative values are rejected. |
+| **Database path**                    | Runtime-selected | Shows the configured SQLite path. Saving cannot move the running instance; choose its path at startup.              |
+| **Show tracker icons**               | On               | Fetches and displays tracker icons on supported workflow pages.                                                     |
+| **Show icons without tracker names** | Off              | Hides tracker names where an icon is shown. Has no effect when **Show tracker icons** is off.                       |
+| **Detect scene releases with SRRDB** | On               | Enables SRRDB scene detection during preparation. Turning it off prevents those SRRDB requests.                     |
 
 For moved/restored installations, [confirm the active database directory](./tracker-auth.md#import-through-the-cookie-folder) before placing cookie files beside it.
 

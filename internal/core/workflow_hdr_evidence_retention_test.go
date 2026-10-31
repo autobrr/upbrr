@@ -244,7 +244,7 @@ func TestWorkflowHybridEvidenceSurvivesDescriptionAndFinalUpload(t *testing.T) {
 	resources := releaseworkflow.DescriptionResources{Media: private, HDR: func(context.Context) (api.HDRAnalysisResult, releaseworkflow.RetainedHDRAnalysisResource, error) {
 		return analysis, workflowHybridPaths{root}, nil
 	}}
-	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "onlyimage"}}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")}, ImageHosting: config.ImageHostingConfig{Host1: "onlyimage"}}
 	for i := range 3 {
 		cfg.Description.CustomDescriptionHeader += fmt.Sprintf("[img]https://images.example/screen-%d.png[/img]\n", i)
 	}

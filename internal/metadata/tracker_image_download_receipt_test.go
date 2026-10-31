@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/imageevidence"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/services/db"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
@@ -29,13 +30,21 @@ func TestTrackerImageDownloadReferenceOutcomes(t *testing.T) {
 	if err := png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
 		t.Fatal(err)
 	}
+	var portraitBytes, dvdBytes bytes.Buffer
+	if err := png.Encode(&portraitBytes, image.NewGray(image.Rect(0, 0, 720, 1280))); err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(&dvdBytes, image.NewGray(image.Rect(0, 0, 352, 576))); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name           string
 		status         int
 		contentType    string
 		body           []byte
 		length         int64
-		height         int
+		resolution     string
+		isDVD          bool
 		writeFailure   bool
 		unprovenClient bool
 		wantReason     string
@@ -96,8 +105,42 @@ func TestTrackerImageDownloadReferenceOutcomes(t *testing.T) {
 		{
 			name:       "resolution rejected",
 			body:       imageBytes.Bytes(),
-			height:     1080,
+			resolution: "1080p",
 			wantReason: "resolution_mismatch_actual_1_expected_1080",
+		},
+		{
+			name:       "portrait image accepted",
+			body:       portraitBytes.Bytes(),
+			resolution: "720p",
+		},
+		{
+			name:       "portrait image below required tier",
+			body:       portraitBytes.Bytes(),
+			resolution: "1080p",
+			wantReason: "resolution_mismatch_actual_720_expected_1080",
+		},
+		{
+			name:       "anamorphic DVD retains physical height",
+			body:       dvdBytes.Bytes(),
+			resolution: "576p",
+			isDVD:      true,
+		},
+		{
+			name:       "narrow landscape retains accepted height",
+			body:       dvdBytes.Bytes(),
+			resolution: "576p",
+		},
+		{
+			name:       "uppercase resolution rejects undersized image",
+			resolution: " 540P ",
+			body:       imageBytes.Bytes(),
+			wantReason: "resolution_mismatch_actual_1_expected_540",
+		},
+		{
+			name:       "540i rejects undersized image",
+			resolution: "540i",
+			body:       imageBytes.Bytes(),
+			wantReason: "resolution_mismatch_actual_1_expected_540",
 		},
 		{name: "decoded saved", body: imageBytes.Bytes()},
 	} {
@@ -144,7 +187,7 @@ func TestTrackerImageDownloadReferenceOutcomes(t *testing.T) {
 				out = filepath.Join(t.TempDir(), "absent", "image.png")
 			}
 			const rawURL = "http://93.184.216.34/full.png"
-			reason, ref := downloadImageWithReference(t.Context(), client, rawURL, out, tc.height, false, allow)
+			reason, ref := downloadImageWithReference(t.Context(), client, rawURL, out, imageevidence.ResolutionHeight(tc.resolution), tc.isDVD, allow)
 			if reason != tc.wantReason || (ref != "") != tc.wantReference {
 				t.Fatalf("outcome reason=%q ref=%q, want %q reference=%t", reason, ref, tc.wantReason, tc.wantReference)
 			}
@@ -155,6 +198,8 @@ func TestTrackerImageDownloadReferenceOutcomes(t *testing.T) {
 				if _, err := os.Stat(out); err == nil {
 					t.Fatal("failed image manufactured local artifact")
 				}
+			} else if saved, err := os.ReadFile(out); err != nil || !bytes.Equal(saved, tc.body) {
+				t.Fatalf("accepted image not retained: %v", err)
 			}
 			if strings.Contains(reason, "93.184") {
 				t.Fatal("diagnostic leaked URL")
@@ -174,7 +219,7 @@ func TestTrackerImageDownloadCachedFailureCannotMintReceipt(t *testing.T) {
 	}
 	ctx, scope := evidence.WithScope(t.Context(), repo, filepath.Join(t.TempDir(), "source"), "source-fingerprint", api.ExternalFreshnessLoad, nil)
 	const rawURL = "http://93.184.216.34/full.png"
-	query := []any{"LST", rawURL, 1080, false}
+	query := []any{"LST", rawURL, 1080, false, trackerImageResolutionPolicyVersion}
 	if err := evidence.Attempt(ctx, "tracker.image", query, func() error { return errors.New("image_decode_failed") }); err == nil {
 		t.Fatal("fixture failed to retain generic failure")
 	}
@@ -182,6 +227,50 @@ func TestTrackerImageDownloadCachedFailureCannotMintReceipt(t *testing.T) {
 	reference, err := attemptTrackerImageDownload(ctx, nil, "LST", rawURL, filepath.Join(t.TempDir(), "image.png"), 1080, false, true)
 	if !errors.Is(err, evidence.ErrSuppressed) || reference != "" {
 		t.Fatalf("cached generic failure regained receipt: reference=%q err=%v", reference, err)
+	}
+	if err := scope.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTrackerImageDownloadReevaluatesLegacyPortraitFailure(t *testing.T) {
+	repo, err := db.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := repo.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, scope := evidence.WithScope(t.Context(), repo, filepath.Join(t.TempDir(), "source"), "source-fingerprint", api.ExternalFreshnessLoad, nil)
+	const rawURL = "http://93.184.216.34/full.png"
+	legacyQuery := []any{"LST", rawURL, 720, false}
+	if err := evidence.Attempt(ctx, "tracker.image", legacyQuery, func() error {
+		return errors.New("resolution_mismatch_actual_1280_expected_720")
+	}); err == nil {
+		t.Fatal("fixture failed to retain legacy rejection")
+	}
+	var payload bytes.Buffer
+	if err := png.Encode(&payload, image.NewGray(image.Rect(0, 0, 720, 1280))); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        http.Header{"Content-Type": {"image/png"}},
+			ContentLength: int64(payload.Len()),
+			Body:          io.NopCloser(bytes.NewReader(payload.Bytes())),
+		}, nil
+	})}
+	out := filepath.Join(t.TempDir(), "portrait.png")
+	reference, err := attemptTrackerImageDownload(ctx, client, "LST", rawURL, out, 720, false, false)
+	if err != nil || reference != "" || requests != 1 {
+		t.Fatalf("legacy verdict suppressed corrected download: requests=%d reference=%q err=%v", requests, reference, err)
+	}
+	if saved, err := os.ReadFile(out); err != nil || !bytes.Equal(saved, payload.Bytes()) {
+		t.Fatalf("corrected portrait image not retained: %v", err)
 	}
 	if err := scope.Err(); err != nil {
 		t.Fatal(err)

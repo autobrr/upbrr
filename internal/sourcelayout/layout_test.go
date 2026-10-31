@@ -341,3 +341,20 @@ func assertSamePath(t *testing.T, got string, want string) {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
 }
+
+func TestResolveISOIsVirtualDiscWithOriginalPhysicalSource(t *testing.T) {
+	image := filepath.Join(t.TempDir(), "Example.3D.ISO")
+	writeTestFile(t, image)
+	layout, err := Resolve(t.Context(), image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.Kind != KindFile || layout.SourcePath != image || layout.DiscType != "BDMV" || len(layout.Discs) != 1 {
+		t.Fatalf("ISO candidate lost physical file identity or virtual disc: %#v", layout)
+	}
+	if layout.Discs[0].Root != image || layout.Discs[0].Type != "BDMV" {
+		t.Fatalf("virtual resource must refer to original image, not an extracted directory: %#v", layout.Discs[0])
+	}
+	// Classification is provisional: playlist discovery and selected report
+	// evidence must validate the image before preparation can succeed.
+}

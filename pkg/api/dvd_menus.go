@@ -74,7 +74,7 @@ type DVDMenuEngineInfo struct {
 	SchemaVersion int
 	// SupportedFeatures lists the engine stages available in this build.
 	SupportedFeatures []string
-	// FFmpegVersion is the bounded first line of FFmpeg version output.
+	// FFmpegVersion contains the bounded version line and independently probed libbluray status.
 	FFmpegVersion string
 	// FFmpegDVDVideo reports whether the required dvdvideo demuxer options are available.
 	FFmpegDVDVideo bool

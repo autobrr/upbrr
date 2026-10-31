@@ -28,7 +28,7 @@ func TestProgrammeInspectionUsesEveryResourceAndRetainsPrimary(t *testing.T) {
 		}
 	}
 	analyzer := &packAnalyzer{}
-	service := NewService(
+	service := newTestService(t,
 		&stubRepo{},
 		WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)),
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}),
@@ -89,7 +89,7 @@ func TestProgrammeInspectionRefreshesPrimaryAndRejectsIncompleteReports(t *testi
 	root := t.TempDir()
 	first, second := filepath.Join(root, "a.mkv"), filepath.Join(root, "b.mkv")
 	analyzer := &programmeReportAnalyzer{report: packMediaReport}
-	service := NewService(
+	service := newTestService(t,
 		&stubRepo{},
 		WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)),
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}),
@@ -151,7 +151,7 @@ func TestProgrammeDerivationUsesFreshPrimaryTechnicalEvidence(t *testing.T) {
 	fresh := strings.ReplaceAll(packMediaReport, `"BitDepth":"8"`, `"BitDepth":"10"`)
 	fresh = strings.ReplaceAll(fresh, `"Format":"AVC"`, `"Format":"HEVC"`)
 	analyzer := &programmeReportAnalyzer{report: fresh}
-	service := NewService(
+	service := newTestService(t,
 		&stubRepo{},
 		WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)),
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}),
@@ -195,7 +195,7 @@ func TestSingleResourceInspectionOverridesMisleadingNames(t *testing.T) {
 	for _, codec := range []string{"WavPack", "unclassified-format", "WMA", "DTS-HD High-Res Audio", "ADPCM"} {
 		report := strings.ReplaceAll(packMediaReport, `"Format":"AC-3"`, `"Format":"`+codec+`"`)
 		analyzer := &programmeReportAnalyzer{report: report}
-		service := NewService(&stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, codec, "db.sqlite")}}))
+		service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, codec, "db.sqlite")}}))
 		state := preparationstate.State{
 			SourcePath:           file,
 			VideoPath:            file,

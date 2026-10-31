@@ -348,10 +348,13 @@ func newWorkflowDescriptionReuseFixture(t *testing.T) workflowDescriptionReuseFi
 	repository := &workflowDescriptionReuseRepositoryFake{}
 	service := &workflowDescriptionServiceFake{}
 	builder := workflowDescriptionBuilder{
-		config: config.Config{Description: config.DescriptionSettingsConfig{
-			CustomSignature: "Signature",
-			ThumbnailSize:   350,
-		}},
+		config: config.Config{
+			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "upbrr.db")},
+			Description: config.DescriptionSettingsConfig{
+				CustomSignature: "Signature",
+				ThumbnailSize:   350,
+			},
+		},
 		resolver: resolver,
 		trackers: service,
 		reuse:    repository,
