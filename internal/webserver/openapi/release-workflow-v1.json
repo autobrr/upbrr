@@ -4864,6 +4864,9 @@
       "MediaPlan": {
         "type": "object",
         "properties": {
+          "autoAdoptSavedImages": {
+            "type": "boolean"
+          },
           "createdAt": {
             "type": "string"
           },

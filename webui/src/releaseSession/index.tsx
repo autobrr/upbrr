@@ -1757,6 +1757,34 @@ export function ReleaseSessionProvider({
         reseedDrafts: !state.screenshots.planStale,
         finalSelectionArtifactIDs: selectedArtifactIDs,
       });
+      // The backend projects the effective prepared collection policy, including overrides.
+      // Import through the workflow so selection, deletion and URL reuse keep one owner.
+      if (
+        workflowPlan.autoAdoptSavedImages &&
+        workflowPlan.savedTrackerImages?.length &&
+        workflowView.current.media?.savedImagePlanId !== workflowPlan.id
+      ) {
+        return await runBackendWorkflow(
+          (current, commandID, signal) =>
+            continueBackendGoal(
+              current,
+              "media_ready",
+              {
+                media: {
+                  screenshotCount: 0,
+                  purpose: "final",
+                  selections: [],
+                  savedImagePlanId: workflowPlan.id,
+                  captureDvdMenus: false,
+                  maxDvdMenuItems: 0,
+                },
+              },
+              commandID,
+              signal,
+            ),
+          screenshotCommandCallbacks(true),
+        );
+      }
       return !command.controller.signal.aborted;
     } catch (error) {
       failWorkflow("screenshots", command, error);

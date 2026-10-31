@@ -576,14 +576,15 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	store := newMemoryStore()
 	initialCollector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("initial-hash"))
 	initial := newTestModule(t, store, initialCollector)
-	prepared, err := initial.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	input := api.PrepareInput{SourcePath: path, Policy: api.PreparationPolicy{KeepImages: true}}
+	prepared, err := initial.Prepare(context.Background(), input)
 	if err != nil {
 		t.Fatalf("initial prepare: %v", err)
 	}
 
 	restartedCollector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("hydrated-hash"))
 	restarted := newTestModule(t, store, restartedCollector)
-	reused, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	reused, err := restarted.Prepare(context.Background(), input)
 	if err != nil {
 		t.Fatalf("restart reuse: %v", err)
 	}
@@ -597,7 +598,7 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 			restartedCollector.hydrateCount(),
 		)
 	}
-	if _, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path}); err != nil {
+	if _, err := restarted.Prepare(context.Background(), input); err != nil {
 		t.Fatalf("second restart reuse: %v", err)
 	}
 	if restartedCollector.hydrateCount() != 1 {
@@ -628,6 +629,20 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	}
 	if screenshot.MediaInfoJSONPath != path {
 		t.Fatalf("hydrated screenshot MediaInfo path = %q, want %q", screenshot.MediaInfoJSONPath, path)
+	}
+	if !screenshot.KeepImages {
+		t.Fatal("persisted collection policy was lost from screenshot planning")
+	}
+	input.Policy.KeepImages = false
+	withoutImages, err := restarted.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutImageSubject, err := restarted.ResolveScreenshotSubject(t.Context(), api.MediaPlanInput{
+		Release: api.ReleaseRef{SourcePath: path, Generation: withoutImages.Release.Generation},
+	})
+	if err != nil || withoutImageSubject.KeepImages {
+		t.Fatalf("disabled collection policy remained enabled: keepImages=%t err=%v", withoutImageSubject.KeepImages, err)
 	}
 }
 

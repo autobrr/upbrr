@@ -112,11 +112,19 @@ func maybeApplyE2EServices(
 		}
 	}
 	if services.Screenshots == nil {
-		services.Screenshots = e2eScreenshotService{
+		screenshots := e2eScreenshotService{
 			shotPath: os.Getenv(e2eShotPathEnv),
 			tmpRoot:  tmpRoot,
 			repo:     repositories.Media(),
 		}
+		if os.Getenv("UPBRR_E2E_SAVED_DESCRIPTION_IMAGE") == "1" {
+			image, err := e2eManagedScreenshot(screenshots.shotPath, tmpRoot, "existing-description", "", 0)
+			if err != nil {
+				return err
+			}
+			screenshots.savedImage = &image
+		}
+		services.Screenshots = screenshots
 	}
 	if services.DVDMenus == nil {
 		services.DVDMenus = e2eDVDMenuService{shotPath: os.Getenv(e2eShotPathEnv), tmpRoot: tmpRoot}
@@ -1792,9 +1800,10 @@ func postE2EImageUpload(ctx context.Context, endpoint string, host string, image
 }
 
 type e2eScreenshotService struct {
-	shotPath string
-	tmpRoot  string
-	repo     api.ScreenshotLifecycleRepository
+	savedImage *api.ScreenshotImage
+	shotPath   string
+	tmpRoot    string
+	repo       api.ScreenshotLifecycleRepository
 }
 
 func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject, count int) (api.ScreenshotPlan, error) {
@@ -1843,6 +1852,20 @@ func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject
 			FrameRate:           24,
 			SuggestedSelections: selections,
 		})
+	}
+	if s.savedImage != nil {
+		// Deletion removes the managed fixture; planning must not recreate it.
+		if _, err := os.Stat(s.savedImage.Path); err == nil {
+			plan.FinalSelections = []api.ScreenshotImage{*s.savedImage}
+			plan.TrackerImageLinks = []api.ScreenshotLinkedImage{{
+				Tracker: "AITHER",
+				Path:    s.savedImage.Path,
+				Host:    "imgbb",
+				URL:     "https://i.ibb.co/e2e-existing.png",
+			}}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return api.ScreenshotPlan{}, err
+		}
 	}
 	return plan, nil
 }

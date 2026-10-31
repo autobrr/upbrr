@@ -1287,6 +1287,7 @@ export type MediaFileFacts = Readonly<{
 }>;
 
 export type MediaPlan = Readonly<{
+  autoAdoptSavedImages?: boolean;
   createdAt: string;
   discType?: string;
   discs?: readonly MediaDiscPlan[];

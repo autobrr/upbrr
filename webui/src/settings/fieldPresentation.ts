@@ -68,11 +68,11 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     KeepImages: field(
       "Collect existing tracker images",
-      "Collect eligible images from supported tracker descriptions for later reuse. On Screenshots, use saved images when offered; collecting them does not capture new frames. Imported comparison images remain in descriptions.",
+      "Collect eligible images from supported tracker descriptions for later reuse. Eligible images are included automatically on Screenshots, where you can review or remove them. Collecting them does not capture new frames. Imported comparison images remain in descriptions.",
     ),
     OnlyID: field(
       "Limit tracker lookup to only metadata ids",
-      "Request identity fields rather than full description metadata from supported trackers. This restricts normal description/image enrichment; inspect the prepared result when combining with image collection.",
+      "Request identity fields rather than full description metadata from supported trackers. Image collection is controlled separately; supported trackers can still provide images when both settings are enabled.",
     ),
     UserOverrides: field(
       "User overrides (compatibility)",

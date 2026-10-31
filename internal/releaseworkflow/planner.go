@@ -1083,19 +1083,21 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		Instructions: *desired,
 		Requirements: current.Media.RequirementsFingerprint,
 	})
-	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil && len(desired.Selections) == 0 {
-		if !stageSucceeded(current.Media.Status) || (desired.SavedImagePlanID == "" && (err != nil || current.Media.CaptureFingerprint != expected)) {
-			return false
-		}
-		return desired.SavedImagePlanID == "" ||
-			(current.Media.SavedImagePlanID == desired.SavedImagePlanID && slices.ContainsFunc(current.Media.Artifacts, func(artifact api.MediaArtifact) bool {
-				if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source == "tracker" && artifact.Selected {
+	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.SavedImagePlanID != "" &&
+		desired.ScreenshotCount == 0 && len(desired.Selections) == 0 && len(desired.ManualFrames) == 0 {
+		// Adoption is complete even when the user has unselected all imported images.
+		return stageSucceeded(current.Media.Status) && current.Media.SavedImagePlanID == desired.SavedImagePlanID &&
+			slices.ContainsFunc(current.Media.Artifacts, func(artifact api.MediaArtifact) bool {
+				if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source == "tracker" {
 					return true
 				}
-				return artifact.Kind == api.MediaArtifactHostedImage && artifact.Selected && slices.ContainsFunc(current.Media.Artifacts, func(source api.MediaArtifact) bool {
-					return source.Kind == api.MediaArtifactScreenshot && source.Selected && string(source.ID) == artifact.Source
+				return artifact.Kind == api.MediaArtifactHostedImage && slices.ContainsFunc(current.Media.Artifacts, func(source api.MediaArtifact) bool {
+					return source.Kind == api.MediaArtifactScreenshot && string(source.ID) == artifact.Source
 				})
-			}))
+			})
+	}
+	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil && len(desired.Selections) == 0 {
+		return stageSucceeded(current.Media.Status) && err == nil && current.Media.CaptureFingerprint == expected
 	}
 	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil {
 		retained := make(map[int]struct{}, len(current.Media.Artifacts))

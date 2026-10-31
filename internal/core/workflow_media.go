@@ -102,13 +102,14 @@ func (b workflowMediaBuilder) Plan(
 		})
 	}
 	return api.MediaPlan{
-		DurationSeconds:     plan.DurationSeconds,
-		FrameRate:           plan.FrameRate,
-		DiscType:            plan.DiscType,
-		SuggestedSelections: append([]api.ScreenshotSelection(nil), plan.SuggestedSelections...),
-		Discs:               discs,
-		Requirements:        requirements,
-		SavedTrackerImages:  mediaPlanSavedImages(plan),
+		DurationSeconds:      plan.DurationSeconds,
+		FrameRate:            plan.FrameRate,
+		DiscType:             plan.DiscType,
+		SuggestedSelections:  append([]api.ScreenshotSelection(nil), plan.SuggestedSelections...),
+		Discs:                discs,
+		Requirements:         requirements,
+		AutoAdoptSavedImages: subject.KeepImages,
+		SavedTrackerImages:   mediaPlanSavedImages(plan),
 	}, nil
 }
 
@@ -630,7 +631,9 @@ func (b workflowMediaBuilder) Build(
 		if len(importedScreenshots) > 0 {
 			snapshot.SavedImagePlanID = instructions.SavedImagePlanID
 		}
-		if len(selections) == 0 {
+		importOnly := instructions.SavedImagePlanID != "" && instructions.ScreenshotCount == 0 &&
+			len(instructions.Selections) == 0 && len(instructions.ManualFrames) == 0
+		if len(selections) == 0 && !importOnly {
 			selections = append(selections, plan.SuggestedSelections...)
 			existingScreenshots = append(existingScreenshots, plan.ExistingScreenshots...)
 			if len(importedScreenshots) > 0 && len(instructions.ManualFrames) == 0 && (len(plan.Discs) <= 1 || len(importedScreenshots) >= screenshotCount) {
@@ -639,7 +642,7 @@ func (b workflowMediaBuilder) Build(
 					selections = selections[:missing]
 				}
 			}
-		} else {
+		} else if len(selections) > 0 {
 			var mergeErr error
 			selections, existingScreenshots, mergeErr = mergeManualSelectionsWithDiscPlan(selections, plan)
 			if mergeErr != nil {
@@ -1110,7 +1113,7 @@ func (b workflowMediaBuilder) BuildIncremental(
 	for _, artifact := range combined.Artifacts {
 		known[artifact.ID] = struct{}{}
 		maxOrder = max(maxOrder, artifact.Order)
-		if artifact.Kind == api.MediaArtifactScreenshot && artifact.Selected {
+		if artifact.Kind == api.MediaArtifactScreenshot && (artifact.Selected || isImportedWorkflowScreenshot(artifact, retained)) {
 			if image, ok := retained.ArtifactImages[artifact.ID]; ok {
 				knownImportedPaths[strings.ToLower(normalizedUploadImagePath(image.Path))] = artifact.ID
 				if isImportedWorkflowScreenshot(artifact, retained) {
@@ -1256,7 +1259,7 @@ func matchingRestoredImportedScreenshot(
 	var fallbackID api.PublicResourceID
 	for _, requireSameURL := range []bool{true, false} {
 		for _, artifact := range artifacts {
-			if artifact.Kind != api.MediaArtifactScreenshot || !artifact.Selected || !isImportedWorkflowScreenshot(artifact, retained) {
+			if artifact.Kind != api.MediaArtifactScreenshot || !isImportedWorkflowScreenshot(artifact, retained) {
 				continue
 			}
 			if _, used := usedSources[artifact.ID]; used {

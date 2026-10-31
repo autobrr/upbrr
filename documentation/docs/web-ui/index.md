@@ -55,7 +55,9 @@ After a source preview is prepared, open the panel below **Edit Release Details*
 
 ### Reuse tracker images
 
-With **Settings → Metadata → Keep images** enabled, preparation can retain validated screenshots from tracker data. Inspect the imported description and images on **Tracker Data**, then open **Screenshots**. When **Saved tracker images** appears, choose **Use saved images** to include those images in the workflow. upbrr can capture additional frames when the retained images do not meet the requested count or tracker requirements.
+With **Settings → Metadata → Collect existing tracker images** enabled, preparation can retain validated screenshots from tracker data. Inspect the imported description and images on **Tracker Data**, then open **Screenshots**. Available existing description images are included automatically in the retained screenshot list, where you can unselect, delete or reorder them like new captures. Loading these images does not capture additional frames; use **Generate screenshots** when you want new captures.
+
+Existing description images are marked with unknown capture timestamps and provenance. Their chronological order cannot be inferred, including relative to newly captured screenshots. Review the displayed selection and order before continuing. Compatible existing URLs remain subject to the selected trackers’ image-host policies.
 
 Review the final screenshot selection and order before continuing. Existing URLs are reused only when the destination tracker and chosen image host allow them; other images need rehosting. Imported comparison blocks remain part of the description and do not count as ordinary screenshots. See [image-host requirements](./settings/image-hosting.md).
 
