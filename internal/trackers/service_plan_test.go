@@ -788,7 +788,7 @@ func TestRetainedUploadPlanPublishesExactDistinctTrackerArtifacts(t *testing.T) 
 			t.Fatalf("register retained definition: %v", err)
 		}
 	}
-	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")}}), nil, nil, registry)
+	service := NewServiceWithRegistry(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")}}, nil, nil, registry)
 	projections := []api.TrackerReleaseProjection{
 		{
 			TrackerID:         "ALPHA",
@@ -858,7 +858,7 @@ func TestRetainedUploadPlanKeepsArtifactFailureTrackerLocal(t *testing.T) {
 			t.Fatalf("register retained definition: %v", err)
 		}
 	}
-	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")}}), nil, nil, registry)
+	service := NewServiceWithRegistry(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")}}, nil, nil, registry)
 	retained, err := service.PrepareRetainedUploadPlan(
 		context.Background(),
 		api.UploadSubject{

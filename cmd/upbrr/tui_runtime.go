@@ -94,7 +94,11 @@ func runCLIPresentation(
 			cancelDriver(errCLIUserInterrupt)
 		}, args, paths, debug, launch, caps.NoColor)
 		model.dashboard, model.keepOpen = streams.dashboard, streams.keepOpen
-		terminalWriter := &cliTerminalWriter{Writer: render, failure: func() { cancelDriver(errors.New("terminal output failed")); cancelUI() }}
+		terminalWriter := &cliTerminalWriter{Writer: render, failure: func() {
+			// Record UI failure before worker completion can quit it normally.
+			cancelUI()
+			cancelDriver(errors.New("terminal output failed"))
+		}}
 		var terminalOutput io.Writer = terminalWriter
 		if file, ok := render.(*os.File); ok {
 			terminalOutput = &cliTerminalFileWriter{cliTerminalWriter: terminalWriter, file: file}

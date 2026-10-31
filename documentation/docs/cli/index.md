@@ -111,6 +111,8 @@ Trackers with a confirmed upload of the same verified submitted content are excl
 
 Interactive tracker questions with exactly `yes`/`no` choices also accept `y`/`n`, regardless of letter case. Other choices still require their listed values. Strict `--unattended` remains prompt-free.
 
+With `--ui=auto`, a terminal-dashboard failure before work starts falls back to plain output. Explicit `--ui=tui` startup failures stop the command. User cancellation or interruption never starts a fallback run.
+
 The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic lines are replaced with `[oversized diagnostic omitted]` rather than showing a partial structured value that cannot be safely redacted. Already-sanitized application log messages retain a bounded prefix with `[truncated]`. File and retained application logs are not shortened by this display limit. Inspect logs and remove any remaining credentials, cookies, tokens, private URLs and unrelated personal information before sharing them.
 
 :::danger Destructive maintenance

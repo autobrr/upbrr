@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -203,6 +204,27 @@ type cliFailingFrames struct{}
 
 func (cliFailingFrames) Write([]byte) (int, error) { return 0, errors.New("synthetic output failure") }
 
+// cliCancelGateContext never cancels. Its AfterFunc stop gate pauses cancellation
+// after the first child closes Done, allowing worker completion to run first.
+type cliCancelGateContext struct {
+	context.Context
+	done, stopping, release chan struct{}
+	once                    sync.Once
+}
+
+func (c *cliCancelGateContext) Done() <-chan struct{} { return c.done }
+
+func (c *cliCancelGateContext) AfterFunc(func()) func() bool {
+	var stopped atomic.Bool
+	return func() bool {
+		if !stopped.CompareAndSwap(false, true) {
+			return false
+		}
+		c.once.Do(func() { close(c.stopping); <-c.release })
+		return true
+	}
+}
+
 func TestUIStartupFailureNeverDispatchesForcedWork(t *testing.T) {
 	var calls atomic.Int32
 	err := runCLIPresentation(t.Context(), cliIO{
@@ -217,26 +239,51 @@ func TestUIStartupFailureNeverDispatchesForcedWork(t *testing.T) {
 }
 
 func TestAutomaticStartupFallbackPreservesInvocationInterrupt(t *testing.T) {
+	// Keep a terminal query queued so the first failed write precedes frame locking.
+	t.Setenv("TERM", "xterm-ghostty")
 	invocation, cancel := context.WithCancelCause(t.Context())
 	cancel(errCLIUserInterrupt)
 	if t.Context().Err() != nil || cliStartupFallbackAllowed(t.Context(), invocation, false) {
 		t.Fatal("invocation-owned interrupt permitted fallback with an uncanceled parent")
 	}
 	for _, forced := range []bool{false, true} {
-		var calls atomic.Int32
-		err := runCLIPresentation(t.Context(), cliIO{
-			in:     strings.NewReader(""),
-			out:    cliFailingFrames{},
-			errOut: io.Discard,
-		}, cliTerminalCapabilities{Width: 120, Height: 40}, true, true, forced, nil, nil, false, false,
-			func(context.Context, []string, []string, cliIO) error { calls.Add(1); return nil })
-		if forced {
-			if err == nil || calls.Load() != 0 {
-				t.Fatal("forced startup failure dispatched work")
-			}
-		} else if err != nil || calls.Load() != 1 {
-			t.Fatalf("ordinary automatic startup failure did not fall back once: %v calls=%d", err, calls.Load())
-		}
+		t.Run(strconv.FormatBool(forced), func(t *testing.T) {
+			testCLIPresentationTime(t, func(t *testing.T) {
+				ctx := &cliCancelGateContext{
+					Context:  context.WithoutCancel(t.Context()),
+					done:     make(chan struct{}),
+					stopping: make(chan struct{}),
+					release:  make(chan struct{}),
+				}
+				release := sync.OnceFunc(func() { close(ctx.release) })
+				defer release()
+				var calls atomic.Int32
+				done := make(chan error, 1)
+				go func() {
+					done <- runCLIPresentation(ctx, cliIO{
+						in:     strings.NewReader(""),
+						out:    cliFailingFrames{},
+						errOut: io.Discard,
+					}, cliTerminalCapabilities{
+						Width:   120,
+						Height:  40,
+						NoColor: true,
+					}, true, true, forced, nil, nil, false, false,
+						func(context.Context, []string, []string, cliIO) error { calls.Add(1); return nil })
+				}()
+				<-ctx.stopping
+				synctest.Wait()
+				release()
+				err := <-done
+				if forced {
+					if err == nil || calls.Load() != 0 {
+						t.Fatal("forced startup failure dispatched work")
+					}
+				} else if err != nil || calls.Load() != 1 {
+					t.Fatalf("ordinary automatic startup failure did not fall back once: %v calls=%d", err, calls.Load())
+				}
+			})
+		})
 	}
 	parent, cancelParent := context.WithCancel(t.Context())
 	cancelParent()
