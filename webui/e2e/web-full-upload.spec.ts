@@ -200,9 +200,11 @@ test("embedded web blocks Dupe Check until missing saved facts are corrected", a
     await expect(dupeCheck).toBeDisabled();
     await expect(warning).toBeVisible();
     seedMissingSource = false;
+    const refreshed = waitForAppMethod(page, "OpenActiveInput");
     await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await refreshed).ok()).toBe(true);
     const corrected = await waitForMetadataReady(page, app.url);
-    expect(corrected.current?.release?.release.Media.Source).toBeTruthy();
+    expect(corrected.current?.corrections?.corrections.releaseName.Source).toBe("Web");
     await expect(warning).toBeHidden();
     await dupeCheck.click();
     await expect(page.getByRole("heading", { name: "Check Trackers", exact: true })).toBeVisible();
