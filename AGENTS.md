@@ -17,6 +17,7 @@ Read the relevant scoped instructions before editing that area; do not load ever
 ## Shared behavior and safety
 
 - Preserve shared CLI/WebUI workflow behavior unless intentionally changing one entrypoint.
+- Multiple manual provider IDs remain authoritative independently, even when provider-returned IDs conflict. Cross-provider agreement cannot veto those selections or discard their successfully fetched metadata. Preserve explicit clearing and Auto/reset; see the metadata boundary rules in [internal/AGENTS.md](internal/AGENTS.md).
 - Debug mode is not a non-mutating dry run. It suppresses tracker submission but may bypass policy gates such as banned-group blocking so later stages remain testable. Client injection remains default; CLI `-ns` and WebUI Upload skip-client-injection are explicit opt-outs. Do not classify these semantics as defects.
 - Never expose credentials, tokens, API keys, cookies or secret payloads in logs, UI, diagnostics or fixtures; use the existing redaction boundaries.
 - Use synthetic media titles, release names and content identifiers in shareable examples and fixtures. Exclude private URLs and identifiable user data. Public service names, provider codes, format labels and production mappings are allowed. Prefer `GRP` for incidental groups; retain actual groups when behavior depends on them.

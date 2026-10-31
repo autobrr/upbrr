@@ -452,7 +452,7 @@ func TestAPIV1CompositeUploadCreateAndFeedbackContracts(t *testing.T) {
 		http.MethodPost,
 		"/api/v1/uploads",
 		strings.NewReader(
-			`{"source":{"path":"D:\\Example Release 2026"},"unattended":{"confirm":false},"execution":{"mode":"debug"},"trackers":{"include":["EXAMPLE"]}}`,
+			`{"source":{"path":"D:\\Example Release 2026"},"unattended":{"confirm":false},"execution":{"mode":"debug"},"trackers":{"include":["EXAMPLE"]},"preparation":{"facts":{"externalIds":{"tmdb":{"value":444555},"imdb":{"value":"tt1234567"},"tvdb":{"value":222333},"tvmaze":{"value":55},"mal":{"value":0}}}}}`,
 		),
 	)
 	create.Header.Set("Authorization", "Bearer "+apiV1TestToken)
@@ -465,6 +465,14 @@ func TestAPIV1CompositeUploadCreateAndFeedbackContracts(t *testing.T) {
 	if coreFake.startOwner != "api:uploader" || coreFake.startRequest.IdempotencyKey != "upload-create-1" ||
 		coreFake.startRequest.Execution.Mode != api.ReleaseWorkflowUploadModeDebug {
 		t.Fatalf("composite create mapping = owner=%q request=%#v", coreFake.startOwner, coreFake.startRequest)
+	}
+	ids := coreFake.startRequest.Preparation.Facts.ExternalIDs
+	if ids.TMDB == nil || ids.TMDB.Value == nil || *ids.TMDB.Value != 444555 ||
+		ids.IMDB == nil || ids.IMDB.Value == nil || *ids.IMDB.Value != "tt1234567" ||
+		ids.TVDB == nil || ids.TVDB.Value == nil || *ids.TVDB.Value != 222333 ||
+		ids.TVmaze == nil || ids.TVmaze.Value == nil || *ids.TVmaze.Value != 55 ||
+		ids.MAL == nil || ids.MAL.Value == nil || *ids.MAL.Value != 0 {
+		t.Fatal("composite API changed independent provider selections or the explicit MAL clear")
 	}
 	if got := createResponse.Header().Get("Location"); got != "/upbrr/api/v1/workflows/workflow-upload" {
 		t.Fatalf("composite create Location = %q", got)

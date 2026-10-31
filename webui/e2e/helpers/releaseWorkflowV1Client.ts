@@ -1,6 +1,12 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type {
+  ReleaseCorrectionsSnapshot,
+  ReleaseFactInstructionSnapshot,
+  ReleaseSnapshot,
+} from "../../src/api/generated/release-workflow";
+
 /** Minimal retained workflow projection consumed by HTTP-only E2E scenarios. */
 export type WorkflowV1Current = Readonly<{
   workflow: Readonly<{
@@ -15,7 +21,9 @@ export type WorkflowV1Current = Readonly<{
       options?: readonly Readonly<{ value: string; label: string }>[];
     }>[];
   }>;
-  release?: Readonly<{ release: Readonly<{ Generation: number }> }>;
+  release?: ReleaseSnapshot;
+  corrections?: ReleaseCorrectionsSnapshot;
+  factInstructions?: ReleaseFactInstructionSnapshot;
   projections?: Readonly<{
     status: string;
     projections: readonly Readonly<{
