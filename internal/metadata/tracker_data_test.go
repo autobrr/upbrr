@@ -402,8 +402,12 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 	if winner.TMDBID == 0 && winner.IMDBID == 0 && winner.TVDBID == 0 {
 		t.Fatalf("expected metadata ids on winner record")
 	}
-	if !slices.ContainsFunc(result.TrackerData, func(record api.TrackerMetadata) bool { return record.Description == "Retained notes" }) {
+	ant, found := trackerRecordFor(result.TrackerData, "ANT")
+	if !found || ant.Description != "Retained notes" {
 		t.Fatalf("concurrent winner discarded retained assets: %+v", result.TrackerData)
+	}
+	if winner.Description != "" {
+		t.Fatalf("winner carries another tracker's description: %q", winner.Description)
 	}
 }
 
