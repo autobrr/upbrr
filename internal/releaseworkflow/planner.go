@@ -988,7 +988,7 @@ func planContinuationCommandWithReadiness(
 			return nil, "hdr-analysis-failed"
 		}
 	}
-	if !mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload) {
+	if !mediaRequirementsPreparedForImagePolicy(current.Media, request.Intent) {
 		var artifactIDs []api.PublicResourceID
 		if request.Intent.MediaSelection != nil {
 			artifactIDs = append(artifactIDs, request.Intent.MediaSelection.ArtifactIDs...)
@@ -999,6 +999,7 @@ func planContinuationCommandWithReadiness(
 			Media:            api.MediaArtifactSetRef{ID: current.Media.ID, Revision: current.Media.Revision},
 			ArtifactIDs:      artifactIDs,
 			SkipUpload:       request.Intent.SkipImageHostUpload,
+			PreferredHost:    cloneStringPointer(preferredImageHost(request.Intent)),
 			IdempotencyKey:   key("prepare-image-requirements"),
 		}, "prepare-image-requirements"
 	}
@@ -1351,13 +1352,13 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 			continuationMediaCaptureSatisfied(current, request.Intent.Media)
 	case api.WorkflowGoalDescriptionsReady:
 		return descriptionsHaveViableTracker(current.Descriptions) &&
-			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
+			mediaRequirementsPreparedForImagePolicy(current.Media, request.Intent)
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
 		return dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) &&
-			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
+			mediaRequirementsPreparedForImagePolicy(current.Media, request.Intent)
 	case api.WorkflowGoalUploaded:
 		return current.UploadResult != nil &&
-			mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload)
+			mediaRequirementsPreparedForImagePolicy(current.Media, request.Intent)
 	default:
 		return false
 	}
@@ -1480,6 +1481,30 @@ func duplicateDecisionsComplete(dupes *api.DupeAssessment) bool {
 	return !slices.ContainsFunc(dupes.Results, func(result api.TrackerDupeAssessment) bool {
 		return result.Decision == api.DupeDecisionPending
 	})
+}
+
+// preferredImageHost uses the same policy input as downstream descriptions.
+func preferredImageHost(intent api.WorkflowIntent) *string {
+	if intent.Descriptions == nil {
+		return nil
+	}
+	return intent.Descriptions.ImageHost.PreferredHost
+}
+
+// mediaRequirementsPreparedForImagePolicy preserves completed default barriers,
+// but re-evaluates changed host preferences through the normal saved-link policy.
+func mediaRequirementsPreparedForImagePolicy(media *api.MediaArtifactSet, intent api.WorkflowIntent) bool {
+	if !mediaRequirementsPreparedForIntent(media, intent.SkipImageHostUpload) {
+		return false
+	}
+	if intent.SkipImageHostUpload || !mediaHasSelectedLocalImages(media) {
+		return true
+	}
+	wanted := preferredImageHost(intent)
+	if wanted == nil || media.ImageHostPreference == nil {
+		return wanted == nil && media.ImageHostPreference == nil
+	}
+	return strings.EqualFold(strings.TrimSpace(*wanted), strings.TrimSpace(*media.ImageHostPreference))
 }
 
 // mediaRequirementsPreparedForIntent requires successful media preparation and

@@ -3993,6 +3993,7 @@ func (m *hostSpecificMediaMutator) UploadImages(
 	artifactIDs []api.PublicResourceID,
 	host string,
 	_ bool,
+	_ *string,
 	_ time.Time,
 ) (api.MediaArtifactSet, RetainedMediaResource, []api.HostedImageAttempt, error) {
 	if host == "" {

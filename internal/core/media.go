@@ -308,8 +308,9 @@ func (m *mediaModule) resolveAcceptedImageUpload(
 		return api.UploadSubject{}, nil, errors.New("core: canonical preparation is not configured")
 	}
 	subject, err := m.preparedFacts.ResolveUploadSubject(ctx, api.UploadSubjectInput{
-		Release:  input.Release,
-		Trackers: append([]string(nil), input.Trackers...),
+		Release:            input.Release,
+		Trackers:           append([]string(nil), input.Trackers...),
+		ImageHostOverrides: api.ImageHostOverrides{PreferredHost: input.PreferredHost},
 	})
 	if err != nil {
 		return api.UploadSubject{}, nil, fmt.Errorf("core: resolve image upload subject: %w", err)
