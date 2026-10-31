@@ -292,6 +292,76 @@ func TestAutomaticStartupFallbackPreservesInvocationInterrupt(t *testing.T) {
 	}
 }
 
+func TestPresentationSignalsPreserveInvocationState(t *testing.T) {
+	t.Setenv("TERM", "xterm-ghostty")
+	for _, test := range []struct {
+		name                 string
+		failOutput, keepOpen bool
+	}{
+		{"output failure", true, false},
+		{"output failure with open dashboard", true, true},
+		{"completed dashboard", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testCLIPresentationTime(t, func(t *testing.T) {
+				ctx := context.WithValue(t.Context(), cliProductionContextKey{}, true)
+				var output io.Writer = &cliSynchronizedOutput{}
+				var gate *cliCancelGateContext
+				release := func() {}
+				if test.failOutput {
+					gate = &cliCancelGateContext{
+						Context:  context.WithoutCancel(ctx),
+						done:     make(chan struct{}),
+						stopping: make(chan struct{}),
+						release:  make(chan struct{}),
+					}
+					ctx, output = gate, cliFailingFrames{}
+					release = sync.OnceFunc(func() { close(gate.release) })
+				}
+				defer release()
+				interrupts := make(chan os.Signal)
+				completed := make(chan struct{})
+				done := make(chan error, 1)
+				var calls atomic.Int32
+				go func() {
+					done <- runCLIPresentation(ctx, cliIO{
+						in:         strings.NewReader(""),
+						out:        output,
+						errOut:     io.Discard,
+						interrupts: interrupts,
+						keepOpen:   test.keepOpen,
+					}, cliTerminalCapabilities{Width: 120, Height: 40}, true, test.failOutput, false, nil, nil, false, false,
+						func(context.Context, []string, []string, cliIO) error {
+							calls.Add(1)
+							close(completed)
+							return nil
+						})
+				}()
+				if gate != nil {
+					<-gate.stopping
+				} else {
+					<-completed
+				}
+				synctest.Wait()
+				// The unbuffered send confirms the controller selected the signal.
+				// Its own shutdown join then finishes handling it before fallback.
+				interrupts <- os.Interrupt
+				release()
+				err := <-done
+				if test.failOutput {
+					exit, ok := errors.AsType[*cliExitError](err)
+					if !ok || exit.code != 130 || !errors.Is(err, errCLIUserInterrupt) || calls.Load() != 0 {
+						t.Fatalf("interrupt after output failure = %v calls=%d", err, calls.Load())
+					}
+				} else if err != nil || calls.Load() != 1 {
+					t.Fatalf("completed dashboard signal = %v calls=%d", err, calls.Load())
+				}
+				close(interrupts)
+			})
+		})
+	}
+}
+
 type cliRetryLifecycle struct{ calls, closed int }
 
 func (f *cliRetryLifecycle) ShutdownWorkflowCoordinator(context.Context) error {

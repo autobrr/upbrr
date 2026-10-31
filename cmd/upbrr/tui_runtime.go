@@ -51,8 +51,16 @@ func runCLIPresentation(
 ) error {
 	streams = streams.normalized()
 	originalStreams := streams
-	runCtx, cancelDriver := context.WithCancelCause(ctx)
-	defer cancelDriver(nil)
+	runCtx, cancelWork := context.WithCancelCause(ctx)
+	defer cancelWork(nil)
+	// Cancellation keeps its first cause; later interrupts still own exit and fallback.
+	var interrupted atomic.Bool
+	cancelDriver := func(cause error) {
+		if errors.Is(cause, errCLIUserInterrupt) {
+			interrupted.Store(true)
+		}
+		cancelWork(cause)
+	}
 	shutdownStarted := make(chan struct{}, 1)
 	runCtx = context.WithValue(runCtx, cliShutdownStartedContextKey{}, shutdownStarted)
 	uiCtx, cancelUI := context.WithCancel(context.WithoutCancel(ctx))
@@ -88,7 +96,7 @@ func runCLIPresentation(
 			render = streams.errOut
 		}
 		model := newCLITUIModel(uiCtx, bridge, func() {
-			if production && errors.Is(context.Cause(runCtx), errCLIUserInterrupt) {
+			if production && interrupted.Load() {
 				forceOnce.Do(func() { close(force) })
 			}
 			cancelDriver(errCLIUserInterrupt)
@@ -171,9 +179,13 @@ func runCLIPresentation(
 	stopSignals := make(chan struct{})
 	var signalWorkers sync.WaitGroup
 	if production {
-		interrupts := make(chan os.Signal, 2)
-		signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM)
-		defer signal.Stop(interrupts)
+		interrupts := streams.interrupts
+		if interrupts == nil {
+			owned := make(chan os.Signal, 2)
+			signal.Notify(owned, os.Interrupt, syscall.SIGTERM)
+			defer signal.Stop(owned)
+			interrupts = owned
+		}
 		signalWorkers.Go(func() {
 			var deadline <-chan time.Time
 			var timer *time.Timer
@@ -190,20 +202,23 @@ func runCLIPresentation(
 				select {
 				case <-stopSignals:
 					return
-				case <-interrupts:
+				case _, open := <-interrupts:
+					if !open {
+						return
+					}
 					select {
 					case <-driverDone:
-						if program != nil && streams.keepOpen {
+						if program != nil && streams.keepOpen && runCtx.Err() == nil {
 							program.Quit()
 							return
 						}
 					default:
 					}
+					cancelDriver(errCLIUserInterrupt)
 					if canceled {
 						forceOnce.Do(func() { close(force) })
 						return
 					}
-					cancelDriver(errCLIUserInterrupt)
 				case <-cancellation:
 					canceled = true
 					cancellation = nil
@@ -339,7 +354,8 @@ func runCLIPresentation(
 	default:
 	}
 	if program != nil {
-		if uiErr != nil && cliStartupFallbackAllowed(ctx, runCtx, forced) {
+		if uiErr != nil && !interrupted.Load() && !errors.Is(result, errCLIShutdownUnconfirmed) &&
+			cliStartupFallbackAllowed(ctx, runCtx, forced) {
 			select {
 			case <-driverStarted:
 			default:
@@ -351,7 +367,7 @@ func runCLIPresentation(
 				return runCLIPresentation(ctx, originalStreams, caps, false, false, false, args, paths, debug, audio, driver)
 			}
 		}
-		if uiErr != nil && !errors.Is(context.Cause(runCtx), errCLIUserInterrupt) &&
+		if uiErr != nil && !interrupted.Load() && !errors.Is(context.Cause(runCtx), errCLIUserInterrupt) &&
 			!errors.Is(result, errCLIShutdownUnconfirmed) {
 			result = errors.Join(result, errors.New("terminal presentation failed; use --ui=plain on the next invocation"))
 		}
@@ -365,7 +381,10 @@ func runCLIPresentation(
 		default:
 		}
 	}
-	if errors.Is(context.Cause(runCtx), errCLIUserInterrupt) {
+	if interrupted.Load() || errors.Is(context.Cause(runCtx), errCLIUserInterrupt) {
+		if errors.Is(result, errCLIShutdownUnconfirmed) {
+			return exitError(130, errors.Join(errCLIUserInterrupt, result))
+		}
 		return exitError(130, errCLIUserInterrupt)
 	}
 	return result
