@@ -123,6 +123,13 @@ func TestExportReusesExistingArtifactsWhenConformanceOK(t *testing.T) {
 		t.Fatalf("write json: %v", err)
 	}
 
+	identity, identityErr := mediaInfoIdentity(targetPath, "")
+	if identityErr != nil {
+		t.Fatal(identityErr)
+	}
+	if err := commitReports(t.Context(), tmpDir, identity, []byte(cachedText), []byte(jsonPayload)); err != nil {
+		t.Fatal(err)
+	}
 	service := NewService(api.NopLogger{}, panicAnalyzer{t: t})
 	result, err := service.Export(context.Background(), Request{
 		SourcePath: targetPath,
@@ -190,6 +197,18 @@ func TestExportRestrictsUnchangedCachedTextPermissions(t *testing.T) {
 		t.Fatalf("write json: %v", err)
 	}
 
+	identity, identityErr := mediaInfoIdentity(targetPath, "")
+	if identityErr != nil {
+		t.Fatal(identityErr)
+	}
+	if err := commitReports(t.Context(), tmpDir, identity, []byte(cleanText), []byte(jsonPayload)); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(textPath, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	service := NewService(api.NopLogger{}, panicAnalyzer{t: t})
 	result, err := service.Export(context.Background(), Request{
 		SourcePath: targetPath,

@@ -363,17 +363,15 @@ func (h *historyModule) collectReleaseCleanupTargets(
 
 	artifactPaths = compactStrings(artifactPaths)
 	tmpDirs := make(map[string]struct{})
-	fallbackBase := paths.ReleaseTempBaseFor(sourcePath, api.ReleaseInfo{})
-	tmpDirs[filepath.Join(tmpRoot, fallbackBase)] = struct{}{}
-	reuseRoot, err := reusableMediaTempRoot(tmpRoot, sourcePath)
+	fallbackDir, _, err := paths.ReleaseTempPathFor(tmpRoot, sourcePath, api.ReleaseInfo{})
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("core: delete history release resolve reusable media root: %w", err)
+		return nil, nil, nil, fmt.Errorf("core: delete history release resolve release root: %w", err)
 	}
-	tmpDirs[reuseRoot] = struct{}{}
+	tmpDirs[fallbackDir] = struct{}{}
 
 	if snapshot.Metadata != nil {
 		stored := *snapshot.Metadata
-		releaseBase := paths.ReleaseTempBaseFor(sourcePath, api.ReleaseInfo{
+		releaseDir, _, resolveErr := paths.ReleaseTempPathFor(tmpRoot, sourcePath, api.ReleaseInfo{
 			Title:    stored.Title,
 			Alt:      stored.Alt,
 			Year:     stored.Year,
@@ -382,7 +380,10 @@ func (h *historyModule) collectReleaseCleanupTargets(
 			Type:     stored.Type,
 			Group:    stored.Group,
 		})
-		tmpDirs[filepath.Join(tmpRoot, releaseBase)] = struct{}{}
+		if resolveErr != nil {
+			return nil, nil, nil, fmt.Errorf("core: resolve stored release directory: %w", resolveErr)
+		}
+		tmpDirs[releaseDir] = struct{}{}
 	}
 	for _, filePath := range artifactPaths {
 		contentRoot, ok := resolveContentTmpRoot(tmpRoot, filePath)
@@ -429,11 +430,11 @@ func addDirectoryChildTempDirs(filesystem historyFilesystem, sourcePath string, 
 	}
 	for _, entry := range entries {
 		childPath := filepath.Join(sourcePath, entry.Name())
-		base := paths.ReleaseTempBaseFor(childPath, api.ReleaseInfo{})
-		if strings.TrimSpace(base) == "" {
+		dir, _, resolveErr := paths.ReleaseTempPathFor(tmpRoot, childPath, api.ReleaseInfo{})
+		if resolveErr != nil {
 			continue
 		}
-		tmpDirs[filepath.Join(tmpRoot, base)] = struct{}{}
+		tmpDirs[dir] = struct{}{}
 	}
 }
 
@@ -445,15 +446,11 @@ func ensureHistoryTempTargetsUnprotected(
 ) error {
 	protectedRoots := make([]string, 0, len(protectedSourcePaths)*2)
 	for _, sourcePath := range compactStrings(protectedSourcePaths) {
-		legacyBase := strings.TrimSpace(paths.ReleaseTempBaseFor(sourcePath, api.ReleaseInfo{}))
-		if legacyBase != "" {
-			protectedRoots = append(protectedRoots, filepath.Join(tmpRoot, legacyBase))
-		}
-		reuseRoot, err := reusableMediaTempRoot(tmpRoot, sourcePath)
+		releaseDir, _, err := paths.ReleaseTempPathFor(tmpRoot, sourcePath, api.ReleaseInfo{})
 		if err != nil {
-			return fmt.Errorf("core: delete history release resolve protected reusable media root: %w", err)
+			return fmt.Errorf("core: resolve protected release directory: %w", err)
 		}
-		protectedRoots = append(protectedRoots, reuseRoot)
+		protectedRoots = append(protectedRoots, releaseDir)
 	}
 	for _, target := range append(append([]string(nil), artifactPaths...), slices.Collect(maps.Keys(tmpDirs))...) {
 		for _, protectedRoot := range protectedRoots {

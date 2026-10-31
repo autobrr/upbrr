@@ -618,12 +618,12 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		}
 		meta.MediaInspectionFingerprint = fingerprint
 		miResult, err := s.mi.Export(ctx, mediainfo.Request{
-			SourcePath:  meta.SourcePath,
-			DiscType:    meta.DiscType,
-			VideoPath:   meta.VideoPath,
-			TempRoot:    tmpRoot,
-			ArtifactDir: fileMediaInfoArtifactDir(tmpRoot, meta.VideoPath, fingerprint),
-			Release:     meta.Release,
+			SourcePath:        meta.SourcePath,
+			DiscType:          meta.DiscType,
+			VideoPath:         meta.VideoPath,
+			TempRoot:          tmpRoot,
+			SourceFingerprint: fingerprint,
+			Release:           meta.Release,
 		})
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: mediainfo: %w", err)
@@ -845,13 +845,24 @@ func (s *Service) collectDiscEvidence(
 		}
 
 		if s.mi != nil && !disc.Image {
+			fingerprint := request.SourceFingerprint
+			if request.Input.VerifiedSource != nil {
+				fingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
+			}
+			reportDir := artifactDir
+			if len(resources) == 0 {
+				// The selected primary disc owns the release-root reports too.
+				reportDir = releaseTemp
+			}
 			result, err := s.mi.Export(ctx, mediainfo.Request{
-				SourcePath:  disc.Root,
-				DiscType:    disc.Type,
-				VideoPath:   resource.VideoPath,
-				TempRoot:    tmpRoot,
-				ArtifactDir: artifactDir,
-				Release:     meta.Release,
+				SourcePath:        disc.Root,
+				OwnerSource:       meta.SourcePath,
+				SourceFingerprint: fingerprint,
+				DiscType:          disc.Type,
+				VideoPath:         resource.VideoPath,
+				TempRoot:          tmpRoot,
+				ArtifactDir:       reportDir,
+				Release:           meta.Release,
 			})
 			if err != nil {
 				return fmt.Errorf("metadata: disc MediaInfo: %w", err)
