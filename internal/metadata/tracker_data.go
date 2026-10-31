@@ -21,6 +21,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
@@ -57,6 +58,10 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return preparationstate.State{}, internalerrors.ErrInvalidInput
 	}
+	stored, err := s.compatibleTrackerMetadata(ctx, meta)
+	if err != nil {
+		return preparationstate.State{}, err
+	}
 	candidates := normalizeTrackers(resolveTrackerCandidates(meta))
 	if len(candidates) == 0 {
 		return meta, nil
@@ -88,10 +93,6 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 	cachedIndex := -1
 	refreshCachedAssets := false
 	if meta.StoredDataFresh {
-		stored, err := s.repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
-		if err != nil {
-			return preparationstate.State{}, fmt.Errorf("metadata: load stored tracker metadata: %w", err)
-		}
 		// Source-level caches never establish current lookup receipt authority.
 		for index := range stored {
 			stored[index].ImportedScreenshotEvidence = nil
@@ -119,7 +120,7 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 		}
 		for index, tracker := range trackers {
 			for _, record := range stored {
-				if !strings.EqualFold(record.Tracker, tracker) || !hasTrackerMetadataIDs(record) {
+				if !strings.EqualFold(record.Tracker, tracker) || !trackerRecordHasPathedData(record) {
 					continue
 				}
 				currentID := trackerIDFor(meta, tracker)
@@ -133,11 +134,15 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 				if meta.InfoHash != "" && record.InfoHash != "" && !strings.EqualFold(meta.InfoHash, record.InfoHash) {
 					continue
 				}
-				cached = record
-				cachedIndex = index
-				break
+				if cachedIndex < 0 || hasTrackerMetadataIDs(record) {
+					cached = record
+					cachedIndex = index
+				}
+				if hasTrackerMetadataIDs(record) {
+					break
+				}
 			}
-			if cachedIndex >= 0 {
+			if cachedIndex >= 0 && hasTrackerMetadataIDs(cached) {
 				break
 			}
 		}
@@ -169,7 +174,7 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 				)
 				cachedReusable = evidence.Reusable(ctx, "tracker.lookup", query)
 			}
-			if !needsAssets && cachedReusable && (cachedIndex == 0 || !strictPriority) {
+			if hasTrackerMetadataIDs(cached) && !needsAssets && cachedReusable && (cachedIndex == 0 || !strictPriority) {
 				meta.TrackerData = append(meta.TrackerData, cached)
 				logger.Debugf("metadata: reusing matching stored tracker IDs tracker=%s for %s", cached.Tracker, meta.SourcePath)
 				return meta, nil
@@ -180,14 +185,16 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 					cached.Tracker, needsDescription, needsImages,
 				)
 			}
-			if strictPriority {
-				limit := cachedIndex
-				if needsAssets || !cachedReusable {
-					limit++
+			if hasTrackerMetadataIDs(cached) {
+				if strictPriority {
+					limit := cachedIndex
+					if needsAssets || !cachedReusable {
+						limit++
+					}
+					trackers = trackers[:limit]
+				} else {
+					trackers = trackers[cachedIndex : cachedIndex+1]
 				}
-				trackers = trackers[:limit]
-			} else {
-				trackers = trackers[cachedIndex : cachedIndex+1]
 			}
 		} else {
 			logger.Debugf("metadata: stored source snapshot has no matching tracker IDs; checking trackers for %s", meta.SourcePath)
@@ -223,22 +230,88 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 		return meta, nil
 	}
 	if cachedIndex >= 0 {
-		result, err := s.enrichTrackerDataPriority(ctx, meta, eligible, now, &cached)
+		var result preparationstate.State
+		var err error
+		if !hasTrackerMetadataIDs(cached) && !shouldUseStrictPriorityLookup(meta, eligible, s.cfg.Trackers.PreferredTracker) {
+			result, err = s.enrichTrackerDataConcurrent(ctx, meta, eligible, now, &cached)
+		} else {
+			result, err = s.enrichTrackerDataPriority(ctx, meta, eligible, now, &cached)
+		}
 		if err != nil {
 			return preparationstate.State{}, err
 		}
 		if slices.ContainsFunc(result.TrackerData, hasTrackerMetadataIDs) {
+			if trackerRecordHasDescriptionAssets(cached) && !slices.ContainsFunc(result.TrackerData, trackerRecordHasDescriptionAssets) {
+				// Asset fallback must not introduce a second supplier's IDs.
+				cached.IMDBID, cached.TMDBID, cached.TVDBID, cached.MALID = 0, 0, 0, 0
+				result.TrackerData = append(result.TrackerData, cached)
+			}
 			return result, nil
 		}
-		result.TrackerData = append(result.TrackerData, cached)
+		if !slices.ContainsFunc(result.TrackerData, func(record api.TrackerMetadata) bool { return strings.EqualFold(record.Tracker, cached.Tracker) }) {
+			result.TrackerData = append(result.TrackerData, cached)
+		}
 		return result, nil
 	}
 
 	if !shouldUseStrictPriorityLookup(meta, eligible, s.cfg.Trackers.PreferredTracker) {
-		return s.enrichTrackerDataConcurrent(ctx, meta, eligible, now)
+		return s.enrichTrackerDataConcurrent(ctx, meta, eligible, now, nil)
 	}
 
 	return s.enrichTrackerDataPriority(ctx, meta, eligible, now, nil)
+}
+
+// compatibleTrackerMetadata invalidates affected adapter IDs before advancing
+// identity compatibility, including unselected rows. Description/image assets
+// and site torrent identities remain available through cooldowns and failures.
+// Current exact-query evidence preserves repairs from interrupted preparations.
+func (s *Service) compatibleTrackerMetadata(ctx context.Context, meta preparationstate.State) ([]api.TrackerMetadata, error) {
+	identity := meta.Identity
+	if identity.SourcePath == "" {
+		stored, err := s.repo.GetExternalIdentity(ctx, meta.SourcePath)
+		if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
+			return nil, fmt.Errorf("metadata: load tracker identity compatibility: %w", err)
+		}
+		identity = stored
+	}
+	compatible := identity.Resolution.ContractVersion == externalidentity.ContractVersion
+	if compatible && !meta.StoredDataFresh {
+		return nil, nil
+	}
+	stored, err := s.repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("metadata: load stored tracker metadata: %w", err)
+	}
+	if !compatible {
+		for index := range stored {
+			record := &stored[index]
+			policy, _ := s.registry.LookupDataPolicy(record.Tracker)
+			if !policy.LegacyExternalIDsNeedRefresh || !hasTrackerMetadataIDs(*record) {
+				continue
+			}
+			var current trackerdata.Result
+			if meta.StoredDataFresh && s.tracker != nil {
+				ids := []string{record.TrackerID}
+				if record.TrackerID != "" {
+					ids = append(ids, "")
+				}
+				for _, id := range ids {
+					query := s.tracker.CacheKey(record.Tracker, id, trackerLookupSubject(meta),
+						trackerLookupFileName(meta, s.cfg.Metadata.SkipTrackerFilenameLookup), meta.Policy.OnlyID, meta.Policy.KeepImages)
+					result, ok := retainedTrackerDataIDs(ctx, query)
+					if ok && (id != "" || result.TrackerID == record.TrackerID) {
+						current = result
+						break
+					}
+				}
+			}
+			record.IMDBID, record.TMDBID, record.TVDBID, record.MALID = current.IMDBID, current.TMDBID, current.TVDBID, current.MALID
+			if err := s.repo.SaveTrackerMetadata(ctx, *record); err != nil {
+				return nil, fmt.Errorf("metadata: clear obsolete tracker IDs: %w", err)
+			}
+		}
+	}
+	return stored, nil
 }
 
 func shouldUseStrictPriorityLookup(meta preparationstate.State, eligible []string, preferred string) bool {
@@ -277,14 +350,7 @@ func (s *Service) enrichTrackerDataPriority(
 		default:
 		}
 
-		lookupMeta := meta
-		if cached != nil && strings.EqualFold(cached.Tracker, tracker) && trackerIDFor(meta, tracker) == "" && cached.TrackerID != "" {
-			lookupMeta.TrackerIDs = cloneTrackerIDs(meta.TrackerIDs)
-			if lookupMeta.TrackerIDs == nil {
-				lookupMeta.TrackerIDs = make(map[string]string)
-			}
-			lookupMeta.TrackerIDs[strings.ToLower(tracker)] = cached.TrackerID
-		}
+		lookupMeta := trackerLookupWithCachedID(meta, tracker, cached)
 		record, persistable, hasIDs, err := s.lookupTrackerData(ctx, lookupMeta, tracker, now)
 		freshAssets := trackerRecordHasDescriptionAssets(record)
 		if cached != nil && strings.EqualFold(cached.Tracker, tracker) && ctx.Err() == nil {
@@ -300,39 +366,10 @@ func (s *Service) enrichTrackerDataPriority(
 			continue
 		}
 		if cached != nil && strings.EqualFold(cached.Tracker, tracker) {
-			freshDescription := strings.TrimSpace(record.Description) != ""
 			if !hasIDs && !trackerRecordHasDescriptionAssets(record) {
 				continue
 			}
-			if record.TrackerID == "" {
-				record.TrackerID = cached.TrackerID
-			}
-			if record.InfoHash == "" {
-				record.InfoHash = cached.InfoHash
-			}
-			record.Matched = record.Matched || cached.Matched
-			record.TMDBID = firstNonZero(record.TMDBID, cached.TMDBID)
-			record.IMDBID = firstNonZero(record.IMDBID, cached.IMDBID)
-			record.TVDBID = firstNonZero(record.TVDBID, cached.TVDBID)
-			record.MALID = firstNonZero(record.MALID, cached.MALID)
-			if record.Category == api.CategoryUnknown {
-				record.Category = cached.Category
-			}
-			if record.Description == "" {
-				record.Description = cached.Description
-			}
-			if !freshDescription {
-				previews := make(map[string]string, len(cached.ImagePreviews)+len(record.ImagePreviews))
-				maps.Copy(previews, cached.ImagePreviews)
-				maps.Copy(previews, record.ImagePreviews)
-				record.ImagePreviews = previews
-			}
-			if len(record.ImageURLs) == 0 && !freshDescription {
-				record.ImageURLs = append([]string(nil), cached.ImageURLs...)
-			}
-			if record.Filename == "" {
-				record.Filename = cached.Filename
-			}
+			record = mergeCachedTrackerMetadata(record, *cached)
 			hasIDs = hasTrackerMetadataIDs(record)
 		}
 
@@ -377,11 +414,60 @@ func (s *Service) enrichTrackerDataPriority(
 	return meta, nil
 }
 
+func trackerLookupWithCachedID(meta preparationstate.State, tracker string, cached *api.TrackerMetadata) preparationstate.State {
+	lookupMeta := meta
+	if cached != nil && strings.EqualFold(cached.Tracker, tracker) && trackerIDFor(meta, tracker) == "" && cached.TrackerID != "" {
+		lookupMeta.TrackerIDs = cloneTrackerIDs(meta.TrackerIDs)
+		if lookupMeta.TrackerIDs == nil {
+			lookupMeta.TrackerIDs = make(map[string]string)
+		}
+		lookupMeta.TrackerIDs[strings.ToLower(tracker)] = cached.TrackerID
+	}
+	return lookupMeta
+}
+
+// mergeCachedTrackerMetadata retains compatible IDs and assets when a partial
+// refresh supplies no replacement. Obsolete adapter IDs are cleared before use.
+func mergeCachedTrackerMetadata(record, cached api.TrackerMetadata) api.TrackerMetadata {
+	freshDescription := strings.TrimSpace(record.Description) != ""
+	if record.TrackerID == "" {
+		record.TrackerID = cached.TrackerID
+	}
+	if record.InfoHash == "" {
+		record.InfoHash = cached.InfoHash
+	}
+	record.Matched = record.Matched || cached.Matched
+	record.TMDBID = firstNonZero(record.TMDBID, cached.TMDBID)
+	record.IMDBID = firstNonZero(record.IMDBID, cached.IMDBID)
+	record.TVDBID = firstNonZero(record.TVDBID, cached.TVDBID)
+	record.MALID = firstNonZero(record.MALID, cached.MALID)
+	if record.Category == api.CategoryUnknown {
+		record.Category = cached.Category
+	}
+	if record.Description == "" {
+		record.Description = cached.Description
+	}
+	if !freshDescription {
+		previews := make(map[string]string, len(cached.ImagePreviews)+len(record.ImagePreviews))
+		maps.Copy(previews, cached.ImagePreviews)
+		maps.Copy(previews, record.ImagePreviews)
+		record.ImagePreviews = previews
+	}
+	if len(record.ImageURLs) == 0 && !freshDescription {
+		record.ImageURLs = append([]string(nil), cached.ImageURLs...)
+	}
+	if record.Filename == "" {
+		record.Filename = cached.Filename
+	}
+	return record
+}
+
 func (s *Service) enrichTrackerDataConcurrent(
 	ctx context.Context,
 	meta preparationstate.State,
 	eligible []string,
 	now time.Time,
+	cached *api.TrackerMetadata,
 ) (preparationstate.State, error) {
 	logger := logging.FromContext(ctx, s.logger)
 
@@ -396,11 +482,12 @@ func (s *Service) enrichTrackerDataConcurrent(
 		workerCount = 1
 	}
 
-	lookupMeta := meta
+	baseLookupMeta := meta
 	var workers sync.WaitGroup
 	for idx := 0; idx < workerCount; idx++ {
 		workers.Go(func() {
 			for tracker := range jobs {
+				lookupMeta := trackerLookupWithCachedID(baseLookupMeta, tracker, cached)
 				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, lookupMeta, tracker, now)
 				results <- trackerLookupOutcome{
 					tracker:     tracker,
@@ -431,6 +518,14 @@ func (s *Service) enrichTrackerDataConcurrent(
 		}
 		if winnerResolved {
 			continue
+		}
+
+		if cached != nil && strings.EqualFold(cached.Tracker, outcome.tracker) {
+			if !outcome.hasIDs && !trackerRecordHasDescriptionAssets(outcome.record) {
+				continue
+			}
+			outcome.record = mergeCachedTrackerMetadata(outcome.record, *cached)
+			outcome.hasIDs = hasTrackerMetadataIDs(outcome.record)
 		}
 
 		if trackerRecordHasDescriptionAssets(outcome.record) {
@@ -525,9 +620,17 @@ func (s *Service) lookupTrackerData(
 		return record, trackerRecordHasPathedData(record), hasTrackerMetadataIDs(record), nil
 	}
 
-	result, err := lookupTrackerDataEvidence(ctx, query, meta.Policy.OnlyID, meta.Policy.KeepImages, func() (trackerdata.Result, error) {
-		return s.tracker.Lookup(ctx, tracker, record.TrackerID, trackerLookupSubject(meta), searchName, meta.Policy.OnlyID, meta.Policy.KeepImages)
-	})
+	policy, _ := s.registry.LookupDataPolicy(tracker)
+	result, err := lookupTrackerDataEvidence(
+		ctx,
+		query,
+		policy.LegacyExternalIDsNeedRefresh,
+		meta.Policy.OnlyID,
+		meta.Policy.KeepImages,
+		func() (trackerdata.Result, error) {
+			return s.tracker.Lookup(ctx, tracker, record.TrackerID, trackerLookupSubject(meta), searchName, meta.Policy.OnlyID, meta.Policy.KeepImages)
+		},
+	)
 	if err != nil && (isContextError(ctx, err) || !result.HasData()) {
 		return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
 	}

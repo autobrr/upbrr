@@ -24,7 +24,39 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v3"
+const ContractVersion = "external-identity-v4"
+
+// CompatibleStoredIdentity preserves manual pins and clears while discarding
+// automatic IDs and dependencies produced before the current identity contract.
+func CompatibleStoredIdentity(stored api.ExternalIdentity) api.ExternalIdentity {
+	if stored.Resolution.ContractVersion == ContractVersion {
+		return stored
+	}
+	providers := []struct {
+		id         *int
+		provenance *api.IdentityProvenance
+		override   api.OverrideState
+		dependency *api.IdentityDependency
+	}{
+		{&stored.TMDBID, &stored.Provenance.TMDB, stored.Overrides.TMDB, &stored.Dependencies.TMDB},
+		{&stored.IMDBID, &stored.Provenance.IMDB, stored.Overrides.IMDB, &stored.Dependencies.IMDB},
+		{&stored.TVDBID, &stored.Provenance.TVDB, stored.Overrides.TVDB, &stored.Dependencies.TVDB},
+		{&stored.TVmazeID, &stored.Provenance.TVmaze, stored.Overrides.TVmaze, &stored.Dependencies.TVmaze},
+		{&stored.MALID, &stored.Provenance.MAL, stored.Overrides.MAL, &stored.Dependencies.MAL},
+	}
+	for _, provider := range providers {
+		if !providerIdentityLocked(provider.override, *provider.provenance) {
+			*provider.id = 0
+			*provider.provenance = api.IdentityProvenanceUnknown
+			*provider.dependency = api.IdentityDependency{}
+		}
+	}
+	if !providerIdentityLocked(stored.Overrides.Category, stored.Provenance.Category) {
+		stored.Category = api.CanonicalCategoryUnknown
+		stored.Provenance.Category = api.IdentityProvenanceUnknown
+	}
+	return stored
+}
 
 // Request contains normalized source scope and identity-resolution intent. It
 // carries no gathered MediaInfo, scene, Arr, tracker, or provider evidence.
@@ -528,6 +560,7 @@ func applyStoredIdentity(identity *api.ExternalIdentity, stored api.ExternalIden
 	if identity == nil || !sourceEvidenceMatches(stored.SourcePath, identity.SourcePath) {
 		return
 	}
+	stored = CompatibleStoredIdentity(stored)
 	identity.TMDBID = stored.TMDBID
 	identity.IMDBID = stored.IMDBID
 	identity.TVDBID = stored.TVDBID

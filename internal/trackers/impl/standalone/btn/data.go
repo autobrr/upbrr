@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -78,7 +79,9 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 			Torrents map[string]map[string]any `json:"torrents"`
 		} `json:"result"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	decoder := json.NewDecoder(resp.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
 		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: btn decode: %w", err)
 	}
 	if len(decoded.Error) > 0 {
@@ -94,8 +97,8 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	return trackers.DataLookupResult{
 		TrackerID:  trackerID,
 		TorrentURL: decodeBTNTorrent(trackerID, value).link(),
-		IMDBID:     int(btnInt(value["ImdbID"])),
-		TVDBID:     int(btnInt(value["TvdbID"])),
+		IMDBID:     providerid.ParseDecimal(btnString(value["ImdbID"])),
+		TVDBID:     providerid.ParseDecimal(btnString(value["TvdbID"])),
 	}, nil
 }
 

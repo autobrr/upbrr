@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -47,6 +48,7 @@ func TestTrackerEvidenceStoredIDsRespectLookupConfiguration(t *testing.T) {
 	meta := preparationstate.State{
 		SourcePath:      source,
 		StoredDataFresh: true,
+		Identity:        api.ExternalIdentity{SourcePath: source, Resolution: api.IdentityResolutionKey{ContractVersion: externalidentity.ContractVersion}},
 		TrackerIDs:      map[string]string{"ant": "42"},
 		FileList:        []string{source},
 	}

@@ -692,8 +692,8 @@
     "sha256": "6be31af8d514728446e6f9d14a69ebfb39c757dfd2e945197795ce003a79a84a"
   },
   "internal/trackers/impl/standalone/btn/profile.go:Profile": {
-    "reason": "Wires the pure language assessment and primary-audio country questionnaire. Existing manual-aware name, title, tag and full-disc original-language selectors remain unchanged; payload regressions verify that corrected primary programme facts override conflicting provider language.",
-    "sha256": "0e189171965d8c9d9829c69fe557a9698721b33b82956837f18bfb7c06f5dd68"
+    "reason": "Wires the pure language assessment and primary-audio country questionnaire. Existing manual-aware name, title, tag and full-disc original-language selectors remain unchanged; payload regressions verify that corrected primary programme facts override conflicting provider language. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged.",
+    "sha256": "3071ec4255a5196d6094a50b9980aec642cfe9f1c2cffe34e97d896d0ba5477b"
   },
   "internal/trackers/impl/standalone/btn/questionnaire.go:languageQuestionnaire": {
     "reason": "Reviewed with primary-country resolution: current agreeing origin evidence suppresses only an unanswered original-audio country question; explicit answers, including invalid or empty values, retain review precedence.",
@@ -908,8 +908,8 @@
     "sha256": "33e7abef28bb531b724f8207a18b2319c99787ff1e64b2b5a4a36343fcd4aa92"
   },
   "internal/trackers/impl/standalone/hdb/profile.go:Profile": {
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections.",
-    "sha256": "f12e2fe2d186d5e8c57909b25204131b0da1291ba1460ced2db4eec3e2c32566"
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged.",
+    "sha256": "b5fe1820fe807d4c75b1bb223768d701c58bb260242515050c590d77ede37e1a"
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
     "reason": "Resolve missing English-track origins against full prepared facts before filtering, preserving same-resource dub inference and explicit unresolved classifications while unresolved tracks on other resources still request correction. Animation, remux/original-audio and full-disc exceptions, finalized Anime/Genres and explicit manual origin/genre choices remain authoritative, with no raw provider fallback.",
@@ -1100,8 +1100,8 @@
     "sha256": "3fe13eba64328115e1a0dc1783749c648454cb6f7bdd9688bf6641fd48a2cd87"
   },
   "internal/trackers/impl/standalone/ptp/profile.go:Profile": {
-    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced.",
-    "sha256": "f8fac95f16a03db719de8f148f28f3bb2c2db020fe764f333a8778f0ebbcd13b"
+    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged.",
+    "sha256": "b895a4f4698ba0a0f847dbca41c219cf7b6f04fc9e618d4408dc9a7a433f5377"
   },
   "internal/trackers/impl/standalone/ptp/questionnaire.go:buildQuestionnaire": {
     "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",

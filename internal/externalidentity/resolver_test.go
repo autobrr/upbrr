@@ -167,6 +167,7 @@ func TestResolveCrossReferenceMetadataHonorsStoredProvenancePins(t *testing.T) {
 			metadataTVDBID := 0
 			identity := api.ExternalIdentity{
 				SourcePath: sourcePath,
+				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
 				Overrides: api.IdentityOverrideState{
 					IMDB: api.OverrideStateUnset,
 					TVDB: api.OverrideStateUnset,
@@ -394,6 +395,7 @@ func TestResolveClearOnlyCandidateReplacesAutomaticEvidenceWithinSource(t *testi
 						identity: api.ExternalIdentity{
 							SourcePath: sourcePath,
 							TMDBID:     100,
+							Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
 							IMDBID:     300,
 							TVDBID:     200,
 							Provenance: api.IdentityProvenanceSet{
@@ -473,6 +475,7 @@ func TestResolvePropagatesCandidateIdentityDependenciesWithinSource(t *testing.T
 				evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
 					return legacyEvidence{identity: api.ExternalIdentity{
 						SourcePath: sourcePath,
+						Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
 						IMDBID:     200,
 						TVDBID:     100,
 						Dependencies: api.IdentityDependencySet{
@@ -517,6 +520,7 @@ func TestResolveClearOnlyCandidateDropsTargetDependency(t *testing.T) {
 			return legacyEvidence{identity: api.ExternalIdentity{
 				SourcePath: sourcePath,
 				TMDBID:     100,
+				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
 				IMDBID:     200,
 				Provenance: api.IdentityProvenanceSet{IMDB: api.IdentityProvenanceExplicit},
 				Overrides:  api.IdentityOverrideState{IMDB: api.OverrideStateValue},
@@ -719,11 +723,11 @@ func TestResolveResetStoredExplicitClearRefreshesCrossReferenceMetadata(t *testi
 				},
 				Metadata: api.SourceScopedMetadata{
 					SourcePath: request.SourcePath,
-					TMDB:       &api.TMDBMetadata{
-TMDBID: 300,
- IMDBID: 400,
- Title: "Refreshed candidate",
-},
+					TMDB: &api.TMDBMetadata{
+						TMDBID: 300,
+						IMDBID: 400,
+						Title:  "Refreshed candidate",
+					},
 				},
 			}, nil
 		}),
@@ -756,6 +760,7 @@ func TestResolveResetKeepsAutomaticStoredEvidenceAndChangesIntentFingerprint(t *
 		evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
 			return legacyEvidence{identity: api.ExternalIdentity{
 				SourcePath: sourcePath,
+				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
 				TMDBID:     100,
 				Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceProvider},
 			}, hasIDs: true}, nil
@@ -763,10 +768,10 @@ func TestResolveResetKeepsAutomaticStoredEvidenceAndChangesIntentFingerprint(t *
 		now: time.Now,
 	}
 	request := Request{
-SourcePath: sourcePath,
- SourceFingerprint: "source-fingerprint",
- Generation: 1,
-}
+		SourcePath:        sourcePath,
+		SourceFingerprint: "source-fingerprint",
+		Generation:        1,
+	}
 
 	baseline, err := resolver.Resolve(context.Background(), request)
 	if err != nil {

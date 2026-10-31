@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	"path/filepath"
 	"testing"
 	"time"
@@ -66,6 +67,7 @@ func TestImportedScreenshotHandoffDoesNotRecoverReceiptFromSourceCache(t *testin
 		SourcePath:        source,
 		SourceFingerprint: "source",
 		StoredDataFresh:   true,
+		Identity:          api.ExternalIdentity{SourcePath: source, Resolution: api.IdentityResolutionKey{ContractVersion: externalidentity.ContractVersion}},
 		TrackerIDs:        map[string]string{"ant": "42"},
 		Policy:            preparationstate.CollectionPolicy{KeepImages: true},
 	})

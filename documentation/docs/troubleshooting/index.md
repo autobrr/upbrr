@@ -114,6 +114,8 @@ Use manual disc-menu image import when automatic capture is not available.
 
 ## A metadata provider fails or selects the wrong title
 
+Updates that change external-ID interpretation rebuild older automatic identity data when the input is prepared again. Explicit ID selections and cleared providers remain authoritative; compatible cached descriptions and images are retained.
+
 Supply the correct provider ID, or clear the provider when you want to continue without it. For example, `--tmdb=` or `--tmdb=0` clears TMDB in the CLI. See [clearing a metadata provider](../cli/index.md#clear-a-metadata-provider) for all supported flags and examples.
 
 In the Web UI, use the [metadata ID controls on Input](../web-ui/index.md#clear-a-metadata-provider), then click **Refresh metadata**. If the first fetch fails before a preview appears, remove the provider and click **Retry metadata** instead.

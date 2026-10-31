@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -72,7 +72,9 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	var decoded struct {
 		Items []map[string]any `json:"item"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	decoder := json.NewDecoder(resp.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
 		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: ant decode: %w", err)
 	}
 	item := matchDataItem(decoded.Items, fileName)
@@ -82,7 +84,7 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	return trackers.DataLookupResult{
 		TorrentURL: antString(item["guid"]),
 		IMDBID:     antIMDB(item["imdb"]),
-		TMDBID:     int(antInt(item["tmdb"])),
+		TMDBID:     providerid.ParseDecimal(fmt.Sprint(item["tmdb"])),
 	}, nil
 }
 
@@ -105,7 +107,6 @@ func matchDataItem(items []map[string]any, fileName string) map[string]any {
 }
 
 func antIMDB(value any) int {
-	text := strings.TrimPrefix(strings.ToLower(antString(value)), "tt")
-	parsed, _ := strconv.Atoi(text)
-	return parsed
+	text := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(fmt.Sprint(value))), "tt")
+	return providerid.ParseDecimal(text)
 }
