@@ -197,10 +197,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		meta.Release.Type = typeValue
 	}
 	resolution, dvdDetails := resolutionFromMediaEvidence(meta, miDoc)
-	if resolution != meta.Release.Resolution {
-		meta.Release.Resolution = resolution
-		logger.Debugf("metadata: resolution derived from mediainfo %q", resolution)
-	}
+	meta.Release.Resolution = resolution
 	if strings.EqualFold(meta.DiscType, "DVD") {
 		dvdDetails.SourcePath = meta.SourcePath
 		dvdDetails.IFOPath = meta.DVDIFOPath

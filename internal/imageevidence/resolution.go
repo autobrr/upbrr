@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// ResolutionHeight returns the height of a supported resolution label, or zero
-// when no image-height constraint is known.
+// ResolutionHeight returns the height of a supported resolution label, ignoring
+// case and surrounding whitespace, or zero when no image-height constraint is known.
 func ResolutionHeight(resolution string) int {
 	return map[string]int{
 		"8640p": 8640,
@@ -26,7 +26,7 @@ func ResolutionHeight(resolution string) int {
 		"540i":  540,
 		"480p":  480,
 		"480i":  480,
-	}[strings.TrimSpace(resolution)]
+	}[strings.ToLower(strings.TrimSpace(resolution))]
 }
 
 // ResolutionMismatch returns a URL-free rejection reason, or an empty string

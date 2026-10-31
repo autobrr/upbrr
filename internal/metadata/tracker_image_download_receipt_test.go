@@ -131,8 +131,8 @@ func TestTrackerImageDownloadReferenceOutcomes(t *testing.T) {
 			resolution: "576p",
 		},
 		{
-			name:       "540p rejects undersized image",
-			resolution: "540p",
+			name:       "uppercase resolution rejects undersized image",
+			resolution: " 540P ",
 			body:       imageBytes.Bytes(),
 			wantReason: "resolution_mismatch_actual_1_expected_540",
 		},
