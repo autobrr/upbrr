@@ -2250,6 +2250,144 @@ test("embedded web restores edited descriptions after reopening an input", async
   }
 });
 
+for (const scenario of [
+  { status: "completed", failed: "", skipped: "", attempts: 1, btn: "completed", hds: "completed" },
+  { status: "partial", failed: "HDS", skipped: "", attempts: 2, btn: "completed", hds: "failed" },
+  { status: "failed", failed: "BTN,HDS", skipped: "", attempts: 2, btn: "failed", hds: "failed" },
+  { status: "canceled", failed: "", skipped: "", attempts: 1, btn: "", hds: "" },
+  {
+    status: "skipped",
+    failed: "",
+    skipped: "BTN,HDS",
+    attempts: 1,
+    btn: "skipped",
+    hds: "skipped",
+  },
+] as const) {
+  test(`embedded web retains one ${scenario.status} dry run per explicit action`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace({ mediaKind: "tv", preparedMediaInfo: true });
+    const attemptsPath = path.join(path.dirname(workspace.dbPath), "tmp", "e2e-plan-attempts.txt");
+    workspace.env.UPBRR_E2E_PLAN_FAILURE_TRACKERS = scenario.failed;
+    workspace.env.UPBRR_E2E_PLAN_SKIP_TRACKERS = scenario.skipped;
+    workspace.env.UPBRR_E2E_RECORD_PLAN_ATTEMPTS = "1";
+    if (scenario.status === "canceled") workspace.env.UPBRR_E2E_WAIT_FOR_PLAN_CANCELLATION = "1";
+    let app: AppServer | undefined;
+    try {
+      app = await startApp(workspace);
+      await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+      await page.getByRole("button", { name: "Dupe Check" }).click();
+      await page.getByRole("checkbox", { name: "HDS" }).check();
+      await runDuplicateCheck(page);
+      await page.getByRole("button", { name: "Screenshots" }).click();
+      await page.getByRole("button", { name: "Generate screenshots" }).click();
+      await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+      await page.getByRole("button", { name: "Descriptions" }).click();
+      await page.getByRole("button", { name: "Refresh descriptions" }).click();
+      await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: "Upload", exact: true }).click();
+      await page.getByLabel("Skip client injection").check();
+
+      const dryRun = page.getByRole("button", { name: "Run dry run", exact: true });
+      const reportStatus = page
+        .getByRole("heading", { name: "Tracker uploads" })
+        .locator("..")
+        .getByText(scenario.status, { exact: true });
+      let previousReportID: string | undefined;
+      for (let attempt = 1; attempt <= scenario.attempts; attempt++) {
+        await dryRun.click();
+        if (scenario.status === "canceled") {
+          await expect.poll(() => readFile(attemptsPath, "utf8").catch(() => "")).toBe("attempt\n");
+          const activeResponse = await page
+            .context()
+            .request.get(new URL("api/app/GetActiveInput", app.url).toString());
+          expect(activeResponse.ok()).toBe(true);
+          const active = ((await activeResponse.json()) as ActiveInputSnapshot).current!;
+          expect(active.operation?.operation).toBe("upload_dry_run");
+          const authResponse = await page
+            .context()
+            .request.get(new URL("api/auth/status", app.url).toString());
+          expect(authResponse.ok()).toBe(true);
+          const { csrfToken } = (await authResponse.json()) as { csrfToken: string };
+          const canceled = await page
+            .context()
+            .request.post(new URL("api/app/CancelReleaseWorkflowOperation", app.url).toString(), {
+              headers: { Origin: new URL(app.url).origin, "X-CSRF-Token": csrfToken },
+              data: { workflowId: active.workflow.id, operationId: active.operation!.id },
+            });
+          expect(canceled.status()).toBe(200);
+          await expect
+            .poll(async () => {
+              const response = await page
+                .context()
+                .request.get(new URL("api/app/GetActiveInput", app!.url).toString());
+              expect(response.ok()).toBe(true);
+              const snapshot = (await response.json()) as ActiveInputSnapshot;
+              return snapshot.current?.operation?.status;
+            })
+            .toBe("canceled");
+          await expect(dryRun).toBeEnabled();
+          expect(await readFile(attemptsPath, "utf8")).toBe("attempt\n");
+          expect(workspace.fake.counters.clientInjections).toBe(0);
+          expect(workspace.fake.counters.trackerUploads).toBe(0);
+          break;
+        }
+        await expect(reportStatus).toBeVisible();
+        await expect(dryRun).toBeEnabled();
+        expect(await readFile(attemptsPath, "utf8")).toBe("attempt\n".repeat(attempt));
+        const response = await page
+          .context()
+          .request.get(new URL("api/app/GetActiveInput", app.url).toString());
+        expect(response.ok()).toBe(true);
+        const snapshot = (await response.json()) as ActiveInputSnapshot;
+        const report = snapshot.current?.dryRun;
+        expect(report).toMatchObject({ status: scenario.status, noSeed: true });
+        expect(report?.reports).toEqual([
+          expect.objectContaining({ trackerId: "BTN", status: scenario.btn }),
+          expect.objectContaining({ trackerId: "HDS", status: scenario.hds }),
+        ]);
+        expect(report?.id).not.toBe(previousReportID);
+        previousReportID = report!.id;
+        expect(workspace.fake.counters.clientInjections).toBe(0);
+        expect(workspace.fake.counters.trackerUploads).toBe(0);
+      }
+
+      const restored = waitForAppMethod(page, "GetActiveInput");
+      await page.reload();
+      const current = await activeCurrentFromResponse(await restored);
+      expect(current.dryRun?.id).toBe(previousReportID);
+      if (scenario.status === "canceled") {
+        expect(current.operation?.status).toBe("canceled");
+      } else {
+        await expect(reportStatus).toBeVisible();
+      }
+      await expect(dryRun).toBeEnabled();
+      expect(await readFile(attemptsPath, "utf8")).toBe("attempt\n".repeat(scenario.attempts));
+      expect(workspace.fake.counters.clientInjections).toBe(0);
+      expect(workspace.fake.counters.trackerUploads).toBe(0);
+      if (scenario.status === "partial") {
+        await page.getByLabel("Skip client injection").check();
+        const upload = page.getByRole("button", { name: "Start upload", exact: true });
+        await expect(upload).toBeEnabled();
+        await upload.click();
+        await expect(page.getByRole("heading", { name: "Workflow upload result" })).toBeVisible();
+        expect(workspace.fake.counters.trackerUploads).toBe(1);
+        expect(
+          workspace.fake.trackerUploadBodies.map(
+            (body) => /name="tracker"\r\n\r\n([^\r\n]+)/.exec(body.toString("latin1"))?.[1],
+          ),
+        ).toEqual(["BTN"]);
+        expect(workspace.fake.counters.clientInjections).toBe(0);
+        expect(await readFile(attemptsPath, "utf8")).toBe("attempt\n".repeat(scenario.attempts));
+      }
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}
+
 test("embedded web reports an optional tracker dry run after a duplicate override", async ({
   page,
 }) => {

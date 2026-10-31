@@ -190,6 +190,8 @@ Imported application config does not change browse roots. The Web UI route accep
 
 ## Safe first use
 
+Each **Run dry run** action performs one assessment after its prerequisites finish. Partial and failed results remain visible for review; correct any reported problems and choose **Run dry run** again to retry explicitly. Trackers that are ready in a partial report remain available for upload.
+
 Use **Dry Run** on the Upload page and disable client injection for the first test. Compare every tracker tab with the tracker's current upload form and rules before allowing submission.
 
 See [Upload workflow](../workflow/index.md) for stage ownership and review boundaries.

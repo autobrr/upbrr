@@ -60,6 +60,10 @@ const (
 	e2eNamingModeEnv    = "UPBRR_E2E_NAMING_MODE"
 	e2eAudioAnalysisEnv = "UPBRR_E2E_AUDIO_ANALYSIS"
 	e2eHDRAnalysisEnv   = "UPBRR_E2E_HDR_ANALYSIS"
+	e2ePlanFailuresEnv  = "UPBRR_E2E_PLAN_FAILURE_TRACKERS"
+	e2ePlanSkipsEnv     = "UPBRR_E2E_PLAN_SKIP_TRACKERS"
+	e2ePlanAttemptsEnv  = "UPBRR_E2E_RECORD_PLAN_ATTEMPTS"
+	e2ePlanWaitEnv      = "UPBRR_E2E_WAIT_FOR_PLAN_CANCELLATION"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -1374,17 +1378,55 @@ func (s e2eTrackerService) PrepareRetainedUploadPlan(
 	if len(trackerNames) == 0 {
 		return nil, errors.New("e2e tracker: retained plan has no eligible trackers")
 	}
+	// Record actual plan builds independently of browser continuation requests.
+	if os.Getenv(e2ePlanAttemptsEnv) == "1" {
+		path, err := db.FileInSubdir(s.dbPath, "tmp", "e2e-plan-attempts.txt")
+		if err != nil {
+			return nil, fmt.Errorf("e2e tracker: resolve plan receipt: %w", err)
+		}
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("e2e tracker: open plan receipt: %w", err)
+		}
+		_, writeErr := io.WriteString(file, "attempt\n")
+		closeErr := file.Close()
+		if err := errors.Join(writeErr, closeErr); err != nil {
+			return nil, fmt.Errorf("e2e tracker: record plan attempt: %w", err)
+		}
+	}
+	// Keep the attempted preparation active until the test cancels its operation.
+	if os.Getenv(e2ePlanWaitEnv) == "1" {
+		<-ctx.Done()
+		return nil, fmt.Errorf("e2e tracker: retained plan canceled: %w", ctx.Err())
+	}
 	previews, err := s.BuildUploadDryRun(ctx, subject, trackerNames)
 	if err != nil {
 		return nil, fmt.Errorf("e2e tracker: prepare retained previews: %w", err)
 	}
 	preparations := make([]trackers.RetainedTrackerPreparation, 0, len(previews))
+	failedTrackers := e2eTrackerSet(e2ePlanFailuresEnv)
+	skippedTrackers := e2eTrackerSet(e2ePlanSkipsEnv)
 	for _, preview := range previews {
-		preparations = append(preparations, trackers.RetainedTrackerPreparation{
+		preparation := trackers.RetainedTrackerPreparation{
 			Tracker:     preview.Tracker,
 			TorrentPath: subject.TorrentPath,
 			Preview:     preview,
-		})
+		}
+		if _, failed := failedTrackers[preview.Tracker]; failed {
+			preparation.Failure = &trackers.TrackerFailure{
+				Tracker: preview.Tracker,
+				Code:    "e2e_preparation_failed",
+				Message: "E2E tracker preparation failed. Retry explicitly.",
+			}
+		}
+		if _, skipped := skippedTrackers[preview.Tracker]; skipped {
+			preparation.Failure = &trackers.TrackerFailure{
+				Tracker: preview.Tracker,
+				Code:    trackers.PreparationFailureCodeSkipped,
+				Message: "E2E tracker preparation skipped.",
+			}
+		}
+		preparations = append(preparations, preparation)
 	}
 	subject.Trackers = append([]string(nil), trackerNames...)
 	return &e2eRetainedUploadPlan{
