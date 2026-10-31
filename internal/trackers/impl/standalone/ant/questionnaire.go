@@ -4,7 +4,9 @@
 package ant
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -18,11 +20,13 @@ func projectionQuestionnaire(input trackers.PreparationInput) *api.TrackerQuesti
 	answers := standalone.QuestionnaireAnswers(input.Meta, "ANT")
 	typeName, _ := resolveType(input.Meta, answers)
 	tags, _ := resolveTags(input.Meta, answers)
-	return buildQuestionnaire(input.Meta, uploadState{
+	questionnaire := buildQuestionnaire(input.Meta, uploadState{
 		typeName:     typeName,
 		tags:         tags,
 		adultContent: detectAdult(input.Meta),
 	})
+	questionnaire.Fields = append(questionnaire.Fields, trumpQuestionnaireFields(input)...)
+	return questionnaire
 }
 
 func buildQuestionnaire(meta api.UploadSubject, state uploadState) *api.TrackerQuestionnaire {
@@ -92,4 +96,92 @@ func requestID(answers map[string]string) (string, error) {
 		return "", errors.New("ANT request ID must be a positive integer")
 	}
 	return strconv.FormatUint(id, 10), nil
+}
+
+// trumpQuestionKeys bind an explicit upload intention to this source generation.
+// Candidate review remains independently bound by the duplicate assessment.
+func trumpQuestionKeys(source string, identity api.ExternalIdentity) (string, string) {
+	if strings.TrimSpace(source) == "" || identity.Generation == 0 {
+		return "", ""
+	}
+	binding := sha256.Sum256([]byte(fmt.Sprintf("%q|%d", source, identity.Generation)))
+	return fmt.Sprintf("intended_trump_%x", binding), fmt.Sprintf("trump_reason_%x", binding)
+}
+
+// intendedTrump consumes only the current reviewed projection when available.
+// Enabling Guru mode alone never authorizes the challenge retry.
+func intendedTrump(input trackers.PreparationInput) (bool, string) {
+	if !input.TrackerConfig.GuruTrump {
+		return false, ""
+	}
+	choice, reason := trumpQuestionKeys(input.Meta.SourcePath, input.Meta.Identity)
+	if choice == "" {
+		return false, ""
+	}
+	answers := standalone.QuestionnaireAnswers(input.Meta, "ANT")
+	if input.Projection != nil {
+		answers = input.Projection.QuestionnaireAnswers
+	}
+	if answers[choice] != "yes" {
+		return false, ""
+	}
+	return true, strings.TrimSpace(answers[reason])
+}
+
+func trumpDecisionInputs(input trackers.PreparationInput) map[string]string {
+	if intended, _ := intendedTrump(input); intended {
+		return map[string]string{"intended_trump": "yes"}
+	}
+	return nil
+}
+
+func trumpQuestionnaireFields(input trackers.PreparationInput) []api.TrackerQuestionnaireField {
+	if !input.TrackerConfig.GuruTrump {
+		return nil
+	}
+	choice, reason := trumpQuestionKeys(input.Meta.SourcePath, input.Meta.Identity)
+	if choice == "" {
+		return nil
+	}
+	value := "no"
+	intended, explanation := intendedTrump(input)
+	if intended {
+		value = "yes"
+	}
+	return []api.TrackerQuestionnaireField{
+		{
+			Key:     choice,
+			Label:   "Intended ANT trump",
+			Kind:    "select",
+			Options: []string{"no", "yes"},
+			Value:   value,
+			Help:    "Guru+ only: explicitly intend to replace an existing release. Duplicate review and upload confirmation are still required; ANT decides eligibility.",
+		},
+		{
+			Key:   reason,
+			Label: "ANT trump reason",
+			Kind:  "text",
+			Value: explanation,
+			Help:  "Optional explanation sent only for an explicitly intended Guru+ trump.",
+		},
+	}
+}
+
+// duplicateTrumpQuestionnaireFields collects upload intent once, independently of comparison evidence.
+func duplicateTrumpQuestionnaireFields(input trackers.PreparationInput) []api.TrackerQuestionnaireField {
+	fields := trumpQuestionnaireFields(input)
+	if len(fields) == 0 {
+		return nil
+	}
+	answers := standalone.QuestionnaireAnswers(input.Meta, "ANT")
+	if input.Projection != nil {
+		answers = input.Projection.QuestionnaireAnswers
+	}
+	if answers[fields[0].Key] == "yes" || answers[fields[0].Key] == "no" {
+		return nil
+	}
+	for index := range fields {
+		fields[index].NeedsReview = true
+	}
+	return fields
 }

@@ -789,12 +789,12 @@ func TestPresentersPreserveRequiredActionFeedback(t *testing.T) {
 func TestQuestionnairePresentationPreservesKindsHelpAndExactAnswers(t *testing.T) {
 	for _, terminal := range []bool{false, true} {
 		var output strings.Builder
-		var presenter cliPresenter = &cliPlainPresenter{reader: bufio.NewReader(strings.NewReader("y\n2,1\nnotes\n")), output: &output}
+		var presenter cliPresenter = &cliPlainPresenter{reader: bufio.NewReader(strings.NewReader("y\n2,1\nnotes\n\n")), output: &output}
 		var terminalPresenter *modelPresenter
 		if terminal {
 			model := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
 			model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-			terminalPresenter = &modelPresenter{model: model, answers: []string{"y", "2,1", "notes"}}
+			terminalPresenter = &modelPresenter{model: model, answers: []string{"y", "2,1", "notes", ""}}
 			presenter = terminalPresenter
 		}
 		writer := &cliPresentationWriter{
@@ -823,6 +823,11 @@ func TestQuestionnairePresentationPreservesKindsHelpAndExactAnswers(t *testing.T
 				Required: true,
 			},
 			{
+				Key:         "optional_notes",
+				Kind:        "text",
+				NeedsReview: true,
+			},
+			{
 				Key:     "default",
 				Kind:    "select",
 				Options: []string{"yes", "no"},
@@ -835,7 +840,7 @@ func TestQuestionnairePresentationPreservesKindsHelpAndExactAnswers(t *testing.T
 			t.Fatal(err)
 		}
 		answers := instructions["ALPHA"].Questionnaire
-		if answers["reset"] != nil || answers["empty"] == nil || *answers["empty"] != "" || *answers["boolean"] != "yes" || answers["default"] != nil || *answers["notes"] != "notes" || *answers["multiple"] != "blue,red" {
+		if answers["reset"] != nil || answers["empty"] == nil || *answers["empty"] != "" || *answers["boolean"] != "yes" || answers["default"] != nil || *answers["notes"] != "notes" || *answers["optional_notes"] != "" || *answers["multiple"] != "blue,red" {
 			t.Fatal("exact answer map or default intent changed")
 		}
 		if terminal && (terminalPresenter.prompts[0].Help != "Current boolean help" || terminalPresenter.prompts[1].Kind != cliPromptMultiSelect) {

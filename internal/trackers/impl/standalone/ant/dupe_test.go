@@ -6,6 +6,7 @@ package ant
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -26,6 +27,51 @@ func adapterEvidence(result dupe.AdapterResult) ([]api.DupeEntry, []string, erro
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
+
+func TestANTCandidateIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, guid, want string
+	}{
+		{"torrent details", "https://anthelion.me/torrents.php?torrentid=42", "42"},
+		{"group and torrent", "https://anthelion.me/torrents.php?id=7&amp;torrentid=42#torrent42", "42"},
+		{"missing", "", ""},
+		{"group only", "https://anthelion.me/torrents.php?id=42", ""},
+		{"invalid ID", "https://anthelion.me/torrents.php?torrentid=42token", ""},
+		{"zero ID", "https://anthelion.me/torrents.php?torrentid=0", ""},
+		{"negative ID", "https://anthelion.me/torrents.php?torrentid=-42", ""},
+		{"repeated ID", "https://anthelion.me/torrents.php?torrentid=42&torrentid=43", ""},
+		{"malformed query", "https://anthelion.me/torrents.php?torrentid=42&key=%zz", ""},
+		{"foreign host", "https://anthelion.me.example.invalid/torrents.php?torrentid=42", ""},
+		{"insecure URL", "http://anthelion.me/torrents.php?torrentid=42", ""},
+		{"URL credentials", "https://user:secret@anthelion.me/torrents.php?torrentid=42", ""},
+		{"download URL", "https://anthelion.me/download.php?torrentid=42", ""},
+		{"relative URL", "/torrents.php?torrentid=42", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := antDupeEntries(map[string]any{"item": []any{map[string]any{
+				"fileName": "Example.2026.1080p.BluRay.m2ts.999.torrent",
+				"guid":     tc.guid,
+			}}})
+			if len(entries) != 1 || entries[0].ID != tc.want {
+				t.Fatalf("candidate identity: entries=%+v want=%q", entries, tc.want)
+			}
+			if got := dupe.NormalizeCandidate(entries[0], "ANT").ID; got != tc.want {
+				t.Fatalf("normalized ID=%q want=%q", got, tc.want)
+			}
+		})
+	}
+}
+
+type antCandidateLogger struct {
+	api.NopLogger
+	trace strings.Builder
+}
+
+func (l *antCandidateLogger) Tracef(format string, args ...any) {
+	fmt.Fprintf(&l.trace, format, args...)
+	l.trace.WriteByte('\n')
+}
 
 func TestDupeSearcherSendsAPIKeyHeader(t *testing.T) {
 	t.Parallel()
@@ -465,8 +511,8 @@ func TestANTDiscSearchResultsFilterIncompatibleVariants(t *testing.T) {
 	http.DefaultTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 		body := `{"item":[
 			{"fileName":"Example.2026.SD.DVD.VOBIFO.123.torrent","media":"DVD","resolution":"SD","codec":"MPEG2"},
-			{"fileName":"Example.2026.1080p.BluRay.m2ts.124.torrent","media":"BluRay","resolution":"1080p","codec":"H264"},
-			{"files":[{"name":"` + filename + `"}],"media":"BluRay","resolution":"1080p","codec":"H264","container":"MKV"},
+			{"fileName":"Example.2026.1080p.BluRay.m2ts.124.torrent","guid":"https://anthelion.me/torrents.php?torrentid=42&passkey=private-key","files":[{"name":"BDMV/index.bdmv"},{"name":"BDMV/MovieObject.bdmv"}],"media":"BluRay","resolution":"1080p","codec":"H264"},
+			{"fileName":"generated.999.torrent","guid":"https://anthelion.me/torrents.php?torrentid=43&passkey=private-key","link":"https://anthelion.me/download.php?id=43&passkey=private-key","files":[{"name":"` + filename + `"}],"media":"BluRay","resolution":"1080p","codec":"H264","container":"MKV"},
 			{"files":[{"name":"Example.2026.1080p.BluRay.REMUX.AVC-GRP.mkv"}],"media":"BluRay","resolution":"1080p","codec":"H264","container":"MKV","flags":["Remux"]}
 		]}`
 		return &http.Response{
@@ -475,12 +521,12 @@ func TestANTDiscSearchResultsFilterIncompatibleVariants(t *testing.T) {
 		}, nil
 	})
 	for _, tc := range []struct {
-		name, kind, source, resolution, codec, matchName string
-		want                                             api.DupeRelation
+		name, kind, source, resolution, codec, matchName, matchedID string
+		want                                                        api.DupeRelation
 	}{
-		{"encode exact match", "ENCODE", "BluRay", "1080p", "H264", filename, api.DupeRelationExactDuplicate},
-		{"Blu-ray disc", "DISC", "BluRay", "1080p", "H264", "Example.2026.1080p.BluRay.m2ts.124.torrent", api.DupeRelationManualReview},
-		{"DVD disc", "DISC", "DVD", "SD", "MPEG2", "Example.2026.SD.DVD.VOBIFO.123.torrent", api.DupeRelationManualReview},
+		{"encode exact match", "ENCODE", "BluRay", "1080p", "H264", filename, "43", api.DupeRelationExactDuplicate},
+		{"Blu-ray disc", "DISC", "BluRay", "1080p", "H264", "Example.2026.1080p.BluRay.m2ts.124.torrent", "42", api.DupeRelationManualReview},
+		{"DVD disc", "DISC", "DVD", "SD", "MPEG2", "Example.2026.SD.DVD.VOBIFO.123.torrent", "", api.DupeRelationManualReview},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			meta := api.UploadSubject{
@@ -499,12 +545,13 @@ func TestANTDiscSearchResultsFilterIncompatibleVariants(t *testing.T) {
 			if tc.kind == "ENCODE" {
 				target.Names, target.FileNames = []string{filename}, []string{filename}
 			}
-			service := dupe.NewServiceWithRegistry(antDupeTestConfig(t), api.NopLogger{}, registry)
-			summary, err := service.Check(t.Context(), api.DuplicateSubject{
+			logger := &antCandidateLogger{}
+			service := dupe.NewServiceWithRegistry(antDupeTestConfig(t), logger, registry)
+			summary, assessment, err := service.CheckWithAssessment(t.Context(), api.DuplicateSubject{
 				SourcePath: "proposed",
 				Identity:   api.ExternalIdentity{TMDBID: 123},
 				Projection: &api.TrackerReleaseProjection{DuplicateTarget: target},
-			}, []string{"ANT"})
+			}, []string{"ANT"}, dupe.CheckOptions{})
 			if err != nil || len(summary.Results) != 1 {
 				t.Fatalf("search: summary=%+v err=%v", summary, err)
 			}
@@ -513,6 +560,16 @@ func TestANTDiscSearchResultsFilterIncompatibleVariants(t *testing.T) {
 				t.Fatalf("unexpected duplicate result: %+v", result)
 			}
 			for _, candidate := range result.Evaluations {
+				wantID := ""
+				switch candidate.Name {
+				case "Example.2026.1080p.BluRay.m2ts.124.torrent":
+					wantID = "42"
+				case filename:
+					wantID = "43"
+				}
+				if candidate.ID != wantID || !strings.Contains(logger.trace.String(), fmt.Sprintf("candidate_id=%q", wantID)) {
+					t.Errorf("candidate=%q ID=%q want=%q trace=%s", candidate.Name, candidate.ID, wantID, logger.trace.String())
+				}
 				want := api.DupeRelationCoexists
 				if candidate.Name == tc.matchName {
 					want = tc.want
@@ -523,6 +580,14 @@ func TestANTDiscSearchResultsFilterIncompatibleVariants(t *testing.T) {
 			}
 			if len(result.Evaluations) != 4 {
 				t.Fatalf("evaluations=%+v", result.Evaluations)
+			}
+			decision, ok := assessment.Decision("ANT")
+			if !ok || decision.Verdict != dupe.VerdictBlocked || decision.Match.MatchedID != tc.matchedID {
+				t.Fatalf("assessment lost matched identity: decision=%+v result=%+v", decision, result)
+			}
+			public, err := json.Marshal(summary)
+			if err != nil || strings.Contains(string(public)+logger.trace.String(), "private-key") {
+				t.Fatalf("public candidate or diagnostics leaked download authority: %s err=%v", public, err)
 			}
 		})
 	}

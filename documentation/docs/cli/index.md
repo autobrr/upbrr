@@ -110,6 +110,10 @@ The CLI shares one active-input slot with every process using its database. Queu
 
 After an interrupted legacy workflow, check the tracker or torrent client before answering the recovery confirmation. Confirm that the operation did not complete only when you have verified its outcome. Interactive mode and `--unattended_confirm` can ask this question; `--unattended` exits without prompting or starting a new submission. Recovery does not submit anything by itself.
 
+If a configuration change blocks startup because an external outcome is unresolved, stop other processes using that database and run `upbrr recover`. Pass the same `--config` option and environment as the original command so recovery selects the existing database. Check each tracker, image host or torrent client before confirming that its action did not complete; answer No for completed or uncertain outcomes.
+
+This maintenance command does not activate configuration or start external work. It opens the retained local artifacts and saves each confirmation together with its workflow checkpoint in one database transaction. After recovery succeeds, rerun the original command to activate configuration and continue through the normal preparation and review checks. Keep the database if recovery reports an error and follow its diagnostic before retrying.
+
 After you answer tracker questions, the CLI rebuilds the affected tracker stages and refreshes duplicate evidence before asking for duplicate review. Follow-up questions can depend on earlier answers. Accepted answers, reviewed names, and rule acknowledgements remain valid only while their underlying inputs still match. Previous duplicate review decisions are requested again after evidence changes; explicit duplicate-policy options still apply. Answering tracker questions does not approve duplicates or authorize upload.
 
 Trackers with a confirmed upload of the same verified submitted content are excluded before duplicate checks. If every selected tracker is already uploaded, the command succeeds without another approval prompt or submission. See [the upload workflow](../workflow/index.md#4-review-duplicate-evidence).

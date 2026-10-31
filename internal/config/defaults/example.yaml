@@ -153,6 +153,7 @@ trackers:
     api_key: ""
     announce_url: ""
     anon: false
+    guru_trump: false
   AR:
     link_dir_name: ""
     username: ""

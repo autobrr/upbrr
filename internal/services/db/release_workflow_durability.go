@@ -535,6 +535,33 @@ func (r *SQLiteRepository) RecoverLegacyReleaseWorkflowEffects(
 	return effects, nil
 }
 
+// ListReleaseWorkflowRecoveryScopes lists uncertain workflows for local database
+// maintenance. Browser and ordinary workflow reads remain owner-scoped.
+func (r *SQLiteRepository) ListReleaseWorkflowRecoveryScopes(ctx context.Context) ([]api.WorkflowScope, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT owner_id, workflow_id FROM release_workflow_effects WHERE status IN ('started', 'unknown')
+		UNION
+		SELECT owner_id, workflow_id FROM submission_fences WHERE status IN ('started', 'unknown')
+		ORDER BY owner_id, workflow_id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("db list recovery scopes: %w", err)
+	}
+	defer rows.Close()
+	var scopes []api.WorkflowScope
+	for rows.Next() {
+		var scope api.WorkflowScope
+		if err := rows.Scan(&scope.OwnerID, &scope.WorkflowID); err != nil {
+			return nil, fmt.Errorf("db read recovery scope: %w", err)
+		}
+		scopes = append(scopes, scope)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db iterate recovery scopes: %w", err)
+	}
+	return scopes, nil
+}
+
 // ListLegacyReleaseWorkflowRecoveryWorkflowIDs returns only the caller's
 // workflows with effects that need a migrated-slot reconciliation.
 func (r *SQLiteRepository) ListLegacyReleaseWorkflowRecoveryWorkflowIDs(ctx context.Context, ownerID string) ([]api.WorkflowID, error) {
@@ -576,50 +603,57 @@ func (r *SQLiteRepository) ResolveReleaseWorkflowEffectUnknown(
 	scopeID string,
 	now time.Time,
 ) error {
+	return r.withWriteTx(ctx, "resolve unknown release workflow effect", func(tx *sql.Tx) error {
+		return resolveReleaseWorkflowEffectUnknown(ctx, tx, ownerID, workflowID, kind, scopeID, now)
+	})
+}
+
+func resolveReleaseWorkflowEffectUnknown(
+	ctx context.Context, tx *sql.Tx, ownerID string, workflowID api.WorkflowID,
+	kind api.WorkflowExternalEffectKind, scopeID string, now time.Time,
+) error {
 	ownerID = strings.TrimSpace(ownerID)
 	scopeID = strings.TrimSpace(scopeID)
 	if ownerID == "" || workflowID == "" || kind == "" || scopeID == "" || now.IsZero() {
 		return errors.New("db: release workflow effect reconciliation identity and timestamp are required")
 	}
-	return r.withWriteTx(ctx, "resolve unknown release workflow effect", func(tx *sql.Tx) error {
-		if err := requireWorkflowInputMutation(ctx, tx, ownerID, workflowID, true); err != nil {
-			return err
-		}
-		latest, err := loadLatestReleaseWorkflowEffect(ctx, tx, ownerID, workflowID, string(kind), scopeID)
-		if err != nil {
-			return err
-		}
-		switch latest.Status {
-		case api.WorkflowEffectStatusFailed:
-			return nil
-		case api.WorkflowEffectStatusUnknown:
-		case api.WorkflowEffectStatusStarted, api.WorkflowEffectStatusSucceeded:
-			return api.ErrReleaseWorkflowEffectConflict
-		}
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM submission_fences
-			WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
-		`, ownerID, workflowID, latest.OperationID, latest.EffectID, api.WorkflowEffectStatusUnknown); err != nil {
-			return fmt.Errorf("db resolve unknown submission fence: %w", err)
-		}
-		result, err := tx.ExecContext(ctx, `
-			UPDATE release_workflow_effects
-			SET status = ?, updated_at = ?, completed_at = ?
-			WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
-		`, api.WorkflowEffectStatusFailed, formatWorkflowStateTime(now), formatWorkflowStateTime(now),
-			ownerID, workflowID, latest.OperationID, latest.EffectID, api.WorkflowEffectStatusUnknown)
-		if err != nil {
-			return fmt.Errorf("db resolve unknown release workflow effect: %w", err)
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("db resolve unknown release workflow effect rows: %w", err)
-		}
-		if rows != 1 {
-			return api.ErrReleaseWorkflowEffectConflict
-		}
+	if err := requireWorkflowInputMutation(ctx, tx, ownerID, workflowID, true); err != nil {
+		return err
+	}
+	latest, err := loadLatestReleaseWorkflowEffect(ctx, tx, ownerID, workflowID, string(kind), scopeID)
+	if err != nil {
+		return err
+	}
+	switch latest.Status {
+	case api.WorkflowEffectStatusFailed:
 		return nil
-	})
+	case api.WorkflowEffectStatusUnknown:
+	case api.WorkflowEffectStatusStarted, api.WorkflowEffectStatusSucceeded:
+		return api.ErrReleaseWorkflowEffectConflict
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM submission_fences
+		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
+	`, ownerID, workflowID, latest.OperationID, latest.EffectID, api.WorkflowEffectStatusUnknown); err != nil {
+		return fmt.Errorf("db resolve unknown submission fence: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE release_workflow_effects
+		SET status = ?, updated_at = ?, completed_at = ?
+		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
+	`, api.WorkflowEffectStatusFailed, formatWorkflowStateTime(now), formatWorkflowStateTime(now),
+		ownerID, workflowID, latest.OperationID, latest.EffectID, api.WorkflowEffectStatusUnknown)
+	if err != nil {
+		return fmt.Errorf("db resolve unknown release workflow effect: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("db resolve unknown release workflow effect rows: %w", err)
+	}
+	if rows != 1 {
+		return api.ErrReleaseWorkflowEffectConflict
+	}
+	return nil
 }
 
 func loadReleaseWorkflowIntent(

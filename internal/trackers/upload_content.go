@@ -16,12 +16,14 @@ const (
 	UploadContentModeScreenshots UploadContentMode = "screenshots"
 	// UploadContentModeDescription consumes the aggregate description and image object.
 	UploadContentModeDescription UploadContentMode = "description"
+	// UploadContentModeOptionalDescription permits empty text while retaining description and image preparation.
+	UploadContentModeOptionalDescription UploadContentMode = "optional_description"
 )
 
 // Valid reports whether mode is one of the supported semantic workflow shapes.
 func (m UploadContentMode) Valid() bool {
 	switch m {
-	case UploadContentModeNone, UploadContentModeScreenshots, UploadContentModeDescription:
+	case UploadContentModeNone, UploadContentModeScreenshots, UploadContentModeDescription, UploadContentModeOptionalDescription:
 		return true
 	default:
 		return false
@@ -29,11 +31,13 @@ func (m UploadContentMode) Valid() bool {
 }
 
 // UsesDescription reports whether shared description construction is required.
-func (m UploadContentMode) UsesDescription() bool { return m == UploadContentModeDescription }
+func (m UploadContentMode) UsesDescription() bool {
+	return m == UploadContentModeDescription || m == UploadContentModeOptionalDescription
+}
 
 // UsesImages reports whether shared screenshot or menu-image preparation is required.
 func (m UploadContentMode) UsesImages() bool {
-	return m == UploadContentModeScreenshots || m == UploadContentModeDescription
+	return m == UploadContentModeScreenshots || m.UsesDescription()
 }
 
 // FailureReasonCode returns the canonical eligibility reason for a failed
@@ -44,7 +48,7 @@ func (m UploadContentMode) FailureReasonCode() api.TrackerContentFailureCode {
 		return ""
 	case UploadContentModeScreenshots:
 		return api.TrackerContentFailureScreenshotPreparation
-	case UploadContentModeDescription:
+	case UploadContentModeDescription, UploadContentModeOptionalDescription:
 		return api.TrackerContentFailureDescriptionPreparation
 	default:
 		return ""

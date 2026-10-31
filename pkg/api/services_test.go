@@ -726,9 +726,20 @@ func TestNewTrackerValidationSubjectSelectsGroupContentAndFinalityTogether(t *te
 		},
 		{name: "no group falls back to direct override", want: "direct override"},
 		{
-			name:   "empty matching group falls back to direct override",
-			groups: []DescriptionBuilderGroup{{Trackers: []string{"SP"}, Final: true}},
+			name:   "empty pending group falls back to direct override",
+			groups: []DescriptionBuilderGroup{{Trackers: []string{"SP"}}},
 			want:   "direct override",
+		},
+		{
+			name:   "empty final group overrides direct text",
+			groups: []DescriptionBuilderGroup{{Trackers: []string{"SP"}, Final: true}},
+			final:  true,
+		},
+		{
+			name:        "empty globally final group overrides direct text",
+			groups:      []DescriptionBuilderGroup{{Trackers: []string{"SP"}}},
+			globalFinal: true,
+			final:       true,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
