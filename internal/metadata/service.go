@@ -5,6 +5,7 @@ package metadata
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
@@ -100,8 +102,8 @@ var (
 	executePlaylistBDInfo = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, playlistFile string, outputPath string, summaryOnly bool) (string, error) {
 		return svc.ExecuteForPlaylist(ctx, bdmvPath, playlistFile, outputPath, summaryOnly)
 	}
-	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string) (bdinfo.ScanResult, error) {
-		return svc.ExecuteFullScan(ctx, bdmvPath, outputDir)
+	executeFullBDInfoScan = func(svc *bdinfo.Service, ctx context.Context, bdmvPath string, outputDir string, selected ...string) (bdinfo.ScanResult, error) {
+		return svc.ExecuteFullScan(ctx, bdmvPath, outputDir, selected...)
 	}
 	parseBDInfoOutput = func(svc *bdinfo.Service, ctx context.Context, filePath string) (map[string]any, error) {
 		return svc.ParseOutput(ctx, filePath)
@@ -609,41 +611,32 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: tmp dir: %w", err)
 		}
+		// Share the primary report with explicit inspection, bound to this source version.
+		fingerprint := request.SourceFingerprint
+		if request.Input.VerifiedSource != nil {
+			fingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
+		}
+		meta.MediaInspectionFingerprint = fingerprint
 		miResult, err := s.mi.Export(ctx, mediainfo.Request{
-			SourcePath: meta.SourcePath,
-			DiscType:   meta.DiscType,
-			VideoPath:  meta.VideoPath,
-			TempRoot:   tmpRoot,
-			Release:    meta.Release,
+			SourcePath:  meta.SourcePath,
+			DiscType:    meta.DiscType,
+			VideoPath:   meta.VideoPath,
+			TempRoot:    tmpRoot,
+			ArtifactDir: fileMediaInfoArtifactDir(tmpRoot, meta.VideoPath, fingerprint),
+			Release:     meta.Release,
 		})
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: mediainfo: %w", err)
 		}
 		meta.MediaInfoJSONPath = miResult.JSONPath
-		meta.HDRFileEligibility = make(map[string]bool)
-		meta.HDRFileEvidence = make(map[string]api.HDRSourceEvidence)
-		// Bind HDR track evidence to its file, inspected inventory and verified content.
-		hdrSourceFingerprint := request.SourceFingerprint
-		if request.Input.VerifiedSource != nil {
-			hdrSourceFingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
+		doc, err := loadMediaInfoDoc(miResult.JSONPath)
+		if err != nil {
+			return preparationstate.State{}, err
 		}
-		meta.MediaInspectionFingerprint = hdrSourceFingerprint
-		for _, file := range meta.FileList {
-			extension := strings.ToLower(filepath.Ext(file))
-			if extension != ".mkv" && extension != ".mp4" && extension != ".ts" && extension != ".m2ts" {
-				continue
-			}
-			evidence, inspectErr := InspectHDRFile(ctx, s.mi, file, hdrSourceFingerprint, tmpRoot)
-			if inspectErr != nil {
-				if ctx.Err() != nil {
-					return preparationstate.State{}, fmt.Errorf("metadata: HDR track inspection canceled: %w", ctx.Err())
-				}
-				logger.Debugf("metadata: HDR track inspection state=unavailable")
-				continue
-			}
-			meta.HDRFileEligibility[file] = evidence.UniqueHEVC && evidence.HDR10Plus
-			meta.HDRFileEvidence[file] = evidence
-		}
+		// The selected episode is authoritative; siblings have no inspection evidence.
+		evidence := mediafacts.HDRSourceFromMediaInfo(doc)
+		meta.HDRFileEligibility = map[string]bool{meta.VideoPath: evidence.UniqueHEVC && evidence.HDR10Plus}
+		meta.HDRFileEvidence = map[string]api.HDRSourceEvidence{meta.VideoPath: evidence}
 		meta.MediaInfoTextPath = miResult.TextPath
 		meta.DVDIFOPath = miResult.IFOPath
 		meta.DVDVOBPath = miResult.VOBPath
@@ -764,10 +757,11 @@ func (s *Service) collectDiscEvidence(
 			return fmt.Errorf("metadata: disc analysis canceled: %w", err)
 		}
 		resource := preparationstate.DiscResource{
-			ID:   disc.ID,
-			Name: disc.Name,
-			Type: disc.Type,
-			Root: disc.Root,
+			BluRayISO: disc.Image,
+			ID:        disc.ID,
+			Name:      disc.Name,
+			Type:      disc.Type,
+			Root:      disc.Root,
 		}
 		defer func() {
 			if resultErr != nil {
@@ -781,6 +775,15 @@ func (s *Service) collectDiscEvidence(
 			if err != nil {
 				return fmt.Errorf("metadata: resolve disc artifact directory: %w", err)
 			}
+			if disc.Image {
+				if strings.TrimSpace(request.SourceFingerprint) == "" {
+					return errors.New("metadata: ISO reports require a verified source fingerprint")
+				}
+				// Legacy caches are not source-bound. Keep ISO reports in an exact
+				// fingerprint namespace so restarts reuse unchanged evidence only.
+				fingerprint := sha256.Sum256([]byte(request.SourceFingerprint))
+				artifactDir = filepath.Join(artifactDir, fmt.Sprintf("iso-%x", fingerprint))
+			}
 			if err := os.MkdirAll(artifactDir, 0o700); err != nil {
 				return fmt.Errorf("metadata: create disc artifact directory: %w", err)
 			}
@@ -792,12 +795,20 @@ func (s *Service) collectDiscEvidence(
 				return &api.InvalidPlaylistSelectionError{Reason: "at least one playlist must be selected for every disc"}
 			}
 			playlistFiles := playlistNames(resource.SelectedPlaylists)
-			files, video, err := s.extractM2TSFromPlaylist(ctx, disc.Root, playlistFiles)
-			if err != nil {
-				logger.Debugf("metadata: failed to extract selected streams disc=%s err=%s", disc.Name, redaction.RedactValue(err.Error(), nil))
+			if disc.Image {
+				if s.bdinfo == nil {
+					return errors.New("metadata: BDInfo is required to validate a decrypted 3D Blu-ray ISO")
+				}
+				resource.FileList = []string{disc.Root}
+				resource.VideoPath = disc.Root
 			} else {
-				resource.FileList = files
-				resource.VideoPath = video
+				files, video, err := s.extractM2TSFromPlaylist(ctx, disc.Root, playlistFiles)
+				if err != nil {
+					logger.Debugf("metadata: failed to extract selected streams disc=%s err=%s", disc.Name, redaction.RedactValue(err.Error(), nil))
+				} else {
+					resource.FileList = files
+					resource.VideoPath = video
+				}
 			}
 
 			if s.bdinfo != nil {
@@ -818,6 +829,11 @@ func (s *Service) collectDiscEvidence(
 				if err != nil {
 					return err
 				}
+				if disc.Image {
+					if err := validateISOReports(resource.Reports); err != nil {
+						return err
+					}
+				}
 				if meta.BDInfo == nil && strings.TrimSpace(outputPath) != "" {
 					parsed, err := parseBDInfoOutput(s.bdinfo, ctx, outputPath)
 					if err != nil {
@@ -828,7 +844,7 @@ func (s *Service) collectDiscEvidence(
 			}
 		}
 
-		if s.mi != nil {
+		if s.mi != nil && !disc.Image {
 			result, err := s.mi.Export(ctx, mediainfo.Request{
 				SourcePath:  disc.Root,
 				DiscType:    disc.Type,
@@ -1267,8 +1283,6 @@ func (s *Service) resolveOrCreateBDMVSummaries(
 	playlistPath string,
 	selected []string,
 ) (string, bool, error) {
-	logger := logging.FromContext(ctx, s.logger)
-
 	cache, err := discoverBDMVSummaryCache(tmpDir)
 	if err != nil {
 		return "", false, fmt.Errorf("metadata: discover bdmv tmp cache: %w", err)
@@ -1295,9 +1309,11 @@ func (s *Service) resolveOrCreateBDMVSummaries(
 		// No selected playlists are cached, so we need a fresh scan.
 	}
 
+	logger := logging.FromContext(ctx, s.logger)
+
 	if len(selected) > 1 {
 		logger.Debugf("metadata: executing full-disc bdinfo for %d selected playlists", len(selected))
-		scanResult, berr := executeFullBDInfoScan(s.bdinfo, ctx, playlistPath, tmpDir)
+		scanResult, berr := executeFullBDInfoScan(s.bdinfo, ctx, playlistPath, tmpDir, selected...)
 		if berr != nil {
 			return "", false, fmt.Errorf("metadata: bdinfo full scan failed: %w", berr)
 		}

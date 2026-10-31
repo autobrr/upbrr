@@ -9259,6 +9259,9 @@
           "prompt": {
             "type": "string"
           },
+          "releaseRule": {
+            "type": "string"
+          },
           "status": {
             "$ref": "#/components/schemas/RequiredActionStatus"
           },
@@ -12089,6 +12092,16 @@
           },
           "metadataLocale": {
             "type": "string"
+          },
+          "modifiedReleaseDecision": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "namingElementPolicyVersion": {
             "type": "string"

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	bdrunner "github.com/autobrr/go-bdinfo/pkg/bdinfo"
+
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 )
 
@@ -35,11 +37,32 @@ type PlaylistItem struct {
 	Size int64
 }
 
-// DiscoverPlaylists discovers and scores all MPLS files in a BDMV folder. It
+// DiscoverPlaylists discovers and scores MPLS files in a BDMV folder or a
+// directly selected 3D Blu-ray ISO candidate. ISO admission additionally requires
+// selected-report evidence during preparation. It
 // returns candidates ordered by descending score.
 func DiscoverPlaylists(ctx context.Context, bdmvRoot string) ([]PlaylistInfo, error) {
 	if bdmvRoot == "" {
 		return nil, fmt.Errorf("playlist: empty path: %w", internalerrors.ErrInvalidInput)
+	}
+
+	if strings.EqualFold(filepath.Ext(bdmvRoot), ".iso") {
+		info, err := os.Stat(bdmvRoot)
+		if err != nil {
+			return nil, fmt.Errorf("playlist: inspect ISO: %w", err)
+		}
+		if info.Mode().IsRegular() {
+			settings := bdrunner.DefaultSettings("")
+			result, err := bdrunner.DiscoverPlaylists(ctx, bdrunner.Options{
+				Path:            bdmvRoot,
+				Settings:        settings,
+				IncludeTimeline: true,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("playlist: cannot read Blu-ray ISO; select a decrypted 3D Blu-ray image: %w", err)
+			}
+			return isoPlaylistCandidates(result)
+		}
 	}
 
 	playlistDir := filepath.Join(bdmvRoot, "PLAYLIST")
@@ -468,4 +491,42 @@ func FormatDuration(seconds float64) string {
 	m := int(d.Minutes()) % 60
 	s := int(d.Seconds()) % 60
 	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
+}
+
+// isoPlaylistCandidates exposes virtual clip names only as selection evidence;
+// they must never be resolved as host filesystem paths or torrent payloads.
+func isoPlaylistCandidates(result bdrunner.Result) ([]PlaylistInfo, error) {
+	if !result.Disc.Is3D {
+		return nil, fmt.Errorf("playlist: only decrypted 3D Blu-ray ISOs are supported: %w", internalerrors.ErrInvalidInput)
+	}
+	candidates := make([]PlaylistInfo, 0, len(result.Playlists))
+	for _, playlist := range result.Playlists {
+		if !playlist.IsValid || playlist.LengthSeconds <= 0 {
+			continue
+		}
+		var items []PlaylistItem
+		for _, timeline := range result.Timelines {
+			if timeline.Name != playlist.Name {
+				continue
+			}
+			for _, item := range timeline.Items {
+				if len(item.Angles) > 0 {
+					items = append(items, PlaylistItem{File: item.Angles[0].Source.LogicalClip})
+				}
+			}
+		}
+		// The dependency exposes total playlist bytes, not individual UDF clip
+		// sizes. Rank by duration rather than inventing per-clip physical sizes.
+		candidates = append(candidates, PlaylistInfo{
+			File:     playlist.Name,
+			Duration: playlist.LengthSeconds,
+			Items:    items,
+			Score:    playlist.LengthSeconds,
+		})
+	}
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("playlist: ISO contains no usable Blu-ray playlists: %w", internalerrors.ErrInvalidInput)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Score > candidates[j].Score })
+	return candidates, nil
 }

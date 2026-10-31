@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/filesystem"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -39,6 +40,8 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 	if len(selectedPlaylists) == 0 {
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
+	options := input.Options
+	options.KeepFolder = resources.policy.KeepFolder
 	subject := api.UploadSubject{
 		MediaFileFacts:              release.Media.MediaFileFacts.Clone(),
 		SourceIdentity:              release.SourceIdentity,
@@ -67,7 +70,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		DescriptionGroupsFinal:      input.DescriptionGroupsFinal,
 		DescriptionTemplate:         resources.descriptionTemplate,
 		Trackers:                    append([]string(nil), input.Trackers...),
-		Options:                     input.Options,
+		Options:                     options,
 		Tag:                         release.Naming.Tag,
 		Release:                     releaseInfo(release),
 		TrackerConfigOverrides:      input.TrackerConfigOverrides,
@@ -418,7 +421,19 @@ func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPl
 	}
 	discs := make([]api.ScreenshotDiscSubject, 0, len(resources.discs))
 	for _, disc := range resources.discs {
+		var summary string
+		if disc.BluRayISO {
+			primary := paths.PrimaryBDMVPlaylistFor(disc.SelectedPlaylists)
+			for _, report := range disc.Reports {
+				if strings.EqualFold(report.Playlist.File, primary) {
+					summary = report.Summary
+					break
+				}
+			}
+		}
 		discs = append(discs, api.ScreenshotDiscSubject{
+			BDInfoSummary:         summary,
+			BluRayISO:             disc.BluRayISO,
 			ID:                    disc.ID,
 			Name:                  disc.Name,
 			Type:                  disc.Type,

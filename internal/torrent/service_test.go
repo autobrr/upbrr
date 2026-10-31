@@ -1593,3 +1593,52 @@ func mustStat(t *testing.T, path string) os.FileInfo {
 	}
 	return info
 }
+
+func TestCreateISOFullDiscKeepsOnlyOriginalPayload(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "Example.3D.iso")
+	payload := []byte("synthetic original image payload")
+	if err := os.WriteFile(source, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Neither virtual stream evidence nor nearby generated artifacts are payloads.
+	artifact := filepath.Join(filepath.Dir(source), "summary.txt")
+	if err := os.WriteFile(artifact, []byte("report"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	subject := api.TorrentSubject{
+		SourcePath: source,
+		DiscType:   "BDMV",
+		FileList:   []string{filepath.Join(filepath.Dir(source), "00001.M2TS"), artifact},
+	}
+	inventory, ok, err := ResolveSubmissionContentInventory(subject)
+	if err != nil || !ok {
+		t.Fatalf("inventory=%+v ok=%v err=%v", inventory, ok, err)
+	}
+	if inventory.Scope != api.SubmissionContentScopeFullDisc || len(inventory.Files) != 1 || inventory.Files[0].LocalPath != source || inventory.Files[0].Size != int64(len(payload)) {
+		t.Fatalf("physical ISO inventory=%+v", inventory)
+	}
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(t.Context(), subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	torrentMeta, err := metainfo.LoadFromFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Files) != 0 || info.Name != filepath.Base(source) || info.Length != int64(len(payload)) {
+		t.Fatalf("ISO torrent is not the original single payload: %+v", info)
+	}
+	identity, err := SubmissionContentIdentity(inventory, verifySubmissionSource(t, source))
+	if err != nil || len(identity.Files) != 1 {
+		t.Fatalf("ISO content identity=%+v err=%v", identity, err)
+	}
+	reused, err := service.Create(t.Context(), subject)
+	if err != nil || reused.InfoHash != result.InfoHash {
+		t.Fatalf("ISO reuse changed content: %+v err=%v", reused, err)
+	}
+}

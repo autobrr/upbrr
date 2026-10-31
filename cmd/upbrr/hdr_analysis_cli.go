@@ -263,13 +263,13 @@ func standaloneHDRPlaylist(result bd.Result, requested string) (string, error) {
 		if requested != "" && !strings.EqualFold(timeline.Name, requested) {
 			continue
 		}
-		if !timeline.Complete || timeline.Err != nil || timeline.SelectedAngle != 0 || len(timeline.Items) == 0 {
+		if !timeline.Complete || timeline.Err != nil || len(timeline.Items) == 0 {
 			continue
 		}
 		seen := make(map[string]bool)
 		valid := true
 		for _, item := range timeline.Items {
-			if item.Err != nil || item.SelectedAlternative != 0 || len(item.Angles) == 0 {
+			if item.Err != nil || len(item.Angles) == 0 {
 				valid = false
 				break
 			}

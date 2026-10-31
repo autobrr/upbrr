@@ -182,7 +182,7 @@ func TestDeriveMediaFactsSceneGroupCasing(t *testing.T) {
 			if test.tag != "" {
 				tag = test.tag
 			}
-			service := NewService(&fakeRepo{}, WithSceneDetector(staticSceneDetector{
+			service := newTestService(t, &fakeRepo{}, WithSceneDetector(staticSceneDetector{
 				result: SceneResult{IsScene: test.confirmed, SceneName: test.sceneName},
 				err:    test.detectorError,
 			}))
@@ -251,7 +251,7 @@ func TestSceneGroupCasingUsesSRRDBReleaseName(t *testing.T) {
 	if err := os.WriteFile(source, []byte("synthetic media"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(&stubRepo{},
+	service := newTestService(t, &stubRepo{},
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}),
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(newSRRDBDetector(server.Client(), server.URL, filepath.Join(base, "cache"), filepath.Join(base, "nfo"))),

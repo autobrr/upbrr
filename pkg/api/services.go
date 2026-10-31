@@ -376,6 +376,8 @@ func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allo
 // instruction, and prerequisite view. It excludes preparation diagnostics,
 // resolver evidence, cache freshness, and client-search implementation state.
 type UploadSubject struct {
+	// ModifiedReleaseDecision is server-owned, exact-generation workflow authority.
+	ModifiedReleaseDecision *bool `json:"-"`
 	// SuppressImportedScreenshotReferences is operation-owned selection policy, never canonical metadata.
 	SuppressImportedScreenshotReferences map[string]bool `json:"-"`
 
@@ -558,6 +560,8 @@ func NewImageHostingSubject(subject UploadSubject) ImageHostingSubject {
 // RuleSubject contains only stable facts used by generic and tracker-specific
 // eligibility rules.
 type RuleSubject struct {
+	// CheckSourceFolder includes the retained folder in modified-release checks.
+	CheckSourceFolder          bool
 	MediaFileFacts             MediaFileFacts
 	TitleSearchEvidence        TrackerTitleSearchEvidence
 	LanguageFacts              LanguageFacts
@@ -781,6 +785,8 @@ type ProvenanceFacts struct {
 // tracker answers, and prepared-resource readiness used by side-effect-free
 // pre-duplicate validation.
 type TrackerValidationSubject struct {
+	// CheckSourceFolder includes the retained folder in modified-release checks.
+	CheckSourceFolder bool
 	// ImportedScreenshotEvidence contains only exact-generation accepted references.
 	ImportedScreenshotEvidence *ImportedScreenshotEvidence `json:",omitempty"`
 	// FinalizedUploadName is the resolved tracker-local name, separate from canonical naming facts.
@@ -920,6 +926,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 	availabilityFacts := deriveValidationAvailabilityFacts(subject.ProviderMetadata)
 	provenanceFacts := deriveValidationProvenanceFacts(subject.Identity, subject.ProviderMetadata)
 	return TrackerValidationSubject{
+		CheckSourceFolder:           subject.Options.KeepFolder,
 		ImportedScreenshotEvidence:  subject.CurrentImportedScreenshotEvidence(),
 		TitleSearchEvidence:         subject.TrackerTitleSearchEvidence[tracker],
 		Tracker:                     tracker,
@@ -1670,6 +1677,7 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
 	mediaFacts := deriveValidationRuleMediaFileFacts(subject, packageFacts.MediaFileCount)
 	return TrackerValidationSubject{
+		CheckSourceFolder:          subject.CheckSourceFolder,
 		TitleSearchEvidence:        subject.TitleSearchEvidence,
 		Tracker:                    strings.ToUpper(strings.TrimSpace(tracker)),
 		LanguageFacts:              subject.LanguageFacts.Clone(),
@@ -1725,6 +1733,7 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 func NewRuleSubject(subject UploadSubject) RuleSubject {
 	dvdVOBMediaInfoReady := preparedDVDVOBMediaInfoAssetEvidence(subject).Ready
 	return RuleSubject{
+		CheckSourceFolder:          subject.Options.KeepFolder,
 		MediaFileFacts:             subject.MediaFileFacts.Clone(),
 		LanguageFacts:              subject.LanguageFacts.Clone(),
 		EffectiveMetadata:          cloneTrackerValidationValue(subject.EffectiveMetadata),

@@ -21,6 +21,7 @@ import (
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
+	"github.com/autobrr/upbrr/internal/imageevidence"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -38,8 +39,8 @@ var newUnit3DArtifactImageHTTPClient = func() *http.Client {
 }
 
 // persistTrackerArtifacts best-effort persists a tracker description and bounded,
-// validated images beneath the release's private temporary directory. Existing
-// non-empty files are reused, image downloads run concurrently, and the returned
+// validated images beneath the release's private temporary directory. Cached images
+// are rechecked when a resolution is known. Downloads run concurrently; the returned
 // URL slice preserves input indexes with empty entries for failed downloads.
 // Current accepted-but-unavailable downloads return separate reference receipts.
 // Cancellation returns URLs completed before workers stop, but no receipts.
@@ -104,7 +105,16 @@ func (s *Service) persistTrackerArtifacts(
 	}
 
 	client := newUnit3DArtifactImageHTTPClient()
-	expectedHeight := parseResolutionHeight(meta.Release.Resolution)
+	doc, err := loadMediaInfoDoc(meta.MediaInfoJSONPath)
+	if err != nil {
+		logger.Warnf("metadata: tracker images skipped tracker=%s reason=invalid_mediainfo", tracker)
+		return nil, nil
+	}
+	resolution, _ := resolutionFromMediaEvidence(meta, doc)
+	if meta.ReleaseNameOverrides.Resolution != nil {
+		resolution = *meta.ReleaseNameOverrides.Resolution
+	}
+	expectedHeight := imageevidence.ResolutionHeight(resolution)
 	isDVD := strings.EqualFold(meta.DiscType, "DVD")
 
 	type imageTask struct {
@@ -155,7 +165,8 @@ func (s *Service) persistTrackerArtifacts(
 				}
 				fileName := buildImageFilename(artifactURL, task.index)
 				outPath := filepath.Join(artifactDir, fileName)
-				if info, err := os.Stat(outPath); err == nil && info.Size() > 0 {
+				if info, err := os.Stat(outPath); err == nil && info.Size() > 0 &&
+					(expectedHeight <= 0 || trackerImageHasResolution(outPath, expectedHeight, isDVD)) {
 					logger.Debugf("metadata: tracker image exists tracker=%s index=%d path=%s", tracker, task.index+1, outPath)
 					successfulByIndex[task.index] = task.url
 					continue

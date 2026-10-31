@@ -47,6 +47,8 @@ type DiscReportResource struct {
 
 // DiscResource contains all preparation-private evidence for one source disc.
 type DiscResource struct {
+	// BluRayISO keeps virtual disc resources separate from extracted stream paths.
+	BluRayISO           bool
 	HDRCaptures         map[string]HDRCaptureResource
 	ID                  string
 	Name                string

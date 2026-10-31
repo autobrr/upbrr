@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -586,8 +587,35 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 				}
 			}
 			if test.ordinaryFirst {
-				if err := restarted.ensureOperationRecovery(ctx); err != nil {
+				work, err := repo.LoadReleaseWorkflowWork(ctx, testOwnerID, opened.WorkflowID, operationID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Observe a live lease independently of setup speed. Keep SQLite and
+				// startup recovery on real time, then expire the persisted fixture explicitly.
+				ordinary := newActiveInputRecoveryModule(t, recoveryRepository, recoveryInputs, verifier,
+					fixedClock{now: work.LeaseExpiresAt.Add(-time.Hour)}, "second-coordinator", WithCoordinator(restarted.Coordinator))
+				defer func() {
+					if err := restarted.Coordinator.Shutdown(ctx); err != nil {
+						t.Errorf("shutdown recovery timer: %v", err)
+					}
+				}()
+				if err := ordinary.ensureOperationRecovery(ctx); err != nil {
 					t.Fatalf("ordinary recovery before startup reset: %v", err)
+				}
+				ordinary.operationWorkersMu.Lock()
+				pending := len(ordinary.recoveryWorkers)
+				ordinary.operationWorkersMu.Unlock()
+				if pending != 1 {
+					t.Fatalf("ordinary recovery timers = %d, want one pending live lease", pending)
+				}
+				unchanged, err := repo.LoadReleaseWorkflowWork(ctx, testOwnerID, opened.WorkflowID, operationID)
+				if err != nil || !reflect.DeepEqual(unchanged, work) {
+					t.Fatalf("ordinary recovery changed foreign work: %#v, err=%v", unchanged, err)
+				}
+				if _, err := repo.RawDB().ExecContext(ctx, `UPDATE release_workflow_work SET lease_expires_at = ? WHERE operation_id = ?`,
+					clock.Now().Add(-time.Second).Format(time.RFC3339Nano), operationID); err != nil {
+					t.Fatalf("expire observed work lease: %v", err)
 				}
 			}
 			if test.failList || test.failTerminal || test.failCompletion || test.failRestore || test.failClose {

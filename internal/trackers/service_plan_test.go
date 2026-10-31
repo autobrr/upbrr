@@ -99,10 +99,10 @@ func TestSubmitTrackerPlansWaitsBetweenReusableAndRehashedBatches(t *testing.T) 
 		{tracker: "HDB", plan: plan("HDB", func() { reusableFinished = time.Now() })},
 		{tracker: "PTP", plan: plan("PTP", func() { rehashedStarted = time.Now() })},
 	}
-	svc := NewServiceWithRegistry(config.Config{
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{
 		TorrentCreation: config.TorrentCreationConfig{RehashCooldown: 1},
 		PostUpload:      config.PostUploadConfig{MaxConcurrentTrackers: 2},
-	}, api.NopLogger{}, nil, nil)
+	}), api.NopLogger{}, nil, nil)
 	svc.submitTrackerPlans(context.Background(), api.UploadSubject{
 		SourcePath:       filepath.Join(t.TempDir(), "Example.Release.2026"),
 		RehashedTrackers: []string{"PTP"},
@@ -147,7 +147,7 @@ func TestUploadPreparationHasBoundedPoolAndFullBarrier(t *testing.T) {
 			t.Fatalf("register %s: %v", name, err)
 		}
 	}
-	svc := NewServiceWithRegistry(config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList(names)}}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList(names)}}), nil, nil, registry)
 	done := make(chan error, 1)
 	go func() {
 		summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "Example.Release.2026"})
@@ -442,7 +442,7 @@ func TestRetainedUploadPlanExecutesExactReviewedProjectionWithoutRepreparing(t *
 	}); err != nil {
 		t.Fatalf("register retained definition: %v", err)
 	}
-	service := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	projection := api.TrackerReleaseProjection{
 		TrackerID:         "EXAMPLE",
 		UploadReleaseName: "Example.Release.2026.REVIEWED-GRP",
@@ -493,7 +493,7 @@ func TestRetainedUploadPlanPersistsAuthorizedRuleAudit(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register retained definition: %v", err)
 	}
-	service := NewServiceWithRegistry(config.Config{}, nil, repository, registry)
+	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, repository, registry)
 	fingerprint, err := api.CanonicalWorkflowFingerprint("authorized-waivable-rules")
 	if err != nil {
 		t.Fatalf("fingerprint waivable rules: %v", err)
@@ -583,7 +583,7 @@ func TestRetainedUploadPlanLogsReturnedTorrentPageURL(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register retained definition: %v", err)
 	}
-	service := NewServiceWithRegistry(config.Config{}, logger, nil, registry)
+	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), logger, nil, registry)
 	retained, err := service.PrepareRetainedUploadPlan(
 		context.Background(),
 		api.UploadSubject{SourcePath: "Example.Release.2026"},
@@ -679,7 +679,7 @@ func TestRetainedUploadPlanExecutesOnlyApprovedTrackers(t *testing.T) {
 			t.Fatalf("register retained definition: %v", err)
 		}
 	}
-	service := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	retained, err := service.PrepareRetainedUploadPlan(
 		context.Background(),
 		api.UploadSubject{SourcePath: "Example.Release.2026", ReleaseName: "Example.Release.2026-GRP"},
@@ -732,7 +732,7 @@ func TestRetainedUploadPlanRejectsStaleReleaseNamePolicyTrackerLocally(t *testin
 	}); err != nil {
 		t.Fatalf("register retained definition: %v", err)
 	}
-	service := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	retained, err := service.PrepareRetainedUploadPlan(
 		context.Background(),
 		api.UploadSubject{SourcePath: "Example.Release.2026", ReleaseName: "Example.Release.2026-GRP"},
@@ -937,7 +937,7 @@ func TestUploadCancellationBeforeBarrierSubmitsNoneAndReleasesReadyPlans(t *test
 	}); err != nil {
 		t.Fatalf("register blocking: %v", err)
 	}
-	svc := NewServiceWithRegistry(config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}}}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}}}), nil, nil, registry)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
@@ -982,7 +982,7 @@ func TestUploadReleaseFailureAfterRemoteSuccessIsSanitizedWarningOnly(t *testing
 	if err := registry.Register(releaseErrorDefinition{readyReleasePlanDefinition: definition}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	svc := NewServiceWithRegistry(config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}, logger, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}), logger, nil, registry)
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "Example.Release.2026"})
 	if err != nil || summary.Uploaded != 1 {
 		t.Fatalf("upload = %#v, %v", summary, err)

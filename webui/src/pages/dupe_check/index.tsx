@@ -109,6 +109,7 @@ const ruleAcknowledgementAction = (projection: TrackerReleaseProjection | undefi
   projection?.requiredActions?.find(
     (action) =>
       action.kind === "authorize_rules" &&
+      action.trackerId === projection.trackerId &&
       (action.status === "pending" ||
         (action.status === "resolved" &&
           Boolean(projection.waivableRuleFingerprint) &&
