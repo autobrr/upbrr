@@ -4,6 +4,7 @@
 import type { ReactNode } from "react";
 import { cn } from "../utils/cn";
 import { settingsStyle } from "./style";
+import { hiddenSettingsFields } from "./fieldPresentation";
 
 const fieldGroups: Record<string, Array<{ title: string; keys: string[] }>> = {
   MainSettings: [
@@ -21,14 +22,7 @@ const fieldGroups: Record<string, Array<{ title: string; keys: string[] }>> = {
   Metadata: [
     {
       title: "Provider lookups",
-      keys: [
-        "BTNAPI",
-        "OnlyID",
-        "PingUnit3D",
-        "SkipAutoTorrent",
-        "SkipTrackerFilenameLookup",
-        "CheckPredb",
-      ],
+      keys: ["OnlyID", "PingUnit3D", "SkipAutoTorrent", "SkipTrackerFilenameLookup", "CheckPredb"],
     },
     {
       title: "Blu-ray matching",
@@ -61,7 +55,7 @@ const fieldGroups: Record<string, Array<{ title: string; keys: string[] }>> = {
     },
     {
       title: "Screenshot layout",
-      keys: ["ThumbnailSize", "ScreensPerRow", "MultiScreens", "PackThumbSize"],
+      keys: ["ThumbnailSize", "ScreensPerRow"],
     },
     {
       title: "Custom headers",
@@ -73,7 +67,6 @@ const fieldGroups: Record<string, Array<{ title: string; keys: string[] }>> = {
         "CustomSignature",
       ],
     },
-    { title: "Limits and processing", keys: ["CharLimit", "FileLimit", "ProcessLimit"] },
   ],
   ArrIntegration: [
     {
@@ -104,7 +97,6 @@ const fieldGroups: Record<string, Array<{ title: string; keys: string[] }>> = {
         "RadarrAPIKey3",
       ],
     },
-    { title: "Media paths", keys: ["EmbyDir", "EmbyTVDir"] },
   ],
   PostUpload: [
     { title: "Tracker handling", keys: ["MaxConcurrentTrackers", "SearchRequests"] },
@@ -216,9 +208,9 @@ const fieldGroups: Record<string, Array<{ title: string; keys: string[] }>> = {
         "Linking",
         "AllowFallback",
         "LinkedFolder",
+        "AutomaticManagementPaths",
         "LocalPath",
         "RemotePath",
-        "AutomaticManagementPaths",
       ],
     },
   ],
@@ -228,7 +220,12 @@ const fieldGroups: Record<string, Array<{ title: string; keys: string[] }>> = {
   ],
 };
 
-/** Groups rendered controls without changing their values, handlers, or visibility. */
+const clientPathColumns = [
+  ["LinkedFolder", "AutomaticManagementPaths"],
+  ["LocalPath", "RemotePath"],
+];
+
+/** Omits retired controls and groups settings without changing their values or handlers. */
 export function SettingsFieldGroups({
   section,
   fields,
@@ -237,7 +234,10 @@ export function SettingsFieldGroups({
   fields: ReadonlyArray<readonly [string, ReactNode]>;
 }>) {
   const definitions = fieldGroups[section] ?? [];
-  const visibleFields = fields.filter(([, field]) => field != null && field !== false);
+  const visibleFields = fields.filter(
+    ([key, field]) =>
+      !hiddenSettingsFields[section]?.includes(key) && field != null && field !== false,
+  );
   const groups = definitions.map(({ title, keys }) => ({
     title,
     fields: keys.flatMap((key) => visibleFields.filter(([fieldKey]) => fieldKey === key)),
@@ -255,13 +255,30 @@ export function SettingsFieldGroups({
             <h3 className="m-0 text-sm font-semibold">{title}</h3>
             <div
               className={cn(
-                settingsStyle.grid,
+                section === "TorrentClients" && title === "Linking and path mapping"
+                  ? "grid min-w-0 grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2"
+                  : settingsStyle.grid,
                 ((section === "Description" && title === "Content") ||
                   section === "ArrIntegration") &&
-                  "[&>label:has([role=switch])]:col-span-full [&>label:has([role=switch])]:border-b [&>label:has([role=switch])]:border-foreground/10",
+                  "[&>.settings-field--switch]:col-span-full [&>.settings-field--switch]:border-b [&>.settings-field--switch]:border-foreground/10",
               )}
             >
-              {fields.map(([, field]) => field)}
+              {section === "TorrentClients" && title === "Linking and path mapping" ? (
+                <>
+                  {fields
+                    .filter(([key]) => !clientPathColumns.some((column) => column.includes(key)))
+                    .map(([, field]) => field)}
+                  {clientPathColumns.map((keys) => (
+                    <div className="grid min-w-0 content-start gap-5" key={keys[0]}>
+                      {keys
+                        .flatMap((key) => fields.filter(([fieldKey]) => fieldKey === key))
+                        .map(([, field]) => field)}
+                    </div>
+                  ))}
+                </>
+              ) : (
+                fields.map(([, field]) => field)
+              )}
             </div>
           </section>
         ))}

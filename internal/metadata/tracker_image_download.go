@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/imageevidence"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -125,14 +126,8 @@ func downloadImageWithReference(
 	if err != nil {
 		return "image_decode_failed", acceptedReference()
 	}
-	if expectedHeight > 0 {
-		actualHeight := imgConfig.Height
-		if !isDVD && actualHeight > expectedHeight {
-			actualHeight = min(imgConfig.Width, imgConfig.Height)
-		}
-		if err := validateImageResolution(actualHeight, expectedHeight, isDVD); err != nil {
-			return fmt.Sprintf("resolution_mismatch_actual_%d_expected_%d", actualHeight, expectedHeight), ""
-		}
+	if reason := imageevidence.ResolutionMismatch(imgConfig, expectedHeight, isDVD); reason != "" {
+		return reason, ""
 	}
 	if err := os.WriteFile(outPath, payload, 0o600); err != nil {
 		return "image_write_failed", acceptedReference()
@@ -140,34 +135,13 @@ func downloadImageWithReference(
 	return "", ""
 }
 
-func parseResolutionHeight(resolution string) int {
-	resMap := map[string]int{
-		"8640p": 8640,
-		"4320p": 4320,
-		"2160p": 2160,
-		"1440p": 1440,
-		"1080p": 1080,
-		"1080i": 1080,
-		"720p":  720,
-		"576p":  576,
-		"576i":  576,
-		"480p":  480,
-		"480i":  480,
+// trackerImageHasResolution checks cached image headers against current geometry policy.
+func trackerImageHasResolution(path string, expectedHeight int, isDVD bool) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
 	}
-	return resMap[strings.TrimSpace(resolution)]
-}
-
-func validateImageResolution(actualHeight int, expectedHeight int, isDVD bool) error {
-	if expectedHeight <= 0 {
-		return nil
-	}
-	lowerBound := int(float64(expectedHeight) * 0.70)
-	upperBound := expectedHeight
-	if isDVD {
-		upperBound = int(float64(expectedHeight) * 1.30)
-	}
-	if actualHeight < lowerBound || actualHeight > upperBound {
-		return fmt.Errorf("resolution %dp outside allowed range (%d-%d)", actualHeight, lowerBound, upperBound)
-	}
-	return nil
+	defer file.Close()
+	config, _, err := image.DecodeConfig(io.LimitReader(file, unit3dMaxImageBytes))
+	return err == nil && imageevidence.ResolutionMismatch(config, expectedHeight, isDVD) == ""
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestExtractDVDMediaInfoFromVOBJSON(t *testing.T) {
@@ -107,6 +108,17 @@ func TestExtractDVDMediaInfoRetainsAnamorphicAxes(t *testing.T) {
 	})
 	if info.Width != 720 || info.Height != 576 || info.Resolution != "576i" {
 		t.Fatalf("anamorphic DVD dimensions=%dx%d resolution=%q", info.Width, info.Height, info.Resolution)
+	}
+}
+
+func TestExtractDVDMediaInfoRejectsConflictingFilenameWithPartialDimensions(t *testing.T) {
+	info := extractDVDMediaInfo(preparationstate.State{
+		DiscType:            "DVD",
+		Release:             api.ReleaseInfo{Resolution: "1080p"},
+		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"Video","Height":"576","ScanType":"Interlaced"}]}}`,
+	})
+	if info.Resolution != "576i" {
+		t.Fatalf("partial interlaced resolution=%q, want 576i", info.Resolution)
 	}
 }
 
@@ -269,9 +281,57 @@ func TestResolutionFromMediaInfo(t *testing.T) {
 			expected: "",
 		},
 		{
+			name:     "unsupported 720 interlaced rejects progressive filename",
+			guessed:  "720p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"720","ScanType":"Interlaced"}]}}`,
+			expected: "",
+		},
+		{
+			name:     "explicit interlaced replaces filename scan",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Interlaced"}]}}`,
+			expected: "1080i",
+		},
+		{
+			name:     "explicit MBAFF replaces filename scan",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"1080","ScanType":"MBAFF"}]}}`,
+			expected: "1080i",
+		},
+		{
+			name:     "explicit progressive replaces filename scan",
+			guessed:  "1080i",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "matching interlaced filename retains higher tier",
+			guessed:  "1080i",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"720","ScanType":"Interlaced"}]}}`,
+			expected: "1080i",
+		},
+		{
+			name:     "missing scan retains filename evidence",
+			guessed:  "1080i",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1280","Height":"720"}]}}`,
+			expected: "1080i",
+		},
+		{
+			name:     "missing dimensions reject conflicting scan",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"0","Height":"720","ScanType":"Interlaced"}]}}`,
+			expected: "",
+		},
+		{
 			name:     "missing dimensions retain filename evidence",
 			guessed:  "1080p",
 			payload:  `{"media":{"track":[{"@type":"Video","Width":"0","Height":"720"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "missing video track retains filename evidence",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"General"}]}}`,
 			expected: "1080p",
 		},
 		{

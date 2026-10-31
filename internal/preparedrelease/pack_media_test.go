@@ -70,7 +70,7 @@ func TestPreparedMediaFileFactsSurvivePersistenceAndExactProjection(t *testing.T
 		t.Fatal("file facts aliased prepared generation")
 	}
 	old := repeated.Release
-	old.Compatibility.ContractVersion = "prepared-release-v32"
+	old.Compatibility.ContractVersion = "prepared-release-v53"
 	old.Naming.Type = "REMUX"
 	old.Media.MediaFileFacts = api.MediaFileFacts{}
 	store.mu.Lock()
@@ -82,5 +82,9 @@ func TestPreparedMediaFileFactsSurvivePersistenceAndExactProjection(t *testing.T
 	}
 	if upgraded.Release.Generation != old.Generation+1 || collector.base.callCount() != 2 || len(upgraded.Release.Media.MediaFileFacts.Files) != 1 {
 		t.Fatalf("contract failed to invalidate generation=%d calls=%d", upgraded.Release.Generation, collector.base.callCount())
+	}
+	repeated, err = module.Prepare(t.Context(), input)
+	if err != nil || collector.base.callCount() != 2 || repeated.Release.Generation != upgraded.Release.Generation {
+		t.Fatalf("compatible generation not reused: generation=%d calls=%d err=%v", repeated.Release.Generation, collector.base.callCount(), err)
 	}
 }

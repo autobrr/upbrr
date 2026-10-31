@@ -180,7 +180,7 @@ func extractDVDMediaInfo(meta preparationstate.State) api.DVDMediaInfo {
 	}
 	scan := normalizeDVDScan(scanType, meta.SourcePath)
 
-	closestWidth, closestHeight, resolution := snapAndMapResolution(width, height, scan, meta.Release.Resolution)
+	closestWidth, closestHeight, resolution := snapAndMapResolution(width, height, scan, resolutionGuessForScan(meta.Release.Resolution, scanType))
 
 	return api.DVDMediaInfo{
 		Width:         closestWidth,
@@ -400,21 +400,53 @@ func resolutionWithHeightFloor(resolution string, height int, scan string) strin
 	return mapDVDResolution("", fmt.Sprintf("%d%s", minimum, scan), 0, scan)
 }
 
-// resolutionFromMediaInfo retains filename evidence when dimensions are missing.
-// Otherwise it normalizes portrait axes using display/pixel aspect evidence and
-// floors automatic classifications at the measured height tier. Explicit manual
-// corrections are applied later.
+// resolutionFromMediaEvidence resolves automatic resolution and DVD geometry before
+// manual corrections. Image validation and finalized facts share this policy.
+func resolutionFromMediaEvidence(meta preparationstate.State, doc mediaInfoDoc) (string, api.DVDMediaInfo) {
+	if !strings.EqualFold(meta.DiscType, "DVD") {
+		return resolutionFromMediaInfo(doc, meta.SourcePath, meta.Release.Resolution), api.DVDMediaInfo{}
+	}
+	info := extractDVDMediaInfo(meta)
+	resolution := info.Resolution
+	if resolution == "OTHER" {
+		resolution = ""
+	} else if strings.TrimSpace(resolution) == "" {
+		resolution = meta.Release.Resolution
+	}
+	return resolution, info
+}
+
+// resolutionGuessForScan rejects contradictions only for explicit known scan types.
+// Missing or unknown scan metadata leaves filename evidence intact.
+func resolutionGuessForScan(guessed, scanType string) string {
+	resolution := strings.TrimSpace(guessed)
+	switch strings.ToLower(strings.TrimSpace(scanType)) {
+	case "progressive", "interlaced", "mbaff":
+		if !strings.HasSuffix(strings.ToLower(resolution), normalizeDVDScan(scanType, "")) {
+			return ""
+		}
+	}
+	return resolution
+}
+
+// resolutionFromMediaInfo rejects filename evidence that conflicts with an explicit
+// scan type, retaining compatible guesses when dimensions are missing. Otherwise it
+// normalizes portrait axes using display/pixel aspect evidence and floors automatic
+// classifications at the measured height tier. Explicit manual corrections apply later.
 func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string, guessed string) string {
 	_, videoTracks, _ := splitMediaInfoTracks(doc)
 	if len(videoTracks) == 0 {
 		return guessed
 	}
 	track := videoTracks[0]
+	scanType := trackString(track, "ScanType")
+	scan := normalizeDVDScan(scanType, sourcePath)
+	resolution := resolutionGuessForScan(guessed, scanType)
 
 	width := trackNumericInt(track, "Width")
 	height := trackNumericInt(track, "Height")
 	if width == 0 || height == 0 {
-		return guessed
+		return resolution
 	}
 	if width < height {
 		aspect, valid := new(big.Rat).SetString(strings.ReplaceAll(trackString(track, "DisplayAspectRatio"), ":", "/"))
@@ -429,10 +461,6 @@ func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string, guessed string
 		}
 	}
 
-	scanType := strings.TrimSpace(trackString(track, "ScanType"))
-	scan := normalizeDVDScan(scanType, sourcePath)
-
-	resolution := strings.TrimSpace(guessed)
 	if resolution == "" {
 		_, _, resolution = snapAndMapResolution(width, height, scan, "")
 	} else {

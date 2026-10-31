@@ -10,7 +10,7 @@ import (
 )
 
 func TestPrepareRecomputesStaleResolutionFacts(t *testing.T) {
-	for _, version := range []string{"prepared-release-v53", "prepared-release-v54"} {
+	for _, version := range []string{"prepared-release-v53", "prepared-release-v54", "prepared-release-v55"} {
 		t.Run(version, func(t *testing.T) {
 			path := writePreparedTestFile(t, "Example.Movie.2026.mkv", "source")
 			store := newMemoryStore()

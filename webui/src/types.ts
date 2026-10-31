@@ -1488,6 +1488,7 @@ export type FieldType = "string" | "number" | "boolean";
 export type FieldMeta = {
   key: string;
   label?: string;
+  help?: string;
   type?: FieldType;
   advanced?: boolean;
   sensitive?: boolean;

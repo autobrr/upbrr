@@ -300,7 +300,7 @@ func TestContinueAitherAcknowledgementReusesPreparedSelectionFacts(t *testing.T)
 				t.Fatal(err)
 			}
 			authorized := projection()
-			if authorized.RuleAuthorizationFingerprint == "" || authorized.RuleAuthorizationFingerprint != authorized.WaivableRuleFingerprint {
+			if authorized.ModifiedReleaseDecision == nil || !*authorized.ModifiedReleaseDecision || authorized.RuleAuthorizationFingerprint != "" {
 				t.Fatalf("warning was not acknowledged before duplicate continuation: %#v", authorized)
 			}
 			generation := current.Release.Release.Generation
@@ -313,7 +313,7 @@ func TestContinueAitherAcknowledgementReusesPreparedSelectionFacts(t *testing.T)
 			settle("repeat-aither-duplicates", api.WorkflowGoalDuplicatesDecided)
 			got := projection()
 			if preparations.Load() != 1 || current.Release.Release.Generation != generation ||
-				got.RuleAuthorizationFingerprint != authorized.RuleAuthorizationFingerprint || got.WaivableRuleFingerprint != authorized.WaivableRuleFingerprint {
+				got.ModifiedReleaseDecision == nil || !*got.ModifiedReleaseDecision || got.RuleAuthorizationFingerprint != "" {
 				t.Fatalf("selection refresh reset accepted warning: preparations=%d generation=%d->%d authorization=%q->%q",
 					preparations.Load(), generation, current.Release.Release.Generation, authorized.RuleAuthorizationFingerprint, got.RuleAuthorizationFingerprint)
 			}

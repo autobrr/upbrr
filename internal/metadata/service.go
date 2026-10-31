@@ -24,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
@@ -609,41 +610,32 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: tmp dir: %w", err)
 		}
+		// Share the primary report with explicit inspection, bound to this source version.
+		fingerprint := request.SourceFingerprint
+		if request.Input.VerifiedSource != nil {
+			fingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
+		}
+		meta.MediaInspectionFingerprint = fingerprint
 		miResult, err := s.mi.Export(ctx, mediainfo.Request{
-			SourcePath: meta.SourcePath,
-			DiscType:   meta.DiscType,
-			VideoPath:  meta.VideoPath,
-			TempRoot:   tmpRoot,
-			Release:    meta.Release,
+			SourcePath:  meta.SourcePath,
+			DiscType:    meta.DiscType,
+			VideoPath:   meta.VideoPath,
+			TempRoot:    tmpRoot,
+			ArtifactDir: fileMediaInfoArtifactDir(tmpRoot, meta.VideoPath, fingerprint),
+			Release:     meta.Release,
 		})
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: mediainfo: %w", err)
 		}
 		meta.MediaInfoJSONPath = miResult.JSONPath
-		meta.HDRFileEligibility = make(map[string]bool)
-		meta.HDRFileEvidence = make(map[string]api.HDRSourceEvidence)
-		// Bind HDR track evidence to its file, inspected inventory and verified content.
-		hdrSourceFingerprint := request.SourceFingerprint
-		if request.Input.VerifiedSource != nil {
-			hdrSourceFingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
+		doc, err := loadMediaInfoDoc(miResult.JSONPath)
+		if err != nil {
+			return preparationstate.State{}, err
 		}
-		meta.MediaInspectionFingerprint = hdrSourceFingerprint
-		for _, file := range meta.FileList {
-			extension := strings.ToLower(filepath.Ext(file))
-			if extension != ".mkv" && extension != ".mp4" && extension != ".ts" && extension != ".m2ts" {
-				continue
-			}
-			evidence, inspectErr := InspectHDRFile(ctx, s.mi, file, hdrSourceFingerprint, tmpRoot)
-			if inspectErr != nil {
-				if ctx.Err() != nil {
-					return preparationstate.State{}, fmt.Errorf("metadata: HDR track inspection canceled: %w", ctx.Err())
-				}
-				logger.Debugf("metadata: HDR track inspection state=unavailable")
-				continue
-			}
-			meta.HDRFileEligibility[file] = evidence.UniqueHEVC && evidence.HDR10Plus
-			meta.HDRFileEvidence[file] = evidence
-		}
+		// The selected episode is authoritative; siblings have no inspection evidence.
+		evidence := mediafacts.HDRSourceFromMediaInfo(doc)
+		meta.HDRFileEligibility = map[string]bool{meta.VideoPath: evidence.UniqueHEVC && evidence.HDR10Plus}
+		meta.HDRFileEvidence = map[string]api.HDRSourceEvidence{meta.VideoPath: evidence}
 		meta.MediaInfoTextPath = miResult.TextPath
 		meta.DVDIFOPath = miResult.IFOPath
 		meta.DVDVOBPath = miResult.VOBPath

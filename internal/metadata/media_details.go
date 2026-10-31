@@ -196,13 +196,12 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		meta.Type = typeValue
 		meta.Release.Type = typeValue
 	}
+	resolution, dvdDetails := resolutionFromMediaEvidence(meta, miDoc)
+	if resolution != meta.Release.Resolution {
+		meta.Release.Resolution = resolution
+		logger.Debugf("metadata: resolution derived from mediainfo %q", resolution)
+	}
 	if strings.EqualFold(meta.DiscType, "DVD") {
-		dvdDetails := extractDVDMediaInfo(meta)
-		if strings.EqualFold(dvdDetails.Resolution, "OTHER") {
-			meta.Release.Resolution = ""
-		} else if strings.TrimSpace(dvdDetails.Resolution) != "" {
-			meta.Release.Resolution = dvdDetails.Resolution
-		}
 		dvdDetails.SourcePath = meta.SourcePath
 		dvdDetails.IFOPath = meta.DVDIFOPath
 		dvdDetails.VOBPath = meta.DVDVOBPath
@@ -213,14 +212,6 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		dvdDetails.UpdatedAt = time.Now().UTC()
 		if err := s.repo.SaveDVDMediaInfo(ctx, dvdDetails); err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: persist dvd mediainfo details: %w", err)
-		}
-	}
-	// Orientation-normalized dimensions constrain automatic filename evidence as
-	// well as the dimension fallback. Explicit corrections are applied later.
-	if !strings.EqualFold(meta.DiscType, "DVD") {
-		if res := resolutionFromMediaInfo(miDoc, meta.SourcePath, meta.Release.Resolution); res != meta.Release.Resolution {
-			meta.Release.Resolution = res
-			logger.Debugf("metadata: resolution derived from mediainfo %q", res)
 		}
 	}
 	logger.Tracef("metadata: media details source=%q type=%q resolution=%q", meta.Source, meta.Type, meta.Release.Resolution)

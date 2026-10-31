@@ -106,6 +106,8 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	// may be explicitly authorized as a non-resolution policy exception.
 	if renamed, reason := releasepolicy.DetectModifiedRelease(releasepolicy.ModifiedReleaseSubject{
 		SourcePath:         meta.SourcePath,
+		FileList:           meta.FileList,
+		CheckSourceFolder:  meta.CheckSourceFolder,
 		VideoPath:          meta.VideoPath,
 		DiscType:           meta.DiscType,
 		PersonalRelease:    meta.PersonalRelease,
@@ -276,6 +278,7 @@ func RuleSubjectFromValidation(subject api.TrackerValidationSubject) api.RuleSub
 		sceneNFOPath = "ready"
 	}
 	return api.RuleSubject{
+		CheckSourceFolder:          subject.CheckSourceFolder,
 		MediaFileFacts:             subject.MediaFileFacts.Clone(),
 		TitleSearchEvidence:        subject.TitleSearchEvidence,
 		LanguageFacts:              subject.LanguageFacts.Clone(),

@@ -882,11 +882,57 @@ func TestBuildCLIRequestExecutionOptions(t *testing.T) {
 	}
 }
 
-func TestParseCLIOptionsRejectsRemovedDryRunFlag(t *testing.T) {
-	t.Parallel()
+func TestCLIRejectsRemovedFlags(t *testing.T) {
+	for _, flag := range []string{"--dry-run", "--not-anime", "--not-anime=false", "-not-anime"} {
+		t.Run(flag, func(t *testing.T) {
+			if _, _, _, err := parseCLIOptions([]string{flag, "movie.mkv"}); err == nil {
+				t.Fatal("removed flag was accepted")
+			}
+			result := executeCLIForTest(t.Context(), t, []string{flag, "--help"})
+			if result.err == nil || !strings.Contains(result.stderr, "flag provided but not defined") {
+				t.Fatalf("command returned %v, stderr %q; want unknown flag", result.err, result.stderr)
+			}
+		})
+	}
+}
 
-	if _, _, _, err := parseCLIOptions([]string{"--dry-run", "movie.mkv"}); err == nil {
-		t.Fatal("expected removed --dry-run flag to be rejected")
+func TestCLIAnimeCorrection(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		want  *bool
+	}{
+		{name: "automatic"},
+		{
+			name:  "anime",
+			flags: []string{"--anime"},
+			want:  boolPtr(true),
+		},
+		{
+			name:  "non-anime",
+			flags: []string{"--anime=false"},
+			want:  boolPtr(false),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, visited, paths, err := parseCLIOptions(append(tc.flags, "movie.mkv"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := buildCLIRequest(opts, visited, paths, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values, err := buildCLIInputCorrectionValues(opts, visited)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, got := range []*bool{req.MetadataOverrides.Anime, values.Metadata.Anime} {
+				if (got == nil) != (tc.want == nil) || got != nil && *got != *tc.want {
+					t.Fatalf("anime correction = %v; want %v", got, tc.want)
+				}
+			}
+		})
 	}
 }
 
@@ -1095,7 +1141,7 @@ func TestBuildCLIRequestMetadataOverrides(t *testing.T) {
 		"--personalrelease",
 		"--stream",
 		"--webdv",
-		"--not-anime",
+		"--anime=false",
 		"movie.mkv",
 	})
 	if err != nil {
@@ -1124,7 +1170,7 @@ func TestBuildCLIRequestMetadataOverrides(t *testing.T) {
 		t.Fatalf("expected webdv override, got %#v", req.MetadataOverrides.WebDV)
 	}
 	if req.MetadataOverrides.Anime == nil || *req.MetadataOverrides.Anime {
-		t.Fatalf("expected not-anime to force anime=false, got %#v", req.MetadataOverrides.Anime)
+		t.Fatalf("expected anime=false correction, got %#v", req.MetadataOverrides.Anime)
 	}
 }
 
@@ -1531,7 +1577,6 @@ func TestCLIInputFlagsRejectConflicts(t *testing.T) {
 	t.Parallel()
 
 	for _, args := range [][]string{
-		{"--anime", "--not-anime", "example.mkv"},
 		{"--tracker-input", "PTP:feature=yes", "--alternate-title", "Example", "example.mkv"},
 		{"--reset-input", "metadata.alternate_title", "--alternate-title", "Example", "example.mkv"},
 		{"--track-languages", "a=English", "--track-languages", "a=Spanish", "example.mkv"},

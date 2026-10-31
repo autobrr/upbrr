@@ -191,19 +191,36 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	}
 	if tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release); err == nil {
 		trackerRecords := s.loadTrackerMetadata(ctx, meta.SourcePath)
-		trackerLinks := buildTrackerImageLinks(trackerRecords, tmpDir, s.registry)
+		trackerLinks := buildTrackerImageLinks(
+			trackerRecords,
+			tmpDir,
+			s.registry,
+			imageevidence.ResolutionHeight(meta.Release.Resolution),
+			strings.EqualFold(meta.DiscType, "DVD"),
+		)
 		if s.repo != nil {
 			if uploaded, err := s.repo.ListUploadedImagesByPath(ctx, meta.MediaBinding); err == nil {
 				restoreLinkedTonemapping(trackerLinks, uploaded)
 			}
 		}
 		plan.TrackerImageLinks = trackerLinks
-		plan.FinalSelections = filterProtectedTrackerFinalSelections(plan.FinalSelections, trackerLinks, trackerRecords, s.registry)
+		plan.FinalSelections = filterProtectedTrackerFinalSelections(
+			plan.FinalSelections,
+			trackerLinks,
+			trackerRecords,
+			s.registry,
+			tmpDir,
+			imageevidence.ResolutionHeight(meta.Release.Resolution),
+			strings.EqualFold(meta.DiscType, "DVD"),
+		)
 		plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
 			listTrackerScreens(tmpDir, screenshotBaseName(meta)),
 			trackerLinks,
 			trackerRecords,
 			s.registry,
+			tmpDir,
+			imageevidence.ResolutionHeight(meta.Release.Resolution),
+			strings.EqualFold(meta.DiscType, "DVD"),
 		)
 		plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, trackerLinks)
 	}
@@ -390,13 +407,22 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 	stampScreenshotImages(plan.ExistingScreenshots, meta.DiscID, meta.DiscName)
 	trackerRecords := s.loadTrackerMetadata(ctx, meta.SourcePath)
 	if meta.DiscID == "" {
-		plan.TrackerImageLinks = buildTrackerImageLinks(trackerRecords, tmpDir, s.registry)
+		plan.TrackerImageLinks = buildTrackerImageLinks(
+			trackerRecords,
+			tmpDir,
+			s.registry,
+			imageevidence.ResolutionHeight(meta.Release.Resolution),
+			strings.EqualFold(meta.DiscType, "DVD"),
+		)
 	}
 	plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
 		listTrackerScreens(tmpDir, base),
 		plan.TrackerImageLinks,
 		trackerRecords,
 		s.registry,
+		tmpDir,
+		imageevidence.ResolutionHeight(meta.Release.Resolution),
+		strings.EqualFold(meta.DiscType, "DVD"),
 	)
 	stampScreenshotImages(plan.ExistingTrackerScreenshots, meta.DiscID, meta.DiscName)
 	plan.FinalSelections = filterScreenshotsMatchingSelections(s.loadFinalSelections(ctx, meta, tmpDir), baselineSelections, plan.FrameRate)
@@ -1641,6 +1667,9 @@ func filterUnlinkedTrackerScreens(
 	links []api.ScreenshotLinkedImage,
 	records []api.TrackerMetadata,
 	registry *trackers.Registry,
+	tmpDir string,
+	expectedHeight int,
+	isDVD bool,
 ) []api.ScreenshotImage {
 	if len(images) == 0 {
 		return images
@@ -1654,10 +1683,13 @@ func filterUnlinkedTrackerScreens(
 	}
 	filtered := make([]api.ScreenshotImage, 0, len(images))
 	for _, img := range images {
+		if imageevidence.ResolutionMismatch(image.Config{Width: img.Width, Height: img.Height}, expectedHeight, isDVD) != "" {
+			continue
+		}
 		if _, ok := linked[img.Path]; ok {
 			continue
 		}
-		if isProtectedTrackerArtifactPath(img.Path, records, registry) {
+		if isProtectedTrackerArtifactPath(img.Path, records, registry, tmpDir) {
 			continue
 		}
 		filtered = append(filtered, img)
@@ -1670,10 +1702,19 @@ func filterProtectedTrackerFinalSelections(
 	links []api.ScreenshotLinkedImage,
 	records []api.TrackerMetadata,
 	registry *trackers.Registry,
+	tmpDir string,
+	expectedHeight int,
+	isDVD bool,
 ) []api.ScreenshotImage {
 	filtered := make([]api.ScreenshotImage, 0, len(images))
 	for _, img := range images {
-		if isProtectedTrackerArtifactPath(img.Path, records, registry) && !slices.ContainsFunc(links, func(link api.ScreenshotLinkedImage) bool {
+		trackerArtifact := slices.ContainsFunc(records, func(record api.TrackerMetadata) bool {
+			return isTrackerArtifactPath(img.Path, tmpDir, record.Tracker)
+		})
+		if trackerArtifact && imageevidence.ResolutionMismatch(image.Config{Width: img.Width, Height: img.Height}, expectedHeight, isDVD) != "" {
+			continue
+		}
+		if isProtectedTrackerArtifactPath(img.Path, records, registry, tmpDir) && !slices.ContainsFunc(links, func(link api.ScreenshotLinkedImage) bool {
 			return pathutil.SamePath(link.Path, img.Path)
 		}) {
 			continue
@@ -1683,13 +1724,18 @@ func filterProtectedTrackerFinalSelections(
 	return filtered
 }
 
-func isProtectedTrackerArtifactPath(pathValue string, records []api.TrackerMetadata, registry *trackers.Registry) bool {
+// isTrackerArtifactPath requires the managed tracker directory for this release.
+func isTrackerArtifactPath(pathValue, tmpDir, tracker string) bool {
+	trackerDir := sanitizeFilename(strings.ToLower(strings.TrimSpace(tracker)))
+	return trackerDir != "" && pathutil.SamePath(filepath.Dir(pathValue), filepath.Join(tmpDir, trackerDir))
+}
+
+func isProtectedTrackerArtifactPath(pathValue string, records []api.TrackerMetadata, registry *trackers.Registry, tmpDir string) bool {
 	for _, record := range records {
 		if !trackers.LegacyImageAssetsNeedProvenance(registry, record.Tracker) {
 			continue
 		}
-		trackerDir := sanitizeFilename(strings.ToLower(strings.TrimSpace(record.Tracker)))
-		if strings.EqualFold(filepath.Base(filepath.Dir(pathValue)), trackerDir) {
+		if isTrackerArtifactPath(pathValue, tmpDir, record.Tracker) {
 			return true
 		}
 	}
@@ -1736,9 +1782,15 @@ func reindexScreenshotImages(images []api.ScreenshotImage) []api.ScreenshotImage
 	return images
 }
 
-// buildTrackerImageLinks exposes comparison-safe saved images with decodable
-// local artifacts. Proxy records publish the direct source URL and host.
-func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string, registry *trackers.Registry) []api.ScreenshotLinkedImage {
+// buildTrackerImageLinks exposes comparison-safe saved images whose decoded
+// dimensions match the current resolution. Proxy records use the direct source.
+func buildTrackerImageLinks(
+	records []api.TrackerMetadata,
+	tmpDir string,
+	registry *trackers.Registry,
+	expectedHeight int,
+	isDVD bool,
+) []api.ScreenshotLinkedImage {
 	if strings.TrimSpace(tmpDir) == "" {
 		return nil
 	}
@@ -1772,7 +1824,7 @@ func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string, regist
 				continue
 			}
 			for _, fullPath := range trackerImageArtifactPaths(tmpDir, trackerDir, trimmed, index) {
-				if validTrackerImageArtifact(fullPath) {
+				if validTrackerImageArtifact(fullPath, expectedHeight, isDVD) {
 					host := imagehost.ExtractHost(directURL)
 					results = append(results, api.ScreenshotLinkedImage{
 						Tracker:    tracker,
@@ -1789,19 +1841,20 @@ func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string, regist
 	return results
 }
 
-func validTrackerImageArtifact(pathValue string) bool {
+func validTrackerImageArtifact(pathValue string, expectedHeight int, isDVD bool) bool {
 	file, err := os.Open(pathValue)
 	if err != nil {
 		return false
 	}
 	defer file.Close()
 	configuration, _, err := image.DecodeConfig(file)
-	return err == nil && configuration.Width > 0 && configuration.Height > 0
+	return err == nil && configuration.Width > 0 && configuration.Height > 0 && imageevidence.ResolutionMismatch(configuration, expectedHeight, isDVD) == ""
 }
 
 // ReusableTrackerImageLinks returns saved tracker images with decodable local
-// artifacts for the prepared source.
-func (s *Service) ReusableTrackerImageLinks(ctx context.Context, sourcePath string, release api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error) {
+// artifacts matching the prepared resolution and disc geometry. Unknown resolution
+// imposes no height constraint; DVD images retain their physical height.
+func (s *Service) ReusableTrackerImageLinks(ctx context.Context, sourcePath, discType string, release api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error) {
 	view := *s
 	view.logger = logging.FromContext(ctx, s.logger)
 	s = &view
@@ -1810,7 +1863,13 @@ func (s *Service) ReusableTrackerImageLinks(ctx context.Context, sourcePath stri
 	if err != nil {
 		return nil, fmt.Errorf("screenshots: reusable tracker images: %w", err)
 	}
-	return buildTrackerImageLinks(s.loadTrackerMetadata(ctx, sourcePath), tmpDir, s.registry), nil
+	return buildTrackerImageLinks(
+		s.loadTrackerMetadata(ctx, sourcePath),
+		tmpDir,
+		s.registry,
+		imageevidence.ResolutionHeight(release.Resolution),
+		strings.EqualFold(discType, "DVD"),
+	), nil
 }
 
 func buildTrackerImageFilename(rawURL string, index int) string {

@@ -3131,6 +3131,26 @@ func TestDeriveMediaFactsResolutionHeightFloor(t *testing.T) {
 			resolution: "480p",
 		},
 		{
+			name:       "explicit interlaced replaces filename scan",
+			parsed:     "1080p",
+			width:      1920,
+			height:     1080,
+			scan:       "Interlaced",
+			resolution: "1080i",
+		},
+		{
+			name:   "unsupported interlaced clears filename",
+			parsed: "720p",
+			scan:   "Interlaced",
+		},
+		{
+			name:       "manual correction overrides explicit scan",
+			parsed:     "720p",
+			manual:     new("720p"),
+			scan:       "Interlaced",
+			resolution: "720p",
+		},
+		{
 			name:     "unsupported DVD interlaced floor clears filename",
 			parsed:   "540i",
 			discType: "DVD",
@@ -3172,6 +3192,9 @@ func TestDeriveMediaFactsResolutionHeightFloor(t *testing.T) {
 			}
 			if meta.Release.Resolution != tc.resolution || meta.ResolvedNaming.Resolution != tc.resolution {
 				t.Fatalf("resolution=%q resolved=%q, want %q", meta.Release.Resolution, meta.ResolvedNaming.Resolution, tc.resolution)
+			}
+			if tc.discType == "" && tc.parsed != "" && tc.parsed != tc.resolution && strings.Contains(meta.ReleaseName, tc.parsed) {
+				t.Fatalf("release name %q retains stale resolution %q", meta.ReleaseName, tc.parsed)
 			}
 			if tc.discType == "" && !strings.Contains(meta.ReleaseName, tc.resolution) {
 				t.Fatalf("release name %q lacks %q", meta.ReleaseName, tc.resolution)

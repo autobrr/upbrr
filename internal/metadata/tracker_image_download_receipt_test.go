@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/imageevidence"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/services/db"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
@@ -42,7 +43,7 @@ func TestTrackerImageDownloadReferenceOutcomes(t *testing.T) {
 		contentType    string
 		body           []byte
 		length         int64
-		height         int
+		resolution     string
 		isDVD          bool
 		writeFailure   bool
 		unprovenClient bool
@@ -104,30 +105,42 @@ func TestTrackerImageDownloadReferenceOutcomes(t *testing.T) {
 		{
 			name:       "resolution rejected",
 			body:       imageBytes.Bytes(),
-			height:     1080,
+			resolution: "1080p",
 			wantReason: "resolution_mismatch_actual_1_expected_1080",
 		},
 		{
-			name:   "portrait image accepted",
-			body:   portraitBytes.Bytes(),
-			height: 720,
+			name:       "portrait image accepted",
+			body:       portraitBytes.Bytes(),
+			resolution: "720p",
 		},
 		{
 			name:       "portrait image below required tier",
 			body:       portraitBytes.Bytes(),
-			height:     1080,
+			resolution: "1080p",
 			wantReason: "resolution_mismatch_actual_720_expected_1080",
 		},
 		{
-			name:   "anamorphic DVD retains physical height",
-			body:   dvdBytes.Bytes(),
-			height: 576,
-			isDVD:  true,
+			name:       "anamorphic DVD retains physical height",
+			body:       dvdBytes.Bytes(),
+			resolution: "576p",
+			isDVD:      true,
 		},
 		{
-			name:   "narrow landscape retains accepted height",
-			body:   dvdBytes.Bytes(),
-			height: 576,
+			name:       "narrow landscape retains accepted height",
+			body:       dvdBytes.Bytes(),
+			resolution: "576p",
+		},
+		{
+			name:       "540p rejects undersized image",
+			resolution: "540p",
+			body:       imageBytes.Bytes(),
+			wantReason: "resolution_mismatch_actual_1_expected_540",
+		},
+		{
+			name:       "540i rejects undersized image",
+			resolution: "540i",
+			body:       imageBytes.Bytes(),
+			wantReason: "resolution_mismatch_actual_1_expected_540",
 		},
 		{name: "decoded saved", body: imageBytes.Bytes()},
 	} {
@@ -174,7 +187,7 @@ func TestTrackerImageDownloadReferenceOutcomes(t *testing.T) {
 				out = filepath.Join(t.TempDir(), "absent", "image.png")
 			}
 			const rawURL = "http://93.184.216.34/full.png"
-			reason, ref := downloadImageWithReference(t.Context(), client, rawURL, out, tc.height, tc.isDVD, allow)
+			reason, ref := downloadImageWithReference(t.Context(), client, rawURL, out, imageevidence.ResolutionHeight(tc.resolution), tc.isDVD, allow)
 			if reason != tc.wantReason || (ref != "") != tc.wantReference {
 				t.Fatalf("outcome reason=%q ref=%q, want %q reference=%t", reason, ref, tc.wantReason, tc.wantReference)
 			}

@@ -34,7 +34,7 @@ type workflowPreflightAuthFake struct {
 
 type workflowPreflightImagesFake struct{ links []api.ScreenshotLinkedImage }
 
-func (f workflowPreflightImagesFake) ReusableTrackerImageLinks(context.Context, string, api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error) {
+func (f workflowPreflightImagesFake) ReusableTrackerImageLinks(context.Context, string, string, api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error) {
 	return f.links, nil
 }
 

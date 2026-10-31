@@ -21,7 +21,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata"
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/db/dbfixture"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -33,6 +33,12 @@ type metadataEvidenceTransport func(*http.Request) (*http.Response, error)
 
 func (f metadataEvidenceTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
+}
+
+type coreEvidenceAnalyzer struct{}
+
+func (coreEvidenceAnalyzer) Analyze(context.Context, string) (string, []byte, error) {
+	return "General\nFormat : Matroska\n", []byte(`{"media":{"track":[{"@type":"General","Format":"Matroska"},{"@type":"Video","Format":"AVC","Width":"1920","Height":"1080"},{"@type":"Audio","ID":"2","Format":"AC-3","Channels":"6","Language":"en"},{"@type":"Text","ID":"3","Format":"UTF-8","Language":"en"}]}}`), nil
 }
 
 type coreEvidenceFixture struct {
@@ -71,15 +77,6 @@ func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) 
 	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
 	if err != nil {
 		t.Fatal(err)
-	}
-	temp, _, err := paths.ReleaseTempDirFor(tmpRoot, source, metadata.ParseReleaseInfo(source))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, body := range map[string]string{"mediainfo.txt": "General\nFormat : Matroska\n", "MediaInfo.json": `{"media":{"track":[{"@type":"General","Format":"Matroska"},{"@type":"Video","Format":"AVC","Width":"1920","Height":"1080"},{"@type":"Audio","ID":"2","Format":"AC-3","Channels":"6","Language":"en"},{"@type":"Text","ID":"3","Format":"UTF-8","Language":"en"}]}}`} {
-		if err := os.WriteFile(filepath.Join(temp, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
 	}
 	var mu sync.Mutex
 	calls := make(map[string]int)
@@ -153,6 +150,14 @@ func newCoreEvidenceFixture(t *testing.T, borrowed bool, sourceNames ...string) 
 				MALID:    new(0),
 			},
 		},
+	}
+	// Seed the source-bound report through the same inspection cache used by preparation.
+	resolved, err := c.preparedFacts.ResolveInput(t.Context(), api.PrepareInput{SourcePath: source}, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := metadata.InspectHDRFile(t.Context(), mediainfo.NewService(nil, coreEvidenceAnalyzer{}), source, resolved.SourceFingerprint, tmpRoot); err != nil {
+		t.Fatal(err)
 	}
 	initial, err := c.preparedFacts.Prepare(t.Context(), input)
 	if err != nil {

@@ -45,7 +45,7 @@ type workflowPreflightBuilder struct {
 // workflowReusableTrackerImageInventory supplies validated local tracker images
 // for the preflight's current source and release.
 type workflowReusableTrackerImageInventory interface {
-	ReusableTrackerImageLinks(context.Context, string, api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error)
+	ReusableTrackerImageLinks(context.Context, string, string, api.ReleaseInfo) ([]api.ScreenshotLinkedImage, error)
 }
 
 func (b workflowPreflightBuilder) hasReusableTrackerImages(
@@ -61,7 +61,7 @@ func (b workflowPreflightBuilder) hasReusableTrackerImages(
 	if b.images == nil || required <= 0 || strings.TrimSpace(subject.SourcePath) == "" {
 		return false
 	}
-	links, err := b.images.ReusableTrackerImageLinks(ctx, subject.SourcePath, subject.Release)
+	links, err := b.images.ReusableTrackerImageLinks(ctx, subject.SourcePath, subject.DiscType, subject.Release)
 	if err != nil {
 		b.logger.Tracef("tracker preflight: source images unavailable tracker=%s reason=metadata_read_failed", projection.TrackerID)
 		return false

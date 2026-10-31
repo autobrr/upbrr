@@ -14,9 +14,11 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+var centerTagReplacer = strings.NewReplacer("[center]", "[align=center]", "[/center]", "[/align]")
+
 func buildDescription(meta api.UploadSubject, dbPath string, assets trackers.DescriptionAssets) string {
 	if assets.Final {
-		return strings.TrimSpace(assets.Description)
+		return description.MapOutsideLiteralBlocks(strings.TrimSpace(assets.Description), centerTagReplacer.Replace)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
@@ -63,7 +65,7 @@ func buildDescription(meta api.UploadSubject, dbPath string, assets trackers.Des
 		parts = append(parts, "[color=red][size=4]Screenshots[/size][/color]\n"+screenshots)
 	}
 
-	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+	return description.MapOutsideLiteralBlocks(strings.TrimSpace(strings.Join(parts, "\n\n")), centerTagReplacer.Replace)
 }
 
 func buildScreenshotSection(images []api.ScreenshotImage) string {
