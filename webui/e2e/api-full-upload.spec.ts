@@ -1073,6 +1073,7 @@ test("API preserves independent manual provider IDs across corrections refresh a
         TVDBID: 2001,
       });
       expect(Boolean(current.release?.release.ProviderMetadata.TMDB)).toBe(metadata);
+      expect(current.release?.release.ProviderMetadata.TVDB?.TVDBID).toBe(2001);
       expect(
         Boolean(
           current.release?.display.Providers.find((provider) => provider.Provider === "tmdb"),

@@ -738,13 +738,15 @@ func TestPreparedIndependentManualProviderIDsSurviveRefreshAndRestart(t *testing
 		t.Run(fmt.Sprintf("sequential=%t", sequential), func(t *testing.T) {
 			fixture := newCorrectionEvidenceFixture(t)
 			fixture.tmdbExternalIDs = `{"imdb_id":"tt7654321","tvdb_id":999888}`
-			fixture.imdb = &stubIMDB{info: imdb.Info{
+			imdbProvider := &stubIMDB{info: imdb.Info{
 IMDbID: "tt1234567",
  Title: "Example Selected Series",
  Type: "tvSeries",
 }}
-			fixture.tvdb = &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{TVDBID: 222333, Name: "Example Selected Series"}}
-			fixture.tvmaze = &stubTVmaze{result: tvmaze.SearchResult{
+			fixture.imdb = imdbProvider
+			tvdbProvider := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{TVDBID: 222333, Name: "Example Selected Series"}}
+			fixture.tvdb = tvdbProvider
+			tvmazeProvider := &stubTVmaze{result: tvmaze.SearchResult{
 				SelectedID: 55,
 				IMDBID:     8887777,
 				TVDBID:     888777,
@@ -754,6 +756,7 @@ ID: 55,
  Externals: tvmaze.Externals{IMDB: "tt8887777", TVDB: 888777},
 }},
 			}}
+			fixture.tvmaze = tvmazeProvider
 			module, repo := fixture.open(t)
 			prepareCorrectionEvidence(t, module, fixture.input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
 			input := api.PrepareInput{SourcePath: fixture.input.SourcePath, ExternalFreshness: api.ExternalFreshnessReuse}
@@ -775,7 +778,7 @@ IMDBID: new(1234567),
 					Mode:  api.ReleaseCorrectionUpdatePatch,
 					Patch: &api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{Identity: patch}},
 				})
-				if result.Release.ProviderMetadata.TMDB == nil || result.Release.ProviderMetadata.IMDB == nil || result.Release.ProviderMetadata.TVDB == nil {
+				if result.Release.ProviderMetadata.TMDB == nil || result.Release.ProviderMetadata.IMDB == nil || result.Release.ProviderMetadata.TVDB == nil || result.Release.ProviderMetadata.TVmaze == nil {
 					t.Fatal("manual selection discarded successfully fetched provider metadata")
 				}
 			}
@@ -807,6 +810,7 @@ IMDBID: new(1234567),
 						module, repo = fixture.open(parentT)
 					}
 					before := fixture.requests()
+					beforeIMDB, beforeTVDB, beforeTVmaze := imdbProvider.infoCalls, tvdbProvider.seriesMetadataCalls, tvmazeProvider.calls
 					result := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
 					ids, providers := result.Release.Identity, result.Release.ProviderMetadata
 					if ids.TMDBID != 555002 || ids.IMDBID != 1234567 || ids.TVDBID != 222333 ||
@@ -853,6 +857,9 @@ IMDBID: new(1234567),
 					if phase == "refresh" {
 						if fixture.requests()["/3/tv/555002/external_ids"] <= before["/3/tv/555002/external_ids"] {
 							t.Fatal("refresh reused old provider evidence")
+						}
+						if imdbProvider.infoCalls <= beforeIMDB || tvdbProvider.seriesMetadataCalls <= beforeTVDB || tvmazeProvider.calls <= beforeTVmaze {
+							t.Fatal("refresh reused old IMDb, TVDB or TVmaze evidence")
 						}
 					} else {
 						fixture.assertRequests(t, before, nil)

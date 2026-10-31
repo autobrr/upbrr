@@ -350,6 +350,9 @@ test("CLI preserves independent manual provider IDs across sequential edits and 
       expect(
         history.Display.Providers.find((provider) => provider.Provider === "tmdb"),
       ).toMatchObject({ ID: 1001, SummaryAvailable: true });
+      expect(
+        history.Display.Providers.find((provider) => provider.Provider === "tvdb"),
+      ).toMatchObject({ ID: 2001, SummaryAvailable: true });
     } finally {
       await app.stop();
     }
