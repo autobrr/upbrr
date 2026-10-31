@@ -5447,26 +5447,46 @@ func TestTVDBMetadataAndDisambiguationReuseAreIndependent(t *testing.T) {
 
 	for _, test := range []struct {
 		status             api.MetadataEvidenceStatus
+		yearSource         string
+		includeYear        bool
 		wantDisambiguation bool
 	}{
 		{status: api.MetadataEvidenceStatusComplete, wantDisambiguation: true},
 		{status: api.MetadataEvidenceStatusPartial, wantDisambiguation: true},
 		{status: api.MetadataEvidenceStatusUnavailable},
 		{status: api.MetadataEvidenceStatusContradictory},
+		{status: api.MetadataEvidenceStatusPartial, yearSource: "translation_name"},
+		{status: api.MetadataEvidenceStatusPartial, yearSource: "translation_alias"},
+		{status: api.MetadataEvidenceStatusPartial, yearSource: "extended_alias"},
+		{
+			status:             api.MetadataEvidenceStatusPartial,
+			yearSource:         "translation_alias",
+			includeYear:        true,
+			wantDisambiguation: true,
+		},
+		{
+			status:             api.MetadataEvidenceStatusPartial,
+			yearSource:         "slug",
+			wantDisambiguation: true,
+		},
 		{},
 	} {
 		metadata := &api.TVDBMetadata{
-			TVDBID:      987650001,
-			NameEnglish: "Example Series",
+			TVDBID:        987650001,
+			NameEnglish:   "Example Series",
+			Year:          2026,
+			YearFromAlias: test.yearSource != "",
+			YearSource:    test.yearSource,
 			NameDisambiguation: api.TVDBNameDisambiguation{
-				Status: test.status,
+				Status:      test.status,
+				IncludeYear: test.includeYear,
 			},
 		}
 		if !usableTVDBMetadata(metadata, metadata.TVDBID) {
 			t.Fatalf("direct metadata unexpectedly unusable for evidence status %q", test.status)
 		}
 		if got := reusableTVDBNameDisambiguation(metadata); got != test.wantDisambiguation {
-			t.Fatalf("reusable disambiguation status %q = %t, want %t", test.status, got, test.wantDisambiguation)
+			t.Fatalf("reusable disambiguation status=%q source=%q included=%t = %t, want %t", test.status, test.yearSource, test.includeYear, got, test.wantDisambiguation)
 		}
 	}
 }

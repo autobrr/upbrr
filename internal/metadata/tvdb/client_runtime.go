@@ -116,6 +116,7 @@ type nameDisambiguationCacheKey struct {
 	canonicalKey string
 	seriesYear   int
 	country      string
+	explicitYear bool
 }
 
 type nameDisambiguationCacheEntry struct {
@@ -504,14 +505,14 @@ func searchResultEnglishName(translations map[string]string) string {
 }
 
 func (c *Client) seriesNameDisambiguation(ctx context.Context, metadata SeriesMetadata) NameDisambiguation {
-	fallbackYear := metadata.SeriesYear > 0 && explicitSeriesYearSource(metadata.SeriesYearSource)
-	return c.searchSeriesNameDisambiguation(ctx, metadata, fallbackYear)
+	explicitYear := metadata.SeriesYear > 0 && IsExplicitSeriesYearSource(metadata.SeriesYearSource)
+	return c.searchSeriesNameDisambiguation(ctx, metadata, explicitYear)
 }
 
 func (c *Client) searchSeriesNameDisambiguation(
 	ctx context.Context,
 	metadata SeriesMetadata,
-	fallbackYear bool,
+	explicitYear bool,
 ) NameDisambiguation {
 	logger := logging.FromContext(ctx, c.logger)
 
@@ -519,7 +520,7 @@ func (c *Client) searchSeriesNameDisambiguation(
 	if canonicalName == "" {
 		return NameDisambiguation{
 			SeriesYear:  metadata.Year,
-			IncludeYear: fallbackYear,
+			IncludeYear: explicitYear,
 			Status:      api.MetadataEvidenceStatusUnavailable,
 			Source:      nameDisambiguationSource,
 		}
@@ -530,6 +531,7 @@ func (c *Client) searchSeriesNameDisambiguation(
 		canonicalKey: normalizeTVDBSeriesName(canonicalName),
 		seriesYear:   metadata.Year,
 		country:      cases.Fold().String(norm.NFKC.String(strings.TrimSpace(metadata.OriginalCountry))),
+		explicitYear: explicitYear,
 	}
 	if cached, ok := c.cachedNameDisambiguation(cacheKey); ok && !evidence.Enabled(ctx) {
 		c.logNameDisambiguation(ctx, metadata.TVDBID, cacheKey.canonicalKey, cached.resultCount, cached.evidence, true)
@@ -537,7 +539,7 @@ func (c *Client) searchSeriesNameDisambiguation(
 	}
 
 	results, err := c.searchSeries(ctx, canonicalName, "")
-	evidence := buildNameDisambiguation(metadata.TVDBID, canonicalName, metadata.Year, metadata.OriginalCountry, fallbackYear, results, err)
+	evidence := buildNameDisambiguation(metadata.TVDBID, canonicalName, metadata.Year, metadata.OriginalCountry, explicitYear, results, err)
 	if err != nil {
 		logger.Debugf(
 			"tvdb: name disambiguation search failed series_id=%d query=%q error=%q",
@@ -590,16 +592,15 @@ type disambiguationCandidate struct {
 	years map[int]struct{}
 }
 
-// buildNameDisambiguation derives only positive collision facts from TVDB's
-// unpaged general-name search. Negative results remain partial, search failures
-// retain only explicit year fallback, and conflicting candidate years become
-// contradictory evidence.
+// buildNameDisambiguation preserves explicit title/alias years independently of
+// TVDB's unpaged collision search. Negative results remain partial; search
+// failures retain the explicit year and conflicting candidate years are contradictory.
 func buildNameDisambiguation(
 	selectedID int,
 	canonicalName string,
 	selectedYear int,
 	originalCountry string,
-	fallbackYear bool,
+	explicitYear bool,
 	results []SeriesSearchResult,
 	searchErr error,
 ) NameDisambiguation {
@@ -610,7 +611,7 @@ func buildNameDisambiguation(
 		Source:        nameDisambiguationSource,
 	}
 	if searchErr != nil {
-		evidence.IncludeYear = fallbackYear
+		evidence.IncludeYear = explicitYear
 		evidence.Status = api.MetadataEvidenceStatusUnavailable
 		return evidence
 	}
@@ -664,7 +665,7 @@ func buildNameDisambiguation(
 		}
 	}
 
-	evidence.IncludeYear = evidence.SameNameSeries > 0
+	evidence.IncludeYear = explicitYear || evidence.SameNameSeries > 0
 	evidence.IncludeLocale = evidence.SameNameAndYearSeries > 0
 	if evidence.IncludeLocale {
 		evidence.Locale, _ = normalizeTVDBCountryLocale(originalCountry)
@@ -685,7 +686,9 @@ func selectedTVDBSeriesYear(data seriesExtendedDataResponse, metadata seriesMeta
 	return parseTVDBSeriesYear(data.FirstAired)
 }
 
-func explicitSeriesYearSource(source string) bool {
+// IsExplicitSeriesYearSource reports whether a year comes from a TVDB title or
+// alias, rather than a slug or premiere date.
+func IsExplicitSeriesYearSource(source string) bool {
 	switch strings.TrimSpace(source) {
 	case seriesYearSourceTranslationName, seriesYearSourceTranslationAlias, seriesYearSourceExtendedAlias:
 		return true
