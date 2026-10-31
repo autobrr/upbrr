@@ -161,6 +161,57 @@ const answerAntTags = async (page: Page) => {
   await applyTrackerAnswers(page);
 };
 
+test("embedded web blocks Dupe Check until missing saved facts are corrected", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  let seedMissingSource = true;
+  try {
+    app = await startApp(workspace);
+    // The fake metadata collector always supplies Source; model an incomplete saved response here.
+    await page.route(
+      /\/api\/app\/(OpenActiveInput|ContinueReleaseWorkflow|GetActiveInput)$/,
+      async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        const current = body.current ?? body;
+        if (seedMissingSource && current.release) current.release.release.Media.Source = "";
+        await route.fulfill({ response, json: body });
+      },
+    );
+    await page.goto(app.url);
+    await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+    await page.getByLabel("Source path", { exact: true }).press("Escape");
+    await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+    const warning = page.getByRole("alert");
+    await expect(warning).toContainText("Required facts missing, please edit release details.");
+    await expect(page.getByRole("button", { name: "Fetch metadata", exact: true })).toBeEnabled();
+    const dupeCheck = page.getByRole("button", { name: "Dupe Check", exact: true });
+    await expect(dupeCheck).toBeDisabled();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await warning.scrollIntoViewIfNeeded();
+    await expect(warning).toBeInViewport();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const source = page.getByRole("combobox", { name: "Source", exact: true });
+    await expect(source).toHaveAttribute("aria-invalid", "true");
+    await source.selectOption("Web");
+    await expect(dupeCheck).toBeDisabled();
+    await expect(warning).toBeVisible();
+    seedMissingSource = false;
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    const corrected = await waitForMetadataReady(page, app.url);
+    expect(corrected.current?.release?.release.Media.Source).toBeTruthy();
+    await expect(warning).toBeHidden();
+    await dupeCheck.click();
+    await expect(page.getByRole("heading", { name: "Check Trackers", exact: true })).toBeVisible();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 for (const scenario of [
   {
     name: "none trackers bypass shared content pages",
