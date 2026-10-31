@@ -255,7 +255,9 @@ The review is tracker-specific. Strict `--unattended` never prompts and skips a 
 
 ### Naming fields
 
-Season tokens require exactly two or four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S01E03` or `S2026E03` for an episode and `S01` or `S2026` for a season pack. One- and three-digit seasons and x-separated forms such as `1x05` are not recognized; use `S01E05` instead.
+Manual season and episode inputs accept plain numbers: `--season 5 --episode 5` produces `S05E05` in generated naming. For daily-dated TV releases, also set `--use-season-episode` to prefer these coordinates over the date. Padded and prefixed forms such as `05`, `S05`, and `E05` remain supported. Seasons accept up to four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`; episodes accept up to three digits. Supply one value per field, without ranges or combined tokens.
+
+Automatic filename detection still requires exactly two or four season digits. Source names can use `S01E03` or `S2026E03` for an episode and `S01` or `S2026` for a season pack. One- and three-digit seasons and x-separated forms such as `1x05` are not recognized in filenames; use `S01E05` instead.
 
 Specials can use `S00E01` in a source name or `--season S00 --episode 01`. An explicit season zero is distinct from an unknown season; episode zero is invalid. Use `--season=` to clear the season or `--reset-input release_name.season` to restore automatic detection. Tracker eligibility still determines whether a special or a pack can be uploaded. Changing the episode coordinates does not remove known multi-episode source membership.
 
@@ -274,7 +276,7 @@ Existing prepared releases are rebuilt after this update. Older binaries do not 
 | `--edition <value>`           | `-edition`, `-repack`                             | Override cut/edition text and multi-edition set labels; independent presentation and features remain. |
 | `--presentation <value>`      | `-presentation`                                   | Set `IMAX`, `Open Matte`, or `IMAX Open Matte`; `--presentation=` clears it.                          |
 | `--release-features <list>`   | `-release-features`                               | Replace release features using comma-separated IDs; `--release-features=` clears them.                |
-| `--season <value>`            | `-season`                                         | Override one season token, such as `05` or `S05`.                                                     |
+| `--season <value>`            | `-season`                                         | Override one season number, such as `5`, `05`, or `S05`.                                              |
 | `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`.                                                     |
 | `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                               |
 | `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                                      |

@@ -117,7 +117,7 @@ Release Overrides:
   -release-features, --release-features strings
       Override release features with comma-separated supported IDs; empty clears
   -season, --season string
-      Override season value (two or four digits, such as 05 or S2026)
+      Override season value (single number such as 5 or S2026)
   -episode, --episode string
       Override episode value (single token such as 5 or E05)
   -episode-title, --episode-title, -manual-episode-title, -met string

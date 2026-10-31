@@ -771,6 +771,32 @@ for (const mode of ["rebuild", "reject"] as const) {
 }
 
 type CorrectionValue = string | number | boolean | readonly string[];
+test("embedded Input applies plain season and episode together", async ({ page }) => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await page.getByRole("textbox", { name: "Season", exact: true }).fill("5");
+    await page.getByRole("textbox", { name: "Episode", exact: true }).fill("5");
+    const saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    expect((await saved).ok()).toBe(true);
+    const snapshot = await waitForMetadataReady(page, app.url);
+    expect(snapshot.current?.corrections?.corrections.releaseName).toMatchObject({
+      Season: "5",
+      Episode: "5",
+    });
+    await expect(page.getByRole("textbox", { name: "Season", exact: true })).toHaveValue("5");
+    await expect(page.getByRole("textbox", { name: "Episode", exact: true })).toHaveValue("5");
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 type CorrectionCase = {
   field: string;
   label: string;
@@ -804,11 +830,19 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     values: ["NF", "AMZN", ""],
   },
   {
+    field: "release_name.season",
+    label: "Season",
+    group: "ReleaseName",
+    key: "Season",
+    values: ["2", "5", "S05", ""],
+    mediaKind: "tv",
+  },
+  {
     field: "release_name.episode",
     label: "Episode",
     group: "ReleaseName",
     key: "Episode",
-    values: ["E02", ""],
+    values: ["5", "E02", ""],
     mediaKind: "tv",
   },
   {
