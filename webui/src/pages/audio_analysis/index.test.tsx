@@ -386,6 +386,7 @@ it("keeps output selections and generation idle while grouped help is opened and
   await user.hover(screen.getByRole("button", { name: "Help for Audio outputs" }));
   expect(await screen.findByRole("tooltip")).toHaveTextContent("channels separately");
   await user.keyboard("{Escape}");
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   expect(waveform).toBeChecked();
   expect(screen.getByRole("radio", { name: "Primary" })).toBeChecked();
   expect(value.generate).not.toHaveBeenCalled();

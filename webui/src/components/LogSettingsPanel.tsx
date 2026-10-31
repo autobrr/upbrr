@@ -391,8 +391,8 @@ export default function LogSettingsPanel({
             <span>{connected ? "Connected" : "Disconnected"}</span>
             <FieldHelp label="Live log connection">
               Connection state of this browser's live log subscription. Up to 1,000 recent entries
-              are loaded first, then new events are appended. This does not indicate whether file
-              logging is enabled.
+              load in the background while live events append as they arrive. Rows can appear out of
+              time order while connecting. This does not indicate whether file logging is enabled.
             </FieldHelp>
           </div>
           <div className="flex items-center gap-2">
@@ -530,9 +530,10 @@ export default function LogSettingsPanel({
               </label>
               <FieldHelp label="Muted messages" id="log-mute-help">
                 Hide exact, case-sensitive whole-message matches in the viewer. Add a message or
-                click a row's level badge; Remove restores matching rows still in the buffer. This
-                is not a wildcard or substring filter, and does not suppress underlying log events
-                or file output.
+                click a row's level badge; Remove restores matching rows still in the buffer. Saved
+                patterns trim surrounding whitespace, so padded messages can reappear after reload.
+                This is not a wildcard or substring filter, and does not suppress underlying log
+                events or file output.
               </FieldHelp>
             </div>
             <p className="helper">Mute changes are saved immediately without Save.</p>

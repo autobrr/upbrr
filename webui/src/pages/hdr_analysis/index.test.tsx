@@ -736,6 +736,7 @@ it("describes conditional comparison controls and keeps warnings inline while he
   ).toBeVisible();
   expect(screen.getByRole("checkbox", { name: "Brightness grade comparison" })).toBeChecked();
   await user.keyboard("{Escape}");
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   expect(value.generate).not.toHaveBeenCalled();
   expect(value.selectComparison).not.toHaveBeenCalled();
 });

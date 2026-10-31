@@ -37,12 +37,12 @@ This choice does not save the global logging setting or change another operation
 
 ## Live viewer
 
-**Connected** means the browser is receiving the live stream. The page first loads up to 1,000 recent sanitized entries, then appends new entries.
+**Connected** means the browser has subscribed to the live stream. Up to 1,000 recent sanitized entries load in the background while live events append as they arrive, so rows can appear out of time order while connecting.
 
 - **Visible levels** and **Search logs** filter only the current display; they do not change runtime logging. Search is a case-insensitive substring match on message text; an empty search restores messages allowed by the other filters.
 - **Clear viewer** empties the browser buffer only. It does not delete the log file or clear the backend buffer.
 - With **Auto-scroll** enabled, the browser retains the latest 1,000 entries. With it disabled, the buffer can grow to 10,000 entries before dropping the oldest entries and showing a warning.
-- A muted message hides exact, case-sensitive whole-message matches in the viewer. Adding a message under **Muted messages**, clicking a row’s level badge, or removing a mute persists it immediately without **Save**; it does not suppress the underlying log event.
+- A muted message hides exact, case-sensitive whole-message matches in the viewer. Saved patterns trim leading and trailing whitespace, so messages with that padding are not matched after reload; clicking a row’s level badge can still hide them in the current view. Adding a message under **Muted messages**, clicking a row’s level badge, or removing a mute persists it immediately without **Save**; it does not suppress the underlying log event.
 
 Torrent-client connection diagnostics omit configured private endpoints and retain safe operation and failure context.
 
