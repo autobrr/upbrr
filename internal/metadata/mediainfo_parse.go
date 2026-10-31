@@ -6,6 +6,7 @@ package metadata
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"regexp"
 	"strconv"
@@ -20,7 +21,7 @@ import (
 
 type mediaInfoDoc = mediafacts.MediaInfoDocument
 
-var canonicalResolutionWidths = []int{3840, 2560, 1920, 1280, 1024, 960, 854, 720, 15360, 7680, 0}
+var canonicalResolutionWidths = []int{4096, 3840, 2560, 2048, 1920, 1280, 1024, 960, 854, 720, 15360, 7680, 0}
 var canonicalResolutionHeights = []int{2160, 1440, 1080, 720, 576, 540, 480, 8640, 4320, 0}
 var bitrateNumberRegex = regexp.MustCompile(`\d+(?:\.\d+)?`)
 
@@ -337,8 +338,11 @@ func mapDVDResolution(res string, guessed string, width int, scan string) string
 	}
 
 	widthMap := map[string]string{
+		"4096p":  "2160p",
 		"3840p":  "2160p",
 		"2560p":  "1440p",
+		"2048p":  "1080p",
+		"2048i":  "1080i",
 		"1920p":  "1080p",
 		"1920i":  "1080i",
 		"1280p":  "720p",
@@ -380,8 +384,8 @@ func snapAndMapResolution(width int, height int, scan string, guessed string) (i
 
 // resolutionWithHeightFloor preserves width-based cropped-video classifications,
 // but never assigns a tier below the highest known tier reached by the measured
-// height. Unsupported scan/tier
-// combinations remain unknown rather than being relabeled as progressive.
+// normalized height supplied by the caller. Unsupported
+// scan/tier combinations remain unknown rather than being relabeled as progressive.
 func resolutionWithHeightFloor(resolution string, height int, scan string) string {
 	minimum := 0
 	for _, tier := range canonicalResolutionHeights {
@@ -397,8 +401,9 @@ func resolutionWithHeightFloor(resolution string, height int, scan string) strin
 }
 
 // resolutionFromMediaInfo retains filename evidence when dimensions are missing.
-// Otherwise it floors automatic filename or dimension-based classifications at
-// the measured height tier. Explicit manual corrections are applied later.
+// Otherwise it normalizes portrait axes using display/pixel aspect evidence and
+// floors automatic classifications at the measured height tier. Explicit manual
+// corrections are applied later.
 func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string, guessed string) string {
 	_, videoTracks, _ := splitMediaInfoTracks(doc)
 	if len(videoTracks) == 0 {
@@ -410,6 +415,18 @@ func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string, guessed string
 	height := trackNumericInt(track, "Height")
 	if width == 0 || height == 0 {
 		return guessed
+	}
+	if width < height {
+		aspect, valid := new(big.Rat).SetString(strings.ReplaceAll(trackString(track, "DisplayAspectRatio"), ":", "/"))
+		if !valid || aspect.Sign() <= 0 {
+			aspect = big.NewRat(int64(width), int64(height))
+			if pixelAspect, ok := new(big.Rat).SetString(strings.ReplaceAll(trackString(track, "PixelAspectRatio"), ":", "/")); ok && pixelAspect.Sign() > 0 {
+				aspect.Mul(aspect, pixelAspect)
+			}
+		}
+		if aspect.Cmp(big.NewRat(1, 1)) < 0 {
+			width, height = height, width
+		}
 	}
 
 	scanType := strings.TrimSpace(trackString(track, "ScanType"))

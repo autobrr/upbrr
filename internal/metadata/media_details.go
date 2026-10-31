@@ -215,8 +215,8 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 			return preparationstate.State{}, fmt.Errorf("metadata: persist dvd mediainfo details: %w", err)
 		}
 	}
-	// Measured height constrains automatic filename evidence as well as the
-	// dimension fallback. Explicit resolution corrections are applied later.
+	// Orientation-normalized dimensions constrain automatic filename evidence as
+	// well as the dimension fallback. Explicit corrections are applied later.
 	if !strings.EqualFold(meta.DiscType, "DVD") {
 		if res := resolutionFromMediaInfo(miDoc, meta.SourcePath, meta.Release.Resolution); res != meta.Release.Resolution {
 			meta.Release.Resolution = res

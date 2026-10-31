@@ -23,6 +23,9 @@ import (
 
 const unit3dMaxImageBytes = 20 * 1024 * 1024
 
+// Version geometry verdicts independently from source-bound preparation facts.
+const trackerImageResolutionPolicyVersion = 2
+
 var validateTrackerArtifactImageURL = trackerdata.ValidateUnit3DImageURL
 
 // attemptTrackerImageDownload captures reference evidence only when this attempt
@@ -35,7 +38,11 @@ func attemptTrackerImageDownload(
 	isDVD, allowReference bool,
 ) (string, error) {
 	var reference string
-	err := evidence.Attempt(ctx, "tracker.image", []any{tracker, rawURL, expectedHeight, isDVD}, func() error {
+	query := []any{tracker, rawURL, expectedHeight, isDVD}
+	if expectedHeight > 0 && !isDVD {
+		query = append(query, trackerImageResolutionPolicyVersion)
+	}
+	err := evidence.Attempt(ctx, "tracker.image", query, func() error {
 		reason, accepted := downloadImageWithReference(ctx, client, rawURL, outPath, expectedHeight, isDVD, allowReference)
 		reference = accepted
 		if reason != "" {
@@ -119,8 +126,12 @@ func downloadImageWithReference(
 		return "image_decode_failed", acceptedReference()
 	}
 	if expectedHeight > 0 {
-		if err := validateImageResolution(imgConfig.Height, expectedHeight, isDVD); err != nil {
-			return fmt.Sprintf("resolution_mismatch_actual_%d_expected_%d", imgConfig.Height, expectedHeight), ""
+		actualHeight := imgConfig.Height
+		if !isDVD && actualHeight > expectedHeight {
+			actualHeight = min(imgConfig.Width, imgConfig.Height)
+		}
+		if err := validateImageResolution(actualHeight, expectedHeight, isDVD); err != nil {
+			return fmt.Sprintf("resolution_mismatch_actual_%d_expected_%d", actualHeight, expectedHeight), ""
 		}
 	}
 	if err := os.WriteFile(outPath, payload, 0o600); err != nil {

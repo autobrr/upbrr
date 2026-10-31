@@ -100,6 +100,16 @@ func TestExtractDVDMediaInfoDoesNotOverrideJSONProgressiveScan(t *testing.T) {
 	}
 }
 
+func TestExtractDVDMediaInfoRetainsAnamorphicAxes(t *testing.T) {
+	info := extractDVDMediaInfo(preparationstate.State{
+		DiscType:            "DVD",
+		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"Video","Width":"352","Height":"576","ScanType":"Interlaced"}]}}`,
+	})
+	if info.Width != 720 || info.Height != 576 || info.Resolution != "576i" {
+		t.Fatalf("anamorphic DVD dimensions=%dx%d resolution=%q", info.Width, info.Height, info.Resolution)
+	}
+}
+
 func TestResolutionFromMediaInfo(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -164,17 +174,17 @@ func TestResolutionFromMediaInfo(t *testing.T) {
 		},
 		{
 			name:     "1080 height floor",
-			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"1080","ScanType":"Progressive"}]}}`,
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"1080","DisplayAspectRatio":"16:9","ScanType":"Progressive"}]}}`,
 			expected: "1080p",
 		},
 		{
 			name:     "1440 height floor",
-			payload:  `{"media":{"track":[{"@type":"Video","Width":"1280","Height":"1440","ScanType":"Progressive"}]}}`,
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1280","Height":"1440","PixelAspectRatio":"2.000","ScanType":"Progressive"}]}}`,
 			expected: "1440p",
 		},
 		{
 			name:     "2160 height floor",
-			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"2160","ScanType":"Progressive"}]}}`,
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"2160","DisplayAspectRatio":"1.778","ScanType":"Progressive"}]}}`,
 			expected: "2160p",
 		},
 		{
@@ -198,8 +208,54 @@ func TestResolutionFromMediaInfo(t *testing.T) {
 			expected: "8640p",
 		},
 		{
+			name:     "portrait 1080 dimensions",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1080","Height":"1920","DisplayAspectRatio":"9:16","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "portrait retains 1080 filename",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1080","Height":"1920","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "portrait 720 dimensions",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"720","Height":"1280","ScanType":"Progressive"}]}}`,
+			expected: "720p",
+		},
+		{
+			name:     "portrait 1440 dimensions",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1440","Height":"2560","ScanType":"Progressive"}]}}`,
+			expected: "1440p",
+		},
+		{
+			name:     "cropped portrait retains long-axis tier",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"800","Height":"1920","ScanType":"Progressive","Rotation":"90.000"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "DCI 2K full frame",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"2048","Height":"1080","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "DCI 2K cropped frame",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"2048","Height":"864","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "DCI 4K full frame",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"4096","Height":"2160","ScanType":"Progressive"}]}}`,
+			expected: "2160p",
+		},
+		{
+			name:     "DCI 4K cropped frame",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"4096","Height":"1716","ScanType":"Progressive"}]}}`,
+			expected: "2160p",
+		},
+		{
 			name:     "1080 interlaced height floor",
-			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"1080","ScanType":"Interlaced"}]}}`,
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"1080","DisplayAspectRatio":"1.778","ScanType":"Interlaced"}]}}`,
 			expected: "1080i",
 		},
 		{
@@ -209,7 +265,7 @@ func TestResolutionFromMediaInfo(t *testing.T) {
 		},
 		{
 			name:     "unsupported 2160 interlaced floor",
-			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"2160","ScanType":"Interlaced"}]}}`,
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"2160","PixelAspectRatio":"2:1","ScanType":"Interlaced"}]}}`,
 			expected: "",
 		},
 		{

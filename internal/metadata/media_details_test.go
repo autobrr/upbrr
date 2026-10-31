@@ -1916,10 +1916,10 @@ func TestDerivedNamingRequiredOmittedAndUnavailableComponents(t *testing.T) {
 			want:    "Hybrid",
 		},
 		{
-name: "opaque hybrid wording",
- role: api.NameRoleHybrid,
- edition: "Hybrid Uncut",
-},
+			name:    "opaque hybrid wording",
+			role:    api.NameRoleHybrid,
+			edition: "Hybrid Uncut",
+		},
 		{name: "unknown hybrid", role: api.NameRoleHybrid},
 		{name: "unknown repack", role: api.NameRoleRepack},
 		{name: "unknown dual audio", role: api.NameRoleDualAudio},
@@ -3087,11 +3087,33 @@ func TestDeriveMediaFactsResolutionHeightFloor(t *testing.T) {
 		name       string
 		parsed     string
 		manual     *string
+		width      int
+		height     int
 		discType   string
 		scan       string
 		resolution string
 	}{
 		{name: "dimension fallback", resolution: "720p"},
+		{
+			name:       "portrait filename retains 1080 tier",
+			parsed:     "1080p",
+			width:      1080,
+			height:     1920,
+			resolution: "1080p",
+		},
+		{
+			name:       "portrait manual correction",
+			manual:     new("480p"),
+			width:      1080,
+			height:     1920,
+			resolution: "480p",
+		},
+		{
+			name:       "cropped DCI dimension fallback",
+			width:      2048,
+			height:     864,
+			resolution: "1080p",
+		},
 		{
 			name:       "lower filename",
 			parsed:     "540p",
@@ -3129,7 +3151,11 @@ func TestDeriveMediaFactsResolutionHeightFloor(t *testing.T) {
 			if scan == "" {
 				scan = "Progressive"
 			}
-			payload := `{"media":{"track":[{"@type":"Video","Format":"AVC","Width":"960","Height":"720","ScanType":"` + scan + `"}]}}`
+			width, height := tc.width, tc.height
+			if width == 0 {
+				width, height = 960, 720
+			}
+			payload := fmt.Sprintf(`{"media":{"track":[{"@type":"Video","Format":"AVC","Width":"%d","Height":"%d","ScanType":"%s"}]}}`, width, height, scan)
 			if err := os.WriteFile(miPath, []byte(payload), 0o600); err != nil {
 				t.Fatalf("write mediainfo: %v", err)
 			}
