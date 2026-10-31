@@ -642,6 +642,8 @@ type State struct {
 	OwnerID                 string
 	// descriptionReuse accompanies one atomic save and is never durable workflow payload.
 	descriptionReuse *api.ReusableDescriptionRecord
+	// effectResolution accompanies one atomic save and is never durable payload.
+	effectResolution *api.ReleaseWorkflowEffectResolution
 	// SourcePath durably binds this workflow to its source before preparation.
 	SourcePath          string `json:",omitempty"`
 	ProcessEpoch        string

@@ -912,7 +912,8 @@ func TestTrackerAuthBackendUsesRequestContext(t *testing.T) {
 
 	backend := &Backend{
 		cfg: config.Config{
-			Metadata: config.MetadataConfig{BTNAPI: "api-key"},
+			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")},
+			Metadata:     config.MetadataConfig{BTNAPI: "api-key"},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"BTN": {

@@ -38,10 +38,12 @@ const (
 
 // DiscResource is one preparation-private disc root within a selected source.
 type DiscResource struct {
-	ID   string
-	Name string
-	Type string
-	Root string
+	// Image identifies an ISO candidate whose virtual contents require BDInfo validation.
+	Image bool
+	ID    string
+	Name  string
+	Type  string
+	Root  string
 }
 
 // Layout preserves requested-source identity while exposing derived local
@@ -109,10 +111,10 @@ func Resolve(ctx context.Context, sourcePath string) (Layout, error) {
 		if target.IsDir() {
 			return Layout{}, ErrDirectorySymlink
 		}
-		return Layout{SourcePath: abs, Kind: KindFile}, nil
+		return fileLayout(abs), nil
 	}
 	if !info.IsDir() {
-		return Layout{SourcePath: abs, Kind: KindFile}, nil
+		return fileLayout(abs), nil
 	}
 
 	discs, err := discoverDiscs(ctx, abs)
@@ -151,6 +153,24 @@ func Resolve(ctx context.Context, sourcePath string) (Layout, error) {
 		DiscType:   discs[0].resource.Type,
 		Discs:      resources,
 	}, nil
+}
+
+// fileLayout preserves the physical file while routing directly selected ISO
+// candidates to disc validation. It does not establish Blu-ray or 3D support.
+func fileLayout(source string) Layout {
+	layout := Layout{SourcePath: source, Kind: KindFile}
+	if strings.EqualFold(filepath.Ext(source), ".iso") {
+		digest := sha256.Sum256([]byte("BDMV\x00ISO"))
+		layout.DiscType = "BDMV"
+		layout.Discs = []DiscResource{{
+			Image: true,
+			ID:    "disc-" + hex.EncodeToString(digest[:]),
+			Name:  "Disc 1",
+			Type:  "BDMV",
+			Root:  source,
+		}}
+	}
+	return layout
 }
 
 func discoverDiscs(ctx context.Context, root string) ([]discoveredDisc, error) {

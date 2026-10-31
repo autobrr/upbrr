@@ -21,7 +21,7 @@ import { LanguageMultiSelect } from "./LanguageMultiSelect";
 import { settingsStyle } from "../../settings/style";
 import { CorrectionSearch, CorrectionSelect } from "./CorrectionChoice";
 import correctionChoices from "./correctionChoices.json";
-import { missingRequiredFacts } from "./requiredFacts";
+import { missingRequiredFacts } from "../../releaseSession/requiredFacts";
 import { FieldHelp } from "../../components/ui/field-help";
 import { correctionHelp } from "./correctionHelp";
 

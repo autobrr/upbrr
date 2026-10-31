@@ -125,7 +125,9 @@ func ExtractJSONBlocks(text string) []Block {
 // are decoded before matching sensitive keys and paths. Nil keys use
 // [DefaultSensitiveKeys] for embedded JSON and URL values; other textual
 // patterns use the package's fixed secret vocabulary.
-func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
+// Optional known secrets are also removed from decoded JSON and URL components.
+func RedactValue(value string, sensitiveKeys map[string]struct{}, secrets ...string) string {
+	value = redactKnownSecrets(value, secrets)
 	keys := sensitiveKeys
 	if keys == nil {
 		keys = DefaultSensitiveKeys
@@ -142,7 +144,7 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 			if err := json.Unmarshal([]byte(segment), &parsed); err != nil {
 				continue
 			}
-			redacted := RedactPrivateInfo(parsed, keys)
+			redacted := RedactPrivateInfo(parsed, keys, secrets...)
 			data, err := json.Marshal(redacted)
 			if err != nil {
 				continue
@@ -155,7 +157,7 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	value = normalizeSecretText(value)
 	normalized := value
 	value = urlRe.ReplaceAllStringFunc(value, func(raw string) string {
-		return redactURL(raw, keys)
+		return redactURL(raw, keys, secrets...)
 	})
 	value = redactURLPath(value)
 	value = urlUserinfoRe.ReplaceAllString(value, `${1}[REDACTED]@`)
@@ -165,10 +167,20 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	value = cookieTailRe.ReplaceAllString(value, `${1}`)
 	value = authTailRe.ReplaceAllString(value, `${1}`)
 	value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
+	value = redactKnownSecrets(value, secrets)
 	if value == normalized {
 		return original
 	}
 
+	return value
+}
+
+func redactKnownSecrets(value string, secrets []string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			value = strings.ReplaceAll(value, secret, "[REDACTED]")
+		}
+	}
 	return value
 }
 
@@ -190,26 +202,37 @@ func normalizeSecretText(value string) string {
 
 // redactURL preserves ordinary URL context while structurally redacting known
 // sensitive userinfo, path, query, and fragment values.
-func redactURL(raw string, sensitiveKeys map[string]struct{}) string {
+func redactURL(raw string, sensitiveKeys map[string]struct{}, secrets ...string) string {
 	trimmed := strings.TrimRight(raw, ".,;:)")
 	suffix := strings.TrimPrefix(raw, trimmed)
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Host == "" {
 		return "[REDACTED]" + suffix
 	}
+	if suffix != "" && len(secrets) > 0 {
+		full, fullErr := url.Parse(raw)
+		if fullErr == nil {
+			for _, secret := range secrets {
+				if secret != "" && urlSecretCount(full, secret) > urlSecretCount(parsed, secret) {
+					parsed, suffix = full, ""
+					break
+				}
+			}
+		}
+	}
 	if parsed.User != nil {
 		parsed.User = url.User("[REDACTED]")
 	}
-	parsed.Path = redactURLPath(parsed.Path)
+	parsed.Path = redactURLPath(redactKnownSecrets(parsed.Path, secrets))
 	parsed.RawPath = ""
-	query, ok := redactURLValues(parsed.RawQuery, sensitiveKeys)
+	query, ok := redactURLValues(parsed.RawQuery, sensitiveKeys, secrets...)
 	if !ok {
 		parsed.RawQuery = "[REDACTED]"
 	} else {
 		parsed.RawQuery = query
 	}
 	if strings.ContainsAny(parsed.Fragment, "=&") {
-		fragment, ok := redactURLValues(parsed.Fragment, sensitiveKeys)
+		fragment, ok := redactURLValues(parsed.Fragment, sensitiveKeys, secrets...)
 		if !ok {
 			parsed.Fragment = "[REDACTED]"
 		} else {
@@ -221,8 +244,32 @@ func redactURL(raw string, sensitiveKeys map[string]struct{}) string {
 			}
 		}
 	}
+	parsed.Fragment = redactKnownSecrets(parsed.Fragment, secrets)
 	parsed.RawFragment = ""
 	return strings.ReplaceAll(parsed.String(), url.QueryEscape("[REDACTED]"), "[REDACTED]") + suffix
+}
+
+// urlSecretCount detects whether trimming URL punctuation would split a known secret.
+func urlSecretCount(value *url.URL, secret string) int {
+	count := strings.Count(value.Path, secret)
+	if decoded, err := url.QueryUnescape(value.RawQuery); err == nil {
+		count += strings.Count(decoded, secret)
+	}
+	if !strings.ContainsAny(value.Fragment, "=&") {
+		return count + strings.Count(value.Fragment, secret)
+	}
+	// Count literal semicolons as data; the sanitizer still rejects malformed queries.
+	fragment, _ := url.ParseQuery(strings.ReplaceAll(value.Fragment, ";", "%3B"))
+	if decoded, err := url.PathUnescape(fragment.Encode()); err == nil {
+		count += strings.Count(decoded, secret)
+	}
+	for key, items := range fragment {
+		count += strings.Count(key, secret)
+		for _, item := range items {
+			count += strings.Count(item, secret)
+		}
+	}
+	return count
 }
 
 func redactURLPath(path string) string {
@@ -232,7 +279,7 @@ func redactURLPath(path string) string {
 	return proxyPathRe.ReplaceAllString(path, `${1}[REDACTED]`)
 }
 
-func redactURLValues(raw string, sensitiveKeys map[string]struct{}) (string, bool) {
+func redactURLValues(raw string, sensitiveKeys map[string]struct{}, secrets ...string) (string, bool) {
 	if raw == "" {
 		return "", true
 	}
@@ -240,12 +287,35 @@ func redactURLValues(raw string, sensitiveKeys map[string]struct{}) (string, boo
 	if err != nil {
 		return "", false
 	}
-	for key := range values {
-		if isSensitiveKey(key, sensitiveKeys) {
-			values[key] = []string{"[REDACTED]"}
+	decoded, _ := url.QueryUnescape(raw)
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		count := strings.Count(decoded, secret)
+		for key, items := range values {
+			count -= strings.Count(key, secret) * len(items)
+			for _, item := range items {
+				count -= strings.Count(item, secret)
+			}
+		}
+		// A complete token spanning fields cannot be removed as one component.
+		if count > 0 {
+			return "", false
 		}
 	}
-	return values.Encode(), true
+	redacted := make(url.Values, len(values))
+	for key, items := range values {
+		if isSensitiveKey(key, sensitiveKeys) {
+			items = []string{"[REDACTED]"}
+		} else {
+			for index, item := range items {
+				items[index] = redactKnownSecrets(item, secrets)
+			}
+		}
+		redacted[redactKnownSecrets(key, secrets)] = items
+	}
+	return redacted.Encode(), true
 }
 
 // redactQuotedKeyValue replaces the value part of a matched quoted secret
@@ -277,7 +347,8 @@ func redactPlainKeyValue(value string) string {
 
 // RedactPrivateInfo recursively redacts JSON-like maps, slices, and strings
 // without mutating input maps or slices. Nil keys use [DefaultSensitiveKeys].
-func RedactPrivateInfo(data any, sensitiveKeys map[string]struct{}) any {
+// Optional known secrets are removed from decoded string values and map keys.
+func RedactPrivateInfo(data any, sensitiveKeys map[string]struct{}, secrets ...string) any {
 	keys := sensitiveKeys
 	if keys == nil {
 		keys = DefaultSensitiveKeys
@@ -287,29 +358,31 @@ func RedactPrivateInfo(data any, sensitiveKeys map[string]struct{}) any {
 	case map[string]any:
 		redacted := make(map[string]any, len(typed))
 		for key, value := range typed {
+			redactedKey := redactKnownSecrets(key, secrets)
 			if isSensitiveKey(key, keys) {
-				redacted[key] = "[REDACTED]"
+				redacted[redactedKey] = "[REDACTED]"
 				continue
 			}
-			redacted[key] = RedactPrivateInfo(value, keys)
+			redacted[redactedKey] = RedactPrivateInfo(value, keys, secrets...)
 		}
 		return redacted
 	case []any:
 		redacted := make([]any, 0, len(typed))
 		for _, value := range typed {
-			redacted = append(redacted, RedactPrivateInfo(value, keys))
+			redacted = append(redacted, RedactPrivateInfo(value, keys, secrets...))
 		}
 		return redacted
 	case string:
+		typed = redactKnownSecrets(typed, secrets)
 		var parsed any
 		if err := json.Unmarshal([]byte(typed), &parsed); err == nil {
-			redacted := RedactPrivateInfo(parsed, keys)
+			redacted := RedactPrivateInfo(parsed, keys, secrets...)
 			data, err := json.Marshal(redacted)
 			if err == nil {
 				return string(data)
 			}
 		}
-		return RedactValue(typed, keys)
+		return RedactValue(typed, keys, secrets...)
 	default:
 		return data
 	}

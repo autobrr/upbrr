@@ -14,7 +14,7 @@ import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { InputFacet } from "../../releaseSession/types";
 import { InputCorrectionEditor, SavedCorrectionReview } from "./InputCorrectionEditor";
 import { settingsStyle } from "../../settings/style";
-import { missingRequiredFacts } from "./requiredFacts";
+import { missingRequiredFacts } from "../../releaseSession/requiredFacts";
 import type {
   DetailBlock,
   DetailItem,
@@ -1712,14 +1712,24 @@ export default function InputPage(props: Props) {
             </details>
           ) : null}
           {showReleaseDetails ? (
-            <p
-              className={`helper max-w-[720px] ${requiredFactsMissing ? "text-destructive-text" : ""}`}
-              role="status"
-            >
-              {requiredFactsMissing
-                ? "Required facts missing, please edit release details."
-                : "Review release facts, source options, and selected tracker input."}
-            </p>
+            requiredFactsMissing ? (
+              <div
+                className="grid gap-2 rounded-md border border-destructive bg-destructive/10 p-4 text-destructive-text"
+                role="alert"
+              >
+                <p className="font-semibold">
+                  Required facts missing, please edit release details.
+                </p>
+                <p>
+                  Correct the highlighted fields under Edit Release Details, then Refresh metadata
+                  to enable Dupe Check.
+                </p>
+              </div>
+            ) : (
+              <p className="helper max-w-[720px]" role="status">
+                Review release facts, source options, and selected tracker input.
+              </p>
+            )
           ) : null}
           {showReleaseDetails && view.correctionDirty ? (
             <p className="text-sm font-medium text-primary" role="status">

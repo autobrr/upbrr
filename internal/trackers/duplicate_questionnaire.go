@@ -41,6 +41,7 @@ func (p *WorkflowProjector) DuplicateQuestionnaires(
 		meta.TrackerDuplicateReviewCandidates = map[string][]api.DupeMatchProjection{string(result.TrackerID): slices.Clone(result.Matches)}
 		fields := descriptor.DupePolicy.Questionnaire(
 			PreparationInput{
+				TrackerConfig: trackerConfigFor(p.config, string(result.TrackerID)),
 				Meta:          meta,
 				Tracker:       string(result.TrackerID),
 				Projection:    &projection,

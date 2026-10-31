@@ -6,6 +6,7 @@ package metadata
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"regexp"
 	"strconv"
@@ -20,7 +21,7 @@ import (
 
 type mediaInfoDoc = mediafacts.MediaInfoDocument
 
-var canonicalResolutionWidths = []int{3840, 2560, 1920, 1280, 1024, 960, 854, 720, 15360, 7680, 0}
+var canonicalResolutionWidths = []int{4096, 3840, 2560, 2048, 1920, 1280, 1024, 960, 854, 720, 15360, 7680, 0}
 var canonicalResolutionHeights = []int{2160, 1440, 1080, 720, 576, 540, 480, 8640, 4320, 0}
 var bitrateNumberRegex = regexp.MustCompile(`\d+(?:\.\d+)?`)
 
@@ -179,7 +180,7 @@ func extractDVDMediaInfo(meta preparationstate.State) api.DVDMediaInfo {
 	}
 	scan := normalizeDVDScan(scanType, meta.SourcePath)
 
-	closestWidth, closestHeight, resolution := snapAndMapResolution(width, height, scan, meta.Release.Resolution)
+	closestWidth, closestHeight, resolution := snapAndMapResolution(width, height, scan, resolutionGuessForScan(meta.Release.Resolution, scanType))
 
 	return api.DVDMediaInfo{
 		Width:         closestWidth,
@@ -337,8 +338,11 @@ func mapDVDResolution(res string, guessed string, width int, scan string) string
 	}
 
 	widthMap := map[string]string{
+		"4096p":  "2160p",
 		"3840p":  "2160p",
-		"2560p":  "1550p",
+		"2560p":  "1440p",
+		"2048p":  "1080p",
+		"2048i":  "1080i",
 		"1920p":  "1080p",
 		"1920i":  "1080i",
 		"1280p":  "720p",
@@ -350,7 +354,8 @@ func mapDVDResolution(res string, guessed string, width int, scan string) string
 		"854i":   "480i",
 		"720p":   "576p",
 		"720i":   "576i",
-		"15360p": "4320p",
+		"7680p":  "4320p",
+		"15360p": "8640p",
 		"OTHERp": "OTHER",
 	}
 
@@ -374,32 +379,93 @@ func snapAndMapResolution(width int, height int, scan string, guessed string) (i
 	closestHeight := closestDVDValue(canonicalResolutionHeights, height)
 	resKey := fmt.Sprintf("%dx%d%s", closestWidth, closestHeight, scan)
 	resolution := mapDVDResolution(resKey, guessed, closestWidth, scan)
-	return closestWidth, closestHeight, resolution
+	return closestWidth, closestHeight, resolutionWithHeightFloor(resolution, height, scan)
 }
 
-// resolutionFromMediaInfo derives a standard resolution string from a MediaInfo
-// document for non-DVD content. It mirrors the Python get_resolution() logic:
-// read Width/Height from the video track, snap each using the same Python
-// closest() helper semantics, compose a WxHscan key, and map it through the
-// same resolution table used for DVD content. Returns "" when
-// the video track is absent or either dimension is zero.
-func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string) string {
+// resolutionWithHeightFloor preserves width-based cropped-video classifications,
+// but never assigns a tier below the highest known tier reached by the measured
+// normalized height supplied by the caller. Unsupported
+// scan/tier combinations remain unknown rather than being relabeled as progressive.
+func resolutionWithHeightFloor(resolution string, height int, scan string) string {
+	minimum := 0
+	for _, tier := range canonicalResolutionHeights {
+		if tier <= height && tier > minimum {
+			minimum = tier
+		}
+	}
+	current, _ := strconv.Atoi(strings.TrimRight(strings.ToLower(strings.TrimSpace(resolution)), "pi"))
+	if minimum == 0 || current >= minimum {
+		return resolution
+	}
+	return mapDVDResolution("", fmt.Sprintf("%d%s", minimum, scan), 0, scan)
+}
+
+// resolutionFromMediaEvidence resolves automatic resolution and DVD geometry before
+// manual corrections. Image validation and finalized facts share this policy.
+func resolutionFromMediaEvidence(meta preparationstate.State, doc mediaInfoDoc) (string, api.DVDMediaInfo) {
+	if !strings.EqualFold(meta.DiscType, "DVD") {
+		return resolutionFromMediaInfo(doc, meta.SourcePath, meta.Release.Resolution), api.DVDMediaInfo{}
+	}
+	info := extractDVDMediaInfo(meta)
+	resolution := info.Resolution
+	if resolution == "OTHER" {
+		resolution = ""
+	} else if strings.TrimSpace(resolution) == "" {
+		resolution = meta.Release.Resolution
+	}
+	return resolution, info
+}
+
+// resolutionGuessForScan rejects contradictions only for explicit known scan types.
+// Missing or unknown scan metadata leaves filename evidence intact.
+func resolutionGuessForScan(guessed, scanType string) string {
+	resolution := strings.TrimSpace(guessed)
+	switch strings.ToLower(strings.TrimSpace(scanType)) {
+	case "progressive", "interlaced", "mbaff":
+		if !strings.HasSuffix(strings.ToLower(resolution), normalizeDVDScan(scanType, "")) {
+			return ""
+		}
+	}
+	return resolution
+}
+
+// resolutionFromMediaInfo rejects filename evidence that conflicts with an explicit
+// scan type, retaining compatible guesses when dimensions are missing. Otherwise it
+// normalizes portrait axes using display/pixel aspect evidence and floors automatic
+// classifications at the measured height tier. Explicit manual corrections apply later.
+func resolutionFromMediaInfo(doc mediaInfoDoc, sourcePath string, guessed string) string {
 	_, videoTracks, _ := splitMediaInfoTracks(doc)
 	if len(videoTracks) == 0 {
-		return ""
+		return guessed
 	}
 	track := videoTracks[0]
+	scanType := trackString(track, "ScanType")
+	scan := normalizeDVDScan(scanType, sourcePath)
+	resolution := resolutionGuessForScan(guessed, scanType)
 
 	width := trackNumericInt(track, "Width")
 	height := trackNumericInt(track, "Height")
 	if width == 0 || height == 0 {
-		return ""
+		return resolution
+	}
+	if width < height {
+		aspect, valid := new(big.Rat).SetString(strings.ReplaceAll(trackString(track, "DisplayAspectRatio"), ":", "/"))
+		if !valid || aspect.Sign() <= 0 {
+			aspect = big.NewRat(int64(width), int64(height))
+			if pixelAspect, ok := new(big.Rat).SetString(strings.ReplaceAll(trackString(track, "PixelAspectRatio"), ":", "/")); ok && pixelAspect.Sign() > 0 {
+				aspect.Mul(aspect, pixelAspect)
+			}
+		}
+		if aspect.Cmp(big.NewRat(1, 1)) < 0 {
+			width, height = height, width
+		}
 	}
 
-	scanType := strings.TrimSpace(trackString(track, "ScanType"))
-	scan := normalizeDVDScan(scanType, sourcePath)
-
-	_, _, resolution := snapAndMapResolution(width, height, scan, "")
+	if resolution == "" {
+		_, _, resolution = snapAndMapResolution(width, height, scan, "")
+	} else {
+		resolution = resolutionWithHeightFloor(resolution, height, scan)
+	}
 	if resolution == "OTHER" {
 		return ""
 	}

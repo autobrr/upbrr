@@ -563,7 +563,8 @@ func (m *Module) resolveContinuationAnswer(
 				continue
 			}
 			if action.Kind == api.RequiredActionReviewDuplicates &&
-				continuationHasDupeDecisionUpdate(request.Intent, current.Dupes) {
+				(continuationHasDupeDecisionUpdate(request.Intent, current.Dupes) || !trackerIntentMatches(request.Intent, current)) {
+				// Apply changed tracker inputs before requiring review of their resulting evidence.
 				continue
 			}
 			if continuationActionBlocksAllLanesForMode(current, action, trackerDecisionMode) {

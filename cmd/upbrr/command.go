@@ -27,8 +27,10 @@ type cliIO struct {
 	// terminalResult carries one deferred artifact report for output after
 	// terminal restoration; the driver must not send multiple reports.
 	terminalResult chan<- func(io.Writer) error
-	dashboard      bool
-	keepOpen       bool
+	// interrupts borrows notifications; nil lets production own OS registration.
+	interrupts <-chan os.Signal
+	dashboard  bool
+	keepOpen   bool
 }
 
 func (streams cliIO) normalized() cliIO {
@@ -68,6 +70,16 @@ func executeCLI(ctx context.Context, args []string, streams cliIO) error {
 		return executeAPITokenCLI(ctx, args, streams, originalArgs)
 	case "auth":
 		return executeAuthCLI(ctx, args, streams, originalArgs)
+	case "recover":
+		//nolint:contextcheck // Cobra receives the execution context below.
+		cmd := newRootCommand(streams, originalArgs)
+		recoverCmd, _, err := cmd.Find(args[:1])
+		if err != nil {
+			return exitError(2, fmt.Errorf("find recovery command: %w", err))
+		}
+		normalized := normalizeNonInterspersedArgs(recoverCmd.Flags(), args[1:])
+		cmd.SetArgs(append([]string{"recover"}, normalized...))
+		return executeCobraCommand(ctx, cmd)
 	case "live-test":
 		//nolint:contextcheck // Cobra receives the execution context below.
 		cmd := newRootCommand(streams, originalArgs)
@@ -158,7 +170,7 @@ func commandHelpToken(value string) bool {
 
 func newRootCommand(streams cliIO, originalArgs []string) *cobra.Command {
 	cmd := newUploadRootCommand(streams, originalArgs)
-	cmd.AddCommand(newServeCommand(streams), newAPITokenCommand(streams), newAuthCommand(streams), newLiveTestCommand(streams))
+	cmd.AddCommand(newServeCommand(streams), newAPITokenCommand(streams), newAuthCommand(streams), newLiveTestCommand(streams), newRecoverCommand(streams))
 	return cmd
 }
 
