@@ -924,6 +924,7 @@ export type ProviderDisplay =
   | (ProviderDisplayBase & { Provider: "mal"; Details: { AniList: AniListMetadata } });
 
 export type PreparedReleaseDisplay = {
+  CanKeepFolder?: boolean;
   Commentary?: boolean;
   ReleaseName: string;
   Providers: ProviderDisplay[];

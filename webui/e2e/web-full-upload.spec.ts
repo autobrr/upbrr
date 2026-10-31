@@ -1394,6 +1394,45 @@ test("embedded web persists Release Details audio track language edits, clear an
   }
 });
 
+test("embedded web keeps an eligible movie folder through preparation", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    const sourceFolder = path.join(path.dirname(workspace.sourcePath), "E2E.Movie.2026");
+    await mkdir(sourceFolder);
+    await writeFile(
+      path.join(sourceFolder, path.basename(workspace.sourcePath)),
+      await readFile(workspace.sourcePath),
+    );
+    await writeFile(path.join(sourceFolder, "release.nfo"), "synthetic sidecar");
+    await writeFile(path.join(sourceFolder, "sample.mkv"), "synthetic sample");
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, sourceFolder);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const sourceOptions = page.getByTestId("input-source-options");
+    await sourceOptions.locator("summary").click();
+    const keepFolder = sourceOptions.getByRole("checkbox", {
+      name: "Keep source folder",
+      exact: true,
+    });
+    await expect(keepFolder).not.toBeChecked();
+    await keepFolder.check();
+    const saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    const response = await saved;
+    expect(response.ok()).toBe(true);
+    const command = workflowCommandBody("OpenActiveInput", response.request().postDataJSON());
+    expect(command.intent).toHaveProperty("preparation.Policy.KeepFolder", true);
+    const current = await waitForMetadataReady(page, app.url);
+    expect(current.current?.release?.display.CanKeepFolder).toBe(true);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded web applies Release Details source options and persists source IDs", async ({
   page,
 }) => {
@@ -1416,9 +1455,11 @@ test("embedded web applies Release Details source options and persists source ID
     ]) {
       await page.getByText("Edit Release Details", { exact: true }).click();
       await sourceOptions.locator("summary").click();
+      await expect(
+        sourceOptions.getByRole("checkbox", { name: "Keep source folder", exact: true }),
+      ).toHaveCount(0);
       await sourceID.fill(values.sourceID);
       for (const label of [
-        "Keep source folder",
         "Collect existing tracker images",
         "Limit tracker lookup to only metadata ids",
       ]) {
@@ -1441,7 +1482,7 @@ test("embedded web applies Release Details source options and persists source ID
         values.sourceID ? { BTN: values.sourceID } : {},
       );
       expect(command.intent).toHaveProperty("preparation.Policy", {
-        KeepFolder: values.policy,
+        KeepFolder: false,
         KeepImages: values.policy,
         OnlyID: values.policy,
       });
@@ -1464,7 +1505,6 @@ test("embedded web applies Release Details source options and persists source ID
       await expect(sourceID).toHaveValue(values.sourceID);
       // Preparation/search options are per-command choices; source IDs are durable facts.
       for (const label of [
-        "Keep source folder",
         "Collect existing tracker images",
         "Limit tracker lookup to only metadata ids",
         "Skip client search",

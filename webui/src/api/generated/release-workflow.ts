@@ -1556,6 +1556,7 @@ export type PreparedRelease = Readonly<{
 }>;
 
 export type PreparedReleaseDisplay = Readonly<{
+  CanKeepFolder?: boolean;
   Commentary?: boolean;
   MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];

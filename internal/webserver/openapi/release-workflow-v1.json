@@ -5960,6 +5960,9 @@
       "PreparedReleaseDisplay": {
         "type": "object",
         "properties": {
+          "CanKeepFolder": {
+            "type": "boolean"
+          },
           "Commentary": {
             "type": "boolean"
           },

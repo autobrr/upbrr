@@ -77,6 +77,12 @@ See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and t
 
 Click **Generate**, then inspect each format and picture/audio outcome. Native plots and selected audio images/statistics are included in descriptions by default. Select individual picture-check images to include them. Successful artifacts remain inspectable after partial attempts; a sampled or bounded result does not establish whole-video picture coverage. See [HDR analysis](../workflow/hdr-analysis.md) for source requirements, comparison sources, retries, and colour-thumbnail interpretation.
 
+### Keep a single video in its folder
+
+Choose **Browse folder**, select a folder containing one eligible movie or episode video, and fetch its metadata. Under **Input → Edit Release Details → Source options**, enable **Keep source folder**, then apply **Refresh metadata**. The torrent keeps that folder as its root but includes only the selected video, not samples, NFOs, text files, or other sidecars. With the option off, the same input uses a single-file torrent.
+
+The option is not shown for direct file inputs, season packs, multi-video folders, or discs; their existing handling is unchanged.
+
 ### Correct Input facts
 
 In **Edit Release Details**, the information icons explain each field and grouped actions. Open help by hovering over its icon, focusing it with the keyboard, or tapping it. Escape or an outside interaction closes it; moving into the floating text keeps it readable without moving the form. Opening help does not apply edits.

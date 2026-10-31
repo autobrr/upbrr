@@ -68,7 +68,7 @@ func ResolveSubmissionContentInventory(meta api.TorrentSubject) (SubmissionConte
 	if len(wanted) == 0 {
 		return SubmissionContentInventory{}, false, errors.New("torrent: no valid wanted files")
 	}
-	if len(wanted) == 1 {
+	if len(wanted) == 1 && !meta.KeepFolder {
 		info, err := os.Stat(wanted[0])
 		if err != nil {
 			return SubmissionContentInventory{}, false, fmt.Errorf("torrent: stat wanted file %q: %w", wanted[0], err)

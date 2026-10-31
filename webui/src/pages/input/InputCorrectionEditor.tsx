@@ -1438,26 +1438,28 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
               />
             </div>
           ))}
-          <div className="flex items-start gap-1">
-            <label className={settingsStyle.toggle}>
-              <span>Keep source folder</span>
-              <input
-                type="checkbox"
-                aria-describedby="input-keep-folder-help"
-                checked={view.intent.policy.keepFolder}
-                onChange={(event) =>
-                  facet.changePreparationPolicy({
-                    ...view.intent.policy,
-                    keepFolder: event.target.checked,
-                  })
-                }
-              />
-            </label>
-            <FieldHelp label="Keep source folder" id="input-keep-folder-help">
-              Preserve the selected source folder in the torrent layout, including when it contains
-              one video. This does not rename or move the source files.
-            </FieldHelp>
-          </div>
+          {view.preview?.Display.CanKeepFolder && (
+            <div className="flex items-start gap-1">
+              <label className={settingsStyle.toggle}>
+                <span>Keep source folder</span>
+                <input
+                  type="checkbox"
+                  aria-describedby="input-keep-folder-help"
+                  checked={view.intent.policy.keepFolder}
+                  onChange={(event) =>
+                    facet.changePreparationPolicy({
+                      ...view.intent.policy,
+                      keepFolder: event.target.checked,
+                    })
+                  }
+                />
+              </label>
+              <FieldHelp label="Keep source folder" id="input-keep-folder-help">
+                Keep this movie or episode inside its source folder; extra files are not included.
+                This does not rename or move the source files.
+              </FieldHelp>
+            </div>
+          )}
           <div className="flex items-start gap-1">
             <label className={settingsStyle.toggle}>
               <span>Collect existing tracker images</span>
