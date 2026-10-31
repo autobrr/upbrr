@@ -12,7 +12,34 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	bd "github.com/autobrr/go-bdinfo/pkg/bdinfo"
+	"github.com/autobrr/go-bdinfo/pkg/bdinfo/video"
 )
+
+func TestStandaloneHDRPlaylistUsesDefaultAngle(t *testing.T) {
+	item := bd.PlayItem{Angles: []bd.Angle{{
+		Source: video.Source{Kind: "m2ts", Path: "00001.M2TS"},
+		STC:    &video.STCSequence{},
+		Video: []video.Mapping{{
+			Role:      video.Primary,
+			Codec:     video.HEVC,
+			EntryType: 1,
+		}},
+	}, {Err: errors.New("unsupported alternate")}}}
+	result := bd.Result{Timelines: []bd.PlaylistTimeline{{
+		Name:     "00001.MPLS",
+		Complete: true,
+		Items:    []bd.PlayItem{item},
+	}}}
+	if got, err := standaloneHDRPlaylist(result, "00001.MPLS"); err != nil || got != "00001.MPLS" {
+		t.Fatalf("default angle playlist = %q, %v", got, err)
+	}
+	result.Timelines[0].Items[0].Angles = nil
+	if _, err := standaloneHDRPlaylist(result, "00001.MPLS"); err == nil {
+		t.Fatal("playlist without a default angle was accepted")
+	}
+}
 
 func TestHDRCLIRejectsDependentAndConflictingFlags(t *testing.T) {
 	cases := []struct {

@@ -104,6 +104,25 @@ Production documentation is built from the exact release tag and published only 
 
 ### Temporary dependency exceptions
 
+#### Blu-ray collector development pin
+
+The temporary go-bdinfo fork pin follows the reviewed head of
+[upstream PR #46](https://github.com/autobrr/go-bdinfo/pull/46), currently
+`42be7cb0c64c29cec8c7abf8ab9e12c77ea5bf95`. The HDR bridge and native consumers use
+the first entry in each nonempty `Angles` list, the scanner's supported default;
+this does not provide configurable angle selection or separate Dolby Vision
+base/enhancement-layer support. Preserve strict clock, packet, range and completion
+validation when updating these dependencies.
+
+[Issue #829](https://github.com/autobrr/upbrr/issues/829) tracks subsequent PR-head
+changes and their compatibility tests. Review the full change from the previous
+pin, consume a compatible published bridge revision, and test the actual module
+graph without local replacement overlays. Reconcile dependent stacked work before
+advancing it. Eventual merged upstream adoption remains separate in
+[issue #754](https://github.com/autobrr/upbrr/issues/754).
+
+#### Vulnerability workflow history
+
 The scheduled vulnerability workflow retains Stylelint and all CSS checks. The former
 WebUI-only exception for GHSA-vfj7-8cjw-p6xm was removed after the advisory was withdrawn
 and a full WebUI scan without exceptions passed. The earlier
