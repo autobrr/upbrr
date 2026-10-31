@@ -33,7 +33,7 @@ func TestProgrammeRateControlIsResourceAndInspectionBound(t *testing.T) {
 	const cbr = `{"media":{"track":[{"@type":"General","Format":"Matroska"},{"@type":"Video","Format":"AVC","Encoded_Library_Name":"x264","Encoded_Library_Settings":"rc=cbr / bitrate=4000"}]}}`
 	const unknown = `{"media":{"track":[{"@type":"General","Format":"Matroska"},{"@type":"Video","Format":"AVC","Encoded_Library_Name":"x264","BitRate_Mode":"VBR"}]}}`
 	analyzer := &rateControlAnalyzer{reports: map[string]string{first: crf, second: cbr}}
-	service := NewService(&stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}))
+	service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}))
 	state := preparationstate.State{
 		SourcePath:        root,
 		VideoPath:         first,

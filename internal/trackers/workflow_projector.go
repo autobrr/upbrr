@@ -398,6 +398,7 @@ func applyWorkflowProjectionRequirements(
 		projection.Artifacts.DVDMenuCount = max(projection.Artifacts.DVDMenuCount, descriptor.WorkflowMedia.DVDMenuCount)
 	}
 	projection.Artifacts.Description = descriptor.UploadContentMode.UsesDescription()
+	projection.Artifacts.AllowEmptyDescription = descriptor.UploadContentMode == UploadContentModeOptionalDescription
 	projection.Artifacts.ImageHosting = projection.Artifacts.ImageHosting || len(projection.Artifacts.AllowedImageHosts) > 0
 	projection.Artifacts.Torrent = true
 }

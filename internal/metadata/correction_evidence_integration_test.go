@@ -276,7 +276,7 @@ func TestPreparedSeasonCorrectionScopesEpisodeEvidence(t *testing.T) {
 	}{
 		{
 			name:   "set",
-			value:  new("S02"),
+			value:  new("2"),
 			season: 2,
 			title:  "The Returning Signal",
 			delta:  map[string]int{"/3/tv/555001/season/2/episode/1": 1, "/v1/search/word:Example Series S02E01": 1},
@@ -326,6 +326,42 @@ func TestPreparedSeasonCorrectionScopesEpisodeEvidence(t *testing.T) {
 			}
 			fixture.assertRequests(t, before, test.delta)
 			previous = result.Release.Generation
+		})
+	}
+}
+
+func TestPreparedPlainSeasonEpisodeCorrections(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name            string
+		values          api.ReleaseNameOverrides
+		season, episode int
+	}{
+		{"season only", api.ReleaseNameOverrides{Season: new("5")}, 5, 1},
+		{"episode only", api.ReleaseNameOverrides{Episode: new("5")}, 1, 5},
+		{"both", api.ReleaseNameOverrides{Season: new("5"), Episode: new("5")}, 5, 5},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newCorrectionEvidenceFixture(t)
+			module, _ := fixture.open(t)
+			initial := prepareCorrectionEvidence(t, module, fixture.input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+			result := prepareCorrectionEvidence(t, module, api.PrepareInput{SourcePath: fixture.input.SourcePath}, api.ReleaseCorrectionUpdate{
+				Mode:  api.ReleaseCorrectionUpdatePatch,
+				Patch: &api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{ReleaseName: test.values}},
+			})
+			if result.Release.Generation <= initial.Release.Generation || result.Release.Episode.Season != test.season || result.Release.Episode.Episode != test.episode ||
+				result.Release.Episode.Title != "Corrected Signal" {
+				t.Fatalf("plain corrections did not reach prepared/provider facts: identity=%+v episode=%+v", result.Release.Identity, result.Release.Episode)
+			}
+			if !strings.Contains(result.Release.Naming.ReleaseName, fmt.Sprintf("S%02dE%02d", test.season, test.episode)) {
+				t.Fatalf("plain corrections did not reach generated name: %q", result.Release.Naming.ReleaseName)
+			}
+			endpoint := fmt.Sprintf("/3/tv/555001/season/%d/episode/%d", test.season, test.episode)
+			saved := result.Corrections.Corrections.ReleaseName
+			if fixture.requests()[endpoint] != 1 || !reflect.DeepEqual(saved.Season, test.values.Season) || !reflect.DeepEqual(saved.Episode, test.values.Episode) {
+				t.Fatalf("plain corrections did not reach provider lookup and durable instructions: requests=%v saved=%+v", fixture.requests(), saved)
+			}
 		})
 	}
 }
@@ -841,6 +877,9 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 			body = `{"id":555211,"name":"The Returning Signal","season_number":2,"episode_number":1,"air_date":"2026-02-01"}`
 		case key == "/3/tv/555001/season/3/episode/1":
 			body = `{"id":555311,"name":"The Final Signal","season_number":3,"episode_number":1,"air_date":"2026-03-01"}`
+		case key == "/3/tv/555001/season/5/episode/1", key == "/3/tv/555001/season/1/episode/5", key == "/3/tv/555001/season/5/episode/5":
+			parts := strings.Split(key, "/")
+			body = fmt.Sprintf(`{"id":555505,"name":"Corrected Signal","season_number":%s,"episode_number":%s,"air_date":"2026-05-05"}`, parts[5], parts[7])
 		case key == "/3/movie/555001":
 			body = `{"id":555001,"title":"Example Movie","original_title":"Example Movie","release_date":"2026-01-01","original_language":"en"}`
 		case key == "/3/tv/555001/season/1/episode/1":
@@ -888,7 +927,7 @@ func (f *correctionEvidenceFixture) open(t *testing.T) (*preparedrelease.Module,
 	if err := repo.MigrateContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(repo,
+	service := newTestService(t, repo,
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: f.dbPath}}),
 		WithMediaInfoExporter(&stubMediaInfo{}),
 		WithSceneDetector(newSRRDBDetector(f.http, "https://scene.example.invalid", "", "")),

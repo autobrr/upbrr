@@ -10,6 +10,8 @@ Commands:
       Manage the WebUI password and browse policy locally
   live-test <init|cleanup> [options]
       Create an isolated profile or clean up its owned hosted images
+  recover [options]
+      Reconcile interrupted external effects without activating configuration
 
 Options:
 
@@ -115,7 +117,7 @@ Release Overrides:
   -release-features, --release-features strings
       Override release features with comma-separated supported IDs; empty clears
   -season, --season string
-      Override season value (two or four digits, such as 05 or S2026)
+      Override season value (single number such as 5 or S2026)
   -episode, --episode string
       Override episode value (single token such as 5 or E05)
   -episode-title, --episode-title, -manual-episode-title, -met string
@@ -283,7 +285,7 @@ Client and Torrent:
   -skip_auto_torrent, --skip_auto_torrent, -sat
       Skip automated torrent client searching
   -keep-folder, --keep-folder, -kf
-      Keep a supplied folder instead of processing its selected video file directly
+      Keep the supplied folder around one movie or episode video, excluding sidecars
   -onlyID, --onlyID
       Only grab tracker metadata IDs
   -infohash, --infohash, -th, -torrenthash string

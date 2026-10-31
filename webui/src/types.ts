@@ -924,6 +924,7 @@ export type ProviderDisplay =
   | (ProviderDisplayBase & { Provider: "mal"; Details: { AniList: AniListMetadata } });
 
 export type PreparedReleaseDisplay = {
+  CanKeepFolder?: boolean;
   Commentary?: boolean;
   ReleaseName: string;
   Providers: ProviderDisplay[];
@@ -1470,7 +1471,7 @@ export type TrackerCatalogEntry = {
   name: string;
   family: "unit3d" | "azfamily" | "standalone" | string;
   baseURL: string;
-  uploadContentMode: "none" | "screenshots" | "description";
+  uploadContentMode: "none" | "screenshots" | "description" | "optional_description";
   fields: TrackerCatalogField[];
   configured: boolean;
   default?: boolean;
@@ -1488,6 +1489,7 @@ export type FieldType = "string" | "number" | "boolean";
 export type FieldMeta = {
   key: string;
   label?: string;
+  help?: string;
   type?: FieldType;
   advanced?: boolean;
   sensitive?: boolean;

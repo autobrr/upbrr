@@ -140,8 +140,8 @@
     "sha256": "9bbdb308b83a947f1ca2b0ad62ec2a67494d352476376b2057c69f6c9a39da8d"
   },
   "internal/trackers/impl/standalone/ant/questionnaire.go:projectionQuestionnaire": {
-    "reason": "Projection reuses upload resolvers: normalized questionnaire type and tags take precedence; manual genres remain ahead of TMDB defaults. IMDb/TMDB type and adult evidence retain their existing order on the exact operation subject.",
-    "sha256": "dc5014713e85961e91c20e6d8cfc40767c83ae4f7f7192b80f5be6491269b617"
+    "reason": "Projection reuses upload resolvers: normalized questionnaire type and tags take precedence; manual genres remain ahead of TMDB defaults. IMDb/TMDB type and adult evidence retain their existing order on the exact operation subject. The added Guru intention controls consume only source-generation-bound explicit answers, with the reviewed projection authoritative; their default is no and they do not replace provider/manual metadata selectors.",
+    "sha256": "f66b247d98bf587c3b04e65c9f4c9b0ff644bc4ecc94488dce1956d276a6c967"
   },
   "internal/trackers/impl/standalone/ant/taxonomy.go:detectAdult": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
@@ -160,8 +160,8 @@
     "sha256": "3df9f9bfd69487f81276b642eb046acbbec9d0988f153ddd03c1f355ea1f4486"
   },
   "internal/trackers/impl/standalone/ant/upload.go:prepareUploadState": {
-    "reason": "Payload reuses reviewed type, tags and adult resolvers on the exact prepared subject. Media and disc country use finalized source/Region; flags use finalized edition/language/media facts. Optional request ID uses explicit questionnaire answers. Reviewed release naming and explicit tags/manual-genre clears retain precedence. Description composition consumes the same prepared subject and preserves final user-reviewed text apart from the requested ANT TMDB logo exclusion; composition errors propagate without changing metadata selectors.",
-    "sha256": "07318f8fa7802a00e72af3a05363eafb9bb690585964361d3b0d5454f6e9abb8"
+    "reason": "Payload reuses reviewed type, tags and adult resolvers on the exact prepared subject. Media and disc country use finalized source/Region; flags use finalized edition/language/media facts. Optional request ID uses explicit questionnaire answers. Reviewed release naming and explicit tags/manual-genre clears retain precedence. Description composition consumes the same prepared subject and preserves final user-reviewed text apart from the requested ANT TMDB logo exclusion; composition errors propagate without changing metadata selectors. The added retry intention and optional reason are read from exact current reviewed questionnaire answers with Guru mode enabled. They affect only one site-issued challenge retry, not metadata, naming, genre, description or staff-token selection.",
+    "sha256": "dbfe42099b2b0139290baa9121e592e0bac1c0b66ba34ca90d58a945825d7972"
   },
   "internal/trackers/impl/standalone/ant/upload.go:resolveKeywords": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -176,8 +176,8 @@
     "sha256": "5e7451f9faf3fed9241d74928416ce5519193d3ff75dd9b542b48f76c0b82366"
   },
   "internal/trackers/impl/standalone/ar/description.go:buildDescription": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "c9cb1cc5c3a1e647205bff122d94fde13b4b35b2b6141ad1f597ec3a093e9e75"
+    "reason": "AR center-tag conversion applies only outside complete code/pre blocks in generated or final descriptions. Title, database-link, overview, genre, and YouTube provider selection and manual precedence remain unchanged, including PreferredGenreText and the final-description bypass of generated sections.",
+    "sha256": "ea34c699aaea4fb8ab15385c20195c8e9a19c7a64e126a62e361c0d3399edba1"
   },
   "internal/trackers/impl/standalone/ar/description.go:resolveOverview": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1140,8 +1140,8 @@
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "reason": "Exposes the same pure language assessment to source input readiness and advances validation compatibility. Unknown soundtrack origin remains unresolved rather than a proven dub; existing canonical category, manual-aware taxonomy, subtitle-manager and upload constructibility checks remain unchanged.",
-    "sha256": "c559cd902f476d004ce4a7fbccd79c7b29461d1af907441ae7f109a1c58dd842"
+    "reason": "Full-DVD eligibility review: the strict check consumes finalized DiscType and release Type through the existing full-disc predicate; an absent disc label uses the finalized DVD/PAL/NTSC source family. HD DVD and DVD-derived remuxes/encodes remain distinct. Current-source provider selectors, explicit manual metadata precedence, language assessment and taxonomy are unchanged. The policy version invalidates retained approvals.",
+    "sha256": "dab9c110e00abf54258827ea08b1670f36d532268ff6d3ad4596b7b38f1cf670"
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

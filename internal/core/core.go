@@ -5,9 +5,7 @@ package core
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,12 +60,6 @@ type Core struct {
 	preparedFacts *preparedrelease.Module
 	workflow      *releaseworkflow.Module
 	media         *mediaModule
-}
-
-func workflowPrivateVaultRoot(dbPath string) string {
-	dbPath = filepath.Clean(strings.TrimSpace(dbPath))
-	sum := sha256.Sum256([]byte(dbPath))
-	return filepath.Join(filepath.Dir(dbPath), "workflow-private", hex.EncodeToString(sum[:16]))
 }
 
 func applyMetadataDefaults(input api.PrepareInput, configured config.MetadataConfig) api.PrepareInput {
@@ -415,15 +407,7 @@ func newCoreWithHooks(
 	var workflowPrivateResources releaseworkflow.PrivateResourceStore = releaseworkflow.NewMemoryPrivateResourceStore()
 	var workflowPrivateVault *releaseworkflow.PrivateArtifactVault
 	if sqliteRepo, ok := repoOwner.(*db.SQLiteRepository); ok && strings.TrimSpace(sqliteRepo.DBPath()) != "" {
-		vault, vaultErr := releaseworkflow.NewPrivateArtifactVault(
-			workflowPrivateVaultRoot(sqliteRepo.DBPath()),
-			append(
-				workflowPrivateResourceCodecs(workflowMediaArtifacts, workflowAudioAnalysis),
-				hdrResourceCodec(audioTmpRoot, "analysis"),
-				hdrResourceCodec(audioTmpRoot, "extraction"),
-				hdrResourceCodec(audioTmpRoot, "measurement"),
-			)...,
-		)
+		vault, vaultErr := newWorkflowPrivateArtifactVault(sqliteRepo.DBPath(), workflowMediaArtifacts, workflowAudioAnalysis)
 		if vaultErr != nil {
 			return nil, fmt.Errorf("core: release workflow private artifact vault: %w", vaultErr)
 		}

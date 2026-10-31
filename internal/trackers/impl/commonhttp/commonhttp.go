@@ -487,28 +487,39 @@ func UploadHTTPErrorWithURL(tracker string, status int, url string, body []byte)
 	return HTTPError{message: fmt.Sprintf("trackers: %s upload failed status=%d url=%s: %s", tracker, status, url, detail)}
 }
 
-// RedactErrorDetail trims value after applying the repository secret redactor.
-func RedactErrorDetail(value string) string {
-	return strings.TrimSpace(redaction.RedactValue(value, nil))
+// RedactErrorDetail trims value after redacting repository patterns and any known
+// per-request secrets, including values revealed by URL normalization.
+func RedactErrorDetail(value string, secrets ...string) string {
+	return strings.TrimSpace(redaction.RedactValue(value, nil, secrets...))
+}
+
+func redactKnownErrorSecrets(value string, secrets []string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			value = strings.ReplaceAll(value, secret, "[REDACTED]")
+		}
+	}
+	return value
 }
 
 // ExtractHTTPErrorDetail scans at most 1 MiB and returns a compact, redacted
 // error detail from plain text, HTML, or JSON response bodies. HTML extraction
 // ignores executable, hidden, navigation, and form-control content.
-func ExtractHTTPErrorDetail(body []byte) string {
+// Known per-request secrets are redacted after decoding and before truncation.
+func ExtractHTTPErrorDetail(body []byte, secrets ...string) string {
 	exceeded := int64(len(body)) > maxHTTPErrorResponseBytes
 	if exceeded {
 		body = body[:maxHTTPErrorResponseBytes]
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
-		return withHTTPErrorLimitDetail("", exceeded)
+		return withHTTPErrorLimitDetail("", exceeded, secrets...)
 	}
 
-	if detail := extractJSONErrorDetail(body); detail != "" {
-		return withHTTPErrorLimitDetail(detail, exceeded)
+	if detail := extractJSONErrorDetail(body, secrets...); detail != "" {
+		return withHTTPErrorLimitDetail(detail, exceeded, secrets...)
 	}
 
-	marked, visible := extractHTTPErrorText(body)
+	marked, visible := extractHTTPErrorText(body, secrets...)
 	text := visible
 	if marked != "" {
 		text = marked
@@ -517,12 +528,12 @@ func ExtractHTTPErrorDetail(body []byte) string {
 		if block.Start < 0 || block.End > len(text) || block.Start >= block.End {
 			continue
 		}
-		if detail := extractJSONErrorDetail([]byte(text[block.Start:block.End])); detail != "" {
-			return withHTTPErrorLimitDetail(detail, exceeded)
+		if detail := extractJSONErrorDetail([]byte(text[block.Start:block.End]), secrets...); detail != "" {
+			return withHTTPErrorLimitDetail(detail, exceeded, secrets...)
 		}
 	}
 
-	return withHTTPErrorLimitDetail(compactHTTPErrorText(text), exceeded)
+	return withHTTPErrorLimitDetail(compactHTTPErrorText(text, secrets...), exceeded, secrets...)
 }
 
 // ExtractHTMLFormErrorDetail returns compact, redacted text from visible HTML
@@ -532,22 +543,22 @@ func ExtractHTMLFormErrorDetail(body []byte) string {
 	return compactHTTPErrorText(marked)
 }
 
-func withHTTPErrorLimitDetail(detail string, exceeded bool) string {
+func withHTTPErrorLimitDetail(detail string, exceeded bool, secrets ...string) string {
 	if !exceeded {
 		return detail
 	}
 	if detail == "" {
 		return "response exceeded 1 MiB"
 	}
-	return compactHTTPErrorText("response exceeded 1 MiB; " + detail)
+	return compactHTTPErrorText("response exceeded 1 MiB; "+detail, secrets...)
 }
 
-func extractJSONErrorDetail(body []byte) string {
+func extractJSONErrorDetail(body []byte, secrets ...string) string {
 	var decoded any
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		return ""
 	}
-	return compactHTTPErrorText(formatErrorValue(decoded, "", 0))
+	return compactHTTPErrorText(formatErrorValue(decoded, "", 0, secrets...), secrets...)
 }
 
 // inlineStyleHidesContent recognizes literal inline display and visibility values.
@@ -603,8 +614,11 @@ func inlineStyleHidesContent(style string) bool {
 	return properties["display"].hidden || properties["visibility"].hidden
 }
 
-func extractHTTPErrorText(body []byte) (string, string) {
+func extractHTTPErrorText(body []byte, secrets ...string) (string, string) {
 	body = body[:min(len(body), int(maxHTTPErrorResponseBytes))]
+	if len(secrets) > 0 {
+		body = []byte(redactKnownErrorSecrets(string(body), secrets))
+	}
 	doc, err := xhtml.Parse(bytes.NewReader(body))
 	if err != nil {
 		return "", ""
@@ -666,10 +680,11 @@ func extractHTTPErrorText(body []byte) (string, string) {
 		}
 	}
 	visit(doc, false)
-	return strings.Join(strings.Fields(messages.String()), " "), strings.Join(strings.Fields(visible.String()), " ")
+	return strings.Join(strings.Fields(redactKnownErrorSecrets(messages.String(), secrets)), " "),
+		strings.Join(strings.Fields(redactKnownErrorSecrets(visible.String(), secrets)), " ")
 }
 
-func formatErrorValue(value any, key string, depth int) string {
+func formatErrorValue(value any, key string, depth int, secrets ...string) string {
 	if depth >= maxHTTPErrorDetailDepth {
 		return ""
 	}
@@ -678,30 +693,30 @@ func formatErrorValue(value any, key string, depth int) string {
 	case map[string]any:
 		for _, candidate := range []string{"errors", "message", "status_message", "detail", "error_description", "reason", "error"} {
 			if nested, ok := valueForKey(typed, candidate); ok {
-				if formatted := formatErrorValue(nested, candidate, depth+1); formatted != "" {
+				if formatted := formatErrorValue(nested, candidate, depth+1, secrets...); formatted != "" {
 					return formatted
 				}
 			}
 		}
-		return formatErrorMap(typed, depth)
+		return formatErrorMap(typed, depth, secrets...)
 	case []any:
 		parts := make([]string, 0, len(typed))
 		for _, item := range typed {
-			if formatted := formatErrorValue(item, "", depth+1); formatted != "" {
+			if formatted := formatErrorValue(item, "", depth+1, secrets...); formatted != "" {
 				parts = append(parts, formatted)
 			}
 		}
 		return strings.Join(parts, "; ")
 	case string:
-		_, visible := extractHTTPErrorText([]byte(typed))
-		return compactHTTPErrorText(visible)
+		_, visible := extractHTTPErrorText([]byte(typed), secrets...)
+		return compactHTTPErrorText(visible, secrets...)
 	case nil:
 		return ""
 	default:
 		if isBooleanStatusKey(key) {
 			return ""
 		}
-		return RedactErrorDetail(fmt.Sprint(typed))
+		return RedactErrorDetail(fmt.Sprint(typed), secrets...)
 	}
 }
 
@@ -714,7 +729,7 @@ func isBooleanStatusKey(key string) bool {
 	}
 }
 
-func formatErrorMap(values map[string]any, depth int) string {
+func formatErrorMap(values map[string]any, depth int, secrets ...string) string {
 	if depth >= maxHTTPErrorDetailDepth {
 		return ""
 	}
@@ -730,7 +745,7 @@ func formatErrorMap(values map[string]any, depth int) string {
 		if strings.Contains(strings.ToLower(key), "token") || strings.Contains(strings.ToLower(key), "key") {
 			continue
 		}
-		formatted := formatErrorValue(values[key], key, depth+1)
+		formatted := formatErrorValue(values[key], key, depth+1, secrets...)
 		if formatted == "" {
 			continue
 		}
@@ -748,12 +763,13 @@ func valueForKey(values map[string]any, target string) (any, bool) {
 	return nil, false
 }
 
-func compactHTTPErrorText(text string) string {
-	text = strings.Join(strings.Fields(stdhtml.UnescapeString(text)), " ")
+func compactHTTPErrorText(text string, secrets ...string) string {
+	text = redactKnownErrorSecrets(stdhtml.UnescapeString(text), secrets)
+	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {
 		return ""
 	}
-	text = RedactErrorDetail(text)
+	text = RedactErrorDetail(text, secrets...)
 	if len(text) <= maxHTTPErrorDetailLength {
 		return text
 	}

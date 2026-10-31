@@ -616,10 +616,10 @@ func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (
 	if err != nil {
 		return createSpec{}, err
 	}
-	if len(wanted) == 1 {
+	if len(wanted) == 1 && !meta.KeepFolder {
 		return createSpec{path: wanted[0]}, nil
 	}
-	if len(wanted) > 1 {
+	if len(wanted) > 0 {
 		if needsWantedFileStaging(source, wanted) {
 			stagedRoot, cleanupPath, err := stageWantedFiles(tmpRoot, source, wanted)
 			if err != nil {
@@ -835,7 +835,7 @@ func globLiteral(value string) string {
 }
 
 func validateTorrentContent(path string, meta api.TorrentSubject) error {
-	expectedFiles, ok, err := expectedTorrentFiles(meta)
+	expectedFiles, scope, ok, err := expectedTorrentFiles(meta)
 	if err != nil {
 		return err
 	}
@@ -858,6 +858,10 @@ func validateTorrentContent(path string, meta api.TorrentSubject) error {
 	if nameOK && info.BestName() != expectedName {
 		return errors.New("torrent: candidate name mismatch")
 	}
+	if (scope == api.SubmissionContentScopeSingleFile && len(info.Files) != 0) ||
+		(scope == api.SubmissionContentScopeFileSet && len(info.Files) == 0) {
+		return errors.New("torrent: candidate folder layout mismatch")
+	}
 	actual := torrentContentPaths(info)
 	if len(actual) == 0 {
 		return errors.New("torrent: candidate has no files")
@@ -868,16 +872,16 @@ func validateTorrentContent(path string, meta api.TorrentSubject) error {
 	return nil
 }
 
-func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, bool, error) {
+func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, api.SubmissionContentScope, bool, error) {
 	inventory, ok, err := ResolveSubmissionContentInventory(meta)
 	if err != nil || !ok {
-		return nil, ok, err
+		return nil, "", ok, err
 	}
 	expected := make([]sourceContentFile, 0, len(inventory.Files))
 	for _, file := range inventory.Files {
 		expected = append(expected, sourceContentFile{path: file.TorrentPath, length: file.Size})
 	}
-	return expected, true, nil
+	return expected, inventory.Scope, true, nil
 }
 
 func expectedTorrentName(meta api.TorrentSubject) (string, bool, error) {
@@ -905,7 +909,7 @@ func expectedTorrentName(meta api.TorrentSubject) (string, bool, error) {
 	if len(wanted) == 0 {
 		return "", false, errors.New("torrent: no valid wanted files")
 	}
-	if len(wanted) == 1 {
+	if len(wanted) == 1 && !meta.KeepFolder {
 		return filepath.Base(wanted[0]), true, nil
 	}
 	return filepath.Base(filepath.Clean(source)), true, nil

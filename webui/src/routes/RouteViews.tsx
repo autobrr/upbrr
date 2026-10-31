@@ -314,7 +314,7 @@ function DescriptionsRoute() {
   return (
     <GuardedReleaseView
       route="descriptions"
-      completedResultAvailable={Boolean(session.descriptions.view.artifact?.descriptions.length)}
+      completedResultAvailable={Boolean(session.descriptions.view.artifact?.descriptions?.length)}
     >
       <DescriptionBuilderPage
         facet={session.descriptions}

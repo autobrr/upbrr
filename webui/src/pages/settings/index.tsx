@@ -21,6 +21,7 @@ import type {
 import { formatApplicationVersion } from "../../utils/applicationInfo";
 import APITokensSettings from "./api_tokens";
 import { AppearanceSettings } from "../../themes/AppearanceSettings";
+import { FieldHelp } from "../../components/ui/field-help";
 import { SettingsFieldGroups } from "../../settings/FieldGroups";
 import { confirmationDialogStyle, settingsStyle } from "../../settings/style";
 
@@ -38,7 +39,7 @@ const appearanceSection = {
 
 const trackerAuthSection = {
   key: "tracker_auth",
-  label: "Tracker Auth",
+  label: "Tracker authentication",
 };
 
 const apiTokensSection = {
@@ -401,7 +402,7 @@ export default function SettingsPage(props: Props) {
     return (
       <div className="flex flex-col gap-4">
         <div className={settingsStyle.subgroup}>
-          <div className={settingsStyle.title}>Tracker Auth</div>
+          <div className={settingsStyle.title}>Tracker authentication</div>
           <div className="flex flex-col gap-2.5">
             <span
               className={`${settingsStyle.authBadge} ${storageReady ? settingsStyle.authReady : settingsStyle.authWarning}`}
@@ -413,15 +414,23 @@ export default function SettingsPage(props: Props) {
               can relogin automatically during unattended uploads.
             </p>
           </div>
-          <label className={`${settingsStyle.field} max-w-[360px]`}>
-            <span>Filter trackers</span>
+          <div className={`${settingsStyle.field} max-w-[360px]`}>
+            <span className="flex flex-wrap items-center gap-1">
+              <label htmlFor="tracker-auth-filter">Filter trackers</label>
+              <FieldHelp label="Filter trackers" id="tracker-auth-filter-help">
+                Filter enabled tracker authentication entries by tracker name or authentication
+                capability. This changes only the visible list.
+              </FieldHelp>
+            </span>
             <input
+              id="tracker-auth-filter"
+              aria-describedby="tracker-auth-filter-help"
               className={settingsInputClass}
               value={trackerAuthFilter}
               onChange={(event) => setTrackerAuthFilter(event.target.value)}
               placeholder="BTN, cookies, api"
             />
-          </label>
+          </div>
         </div>
         {trackerAuthLoading ? (
           <p className="text-muted-foreground">Loading tracker auth...</p>
@@ -504,6 +513,7 @@ export default function SettingsPage(props: Props) {
                       aria-label={`${capability.displayName || capability.trackerID} 2FA code`}
                       className={`${settingsInputClass} w-36`}
                       value={code}
+                      aria-describedby={`tracker-2fa-help-${encodeURIComponent(capability.trackerID)}`}
                       inputMode="numeric"
                       autoComplete="one-time-code"
                       onChange={(event) =>
@@ -514,6 +524,13 @@ export default function SettingsPage(props: Props) {
                       }
                       placeholder="2FA code"
                     />
+                    <FieldHelp
+                      label={`${capability.displayName || capability.trackerID} 2FA code`}
+                      id={`tracker-2fa-help-${encodeURIComponent(capability.trackerID)}`}
+                    >
+                      Current one-time code for this pending login challenge, not the reusable
+                      authenticator setup URI. Submitting sends it immediately.
+                    </FieldHelp>
                     <Button
                       type="button"
                       aria-label={`Submit 2FA — ${capability.displayName || capability.trackerID}`}
@@ -528,6 +545,20 @@ export default function SettingsPage(props: Props) {
                     </Button>
                   </div>
                 ) : null}
+                <div className="flex flex-wrap items-center gap-1">
+                  <p className="helper">
+                    Actions take effect immediately, without Save. Delete Auth removes stored
+                    authentication state.
+                  </p>
+                  <FieldHelp
+                    label={`${capability.displayName || capability.trackerID} authentication actions`}
+                  >
+                    These actions take effect immediately, without Save. Import opens a browser file
+                    picker and uploads the selected Netscape or JSON cookie file's contents. Check
+                    Auth contacts the tracker when supported. Delete Auth removes stored
+                    authentication state; it does not delete your tracker account.
+                  </FieldHelp>
+                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {capability.supportsCookieFile ? (
                     <Button
@@ -700,14 +731,28 @@ export default function SettingsPage(props: Props) {
         <p className={pageStyle.eyebrow}>upbrr</p>
         <h1>Settings</h1>
         <p className={pageStyle.subtitle}>
-          Edit settings by section. Changes apply immediately and are saved to SQLite.
+          Edit settings by section, then Save to validate and apply them when active work can safely
+          finish. Appearance, API tokens and tracker authentication have separate immediate actions.
         </p>
       </header>
 
       <section className={pageStyle.panel}>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-col gap-2.5">
-            <p className={pageStyle.label}>Configuration</p>
+            <div className="flex items-center gap-1">
+              <p className={pageStyle.label}>Configuration</p>
+              <FieldHelp label="Configuration actions">
+                Reload discards the draft after confirmation. Export downloads configuration with
+                stored secrets encrypted. Import replaces persisted configuration after
+                confirmation; export a backup first. Save stages validated settings for activation,
+                which may remain pending while work finishes. Environment overrides can remain
+                effective after a stored value changes.
+              </FieldHelp>
+            </div>
+            <p className="helper">
+              Reload discards the draft; Import replaces saved configuration after confirmation.
+              Export a backup first.
+            </p>
             <p className="helper">Invalid changes will be rejected with a validation error.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -891,9 +936,17 @@ export default function SettingsPage(props: Props) {
                   {settingsSections.find((section) => section.key === settingsSection)?.label}
                 </h2>
                 {showAdvancedToggle ? (
-                  <label className={`${settingsStyle.switchRow} self-start gap-6`}>
-                    <span>Show advanced</span>
+                  <div className={`${settingsStyle.switchRow} self-start gap-6`}>
+                    <span className="flex min-w-0 flex-1 flex-wrap items-center self-start gap-1">
+                      <label htmlFor="settings-advanced">Show advanced</label>
+                      <FieldHelp label="Show advanced" id="settings-advanced-help">
+                        Show additional controls in this section. Hiding them does not reset their
+                        saved values. Compatibility-only controls are identified in their help.
+                      </FieldHelp>
+                    </span>
                     <Switch
+                      id="settings-advanced"
+                      aria-describedby="settings-advanced-help"
                       aria-label="Show advanced"
                       checked={advancedOpen}
                       onChange={(event) =>
@@ -903,7 +956,7 @@ export default function SettingsPage(props: Props) {
                         }))
                       }
                     />
-                  </label>
+                  </div>
                 ) : null}
                 {settingsSection === "image_hosting" ? (
                   renderImageHostingSection()

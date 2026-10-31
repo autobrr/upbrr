@@ -223,6 +223,18 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",
 		)
 	}
+	// Release-wide image prerequisites cannot be answered through tracker feedback.
+	if action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "" &&
+		s.current.Media != nil && s.current.Media.Status == api.StageStatusBlocked {
+		if len(s.current.Media.Failures) > 0 {
+			return feedback, false, fmt.Errorf(
+				"upbrr: release media blocked (interaction=%s): %w",
+				s.intent.interaction,
+				api.NewOperationError(s.current.Media.Failures[0].Failure, nil),
+			)
+		}
+		return feedback, false, fmt.Errorf("upbrr: release media blocked (interaction=%s): %s", s.intent.interaction, action.Prompt)
+	}
 	if s.intent.interaction == api.InteractionModeUnattended &&
 		action.Kind != api.RequiredActionAuthorizeRules && action.Kind != api.RequiredActionResolveTrackerPreparation &&
 		action.Kind != api.RequiredActionApproveTrackers {
@@ -737,16 +749,22 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		writer.question.Evidence = safeTerminalText(evidence.String())
 	}
 	if len(result.Questionnaire) > 0 && s.intent.interaction != api.InteractionModeUnattended {
-		review, reviewErr := promptYesNo(reader, s.streams.out, "Review comparison evidence before deciding? [y/N]: ", false)
-		if reviewErr != nil {
-			return feedback, false, reviewErr
+		review := slices.ContainsFunc(result.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+			return field.NeedsReview || (field.Required && strings.TrimSpace(field.Value) == "")
+		})
+		if !review {
+			var reviewErr error
+			review, reviewErr = promptYesNo(reader, s.streams.out, "Review comparison evidence before deciding? [y/N]: ", false)
+			if reviewErr != nil {
+				return feedback, false, reviewErr
+			}
 		}
 		if review {
 			projections := cliTrackerQuestionnaireProjection(s.current, action.TrackerID)
 			if projections == nil {
 				return feedback, false, errors.New("upbrr: comparison questionnaire projection is unavailable")
 			}
-			// The operator opted into these optional fields; other tracker inputs keep their normal prompt policy.
+			// Review these duplicate-stage fields; other tracker inputs keep their normal prompt policy.
 			for index := range projections.Projections[0].Questionnaire {
 				field := &projections.Projections[0].Questionnaire[index]
 				if slices.ContainsFunc(result.Questionnaire, func(question api.TrackerQuestionnaireRequirement) bool { return question.Key == field.Key }) {

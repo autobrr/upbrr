@@ -164,6 +164,11 @@ func (r *MemoryRepository) Save(ctx context.Context, ownerID string, expected ap
 	if cloned.Workflow.Revision != expected+1 {
 		return errors.New("release workflow: revision must advance by one")
 	}
+	if resolution := state.effectResolution; resolution != nil {
+		if err := r.resolveEffectUnknownLocked(ownerID, state.Workflow.ID, resolution.Kind, resolution.ScopeID, state.Workflow.UpdatedAt); err != nil {
+			return err
+		}
+	}
 	cloned.OwnerID = current.OwnerID
 	r.states[state.Workflow.ID] = &memoryState{State: cloned, cacheJSON: true}
 	return nil
@@ -681,13 +686,19 @@ func (r *MemoryRepository) ResolveEffectUnknown(
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("resolve workflow effect unknown: %w", err)
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.resolveEffectUnknownLocked(ownerID, workflowID, kind, scopeID, now)
+}
+
+func (r *MemoryRepository) resolveEffectUnknownLocked(
+	ownerID string, workflowID api.WorkflowID, kind api.WorkflowExternalEffectKind, scopeID string, now time.Time,
+) error {
 	ownerID = strings.TrimSpace(ownerID)
 	scopeID = strings.TrimSpace(scopeID)
 	if ownerID == "" || workflowID == "" || kind == "" || scopeID == "" || now.IsZero() {
 		return api.ErrReleaseWorkflowEffectConflict
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	var latestKey string
 	var latest api.ReleaseWorkflowEffectRecord
 	for key, effect := range r.effects {

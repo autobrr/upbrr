@@ -193,6 +193,12 @@ func TestParseSeasonEpisodeInstruction(t *testing.T) {
 		want  int
 	}{
 		{
+			name:  "plain special season",
+			parse: ParseSeasonInstruction,
+			value: "0",
+			want:  0,
+		},
+		{
 			name:  "explicit special season",
 			parse: ParseSeasonInstruction,
 			value: "S00",
@@ -326,11 +332,6 @@ func TestParseSeasonEpisodeInstruction(t *testing.T) {
 			value: "1x05",
 		},
 		{
-			name:  "zero season",
-			parse: ParseSeasonInstruction,
-			value: "0",
-		},
-		{
 			name:  "season overflow",
 			parse: ParseSeasonInstruction,
 			value: "10000",
@@ -427,15 +428,6 @@ func TestExtractSeasonTokenWidths(t *testing.T) {
 	}
 }
 
-func TestParseSeasonInstructionRejectsInvalidWidths(t *testing.T) {
-	t.Parallel()
-	for _, token := range []string{"1", "S1", "123", "S123", "000", "S001"} {
-		if _, err := ParseSeasonInstruction(token); !errors.Is(err, internalerrors.ErrInvalidInput) {
-			t.Errorf("ParseSeasonInstruction(%q) error = %v, want invalid input", token, err)
-		}
-	}
-}
-
 func TestExtractIgnoredTokensPreservePackAndEpisodeEvidence(t *testing.T) {
 	t.Parallel()
 	files := []string{"Example.Show.S02E03.mkv", "Example.Show.S02E04.mkv"}
@@ -459,6 +451,7 @@ func TestFormatSeasonInstructionRoundTrip(t *testing.T) {
 		token string
 		want  string
 	}{
+		{"2", "S02"}, {"5", "S05"}, {"s5", "S05"}, {"123", "S0123"},
 		{"99", "S99"}, {"0100", "S0100"}, {"0999", "S0999"}, {"1000", "S1000"},
 	} {
 		t.Run(tc.token, func(t *testing.T) {

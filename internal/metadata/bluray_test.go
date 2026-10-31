@@ -69,7 +69,7 @@ func TestShouldLookupBlurayWhenDescriptionNeedsBlurayData(t *testing.T) {
 				}
 			})
 
-			service := NewService(repo, WithConfig(tt.cfg))
+			service := newTestService(t, repo, WithConfig(tt.cfg))
 			gotEnabled := service.blurayLookupEnabled()
 			if gotEnabled != tt.wantEnabled {
 				t.Fatalf("blurayLookupEnabled() = %t, want %t", gotEnabled, tt.wantEnabled)
