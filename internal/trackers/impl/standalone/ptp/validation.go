@@ -15,7 +15,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:                 "standalone-ptp-constructibility-v6",
+		ID:                 "standalone-ptp-constructibility-v8",
 		LanguageAssessment: languageFailures,
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 			if err := ctx.Err(); err != nil {
@@ -23,6 +23,20 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 			}
 			meta := standalone.UploadSubjectForValidation(subject)
 			failures := make([]api.RuleFailure, 0, 3)
+			isDVD := strings.EqualFold(strings.TrimSpace(subject.DiscType), "DVD")
+			if strings.TrimSpace(subject.DiscType) == "" {
+				switch strings.ToUpper(strings.TrimSpace(meta.Source)) {
+				case "DVD", "PAL", "NTSC", "PAL DVD", "NTSC DVD":
+					isDVD = true
+				}
+			}
+			if isDVD && trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
+				failures = append(failures, trackers.NewRuleFailure(
+					"unsupported_disc",
+					"Full DVD disc uploads to PTP are unsupported because PTP requires a MediaInfo version that upbrr does not support.",
+					api.RuleDispositionStrict,
+				))
+			}
 			if reason := validateNoEnglishSubtitles(meta); reason != "" {
 				failures = append(failures, trackers.NewQuestionnaireRuleFailure("tracker_input.no_english_subtitles", reason))
 			}
