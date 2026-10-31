@@ -254,7 +254,7 @@ test("dirty settings survive navigation and require confirmation before logout o
     await page.getByRole("heading", { name: "Build Release Name" }).waitFor();
 
     await page.getByRole("button", { name: "Logging" }).click();
-    const level = page.getByRole("combobox", { name: "Level" });
+    const level = page.getByRole("combobox", { name: "Runtime log level" });
     await expect(level).toBeVisible();
     const originalLevel = await level.inputValue();
     const changedLevel = originalLevel === "debug" ? "trace" : "debug";
@@ -318,7 +318,7 @@ test("session loss in another tab discards private drafts and cached data", asyn
     await page.getByRole("heading", { name: "Build Release Name" }).waitFor();
 
     await page.getByRole("button", { name: "Logging" }).click();
-    const level = page.getByRole("combobox", { name: "Level" });
+    const level = page.getByRole("combobox", { name: "Runtime log level" });
     const originalLevel = await level.inputValue();
     await level.selectOption(originalLevel === "debug" ? "trace" : "debug");
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
@@ -340,7 +340,9 @@ test("session loss in another tab discards private drafts and cached data", asyn
     await page.getByRole("button", { name: "Sign In" }).click();
     await page.getByRole("heading", { name: "History" }).waitFor();
     await page.getByRole("button", { name: "Logging" }).click();
-    await expect(page.getByRole("combobox", { name: "Level" })).toHaveValue(originalLevel);
+    await expect(page.getByRole("combobox", { name: "Runtime log level" })).toHaveValue(
+      originalLevel,
+    );
   } finally {
     await app?.stop();
     await workspace.cleanup();
