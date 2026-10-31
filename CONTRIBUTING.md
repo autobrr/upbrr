@@ -104,6 +104,28 @@ Production documentation is built from the exact release tag and published only 
 
 ### Temporary dependency exceptions
 
+#### Blu-ray collector development pin
+
+The go-bdinfo collector API baseline follows the reviewed head of
+[upstream PR #46](https://github.com/autobrr/go-bdinfo/pull/46), currently
+`42be7cb0c64c29cec8c7abf8ab9e12c77ea5bf95`. ISO support additionally pins
+[the fork ISO fix](https://github.com/Audionut/go-bdinfo/pull/1) at
+`d14ed9d1f24ddfa8e172d09c5062ac09e7e7a228`; preserve that fix when reconciling
+subsequent upstream updates. The HDR bridge and native consumers use
+the first entry in each nonempty `Angles` list, the scanner's supported default;
+this does not provide configurable angle selection or separate Dolby Vision
+base/enhancement-layer support. Preserve strict clock, packet, range and completion
+validation when updating these dependencies.
+
+[Issue #829](https://github.com/autobrr/upbrr/issues/829) tracks subsequent PR-head
+changes and their compatibility tests. Review the full change from the previous
+pin, consume a compatible published bridge revision, and test the actual module
+graph without local replacement overlays. Reconcile dependent stacked work before
+advancing it. Eventual merged upstream adoption remains separate in
+[issue #754](https://github.com/autobrr/upbrr/issues/754).
+
+#### Vulnerability workflow history
+
 The scheduled vulnerability workflow retains Stylelint and all CSS checks. The former
 WebUI-only exception for GHSA-vfj7-8cjw-p6xm was removed after the advisory was withdrawn
 and a full WebUI scan without exceptions passed. The earlier
@@ -352,7 +374,8 @@ Alternatively, `make precommit` and `make prepush` run the configured Lefthook c
 - Before tracker changes, follow [`ADDING_TRACKERS.md`](ADDING_TRACKERS.md) for semantic file ownership, registration/config, auth, naming, questions, immutable upload preparation and validation contracts. Do not duplicate those algorithms in generic infrastructure or UI. In particular, [content-filename transformations are prohibited](ADDING_TRACKERS.md#content-filename-policy); upload/search-title resolution is separate.
 - Metadata producers resolve parser/provider/media/user precedence before publishing a generation. Trackers consume [finalized facts](ADDING_TRACKERS.md#finalized-metadata-source-of-truth), preserving provider overrides and presentation-independent facts. Changes need producer-to-projection coverage, conflicting/empty parser cases and a prepared-contract version bump when cached semantics change.
 - Generic release policy, paths, clients and metainfo live under `internal/releasepolicy`, `internal/pathing`, `internal/torrentclient` and `internal/torrent/metainfo`. Generic BBCode, descriptions and image hosting live under `internal/{bbcode,description,imagehosting}`; tracker policy stays tracker-owned.
-- `make architecturepolicy` enforces tracker semantic ownership and reviewed-name boundaries. Generated frontend bundles, populated embedded assets, Playwright output and local binaries remain uncommitted local artifacts.
+- Managed release files share the `internal/pathing/layout.ReleaseTempDirFor` owner under application `tmp`; feature outputs may nest inside it. Source fingerprints and verified-content identity govern reuse independently of names. Artifact layout changes require coordinated producers, persistence/hydration, consumers, History cleanup and upgrade docs; never add automatic legacy cache discovery or migration.
+- `make architecturepolicy` enforces release artifact roots, tracker semantic ownership and reviewed-name boundaries; `make pathpolicy` checks filesystem portability and containment conventions. Generated frontend bundles, populated embedded assets, Playwright output and local binaries remain uncommitted local artifacts.
 
 ### Shareable fixtures and examples
 

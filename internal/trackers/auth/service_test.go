@@ -26,11 +26,17 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func newTestService(cfg config.Config) *Service {
-	return newTestServiceWithLogger(cfg, api.NopLogger{})
+func newTestService(t *testing.T, cfg config.Config) *Service {
+	t.Helper()
+	return newTestServiceWithLogger(t, cfg, api.NopLogger{})
 }
 
-func newTestServiceWithLogger(cfg config.Config, logger api.Logger) *Service {
+func newTestServiceWithLogger(t *testing.T, cfg config.Config, logger api.Logger) *Service {
+	t.Helper()
+	if cfg.MainSettings.DBPath == "" {
+		// A fake auth adapter still uses the real cookie store for local status.
+		cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "upbrr.db")
+	}
 	registry := trackers.NewRegistry()
 	for _, definition := range []trackers.Definition{btn.New(), ptp.New(), rtf.New()} {
 		if err := registry.Register(definition); err != nil {
@@ -151,7 +157,7 @@ func TestLoginCreatesManual2FAChallengeBeforeReturning(t *testing.T) {
 			return Session{}, &Needs2FAError{TrackerID: "PTP"}
 		},
 	}
-	loginService := newTestService(cfg)
+	loginService := newTestService(t, cfg)
 	loginService.adapters = map[string]Adapter{"PTP": adapter}
 
 	status, err := loginService.Login(context.Background(), "PTP", api.TrackerAuthLoginRequest{})
@@ -162,7 +168,7 @@ func TestLoginCreatesManual2FAChallengeBeforeReturning(t *testing.T) {
 		t.Fatalf("expected active 2FA challenge, got %#v", status)
 	}
 
-	submitService := newTestService(cfg)
+	submitService := newTestService(t, cfg)
 	submitService.adapters = map[string]Adapter{"PTP": adapter}
 	status, err = submitService.Submit2FA(context.Background(), status.ChallengeID, "123456")
 	if err != nil {
@@ -185,7 +191,7 @@ func TestBTNCapabilityAndLocalStatusSemantics(t *testing.T) {
 			"BTN": {},
 		}},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	caps, err := service.Capabilities(ctx)
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
@@ -217,7 +223,7 @@ func TestBTNCapabilityAndLocalStatusSemantics(t *testing.T) {
 	}
 
 	cfg.Trackers.Trackers["BTN"] = config.TrackerConfig{Username: "user", Password: "pass"}
-	service = newTestService(cfg)
+	service = newTestService(t, cfg)
 	status, err = service.Status(ctx, "BTN")
 	if err != nil {
 		t.Fatalf("Status credentials: %v", err)
@@ -230,7 +236,7 @@ func TestBTNCapabilityAndLocalStatusSemantics(t *testing.T) {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
 	cfg.Trackers.Trackers["BTN"] = config.TrackerConfig{}
-	service = newTestService(cfg)
+	service = newTestService(t, cfg)
 	status, err = service.Status(ctx, "BTN")
 	if err != nil {
 		t.Fatalf("Status cookies: %v", err)
@@ -241,7 +247,7 @@ func TestBTNCapabilityAndLocalStatusSemantics(t *testing.T) {
 
 	cfg.Metadata.BTNAPI = ""
 	cfg.Trackers.Trackers["BTN"] = config.TrackerConfig{Username: "user", Password: "pass"}
-	service = newTestService(cfg)
+	service = newTestService(t, cfg)
 	status, err = service.Status(ctx, "BTN")
 	if err != nil {
 		t.Fatalf("Status missing API key: %v", err)
@@ -251,7 +257,7 @@ func TestBTNCapabilityAndLocalStatusSemantics(t *testing.T) {
 	}
 
 	cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "missing-auth", "upbrr.db")
-	service = newTestService(cfg)
+	service = newTestService(t, cfg)
 	status, err = service.Status(ctx, "BTN")
 	if err != nil {
 		t.Fatalf("Status missing API key without encrypted storage: %v", err)
@@ -294,7 +300,7 @@ func TestSubmit2FARetriesAdapterLoginWithCurrentConfigAndCode(t *testing.T) {
 			return Session{TrackerID: "PTP", State: SessionStateReady}, nil
 		},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	service.adapters = map[string]Adapter{"PTP": adapter}
 
 	status, err := service.Login(context.Background(), "PTP", api.TrackerAuthLoginRequest{})
@@ -339,7 +345,7 @@ func TestSubmit2FABTNSuccessPreservesMissingAPIStatus(t *testing.T) {
 			return Session{TrackerID: "BTN", State: SessionStateReady}, nil
 		},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	service.adapters = map[string]Adapter{"BTN": adapter}
 
 	status, err := service.Login(context.Background(), "BTN", api.TrackerAuthLoginRequest{})
@@ -396,7 +402,7 @@ func TestSubmit2FAFailureKeepsChallengeRetryVisible(t *testing.T) {
 			}
 		},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	service.adapters = map[string]Adapter{"PTP": adapter}
 
 	status, err := service.Login(context.Background(), "PTP", api.TrackerAuthLoginRequest{})
@@ -429,7 +435,7 @@ func TestSubmit2FATransientSubmittedCodeFailureKeepsChallengeRetryVisible(t *tes
 			},
 		},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	service.challenges = NewChallengeManager(defaultChallengeTTL)
 	service.adapters = map[string]Adapter{
 		"PTP": trackerAdapter{
@@ -481,7 +487,7 @@ func TestSubmit2FAPreCodeLoginFailureDoesNotExposeRetryChallenge(t *testing.T) {
 			},
 		},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	service.challenges = NewChallengeManager(defaultChallengeTTL)
 	service.adapters = map[string]Adapter{
 		"PTP": trackerAdapter{
@@ -530,7 +536,7 @@ func TestSubmit2FAConfirmedInvalidFailureDoesNotExposeRetryChallenge(t *testing.
 			},
 		},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	service.challenges = NewChallengeManager(defaultChallengeTTL)
 	service.adapters = map[string]Adapter{
 		"PTP": trackerAdapter{
@@ -580,7 +586,7 @@ func TestSubmit2FASubmittedCodeAuthKeyFailureKeepsChallengeRetryVisible(t *testi
 			},
 		},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	service.challenges = NewChallengeManager(defaultChallengeTTL)
 	service.adapters = map[string]Adapter{
 		"BTN": trackerAdapter{
@@ -638,7 +644,7 @@ func TestSubmit2FATransientParserFailureDoesNotExposeRetryChallenge(t *testing.T
 			return Session{}, classifyAdapterError("BTN", errors.New("trackers: BTN 2FA token not found"))
 		},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	service.adapters = map[string]Adapter{"BTN": adapter}
 
 	status, err := service.Login(context.Background(), "BTN", api.TrackerAuthLoginRequest{})
@@ -677,7 +683,7 @@ func TestSubmit2FARejectsChallengeAfterTrackerConfigReplacement(t *testing.T) {
 			return Session{}, &Needs2FAError{TrackerID: "PTP"}
 		},
 	}
-	loginService := newTestService(cfg)
+	loginService := newTestService(t, cfg)
 	loginService.adapters = map[string]Adapter{"PTP": adapter}
 
 	status, err := loginService.Login(context.Background(), "PTP", api.TrackerAuthLoginRequest{})
@@ -692,7 +698,7 @@ func TestSubmit2FARejectsChallengeAfterTrackerConfigReplacement(t *testing.T) {
 			},
 		},
 	}
-	submitService := newTestService(replacedCfg)
+	submitService := newTestService(t, replacedCfg)
 	submitService.adapters = map[string]Adapter{"PTP": adapter}
 	_, err = submitService.Submit2FA(context.Background(), status.ChallengeID, "123456")
 	if err == nil {
@@ -724,7 +730,7 @@ func TestSubmit2FAUsesCanceledContextWithoutConsumingChallenge(t *testing.T) {
 			return Session{}, ctx.Err()
 		},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	service.adapters = map[string]Adapter{"PTP": adapter}
 	service.challenges = challenges
 	ownerKey, err := service.challengeOwnerKey("PTP")
@@ -750,7 +756,7 @@ func TestSubmit2FAUsesCanceledContextWithoutConsumingChallenge(t *testing.T) {
 func TestLoginMissingCredentialsReturnsLoginRequiredWithoutChallenge(t *testing.T) {
 	t.Parallel()
 
-	status, err := newTestService(config.Config{}).Login(
+	status, err := newTestService(t, config.Config{}).Login(
 		context.Background(),
 		"PTP",
 		api.TrackerAuthLoginRequest{},
@@ -763,6 +769,22 @@ func TestLoginMissingCredentialsReturnsLoginRequiredWithoutChallenge(t *testing.
 	}
 	if status.Needs2FA || strings.TrimSpace(status.ChallengeID) != "" {
 		t.Fatalf("missing credentials must not create manual 2FA challenge: %#v", status)
+	}
+}
+
+func TestLoginMissingCredentialsIgnoresDefaultDatabase(t *testing.T) {
+	root := t.TempDir()
+	// A default-path lookup must fail even on hosts with a writable home directory.
+	if err := os.WriteFile(filepath.Join(root, "upbrr"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", root)
+	status, err := newTestService(t, config.Config{}).Login(t.Context(), "PTP", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != StateLoginRequired {
+		t.Fatalf("test service depended on the default database: state=%s", status.State)
 	}
 }
 
@@ -786,7 +808,7 @@ func TestLoginBTNCredentialsWithoutAPIAttemptsSessionValidation(t *testing.T) {
 			return Session{TrackerID: "BTN", State: SessionStateReady}, nil
 		},
 	}
-	service := newTestService(cfg)
+	service := newTestService(t, cfg)
 	service.adapters = map[string]Adapter{"BTN": adapter}
 
 	status, err := service.Login(context.Background(), "BTN", api.TrackerAuthLoginRequest{})
@@ -810,7 +832,7 @@ func TestLoginBTNCookiesWithoutAPIPreservesMissingAPIStatus(t *testing.T) {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
 
-	status, err := newTestService(config.Config{
+	status, err := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 	}).Login(ctx, "BTN", api.TrackerAuthLoginRequest{})
 	if err != nil {
@@ -844,7 +866,7 @@ func TestStatusConfiguredOTPURIAvoidsManualChallenge(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			service := newTestService(config.Config{
+			service := newTestService(t, config.Config{
 				Trackers: config.TrackersConfig{
 					Trackers: map[string]config.TrackerConfig{
 						"PTP": trackerCfg,
@@ -900,7 +922,7 @@ func TestStatusPTPRequiresAnnounceURLForConfiguredLogin(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			service := newTestService(config.Config{
+			service := newTestService(t, config.Config{
 				MainSettings: config.MainSettingsConfig{DBPath: newTrackerAuthTestDB(t)},
 				Trackers: config.TrackersConfig{
 					Trackers: map[string]config.TrackerConfig{"PTP": tt.cfg},
@@ -925,7 +947,7 @@ func TestStatusPTPCookiesRemainConfiguredWithoutAnnounceURL(t *testing.T) {
 	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "PTP", map[string]string{"session": "abc"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{"PTP": {Username: "user", Password: "pass"}},
@@ -988,7 +1010,7 @@ func TestStatusConfiguredAuthReportsEncryptedStorageUnavailableWhenPersistenceRe
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			service := newTestService(config.Config{
+			service := newTestService(t, config.Config{
 				MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")},
 				Trackers: config.TrackersConfig{
 					Trackers: map[string]config.TrackerConfig{tt.spec.id: tt.cfg},
@@ -1087,7 +1109,7 @@ func TestStatusStateMessageParityForAuthBlockers(t *testing.T) {
 
 			cfg := tt.cfg
 			cfg.MainSettings.DBPath = tt.dbPath
-			service := newTestService(cfg)
+			service := newTestService(t, cfg)
 			status := service.statusForSpec(context.Background(), tt.spec)
 			if status.State != tt.wantState {
 				t.Fatalf("expected state %q, got %#v", tt.wantState, status)
@@ -1116,7 +1138,7 @@ func TestStatusCookieReadErrorStaysDistinctFromMissingCookies(t *testing.T) {
 		t.Fatalf("corrupt cookie row: %v", err)
 	}
 
-	status, err := newTestService(config.Config{
+	status, err := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 	}).Status(ctx, "PTP")
 	if err != nil {
@@ -1129,7 +1151,7 @@ func TestStatusCookieReadErrorStaysDistinctFromMissingCookies(t *testing.T) {
 		t.Fatalf("cookie read error was reported as missing cookies: %#v", status)
 	}
 
-	missingStatus, err := newTestService(config.Config{
+	missingStatus, err := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: newTrackerAuthTestDB(t)},
 	}).Status(ctx, "PTP")
 	if err != nil {
@@ -1153,7 +1175,7 @@ func TestStatusCookieParseErrorStaysDistinctFromMissingCookies(t *testing.T) {
 		t.Fatalf("write malformed cookie file: %v", err)
 	}
 
-	status, err := newTestService(config.Config{
+	status, err := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 	}).Status(ctx, "PTP")
 	if err != nil {
@@ -1188,7 +1210,7 @@ func TestStatusConfiguredAuthReportsCoexistingCookies(t *testing.T) {
 			if err := cookies.SaveTrackerCookieMap(ctx, dbPath, tt.trackerID, map[string]string{"session": "abc"}); err != nil {
 				t.Fatalf("SaveTrackerCookieMap: %v", err)
 			}
-			service := newTestService(config.Config{
+			service := newTestService(t, config.Config{
 				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 				Trackers: config.TrackersConfig{
 					Trackers: map[string]config.TrackerConfig{tt.trackerID: tt.cfg},
@@ -1213,7 +1235,7 @@ func TestStatusHDBPasskeyWithoutCookiesIsNotUploadReady(t *testing.T) {
 	t.Parallel()
 
 	dbPath := newTrackerAuthTestDB(t)
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{"HDB": {Username: "user", Passkey: "passkey"}},
@@ -1233,7 +1255,7 @@ func TestLoginHDBWithoutCredentialLoginReturnsStatus(t *testing.T) {
 	t.Parallel()
 
 	dbPath := newTrackerAuthTestDB(t)
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{"HDB": {Username: "user", Passkey: "passkey"}},
@@ -1252,7 +1274,7 @@ func TestLoginHDBWithoutCredentialLoginReturnsStatus(t *testing.T) {
 func TestStatusCookiesOnlyReportsEncryptedStorageUnavailable(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")},
 	})
 	status := service.statusForSpec(context.Background(), trackerSpec{
@@ -1270,7 +1292,7 @@ func TestStatusCookiesOnlyReportsEncryptedStorageUnavailable(t *testing.T) {
 func TestRTFStatusTreatsCredentialsAsRefreshAuth(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"RTF": {Username: "user", Password: "pass"},
@@ -1290,7 +1312,7 @@ func TestRTFStatusTreatsCredentialsAsRefreshAuth(t *testing.T) {
 func TestFFAdvertisesCookieImportWithRemoteLoginAction(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(config.Config{})
+	service := newTestService(t, config.Config{})
 	caps, err := service.Capabilities(context.Background())
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
@@ -1318,7 +1340,7 @@ func TestValidateWithoutAdapterReportsUnsupportedRemoteValidation(t *testing.T) 
 			},
 		},
 	}
-	status, err := newTestService(cfg).Validate(context.Background(), "ASC")
+	status, err := newTestService(t, cfg).Validate(context.Background(), "ASC")
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -1831,7 +1853,7 @@ func TestImportCookiesRejectsMalformedArrayEntryWithoutReplacingCookies(t *testi
 	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "existing"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
-	service := newTestService(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
+	service := newTestService(t, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 
 	_, err := service.ImportCookies(ctx, "AR", "cookies.json", `[
 		{"name":"session","value":"replacement"},
@@ -1861,7 +1883,7 @@ func TestImportCookiesRejectsOverCapWithoutReplacingCookies(t *testing.T) {
 	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "existing"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
-	service := newTestService(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
+	service := newTestService(t, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 
 	_, err := service.ImportCookies(ctx, "AR", "cookies.txt", strings.Repeat("x", MaxCookieImportContentBytes+1))
 	if err == nil {
@@ -1895,7 +1917,7 @@ func TestImportCookiesReportsMergedCookieCount(t *testing.T) {
 	if err := os.WriteFile(legacyPath, []byte(".example.test\tTRUE\t/\tTRUE\t0\tlegacy\tfrom-file\n"), 0o600); err != nil {
 		t.Fatalf("write legacy cookies: %v", err)
 	}
-	service := newTestService(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
+	service := newTestService(t, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 
 	status, err := service.ImportCookies(ctx, "AR", "cookies.json", `{"session":"from-db"}`)
 	if err != nil {
@@ -1911,7 +1933,7 @@ func TestImportCookiesPreservesBTNMissingAPIStatus(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := newTrackerAuthTestDB(t)
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 			"BTN": {},
@@ -1930,7 +1952,7 @@ func TestImportCookiesPreservesBTNMissingAPIStatus(t *testing.T) {
 func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(config.Config{})
+	service := newTestService(t, config.Config{})
 	caps, err := service.Capabilities(context.Background())
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
@@ -1990,7 +2012,7 @@ func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
 	t.Parallel()
 
 	logger := &trackerAuthRecordingLogger{}
-	service := newTestServiceWithLogger(config.Config{
+	service := newTestServiceWithLogger(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: newTrackerAuthTestDB(t)},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
@@ -2046,7 +2068,7 @@ func TestTrackerAuthWarningStatusDoesNotLogSuccess(t *testing.T) {
 	t.Parallel()
 
 	logger := &trackerAuthRecordingLogger{}
-	service := newTestServiceWithLogger(config.Config{}, logger)
+	service := newTestServiceWithLogger(t, config.Config{}, logger)
 	service.logStatus("login completed", api.TrackerAuthStatus{
 		TrackerID: "BTN",
 		State:     StateConfigured,
@@ -2067,7 +2089,7 @@ func TestTrackerAuthConfiguredLoginStatusUsesInfo(t *testing.T) {
 	t.Parallel()
 
 	logger := &trackerAuthRecordingLogger{}
-	service := newTestServiceWithLogger(config.Config{}, logger)
+	service := newTestServiceWithLogger(t, config.Config{}, logger)
 	service.logStatus("login completed", api.TrackerAuthStatus{
 		TrackerID: "BTN",
 		State:     StateConfigured,
@@ -2086,7 +2108,7 @@ func TestTrackerAuthConfiguredLoginStatusUsesInfo(t *testing.T) {
 func TestTrackerAuthRejectsCaseCollidingConfigIDs(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"ar": {Username: "user", Password: "pass"},
@@ -2115,7 +2137,7 @@ func TestTrackerAuthRejectsCaseCollidingConfigIDs(t *testing.T) {
 func TestTrackerAuthKeepsCaseInsensitiveSingleConfigLookup(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"ar": {Username: "user", Password: "pass"},
@@ -2135,7 +2157,7 @@ func TestTrackerAuthKeepsCaseInsensitiveSingleConfigLookup(t *testing.T) {
 func TestTrackerAuthDoesNotFoldUnicodeLookalikeTrackerIDs(t *testing.T) {
 	t.Parallel()
 
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"AR": {Username: "user", Password: "pass"},
@@ -2174,7 +2196,7 @@ func TestDeleteARAuthClearsCookiesAuthStateAndLegacyAuth(t *testing.T) {
 		t.Fatalf("write legacy auth: %v", err)
 	}
 
-	service := newTestService(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
+	service := newTestService(t, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 	status, err := service.Delete(ctx, "AR")
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -2202,7 +2224,7 @@ func TestDeleteARAuthStatusRefreshIgnoresCancellationAfterMutation(t *testing.T)
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
 	deleteCtx, cancel := context.WithCancel(context.Background())
-	service := newTestService(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
+	service := newTestService(t, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 	service.afterDeleteCleanup = cancel
 
 	status, err := service.Delete(deleteCtx, "AR")
@@ -2233,7 +2255,7 @@ func TestDeleteARAuthLegacyPathFailureReturnsError(t *testing.T) {
 	if err := os.WriteFile(cookiesDir, []byte("blocks cookie path"), 0o600); err != nil {
 		t.Fatalf("write cookie path blocker: %v", err)
 	}
-	service := newTestService(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
+	service := newTestService(t, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 
 	_, err := service.Delete(ctx, "AR")
 	if err == nil {
@@ -2282,7 +2304,7 @@ func TestDeleteARAuthWithoutWebAuthMaterialDeletesStaleAuth(t *testing.T) {
 	if err := os.WriteFile(cookiePath, []byte(".alpharatio.cc\tTRUE\t/\tTRUE\t0\tsession\tabc\n"), 0o600); err != nil {
 		t.Fatalf("write legacy cookies: %v", err)
 	}
-	service := newTestService(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
+	service := newTestService(t, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 
 	_, err = service.Delete(ctx, "AR")
 	if err != nil {
@@ -2328,7 +2350,7 @@ func TestDeleteARCookieFailureRestoresAuthState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(legacyCookiePath, "child"), []byte("blocks remove"), 0o600); err != nil {
 		t.Fatalf("write legacy cookie child: %v", err)
 	}
-	service := newTestService(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
+	service := newTestService(t, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 
 	_, err = service.Delete(ctx, "AR")
 	if err == nil {
@@ -2417,7 +2439,7 @@ func TestValidateBoundsRemoteAuthAndFailedValidationIsNotReady(t *testing.T) {
 			}
 		},
 	}
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 			"BTN": {Username: "user", Password: "pass"},
@@ -2477,7 +2499,7 @@ func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T
 	for _, trackerID := range trackerIDs {
 		trackerConfigs[trackerID] = config.TrackerConfig{}
 	}
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Metadata:     config.MetadataConfig{BTNAPI: "api-key"},
 		Trackers:     config.TrackersConfig{Trackers: trackerConfigs},

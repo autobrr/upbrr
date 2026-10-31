@@ -145,11 +145,11 @@ describe("AppearanceProvider", () => {
       }),
     ).toHaveLength(8);
     fireEvent.click(screen.getByRole("radio", { name: "Kanagawa Wave" }));
-    expect(screen.getByRole("group", { name: "Accent" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Accent color" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "pink" }));
     expect(document.documentElement.dataset.accent).toBe("pink");
     fireEvent.click(screen.getByRole("radio", { name: "Napster" }));
-    expect(screen.queryByRole("group", { name: "Accent" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Accent color" })).toBeNull();
     expect(screen.getByText(/light-only theme/)).toBeVisible();
     expect(document.documentElement.classList.contains("light")).toBe(true);
     expect(

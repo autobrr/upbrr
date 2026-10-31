@@ -6,6 +6,7 @@ import type {
   HDRAnalysisTargetResult,
   HDRTypedArtifact,
 } from "../../api/generated/release-workflow";
+import { FieldHelp } from "../../components/ui/field-help";
 import { pageStyle } from "../../components/ui/pageStyle";
 import { Select } from "../../components/ui/select";
 import type { HDRAnalysisFacet } from "../../releaseSession/types";
@@ -55,7 +56,7 @@ const artifactTrackLabel = (target: HDRAnalysisTargetResult, artifact: HDRTypedA
   const track = target.decoded
     ?.flatMap((result) => result.audioTracks || [])
     .find((item) => item.trackId === artifact.audioTrackId);
-  return `${artifactLabel(artifact.kind, artifact.format)}${track ? ` · Track ${track.ordinal} · ${track.language || "und"} · ${track.codec} · ${track.channelLayout}` : ""}`;
+  return `${artifactLabel(artifact.kind, artifact.format)}${track ? ` · Track ${track.ordinal} · ${track.language || "unknown language"} · ${track.codec} · ${track.channelLayout}` : ""}`;
 };
 const retryable = new Set(["failed", "canceled", "interrupted", "unsupported", "inconclusive"]);
 
@@ -203,14 +204,21 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
         </section>
       )}
       <section className={`${pageStyle.panel} grid gap-3`} aria-labelledby="hdr-selection">
-        <h2 id="hdr-selection">Prepared targets</h2>
+        <div className="flex flex-wrap items-center gap-1">
+          <h2 id="hdr-selection">Prepared targets</h2>
+          <FieldHelp label="Prepared targets" id="hdr-targets-help">
+            Select supported media targets from the current prepared release. One supported target
+            is selected automatically; multiple targets need explicit selection. Unsupported targets
+            retain their reason inline.
+          </FieldHelp>
+        </div>
         <p className={pageStyle.subtitle}>
           File sources require a unique HEVC video track. For Blu-ray, enable the HDR metadata check
           in playlist selection first. Changing the peak estimator reuses complete retained
           metadata.
         </p>
         {view.targets.length === 0 && (
-          <p>No supported MKV or Blu-ray target is available. Prepare a supported source first.</p>
+          <p>No supported file or Blu-ray target is available. Prepare a supported source first.</p>
         )}
         <fieldset disabled={blocked} className="grid gap-2">
           <legend className="sr-only">Select HDR targets in source order</legend>
@@ -218,6 +226,7 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
             <label key={target.id} className="flex items-start gap-2">
               <input
                 type="checkbox"
+                aria-describedby="hdr-targets-help"
                 checked={selected.includes(target.id)}
                 disabled={!target.supported}
                 onChange={(event) =>
@@ -240,22 +249,40 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
             </label>
           ))}
           <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)]">
-            <label className="grid min-w-0 gap-1.5 text-sm font-medium" htmlFor="hdr-peak">
-              Peak estimator
+            <div className="grid min-w-0 gap-1.5 text-sm font-medium">
+              <span className="flex flex-wrap items-center gap-1">
+                <label htmlFor="hdr-peak">Peak estimator</label>
+                <FieldHelp label="Peak estimator" id="hdr-peak-help">
+                  Select how the HDR10+ plot estimates peak brightness from native metadata.
+                  Histogram uses the maximum supplied distribution value; Last histogram value uses
+                  the last supplied value. MaxSCL uses the maximum scene component, or a luminance
+                  estimate weighted from the three RGB components. This does not change decoded
+                  picture measurements. Complete retained metadata can be reused.
+                </FieldHelp>
+              </span>
               <Select
+                aria-describedby="hdr-peak-help"
                 id="hdr-peak"
                 value={peakSource}
                 onChange={(event) => setPeakSource(event.target.value)}
               >
                 <option value="histogram">Histogram (default)</option>
-                <option value="histogram99">Histogram 99th percentile</option>
-                <option value="max-scl">MaxSCL</option>
-                <option value="max-scl-luminance">MaxSCL luminance</option>
+                <option value="histogram99">Last histogram value</option>
+                <option value="max-scl">Maximum scene component (MaxSCL)</option>
+                <option value="max-scl-luminance">Scene-component luminance (MaxSCL)</option>
               </Select>
-            </label>
-            <label className="grid min-w-0 gap-1.5 text-sm font-medium" htmlFor="hdr-formats">
-              Metadata formats
+            </div>
+            <div className="grid min-w-0 gap-1.5 text-sm font-medium">
+              <span className="flex flex-wrap items-center gap-1">
+                <label htmlFor="hdr-formats">Metadata formats</label>
+                <FieldHelp label="Metadata formats" id="hdr-formats-help">
+                  Automatic discovery scans HDR10+ and Dolby Vision independently. Request one
+                  format explicitly or require both; requiring an absent format prevents a complete
+                  result. Static HDR10 and HLG do not supply dynamic metadata plots.
+                </FieldHelp>
+              </span>
               <Select
+                aria-describedby="hdr-formats-help"
                 id="hdr-formats"
                 value={formats}
                 onChange={(event) => setFormats(event.target.value)}
@@ -265,10 +292,18 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
                 <option value="dolby-vision">Dolby Vision only</option>
                 <option value="both">Require both formats</option>
               </Select>
-            </label>
-            <label className="grid min-w-0 gap-1.5 text-sm font-medium" htmlFor="hdr-mode">
-              Analysis mode
+            </div>
+            <div className="grid min-w-0 gap-1.5 text-sm font-medium">
+              <span className="flex flex-wrap items-center gap-1">
+                <label htmlFor="hdr-mode">Analysis mode</label>
+                <FieldHelp label="Analysis mode" id="hdr-mode-help">
+                  Choose the work to request. The default reads native metadata and primary audio
+                  without decoding video. Picture modes add sampled, full-frame or bounded checks;
+                  individual mode requests only the picture checks you enable and no audio.
+                </FieldHelp>
+              </span>
               <Select
+                aria-describedby="hdr-mode-help"
                 id="hdr-mode"
                 value={analysisMode}
                 onChange={(event) => {
@@ -285,7 +320,7 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
                 <option value="boundary">Bounded scene synchronization</option>
                 <option value="manual">Metadata only / individual picture checks</option>
               </Select>
-            </label>
+            </div>
           </div>
           <fieldset className="grid gap-2">
             <legend>Picture and audio checks</legend>
@@ -315,42 +350,80 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
               </p>
             )}
             {automatic && (
-              <label className="flex gap-2">
-                <input
-                  type="checkbox"
-                  checked={fullFrames}
-                  onChange={(event) => setFullFrames(event.target.checked)}
-                />
-                Measure every video frame (slower)
-              </label>
+              <div className="flex items-start gap-1">
+                <label className="flex gap-2">
+                  <input
+                    type="checkbox"
+                    aria-describedby="hdr-full-frames-help"
+                    checked={fullFrames}
+                    onChange={(event) => setFullFrames(event.target.checked)}
+                  />
+                  Measure every video frame (slower)
+                </label>
+                <FieldHelp label="Measure every video frame (slower)" id="hdr-full-frames-help">
+                  Replace sampled automatic picture measurements with a full-frame pass. Complete
+                  metadata and audio are still requested. This increases decoding work; it does not
+                  align a reference source automatically.
+                </FieldHelp>
+              </div>
             )}
             {boundary && (
-              <label className="flex gap-2">
-                <input
-                  type="checkbox"
-                  checked={boundaryAudio}
-                  onChange={(event) => {
-                    setBoundaryAudio(event.target.checked);
-                    if (!event.target.checked) setAllAudioTracks(false);
-                  }}
-                />
-                Analyze audio
-              </label>
+              <div className="flex items-start gap-1">
+                <label className="flex gap-2">
+                  <input
+                    type="checkbox"
+                    aria-describedby="hdr-audio-help"
+                    checked={boundaryAudio}
+                    onChange={(event) => {
+                      setBoundaryAudio(event.target.checked);
+                      if (!event.target.checked) setAllAudioTracks(false);
+                    }}
+                  />
+                  Analyze audio
+                </label>
+                <FieldHelp label="Analyze audio" id="hdr-audio-help">
+                  Include audio analysis alongside bounded scene checks. Without this option,
+                  bounded mode requests no audio outputs. The primary prepared audio track is used
+                  unless all tracks are selected.
+                </FieldHelp>
+              </div>
             )}
             {audioEnabled && (
-              <label className="flex gap-2">
-                <input
-                  type="checkbox"
-                  checked={allAudioTracks}
-                  onChange={(event) => setAllAudioTracks(event.target.checked)}
-                />
-                Analyze all audio tracks (up to 64)
-              </label>
+              <div className="flex items-start gap-1">
+                <label className="flex gap-2">
+                  <input
+                    type="checkbox"
+                    aria-describedby="hdr-all-audio-help"
+                    checked={allAudioTracks}
+                    onChange={(event) => setAllAudioTracks(event.target.checked)}
+                  />
+                  Analyze all audio tracks (up to 64)
+                </label>
+                <FieldHelp label="Analyze all audio tracks (up to 64)" id="hdr-all-audio-help">
+                  Analyze every prepared audio track instead of the primary track, retaining
+                  separate outcomes and outputs. More tracks require more decoding work. Selections
+                  over 64 tracks are rejected rather than truncated.
+                </FieldHelp>
+              </div>
             )}
             {pictureEnabled && (
-              <label className="grid gap-1">
-                Video decoder threads (0 uses the mode default)
+              <div className="grid gap-1">
+                <span className="flex flex-wrap items-center gap-1">
+                  <label htmlFor="hdr-threads">
+                    Video decoder threads (0 uses the mode default)
+                  </label>
+                  <FieldHelp
+                    label="Video decoder threads (0 uses the mode default)"
+                    id="hdr-threads-help"
+                  >
+                    Requested maximum threads for picture decoding: an integer from 0 to 64. Zero
+                    uses the mode default; CPU availability and shared budgets may reduce the actual
+                    count. This does not set audio-decoder threads.
+                  </FieldHelp>
+                </span>
                 <input
+                  aria-describedby="hdr-threads-help"
+                  id="hdr-threads"
                   type="number"
                   min={0}
                   max={64}
@@ -359,28 +432,44 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
                   className="rounded border border-border bg-card p-2"
                   onChange={(event) => setDecoderThreads(Number(event.target.value))}
                 />
-              </label>
+              </div>
             )}
             {!automatic && !audioOnly && (
               <>
                 {!boundary && (
+                  <div className="flex items-start gap-1">
+                    <label className="flex gap-2">
+                      <input
+                        type="checkbox"
+                        aria-describedby="hdr-scene-sync-help"
+                        checked={sceneSync}
+                        onChange={(event) => setSceneSync(event.target.checked)}
+                      />
+                      Scene synchronization
+                    </label>
+                    <FieldHelp label="Scene synchronization" id="hdr-scene-sync-help">
+                      Compare native scene boundaries with decoded picture evidence. This is the
+                      separate scene check in individual mode; bounded mode selects its own limited
+                      windows. Inconclusive evidence does not establish a match.
+                    </FieldHelp>
+                  </div>
+                )}
+                <div className="flex items-start gap-1">
                   <label className="flex gap-2">
                     <input
                       type="checkbox"
-                      checked={sceneSync}
-                      onChange={(event) => setSceneSync(event.target.checked)}
+                      aria-describedby="hdr-active-area-help"
+                      checked={activeArea}
+                      onChange={(event) => setActiveArea(event.target.checked)}
                     />
-                    Scene synchronization
+                    Active-area borders
                   </label>
-                )}
-                <label className="flex gap-2">
-                  <input
-                    type="checkbox"
-                    checked={activeArea}
-                    onChange={(event) => setActiveArea(event.target.checked)}
-                  />
-                  Active-area borders
-                </label>
+                  <FieldHelp label="Active-area borders" id="hdr-active-area-help">
+                    Compare decoded picture borders with Dolby Vision active-area metadata. Bounded
+                    mode samples fixed positions. This measures evidence; it does not crop or modify
+                    the source video.
+                  </FieldHelp>
+                </div>
               </>
             )}
             {!audioOnly && !boundary && (
@@ -389,14 +478,23 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
                   These checks decode pictures and may take longer. Uncertain mappings remain
                   inconclusive.
                 </p>
-                <label className="grid gap-1">
-                  Comparison source path
+                <div className="grid gap-1">
+                  <span className="flex flex-wrap items-center gap-1">
+                    <label htmlFor="hdr-comparison-path">Comparison source path</label>
+                    <FieldHelp label="Comparison source path" id="hdr-comparison-path-help">
+                      Server-local HDR10-compatible reference file, source B, with corresponding
+                      content and cadence. Select comparison source validates and binds it to this
+                      release; typing a path alone does not select it or replace Input.
+                    </FieldHelp>
+                  </span>
                   <input
+                    aria-describedby="hdr-comparison-path-help"
+                    id="hdr-comparison-path"
                     className="rounded border border-border bg-card p-2"
                     value={comparisonPath}
                     onChange={(event) => setComparisonPath(event.target.value)}
                   />
-                </label>
+                </div>
                 <button
                   type="button"
                   className={button}
@@ -408,27 +506,52 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
                 {view.comparison && (
                   <p>Source B selected · fingerprint {view.comparison.fingerprint}</p>
                 )}
-                <label className="flex gap-2">
-                  <input
-                    type="checkbox"
-                    checked={grade}
-                    onChange={(event) => setGrade(event.target.checked)}
-                  />
-                  Brightness grade comparison
-                </label>
-                <label className="flex gap-2">
-                  <input
-                    type="checkbox"
-                    checked={colour}
-                    onChange={(event) => setColour(event.target.checked)}
-                  />
-                  Colour comparison
-                </label>
+                <div className="flex items-start gap-1">
+                  <label className="flex gap-2">
+                    <input
+                      type="checkbox"
+                      aria-describedby="hdr-grade-help"
+                      checked={grade}
+                      onChange={(event) => setGrade(event.target.checked)}
+                    />
+                    Brightness grade comparison
+                  </label>
+                  <FieldHelp label="Brightness grade comparison" id="hdr-grade-help">
+                    Compare decoded picture brightness with the selected reference. Requires source
+                    B, a confirmed integer frame offset and a common crop. A generated plot is
+                    evidence to review, not automatic confirmation of compatible grading.
+                  </FieldHelp>
+                </div>
+                <div className="flex items-start gap-1">
+                  <label className="flex gap-2">
+                    <input
+                      type="checkbox"
+                      aria-describedby="hdr-colour-help"
+                      checked={colour}
+                      onChange={(event) => setColour(event.target.checked)}
+                    />
+                    Colour comparison
+                  </label>
+                  <FieldHelp label="Colour comparison" id="hdr-colour-help">
+                    Compare supported decoded colour evidence within the common crop. Requires an
+                    aligned reference with matching content and cadence. Unsupported mappings remain
+                    inconclusive; the sources are not automatically aligned or resized.
+                  </FieldHelp>
+                </div>
                 {(grade || colour) && (
                   <>
-                    <label className="grid gap-1">
-                      Confirmed frame offset (B − A)
+                    <div className="grid gap-1">
+                      <span className="flex flex-wrap items-center gap-1">
+                        <label htmlFor="hdr-offset">Confirmed frame offset (B − A)</label>
+                        <FieldHelp label="Confirmed frame offset (B − A)" id="hdr-offset-help">
+                          Integer mapping: B frame = A frame + offset, from −500000 to 500000.
+                          Supply 0 for already aligned sources. Confirm this mapping yourself; it is
+                          not estimated from the path.
+                        </FieldHelp>
+                      </span>
                       <input
+                        aria-describedby="hdr-offset-help"
+                        id="hdr-offset"
                         type="number"
                         min={-500000}
                         max={500000}
@@ -437,16 +560,26 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
                         value={offset}
                         onChange={(event) => setOffset(event.target.value)}
                       />
-                    </label>
-                    <label className="grid gap-1">
-                      Common crop: left,top,width,height
+                    </div>
+                    <div className="grid gap-1">
+                      <span className="flex flex-wrap items-center gap-1">
+                        <label htmlFor="hdr-crop">Common crop: left,top,width,height</label>
+                        <FieldHelp label="Common crop: left,top,width,height" id="hdr-crop-help">
+                          Four comma-separated integers in coded pixels, applied to both sources.
+                          Left and top must be nonnegative; width and height must be even and at
+                          least 2. The crop must fit both pictures; this form allows bounds up to
+                          8192 × 4320.
+                        </FieldHelp>
+                      </span>
                       <input
+                        aria-describedby="hdr-crop-help"
+                        id="hdr-crop"
                         className="rounded border border-border bg-card p-2"
                         value={crop}
                         onChange={(event) => setCrop(event.target.value)}
                         placeholder="0,0,3840,2160"
                       />
-                    </label>
+                    </div>
                     <p>
                       Confirm corresponding content, equal cadence and this integer frame mapping.
                       Different edits or unsupported colour mappings cannot be compared.
@@ -460,8 +593,18 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
             )}
           </fieldset>
         </fieldset>
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="font-medium">Analysis actions</span>
+          <FieldHelp label="HDR analysis actions" id="hdr-actions-help">
+            Generate uses the current selections. Retry or Resume uses the retained request, reusing
+            compatible completed work. Cancel stops active work. Individual failed picture
+            measurements can be retried below without authorizing a fresh native metadata
+            extraction. Progress is completed work, not a time estimate.
+          </FieldHelp>
+        </div>
         <div className="flex flex-wrap gap-2">
           <button
+            aria-describedby="hdr-actions-help"
             ref={generateButton}
             className={button}
             disabled={
@@ -484,6 +627,7 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
             Generate
           </button>
           <button
+            aria-describedby="hdr-actions-help"
             className={button}
             disabled={
               blocked ||
@@ -496,7 +640,12 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
           >
             {view.pendingRequest ? "Resume" : "Retry"}
           </button>
-          <button className={button} disabled={!busy} onClick={() => void facet.cancel()}>
+          <button
+            aria-describedby="hdr-actions-help"
+            className={button}
+            disabled={!busy}
+            onClick={() => void facet.cancel()}
+          >
             Cancel
           </button>
         </div>
@@ -526,9 +675,22 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
       </section>
       {view.result?.targets.map((target) => (
         <section key={target.targetId} className={`${pageStyle.panel} grid gap-3`}>
-          <h2>{target.label}</h2>
+          <div className="flex flex-wrap items-center gap-1">
+            <h2>{target.label}</h2>
+            <FieldHelp label={`${target.label} results`} id={`hdr-result-${target.targetId}-help`}>
+              Native metadata coverage and decoded picture coverage describe separate evidence.
+              Partial, unsupported or inconclusive checks are not a pass. Measured counts apply to
+              the selected pictures or audio work, not necessarily the entire source. Preview opens
+              an image; Download saves a local artifact. Successful outputs can remain available
+              after a partial attempt.
+            </FieldHelp>
+          </div>
           {target.formats?.map((format) => (
-            <section key={format.format} className="grid gap-2">
+            <section
+              key={format.format}
+              className="grid gap-2"
+              aria-describedby={`hdr-result-${target.targetId}-help`}
+            >
               <h3>{formatLabel(format.format)}</h3>
               <p>
                 Extraction: {format.state} · Coverage: {format.coverage}
@@ -546,7 +708,11 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
             </section>
           ))}
           {target.decoded?.map((result) => (
-            <section key={result.mode} className="grid gap-2">
+            <section
+              key={result.mode}
+              className="grid gap-2"
+              aria-describedby={`hdr-result-${target.targetId}-help`}
+            >
               <h3>{decodedLabel(result.mode)}</h3>
               <p>
                 {result.state} · Measured {result.measured} / {result.selected}
@@ -555,7 +721,7 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
               </p>
               {result.audioTracks?.map((track) => (
                 <p key={track.trackId}>
-                  Track {track.ordinal} · {track.language || "und"} · {track.codec} ·{" "}
+                  Track {track.ordinal} · {track.language || "unknown language"} · {track.codec} ·{" "}
                   {track.channelLayout}: {track.state}
                   {track.pcmMeasured ? " · complete PCM measured" : " · PCM incomplete"}
                   {track.failure ? ` · ${track.failure.message}` : ""}
@@ -580,21 +746,33 @@ export default function HDRAnalysisPage({ facet, setLightboxImage, setLightboxAl
           {target.artifacts?.map((artifact) => (
             <div key={artifact.id} className="grid gap-2">
               {artifact.mime === "image/png" && (
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    disabled={blocked}
-                    checked={view.includedArtifactIDs.includes(artifact.id)}
-                    onChange={(event) =>
-                      void facet.setIncludedArtifacts(
-                        event.target.checked
-                          ? [...view.includedArtifactIDs, artifact.id]
-                          : view.includedArtifactIDs.filter((id) => id !== artifact.id),
-                      )
-                    }
-                  />
-                  Include {target.label} {artifactTrackLabel(target, artifact)} in descriptions
-                </label>
+                <div className="flex items-start gap-1">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      disabled={blocked}
+                      aria-describedby={`hdr-artifact-${artifact.id}-help`}
+                      checked={view.includedArtifactIDs.includes(artifact.id)}
+                      onChange={(event) =>
+                        void facet.setIncludedArtifacts(
+                          event.target.checked
+                            ? [...view.includedArtifactIDs, artifact.id]
+                            : view.includedArtifactIDs.filter((id) => id !== artifact.id),
+                        )
+                      }
+                    />
+                    Include {target.label} {artifactTrackLabel(target, artifact)} in descriptions
+                  </label>
+                  <FieldHelp
+                    label={`Include ${target.label} ${artifactTrackLabel(target, artifact)} in descriptions`}
+                    id={`hdr-artifact-${artifact.id}-help`}
+                  >
+                    Select this successful image for generated descriptions. Native plots and
+                    selected audio images are included by default; picture-check images require
+                    selection. Final edited descriptions remain authoritative, so inspect them after
+                    changing inclusion.
+                  </FieldHelp>
+                </div>
               )}
               {artifact.mime === "image/png" && (
                 <button

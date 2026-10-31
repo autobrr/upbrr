@@ -626,3 +626,56 @@ func (l *screenshotRecordingLogger) Contains(needle string) bool {
 	}
 	return false
 }
+
+func TestISOCaptureUsesSelectedWholePlaylist(t *testing.T) {
+	root := t.TempDir()
+	image := filepath.Join(t.TempDir(), "Example.3D.iso")
+	meta := api.ScreenshotSubject{
+		BluRayISO:  true,
+		SourcePath: image,
+		DiscType:   "BDMV",
+		VideoPath:  image,
+		Release:    api.ReleaseInfo{Title: "Example"},
+		SelectedBDMVPlaylists: []api.PlaylistInfo{{
+			File:     "00800.MPLS",
+			Duration: 120,
+			Items:    []api.PlaylistItem{{File: "00001.M2TS", Size: 999}, {File: "00002.M2TS", Size: 1}},
+		}},
+	}
+	dir, _, err := paths.ReleaseTempDirFor(root, image, meta.Release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	summary := "Playlist: 00800.MPLS\nLength: 00:02:00\nVideo: MPEG-4 AVC Video / 20000 kbps / 1080p / 23.976 fps / 16:9 / High / 8 bits / SDR / BT.709\n"
+	meta.BDInfoSummary = summary
+	if err := os.WriteFile(paths.BDMVSummaryPath(dir, "00800.MPLS"), []byte("stale invalid report"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	meta = screenshotSubjectForDisc(meta, screenshotDiscs(meta)[0])
+	info, err := resolveVideoInfo(t.Context(), meta, root, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, timestamp := resolveSegmentTimestamp(info, 90)
+	if source != image || timestamp != 90 || info.Playlist != "800" || info.DurationSeconds != 120 || len(info.Segments) != 0 {
+		t.Fatalf("ISO selected timeline changed to a clip: %#v source=%q timestamp=%v", info, source, timestamp)
+	}
+	for _, evidence := range []string{"", strings.Replace(summary, "00800.MPLS", "00001.MPLS", 1)} {
+		meta.BDInfoSummary = evidence
+		// A valid legacy cache must never replace missing/stale prepared evidence.
+		if err := os.WriteFile(paths.BDMVSummaryPath(dir, "00800.MPLS"), []byte(summary), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := resolveVideoInfo(t.Context(), meta, root, api.NopLogger{}); err == nil {
+			t.Fatal("unbound cache replaced missing or mismatched prepared evidence")
+		}
+	}
+	meta.BDInfoSummary = summary
+	meta.SelectedBDMVPlaylists = nil
+	if _, err := resolveVideoInfo(t.Context(), meta, root, api.NopLogger{}); err == nil {
+		t.Fatal("missing explicit playlist accepted")
+	}
+}

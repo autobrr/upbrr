@@ -6,7 +6,9 @@ package api
 // PreparedReleaseDisplay is the canonical presentation projection for one
 // exact prepared generation.
 type PreparedReleaseDisplay struct {
-	HDRTargets []HDRAnalysisTarget `json:"hdrTargets,omitempty"`
+	// CanKeepFolder identifies a supplied folder containing one selected movie or episode video, not a pack or disc.
+	CanKeepFolder bool                `json:",omitempty"`
+	HDRTargets    []HDRAnalysisTarget `json:"hdrTargets,omitempty"`
 	// Commentary is the effective prepared value after explicit corrections.
 	Commentary    bool `json:",omitempty"`
 	ReleaseName   string

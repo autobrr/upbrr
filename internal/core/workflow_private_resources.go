@@ -9,10 +9,40 @@ import (
 	"fmt"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// NewRecoveryPrivateArtifactVault opens retained workflow resources without
+// activating configuration or constructing external services.
+func NewRecoveryPrivateArtifactVault(repo *db.SQLiteRepository) (*releaseworkflow.PrivateArtifactVault, error) {
+	root, err := db.Subdir(repo.DBPath(), "tmp")
+	if err != nil {
+		return nil, fmt.Errorf("recovery private resource root: %w", err)
+	}
+	return newWorkflowPrivateArtifactVault(repo.DBPath(), workflowMediaBuilder{
+		media: &mediaModule{repo: repo, mediaReuse: repo},
+	}, workflowAudioAnalysisBuilder{root: root})
+}
+
+func newWorkflowPrivateArtifactVault(
+	dbPath string, media workflowMediaBuilder, audio workflowAudioAnalysisBuilder,
+) (*releaseworkflow.PrivateArtifactVault, error) {
+	vault, err := releaseworkflow.NewPrivateArtifactVault(
+		releaseworkflow.PrivateArtifactVaultRoot(dbPath),
+		append(workflowPrivateResourceCodecs(media, audio),
+			hdrResourceCodec(audio.root, "analysis"),
+			hdrResourceCodec(audio.root, "extraction"),
+			hdrResourceCodec(audio.root, "measurement"),
+		)...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("open workflow private artifact vault: %w", err)
+	}
+	return vault, nil
+}
 
 const (
 	workflowPrivateResourceKindDupes         = "upbrr/workflow-dupe-evidence/v1"

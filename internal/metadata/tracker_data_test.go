@@ -164,7 +164,7 @@ func TestTrackerLookupKeepsExactPageWithoutTorrentID(t *testing.T) {
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
 		"ANT": {TorrentURL: torrentPage, IMDBID: 1234567},
 	}}
-	svc := NewService(&fakeRepo{}, WithTrackerDataLookup(lookup))
+	svc := newTestService(t, &fakeRepo{}, WithTrackerDataLookup(lookup))
 	record, persistable, _, err := svc.lookupTrackerData(t.Context(), preparationstate.State{SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv")}, "ANT", time.Now())
 	if err != nil || !persistable || record.TorrentURL != torrentPage || record.TrackerID != "" {
 		t.Fatalf("exact torrent page was not retained: record=%+v persistable=%t err=%v", record, persistable, err)
@@ -177,7 +177,7 @@ func TestTrackerLookupANTWorkingIDStillUsesFilename(t *testing.T) {
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
 		"ANT": {TorrentURL: torrentPage, IMDBID: 1234567},
 	}}
-	svc := NewService(&fakeRepo{}, WithTrackerDataLookup(lookup))
+	svc := newTestService(t, &fakeRepo{}, WithTrackerDataLookup(lookup))
 	meta := preparationstate.State{
 		SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv"),
 		TrackerIDs: map[string]string{"ant": "1"},
@@ -214,7 +214,7 @@ func TestTrackerLookupFileNameKeepsFilenameWhenDefaultEnabled(t *testing.T) {
 func TestTrackerLookupWithKnownIDPassesFilename(t *testing.T) {
 	t.Parallel()
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{"BLU": {TrackerID: "42"}}}
-	svc := NewService(&fakeRepo{}, WithTrackerDataLookup(lookup))
+	svc := newTestService(t, &fakeRepo{}, WithTrackerDataLookup(lookup))
 	meta := preparationstate.State{
 		SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv"),
 		TrackerIDs: map[string]string{"blu": "42"},
@@ -231,7 +231,7 @@ func TestTrackerLookupWithKnownIDPassesFilename(t *testing.T) {
 func TestTrackerLookupFileNameHonorsSkipForANT(t *testing.T) {
 	t.Parallel()
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{"ANT": {TrackerID: "1"}}}
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{Metadata: config.MetadataConfig{SkipTrackerFilenameLookup: true}}), WithTrackerDataLookup(lookup))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{Metadata: config.MetadataConfig{SkipTrackerFilenameLookup: true}}), WithTrackerDataLookup(lookup))
 	meta := preparationstate.State{
 		SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv"),
 		TrackerIDs: map[string]string{"ant": "1"},
@@ -269,7 +269,7 @@ func TestEnrichTrackerDataStopsAfterFirstPriorityIDWinner(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -324,7 +324,7 @@ func TestEnrichTrackerDataPreferredTrackerOverridesStaticPriority(t *testing.T) 
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -380,7 +380,7 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath:       source,
@@ -442,7 +442,7 @@ func TestEnrichTrackerDataPreferredTrackerIsSourceOfTruthWithoutClientTrackerIDs
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath:       `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -500,7 +500,7 @@ func TestEnrichTrackerDataContinuesUntilIDsFound(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -612,7 +612,7 @@ func TestLoadBTNClaimedTitlesRefreshesFreshLegacyCache(t *testing.T) {
 	}))
 	defer restore()
 
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	claimed, err := svc.loadBTNClaimedTitles(context.Background(), cachePath, 48*time.Hour)
 	if err != nil {
 		t.Fatalf("load btn claimed titles: %v", err)
@@ -664,7 +664,7 @@ func TestLoadBTNClaimedTitlesRefetchesAfter48Hours(t *testing.T) {
 	}))
 	defer restore()
 
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	claimed, err := svc.loadBTNClaimedTitles(context.Background(), cachePath, 48*time.Hour)
 	if err != nil {
 		t.Fatalf("load btn claimed titles: %v", err)
@@ -708,7 +708,7 @@ func TestLoadBTNClaimedTitlesFallsBackToStaleCacheAfterFetchFailure(t *testing.T
 	}))
 	defer restore()
 
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	claimed, err := svc.loadBTNClaimedTitles(context.Background(), cachePath, 48*time.Hour)
 	if err != nil {
 		t.Fatalf("load stale BTN claimed titles: %v", err)
@@ -762,7 +762,7 @@ func TestFetchBTNClaimedTitlesRequiresExistingSessionWithoutLogin(t *testing.T) 
 	}))
 	defer restore()
 
-	svc := NewService(&fakeRepo{}, WithConfig(cfg))
+	svc := newTestService(t, &fakeRepo{}, WithConfig(cfg))
 	claimed, err := svc.fetchBTNClaimedTitles(context.Background())
 	if err == nil {
 		t.Fatalf("expected login failure")
@@ -837,7 +837,7 @@ func TestFreshSnapshotUsesTrackerIDsBeforeProviderNameSearch(t *testing.T) {
 				Title:  "Example Movie",
 				Year:   2026,
 			}}
-			svc := NewService(repo,
+			svc := newTestService(t, repo,
 				WithConfig(config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 					"ANT": {APIKey: "ant-key"},
 				}}}),
@@ -965,7 +965,7 @@ func TestFreshAitherSnapshotRefreshesRequestedDescriptionAndImages(t *testing.T)
 					Images:      []bbcode.Image{{RawURL: imageURL}},
 				},
 			}}
-			svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+			svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 			result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 				SourcePath:      sourcePath,
 				StoredDataFresh: true,
@@ -1015,7 +1015,7 @@ func TestFreshSnapshotRefreshesDescriptionAndImagesForOtherUnit3DAndBHD(t *testi
 					Images:      []bbcode.Image{{RawURL: imageURL}},
 				},
 			}}
-			svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+			svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 			result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 				SourcePath:      sourcePath,
 				StoredDataFresh: true,
@@ -1067,7 +1067,7 @@ func TestFreshLegacyComparisonCacheRefreshesImageProvenance(t *testing.T) {
 					Images:      []bbcode.Image{{RawURL: freshURL}},
 				},
 			}}
-			svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+			svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 			state := preparationstate.State{
 				SourcePath:      sourcePath,
 				StoredDataFresh: true,
@@ -1106,7 +1106,7 @@ func TestLegacyComparisonCacheWithFailedRefreshWithholdsUnverifiedImages(t *test
 	}
 	repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}
 	lookup := &stubTrackerLookup{}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1147,7 +1147,7 @@ func TestFreshSnapshotClearsLegacyImagesForEveryStoredTracker(t *testing.T) {
 		},
 	}
 	repo := &fakeRepo{trackerMetadata: stored}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(&stubTrackerLookup{}), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(&stubTrackerLookup{}), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	_, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1198,7 +1198,7 @@ func TestFreshSnapshotRespectsDeletedTrackerImages(t *testing.T) {
 				Images:      []bbcode.Image{{RawURL: "https://img.example/deleted.png"}},
 			},
 		}}
-		svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+		svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 		result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 			SourcePath:      sourcePath,
 			StoredDataFresh: true,
@@ -1228,7 +1228,7 @@ func TestFreshAitherSnapshotKeepsStoredIDsWhenRefreshIsEmpty(t *testing.T) {
 	}
 	repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}
 	lookup := &stubTrackerLookup{}
-	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
+	svc := newTestService(t, repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
 		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
 	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
@@ -1277,7 +1277,7 @@ func TestFreshAitherPartialRefreshRetainsStoredImagePreviews(t *testing.T) {
 	lookup := &stubTrackerLookup{results: map[string]trackerdata.Result{
 		"AITHER": {TrackerID: stored.TrackerID, TMDBID: stored.TMDBID},
 	}}
-	svc := NewService(repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
+	svc := newTestService(t, repo, WithConfig(config.Config{Trackers: config.TrackersConfig{
 		Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
 	}}), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
@@ -1314,7 +1314,7 @@ func TestFreshAitherSnapshotDoesNotPairNewDescriptionWithOldImages(t *testing.T)
 			Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1351,7 +1351,7 @@ func TestFreshAitherSnapshotRefreshesByStoredTrackerIDWhenOnlyInfoHashIsPathed(t
 			Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:       sourcePath,
 		StoredDataFresh:  true,
@@ -1393,7 +1393,7 @@ func TestFreshAitherSnapshotCompletesAssetsDuringIDCooldown(t *testing.T) {
 			Trackers: map[string]config.TrackerConfig{"AITHER": {APIKey: "aither-key"}},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1451,7 +1451,7 @@ func TestFreshAitherSnapshotMergesSparseImageRefreshAndStoredHash(t *testing.T) 
 			},
 		},
 	}}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	result, err := svc.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:      sourcePath,
 		StoredDataFresh: true,
@@ -1587,7 +1587,7 @@ func TestFreshSnapshotPreservesPreferredTrackerIDPriority(t *testing.T) {
 					Year:   2026,
 				}
 			}}
-			svc := NewService(repo,
+			svc := newTestService(t, repo,
 				WithConfig(config.Config{Trackers: config.TrackersConfig{
 					PreferredTracker: "HDB",
 					Trackers: map[string]config.TrackerConfig{
@@ -1665,7 +1665,7 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(newClaimTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(newClaimTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.S01.1080p.WEB-DL-GRP"),
@@ -1712,7 +1712,7 @@ func TestEnrichTrackerDataKeepsBTNAsFallbackWhenKeepingImages(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(newClaimTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(newClaimTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.S01.1080p.WEB-DL-GRP"),
@@ -1762,7 +1762,7 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -1830,7 +1830,7 @@ func TestEnrichTrackerDataDropsImageURLsWhenArtifactDownloadRejected(t *testing.
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: filepath.Join(t.TempDir(), "Movie.2026.2160p.mkv"),
@@ -1894,7 +1894,7 @@ func TestEnrichTrackerDataRejectedImageURLsDoNotChooseAssetSource(t *testing.T) 
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	result, err := svc.collectTrackerEvidence(context.Background(), preparationstate.State{
 		SourcePath:       filepath.Join(t.TempDir(), "Movie.2026.2160p.mkv"),
@@ -1940,7 +1940,7 @@ func TestEnrichTrackerDataPreservesDuplicateImageURLPositionsForArtifactLinks(t 
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	result, err := svc.collectTrackerEvidence(context.Background(), preparationstate.State{
 		SourcePath: sourcePath,
@@ -1980,7 +1980,7 @@ func TestEnrichTrackerDataPreservesDuplicateImageURLPositionsForLocalScreenshots
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	svc := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	result, err := svc.collectTrackerEvidence(context.Background(), preparationstate.State{
 		SourcePath: sourcePath,

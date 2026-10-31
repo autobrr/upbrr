@@ -5,6 +5,7 @@ package metadata
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -23,11 +24,16 @@ func (a *rateControlAnalyzer) Analyze(_ context.Context, target string) (string,
 func TestProgrammeRateControlIsResourceAndInspectionBound(t *testing.T) {
 	root := t.TempDir()
 	first, second := filepath.Join(root, "a.mkv"), filepath.Join(root, "b.mkv")
+	for _, file := range []string{first, second} {
+		if err := os.WriteFile(file, []byte("synthetic media"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	const crf = `{"media":{"track":[{"@type":"General","Format":"Matroska"},{"@type":"Video","Format":"AVC","Encoded_Library_Name":"x264","Encoded_Library_Settings":"rc=crf / crf=18"}]}}`
 	const cbr = `{"media":{"track":[{"@type":"General","Format":"Matroska"},{"@type":"Video","Format":"AVC","Encoded_Library_Name":"x264","Encoded_Library_Settings":"rc=cbr / bitrate=4000"}]}}`
 	const unknown = `{"media":{"track":[{"@type":"General","Format":"Matroska"},{"@type":"Video","Format":"AVC","Encoded_Library_Name":"x264","BitRate_Mode":"VBR"}]}}`
 	analyzer := &rateControlAnalyzer{reports: map[string]string{first: crf, second: cbr}}
-	service := NewService(&stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}))
+	service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}))
 	state := preparationstate.State{
 		SourcePath:        root,
 		VideoPath:         first,

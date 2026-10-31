@@ -125,6 +125,7 @@ func osFolder() string {
 }
 
 type captureRequest struct {
+	Playlist      string
 	InputPath     string
 	OutputPath    string
 	Timestamp     float64
@@ -150,6 +151,7 @@ type frameInfoResult struct {
 }
 
 type previewRequest struct {
+	Playlist  string
 	InputPath string
 	Timestamp float64
 	ToneMap   bool
@@ -540,12 +542,14 @@ func rejectCorruptCaptureOutput(outputPath string, result CommandResult) error {
 }
 
 func buildFFmpegPreviewArgs(req previewRequest) []string {
-	return []string{
+	args := []string{
 		"-hide_banner",
 		"-loglevel", "error",
 		"-hwaccel", "auto",
 		"-ss", fmt.Sprintf("%.3f", req.Timestamp),
-		"-i", req.InputPath,
+	}
+	args = append(args, screenshotInputArgs(req.InputPath, req.Playlist)...)
+	return append(args,
 		"-an",
 		"-sn",
 		"-dn",
@@ -558,13 +562,15 @@ func buildFFmpegPreviewArgs(req previewRequest) []string {
 		"-f", "image2pipe",
 		"-vcodec", "png",
 		"-",
-	}
+	)
 }
 
 func buildFFmpegArgs(req captureRequest, useLibplacebo bool) []string {
 	vf := buildFilterChain(req, useLibplacebo)
 
-	args := []string{"-hide_banner", "-y", "-loglevel", "error", "-ss", fmt.Sprintf("%.3f", req.Timestamp), "-i", req.InputPath, "-frames:v", "1"}
+	args := []string{"-hide_banner", "-y", "-loglevel", "error", "-ss", fmt.Sprintf("%.3f", req.Timestamp)}
+	args = append(args, screenshotInputArgs(req.InputPath, req.Playlist)...)
+	args = append(args, "-frames:v", "1")
 	if useLibplacebo {
 		args = append(args, "-init_hw_device", "vulkan")
 	}
@@ -676,17 +682,20 @@ func overlayFilters(req captureRequest) []string {
 	return filters
 }
 
-func getFrameInfo(ctx context.Context, runner Runner, cmdPath string, inputPath string, timestamp float64) (frameInfoResult, error) {
-	args := []string{
+func getFrameInfo(ctx context.Context, runner Runner, cmdPath string, inputPath string, timestamp float64, playlist string) (frameInfoResult, error) {
+	args := make([]string, 0, 18)
+	args = append(args,
 		"-hide_banner",
 		"-loglevel", "info",
 		"-ss", fmt.Sprintf("%.3f", timestamp),
-		"-i", inputPath,
+	)
+	args = append(args, screenshotInputArgs(inputPath, playlist)...)
+	args = append(args,
 		"-frames:v", "1",
 		"-vf", "showinfo",
 		"-f", "null",
 		"-",
-	}
+	)
 	result, err := runner.Run(ctx, cmdPath, args, "")
 	if err != nil && result.ExitCode == 0 {
 		err = nil
@@ -739,4 +748,13 @@ func absFloat(value float64) float64 {
 		return -value
 	}
 	return value
+}
+
+// screenshotInputArgs keeps protocol options before -i. An empty playlist
+// preserves ordinary-file and extracted-disc capture behavior.
+func screenshotInputArgs(source, playlist string) []string {
+	if playlist != "" {
+		return []string{"-playlist", playlist, "-i", "bluray:" + source, "-map", "0:v:0"}
+	}
+	return []string{"-i", source}
 }

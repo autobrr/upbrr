@@ -16,6 +16,7 @@ Read the relevant scoped instructions before editing that area; do not load ever
 
 ## Shared behavior and safety
 
+- All automatically managed release artifacts belong beneath the shared `tmp/<release>/` owner. Use the release resolver; keep source validation independent of directory naming. Follow `internal/AGENTS.md` when changing this lifecycle.
 - Preserve shared CLI/WebUI workflow behavior unless intentionally changing one entrypoint.
 - Debug mode is not a non-mutating dry run. It suppresses tracker submission but may bypass policy gates such as banned-group blocking so later stages remain testable. Client injection remains default; CLI `-ns` and WebUI Upload skip-client-injection are explicit opt-outs. Do not classify these semantics as defects.
 - Never expose credentials, tokens, API keys, cookies or secret payloads in logs, UI, diagnostics or fixtures; use the existing redaction boundaries.

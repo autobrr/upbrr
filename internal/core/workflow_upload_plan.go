@@ -383,6 +383,7 @@ func (b workflowUploadPlanBuilder) Build(
 		SourcePath:      subject.SourcePath,
 		FileList:        append([]string(nil), subject.FileList...),
 		DiscType:        subject.DiscType,
+		KeepFolder:      subject.KeepFolder,
 		ClientOverrides: descriptionInstructions.Client,
 	}
 	injectPreparedTorrent := options.DryRun &&

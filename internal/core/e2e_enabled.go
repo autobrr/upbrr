@@ -32,6 +32,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -60,6 +61,10 @@ const (
 	e2eNamingModeEnv    = "UPBRR_E2E_NAMING_MODE"
 	e2eAudioAnalysisEnv = "UPBRR_E2E_AUDIO_ANALYSIS"
 	e2eHDRAnalysisEnv   = "UPBRR_E2E_HDR_ANALYSIS"
+	e2ePlanFailuresEnv  = "UPBRR_E2E_PLAN_FAILURE_TRACKERS"
+	e2ePlanSkipsEnv     = "UPBRR_E2E_PLAN_SKIP_TRACKERS"
+	e2ePlanAttemptsEnv  = "UPBRR_E2E_RECORD_PLAN_ATTEMPTS"
+	e2ePlanWaitEnv      = "UPBRR_E2E_WAIT_FOR_PLAN_CANCELLATION"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -791,13 +796,13 @@ type e2eTorrentService struct {
 }
 
 func (s e2eTorrentService) Create(_ context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
-	root := filepath.Dir(strings.TrimSpace(s.dbPath))
-	if root == "." || root == "" {
-		root = os.TempDir()
+	root, err := db.Subdir(s.dbPath, "tmp")
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("e2e torrent: tmp root: %w", err)
 	}
-	dir := filepath.Join(root, "e2e-artifacts")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return api.TorrentResult{}, fmt.Errorf("e2e torrent: mkdir: %w", err)
+	dir, _, err := paths.ReleaseTempDirFor(root, meta.SourcePath, api.ReleaseInfo{})
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("e2e torrent: release owner: %w", err)
 	}
 	info, err := e2eTorrentInfo(meta.SourcePath)
 	if err != nil {
@@ -1300,7 +1305,7 @@ func (s e2eDVDMenuService) Capture(
 	}
 	images := make([]api.DVDMenuCaptureImage, 0, limit)
 	for index, disc := range discs[:limit] {
-		image, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(subject.SourcePath), "menu-"+disc.ID, index+1)
+		image, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, subject.SourcePath, "menu-"+disc.ID, index+1)
 		if err != nil {
 			return api.DVDMenuCaptureResult{}, err
 		}
@@ -1374,17 +1379,55 @@ func (s e2eTrackerService) PrepareRetainedUploadPlan(
 	if len(trackerNames) == 0 {
 		return nil, errors.New("e2e tracker: retained plan has no eligible trackers")
 	}
+	// Record actual plan builds independently of browser continuation requests.
+	if os.Getenv(e2ePlanAttemptsEnv) == "1" {
+		path, err := db.FileInSubdir(s.dbPath, "tmp", "e2e-plan-attempts.txt")
+		if err != nil {
+			return nil, fmt.Errorf("e2e tracker: resolve plan receipt: %w", err)
+		}
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("e2e tracker: open plan receipt: %w", err)
+		}
+		_, writeErr := io.WriteString(file, "attempt\n")
+		closeErr := file.Close()
+		if err := errors.Join(writeErr, closeErr); err != nil {
+			return nil, fmt.Errorf("e2e tracker: record plan attempt: %w", err)
+		}
+	}
+	// Keep the attempted preparation active until the test cancels its operation.
+	if os.Getenv(e2ePlanWaitEnv) == "1" {
+		<-ctx.Done()
+		return nil, fmt.Errorf("e2e tracker: retained plan canceled: %w", ctx.Err())
+	}
 	previews, err := s.BuildUploadDryRun(ctx, subject, trackerNames)
 	if err != nil {
 		return nil, fmt.Errorf("e2e tracker: prepare retained previews: %w", err)
 	}
 	preparations := make([]trackers.RetainedTrackerPreparation, 0, len(previews))
+	failedTrackers := e2eTrackerSet(e2ePlanFailuresEnv)
+	skippedTrackers := e2eTrackerSet(e2ePlanSkipsEnv)
 	for _, preview := range previews {
-		preparations = append(preparations, trackers.RetainedTrackerPreparation{
+		preparation := trackers.RetainedTrackerPreparation{
 			Tracker:     preview.Tracker,
 			TorrentPath: subject.TorrentPath,
 			Preview:     preview,
-		})
+		}
+		if _, failed := failedTrackers[preview.Tracker]; failed {
+			preparation.Failure = &trackers.TrackerFailure{
+				Tracker: preview.Tracker,
+				Code:    "e2e_preparation_failed",
+				Message: "E2E tracker preparation failed. Retry explicitly.",
+			}
+		}
+		if _, skipped := skippedTrackers[preview.Tracker]; skipped {
+			preparation.Failure = &trackers.TrackerFailure{
+				Tracker: preview.Tracker,
+				Code:    trackers.PreparationFailureCodeSkipped,
+				Message: "E2E tracker preparation skipped.",
+			}
+		}
+		preparations = append(preparations, preparation)
 	}
 	subject.Trackers = append([]string(nil), trackerNames...)
 	return &e2eRetainedUploadPlan{
@@ -1708,7 +1751,7 @@ type e2eImageService struct {
 }
 
 func (s e2eImageService) ListCandidates(_ context.Context, meta api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
-	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), "", 1)
+	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, meta.SourcePath, "", 1)
 	if err != nil {
 		return nil, err
 	}
@@ -1898,14 +1941,15 @@ func (s e2eScreenshotService) PreviewFrame(
 	}, nil
 }
 
-func (s e2eScreenshotService) Delete(ctx context.Context, _ api.ScreenshotSubject, imagePath string) error {
+func (s e2eScreenshotService) Delete(ctx context.Context, subject api.ScreenshotSubject, imagePath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	root, err := filepath.Abs(filepath.Join(s.tmpRoot, "e2e"))
+	root, _, err := paths.ReleaseTempDirFor(s.tmpRoot, subject.SourcePath, subject.Release)
 	if err != nil {
 		return fmt.Errorf("e2e screenshots: resolve managed root: %w", err)
 	}
+	root = filepath.Join(root, "e2e")
 	target, err := filepath.Abs(strings.TrimSpace(imagePath))
 	if err != nil {
 		return fmt.Errorf("e2e screenshots: resolve delete target: %w", err)
@@ -1937,7 +1981,7 @@ func (s e2eScreenshotService) SaveFinalSelections(ctx context.Context, meta api.
 }
 
 func (s e2eScreenshotService) imageAt(meta api.ScreenshotSubject, discID string, index int) (api.ScreenshotImage, error) {
-	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), discID, index)
+	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, meta.SourcePath, discID, index)
 }
 
 func e2eScreenshotDiscName(meta api.ScreenshotSubject, discID string) string {
@@ -1962,10 +2006,7 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, s
 	if err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: read fixture: %w", err)
 	}
-	release := strings.TrimSpace(releaseName)
-	if release == "" {
-		release = "e2e-release"
-	}
+	release := filepath.Base(strings.TrimSpace(releaseName))
 	if strings.TrimSpace(scope) != "" {
 		release += "-" + strings.TrimSpace(scope)
 	}
@@ -1977,7 +2018,11 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, s
 			return r
 		}
 	}, release)
-	managedDir := filepath.Join(root, "e2e", release)
+	owner, _, err := paths.ReleaseTempDirFor(root, releaseName, api.ReleaseInfo{})
+	if err != nil {
+		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: resolve release owner: %w", err)
+	}
+	managedDir := filepath.Join(owner, "e2e", release)
 	if err := os.MkdirAll(managedDir, 0o755); err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: create managed dir: %w", err)
 	}

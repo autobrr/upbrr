@@ -546,6 +546,12 @@ type DupePolicy struct {
 	// StaffTokenOverride requires owner attestation of staff-token possession to
 	// override duplicate or incomplete-search evidence. No token value is retained.
 	StaffTokenOverride bool `json:",omitempty"`
+	// StaffTokenOverrideRequired optionally resolves attestation against the reviewed
+	// release and evaluated candidates. It does not change duplicate relations.
+	StaffTokenOverrideRequired func(config.TrackerConfig, api.DuplicateSubject, []api.DupeCandidateEvaluation) bool `json:"-"`
+	// DecisionInputs projects tracker-owned inputs that must invalidate retained
+	// duplicate decisions when questionnaire answers change. Omit payload-only answers.
+	DecisionInputs func(PreparationInput) map[string]string `json:"-"`
 	// ID is the stable versioned comparison-policy identifier.
 	ID string
 	// EvidenceID identifies the policy evidence backing automatic

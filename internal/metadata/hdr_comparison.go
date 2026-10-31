@@ -5,18 +5,17 @@ package metadata
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
+	"github.com/autobrr/upbrr/internal/pathing"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -24,37 +23,52 @@ import (
 // InspectHDRComparison collects file-specific probe evidence without preparing
 // a release or requesting provider metadata. The caller verifies source identity
 // before and after this bounded inspection.
-func (s *Service) InspectHDRComparison(ctx context.Context, path, fingerprint string) (api.HDRSourceEvidence, error) {
+func (s *Service) InspectHDRComparison(ctx context.Context, release api.ReleaseRef, path, fingerprint string) (api.HDRSourceEvidence, error) {
 	root, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 	if err != nil {
 		return api.HDRSourceEvidence{}, fmt.Errorf("HDR inspection temp root: %w", err)
 	}
-	return InspectHDRFile(ctx, s.mi, path, fingerprint, root)
-}
-
-// InspectHDRFile shares bounded per-file evidence inspection with standalone CLI analysis.
-func InspectHDRFile(ctx context.Context, exporter mediainfo.Exporter, path, fingerprint, root string) (api.HDRSourceEvidence, error) {
-	doc, err := inspectFileMediaInfo(ctx, exporter, path, fingerprint, root)
+	doc, _, err := inspectOwnedFileMediaInfoReports(ctx, s.mi, path, fingerprint, root, release.SourcePath, true)
 	if err != nil {
 		return api.HDRSourceEvidence{}, err
 	}
 	return mediafacts.HDRSourceFromMediaInfo(doc), nil
 }
 
-func inspectFileMediaInfo(ctx context.Context, exporter mediainfo.Exporter, path, fingerprint, root string) (mediaInfoDoc, error) {
-	doc, _, err := inspectFileMediaInfoReports(ctx, exporter, path, fingerprint, root)
-	return doc, err
+// InspectHDRFile shares bounded per-file evidence inspection with standalone CLI analysis.
+func InspectHDRFile(ctx context.Context, exporter mediainfo.Exporter, path, fingerprint, root string) (api.HDRSourceEvidence, error) {
+	doc, _, err := inspectOwnedFileMediaInfoReports(ctx, exporter, path, fingerprint, root, path, false)
+	if err != nil {
+		return api.HDRSourceEvidence{}, err
+	}
+	return mediafacts.HDRSourceFromMediaInfo(doc), nil
 }
 
-func inspectFileMediaInfoReports(ctx context.Context, exporter mediainfo.Exporter, path, fingerprint, root string) (mediaInfoDoc, mediainfo.Result, error) {
+func inspectReleaseMediaInfoReports(
+	ctx context.Context,
+	exporter mediainfo.Exporter,
+	meta preparationstate.State,
+	path, fingerprint, root string,
+) (mediaInfoDoc, mediainfo.Result, error) {
+	return inspectOwnedFileMediaInfoReports(ctx, exporter, path, fingerprint, root, meta.SourcePath, !pathing.SamePath(path, meta.VideoPath))
+}
+
+func inspectOwnedFileMediaInfoReports(
+	ctx context.Context,
+	exporter mediainfo.Exporter,
+	path, fingerprint, root, owner string,
+	secondary bool,
+) (mediaInfoDoc, mediainfo.Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	result, err := exporter.Export(ctx, mediainfo.Request{
-		SourcePath:  path,
-		VideoPath:   path,
-		TempRoot:    root,
-		ArtifactDir: fileMediaInfoArtifactDir(root, path, fingerprint),
-		Release:     ParseReleaseInfo(path),
+		SourcePath:        path,
+		VideoPath:         path,
+		TempRoot:          root,
+		OwnerSource:       owner,
+		SourceFingerprint: fingerprint,
+		Secondary:         secondary,
+		Release:           ParseReleaseInfo(path),
 	})
 	if err != nil {
 		return mediaInfoDoc{}, mediainfo.Result{}, fmt.Errorf("HDR file inspection: %w", err)
@@ -80,9 +94,4 @@ func inspectFileMediaInfoReports(ctx context.Context, exporter mediainfo.Exporte
 		return mediaInfoDoc{}, mediainfo.Result{}, fmt.Errorf("decode HDR file inspection: %w", err)
 	}
 	return doc, result, nil
-}
-
-func fileMediaInfoArtifactDir(root, path, fingerprint string) string {
-	key := sha256.Sum256([]byte(path + "\x00" + fingerprint))
-	return filepath.Join(root, "hdr-mediainfo", hex.EncodeToString(key[:]))
 }

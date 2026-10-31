@@ -29,6 +29,7 @@ import (
 )
 
 type dryRunClientService struct {
+	subjects   []api.ClientSubject
 	injections []api.TorrentResult
 	searches   int
 	injectErr  error
@@ -80,7 +81,8 @@ func (f *workflowTorrentServiceCapture) Create(_ context.Context, subject api.To
 	return f.result, nil
 }
 
-func (s *dryRunClientService) Inject(_ context.Context, _ api.ClientSubject, torrent api.TorrentResult) error {
+func (s *dryRunClientService) Inject(_ context.Context, subject api.ClientSubject, torrent api.TorrentResult) error {
+	s.subjects = append(s.subjects, subject)
 	s.injections = append(s.injections, torrent)
 	return s.injectErr
 }
@@ -1495,8 +1497,20 @@ func TestWorkflowLiveReviewDefersInjectionUntilRegisteredTorrentExists(t *testin
 			},
 		}},
 	}
+	source := filepath.Join(tempDir, "Example.Release.2026")
+	selected := []string{filepath.Join(source, "Example.Release.2026.mkv")}
+	subject := api.UploadSubject{
+		SourcePath: source,
+		FileList:   selected,
+		KeepFolder: true,
+		Options:    api.UploadOptions{SkipAutoTorrent: true},
+	}
+	torrentSubject := workflowSubmissionTorrentSubject(subject)
+	if !torrentSubject.KeepFolder || torrentSubject.SourcePath != source || !slices.Equal(torrentSubject.FileList, selected) {
+		t.Fatalf("submission torrent lost folder selection: %#v", torrentSubject)
+	}
 	builder := workflowUploadPlanBuilder{
-		resolver: &workflowDescriptionResolverFake{},
+		resolver: workflowUploadResolverFixed{subject: subject},
 		trackers: service,
 		clients:  clientService,
 	}
@@ -1557,6 +1571,10 @@ func TestWorkflowLiveReviewDefersInjectionUntilRegisteredTorrentExists(t *testin
 		clientService.injections[0].Path != registeredPath ||
 		clientService.injections[0].Path == preparedPath {
 		t.Fatalf("live upload results=%#v injections=%#v", results, clientService.injections)
+	}
+	injected := clientService.subjects[0]
+	if !injected.KeepFolder || injected.SourcePath != source || !slices.Equal(injected.FileList, selected) {
+		t.Fatalf("client injection lost folder selection: %#v", injected)
 	}
 }
 

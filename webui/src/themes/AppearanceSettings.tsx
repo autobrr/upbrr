@@ -3,6 +3,7 @@
 
 import { accentChoices, supportsAccents, themeCatalog, type ThemeMode } from "./appearance";
 import { useAppearance } from "./provider";
+import { FieldHelp } from "../components/ui/field-help";
 import { settingsStyle } from "../settings/style";
 
 const modeLabels: Readonly<Record<ThemeMode, string>> = {
@@ -29,8 +30,18 @@ export function AppearanceSettings() {
       </div>
 
       <section className={settingsStyle.subgroup} aria-label="Theme">
-        <h3 className="m-0 text-sm font-semibold">Theme</h3>
-        <fieldset className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,165px),1fr))] gap-3">
+        <div className="flex items-center gap-1">
+          <h3 className="m-0 text-sm font-semibold">Theme</h3>
+          <FieldHelp label="Theme" id="appearance-theme-help">
+            Choose a bundled color palette. Applies immediately in this browser without saving
+            server settings. Napster is light-only; your mode preference is retained for other
+            themes.
+          </FieldHelp>
+        </div>
+        <fieldset
+          aria-describedby="appearance-theme-help"
+          className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,165px),1fr))] gap-3"
+        >
           <legend className="sr-only">Theme</legend>
           {themeCatalog.map((theme) => (
             <label key={theme.id} className="block cursor-pointer">
@@ -71,8 +82,16 @@ export function AppearanceSettings() {
       </section>
 
       <section className={settingsStyle.subgroup} aria-label="Mode">
-        <fieldset>
-          <legend className="mb-2 text-sm font-semibold text-foreground">Mode</legend>
+        <fieldset aria-describedby="appearance-mode-help" aria-labelledby="appearance-mode-label">
+          <legend className="mb-2 text-sm font-semibold text-foreground">
+            <span className="inline-flex items-center gap-1">
+              <span id="appearance-mode-label">Color mode</span>
+              <FieldHelp label="Color mode" id="appearance-mode-help">
+                Use system setting follows this device’s light/dark preference. Light or Dark
+                overrides it for compatible themes in this browser; changes apply immediately.
+              </FieldHelp>
+            </span>
+          </legend>
           <div className="flex flex-wrap gap-3">
             {(["auto", "light", "dark"] as const).map((mode) => (
               <label
@@ -96,8 +115,19 @@ export function AppearanceSettings() {
 
       {supportsAccents(preference.theme) ? (
         <section className={settingsStyle.subgroup} aria-label="Accent">
-          <fieldset>
-            <legend className="mb-2 text-sm font-semibold text-foreground">Accent</legend>
+          <fieldset
+            aria-describedby="appearance-accent-help"
+            aria-labelledby="appearance-accent-label"
+          >
+            <legend className="mb-2 text-sm font-semibold text-foreground">
+              <span className="inline-flex items-center gap-1">
+                <span id="appearance-accent-label">Accent color</span>
+                <FieldHelp label="Accent color" id="appearance-accent-help">
+                  Choose the accent for this compatible theme. Each theme remembers its own accent
+                  in this browser; changes apply immediately.
+                </FieldHelp>
+              </span>
+            </legend>
             <div className="flex flex-wrap gap-2">
               {accentChoices.map((accent) => (
                 <button

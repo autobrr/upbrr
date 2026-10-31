@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { FieldHelp } from "./ui/field-help";
+import { settingsFieldPresentation } from "../settings/fieldPresentation";
 import { pageStyle } from "./ui/pageStyle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
@@ -335,12 +337,19 @@ export default function LogSettingsPanel({
           fields={["Level", "FileEnabled", "MaxTotalSizeMB", "MaxFiles"].map((key) => {
             const meta = fieldMeta[key];
             if (key === "Level") {
-              const label = meta?.label ?? "Level";
+              const { label, help } = settingsFieldPresentation.Logging.Level;
               return [
                 key,
-                <label className={settingsStyle.field} key="Logging.Level">
-                  <span>{label}</span>
+                <div className={settingsStyle.field} key="Logging.Level">
+                  <span className="flex flex-wrap items-center gap-1">
+                    <label htmlFor="logging-runtime-level">{label}</label>
+                    <FieldHelp label={label!} id="logging-runtime-level-help">
+                      {help}
+                    </FieldHelp>
+                  </span>
                   <Select
+                    id="logging-runtime-level"
+                    aria-describedby="logging-runtime-level-help"
                     value={levelValue}
                     onChange={(event) =>
                       updateConfigValue(["Logging", "Level"], event.target.value)
@@ -355,7 +364,7 @@ export default function LogSettingsPanel({
                       </option>
                     ))}
                   </Select>
-                </label>,
+                </div>,
               ];
             }
             return [key, renderField(key, loggingConfig[key], ["Logging", key], meta)];
@@ -366,6 +375,7 @@ export default function LogSettingsPanel({
           <span className="text-sm font-medium [overflow-wrap:anywhere]">
             {logPath || "Unavailable"}
           </span>
+          <p className="helper">File rotation can remove older log files.</p>
         </div>
       </div>
 
@@ -379,25 +389,57 @@ export default function LogSettingsPanel({
               )}
             />
             <span>{connected ? "Connected" : "Disconnected"}</span>
+            <FieldHelp label="Live log connection">
+              Connection state of this browser's live log subscription. Up to 1,000 recent entries
+              load in the background while live events append as they arrive. Rows can appear out of
+              time order while connecting. This does not indicate whether file logging is enabled.
+            </FieldHelp>
           </div>
           <div className="flex items-center gap-2">
-            <button className="ghost" type="button" onClick={handleClearLogs}>
-              Clear
+            <button
+              className="ghost"
+              type="button"
+              onClick={handleClearLogs}
+              aria-describedby="log-clear-note"
+            >
+              Clear viewer
             </button>
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-muted px-2 py-1 text-sm font-semibold text-foreground">
-              <span>Auto-scroll</span>
-              <Switch
-                aria-label="Auto-scroll logs"
-                checked={autoScroll}
-                onChange={(event) => setAutoScroll(event.target.checked)}
-              />
-            </label>
+            <div className="flex items-center gap-1">
+              {" "}
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-muted px-2 py-1 text-sm font-semibold text-foreground">
+                <span>Auto-scroll</span>
+                <Switch
+                  aria-label="Auto-scroll logs"
+                  aria-describedby="log-autoscroll-help"
+                  checked={autoScroll}
+                  onChange={(event) => setAutoScroll(event.target.checked)}
+                />
+              </label>
+              <FieldHelp label="Auto-scroll logs" id="log-autoscroll-help">
+                Follow new entries and retain the latest 1,000 browser rows. When off, the viewer
+                can retain up to 10,000 rows before dropping the oldest and showing a warning. This
+                does not pause collection or file logging.
+              </FieldHelp>
+            </div>
           </div>
         </div>
 
+        <p id="log-clear-note" className="helper">
+          Clear viewer empties this browser buffer only; log files and the server buffer are
+          retained.
+        </p>
         <div className="flex flex-wrap items-end gap-3">
-          <fieldset className="m-0 min-w-0 border-0 p-0">
-            <legend className="mb-1 text-sm font-semibold text-foreground">Visible levels</legend>
+          <fieldset className="m-0 min-w-0 border-0 p-0" aria-label="Visible levels">
+            <legend className="mb-1 text-sm font-semibold text-foreground">
+              <span className="inline-flex items-center gap-1">
+                Visible levels
+                <FieldHelp label="Visible log levels" id="log-visible-levels-help">
+                  Show or hide each level in this browser's retained entries. These checkboxes do
+                  not change which events the application records; choose Runtime log level and Save
+                  to change that threshold.
+                </FieldHelp>
+              </span>
+            </legend>
             <div className="flex flex-wrap gap-1.5">
               {levelOrder.map((level) => (
                 <label
@@ -412,6 +454,7 @@ export default function LogSettingsPanel({
                 >
                   <Checkbox
                     id={`log-level-${level}`}
+                    aria-describedby="log-visible-levels-help"
                     checked={levelFilter[level]}
                     onCheckedChange={() => toggleLevel(level)}
                   />
@@ -420,13 +463,25 @@ export default function LogSettingsPanel({
               ))}
             </div>
           </fieldset>
-          <input
-            className="min-w-[200px] flex-1 rounded-md border border-input bg-card px-2 py-1.5 text-sm text-card-foreground"
-            aria-label="Search logs"
-            placeholder="Search logs"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
+          <div className="grid min-w-0 flex-1 gap-1">
+            <span className="flex items-center gap-1">
+              <label htmlFor="log-search">Search logs</label>
+              <FieldHelp label="Search logs" id="log-search-help">
+                Case-insensitive substring search within retained message text. Empty shows all
+                messages allowed by the level and mute filters. Search does not query older log
+                files or change recording.
+              </FieldHelp>
+            </span>{" "}
+            <input
+              className="min-w-[200px] flex-1 rounded-md border border-input bg-card px-2 py-1.5 text-sm text-card-foreground"
+              id="log-search"
+              aria-label="Search logs"
+              aria-describedby="log-search-help"
+              placeholder="Search logs"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
         </div>
 
         {bufferWarning ? <p className="font-semibold text-primary-text">{bufferWarning}</p> : null}
@@ -453,6 +508,7 @@ export default function LogSettingsPanel({
                   type="button"
                   onClick={() => handleMuteMessage(entry.Message)}
                   aria-label={`Mute ${entry.Level.toUpperCase()} message: ${entry.Message || "(empty message)"}`}
+                  aria-describedby="log-mute-help"
                   title="Mute this message"
                 >
                   {entry.Level.toUpperCase()}
@@ -468,12 +524,25 @@ export default function LogSettingsPanel({
 
         <div className="grid gap-2">
           <div>
-            <p className={pageStyle.label}>Muted patterns</p>
-            <p className="helper">Mute exact message matches.</p>
+            <div className="flex items-center gap-1">
+              <label htmlFor="log-mute" className={pageStyle.label}>
+                Muted messages
+              </label>
+              <FieldHelp label="Muted messages" id="log-mute-help">
+                Hide exact, case-sensitive whole-message matches in the viewer. Add a message or
+                click a row's level badge; Remove restores matching rows still in the buffer. Saved
+                patterns trim surrounding whitespace, so padded messages can reappear after reload.
+                This is not a wildcard or substring filter, and does not suppress underlying log
+                events or file output.
+              </FieldHelp>
+            </div>
+            <p className="helper">Mute changes are saved immediately without Save.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <input
               className="min-w-[220px] flex-1 rounded-md border border-input bg-card px-2 py-1.5 text-sm text-card-foreground"
+              id="log-mute"
+              aria-describedby="log-mute-help"
               placeholder="Message to mute"
               value={pendingMute}
               onChange={(event) => setPendingMute(event.target.value)}
@@ -481,12 +550,17 @@ export default function LogSettingsPanel({
                 if (event.key === "Enter") handleAddMute();
               }}
             />
-            <button className="ghost" type="button" onClick={handleAddMute}>
+            <button
+              className="ghost"
+              type="button"
+              onClick={handleAddMute}
+              aria-describedby="log-mute-help"
+            >
               Add
             </button>
           </div>
           {mutedPatterns.length === 0 ? (
-            <p className="text-muted-foreground">No muted patterns.</p>
+            <p className="text-muted-foreground">No muted messages.</p>
           ) : (
             <div className="grid gap-1.5">
               {mutedPatterns.map((pattern) => (
@@ -498,6 +572,8 @@ export default function LogSettingsPanel({
                   <button
                     className="ghost shrink-0"
                     type="button"
+                    aria-label={`Remove muted message: ${pattern}`}
+                    aria-describedby="log-mute-help"
                     onClick={() => handleRemoveMute(pattern)}
                   >
                     Remove

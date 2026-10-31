@@ -123,7 +123,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 			fingerprint = meta.SourceFingerprint
 		}
 		var reports mediainfo.Result
-		miDoc, reports, err = inspectFileMediaInfoReports(ctx, s.mi, meta.VideoPath, fingerprint, root)
+		miDoc, reports, err = inspectReleaseMediaInfoReports(ctx, s.mi, meta, meta.VideoPath, fingerprint, root)
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("primary inspection: %w", err)
 		}
@@ -185,6 +185,15 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	logger.Tracef("metadata: media details audio=%q channels=%q commentary=%t", meta.Audio, meta.Channels, meta.HasCommentary)
 
 	meta.Is3D = threeDFromMedia(miDoc, bdinfo)
+	blurayISO := false
+	for _, disc := range meta.Discs {
+		if disc.BluRayISO {
+			blurayISO = true
+			// ISO collection has already validated MVC in every selected report.
+			meta.Is3D = "3D"
+			break
+		}
+	}
 	logger.Tracef("metadata: media details 3d=%q", meta.Is3D)
 
 	source, typeValue := sourceAndType(meta, miDoc)
@@ -196,11 +205,9 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		meta.Type = typeValue
 		meta.Release.Type = typeValue
 	}
+	resolution, dvdDetails := resolutionFromMediaEvidence(meta, miDoc)
+	meta.Release.Resolution = resolution
 	if strings.EqualFold(meta.DiscType, "DVD") {
-		dvdDetails := extractDVDMediaInfo(meta)
-		if strings.TrimSpace(dvdDetails.Resolution) != "" && !strings.EqualFold(dvdDetails.Resolution, "OTHER") {
-			meta.Release.Resolution = dvdDetails.Resolution
-		}
 		dvdDetails.SourcePath = meta.SourcePath
 		dvdDetails.IFOPath = meta.DVDIFOPath
 		dvdDetails.VOBPath = meta.DVDVOBPath
@@ -213,14 +220,10 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 			return preparationstate.State{}, fmt.Errorf("metadata: persist dvd mediainfo details: %w", err)
 		}
 	}
-	// For non-DVD content, if rls did not parse a resolution from the filename,
-	// fall back to deriving it from the MediaInfo video track dimensions —
-	// matching the Python get_resolution() behaviour.
-	if strings.TrimSpace(meta.Release.Resolution) == "" && !strings.EqualFold(meta.DiscType, "DVD") {
-		if res := resolutionFromMediaInfo(miDoc, meta.SourcePath); res != "" {
-			meta.Release.Resolution = res
-			logger.Debugf("metadata: resolution derived from mediainfo %q", res)
-		}
+	// ISO preparation uses the selected BDInfo report instead of MediaInfo.
+	// Preserve parsed values here; explicit naming corrections are applied later.
+	if strings.TrimSpace(meta.Release.Resolution) == "" && blurayISO && bdinfo != nil && len(bdinfo.Video) > 0 {
+		meta.Release.Resolution = strings.TrimSpace(bdinfo.Video[0].Resolution)
 	}
 	logger.Tracef("metadata: media details source=%q type=%q resolution=%q", meta.Source, meta.Type, meta.Release.Resolution)
 

@@ -54,7 +54,7 @@ Metadata providers and local media inspection produce shared release facts. Revi
 - external IDs;
 - generated release name.
 
-Automatic category detection checks source folders and filenames for TV hints before using the parsed release category, with Movie as the final fallback. Parent folders affect category only; they do not replace the parsed release title. A `Season 1` directory is a TV-category hint without supplying a season number; canonical season tokens still require two or four digits. Tracker-provided categories take precedence over automatic detection, and an explicit category correction in Input or `--category` remains authoritative.
+Automatic category detection checks source folders and filenames for TV hints before using the parsed release category, with Movie as the final fallback. Parent folders affect category only; they do not replace the parsed release title. A `Season 1` directory is a TV-category hint without supplying a season number; filename season tokens still require two or four digits. Manual season and episode corrections accept plain numbers; see [naming fields](../cli/index.md#naming-fields). Tracker-provided categories take precedence over automatic detection, and an explicit category correction in Input or `--category` remains authoritative.
 
 Overrides change the prepared generation. Later operations must use that exact generation rather than silently rebuilding it.
 
@@ -187,6 +187,8 @@ After confirmed tracker success, upbrr records the tracker result and attempts t
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
 
 Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. While an unknown outcome is retained, it requires reconciliation and is never treated as confirmed success. Restarting does not clear its retry block; verify and reconcile the remote outcome before another attempt.
+
+Automatically managed reports, screenshots, descriptions, torrent exports and analysis files share the release's `tmp/<release>/` folder in the active state directory. Analysis and secondary-file reports may use nested folders. Compatible source evidence is reused; changing the source requires fresh evidence. History deletion includes these nested files and preserves active or shared ownership. See the [v0.4.2 artifact notice](../changelog/v0.4.2.md) for legacy cache removal.
 
 ## 8. Inject into clients
 

@@ -93,17 +93,17 @@ type UseSettingsStateResult = {
 };
 
 const settingsSections: SettingsSection[] = [
-  { key: "main_settings", jsonKey: "MainSettings", label: "Main" },
+  { key: "main_settings", jsonKey: "MainSettings", label: "General" },
   { key: "image_hosting", jsonKey: "ImageHosting", label: "Image Hosting" },
   { key: "metadata", jsonKey: "Metadata", label: "Metadata" },
-  { key: "screenshot_handling", jsonKey: "ScreenshotHandling", label: "Screens" },
+  { key: "screenshot_handling", jsonKey: "ScreenshotHandling", label: "Screenshot capture" },
   { key: "description_settings", jsonKey: "Description", label: "Description" },
-  { key: "arr_integration", jsonKey: "ArrIntegration", label: "Arr" },
+  { key: "arr_integration", jsonKey: "ArrIntegration", label: "Sonarr and Radarr" },
   { key: "post_upload", jsonKey: "PostUpload", label: "Post Upload" },
   { key: "trackers", jsonKey: "Trackers", label: "Trackers" },
   { key: "torrent_clients", jsonKey: "TorrentClients", label: "Torrent Clients" },
   { key: "client_setup", jsonKey: "ClientSetup", label: "Client Handling" },
-  { key: "torrent_creation", jsonKey: "TorrentCreation", label: "Torrent Specific" },
+  { key: "torrent_creation", jsonKey: "TorrentCreation", label: "Torrent preparation" },
 ];
 
 const imageHostOptions = [
@@ -123,8 +123,8 @@ const imageHostOptions = [
 ];
 
 const torrentClientTypeOptions = [
-  { value: "qbit", label: "qBit" },
-  { value: "watch", label: "Watch" },
+  { value: "qbit", label: "qBittorrent" },
+  { value: "watch", label: "Watch folder" },
 ];
 const torrentClientLinkingOptions = [
   { value: "", label: "None" },

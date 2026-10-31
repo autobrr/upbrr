@@ -13,6 +13,20 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestPrivateArtifactVaultRootIsDatabaseScoped(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	firstDB := filepath.Join(root, "first.db")
+	secondDB := filepath.Join(root, "second.db")
+	first := PrivateArtifactVaultRoot(firstDB)
+	if first != PrivateArtifactVaultRoot(firstDB) {
+		t.Fatal("same database path produced unstable private vault root")
+	}
+	if first == PrivateArtifactVaultRoot(secondDB) {
+		t.Fatal("distinct databases in one directory shared a private vault root")
+	}
+}
+
 func TestPrivateArtifactVaultRestartIsolationIntegrityAndConsume(t *testing.T) {
 	t.Parallel()
 

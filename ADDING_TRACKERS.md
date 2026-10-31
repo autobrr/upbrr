@@ -1191,6 +1191,12 @@ automatic upload decisions cannot supply it, and refreshed evidence requires con
 Blocking a duplicate needs no token. In-client matches remain non-overridable. The tracker, not
 this attestation, validates any staff token at submission.
 
+An optional `StaffTokenOverrideRequired` callback may select a separately supported
+upload authorization path using effective configuration, the exact reviewed projection,
+and sanitized candidate evaluations. It changes only staff attestation, never duplicate
+relations or ordinary approval. Preserve exact-match and in-client protections; bind
+explicit intention answers to the current source generation and version the policy.
+
 Target-level duplicate policy reviews use `DupeCheckResult.ReviewReasons` and
 `TrackerDupeAssessment.reviewReasons`, including when a complete search has no candidates.
 Keep these reasons separate from candidate matches. They enter the existing fingerprint-bound

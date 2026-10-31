@@ -111,7 +111,7 @@ func TestTrackerIDUpgradeRetainsFailuresAndAssetsAcrossRestart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			service := NewService(repo, WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)),
+			service := newTestService(t, repo, WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)),
 				WithConfig(config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 					"HDB": {Username: "synthetic-user", Passkey: "synthetic-key"},
 				}}}))
