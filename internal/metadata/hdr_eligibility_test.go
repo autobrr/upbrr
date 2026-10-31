@@ -79,7 +79,7 @@ func TestHDRPackUsesOnlyPrimaryReportAndTarget(t *testing.T) {
 				calls:    make(map[string]int),
 				reports:  map[string]string{first: test.report},
 			}
-			service := NewService(repo,
+			service := newTestService(t, repo,
 				WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)),
 				WithSceneDetector(stubSceneDetector{}),
 				WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
@@ -115,9 +115,9 @@ func TestHDRPackUsesOnlyPrimaryReportAndTarget(t *testing.T) {
 			}
 			for _, profile := range []string{api.HDRAnalysisProfileVersion, api.HDRAnalysisProfileV2} {
 				subject, err := module.ResolveHDRAnalysisSubject(t.Context(), api.HDRAnalysisInstructions{
-					Release: ref,
- TargetIDs: []string{api.HDRTargetID(first, "")},
- ProfileVersion: profile,
+					Release:        ref,
+					TargetIDs:      []string{api.HDRTargetID(first, "")},
+					ProfileVersion: profile,
 				})
 				eligible := test.hdr10Plus || profile == api.HDRAnalysisProfileV2 && test.hevc
 				if eligible {
@@ -128,9 +128,9 @@ func TestHDRPackUsesOnlyPrimaryReportAndTarget(t *testing.T) {
 					t.Fatalf("unsupported primary gained authority: %v", err)
 				}
 				_, err = module.ResolveHDRAnalysisSubject(t.Context(), api.HDRAnalysisInstructions{
-					Release: ref,
- TargetIDs: []string{api.HDRTargetID(second, "")},
- ProfileVersion: profile,
+					Release:        ref,
+					TargetIDs:      []string{api.HDRTargetID(second, "")},
+					ProfileVersion: profile,
 				})
 				if failure, ok := api.AsHDRAnalysisFailure(err); !ok || failure.Code != api.HDRAnalysisFailureInvalidSelection {
 					t.Fatalf("uninspected sibling remained selectable: %v", err)
@@ -182,7 +182,7 @@ func TestHDREligibilityCacheBindsTargetInventoryAndVerifiedContent(t *testing.T)
 		}
 	}
 	analyzer := hdrTrackAnalyzer{hdrFiles: map[string]bool{first: true}, calls: make(map[string]int)}
-	service := NewService(&stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithSceneDetector(stubSceneDetector{}),
+	service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithSceneDetector(stubSceneDetector{}),
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}))
 	request := testCollectionRequest(t, api.Request{SourcePath: first})
 	request.SourceFingerprint = strings.Repeat("1", 64)

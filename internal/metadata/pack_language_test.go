@@ -69,7 +69,7 @@ func TestPackSelectedMediaLanguagesDriveTrackerEligibility(t *testing.T) {
 				t.Fatal(err)
 			}
 			analyzer := &packLanguageAnalyzer{}
-			service := NewService(&stubRepo{},
+			service := newTestService(t, &stubRepo{},
 				WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)),
 				WithSceneDetector(stubSceneDetector{}),
 				WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}),

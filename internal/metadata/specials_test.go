@@ -155,7 +155,7 @@ func TestSpecialProviderSeasonPresence(t *testing.T) {
 					tvdbClient = tvdb.NewClient(httpClient, api.NopLogger{}, "synthetic-key", "")
 					external.TVDB = &api.TVDBMetadata{TVDBID: ids.TVDBID, OriginalLanguage: "eng"}
 				}
-				updated := NewService(&fakeRepo{}).applyTVEpisodeMetadata(t.Context(), meta, &ids, &external, tmdbClient, tvdbClient, nil)
+				updated := newTestService(t, &fakeRepo{}).applyTVEpisodeMetadata(t.Context(), meta, &ids, &external, tmdbClient, tvdbClient, nil)
 				if test.matched {
 					if updated.EpisodeTitle != "The Special Signal" || updated.EpisodeYear != 2026 {
 						t.Fatalf("explicit season zero did not match: %+v", updated)
@@ -185,7 +185,7 @@ func TestIMDbMissingSeasonRetainsDailyDateMatch(t *testing.T) {
 	}
 	applySeasonEpisodeMetadata(&meta, seasonep.Extract(meta.SourcePath, meta), nil)
 	ids := api.ExternalIdentity{IMDBID: 555001, Category: api.CanonicalCategoryTV}
-	updated := NewService(&fakeRepo{}).applyTVEpisodeMetadata(t.Context(), meta, &ids, &external, nil, &stubTVDB{}, nil)
+	updated := newTestService(t, &fakeRepo{}).applyTVEpisodeMetadata(t.Context(), meta, &ids, &external, nil, &stubTVDB{}, nil)
 	if updated.EpisodeTitle != "The Daily Signal" || updated.DailyEpisodeDate != "2026-01-01" || updated.EpisodeInt != 1 {
 		t.Fatalf("unknown provider season changed daily matching: title=%q date=%q episode=%d",
 			updated.EpisodeTitle, updated.DailyEpisodeDate, updated.EpisodeInt)
@@ -366,7 +366,7 @@ func TestSpecialEpisodeEnrichmentRequiresExactCoordinates(t *testing.T) {
 					}}}
 				}
 				beforeIDs := ids
-				service := NewService(&fakeRepo{})
+				service := newTestService(t, &fakeRepo{})
 				updated := service.applyTVEpisodeMetadata(t.Context(), meta, &ids, &external, tmdbClient, tvdbClient, &stubTVmaze{})
 				if updated.SeasonInt != 0 || updated.SeasonStr != "S00" || updated.EpisodeInt != 1 || updated.EpisodeStr != "E01" ||
 					!reflect.DeepEqual(ids, beforeIDs) {
@@ -413,7 +413,7 @@ func TestSpecialEpisodeSkipsDailyAndTVmazeRemapping(t *testing.T) {
 		TVmazeID: 555002,
 		Category: api.CanonicalCategoryTV,
 	}
-	updated := NewService(&fakeRepo{}).applyTVEpisodeMetadata(t.Context(), meta, &ids, nil, tmdbClient, &stubTVDB{}, tvmazeClient)
+	updated := newTestService(t, &fakeRepo{}).applyTVEpisodeMetadata(t.Context(), meta, &ids, nil, tmdbClient, &stubTVDB{}, tvmazeClient)
 	if tmdbClient.dailyCalls != 0 || tvmazeClient.episodeDateCalls != 0 || tvmazeClient.episodeNumberCalls != 0 || tmdbClient.episodeCalls != 1 {
 		t.Fatalf("special used a remapping path: daily=%d TVmaze date=%d number=%d TMDB details=%d",
 			tmdbClient.dailyCalls, tvmazeClient.episodeDateCalls, tvmazeClient.episodeNumberCalls, tmdbClient.episodeCalls)
@@ -454,7 +454,7 @@ func TestSpecialTVDBSelectedSnapshotRequiresSeasonPresence(t *testing.T) {
 					Category:   api.CanonicalCategoryTV,
 				}
 				snapshot := api.SourceScopedMetadata{SourcePath: source, TVDB: &api.TVDBMetadata{TVDBID: ids.TVDBID, OriginalLanguage: "eng"}}
-				service := NewService(&fakeRepo{})
+				service := newTestService(t, &fakeRepo{})
 				daily := preparationstate.State{
 					SourcePath:       source,
 					Release:          api.ReleaseInfo{Category: "TV", Title: "Example Series"},
@@ -553,7 +553,7 @@ func TestSpecialTVDBEnglishTextRetainsOnlyMatchingEpisode(t *testing.T) {
 				if translation == "error" {
 					client.episodeTransErr = errors.New("synthetic translation unavailable")
 				}
-				updated := NewService(&fakeRepo{}).applyTVEpisodeMetadata(t.Context(), meta, &ids, &external, nil, client, nil)
+				updated := newTestService(t, &fakeRepo{}).applyTVEpisodeMetadata(t.Context(), meta, &ids, &external, nil, client, nil)
 				wantTitle, wantOverview := "", ""
 				if cached.retain {
 					wantTitle, wantOverview = "Cached episode title", "Cached episode overview"

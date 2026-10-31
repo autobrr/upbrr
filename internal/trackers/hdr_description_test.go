@@ -232,7 +232,7 @@ func TestHDRPreparedDescriptionCarriesFullSizePreviewAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 			image := filepath.Join(t.TempDir(), "hdr.png")
-			service := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+			service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 			prepared, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(api.UploadSubject{
 				SourcePath: filepath.Join(t.TempDir(), "Synthetic.HDR.mkv"),
 				ExactMedia: &api.ExactMediaAssets{

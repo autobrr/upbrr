@@ -1083,7 +1083,7 @@ func TestPrepareUploadContentKeepsFinalDescriptionAndSeparateMedia(t *testing.T)
 		ExactMedia: &api.ExactMediaAssets{DVDMenus: []api.DVDMenuCaptureImage{{ScreenshotImage: menu}}},
 	}
 	registry := descriptionAssetsTestRegistry(t)
-	service := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, &stubRepo{}, registry)
+	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), api.NopLogger{}, &stubRepo{}, registry)
 	content := service.prepareUploadContent(t.Context(), "AITHER", meta, config.TrackerConfig{}, nil, imageHostPreflight{
 		"AITHER": {screenshots: []api.ScreenshotImage{shot}},
 	})

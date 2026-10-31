@@ -257,7 +257,7 @@ func TestBuildReleaseNameRetainsDVDDiscFactsForIndependentPolicyOperations(t *te
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			meta, err := NewService(&fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), preparationstate.State{
+			meta, err := newTestService(t, &fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), preparationstate.State{
 				SourcePath: "Example.Release.2026.PAL.DVD",
 				DiscType:   "DVD",
 				Type:       "DISC",
@@ -352,7 +352,7 @@ func TestDerivedDVDManualSourceSpellingIsPreserved(t *testing.T) {
 		},
 	} {
 		t.Run(test.source, func(t *testing.T) {
-			meta, err := NewService(&fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), preparationstate.State{
+			meta, err := newTestService(t, &fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), preparationstate.State{
 				SourcePath: "Example.Release.2026.DVD",
 				DiscType:   "DVD",
 				Type:       "DISC",

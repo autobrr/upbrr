@@ -338,7 +338,7 @@ func TestPTPTrackerImageLookupPersistsAuthenticatedArtifact(t *testing.T) {
 			Images:      []bbcode.Image{{RawURL: originalURL}},
 		},
 	}}
-	service := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	service := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	state, err := service.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath: sourcePath,
 		TrackerIDs: map[string]string{"ptp": "303"},
