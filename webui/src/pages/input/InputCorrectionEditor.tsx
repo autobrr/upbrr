@@ -21,7 +21,7 @@ import { LanguageMultiSelect } from "./LanguageMultiSelect";
 import { settingsStyle } from "../../settings/style";
 import { CorrectionSearch, CorrectionSelect } from "./CorrectionChoice";
 import correctionChoices from "./correctionChoices.json";
-import { missingRequiredFacts } from "./requiredFacts";
+import { missingRequiredFacts } from "../../releaseSession/requiredFacts";
 
 const hasOwn = (value: object, key: PropertyKey) =>
   Object.prototype.hasOwnProperty.call(value, key);

@@ -36,7 +36,7 @@ const preview = (sourcePath: string, generation: number): MetadataPreview => ({
   ReleaseName: "Example.Release.2026.1080p-GRP",
   ReleaseNameOverrides: {},
   Release: { SourcePath: sourcePath, Generation: generation },
-  Identity: { ...emptyExternalIdentity(sourcePath), Generation: generation },
+  Identity: { ...emptyExternalIdentity(sourcePath), Category: "movie", Generation: generation },
   Display: { ReleaseName: "Example.Release.2026.1080p-GRP", Providers: [] },
   Bluray: null,
   Diagnostics: [],
@@ -678,7 +678,8 @@ const workflowCurrentFromPreview = (
       release: {
         Generation: value.Release.Generation,
         Source: { SourcePath: value.SourcePath },
-        Naming: { ReleaseName: value.ReleaseName },
+        Naming: { ReleaseName: value.ReleaseName, Resolution: "1080p" },
+        Media: { Type: "ENCODE", Source: "BluRay" },
         Identity: value.Identity,
         ProviderMetadata: { Bluray: value.Bluray },
       },
@@ -5569,6 +5570,68 @@ describe("useReleaseSession", () => {
       reason: "",
     });
   });
+
+  it.each(["Category", "Type", "Source", "Resolution"] as const)(
+    "keeps duplicate navigation blocked until missing saved %s is corrected",
+    async (field) => {
+      const complete = workflowCurrentFromPreview(
+        workflowCurrent("required-facts", 4),
+        preview("C:\\media\\Example.mkv", 1),
+      );
+      const release = complete.release!;
+      let current: ReleaseWorkflowCurrent = {
+        ...complete,
+        release: {
+          ...release,
+          release: {
+            ...release.release,
+            Identity: {
+              ...release.release.Identity,
+              Category: field === "Category" ? "unknown" : "movie",
+            },
+            Media: {
+              ...release.release.Media,
+              Type: field === "Type" ? " " : "ENCODE",
+              Source: field === "Source" ? "" : "BluRay",
+            },
+            Naming: {
+              ...release.release.Naming,
+              Resolution: field === "Resolution" ? "" : "1080p",
+            },
+          },
+        },
+      };
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: "required-facts",
+            workflow: workflowPorts({
+              current: async () => current,
+              continue: async () => current,
+            }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(result.current.input.view.release).not.toBeNull());
+      expect(result.current.navigation.open("duplicates")).toBe(false);
+      expect(result.current.navigation.view.access.duplicates.reason).toMatch(
+        /required facts.*Input/,
+      );
+      act(() =>
+        result.current.input.changeReleaseName({
+          [field]: { Category: "movie", Type: "ENCODE", Source: "BluRay", Resolution: "1080p" }[
+            field
+          ],
+        }),
+      );
+      expect(result.current.navigation.open("duplicates")).toBe(false);
+      await act(() => result.current.workflow.reload());
+      expect(result.current.navigation.open("duplicates")).toBe(false);
+      current = { ...complete, workflow: { ...complete.workflow, revision: 5 } };
+      await act(() => result.current.workflow.reload());
+      expect(result.current.navigation.open("duplicates")).toBe(true);
+    },
+  );
 
   it("delegates disc and playlist decisions to canonical preparation", async () => {
     const prepare = vi.fn(async (current: ReleaseWorkflowCurrent, input: PrepareInput) =>

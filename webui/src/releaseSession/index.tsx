@@ -2257,6 +2257,7 @@ export function ReleaseSessionProvider({
             ),
           ),
           Boolean(workflowView.current?.release?.display.hdrTargets?.length),
+          workflowView.current?.release?.release ?? null,
         );
   const workflowMedia = workflowView.current?.media;
   const workflowMediaURL = (artifactID: string) =>

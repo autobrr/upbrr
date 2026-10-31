@@ -2884,7 +2884,7 @@ describe("required saved release facts", () => {
           release.Media[field] = value as string;
         }
         rerender(<InputPage facet={{ ...facet, view: { ...facet.view } }} {...inputPageProps()} />);
-        expect(screen.getByText(warning)).toHaveClass("text-destructive-text");
+        expect(screen.getByRole("alert")).toHaveTextContent(warning);
         expect(screen.queryByText(helper)).not.toBeInTheDocument();
         for (const name of fields) {
           const control = screen.getByRole("combobox", { name });
