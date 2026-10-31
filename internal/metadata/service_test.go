@@ -747,7 +747,10 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 
 	fullScans := 0
 	playlistScans := 0
-	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, outputDir string) (bdinfo.ScanResult, error) {
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, outputDir string, selected ...string) (bdinfo.ScanResult, error) {
+		if strings.Join(selected, ",") != "00001.MPLS,00002.MPLS" {
+			t.Fatalf("scan validation lost selected playlists: %v", selected)
+		}
 		fullScans++
 		return bdinfo.ScanResult{
 			ReportPath: filepath.Join(outputDir, "BD_FULL.txt"),
@@ -1387,7 +1390,7 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 	}
 	fullScans := 0
 	playlistScans := 0
-	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, _ string) (bdinfo.ScanResult, error) {
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, _ string, _ ...string) (bdinfo.ScanResult, error) {
 		fullScans++
 		return bdinfo.ScanResult{}, errors.New("unexpected full scan")
 	}
@@ -1507,7 +1510,7 @@ func TestPrepareBDMVDirectPlaylistInvokesBDInfoForParentAndRoot(t *testing.T) {
 		"Length: 01:30:00.000",
 	}, "\n") + "\n"
 
-	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, _ string) (bdinfo.ScanResult, error) {
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, _ string, _ ...string) (bdinfo.ScanResult, error) {
 		fullScans++
 		return bdinfo.ScanResult{}, errors.New("unexpected full scan")
 	}
@@ -1723,7 +1726,10 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 		"[/code]",
 	}, "\n")
 	fullScans := 0
-	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, outputDir string) (bdinfo.ScanResult, error) {
+	executeFullBDInfoScan = func(_ *bdinfo.Service, _ context.Context, _ string, outputDir string, selected ...string) (bdinfo.ScanResult, error) {
+		if strings.Join(selected, ",") != "00001.MPLS,00002.MPLS" {
+			t.Fatalf("scan validation lost selected playlists: %v", selected)
+		}
 		fullScans++
 		return bdinfo.ScanResult{
 			ReportPath: filepath.Join(outputDir, "BD_FULL.txt"),

@@ -604,6 +604,9 @@ func (s *Service) resolveCapability(ctx context.Context) (string, render.Capabil
 
 	logger.Debugf("DVD menus: FFmpeg capability probe started")
 	capability, err := render.Probe(ctx, s.runner, executable)
+	blurayAvailable, capabilityErr := render.ProbeBluray(ctx, s.runner, executable)
+	capability.BlurayAvailable = blurayAvailable
+	capability.BlurayChecked = capabilityErr == nil
 	if err != nil {
 		info = engineInfo(capability)
 		info.MissingFFmpegOptions = missingFFmpegOptions(err)
@@ -651,6 +654,16 @@ func baseEngineInfo() api.DVDMenuEngineInfo {
 func engineInfo(capability render.Capability) api.DVDMenuEngineInfo {
 	info := baseEngineInfo()
 	info.FFmpegVersion = capability.Version
+	if info.FFmpegVersion != "" {
+		blurayStatus := "unknown"
+		if capability.BlurayChecked {
+			blurayStatus = "unavailable"
+			if capability.BlurayAvailable {
+				blurayStatus = "available"
+			}
+		}
+		info.FFmpegVersion += " (libbluray: " + blurayStatus + ")"
+	}
 	info.FFmpegDVDVideo = capability.Available
 	return info
 }

@@ -185,6 +185,15 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	logger.Tracef("metadata: media details audio=%q channels=%q commentary=%t", meta.Audio, meta.Channels, meta.HasCommentary)
 
 	meta.Is3D = threeDFromMedia(miDoc, bdinfo)
+	blurayISO := false
+	for _, disc := range meta.Discs {
+		if disc.BluRayISO {
+			blurayISO = true
+			// ISO collection has already validated MVC in every selected report.
+			meta.Is3D = "3D"
+			break
+		}
+	}
 	logger.Tracef("metadata: media details 3d=%q", meta.Is3D)
 
 	source, typeValue := sourceAndType(meta, miDoc)
@@ -210,6 +219,11 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		if err := s.repo.SaveDVDMediaInfo(ctx, dvdDetails); err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: persist dvd mediainfo details: %w", err)
 		}
+	}
+	// ISO preparation uses the selected BDInfo report instead of MediaInfo.
+	// Preserve parsed values here; explicit naming corrections are applied later.
+	if strings.TrimSpace(meta.Release.Resolution) == "" && blurayISO && bdinfo != nil && len(bdinfo.Video) > 0 {
+		meta.Release.Resolution = strings.TrimSpace(bdinfo.Video[0].Resolution)
 	}
 	logger.Tracef("metadata: media details source=%q type=%q resolution=%q", meta.Source, meta.Type, meta.Release.Resolution)
 

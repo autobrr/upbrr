@@ -90,6 +90,20 @@ For BDMV, interactive preparation groups playlist choices by disc and requires a
 
 `--manual_frames 240,480` requests both frames from every prepared disc. The selected parent remains one collection-root torrent containing all disc folders.
 
+### Decrypted 3D Blu-ray ISO input
+
+Select the original `.iso` file in the WebUI file browser, or pass it directly to the CLI:
+
+```powershell
+.\upbrr.exe "D:\releases\Example.Movie.2026.3D.iso"
+```
+
+Choose a playlist through the normal Blu-ray selector. A remembered choice is reused only for the same source fingerprint; a changed image requires a fresh selection. Preparation uses BDInfo and requires MVC evidence in every selected playlist. A filename or manual 3D correction cannot make an unsupported image eligible. MediaInfo is not required for this ISO workflow. If the filename has no resolution, naming uses the primary selected report's video resolution; explicit resolution corrections still apply.
+
+Screenshots use FFmpeg's `bluray:` input and the explicitly selected playlist. Times refer to the complete playlist, including multiple clips. The images are ordinary single-view AVC base-view frames, not stereoscopic reconstructions; the base view is not necessarily the left eye. FFmpeg must provide the libbluray input protocol. The reported FFmpeg information includes `libbluray: available`, `unavailable`, or `unknown`; availability alone does not prove that a particular image can be decoded.
+
+The torrent contains only the original ISO, with its physical size and source path preserved. No mounting or extraction is required. DVD ISOs, 2D Blu-ray ISOs, encrypted images, and generic archive browsing are not supported by this workflow. Existing extracted-disc preparation remains available.
+
 ## Interaction and safety
 
 The CLI shares one active-input slot with every process using its database. Queue entries run serially. If another session owns the input, the command returns a busy error; unattended mode never prompts or takes over a live input. After its terminal result, the CLI closes its owned input. Cancellation uses bounded cleanup; a reported cleanup failure requires recovery before further work.
