@@ -919,14 +919,22 @@ name: "owner merge",
 						}
 					}
 					if phase.name == "refresh" {
-						if fixture.requests()["/3/tv/555002/external_ids"] <= before["/3/tv/555002/external_ids"] {
-							t.Fatal("refresh reused old provider evidence")
+						after := fixture.requests()
+						for _, endpoint := range []string{"/3/tv/555002", "/3/tv/555002/external_ids"} {
+							if after[endpoint] <= before[endpoint] {
+								t.Fatalf("refresh reused old TMDB evidence at %s", endpoint)
+							}
 						}
 						if imdbProvider.infoCalls <= beforeIMDB || tvdbProvider.seriesMetadataCalls <= beforeTVDB || tvmazeProvider.calls <= beforeTVmaze {
 							t.Fatal("refresh reused old IMDb, TVDB or TVmaze evidence")
 						}
 					} else {
 						fixture.assertRequests(t, before, nil)
+						if phase.name == "reuse" || phase.name == "restart" {
+							if imdbProvider.infoCalls != beforeIMDB || tvdbProvider.seriesMetadataCalls != beforeTVDB || tvmazeProvider.calls != beforeTVmaze {
+								t.Fatal("cached IMDb, TVDB or TVmaze evidence was re-fetched")
+							}
+						}
 					}
 					if phase.preparedVersion != "" && result.Release.Generation <= staleGeneration {
 						t.Fatal("old rejection semantics reused")
