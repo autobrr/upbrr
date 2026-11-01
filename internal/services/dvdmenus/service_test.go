@@ -30,6 +30,7 @@ import (
 type capabilityRunner struct {
 	calls              int
 	missingMenuOptions bool
+	protocolErr        error
 }
 
 type dvdMenuRecordingLogger struct {
@@ -82,6 +83,9 @@ func (l *dvdMenuRecordingLogger) Count(expected string) int {
 func (r *capabilityRunner) Run(_ context.Context, _ string, args []string, _ int) (render.Output, error) {
 	r.calls++
 	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "-protocols") {
+		return render.Output{Stdout: []byte("Supported file protocols:\nInput:\n  bluray\nOutput:\n  file\n")}, r.protocolErr
+	}
 	if strings.Contains(joined, "demuxer=dvdvideo") {
 		if r.missingMenuOptions {
 			return render.Output{Stdout: []byte("dvdvideo -menu")}, nil
@@ -687,7 +691,7 @@ func TestCapabilityRetainsFFmpegVersionWithoutMenuSupport(t *testing.T) {
 	runner := &capabilityRunner{missingMenuOptions: true}
 	service := newService(api.NopLogger{}, "", nil, runner, func() (string, error) { return executable, nil }, nil)
 	info, err := service.Capability(t.Context())
-	if err == nil || info.FFmpegDVDVideo || info.FFmpegVersion != "ffmpeg version example" {
+	if err == nil || info.FFmpegDVDVideo || info.FFmpegVersion != "ffmpeg version example (libbluray: available)" {
 		t.Fatalf("incompatible capability = %#v, err=%v", info, err)
 	}
 	if strings.Join(info.MissingFFmpegOptions, ",") != "-menu_lu,-menu_vts,-pgc,-pg" || info.EngineVersion == "" {
@@ -711,12 +715,12 @@ func TestCapabilityCacheInvalidatesWhenExecutableIdentityChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("capability: %v", err)
 		}
-		if !info.FFmpegDVDVideo || info.FFmpegVersion != "ffmpeg version example" {
+		if !info.FFmpegDVDVideo || info.FFmpegVersion != "ffmpeg version example (libbluray: available)" {
 			t.Fatalf("capability info = %#v", info)
 		}
 	}
-	if runner.calls != 2 {
-		t.Fatalf("cached probe calls = %d, want 2", runner.calls)
+	if runner.calls != 3 {
+		t.Fatalf("cached probe calls = %d, want 3", runner.calls)
 	}
 	if err := os.WriteFile(executable, []byte("second identity"), 0o600); err != nil {
 		t.Fatalf("change FFmpeg identity: %v", err)
@@ -724,8 +728,8 @@ func TestCapabilityCacheInvalidatesWhenExecutableIdentityChanges(t *testing.T) {
 	if _, err := service.Capability(context.Background()); err != nil {
 		t.Fatalf("capability after identity change: %v", err)
 	}
-	if runner.calls != 4 {
-		t.Fatalf("invalidated probe calls = %d, want 4", runner.calls)
+	if runner.calls != 6 {
+		t.Fatalf("invalidated probe calls = %d, want 6", runner.calls)
 	}
 }
 
@@ -863,4 +867,17 @@ func hasDiscWarning(warnings []api.DVDMenuCaptureWarning, discID string) bool {
 		}
 	}
 	return false
+}
+
+func TestCapabilityProtocolFailureDoesNotDisableDVDMenus(t *testing.T) {
+	executable := filepath.Join(t.TempDir(), "ffmpeg-example")
+	if err := os.WriteFile(executable, []byte("example"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &capabilityRunner{protocolErr: errors.New("protocol probe failed")}
+	service := newService(api.NopLogger{}, "", nil, runner, func() (string, error) { return executable, nil }, nil)
+	info, err := service.Capability(t.Context())
+	if err != nil || !info.FFmpegDVDVideo || info.FFmpegVersion != "ffmpeg version example (libbluray: unknown)" {
+		t.Fatalf("capability = %#v, error=%v", info, err)
+	}
 }

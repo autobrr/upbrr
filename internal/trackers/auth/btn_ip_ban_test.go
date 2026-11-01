@@ -41,7 +41,7 @@ func TestBTNIPBanSharedAuthPreservesStatusAndSession(t *testing.T) {
 		Password: "synthetic-password",
 		APIKey:   "synthetic-api-key",
 	}
-	service := newTestService(config.Config{
+	service := newTestService(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Trackers:     config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BTN": cfg}},
 	})

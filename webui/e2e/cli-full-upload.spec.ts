@@ -47,6 +47,34 @@ test("CLI full upload approves trackers before downstream work", async () => {
   }
 });
 
+for (const flags of [
+  ["--season", "2"],
+  ["--episode", "5"],
+  ["--season", "5", "--episode", "5"],
+]) {
+  test(`CLI accepts plain episode coordinates: ${flags.join(" ")}`, async () => {
+    const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+    try {
+      const result = await runCLI(
+        [
+          "--config",
+          workspace.configPath,
+          "--input-only",
+          "--unattended",
+          ...flags,
+          workspace.sourcePath,
+        ],
+        workspace.env,
+      );
+      expect(result.code, result.output).toBe(0);
+      expect(workspace.fake.counters.trackerUploads).toBe(0);
+      expect(workspace.fake.counters.clientInjections).toBe(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+}
+
 test("CLI uploads one collection torrent for two BDMV discs", async () => {
   const workspace = await createE2EWorkspace({ useLargestPlaylist: true, mediaKind: "tv" });
   try {

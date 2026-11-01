@@ -112,6 +112,10 @@ type Capability struct {
 	Available bool
 	// Version is a bounded first line from FFmpeg's version output.
 	Version string
+	// BlurayAvailable reports a detected bluray input protocol, not successful disc decoding.
+	BlurayAvailable bool
+	// BlurayChecked distinguishes a successful protocol probe from unknown support.
+	BlurayChecked bool
 	// Options contains the required dvdvideo options observed by the probe.
 	Options []string
 }
@@ -160,6 +164,37 @@ func Probe(ctx context.Context, runner Runner, executable string) (Capability, e
 		Version:   version,
 		Options:   options,
 	}, nil
+}
+
+// ProbeBluray checks whether FFmpeg lists the libbluray-backed input protocol.
+// Protocol availability does not establish that any particular disc can be decoded.
+func ProbeBluray(ctx context.Context, runner Runner, executable string) (bool, error) {
+	if runner == nil || strings.TrimSpace(executable) == "" {
+		return false, errors.New("FFmpeg protocol runner unavailable")
+	}
+	output, err := runner.Run(ctx, executable, []string{"-hide_banner", "-protocols"}, MaxDiagnosticBytes)
+	if err != nil {
+		return false, fmt.Errorf("FFmpeg protocol probe: %w", err)
+	}
+	input := false
+	foundInput := false
+	for line := range strings.SplitSeq(string(output.Stdout), "\n") {
+		switch strings.TrimSpace(line) {
+		case "Input:":
+			input = true
+			foundInput = true
+		case "Output:":
+			input = false
+		case "bluray":
+			if input {
+				return true, nil
+			}
+		}
+	}
+	if !foundInput {
+		return false, errors.New("FFmpeg protocol probe: missing input protocol list")
+	}
+	return false, nil
 }
 
 func firstLine(value string) string {

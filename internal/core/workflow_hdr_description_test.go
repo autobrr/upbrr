@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func TestWorkflowFinalDescriptionDoesNotResolveOrHostUnusedHDR(t *testing.T) {
 	descriptor, _ := registry.LookupDescriptor("AITHER")
 	builder := workflowDescriptionBuilder{
 		resolver: &workflowDescriptionResolverFake{},
-		trackers: trackers.NewServiceWithRegistry(config.Config{}, api.NopLogger{}, nil, registry),
+		trackers: trackers.NewServiceWithRegistry(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}}, api.NopLogger{}, nil, registry),
 	}
 	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
 		TrackerID:        "AITHER",

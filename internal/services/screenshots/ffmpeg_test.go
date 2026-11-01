@@ -512,3 +512,30 @@ func testPNGBytes(t *testing.T, pixel color.RGBA) []byte {
 	}
 	return buf.Bytes()
 }
+
+func TestBlurayInputOptionsStayBeforeInputForCaptureAndPreview(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "Example.3D.iso")
+	for _, args := range [][]string{
+		buildFFmpegArgs(captureRequest{
+			InputPath: source,
+			Playlist:  "800",
+			Timestamp: 90,
+		}, false),
+		buildFFmpegPreviewArgs(previewRequest{
+			InputPath: source,
+			Playlist:  "800",
+			Timestamp: 90,
+		}),
+	} {
+		playlist := slices.Index(args, "-playlist")
+		input := slices.Index(args, "-i")
+		seek := slices.Index(args, "-ss")
+		if playlist < 0 || input <= playlist || args[playlist+1] != "800" || args[input+1] != "bluray:"+source || seek < 0 || args[seek+1] != "90.000" {
+			t.Fatalf("selected ISO playlist/timeline lost: %v", args)
+		}
+	}
+	ordinary := buildFFmpegArgs(captureRequest{InputPath: source}, false)
+	if slices.Contains(ordinary, "-playlist") || slices.Contains(ordinary, "bluray:"+source) {
+		t.Fatalf("ordinary input behavior changed: %v", ordinary)
+	}
+}

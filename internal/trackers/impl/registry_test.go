@@ -91,7 +91,7 @@ func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
 
 	for _, tracker := range registry.Names() {
 		mode, ok := registry.LookupUploadContentMode(tracker)
-		if !ok || mode != trackers.UploadContentModeDescription {
+		if !ok || !mode.UsesDescription() {
 			continue
 		}
 		definition, ok := registry.Lookup(tracker)
@@ -239,7 +239,7 @@ func TestCustomDescriptionGroupsIncludeTrackerScreenshots(t *testing.T) {
 					"source_notes":      "Example BluRay source",
 				}}
 			}
-			cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: imageHost}}
+			cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}, ImageHosting: config.ImageHostingConfig{Host1: imageHost}}
 			service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, registry)
 			preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), []string{tracker})
 			if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 1 {
@@ -636,6 +636,7 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 		}
 	}
 	specialModes := map[string]trackers.UploadContentMode{
+		"ANT": trackers.UploadContentModeOptionalDescription,
 		"BTN": trackers.UploadContentModeNone,
 		"NBL": trackers.UploadContentModeNone,
 		"RTF": trackers.UploadContentModeScreenshots,
@@ -688,8 +689,9 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if _, ok := registry.LookupMetadataPolicy("ANT"); !ok {
 		t.Fatal("expected ANT tracker-owned metadata policy")
 	}
-	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v6" ||
-		policy.EvidenceID != "ant-slots-staff-overrides" || policy.TargetSlot == nil || !policy.StaffTokenOverride {
+	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v7" ||
+		policy.EvidenceID != "ant-slots-staff-overrides" || policy.TargetSlot == nil || !policy.StaffTokenOverride ||
+		policy.Questionnaire == nil || policy.StaffTokenOverrideRequired == nil {
 		t.Fatalf("ANT dupe policy = %#v, %t", policy, ok)
 	}
 }
@@ -1203,7 +1205,7 @@ func TestSavedDescriptionGroupPreservesGeneratedContent(t *testing.T) {
 		EpisodeOverview:  synopsis,
 		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Logo: logo}},
 	}
-	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "ptscreens"}}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}, ImageHosting: config.ImageHostingConfig{Host1: "ptscreens"}}
 	cfg.Description.AddLogo = true
 	cfg.Description.EpisodeOverview = true
 	cfg.Description.LogoSize = 300

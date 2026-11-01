@@ -204,6 +204,45 @@ func syncCookieEncryptionBeforeConfigSaveTx(ctx context.Context, tx *sql.Tx, dbP
 	return key, nil
 }
 
+// ResolveExistingDBPath follows startup's database selection without saving
+// configuration or creating a missing database. It is intended for maintenance
+// that must run before runtime configuration activation.
+func ResolveExistingDBPath(ctx context.Context, configPath string, configProvided bool) (string, error) {
+	var dbPath string
+	var err error
+	if configProvided {
+		_, dbPath, err = Bootstrap(ctx, configPath, true, false)
+	} else {
+		dbPath, err = db.DefaultPath()
+		if err != nil {
+			return "", fmt.Errorf("default db path: %w", err)
+		}
+		_, err = loadStoredConfigForProvidedMerge(ctx, dbPath)
+		if errors.Is(err, internalerrors.ErrNotFound) {
+			var path string
+			path, err = DefaultYAMLPath()
+			if err == nil {
+				var loaded *config.Config
+				loaded, err = LoadFromPathOrEmbedded(path)
+				if err == nil {
+					dbPath, err = resolveDBPath(loaded)
+				}
+			}
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		return "", fmt.Errorf("inspect existing recovery database: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("existing recovery database must be a regular file")
+	}
+	return dbPath, nil
+}
+
 // Bootstrap resolves the effective config and database path at process
 // startup. It prefers the sqlite database (with YAML used only as a bootstrap
 // source when the database is empty). The persistYAML flag controls whether a

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path" //nolint:depguard // BDInfo timeline source names are slash-delimited disc data, not host filesystem paths.
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,11 +22,12 @@ import (
 )
 
 type runRequest struct {
-	BDMVPath     string
-	PlaylistName string
-	ReportPath   string
-	OnProgress   func(bdrunner.ProgressEvent)
-	SummaryOnly  bool
+	BDMVPath        string
+	PlaylistName    string
+	ReportPath      string
+	OnProgress      func(bdrunner.ProgressEvent)
+	SummaryOnly     bool
+	IncludeTimeline bool
 }
 
 var runBDInfo = func(ctx context.Context, req runRequest) (bdrunner.Result, error) {
@@ -38,10 +40,11 @@ var runBDInfo = func(ctx context.Context, req runRequest) (bdrunner.Result, erro
 	settings.SummaryOnly = req.SummaryOnly
 
 	return bdrunner.Run(ctx, bdrunner.Options{
-		Path:       req.BDMVPath,
-		ReportPath: req.ReportPath,
-		Settings:   settings,
-		OnProgress: req.OnProgress,
+		Path:            req.BDMVPath,
+		ReportPath:      req.ReportPath,
+		Settings:        settings,
+		OnProgress:      req.OnProgress,
+		IncludeTimeline: req.IncludeTimeline,
 	})
 }
 
@@ -226,12 +229,20 @@ func (s *Service) ExecuteForPlaylist(ctx context.Context, bdmvPath string, playl
 
 // ExecuteFullScan scans the full disc, writes BD_FULL.txt beneath outputDir,
 // and returns both the persisted path and report text. A newly created report
-// file uses mode 0600.
-func (s *Service) ExecuteFullScan(ctx context.Context, bdmvPath string, outputDir string) (ScanResult, error) {
-	return s.execute(ctx, bdmvPath, "", filepath.Join(outputDir, "BD_FULL.txt"), false)
+// file uses mode 0600. selectedPlaylists limits ISO read-error validation to the
+// content the caller will consume; absent names validate all reported playlists.
+func (s *Service) ExecuteFullScan(ctx context.Context, bdmvPath string, outputDir string, selectedPlaylists ...string) (ScanResult, error) {
+	return s.execute(ctx, bdmvPath, "", filepath.Join(outputDir, "BD_FULL.txt"), false, selectedPlaylists...)
 }
 
-func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName string, outputPath string, summaryOnly bool) (ScanResult, error) {
+func (s *Service) execute(
+	ctx context.Context,
+	bdmvPath string,
+	playlistName string,
+	outputPath string,
+	summaryOnly bool,
+	selectedPlaylists ...string,
+) (ScanResult, error) {
 	logger := logging.FromContext(ctx, s.logger)
 
 	if err := ctx.Err(); err != nil {
@@ -256,6 +267,14 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 	} else {
 		logger.Debugf("bdinfo: running in-process full-disc scan")
 	}
+	iso := false
+	if strings.EqualFold(filepath.Ext(bdmvPath), ".iso") {
+		info, err := os.Stat(bdmvPath)
+		if err != nil {
+			return ScanResult{}, fmt.Errorf("bdinfo: inspect ISO source: %w", err)
+		}
+		iso = info.Mode().IsRegular()
+	}
 	req := runRequest{
 		BDMVPath:     bdmvPath,
 		PlaylistName: playlistName,
@@ -264,7 +283,8 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 			progress.emit(event)
 			emitProgressEvent(reporter, event)
 		},
-		SummaryOnly: summaryOnly,
+		SummaryOnly:     summaryOnly,
+		IncludeTimeline: iso,
 	}
 	var result bdrunner.Result
 	var err error
@@ -312,6 +332,14 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 	if err := ctx.Err(); err != nil {
 		return ScanResult{}, fmt.Errorf("bdinfo: scan canceled: %w", err)
 	}
+	if iso {
+		if playlistName != "" {
+			selectedPlaylists = []string{playlistName}
+		}
+		if err := validateISOScan(result, selectedPlaylists); err != nil {
+			return ScanResult{}, err
+		}
+	}
 	if strings.TrimSpace(result.ReportPath) != "" {
 		outputPath = result.ReportPath
 	}
@@ -345,6 +373,57 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 		ReportPath: outputPath,
 		ReportText: reportText,
 	}, nil
+}
+
+// validateISOScan rejects selected-content read failures without treating an
+// unrelated file warning or unsupported SSIF clock mapping as a failed report.
+func validateISOScan(result bdrunner.Result, playlistNames []string) error {
+	if result.Scan.ScanError != "" {
+		return errors.New("bdinfo: incomplete ISO scan; use a readable decrypted 3D Blu-ray image")
+	}
+	if len(result.Scan.FileErrors) == 0 {
+		return nil
+	}
+	selected := make(map[string]struct{})
+	remaining := make(map[string]bool, len(playlistNames))
+	for _, name := range playlistNames {
+		remaining[normalizePlaylistSelector(name)] = true
+	}
+	if len(result.Timelines) == 0 {
+		return errors.New("bdinfo: cannot associate ISO scan errors with selected content")
+	}
+	for _, timeline := range result.Timelines {
+		name := normalizePlaylistSelector(timeline.Name)
+		if len(playlistNames) > 0 {
+			if !remaining[name] {
+				continue
+			}
+			delete(remaining, name)
+		}
+		selected[strings.ToUpper(timeline.Name)] = struct{}{}
+		if len(timeline.Items) == 0 {
+			return errors.New("bdinfo: cannot associate ISO scan errors with selected content")
+		}
+		for _, item := range timeline.Items {
+			if len(item.Angles) == 0 || item.Angles[0].Source.LogicalClip == "" {
+				return errors.New("bdinfo: cannot associate ISO scan errors with selected content")
+			}
+			source := item.Angles[0].Source
+			clip := strings.ToUpper(source.LogicalClip)
+			selected[clip] = struct{}{}
+			selected[strings.TrimSuffix(clip, path.Ext(clip))+".CLPI"] = struct{}{}
+			selected[strings.ToUpper(path.Base(source.Path))] = struct{}{}
+		}
+	}
+	if len(remaining) > 0 {
+		return errors.New("bdinfo: cannot associate ISO scan errors with selected content")
+	}
+	for name := range result.Scan.FileErrors {
+		if _, failed := selected[strings.ToUpper(name)]; failed {
+			return errors.New("bdinfo: selected ISO content could not be read; use a readable decrypted 3D Blu-ray image")
+		}
+	}
+	return nil
 }
 
 // ParseOutput extracts title, label, size, length, and quick-summary fields from

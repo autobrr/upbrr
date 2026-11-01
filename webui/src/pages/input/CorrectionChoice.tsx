@@ -60,7 +60,7 @@ export function CorrectionSelect({
 }
 
 /** Editable suggestions preserve custom corrections; only a chosen option supplies its canonical value. */
-export function CorrectionSearch({ id, label, value, options, onChange }: Props) {
+export function CorrectionSearch({ id, label, value, options, describedBy, onChange }: Props) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
@@ -97,6 +97,7 @@ export function CorrectionSearch({ id, label, value, options, onChange }: Props)
           id={id}
           role="combobox"
           aria-label={label}
+          aria-describedby={describedBy}
           aria-autocomplete="list"
           aria-expanded={open}
           aria-controls={open ? `${id}-options` : undefined}

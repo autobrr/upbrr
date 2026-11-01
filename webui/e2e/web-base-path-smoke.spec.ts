@@ -641,12 +641,14 @@ test("bounded HDR mode retains native evidence and restores explicit audio-off c
     app = await startApp(workspace, { baseURL: "/upbrr/" });
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
-    await page.getByLabel("Analysis mode").selectOption("boundary");
+    await page.getByLabel("Analysis mode", { exact: true }).selectOption("boundary");
     await expect(page.getByLabel("Analyze audio", { exact: true })).toBeChecked();
-    await expect(page.getByLabel("Active-area borders")).not.toBeChecked();
-    await page.getByLabel("Analyze all audio tracks (up to 64)").check();
+    await expect(page.getByLabel("Active-area borders", { exact: true })).not.toBeChecked();
+    await page.getByLabel("Analyze all audio tracks (up to 64)", { exact: true }).check();
     await page.getByLabel("Analyze audio", { exact: true }).uncheck();
-    await page.getByLabel("Video decoder threads (0 uses the mode default)").fill("4");
+    await page
+      .getByLabel("Video decoder threads (0 uses the mode default)", { exact: true })
+      .fill("4");
     await page.getByRole("button", { name: "Generate", exact: true }).click();
     await expect(page.getByRole("img", { name: "Video 1 HDR10+ plot", exact: true })).toBeVisible({
       timeout: 30_000,
@@ -663,13 +665,15 @@ test("bounded HDR mode retains native evidence and restores explicit audio-off c
     expect(report.decoded[0].coverage).toBe("unknown");
     await page.reload();
     await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
-    await expect(page.getByLabel("Analysis mode")).toHaveValue("boundary");
+    await expect(page.getByLabel("Analysis mode", { exact: true })).toHaveValue("boundary");
     await expect(page.getByLabel("Analyze audio", { exact: true })).not.toBeChecked();
-    await expect(page.getByLabel("Video decoder threads (0 uses the mode default)")).toHaveValue(
-      "4",
-    );
+    await expect(
+      page.getByLabel("Video decoder threads (0 uses the mode default)", { exact: true }),
+    ).toHaveValue("4");
     await page.getByLabel("Analyze audio", { exact: true }).check();
-    await expect(page.getByLabel("Analyze all audio tracks (up to 64)")).not.toBeChecked();
+    await expect(
+      page.getByLabel("Analyze all audio tracks (up to 64)", { exact: true }),
+    ).not.toBeChecked();
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 1000 });
       for (const mode of ["light", "dark"]) {
@@ -712,4 +716,128 @@ test("bounded HDR mode retains native evidence and restores explicit audio-off c
     await app?.stop();
     await workspace.cleanup();
   }
+});
+
+test.describe("Contextual help outside Settings", () => {
+  test.use({ hasTouch: true });
+
+  test("keeps release, analysis and logging controls stable without starting work", async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace({ hdrAnalysis: true, audioAnalysis: true });
+    let app: AppServer | undefined;
+    try {
+      app = await startApp(workspace, { baseURL: "/upbrr/" });
+      await fetchMetadata(page, app.url, workspace.sourcePath);
+      await page.setViewportSize({ width: 360, height: 780 });
+      const before = { ...workspace.fake.counters };
+      const mutations: string[] = [];
+      page.on("request", (request) => {
+        if (
+          request.method() === "POST" &&
+          /Generate|ContinueReleaseWorkflow|SaveConfig|OpenActiveInput/.test(request.url())
+        )
+          mutations.push(
+            request.url().endsWith("/ContinueReleaseWorkflow")
+              ? `ContinueReleaseWorkflow:${(request.postDataJSON() as { goal: string }).goal}`
+              : new URL(request.url()).pathname,
+          );
+      });
+      const tooltip = page.getByTestId("field-help-content");
+      const checkFloatingHelp = async (
+        label: string,
+        control: import("@playwright/test").Locator,
+      ) => {
+        const help = page.getByRole("button", { name: `Help for ${label}`, exact: true });
+        await help.scrollIntoViewIfNeeded();
+        const controlPosition = () =>
+          control.evaluate((element) => {
+            const bounds = element.getBoundingClientRect();
+            return {
+              x: bounds.x + scrollX,
+              y: bounds.y + scrollY,
+              width: bounds.width,
+              height: bounds.height,
+            };
+          });
+        const position = await controlPosition();
+        await help.tap();
+        await expect(tooltip).toBeVisible();
+        const box = await tooltip.boundingBox();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(360);
+        expect(box!.y).toBeGreaterThanOrEqual(0);
+        expect(box!.y + box!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+        expect(await controlPosition()).toEqual(position);
+        await help.tap();
+        await expect(tooltip).toBeHidden();
+        await help.tap();
+        await expect(tooltip).toBeVisible();
+        await page.getByRole("heading", { level: 1 }).tap();
+        await expect(tooltip).toBeHidden();
+      };
+
+      await page.getByText("Edit Release Details", { exact: true }).click();
+      const provider = page.getByRole("textbox", { name: "TMDB ID", exact: true });
+      const originalID = await provider.inputValue();
+      await expect(provider).toHaveAccessibleDescription(/numeric content ID/);
+      await checkFloatingHelp("TMDB ID", provider);
+      const providerHelp = page.getByRole("button", { name: "Help for TMDB ID", exact: true });
+      await provider.focus();
+      await provider.press("Shift+Tab");
+      await expect(providerHelp).toBeFocused();
+      await expect(tooltip).toBeVisible();
+      await providerHelp.press("Escape");
+      await expect(tooltip).toBeHidden();
+      await expect(providerHelp).toBeFocused();
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await provider.focus();
+      await page.locator('label[for="correction-identity.tmdb-value"]').hover();
+      await expect(tooltip).toBeHidden();
+      await providerHelp.hover();
+      await expect(tooltip).toBeVisible();
+      await tooltip.hover();
+      await expect(tooltip).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(provider).toHaveValue(originalID);
+
+      await page.setViewportSize({ width: 360, height: 780 });
+      await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();
+      const mode = page.getByRole("combobox", { name: "Analysis mode", exact: true });
+      await checkFloatingHelp("Analysis mode", mode);
+      await expect(mode).toHaveValue("metadata_audio");
+      await mode.selectOption("manual");
+      await page
+        .getByRole("checkbox", { name: "Brightness grade comparison", exact: true })
+        .check();
+      const offset = page.getByRole("spinbutton", { name: "Confirmed frame offset (B − A)" });
+      await expect(offset).toHaveAccessibleDescription(/B frame = A frame \+ offset/);
+      await checkFloatingHelp("Confirmed frame offset (B − A)", offset);
+      await expect(
+        page.getByText("Select source B and supply an explicit offset and even crop dimensions."),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+
+      await page.getByRole("button", { name: "Audio Analysis", exact: true }).click();
+      const waveform = page.getByRole("checkbox", { name: "Waveform", exact: true });
+      await expect(waveform).toHaveAccessibleDescription(/amplitude over time/);
+      await checkFloatingHelp("Audio outputs", waveform);
+      await expect(waveform).toBeChecked();
+      await expect(page.getByRole("radio", { name: "Primary", exact: true })).toBeChecked();
+
+      await page.getByRole("button", { name: "Logging", exact: true }).click();
+      const level = page.getByRole("combobox", { name: "Runtime log level" });
+      const originalLevel = await level.inputValue();
+      await expect(level).toHaveAccessibleDescription(/after Save/);
+      await checkFloatingHelp("Runtime log level", level);
+      await expect(level).toHaveValue(originalLevel);
+      await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+      expect(workspace.fake.counters).toEqual(before);
+      // Entering HDR normally refreshes tracker requirements, without starting analysis.
+      expect(mutations).toEqual(["ContinueReleaseWorkflow:trackers_projected"]);
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
 });

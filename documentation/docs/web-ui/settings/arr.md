@@ -1,11 +1,11 @@
 ---
-title: Arr settings
+title: Sonarr and Radarr settings
 description: Enrich prepared releases through one or more Sonarr and Radarr instances.
 ---
 
-# Arr settings
+# Sonarr and Radarr settings
 
-Use **Settings → Arr** to let upbrr match a source path against Sonarr for TV or Radarr for movies. A match supplies non-authoritative IDs, year, genres, and release-group evidence to preparation.
+Use **Settings → Sonarr and Radarr** to let upbrr match a source path against Sonarr for TV or Radarr for movies. A match supplies non-authoritative IDs, year, genres, and release-group evidence to preparation.
 
 ## Configure Sonarr or Radarr
 
@@ -22,7 +22,7 @@ API keys are secrets and appear as `[REDACTED]` after saving.
 
 :::note Compatibility fields
 
-**Emby dir** and **Emby TV dir** remain in the schema but have no current runtime reader.
+Legacy Emby paths are retained for configuration compatibility and are not exposed in Settings.
 
 :::
 

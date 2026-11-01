@@ -5,26 +5,26 @@ description: Order image-upload hosts and configure only the credentials each se
 
 # Image Hosting settings
 
-Use **Settings → Image Hosting** to define global image-upload candidates. **Host 1** has highest priority; blank and duplicate entries are ignored. Tracker policy can restrict the candidates, and a tracker-specific **Image host** setting can override the global preference.
+Use **Settings → Image Hosting** to define global image-upload candidates. **Image host priority 1** has highest priority; blank and duplicate entries are ignored. Tracker policy can restrict the candidates, and a tracker-specific **Preferred image host for this tracker** setting can override the global preference.
 
 ## Configure host priority
 
 Choose up to six hosts in preferred order. The Web UI reveals credential fields only for selected hosts.
 
-| Host         | Required setting         |
-| ------------ | ------------------------ |
-| ImgBB        | API key                  |
-| ImgBox       | None                     |
-| Pixhost      | None                     |
-| Lensdump     | API key                  |
-| PTScreens    | API key                  |
-| OnlyImage    | API key                  |
-| Dalexni      | API key                  |
-| Zipline      | Base URL and API key     |
-| PassTheImage | API key                  |
-| Seedpool CDN | API key                  |
-| ShareX       | Endpoint URL and API key |
-| UTPPM        | API key                  |
+| Host         | Required setting                |
+| ------------ | ------------------------------- |
+| ImgBB        | API key                         |
+| ImgBox       | None                            |
+| Pixhost      | None                            |
+| Lensdump     | API key                         |
+| PTScreens    | API key                         |
+| OnlyImage    | API key                         |
+| Dalexni      | API key                         |
+| Zipline      | Upload endpoint URL and API key |
+| PassTheImage | API key                         |
+| Seedpool CDN | API key                         |
+| ShareX       | Endpoint URL and API key        |
+| UTPPM        | API key                         |
 
 Tracker-specific host choices still apply after warning acknowledgement and when existing images are reused. Cached images on another host do not replace the configured choice.
 

@@ -1191,6 +1191,12 @@ automatic upload decisions cannot supply it, and refreshed evidence requires con
 Blocking a duplicate needs no token. In-client matches remain non-overridable. The tracker, not
 this attestation, validates any staff token at submission.
 
+An optional `StaffTokenOverrideRequired` callback may select a separately supported
+upload authorization path using effective configuration, the exact reviewed projection,
+and sanitized candidate evaluations. It changes only staff attestation, never duplicate
+relations or ordinary approval. Preserve exact-match and in-client protections; bind
+explicit intention answers to the current source generation and version the policy.
+
 Target-level duplicate policy reviews use `DupeCheckResult.ReviewReasons` and
 `TrackerDupeAssessment.reviewReasons`, including when a complete search has no candidates.
 Keep these reasons separate from candidate matches. They enter the existing fingerprint-bound
@@ -1471,6 +1477,20 @@ lookup is possible. Keys may contain credentials: the shared evidence cache hash
 storage, and callers must never log them. Return usable partial metadata alongside an asset
 error so IDs survive while the failed dependency remains suppressed. A successful empty result
 can retry on a fresh input load; a completed failure retries only after History deletion.
+
+Keep external metadata IDs exact at the response boundary. Use `json.Decoder.UseNumber`
+for untyped JSON and `providerid.ParseDecimal` for decimal ID strings after any
+documented provider prefix is removed. Do not convert IDs through floating point,
+accept a scanned prefix, or ignore range errors. Preserve the adapter's supported
+wire representations; a missing or invalid ID must not become a different ID.
+Adapters repairing previously inexact IDs opt into `LegacyExternalIDsNeedRefresh`
+in their `DataLookupPolicy` to expire obsolete normalized lookup payloads. Also
+advance `externalidentity.ContractVersion` and the prepared-release compatibility
+contract when repairing retained automatic identity: the policy flag alone does
+not invalidate a current-contract canonical identity. Incompatible automatic
+identity triggers cleanup of affected aggregate tracker IDs; current exact-query
+evidence preserves already repaired IDs if preparation was interrupted. Failed
+queries remain suppressed, and compatible description/image assets are retained.
 
 For auth:
 

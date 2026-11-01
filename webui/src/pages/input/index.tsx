@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { FieldHelp } from "../../components/ui/field-help";
 import { pageStyle } from "../../components/ui/pageStyle";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
@@ -13,7 +14,7 @@ import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { InputFacet } from "../../releaseSession/types";
 import { InputCorrectionEditor, SavedCorrectionReview } from "./InputCorrectionEditor";
 import { settingsStyle } from "../../settings/style";
-import { missingRequiredFacts } from "./requiredFacts";
+import { missingRequiredFacts } from "../../releaseSession/requiredFacts";
 import type {
   DetailBlock,
   DetailItem,
@@ -1711,14 +1712,24 @@ export default function InputPage(props: Props) {
             </details>
           ) : null}
           {showReleaseDetails ? (
-            <p
-              className={`helper max-w-[720px] ${requiredFactsMissing ? "text-destructive-text" : ""}`}
-              role="status"
-            >
-              {requiredFactsMissing
-                ? "Required facts missing, please edit release details."
-                : "Review release facts, source options, and selected tracker input."}
-            </p>
+            requiredFactsMissing ? (
+              <div
+                className="grid gap-2 rounded-md border border-destructive bg-destructive/10 p-4 text-destructive-text"
+                role="alert"
+              >
+                <p className="font-semibold">
+                  Required facts missing, please edit release details.
+                </p>
+                <p>
+                  Correct the highlighted fields under Edit Release Details, then Refresh metadata
+                  to enable Dupe Check.
+                </p>
+              </div>
+            ) : (
+              <p className="helper max-w-[720px]" role="status">
+                Review release facts, source options, and selected tracker input.
+              </p>
+            )
           ) : null}
           {showReleaseDetails && view.correctionDirty ? (
             <p className="text-sm font-medium text-primary" role="status">
@@ -1731,11 +1742,28 @@ export default function InputPage(props: Props) {
               <summary className={editDropdownSummaryClass}>Edit Release Details</summary>
               <div className="mt-3 grid gap-[9px]">
                 <InputCorrectionEditor facet={facet} />
-                <div className="flex justify-end">
+                {hasPreview ? (
+                  <p className="helper">
+                    Reset data + refresh forces fresh preparation and renewed downstream review.
+                    Saved corrections remain in effect.
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <FieldHelp
+                    label="Release preparation actions"
+                    id="release-preparation-actions-help"
+                  >
+                    Refresh metadata or Retry metadata verifies the source and applies pending
+                    corrections to a prepared generation. Auto changes take effect at that point
+                    too. Reset data + refresh forces fresh preparation while retaining saved
+                    corrections. Preparation stops before duplicate searches, analysis, upload and
+                    client injection.
+                  </FieldHelp>
                   {hasPreview ? (
                     <button
                       className="ghost"
                       type="button"
+                      aria-describedby="release-preparation-actions-help"
                       onClick={handleResetMetadata}
                       disabled={loading}
                     >
@@ -1745,6 +1773,7 @@ export default function InputPage(props: Props) {
                   <button
                     className="primary"
                     type="button"
+                    aria-describedby="release-preparation-actions-help"
                     onClick={handleRefresh}
                     disabled={refreshDisabled}
                   >

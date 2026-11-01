@@ -2,6 +2,8 @@
 
 Scope: `internal/services/audioanalysis/`. Follow the repository and `internal/AGENTS.md` rules too. This is a reference for contributors changing waveform or spectrogram processing, not a PNG styling specification.
 
+Keep generated images and decode intermediates under the caller's owned release output directory; do not introduce a separate analysis root under application `tmp`.
+
 ## Spectrogram signal contract
 
 The reference is SoX `spectrogram -x 3000 -y 513 -z 120 -w Kaiser` on the same decoded PCM. Preserve these properties when optimizing:

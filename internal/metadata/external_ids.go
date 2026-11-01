@@ -26,6 +26,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/internal/metadata/imdb"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -128,6 +129,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return preparationstate.State{}, internalerrors.ErrInvalidInput
 	}
 	meta.Identity = meta.Identity.WithoutResetPins(meta.IdentityResetFields)
+	previousMALID := meta.Identity.MALID
+	meta.Identity = externalidentity.CompatibleStoredIdentity(meta.Identity)
+	if previousMALID != 0 && meta.MALID == previousMALID && meta.Identity.MALID == 0 {
+		meta.MALID = 0
+	}
+	invalidateMismatchedProviderMetadata(&meta.ProviderMetadata, meta.Identity)
 
 	refreshProviders := meta.ExternalFreshness.RequiresRefresh()
 	if refreshProviders {

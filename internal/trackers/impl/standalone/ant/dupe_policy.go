@@ -10,6 +10,7 @@ import (
 
 	"github.com/autobrr/rls"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -17,12 +18,15 @@ import (
 
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
-		ID:                 "ant/duplicate/v6",
-		EvidenceID:         "ant-slots-staff-overrides",
-		SearchScope:        trackers.DupeSearchScope{MaxPages: 100},
-		TargetSlot:         resolveTargetSlot,
-		CompareSlots:       compareSlots,
-		StaffTokenOverride: true,
+		ID:                         "ant/duplicate/v7",
+		EvidenceID:                 "ant-slots-staff-overrides",
+		SearchScope:                trackers.DupeSearchScope{MaxPages: 100},
+		TargetSlot:                 resolveTargetSlot,
+		CompareSlots:               compareSlots,
+		StaffTokenOverride:         true,
+		StaffTokenOverrideRequired: requiresStaffToken,
+		DecisionInputs:             trumpDecisionInputs,
+		Questionnaire:              duplicateTrumpQuestionnaireFields,
 	}
 }
 
@@ -229,4 +233,23 @@ func slotContradictsTitle(slot []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// requiresStaffToken preserves staff attestation for exact matches and ordinary
+// uploads. Guru intent changes only that attestation, never the duplicate result.
+func requiresStaffToken(cfg config.TrackerConfig, subject api.DuplicateSubject, evaluations []api.DupeCandidateEvaluation) bool {
+	if subject.Projection == nil {
+		return true
+	}
+	intended, _ := intendedTrump(trackers.PreparationInput{
+		TrackerConfig: cfg,
+		Meta:          api.UploadSubject{SourcePath: subject.SourcePath, Identity: subject.Identity},
+		Projection:    subject.Projection,
+	})
+	if !intended {
+		return true
+	}
+	return slices.ContainsFunc(evaluations, func(candidate api.DupeCandidateEvaluation) bool {
+		return candidate.Relation == api.DupeRelationExactDuplicate
+	})
 }
