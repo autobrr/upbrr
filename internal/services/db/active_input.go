@@ -64,8 +64,8 @@ func (r *SQLiteRepository) CompareAndSwapActiveInput(
 // CloseIdleActiveInput atomically closes one exact committed input without
 // requiring its prior coordinator to still hold a live lease. It is limited
 // to idle active records so a restarted process cannot clear in-flight work.
-// Unresolved effects remain durable and continue to block a fresh opening
-// until explicit reconciliation resolves them.
+// Unresolved effects remain durable for source-scoped recovery; detaching an
+// input does not authorize retrying its external effects.
 func (r *SQLiteRepository) CloseIdleActiveInput(ctx context.Context, expected api.ActiveInputRecord, now time.Time) error {
 	if expected.State != api.ActiveInputActive || expected.Revision >= math.MaxInt64 {
 		return api.ErrActiveInputChanged
@@ -192,7 +192,9 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 		if next.State != api.ActiveInputRecovering && !restoringOwnedInput && !legacyRecoveryClose {
 			var unresolved int
 			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_effects
-				WHERE status IN ('started', 'unknown'))`).Scan(&unresolved); err != nil {
+				WHERE status IN ('started', 'unknown') AND
+				((owner_id = ? AND workflow_id = ?) OR (owner_id = ? AND workflow_id = ?)))`,
+				current.OwnerID, current.WorkflowID, next.OwnerID, next.WorkflowID).Scan(&unresolved); err != nil {
 				return fmt.Errorf("db inspect active input effects: %w", err)
 			}
 			if unresolved != 0 {

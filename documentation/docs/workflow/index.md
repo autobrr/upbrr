@@ -15,7 +15,7 @@ One input can be active per database, shared by the Web UI and CLI. Tabs in the 
 
 Switching during local preparation cancels that work and waits for cleanup. A submission or uncertain remote outcome must finish or be reconciled before switching. Closing a browser tab does not release the input.
 
-If **Legacy workflow recovery** lists an unresolved external effect, inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. Recovery never repeats a submission automatically. Resolve every listed workflow before opening a new input.
+If **Legacy workflow recovery** lists an unresolved external effect, inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. Recovery never repeats a submission automatically. The Web UI continues to list every retained workflow that needs recovery. CLI queues attach reconciliation to the affected source and continue independent items after releasing the previous input. A retained workflow without a reliable source still requires manual recovery.
 
 Every explicit open, history restore, or refresh checks the source path and inventory and hashes at most the first 1 MiB of each file. File sizes and modification times are checked before and after sampling. This is a lightweight identity check, not verification of every source byte. Torrent creation still performs its required piece hashing. A plain page reload reads the current state without starting another verification.
 

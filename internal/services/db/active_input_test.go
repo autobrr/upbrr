@@ -296,16 +296,16 @@ func TestCloseIdleActiveInputDetachesUnresolvedEffects(t *testing.T) {
 				RequestedPath:  filepath.Join(t.TempDir(), "source.mkv"),
 				IdempotencyKey: "open",
 			}
-			if err := repo.CompareAndSwapActiveInput(
-				ctx,
-				closed,
-				opening,
-				now.Add(3*time.Second),
-			); !errors.Is(
-				err,
-				api.ErrReleaseWorkflowEffectOutcomeUnknown,
-			) {
-				t.Fatalf("open after detached %s effect = %v, want %v", status, err, api.ErrReleaseWorkflowEffectOutcomeUnknown)
+			if err := repo.CompareAndSwapActiveInput(ctx, closed, opening, now.Add(3*time.Second)); err != nil {
+				t.Fatalf("reserve unrelated input after detached %s effect: %v", status, err)
+			}
+			// Reserving unrelated work must not permit rebinding the affected workflow.
+			affected := opening
+			affected.State, affected.Revision = api.ActiveInputActive, opening.Revision+1
+			affected.InputID, affected.SourceVersion, affected.WorkflowID = active.InputID, active.SourceVersion, active.WorkflowID
+			affected.ReservationID, affected.RequestedPath = "", ""
+			if err := repo.CompareAndSwapActiveInput(ctx, opening, affected, now.Add(4*time.Second)); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+				t.Fatalf("affected workflow bypassed its %s effect: %v", status, err)
 			}
 		})
 	}
@@ -730,8 +730,15 @@ func TestLegacyRecoveryFencesOwnerEffectsAndDoesNotBypassNormalAdmission(t *test
 		RequestedPath:  filepath.Join(t.TempDir(), "source.mkv"),
 		IdempotencyKey: "new-open",
 	}
-	if err := repo.CompareAndSwapActiveInput(ctx, closed, opening, now.Add(4*time.Second)); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
-		t.Fatalf("normal open after legacy close = %v", err)
+	if err := repo.CompareAndSwapActiveInput(ctx, closed, opening, now.Add(4*time.Second)); err != nil {
+		t.Fatalf("unrelated reservation after legacy close: %v", err)
+	}
+	affected := opening
+	affected.State, affected.Revision = api.ActiveInputActive, opening.Revision+1
+	affected.InputID, affected.SourceVersion, affected.WorkflowID = "affected-input", "verified", state.WorkflowID
+	affected.ReservationID, affected.RequestedPath = "", ""
+	if err := repo.CompareAndSwapActiveInput(ctx, opening, affected, now.Add(5*time.Second)); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		t.Fatalf("normal admission rebound the unresolved workflow: %v", err)
 	}
 }
 
