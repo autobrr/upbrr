@@ -1566,6 +1566,7 @@ export type PreparedReleaseDisplay = Readonly<{
   MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
+  TVDBNamingAvailable?: boolean;
   TrackerData: readonly TrackerPreview[];
   hdrTargets?: readonly HDRAnalysisTarget[];
 }>;

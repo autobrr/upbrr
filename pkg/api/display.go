@@ -6,6 +6,9 @@ package api
 // PreparedReleaseDisplay is the canonical presentation projection for one
 // exact prepared generation.
 type PreparedReleaseDisplay struct {
+	// TVDBNamingAvailable distinguishes usable TVDB naming data (even without a
+	// year qualifier) from missing data where manual TV-year correction is allowed.
+	TVDBNamingAvailable bool `json:",omitempty"`
 	// CanKeepFolder identifies a supplied folder containing one selected movie or episode video, not a pack or disc.
 	CanKeepFolder bool                `json:",omitempty"`
 	HDRTargets    []HDRAnalysisTarget `json:"hdrTargets,omitempty"`

@@ -806,6 +806,15 @@ func (m SourceScopedMetadata) IsCurrentFor(sourcePath string, identity ExternalI
 		preparedGenerationMatches(m.Generation, identity.Generation)
 }
 
+// TVDBNamingAvailable reports whether a source- and identity-matched TVDB
+// snapshot supplies a series name. A zero year or no-qualifier decision is still
+// available TVDB data; an ID without usable metadata is not.
+func (m SourceScopedMetadata) TVDBNamingAvailable(source string, identity ExternalIdentity) bool {
+	return sourceScopedPathMatches(identity.SourcePath, source) && sourceScopedPathMatches(m.SourcePath, source) &&
+		m.TVDB != nil && identity.TVDBID > 0 && m.TVDB.TVDBID == identity.TVDBID &&
+		(strings.TrimSpace(m.TVDB.NameEnglish) != "" || strings.TrimSpace(m.TVDB.Name) != "")
+}
+
 func sourceScopedPathMatches(scopedPath string, currentPath string) bool {
 	scopedPath = strings.TrimSpace(scopedPath)
 	return scopedPath == "" || strings.EqualFold(scopedPath, strings.TrimSpace(currentPath))

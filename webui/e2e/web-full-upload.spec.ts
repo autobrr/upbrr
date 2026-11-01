@@ -1561,6 +1561,29 @@ test("embedded web keeps selected providers through an IMDb correction and reloa
     await expect(keepTVDB).toBeChecked();
     await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).toHaveValue("1001");
     await expect(page.getByRole("textbox", { name: "TVDB ID", exact: true })).toHaveValue("2001");
+    expect(current.release?.display.TVDBNamingAvailable).toBe(true);
+    await expect(page.getByLabel("Manual year", { exact: true })).toBeDisabled();
+    await expect(page.getByRole("combobox", { name: "Omit year", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Remove TVDB ID", exact: true }).click();
+    const cleared = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await expect((await cleared).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(page.getByLabel("Manual year", { exact: true })).toBeEnabled();
+    await page.getByLabel("Manual year", { exact: true }).fill("2030");
+    await expect(page.getByRole("combobox", { name: "Omit year", exact: true })).toBeVisible();
+    const corrected = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await expect((await corrected).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    const fallbackReload = waitForAppMethod(page, "GetActiveInput");
+    await page.reload();
+    const fallback = await activeCurrentFromResponse(await fallbackReload);
+    expect(fallback.release?.release.Identity.TVDBID).toBe(0);
+    expect(fallback.release?.display.TVDBNamingAvailable).not.toBe(true);
+    expect(fallback.corrections?.corrections.releaseName.ManualYear).toBe(2030);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(page.getByLabel("Manual year", { exact: true })).toHaveValue("2030");
   } finally {
     await app?.stop();
     await workspace.cleanup();
@@ -1712,7 +1735,7 @@ test("embedded web retains Release Details corrections without downstream workfl
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     const categoryInput = page.getByRole("combobox", { name: "Category", exact: true });
     await categoryInput.selectOption("tv");
-    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeDisabled();
+    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     await categoryInput.selectOption("movie");
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     await page.getByRole("button", { name: "Auto Category", exact: true }).click();

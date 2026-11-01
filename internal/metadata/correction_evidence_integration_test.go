@@ -1338,6 +1338,8 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 					t.Error("TVDB disambiguation did not search the unfiltered canonical series name")
 				}
 				body = `{"data":[{"tvdb_id":"555003","name":"Example Series","primary_language":"eng","year":"2024"}]}`
+			case "/v4/search/remoteid/555001":
+				body = `{"data":[]}`
 			case "/v4/series/555003/episodes/default":
 				body = `{"data":{"episodes":[{"id":555301,"name":"The First Signal","seasonNumber":1,"number":1,"aired":"2024-01-01"}],"slug":"example-series"}}`
 			case "/v4/episodes/555301/translations/eng":
@@ -1354,6 +1356,8 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 			body = `{"results":[{"id":555001,"name":"Example Series","original_name":"Example Series","first_air_date":"2026-01-01","original_language":"en"}]}`
 		case key == "/3/search/movie":
 			body = `{"results":[]}`
+		case key == "/3/find/555003":
+			body = `{"tv_results":[{"id":555001,"name":"Example Series","first_air_date":"2026-01-01"}]}`
 		case key == "/3/find/tt0555099":
 			body = `{"movie_results":[],"tv_results":[]}`
 		case key == "/3/tv/555002":

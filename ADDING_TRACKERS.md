@@ -283,7 +283,7 @@ naming fingerprints include the selected provider, so changing it requires renew
 
 Use `CurrentTVDBNameDisambiguation` for identity-bound TV qualifiers when the primary title
 comes from another provider. It rejects stale or mismatched evidence and manual titles;
-tracker-local callbacks still own qualifier placement and manual-year preservation. Do not
+tracker-local callbacks still own qualifier placement and evidenced destination-specific year rules. Usable TVDB naming data controls TV year value and omission, even when the selected qualifier year is zero. Manual year and omission controls apply only when that data is absent; do not infer absence from a zero year or a negative collision decision. Do not
 require rendered title text to equal TVDB's spelling.
 
 `StructuredNamePolicy.Defaults` applies optional presentation preferences. Its editor leaves

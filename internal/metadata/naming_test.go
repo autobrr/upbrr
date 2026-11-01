@@ -891,8 +891,9 @@ func TestApplyReleaseNameValueOverridesIgnoresManualYearForTV(t *testing.T) {
 	for _, manualYear := range []int{0, 2030} {
 		t.Run(strconv.Itoa(manualYear), func(t *testing.T) {
 			meta := preparationstate.State{
-				Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+				Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 123},
 				Release:              api.ReleaseInfo{Year: 2024},
+				ProviderMetadata:     api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{TVDBID: 123, Name: "Example Series"}},
 				ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(manualYear)},
 			}
 			applyReleaseNameValueOverrides(&meta)
@@ -1586,7 +1587,7 @@ func TestResolveReleaseNameTitleTVFallsBackFromUnusableTVDBToIMDb(t *testing.T) 
 	}
 }
 
-func TestReleaseNameRequestFromMetaTVOmitsYearWithoutEligibleTVDB(t *testing.T) {
+func TestReleaseNameRequestFromMetaTVAllowsYearFallbackWithoutTVDB(t *testing.T) {
 	meta := preparationstate.State{
 		SourcePath:           `D:\Shows\Parsed.Series.S01E01.1080p.WEB-DL.x264-GRP.mkv`,
 		Identity:             api.ExternalIdentity{Category: "TV", IMDBID: 1234567},
@@ -1609,11 +1610,11 @@ func TestReleaseNameRequestFromMetaTVOmitsYearWithoutEligibleTVDB(t *testing.T) 
 		},
 	}
 	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
-	if req.Year != 0 || req.SearchYear != "" {
-		t.Fatalf("TV request used non-TVDB year: year=%d search_year=%q", req.Year, req.SearchYear)
+	if req.TVDBNamingAvailable || req.Year != 2030 || req.SearchYear != "2030" {
+		t.Fatalf("TV request lost manual year fallback: year=%d search_year=%q", req.Year, req.SearchYear)
 	}
 	result := BuildReleaseName(req, api.NopLogger{})
-	if !containsAll(result.NameNoTag, []string{"IMDb Series", "AKA Original Series", "S01E01"}) || strings.Contains(result.NameNoTag, "2026") {
+	if !containsAll(result.NameNoTag, []string{"IMDb Series", "2030", "AKA Original Series", "S01E01"}) || strings.Contains(result.NameNoTag, "2026") {
 		t.Fatalf("expected TV name without non-TVDB year, got %q", result.NameNoTag)
 	}
 }

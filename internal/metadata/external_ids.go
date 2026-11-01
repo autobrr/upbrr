@@ -1616,7 +1616,13 @@ func copyRetainedProviderMetadata(
 	}
 	if shouldUseTVDBForCategory(preparationstate.State{}, ids) {
 		if keepProvider(overrides.KeepTVDB) && usableTVDBMetadata(previous.TVDB, ids.TVDBID) {
-			target.TVDB = previous.TVDB
+			// Keep freezes provider evidence. Repair a derived omission only when
+			// the explicit alias year belongs to that stored series-year decision.
+			retained := *previous.TVDB
+			if tvdbNameDisambiguationInput(&retained).ExplicitNamingYear && retained.NameDisambiguation.SeriesYear == retained.Year {
+				retained.NameDisambiguation.IncludeYear = true
+			}
+			target.TVDB = &retained
 		}
 		if keepProvider(overrides.KeepTVmaze) && usableTVmazeMetadata(previous.TVmaze, ids.TVmazeID) {
 			target.TVmaze = previous.TVmaze
@@ -1671,9 +1677,10 @@ func usableTVDBMetadata(metadata *api.TVDBMetadata, tvdbID int) bool {
 }
 
 // reusableTVDBNameDisambiguation reports whether collision evidence can support
-// site-specific naming without another TVDB search.
+// site-specific naming without another TVDB search. Older negative decisions
+// must be recomputed when the selected title or alias explicitly carries a year.
 func reusableTVDBNameDisambiguation(metadata *api.TVDBMetadata) bool {
-	if metadata == nil {
+	if metadata == nil || tvdbNameDisambiguationInput(metadata).ExplicitNamingYear && !metadata.NameDisambiguation.IncludeYear {
 		return false
 	}
 	status := metadata.NameDisambiguation.Status
@@ -2009,7 +2016,7 @@ func resolveSearchTitles(meta preparationstate.State) (string, string) {
 }
 
 func resolveSearchYear(meta preparationstate.State) int {
-	if meta.ReleaseNameOverrides.ManualYear != nil && resolveCategoryPreference(meta) != "TV" {
+	if meta.ReleaseNameOverrides.ManualYear != nil && (resolveCategoryPreference(meta) != "TV" || !matchingTVDBMetadataForNaming(meta)) {
 		if *meta.ReleaseNameOverrides.ManualYear > 0 {
 			return *meta.ReleaseNameOverrides.ManualYear
 		}
@@ -2607,7 +2614,7 @@ func tvdbNameDisambiguationInput(metadata *api.TVDBMetadata) tvdb.NameDisambigua
 		NameEnglish:        strings.TrimSpace(metadata.NameEnglish),
 		SeriesYear:         metadata.Year,
 		OriginalCountry:    strings.TrimSpace(metadata.OriginalCountry),
-		ExplicitNamingYear: metadata.YearFromAlias,
+		ExplicitNamingYear: metadata.Year > 0 && metadata.YearFromAlias && tvdb.IsExplicitSeriesYearSource(metadata.YearSource),
 	}
 }
 
