@@ -819,27 +819,53 @@ IMDBID: new(1234567),
 				}
 			}
 			parentT := t
-			for _, phase := range []string{"reuse", "refresh", "restart", "old contract"} {
-				t.Run(phase, func(t *testing.T) {
+			for _, phase := range []struct {
+				name, preparedVersion, identityVersion string
+			}{
+				{name: "reuse"},
+				{name: "refresh"},
+				{name: "restart"},
+				{
+name: "old contract",
+ preparedVersion: "prepared-release-v56",
+ identityVersion: "external-identity-v3",
+},
+				{
+name: "main before merge",
+ preparedVersion: "prepared-release-v61",
+ identityVersion: "external-identity-v4",
+},
+				{
+name: "PR before merge",
+ preparedVersion: "prepared-release-v57",
+ identityVersion: "external-identity-v5",
+},
+				{
+name: "owner merge",
+ preparedVersion: "prepared-release-v62",
+ identityVersion: "external-identity-v5",
+},
+			} {
+				t.Run(phase.name, func(t *testing.T) {
 					input.ExternalFreshness = api.ExternalFreshnessReuse
 					var staleGeneration api.PreparedGeneration
-					switch phase {
-					case "refresh":
+					if phase.name == "refresh" {
 						input.ExternalFreshness = api.ExternalFreshnessRefresh
-					case "old contract":
+					}
+					if phase.preparedVersion != "" {
 						stale, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
 						if err != nil {
 							t.Fatal(err)
 						}
 						staleGeneration = stale.Generation
-						stale.Compatibility.ContractVersion = "prepared-release-v56"
-						stale.Identity.Resolution.ContractVersion = "external-identity-v3"
+						stale.Compatibility.ContractVersion = phase.preparedVersion
+						stale.Identity.Resolution.ContractVersion = phase.identityVersion
 						stale.ProviderMetadata.TMDB = nil
 						if err := repo.CommitPreparedRelease(t.Context(), stale); err != nil {
 							t.Fatal(err)
 						}
 					}
-					if phase == "restart" || phase == "old contract" {
+					if phase.name == "restart" || phase.preparedVersion != "" {
 						if err := repo.Close(); err != nil {
 							t.Fatal(err)
 						}
@@ -850,12 +876,14 @@ IMDBID: new(1234567),
 					result := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
 					ids, providers := result.Release.Identity, result.Release.ProviderMetadata
 					if ids.TMDBID != 555002 || ids.IMDBID != 1234567 || ids.TVDBID != 222333 ||
-						providers.TMDB == nil || providers.TMDB.Title != "Alternate Series" || providers.IMDB == nil || providers.TVDB == nil || providers.TVmaze == nil || ids.TVmazeID != 55 {
+						providers.TMDB == nil || providers.TMDB.TMDBID != 555002 || providers.TMDB.Title != "Alternate Series" ||
+						providers.IMDB == nil || providers.TVDB == nil || providers.TVmaze == nil || providers.TVmaze.TVmazeID != 55 || ids.TVmazeID != 55 {
 						t.Fatalf("manual provider authority lost: IDs=%#v", ids)
 					}
 					if result.Corrections.Corrections.Identity.TMDBID == nil || *result.Corrections.Corrections.Identity.TMDBID != 555002 ||
 						result.Corrections.Corrections.Identity.IMDBID == nil || *result.Corrections.Corrections.Identity.IMDBID != 1234567 ||
-						result.Corrections.Corrections.Identity.TVDBID == nil || *result.Corrections.Corrections.Identity.TVDBID != 222333 {
+						result.Corrections.Corrections.Identity.TVDBID == nil || *result.Corrections.Corrections.Identity.TVDBID != 222333 ||
+						result.Corrections.Corrections.Identity.TVmazeID == nil || *result.Corrections.Corrections.Identity.TVmazeID != 55 {
 						t.Fatal("saved manual corrections lost")
 					}
 					if result.Release.Episode.Title != "The Other Signal" || !strings.Contains(result.Release.Naming.ReleaseName, "The Other Signal") {
@@ -890,7 +918,7 @@ IMDBID: new(1234567),
 							t.Fatal("downstream subject lost selected IDs, metadata or naming")
 						}
 					}
-					if phase == "refresh" {
+					if phase.name == "refresh" {
 						if fixture.requests()["/3/tv/555002/external_ids"] <= before["/3/tv/555002/external_ids"] {
 							t.Fatal("refresh reused old provider evidence")
 						}
@@ -900,7 +928,7 @@ IMDBID: new(1234567),
 					} else {
 						fixture.assertRequests(t, before, nil)
 					}
-					if phase == "old contract" && result.Release.Generation <= staleGeneration {
+					if phase.preparedVersion != "" && result.Release.Generation <= staleGeneration {
 						t.Fatal("old rejection semantics reused")
 					}
 				})
