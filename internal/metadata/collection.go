@@ -54,6 +54,7 @@ func (s *Service) CollectPreparationEvidence(ctx context.Context, request prepar
 	state, err = collectPreparationStage(ctx, api.PreparationPhaseClientDiscovery, func(ctx context.Context) (preparationstate.State, error) {
 		if request.RetainedClientEvidence != nil {
 			applyClientEvidenceSnapshot(&state, *request.RetainedClientEvidence)
+			progress.Retained(ctx, request.RetainedClientEvidence.Disposition == preparationstate.ClientEvidenceDispositionUnavailable)
 			return state, nil
 		}
 		return s.collectClientEvidence(ctx, request.Input, state)

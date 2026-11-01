@@ -8,7 +8,7 @@ import { WorkflowOperationProgress } from "./WorkflowOperationProgress";
 
 afterEach(cleanup);
 
-it("updates metadata detail in place, keeps stage-order percentages out of fetch counts, and retains partial outcomes", () => {
+it("updates metadata detail in place, keeps stage-order percentages out of fetch counts, and retains partial and canceled outcomes", () => {
   let operation = {
     id: "metadata-1",
     workflowId: "workflow-1",
@@ -67,4 +67,32 @@ it("updates metadata detail in place, keeps stage-order percentages out of fetch
   expect(
     screen.getByText("Stage complete with unavailable optional metadata."),
   ).toBeInTheDocument();
+  operation = {
+    ...operation,
+    status: "canceled",
+    items: [{ ...operation.items![0], status: "canceled", message: "" }],
+    events: [
+      ...operation.events!,
+      {
+        ...operation.events![0],
+        sequence: 41,
+        scope: "item",
+        scopeId: "media_facts",
+        lifecycle: "canceled",
+        severity: "warn",
+        message: "Stage canceled.",
+      },
+    ],
+  };
+  rerender(<WorkflowOperationProgress operation={operation} />);
+  expect(screen.getByText("Derive media facts")).toBeInTheDocument();
+  expect(screen.getAllByText("Stage canceled.")).toHaveLength(1);
+  expect(screen.queryByText(/Old edition/)).not.toBeInTheDocument();
+  operation = {
+    ...operation,
+    items: [{ ...operation.items![0], message: "Stage canceled." }],
+    events: [],
+  };
+  rerender(<WorkflowOperationProgress operation={operation} />);
+  expect(screen.getByText("Stage canceled.")).toBeInTheDocument();
 });

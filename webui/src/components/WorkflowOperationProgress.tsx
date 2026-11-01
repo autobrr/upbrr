@@ -35,7 +35,9 @@ export function WorkflowOperationProgress({
   if (
     !visibleStatuses.has(operation.status) &&
     !operation.items?.some(
-      (item) => item.kind.startsWith("preparation_") && item.status === "partial",
+      (item) =>
+        item.kind.startsWith("preparation_") &&
+        (item.status === "partial" || item.status === "canceled"),
     ) &&
     !events.some((event) => event.severity === "warn" || event.severity === "error")
   )
@@ -64,7 +66,8 @@ export function WorkflowOperationProgress({
       (item.status === "queued" ||
         item.status === "running" ||
         item.status === "failed" ||
-        item.status === "partial") &&
+        item.status === "partial" ||
+        (metadataPreparation && item.status === "canceled")) &&
       !eventScopeIds.has(item.id),
   );
 

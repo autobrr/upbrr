@@ -39,6 +39,7 @@ type Step struct {
 
 // StartStage brackets collection with terminal progress and a bounded waiting
 // heartbeat. The returned closer must run once after collection, including errors.
+// A canceled or expired context reports cancellation even if collection returns nil.
 func StartStage(ctx context.Context, phase api.PreparationProgressPhase) (context.Context, func(error)) {
 	s := &stage{
 		ctx:     ctx,
@@ -84,7 +85,7 @@ func StartStage(ctx context.Context, phase api.PreparationProgressPhase) (contex
 		if err != nil {
 			status, message = api.PreparationProgressFailed, "Stage failed."
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			status, message = api.PreparationProgressCanceled, "Stage canceled."
 		}
 		api.EmitPreparationProgress(ctx, api.NewPreparationProgressUpdate(phase, status, message))

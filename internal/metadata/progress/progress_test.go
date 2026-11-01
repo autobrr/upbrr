@@ -73,6 +73,29 @@ func TestStageCancellationAndFailure(t *testing.T) {
 	}
 }
 
+func TestStageReportsCanceledContextWhenCollectorReturnsNil(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		timeout time.Duration
+	}{
+		{name: "cancellation during collection", timeout: time.Hour},
+		{name: "expired deadline", timeout: -time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(tc.timeout))
+			defer cancel()
+			var updates []api.PreparationProgressUpdate
+			ctx = api.WithPreparationProgressReporter(ctx, func(u api.PreparationProgressUpdate) { updates = append(updates, u) })
+			_, finish := StartStage(ctx, api.PreparationPhaseTrackerEvidence)
+			cancel()
+			finish(nil)
+			if got := updates[len(updates)-1]; got.Status != api.PreparationProgressCanceled {
+				t.Fatalf("canceled context reported success: %#v", got)
+			}
+		})
+	}
+}
+
 func TestConcurrentSubstepsResumeUnfinishedWork(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var mu sync.Mutex

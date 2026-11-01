@@ -23,11 +23,14 @@ func (s *Service) collectClientEvidence(
 ) (preparationstate.State, error) {
 	step := progress.Begin(ctx, "Search configured torrent clients")
 	evidence, err := s.discoverClientEvidence(ctx, input, state.SourcePath, state.FileList, state.DiscType)
+	unavailable := err != nil || evidence.Disposition == clientdiscovery.DispositionUnavailable
 	message := "Client discovery complete."
 	if err != nil {
 		message = "Client discovery failed."
+	} else if unavailable {
+		message = "Client evidence unavailable."
 	}
-	step.Finish(message, err != nil)
+	step.Finish(message, unavailable)
 	if err != nil {
 		return preparationstate.State{}, err
 	}
