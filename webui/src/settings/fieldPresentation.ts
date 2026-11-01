@@ -106,11 +106,11 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     BlurayScore: field(
       "Blu-ray match threshold",
-      "Minimum candidate score for automatic selection when multiple releases are found. Default: 94.5. A non-positive value uses 100.",
+      "Minimum score when multiple eligible releases are found. A known release country limits eligibility. Default: 94.5. A non-positive value uses 100.",
     ),
     BluraySingleScore: field(
       "Single-candidate Blu-ray threshold",
-      "Minimum score for automatic selection when one release is found. Default: 89.5. A non-positive value uses 100.",
+      "Minimum score for one release when no country is locked. A unique matching-country release is selected regardless of score. Default: 89.5. A non-positive value uses 100.",
     ),
     CheckPredb: field(
       "PreDB check preference (compatibility)",

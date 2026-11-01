@@ -127,7 +127,7 @@ Release Overrides:
   -daily, --daily string
       Set daily episode air date (YYYY-MM-DD)
   -region, --region, -reg string
-      Override disc region
+      Override release country code (for example USA)
   -use-season-episode, --use-season-episode
       Use the explicit season and episode values
   -no-season, --no-season

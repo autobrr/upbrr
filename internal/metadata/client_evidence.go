@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
+	"github.com/autobrr/upbrr/internal/metadata/progress"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -20,7 +21,16 @@ func (s *Service) collectClientEvidence(
 	input api.PrepareInput,
 	state preparationstate.State,
 ) (preparationstate.State, error) {
+	step := progress.Begin(ctx, "Search configured torrent clients")
 	evidence, err := s.discoverClientEvidence(ctx, input, state.SourcePath, state.FileList, state.DiscType)
+	unavailable := err != nil || evidence.Disposition == clientdiscovery.DispositionUnavailable
+	message := "Client discovery complete."
+	if err != nil {
+		message = "Client discovery failed."
+	} else if unavailable {
+		message = "Client evidence unavailable."
+	}
+	step.Finish(message, unavailable)
 	if err != nil {
 		return preparationstate.State{}, err
 	}
@@ -36,6 +46,9 @@ func (s *Service) discoverClientEvidence(
 	discType string,
 ) (clientdiscovery.Evidence, error) {
 	if s.clients == nil {
+		if input.Search.Skip {
+			return clientdiscovery.Evidence{Disposition: clientdiscovery.DispositionSkipped}, nil
+		}
 		return clientdiscovery.Evidence{Disposition: clientdiscovery.DispositionUnavailable}, nil
 	}
 	evidence, err := s.clients.Discover(ctx, clientdiscovery.SearchInput{

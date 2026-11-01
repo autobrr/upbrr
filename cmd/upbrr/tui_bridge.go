@@ -52,10 +52,11 @@ type cliBridgeUpdate struct {
 // cliTelemetry carries producer-specific counts, such as trackers or torrent
 // pieces. ItemOnly keeps these counts separate from overall workflow progress.
 type cliTelemetry struct {
-	Item, Epoch                                   uint64
-	WorkflowID, OperationID, Lane, Attempt, Phase string
-	Completed, Total                              int
-	ItemOnly                                      bool
+	Item, Epoch                                         uint64
+	WorkflowID, OperationID, Lane, Attempt, Phase, Kind string
+	Completed, Total                                    int
+	ItemOnly                                            bool
+	Status                                              api.StageStatus
 }
 
 // cliTUIBridge connects concurrent producers to the single model update loop.

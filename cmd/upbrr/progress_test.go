@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -329,5 +330,62 @@ func TestCLIWorkflowProgressKeepsCountersAtTrace(t *testing.T) {
 	}
 	if debug != 1 || trace != 4 {
 		t.Fatalf("workflow log counts: debug=%d trace=%d, want 1 and 4", debug, trace)
+	}
+}
+
+func TestMetadataProgressOutputBoundAndFastOperations(t *testing.T) {
+	for _, duration := range []int{2, 29, 125} {
+		var output bytes.Buffer
+		var progress cliMetadataProgress
+		start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		op := api.WorkflowOperationStatus{Operation: api.OperationKindPreparation, Status: api.StageStatusRunning}
+		for tick := 0; tick < duration*100; tick++ {
+			op.Message = fmt.Sprintf("Read Blu-ray.com release details: %d processed", tick)
+			progress.Print(&output, op, start.Add(time.Duration(tick)*10*time.Millisecond))
+		}
+		op.Status = api.StageStatusCompleted
+		op.Message = "Metadata ready."
+		progress.Print(&output, op, start.Add(time.Duration(duration)*time.Second))
+		lines := strings.Count(output.String(), "\n")
+		want := 0
+		if duration >= 30 {
+			want = (duration-1)/30 + 1
+		}
+		if lines != want || strings.ContainsAny(output.String(), "\r\x1b") {
+			t.Fatalf("duration %d output (%d, want %d): %q", duration, lines, want, output.String())
+		}
+	}
+	var output bytes.Buffer
+	var progress cliMetadataProgress
+	start := time.Now()
+	op := api.WorkflowOperationStatus{
+		Operation: api.OperationKindPreparation,
+		Status:    api.StageStatusRunning,
+		Message:   "Waiting for a response.",
+	}
+	for tick := range 125 {
+		progress.Print(&output, op, start.Add(time.Duration(tick)*time.Second))
+	}
+	if got := strings.Count(output.String(), "\n"); got != 1 {
+		t.Fatalf("unchanged update printed %d times", got)
+	}
+}
+
+func TestMetadataProgressReportsRetainedPartialOutcome(t *testing.T) {
+	var output bytes.Buffer
+	var progress cliMetadataProgress
+	operation := api.WorkflowOperationStatus{
+		Operation: api.OperationKindPreparation,
+		Status:    api.StageStatusCompleted,
+		Message:   "Operation complete.",
+		Items: []api.WorkflowOperationItem{{
+			Kind:   "preparation_phase",
+			Label:  "Derive media facts",
+			Status: api.StageStatusPartial,
+		}},
+	}
+	progress.Print(&output, operation, time.Now())
+	if strings.Count(output.String(), "\n") != 1 || !strings.Contains(output.String(), "Partial metadata: Derive media facts") {
+		t.Fatalf("partial outcome = %q", output.String())
 	}
 }

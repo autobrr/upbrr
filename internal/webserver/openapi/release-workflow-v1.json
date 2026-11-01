@@ -875,6 +875,9 @@
               "$ref": "#/components/schemas/BlurayReleaseCandidate"
             }
           },
+          "Country": {
+            "type": "string"
+          },
           "IMDBID": {
             "type": "integer"
           },
@@ -904,6 +907,7 @@
           "AutoSelected",
           "BestScore",
           "Candidates",
+          "Country",
           "IMDBID",
           "SearchURL",
           "SelectedReleaseID",
@@ -971,6 +975,9 @@
           "Region": {
             "type": "string"
           },
+          "ReleaseDate": {
+            "type": "string"
+          },
           "ReleaseID": {
             "type": "string"
           },
@@ -1008,6 +1015,7 @@
           "ProductID",
           "Publisher",
           "Region",
+          "ReleaseDate",
           "ReleaseID",
           "Score",
           "Specs",

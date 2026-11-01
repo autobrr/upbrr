@@ -964,6 +964,8 @@ export type BluraySpecs = {
 };
 
 export type BlurayReleaseCandidate = {
+  /** Edition-specific YYYY-MM-DD calendar date; empty when unavailable. */
+  ReleaseDate: string;
   ReleaseID: string;
   ProductID: string;
   MovieTitle: string;
@@ -986,6 +988,8 @@ export type BlurayReleaseCandidate = {
 
 export type BlurayMetadata = {
   SourcePath: string;
+  /** Recognized release country limiting Candidates; empty means unrestricted. */
+  Country: string;
   IMDBID: number;
   SearchURL: string;
   SelectedReleaseID: string;

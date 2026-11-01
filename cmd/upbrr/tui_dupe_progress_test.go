@@ -100,3 +100,56 @@ func TestDupeProgressRejectsPreviousPresentationEpoch(t *testing.T) {
 		t.Fatal("a restarted duplicate check retained previous completion counts")
 	}
 }
+
+func TestMetadataProgressUpdatesTUIInPlace(t *testing.T) {
+	bridge := newCLITUIBridge()
+	streams := cliIO{out: &cliPresentationWriter{
+		Writer:    io.Discard,
+		presenter: bridge,
+		ctx:       t.Context(),
+		terminal:  true,
+	}, presenter: bridge}
+	ctx := withCLIItemPresentation(t.Context(), streams, "Example.Movie.2026-GRP", 1)
+	session := &cliWorkflowSession{streams: streams, current: releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "metadata", Revision: 1},
+		Operation: &api.WorkflowOperationStatus{
+			ID:         "metadata-op",
+			WorkflowID: "metadata",
+			Operation:  api.OperationKindPreparation,
+			Status:     api.StageStatusRunning,
+			Phase:      "media_facts",
+			Completed:  800,
+			Total:      1200,
+			Items: []api.WorkflowOperationItem{
+				{
+					ID:      "bdinfo",
+					Kind:    "preparation_phase",
+					Label:   "Analyze Blu-ray playlists",
+					Status:  api.StageStatusRunning,
+					Message: "Analyzing playlists.",
+				},
+				{
+					ID:      "media_facts",
+					Kind:    "preparation_substep",
+					Label:   "Derive media facts",
+					Status:  api.StageStatusRunning,
+					Message: "Read Blu-ray.com release details: 7/100 processed (10s elapsed)",
+				}},
+		},
+	}}
+	session.publishPresentation(ctx)
+	model := newCLITUIModel(t.Context(), bridge, func() {}, nil, nil, false, false, true)
+	model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model.Update(bridge.receive(t.Context())())
+	frame := ansi.Strip(model.flow(100, 20))
+	if !strings.Contains(frame, "7/100 processed (10s elapsed)") || strings.Contains(frame, "67%") {
+		t.Fatalf("metadata frame = %s", frame)
+	}
+	session.current.Operation.Items[1].Message = "Read Blu-ray.com release details: 8/100 processed"
+	session.publishPresentation(ctx)
+	model.Update(bridge.receive(t.Context())())
+	frame = ansi.Strip(model.flow(100, 20))
+	if !strings.Contains(frame, "8/100 processed") || strings.Contains(frame, "7/100 processed") || len(model.logs) != 0 {
+		t.Fatalf("metadata redraw/logs = %s, %#v", frame, model.logs)
+	}
+}

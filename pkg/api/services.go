@@ -2223,7 +2223,9 @@ type AniListExternalLink struct {
 }
 
 type BlurayMetadata struct {
-	SourcePath        string
+	SourcePath string
+	// Country limits Candidates to this recognized release country; empty means unrestricted.
+	Country           string
 	IMDBID            int
 	SearchURL         string
 	SelectedReleaseID string
@@ -2236,16 +2238,20 @@ type BlurayMetadata struct {
 	UpdatedAt         time.Time `ts_type:"string"`
 }
 
+// BlurayReleaseCandidate describes one disc edition and its local match evidence.
 type BlurayReleaseCandidate struct {
-	ReleaseID    string
-	ProductID    string
-	MovieTitle   string
-	MovieYear    string
-	Title        string
-	URL          string
-	Price        string
-	Publisher    string
-	Country      string
+	// ReleaseDate is an edition-specific YYYY-MM-DD calendar date, or empty when unavailable.
+	ReleaseDate string
+	ReleaseID   string
+	ProductID   string
+	MovieTitle  string
+	MovieYear   string
+	Title       string
+	URL         string
+	Price       string
+	Publisher   string
+	Country     string
+	// Region is the release-country code, distinct from Specs.Playback.Region (A/B/C).
 	Region       string
 	Score        float64
 	Accepted     bool

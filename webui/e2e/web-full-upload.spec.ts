@@ -1914,6 +1914,8 @@ test("embedded web selects a Blu-ray candidate through the authoritative workflo
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "Blu-ray Candidates" }).click();
     await expect(page.getByText("Example Release 2026 Collector Edition")).toBeVisible();
+    await expect(page.getByText("United States", { exact: true })).toHaveCount(3);
+    await expect(page.getByText("USA", { exact: true })).toHaveCount(2);
     await expect(page.getByRole("button", { name: "Selected" })).toBeDisabled();
 
     const response = page.waitForResponse((candidate) =>

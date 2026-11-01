@@ -23,7 +23,8 @@ type jsonResult struct {
 // empty predicate classifies decoded collections that carry non-result metadata.
 func JSON(ctx context.Context, domain string, query, target any, notFound error, empty func() bool, fetch func() error) error {
 	if !Enabled(ctx) {
-		return fetch()
+		_, err := observeFetch(ctx, domain, func() (bool, error) { err := fetch(); return err == nil, err })
+		return err
 	}
 	result, err := Lookup(ctx, domain, []any{query, fmt.Sprintf("%T", target)}, func() (jsonResult, error) {
 		if err := fetch(); err != nil {

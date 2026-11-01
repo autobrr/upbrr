@@ -209,6 +209,7 @@ export type BlurayMetadata = Readonly<{
   AutoSelected: boolean;
   BestScore: number;
   Candidates: readonly BlurayReleaseCandidate[];
+  Country: string;
   IMDBID: number;
   SearchURL: string;
   SelectedReleaseID: string;
@@ -236,6 +237,7 @@ export type BlurayReleaseCandidate = Readonly<{
   ProductID: string;
   Publisher: string;
   Region: string;
+  ReleaseDate: string;
   ReleaseID: string;
   Score: number;
   Specs: BluraySpecs;
