@@ -484,7 +484,7 @@ During upload, the CLI prints the path of every successfully retained PNG and st
 | `--client <name>`        | `-client`                          | Override torrent client.                                                                 |
 | `--qbit-tag <value>`     | `-qbit-tag`, `-qbt`                | Override qBittorrent tag.                                                                |
 | `--qbit-cat <value>`     | `-qbit-cat`, `-qbc`                | Override qBittorrent category.                                                           |
-| `--force-recheck`        | `-force-recheck`, `-frc`           | Force recheck of matched qBittorrent torrents before validation.                         |
+| `--force-recheck`        | `-force-recheck`, `-frc`           | Recheck matched qBittorrent torrents and verify reusable torrent data.                   |
 | `--no-seed`              | `-no-seed`, `-ns`                  | Do not inject into torrent clients.                                                      |
 | `--skip_auto_torrent`    | `-skip_auto_torrent`, `-sat`       | Skip automated torrent-client searching.                                                 |
 | `--keep-folder`          | `-keep-folder`, `-kf`              | Keep the supplied folder around one movie or episode video.                              |
@@ -497,6 +497,10 @@ During upload, the CLI prints the path of every successfully retained PNG and st
 `--keep-folder` applies only when a supplied folder contains one selected movie or episode video. The torrent retains that folder as its root and includes only the selected video; samples, NFOs, text files, and other sidecars are excluded. The default remains a single-file torrent. Season packs, multi-video folders, disc sources, and direct file inputs are unchanged. Reused torrents must match the requested layout.
 
 `--nohash` and `--rehash` cannot be combined, even with explicit false values.
+
+Ordinary torrent reuse checks the metainfo, requested file layout and applicable limits without reading every media byte. This does not prove that same-sized media bytes match the piece hashes. Use `--force-recheck` to request a piece check, or `--rehash` to create a fresh torrent. A reusable artifact may need a metadata-only layout change; `--nohash` permits that but fails if new pieces are required.
+
+Reuse currently supports v1 torrents; v2 and hybrid v1/v2 torrents require a new torrent, so `--nohash` cannot use them.
 
 ## `serve`
 

@@ -802,6 +802,17 @@ func TestFreshSnapshotUsesTrackerIDsBeforeProviderNameSearch(t *testing.T) {
 				IMDBID:     24,
 			}},
 		},
+		{
+			name: "same tracker ID with another source-tag infohash",
+			stored: []api.TrackerMetadata{{
+				SourcePath: sourcePath,
+				Tracker:    "ANT",
+				TrackerID:  trackerID,
+				InfoHash:   "another-infohash",
+				TMDBID:     42,
+				IMDBID:     24,
+			}},
+		},
 		{name: "missing saved tracker IDs", wantLookups: 1},
 		{
 			name: "saved tracker record without metadata IDs",

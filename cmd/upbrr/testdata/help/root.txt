@@ -281,7 +281,7 @@ Client and Torrent:
   -qbit-cat, --qbit-cat, -qbc string
       Override qBittorrent category
   -force-recheck, --force-recheck, -frc
-      Force recheck matched qBittorrent torrents before validation
+      Recheck matched qBittorrent torrents and verify reusable torrent data
   -no-seed, --no-seed, -ns
       Do not inject torrent into clients
   -skip_auto_torrent, --skip_auto_torrent, -sat
