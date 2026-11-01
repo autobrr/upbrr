@@ -2685,6 +2685,17 @@ func TestAudioFromMediaAddsDualAudioForEnglishAndOriginalLanguage(t *testing.T) 
 	if channels != "5.1" || commentary {
 		t.Fatalf("expected 5.1 with no commentary, got channels=%q commentary=%t", channels, commentary)
 	}
+	meta.ProviderMetadata.TMDB.OriginalLanguage = "gaa"
+	doc.Media.Track[2]["Language"] = ""
+	doc.Media.Track[2]["Language_String"] = "Ga"
+	if audio, _, _ := audioFromMedia(meta, doc, nil); audio != "Dual-Audio DD 5.1" {
+		t.Fatalf("human-name ingress lost original Ga audio: %q", audio)
+	}
+	meta.ProviderMetadata.TMDB.OriginalLanguage = "en"
+	doc.Media.Track[1]["Language"], doc.Media.Track[2]["Language"] = "en-US", "en-GB"
+	if audio, _, _ := audioFromMedia(meta, doc, nil); audio != "DD 5.1" {
+		t.Fatalf("English variants invented Dual-Audio: %q", audio)
+	}
 }
 
 func TestAudioFromMediaSkipsCommentaryTitleVariantsForDualAudio(t *testing.T) {

@@ -84,6 +84,17 @@ known language differing from the title's recorded original language does not pr
 a dub. Ordinary matching-language original tracks need no special title or flag.
 Commentary is not programme audio.
 
+Language corrections accept complete names or codes, including explicit regions and
+scripts such as `pt-BR` and `zh-Hant`. These variants remain visible; matching uses
+the base language. Filipino (`fil`), Tagalog (`tgl`) and the collective Philippine
+languages (`phi`) remain distinct. A collective label does not identify its members.
+Absent language, undetermined (`und`), multiple languages (`mul`), uncoded languages
+(`mis`), non-linguistic content (`zxx`) and custom text are retained separately;
+unknown values do not establish English or an original soundtrack. Full and Forced
+subtitle coverage stays separate from language identity. Auto removes a correction;
+an explicitly empty list clears it. For an ambiguous name, choose the suggestion
+with its displayed code or enter the intended code directly.
+
 For a previously inspected source, the CLI accepts
 `--track-audio-origin 'TRACK_ID=original'` (or `dubbed` or `unresolved`). It binds the
 answer to that track's current manifest; changed sources require review again.

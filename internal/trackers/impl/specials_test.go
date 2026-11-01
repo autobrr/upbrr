@@ -18,7 +18,7 @@ func TestOnlyOptedInUnit3DSitesAllowExplicitSingleSpecials(t *testing.T) {
 		"LUME":   "unit3d-lume-constructibility-v1+unit3d-lume-constructibility-v5/languages-v2",
 		"OTW":    "unit3d-otw-constructibility-v1+unit3d-otw-policy-v6",
 		"ULCX":   "unit3d-ulcx-constructibility-v1+unit3d-ulcx-policy-v12/languages-v2",
-		"YUS":    "unit3d-yus-constructibility-v1+unit3d-yus-policy-v2",
+		"YUS":    "unit3d-yus-constructibility-v1+unit3d-yus-policy-v3",
 	}
 	registry, err := NewRegistry()
 	if err != nil {

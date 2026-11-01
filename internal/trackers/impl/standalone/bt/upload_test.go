@@ -4,6 +4,7 @@
 package bt
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -121,7 +122,7 @@ func TestResolveLanguageUsesResolvedAudioFacts(t *testing.T) {
 	t.Parallel()
 
 	meta := api.UploadSubject{AudioLanguages: []string{"Portuguese"}, Release: api.ReleaseInfo{Language: []string{"English"}}}
-	if got := resolveLanguage(meta); got != "portuguese" {
+	if got := resolveLanguage(meta); got != "Português" {
 		t.Fatalf("resolved language = %q", got)
 	}
 	if got := resolveLanguage(api.UploadSubject{Release: api.ReleaseInfo{Language: []string{"English"}}}); got != "" {
@@ -417,5 +418,12 @@ func TestResolveRuntimeFallsBackWhenMediaInfoDurationInvalid(t *testing.T) {
 
 	if got := resolveRuntime(meta); got != 90 {
 		t.Fatalf("expected BDInfo runtime fallback, got %d", got)
+	}
+}
+
+func TestSubtitleProjectionKeepsExistingCantoneseScriptGrouping(t *testing.T) {
+	_, ids := resolveSubtitle(api.UploadSubject{SubtitleLanguages: []string{"yue-Hant", "Cantonese [yue-Hans]"}})
+	if !slices.Equal(ids, []string{"14"}) {
+		t.Fatalf("Cantonese subtitle IDs = %v", ids)
 	}
 }

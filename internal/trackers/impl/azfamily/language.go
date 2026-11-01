@@ -4,8 +4,9 @@
 package azfamily
 
 import (
-	"strings"
+	"golang.org/x/text/language"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -29,60 +30,67 @@ func languageValues(meta api.UploadSubject) languageBundle {
 }
 
 func languageID(value string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "english", "eng", "en":
+	tag, ok := languageutil.LanguageTag(value)
+	if !ok {
+		return "", false
+	}
+	// This taxonomy groups aliases that remain distinct in canonical media facts.
+	tag, _ = language.All.Canonicalize(tag)
+	base, _, _ := tag.Raw()
+	switch base.String() {
+	case "en":
 		return "45", true
-	case "japanese", "jpn", "ja":
+	case "ja":
 		return "76", true
-	case "korean", "kor", "ko":
+	case "ko":
 		return "85", true
-	case "chinese", "zho", "zh":
+	case "zh":
 		return "33", true
-	case "cantonese", "yue":
+	case "yue":
 		return "27", true
-	case "french", "fra", "fre", "fr":
+	case "fr":
 		return "52", true
-	case "german", "deu", "ger", "de":
+	case "de":
 		return "58", true
-	case "spanish", "spa", "es":
+	case "es":
 		return "132", true
-	case "italian", "ita", "it":
+	case "it":
 		return "74", true
-	case "portuguese", "por", "pt":
+	case "pt":
 		return "116", true
-	case "russian", "rus", "ru":
+	case "ru":
 		return "123", true
-	case "thai", "tha", "th":
+	case "th":
 		return "137", true
-	case "vietnamese", "vie", "vi":
+	case "vi":
 		return "154", true
-	case "indonesian", "ind", "id":
+	case "id":
 		return "72", true
-	case "malay", "msa", "may", "ms":
+	case "ms":
 		return "97", true
-	case "tagalog", "tgl", "tl", "filipino":
+	case "fil":
 		return "136", true
-	case "hindi", "hin", "hi":
+	case "hi":
 		return "66", true
-	case "arabic", "ara", "ar":
+	case "ar":
 		return "7", true
-	case "turkish", "tur", "tr":
+	case "tr":
 		return "145", true
-	case "dutch", "nld", "dut", "nl":
+	case "nl":
 		return "43", true
-	case "polish", "pol", "pl":
+	case "pl":
 		return "114", true
-	case "danish", "dan", "da":
+	case "da":
 		return "41", true
-	case "finnish", "fin", "fi":
+	case "fi":
 		return "51", true
-	case "swedish", "swe", "sv":
+	case "sv":
 		return "134", true
-	case "norwegian", "nor", "no", "nob", "nb":
+	case "no", "nn":
 		return "22", true
-	case "hebrew", "heb", "he":
+	case "he":
 		return "64", true
-	case "ukrainian", "ukr", "uk":
+	case "uk":
 		return "147", true
 	default:
 		return "", false
