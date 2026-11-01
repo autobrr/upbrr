@@ -2744,7 +2744,11 @@ func TestResolveExternalIDsReconcilesExplicitTMDBAndTVmazeLinks(t *testing.T) {
 			if result.Identity.TMDBID != tmdbID || result.Identity.TVmazeID != tvmazeID {
 				t.Fatalf("explicit anchors changed: %#v", result.Identity)
 			}
-			if (result.Identity.IMDBID != 0) != tc.wantSiblingIDs || (result.Identity.TVDBID != 0) != tc.wantSiblingIDs {
+			wantIMDBID, wantTVDBID := 0, 0
+			if tc.wantSiblingIDs {
+				wantIMDBID, wantTVDBID = 1234567, 222333
+			}
+			if result.Identity.IMDBID != wantIMDBID || result.Identity.TVDBID != wantTVDBID {
 				t.Fatalf("sibling identity = %#v", result.Identity)
 			}
 			if result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.TVmaze == nil {

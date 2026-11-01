@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v5"
+const ContractVersion = "external-identity-v6"
 
 // CompatibleStoredIdentity preserves manual pins and clears while discarding
 // automatic IDs and dependencies produced before the current identity contract.
