@@ -209,8 +209,13 @@ test("embedded web blocks Dupe Check until missing saved facts are corrected", a
     await dupeCheck.click();
     await expect(page.getByRole("heading", { name: "Check Trackers", exact: true })).toBeVisible();
   } finally {
-    await app?.stop();
-    await workspace.cleanup();
+    try {
+      // Drain intercepted fetches while their server is still running.
+      await page.unrouteAll({ behavior: "wait" });
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
   }
 });
 
