@@ -54,7 +54,7 @@ Failed checks identify HTTP status codes and recognized API errors, maintenance 
 
 Pixhost checks a fixed synthetic public image URL without uploading anything. If Pixhost reports that URL as invalid, the result explains that the API was reached but the status check could not be verified; it does not report success.
 
-TMDB checks the entered API key at its fixed API v3 authentication endpoint. An HTTP 200 JSON validation response confirms that request; optional success fields may be absent. Explicit API errors, HTTP 401 and non-JSON pages are reported as failed checks. The check uses the same API-key authentication as metadata lookup.
+TMDB reads the details of one fixed public movie using the entered API key and the same API-key authentication as metadata lookup. Success requires the expected movie ID and a nonempty title in an HTTP 200 JSON response. Unidentified JSON, explicit API errors, HTTP 401 and non-JSON pages are reported as failed checks. No metadata is saved.
 
 ## Secrets and direct actions
 

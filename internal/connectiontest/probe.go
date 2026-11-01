@@ -68,25 +68,30 @@ func test(ctx context.Context, cfg config.Config, target api.ConnectionTestTarge
 		if !CredentialPresent(key) {
 			return result("missing_configuration", "Enter a TMDB API key before testing.")
 		}
-		endpoint := "https://api.themoviedb.org/3/authentication?" + url.Values{"api_key": {key}}.Encode()
+		const movieID = 155
+		endpoint := fmt.Sprintf("https://api.themoviedb.org/3/movie/%d?", movieID) + url.Values{"api_key": {key}}.Encode()
 		body, failure := Request(ctx, client, http.MethodGet, endpoint, nil, nil)
 		if failure.Code != "" {
 			return failure
 		}
-		// TMDB defines HTTP 200 with a JSON object as successful validation;
-		// its success and status_code properties are optional in the schema.
-		// Keep malformed bodies and explicit unsuccessful API codes distinct.
-		var response *struct {
-			Success    *bool `json:"success"`
-			StatusCode *int  `json:"status_code"`
+		// Read one fixed public movie using the same API-key transport as metadata
+		// lookup. Require its identity without saving or returning movie metadata.
+		var response struct {
+			ID         int    `json:"id"`
+			Title      string `json:"title"`
+			Success    *bool  `json:"success"`
+			StatusCode *int   `json:"status_code"`
 		}
-		if json.Unmarshal(body, &response) != nil || response == nil {
+		if json.Unmarshal(body, &response) != nil {
 			return UnexpectedResponse()
 		}
-		if response.StatusCode != nil && *response.StatusCode != 1 {
-			return result("remote_error", "TMDB returned an unsuccessful API validation response. Check the API key and TMDB service status.")
+		if (response.Success != nil && !*response.Success) || (response.StatusCode != nil && *response.StatusCode != 1) {
+			return result("remote_error", "TMDB returned an unsuccessful API response. Check the API key and TMDB service status.")
 		}
-		return result("success", "TMDB accepted the API key.")
+		if response.ID != movieID || strings.TrimSpace(response.Title) == "" {
+			return UnexpectedResponse()
+		}
+		return result("success", "TMDB authorized a fixed public movie-details read. No metadata was saved.")
 	case "sonarr", "radarr":
 		return testArr(ctx, cfg.ArrIntegration, target, client)
 	case "torrent_client":
