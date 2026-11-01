@@ -12,6 +12,7 @@ import (
 // Profile returns DC identity, preparation, dupe, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:     trackers.ConnectionProbe{Test: testConnection, DraftConfig: trackers.APIKeyProbeConfig},
 		UsesMenuImages:      true,
 		Name:                "DC",
 		BaseURL:             baseURL,

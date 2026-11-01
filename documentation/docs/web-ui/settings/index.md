@@ -34,6 +34,20 @@ Export the current configuration first. Import replaces the configuration stored
 
 :::
 
+## Test a connection
+
+Select **Test connection** beside an integration or configured instance to check the current form values without saving them. An unchanged `[REDACTED]` value uses its preserved secret; an edited credential is tested immediately. The request runs on the server with the integration's applicable proxy and TLS settings.
+
+Wait for the result beside the button. Other instances can be tested independently. Editing the tested fields clears their result and cancels a pending test. Requests have a ten-second timeout; a denied response can also indicate account permissions, IP restrictions, or proxy access.
+
+A successful check proves only the read operation described in its result. It does not prove upload permission. Connection tests do not upload images or torrents, add torrents to clients, save settings, or refresh stored tracker sessions. Public services may have no credentials to check. Where no safe check is available, the result explains the limitation and does not report success.
+
+The checked credential depends on the provider. API probes check the entered API credentials; cookie probes check the imported session. Where temporary credential login is supported, entering either a username or password selects a fresh login and requires both values. A failed login does not fall back to imported cookies. Announce passkeys and credentials used only during upload are not verified by a session-page check.
+
+The result describes the check's scope and limits. An API key may work for reads while a separate web login, two-factor step or upload permission still needs attention. Some supported upload APIs provide no compatible read-only credential check. Custom upload URLs may also have no verified companion read URL. No upload is attempted in these cases. A provider may record normal request or token-use audit information without creating content or refreshing credentials.
+
+An **unverified** result means a compatible authenticated read contract has not yet been established. It is not evidence of invalid credentials or proof that the provider cannot support a safe check. No credentials are sent for an unverified check.
+
 ## Secrets and direct actions
 
 Stored credentials appear as `[REDACTED]`. Leave that value unchanged to preserve the secret, enter a new value to replace it, or clear it to remove it. Never include configuration exports, API tokens, cookies, passkeys, or announce URLs in public reports.

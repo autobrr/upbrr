@@ -222,9 +222,9 @@ function hasConfiguredTrackerValue(
 const trackerConfigValue = (entries: ConfigMap, name: string): ConfigMap | null => {
   const exact = entries[name];
   if (exact && typeof exact === "object" && !Array.isArray(exact)) return exact as ConfigMap;
-  const foldedName = Object.keys(entries).find(
-    (candidate) => candidate.trim().toLowerCase() === name.trim().toLowerCase(),
-  );
+  const foldedName = Object.keys(entries)
+    .sort()
+    .find((candidate) => candidate.trim().toLowerCase() === name.trim().toLowerCase());
   if (!foldedName) return null;
   const value = entries[foldedName];
   return value && typeof value === "object" && !Array.isArray(value) ? (value as ConfigMap) : null;
@@ -1014,6 +1014,11 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
   const editorContext: SettingsRenderContext = {
     settingsConfigData,
+    connectionTestSecrets: sensitiveValues,
+    buildConnectionTestPayload: () =>
+      settingsConfigData
+        ? JSON.stringify(restoreSensitiveConfig(settingsConfigData, sensitiveValues))
+        : null,
     updateConfigValue,
     markSettingsChanged,
     addConfigKey,

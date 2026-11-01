@@ -54,6 +54,9 @@ type Backend struct {
 	streams  map[string]*backendLogStream
 	streamWG sync.WaitGroup
 
+	connectionTestMu sync.Mutex
+	connectionTests  map[connectionTestKey]bool
+
 	activationInitMu    sync.Mutex
 	activator           *RuntimeActivator
 	workflowCoordinator *releaseworkflow.Coordinator

@@ -5,6 +5,7 @@ package rtf
 
 import (
 	"context"
+	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -16,6 +17,12 @@ import (
 // Profile returns RTF identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe: trackers.ConnectionProbe{Test: testConnection, DraftConfig: func(cfg config.TrackerConfig) config.TrackerConfig {
+			if strings.TrimSpace(cfg.APIKey) != "" {
+				return config.TrackerConfig{APIKey: cfg.APIKey}
+			}
+			return config.TrackerConfig{PTPAPIKey: cfg.PTPAPIKey}
+		}},
 		Name:                 "RTF",
 		BaseURL:              defaultBaseURL,
 		DescriptionGroup:     "rtf",

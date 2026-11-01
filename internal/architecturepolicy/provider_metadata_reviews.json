@@ -208,8 +208,8 @@
     "sha256": "34cb615f580168c90ee8d01ff1c5cd0cff26fe25f8f901fe371ac19ad92a239f"
   },
   "internal/trackers/impl/standalone/ar/profile.go:Profile": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "1e71723f3ebc3de923cef1bdbc82f94e6668a5af7476fcc167d61dc2c9c5c35a"
+    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
+    "sha256": "f0638f6bb54de0cd1af904f6d53ab726786fbbf11d4e14ae8663da6e4373fb74"
   },
   "internal/trackers/impl/standalone/ar/taxonomy.go:resolveGenres": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
@@ -332,8 +332,8 @@
     "sha256": "3262a761092f75ef76cb9d4761052f368b4ad6abd2e6f194b19bb61e3c74cb69"
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "Adds the pure questionnaire binding only. Explicit requested upload names still precede resolved titles; existing manual title/original-title precedence, localized provider fallbacks, and anime search behavior are unchanged.",
-    "sha256": "17b969ecdee139d2632c2a5d8e6a7283605adbea77550c561656c7ad9e3820a7"
+    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
+    "sha256": "3c24c9117bb0eb6c03b3638da044bfec835f2b444d9ba3b9612acdaa09c69605"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks.",
@@ -384,8 +384,8 @@
     "sha256": "fd11af9de2fb77db136a7fcaff830b30d5bff684b96b612cea0c1ee12926db79"
   },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
-    "reason": "Advances the naming policy for source-reviewed original-versus-dubbed programme audio. Existing provider selection, manual title/year precedence, full-disc behavior and independent validation remain unchanged; factual audio tags remain independent of presentation overrides.",
-    "sha256": "decefcf3d0673414a20c705ed0ee021269a9234f6c30b818d3f33477abcd7c32"
+    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
+    "sha256": "6a0f298c229e7ace66cff19ca36c97bbbaab8547480e8edb27f15a356b3ce0f8"
   },
   "internal/trackers/impl/standalone/bhd/rules.go:languageAssessment": {
     "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
@@ -532,8 +532,8 @@
     "sha256": "7f5140247cc516ad4c879103dd3077eab1cc328d6e1f1d889bb56e29897858b4"
   },
   "internal/trackers/impl/standalone/bt/profile.go:Profile": {
-    "reason": "Adds the pure questionnaire binding only. Existing anime search still honors manual title including manual-empty before TVDB/TMDB/IMDb fallbacks; upload naming and localized provider policy are unchanged.",
-    "sha256": "6ffcfab4ae85b1176a1dde4c17a6dc47315af0edcc6afc4738c4c64226d8e7bf"
+    "reason": "Adds only the read-only Settings connection-probe binding. Existing localized metadata policy and upload/search naming callbacks are unchanged; anime searches still honor manual title, including manual-empty, before provider fallbacks.",
+    "sha256": "08bd0efbc39df9ed9043e44bf33f846bfd3ed225206f67d92531ad5af63bbe45"
   },
   "internal/trackers/impl/standalone/bt/questionnaire.go:buildQuestionnaire": {
     "reason": "Pure projection and upload schema prefer nonempty overview/tag answers to exact-subject localized/base provider defaults. Scoped episode overview and manual genres retain precedence; explicit blanks preserve fallback semantics without reading media files.",
@@ -692,8 +692,8 @@
     "sha256": "6be31af8d514728446e6f9d14a69ebfb39c757dfd2e945197795ce003a79a84a"
   },
   "internal/trackers/impl/standalone/btn/profile.go:Profile": {
-    "reason": "Wires the pure language assessment and primary-audio country questionnaire. Existing manual-aware name, title, tag and full-disc original-language selectors remain unchanged; payload regressions verify that corrected primary programme facts override conflicting provider language. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged.",
-    "sha256": "3071ec4255a5196d6094a50b9980aec642cfe9f1c2cffe34e97d896d0ba5477b"
+    "reason": "Wires the pure language assessment and primary-audio country questionnaire. Existing manual-aware name, title, tag and full-disc original-language selectors remain unchanged; payload regressions verify that corrected primary programme facts override conflicting provider language. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged. Settings connection checks add only an isolated probe binding and draft-credential selector; provider/manual metadata selectors and prepared-upload callbacks remain unchanged.",
+    "sha256": "a99cc07196c6b12b56362161d26dccfbc1a694edcdd969f70ea7123dd586794f"
   },
   "internal/trackers/impl/standalone/btn/questionnaire.go:languageQuestionnaire": {
     "reason": "Reviewed with primary-country resolution: current agreeing origin evidence suppresses only an unanswered original-audio country question; explicit answers, including invalid or empty values, retain review precedence.",
@@ -908,8 +908,8 @@
     "sha256": "33e7abef28bb531b724f8207a18b2319c99787ff1e64b2b5a4a36343fcd4aa92"
   },
   "internal/trackers/impl/standalone/hdb/profile.go:Profile": {
-    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged.",
-    "sha256": "b5fe1820fe807d4c75b1bb223768d701c58bb260242515050c590d77ede37e1a"
+    "reason": "Warn-only review: current finalized/manual metadata and independent measured eligibility remain authoritative. Source-history and hypothetical evidence no longer grant or withhold permission through questionnaire answers; policy versions invalidate old projections. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged. Settings connection checks add only an isolated probe binding and draft-credential selector; provider/manual metadata selectors and prepared-upload callbacks remain unchanged.",
+    "sha256": "157993f3722ac5dec52aaae574dd3ad9a0a647c541ec29e6d62354c1d297014e"
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
     "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
@@ -1100,8 +1100,8 @@
     "sha256": "3fe13eba64328115e1a0dc1783749c648454cb6f7bdd9688bf6641fd48a2cd87"
   },
   "internal/trackers/impl/standalone/ptp/profile.go:Profile": {
-    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged.",
-    "sha256": "b895a4f4698ba0a0f847dbca41c219cf7b6f04fc9e618d4408dc9a7a433f5377"
+    "reason": "PTP edition/feature review: consumes the exact prepared generation; explicit manual-empty distributor provenance suppresses collection fallback and effective commentary false remains authoritative. The pure mapper and its profile, preview, and payload callers were reviewed together; no late provider or name parsing was introduced. External-ID cache refresh opt-in only; finalized provider/manual naming and payload selectors are unchanged. Settings connection checks add only an isolated probe binding and draft-credential selector; provider/manual metadata selectors and prepared-upload callbacks remain unchanged.",
+    "sha256": "0db8504c0bdffd58dbd700dc0c99aa61be3f0f023c5935de12bd97968d8f3abc"
   },
   "internal/trackers/impl/standalone/ptp/questionnaire.go:buildQuestionnaire": {
     "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
@@ -1280,8 +1280,8 @@
     "sha256": "f8953a4679fa96231aaf1f3422f140462d4c16c8b5bb24c2484b5931afb7ac38"
   },
   "internal/trackers/impl/standalone/tvc/profile.go:Profile": {
-    "reason": "Adds the pure questionnaire binding only. Requested upload name still precedes name_override, then resolveName with PreferredTitle/PreferredYear; exact-subject provider defaults and manual-empty naming behavior are unchanged.",
-    "sha256": "7a421f17084d1d98b83d4376f4ad70749748309145e1877d028b8b0efc7e3bd3"
+    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
+    "sha256": "2ffcf7bd91698e368a5221f9d61edbb5faceb2f5ac48634d4c794931ed4aca46"
   },
   "internal/trackers/impl/standalone/tvc/taxonomy.go:resolveCategory": {
     "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged.",

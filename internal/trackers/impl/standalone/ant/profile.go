@@ -15,6 +15,7 @@ import (
 // Profile returns ANT identity, preparation, dupe, rules, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:         trackers.ConnectionProbe{Test: testConnection, DraftConfig: trackers.APIKeyProbeConfig},
 		UsesMenuImages:          true,
 		Name:                    "ANT",
 		BaseURL:                 "https://anthelion.me",

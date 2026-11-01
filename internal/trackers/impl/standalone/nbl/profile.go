@@ -14,6 +14,7 @@ import (
 // including the strict TVmaze metadata requirement for TV uploads.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:     trackers.ConnectionProbe{Test: testConnection, DraftConfig: trackers.APIKeyProbeConfig},
 		Name:                "NBL",
 		BaseURL:             "https://nebulance.io",
 		DescriptionGroup:    "nbl",

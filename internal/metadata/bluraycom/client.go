@@ -187,12 +187,7 @@ func (c *Client) fetchPage(ctx context.Context, targetURL string, referer string
 	if err != nil {
 		return "", fmt.Errorf("bluray.com: create request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
+	setPageHeaders(req.Header, referer)
 	if strings.Contains(targetURL, "menu_ajax.php") {
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	}

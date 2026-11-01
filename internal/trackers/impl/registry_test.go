@@ -1222,3 +1222,16 @@ func TestSavedDescriptionGroupPreservesGeneratedContent(t *testing.T) {
 		meta.DescriptionGroups[0].RawDescription = got
 	}
 }
+
+func TestConnectionProbesRegisteredForVerifiedFamilies(t *testing.T) {
+	t.Parallel()
+	registry := MustNewRegistry()
+	for _, family := range []trackers.Family{trackers.FamilyUnit3D, trackers.FamilyAZFamily} {
+		for _, name := range registry.NamesByFamily(family) {
+			descriptor, _ := registry.LookupDescriptor(name)
+			if descriptor.ConnectionProbe.Test == nil || descriptor.ConnectionProbe.StoredCookies != (family == trackers.FamilyAZFamily) {
+				t.Errorf("%s missing family-owned probe or wrong session source", name)
+			}
+		}
+	}
+}
