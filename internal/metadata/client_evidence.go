@@ -46,6 +46,9 @@ func (s *Service) discoverClientEvidence(
 	discType string,
 ) (clientdiscovery.Evidence, error) {
 	if s.clients == nil {
+		if input.Search.Skip {
+			return clientdiscovery.Evidence{Disposition: clientdiscovery.DispositionSkipped}, nil
+		}
 		return clientdiscovery.Evidence{Disposition: clientdiscovery.DispositionUnavailable}, nil
 	}
 	evidence, err := s.clients.Discover(ctx, clientdiscovery.SearchInput{

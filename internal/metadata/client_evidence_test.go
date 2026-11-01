@@ -55,26 +55,34 @@ func TestClientDiscoveryProgressPreservesUnavailableAndSkippedOutcomes(t *testin
 	}{
 		{name: "missing module", want: api.PreparationProgressPartial},
 		{
-name: "failed search",
- clients: clientdiscovery.New(&metadataClientRecorder{err: errors.New("synthetic client failure")}, api.NopLogger{}),
- want: api.PreparationProgressPartial,
-},
+			name: "requested skip without module",
+			skip: true,
+			want: api.PreparationProgressCompleted,
+		},
 		{
-name: "requested skip",
- clients: clientdiscovery.New(nil, api.NopLogger{}),
- skip: true,
- want: api.PreparationProgressCompleted,
-},
+			name:    "failed search",
+			clients: clientdiscovery.New(&metadataClientRecorder{err: errors.New("synthetic client failure")}, api.NopLogger{}),
+			want:    api.PreparationProgressPartial,
+		},
+		{
+			name:    "requested skip",
+			clients: clientdiscovery.New(nil, api.NopLogger{}),
+			skip:    true,
+			want:    api.PreparationProgressCompleted,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var updates []api.PreparationProgressUpdate
 			ctx := api.WithPreparationProgressReporter(t.Context(), func(u api.PreparationProgressUpdate) { updates = append(updates, u) })
 			service := &Service{clients: tc.clients}
-			_, err := collectPreparationStage(ctx, api.PreparationPhaseClientDiscovery, func(ctx context.Context) (preparationstate.State, error) {
+			state, err := collectPreparationStage(ctx, api.PreparationPhaseClientDiscovery, func(ctx context.Context) (preparationstate.State, error) {
 				return service.collectClientEvidence(ctx, api.PrepareInput{Search: api.ClientSearchPolicy{Skip: tc.skip}}, preparationstate.State{SourcePath: "Example.Release.2026.mkv"})
 			})
 			if err != nil {
 				t.Fatal(err)
+			}
+			if tc.skip && state.ClientEvidence.Disposition != preparationstate.ClientEvidenceDispositionSkipped {
+				t.Fatalf("explicit skip disposition = %s", state.ClientEvidence.Disposition)
 			}
 			if got := updates[len(updates)-1]; got.Status != tc.want {
 				t.Fatalf("client discovery terminal outcome = %#v, want %s", got, tc.want)
