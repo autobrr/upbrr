@@ -14,6 +14,7 @@ import (
 // including the strict requirement for matching TMDB or IMDb metadata.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:         trackers.ConnectionProbe{Test: testConnection, DraftConfig: trackers.APIKeyProbeConfig},
 		ProjectionQuestionnaire: projectionQuestionnaire,
 		UsesMenuImages:          true,
 		Name:                    "SPD",

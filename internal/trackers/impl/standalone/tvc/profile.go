@@ -16,6 +16,9 @@ import (
 // including strict metadata, UHD, BDMV-disc, and remux restrictions.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe: trackers.ConnectionProbe{
+			UnverifiedReason: "TVC uses a custom tracker API. A compatible authenticated read has not been verified for this version; no credentials or upload request were sent.",
+		},
 		Name:                    "TVC",
 		BaseURL:                 "https://tvchaosuk.com",
 		DescriptionGroup:        "tvc",

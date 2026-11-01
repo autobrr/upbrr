@@ -1006,6 +1006,8 @@ type Descriptor struct {
 	ClaimFactory ClaimCheckerFactory
 	// ClaimPolicy contains optional generic claim orchestration settings.
 	ClaimPolicy *ClaimPolicy
+	// ConnectionProbe tests draft credentials without activating or persisting them.
+	ConnectionProbe ConnectionProbe
 	// AuthResolver performs optional tracker-owned auth resolution.
 	AuthResolver AuthSessionResolver
 	// AuthCapability describes optional interactive auth support.

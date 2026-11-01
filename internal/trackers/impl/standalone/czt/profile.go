@@ -4,6 +4,7 @@
 package czt
 
 import (
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -13,6 +14,10 @@ import (
 // Profile returns CZT identity, preparation, dupe, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe: trackers.ConnectionProbe{
+			Test:        testConnection,
+			DraftConfig: func(cfg config.TrackerConfig) config.TrackerConfig { return config.TrackerConfig{Passkey: cfg.Passkey} },
+		},
 		Name:                    trackerName,
 		BaseURL:                 defaultBaseURL,
 		DescriptionGroup:        descGroup,

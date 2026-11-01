@@ -209,6 +209,9 @@ func (d *Definition) AuthCapabilityDescriptor() *api.TrackerAuthCapability {
 	return cloneAuthCapability(d.profile.AuthCapability)
 }
 
+// ConnectionProbe returns the profile-owned draft connection test.
+func (d *Definition) ConnectionProbe() trackers.ConnectionProbe { return d.profile.ConnectionProbe }
+
 // AuthSessionResolver returns optional tracker-owned auth resolution behavior.
 func (d *Definition) AuthSessionResolver() trackers.AuthSessionResolver {
 	return d.profile.AuthResolver

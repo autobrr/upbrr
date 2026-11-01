@@ -408,6 +408,14 @@ owns status/import/validate/login/2FA/delete coordination across CLI, API, and W
 - Hybrid modes must be explicit. For example, API-upload and cookie-form upload can resolve to
   different requirement alternatives without tracker-name branches in generic code.
 
+### Settings connection probes
+
+Definitions may expose `ConnectionProbeProvider`; standalone profiles bind `ConnectionProbe` in `profile.go` with protocol logic in `auth_connection.go`. The registry carries this capability separately from `AuthSessionResolver`. Declare `DraftConfig` to copy only the credential fields consumed by the probe before decryption; nil selects no draft fields for cookie-only checks. A probe receives that selected decrypted config, an optional read-only cookie snapshot scoped to the registered host, and a bounded HTTP client that rejects redirects. It has no database or persistence handle.
+
+For credential-login probes, `CredentialsOverrideCookies` selects a fresh ephemeral login when either username or password is entered. Require both fields, discard the temporary session and never fall back to stored cookies after a failed draft login.
+
+Use a verified authenticated read operation and validate its service-specific response. Return fixed, secret-free `api.ConnectionTestResult` messages. Do not reuse an auth resolver that logs in, refreshes credentials, initializes storage, or persists session state. Never probe by uploading content, adding torrents, or sending an empty upload request. Document genuinely unavailable safe operations without treating an unverified endpoint as unsupported. Tests must use local fakes and synthetic credentials.
+
 ### Torrent-identity contract
 
 For `TorrentIdentityPolicy`, use `TrackerURLPatterns` for announces and `CommentURLPatterns` plus a
@@ -1441,6 +1449,7 @@ Declare static capabilities directly in `standalone.Profile`:
 | Profile field             | Typical supporting file      | Purpose                                           |
 | ------------------------- | ---------------------------- | ------------------------------------------------- |
 | `AuthCapability`          | `auth.go`                    | Declares API-key, passkey, cookie, login/2FA      |
+| `ConnectionProbe`         | `auth_connection.go`         | Read-only draft Settings connection check         |
 | `AuthResolver`            | `auth.go`                    | Validates or refreshes remote auth                |
 | `AuthPolicy`              | `profile.go`                 | Auth coordinator semantics                        |
 | `AuthStateManager`        | `auth.go`                    | Cleans tracker-owned persisted auth state         |
