@@ -116,6 +116,21 @@ func TestPreparedRequirementsSatisfied(t *testing.T) {
 			want: true,
 		},
 		{
+			name:   "TV alias year from another source",
+			fields: []api.MetadataRequirementField{"year"},
+			mutate: func(r *api.PreparedRelease, _ *api.ReleaseFactInstructions) {
+				r.Identity.Category = api.CanonicalCategoryTV
+				r.Identity.TVDBID = 22
+				r.ProviderMetadata.SourcePath = filepath.Join(filepath.Dir(r.Source.SourcePath), "Other.2026.mkv")
+				r.ProviderMetadata.TVDB = &api.TVDBMetadata{
+					TVDBID:        22,
+					Name:          "Example Series",
+					Year:          2026,
+					YearFromAlias: true,
+				}
+			},
+		},
+		{
 			name:   "movie localization",
 			fields: []api.MetadataRequirementField{"tmdb_localized_pt_br"},
 			mutate: func(r *api.PreparedRelease, _ *api.ReleaseFactInstructions) {
