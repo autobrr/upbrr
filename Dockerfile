@@ -10,7 +10,7 @@ FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend
 
 WORKDIR /src/webui
 
-COPY webui/package.json webui/pnpm-lock.yaml ./
+COPY webui/package.json webui/pnpm-lock.yaml webui/pnpm-workspace.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile
 
 COPY webui/ ./
