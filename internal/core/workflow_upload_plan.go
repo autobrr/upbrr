@@ -624,6 +624,7 @@ func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 			DiscType:          input.DiscType,
 			KeepFolder:        input.KeepFolder,
 			Policy:            subject.ClientSearchPolicy,
+			ForceRecheck:      new(input.ForceRecheck),
 			FindAllCandidates: true,
 		})
 		if ctx.Err() != nil {

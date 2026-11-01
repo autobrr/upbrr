@@ -139,7 +139,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		ArrReleaseGroup:             release.Naming.Group,
 		InfoHash:                    resources.clientEvidence.Result.InfoHash,
 		ClientTorrentPath:           resources.clientEvidence.Result.TorrentPath,
-		ClientTorrentCandidates:     append([]api.ClientTorrentCandidate(nil), resources.clientEvidence.Result.TorrentCandidates...),
+		ClientTorrentCandidates:     resources.clientEvidence.Result.TorrentCandidates,
 		ClientSearchPolicy:          resources.clientEvidence.Policy,
 		ClientSearchPerformed:       resources.clientEvidence.Disposition == preparationstate.ClientEvidenceDispositionSearched,
 		ClientTorrentDataVerified:   resources.clientEvidence.Result.TorrentDataVerified,
@@ -161,6 +161,12 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		Files:               append([]api.VerifiedSourceFile(nil), subject.SourceIdentity.Files...),
 	}
 	cloned.SourceManifest = release.Source
+	cloned.ClientTorrentCandidates = append([]api.ClientTorrentCandidate(nil), subject.ClientTorrentCandidates...)
+	cloned.ClientSearchPolicy = subject.ClientSearchPolicy
+	if subject.ClientSearchPolicy.Client != nil {
+		cloned.ClientSearchPolicy.Client = new(*subject.ClientSearchPolicy.Client)
+	}
+	cloned.ClientSearchPerformed = subject.ClientSearchPerformed
 	cloned.StaffUploadTokens = maps.Clone(input.StaffUploadTokens)
 	return cloned, nil
 }

@@ -569,6 +569,36 @@ func TestPrepareReportsCanonicalOwnerStagesAndReuse(t *testing.T) {
 	}
 }
 
+func TestResolveUploadSubjectRetainsPrivateClientSearchEvidence(t *testing.T) {
+	t.Parallel()
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	client := "qbit"
+	snapshot := clientEvidenceTestSnapshot("primary-hash")
+	snapshot.Policy.Client = &client
+	snapshot.Result.TorrentCandidates = []api.ClientTorrentCandidate{{Path: "alternate.torrent", InfoHash: "alternate-hash"}}
+	module := newTestModule(t, newMemoryStore(), newClientEvidenceTestCollector(snapshot))
+	prepared, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: path, Search: api.ClientSearchPolicy{Client: &client}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}}
+	subject, err := module.ResolveUploadSubject(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !subject.ClientSearchPerformed || subject.ClientSearchPolicy.Client == nil || *subject.ClientSearchPolicy.Client != client ||
+		len(subject.ClientTorrentCandidates) != 1 || subject.ClientTorrentCandidates[0].InfoHash != "alternate-hash" {
+		t.Fatalf("missing client search evidence: %+v", subject)
+	}
+	*subject.ClientSearchPolicy.Client = "modified"
+	subject.ClientTorrentCandidates[0].InfoHash = "modified"
+	again, err := module.ResolveUploadSubject(t.Context(), input)
+	if err != nil || again.ClientSearchPolicy.Client == nil || *again.ClientSearchPolicy.Client != client ||
+		len(again.ClientTorrentCandidates) != 1 || again.ClientTorrentCandidates[0].InfoHash != "alternate-hash" {
+		t.Fatalf("client search evidence was not detached: subject=%+v err=%v", again, err)
+	}
+}
+
 func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) {
 	t.Parallel()
 

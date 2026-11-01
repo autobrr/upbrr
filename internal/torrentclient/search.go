@@ -1307,9 +1307,8 @@ func dedupeStrings(values []string) []string {
 	return result
 }
 
-// selectValidTorrent validates qBittorrent name/comment matches against
-// exported metadata, returning only matches trusted for tracker provenance and
-// choosing one reusable torrent file when strict path and piece checks pass.
+// selectValidTorrent retains name-matched tracker metadata independently of
+// export availability and selects reusable files only after validation.
 func (s *Service) selectValidTorrent(
 	ctx context.Context,
 	meta api.ClientSubject,

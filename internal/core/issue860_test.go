@@ -14,7 +14,10 @@ import (
 
 	"github.com/autobrr/go-torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/torrent"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -22,6 +25,81 @@ import (
 type issue860Client struct {
 	searches int
 	result   api.ClientSearchResult
+	subject  api.ClientSubject
+}
+
+type issue860Collector struct{ candidate api.ClientTorrentCandidate }
+
+func (c issue860Collector) Collect(ctx context.Context, request preparationstate.Request) (preparedrelease.CollectedFacts, error) {
+	facts, err := (workflowMediaCollector{}).Collect(ctx, request)
+	facts.Resources.ClientEvidence = preparationstate.ClientEvidenceSnapshot{
+		Disposition: preparationstate.ClientEvidenceDispositionSearched,
+		Result: api.ClientSearchResult{
+			InfoHash:          c.candidate.InfoHash,
+			TorrentPath:       c.candidate.Path,
+			TorrentCandidates: []api.ClientTorrentCandidate{c.candidate},
+		},
+	}
+	return facts, err
+}
+
+func TestPreparedWorkflowSearchesCompatibleAlternative(t *testing.T) {
+	t.Parallel()
+	source, candidates := issue860CandidateFixture(t)
+	repository, err := db.Open(filepath.Join(t.TempDir(), "prepared.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+	if err := repository.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, issue860Collector{candidate: candidates[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := prepared.Prepare(t.Context(), api.PrepareInput{SourcePath: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clients := &issue860Client{result: api.ClientSearchResult{TorrentCandidates: []api.ClientTorrentCandidate{candidates[1]}}}
+	retained := &workflowRetainedUploadServiceFake{torrentPaths: map[api.TrackerID]string{"PTP": candidates[1].Path}}
+	builder := workflowUploadPlanBuilder{
+		resolver: prepared,
+		trackers: retained,
+		torrents: torrent.NewService(nil, t.TempDir()),
+		clients:  clients,
+	}
+	var pieceWork atomic.Int64
+	ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+		if update.TotalPieces > 0 {
+			pieceWork.Add(1)
+		}
+	})
+	_, execution, err := builder.Build(ctx,
+		api.TrackerReleaseProjectionSet{
+			ReleaseRef: api.ReleaseRef{SourcePath: source, Generation: facts.Release.Generation},
+			Projections: []api.TrackerReleaseProjection{{
+				TrackerID:   "PTP",
+				Readiness:   api.ReadinessStatusReady,
+				UploadReady: true,
+			}},
+		},
+		api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+			TrackerID: "PTP",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		}}},
+		workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{},
+		api.DescriptionInstructions{Torrent: api.TorrentOverrides{NoHash: new(true)}},
+		releaseworkflow.UploadPlanBuildOptions{DryRun: true, NoSeed: true}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = execution.Release() }()
+	if retained.subject.TorrentPath != candidates[1].Path || clients.searches != 1 || pieceWork.Load() != 0 {
+		t.Fatalf("wrong artifact or unnecessary media work: path=%q searches=%d pieces=%d", retained.subject.TorrentPath, clients.searches, pieceWork.Load())
+	}
 }
 
 // CLI composite execution and WebUI dry runs both use this shared builder.
@@ -98,10 +176,56 @@ func (c *issue860Client) Inject(context.Context, api.ClientSubject, api.TorrentR
 }
 func (c *issue860Client) SearchPathedTorrents(_ context.Context, subject api.ClientSubject) (api.ClientSearchResult, error) {
 	c.searches++
+	c.subject = subject
 	if !subject.FindAllCandidates {
 		panic("policy-driven search must request alternatives")
 	}
 	return c.result, nil
+}
+
+func TestWorkflowAlternativeSearchForwardsExplicitRecheck(t *testing.T) {
+	t.Parallel()
+	source, candidates := issue860CandidateFixture(t)
+	clients := &issue860Client{result: api.ClientSearchResult{TorrentCandidates: []api.ClientTorrentCandidate{candidates[1]}}}
+	builder := workflowUploadPlanBuilder{torrents: torrent.NewService(api.NopLogger{}, t.TempDir()), clients: clients}
+	_, err := builder.prepareWorkflowTorrent(t.Context(), api.UploadSubject{ClientSearchPerformed: true}, api.TorrentSubject{
+		SourcePath:            source,
+		SourceSize:            11,
+		Trackers:              []string{"PTP"},
+		ClientTorrentPath:     candidates[0].Path,
+		ClientTorrentInfoHash: candidates[0].InfoHash,
+		ForceRecheck:          true,
+		TorrentOverrides:      api.TorrentOverrides{NoHash: new(true)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clients.searches != 1 || clients.subject.ClientOverrides.ForceRecheck == nil || !*clients.subject.ClientOverrides.ForceRecheck {
+		t.Fatalf("alternative search did not receive recheck: searches=%d overrides=%+v", clients.searches, clients.subject.ClientOverrides)
+	}
+}
+
+func TestWorkflowSearchesWhenAdjacentArtifactFailsPolicy(t *testing.T) {
+	t.Parallel()
+	source, candidates := issue860CandidateFixture(t)
+	data, err := os.ReadFile(candidates[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source+".torrent", data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clients := &issue860Client{result: api.ClientSearchResult{TorrentCandidates: []api.ClientTorrentCandidate{candidates[1]}}}
+	builder := workflowUploadPlanBuilder{torrents: torrent.NewService(api.NopLogger{}, t.TempDir()), clients: clients}
+	result, err := builder.prepareWorkflowTorrent(t.Context(), api.UploadSubject{ClientSearchPerformed: true}, api.TorrentSubject{
+		SourcePath:       source,
+		SourceSize:       11,
+		Trackers:         []string{"PTP"},
+		TorrentOverrides: api.TorrentOverrides{NoHash: new(true)},
+	})
+	if err != nil || clients.searches != 1 || result.InfoHash != candidates[1].InfoHash {
+		t.Fatalf("alternative not selected: searches=%d result=%+v err=%v", clients.searches, result, err)
+	}
 }
 
 func TestWorkflowSearchesFurtherOnlyWhenPolicyRequiresIt(t *testing.T) {
