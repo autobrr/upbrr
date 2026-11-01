@@ -1670,15 +1670,23 @@ describe("InputPage", () => {
     expect(facet.changeMetadata).toHaveBeenCalledWith({ SubtitleLanguages: [] });
   });
 
-  it.each(["movie", "tv"] as const)(
-    "locks provider titles and preserves the %s year policy",
-    (category) => {
+  it.each([
+    ["movie", false],
+    ["tv", true],
+    ["tv", false],
+  ] as const)(
+    "locks provider titles and preserves the %s year policy with TVDB availability %s",
+    (category, tvdbAvailable) => {
       const base = readyInputFacet(1);
       const release = preparedRelease();
       const facet: InputFacet = {
         ...base,
         view: {
           ...base.view,
+          preview: {
+            ...base.view.preview!,
+            Display: { ...base.view.preview!.Display, TVDBNamingAvailable: tvdbAvailable },
+          },
           release: { ...release, Identity: { ...release.Identity, Category: category } },
           intent: {
             ...base.view.intent,
@@ -1701,19 +1709,27 @@ describe("InputPage", () => {
       }
       expect(facet.changeMetadata).not.toHaveBeenCalled();
       const year = screen.getByLabelText("Manual year");
-      if (category === "tv") {
+      if (category === "tv" && tvdbAvailable) {
         expect(year).toHaveAttribute("readonly");
         expect(year).toBeDisabled();
         expect(year).toHaveValue(2026);
         expect(screen.queryByRole("button", { name: "Auto Manual year" })).not.toBeInTheDocument();
         fireEvent.change(year, { target: { value: "2002" } });
         expect(facet.changeReleaseName).not.toHaveBeenCalled();
+        expect(screen.queryByRole("combobox", { name: "Omit year" })).not.toBeInTheDocument();
       } else {
         expect(year).not.toHaveAttribute("readonly");
         expect(year).toBeEnabled();
         expect(year).toHaveValue(2001);
         fireEvent.change(year, { target: { value: "2002" } });
         expect(facet.changeReleaseName).toHaveBeenCalledWith({ ManualYear: 2002 });
+        fireEvent.change(screen.getByRole("combobox", { name: "Omit year" }), {
+          target: { value: "yes" },
+        });
+        expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+          ManualYear: 2001,
+          NoYear: true,
+        });
       }
       expect(screen.getByLabelText("Alternate title")).not.toHaveAttribute("readonly");
     },
@@ -1739,7 +1755,15 @@ describe("InputPage", () => {
         ...base,
         view: {
           ...base.view,
-          release: { ...release, Identity: { ...release.Identity, Category: preparedCategory } },
+          preview: {
+            ...base.view.preview!,
+            Display: { ...base.view.preview!.Display, TVDBNamingAvailable: true },
+          },
+          release: {
+            ...release,
+            Naming: { ...release.Naming, Year: 0 },
+            Identity: { ...release.Identity, Category: preparedCategory },
+          },
         },
       };
       const { rerender } = render(<InputCorrectionEditor facet={facet} />);
@@ -2745,6 +2769,10 @@ describe("saved correction review", () => {
       ...base,
       view: {
         ...base.view,
+        preview: {
+          ...metadataPreview(1),
+          Display: { ...metadataPreview(1).Display, TVDBNamingAvailable: true },
+        },
         correctionDirty: true,
         confirmFields: [{ field: "metadata.alternate_title" }],
         correctionReview: {
@@ -2764,6 +2792,11 @@ describe("saved correction review", () => {
     render(<InputPage facet={facet} {...inputPageProps()} />);
     expect(screen.getByLabelText("Edit Title")).toBeDisabled();
     expect(screen.getByLabelText("Edit Manual year")).toBeDisabled();
+    expect(
+      within(screen.getByRole("group", { name: "Manual year" })).getByRole("button", {
+        name: "Keep saved value",
+      }),
+    ).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Apply and continue" }));
     expect(facet.prepareSource).toHaveBeenCalledWith(facet.view.selectedSource, facet.view.intent);
   });

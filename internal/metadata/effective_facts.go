@@ -35,7 +35,7 @@ func effectiveMetadata(meta preparationstate.State, request api.ReleaseNameReque
 		OriginalLanguageProvenance: api.FactProvenanceAutomatic,
 		DistributorProvenance:      api.FactProvenanceAutomatic,
 	}
-	if value := meta.ReleaseNameOverrides.ManualYear; value != nil && !strings.EqualFold(request.Category, "TV") {
+	if value := meta.ReleaseNameOverrides.ManualYear; value != nil && !request.TVDBNamingAvailable {
 		metadata.Year = *value
 		if *value == 0 {
 			metadata.YearProvenance = api.FactProvenanceManualEmpty

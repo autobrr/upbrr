@@ -2013,7 +2013,7 @@ func resolveSearchTitles(meta preparationstate.State) (string, string) {
 }
 
 func resolveSearchYear(meta preparationstate.State) int {
-	if meta.ReleaseNameOverrides.ManualYear != nil && resolveCategoryPreference(meta) != "TV" {
+	if meta.ReleaseNameOverrides.ManualYear != nil && (resolveCategoryPreference(meta) != "TV" || !matchingTVDBMetadataForNaming(meta)) {
 		if *meta.ReleaseNameOverrides.ManualYear > 0 {
 			return *meta.ReleaseNameOverrides.ManualYear
 		}

@@ -123,7 +123,7 @@ Release Overrides:
   -episode-title, --episode-title, -manual-episode-title, -met string
       Override episode title
   -manual-year, --manual-year, -year int
-      Override release year
+      Override movie year or TV year without TVDB data
   -daily, --daily string
       Set daily episode air date (YYYY-MM-DD)
   -region, --region, -reg string
@@ -133,7 +133,7 @@ Release Overrides:
   -no-season, --no-season
       Remove season and episode from name
   -no-year, --no-year
-      Remove year from name
+      Omit movie year or TV year without TVDB data
   -no-aka, --no-aka
       Remove AKA from name
   -no-tag, --no-tag

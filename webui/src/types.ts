@@ -929,6 +929,8 @@ export type ProviderDisplay =
   | (ProviderDisplayBase & { Provider: "mal"; Details: { AniList: AniListMetadata } });
 
 export type PreparedReleaseDisplay = {
+  /** Available TVDB naming data owns TV year even when no qualifier is selected. */
+  TVDBNamingAvailable?: boolean;
   CanKeepFolder?: boolean;
   Commentary?: boolean;
   ReleaseName: string;

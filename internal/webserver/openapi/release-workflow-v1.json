@@ -6028,6 +6028,9 @@
           "ReleaseName": {
             "type": "string"
           },
+          "TVDBNamingAvailable": {
+            "type": "boolean"
+          },
           "TrackerData": {
             "type": "array",
             "items": {

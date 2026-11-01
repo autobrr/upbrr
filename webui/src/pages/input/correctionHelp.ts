@@ -30,7 +30,7 @@ export const correctionHelp: Record<string, string> = {
   "release_name.episode_title":
     "Override the episode title used in prepared metadata and generated names. An explicit blank removes it; Auto restores the derived title.",
   "release_name.manual_year":
-    "Override the movie release year. Clearing saves zero; Auto restores the derived year. TV year remains provider-owned and cannot be edited here.",
+    "Override the movie release year, or the TV naming year when TVDB data is unavailable. Clearing saves zero; Auto restores automatic selection. Available TVDB data takes precedence, including a decision to omit the year.",
   "release_name.manual_date":
     "Set a daily episode date in YYYY-MM-DD form. Daily-date naming can replace season/episode naming; explicit season-zero specials retain their episode identity.",
   "release_name.region":
@@ -42,7 +42,7 @@ export const correctionHelp: Record<string, string> = {
   "release_name.no_season":
     "Yes omits both season and episode components from generated names. No leaves them available; Auto removes this saved naming choice. Prepared episode facts remain available.",
   "release_name.no_year":
-    "Yes omits the year from generated names. No leaves it available; Auto removes this saved naming choice.",
+    "Yes omits the year for movies or TV without usable TVDB naming data. Available TVDB data takes precedence, including a decision to omit the year. Auto removes this saved naming choice.",
   "release_name.no_aka":
     "Yes omits the alternate title from generated names. No leaves it available; Auto removes this saved naming choice.",
   "release_name.no_tag":

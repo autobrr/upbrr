@@ -863,6 +863,9 @@ func ensureManualGeneratedNameComponents(document *api.ReleaseNameDocument, meta
 // exact presentation choices. Tracker defaults may format their source/type
 // labels and known resolution; explicit resolution clears remain protected.
 func generatedNameRoleIsManual(role api.ReleaseNameRole, meta *preparationstate.State, request api.ReleaseNameRequest) bool {
+	if role == api.NameRoleYear && request.TVDBNamingAvailable {
+		return false
+	}
 	if strings.EqualFold(strings.TrimSpace(request.Type), "ENCODE") && sourceIn(request.Source, "DVD", "PAL DVD", "NTSC DVD") {
 		if role == api.NameRoleSource || role == api.NameRoleVideoFormat {
 			return false

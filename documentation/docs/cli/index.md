@@ -279,12 +279,12 @@ Existing prepared releases are rebuilt after this update. Older binaries do not 
 | `--season <value>`            | `-season`                                         | Override one season number, such as `5`, `05`, or `S05`.                                              |
 | `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`.                                                     |
 | `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                               |
-| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                                      |
+| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override movie year or TV year without usable TVDB data; `0` clears it.                               |
 | `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                                                                           |
 | `--use-season-episode`        | `-use-season-episode`                             | Prefer explicit or TMDB-matched season/episode naming over a daily date.                              |
 | `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                                                                                 |
 | `--no-season`                 | `-no-season`                                      | Remove season and episode from name.                                                                  |
-| `--no-year`                   | `-no-year`                                        | Remove year from name.                                                                                |
+| `--no-year`                   | `-no-year`                                        | Omit movie year or TV year without usable TVDB data.                                                  |
 | `--no-aka`                    | `-no-aka`                                         | Remove AKA from name.                                                                                 |
 | `--no-tag`                    | `-no-tag`                                         | Remove group tag from name.                                                                           |
 | `--no-episode-title`          | `-no-episode-title`, `-net`                       | Remove episode title from name.                                                                       |
