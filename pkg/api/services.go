@@ -636,10 +636,11 @@ type SeasonEpisodeFacts struct {
 // Complete means enumeration succeeded, independently of episode or media coverage.
 // Files are host paths; a filtered media list alone is not complete evidence.
 // Scope preserves the effective torrent layout, including single-file collapse.
+// Empty Files are omitted from JSON.
 type PackageInventory struct {
 	Status MetadataEvidenceStatus
 	Scope  SubmissionContentScope
-	Files  []string
+	Files  []string `json:",omitempty"`
 }
 
 // Clone detaches the inventory's file paths from the prepared generation.

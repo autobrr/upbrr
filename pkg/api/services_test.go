@@ -346,6 +346,29 @@ func TestNewTrackerValidationSubjectDerivesFailSafeEvidence(t *testing.T) {
 	}
 }
 
+func TestPackageInventoryJSONOmitsUnavailableFiles(t *testing.T) {
+	for _, inventory := range []PackageInventory{
+		{},
+		{Status: MetadataEvidenceStatusUnavailable},
+		{Status: MetadataEvidenceStatusComplete, Files: []string{"Example.iso"}},
+	} {
+		encoded, err := json.Marshal(SourceManifest{PackageInventory: inventory})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded struct {
+			PackageInventory map[string]json.RawMessage
+		}
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		files, present := decoded.PackageInventory["Files"]
+		if present != (len(inventory.Files) > 0) || present && string(files) != `["Example.iso"]` {
+			t.Fatalf("inventory files = %s (present %t), status %q", files, present, inventory.Status)
+		}
+	}
+}
+
 func TestValidationUsesInventoryAuthorityIndependentlyOfMediaCoverage(t *testing.T) {
 	root := t.TempDir()
 	files := []string{filepath.Join(root, "Example.S01E01.mkv"), filepath.Join(root, "Example.S01E03.mkv"), filepath.Join(root, "included.rar")}

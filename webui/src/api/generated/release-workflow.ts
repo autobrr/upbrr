@@ -1485,7 +1485,7 @@ export type OperationRecovery = string;
 export type OverrideState = string;
 
 export type PackageInventory = Readonly<{
-  Files: readonly string[];
+  Files?: readonly string[];
   Scope: SubmissionContentScope;
   Status: MetadataEvidenceStatus;
 }>;

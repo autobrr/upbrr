@@ -4,7 +4,6 @@
 package dupe
 
 import (
-	"slices"
 	"strings"
 	"unicode"
 )
@@ -12,21 +11,29 @@ import (
 // ThreeDFromLabels extracts positive stereoscopic evidence from tracker labels.
 // Missing labels and mixed 2D/3D editions do not establish a presentation.
 func ThreeDFromLabels(labels ...string) string {
+	twoD, threeD := presentationFromLabels(labels...)
+	if threeD && !twoD {
+		return "3d"
+	}
+	return ""
+}
+
+func presentationFromLabels(labels ...string) (bool, bool) {
+	twoD, threeD := false, false
 	for _, label := range labels {
 		tokens := strings.FieldsFunc(strings.ToUpper(label), func(r rune) bool {
 			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 		})
-		if slices.Contains(tokens, "2D") {
-			continue
-		}
 		for _, token := range tokens {
 			switch token {
+			case "2D":
+				twoD = true
 			case "3D", "BLURAY3D", "HSBS", "FSBS", "HOU", "FOU", "HTAB", "FTAB", "MVC":
-				return "3d"
+				threeD = true
 			}
 		}
 	}
-	return ""
+	return twoD, threeD
 }
 
 func canonicalThreeD(value string) string {
@@ -36,19 +43,38 @@ func canonicalThreeD(value string) string {
 	return ThreeDFromLabels(value)
 }
 
-func threeDFromTitle(metadata string) string {
+func threeDFromTitle(metadata string, origin FactOrigin) Fact {
 	// A terminal hyphenated marker can be the release group, even when the
 	// parser recognizes it as a technical token. Keep that ambiguity unknown.
 	if separator := strings.LastIndex(metadata, "-"); separator >= 0 {
 		suffix := metadata[separator+1:]
-		if !strings.ContainsAny(suffix, " ._") && ThreeDFromLabels(suffix) != "" {
+		twoD, threeD := presentationFromLabels(suffix)
+		if !strings.ContainsAny(suffix, " ._") && (twoD || threeD) {
 			metadata = metadata[:separator]
 		}
 	}
-	return ThreeDFromLabels(metadata)
+	twoD, threeD := presentationFromLabels(metadata)
+	if !twoD && !threeD {
+		return missingFact()
+	}
+	fact := Fact{
+		Status:       FactPartial,
+		Origin:       origin,
+		SourceFields: []string{"title"},
+	}
+	switch {
+	case twoD && threeD:
+		fact.Status = FactContradictory
+		fact.Contradictions = []string{"2d", "3d"}
+	case twoD:
+		fact.Value = "2d"
+	case threeD:
+		fact.Value = "3d"
+	}
+	return fact
 }
 
-func candidateThreeDFact(candidate TrackerCandidate, title string) Fact {
+func candidateThreeDFact(candidate TrackerCandidate, title Fact) Fact {
 	labels := append([]string{candidate.Type, candidate.Source}, candidate.Flags...)
 	structured := mergeStructuredAndTitleFact(
 		canonicalThreeD(candidate.ThreeD),
@@ -57,8 +83,15 @@ func candidateThreeDFact(candidate TrackerCandidate, title string) Fact {
 		FactOriginTrackerAPI,
 		FactOriginTrackerAPI,
 	)
+	return mergeThreeDTitleFact(structured, title)
+}
+
+func mergeThreeDTitleFact(structured Fact, title Fact) Fact {
 	if structured.Status == FactContradictory {
 		return structured
 	}
-	return mergeStructuredAndTitleFact(structured.Value, "threeD", title, FactOriginTrackerAPI, FactOriginTrackerTitle)
+	if title.Status == FactContradictory {
+		return title
+	}
+	return mergeStructuredAndTitleFact(structured.Value, "threeD", title.Value, structured.Origin, title.Origin)
 }

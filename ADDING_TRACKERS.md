@@ -1191,6 +1191,8 @@ structured flags. Use `dupe.ThreeDFromLabels` for tag arrays that otherwise disc
 labels. Name fallback uses explicit stereoscopic tokens in bounded release metadata, excluding
 title text and ambiguous group suffixes, and remains partial. Empty tags or a missing marker
 never prove 2D; only explicit 2D evidence may establish that presentation.
+Mixed 2D/3D labels do not establish either presentation. Conflicting title markers require
+review, and title-only presentation facts cannot establish automatic coexistence.
 
 Use `DupePolicy.Slots` for conditional ordinary-slot matrices, with complete normalized
 predicates and shared IDs only for presentations that compete in the same slot. Unlisted or

@@ -5767,7 +5767,6 @@
           }
         },
         "required": [
-          "Files",
           "Scope",
           "Status"
         ]
