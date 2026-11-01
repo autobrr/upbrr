@@ -254,6 +254,30 @@ func TestQbitProbeLoginProxyAndTLS(t *testing.T) {
 	}
 }
 
+func TestQbitProbeRejectsRedirectWithoutContactingDestination(t *testing.T) {
+	t.Parallel()
+	var destinationRequests atomic.Int32
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		destinationRequests.Add(1)
+		_, _ = io.WriteString(w, "v5.0.0")
+	}))
+	defer destination.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/base/api/v2/app/version" {
+			t.Error("unexpected redirect probe operation")
+		}
+		http.Redirect(w, r, destination.URL, http.StatusFound)
+	}))
+	defer origin.Close()
+	cfg := config.Config{TorrentClients: map[string]config.TorrentClientConfig{
+		"selected": {Type: "qbit", QbitURL: origin.URL + "/base"},
+	}}
+	got := Test(t.Context(), cfg, api.ConnectionTestTarget{Kind: "torrent_client", Instance: "selected"})
+	if got.Code == "success" || destinationRequests.Load() != 0 {
+		t.Fatalf("redirect result=%s destination requests=%d", got.Code, destinationRequests.Load())
+	}
+}
+
 func TestCanceledAndIncompleteProbesDoNotRequest(t *testing.T) {
 	t.Parallel()
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { t.Fatal("unexpected remote request"); return nil, nil })}

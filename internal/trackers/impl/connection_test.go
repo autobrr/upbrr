@@ -301,6 +301,16 @@ func TestReadOnlyCookieProbesRequireAuthenticatedResponses(t *testing.T) {
 					if req.Method != http.MethodGet || req.URL.Host != tc.host || req.URL.Path != tc.path || req.Body != nil || err != nil || cookie.Value != "synthetic-session" {
 						t.Error("wrong read or cookie destination")
 					}
+					if strings.Contains(req.URL.RawQuery, "synthetic-must-not-send") {
+						t.Error("passkey sent in query")
+					}
+					for name, values := range req.Header {
+						for _, value := range values {
+							if strings.Contains(value, "synthetic-must-not-send") {
+								t.Errorf("passkey sent in header %s", name)
+							}
+						}
+					}
 					return &http.Response{
 						StatusCode: http.StatusOK,
 						Body:       io.NopCloser(strings.NewReader(body)),

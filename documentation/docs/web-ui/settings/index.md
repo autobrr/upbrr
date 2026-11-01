@@ -40,6 +40,8 @@ Select **Test connection** beside an integration or configured instance to check
 
 Wait for the result beside the button. Other instances can be tested independently. Editing the tested fields clears their result and cancels a pending test. Requests have a ten-second timeout; a denied response can also indicate account permissions, IP restrictions, or proxy access.
 
+Cancellation stops waiting for storage, but a filesystem read already blocked by the operating system may need to finish later. Further storage reads wait for that operation or their own cancellation; canceled tests never start a service request afterward.
+
 A successful check proves only the read operation described in its result. It does not prove upload permission. Connection tests do not upload images or torrents, add torrents to clients, save settings, or refresh stored tracker sessions. Public services may have no credentials to check. Where no safe check is available, the result explains the limitation and does not report success.
 
 The checked credential depends on the provider. API probes check the entered API credentials; cookie probes check the imported session. Where temporary credential login is supported, entering either a username or password selects a fresh login and requires both values. A failed login does not fall back to imported cookies. Announce passkeys and credentials used only during upload are not verified by a session-page check.

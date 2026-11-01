@@ -4,7 +4,9 @@
 package webserver
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
@@ -146,7 +150,10 @@ func TestConnectionRejectsOverlapAndKeepsInstancesIndependent(t *testing.T) {
 
 func TestConnectionPreservesEffectiveTorrentClientTLSOptions(t *testing.T) {
 	t.Parallel()
-	repo, _ := openBackendConfigTestRepo(t, "tls.db")
+	repo, repoPath := openBackendConfigTestRepo(t, "tls.db")
+	if err := authmaterial.BootstrapAuthFile(repoPath, "admin", "synthetic-tls-test-password"); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/v2/app/version" {
 			t.Error("unexpected torrent-client operation")
@@ -156,8 +163,8 @@ func TestConnectionPreservesEffectiveTorrentClientTLSOptions(t *testing.T) {
 	defer server.Close()
 	backend := &Backend{repo: repo}
 	for _, tc := range []struct {
-		name, code   string
-		skip, verify bool
+		name, code                                     string
+		skip, verify, proxy, malformed, encryptedProxy bool
 	}{
 		{
 			name:   "legacy skip wins",
@@ -171,14 +178,66 @@ func TestConnectionPreservesEffectiveTorrentClientTLSOptions(t *testing.T) {
 			verify: false,
 			code:   "tls_error",
 		},
+		{
+			name:   "proxy-only TLS route",
+			skip:   true,
+			verify: true,
+			proxy:  true,
+			code:   "success",
+		},
+		{
+			name:      "proxy ignores obsolete direct credentials",
+			skip:      true,
+			verify:    true,
+			proxy:     true,
+			malformed: true,
+			code:      "success",
+		},
+		{
+			name:           "encrypted proxy ignores obsolete direct credentials",
+			skip:           true,
+			verify:         true,
+			proxy:          true,
+			malformed:      true,
+			encryptedProxy: true,
+			code:           "success",
+		},
+		{
+			name:      "direct credentials remain validated",
+			skip:      true,
+			verify:    true,
+			malformed: true,
+			code:      "invalid_configuration",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			payload, err := json.Marshal(map[string]any{"TorrentClients": map[string]any{"selected": map[string]any{
+			client := map[string]any{
 				"Type":                   "qbit",
 				"QbitURL":                server.URL,
 				"TLSSkipVerify":          tc.skip,
 				"VerifyWebUICertificate": tc.verify,
-			}}})
+			}
+			if tc.proxy {
+				client["QuiProxyURL"] = server.URL
+				client["QbitURL"] = "http://unused.invalid"
+			}
+			if tc.encryptedProxy {
+				cfg := &config.Config{TorrentClients: map[string]config.TorrentClientConfig{
+					"selected": {Type: "qbit", QuiProxyURL: server.URL},
+				}}
+				cfg.MainSettings.DBPath = repoPath
+				encrypted, err := config.EncryptConfigSecrets(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				client["QuiProxyURL"] = encrypted.TorrentClients["selected"].QuiProxyURL
+			}
+			if tc.malformed {
+				for _, field := range []string{"QbitUser", "QbitPass", "Username", "Password"} {
+					client[field] = "upbrr-enc:v1:malformed-synthetic-envelope"
+				}
+			}
+			payload, err := json.Marshal(map[string]any{"TorrentClients": map[string]any{"selected": client}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -188,6 +247,150 @@ func TestConnectionPreservesEffectiveTorrentClientTLSOptions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConnectionCancellationPrecedesSecretRestoration(t *testing.T) {
+	t.Parallel()
+	repo, repoPath := openBackendConfigTestRepo(t, "canceled-secret.db")
+	if err := authmaterial.BootstrapAuthFile(repoPath, "admin", "synthetic-canceled-test-password"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	backend := &Backend{repo: repo}
+	got := backend.TestConnection(ctx, "session", api.ConnectionTestRequest{
+		Target:  api.ConnectionTestTarget{Kind: "tmdb"},
+		Payload: `{"MainSettings":{"TMDBAPI":"upbrr-enc:v1:malformed-synthetic-envelope"}}`,
+	})
+	if got.Code != "canceled" {
+		t.Fatalf("canceled secret restoration=%s", got.Code)
+	}
+}
+
+func TestConnectionWithoutStoredSecretsBypassesBlockedStorage(t *testing.T) {
+	t.Parallel()
+	repo, _ := openBackendConfigTestRepo(t, "blocked-storage.db")
+	for _, tc := range []struct {
+		target api.ConnectionTestTarget
+		code   string
+	}{
+		{target: api.ConnectionTestTarget{Kind: "tmdb"}, code: "missing_configuration"},
+		{target: api.ConnectionTestTarget{Kind: "tracker", Instance: "ASC"}, code: "unverified"},
+		{target: api.ConnectionTestTarget{Kind: "image_host", Instance: "imgbb"}, code: "unsupported"},
+	} {
+		synctest.Test(t, func(t *testing.T) {
+			slot := make(chan struct{}, 1)
+			slot <- struct{}{}
+			backend := &Backend{repo: repo, connectionStorageReads: slot}
+			got := backend.TestConnection(t.Context(), "session", api.ConnectionTestRequest{Target: tc.target, Payload: `{}`})
+			if got.Code != tc.code {
+				t.Fatalf("no-storage %s outcome=%s want=%s", tc.target.Kind, got.Code, tc.code)
+			}
+		})
+	}
+}
+
+func TestConnectionPlaintextDraftBypassesBlockedStorage(t *testing.T) {
+	t.Parallel()
+	repo, _ := openBackendConfigTestRepo(t, "plaintext-blocked-storage.db")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/app/version" {
+			_, _ = io.WriteString(w, "v5.0.0")
+			return
+		}
+		if r.URL.Path != "/api/v3/system/status" || r.Header.Get("X-Api-Key") != "synthetic-plaintext-key" {
+			t.Error("unexpected plaintext draft request")
+		}
+		_, _ = io.WriteString(w, `{"appName":"Sonarr","version":"4.0.0"}`)
+	}))
+	defer server.Close()
+	slot := make(chan struct{}, 1)
+	slot <- struct{}{}
+	backend := &Backend{repo: repo, connectionStorageReads: slot}
+	for _, tc := range []struct {
+		target api.ConnectionTestTarget
+		draft  any
+	}{
+		{
+			target: api.ConnectionTestTarget{Kind: "sonarr", Instance: "0"},
+			draft: config.Config{ArrIntegration: config.ArrIntegrationConfig{
+				SonarrURL: server.URL, SonarrAPIKey: "synthetic-plaintext-key",
+			}},
+		},
+		{
+			target: api.ConnectionTestTarget{Kind: "torrent_client", Instance: "proxy"},
+			draft: map[string]any{"TorrentClients": map[string]any{"proxy": map[string]any{
+				"QuiProxyURL": server.URL,
+				"Username":    "upbrr-enc:v1:unused",
+				"Password":    "upbrr-enc:v1:unused",
+				"QbitUser":    "upbrr-enc:v1:unused",
+				"QbitPass":    "upbrr-enc:v1:unused",
+			}}},
+		},
+	} {
+		payload, err := json.Marshal(tc.draft)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		got := backend.TestConnection(ctx, "session", api.ConnectionTestRequest{Target: tc.target, Payload: string(payload)})
+		cancel()
+		if got.Code != "success" {
+			t.Fatalf("plaintext %s blocked by unrelated storage: %s", tc.target.Kind, got.Code)
+		}
+	}
+}
+
+func TestConnectionStorageCancellationRetainsAdmissionUntilReadFinishes(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		slot := make(chan struct{}, 1)
+		started, release := make(chan struct{}), make(chan struct{})
+		released := false
+		defer func() {
+			if !released {
+				close(release)
+			}
+		}()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		completed := make(chan error, 1)
+		reads := 0
+		go func() {
+			_, err := readConnectionStorage(ctx, slot, func() (string, error) {
+				reads++
+				close(started)
+				<-release
+				return "late-synthetic-secret", nil
+			})
+			completed <- err
+		}()
+		<-started
+		cancel()
+		if err := <-completed; !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled storage wait=%v", err)
+		}
+
+		second, cancelSecond := context.WithTimeout(context.Background(), time.Second)
+		defer cancelSecond()
+		_, err := readConnectionStorage(second, slot, func() (string, error) {
+			reads++
+			return "must-not-start", nil
+		})
+		if !errors.Is(err, context.DeadlineExceeded) || reads != 1 {
+			t.Fatalf("blocked admission=%v reads=%d", err, reads)
+		}
+		close(release)
+		released = true
+		synctest.Wait()
+		value, err := readConnectionStorage(context.Background(), slot, func() (string, error) {
+			reads++
+			return "fresh-synthetic-secret", nil
+		})
+		if err != nil || value != "fresh-synthetic-secret" || reads != 2 {
+			t.Fatalf("released admission=%v reads=%d", err, reads)
+		}
+	})
 }
 
 func TestConnectionRoutePreservesSettingsAuthorization(t *testing.T) {

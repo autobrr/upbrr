@@ -88,6 +88,49 @@ func TestUploadOnlyHostLimitsSendNoRequests(t *testing.T) {
 		if got.Code != "unsupported" || !strings.Contains(got.Message, "upload") {
 			t.Fatalf("%s limitation=%#v", host, got)
 		}
+		if host == "passtheimage" || host == "utppm" {
+			if !strings.Contains(got.Message, "Chevereto /api/1/upload") || strings.Contains(got.Message, "v1.1") {
+				t.Fatalf("%s limitation names the wrong upload contract", host)
+			}
+		}
+	}
+}
+
+type countedSessionBody struct {
+	source    *strings.Reader
+	readBytes int
+	closed    bool
+}
+
+func (body *countedSessionBody) Read(buffer []byte) (int, error) {
+	n, err := body.source.Read(buffer)
+	body.readBytes += n
+	if err != nil {
+		return n, fmt.Errorf("counted session body: %w", err)
+	}
+	return n, nil
+}
+
+func (body *countedSessionBody) Close() error {
+	body.closed = true
+	return nil
+}
+
+func TestImgboxProbeBoundsAllResponseReads(t *testing.T) {
+	t.Parallel()
+	body := &countedSessionBody{
+		source: strings.NewReader(`<input name="authenticity_token" value="synthetic-token">` + strings.Repeat(" ", 2*int(maxResponseBodyPreviewBytes))),
+	}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"text/html"}, "Set-Cookie": {"_imgbox_session=synthetic-cookie"}},
+			Body:       body,
+		}, nil
+	})}
+	got := TestConnection(t.Context(), config.ImageHostingConfig{}, "imgbox", client)
+	if got.Code != "success" || !body.closed || int64(body.readBytes) > maxResponseBodyPreviewBytes {
+		t.Fatalf("probe=%s closed=%v bytes=%d", got.Code, body.closed, body.readBytes)
 	}
 }
 
@@ -153,7 +196,7 @@ func TestImgboxProbeCancellationWinsAfterValidSessionPrefix(t *testing.T) {
 	const token = `<input name="authenticity_token" value="synthetic-token">`
 	body := &blockedSessionBody{
 		ctx:     ctx,
-		prefix:  strings.NewReader(token + strings.Repeat(" ", (64<<10)-len(token))),
+		prefix:  strings.NewReader(token + strings.Repeat(" ", 1024-len(token))),
 		blocked: make(chan struct{}),
 	}
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {

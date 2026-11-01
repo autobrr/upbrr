@@ -6,6 +6,7 @@ package webserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -42,6 +43,9 @@ func (b *Backend) TestConnection(ctx context.Context, owner string, req api.Conn
 	if b == nil || b.repo == nil {
 		return api.ConnectionTestResult{Code: "unavailable", Message: "Settings storage is unavailable. Try again after the server is ready."}
 	}
+	if ctx.Err() != nil {
+		return connectiontest.RequestFailure(ctx, ctx.Err())
+	}
 	if len(req.Payload) > configImportMaxBytes {
 		return api.ConnectionTestResult{Code: "invalid_configuration", Message: "The settings draft exceeds the connection test limit."}
 	}
@@ -54,6 +58,10 @@ func (b *Backend) TestConnection(ctx context.Context, owner string, req api.Conn
 	if b.connectionTests == nil {
 		b.connectionTests = make(map[connectionTestKey]bool)
 	}
+	if b.connectionStorageReads == nil {
+		b.connectionStorageReads = make(chan struct{}, 1)
+	}
+	storageReads := b.connectionStorageReads
 	b.connectionTests[key] = true
 	b.connectionTestMu.Unlock()
 	defer func() {
@@ -123,7 +131,19 @@ func (b *Backend) TestConnection(ctx context.Context, owner string, req api.Conn
 		}
 	}
 	selected.MainSettings.DBPath = b.repo.DBPath()
-	draft, err = config.DecryptConfigSecrets(selected)
+	needsStorage, err := config.HasEncryptedSecrets(selected)
+	if err == nil {
+		if needsStorage {
+			draft, err = readConnectionStorage(ctx, storageReads, func() (*config.Config, error) {
+				return config.DecryptConfigSecrets(selected)
+			})
+		} else {
+			draft, err = config.DecryptConfigSecrets(selected)
+		}
+	}
+	if ctx.Err() != nil {
+		return connectiontest.RequestFailure(ctx, ctx.Err())
+	}
 	if err != nil {
 		return api.ConnectionTestResult{
 			Code:    "invalid_configuration",
@@ -160,7 +180,12 @@ func (b *Backend) TestConnection(ctx context.Context, owner string, req api.Conn
 			if parseErr != nil || endpoint.Hostname() == "" {
 				return api.ConnectionTestResult{Code: "unavailable", Message: "The tracker catalog endpoint is unavailable."}
 			}
-			input.Cookies, err = cookies.SnapshotTrackerCookieMap(ctx, b.repo.RawDB(), b.repo.DBPath(), descriptor.Name, endpoint.Hostname())
+			input.Cookies, err = readConnectionStorage(ctx, storageReads, func() (map[string]string, error) {
+				return cookies.SnapshotTrackerCookieMap(ctx, b.repo.RawDB(), b.repo.DBPath(), descriptor.Name, endpoint.Hostname())
+			})
+			if ctx.Err() != nil {
+				return connectiontest.RequestFailure(ctx, ctx.Err())
+			}
 			if err != nil && !errors.Is(err, cookies.ErrTrackerCookiesNotFound) {
 				return api.ConnectionTestResult{
 					Code:    "unavailable",
@@ -173,4 +198,43 @@ func (b *Backend) TestConnection(ctx context.Context, owner string, req api.Conn
 		})
 	}
 	return connectiontest.Test(ctx, *draft, req.Target)
+}
+
+// readConnectionStorage bounds caller waiting and admits one storage operation
+// per backend. OS-blocked filesystem I/O may outlive cancellation; retain its
+// slot until I/O and cleanup finish so later requests cannot accumulate workers.
+// The callback must only read local storage; provider requests stay in the caller.
+func readConnectionStorage[T any](ctx context.Context, slot chan struct{}, read func() (T, error)) (T, error) {
+	var zero T
+	if err := ctx.Err(); err != nil {
+		return zero, fmt.Errorf("connection storage: %w", err)
+	}
+	select {
+	case slot <- struct{}{}:
+	case <-ctx.Done():
+		return zero, fmt.Errorf("connection storage: %w", ctx.Err())
+	}
+	if err := ctx.Err(); err != nil {
+		<-slot
+		return zero, fmt.Errorf("connection storage: %w", err)
+	}
+	type result struct {
+		value T
+		err   error
+	}
+	completed := make(chan result, 1)
+	go func() {
+		defer func() { <-slot }()
+		value, err := read()
+		completed <- result{value: value, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return zero, fmt.Errorf("connection storage: %w", ctx.Err())
+	case got := <-completed:
+		if err := ctx.Err(); err != nil {
+			return zero, fmt.Errorf("connection storage: %w", err)
+		}
+		return got.value, got.err
+	}
 }

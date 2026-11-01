@@ -44,7 +44,13 @@ func TestConnection(ctx context.Context, cfg config.ImageHostingConfig, host str
 	// and https://ptscreens.com/api-v1. Passtheima.ge and utp.pm identify their
 	// deployed Chevereto versions; their configured /api/1/upload contracts
 	// match https://v4-docs.chevereto.com/api/1/file-upload.html.
-	if host == "lensdump" || host == "onlyimage" || host == "ptscreens" || host == "passtheimage" || host == "utppm" {
+	if host == "passtheimage" || host == "utppm" {
+		return connectionResult(
+			"unsupported",
+			"This uploader uses the host's Chevereto /api/1/upload contract, without a verified read-only key check here. Credentials were not sent and no image was uploaded.",
+		)
+	}
+	if host == "lensdump" || host == "onlyimage" || host == "ptscreens" {
 		return connectionResult(
 			"unsupported",
 			"This uploader uses the host's API v1.1, which documents file uploads without a read-only key check. Credentials were not sent and no image was uploaded.",
@@ -134,9 +140,8 @@ func testZipline(ctx context.Context, cfg config.ImageHostingConfig, client *htt
 // testImgbox performs only the existing anonymous session-page read. Upload
 // token generation is deliberately excluded because it can allocate a gallery.
 func testImgbox(ctx context.Context, client *http.Client) api.ConnectionTestResult {
-	_, _, err := imgboxGetCsrfAndCookie(ctx, client)
-	// The upload helper drains its response on close. Even if it parsed the
-	// session prefix, cancellation or a deadline during that drain must win.
+	_, _, err := imgboxGetCsrfAndCookie(ctx, client, maxResponseBodyPreviewBytes)
+	// Cancellation wins even if the limited session prefix parsed successfully.
 	if ctx.Err() != nil {
 		return connectiontest.RequestFailure(ctx, ctx.Err())
 	}

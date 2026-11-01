@@ -1232,6 +1232,16 @@ func TestConnectionProbesRegisteredForVerifiedFamilies(t *testing.T) {
 			if descriptor.ConnectionProbe.Test == nil || descriptor.ConnectionProbe.StoredCookies != (family == trackers.FamilyAZFamily) {
 				t.Errorf("%s missing family-owned probe or wrong session source", name)
 			}
+			if family == trackers.FamilyUnit3D {
+				if descriptor.ConnectionProbe.DraftConfig == nil {
+					t.Errorf("%s missing unsaved-key selection", name)
+					continue
+				}
+				selected := descriptor.ConnectionProbe.DraftConfig(config.TrackerConfig{APIKey: "synthetic-api-key", Passkey: "must-not-select"})
+				if selected.APIKey != "synthetic-api-key" || selected.Passkey != "" {
+					t.Errorf("%s lost the draft key or selected unrelated credentials", name)
+				}
+			}
 		}
 	}
 }

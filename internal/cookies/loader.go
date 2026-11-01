@@ -100,7 +100,7 @@ func LoadTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string
 		return nil, err
 	}
 
-	fileCookies, err := loadTrackerHTTPCookiesFromFiles(dbPath, normalizedTrackerID, domain)
+	fileCookies, err := loadTrackerHTTPCookiesFromFiles(ctx, dbPath, normalizedTrackerID, domain)
 	if err == nil {
 		return CookieMapToHTTPCookies(mergeCookieMaps(httpCookiesToMap(fileCookies), storedValues), domain), nil
 	}
@@ -444,12 +444,18 @@ func loadTrackerCookieMapFromFiles(dbPath string, trackerID string) (map[string]
 	return nil, fmt.Errorf("%w: no cookies found for tracker %s", ErrTrackerCookiesNotFound, trackerID)
 }
 
-func loadTrackerHTTPCookiesFromFiles(dbPath string, trackerID string, domain string) ([]*http.Cookie, error) {
+func loadTrackerHTTPCookiesFromFiles(ctx context.Context, dbPath string, trackerID string, domain string) ([]*http.Cookie, error) {
 	var firstLoadErr error
 	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, trackerID, ".txt", ".json") {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("cookies: legacy files: %w", err)
+		}
 		switch strings.ToLower(filepath.Ext(candidate)) {
 		case ".txt":
 			cookies, err := commonhttp.LoadNetscapeCookies(candidate, domain)
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("cookies: legacy files: %w", ctx.Err())
+			}
 			if err != nil {
 				if !isIgnorableLegacyNetscapeLoadErr(err) && firstLoadErr == nil {
 					firstLoadErr = fmt.Errorf("cookies: load legacy cookie file %s: %w", candidate, err)
@@ -461,6 +467,9 @@ func loadTrackerHTTPCookiesFromFiles(dbPath string, trackerID string, domain str
 			}
 		case ".json":
 			values, err := commonhttp.LoadJSONCookieMap(candidate)
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("cookies: legacy files: %w", ctx.Err())
+			}
 			if err != nil {
 				if !errors.Is(err, fs.ErrNotExist) && firstLoadErr == nil {
 					firstLoadErr = fmt.Errorf("cookies: load legacy cookie file %s: %w", candidate, err)
