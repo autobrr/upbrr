@@ -35,6 +35,7 @@ import (
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/torrent"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -491,6 +492,15 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		return preparationstate.State{}, fmt.Errorf("metadata: source size: %w", err)
 	}
 	meta.SourceSize = size
+	meta.PackageInventory, err = torrent.ResolvePackageInventory(api.TorrentSubject{
+		SourcePath: primary,
+		DiscType:   meta.DiscType,
+		FileList:   meta.FileList,
+		KeepFolder: request.Input.Policy.KeepFolder && !meta.TVPack,
+	})
+	if err != nil {
+		return preparationstate.State{}, fmt.Errorf("metadata: package inventory: %w", err)
+	}
 	applyDVDCapacity(&meta)
 	logger.Debugf("metadata: source size %d bytes", size)
 

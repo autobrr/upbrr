@@ -1476,6 +1476,12 @@ export type OperationRecovery = string;
 
 export type OverrideState = string;
 
+export type PackageInventory = Readonly<{
+  Files: readonly string[];
+  Scope: SubmissionContentScope;
+  Status: MetadataEvidenceStatus;
+}>;
+
 export type PlaylistInfo = Readonly<{
   discId: string;
   discName: string;
@@ -2342,6 +2348,7 @@ export type SourceEntryType = string;
 export type SourceManifest = Readonly<{
   Classification: SourceClassification;
   Entries: readonly SourceManifestEntry[];
+  PackageInventory: PackageInventory;
   SelectedPlaylists: readonly PlaylistInfo[];
   Size: number;
   SourcePath: string;
@@ -2383,6 +2390,8 @@ export type StoredReleaseCorrectionsV1 = Readonly<{
   staleContentFields?: readonly CorrectionField[];
   version: number;
 }>;
+
+export type SubmissionContentScope = string;
 
 export type SubmissionExclusion = Readonly<{
   confirmedAt: string;

@@ -346,6 +346,47 @@ func TestNewTrackerValidationSubjectDerivesFailSafeEvidence(t *testing.T) {
 	}
 }
 
+func TestValidationUsesInventoryAuthorityIndependentlyOfMediaCoverage(t *testing.T) {
+	root := t.TempDir()
+	files := []string{filepath.Join(root, "Example.S01E01.mkv"), filepath.Join(root, "Example.S01E03.mkv"), filepath.Join(root, "included.rar")}
+	for _, status := range []MetadataEvidenceStatus{"", MetadataEvidenceStatusComplete, MetadataEvidenceStatusPartial, MetadataEvidenceStatusUnavailable} {
+		t.Run(string(status), func(t *testing.T) {
+			upload := UploadSubject{
+				SourcePath:     root,
+				VideoPath:      files[0],
+				FileList:       files[:1],
+				Container:      "MKV",
+				AudioLanguages: []string{"English"},
+			}
+			if status != "" {
+				upload.PackageInventory = PackageInventory{Status: status, Files: slices.Clone(files)}
+			}
+			wantStatus, wantCount := status, len(files)
+			if status == "" {
+				wantStatus, wantCount = MetadataEvidenceStatusPartial, 1
+			}
+			for _, projected := range []TrackerValidationSubject{
+				NewTrackerValidationSubject(upload, "EXAMPLE"),
+				NewTrackerValidationSubjectFromRuleSubject(NewRuleSubject(upload), "EXAMPLE"),
+			} {
+				if projected.PackageFacts.Status != wantStatus || projected.PackageFacts.KnownFileCount != wantCount {
+					t.Fatalf("inventory = %+v, want status %s count %d", projected.PackageFacts, wantStatus, wantCount)
+				}
+				if status != "" && (projected.PackageFacts.ArchiveFileCount != 1 || !slices.Equal(projected.FileList, files)) {
+					t.Fatal("inventory lost included files")
+				}
+				if projected.MediaFileFacts.LanguageStatus == MetadataEvidenceStatusComplete {
+					t.Fatal("inventory status promoted language coverage")
+				}
+				projected.FileList[0] = "changed"
+				if upload.FileList[0] != files[0] || status != "" && upload.PackageInventory.Files[0] != files[0] {
+					t.Fatal("projection aliases inventory")
+				}
+			}
+		})
+	}
+}
+
 func TestNewTrackerValidationSubjectProjectsFinalTrackerDescription(t *testing.T) {
 	t.Parallel()
 

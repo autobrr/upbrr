@@ -288,6 +288,8 @@ func btnHDRTags(raw any, present bool) ([]string, bool, bool, api.HDRFacts) {
 			flags = append(flags, "HDR10")
 		case "HYBRID LOG GAMMA":
 			flags = append(flags, "HLG")
+		case "3D":
+			flags = append(flags, "3D")
 		}
 	}
 	return flags, true, true, api.HDRFacts{}

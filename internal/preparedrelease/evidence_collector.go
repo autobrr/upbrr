@@ -204,7 +204,8 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		}
 	}
 	facts := CollectedFacts{
-		NamingCategory: resolved.Category,
+		PackageInventory: meta.PackageInventory.Clone(),
+		NamingCategory:   resolved.Category,
 		Naming: api.NamingFacts{
 			Filename:                 meta.Filename,
 			ReleaseName:              meta.ReleaseName,

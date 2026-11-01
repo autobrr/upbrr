@@ -46,6 +46,8 @@ Tracker settings can restrict duplicate competition by incoming release group. W
 
 A completed search with no matches can still require duplicate-policy review when ordinary-slot eligibility, source availability, or staff-owned decisions are unresolved. Review these reasons alongside potential duplicates. Acknowledgement records your decision for the current evidence; it does not establish tracker staff approval or missing source evidence. Changing the reviewed name, relevant facts, or review reasons requires a new decision.
 
+Duplicate checks use structured 3D labels when available. Release-name fallback recognizes explicit stereoscopic markers in release metadata, while ambiguous title text remains unknown. Missing 3D information does not prove that an existing release is 2D.
+
 `--skip-dupe-check` and similar bypasses remove safeguards. Use them only when you have manually completed the equivalent tracker checks.
 
 ### Approve tracker warnings
@@ -67,6 +69,8 @@ Review the assessment displayed for each selected tracker:
 - **Guidance**: non-blocking advice in a panel that starts collapsed on **Dupe Check**. Expand it to read the warnings. It requires no answer or acknowledgement and does not establish that unknown source details are correct.
 
 Check the tracker's current rules to understand what each finding means for your release. upbrr's assessment is not a substitute for those rules.
+
+Package checks use the files intended for the torrent, following its inclusion policy. A complete inventory can still contain prohibited files or a missing episode in a sequence. Inventory completeness is separate from the technical and language coverage of inspected media. ISO inputs retain their image-file identity during package validation. Older prepared generations require preparation again to collect this evidence.
 
 Track order and the default flag are separate facts. An original-language track can be present without being first or default. Ordering recommendations appear as non-blocking **Guidance**, including for personal releases, and require no answer or acknowledgement. Independent requirements for original audio, default flags, permitted dubs, subtitles and compatibility tracks still apply.
 

@@ -228,6 +228,9 @@ func nblDupeEntries(items []nblSearchItem) []api.DupeEntry {
 			FlagsComplete: tagsPresent,
 			HDR:           hdr,
 		}
+		if item.Tags != nil {
+			entry.ThreeD = dupe.ThreeDFromLabels((*item.Tags)...)
+		}
 		if item.Size > 0 {
 			entry.SizeKnown, entry.SizeBytes = true, item.Size
 		}

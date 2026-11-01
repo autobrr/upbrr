@@ -259,7 +259,7 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginContentName,
 		),
 		ThreeD: mergeStructuredAndTitleFact(
-			target.ThreeD,
+			canonicalThreeD(target.ThreeD),
 			"threeD",
 			title.ThreeD,
 			FactOriginTargetMedia,
@@ -386,13 +386,7 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
-		ThreeD: mergeStructuredAndTitleFact(
-			candidate.ThreeD,
-			"threeD",
-			title.ThreeD,
-			FactOriginTrackerAPI,
-			FactOriginTrackerTitle,
-		),
+		ThreeD: candidateThreeDFact(candidate, title.ThreeD),
 		Repack: mergeStructuredAndTitleFact(
 			candidate.Repack,
 			"repack",
@@ -654,8 +648,8 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 			}
 		}
 	}
-	if tokenPresent(upper, "3D") {
-		parsed.ThreeD = "3d"
+	if bounded {
+		parsed.ThreeD = threeDFromTitle(metadata)
 	}
 	return parsed
 }

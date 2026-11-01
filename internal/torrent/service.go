@@ -943,9 +943,6 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 	paths := make([]sourceContentFile, 0)
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			if os.IsNotExist(walkErr) {
-				return nil
-			}
 			return walkErr
 		}
 		if entry.IsDir() {
@@ -969,9 +966,6 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
 			return fmt.Errorf("disc file info: %w", err)
 		}
 		if !info.Mode().IsRegular() {

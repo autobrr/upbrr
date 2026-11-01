@@ -48,6 +48,11 @@ func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
 		t.Fatalf("write video failed: %v", err)
 	}
+	for _, name := range []string{"sample.mkv", "release.nfo", "excluded.rar"} {
+		if err := os.WriteFile(filepath.Join(path, name), []byte("excluded"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	repo := &stubRepo{existing: db.FileMetadata{Path: videoPath, InfoHash: "hash"}}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
@@ -68,6 +73,9 @@ func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 	}
 	if meta.SourcePath != path {
 		t.Fatalf("unexpected source path: %s", meta.SourcePath)
+	}
+	if meta.PackageInventory.Status != api.MetadataEvidenceStatusComplete || !slices.Equal(meta.PackageInventory.Files, []string{videoPath}) {
+		t.Fatalf("intended torrent inventory = %+v", meta.PackageInventory)
 	}
 	if len(meta.Paths) != 1 {
 		t.Fatalf("unexpected paths length: %d", len(meta.Paths))
@@ -648,6 +656,10 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 	}
 	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
 		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(bdmvPath, "index.bdmv"), []byte("synthetic disc marker"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	repo := &stubRepo{
@@ -1346,6 +1358,10 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 		t.Fatalf("mkdir stream failed: %v", err)
 	}
 
+	if err := os.WriteFile(filepath.Join(bdmvPath, "index.bdmv"), []byte("synthetic disc marker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	repo := &stubRepo{
 		playlistSelection: db.PlaylistSelection{
 			SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
@@ -1459,6 +1475,10 @@ func TestPrepareBDMVDirectPlaylistInvokesBDInfoForParentAndRoot(t *testing.T) {
 	}
 	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
 		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(bdmvPath, "index.bdmv"), []byte("synthetic disc marker"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	repo := &stubRepo{}
@@ -1657,6 +1677,10 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 	}
 	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
 		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(bdmvPath, "index.bdmv"), []byte("synthetic disc marker"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	repo := &stubRepo{

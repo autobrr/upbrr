@@ -43,6 +43,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 	options := input.Options
 	options.KeepFolder = resources.policy.KeepFolder
 	subject := api.UploadSubject{
+		PackageInventory:            release.Source.PackageInventory.Clone(),
 		MediaFileFacts:              release.Media.MediaFileFacts.Clone(),
 		SourceIdentity:              release.SourceIdentity,
 		LanguageFacts:               release.Media.LanguageFacts.Clone(),

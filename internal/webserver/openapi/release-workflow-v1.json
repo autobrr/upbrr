@@ -5682,6 +5682,28 @@
       "OverrideState": {
         "type": "string"
       },
+      "PackageInventory": {
+        "type": "object",
+        "properties": {
+          "Files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Scope": {
+            "$ref": "#/components/schemas/SubmissionContentScope"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          }
+        },
+        "required": [
+          "Files",
+          "Scope",
+          "Status"
+        ]
+      },
       "PlaylistInfo": {
         "type": "object",
         "properties": {
@@ -9679,6 +9701,9 @@
               "$ref": "#/components/schemas/SourceManifestEntry"
             }
           },
+          "PackageInventory": {
+            "$ref": "#/components/schemas/PackageInventory"
+          },
           "SelectedPlaylists": {
             "type": "array",
             "items": {
@@ -9695,6 +9720,7 @@
         "required": [
           "Classification",
           "Entries",
+          "PackageInventory",
           "SelectedPlaylists",
           "Size",
           "SourcePath"
@@ -9893,6 +9919,9 @@
           "releaseName",
           "version"
         ]
+      },
+      "SubmissionContentScope": {
+        "type": "string"
       },
       "SubmissionExclusion": {
         "type": "object",
