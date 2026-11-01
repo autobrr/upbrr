@@ -2157,7 +2157,7 @@ func TestSQLiteListHistoryProtectedSourcePathsRejectsSourceLessRunningWorkflow(t
 	}
 }
 
-func TestSQLitePurgeContentDataRemovesInactiveUnknownEffectsWithoutBlockingOtherInput(t *testing.T) {
+func TestSQLitePurgeContentDataRemovesInactiveUnknownEffectsBeforeFirstInput(t *testing.T) {
 	t.Parallel()
 
 	repo := openMigratedTestRepo(t)
@@ -2207,23 +2207,15 @@ func TestSQLitePurgeContentDataRemovesInactiveUnknownEffectsWithoutBlockingOther
 	active.State, active.Revision = api.ActiveInputActive, opening.Revision+1
 	active.InputID, active.SourceVersion, active.WorkflowID = "next-input", "next-version", "next-workflow"
 	active.ReservationID, active.RequestedPath = "", ""
-	if err := repo.CompareAndSwapActiveInput(ctx, opening, active, now); err != nil {
-		t.Fatalf("activate independent input before purge: %v", err)
-	}
-	if count := workflowHistoryEffectCount(t, repo, target); count != 1 {
-		t.Fatalf("independent input discarded uncertain effect: count=%d", count)
+	if err := repo.CompareAndSwapActiveInput(ctx, opening, active, now); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		t.Fatalf("activate before purge = %v", err)
 	}
 
 	if err := repo.PurgeContentData(ctx, targetPath); err != nil {
 		t.Fatalf("purge inactive unknown history: %v", err)
 	}
-	if count := workflowHistoryEffectCount(t, repo, target); count != 0 {
-		t.Fatalf("inactive effect survived explicit history purge: count=%d", count)
-	}
-	current, err := repo.LoadActiveInput(ctx)
-	if err != nil || current.State != active.State || current.Revision != active.Revision ||
-		current.Fence != active.Fence || current.OwnerID != active.OwnerID || current.WorkflowID != active.WorkflowID {
-		t.Fatalf("history purge changed independent input: current=%+v err=%v", current, err)
+	if err := repo.CompareAndSwapActiveInput(ctx, opening, active, now); err != nil {
+		t.Fatalf("activate after purge: %v", err)
 	}
 }
 

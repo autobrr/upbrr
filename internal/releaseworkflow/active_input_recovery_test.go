@@ -702,8 +702,8 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 				}
 				_, err := restarted.OpenInput(ctx, testOwnerID, OpenInputRequest{
 					ExpectedRevision: slot.Revision,
-					Input:            api.PrepareInput{SourcePath: state.SourcePath},
-					IdempotencyKey:   "blocked-by-own-uncertain-effect",
+					Input:            api.PrepareInput{SourcePath: "unverified-source.mkv"},
+					IdempotencyKey:   "blocked-by-uncertain-effect",
 				})
 				if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || verifier.calls != 0 {
 					t.Fatalf("open after interrupted effect: source checks=%d err=%v", verifier.calls, err)

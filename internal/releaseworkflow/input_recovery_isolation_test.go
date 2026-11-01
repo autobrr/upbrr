@@ -4,6 +4,8 @@
 package releaseworkflow
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"slices"
 	"testing"
@@ -19,9 +21,31 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 		missing   bool
 		ambiguous bool
 		blocked   bool
+		foreign   bool
+		unfenced  bool
+		kind      api.WorkflowExternalEffectKind
 	}{
 		{name: "same source", blocked: true},
 		{name: "unrelated source", other: true},
+		{name: "foreign tracker owner", foreign: true},
+		{
+			name:     "foreign unfenced tracker owner",
+			foreign:  true,
+			unfenced: true,
+			blocked:  true,
+		},
+		{
+			name:    "foreign client injection owner",
+			foreign: true,
+			kind:    api.WorkflowExternalEffectClientInjection,
+			blocked: true,
+		},
+		{
+			name:    "foreign image hosting owner",
+			foreign: true,
+			kind:    api.WorkflowExternalEffectImageHosting,
+			blocked: true,
+		},
 		{
 			name:    "missing authority",
 			other:   true,
@@ -44,7 +68,8 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 			}
 			verifier := &hashingActiveInputVerifier{}
 			module := newActiveInputRecoveryModule(t, persistent, repo, verifier, &mutableClock{now: time.Now().UTC()}, "queue-isolation")
-			sourceA := writeActiveInputRecoverySource(t, "Example.A.2026.mkv", "synthetic source A")
+			const sourceContents = "synthetic source A"
+			sourceA := writeActiveInputRecoverySource(t, "Example.A.2026.mkv", sourceContents)
 			sourceB := writeActiveInputRecoverySource(t, "Example.B.2026.mkv", "synthetic source B")
 			opened, err := module.OpenInput(ctx, testOwnerID, OpenInputRequest{Input: api.PrepareInput{SourcePath: sourceA}, IdempotencyKey: "open-A"})
 			if err != nil {
@@ -67,16 +92,35 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			kind := test.kind
+			if kind == "" {
+				kind = api.WorkflowExternalEffectTrackerSubmission
+			}
 			effect := api.ReleaseWorkflowEffectRecord{
 				OwnerID:             testOwnerID,
 				WorkflowID:          opened.WorkflowID,
 				OperationID:         "upload-A",
 				EffectID:            "submission-A",
-				Kind:                string(api.WorkflowExternalEffectTrackerSubmission),
+				Kind:                string(kind),
 				ScopeID:             "ALPHA",
 				SemanticFingerprint: "synthetic-A",
 				StartedAt:           time.Now().UTC(),
 				UpdatedAt:           time.Now().UTC(),
+			}
+			if kind == api.WorkflowExternalEffectTrackerSubmission && !test.unfenced {
+				digest := sha256.Sum256([]byte(sourceContents))
+				identity, err := api.NewSubmissionContentIdentity(api.SubmissionContentScopeSingleFile, []api.SubmissionContentFile{{
+					Size: int64(len(sourceContents)), SHA256: hex.EncodeToString(digest[:]),
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				effect.Submission = &api.SubmissionFenceAuthority{
+					ContentIdentity: identity,
+					TrackerSite:     "ALPHA|https://alpha.example/",
+					CoordinatorID:   opened.CoordinatorID,
+					Fence:           opened.Fence,
+				}
 			}
 			if _, _, err := persistent.BeginEffect(authority, effect); err != nil {
 				t.Fatal(err)
@@ -87,15 +131,25 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 			if err := module.ReleaseInput(ctx, testOwnerID, opened.Revision); err != nil {
 				t.Fatal(err)
 			}
+			nextOwner := testOwnerID
+			if test.foreign {
+				nextOwner = "other-owner"
+				if _, err := module.RecoverLegacyInput(ctx, testOwnerID, opened.WorkflowID); err != nil {
+					t.Fatal(err)
+				}
+				if err := module.ResetIdleInputOnStartup(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
 			closed, err := repo.LoadActiveInput(ctx)
-			if err != nil {
-				t.Fatal(err)
+			if err != nil || closed.State != api.ActiveInputEmpty {
+				t.Fatalf("input was not detached: slot=%+v err=%v", closed, err)
 			}
 			source := sourceA
 			if test.other {
 				source = sourceB
 			}
-			next, err := module.OpenInput(ctx, testOwnerID, OpenInputRequest{
+			next, err := module.OpenInput(ctx, nextOwner, OpenInputRequest{
 				ExpectedRevision: closed.Revision,
 				Input:            api.PrepareInput{SourcePath: source},
 				IdempotencyKey:   "open-next",
@@ -112,7 +166,7 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 			if _, err := module.RecoverLegacyInput(ctx, testOwnerID, opened.WorkflowID); !errors.Is(err, api.ErrActiveInputBusy) {
 				t.Fatalf("A recovery replaced active B: %v", err)
 			}
-			if err := module.ReleaseInput(ctx, testOwnerID, next.Revision); err != nil {
+			if err := module.ReleaseInput(ctx, nextOwner, next.Revision); err != nil {
 				t.Fatal(err)
 			}
 			ids, err := module.LegacyRecoveryWorkflowIDs(ctx, testOwnerID)

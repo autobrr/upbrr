@@ -251,7 +251,10 @@ func TestCloseIdleActiveInputDetachesUnresolvedEffects(t *testing.T) {
 			}
 			active := createIdleActiveInputForTest(ctx, t, repo, now, workflow.OwnerID, workflow.WorkflowID, "first-coordinator")
 			activeCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: active.CoordinatorID, Fence: active.Fence})
-			effect, _, err := repo.BeginReleaseWorkflowEffect(activeCtx, workflowEffectForTest(workflow, "operation", "effect", "PTP", now))
+			submission := submissionFenceTestEffect(workflow, "effect", submissionFenceTestIdentity(t, "a"), now)
+			submission.Submission.CoordinatorID = active.CoordinatorID
+			submission.Submission.Fence = active.Fence
+			effect, _, err := repo.BeginReleaseWorkflowEffect(activeCtx, submission)
 			if err != nil {
 				t.Fatalf("begin effect: %v", err)
 			}
@@ -730,15 +733,8 @@ func TestLegacyRecoveryFencesOwnerEffectsAndDoesNotBypassNormalAdmission(t *test
 		RequestedPath:  filepath.Join(t.TempDir(), "source.mkv"),
 		IdempotencyKey: "new-open",
 	}
-	if err := repo.CompareAndSwapActiveInput(ctx, closed, opening, now.Add(4*time.Second)); err != nil {
-		t.Fatalf("unrelated reservation after legacy close: %v", err)
-	}
-	affected := opening
-	affected.State, affected.Revision = api.ActiveInputActive, opening.Revision+1
-	affected.InputID, affected.SourceVersion, affected.WorkflowID = "affected-input", "verified", state.WorkflowID
-	affected.ReservationID, affected.RequestedPath = "", ""
-	if err := repo.CompareAndSwapActiveInput(ctx, opening, affected, now.Add(5*time.Second)); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
-		t.Fatalf("normal admission rebound the unresolved workflow: %v", err)
+	if err := repo.CompareAndSwapActiveInput(ctx, closed, opening, now.Add(4*time.Second)); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		t.Fatalf("normal open after legacy close = %v", err)
 	}
 }
 

@@ -191,9 +191,16 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 			current.WorkflowID != "" && next.State == api.ActiveInputEmpty
 		if next.State != api.ActiveInputRecovering && !restoringOwnedInput && !legacyRecoveryClose {
 			var unresolved int
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_effects
-				WHERE status IN ('started', 'unknown') AND
-				((owner_id = ? AND workflow_id = ?) OR (owner_id = ? AND workflow_id = ?)))`,
+			// Only tracker receipts with an exact protective global fence can be
+			// isolated. Other effects and unfenced legacy receipts remain blocking.
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_effects e
+				WHERE e.status IN ('started', 'unknown') AND
+				(e.kind <> 'tracker_submission' OR NOT EXISTS (
+					SELECT 1 FROM submission_fences f
+					WHERE f.owner_id = e.owner_id AND f.workflow_id = e.workflow_id
+					AND f.operation_id = e.operation_id AND f.effect_id = e.effect_id
+					AND f.status IN ('started', 'unknown', 'succeeded')
+				) OR (e.owner_id = ? AND e.workflow_id = ?) OR (e.owner_id = ? AND e.workflow_id = ?)))`,
 				current.OwnerID, current.WorkflowID, next.OwnerID, next.WorkflowID).Scan(&unresolved); err != nil {
 				return fmt.Errorf("db inspect active input effects: %w", err)
 			}
