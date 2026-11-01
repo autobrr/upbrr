@@ -306,6 +306,54 @@ func TestResolveClearsStoredProviderGuessesFromAuthoritativeCandidate(t *testing
 	}
 }
 
+func TestResolveCategoryChangeRemovesClearedAutomaticEvidence(t *testing.T) {
+	t.Parallel()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv")
+	resolver := &Resolver{
+		evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
+			return legacyEvidence{
+				identity: api.ExternalIdentity{
+					SourcePath: sourcePath,
+					Category:   api.CanonicalCategoryTV,
+					TMDBID:     555001,
+					IMDBID:     555002,
+					TVDBID:     555003,
+					TVmazeID:   555004,
+					Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
+				},
+				metadata: api.SourceScopedMetadata{
+					SourcePath: sourcePath,
+					TMDB:       &api.TMDBMetadata{TMDBID: 555001},
+					IMDB:       &api.IMDBMetadata{IMDBID: 555002},
+					TVDB:       &api.TVDBMetadata{TVDBID: 555003},
+					TVmaze:     &api.TVmazeMetadata{TVmazeID: 555004},
+				},
+				hasIDs:  true,
+				hasMeta: true,
+			}, nil
+		}),
+		candidate: candidateSourceFunc(func(context.Context, Request) (CandidateEvidence, error) {
+			return CandidateEvidence{
+				Identity: api.ExternalIdentity{SourcePath: sourcePath, Category: api.CanonicalCategoryMovie},
+				Metadata: api.SourceScopedMetadata{SourcePath: sourcePath},
+			}, nil
+		}),
+		now: time.Now,
+	}
+	result, err := resolver.Resolve(t.Context(), Request{
+		SourcePath:        sourcePath,
+		SourceFingerprint: "source-fingerprint",
+		Generation:        1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Identity.Category != api.CanonicalCategoryMovie || result.Identity.TMDBID != 0 || result.Identity.IMDBID != 0 || result.Identity.TVDBID != 0 || result.Identity.TVmazeID != 0 ||
+		result.ProviderMetadata.TMDB != nil || result.ProviderMetadata.IMDB != nil || result.ProviderMetadata.TVDB != nil || result.ProviderMetadata.TVmaze != nil {
+		t.Fatalf("category change restored discarded automatic evidence: identity=%+v metadata=%+v", result.Identity, result.ProviderMetadata)
+	}
+}
+
 func TestHasExplicitProviderCorrectionRecognizesZeroValuePins(t *testing.T) {
 	for _, tc := range []struct {
 		name string

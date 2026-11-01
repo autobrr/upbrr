@@ -630,6 +630,189 @@ func TestPreparedMovieYearCorrectionReusesProviderEvidence(t *testing.T) {
 	}
 }
 
+func TestPreparedTMDBCategoryFallbackAndMovieCorrectionSurviveRestart(t *testing.T) {
+	t.Parallel()
+	fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Series.2026.1080p.WEB-DL.H264-GRP.mkv")
+	fixture.input.Instructions = api.ReleaseFactInstructions{}
+	fixture.imdb = &stubIMDB{
+		searchFn: func(input imdb.SearchInput) (imdb.SearchResult, error) {
+			if input.Category == "tv" {
+				return imdb.SearchResult{IMDbID: 555002}, nil
+			}
+			return imdb.SearchResult{IMDbID: 555099}, nil
+		},
+		infoFn: func(id string) imdb.Info {
+			if id == "tt0555002" {
+				return imdb.Info{
+					IMDbID: id,
+					Title:  "Example Series",
+					Type:   "tvSeries",
+				}
+			}
+			return imdb.Info{
+				IMDbID: id,
+				Title:  "Example Movie",
+				Type:   "movie",
+			}
+		},
+	}
+	fixture.tvdb = &stubTVDB{id: 555003, name: "Example Series"}
+	fixture.tvmaze = &stubTVmaze{result: tvmaze.SearchResult{
+		SelectedID: 555004,
+		TVDBID:     555003,
+		Candidates: []tvmaze.Candidate{{ID: 555004, Name: "Example Series"}},
+	}}
+	module, repo := fixture.open(t)
+	input := fixture.input
+	update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+	for _, phase := range []string{"fallback", "restart", "Movie correction", "Movie restart"} {
+		switch phase {
+		case "restart", "Movie restart":
+			if err := repo.Close(); err != nil {
+				t.Fatal(err)
+			}
+			module, repo = fixture.open(t)
+			input = api.PrepareInput{SourcePath: input.SourcePath, ExternalFreshness: api.ExternalFreshnessLoad}
+			update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+		case "Movie correction":
+			input.ExternalFreshness = api.ExternalFreshnessReuse
+			update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
+				Values: api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{Category: new("MOVIE")}},
+			}}
+		}
+		result := prepareCorrectionEvidence(t, module, input, update)
+		release := result.Release
+		wantCategory, wantIMDb := api.CanonicalCategoryTV, 555002
+		if strings.HasPrefix(phase, "Movie") {
+			wantCategory, wantIMDb = api.CanonicalCategoryMovie, 555099
+		}
+		if release.Identity.Category != wantCategory || release.Identity.IMDBID != wantIMDb {
+			t.Fatalf("%s: category/IMDb = %s/%d, want %s/%d", phase, release.Identity.Category, release.Identity.IMDBID, wantCategory, wantIMDb)
+		}
+		if release.ProviderMetadata.IMDB == nil {
+			t.Fatalf("%s: metadata previews unavailable", phase)
+		}
+		if wantCategory == api.CanonicalCategoryTV {
+			if release.Identity.TMDBID != 555001 || release.Identity.TVDBID != 555003 || release.Identity.TVmazeID != 555004 ||
+				release.ProviderMetadata.TMDB == nil || release.ProviderMetadata.TVDB == nil || release.ProviderMetadata.TVmaze == nil {
+				t.Fatalf("%s: TV fallback lost provider IDs or metadata: %+v", phase, release.Identity)
+			}
+		} else if release.Identity.TMDBID != 0 || release.Identity.TVDBID != 0 || release.Identity.TVmazeID != 0 ||
+			release.ProviderMetadata.TMDB != nil || release.ProviderMetadata.TVDB != nil || release.ProviderMetadata.TVmaze != nil {
+			t.Fatalf("%s: Movie retained TV provider IDs or metadata: %+v", phase, release.Identity)
+		}
+		display, err := preparedrelease.ProjectDisplay(release)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(display.Providers) == 0 {
+			t.Fatalf("%s: metadata previews absent from display", phase)
+		}
+	}
+	if calls := fixture.requests(); calls["/3/search/movie"] == 0 || calls["/3/search/tv"] == 0 || calls["/3/tv/555001"] == 0 {
+		t.Fatalf("fallback did not search and fetch the TV namespace: %v", calls)
+	}
+}
+
+func TestPreparedProviderCorrectionsRestoreMALAcrossRestart(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		mal  *int
+		want int
+	}{
+		{name: "automatic", want: 444},
+		{
+			name: "manual",
+			mal:  new(999),
+			want: 999,
+		},
+		{name: "cleared", mal: new(0)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newCorrectionEvidenceFixture(t)
+			fixture.tmdbAnime = true
+			fixture.tmdbExternalIDs = `{"imdb_id":"tt0555002"}`
+			fixture.input.Instructions.Identity = api.ExternalIDOverrides{MALID: test.mal}
+			fixture.imdb = &stubIMDB{
+				searchResult: imdb.SearchResult{IMDbID: 555002},
+				infoFn: func(id string) imdb.Info {
+					return imdb.Info{
+						IMDbID: id,
+						Title:  "Example Series",
+						Type:   "tvSeries",
+					}
+				},
+			}
+			module, repo := fixture.open(t)
+			input := fixture.input
+			update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+			for _, phase := range []string{"initial", "IMDb correction", "TMDB correction", "restart", "refresh", "old contract"} {
+				want := test.want
+				switch phase {
+				case "IMDb correction":
+					input = api.PrepareInput{SourcePath: input.SourcePath, ExternalFreshness: api.ExternalFreshnessReuse}
+					update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
+						Values: api.ReleaseCorrectionValues{Identity: api.ExternalIDOverrides{IMDBID: new(555099)}},
+					}}
+					if test.mal == nil {
+						want = 0 // The corrected IMDb has no TMDB link until TMDB is selected manually.
+					}
+				case "TMDB correction":
+					update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
+						Values: api.ReleaseCorrectionValues{Identity: api.ExternalIDOverrides{TMDBID: new(555001)}},
+					}}
+				case "refresh":
+					input.ExternalFreshness = api.ExternalFreshnessRefresh
+					update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+				case "restart", "old contract":
+					if phase == "old contract" {
+						stale, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
+						if err != nil {
+							t.Fatal(err)
+						}
+						stale.Compatibility.ContractVersion = "prepared-release-v64"
+						stale.Identity.Resolution.ContractVersion = "external-identity-v7"
+						if test.mal == nil {
+							stale.Identity.MALID = 0
+							stale.Identity.Provenance.MAL = api.IdentityProvenanceUnknown
+							stale.Identity.Dependencies.MAL = api.IdentityDependency{}
+							stale.ProviderMetadata.AniList = nil
+						}
+						if err := repo.CommitPreparedRelease(t.Context(), stale); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := repo.Close(); err != nil {
+						t.Fatal(err)
+					}
+					module, repo = fixture.open(t)
+					input.ExternalFreshness = api.ExternalFreshnessLoad
+					update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+				}
+				result := prepareCorrectionEvidence(t, module, input, update)
+				ids, metadata := result.Release.Identity, result.Release.ProviderMetadata
+				if ids.MALID != want || want == 0 && metadata.AniList != nil ||
+					want != 0 && (metadata.AniList == nil || metadata.AniList.MALID != want) {
+					t.Fatalf("%s: MAL identity/preview = %d / %#v, want %d", phase, ids.MALID, metadata.AniList, want)
+				}
+				if test.mal != nil {
+					correction := result.Corrections.Corrections.Identity.MALID
+					if correction == nil || *correction != *test.mal || ids.Provenance.MAL != api.IdentityProvenanceExplicit {
+						t.Fatalf("%s: manual MAL correction lost: %#v", phase, ids)
+					}
+				}
+				if phase != "initial" && (ids.IMDBID != 555099 || metadata.IMDB == nil) {
+					t.Fatalf("%s: IMDb correction lost: %#v", phase, ids)
+				}
+				if phase != "initial" && phase != "IMDb correction" && (ids.TMDBID != 555001 || metadata.TMDB == nil) {
+					t.Fatalf("%s: TMDB correction lost: %#v", phase, ids)
+				}
+			}
+		})
+	}
+}
+
 func TestPreparedExplicitTVAcquiresTVDBDespiteParsedMovie(t *testing.T) {
 	for _, test := range []struct {
 		aliasYear bool
@@ -965,6 +1148,7 @@ type correctionEvidenceFixture struct {
 	tvdb            TVDBClient
 	imdb            IMDBClient
 	tmdbExternalIDs string
+	tmdbAnime       bool
 	tvmaze          TVmazeClient
 	tvdbAliasYear   bool
 	mu              sync.Mutex
@@ -1021,6 +1205,20 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 		switch {
 		case request.URL.Host == "scene.example.invalid":
 			body = `{"resultsCount":0,"results":[]}`
+		case request.URL.Host == "graphql.anilist.co":
+			var payload struct {
+				Variables struct {
+					IDMal int `json:"idMal"`
+				} `json:"variables"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				return nil, fmt.Errorf("decode AniList fixture request: %w", err)
+			}
+			if payload.Variables.IDMal == 0 {
+				body = `{"data":{"Page":{"media":[{"id":445,"idMal":444,"title":{"romaji":"Example Series"}}]}}}`
+			} else {
+				body = fmt.Sprintf(`{"data":{"Media":{"id":445,"idMal":%d,"title":{"romaji":"Example Series"}}}}`, payload.Variables.IDMal)
+			}
 		case request.URL.Host == "api4.thetvdb.com":
 			switch request.URL.Path {
 			case "/v4/login":
@@ -1046,8 +1244,15 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 			t.Errorf("unexpected HTTP destination: %s", request.URL.Host)
 		case key == "/3/tv/555001":
 			body = `{"id":555001,"name":"Example Series","original_name":"Example Series","first_air_date":"2026-01-01","original_language":"en","type":"Scripted","seasons":[{"season_number":1,"air_date":"2026-01-01"}]}`
+			if fixture.tmdbAnime {
+				body = strings.Replace(body, `"original_language":"en"`, `"original_language":"ja","genres":[{"id":16,"name":"Animation"}]`, 1)
+			}
 		case key == "/3/search/tv":
 			body = `{"results":[{"id":555001,"name":"Example Series","original_name":"Example Series","first_air_date":"2026-01-01","original_language":"en"}]}`
+		case key == "/3/search/movie":
+			body = `{"results":[]}`
+		case key == "/3/find/tt0555099":
+			body = `{"movie_results":[],"tv_results":[]}`
 		case key == "/3/tv/555002":
 			body = `{"id":555002,"name":"Alternate Series","original_name":"Alternate Series","first_air_date":"2026-01-01","original_language":"en","type":"Scripted"}`
 		case key == "/3/tv/555002/season/1/episode/1":

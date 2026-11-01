@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v6"
+const ContractVersion = "external-identity-v8"
 
 // CompatibleStoredIdentity preserves manual pins and clears while discarding
 // automatic IDs and dependencies produced before the current identity contract.
@@ -323,7 +323,11 @@ func applyCandidateEvidence(
 	if result == nil {
 		return nil
 	}
-	authoritativeProviders := hasExplicitProviderCorrection(candidate.Identity)
+	storedCategory, _ := api.NormalizeCanonicalCategory(string(result.Identity.Category))
+	candidateCategory, _ := api.NormalizeCanonicalCategory(string(candidate.Identity.Category))
+	categoryChanged := storedCategory != api.CanonicalCategoryUnknown && candidateCategory != api.CanonicalCategoryUnknown &&
+		storedCategory != candidateCategory
+	authoritativeProviders := hasExplicitProviderCorrection(candidate.Identity) || categoryChanged
 	candidateIdentityApplies := hasCandidateIdentity(candidate.Identity) && sourceEvidenceMatches(candidate.Identity.SourcePath, sourcePath)
 	if candidateIdentityApplies {
 		if authoritativeProviders || hasExplicitProviderCorrection(result.Identity) {

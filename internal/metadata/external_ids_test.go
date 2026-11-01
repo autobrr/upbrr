@@ -1197,7 +1197,12 @@ func TestResolveExternalIDsExplicitMovieCategoryVetoesEarlierTVCandidate(t *test
 			Year:     2024,
 		},
 	}
-	tmdbClient := &stubTMDB{}
+	tmdbClient := &stubTMDB{searchFn: func(input tmdb.SearchInput) (tmdb.SearchOutcome, error) {
+		if !input.DontSwitch {
+			t.Error("explicit Movie category permitted a TV search fallback")
+		}
+		return tmdb.SearchOutcome{}, nil
+	}}
 	imdbClient := &stubIMDB{}
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
@@ -1328,6 +1333,289 @@ func TestResolveExternalIDsSearchAndMetadata(t *testing.T) {
 	}
 	if tmdbClient.searchCalls == 0 || imdbClient.searchCalls == 0 {
 		t.Fatalf("expected search calls to run")
+	}
+}
+
+func TestResolveExternalIDsTMDBCategorySwitchReplacesEarlierIMDbSearch(t *testing.T) {
+	for _, test := range []struct{ selectedIMDb, externalMatch, cachedIMDb bool }{{}, {selectedIMDb: true}, {selectedIMDb: true, externalMatch: true}, {cachedIMDb: true}} {
+		t.Run(fmt.Sprintf("selected IMDb=%t external match=%t cached IMDb=%t", test.selectedIMDb, test.externalMatch, test.cachedIMDb), func(t *testing.T) {
+			t.Parallel()
+			tmdbClient := &stubTMDB{
+				searchFn: func(input tmdb.SearchInput) (tmdb.SearchOutcome, error) {
+					if input.SearchYear == 2026 || test.externalMatch {
+						return tmdb.SearchOutcome{}, nil
+					}
+					return tmdb.SearchOutcome{TMDBID: 555001, Category: "TV"}, nil
+				},
+				metadata: tmdb.MetadataResult{
+					Title:    "Example Series",
+					TMDBType: "Scripted",
+					TVDBID:   555003,
+				},
+			}
+			if test.externalMatch {
+				tmdbClient.findResult = tmdb.FindResult{TMDBID: 555001, Category: "TV"}
+			}
+			imdbClient := &stubIMDB{
+				searchFn: func(input imdb.SearchInput) (imdb.SearchResult, error) {
+					if input.Category == "tv" {
+						return imdb.SearchResult{
+							IMDbID: 555002,
+							Candidates: []imdb.Candidate{{
+								IMDbID: 555002,
+								Title:  "Example Series",
+								Type:   "TV Series",
+							}},
+						}, nil
+					}
+					result := imdb.SearchResult{Candidates: []imdb.Candidate{{
+						IMDbID: 555099,
+						Title:  "Example Movie",
+						Type:   "Movie",
+					}}}
+					if test.selectedIMDb {
+						result.IMDbID = 555099
+					}
+					return result, nil
+				},
+				info: imdb.Info{
+					IMDbID: "tt0555002",
+					Title:  "Example Series",
+					Type:   "tvSeries",
+				},
+			}
+			tvdbClient := &stubTVDB{name: "Example Series"}
+			tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{
+				SelectedID: 555004,
+				TVDBID:     555003,
+				Candidates: []tvmaze.Candidate{{ID: 555004, Name: "Example Series"}},
+			}}
+			svc := newTestService(t, &fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient),
+				WithTVDBClient(tvdbClient), WithTVmazeClient(tvmazeClient))
+			sourcePath := filepath.Join(t.TempDir(), "Example.Series.2026.1080p-GRP.mkv")
+			state := preparationstate.State{
+				SourcePath: sourcePath,
+				Release: api.ReleaseInfo{
+					Title:    "Example Series",
+					Year:     2026,
+					Category: "MOVIE",
+				},
+				MediaInfoCategory: "MOVIE",
+			}
+			if test.cachedIMDb {
+				state.StoredDataFresh = true
+				state.Identity = api.ExternalIdentity{
+					SourcePath: sourcePath,
+					Category:   api.CanonicalCategoryMovie,
+					IMDBID:     555099,
+					Provenance: api.IdentityProvenanceSet{IMDB: api.IdentityProvenanceProvider},
+				}
+				state.ProviderMetadata = api.SourceScopedMetadata{
+					SourcePath: sourcePath,
+					IMDB: &api.IMDBMetadata{
+						IMDBID: 555099,
+						Title:  "Cached Movie",
+						Type:   "movie",
+					},
+				}
+			}
+			result, err := svc.resolveExternalIdentity(t.Context(), state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Identity.Category != api.CanonicalCategoryTV || result.Identity.TMDBID != 555001 || result.Identity.IMDBID != 555002 ||
+				result.Identity.TVDBID != 555003 || result.Identity.TVmazeID != 555004 {
+				t.Fatalf("switched identity = %+v", result.Identity)
+			}
+			if result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.IMDB == nil || result.ProviderMetadata.TVDB == nil || result.ProviderMetadata.TVmaze == nil {
+				t.Fatalf("category switch lost provider metadata: %+v", result.ProviderMetadata)
+			}
+			if len(tmdbClient.metaInputs) == 0 || tmdbClient.metaInputs[0].Category != "tv" || imdbClient.infoCalls != 1 {
+				t.Fatal("category switch fetched incorrect or stale provider metadata")
+			}
+			wantSearches := 2
+			if test.cachedIMDb {
+				wantSearches = 1
+			}
+			if len(imdbClient.searchInputs) != wantSearches || imdbClient.searchInputs[wantSearches-1].Category != "tv" {
+				t.Fatalf("IMDb did not search the corrected category: %+v", imdbClient.searchInputs)
+			}
+			for _, candidate := range result.ExternalIdentityCandidates {
+				if candidate.Provider == api.IdentityProviderIMDB && candidate.ID != 555002 {
+					t.Fatalf("retained previous-category IMDb candidate: %+v", candidate)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveExternalIDsUsesTMDBExternalMatchCategory(t *testing.T) {
+	for _, test := range []struct {
+		name, parsed, matched string
+		wantTV                bool
+	}{
+		{
+			name:    "Movie to TV",
+			parsed:  "MOVIE",
+			matched: "TV",
+			wantTV:  true,
+		},
+		{
+			name:    "TV to Movie",
+			parsed:  "TV",
+			matched: "MOVIE",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			tmdbClient := &stubTMDB{
+				findResult: tmdb.FindResult{TMDBID: 555001, Category: test.matched},
+				metadata:   tmdb.MetadataResult{Title: "Example Title", TMDBType: test.matched},
+			}
+			tvdbClient := &stubTVDB{id: 555003, name: "Example Title"}
+			tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{
+				SelectedID: 555004,
+				Candidates: []tvmaze.Candidate{{ID: 555004, Name: "Example Title"}},
+			}}
+			svc := newTestService(t, &fakeRepo{}, WithTMDBClient(tmdbClient),
+				WithIMDBClient(&stubIMDB{info: imdb.Info{IMDbID: "tt0555002", Title: "Example Title"}}),
+				WithTVDBClient(tvdbClient), WithTVmazeClient(tvmazeClient))
+			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath:        filepath.Join(t.TempDir(), "Example.Title.2026.1080p-GRP.mkv"),
+				Release:           api.ReleaseInfo{Title: "Example Title", Category: test.parsed},
+				MediaInfoCategory: test.parsed,
+				MediaInfoIMDBID:   555002,
+				MediaInfoTVDBID:   555003,
+				SceneTVmazeID:     555004,
+				SeasonInt:         1,
+				EpisodeInt:        1,
+				DailyEpisodeDate:  "2026-01-01",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(result.Identity.Category) != strings.ToLower(test.matched) || result.Identity.TMDBID != 555001 ||
+				result.ProviderMetadata.TMDB == nil || tmdbClient.metaInputs[0].Category != strings.ToLower(test.matched) {
+				t.Fatalf("external match lost selected category or metadata: %+v", result.Identity)
+			}
+			if test.wantTV {
+				if result.Identity.TVDBID != 555003 || result.Identity.TVmazeID != 555004 || result.ProviderMetadata.TVDB == nil || result.ProviderMetadata.TVmaze == nil {
+					t.Fatalf("TV match did not acquire TV providers: %+v", result.Identity)
+				}
+			} else if result.Identity.TVDBID != 0 || result.Identity.TVmazeID != 0 || result.ProviderMetadata.TVDB != nil || result.ProviderMetadata.TVmaze != nil ||
+				tvdbClient.calls != 0 || tvdbClient.seriesMetadataCalls != 0 || tvmazeClient.calls != 0 || tmdbClient.episodeCalls != 0 || tmdbClient.seasonCalls != 0 || tmdbClient.dailyCalls != 0 {
+				t.Fatalf("Movie match retained or fetched TV provider IDs or metadata: %+v", result.Identity)
+			}
+		})
+	}
+}
+
+func TestResolveExternalIDsRetriesIMDbAfterTVmazeChangesTMDBCategory(t *testing.T) {
+	tmdbClient := &stubTMDB{
+		findFn: func(input tmdb.FindInput) (tmdb.FindResult, error) {
+			if input.IMDbID != "" {
+				return tmdb.FindResult{TMDBID: 555001, Category: "MOVIE"}, nil
+			}
+			return tmdb.FindResult{}, nil
+		},
+		metadata: tmdb.MetadataResult{Title: "Example Movie", TMDBType: "Movie"},
+	}
+	imdbClient := &stubIMDB{
+		searchFn: func(input imdb.SearchInput) (imdb.SearchResult, error) {
+			if input.Category == "movie" {
+				return imdb.SearchResult{IMDbID: 555002}, nil
+			}
+			return imdb.SearchResult{Candidates: []imdb.Candidate{{IMDbID: 555099, Title: "Old Series"}}}, nil
+		},
+		info: imdb.Info{
+			IMDbID: "tt0555002",
+			Title:  "Example Movie",
+			Type:   "movie",
+		},
+	}
+	tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{
+		SelectedID: 555004,
+		IMDBID:     555099,
+		Candidates: []tvmaze.Candidate{{ID: 555004, Name: "Old Series"}},
+	}}
+	svc := newTestService(t, &fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient),
+		WithTVDBClient(&stubTVDB{}), WithTVmazeClient(tvmazeClient))
+	result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+		SourcePath:        filepath.Join(t.TempDir(), "Example.Title.S01E01.1080p-GRP.mkv"),
+		MediaInfoCategory: "TV",
+		MediaInfoTVDBID:   555003,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Identity.Category != api.CanonicalCategoryMovie || result.Identity.TMDBID != 555001 || result.Identity.IMDBID != 555002 ||
+		result.Identity.TVDBID != 0 || result.Identity.TVmazeID != 0 || result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.IMDB == nil ||
+		result.ProviderMetadata.TVDB != nil || result.ProviderMetadata.TVmaze != nil {
+		t.Fatalf("late category resolution retained old identities or lost metadata: %+v", result.Identity)
+	}
+	for _, candidate := range result.ExternalIdentityCandidates {
+		if candidate.Provider == api.IdentityProviderIMDB && candidate.ID == 555099 {
+			t.Fatal("late category change retained earlier TV IMDb candidate")
+		}
+	}
+}
+
+func TestResolveExternalIDsCategoryCorrectionPreservesCurrentDirectEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		apply func(*preparationstate.State)
+	}{
+		{name: "tracker", apply: func(state *preparationstate.State) {
+			state.TrackerData = []api.TrackerMetadata{{
+				TMDBID:   555001,
+				IMDBID:   555002,
+				Category: "MOVIE",
+			}}
+		}},
+		{name: "MediaInfo", apply: func(state *preparationstate.State) {
+			state.MediaInfoTMDBID, state.MediaInfoIMDBID = 555001, 555002
+		}},
+		{name: "scene", apply: func(state *preparationstate.State) {
+			state.SceneTMDBID, state.SceneIMDB = 555001, 555002
+		}},
+		{name: "Arr", apply: func(state *preparationstate.State) {
+			state.ArrTMDBID, state.ArrIMDBID, state.ArrSource = 555001, 555002, "radarr"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			source := filepath.Join(t.TempDir(), "Example.Movie.2026.1080p-GRP.mkv")
+			state := preparationstate.State{
+				SourcePath:      source,
+				StoredDataFresh: true,
+				Identity: api.ExternalIdentity{
+					SourcePath: source,
+					Category:   api.CanonicalCategoryTV,
+					MALID:      555099,
+				},
+				MALID:                555099,
+				MediaInfoCategory:    "MOVIE",
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Category: new("MOVIE")},
+			}
+			test.apply(&state)
+			tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Example Movie", TMDBType: "Movie"}}
+			imdbClient := &stubIMDB{info: imdb.Info{
+				IMDbID: "tt0555002",
+				Title:  "Example Movie",
+				Type:   "movie",
+			}}
+			svc := newTestService(t, &fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient),
+				WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
+			result, err := svc.resolveExternalIdentity(t.Context(), state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Identity.Category != api.CanonicalCategoryMovie || result.Identity.TMDBID != 555001 || result.Identity.IMDBID != 555002 ||
+				result.Identity.MALID != 0 || result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.IMDB == nil ||
+				tmdbClient.searchCalls != 0 || imdbClient.searchCalls != 0 {
+				t.Fatalf("category correction discarded current direct evidence or restored an old guess: %+v", result.Identity)
+			}
+		})
 	}
 }
 
@@ -2398,17 +2686,20 @@ func TestResolveExternalIDsCategoryResetUsesParsedMovieCategory(t *testing.T) {
 	for _, test := range []struct {
 		name                    string
 		resetCategory           bool
+		wantCategory            api.CanonicalCategory
 		wantCandidateProvenance api.IdentityProvenance
 		wantCanonicalProvenance api.IdentityProvenance
 	}{
 		{
 			name:                    "reset stored category",
 			resetCategory:           true,
+			wantCategory:            api.CanonicalCategoryMovie,
 			wantCandidateProvenance: api.IdentityProvenanceUnknown,
 			wantCanonicalProvenance: api.IdentityProvenanceProvider,
 		},
 		{
 			name:                    "preserves unmarked category",
+			wantCategory:            api.CanonicalCategoryTV,
 			wantCandidateProvenance: api.IdentityProvenanceExplicit,
 			wantCanonicalProvenance: api.IdentityProvenanceExplicit,
 		},
@@ -2421,8 +2712,10 @@ func TestResolveExternalIDsCategoryResetUsesParsedMovieCategory(t *testing.T) {
 				Overrides:  api.IdentityOverrideState{Category: api.OverrideStateValue},
 			}
 			tmdbClient := &stubTMDB{
-				searchOutcome: tmdb.SearchOutcome{TMDBID: 333, Category: "MOVIE"},
-				metadata:      tmdb.MetadataResult{TMDBType: "Movie", Title: "Example Movie"},
+				searchFn: func(input tmdb.SearchInput) (tmdb.SearchOutcome, error) {
+					return tmdb.SearchOutcome{TMDBID: 333, Category: input.Category}, nil
+				},
+				metadata: tmdb.MetadataResult{TMDBType: string(test.wantCategory), Title: "Example Title"},
 			}
 			repo := &fakeRepo{ids: stored}
 			service := newTestService(t, repo,
@@ -2445,10 +2738,10 @@ func TestResolveExternalIDsCategoryResetUsesParsedMovieCategory(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolve provider candidate: %v", err)
 			}
-			if len(tmdbClient.searchInputs) != 1 || tmdbClient.searchInputs[0].Category != "MOVIE" {
+			if len(tmdbClient.searchInputs) != 1 || tmdbClient.searchInputs[0].Category != strings.ToUpper(string(test.wantCategory)) {
 				t.Fatalf("TMDB search inputs = %#v", tmdbClient.searchInputs)
 			}
-			if candidate.Identity.Category != api.CanonicalCategoryMovie ||
+			if candidate.Identity.Category != test.wantCategory ||
 				candidate.Identity.Provenance.Category != test.wantCandidateProvenance {
 				t.Fatalf("provider candidate category = %#v", candidate.Identity)
 			}
@@ -2468,7 +2761,7 @@ func TestResolveExternalIDsCategoryResetUsesParsedMovieCategory(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolve canonical identity: %v", err)
 			}
-			if resolved.Identity.Category != api.CanonicalCategoryMovie ||
+			if resolved.Identity.Category != test.wantCategory ||
 				resolved.Identity.Provenance.Category != test.wantCanonicalProvenance {
 				t.Fatalf("canonical category = %#v", resolved.Identity)
 			}
@@ -3916,10 +4209,22 @@ func TestResolveExternalIDsDoesNotApplyTVDBForMovieCategory(t *testing.T) {
 		WithTVmazeClient(tvmazeClient),
 	)
 
+	source := filepath.Join(t.TempDir(), "Example.TV.Movie.2024.1080p.WEB-DL.mkv")
 	meta := preparationstate.State{
-		SourcePath:        "/media/Example.TV.Movie.2024.1080p.WEB-DL.mkv",
+		SourcePath:        source,
 		MediaInfoCategory: "movie",
 		Release:           api.ReleaseInfo{Title: "Example TV Movie", Year: 2024},
+		StoredDataFresh:   true,
+		Identity: api.ExternalIdentity{
+			SourcePath: source,
+			TVDBID:     55,
+			TVmazeID:   66,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: source,
+			TVDB:       &api.TVDBMetadata{TVDBID: 55, Name: "Previous Series"},
+			TVmaze:     &api.TVmazeMetadata{TVmazeID: 66, Name: "Previous Series"},
+		},
 	}
 
 	result, err := svc.resolveExternalIdentity(context.Background(), meta)
@@ -3935,6 +4240,9 @@ func TestResolveExternalIDsDoesNotApplyTVDBForMovieCategory(t *testing.T) {
 	}
 	if len(tvdbClient.tvMovieCalls) != 0 {
 		t.Fatalf("expected no tvdb lookup for movie category, got %#v", tvdbClient.tvMovieCalls)
+	}
+	if result.Identity.TVmazeID != 0 || result.ProviderMetadata.TVmaze != nil || tvmazeClient.calls != 0 {
+		t.Fatalf("movie retained or fetched TVmaze results: identity=%+v metadata=%+v calls=%d", result.Identity, result.ProviderMetadata.TVmaze, tvmazeClient.calls)
 	}
 }
 
@@ -4030,18 +4338,23 @@ func TestResolveExternalIDsOverride(t *testing.T) {
 
 func TestResolveExternalIDsPreservesExplicitTVDBIDForMovieConflict(t *testing.T) {
 	tvdbID := 345678
+	tvdbClient := &stubTVDB{}
+	tvmazeClient := &stubTVmaze{}
 	svc := newTestService(t, &fakeRepo{},
 		WithTMDBClient(&stubTMDB{}),
 		WithIMDBClient(&stubIMDB{}),
-		WithTVDBClient(&stubTVDB{}),
-		WithTVmazeClient(&stubTVmaze{}),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(tvmazeClient),
 	)
 
 	result, err := svc.resolveExternalIdentity(context.Background(), preparationstate.State{
 		SourcePath:        "Example.Movie.2026.1080p-GRP.mkv",
 		MediaInfoCategory: "MOVIE",
+		SeasonInt:         1,
+		EpisodeInt:        1,
 		ExternalIDOverrides: api.ExternalIDOverrides{
-			TVDBID: &tvdbID,
+			TVDBID:   &tvdbID,
+			TVmazeID: new(555004),
 		},
 	})
 	if err != nil {
@@ -4050,8 +4363,9 @@ func TestResolveExternalIDsPreservesExplicitTVDBIDForMovieConflict(t *testing.T)
 	if result.Identity.TVDBID != tvdbID || result.Identity.Provenance.TVDB != api.IdentityProvenanceExplicit {
 		t.Fatalf("explicit TVDB ID changed: %#v", result.Identity)
 	}
-	if result.ProviderMetadata.TVDB != nil {
-		t.Fatalf("movie retained TVDB metadata: %#v", result.ProviderMetadata.TVDB)
+	if result.Identity.TVmazeID != 555004 || result.ProviderMetadata.TVDB != nil || result.ProviderMetadata.TVmaze != nil ||
+		tvdbClient.episodeCalls != 0 || tvmazeClient.episodeNumberCalls != 0 {
+		t.Fatalf("movie used pinned TV providers despite its category: %+v", result.ProviderMetadata)
 	}
 	if len(result.LookupWarnings) != 1 || !strings.Contains(result.LookupWarnings[0], "Correct the TVDB ID or category") {
 		t.Fatalf("correction warnings = %#v", result.LookupWarnings)
@@ -4168,6 +4482,7 @@ func TestResolveExternalIDsRefetchesTMDBMetadataWhenCategoryChangesWithSameID(t 
 					},
 				},
 				ReleaseNameOverrides: api.ReleaseNameOverrides{Category: &category},
+				ExternalIDOverrides:  api.ExternalIDOverrides{TMDBID: new(12345)},
 			})
 			if err != nil {
 				t.Fatalf("resolve external identity: %v", err)
@@ -5717,6 +6032,7 @@ func TestResolveExternalIDsAppliesMALOverride(t *testing.T) {
 			MALID:    111,
 			Anime:    true,
 		},
+		anilistMetadata: tmdb.AniListMetadataResult{MALID: 999, AniListID: 998},
 	}
 	imdbClient := &stubIMDB{}
 	tvdbClient := &stubTVDB{}
@@ -5747,44 +6063,69 @@ func TestResolveExternalIDsAppliesMALOverride(t *testing.T) {
 	if result.Identity.MALID != 999 || result.Identity.Provenance.MAL != api.IdentityProvenanceExplicit || result.Identity.Overrides.MAL != api.OverrideStateValue {
 		t.Fatalf("expected canonical mal override, got %#v", result.Identity)
 	}
-}
-
-func TestResolveExternalIDsAnchoredTMDBSuppressesUnverifiedMAL(t *testing.T) {
-	tmdbID := 101
-	tmdbClient := &stubTMDB{
-		metadata: tmdb.MetadataResult{
-			TMDBType: "tv",
-			MALID:    444,
-			Anime:    true,
-		},
-	}
-	svc := newTestService(t, &fakeRepo{},
-		WithTMDBClient(tmdbClient),
-		WithIMDBClient(&stubIMDB{}),
-		WithTVDBClient(&stubTVDB{}),
-		WithTVmazeClient(&stubTVmaze{}),
-	)
-
-	result, err := svc.resolveExternalIdentity(context.Background(), preparationstate.State{
-		SourcePath:        "/media/Example.Anime.S01E01.mkv",
-		MediaInfoCategory: "TV",
-		TrackerData:       []api.TrackerMetadata{{MALID: 111}},
-		SceneMALID:        222,
-		MALID:             333,
-		ExternalIDOverrides: api.ExternalIDOverrides{
-			TMDBID: &tmdbID,
-		},
-	})
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if result.Identity.MALID != 0 || result.MALID != 0 {
-		t.Fatalf("expected anchored TMDB to suppress unverified MAL, got %#v", result.Identity)
+	if result.ProviderMetadata.AniList == nil || result.ProviderMetadata.AniList.MALID != 999 {
+		t.Fatalf("expected metadata for the manual MAL selection, got %#v", result.ProviderMetadata.AniList)
 	}
 	for _, input := range tmdbClient.metaInputs {
 		if !input.SkipAnimeLookup {
-			t.Fatalf("anchored TMDB metadata input did not suppress anime lookup: %#v", input)
+			t.Fatal("manual MAL selection triggered automatic anime discovery")
 		}
+	}
+}
+
+func TestResolveExternalIDsProviderCorrectionsRediscoverMAL(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		overrides api.ExternalIDOverrides
+	}{
+		{name: "TMDB", overrides: api.ExternalIDOverrides{TMDBID: new(101)}},
+		{name: "IMDb", overrides: api.ExternalIDOverrides{IMDBID: new(202)}},
+		{name: "TMDB and IMDb", overrides: api.ExternalIDOverrides{TMDBID: new(101), IMDBID: new(202)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tmdbClient := &stubTMDB{
+				findResult: tmdb.FindResult{TMDBID: 101, Category: "TV"},
+				metadata: tmdb.MetadataResult{
+					TMDBType: "tv",
+					MALID:    444,
+					Anime:    true,
+				},
+				anilistMetadata: tmdb.AniListMetadataResult{
+					MALID:       444,
+					AniListID:   445,
+					TitleRomaji: "Example Anime",
+				},
+			}
+			svc := newTestService(t, &fakeRepo{},
+				WithTMDBClient(tmdbClient),
+				WithIMDBClient(&stubIMDB{info: imdb.Info{IMDbID: "tt0000202"}}),
+				WithTVDBClient(&stubTVDB{}),
+				WithTVmazeClient(&stubTVmaze{}),
+			)
+			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath:          "/media/Example.Anime.S01E01.mkv",
+				MediaInfoCategory:   "TV",
+				TrackerData:         []api.TrackerMetadata{{MALID: 111}},
+				SceneMALID:          222,
+				MALID:               333,
+				ExternalIDOverrides: test.overrides,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Identity.MALID != 444 || result.MALID != 444 || result.Identity.Provenance.MAL != api.IdentityProvenanceProvider ||
+				result.ProviderMetadata.AniList == nil || result.ProviderMetadata.AniList.MALID != 444 {
+				t.Fatalf("provider correction did not rediscover MAL and its preview: identity=%#v metadata=%#v", result.Identity, result.ProviderMetadata.AniList)
+			}
+			if len(tmdbClient.metaInputs) == 0 {
+				t.Fatal("provider correction did not fetch TMDB metadata")
+			}
+			for _, input := range tmdbClient.metaInputs {
+				if input.SkipAnimeLookup {
+					t.Fatalf("provider correction suppressed anime discovery: %#v", input)
+				}
+			}
+		})
 	}
 }
 
@@ -5963,28 +6304,6 @@ func TestResolveExternalIDsMALFallbacksAndClear(t *testing.T) {
 		WithTVmazeClient(&stubTVmaze{}),
 	)
 
-	result, err := svc.resolveExternalIdentity(context.Background(), preparationstate.State{
-		SourcePath:        "/media/Example.Anime.S01E02.mkv",
-		MediaInfoCategory: "TV",
-		SceneMALID:        222,
-		MALID:             333,
-		ExternalIDOverrides: api.ExternalIDOverrides{
-			TMDBID: &tmdbID,
-		},
-	})
-	if err != nil {
-		t.Fatalf("resolve scene: %v", err)
-	}
-	if result.Identity.MALID != 0 || len(tmdbClient.metaInputs) == 0 {
-		t.Fatalf("anchored TMDB anime enrichment = identity:%#v inputs:%#v", result.Identity, tmdbClient.metaInputs)
-	}
-	for _, input := range tmdbClient.metaInputs {
-		if !input.SkipAnimeLookup {
-			t.Fatalf("anchored TMDB anime enrichment = identity:%#v inputs:%#v", result.Identity, tmdbClient.metaInputs)
-		}
-	}
-	anchoredInputCount := len(tmdbClient.metaInputs)
-
 	cleared, err := svc.resolveExternalIdentity(context.Background(), preparationstate.State{
 		SourcePath:        "/media/Example.Anime.S01E03.mkv",
 		MediaInfoCategory: "TV",
@@ -6005,7 +6324,7 @@ func TestResolveExternalIDsMALFallbacksAndClear(t *testing.T) {
 	if cleared.MALID != 0 {
 		t.Fatalf("expected prepared mal mirror cleared, got %d", cleared.MALID)
 	}
-	for _, input := range tmdbClient.metaInputs[anchoredInputCount:] {
+	for _, input := range tmdbClient.metaInputs {
 		if !input.SkipAnimeLookup {
 			t.Fatalf("cleared MAL anime enrichment inputs = %#v", tmdbClient.metaInputs)
 		}
@@ -6588,9 +6907,10 @@ func TestShouldUseTVDBHonorsExplicitCategoryBeforeParsedEvidence(t *testing.T) {
 			explicit: new("MOVIE"),
 		},
 		{
-			name:     "uncorrected Movie still blocks TV",
+			name:     "resolved TV overrides parsed Movie",
 			parsed:   "MOVIE",
 			resolved: "TV",
+			want:     true,
 		},
 		{
 			name:     "uncorrected TV still permits TVDB",
@@ -6599,10 +6919,11 @@ func TestShouldUseTVDBHonorsExplicitCategoryBeforeParsedEvidence(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "blank correction keeps existing Movie precedence",
+			name:     "blank correction permits resolved TV",
 			parsed:   "MOVIE",
 			resolved: "TV",
 			explicit: new(""),
+			want:     true,
 		},
 		{
 			name:     "unsupported correction keeps existing TV behavior",
