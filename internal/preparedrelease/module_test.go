@@ -611,7 +611,9 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 		t.Fatalf("initial prepare: %v", err)
 	}
 
-	restartedCollector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("hydrated-hash"))
+	hydrated := clientEvidenceTestSnapshot("hydrated-hash")
+	hydrated.Result.TorrentCandidates = []api.ClientTorrentCandidate{{Path: "hydrated.torrent", InfoHash: "hydrated-candidate-hash"}}
+	restartedCollector := newClientEvidenceTestCollector(hydrated)
 	restarted := newTestModule(t, store, restartedCollector)
 	reused, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
 	if err != nil {
@@ -642,6 +644,9 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	if upload.InfoHash != "hydrated-hash" || !upload.ClientTorrentDataVerified || upload.TrackerIDs["ant"] != "hydrated-id" ||
 		len(upload.MatchedTrackers) != 1 || upload.MatchedTrackers[0] != "ANT" {
 		t.Fatalf("hydrated upload evidence = %#v", upload)
+	}
+	if len(upload.ClientTorrentCandidates) != 1 || upload.ClientTorrentCandidates[0].InfoHash != "hydrated-candidate-hash" {
+		t.Fatalf("hydrated client candidates = %#v", upload.ClientTorrentCandidates)
 	}
 	upload.TrackerIDs["ant"] = "mutated"
 	upload.MatchedTrackers[0] = "MUTATED"
