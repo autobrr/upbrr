@@ -6382,6 +6382,7 @@ func (m *Module) uploadMediaImages(
 		artifactIDs,
 		command.Host,
 		command.Retry,
+		command.PreferredHost,
 		now,
 	)
 	if err != nil {
@@ -6415,6 +6416,7 @@ func (m *Module) uploadMediaImages(
 	switch {
 	case strings.TrimSpace(command.Host) == "":
 		updated.ImageRequirementsPrepared = true
+		updated.ImageHostPreference = cloneStringPointer(command.PreferredHost)
 	case leavingSkipMode:
 		// Host-specific upload after skip must not retain full preparation, or
 		// partial host coverage can block other trackers before required hosting runs.
@@ -6705,6 +6707,7 @@ func (m *Module) publishMediaMutation(
 		ImageRequirementsPrepared    bool
 		ImageHostUploadSkipped       bool
 		AutomaticScreenshotSelection bool
+		ImageHostPreference          *string `json:",omitempty"`
 	}{
 		snapshot.CaptureFingerprint,
 		snapshot.Artifacts,
@@ -6713,6 +6716,7 @@ func (m *Module) publishMediaMutation(
 		snapshot.ImageRequirementsPrepared,
 		snapshot.ImageHostUploadSkipped,
 		snapshot.AutomaticScreenshotSelection,
+		snapshot.ImageHostPreference,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint media mutation: %w", err)

@@ -4358,6 +4358,16 @@
           "id": {
             "$ref": "#/components/schemas/MediaArtifactSetID"
           },
+          "imageHostPreference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "imageHostUploadSkipped": {
             "type": "boolean"
           },

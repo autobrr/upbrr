@@ -1217,7 +1217,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	}
 	firstArtifactID, deletedArtifactID := snapshot.Artifacts[0].ID, snapshot.Artifacts[1].ID
 	snapshot, retainedResource, _, err := builder.UploadImages(ctx, firstRelease, projections, snapshot, retainedAny,
-		[]api.PublicResourceID{firstArtifactID}, "imgbb", false, time.Now())
+		[]api.PublicResourceID{firstArtifactID}, "imgbb", false, nil, time.Now())
 	if err != nil {
 		t.Fatalf("host first generation: %v", err)
 	}
@@ -1236,7 +1236,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		t.Fatalf("upload mutated reusable associations before publication: got %#v, want %#v", assetsBeforePublication, existingAssets)
 	}
 	snapshot, retainedResource, reusedAttempts, err := builder.UploadImages(ctx, firstRelease, projections, snapshot, retainedResource,
-		[]api.PublicResourceID{firstArtifactID}, "imgbb", false, time.Now())
+		[]api.PublicResourceID{firstArtifactID}, "imgbb", false, nil, time.Now())
 	if err != nil {
 		t.Fatalf("reuse first generation host: %v", err)
 	}
@@ -1370,6 +1370,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		[]api.PublicResourceID{restored.Artifacts[0].ID},
 		"imgbb",
 		false,
+		nil,
 		time.Now(),
 	)
 	if err != nil {
@@ -1396,6 +1397,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		[]api.PublicResourceID{restored.Artifacts[0].ID},
 		"",
 		false,
+		nil,
 		time.Now(),
 	)
 	if err != nil {
@@ -1451,7 +1453,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 			testCase.mutate(&mismatched)
 			uploadsBeforeMismatch := host.uploads
 			refreshed, refreshedResource, _, uploadErr := builder.UploadImages(ctx, restoredRelease, projections, restored, mismatched,
-				[]api.PublicResourceID{restored.Artifacts[0].ID}, "imgbb", false, time.Now())
+				[]api.PublicResourceID{restored.Artifacts[0].ID}, "imgbb", false, nil, time.Now())
 			if uploadErr != nil || host.uploads != uploadsBeforeMismatch+1 || host.calls[len(host.calls)-1].host != "imgbb" {
 				t.Fatalf("%s upload err=%v calls=%#v", testCase.name, uploadErr, host.calls)
 			}
@@ -1460,7 +1462,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 				t.Fatalf("%s did not retire stale hosted media: %#v", testCase.name, refreshed.Artifacts)
 			}
 			_, _, _, uploadErr = builder.UploadImages(ctx, restoredRelease, projections, refreshed, refreshedResource,
-				[]api.PublicResourceID{restored.Artifacts[0].ID}, "imgbb", false, time.Now())
+				[]api.PublicResourceID{restored.Artifacts[0].ID}, "imgbb", false, nil, time.Now())
 			if uploadErr != nil || host.uploads != uploadsBeforeMismatch+1 {
 				t.Fatalf("%s retained refresh upload err=%v calls=%#v", testCase.name, uploadErr, host.calls)
 			}
@@ -1479,7 +1481,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		invalidRetained := cloneWorkflowMediaPrivateArtifacts(restoredPrivate)
 		uploadsBeforeMismatch := host.uploads
 		refreshed, _, attempts, uploadErr := builder.UploadImages(ctx, restoredRelease, projections, invalidPublic, invalidRetained,
-			[]api.PublicResourceID{restored.Artifacts[0].ID}, "imgbb", false, time.Now())
+			[]api.PublicResourceID{restored.Artifacts[0].ID}, "imgbb", false, nil, time.Now())
 		if uploadErr != nil || host.uploads != uploadsBeforeMismatch+1 || len(refreshed.Artifacts) != len(invalidPublic.Artifacts)+1 {
 			t.Fatalf("public hosted mismatch upload err=%v artifacts=%#v calls=%#v", uploadErr, refreshed.Artifacts, host.calls)
 		}
@@ -1505,7 +1507,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	host.rawURL = "https://images.invalid/refreshed-account.png"
 	uploadsBeforeMismatch := host.uploads
 	refreshed, refreshedResource, _, err := builder.UploadImages(ctx, restoredRelease, projections, restored, staleAccount,
-		[]api.PublicResourceID{restored.Artifacts[0].ID}, "imgbb", false, time.Now())
+		[]api.PublicResourceID{restored.Artifacts[0].ID}, "imgbb", false, nil, time.Now())
 	if err != nil || host.uploads != uploadsBeforeMismatch+1 || host.calls[len(host.calls)-1].host != "imgbb" {
 		t.Fatalf("account mismatch legacy-cache bypass upload err=%v calls=%#v", err, host.calls)
 	}
@@ -1518,7 +1520,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		t.Fatalf("account mismatch exact media err=%v media=%#v", exactErr, exact)
 	}
 	_, _, _, err = builder.UploadImages(ctx, restoredRelease, projections, refreshed, refreshedResource,
-		[]api.PublicResourceID{restored.Artifacts[0].ID}, "imgbb", false, time.Now())
+		[]api.PublicResourceID{restored.Artifacts[0].ID}, "imgbb", false, nil, time.Now())
 	if err != nil || host.uploads != uploadsBeforeMismatch+1 {
 		t.Fatalf("account mismatch retained refresh err=%v calls=%#v", err, host.calls)
 	}
@@ -1549,6 +1551,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		[]api.PublicResourceID{restored.Artifacts[0].ID},
 		"imgbb",
 		false,
+		nil,
 		time.Now(),
 	)
 	if err != nil || host.uploads != uploadsBeforeFailure+1 || len(failedAttempts) != 1 ||
@@ -1571,6 +1574,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		[]api.PublicResourceID{restored.Artifacts[0].ID},
 		"imgbb",
 		true,
+		nil,
 		time.Now(),
 	)
 	if err != nil || host.uploads != uploadsBeforeFailure+2 || len(retriedAttempts) != 1 ||

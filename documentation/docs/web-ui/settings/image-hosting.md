@@ -28,6 +28,8 @@ Choose up to six hosts in preferred order. The Web UI reveals credential fields 
 
 Tracker-specific host choices still apply after warning acknowledgement and when existing images are reused. Cached images on another host do not replace the configured choice.
 
+For composite uploads, CLI `--imghost` (`-ih`) and API `imageHosting.preferredHost` also guide automatic screenshot and DVD-menu hosting. Tracker-specific configured hosts take precedence. The preference uses normal host compatibility and fallback rules; compatible saved links can still be reused rather than uploaded again. It is not the same as selecting one explicit host in the Upload Images stage.
+
 When an allowed host fails, upbrr can try the next eligible configured host. A host rejected by the target tracker's policy is skipped regardless of its global position.
 
 Imported tracker images still follow the destination's host policy. upbrr resolves supported thumbnail and proxy URLs to full-size sources where possible. Links tied to the source tracker, including PTP-hosted images when uploading elsewhere, require an eligible image host; this also applies to images inside imported comparison blocks. If a required image cannot be downloaded or rehosted, preparation reports the failure instead of treating the source URL as a valid destination upload.
