@@ -98,6 +98,9 @@ func (p *recordingEvidencePipeline) CollectPreparationEvidence(
 // resolveExternalIdentity keeps provider-adapter tests focused on the candidate
 // returned to canonical preparation; production collection never publishes it.
 func (s *Service) resolveExternalIdentity(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
+	// Provider-policy fixtures describe current evidence. Compatibility tests use
+	// the production pipeline directly, including its persisted version checks.
+	meta.Identity.Resolution.ContractVersion = externalidentity.ContractVersion
 	return s.collectExternalIdentityEvidence(ctx, meta)
 }
 
@@ -3104,7 +3107,7 @@ func TestResolveExternalIDsSQLiteFreshProvenanceOnlyAnchorClearsStoredGuess(t *t
 	}
 }
 
-func TestResolveExternalIDsSQLiteStaleAutomaticTVCanDriftFromFallbackMovieNaming(t *testing.T) {
+func TestResolveExternalIDsSQLiteDiscardsObsoleteAutomaticTVBeforeFallbackMovieNaming(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
 	sourcePath := filepath.Join(base, "unknown")
@@ -3192,8 +3195,8 @@ func TestResolveExternalIDsSQLiteStaleAutomaticTVCanDriftFromFallbackMovieNaming
 	if err != nil {
 		t.Fatalf("resolve stale identity: %v", err)
 	}
-	if resolved.Identity.Category != api.CanonicalCategoryTV {
-		t.Fatalf("resolved category = %q, candidate category = %q, want TV", resolved.Identity.Category, pipeline.state.Identity.Category)
+	if resolved.Identity.Category != api.CanonicalCategoryUnknown {
+		t.Fatalf("resolved category = %q, candidate category = %q, want unknown", resolved.Identity.Category, pipeline.state.Identity.Category)
 	}
 }
 

@@ -573,6 +573,8 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 	return nil
 }
 
+// GetExternalIdentity returns canonical identity authority and compatibility,
+// including legacy rows that have no prepared generation yet.
 func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string) (Identity, error) {
 	if r == nil || r.db == nil {
 		return Identity{}, errors.New("db: repository not initialized")
@@ -584,7 +586,8 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 	row := r.db.QueryRowContext(ctx, `
 		SELECT source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
 			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal,
-			dependency_json, updated_at
+			dependency_json, updated_at, generation, category_provenance,
+			override_json, conflict_status, source_fingerprint, intent_fingerprint, contract_version
 		FROM external_ids
 		WHERE source_path = ?
 	`, path)
@@ -598,6 +601,9 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 	var sourceTVmaze string
 	var sourceMAL string
 	var dependencyJSON string
+	var categoryProvenance string
+	var overrideJSON string
+	var conflict string
 	if err := row.Scan(
 		&ids.SourcePath,
 		&ids.TMDBID,
@@ -613,6 +619,13 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 		&sourceMAL,
 		&dependencyJSON,
 		&updatedAt,
+		&ids.Generation,
+		&categoryProvenance,
+		&overrideJSON,
+		&conflict,
+		&ids.Resolution.SourceFingerprint,
+		&ids.Resolution.IntentFingerprint,
+		&ids.Resolution.ContractVersion,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Identity{}, internalerrors.ErrNotFound
@@ -626,11 +639,16 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 	}
 	ids.Category, _ = api.NormalizeCanonicalCategory(category)
 	ids.Provenance = api.IdentityProvenanceSet{
-		TMDB:   api.IdentityProvenance(sourceTMDB),
-		IMDB:   api.IdentityProvenance(sourceIMDB),
-		TVDB:   api.IdentityProvenance(sourceTVDB),
-		TVmaze: api.IdentityProvenance(sourceTVmaze),
-		MAL:    api.IdentityProvenance(sourceMAL),
+		TMDB:     api.IdentityProvenance(sourceTMDB),
+		IMDB:     api.IdentityProvenance(sourceIMDB),
+		TVDB:     api.IdentityProvenance(sourceTVDB),
+		TVmaze:   api.IdentityProvenance(sourceTVmaze),
+		MAL:      api.IdentityProvenance(sourceMAL),
+		Category: api.IdentityProvenance(categoryProvenance),
+	}
+	ids.Conflict = api.IdentityConflictStatus(conflict)
+	if err := decodePreparedJSON(overrideJSON, &ids.Overrides); err != nil {
+		return Identity{}, fmt.Errorf("db get external ids: decode identity overrides: %w", err)
 	}
 	if err := decodePreparedJSON(dependencyJSON, &ids.Dependencies); err != nil {
 		return Identity{}, fmt.Errorf("db get external ids: decode identity dependencies: %w", err)
