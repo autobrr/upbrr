@@ -212,6 +212,7 @@ func hdrDiscFixture(t *testing.T, codec byte, payload []byte) string {
 	clpi := make([]byte, 0, 64+len(sequence)+4+len(program))
 	clpi = append(clpi, make([]byte, 60)...)
 	copy(clpi, "HDMV0200")
+	binary.BigEndian.PutUint32(clpi[40:], 16)
 	binary.BigEndian.PutUint32(clpi[8:], 60)
 	packetCount := uint32(1)
 	if codec == 0x24 {

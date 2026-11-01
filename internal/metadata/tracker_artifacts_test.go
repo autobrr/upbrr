@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"os"
@@ -54,6 +56,111 @@ func TestPersistUnit3DArtifactsLogsDownloadReasonWithoutImageURL(t *testing.T) {
 		strings.Contains(logger.warnings[0], "93.184.216.34") || strings.Contains(logger.warnings[0], "https://") ||
 		strings.Contains(logger.warnings[0], "private-image") || strings.Contains(logger.warnings[0], "marker=example") {
 		t.Fatalf("expected URL-free download failure reason, got warnings=%v successful=%v", logger.warnings, successful)
+	}
+}
+
+func TestPersistTrackerArtifactsUsesMeasuredResolution(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		height   int
+		manual   *string
+		cached   bool
+		accepted bool
+	}{
+		{
+			name:     "height floor accepts measured image",
+			height:   720,
+			accepted: true,
+		},
+		{name: "height floor rejects undersized image", height: 400},
+		{
+			name:     "manual resolution takes precedence",
+			height:   400,
+			manual:   new("480p"),
+			accepted: true,
+		},
+		{
+			name:     "cached image is revalidated",
+			height:   720,
+			cached:   true,
+			accepted: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var payload bytes.Buffer
+			if err := png.Encode(&payload, image.NewGray(image.Rect(0, 0, 1280, tc.height))); err != nil {
+				t.Fatal(err)
+			}
+			var requests atomic.Int32
+			previous := newUnit3DArtifactImageHTTPClient
+			newUnit3DArtifactImageHTTPClient = func() *http.Client {
+				return &http.Client{Transport: artifactRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+					requests.Add(1)
+					return &http.Response{
+						StatusCode:    http.StatusOK,
+						Header:        http.Header{"Content-Type": {"image/png"}},
+						Body:          io.NopCloser(bytes.NewReader(payload.Bytes())),
+						ContentLength: int64(payload.Len()),
+						Request:       req,
+					}, nil
+				})}
+			}
+			t.Cleanup(func() { newUnit3DArtifactImageHTTPClient = previous })
+			root := t.TempDir()
+			miPath := filepath.Join(root, "mediainfo.json")
+			if err := os.WriteFile(miPath, []byte(`{"media":{"track":[{"@type":"Video","Width":"960","Height":"720","ScanType":"Progressive"}]}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := config.Config{
+				MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")},
+			}
+			meta := preparationstate.State{
+				SourcePath:           filepath.Join(root, "Example.Release.2026.480p-GRP.mkv"),
+				MediaInfoJSONPath:    miPath,
+				Release:              api.ReleaseInfo{Resolution: "480p"},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Resolution: tc.manual},
+			}
+			const rawURL = "http://93.184.216.34/full.png"
+			var cachedPath string
+			if tc.cached {
+				tmpRoot, err := dbsvc.Subdir(cfg.MainSettings.DBPath, "tmp")
+				if err != nil {
+					t.Fatal(err)
+				}
+				tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cachedPath = filepath.Join(tmpDir, "aither", buildImageFilename(rawURL, 0))
+				if err := os.MkdirAll(filepath.Dir(cachedPath), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				var stale bytes.Buffer
+				if err := png.Encode(&stale, image.NewGray(image.Rect(0, 0, 1280, 400))); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(cachedPath, stale.Bytes(), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			svc := &Service{cfg: cfg, logger: api.NopLogger{}}
+			successful, _ := svc.persistTrackerArtifacts(t.Context(), meta, "AITHER", trackerdata.Result{
+				Validated: []bbcode.Image{{RawURL: rawURL}},
+			}, true)
+			accepted := len(successful) == 1 && successful[0] == rawURL
+			if accepted != tc.accepted || requests.Load() != 1 {
+				t.Fatalf("accepted=%t requests=%d, want accepted=%t requests=1", accepted, requests.Load(), tc.accepted)
+			}
+			if tc.cached {
+				retained, _ := svc.persistTrackerArtifacts(t.Context(), meta, "AITHER", trackerdata.Result{Validated: []bbcode.Image{{RawURL: rawURL}}}, true)
+				if len(retained) != 1 || retained[0] != rawURL || requests.Load() != 1 {
+					t.Fatal("valid cached image was fetched again")
+				}
+				if saved, err := os.ReadFile(cachedPath); err != nil || !bytes.Equal(saved, payload.Bytes()) {
+					t.Fatalf("stale image was not replaced: %v", err)
+				}
+			}
+		})
 	}
 }
 
@@ -231,7 +338,7 @@ func TestPTPTrackerImageLookupPersistsAuthenticatedArtifact(t *testing.T) {
 			Images:      []bbcode.Image{{RawURL: originalURL}},
 		},
 	}}
-	service := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
+	service := newTestService(t, repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 	state, err := service.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath: sourcePath,
 		TrackerIDs: map[string]string{"ptp": "303"},

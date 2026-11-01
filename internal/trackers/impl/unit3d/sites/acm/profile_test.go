@@ -5,6 +5,7 @@ package acm
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -56,7 +57,7 @@ func TestACMStructuredReleaseNamePolicy(t *testing.T) {
 				VideoEncode: "x264",
 				Tag:         "-GRP",
 			},
-			subtitles: []string{"English", "Japanese"},
+			subtitles: []string{"English [en-US] (Forced)", "Japanese"},
 			want:      "Example 2024 1080p BluRay AAC2.0 x264-GRP",
 		},
 		{
@@ -177,6 +178,9 @@ func TestACMStructuredReleaseNamePolicy(t *testing.T) {
 			want:      "Example 2024 480p DVD NTSC DVD MPEG DD 2.0",
 		},
 	}
+	if got := acmSubtitleCodesFor(api.UploadSubject{SubtitleLanguages: []string{"Portuguese [pt-BR]", "Portuguese [pt-PT] (Full)"}}); !slices.Equal(got, []string{"Por-BR", "Por"}) {
+		t.Fatalf("regional subtitle codes = %v", got)
+	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -255,7 +259,7 @@ func TestACMStructuredPolicyPreservesManualAndOpaqueNames(t *testing.T) {
 
 func TestProfileParity(t *testing.T) {
 	profile := Profile().Site
-	if got := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy(); got.ID != "unit3d/acm/v4" || got.Structured == nil || got.Resolver != nil {
+	if got := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy(); got.ID != "unit3d/acm/v5" || got.Structured == nil || got.Resolver != nil {
 		t.Fatalf("ACM policy = %#v", got)
 	}
 	if got := profile.ResolveTypeID(api.UploadSubject{

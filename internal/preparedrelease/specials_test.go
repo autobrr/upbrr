@@ -775,6 +775,8 @@ func openSpecialPreparation(t *testing.T, dbPath string) (*Module, *db.SQLiteRep
 	}
 	service := metadata.NewService(repo,
 		metadata.WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		metadata.WithTagsPathFromDB(dbPath),
+		metadata.WithSRRDBPaths(dbPath),
 		metadata.WithMediaInfoExporter(sceneGroupMediaInfo{}),
 		metadata.WithSceneDetector(&preparedSceneDetector{}),
 		metadata.WithIMDBClient(sceneGroupIMDB{}),

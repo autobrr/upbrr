@@ -188,7 +188,7 @@ func TestTVSearchUsesTVCategoryAndFiltersWrongWork(t *testing.T) {
 			{"category":[5000,100004],"tvdbid":100002,"tmdb":200002,"season":2,"episode":3,"fileName":"Other.Series.2026.S02E03.torrent"}]}`
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 		})}
-		result := dupe.NewAdapter(New(), "ANT", antDupeTestConfig(), client, api.NopLogger{}).Search(t.Context(), api.DuplicateSubject{Identity: identity})
+		result := dupe.NewAdapter(New(), "ANT", antDupeTestConfig(t), client, api.NopLogger{}).Search(t.Context(), api.DuplicateSubject{Identity: identity})
 		entries := result.Entries()
 		if result.Cause() != nil || !result.SearchEvidence().EffectiveComplete() || len(entries) != 1 ||
 			entries[0].Category != "tv" || entries[0].Pack || entries[0].Season != 2 || entries[0].Episode != 0 || entries[0].TrackerSlot != "" {
@@ -203,7 +203,7 @@ func TestANTTVWorkflowOmitsImagesAndMovieSlotAuthority(t *testing.T) {
 	if err := registry.Register(New()); err != nil {
 		t.Fatal(err)
 	}
-	cfg := antDupeTestConfig()
+	cfg := antDupeTestConfig(t)
 	cfg.Trackers.Trackers["ANT"] = config.TrackerConfig{APIKey: "test-key", ImageCount: 4}
 	projector, err := trackers.NewWorkflowProjector(registry, cfg, nil)
 	if err != nil {

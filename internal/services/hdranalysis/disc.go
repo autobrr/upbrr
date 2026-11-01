@@ -28,7 +28,7 @@ type TimelineItem struct {
 	Mapping             video.Mapping
 }
 
-// DiscExtraction grants authority only to a fully collected ordinary primary HEVC timeline.
+// DiscExtraction grants authority only to a fully collected default-angle primary HEVC timeline.
 func DiscExtraction(outcome *bridge.Outcome, playlistName string) (Sidecar, error) {
 	return discExtractionWithRetained(outcome, playlistName, 0)
 }
@@ -46,6 +46,10 @@ func discExtractionWithRetained(outcome *bridge.Outcome, playlistName string, ot
 	}
 	collectedSources := make(map[string]bool)
 	for _, collection := range outcome.Report.Collection {
+		key := collection.Info.Source.Path + "|" + strconv.Itoa(int(collection.Info.PID))
+		if !selectedSources[key] {
+			continue
+		}
 		selected := false
 		for _, occurrence := range collection.Info.Occurrences {
 			if strings.EqualFold(occurrence.Playlist, playlistName) && occurrence.Mapping.Role == video.Primary {
@@ -58,7 +62,7 @@ func discExtractionWithRetained(outcome *bridge.Outcome, playlistName string, ot
 			return Sidecar{}, errors.Join(extract.ErrIncomplete, collection.Err)
 		}
 		if selected {
-			collectedSources[collection.Info.Source.Path+"|"+strconv.Itoa(int(collection.Info.PID))] = true
+			collectedSources[key] = true
 			for _, sourceError := range outcome.SourceErrors {
 				if sourceError.Key.ClipID == collection.Info.Source.Path && sourceError.Key.TrackID == uint64(collection.Info.PID) &&
 					!errors.Is(sourceError.Err, extract.ErrNoMetadata) {
@@ -103,11 +107,11 @@ func discTimeline(report *bd.Result, playlistName string) ([]TimelineItem, map[s
 			continue
 		}
 		timelineFound = true
-		if !timeline.Complete || !timeline.Scanned || timeline.SelectedAngle != 0 || timeline.Err != nil {
+		if !timeline.Complete || !timeline.Scanned || timeline.Err != nil {
 			return nil, nil, errors.Join(extract.ErrUnsupportedInput, timeline.Err)
 		}
 		for _, item := range timeline.Items {
-			if item.Err != nil || item.SelectedAlternative != 0 || len(item.Angles) == 0 {
+			if item.Err != nil || len(item.Angles) == 0 {
 				return nil, nil, extract.ErrUnsupportedInput
 			}
 			angle := item.Angles[0]

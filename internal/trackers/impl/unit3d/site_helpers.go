@@ -42,14 +42,3 @@ func hasAdultToken(value string) bool {
 	}
 	return false
 }
-
-func hasEnglishLanguage(languages []string) bool {
-	for _, language := range languages {
-		lower := strings.ToLower(strings.TrimSpace(language))
-		switch lower {
-		case "english", "en", "eng", "en-us", "en-gb":
-			return true
-		}
-	}
-	return false
-}

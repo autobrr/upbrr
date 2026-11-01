@@ -6,6 +6,7 @@ package torrent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	slashpath "path" //nolint:depguard // Joins torrent-internal slash-delimited metainfo paths.
 	"path/filepath"
@@ -191,28 +192,50 @@ func TestCreateTrustsPTPPieceProfile(t *testing.T) {
 
 func TestCreateFolderWithSingleWantedVideoHashesFile(t *testing.T) {
 	t.Parallel()
-
-	dir := t.TempDir()
-	sourceDir := filepath.Join(dir, "Movie.2026.1080p.WEB-DL-GRP")
-	video := filepath.Join(sourceDir, "Movie.2026.1080p.WEB-DL-GRP.mkv")
-	writeTestFile(t, video, "video")
-	writeTestFile(t, filepath.Join(sourceDir, "proof.jpg"), "proof")
-
-	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.TorrentSubject{
-		SourcePath: sourceDir,
-		FileList:   []string{video},
-	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	name, files := loadTorrentShape(t, result.Path)
-	if name != filepath.Base(video) {
-		t.Fatalf("expected single-file torrent name %q, got %q", filepath.Base(video), name)
-	}
-	if len(files) != 0 {
-		t.Fatalf("expected single-file torrent file list to be empty, got %#v", files)
+	for _, folderName := range []string{"Example.Movie.2026.1080p.WEB-DL-GRP", "Example.Movie.2026.1080p.WEB-DL-GRP.mkv"} {
+		for _, keep := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s keep=%t", folderName, keep), func(t *testing.T) {
+				sourceDir := filepath.Join(t.TempDir(), folderName)
+				video := filepath.Join(sourceDir, "Example.Movie.2026.1080p.WEB-DL-GRP.mkv")
+				writeTestFile(t, video, "video")
+				for _, name := range []string{"sample.mkv", "release.nfo", "notes.txt", "proof.jpg"} {
+					writeTestFile(t, filepath.Join(sourceDir, name), "sidecar")
+				}
+				service := NewService(api.NopLogger{}, t.TempDir())
+				subject := api.TorrentSubject{
+					SourcePath: sourceDir,
+					FileList:   []string{video},
+					KeepFolder: keep,
+				}
+				result, err := service.Create(t.Context(), subject)
+				if err != nil {
+					t.Fatal(err)
+				}
+				name, files := loadTorrentShape(t, result.Path)
+				if keep {
+					if name != filepath.Base(sourceDir) || len(files) != 1 || files[0] != filepath.Base(video) {
+						t.Fatalf("kept folder layout = %q %v", name, files)
+					}
+				} else if name != filepath.Base(video) || len(files) != 0 {
+					t.Fatalf("single-file layout = %q %v", name, files)
+				}
+				inventory, ok, err := ResolveSubmissionContentInventory(subject)
+				if err != nil || !ok || len(inventory.Files) != 1 || inventory.Files[0].LocalPath != video {
+					t.Fatalf("selected content inventory = %+v ok=%t err=%v", inventory, ok, err)
+				}
+				wantScope := api.SubmissionContentScopeSingleFile
+				if keep {
+					wantScope = api.SubmissionContentScopeFileSet
+				}
+				if inventory.Scope != wantScope {
+					t.Fatalf("scope=%s want=%s", inventory.Scope, wantScope)
+				}
+				subject.KeepFolder = !keep
+				if err := validateTorrentContent(result.Path, subject); err == nil {
+					t.Fatal("opposite folder layout accepted for reuse")
+				}
+			})
+		}
 	}
 }
 
@@ -301,6 +324,31 @@ func TestCreateFolderPackEscapesWantedFilePatterns(t *testing.T) {
 
 	_, files := loadTorrentShape(t, result.Path)
 	assertStringSliceEqual(t, files, []string{"Show, [S01E01].mkv", "Show.{S01E02}.mkv"})
+}
+
+func TestCreateDiscImagePreservesSingleFileLayout(t *testing.T) {
+	t.Parallel()
+	for _, reuse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reuse=%t", reuse), func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "Example.Movie.2026.iso")
+			writeTestFile(t, source, "disc image")
+			if reuse {
+				createTestTorrentFromExisting(t, source, source+".torrent")
+			}
+			service := NewService(api.NopLogger{}, t.TempDir())
+			result, err := service.Create(t.Context(), api.TorrentSubject{SourcePath: source, DiscType: "BDMV"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			name, files := loadTorrentShape(t, result.Path)
+			if name != filepath.Base(source) || len(files) != 0 {
+				t.Fatalf("disc image layout = %q %v", name, files)
+			}
+			if reuse && result.Path != source+".torrent" {
+				t.Fatalf("disc image candidate was not reused: %s", result.Path)
+			}
+		})
+	}
 }
 
 func TestCreateDiscFolderIgnoresWantedFileList(t *testing.T) {
@@ -591,9 +639,9 @@ func TestCreateNoHashRequiresVerifiedClientDataToSkipBytes(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name         string
-		verified     bool
-		missingHash  bool
+		name        string
+		verified    bool
+		missingHash bool
 	}{
 		{name: "verified", verified: true},
 		{name: "unverified"},
@@ -1544,4 +1592,53 @@ func mustStat(t *testing.T, path string) os.FileInfo {
 		t.Fatalf("stat %s: %v", path, err)
 	}
 	return info
+}
+
+func TestCreateISOFullDiscKeepsOnlyOriginalPayload(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "Example.3D.iso")
+	payload := []byte("synthetic original image payload")
+	if err := os.WriteFile(source, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Neither virtual stream evidence nor nearby generated artifacts are payloads.
+	artifact := filepath.Join(filepath.Dir(source), "summary.txt")
+	if err := os.WriteFile(artifact, []byte("report"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	subject := api.TorrentSubject{
+		SourcePath: source,
+		DiscType:   "BDMV",
+		FileList:   []string{filepath.Join(filepath.Dir(source), "00001.M2TS"), artifact},
+	}
+	inventory, ok, err := ResolveSubmissionContentInventory(subject)
+	if err != nil || !ok {
+		t.Fatalf("inventory=%+v ok=%v err=%v", inventory, ok, err)
+	}
+	if inventory.Scope != api.SubmissionContentScopeFullDisc || len(inventory.Files) != 1 || inventory.Files[0].LocalPath != source || inventory.Files[0].Size != int64(len(payload)) {
+		t.Fatalf("physical ISO inventory=%+v", inventory)
+	}
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(t.Context(), subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	torrentMeta, err := metainfo.LoadFromFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Files) != 0 || info.Name != filepath.Base(source) || info.Length != int64(len(payload)) {
+		t.Fatalf("ISO torrent is not the original single payload: %+v", info)
+	}
+	identity, err := SubmissionContentIdentity(inventory, verifySubmissionSource(t, source))
+	if err != nil || len(identity.Files) != 1 {
+		t.Fatalf("ISO content identity=%+v err=%v", identity, err)
+	}
+	reused, err := service.Create(t.Context(), subject)
+	if err != nil || reused.InfoHash != result.InfoHash {
+		t.Fatalf("ISO reuse changed content: %+v err=%v", reused, err)
+	}
 }

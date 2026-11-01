@@ -224,7 +224,8 @@ func resolveDescriptionAssets(
 	if (repo == nil || strings.TrimSpace(meta.SourcePath) == "") && meta.ExactMedia == nil {
 		description := meta.DescriptionOverride
 		final := false
-		if group := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(group.Source()) != "" {
+		if group := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(group.Source()) != "" ||
+			group.GroupKey != "" && (meta.DescriptionGroupsFinal || group.Final) {
 			description = group.Source()
 			final = meta.DescriptionGroupsFinal || group.Final
 		}
@@ -236,8 +237,8 @@ func resolveDescriptionAssets(
 		hasDescription := strings.TrimSpace(description) != ""
 		return DescriptionAssets{
 			Description: description,
-			Override:    hasDescription,
-			Final:       final && hasDescription,
+			Override:    hasDescription || final,
+			Final:       final,
 		}, nil
 	}
 	if logger != nil {
@@ -299,8 +300,8 @@ func resolveDescriptionAssets(
 		Screenshots: normalScreenshots,
 		MenuImages:  menuImages,
 		Slots:       slots,
-		Override:    overridden && hasDescription,
-		Final:       final && hasDescription,
+		Override:    overridden && (hasDescription || final),
+		Final:       final,
 	}, nil
 }
 
@@ -625,7 +626,8 @@ func resolveTrackerDescription(
 	if err := ctx.Err(); err != nil {
 		return "", false, false
 	}
-	if group := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(group.Source()) != "" {
+	if group := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(group.Source()) != "" ||
+		group.GroupKey != "" && (meta.DescriptionGroupsFinal || group.Final) {
 		if logger != nil {
 			logger.Tracef(
 				"trackers: canonical group description applied source=%s tracker=%s len=%d",

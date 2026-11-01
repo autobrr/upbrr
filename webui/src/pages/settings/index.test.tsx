@@ -126,7 +126,7 @@ describe("SettingsPage", () => {
       "Appearance",
       "Application Details",
       "API Tokens",
-      "Tracker Auth",
+      "Tracker authentication",
     ]);
     expect(screen.queryByText("autobrr/upbrr")).not.toBeInTheDocument();
 
@@ -206,7 +206,7 @@ describe("SettingsPage", () => {
 
     render(<SettingsPage {...baseProps} setSettingsSection={setSettingsSection} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Tracker Auth" }));
+    await userEvent.click(screen.getByRole("button", { name: "Tracker authentication" }));
 
     expect(setSettingsSection).toHaveBeenCalledWith("tracker_auth");
   });

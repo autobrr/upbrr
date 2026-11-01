@@ -7,6 +7,12 @@ description: Save, reload, import, and verify every section of the Web UI Settin
 
 The Web UI **Settings** page edits runtime configuration and manages related security state. Open **Settings**, choose a section, make the change, then select **Save**.
 
+## Field help
+
+Use the information icon beside a setting’s label to read its effect, constraints and relevant defaults. Help floats near the icon without moving the form. Hover over the icon or focus it with the keyboard; on touch devices, tap to open or close it. You can move the pointer onto the help to read it. Press Escape, move away, or tap outside to dismiss it. Essential warnings remain visible beside the controls. Opening help does not change the setting.
+
+Display names may differ from imported configuration keys. Keys, saved values and API fields are unchanged. Compatibility-only preferences are identified individually; they remain stored but do not implement the named feature. Changing them can still invalidate derived configuration state.
+
 ## Configuration actions
 
 | Action     | Result                                                                                          |
@@ -37,7 +43,7 @@ Most sections stage edits until **Save**. These sections behave differently:
 - **Application Details** is read-only.
 - **Appearance** applies immediately and is saved in this browser; see [Appearance](./appearance.md).
 - **API Tokens** creates and revokes tokens immediately.
-- **Tracker Auth** imports, checks, and deletes auth state immediately.
+- **Tracker authentication** imports, checks, and deletes auth state immediately.
 
 Unsaved settings edits stay in the draft while you use other Web UI pages or browser Back and Forward. **Reload** and **Log out** ask before discarding them. Reloading or closing the browser tab triggers the browser's own unsaved-changes warning. If the session expires, sign in again; the unsaved draft has been discarded.
 
@@ -47,21 +53,21 @@ Use **Show advanced** only when a section offers it. Advanced fields are active 
 
 | Section                                         | Purpose                                                          |
 | ----------------------------------------------- | ---------------------------------------------------------------- |
-| [Main](./main.md)                               | Metadata access, browser history, icons, and scene detection.    |
+| [General](./main.md)                            | Metadata access, browser history, icons, and scene detection.    |
 | [Image Hosting](./image-hosting.md)             | Ordered upload hosts, credentials, and conditional hosts.        |
 | [Metadata](./metadata.md)                       | Discovery, tracker-data, image, and Blu-ray lookup policy.       |
-| [Screens](./screens.md)                         | Screenshot generation, upload concurrency, and tone mapping.     |
+| [Screenshot capture](./screens.md)              | Screenshot generation, upload concurrency, and tone mapping.     |
 | [Description](./description.md)                 | Shared description layout, headers, artwork, and signatures.     |
-| [Arr](./arr.md)                                 | Sonarr and Radarr metadata enrichment.                           |
+| [Sonarr and Radarr](./arr.md)                   | Sonarr and Radarr metadata enrichment.                           |
 | [Post Upload](./post-upload.md)                 | Client-injection delay and tracker upload concurrency.           |
 | [Trackers](./trackers.md)                       | Enabled trackers, defaults, credentials, and tracker options.    |
 | [Torrent Clients](./torrent-clients.md)         | qBittorrent, qui proxy, watch-folder, linking, and path mapping. |
 | [Client Handling](./client-handling.md)         | Default, search, and injection client selection.                 |
-| [Torrent Specific](./torrent-specific.md)       | Reusable torrent piece preference and rehash scheduling.         |
+| [Torrent preparation](./torrent-specific.md)    | Reusable torrent piece preference and rehash scheduling.         |
 | [Application Details](./application-details.md) | Build, platform, FFmpeg, and uptime diagnostics.                 |
 | [Appearance](./appearance.md)                   | Bundled themes, color mode, and optional accents.                |
 | [API Tokens](./api-tokens.md)                   | Scoped bearer-token creation and revocation.                     |
-| [Tracker Auth](./tracker-auth.md)               | Encrypted cookies, remote checks, relogin, and 2FA state.        |
+| [Tracker authentication](./tracker-auth.md)     | Encrypted cookies, remote checks, relogin, and 2FA state.        |
 
 After changing upload behavior or credentials, inspect every tracker preview and run **Dry Run**. Dry Run suppresses tracker submission but still attempts client injection by default; select **Skip client injection** when no torrent should be added. For CLI testing, combine `--debug` with `--no-seed` (`-ns`).
 

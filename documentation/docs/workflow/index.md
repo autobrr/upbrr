@@ -54,7 +54,7 @@ Metadata providers and local media inspection produce shared release facts. Revi
 - external IDs;
 - generated release name.
 
-Automatic category detection checks source folders and filenames for TV hints before using the parsed release category, with Movie as the final fallback. Parent folders affect category only; they do not replace the parsed release title. A `Season 1` directory is a TV-category hint without supplying a season number; canonical season tokens still require two or four digits. Tracker-provided categories take precedence over automatic detection, and an explicit category correction in Input or `--category` remains authoritative.
+Automatic category detection checks source folders and filenames for TV hints before using the parsed release category, with Movie as the final fallback. Parent folders affect category only; they do not replace the parsed release title. A `Season 1` directory is a TV-category hint without supplying a season number; filename season tokens still require two or four digits. Manual season and episode corrections accept plain numbers; see [naming fields](../cli/index.md#naming-fields). Tracker-provided categories take precedence over automatic detection, and an explicit category correction in Input or `--category` remains authoritative.
 
 Overrides change the prepared generation. Later operations must use that exact generation rather than silently rebuilding it.
 
@@ -83,6 +83,17 @@ the track's language correction. A `mul` tag does not identify the languages, an
 known language differing from the title's recorded original language does not prove
 a dub. Ordinary matching-language original tracks need no special title or flag.
 Commentary is not programme audio.
+
+Language corrections accept complete names or codes, including explicit regions and
+scripts such as `pt-BR` and `zh-Hant`. These variants remain visible; matching uses
+the base language. Filipino (`fil`), Tagalog (`tgl`) and the collective Philippine
+languages (`phi`) remain distinct. A collective label does not identify its members.
+Absent language, undetermined (`und`), multiple languages (`mul`), uncoded languages
+(`mis`), non-linguistic content (`zxx`) and custom text are retained separately;
+unknown values do not establish English or an original soundtrack. Full and Forced
+subtitle coverage stays separate from language identity. Auto removes a correction;
+an explicitly empty list clears it. For an ambiguous name, choose the suggestion
+with its displayed code or enter the intended code directly.
 
 For a previously inspected source, the CLI accepts
 `--track-audio-origin 'TRACK_ID=original'` (or `dubbed` or `unresolved`). It binds the
@@ -187,6 +198,8 @@ After confirmed tracker success, upbrr records the tracker result and attempts t
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
 
 Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. While an unknown outcome is retained, it requires reconciliation and is never treated as confirmed success. Restarting does not clear its retry block; verify and reconcile the remote outcome before another attempt.
+
+Automatically managed reports, screenshots, descriptions, torrent exports and analysis files share the release's `tmp/<release>/` folder in the active state directory. Analysis and secondary-file reports may use nested folders. Compatible source evidence is reused; changing the source requires fresh evidence. History deletion includes these nested files and preserves active or shared ownership. See the [v0.4.2 artifact notice](../changelog/v0.4.2.md) for legacy cache removal.
 
 ## 8. Inject into clients
 

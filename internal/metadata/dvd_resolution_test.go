@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestExtractDVDMediaInfoFromVOBJSON(t *testing.T) {
@@ -100,80 +101,256 @@ func TestExtractDVDMediaInfoDoesNotOverrideJSONProgressiveScan(t *testing.T) {
 	}
 }
 
+func TestExtractDVDMediaInfoRetainsAnamorphicAxes(t *testing.T) {
+	info := extractDVDMediaInfo(preparationstate.State{
+		DiscType:            "DVD",
+		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"Video","Width":"352","Height":"576","ScanType":"Interlaced"}]}}`,
+	})
+	if info.Width != 720 || info.Height != 576 || info.Resolution != "576i" {
+		t.Fatalf("anamorphic DVD dimensions=%dx%d resolution=%q", info.Width, info.Height, info.Resolution)
+	}
+}
+
+func TestExtractDVDMediaInfoRejectsConflictingFilenameWithPartialDimensions(t *testing.T) {
+	info := extractDVDMediaInfo(preparationstate.State{
+		DiscType:            "DVD",
+		Release:             api.ReleaseInfo{Resolution: "1080p"},
+		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"Video","Height":"576","ScanType":"Interlaced"}]}}`,
+	})
+	if info.Resolution != "576i" {
+		t.Fatalf("partial interlaced resolution=%q, want 576i", info.Resolution)
+	}
+}
+
 func TestResolutionFromMediaInfo(t *testing.T) {
 	tests := []struct {
 		name     string
+		guessed  string
 		payload  string
 		expected string
-		message  string
 	}{
 		{
 			name:     "1080p",
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Progressive"}]}}`,
 			expected: "1080p",
-			message:  "expected 1080p, got %q",
 		},
 		{
 			name:     "720p",
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1280","Height":"720","ScanType":"Progressive"}]}}`,
 			expected: "720p",
-			message:  "expected 720p, got %q",
 		},
 		{
 			name:     "720x540p",
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"720","Height":"540","ScanType":"Progressive"}]}}`,
 			expected: "540p",
-			message:  "expected 540p for 720x540, got %q",
 		},
 		{
 			name:     "960x540p",
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"960","Height":"540","ScanType":"Progressive"}]}}`,
 			expected: "540p",
-			message:  "expected 540p for 960x540, got %q",
 		},
 		{
 			name:     "1080i",
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Interlaced"}]}}`,
 			expected: "1080i",
-			message:  "expected 1080i, got %q",
 		},
 		{
 			name:     "1080i MBAFF",
 			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"1080","ScanType":"MBAFF"}]}}`,
 			expected: "1080i",
-			message:  "expected 1080i for MBAFF, got %q",
 		},
 		{
 			name:     "2160p",
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"3840","Height":"2160","ScanType":"Progressive"}]}}`,
 			expected: "2160p",
-			message:  "expected 2160p, got %q",
 		},
 		{
 			name:     "floors cropped dimensions",
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1916","Height":"800","ScanType":"Progressive"}]}}`,
 			expected: "1080p",
-			message:  "expected 1080p for cropped dimensions, got %q",
+		},
+		{
+			name:     "SD 540 height floor",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"854","Height":"540","ScanType":"Progressive"}]}}`,
+			expected: "540p",
+		},
+		{
+			name:     "SD 576 height floor",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"576","ScanType":"Progressive"}]}}`,
+			expected: "576p",
+		},
+		{
+			name:     "720 height floor",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"720","ScanType":"Progressive"}]}}`,
+			expected: "720p",
+		},
+		{
+			name:     "1080 height floor",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"1080","DisplayAspectRatio":"16:9","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "1440 height floor",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1280","Height":"1440","PixelAspectRatio":"2.000","ScanType":"Progressive"}]}}`,
+			expected: "1440p",
+		},
+		{
+			name:     "2160 height floor",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"2160","DisplayAspectRatio":"1.778","ScanType":"Progressive"}]}}`,
+			expected: "2160p",
+		},
+		{
+			name:     "height below 720 does not round up",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"719","ScanType":"Progressive"}]}}`,
+			expected: "576p",
+		},
+		{
+			name:     "cropped 1440 width",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"2560","Height":"1000","ScanType":"Progressive"}]}}`,
+			expected: "1440p",
+		},
+		{
+			name:     "cropped 4320 width",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"7680","Height":"2000","ScanType":"Progressive"}]}}`,
+			expected: "4320p",
+		},
+		{
+			name:     "cropped 8640 width",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"15360","Height":"4000","ScanType":"Progressive"}]}}`,
+			expected: "8640p",
+		},
+		{
+			name:     "portrait 1080 dimensions",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1080","Height":"1920","DisplayAspectRatio":"9:16","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "portrait retains 1080 filename",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1080","Height":"1920","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "portrait 720 dimensions",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"720","Height":"1280","ScanType":"Progressive"}]}}`,
+			expected: "720p",
+		},
+		{
+			name:     "portrait 1440 dimensions",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1440","Height":"2560","ScanType":"Progressive"}]}}`,
+			expected: "1440p",
+		},
+		{
+			name:     "cropped portrait retains long-axis tier",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"800","Height":"1920","ScanType":"Progressive","Rotation":"90.000"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "DCI 2K full frame",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"2048","Height":"1080","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "DCI 2K cropped frame",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"2048","Height":"864","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "DCI 4K full frame",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"4096","Height":"2160","ScanType":"Progressive"}]}}`,
+			expected: "2160p",
+		},
+		{
+			name:     "DCI 4K cropped frame",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"4096","Height":"1716","ScanType":"Progressive"}]}}`,
+			expected: "2160p",
+		},
+		{
+			name:     "1080 interlaced height floor",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"1080","DisplayAspectRatio":"1.778","ScanType":"Interlaced"}]}}`,
+			expected: "1080i",
+		},
+		{
+			name:     "unsupported 720 interlaced floor",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"720","ScanType":"Interlaced"}]}}`,
+			expected: "",
+		},
+		{
+			name:     "unsupported 2160 interlaced floor",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"2160","PixelAspectRatio":"2:1","ScanType":"Interlaced"}]}}`,
+			expected: "",
+		},
+		{
+			name:     "unsupported 720 interlaced rejects progressive filename",
+			guessed:  "720p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"720","ScanType":"Interlaced"}]}}`,
+			expected: "",
+		},
+		{
+			name:     "explicit interlaced replaces filename scan",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Interlaced"}]}}`,
+			expected: "1080i",
+		},
+		{
+			name:     "explicit MBAFF replaces filename scan",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"1080","ScanType":"MBAFF"}]}}`,
+			expected: "1080i",
+		},
+		{
+			name:     "explicit progressive replaces filename scan",
+			guessed:  "1080i",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Progressive"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "matching interlaced filename retains higher tier",
+			guessed:  "1080i",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"960","Height":"720","ScanType":"Interlaced"}]}}`,
+			expected: "1080i",
+		},
+		{
+			name:     "missing scan retains filename evidence",
+			guessed:  "1080i",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1280","Height":"720"}]}}`,
+			expected: "1080i",
+		},
+		{
+			name:     "missing dimensions reject conflicting scan",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"0","Height":"720","ScanType":"Interlaced"}]}}`,
+			expected: "",
+		},
+		{
+			name:     "missing dimensions retain filename evidence",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"0","Height":"720"}]}}`,
+			expected: "1080p",
+		},
+		{
+			name:     "missing video track retains filename evidence",
+			guessed:  "1080p",
+			payload:  `{"media":{"track":[{"@type":"General"}]}}`,
+			expected: "1080p",
 		},
 		{
 			name:     "empty on missing track",
 			payload:  `{"media":{"track":[{"@type":"General"}]}}`,
 			expected: "",
-			message:  "expected empty on missing video track, got %q",
 		},
 		{
 			name:     "empty on zero dimensions",
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"0","Height":"0"}]}}`,
 			expected: "",
-			message:  "expected empty on zero dimensions, got %q",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			res := resolutionFromMediaInfo(mustParseMediaInfoDoc(tc.payload), "/releases/Movie")
+			res := resolutionFromMediaInfo(mustParseMediaInfoDoc(tc.payload), "/releases/Movie", tc.guessed)
 			if res != tc.expected {
-				t.Fatalf(tc.message, res)
+				t.Fatalf("resolution = %q, want %q", res, tc.expected)
 			}
 		})
 	}
@@ -196,7 +373,7 @@ func TestResolutionFromMediaInfoEmptyOnSingleZeroDimension(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			res := resolutionFromMediaInfo(mustParseMediaInfoDoc(tc.payload), "/releases/Movie")
+			res := resolutionFromMediaInfo(mustParseMediaInfoDoc(tc.payload), "/releases/Movie", "")
 			if res != "" {
 				t.Fatalf("expected empty when one dimension is zero, got %q", res)
 			}

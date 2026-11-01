@@ -3,6 +3,7 @@
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import type { AudioAnalysisFacet } from "../../releaseSession/types";
 import AudioAnalysisPage from "./index";
 
@@ -146,7 +147,7 @@ describe("AudioAnalysisPage", () => {
       resourceLimits: { decoderThreads: 2 },
     });
     expect(screen.getByText(/Director commentary/)).toBeInTheDocument();
-    expect(screen.getAllByText(/commentary/)).toHaveLength(2);
+    expect(screen.getByText("English · commentary")).toBeInTheDocument();
   });
 
   it("requires a checkbox selection in Selected mode", () => {
@@ -371,4 +372,28 @@ describe("AudioAnalysisPage", () => {
 
     expect(value.retry).toHaveBeenCalledOnce();
   });
+});
+
+it("keeps output selections and generation idle while grouped help is opened and dismissed", async () => {
+  const user = userEvent.setup();
+  const value = facet();
+  render(<AudioAnalysisPage facet={value} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  const waveform = screen.getByRole("checkbox", { name: "Waveform" });
+  expect(waveform).toHaveAccessibleDescription(/amplitude over time/);
+  expect(screen.getByRole("combobox", { name: "Threads per decoder" })).toHaveAccessibleDescription(
+    /Default: 2/,
+  );
+  await user.hover(screen.getByRole("button", { name: "Help for Audio outputs" }));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("channels separately");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  expect(waveform).toBeChecked();
+  expect(screen.getByRole("radio", { name: "Primary" })).toBeChecked();
+  expect(value.generate).not.toHaveBeenCalled();
+  expect(value.disable).not.toHaveBeenCalled();
+  fireEvent.click(waveform);
+  fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+  expect(value.generate).toHaveBeenCalledWith(
+    expect.objectContaining({ variants: ["spectrogram", "stats"], trackIDs: ["audio-main"] }),
+  );
 });

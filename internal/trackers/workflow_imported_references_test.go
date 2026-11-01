@@ -294,7 +294,7 @@ func TestImportedReferencesDoNotForceDescriptionRehosting(t *testing.T) {
 	}
 	repo := importedReferenceNoIORepository{}
 	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "IMPORTER", subject,
-		config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, registry, preloaded)
+		trackerTestConfig(t, config.Config{}), config.TrackerConfig{}, repo, nil, api.NopLogger{}, registry, preloaded)
 	if err != nil || resolution.blocking || resolution.feedback.Reuploaded || len(resolution.screenshots) != 0 {
 		t.Fatalf("reference-only description host resolution = %+v, err = %v", resolution, err)
 	}

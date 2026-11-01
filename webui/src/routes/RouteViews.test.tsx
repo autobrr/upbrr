@@ -21,6 +21,27 @@ const DuplicatesRoute = routeComponents.dupes;
 
 afterEach(cleanup);
 
+it("renders the descriptions view when a retained failure has a null descriptions list", async () => {
+  const context = contextFor("workflow-a", true, null);
+  const failedContext = {
+    ...context,
+    session: {
+      ...context.session,
+      descriptions: {
+        ...context.session.descriptions,
+        view: { ...context.session.descriptions.view, artifact: { descriptions: null } },
+      },
+    },
+  } as unknown as RouteViewContextValue;
+  const Route = routeComponents.description_builder;
+  render(
+    <RouteViewsContext.Provider value={failedContext}>
+      <Route />
+    </RouteViewsContext.Provider>,
+  );
+  expect(await screen.findByText("Retained descriptions")).toBeInTheDocument();
+});
+
 function contextFor(
   workflowID: string,
   available: boolean,

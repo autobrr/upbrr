@@ -57,7 +57,7 @@ func TestPreparedExactMediaPreservesDescriptionArtwork(t *testing.T) {
 				ImageHostOverrides: api.ImageHostOverrides{SkipUpload: &skipUpload},
 			}
 			repo := &stubRepo{}
-			service := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, repo, registry)
+			service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), api.NopLogger{}, repo, registry)
 			content := service.prepareUploadContent(t.Context(), tracker, meta, config.TrackerConfig{}, nil, nil)
 			if content.Failure != nil || content.Assets == nil {
 				t.Fatalf("prepare final content: %+v", content)

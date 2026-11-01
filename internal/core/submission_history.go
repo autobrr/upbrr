@@ -91,6 +91,7 @@ func workflowSubmissionTorrentSubject(subject api.UploadSubject) api.TorrentSubj
 		SourceSize:                subject.SourceSize,
 		FileList:                  append([]string(nil), subject.FileList...),
 		DiscType:                  subject.DiscType,
+		KeepFolder:                subject.KeepFolder,
 		ClientTorrentPath:         subject.ClientTorrentPath,
 		ClientTorrentInfoHash:     subject.InfoHash,
 		ClientTorrentDataVerified: subject.ClientTorrentDataVerified,

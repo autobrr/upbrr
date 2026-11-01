@@ -29,10 +29,19 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// trackerTestConfig keeps constructor-owned banned-group caches in the test's root.
+func trackerTestConfig(t *testing.T, cfg config.Config) config.Config {
+	t.Helper()
+	if cfg.MainSettings.DBPath == "" {
+		cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "upbrr.db")
+	}
+	return cfg
+}
+
 func TestUploadNoTrackers(t *testing.T) {
 	t.Parallel()
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, NewRegistry())
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, NewRegistry())
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -46,7 +55,7 @@ func TestUploadConfiguredTrackers(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"blU", "bhd"}}}
-	svc := NewServiceWithRegistry(cfg, nil, nil, NewRegistry())
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, NewRegistry())
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -60,7 +69,7 @@ func TestUploadOverrideTrackers(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}}}
-	svc := NewServiceWithRegistry(cfg, nil, nil, NewRegistry())
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, NewRegistry())
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file", Trackers: []string{"aither"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -85,7 +94,7 @@ func TestUploadOverrideTrackersReplaceDefaults(t *testing.T) {
 	}
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}}}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{
 		SourcePath: "/tmp/file",
 		Trackers:   []string{"aither"},
@@ -132,7 +141,7 @@ func TestUploadAppliesGroupPoliciesPerTracker(t *testing.T) {
 			"PTP": {InternalGroups: config.CSVList{"Mine"}},
 		},
 	}}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 	summary, err := svc.Upload(t.Context(), api.UploadSubject{SourcePath: "/tmp/file", Tag: "-Mine"})
 	if err != nil || summary.Uploaded != 2 {
 		t.Fatalf("Upload() summary=%#v err=%v", summary, err)
@@ -155,7 +164,7 @@ func TestUploadRemovesTrackers(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU", "BHD"}}}
-	svc := NewServiceWithRegistry(cfg, nil, nil, NewRegistry())
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, NewRegistry())
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file", TrackersRemove: []string{"bhd"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -169,7 +178,7 @@ func TestUploadUnknownTrackers(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"NOPE"}}}
-	svc := NewServiceWithRegistry(cfg, nil, nil, NewRegistry())
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, NewRegistry())
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -191,7 +200,7 @@ func TestUploadBannedGroup(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("register TOS: %v", err)
 	}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 	_, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file", Tag: "-FL3ER"})
 	if !errors.Is(err, internalerrors.ErrBannedGroup) {
 		t.Fatalf("expected banned group error, got %v", err)
@@ -226,7 +235,7 @@ func TestUploadSkipsDynamicBannedRefreshForEmptyEffectiveGroup(t *testing.T) {
 			},
 		},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 	svc.banned.client = bannedRewriteClient(t, server)
 
 	for _, tag := range []string{"-", " - ", "   "} {
@@ -767,7 +776,7 @@ func TestBuildUploadDryRunUsesBuilder(t *testing.T) {
 		t.Fatalf("register stub: %v", err)
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"}, []string{"BLU"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -791,7 +800,7 @@ func TestBuildUploadPreviewUsesTypedDryRunIntent(t *testing.T) {
 	if err := registry.Register(stubDryRunDefinition{name: "BLU", intents: &intents}); err != nil {
 		t.Fatalf("register stub: %v", err)
 	}
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	subject := api.UploadSubject{SourcePath: "/tmp/file"}
 	if _, err := svc.BuildUploadDryRun(context.Background(), subject, []string{"BLU"}); err != nil {
 		t.Fatalf("build explicit dry run: %v", err)
@@ -820,7 +829,7 @@ func TestBuildPreparationSkipsAllNonDescriptionContent(t *testing.T) {
 		uploadsErr:             errors.New("uploads unavailable"),
 		descriptionOverrideErr: errors.New("overrides unavailable"),
 	}
-	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, repo, registry)
 
 	preview, err := svc.BuildPreparation(
 		context.Background(),
@@ -856,7 +865,7 @@ func TestBuildPreparationUsesProjectedDescriptionGroupOverride(t *testing.T) {
 		t.Fatalf("register example definition: %v", err)
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	preview, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(api.UploadSubject{
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
 			GroupKey:       "example",
@@ -896,7 +905,7 @@ func TestBuildUploadDryRunNoneModeSkipsSharedContent(t *testing.T) {
 		uploadsErr:             errors.New("uploads unavailable"),
 		descriptionOverrideErr: errors.New("overrides unavailable"),
 	}
-	svc := NewServiceWithRegistry(config.Config{}, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, repo, registry)
 
 	entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{SourcePath: "/tmp/source"}, []string{"NONE"})
 	if err != nil {
@@ -954,7 +963,7 @@ func TestBuildUploadDryRunDistinguishesReadyEmptyAndFailedScreenshots(t *testing
 				t.Fatalf("register stub: %v", err)
 			}
 			cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
-			svc := NewServiceWithRegistry(cfg, nil, test.repo, registry)
+			svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, test.repo, registry)
 
 			entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{SourcePath: "/tmp/source"}, []string{"IMAGES"})
 			if err != nil {
@@ -1004,7 +1013,7 @@ func TestBuildUploadDryRunScopesDescriptionPreloadFailure(t *testing.T) {
 	}
 	repo := &stubRepo{descriptionOverrideErr: errors.New("description overrides unavailable")}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 
 	entries, err := svc.BuildUploadDryRun(
 		context.Background(),
@@ -1054,7 +1063,7 @@ func TestBuildUploadDryRunBlocksWhenImageHostFallbacksFail(t *testing.T) {
 		},
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
-	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+	svc := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), nil, repo, registry, images)
 
 	entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{SourcePath: "/tmp/source"}, []string{"PTP"})
 	if err != nil {
@@ -1107,7 +1116,7 @@ func TestBuildPreparationBlocksWhenImageHostFallbacksFail(t *testing.T) {
 		},
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
-	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+	svc := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), nil, repo, registry, images)
 
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: "/tmp/source"}), []string{"PTP"})
 	if err != nil {
@@ -1173,7 +1182,7 @@ func TestBuildPreparationDoesNotRetryFailedImageHostForLaterTrackers(t *testing.
 			Host2: "imgbb",
 		},
 	}
-	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+	svc := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), nil, repo, registry, images)
 
 	preview, err := svc.BuildPreparation(
 		context.Background(),
@@ -1237,7 +1246,7 @@ func TestBuildPreparationBlocksWhenUploadedImagesDoNotCoverRHDSlots(t *testing.T
 			},
 		},
 	}
-	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+	svc := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), nil, repo, registry, images)
 
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: sourcePath}), []string{"RHD"})
 	if err != nil {
@@ -1269,7 +1278,7 @@ func TestBuildUploadDryRunIncludesRuleFailedTrackers(t *testing.T) {
 		t.Fatalf("register stub: %v", err)
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{
 		SourcePath: "/tmp/file",
 		TrackerRuleFailures: map[string][]api.RuleFailure{
@@ -1295,7 +1304,7 @@ func TestBuildUploadDryRunUsesRequiredPreparationContract(t *testing.T) {
 		t.Fatalf("register stub: %v", err)
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"}, []string{"BLU"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1329,7 +1338,7 @@ func TestBuildPreparationGroupsExactMatchingUnit3DDescriptions(t *testing.T) {
 		}
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{}), []string{"AITHER", "HHD"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1387,7 +1396,7 @@ func TestBuildPreparationUsesTrackerCompatibleExactImageSets(t *testing.T) {
 			SkipUpload: &skipUpload,
 		},
 	}
-	svc := NewServiceWithRegistry(config.Config{}, nil, &stubRepo{}, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, &stubRepo{}, registry)
 	preview, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), []string{"ALPHA", "BETA"})
 	if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 2 {
 		t.Fatalf("mixed-host preparation = %#v err=%v", preview, err)
@@ -1436,7 +1445,7 @@ func TestBuildPreparationSplitsSameGroupWhenDescriptionDiffers(t *testing.T) {
 		}
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{}), []string{"AITHER", "HHD"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1508,7 +1517,7 @@ func TestBuildPreparationGroupsSameFinalDescriptionWhenExtractedDescriptionDiffe
 	}
 
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: sourcePath}), []string{"AITHER", "BLU"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1545,7 +1554,7 @@ func TestBuildPreparationGroupsSameDescriptionWhenImageHostFeedbackDiffers(t *te
 		}
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{}), []string{"AITHER", "PTP"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1592,7 +1601,7 @@ func TestBuildPreparationGroupsUnit3DWhenImageHostMessageOnlyDiffers(t *testing.
 		},
 	}
 	repo := &stubRepo{}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: sourcePath}), []string{"AITHER", "HHD"})
 	if err != nil {
@@ -1698,7 +1707,7 @@ func TestBuildPreparationUnit3DGroupsOnConfiguredHostPreference(t *testing.T) {
 			},
 		},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: sourcePath}), []string{"HHD", "LUME", "RAS"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1798,7 +1807,7 @@ func TestUploadAggregatesUploadedTorrentArtifacts(t *testing.T) {
 	}
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1852,7 +1861,7 @@ func TestUploadPreflightsMultipleConfiguredImageHostsOnce(t *testing.T) {
 			},
 		},
 	}
-	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+	svc := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), nil, repo, registry, images)
 
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/source"})
 	if err != nil {
@@ -1909,7 +1918,7 @@ func TestUploadPreflightsUnrestrictedTrackerToFirstConfiguredImageHost(t *testin
 		ImageHosting: config.ImageHostingConfig{Host1: "imgbb", Host2: "pixhost"},
 		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"RHD"}},
 	}
-	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+	svc := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), nil, repo, registry, images)
 
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/source"})
 	if err != nil {
@@ -1964,7 +1973,7 @@ func TestUploadPreparesDistinctTrackerArtifactsBeforeConcurrentUploads(t *testin
 			},
 		},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 
 	done := make(chan struct {
 		summary api.UploadSummary
@@ -2057,7 +2066,7 @@ func TestBuildPreparationPreflightsMultipleConfiguredImageHostsConcurrently(t *t
 			},
 		},
 	}
-	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
+	svc := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), nil, repo, registry, images)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -2131,7 +2140,7 @@ func TestUploadRunsTrackersConcurrentlyWithLimit(t *testing.T) {
 		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 2},
 		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU", "BHD", "AITHER"}},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 
 	type uploadResult struct {
 		summary api.UploadSummary
@@ -2197,7 +2206,7 @@ func TestUploadReportsCancellationAfterCompletedTrackerUpload(t *testing.T) {
 	}
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 
 	summary, err := svc.Upload(ctx, api.UploadSubject{
 		MediaBinding: trackerTestMediaBinding("/tmp/file"),
@@ -2223,7 +2232,7 @@ func TestUploadCanceledBeforeStartReturnsZeroUpload(t *testing.T) {
 	}
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 
 	summary, err := svc.Upload(ctx, api.UploadSubject{SourcePath: "/tmp/file"})
 	if !errors.Is(err, context.Canceled) {
@@ -2256,7 +2265,7 @@ func TestUploadCancellationKeepsCompletedTrackerOnly(t *testing.T) {
 		PostUpload:   config.PostUploadConfig{MaxConcurrentTrackers: 1},
 		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 
 	summary, err := svc.Upload(ctx, api.UploadSubject{SourcePath: "/tmp/file"})
 	if !errors.Is(err, context.Canceled) {
@@ -2307,7 +2316,7 @@ func TestUploadStatusFailureDoesNotCancelCompletedTracker(t *testing.T) {
 		PostUpload:   config.PostUploadConfig{MaxConcurrentTrackers: 1},
 		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 
 	summary, err := svc.Upload(ctx, api.UploadSubject{SourcePath: "/tmp/file"})
 	if !errors.Is(err, context.Canceled) {
@@ -2369,7 +2378,7 @@ func TestUploadCancellationFinalizesPendingWithCleanupContext(t *testing.T) {
 		PostUpload:   config.PostUploadConfig{MaxConcurrentTrackers: 1},
 		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 
 	summary, err := svc.Upload(ctx, api.UploadSubject{SourcePath: "/tmp/file"})
 	if !errors.Is(err, context.Canceled) {
@@ -2418,7 +2427,7 @@ func TestUploadLateCancellationUsesCleanupContextForStatusWrites(t *testing.T) {
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 
 	summary, err := svc.Upload(ctx, api.UploadSubject{SourcePath: "/tmp/file"})
 	if err != nil {
@@ -2465,7 +2474,7 @@ func TestUploadBestEffortWithFailures(t *testing.T) {
 		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 3},
 		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU", "BHD", "AITHER"}},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
 	if err == nil {
@@ -2499,7 +2508,7 @@ func TestUploadBestEffortWithFailuresAndRepoReturnsError(t *testing.T) {
 		PostUpload:   config.PostUploadConfig{MaxConcurrentTrackers: 3},
 		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU", "BHD", "AITHER"}},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
 	if err == nil {
@@ -2555,7 +2564,7 @@ func TestUploadRetriesTransientUploadedStatusFailure(t *testing.T) {
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 
 	ctx := context.Background()
 	summary, err := svc.Upload(ctx, api.UploadSubject{
@@ -2600,7 +2609,7 @@ func TestUploadAllFailuresReturnsError(t *testing.T) {
 		PostUpload: config.PostUploadConfig{MaxConcurrentTrackers: 2},
 		Trackers:   config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU", "BHD"}},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, nil, registry)
 
 	_, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
 	if err == nil {
@@ -2690,7 +2699,7 @@ func TestBuildPreparationSeparatesScopedImageHostGroups(t *testing.T) {
 		},
 	}
 
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: "/tmp/source"}), []string{"HDB", "AITHER"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2782,7 +2791,7 @@ func TestBuildPreparationRehostsHDBScreenshotsForURLOnlySlots(t *testing.T) {
 		},
 	}
 
-	svc := NewServiceWithRegistryAndImages(cfg, api.NopLogger{}, repo, registry, images)
+	svc := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), api.NopLogger{}, repo, registry, images)
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(meta), []string{"HDB"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2868,7 +2877,7 @@ func TestBuildPreparationPreloadsDescriptionAssetQueriesOnce(t *testing.T) {
 	}
 
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 	_, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{SourcePath: "/tmp/source"}), []string{"HDB", "AITHER", "BHD"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2908,7 +2917,7 @@ func TestBuildPreparationDoesNotImportUploadOutcomeBlocks(t *testing.T) {
 		}
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	preview, err := svc.BuildPreparation(context.Background(), api.NewDescriptionSubject(api.UploadSubject{
 		SourcePath: "/tmp/source",
 		BlockedTrackers: map[string][]api.TrackerBlockReason{
@@ -2944,7 +2953,7 @@ func TestBuildPreparationUsesStoredImagePreviews(t *testing.T) {
 		ImagePreviews: map[string]string{full: previewURL},
 	}}}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 	prepared, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(api.UploadSubject{
 		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv"),
 	}), []string{"AITHER"})
@@ -2971,7 +2980,7 @@ func TestBuildUploadDryRunIncludesBlockedTrackers(t *testing.T) {
 		}
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{
 		SourcePath: "/tmp/source",
 		BlockedTrackers: map[string][]api.TrackerBlockReason{
@@ -2997,7 +3006,7 @@ func TestBuildUploadDryRunAnnotatesBannedGroupWithoutBlockingPayload(t *testing.
 		t.Fatalf("register stub: %v", err)
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{
 		SourcePath: "/tmp/source",
 		Tag:        "-AFG",
@@ -3035,7 +3044,7 @@ func TestBuildUploadDryRunAnnotatesBannedGroupOnBuilderError(t *testing.T) {
 		t.Fatalf("register stub: %v", err)
 	}
 
-	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
 	entries, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{
 		SourcePath: "/tmp/source",
 		Tag:        "-AFG",
@@ -3074,9 +3083,9 @@ func TestBuildUploadDryRunReportsBannedCheckErrorOnBuilderError(t *testing.T) {
 
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "upbrr.db")
-	svc := NewServiceWithRegistry(config.Config{
+	svc := NewServiceWithRegistry(trackerTestConfig(t, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-	}, nil, nil, registry)
+	}), nil, nil, registry)
 	bannedDir := filepath.Join(tempDir, "cache", "banned")
 	if err := os.MkdirAll(bannedDir, 0o700); err != nil {
 		t.Fatalf("create banned cache dir: %v", err)
@@ -3127,7 +3136,7 @@ func TestUploadSkipsBlockedTrackersBeforePendingRecords(t *testing.T) {
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
 		Trackers:     config.TrackersConfig{DefaultTrackers: config.CSVList{"HDB", "AITHER"}},
 	}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{
 		SourcePath: "/tmp/source",
@@ -3209,7 +3218,7 @@ func TestBuildUploadDryRunPreloadsDescriptionAssetQueriesOnce(t *testing.T) {
 	}
 
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
-	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
+	svc := NewServiceWithRegistry(trackerTestConfig(t, cfg), nil, repo, registry)
 	_, err := svc.BuildUploadDryRun(context.Background(), api.UploadSubject{SourcePath: "/tmp/source"}, []string{"HDB", "AITHER", "BHD"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -1562,6 +1562,7 @@ export type PreparedRelease = Readonly<{
 }>;
 
 export type PreparedReleaseDisplay = Readonly<{
+  CanKeepFolder?: boolean;
   Commentary?: boolean;
   MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
@@ -2623,6 +2624,7 @@ export type TrackerApprovalSnapshotRef = Readonly<{
 }>;
 
 export type TrackerArtifactRequirements = Readonly<{
+  allowEmptyDescription?: boolean;
   allowedImageHosts?: readonly string[];
   bdInfo: boolean;
   description: boolean;

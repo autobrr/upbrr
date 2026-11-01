@@ -146,7 +146,7 @@ func TestDeriveBDInfoCommentaryRespectsManualFlagOnReprepare(t *testing.T) {
 				meta.Discs[0].ID = ""
 				meta.Discs[0].Reports[0].Playlist.ID = ""
 			}
-			service := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			service := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			for generation := range 2 {
 				var err error
 				meta, err = service.deriveMediaFacts(t.Context(), meta)
@@ -225,7 +225,7 @@ func TestDeriveBDInfoCommentaryDoesNotReintroduceMediaInfoLanguages(t *testing.T
 			if err := os.WriteFile(meta.MediaInfoJSONPath, []byte(`{"media":{"track":[{"@type":"Audio","Language":"French","Format":"AC-3"}]}}`), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			service := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			service := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 			actual, err := service.deriveMediaFacts(t.Context(), meta)
 			if err != nil {
 				t.Fatal(err)
@@ -244,7 +244,7 @@ func TestDeriveBDInfoUnknownMainLanguageRequiresBoundCorrection(t *testing.T) {
 	if err := os.WriteFile(meta.MediaInfoJSONPath, []byte(`{"media":{"track":[{"@type":"Audio","Language":"English","Format":"AC-3"}]}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	service := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
 	inspected, err := service.deriveMediaFacts(t.Context(), meta)
 	if err != nil {
 		t.Fatal(err)

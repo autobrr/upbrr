@@ -703,6 +703,25 @@ func TestResolveCategoryMatrix(t *testing.T) {
 			want: "34",
 		},
 		{
+			name: "Romany is not Romanian",
+			meta: api.UploadSubject{
+				Identity:          api.ExternalIdentity{Category: "MOVIE"},
+				Release:           api.ReleaseInfo{Resolution: "1080p"},
+				SubtitleLanguages: []string{"Romany"},
+			},
+			want: "29",
+		},
+		{
+			name: "Romanian coverage retains language category",
+			meta: api.UploadSubject{
+				Identity:          api.ExternalIdentity{Category: "TV"},
+				Release:           api.ReleaseInfo{Resolution: "1080p"},
+				SeasonInt:         1,
+				SubtitleLanguages: []string{"Romanian (Forced)"},
+			},
+			want: "34",
+		},
+		{
 			name: "anime",
 			meta: api.UploadSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie}, Anime: true},
 			want: "23",

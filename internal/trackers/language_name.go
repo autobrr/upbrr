@@ -102,12 +102,5 @@ func KnownProgrammeLanguageCount(facts api.LanguageFacts) int {
 	if facts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory {
 		return 0
 	}
-	languages := make(map[string]struct{}, len(facts.ProgrammeLanguages))
-	for _, language := range facts.ProgrammeLanguages {
-		code := languageutil.NormalizeLanguageCode(language)
-		if code != "" && code != "und" && code != "mul" {
-			languages[code] = struct{}{}
-		}
-	}
-	return len(languages)
+	return languageutil.LanguageIdentityCount(facts.ProgrammeLanguages)
 }

@@ -30,6 +30,8 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 
 ## Canonical Release Ownership
 
+- Resolve managed artifact roots with `pathing/layout.ReleaseTempDirFor`; derive feature/generation/attempt subdirectories only beneath that owner. `ReleaseTempPathFor` is the non-creating cleanup lookup. Independent feature roots under application `tmp` are prohibited by `make architecturepolicy`.
+- Keep source identity/fingerprints (including verified content) separate from visible directory names. Layout changes must align producers, persisted/hydrated references, consumers, cancellation/private writes, active/shared cleanup protection, and upgrade documentation. Do not discover or migrate abandoned legacy caches automatically.
 - Canonical preparation contracts: single-source; preserve caller interaction mode.
 - `PreparedRelease`: typed reusable source facts only; no workflow options, tracker choices, questionnaire answers, overrides, outcomes.
 - Operations consume owner-local inputs + exact `ReleaseRef`; workflow interfaces accept only the narrowest sufficient contract, not broad `PreparedRelease`.

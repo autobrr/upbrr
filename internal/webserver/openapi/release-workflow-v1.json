@@ -5984,6 +5984,9 @@
       "PreparedReleaseDisplay": {
         "type": "object",
         "properties": {
+          "CanKeepFolder": {
+            "type": "boolean"
+          },
           "Commentary": {
             "type": "boolean"
           },
@@ -10835,6 +10838,9 @@
       "TrackerArtifactRequirements": {
         "type": "object",
         "properties": {
+          "allowEmptyDescription": {
+            "type": "boolean"
+          },
           "allowedImageHosts": {
             "type": "array",
             "items": {

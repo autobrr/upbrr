@@ -11,10 +11,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -243,6 +243,5 @@ func ptpMap(value any) map[string]any { result, _ := value.(map[string]any); ret
 func ptpSlice(value any) []any        { result, _ := value.([]any); return result }
 func ptpInt(value any) int {
 	trimmed := strings.TrimPrefix(ptpString(value), "tt")
-	parsed, _ := strconv.Atoi(trimmed)
-	return parsed
+	return providerid.ParseDecimal(trimmed)
 }

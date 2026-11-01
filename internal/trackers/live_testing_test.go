@@ -89,7 +89,7 @@ func TestLiveTestTrackerServiceBlocksBeforePreparation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewServiceWithRegistryAndImages(config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"ALPHA"}}},
+	svc := NewServiceWithRegistryAndImages(trackerTestConfig(t, config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"ALPHA"}}}),
 		nil, nil, registry, nil, policy)
 	_, err = svc.Upload(t.Context(), api.UploadSubject{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026-GRP")})
 	if !errors.Is(err, api.ErrLiveTestMutationDisabled) || len(started) != 0 || len(submitted) != 0 {

@@ -4,6 +4,8 @@
 package ant
 
 import (
+	"time"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -23,7 +25,7 @@ func Profile() standalone.Profile {
 		Name:              "ANT",
 		BaseURL:           antBaseURL,
 		DescriptionGroup:  "ant",
-		UploadContentMode: trackers.UploadContentModeDescription,
+		UploadContentMode: trackers.UploadContentModeOptionalDescription,
 		CategoryPolicies: map[api.CanonicalCategory]trackers.CategoryPolicy{
 			api.CanonicalCategoryTV: {
 				UploadContentMode: trackers.UploadContentModeNone,
@@ -52,6 +54,7 @@ func Profile() standalone.Profile {
 		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "ANT", RequireAnnounce: true},
 		DupePolicy:           duplicatePolicy(),
+		DataPolicy:           &trackers.DataLookupPolicy{Cooldown: 15 * time.Second, LegacyExternalIDsNeedRefresh: true},
 		AudioPolicy: &trackers.AudioPolicy{
 			AllowedLanguages: []string{"english"}, BlockEnglishOriginalWithForeign: true,
 		},

@@ -27,6 +27,7 @@ func (m *Module) ResolveDisplay(ctx context.Context, ref api.ReleaseRef) (api.Pr
 		return api.PreparedReleaseDisplay{}, err
 	}
 	resources := owned.resources
+	display.CanKeepFolder = canKeepSourceFolder(owned)
 	for _, target := range hdrTargetSubjects(owned) {
 		display.HDRTargets = append(display.HDRTargets, target.Target)
 	}

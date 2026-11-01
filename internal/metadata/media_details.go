@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/text/language"
+
 	"github.com/autobrr/upbrr/internal/logging"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -123,7 +125,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 			fingerprint = meta.SourceFingerprint
 		}
 		var reports mediainfo.Result
-		miDoc, reports, err = inspectFileMediaInfoReports(ctx, s.mi, meta.VideoPath, fingerprint, root)
+		miDoc, reports, err = inspectReleaseMediaInfoReports(ctx, s.mi, meta, meta.VideoPath, fingerprint, root)
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("primary inspection: %w", err)
 		}
@@ -185,6 +187,15 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	logger.Tracef("metadata: media details audio=%q channels=%q commentary=%t", meta.Audio, meta.Channels, meta.HasCommentary)
 
 	meta.Is3D = threeDFromMedia(miDoc, bdinfo)
+	blurayISO := false
+	for _, disc := range meta.Discs {
+		if disc.BluRayISO {
+			blurayISO = true
+			// ISO collection has already validated MVC in every selected report.
+			meta.Is3D = "3D"
+			break
+		}
+	}
 	logger.Tracef("metadata: media details 3d=%q", meta.Is3D)
 
 	source, typeValue := sourceAndType(meta, miDoc)
@@ -196,11 +207,9 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		meta.Type = typeValue
 		meta.Release.Type = typeValue
 	}
+	resolution, dvdDetails := resolutionFromMediaEvidence(meta, miDoc)
+	meta.Release.Resolution = resolution
 	if strings.EqualFold(meta.DiscType, "DVD") {
-		dvdDetails := extractDVDMediaInfo(meta)
-		if strings.TrimSpace(dvdDetails.Resolution) != "" && !strings.EqualFold(dvdDetails.Resolution, "OTHER") {
-			meta.Release.Resolution = dvdDetails.Resolution
-		}
 		dvdDetails.SourcePath = meta.SourcePath
 		dvdDetails.IFOPath = meta.DVDIFOPath
 		dvdDetails.VOBPath = meta.DVDVOBPath
@@ -213,14 +222,10 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 			return preparationstate.State{}, fmt.Errorf("metadata: persist dvd mediainfo details: %w", err)
 		}
 	}
-	// For non-DVD content, if rls did not parse a resolution from the filename,
-	// fall back to deriving it from the MediaInfo video track dimensions —
-	// matching the Python get_resolution() behaviour.
-	if strings.TrimSpace(meta.Release.Resolution) == "" && !strings.EqualFold(meta.DiscType, "DVD") {
-		if res := resolutionFromMediaInfo(miDoc, meta.SourcePath); res != "" {
-			meta.Release.Resolution = res
-			logger.Debugf("metadata: resolution derived from mediainfo %q", res)
-		}
+	// ISO preparation uses the selected BDInfo report instead of MediaInfo.
+	// Preserve parsed values here; explicit naming corrections are applied later.
+	if strings.TrimSpace(meta.Release.Resolution) == "" && blurayISO && bdinfo != nil && len(bdinfo.Video) > 0 {
+		meta.Release.Resolution = strings.TrimSpace(bdinfo.Video[0].Resolution)
 	}
 	logger.Tracef("metadata: media details source=%q type=%q resolution=%q", meta.Source, meta.Type, meta.Release.Resolution)
 
@@ -627,7 +632,9 @@ func audioLanguagePrefix(meta preparationstate.State, tracks []map[string]any) s
 
 	languages := make([]string, 0, len(filtered))
 	for _, track := range filtered {
-		languages = append(languages, trackString(track, "Language", "Language_String", "Language_String2", "Language_String3"))
+		if values := mediaInfoTrackLanguages(track); len(values) == 1 {
+			languages = append(languages, values[0])
+		}
 	}
 	return audioLanguagePrefixFromLanguages(meta, languages)
 }
@@ -637,7 +644,11 @@ func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []s
 		return ""
 	}
 
-	original := canonicalAudioLanguage(originalAudioLanguage(meta))
+	originalValue := originalAudioLanguage(meta)
+	if !languageutil.IsIdentifiedLanguage(originalValue) {
+		return ""
+	}
+	original := canonicalAudioLanguage(originalValue)
 	if original == "" || original == "unknown" {
 		return ""
 	}
@@ -646,6 +657,9 @@ func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []s
 	hasOriginal := false
 	hasOther := false
 	for _, value := range languages {
+		if !languageutil.IsIdentifiedLanguage(value) {
+			continue
+		}
 		language := canonicalAudioLanguage(value)
 		if language == "" || language == "unknown" {
 			continue
@@ -661,7 +675,7 @@ func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []s
 		}
 	}
 
-	if len(languages) > 1 && ((hasEnglish && (hasOriginal || hasOther)) || (hasOriginal && hasOther)) {
+	if languageutil.LanguageIdentityCount(languages) > 1 && ((hasEnglish && (hasOriginal || hasOther)) || (hasOriginal && hasOther)) {
 		return "Dual-Audio"
 	}
 	if hasEnglish && !hasOriginal && original != "english" {
@@ -682,40 +696,27 @@ func originalAudioLanguage(meta preparationstate.State) string {
 	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.OriginalLanguage) != "":
 		return meta.ProviderMetadata.TVDB.OriginalLanguage
 	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Language) != "":
-		return meta.ProviderMetadata.TVmaze.Language
+		value := meta.ProviderMetadata.TVmaze.Language
+		if normalized := languageutil.NormalizeLanguageName(value); normalized != "" {
+			return normalized
+		}
+		return value
 	default:
 		return ""
 	}
 }
 
 func canonicalAudioLanguage(value string) string {
-	token := strings.ToLower(strings.TrimSpace(value))
-	if token == "" {
-		return ""
-	}
-	for _, separator := range []string{"-", "_", ",", " "} {
-		if index := strings.Index(token, separator); index >= 0 {
-			token = token[:index]
-			break
-		}
-	}
-	switch token {
-	case "en", "eng", "english":
-		return "english"
-	case "zh", "zho", "chi", "cn", "cmn", "chinese", "mandarin":
-		return "chinese"
-	case "no", "nor", "nb", "nob", "norwegian":
-		return "norwegian"
-	case "zxx", "xx", "und":
+	if value == "xx" || languageutil.NormalizeLanguageCode(value) == "und" || languageutil.NormalizeLanguageCode(value) == "zxx" {
 		return "unknown"
 	}
-	if normalized := languageutil.NormalizeLanguageLabel(value); normalized != "" {
-		return strings.ToLower(normalized)
+	tag, ok := languageutil.LanguageTag(value)
+	if !ok {
+		return ""
 	}
-	if normalized := strings.ToLower(strings.TrimSpace(languageutil.NormalizeLanguageDisplay(value))); normalized != "" {
-		return normalized
-	}
-	return token
+	// Historical naming groups stay local; canonical media identities do not merge.
+	tag, _ = language.All.Canonicalize(tag)
+	return strings.ToLower(languageutil.NormalizeLanguageDisplay(tag.String()))
 }
 
 func isCommentaryOrCompatibilityAudioValue(value string) bool {

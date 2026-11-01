@@ -171,6 +171,7 @@ func TestEnglishSubtitleInspectionKnownState(t *testing.T) {
 		{"negative", "General\nFormat : Matroska\nCount of text streams : 1\nVideo\nFormat : AVC\nText\nLanguage : Japanese\n", false, true},
 		{"count unknown negative", header + "Text\nLanguage : Japanese\n", false, false},
 		{"positive", "Text\nLanguage : English\n", true, true},
+		{"regional English", "Text\nLanguage : en-US\n", true, true},
 		{"unknown language", header + "Text\nLanguage : und\n", false, false},
 		{"partial track", header + "Text #1\nLanguage : Japanese\nText #2\nFormat : UTF-8\n", false, false},
 		{"partial report", "Text\nLanguage : Japanese\n", false, false},

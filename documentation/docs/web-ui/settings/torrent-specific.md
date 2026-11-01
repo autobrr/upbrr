@@ -1,18 +1,18 @@
 ---
-title: Torrent-Specific settings
+title: Torrent preparation settings
 description: Prefer reusable torrents with smaller pieces and delay rehash-dependent submissions.
 ---
 
-# Torrent-Specific settings
+# Torrent preparation settings
 
-Use **Settings → Torrent Specific** for torrent reuse and rehash scheduling.
+Use **Settings → Torrent preparation** for torrent reuse and rehash scheduling.
 
-| Field                                     | Default | Effect                                                                                                      |
-| ----------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
-| **Prefer reusable torrents up to 16 MiB** | Off     | During torrent-client search, prefers a validated reusable torrent whose piece size is at most 16 MiB.      |
-| **Rehash cooldown**                       | `0`     | Waits this many seconds after reusable-torrent submissions finish before starting rehash-dependent uploads. |
+| Field                                                 | Default | Effect                                                                                                      |
+| ----------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
+| **Prefer reusable torrents with pieces up to 16 MiB** | Off     | During torrent-client search, prefers a validated reusable torrent whose piece size is at most 16 MiB.      |
+| **Rehash-dependent upload delay (seconds)**           | `0`     | Waits this many seconds after reusable-torrent submissions finish before starting rehash-dependent uploads. |
 
-**Prefer reusable torrents up to 16 MiB** affects selection among reusable client torrents; it does not impose a piece size on every newly generated torrent. A negative rehash cooldown behaves as zero.
+**Prefer reusable torrents with pieces up to 16 MiB** affects selection among reusable client torrents; it does not impose a piece size on every newly generated torrent. A negative rehash cooldown behaves as zero.
 
 :::note Compatibility field
 
