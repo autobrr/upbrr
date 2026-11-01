@@ -285,8 +285,9 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 	if !ok || retained.screenshotSubject.MediaBinding.PreparedGeneration != currentBinding.PreparedGeneration {
 		t.Fatalf("restored private media = %#v", retainedResource)
 	}
-	if !strings.HasPrefix(filepath.Base(filepath.Dir(repository.saved[0].Image.Path)), "@reused-") {
-		t.Fatalf("restored image path = %q, want dedicated reusable root", repository.saved[0].Image.Path)
+	owner, _, err := paths.ReleaseTempPathFor(filepath.Join(baseDir, "tmp"), currentBinding.SourcePath, api.ReleaseInfo{})
+	if err != nil || !pathing.SamePath(filepath.Dir(repository.saved[0].Image.Path), filepath.Join(owner, "reused")) {
+		t.Fatalf("restored image path = %q, want release-owned reusable directory: %v", repository.saved[0].Image.Path, err)
 	}
 	claim, found := retained.legacyImageFormats[retained.Screenshots[0].Path]
 	if !found || claim.Format != "png" || claim.Conflicting || retained.Screenshots[0].Format != "" {
@@ -749,19 +750,19 @@ func TestWorkflowMediaRestoreCompatibleMaterializesBeforeSourceCleanup(t *testin
 	if err != nil {
 		t.Fatalf("create first release tmp dir: %v", err)
 	}
-	secondLegacyTmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, secondSource, api.ReleaseInfo{})
+	secondTmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, secondSource, api.ReleaseInfo{})
 	if err != nil {
-		t.Fatalf("create second legacy tmp dir: %v", err)
+		t.Fatalf("create second release tmp dir: %v", err)
 	}
-	if !pathing.SamePath(firstTmpDir, secondLegacyTmpDir) {
-		t.Fatalf("same-basename sources did not share legacy tmp dir: %q, %q", firstTmpDir, secondLegacyTmpDir)
+	if pathing.SamePath(firstTmpDir, secondTmpDir) {
+		t.Fatalf("same-basename sources share an artifact owner: %q, %q", firstTmpDir, secondTmpDir)
 	}
 	secondReuseRoot, err := reusableMediaTempRoot(tmpRoot, secondSource)
 	if err != nil {
 		t.Fatalf("resolve second reusable root: %v", err)
 	}
-	if pathing.SamePath(firstTmpDir, secondReuseRoot) {
-		t.Fatalf("reusable root collides with first source legacy tmp dir: %q", secondReuseRoot)
+	if !pathing.IsWithinRoot(secondTmpDir, secondReuseRoot) {
+		t.Fatalf("reusable root is outside its release owner: %q", secondReuseRoot)
 	}
 	imagePath := filepath.Join(firstTmpDir, "screen.png")
 	imageBytes := []byte("reusable image")
@@ -852,9 +853,6 @@ func TestWorkflowMediaRestoreCompatibleMaterializesBeforeSourceCleanup(t *testin
 	}
 	if !pathing.IsWithinRoot(secondReuseRoot, materializedPath) {
 		t.Fatalf("persisted image path = %q, want under %q", materializedPath, secondReuseRoot)
-	}
-	if !strings.HasPrefix(filepath.Base(filepath.Dir(materializedPath)), "@reused-") {
-		t.Fatalf("persisted image path = %q, want dedicated reusable root", materializedPath)
 	}
 	if got, readErr := os.ReadFile(materializedPath); readErr != nil || !bytes.Equal(got, imageBytes) {
 		t.Fatalf("materialized image = %q, %v; want %q", got, readErr, imageBytes)

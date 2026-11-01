@@ -14,6 +14,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -188,13 +190,7 @@ var cztCategories = []cztCategory{
 }
 
 func hasRomanianSubs(meta api.UploadSubject) bool {
-	for _, s := range meta.SubtitleLanguages {
-		v := strings.ToLower(strings.TrimSpace(s))
-		if v == "ro" || v == "rum" || v == "ron" || strings.HasPrefix(v, "roman") {
-			return true
-		}
-	}
-	return false
+	return languageutil.ContainsLanguage(meta.SubtitleLanguages, "ro")
 }
 
 func isHD(res string) bool {

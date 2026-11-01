@@ -76,6 +76,7 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
     label: "Displayed uploader name",
     help: "FileList uploader-credit value. Not sent when anonymous uploading is enabled.",
   }),
+  GuruTrump: boolField("GuruTrump", { label: "Guru+ intended trump uploads" }),
   UploaderStatus: boolField("UploaderStatus", {
     label: "Auto-approve ASC uploads",
     help: "Attempt ASC uploader approval after upload. Requires account permission; enabling this does not grant uploader privileges.",

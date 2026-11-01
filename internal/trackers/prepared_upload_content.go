@@ -87,7 +87,7 @@ func (s *Service) prepareUploadContent(
 		return preparedUploadContent{Mode: mode, State: preparedUploadContentNotRequired}
 	case UploadContentModeScreenshots:
 		assets, err = resolveScreenshotAssets(ctx, tracker, meta, s.repo, logging.FromContext(ctx, s.logger), preloaded, s.registry)
-	case UploadContentModeDescription:
+	case UploadContentModeDescription, UploadContentModeOptionalDescription:
 		assets, err = resolveDescriptionAssets(ctx, tracker, meta, s.repo, logging.FromContext(ctx, s.logger), preloaded, s.registry)
 	default:
 		err = errors.New("unsupported tracker upload content mode")

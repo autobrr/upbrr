@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -930,6 +931,38 @@ func TestCLIAnimeCorrection(t *testing.T) {
 			for _, got := range []*bool{req.MetadataOverrides.Anime, values.Metadata.Anime} {
 				if (got == nil) != (tc.want == nil) || got != nil && *got != *tc.want {
 					t.Fatalf("anime correction = %v; want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestCLIPlainSeasonEpisodeCorrections(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		want  api.ReleaseNameOverrides
+	}{
+		{"season only", []string{"--season", "2"}, api.ReleaseNameOverrides{Season: new("2")}},
+		{"episode only", []string{"--episode", "5"}, api.ReleaseNameOverrides{Episode: new("5")}},
+		{"both", []string{"--season", "5", "--episode", "5"}, api.ReleaseNameOverrides{Season: new("5"), Episode: new("5")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, visited, paths, err := parseCLIOptions(append(tc.flags, "Example.Series.S01E01.mkv"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := buildCLIRequest(opts, visited, paths, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values, err := buildCLIInputCorrectionValues(opts, visited)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, got := range []api.ReleaseNameOverrides{req.ReleaseNameOverrides, values.ReleaseName} {
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("episode coordinate corrections = %#v, want %#v", got, tc.want)
 				}
 			}
 		})

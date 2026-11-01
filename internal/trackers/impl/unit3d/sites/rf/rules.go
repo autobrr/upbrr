@@ -43,8 +43,8 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool { return track.Kind == api.MediaTrackSubtitle }) {
 		return unknown("embedded subtitle languages were cleared; review the tracker's subtitle guidance")
 	}
-	englishOriginal := slices.Contains(facts.OriginalLanguages, "English")
-	if !englishOriginal && !slices.Contains(facts.SubtitleLanguages, "English") {
+	englishOriginal := languageutil.ContainsLanguage(facts.OriginalLanguages, "English")
+	if !englishOriginal && !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") {
 		failure := trackers.LanguageRuleFailure(
 			subject,
 			"retail_subtitles",
@@ -58,12 +58,13 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	presentationDefect := false
 	for _, track := range facts.Tracks {
 		if track.Kind == api.MediaTrackSubtitle &&
-			(!predominantlyEnglish || !slices.Contains(facts.SubtitleLanguages, "English") || !rfForcedEnglishTrack(track)) {
+			(!predominantlyEnglish || !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") || !rfForcedEnglishTrack(track)) {
 			presentationDefect = true
 		}
 	}
 	if subject.HardcodedSubs {
-		forcedEnglish := predominantlyEnglish && len(subject.HardcodedSubtitleCoverage) == 1 && subject.HardcodedSubtitleCoverage[0].Language == "English" &&
+		forcedEnglish := predominantlyEnglish && len(subject.HardcodedSubtitleCoverage) == 1 &&
+			languageutil.SameLanguage(subject.HardcodedSubtitleCoverage[0].Language, "English") &&
 			subject.HardcodedSubtitleCoverage[0].Coverage == api.SubtitleCoverageForced
 		if !forcedEnglish {
 			presentationDefect = true
@@ -89,7 +90,7 @@ func rfForcedEnglishTrack(track api.MediaTrackFacts) bool {
 	}
 	for _, value := range track.Languages {
 		language, coverage := languageutil.SubtitleLanguageParts(value)
-		if language != "English" || (!track.Forced && !strings.EqualFold(coverage, "Forced")) {
+		if !languageutil.SameLanguage(language, "English") || (!track.Forced && !strings.EqualFold(coverage, "Forced")) {
 			return false
 		}
 	}

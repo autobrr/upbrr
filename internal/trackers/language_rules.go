@@ -130,21 +130,21 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 	needsOriginal := policy.OriginalAudio != "" || policy.ExtraDubs != "" || policy.OriginalFirst != "" || policy.OriginalDefault != "" ||
 		policy.EnglishSubtitles == "foreign" || policy.EnglishSubtitles == "foreign_without_dub" || policy.EnglishSubtitles == "spoken"
 	originalKnown := len(facts.OriginalLanguages) > 0 && !slices.ContainsFunc(facts.OriginalLanguages, func(value string) bool {
-		code := languageutil.NormalizeLanguageCode(value)
-		return code == "" || code == "und" || code == "mul"
+		return !languageutil.IsIdentifiedLanguage(value)
 	})
 	if needsOriginal && !originalKnown {
 		add("original_evidence", "original language evidence needs review", LanguageUnresolved)
 	}
-	hasEnglish := programmeStatus != api.MetadataEvidenceStatusContradictory && slices.Contains(facts.ProgrammeLanguages, "English")
-	englishSubs := slices.Contains(facts.SubtitleLanguages, "English")
+	hasEnglish := programmeStatus != api.MetadataEvidenceStatusContradictory && languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English")
+	englishSubs := languageutil.ContainsLanguage(facts.SubtitleLanguages, "English")
 	needsProgramme := policy.OriginalAudio != "" || policy.ExtraDubs != "" || policy.OriginalFirst != "" || policy.OriginalDefault != "" ||
 		(policy.EnglishSubtitles == "foreign_without_dub" || policy.EnglishSubtitles == "without_english") && !englishSubs && !hasEnglish
 	if needsProgramme && programmeStatus != api.MetadataEvidenceStatusComplete {
 		add("evidence", "programme language, track role or inspected coverage needs review", LanguageUnresolved)
 	}
 	originUnresolved := facts.HasUnresolvedProgrammeAudioOrigin()
-	foreign := originalKnown && !slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX")
+	foreign := originalKnown && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
+		!languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX")
 	originalDefault := slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
 		return facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal && track.DefaultKnown && track.Default
 	})
@@ -152,8 +152,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 	originalFirst := originalOrderStatus == "" && facts.HasOriginalAudio()
 	couldContainEnglish := func(track api.MediaTrackFacts) bool {
 		return len(track.Languages) == 0 || slices.ContainsFunc(track.Languages, func(language string) bool {
-			code := languageutil.NormalizeLanguageCode(language)
-			return language == "English" || code == "" || code == "und" || code == "mul"
+			return languageutil.SameLanguage(language, "English") || !languageutil.IsIdentifiedLanguage(language)
 		})
 	}
 	dubUnresolved := originUnresolved && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
@@ -177,7 +176,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 				outcomes = append(outcomes, policy.OriginalDefault)
 			}
 			if len(track.Languages) == 0 || slices.ContainsFunc(track.Languages, func(language string) bool {
-				return language != "English" && !slices.Contains(facts.OriginalLanguages, language)
+				return !languageutil.SameLanguage(language, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, language)
 			}) {
 				outcomes = append(outcomes, policy.ExtraDubs)
 			}
@@ -207,8 +206,8 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 				continue
 			}
 			for _, language := range track.Languages {
-				code := languageutil.NormalizeLanguageCode(language)
-				if language == "English" || slices.Contains(facts.OriginalLanguages, language) || code == "" || code == "und" || code == "mul" {
+				if languageutil.SameLanguage(language, "English") || languageutil.ContainsLanguage(facts.OriginalLanguages, language) ||
+					!languageutil.IsIdentifiedLanguage(language) {
 					continue
 				}
 				add("extra_dub", "non-original, non-English programme dub: "+language, policy.ExtraDubs)
@@ -223,7 +222,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 	}
 	needsSubs := policy.EnglishSubtitles == "foreign" && foreign || policy.EnglishSubtitles == "foreign_without_dub" && foreign && !facts.HasEnglishDub() ||
 		policy.EnglishSubtitles == "without_english" &&
-			!hasEnglish || policy.EnglishSubtitles == "spoken" && originalKnown && !slices.Contains(facts.OriginalLanguages, "ZXX")
+			!hasEnglish || policy.EnglishSubtitles == "spoken" && originalKnown && !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX")
 	if needsSubs && !englishSubs {
 		if facts.SubtitleStatus != api.MetadataEvidenceStatusComplete ||
 			(policy.EnglishSubtitles == "foreign_without_dub" && dubUnresolved) ||
@@ -316,7 +315,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 	if foreign && englishSubs && policy.SubtitleDefault != "" {
 		knownDefault, unknownDefault := false, facts.SubtitleStatus != api.MetadataEvidenceStatusComplete
 		for _, track := range facts.Tracks {
-			if track.Kind != api.MediaTrackSubtitle || !slices.Contains(subtitleLanguages(track.Languages), "English") {
+			if track.Kind != api.MediaTrackSubtitle || !languageutil.ContainsLanguage(subtitleLanguages(track.Languages), "English") {
 				continue
 			}
 			knownDefault = knownDefault || track.DefaultKnown && track.Default
@@ -442,11 +441,11 @@ func programmeDubRemediation(facts api.LanguageFacts, language string, personalR
 		return track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix)
 	}
 	permitted := func(language string) bool {
-		return language == "English" || slices.Contains(facts.OriginalLanguages, language)
+		return languageutil.SameLanguage(language, "English") || languageutil.ContainsLanguage(facts.OriginalLanguages, language)
 	}
 	found := false
 	for _, track := range facts.Tracks {
-		if !programme(track) || facts.ProgrammeAudioOrigin(track) != api.TrackAudioDubbed || !slices.Contains(track.Languages, language) {
+		if !programme(track) || facts.ProgrammeAudioOrigin(track) != api.TrackAudioDubbed || !languageutil.ContainsLanguage(track.Languages, language) {
 			continue
 		}
 		found = true

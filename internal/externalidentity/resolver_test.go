@@ -184,6 +184,7 @@ func TestResolveCrossReferenceMetadataHonorsStoredProvenancePins(t *testing.T) {
 			metadataTVDBID := 0
 			identity := api.ExternalIdentity{
 				SourcePath: sourcePath,
+				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
 				Overrides: api.IdentityOverrideState{
 					IMDB: api.OverrideStateUnset,
 					TVDB: api.OverrideStateUnset,
@@ -415,6 +416,7 @@ func TestResolveClearOnlyCandidateReplacesAutomaticEvidenceWithinSource(t *testi
 						identity: api.ExternalIdentity{
 							SourcePath: sourcePath,
 							TMDBID:     100,
+							Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
 							IMDBID:     300,
 							TVDBID:     200,
 							Provenance: api.IdentityProvenanceSet{
@@ -494,6 +496,7 @@ func TestResolvePropagatesCandidateIdentityDependenciesWithinSource(t *testing.T
 				evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
 					return legacyEvidence{identity: api.ExternalIdentity{
 						SourcePath: sourcePath,
+						Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
 						IMDBID:     200,
 						TVDBID:     100,
 						Dependencies: api.IdentityDependencySet{
@@ -538,6 +541,7 @@ func TestResolveClearOnlyCandidateDropsTargetDependency(t *testing.T) {
 			return legacyEvidence{identity: api.ExternalIdentity{
 				SourcePath: sourcePath,
 				TMDBID:     100,
+				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
 				IMDBID:     200,
 				Provenance: api.IdentityProvenanceSet{IMDB: api.IdentityProvenanceExplicit},
 				Overrides:  api.IdentityOverrideState{IMDB: api.OverrideStateValue},
@@ -774,6 +778,7 @@ func TestResolveResetKeepsAutomaticStoredEvidenceAndChangesIntentFingerprint(t *
 		evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
 			return legacyEvidence{identity: api.ExternalIdentity{
 				SourcePath: sourcePath,
+				Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
 				TMDBID:     100,
 				Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceProvider},
 			}, hasIDs: true}, nil

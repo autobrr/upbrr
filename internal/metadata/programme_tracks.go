@@ -41,7 +41,7 @@ func (s *Service) inspectProgrammeTracks(ctx context.Context, meta preparationst
 	}
 	for _, file := range meta.FileList {
 		primary := pathing.SamePath(file, meta.VideoPath)
-		doc, inspectErr := inspectFileMediaInfo(ctx, s.mi, file, fingerprint, root)
+		doc, _, inspectErr := inspectReleaseMediaInfoReports(ctx, s.mi, meta, file, fingerprint, root)
 		if inspectErr != nil {
 			if ctx.Err() != nil {
 				return meta, fmt.Errorf("programme track inspection canceled: %w", ctx.Err())

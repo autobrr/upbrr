@@ -21,6 +21,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -992,6 +993,9 @@ func TestCollectDiscEvidenceNamespacesDuplicatePlaylists(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(sourcePath, name, "BDMV", "STREAM"), 0o700); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.WriteFile(filepath.Join(sourcePath, name, "BDMV", "STREAM", "00001.m2ts"), []byte("synthetic media"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	layout, err := sourcelayout.Resolve(context.Background(), sourcePath)
 	if err != nil {
@@ -1036,7 +1040,7 @@ func TestCollectDiscEvidenceNamespacesDuplicatePlaylists(t *testing.T) {
 		&stubRepo{},
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		WithBDInfoService(bdinfo.New(api.NopLogger{})),
-		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithMediaInfoExporter(mediainfo.NewService(nil, &packAnalyzer{})),
 	)
 	meta := preparationstate.State{
 		SourcePath: sourcePath,
@@ -1063,6 +1067,10 @@ func TestCollectDiscEvidenceNamespacesDuplicatePlaylists(t *testing.T) {
 	}
 	if meta.Discs[0].Reports[0].Playlist.ID == meta.Discs[1].Reports[0].Playlist.ID {
 		t.Fatal("duplicate playlist basenames shared an ID")
+	}
+	if meta.MediaInfoJSONPath != filepath.Join(releaseDir, "MediaInfo.json") ||
+		meta.Discs[0].MediaInfoJSONPath == meta.Discs[1].MediaInfoJSONPath || !pathutil.IsWithinRoot(releaseDir, meta.Discs[1].MediaInfoJSONPath) {
+		t.Fatalf("primary/secondary report ownership changed: primary=%s discs=%+v", meta.MediaInfoJSONPath, meta.Discs)
 	}
 }
 

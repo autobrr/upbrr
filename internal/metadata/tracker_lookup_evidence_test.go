@@ -53,7 +53,7 @@ func TestTrackerLookupReplayCannotRebindImportedAcceptance(t *testing.T) {
 	}
 	record := api.TrackerMetadata{Tracker: "LST", TrackerID: "42"}
 	ctx, scope := evidence.WithScope(t.Context(), repo, source, meta.SourceFingerprint, api.ExternalFreshnessLoad, nil)
-	initial, err := lookupTrackerDataEvidence(ctx, query, false, true, fetch)
+	initial, err := lookupTrackerDataEvidence(ctx, query, false, false, true, fetch)
 	if err == nil || importedScreenshotEvidenceFromResult(meta, record, initial) == nil || calls != 1 {
 		t.Fatalf("current partial lookup lost receipt: result=%+v calls=%d err=%v", initial, calls, err)
 	}
@@ -63,7 +63,7 @@ func TestTrackerLookupReplayCannotRebindImportedAcceptance(t *testing.T) {
 
 	// A new collection keeps the same source and query, as a corrected generation does.
 	ctx, scope = evidence.WithScope(t.Context(), repo, source, meta.SourceFingerprint, api.ExternalFreshnessReuse, nil)
-	replayed, err := lookupTrackerDataEvidence(ctx, query, false, true, fetch)
+	replayed, err := lookupTrackerDataEvidence(ctx, query, false, false, true, fetch)
 	if !errors.Is(err, evidence.ErrSuppressed) || calls != 1 || importedScreenshotEvidenceFromResult(meta, record, replayed) != nil {
 		t.Fatalf("cached typed partial regained acceptance or fetched: result=%+v calls=%d err=%v", replayed, calls, err)
 	}

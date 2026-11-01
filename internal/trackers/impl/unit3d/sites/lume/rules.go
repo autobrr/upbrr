@@ -57,8 +57,8 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		policy.OriginalAudio = ""
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
-	if !slices.Contains(facts.OriginalLanguages, "ZXX") && slices.Contains(facts.SubtitleLanguages, "English") &&
-		!slices.Contains(facts.FullSubtitleLanguages, "English") {
+	if !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") && languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") &&
+		!languageutil.ContainsLanguage(facts.FullSubtitleLanguages, "English") {
 		failures = append(
 			failures,
 			trackers.LanguageRuleFailure(
@@ -74,8 +74,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			continue
 		}
 		if len(track.Languages) == 0 || slices.ContainsFunc(track.Languages, func(value string) bool {
-			code := languageutil.NormalizeLanguageCode(value)
-			return code == "" || code == "und" || code == "mul"
+			return !languageutil.IsIdentifiedLanguage(value)
 		}) {
 			failures = append(
 				failures,
@@ -111,7 +110,7 @@ func trackOrderingFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 	multilingualDub := false
 	for _, track := range audioTracks {
 		original := (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) &&
-			slices.ContainsFunc(track.Languages, func(language string) bool { return slices.Contains(facts.OriginalLanguages, language) })
+			slices.ContainsFunc(track.Languages, func(language string) bool { return languageutil.ContainsLanguage(facts.OriginalLanguages, language) })
 		if original && otherAudioSeen {
 			failures = append(
 				failures,
@@ -201,13 +200,13 @@ func unresolvedTrackOrder(subject api.TrackerValidationSubject) []api.RuleFailur
 }
 
 func compareDubLanguages(left, right string) int {
-	if left == "English" && right != "English" {
+	if languageutil.SameLanguage(left, "English") && !languageutil.SameLanguage(right, "English") {
 		return -1
 	}
-	if right == "English" && left != "English" {
+	if languageutil.SameLanguage(right, "English") && !languageutil.SameLanguage(left, "English") {
 		return 1
 	}
-	return strings.Compare(left, right)
+	return strings.Compare(languageutil.NormalizeLanguageDisplay(left), languageutil.NormalizeLanguageDisplay(right))
 }
 
 // trackMetadataFailures preserves measured omissions and contradictions.

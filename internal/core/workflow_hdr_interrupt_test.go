@@ -124,7 +124,9 @@ func openHDRRestartFixture(t *testing.T, root string, decoded bool) *hdrRestartF
 	clock := &hdrRestartClock{}
 	options := []releaseworkflow.Option{releaseworkflow.WithHDRAnalysisBuilder(builder), releaseworkflow.WithClock(clock),
 		releaseworkflow.WithActiveInputs(repo, verifyWorkflowInput),
-		releaseworkflow.WithHDRComparisonInspector(func(context.Context, string, string) (api.HDRSourceEvidence, error) { return evidence, nil })}
+		releaseworkflow.WithHDRComparisonInspector(func(context.Context, api.ReleaseRef, string, string) (api.HDRSourceEvidence, error) {
+			return evidence, nil
+		})}
 	module, err := releaseworkflow.New(persistent, vault, prepared, options...)
 	if err != nil {
 		t.Fatal(err)

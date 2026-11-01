@@ -912,6 +912,9 @@ func TestValidateReleaseNameFactInstructions(t *testing.T) {
 			ManualDate: new(""),
 		},
 		{Season: new("05"), Episode: new("07")},
+		{Season: new("5"), Episode: new("5")},
+		{Season: new("S123")},
+		{Season: new("0"), Episode: new("5")},
 		{Season: new("S05"), Episode: new("E07")},
 		{Season: new("S00"), Episode: new("E01")},
 		{Season: new("s05"), Episode: new("e7")},
@@ -927,12 +930,9 @@ func TestValidateReleaseNameFactInstructions(t *testing.T) {
 	}
 
 	invalid := []api.ReleaseNameOverrides{
-		{Season: new("5")},
-		{Season: new("S123")},
 		{Season: new("S01E05")},
 		{Season: new("S01-S02")},
 		{Season: new("1x05")},
-		{Season: new("0")},
 		{Season: new("10000")},
 		{Season: new("abc")},
 		{Season: new("S")},

@@ -6,20 +6,11 @@ package unit3d
 import (
 	"fmt"
 	"strings"
-	"sync"
-
-	"golang.org/x/text/language"
-	"golang.org/x/text/language/display"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
-)
-
-var (
-	languageTagLookupOnce sync.Once
-	languageTagLookup     map[string]language.Tag
 )
 
 var localizedCodecReplacer = strings.NewReplacer("DD+ ", "DDP", "DD ", "DD", "AAC ", "AAC", "FLAC ", "FLAC")
@@ -171,6 +162,7 @@ func applyLocalizedAlternateTitle(editor *trackers.NameEditor, meta api.UploadSu
 		return nil
 	}
 	_, portuguese := portugueseLanguageNames[strings.ToLower(resolveOriginalLanguage(meta))]
+	portuguese = portuguese || languageutil.SameLanguage(resolveOriginalLanguage(meta), "pt")
 	if portuguese {
 		title := strings.TrimSpace(strings.TrimPrefix(alternate.Value, "AKA"))
 		if title != "" {
@@ -187,22 +179,19 @@ func applyLocalizedAlternateTitle(editor *trackers.NameEditor, meta api.UploadSu
 
 func localizedAudioLabel(values []string) string {
 	hasPortuguese := false
-	languages := make(map[string]struct{})
 	for _, value := range values {
-		if _, ok := portugueseLanguageNames[strings.ToLower(strings.TrimSpace(value))]; ok {
+		if _, ok := portugueseLanguageNames[strings.ToLower(strings.TrimSpace(value))]; ok || languageutil.SameLanguage(value, "pt") {
 			hasPortuguese = true
-		}
-		if code, _, ok := languageCode(value); ok {
-			languages[code] = struct{}{}
 		}
 	}
 	if !hasPortuguese {
 		return ""
 	}
-	if len(languages) >= 3 {
+	languages := languageutil.LanguageIdentityCount(values)
+	if languages >= 3 {
 		return "MULTI"
 	}
-	if len(languages) == 2 {
+	if languages == 2 {
 		return "DUAL"
 	}
 	return ""
@@ -225,61 +214,6 @@ func insertLocalizedOriginalGroup(editor *trackers.NameEditor, meta api.UploadSu
 	return nil
 }
 
-func languageCode(value string) (string, bool, bool) {
-	normalized := languageutil.NormalizeLanguageDisplay(value)
-	if normalized == "" {
-		normalized = strings.TrimSpace(value)
-	}
-	tag, ok := parseLanguageTag(normalized)
-	if !ok {
-		return "", false, false
-	}
-	base, _ := tag.Base()
-	if base.String() == "und" {
-		return "", false, false
-	}
-	code := base.ISO3()
-	if code == "" {
-		return "", false, false
-	}
-	return strings.ToUpper(code), isEnglishLanguageTag(base.String()), true
-}
-
-func parseLanguageTag(value string) (language.Tag, bool) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return language.Tag{}, false
-	}
-	if tag, err := language.Parse(trimmed); err == nil && tag != language.Und {
-		return tag, true
-	}
-	normalized := languageutil.NormalizeLanguageDisplay(trimmed)
-	if normalized == "" {
-		normalized = trimmed
-	}
-	languageTagLookupOnce.Do(buildLanguageTagLookup)
-	tag, ok := languageTagLookup[strings.ToLower(strings.TrimSpace(normalized))]
-	if ok {
-		return tag, true
-	}
-	return language.Tag{}, false
-}
-
-func buildLanguageTagLookup() {
-	languageTagLookup = make(map[string]language.Tag)
-	namer := display.Languages(language.English)
-	for _, tag := range display.Supported.Tags() {
-		name := strings.ToLower(strings.TrimSpace(namer.Name(tag)))
-		if name == "" {
-			continue
-		}
-		if _, exists := languageTagLookup[name]; exists {
-			continue
-		}
-		languageTagLookup[name] = tag
-	}
-}
-
 func resolveOriginalLanguage(meta api.UploadSubject) string {
 	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
 		return trackers.PreferredOriginalLanguage(meta, "")
@@ -294,15 +228,6 @@ func resolveOriginalLanguage(meta api.UploadSubject) string {
 		return strings.TrimSpace(meta.ProviderMetadata.IMDB.OriginalLanguage)
 	default:
 		return ""
-	}
-}
-
-func isEnglishLanguageTag(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "english", "en", "eng", "en-us", "en-gb":
-		return true
-	default:
-		return false
 	}
 }
 

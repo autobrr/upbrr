@@ -412,16 +412,18 @@ type UploadSubject struct {
 	DiscType                   string
 	VideoPath                  string
 	FileList                   []string
-	SourceSize                 int64
-	MediaInfoJSONPath          string
-	MediaInfoTextPath          string
-	DVDVOBMediaInfoText        string
-	Scene                      bool
-	SceneName                  string
-	SceneNFOPath               string
-	SceneRenamed               bool
-	SceneRenamedReason         string
-	DescriptionGroups          []DescriptionBuilderGroup
+	// KeepFolder retains the supplied root around one selected movie or episode video.
+	KeepFolder          bool
+	SourceSize          int64
+	MediaInfoJSONPath   string
+	MediaInfoTextPath   string
+	DVDVOBMediaInfoText string
+	Scene               bool
+	SceneName           string
+	SceneNFOPath        string
+	SceneRenamed        bool
+	SceneRenamedReason  string
+	DescriptionGroups   []DescriptionBuilderGroup
 	// DescriptionGroupsFinal distinguishes retained description output from
 	// pre-description subjects whose content may still be generated.
 	DescriptionGroupsFinal bool
@@ -1026,7 +1028,7 @@ func (s UploadSubject) TrackerDescriptionOverride(tracker string) (string, bool)
 		if !matchesTracker {
 			continue
 		}
-		if description := strings.TrimSpace(group.Source()); description != "" {
+		if description := strings.TrimSpace(group.Source()); description != "" || s.DescriptionGroupsFinal || group.Final {
 			return description, s.DescriptionGroupsFinal || group.Final
 		}
 	}
@@ -1965,6 +1967,8 @@ type TorrentSubject struct {
 	SourceSize int64
 	FileList   []string
 	DiscType   string
+	// KeepFolder preserves a selected single video's directory without adding sidecars.
+	KeepFolder bool
 	// ClientTorrentPath is reusable metainfo selected by client discovery.
 	ClientTorrentPath string
 	// ClientTorrentInfoHash is the infohash captured with ClientTorrentPath.
@@ -1987,6 +1991,7 @@ type ClientSubject struct {
 	SourcePath      string
 	FileList        []string
 	DiscType        string
+	KeepFolder      bool
 	ClientOverrides ClientOverrides
 }
 

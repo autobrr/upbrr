@@ -27,7 +27,7 @@ import (
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/pathing"
-	"github.com/autobrr/upbrr/internal/preparedrelease"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -2736,24 +2736,13 @@ func reusableMediaImageFormat(pathValue string) string {
 	return imageevidence.VerifiedFormat(pathValue)
 }
 
-// reusableMediaTempRoot returns the reserved first-level directory for local
-// reusable media owned by one canonical source path. Its @ prefix cannot
-// collide with the existing release-temp basename namespace.
+// reusableMediaTempRoot retains reusable images inside their owning release.
 func reusableMediaTempRoot(tmpRoot, sourcePath string) (string, error) {
-	absSource, err := filepath.Abs(strings.TrimSpace(sourcePath))
+	releaseRoot, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, api.ReleaseInfo{})
 	if err != nil {
-		return "", fmt.Errorf("workflow media resolve reusable source path: %w", err)
+		return "", fmt.Errorf("core: resolve reusable media owner: %w", err)
 	}
-	sourceKey := preparedrelease.CanonicalSourceKey(absSource)
-	if sourceKey == "" {
-		return "", errors.New("workflow media reusable source path is required")
-	}
-	sourceDigest := sha256.Sum256([]byte(sourceKey))
-	reuseRoot := filepath.Join(tmpRoot, "@reused-"+hex.EncodeToString(sourceDigest[:]))
-	if !pathing.IsWithinRoot(tmpRoot, reuseRoot) {
-		return "", errors.New("workflow media reusable destination escapes tmp root")
-	}
-	return reuseRoot, nil
+	return filepath.Join(releaseRoot, "reused"), nil
 }
 
 func reusableMediaImageExtension(pathValue string) string {

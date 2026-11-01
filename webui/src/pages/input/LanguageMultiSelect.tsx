@@ -10,6 +10,7 @@ import correctionChoices from "./correctionChoices.json";
 export function LanguageMultiSelect({
   id,
   label,
+  describedBy,
   value,
   onChange,
   coverage = false,
@@ -17,6 +18,7 @@ export function LanguageMultiSelect({
   coverage?: boolean;
   id: string;
   label: string;
+  describedBy?: string;
   value: readonly string[] | null | undefined;
   onChange: (value: readonly string[]) => void;
 }>) {
@@ -61,7 +63,7 @@ export function LanguageMultiSelect({
         id={id}
         type="button"
         aria-label={label}
-        aria-describedby={`${id}-summary`}
+        aria-describedby={[`${id}-summary`, describedBy].filter(Boolean).join(" ")}
         aria-expanded={open}
         aria-controls={open ? `${id}-options` : undefined}
         className="flex h-9 min-w-0 w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-left text-sm text-card-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"

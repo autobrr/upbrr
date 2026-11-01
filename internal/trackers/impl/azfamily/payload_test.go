@@ -4,9 +4,23 @@
 package azfamily
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestCanonicalLanguagePayloadKeepsSiteGrouping(t *testing.T) {
+	got := languageValues(api.UploadSubject{
+		AudioLanguages:    languageutil.NormalizeLanguageList([]string{"nb", "fil", "tgl", "cmn"}),
+		SubtitleLanguages: languageutil.NormalizeLanguageList([]string{"English (Full)", "Norwegian Bokmål", "pt-BR", "phi"}),
+	})
+	if !slices.Equal(got.Audio, []string{"136", "22", "33"}) || !slices.Equal(got.Subtitles, []string{"116", "22", "45"}) {
+		t.Fatalf("language payload lost canonical languages or invented a collective member: %#v", got)
+	}
+}
 
 func TestReadScreenshotSourceEnforcesLimit(t *testing.T) {
 	t.Parallel()
