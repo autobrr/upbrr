@@ -29,6 +29,7 @@ import (
 )
 
 type dryRunClientService struct {
+	subjects   []api.ClientSubject
 	injections []api.TorrentResult
 	searches   int
 	injectErr  error
@@ -80,7 +81,8 @@ func (f *workflowTorrentServiceCapture) Create(_ context.Context, subject api.To
 	return f.result, nil
 }
 
-func (s *dryRunClientService) Inject(_ context.Context, _ api.ClientSubject, torrent api.TorrentResult) error {
+func (s *dryRunClientService) Inject(_ context.Context, subject api.ClientSubject, torrent api.TorrentResult) error {
+	s.subjects = append(s.subjects, subject)
 	s.injections = append(s.injections, torrent)
 	return s.injectErr
 }
@@ -96,6 +98,7 @@ func (s *dryRunClientService) SearchPathedTorrents(context.Context, api.ClientSu
 
 type workflowRetainedUploadPlanFake struct {
 	preparations []trackers.RetainedTrackerPreparation
+	resolved     map[string]trackers.RetainedTrackerPreparation
 	results      []trackers.RetainedTrackerResult
 }
 
@@ -109,6 +112,9 @@ func (f *workflowRetainedUploadPlanFake) ResolveAction(
 	_ api.RequiredActionKind,
 	_ bool,
 ) (trackers.RetainedTrackerPreparation, error) {
+	if preparation, ok := f.resolved[trackerID]; ok {
+		return preparation, nil
+	}
 	for _, preparation := range f.preparations {
 		if strings.EqualFold(preparation.Tracker, trackerID) {
 			return preparation, nil
@@ -224,6 +230,7 @@ type workflowRetainedUploadServiceFake struct {
 	projections    []api.TrackerReleaseProjection
 	failures       map[api.TrackerID]trackers.TrackerFailure
 	actions        map[api.TrackerID][]api.RequiredAction
+	resolved       map[string]trackers.RetainedTrackerPreparation
 	torrentPaths   map[api.TrackerID]string
 	results        []trackers.RetainedTrackerResult
 	subject        api.UploadSubject
@@ -263,6 +270,7 @@ func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 	}
 	return &workflowRetainedUploadPlanFake{
 		preparations: preparations,
+		resolved:     f.resolved,
 		results:      append([]trackers.RetainedTrackerResult(nil), f.results...),
 	}, nil
 }
@@ -1472,8 +1480,20 @@ func TestWorkflowLiveUploadInjectsRegisteredTorrentAfterPreparation(t *testing.T
 					},
 				}},
 			}
+			source := filepath.Join(tempDir, "Example.Release.2026")
+			selected := []string{filepath.Join(source, "Example.Release.2026.mkv")}
+			subject := api.UploadSubject{
+				SourcePath: source,
+				FileList:   selected,
+				KeepFolder: true,
+				Options:    api.UploadOptions{SkipAutoTorrent: true},
+			}
+			torrentSubject := workflowSubmissionTorrentSubject(subject)
+			if !torrentSubject.KeepFolder || torrentSubject.SourcePath != source || !slices.Equal(torrentSubject.FileList, selected) {
+				t.Fatalf("submission torrent lost folder selection: %#v", torrentSubject)
+			}
 			builder := workflowUploadPlanBuilder{
-				resolver: &workflowDescriptionResolverFake{},
+				resolver: workflowUploadResolverFixed{subject: subject},
 				trackers: service,
 				clients:  clientService,
 			}
@@ -1538,6 +1558,10 @@ func TestWorkflowLiveUploadInjectsRegisteredTorrentAfterPreparation(t *testing.T
 				clientService.injections[priorInjections].Path != registeredPath ||
 				clientService.injections[priorInjections].Path == preparedPath {
 				t.Fatalf("live upload results=%#v injections=%#v", results, clientService.injections)
+			}
+			injected := clientService.subjects[priorInjections]
+			if !injected.KeepFolder || injected.SourcePath != source || !slices.Equal(injected.FileList, selected) {
+				t.Fatalf("client injection lost folder selection: %#v", injected)
 			}
 		})
 	}

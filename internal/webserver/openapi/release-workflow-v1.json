@@ -2172,6 +2172,56 @@
               }
             ]
           },
+          "KeepIMDB": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepMAL": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepTMDB": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepTVDB": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepTVmaze": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "MALID": {
             "anyOf": [
               {
@@ -4308,6 +4358,16 @@
           "id": {
             "$ref": "#/components/schemas/MediaArtifactSetID"
           },
+          "imageHostPreference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "imageHostUploadSkipped": {
             "type": "boolean"
           },
@@ -5960,6 +6020,9 @@
       "PreparedReleaseDisplay": {
         "type": "object",
         "properties": {
+          "CanKeepFolder": {
+            "type": "boolean"
+          },
           "Commentary": {
             "type": "boolean"
           },
@@ -5974,6 +6037,9 @@
           },
           "ReleaseName": {
             "type": "string"
+          },
+          "TVDBNamingAvailable": {
+            "type": "boolean"
           },
           "TrackerData": {
             "type": "array",
@@ -10811,6 +10877,9 @@
       "TrackerArtifactRequirements": {
         "type": "object",
         "properties": {
+          "allowEmptyDescription": {
+            "type": "boolean"
+          },
           "allowedImageHosts": {
             "type": "array",
             "items": {
@@ -12603,6 +12672,9 @@
           },
           "dupes": {
             "$ref": "#/components/schemas/DupeAssessmentRef"
+          },
+          "explicitDryRun": {
+            "type": "boolean"
           },
           "failedCount": {
             "type": "integer"

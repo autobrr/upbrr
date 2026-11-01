@@ -41,7 +41,7 @@ func (s *Service) inspectProgrammeTracks(ctx context.Context, meta preparationst
 	}
 	for _, file := range meta.FileList {
 		primary := pathing.SamePath(file, meta.VideoPath)
-		doc, inspectErr := inspectFileMediaInfo(ctx, s.mi, file, fingerprint, root)
+		doc, _, inspectErr := inspectReleaseMediaInfoReports(ctx, s.mi, meta, file, fingerprint, root)
 		if inspectErr != nil {
 			if ctx.Err() != nil {
 				return meta, fmt.Errorf("programme track inspection canceled: %w", ctx.Err())
@@ -89,7 +89,7 @@ func (s *Service) inspectProgrammeTracks(ctx context.Context, meta preparationst
 			HasEncodeSettings:   settings,
 			EncodeSettingsKnown: len(video) == 1,
 			RateControl:         mediafacts.VideoRateControlFromMediaInfo(doc),
-			Resolution:          resolutionFromMediaInfo(doc, file),
+			Resolution:          resolutionFromMediaInfo(doc, file, ""),
 			VideoCodec:          codec,
 			VideoEncode:         encoder,
 			VideoEncoder:        measuredVideoEncoder(doc),

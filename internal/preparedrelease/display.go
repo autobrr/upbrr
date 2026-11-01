@@ -27,6 +27,7 @@ func (m *Module) ResolveDisplay(ctx context.Context, ref api.ReleaseRef) (api.Pr
 		return api.PreparedReleaseDisplay{}, err
 	}
 	resources := owned.resources
+	display.CanKeepFolder = canKeepSourceFolder(owned)
 	for _, target := range hdrTargetSubjects(owned) {
 		display.HDRTargets = append(display.HDRTargets, target.Target)
 	}
@@ -54,6 +55,8 @@ func ProjectDisplay(release api.PreparedRelease) (api.PreparedReleaseDisplay, er
 	}
 	release = detached
 	display := api.PreparedReleaseDisplay{
+		TVDBNamingAvailable: release.Identity.Category == api.CanonicalCategoryTV &&
+			release.ProviderMetadata.TVDBNamingAvailable(release.Source.SourcePath, release.Identity),
 		ReleaseName: release.Naming.ReleaseName,
 		Commentary:  release.Media.Commentary,
 		Providers:   []api.ProviderDisplay{},

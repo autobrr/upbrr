@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -614,6 +615,40 @@ func TestWorkflowDescriptionBuilderHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestWorkflowDescriptionBuilderEmptyTextHonorsTrackerRequirements(t *testing.T) {
+	t.Parallel()
+	for _, optional := range []bool{false, true} {
+		t.Run(fmt.Sprintf("optional=%t", optional), func(t *testing.T) {
+			builder := workflowDescriptionBuilder{
+				resolver: &workflowDescriptionResolverFake{},
+				trackers: &workflowDescriptionServiceFake{preview: &api.PreparationPreview{
+					Descriptions: []api.PreparationDescription{{GroupKey: "example", Trackers: []string{"EXAMPLE"}}},
+				}},
+			}
+			projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+				TrackerID:        "EXAMPLE",
+				DescriptionGroup: "example",
+				Artifacts:        api.TrackerArtifactRequirements{Description: true, AllowEmptyDescription: optional},
+			}}}
+			snapshot, err := builder.Build(t.Context(), api.ReleaseRef{SourcePath: "Example.mkv"}, projections,
+				api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionInstructions{}, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if optional {
+				if snapshot.Status != api.StageStatusCompleted || len(snapshot.Descriptions) != 1 ||
+					snapshot.Descriptions[0].Source != "" || snapshot.Descriptions[0].Rendered != "" || len(snapshot.Failures) != 0 ||
+					len(snapshot.TrackerResults) != 1 || snapshot.TrackerResults[0].Status != api.StageStatusCompleted {
+					t.Fatalf("optional empty description = %+v", snapshot)
+				}
+			} else if snapshot.Status != api.StageStatusFailed || snapshot.Descriptions == nil || len(snapshot.Descriptions) != 0 ||
+				len(snapshot.Failures) != 1 || len(snapshot.TrackerResults) != 1 || snapshot.TrackerResults[0].Status != api.StageStatusFailed {
+				t.Fatalf("required empty description = %+v", snapshot)
+			}
+		})
+	}
+}
+
 func TestWorkflowDescriptionOverridesPreservePerGroupFinalSource(t *testing.T) {
 	t.Parallel()
 	resolver := &workflowDescriptionResolverFake{}
@@ -663,37 +698,50 @@ func TestWorkflowDescriptionOverridesPreservePerGroupFinalSource(t *testing.T) {
 func TestWorkflowDescriptionSaveKeepsEditedRegisteredGroup(t *testing.T) {
 	t.Parallel()
 	registry := trackerimpl.MustNewRegistry()
-	descriptor, ok := registry.LookupDescriptor("AITHER")
-	if !ok {
-		t.Fatal("AITHER missing")
-	}
-	builder := workflowDescriptionBuilder{
-		resolver: &workflowDescriptionResolverFake{},
-		trackers: trackers.NewServiceWithRegistry(config.Config{}, api.NopLogger{}, nil, registry),
-	}
-	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
-		TrackerID:        "AITHER",
-		DescriptionGroup: descriptor.DescriptionGroup,
-		Artifacts:        api.TrackerArtifactRequirements{Description: true},
-	}}}
-	build := func(instructions api.DescriptionInstructions) api.DescriptionSet {
-		t.Helper()
-		result, err := builder.Build(t.Context(), api.ReleaseRef{SourcePath: "Example.mkv"}, projections, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, instructions, time.Now())
-		if err != nil || len(result.Descriptions) != 1 {
-			t.Fatalf("build failed: %+v %v", result, err)
-		}
-		return result
-	}
-	generated := build(api.DescriptionInstructions{})
-	source := generated.Descriptions[0].Source + "\nOwner edit"
-	saved := build(api.DescriptionInstructions{Overrides: []api.DescriptionOverrideInput{{
-		GroupKey:   generated.Descriptions[0].GroupKey,
-		Source:     source,
-		Final:      true,
-		TrackerIDs: generated.Descriptions[0].TrackerIDs,
-	}}})
-	if saved.Descriptions[0].Source != source {
-		t.Fatalf("Save group reverted edit: want %q, got %q", source, saved.Descriptions[0].Source)
+	for _, tracker := range []string{"AITHER", "ANT"} {
+		t.Run(tracker, func(t *testing.T) {
+			descriptor, ok := registry.LookupDescriptor(tracker)
+			if !ok {
+				t.Fatal("tracker missing")
+			}
+			builder := workflowDescriptionBuilder{
+				resolver: &workflowDescriptionResolverFake{},
+				trackers: trackers.NewServiceWithRegistry(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}}, api.NopLogger{}, nil, registry),
+			}
+			projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+				TrackerID:        api.TrackerID(tracker),
+				DescriptionGroup: descriptor.DescriptionGroup,
+				Artifacts:        api.TrackerArtifactRequirements{Description: true, AllowEmptyDescription: descriptor.UploadContentMode == trackers.UploadContentModeOptionalDescription},
+			}}}
+			build := func(instructions api.DescriptionInstructions) api.DescriptionSet {
+				t.Helper()
+				result, err := builder.Build(t.Context(), api.ReleaseRef{SourcePath: "Example.mkv"}, projections, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, instructions, time.Now())
+				if err != nil || len(result.Descriptions) != 1 {
+					t.Fatalf("build failed: %+v %v", result, err)
+				}
+				return result
+			}
+			generated := build(api.DescriptionInstructions{})
+			sources := []string{generated.Descriptions[0].Source + "\nOwner edit"}
+			if descriptor.UploadContentMode == trackers.UploadContentModeOptionalDescription {
+				sources = append(sources, "")
+			}
+			for _, source := range sources {
+				instructions := api.DescriptionInstructions{Overrides: []api.DescriptionOverrideInput{{
+					GroupKey:   generated.Descriptions[0].GroupKey,
+					Source:     source,
+					Final:      true,
+					TrackerIDs: generated.Descriptions[0].TrackerIDs,
+				}}}
+				if err := instructions.Validate(); err != nil {
+					t.Fatal(err)
+				}
+				saved := build(instructions)
+				if saved.Descriptions[0].Source != source {
+					t.Fatalf("Save group reverted edit: want %q, got %q", source, saved.Descriptions[0].Source)
+				}
+			}
+		})
 	}
 }
 

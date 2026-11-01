@@ -13,6 +13,8 @@ Use bounded scene synchronization to inspect pictures near selected metadata bou
 
 Prepared upload targets support MKV, MP4, TS, and M2TS files with a unique HEVC video track, and selected primary HEVC playlists from ordinary, unencrypted Blu-ray content roots at angle 0. ISO files, SSIF mappings, and ambiguous video bindings are unsupported. A filename alone does not establish that dynamic metadata is present. Static HDR10 and HLG do not supply HDR10+ or Dolby Vision metadata.
 
+For a non-disc TV pack, preparation reuses the selected first episode’s MediaInfo report for the pack’s HDR facts and target eligibility. Only that episode is offered as a prepared HDR target. Later episodes do not supply the pack’s HDR facts or HDR targets, even if their HDR properties differ; an ineligible first episode does not trigger a search through the pack.
+
 Standalone analysis also accepts raw `.hevc` and `.h265` files. Raw HEVC support does not make those files prepared upload targets. Use metadata-only analysis when decoded checks are unavailable for the source.
 
 Audio and picture checks require FFmpeg. Picture checks also require supported colour, geometry, and timing evidence; a source that supports native metadata extraction may still be unsupported for a decoded check. Read the individual outcome rather than treating the presence of a native plot as proof that every check ran.
@@ -25,6 +27,8 @@ Audio and picture checks require FFmpeg. Picture checks also require supported c
 4. Click **Generate**. Review each format, picture check, and audio-track outcome after processing finishes.
 5. Preview or download successful artifacts. Select the picture-check images you want in descriptions, then inspect the generated descriptions before upload.
 
+Information icons beside the target heading, options, actions and results explain scope, units and retained-work behavior. Help supports pointer, keyboard focus and touch, and does not select targets or start work. Required evidence and coverage limitations remain visible inline.
+
 Opening the page does not start analysis. **Cancel** stops active work. **Retry** reuses retained work where compatible; **Resume** appears for a retained pending request.
 
 ### Choose native formats
@@ -36,7 +40,7 @@ Opening the page does not start analysis. **Cancel** stops active work. **Retry*
 | **Dolby Vision only**    | Request Dolby Vision metadata and its L1 brightness plot.                                      |
 | **Require both formats** | Analyze both native formats; a missing format prevents a complete result.                      |
 
-The HDR10+ peak estimator defaults to **Histogram**. Other choices are **Histogram 99th percentile**, **MaxSCL**, and **MaxSCL luminance**. Changing it can reuse complete retained metadata; it does not change decoded pixels or turn metadata into a picture measurement.
+The HDR10+ peak estimator defaults to **Histogram**. Other choices are **Last histogram value**, **Maximum scene component (MaxSCL)**, and **Scene-component luminance (MaxSCL)**. Histogram uses the maximum supplied distribution value; Last histogram value uses the final supplied value without sorting. The MaxSCL choices use the largest supplied component or a luminance estimate weighted from the three RGB components. Changing the estimator can reuse complete retained metadata; it does not change decoded pixels or turn metadata into a picture measurement.
 
 ### Choose the work to perform
 

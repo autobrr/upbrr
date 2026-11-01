@@ -187,7 +187,8 @@ func newActiveCorrectionFixture(t *testing.T) *activeCorrectionFixture {
 			StaleContentFields: []api.CorrectionField{api.CorrectionFieldMetadataAlternateTitle, api.CorrectionFieldMetadataGenres},
 		}},
 	}
-	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
+	// Exercise SQLite transaction ordering without disk latency consuming the polling deadline.
+	repo, err := db.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -283,7 +283,7 @@ naming fingerprints include the selected provider, so changing it requires renew
 
 Use `CurrentTVDBNameDisambiguation` for identity-bound TV qualifiers when the primary title
 comes from another provider. It rejects stale or mismatched evidence and manual titles;
-tracker-local callbacks still own qualifier placement and manual-year preservation. Do not
+tracker-local callbacks still own qualifier placement and evidenced destination-specific year rules. Usable TVDB naming data controls TV year value and omission, even when the selected qualifier year is zero. Manual year and omission controls apply only when that data is absent; do not infer absence from a zero year or a negative collision decision. Do not
 require rendered title text to equal TVDB's spelling.
 
 `StructuredNamePolicy.Defaults` applies optional presentation preferences. Its editor leaves
@@ -407,6 +407,14 @@ owns status/import/validate/login/2FA/delete coordination across CLI, API, and W
   lane without prompting; `--unattended_confirm` may let the CLI present required manual actions.
 - Hybrid modes must be explicit. For example, API-upload and cookie-form upload can resolve to
   different requirement alternatives without tracker-name branches in generic code.
+
+### Settings connection probes
+
+Definitions may expose `ConnectionProbeProvider`; standalone profiles bind `ConnectionProbe` in `profile.go` with protocol logic in `auth_connection.go`. The registry carries this capability separately from `AuthSessionResolver`. Declare `DraftConfig` to copy only the credential fields consumed by the probe before decryption; nil selects no draft fields for cookie-only checks. A probe receives that selected decrypted config, an optional read-only cookie snapshot scoped to the registered host, and a bounded HTTP client that rejects redirects. It has no database or persistence handle.
+
+For credential-login probes, `CredentialsOverrideCookies` selects a fresh ephemeral login when either username or password is entered. Require both fields, discard the temporary session and never fall back to stored cookies after a failed draft login.
+
+Use a verified authenticated read operation and validate its service-specific response. Return fixed, secret-free `api.ConnectionTestResult` messages. Do not reuse an auth resolver that logs in, refreshes credentials, initializes storage, or persists session state. Never probe by uploading content, adding torrents, or sending an empty upload request. Document genuinely unavailable safe operations without treating an unverified endpoint as unsupported. Tests must use local fakes and synthetic credentials.
 
 ### Torrent-identity contract
 
@@ -1191,6 +1199,12 @@ automatic upload decisions cannot supply it, and refreshed evidence requires con
 Blocking a duplicate needs no token. In-client matches remain non-overridable. The tracker, not
 this attestation, validates any staff token at submission.
 
+An optional `StaffTokenOverrideRequired` callback may select a separately supported
+upload authorization path using effective configuration, the exact reviewed projection,
+and sanitized candidate evaluations. It changes only staff attestation, never duplicate
+relations or ordinary approval. Preserve exact-match and in-client protections; bind
+explicit intention answers to the current source generation and version the policy.
+
 Target-level duplicate policy reviews use `DupeCheckResult.ReviewReasons` and
 `TrackerDupeAssessment.reviewReasons`, including when a complete search has no candidates.
 Keep these reasons separate from candidate matches. They enter the existing fingerprint-bound
@@ -1311,6 +1325,9 @@ incomplete answer retains only a private reuse baseline, with no current duplica
 authority. Rebinding never extends duplicate freshness. Canonical prepared-release contract versions do not change for
 tracker-only questionnaire semantics; version the tracker projector instead.
 
+Non-disc TV-pack HDR facts and prepared HDR targets use only the selected primary video's existing
+MediaInfo report. Do not request a pack-wide HDR sweep or attribute inspected evidence to siblings.
+
 By default, non-disc TV-pack preparation uses the selected primary video's MediaInfo report. A typed
 metadata requirement may request per-resource inspection for an explicit site policy; preserve
 resource identity and incomplete coverage. The following passive guidance defaults do not override
@@ -1330,6 +1347,15 @@ MediaInfo-selected resource. Uninspected pack files produce passive coverage gui
 programme-language gate. Keep canonical language statuses and `TrackCoverageComplete` unchanged:
 they still describe collection-wide evidence and protect naming, source binding and independent
 requirements. Do not rewrite language facts to bypass coverage; questionnaire keys use those facts.
+
+Use `internal/languageutil` for shared language identity and complete labels. Compare
+with `SameLanguage`/`ContainsLanguage`, not display spelling. Source fields containing
+human names use `NormalizeLanguageNames`; code fields use `NormalizeLanguageList`.
+Keep regional/script variants, subtitle coverage, custom values and collective tags
+in canonical facts. Apply intentional site grouping only in the owning taxonomy;
+provider request locales are a separate contract. Refresh the bundled IANA vocabulary
+with `python3 scripts/languages/update-registry.py <downloaded-registry-file> > internal/languageutil/language_registry.tsv` and
+regenerate correction choices when changing it.
 
 Use `WithLanguagePolicy` or `WithLanguageAssessment` to expose the same pure language predicate
 through `ValidationPolicyBinding.LanguageAssessment` for source-level readiness. A custom binding
@@ -1423,6 +1449,7 @@ Declare static capabilities directly in `standalone.Profile`:
 | Profile field             | Typical supporting file      | Purpose                                           |
 | ------------------------- | ---------------------------- | ------------------------------------------------- |
 | `AuthCapability`          | `auth.go`                    | Declares API-key, passkey, cookie, login/2FA      |
+| `ConnectionProbe`         | `auth_connection.go`         | Read-only draft Settings connection check         |
 | `AuthResolver`            | `auth.go`                    | Validates or refreshes remote auth                |
 | `AuthPolicy`              | `profile.go`                 | Auth coordinator semantics                        |
 | `AuthStateManager`        | `auth.go`                    | Cleans tracker-owned persisted auth state         |
@@ -1459,6 +1486,20 @@ lookup is possible. Keys may contain credentials: the shared evidence cache hash
 storage, and callers must never log them. Return usable partial metadata alongside an asset
 error so IDs survive while the failed dependency remains suppressed. A successful empty result
 can retry on a fresh input load; a completed failure retries only after History deletion.
+
+Keep external metadata IDs exact at the response boundary. Use `json.Decoder.UseNumber`
+for untyped JSON and `providerid.ParseDecimal` for decimal ID strings after any
+documented provider prefix is removed. Do not convert IDs through floating point,
+accept a scanned prefix, or ignore range errors. Preserve the adapter's supported
+wire representations; a missing or invalid ID must not become a different ID.
+Adapters repairing previously inexact IDs opt into `LegacyExternalIDsNeedRefresh`
+in their `DataLookupPolicy` to expire obsolete normalized lookup payloads. Also
+advance `externalidentity.ContractVersion` and the prepared-release compatibility
+contract when repairing retained automatic identity: the policy flag alone does
+not invalidate a current-contract canonical identity. Incompatible automatic
+identity triggers cleanup of affected aggregate tracker IDs; current exact-query
+evidence preserves already repaired IDs if preparation was interrupted. Failed
+queries remain suppressed, and compatible description/image assets are retained.
 
 For auth:
 

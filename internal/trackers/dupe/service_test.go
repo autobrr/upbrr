@@ -838,7 +838,9 @@ func TestLiveTestChecksEverySelectedTrackerSerially(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewServiceWithRegistry(adaptersConfig(adapters), api.NopLogger{}, &trackerspkg.Registry{}, policy)
+	cfg := adaptersConfig(adapters)
+	cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "upbrr.db")
+	service := NewServiceWithRegistry(cfg, api.NopLogger{}, &trackerspkg.Registry{}, policy)
 	service.adapters = adapters
 	summary, err := service.Check(t.Context(), api.DuplicateSubject{SourcePath: filepath.Join(t.TempDir(), "Synthetic.Release.2026-GRP.mkv")}, names)
 	if err != nil {

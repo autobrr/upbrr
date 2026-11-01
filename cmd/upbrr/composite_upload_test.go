@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -143,6 +144,75 @@ func TestCLICompositeMediaUsesConfiguredScreenshotsUnlessOverridden(t *testing.T
 				t.Fatalf("media screenshots = %#v, want count %d frames %v", mapped.Media.Screenshots, tc.count, tc.frames)
 			}
 		})
+	}
+}
+
+func TestCLICompositeBlockedMediaStopsWithoutTrackerFeedback(t *testing.T) {
+	t.Parallel()
+
+	const prompt = "Capture, select, or host the required release images before continuing."
+	failure := api.OperationFailure{
+		Code:      api.OperationFailureInternal,
+		Operation: api.OperationKindMedia,
+		Message:   "Screenshot capture failed. Repair source media before retrying.",
+		Recovery:  api.OperationRecoveryRetry,
+	}
+	for _, interaction := range []api.InteractionMode{
+		api.InteractionModeInteractive,
+		api.InteractionModeUnattended,
+		api.InteractionModeUnattendedConfirm,
+	} {
+		for _, withFailure := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/failure=%t", interaction, withFailure), func(t *testing.T) {
+				t.Parallel()
+				action := api.RequiredAction{
+					ID:               "media-required",
+					Kind:             api.RequiredActionProvideTrackerInput,
+					Status:           api.RequiredActionStatusPending,
+					WorkflowRevision: 3,
+					Prompt:           prompt,
+				}
+				media := &api.MediaArtifactSet{Status: api.StageStatusBlocked}
+				if withFailure {
+					media.Failures = []api.WorkflowFailure{{Failure: failure}}
+				}
+				coreSvc := &cliWorkflowCoreFake{current: releaseworkflow.CommandResult{
+					Workflow: api.ReleaseWorkflow{
+						ID:       "workflow-media-blocked",
+						Revision: 3,
+						Status:   api.WorkflowStatusBlocked,
+					},
+					Media:        media,
+					Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{action}},
+				}}
+				var output strings.Builder
+				session := &cliWorkflowSession{
+					core:    coreSvc,
+					intent:  cliWorkflowIntent{interaction: interaction},
+					streams: cliIO{out: &output},
+					uploadRequest: api.Request{
+						SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+						Options:    api.UploadOptions{InteractionMode: interaction},
+					},
+				}
+				// A nil reader makes any accidental questionnaire prompt fail the test.
+				uploaded, err := session.completeComposite(t.Context(), false, nil, config.Config{}, api.NopLogger{})
+				if err == nil || uploaded != 0 || len(coreSvc.uploadFeedback) != 0 {
+					t.Fatalf("blocked media = uploaded:%d feedback:%d err:%v", uploaded, len(coreSvc.uploadFeedback), err)
+				}
+				if strings.Contains(err.Error(), "outside tracker projection feedback") || output.Len() != 0 {
+					t.Fatalf("media recovery entered tracker feedback: err:%v output:%q", err, output.String())
+				}
+				if withFailure {
+					got, ok := api.AsOperationFailure(err)
+					if !ok || got != failure || formatCLIError(err) != failure.Message+" (recovery: retry)" {
+						t.Fatalf("media recovery was lost: failure:%#v err:%v", got, err)
+					}
+				} else if !strings.Contains(err.Error(), prompt) || !strings.Contains(err.Error(), "media blocked") {
+					t.Fatalf("media recovery prompt was lost: %v", err)
+				}
+			})
+		}
 	}
 }
 
@@ -333,7 +403,7 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 	}
 	if mapped.Duplicates.RemoteCheck == nil || *mapped.Duplicates.RemoteCheck ||
 		mapped.Duplicates.CheckCount == nil || *mapped.Duplicates.CheckCount != 2 ||
-		mapped.Duplicates.OnEvidence != api.ReleaseWorkflowDuplicateUpload ||
+		mapped.Duplicates.OnEvidence != api.ReleaseWorkflowDuplicateBlock ||
 		!slicesEqual(mapped.Duplicates.AllowUpload, []api.TrackerID{"BETA"}) {
 		t.Fatalf("duplicate mapping = %#v", mapped.Duplicates)
 	}
@@ -420,6 +490,8 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 					},
 					{
 						TrackerID:         "BETA",
+						UploadReady:       true,
+						Readiness:         api.ReadinessStatusReady,
 						DisplayName:       "Beta",
 						UploadReleaseName: "Example.Release.2026.BETA-GRP",
 						EditionFeatures:   []api.TrackerEditionFeature{{Label: "With Commentary", Selected: false}},
@@ -435,7 +507,12 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 						Relation: api.DupeRelationExactDuplicate,
 					}},
 				},
-				{TrackerID: "BETA", Decision: api.DupeDecisionNoMatch},
+				{
+					TrackerID: "BETA",
+					Decision:  api.DupeDecisionNoMatch,
+					Status:    api.StageStatusCompleted,
+					Search:    api.DupeSearchEvidence{Complete: true},
+				},
 			}},
 		}, nil
 	}
@@ -472,7 +549,7 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 		},
 		streams: cliIO{out: &output},
 	}
-	_, err := session.complete(
+	err := session.complete(
 		context.Background(),
 		false,
 		bufio.NewReader(strings.NewReader("y\nn\n")),
@@ -501,7 +578,7 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	}
 	for _, prompt := range []string{
 		`Use Alpha as "Example.Release.2026.ALPHA-GRP"? [y/N]:`,
-		`Use Beta as "Example.Release.2026.BETA-GRP"? [y/N]:`,
+		`Use Beta as "Example.Release.2026.BETA-GRP"? [Y/n]:`,
 	} {
 		if !strings.Contains(output.String(), prompt) {
 			t.Fatalf("INFO output missing tracker approval prompt %q", prompt)
@@ -636,15 +713,18 @@ func TestCLICompositeTrackerFeedbackConfirmsOrEditsReleaseName(t *testing.T) {
 					Trackers: []string{"AR"},
 				},
 				current: releaseworkflow.CommandResult{
+					Media: &api.MediaArtifactSet{Status: api.StageStatusBlocked},
 					Projections: &api.TrackerReleaseProjectionSet{
 						Projections: []api.TrackerReleaseProjection{{TrackerID: "AR"}},
 					},
 				},
 			}
-			feedback, declined, err := session.collectCompositeTrackerFeedback(
+			feedback, declined, err := session.collectCompositeUploadFeedback(
+				t.Context(),
 				bufio.NewReader(strings.NewReader(test.input)),
+				config.Config{},
+				api.NopLogger{},
 				action,
-				api.ReleaseWorkflowUploadFeedback{},
 			)
 			if err != nil {
 				t.Fatalf("collect tracker feedback: %v", err)
@@ -994,6 +1074,7 @@ func TestCLICompositeTrackerFeedbackCollectsCurrentLateQuestionnaire(t *testing.
 				uploadRequest: api.Request{Trackers: []string{test.tracker}, TrackerQuestionnaireAnswers: map[string]map[string]string{test.tracker: {test.key: test.previous}}},
 				current: releaseworkflow.CommandResult{
 					Workflow: api.ReleaseWorkflow{ID: "workflow"},
+					Media:    &api.MediaArtifactSet{Status: api.StageStatusBlocked},
 					Projections: &api.TrackerReleaseProjectionSet{
 						ID:          "projection",
 						Revision:    3,
@@ -1011,7 +1092,7 @@ func TestCLICompositeTrackerFeedbackCollectsCurrentLateQuestionnaire(t *testing.
 					},
 				},
 			}
-			feedback, declined, err := session.collectCompositeTrackerFeedback(bufio.NewReader(strings.NewReader(test.answer+"\n")), api.RequiredAction{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: api.TrackerID(test.tracker)}, api.ReleaseWorkflowUploadFeedback{})
+			feedback, declined, err := session.collectCompositeUploadFeedback(t.Context(), bufio.NewReader(strings.NewReader(test.answer+"\n")), config.Config{}, api.NopLogger{}, api.RequiredAction{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: api.TrackerID(test.tracker)})
 			if err != nil || declined || feedback.Response.Questionnaire == nil {
 				t.Fatalf("late questionnaire feedback=%+v declined=%t error=%v", feedback, declined, err)
 			}
@@ -1095,17 +1176,143 @@ func TestCLICompositeSequentialFeedbackUsesLatestQuestionnaireAuthority(t *testi
 	}
 }
 
-func TestCLICompositeEditionFeaturesDoNotPromptInUnattendedMode(t *testing.T) {
+func TestCLICompositeTrackerApprovalDefaults(t *testing.T) {
 	t.Parallel()
-	var output strings.Builder
-	session := &cliWorkflowSession{
-		intent:  cliWorkflowIntent{interaction: api.InteractionModeUnattended},
-		streams: cliIO{out: &output},
-		current: releaseworkflow.CommandResult{Projections: &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "EXAMPLE", EditionFeatures: []api.TrackerEditionFeature{{Label: "With Commentary", Selected: true}}}}}},
-	}
-	feedback, declined, err := session.collectCompositeUploadFeedback(t.Context(), nil, config.Config{}, api.NopLogger{}, api.RequiredAction{Kind: api.RequiredActionApproveTrackers})
-	if err == nil || !strings.Contains(err.Error(), "unattended") || declined || feedback.Response.TrackerApproval != nil || output.Len() != 0 {
-		t.Fatalf("unattended review: error=%v declined=%t output=%q", err, declined, output.String())
+	for _, mode := range []api.InteractionMode{api.InteractionModeInteractive, api.InteractionModeUnattendedConfirm, api.InteractionModeUnattended} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range []struct {
+				name     string
+				decision api.DupeDecision
+				status   api.StageStatus
+				complete bool
+				staff    bool
+				reasons  []api.DupeReason
+				input    string
+				want     bool
+			}{
+				{
+					name:     "clear Enter",
+					decision: api.DupeDecisionNoMatch,
+					status:   api.StageStatusCompleted,
+					complete: true,
+					input:    "\n",
+					want:     true,
+				},
+				{
+					name:     "clear Yes",
+					decision: api.DupeDecisionNoMatch,
+					status:   api.StageStatusCompleted,
+					complete: true,
+					input:    "y\n",
+					want:     true,
+				},
+				{
+					name:     "duplicate Enter",
+					decision: api.DupeDecisionAccepted,
+					status:   api.StageStatusCompleted,
+					complete: true,
+					input:    "\n",
+				},
+				{
+					name:     "overridden duplicate Enter",
+					decision: api.DupeDecisionIgnored,
+					status:   api.StageStatusCompleted,
+					complete: true,
+					input:    "\n",
+				},
+				{
+					name:     "incomplete search",
+					decision: api.DupeDecisionNoMatch,
+					status:   api.StageStatusCompleted,
+					input:    "\n",
+				},
+				{
+					name:     "failed check",
+					decision: api.DupeDecisionSkipped,
+					status:   api.StageStatusFailed,
+					input:    "\n",
+				},
+				{
+					name:     "skipped check",
+					decision: api.DupeDecisionSkipped,
+					status:   api.StageStatusSkipped,
+					input:    "\n",
+				},
+				{
+					name:     "staff token",
+					decision: api.DupeDecisionNoMatch,
+					status:   api.StageStatusCompleted,
+					complete: true,
+					staff:    true,
+					input:    "\n",
+				},
+				{
+					name:     "review reasons",
+					decision: api.DupeDecisionNoMatch,
+					status:   api.StageStatusCompleted,
+					complete: true,
+					reasons:  []api.DupeReason{{Code: "source_review", Message: "Verify source eligibility."}},
+					input:    "\n",
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					var output strings.Builder
+					session := &cliWorkflowSession{
+						intent:  cliWorkflowIntent{interaction: mode},
+						streams: cliIO{out: &output},
+						current: releaseworkflow.CommandResult{
+							Projections: &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+								TrackerID:         "EXAMPLE",
+								UploadReleaseName: "Example.Release.2026.1080p-GRP",
+								UploadReady:       true,
+								Readiness:         api.ReadinessStatusReady,
+								EditionFeatures:   []api.TrackerEditionFeature{{Label: "With Commentary", Selected: true}},
+							}}},
+							Dupes: &api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+								TrackerID:          "EXAMPLE",
+								Decision:           tc.decision,
+								Status:             tc.status,
+								Search:             api.DupeSearchEvidence{Complete: tc.complete},
+								RequiresStaffToken: tc.staff,
+								ReviewReasons:      tc.reasons,
+							}}},
+						},
+					}
+					action := api.RequiredAction{
+						ID:               "approval-default",
+						Kind:             api.RequiredActionApproveTrackers,
+						WorkflowRevision: 7,
+						Options:          []api.RequiredActionOption{{Value: "EXAMPLE"}},
+					}
+					var reader *bufio.Reader
+					if mode != api.InteractionModeUnattended {
+						reader = bufio.NewReader(strings.NewReader(tc.input))
+					}
+					feedback, declined, err := session.collectCompositeUploadFeedback(t.Context(), reader, config.Config{}, api.NopLogger{}, action)
+					if err != nil || declined == tc.want {
+						t.Fatalf("tracker approval: declined=%t err=%v output=%s", declined, err, output.String())
+					}
+					if tc.want {
+						if feedback.Action.ID != action.ID || feedback.Action.WorkflowRevision != 7 ||
+							feedback.Response.TrackerApproval == nil || !feedback.Response.TrackerApproval.Confirmed ||
+							!slices.Equal(feedback.Response.TrackerApproval.TrackerIDs, []api.TrackerID{"EXAMPLE"}) {
+							t.Fatalf("tracker approval lost exact authority: %+v", feedback)
+						}
+					} else if feedback.Response.TrackerApproval != nil {
+						t.Fatal("declining all trackers produced upload authority")
+					}
+					if mode == api.InteractionModeUnattended {
+						if strings.Contains(output.String(), "[Y/n]") || strings.Contains(output.String(), "[y/N]") {
+							t.Fatalf("unattended approval prompted: %s", output.String())
+						}
+					} else if !strings.Contains(output.String(), map[bool]string{true: "[Y/n]", false: "[y/N]"}[tc.want]) {
+						t.Fatalf("tracker approval displayed wrong default: %s", output.String())
+					}
+				})
+			}
+		})
 	}
 }
 
@@ -1222,10 +1429,10 @@ func TestCLISharedModifiedReleaseConfirmationSubmitsOneDecision(t *testing.T) {
 			var output bytes.Buffer
 			session := &cliWorkflowSession{intent: cliWorkflowIntent{interaction: test.mode}, streams: cliIO{out: &output}}
 			action := api.RequiredAction{
-Kind: api.RequiredActionAuthorizeRules,
- ReleaseRule: "modified_release",
- Prompt: "Verify source provenance for all selected trackers?",
-}
+				Kind:        api.RequiredActionAuthorizeRules,
+				ReleaseRule: "modified_release",
+				Prompt:      "Verify source provenance for all selected trackers?",
+			}
 			feedback, declined, err := session.collectCompositeRuleOverrideFeedback(bufio.NewReader(strings.NewReader(test.input)), action, api.ReleaseWorkflowUploadFeedback{})
 			if err != nil || declined || feedback.Response.RuleAuthorization == nil || feedback.Response.RuleAuthorization.Confirmed != test.want {
 				t.Fatalf("shared answer=%#v declined=%v error=%v", feedback, declined, err)

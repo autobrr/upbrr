@@ -162,7 +162,10 @@ type TrackerDryRunReport struct {
 
 // UploadDryRunResult retains one report per applicable tracker.
 type UploadDryRunResult struct {
-	// ClientInjectionRequested distinguishes an explicit dry run from a live-upload review.
+	// ExplicitDryRun preserves the requested mode across preparation decisions,
+	// including when NoSeed disables client injection.
+	ExplicitDryRun bool `json:"explicitDryRun,omitempty"`
+	// ClientInjectionRequested records effective permission to inject the prepared torrent.
 	ClientInjectionRequested bool                           `json:"clientInjectionRequested,omitempty"`
 	ID                       UploadDryRunResultID           `json:"id"`
 	WorkflowID               WorkflowID                     `json:"workflowId"`

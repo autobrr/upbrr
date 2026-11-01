@@ -85,15 +85,18 @@ func (f LanguageFacts) ProgrammeAudioOrigin(track MediaTrackFacts) TrackAudioOri
 	}
 	matchesOriginalLanguages := func(candidate MediaTrackFacts) bool {
 		return len(candidate.Languages) > 0 && !slices.ContainsFunc(candidate.Languages, func(language string) bool {
-			return !slices.Contains(f.OriginalLanguages, language)
+			return !languageutil.ContainsLanguage(f.OriginalLanguages, language)
 		})
 	}
 	if matchesOriginalLanguages(track) {
 		return TrackAudioOriginal
 	}
-	if len(f.OriginalLanguages) == 0 || slices.Contains(f.OriginalLanguages, "English") || slices.Contains(f.OriginalLanguages, "ZXX") ||
-		f.ProgrammeStatus == MetadataEvidenceStatusContradictory || !slices.Contains(f.ProgrammeLanguages, "English") ||
-		len(track.Languages) != 1 || track.Languages[0] != "English" {
+	if len(f.OriginalLanguages) == 0 || languageutil.ContainsLanguage(f.OriginalLanguages, "English") ||
+		languageutil.ContainsLanguage(f.OriginalLanguages, "ZXX") ||
+		f.ProgrammeStatus == MetadataEvidenceStatusContradictory ||
+		!languageutil.ContainsLanguage(f.ProgrammeLanguages, "English") ||
+		len(track.Languages) != 1 ||
+		!languageutil.SameLanguage(track.Languages[0], "English") {
 		return ""
 	}
 	if slices.ContainsFunc(f.Tracks, func(original MediaTrackFacts) bool {
@@ -102,7 +105,7 @@ func (f LanguageFacts) ProgrammeAudioOrigin(track MediaTrackFacts) TrackAudioOri
 			(original.AudioOrigin == TrackAudioOriginal || original.AudioOrigin == "" && matchesOriginalLanguages(original)) &&
 			slices.ContainsFunc(original.Languages, func(language string) bool {
 				code := languageutil.NormalizeLanguageCode(language)
-				return code != "" && code != "en" && code != "und" && code != "mul" && code != "zxx"
+				return languageutil.IsIdentifiedLanguage(language) && code != "en" && code != "zxx"
 			})
 	}) {
 		return TrackAudioDubbed
@@ -129,13 +132,13 @@ func (f LanguageFacts) HasUnresolvedProgrammeAudioOrigin() bool {
 // HasEnglishDub identifies classified or inferred English programme dubs, excluding
 // English dialogue within an original multilingual stream and aggregate corrections.
 func (f LanguageFacts) HasEnglishDub() bool {
-	if !f.OriginalLanguagesKnown || len(f.OriginalLanguages) == 0 || !slices.Contains(f.ProgrammeLanguages, "English") ||
-		slices.Contains(f.OriginalLanguages, "English") || slices.Contains(f.OriginalLanguages, "ZXX") ||
+	if !f.OriginalLanguagesKnown || len(f.OriginalLanguages) == 0 || !languageutil.ContainsLanguage(f.ProgrammeLanguages, "English") ||
+		languageutil.ContainsLanguage(f.OriginalLanguages, "English") || languageutil.ContainsLanguage(f.OriginalLanguages, "ZXX") ||
 		f.ProgrammeStatus == MetadataEvidenceStatusContradictory {
 		return false
 	}
 	return slices.ContainsFunc(f.Tracks, func(track MediaTrackFacts) bool {
-		return f.ProgrammeAudioOrigin(track) == TrackAudioDubbed && slices.Contains(track.Languages, "English")
+		return f.ProgrammeAudioOrigin(track) == TrackAudioDubbed && languageutil.ContainsLanguage(track.Languages, "English")
 	})
 }
 

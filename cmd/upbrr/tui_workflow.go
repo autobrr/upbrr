@@ -46,7 +46,8 @@ func withCLIItemPresentation(ctx context.Context, streams cliIO, source string, 
 	return context.WithValue(ctx, cliItemContextKey{}, view.Item)
 }
 
-func publishCLIItemResult(streams cliIO, err error) {
+// publishCLIItemResult preserves saved skip outcomes; errors take precedence.
+func publishCLIItemResult(streams cliIO, err error, status string) {
 	bridge := cliBridgeFromOutput(streams.out)
 	if bridge == nil {
 		return
@@ -56,6 +57,9 @@ func publishCLIItemResult(streams cliIO, err error) {
 	bridge.mu.Unlock()
 	if view.Result == "" {
 		view.Result = "Item completed."
+		if status == "skipped" {
+			view.Result = "Item skipped. Inspect the saved queue before retrying."
+		}
 	}
 	view.ItemFailed = err != nil
 	if err != nil {

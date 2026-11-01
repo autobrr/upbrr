@@ -294,7 +294,7 @@ describe("App shell", () => {
     expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Settings$/ }));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /^Main$/ })).toHaveAttribute(
+      expect(screen.getByRole("button", { name: /^General$/ })).toHaveAttribute(
         "aria-pressed",
         "true",
       ),

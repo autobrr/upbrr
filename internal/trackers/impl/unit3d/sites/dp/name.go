@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -16,7 +18,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v13", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v14", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -187,14 +189,14 @@ func audioLabel(values []string) string {
 // no marker; ambiguous primary-track evidence returns a naming error.
 func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 	facts := meta.LanguageFacts
-	languages := facts.ProgrammeLanguages
+	languages := languageutil.LanguageMatchKeys(facts.ProgrammeLanguages)
 	if !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) == 0 || facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete ||
-		trackers.KnownProgrammeLanguageCount(facts) != len(languages) ||
+		slices.ContainsFunc(facts.ProgrammeLanguages, func(value string) bool { return !languageutil.IsIdentifiedLanguage(value) }) ||
 		len(languages) == 0 {
 		return "", true, nil
 	}
 	original := facts.HasOriginalAudio()
-	english := slices.Contains(languages, "English")
+	english := languageutil.ContainsLanguage(languages, "English")
 	if len(languages) == 1 && original {
 		return "", true, nil
 	}
@@ -207,33 +209,33 @@ func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 	if len(languages) == 1 && facts.HasEnglishDub() {
 		return "Dubbed", true, nil
 	}
-	nordic := []string{"Danish", "Finnish", "Icelandic", "Norwegian", "Swedish"}
+	nordic := []string{"da", "fi", "is", "no", "nb", "nn", "sv"}
 	if len(languages) == 1 && !original && !english && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
-		return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed && slices.Contains(track.Languages, languages[0])
-	}) && !slices.Contains(facts.OriginalLanguages, "English") &&
+		return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed && languageutil.ContainsLanguage(track.Languages, languages[0])
+	}) && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
 		!slices.ContainsFunc(
 			facts.OriginalLanguages,
-			func(language string) bool { return slices.Contains(nordic, language) },
-		) && slices.Contains(nordic, languages[0]) {
-		return languages[0] + " Dubbed", true, nil
+			func(language string) bool { return languageutil.ContainsLanguage(nordic, language) },
+		) && languageutil.ContainsLanguage(nordic, languages[0]) {
+		return languageutil.NormalizeLanguageDisplay(languages[0]) + " Dubbed", true, nil
 	}
 	if len(languages) != 2 {
 		return "", false, nil
 	}
 	if english {
 		for _, language := range languages {
-			if language != "English" {
-				if slices.Contains(facts.OriginalLanguages, "English") && slices.Contains(facts.OriginalLanguages, language) {
+			if !languageutil.SameLanguage(language, "English") {
+				if languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
 					return "", false, nil
 				}
-				return language + " MULTi", true, nil
+				return languageutil.NormalizeLanguageDisplay(language) + " MULTi", true, nil
 			}
 		}
 	}
 	if !original &&
-		slices.Contains(nordic, languages[0]) && slices.Contains(nordic, languages[1]) {
+		languageutil.ContainsLanguage(nordic, languages[0]) && languageutil.ContainsLanguage(nordic, languages[1]) {
 		if language := primaryProgrammeLanguage(facts); language != "" {
-			return language + " MULTi", true, nil
+			return languageutil.NormalizeLanguageDisplay(language) + " MULTi", true, nil
 		}
 		return "", true, &trackers.NameRuleError{
 			Rule:   "primary_audio_language",
@@ -241,15 +243,15 @@ func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 			Reason: "Unresolved DP language naming: one inspected primary programme audio track with a single established language is required",
 		}
 	}
-	if !slices.Contains(facts.OriginalLanguages, "English") {
+	if !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") {
 		for index, language := range languages {
 			other := languages[1-index]
 			if original {
-				if slices.Contains(facts.OriginalLanguages, language) && !slices.Contains(facts.OriginalLanguages, other) {
-					return other + " MULTi", true, nil
+				if languageutil.ContainsLanguage(facts.OriginalLanguages, language) && !languageutil.ContainsLanguage(facts.OriginalLanguages, other) {
+					return languageutil.NormalizeLanguageDisplay(other) + " MULTi", true, nil
 				}
-			} else if slices.Contains(nordic, language) && !slices.Contains(nordic, other) {
-				return other + " MULTi", true, nil
+			} else if languageutil.ContainsLanguage(nordic, language) && !languageutil.ContainsLanguage(nordic, other) {
+				return languageutil.NormalizeLanguageDisplay(other) + " MULTi", true, nil
 			}
 		}
 	}
@@ -270,7 +272,7 @@ func primaryProgrammeLanguage(facts api.LanguageFacts) string {
 		}
 		matches++
 		if track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) &&
-			len(track.Languages) == 1 && slices.Contains(facts.ProgrammeLanguages, track.Languages[0]) {
+			len(track.Languages) == 1 && languageutil.ContainsLanguage(facts.ProgrammeLanguages, track.Languages[0]) {
 			language = track.Languages[0]
 		}
 	}

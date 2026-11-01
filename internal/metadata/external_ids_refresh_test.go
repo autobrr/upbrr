@@ -84,7 +84,7 @@ func TestResolveExternalIDsRefreshesChangedProviderIDs(t *testing.T) {
 					return tmdb.MetadataResult{Title: "Example Series", TMDBType: "TV"}, nil
 				},
 			}
-			service := NewService(&fakeRepo{}, WithIMDBClient(imdbClient), WithTMDBClient(tmdbClient), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
+			service := newTestService(t, &fakeRepo{}, WithIMDBClient(imdbClient), WithTMDBClient(tmdbClient), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
 			result, err := service.resolveExternalIdentity(t.Context(), preparationstate.State{
 				SourcePath:        filepath.Join(t.TempDir(), "Example.Series.S01E02.mkv"),
 				ExternalFreshness: api.ExternalFreshnessRefresh,

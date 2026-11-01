@@ -145,6 +145,8 @@ func TrackerDryRunEligibility(
 		return api.UploadEligibilityUnknown, ""
 	case report.Status == api.StageStatusSkipped:
 		return api.UploadEligibilitySkipped, api.UploadSkipReasonUploadPreparationSkipped
+	case report.Status == api.StageStatusBlocked:
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonNotReady
 	case stageSucceeded(report.Status):
 		return api.UploadEligibilityEligible, ""
 	}

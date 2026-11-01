@@ -421,16 +421,18 @@ type UploadSubject struct {
 	DiscType                   string
 	VideoPath                  string
 	FileList                   []string
-	SourceSize                 int64
-	MediaInfoJSONPath          string
-	MediaInfoTextPath          string
-	DVDVOBMediaInfoText        string
-	Scene                      bool
-	SceneName                  string
-	SceneNFOPath               string
-	SceneRenamed               bool
-	SceneRenamedReason         string
-	DescriptionGroups          []DescriptionBuilderGroup
+	// KeepFolder retains the supplied root around one selected movie or episode video.
+	KeepFolder          bool
+	SourceSize          int64
+	MediaInfoJSONPath   string
+	MediaInfoTextPath   string
+	DVDVOBMediaInfoText string
+	Scene               bool
+	SceneName           string
+	SceneNFOPath        string
+	SceneRenamed        bool
+	SceneRenamedReason  string
+	DescriptionGroups   []DescriptionBuilderGroup
 	// DescriptionGroupsFinal distinguishes retained description output from
 	// pre-description subjects whose content may still be generated.
 	DescriptionGroupsFinal bool
@@ -1035,7 +1037,7 @@ func (s UploadSubject) TrackerDescriptionOverride(tracker string) (string, bool)
 		if !matchesTracker {
 			continue
 		}
-		if description := strings.TrimSpace(group.Source()); description != "" {
+		if description := strings.TrimSpace(group.Source()); description != "" || s.DescriptionGroupsFinal || group.Final {
 			return description, s.DescriptionGroupsFinal || group.Final
 		}
 	}
@@ -1974,6 +1976,8 @@ type TorrentSubject struct {
 	SourceSize int64
 	FileList   []string
 	DiscType   string
+	// KeepFolder preserves a selected single video's directory without adding sidecars.
+	KeepFolder bool
 	// ClientTorrentPath is reusable metainfo selected by client discovery.
 	ClientTorrentPath string
 	// ClientTorrentInfoHash is the infohash captured with ClientTorrentPath.
@@ -1996,6 +2000,7 @@ type ClientSubject struct {
 	SourcePath      string
 	FileList        []string
 	DiscType        string
+	KeepFolder      bool
 	ClientOverrides ClientOverrides
 }
 
@@ -2107,7 +2112,8 @@ func filterRuleFailures(failures []RuleFailure, blocking bool) []RuleFailure {
 
 // ExternalIDOverrides carries caller-supplied ID intent into metadata
 // resolution. Nil means the resolver may fill the provider; a positive value
-// locks that provider to the supplied ID; zero locks an explicit clear for the
+// locks that provider independently, even when provider cross-links disagree;
+// zero locks an explicit clear for the
 // current request.
 type ExternalIDOverrides struct {
 	TMDBID   *int
@@ -2117,6 +2123,13 @@ type ExternalIDOverrides struct {
 	// MALID carries caller intent for the canonical MAL/AniList-compatible
 	// anime identifier. Nil leaves resolution unchanged; zero clears it.
 	MALID *int
+	// Keep* preserves an existing automatic provider match when another provider
+	// changes. Explicit ID values and clears remain independent and take precedence.
+	KeepTMDB   *bool `json:",omitempty"`
+	KeepIMDB   *bool `json:",omitempty"`
+	KeepTVDB   *bool `json:",omitempty"`
+	KeepTVmaze *bool `json:",omitempty"`
+	KeepMAL    *bool `json:",omitempty"`
 }
 
 // AniListMetadata is the AniList media snapshot used for MAL/AniList preview.

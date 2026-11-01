@@ -60,12 +60,22 @@ func TestRebuildReleaseNameTVYearIgnoresManualOverrides(t *testing.T) {
 			NameEnglish:   "Provider Show",
 			Year:          2024,
 			YearFromAlias: true,
+			NameDisambiguation: api.TVDBNameDisambiguation{
+				IncludeYear: true,
+				SeriesYear:  2020,
+				Status:      api.MetadataEvidenceStatusPartial,
+			},
 		}},
-		ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030), NoYear: new(true)},
 	}
 	RebuildReleaseName(&meta, api.NopLogger{})
 	if meta.ResolvedNaming.Year != 2024 || meta.EffectiveMetadata.Year != 2024 || meta.EffectiveMetadata.YearProvenance != api.FactProvenanceAutomatic {
 		t.Fatalf("manual TV year facts = naming=%d effective=%#v", meta.ResolvedNaming.Year, meta.EffectiveMetadata)
+	}
+
+	component, ok := meta.GeneratedName.Component(api.NameRoleYear)
+	if !ok || !component.Present || component.Manual || component.Value != "2024" {
+		t.Fatalf("manual TV year presentation survived: %#v", component)
 	}
 
 	meta.ReleaseNameOverrides.ManualYear = new(0)
@@ -75,7 +85,7 @@ func TestRebuildReleaseNameTVYearIgnoresManualOverrides(t *testing.T) {
 	}
 }
 
-func TestRebuildReleaseNameTVOmitsEffectiveYearWithoutEligibleTVDB(t *testing.T) {
+func TestRebuildReleaseNameTVManualYearWithoutTVDB(t *testing.T) {
 	t.Parallel()
 
 	meta := preparationstate.State{
@@ -89,8 +99,8 @@ func TestRebuildReleaseNameTVOmitsEffectiveYearWithoutEligibleTVDB(t *testing.T)
 		ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)},
 	}
 	RebuildReleaseName(&meta, api.NopLogger{})
-	if meta.ResolvedNaming.Year != 0 || meta.EffectiveMetadata.Year != 0 || meta.EffectiveMetadata.YearProvenance != api.FactProvenanceAutomatic {
-		t.Fatalf("TV facts used a fallback year: naming=%d effective=%#v", meta.ResolvedNaming.Year, meta.EffectiveMetadata)
+	if meta.ResolvedNaming.Year != 2030 || meta.EffectiveMetadata.Year != 2030 || meta.EffectiveMetadata.YearProvenance != api.FactProvenanceManual {
+		t.Fatalf("TV facts lost the manual fallback year: naming=%d effective=%#v", meta.ResolvedNaming.Year, meta.EffectiveMetadata)
 	}
 }
 

@@ -71,6 +71,24 @@ func discOutcomeFixture() *bridge.Outcome {
 
 func TestDiscExtractionAuthorityAndRetainedClockEvidence(t *testing.T) {
 	outcome := discOutcomeFixture()
+	// Additional angles must not replace the scanner's supported default path.
+	item := &outcome.Report.Timelines[0].Items[0]
+	item.Angles = append(item.Angles, bd.Angle{Err: errors.New("unsupported alternate")})
+	alternate := outcome.Report.Collection[0]
+	alternate.Info.Source.Path = "BDMV/STREAM/00002.M2TS"
+	alternate.Info.Occurrences = append([]video.Occurrence(nil), alternate.Info.Occurrences...)
+	alternate.Info.Occurrences[0].Angle = 1
+	alternate.Status = video.Failed
+	alternate.CleanEOF = false
+	alternate.Err = errors.New("alternate collection failed")
+	outcome.Report.Collection = append(outcome.Report.Collection, alternate)
+	outcome.SourceErrors = []bridge.SourceError{{
+		Key: extract.StreamKey{
+			ClipID:  alternate.Info.Source.Path,
+			TrackID: uint64(alternate.Info.PID),
+		},
+		Err: alternate.Err,
+	}}
 	sidecar, err := DiscExtraction(outcome, "00001.MPLS")
 	if err != nil || len(sidecar.Timeline) != 1 || sidecar.Timeline[0].Mapping.PID != 4113 {
 		t.Fatalf("disc authority=%#v %v", sidecar, err)
@@ -91,15 +109,28 @@ func TestDiscExtractionAuthorityAndRetainedClockEvidence(t *testing.T) {
 	}
 	cases := map[string]func(*bridge.Outcome){
 		"metadata discovery": func(o *bridge.Outcome) { o.Report.Timelines[0].Scanned = false },
-		"alternate angle":    func(o *bridge.Outcome) { o.Report.Timelines[0].SelectedAngle = 1 },
+		"missing angles":     func(o *bridge.Outcome) { o.Report.Timelines[0].Items[0].Angles = nil },
 		"secondary stream":   func(o *bridge.Outcome) { o.Report.Timelines[0].Items[0].Angles[0].Video[0].Role = video.Secondary },
 		"ssif":               func(o *bridge.Outcome) { o.Report.Timelines[0].Items[0].Angles[0].Source.Kind = "ssif" },
 		"missing stc":        func(o *bridge.Outcome) { o.Report.Timelines[0].Items[0].Angles[0].STC = nil },
 		"missing collection": func(o *bridge.Outcome) { o.Report.Collection = nil },
 		"unclean eof":        func(o *bridge.Outcome) { o.Report.Collection[0].CleanEOF = false },
-		"declined budget":    func(o *bridge.Outcome) { o.DeclinedAfterExhaustion = 1 },
-		"omitted assembly":   func(o *bridge.Outcome) { o.OmittedPlaylistResults = 1 },
-		"corrupt timeline":   func(o *bridge.Outcome) { o.Report.Timelines[0].Items[0].Offset45 = 10 },
+		"failed default collection": func(o *bridge.Outcome) {
+			o.Report.Collection[0].Status = video.Failed
+			o.Report.Collection[0].Err = errors.New("default collection failed")
+		},
+		"default source error": func(o *bridge.Outcome) {
+			o.SourceErrors = []bridge.SourceError{{
+				Key: extract.StreamKey{
+					ClipID:  o.Report.Collection[0].Info.Source.Path,
+					TrackID: uint64(o.Report.Collection[0].Info.PID),
+				},
+				Err: errors.New("default source failed"),
+			}}
+		},
+		"declined budget":  func(o *bridge.Outcome) { o.DeclinedAfterExhaustion = 1 },
+		"omitted assembly": func(o *bridge.Outcome) { o.OmittedPlaylistResults = 1 },
+		"corrupt timeline": func(o *bridge.Outcome) { o.Report.Timelines[0].Items[0].Offset45 = 10 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

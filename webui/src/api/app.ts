@@ -56,6 +56,12 @@ type LogEntry = {
 
 type ConfigImportResult = { message: string; warnings: string[] };
 
+/** Selects one integration in the editable Settings configuration. */
+export type ConnectionTestTarget = Readonly<{ kind: string; instance?: string }>;
+
+/** Fixed server guidance; remote response bodies and credentials are never returned. */
+export type ConnectionTestResult = Readonly<{ code: string; message: string }>;
+
 /** Workflow projection families affected by the effective configuration change. */
 export type ConfigImpact =
   | "provider"
@@ -298,6 +304,9 @@ export const descriptionClient = {
 
 /** Config persistence plus browser-native import and download behavior. */
 export const configClient = {
+  /** Tests an encrypted draft without saving or activating it. */
+  testConnection: (payload: string, target: ConnectionTestTarget, signal?: AbortSignal) =>
+    requestApp<ConnectionTestResult>("TestConnection", { payload, target }, { signal }),
   get: (signal?: AbortSignal) => requestApp<string>("GetConfig", undefined, { signal }),
   getDefault: () => requestApp<string>("GetDefaultConfig"),
   /** Reads activation status without exposing the pending configuration. */

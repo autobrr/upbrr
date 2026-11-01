@@ -563,6 +563,11 @@ export type ExternalFreshness = string;
 
 export type ExternalIDOverrides = Readonly<{
   IMDBID?: number | null;
+  KeepIMDB?: boolean | null;
+  KeepMAL?: boolean | null;
+  KeepTMDB?: boolean | null;
+  KeepTVDB?: boolean | null;
+  KeepTVmaze?: boolean | null;
   MALID?: number | null;
   TMDBID?: number | null;
   TVDBID?: number | null;
@@ -1147,6 +1152,7 @@ export type MediaArtifactSet = Readonly<{
   failures?: readonly WorkflowFailure[];
   hostAttempts?: readonly HostedImageAttempt[];
   id: MediaArtifactSetID;
+  imageHostPreference?: string | null;
   imageHostUploadSkipped?: boolean;
   imageRequirementsPrepared: boolean;
   projectionSet: TrackerReleaseProjectionSetRef;
@@ -1556,10 +1562,12 @@ export type PreparedRelease = Readonly<{
 }>;
 
 export type PreparedReleaseDisplay = Readonly<{
+  CanKeepFolder?: boolean;
   Commentary?: boolean;
   MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
+  TVDBNamingAvailable?: boolean;
   TrackerData: readonly TrackerPreview[];
   hdrTargets?: readonly HDRAnalysisTarget[];
 }>;
@@ -2617,6 +2625,7 @@ export type TrackerApprovalSnapshotRef = Readonly<{
 }>;
 
 export type TrackerArtifactRequirements = Readonly<{
+  allowEmptyDescription?: boolean;
   allowedImageHosts?: readonly string[];
   bdInfo: boolean;
   description: boolean;
@@ -3101,6 +3110,7 @@ export type UploadDryRunResult = Readonly<{
   createdAt: string;
   descriptions: DescriptionSetRef;
   dupes: DupeAssessmentRef;
+  explicitDryRun?: boolean;
   failedCount: number;
   id: UploadDryRunResultID;
   inputFingerprint: WorkflowFingerprint;

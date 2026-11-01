@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/Audionut/go-dovi-extract v0.0.0-20261013073033-2f59342e05cb
 	github.com/Audionut/go-hdr10-plus v0.0.0
-	github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261012140645-34d94903fa8c
+	github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261028071522-2fff01f2f5bc
 	github.com/at-wat/ebml-go v0.19.4
 	github.com/autobrr/go-bdinfo v0.4.2
 	github.com/autobrr/go-mediainfo v0.8.1-0.20261020113756-56fa5814c646
@@ -26,13 +26,13 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.46.0
-	golang.org/x/net v0.58.0
-	golang.org/x/sync v0.23.0
-	golang.org/x/sys v0.48.0
-	golang.org/x/term v0.45.0
-	golang.org/x/text v0.42.0
+	golang.org/x/net v0.62.0
+	golang.org/x/sync v0.24.0
+	golang.org/x/sys v0.49.0
+	golang.org/x/term v0.47.0
+	golang.org/x/text v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.1
 )
@@ -74,6 +74,6 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-replace github.com/autobrr/go-bdinfo => github.com/Audionut/go-bdinfo v0.2.1-0.20261010032011-6250d2b849ca
+replace github.com/autobrr/go-bdinfo => github.com/Audionut/go-bdinfo v0.2.1-0.20261028065013-d14ed9d1f24d
 
 replace github.com/Audionut/go-hdr10-plus => github.com/Audionut/go-hdr10-plus v0.0.0-20261012140645-34d94903fa8c

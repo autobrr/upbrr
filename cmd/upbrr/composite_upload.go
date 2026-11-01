@@ -67,10 +67,10 @@ func (s *cliWorkflowSession) completeComposite(
 	s.current = current
 	s.publishPresentation(ctx)
 	current, err = s.waitForCompositeUpload(ctx, current)
+	s.current = current
 	if err != nil {
 		return 0, err
 	}
-	s.current = current
 	s.publishPresentation(ctx)
 
 	printProjections := cliWorkflowProjectionOutputEnabled(
@@ -90,6 +90,11 @@ func (s *cliWorkflowSession) completeComposite(
 		}
 		if !s.submissionSuppressed && s.current.UploadResult != nil {
 			return printCLIWorkflowUploadResult(s.streams.out, s.current.UploadResult)
+		}
+		if operation := s.current.Operation; operation != nil && operation.Status == api.StageStatusCompleted &&
+			operation.Result != nil && operation.Result.Kind == api.WorkflowOperationResultDupes {
+			fmt.Fprintln(s.streams.out, "All trackers skipped after duplicate checks.")
+			return 0, nil
 		}
 		if s.current.Selection != nil && len(s.current.Selection.TrackerIDs) == 0 {
 			fmt.Fprintf(s.streams.out, "No trackers configured for %s\n", formatPathLabel(s.intent.sourcePath))
@@ -118,10 +123,10 @@ func (s *cliWorkflowSession) completeComposite(
 			return 0, fmt.Errorf("upbrr: submit composite upload feedback: %w", submitErr)
 		}
 		next, err = s.waitForCompositeUpload(ctx, next)
+		s.current = next
 		if err != nil {
 			return 0, err
 		}
-		s.current = next
 		s.publishPresentation(ctx)
 	}
 	return 0, errors.New("upbrr: composite upload exceeded the transition limit")
@@ -178,11 +183,12 @@ func (s *cliWorkflowSession) waitForCompositeUpload(
 	if waitErr != nil {
 		if err == nil {
 			printCLIHDRResult(s.streams.out, latest)
+			return latest, waitErr
 		}
-		return releaseworkflow.CommandResult{}, waitErr
+		return current, waitErr
 	}
 	if err != nil {
-		return releaseworkflow.CommandResult{}, fmt.Errorf("upbrr: load composite upload workflow: %w", err)
+		return current, fmt.Errorf("upbrr: load composite upload workflow: %w", err)
 	}
 	latest.Operation = &completed
 	printCLIHDRResult(s.streams.out, latest)
@@ -217,8 +223,21 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",
 		)
 	}
+	// Release-wide image prerequisites cannot be answered through tracker feedback.
+	if action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "" &&
+		s.current.Media != nil && s.current.Media.Status == api.StageStatusBlocked {
+		if len(s.current.Media.Failures) > 0 {
+			return feedback, false, fmt.Errorf(
+				"upbrr: release media blocked (interaction=%s): %w",
+				s.intent.interaction,
+				api.NewOperationError(s.current.Media.Failures[0].Failure, nil),
+			)
+		}
+		return feedback, false, fmt.Errorf("upbrr: release media blocked (interaction=%s): %s", s.intent.interaction, action.Prompt)
+	}
 	if s.intent.interaction == api.InteractionModeUnattended &&
-		action.Kind != api.RequiredActionAuthorizeRules && action.Kind != api.RequiredActionResolveTrackerPreparation {
+		action.Kind != api.RequiredActionAuthorizeRules && action.Kind != api.RequiredActionResolveTrackerPreparation &&
+		action.Kind != api.RequiredActionApproveTrackers {
 		return feedback, false, fmt.Errorf("upbrr: strict unattended upload requires global action %s: %s", action.Kind, action.Prompt)
 	}
 	s.bindAction(ctx, action, action.Prompt)
@@ -424,7 +443,10 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		if tracker == "" {
 			tracker = string(trackerID)
 		}
-		dupe := dupeByTracker[trackerID]
+		dupe, ok := dupeByTracker[trackerID]
+		if !ok {
+			return feedback, false, fmt.Errorf("upbrr: tracker approval candidate %s has no current duplicate assessment", trackerID)
+		}
 		var evidence strings.Builder
 		// Capture evidence before console output, which may fail independently.
 		output := io.MultiWriter(&evidence, s.streams.out)
@@ -471,10 +493,23 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 				projection.Artifacts.Description,
 			)
 		}
-		prompt := fmt.Sprintf("Use %s as %q? [y/N]: ", tracker, projection.UploadReleaseName)
-		confirmed, err := promptYesNo(reader, s.streams.out, prompt, false)
-		if err != nil {
-			return feedback, false, err
+		// Only a completed clear check grants affirmative authorization by default.
+		// Duplicate overrides remain a separate decision, including in unattended mode.
+		defaultYes := releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, true) &&
+			dupe.Decision == api.DupeDecisionNoMatch && dupe.Status == api.StageStatusCompleted &&
+			dupe.Search.Complete && !dupe.RequiresStaffToken && !cliDupeRequiresRiskAcknowledgement(dupe)
+		confirmed := defaultYes
+		if s.intent.interaction != api.InteractionModeUnattended {
+			choice := "[y/N]"
+			if defaultYes {
+				choice = "[Y/n]"
+			}
+			prompt := fmt.Sprintf("Use %s as %q? %s: ", tracker, projection.UploadReleaseName, choice)
+			var err error
+			confirmed, err = promptYesNo(reader, s.streams.out, prompt, defaultYes)
+			if err != nil {
+				return feedback, false, err
+			}
 		}
 		if confirmed {
 			approved = append(approved, trackerID)
@@ -714,16 +749,22 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		writer.question.Evidence = safeTerminalText(evidence.String())
 	}
 	if len(result.Questionnaire) > 0 && s.intent.interaction != api.InteractionModeUnattended {
-		review, reviewErr := promptYesNo(reader, s.streams.out, "Review comparison evidence before deciding? [y/N]: ", false)
-		if reviewErr != nil {
-			return feedback, false, reviewErr
+		review := slices.ContainsFunc(result.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+			return field.NeedsReview || (field.Required && strings.TrimSpace(field.Value) == "")
+		})
+		if !review {
+			var reviewErr error
+			review, reviewErr = promptYesNo(reader, s.streams.out, "Review comparison evidence before deciding? [y/N]: ", false)
+			if reviewErr != nil {
+				return feedback, false, reviewErr
+			}
 		}
 		if review {
 			projections := cliTrackerQuestionnaireProjection(s.current, action.TrackerID)
 			if projections == nil {
 				return feedback, false, errors.New("upbrr: comparison questionnaire projection is unavailable")
 			}
-			// The operator opted into these optional fields; other tracker inputs keep their normal prompt policy.
+			// Review these duplicate-stage fields; other tracker inputs keep their normal prompt policy.
 			for index := range projections.Projections[0].Questionnaire {
 				field := &projections.Projections[0].Questionnaire[index]
 				if slices.ContainsFunc(result.Questionnaire, func(question api.TrackerQuestionnaireRequirement) bool { return question.Key == field.Key }) {
@@ -957,7 +998,7 @@ func mapCLICompositeUploadRequest(
 	remoteCheck := !request.SkipDupeCheck
 	onEvidence := api.ReleaseWorkflowDuplicateDisposition("")
 	if request.SkipDupeAsActual {
-		onEvidence = api.ReleaseWorkflowDuplicateUpload
+		onEvidence = api.ReleaseWorkflowDuplicateBlock
 	}
 	screenshotCount := request.Options.Screens
 	automaticScreenshots := screenshotCountIsDefault && len(request.ScreenshotOverrides.ManualFrames) == 0 &&

@@ -21,7 +21,9 @@ import { LanguageMultiSelect } from "./LanguageMultiSelect";
 import { settingsStyle } from "../../settings/style";
 import { CorrectionSearch, CorrectionSelect } from "./CorrectionChoice";
 import correctionChoices from "./correctionChoices.json";
-import { missingRequiredFacts } from "./requiredFacts";
+import { missingRequiredFacts } from "../../releaseSession/requiredFacts";
+import { FieldHelp } from "../../components/ui/field-help";
+import { correctionHelp } from "./correctionHelp";
 
 const hasOwn = (value: object, key: PropertyKey) =>
   Object.prototype.hasOwnProperty.call(value, key);
@@ -51,11 +53,13 @@ const inputGridClass =
 function CommaListInput({
   id,
   label,
+  describedBy,
   value,
   onChange,
 }: Readonly<{
   id: string;
   label: string;
+  describedBy?: string;
   value: readonly string[] | null | undefined;
   onChange: (value: readonly string[]) => void;
 }>) {
@@ -69,6 +73,7 @@ function CommaListInput({
     <input
       id={id}
       aria-label={label}
+      aria-describedby={describedBy}
       value={draft}
       onFocus={() => {
         focused.current = true;
@@ -126,7 +131,7 @@ function ReleaseFeaturesInput({
         type="button"
         className="flex h-9 min-w-0 w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-left text-sm text-card-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
         aria-labelledby="correction-release_name.release_features-label"
-        aria-describedby="correction-release_name.release_features-summary"
+        aria-describedby="correction-release_name.release_features-summary correction-release_name.release_features-value-help"
         aria-expanded={open}
         aria-controls={open ? "correction-release_name.release_features-options" : undefined}
         onClick={() => setOpen((previous) => !previous)}
@@ -175,12 +180,14 @@ function ProviderIDInput({
   label,
   value,
   imdb,
+  describedBy,
   onChange,
 }: Readonly<{
   id: string;
   label: string;
   value: number;
   imdb: boolean;
+  describedBy?: string;
   onChange: (value: number) => void;
 }>) {
   const rendered = value > 0 ? String(value) : "";
@@ -196,6 +203,7 @@ function ProviderIDInput({
         id={id}
         className="w-full min-w-0"
         aria-label={label}
+        aria-describedby={describedBy}
         aria-invalid={!valid}
         type="text"
         inputMode="numeric"
@@ -250,21 +258,30 @@ function CorrectionRow({
   onConfirm: () => void;
   children: ReactNode;
 }>) {
+  const controlID = `correction-${field}-${trackId || "value"}`;
+  const help =
+    correctionHelp[field] ||
+    (field.startsWith("identity.")
+      ? "Correct this provider's numeric content ID, then refresh metadata. IMDb also accepts a tt prefix. An empty field or Remove explicitly disables this provider for this source; Auto restores automatic resolution."
+      : undefined);
   return (
     <div
       className={inputFieldClass}
       data-correction-field={field}
       {...(trackId ? { "data-track-id": trackId } : {})}
     >
-      {grouped ? (
-        <span className="font-medium" id={`correction-${field}-label`}>
-          {label}
-        </span>
-      ) : (
-        <label className="font-medium" htmlFor={`correction-${field}-${trackId || "value"}`}>
-          {label}
-        </label>
-      )}
+      <span className="flex flex-wrap items-center gap-1 font-medium">
+        {grouped ? (
+          <span id={`correction-${field}-label`}>{label}</span>
+        ) : (
+          <label htmlFor={controlID}>{label}</label>
+        )}
+        {help ? (
+          <FieldHelp label={label} id={`${controlID}-help`}>
+            {help}
+          </FieldHelp>
+        ) : null}
+      </span>
       <div className="flex min-w-0 items-start gap-2">
         <div className="min-w-0 flex-1 [&_input]:w-full">{children}</div>
         {!readOnly ? (
@@ -313,9 +330,15 @@ function TriStateField({
   const id = `correction-${field}-value`;
   return (
     <div className={inputFieldClass} data-correction-field={field}>
-      <label htmlFor={id}>{label}</label>
+      <span className="flex flex-wrap items-center gap-1 font-medium">
+        <label htmlFor={id}>{label}</label>
+        <FieldHelp label={label} id={`${id}-help`}>
+          {correctionHelp[field]}
+        </FieldHelp>
+      </span>
       <Select
         id={id}
+        aria-describedby={`${id}-help`}
         aria-label={label}
         value={value === undefined || value === null ? "auto" : value ? "yes" : "no"}
         onChange={(event) => {
@@ -340,16 +363,19 @@ function TriStateField({
   );
 }
 
+type ProviderIDKey = "TMDBID" | "IMDBID" | "TVDBID" | "TVmazeID" | "MALID";
+
 const identityFields: ReadonlyArray<{
   field: string;
   label: string;
-  key: keyof ExternalIDOverrides;
+  key: ProviderIDKey;
+  keepKey: "KeepTMDB" | "KeepIMDB" | "KeepTVDB" | "KeepTVmaze" | "KeepMAL";
 }> = [
-  { field: "identity.tmdb", label: "TMDB ID", key: "TMDBID" },
-  { field: "identity.imdb", label: "IMDB ID", key: "IMDBID" },
-  { field: "identity.tvdb", label: "TVDB ID", key: "TVDBID" },
-  { field: "identity.tvmaze", label: "TVmaze ID", key: "TVmazeID" },
-  { field: "identity.mal", label: "MAL ID", key: "MALID" },
+  { field: "identity.tmdb", label: "TMDB ID", key: "TMDBID", keepKey: "KeepTMDB" },
+  { field: "identity.imdb", label: "IMDb ID", key: "IMDBID", keepKey: "KeepIMDB" },
+  { field: "identity.tvdb", label: "TVDB ID", key: "TVDBID", keepKey: "KeepTVDB" },
+  { field: "identity.tvmaze", label: "TVmaze ID", key: "TVmazeID", keepKey: "KeepTVmaze" },
+  { field: "identity.mal", label: "MyAnimeList ID", key: "MALID", keepKey: "KeepMAL" },
 ];
 
 const releaseStringFields: ReadonlyArray<{
@@ -479,15 +505,15 @@ const releaseBooleanFields: ReadonlyArray<{
     key: "UseSeasonEpisode",
   },
   { field: "release_name.three_d", label: "3D", key: "ThreeD" },
-  { field: "release_name.no_season", label: "No season", key: "NoSeason" },
-  { field: "release_name.no_year", label: "No year", key: "NoYear" },
-  { field: "release_name.no_aka", label: "No AKA", key: "NoAKA" },
-  { field: "release_name.no_tag", label: "No tag", key: "NoTag" },
-  { field: "release_name.no_episode_title", label: "No episode title", key: "NoEpisodeTitle" },
-  { field: "release_name.no_distributor", label: "No distributor", key: "NoDistributor" },
-  { field: "release_name.no_edition", label: "No edition", key: "NoEdition" },
-  { field: "release_name.no_dub", label: "No dub", key: "NoDub" },
-  { field: "release_name.no_dual", label: "No dual audio", key: "NoDual" },
+  { field: "release_name.no_season", label: "Omit season and episode", key: "NoSeason" },
+  { field: "release_name.no_year", label: "Omit year", key: "NoYear" },
+  { field: "release_name.no_aka", label: "Omit alternate title", key: "NoAKA" },
+  { field: "release_name.no_tag", label: "Clear release group", key: "NoTag" },
+  { field: "release_name.no_episode_title", label: "Clear episode title", key: "NoEpisodeTitle" },
+  { field: "release_name.no_distributor", label: "Clear distributor", key: "NoDistributor" },
+  { field: "release_name.no_edition", label: "Suppress edition labels", key: "NoEdition" },
+  { field: "release_name.no_dub", label: "Omit dubbed marker", key: "NoDub" },
+  { field: "release_name.no_dual", label: "Omit dual-audio marker", key: "NoDual" },
   { field: "release_name.dual_audio", label: "Force dual audio", key: "DualAudio" },
 ];
 
@@ -593,7 +619,7 @@ const metadataBooleanFields: ReadonlyArray<{
   },
   {
     field: "metadata.web_dv",
-    label: "WEB Dolby Vision",
+    label: "Web-sourced Dolby Vision",
     key: "WebDV",
     automatic: (r) => Boolean(r?.Media?.WebDV),
   },
@@ -723,6 +749,7 @@ export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>
     view.intent.releaseName.Category ?? review.currentBinding.category
   ).toLowerCase();
   const isTV = ["tv", "television", "series", "episode"].includes(category);
+  const tvdbOwnsYear = isTV && view.preview?.Display.TVDBNamingAvailable === true;
   const statusFor = (field: string) => {
     if (view.resetFields.some((ref) => ref.field === field)) return "Use automatic value pending";
     if (view.valueFields.some((ref) => ref.field === field)) return "Edited value pending";
@@ -769,7 +796,7 @@ export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>
           const readOnly =
             metadataField?.key === "Title" ||
             metadataField?.key === "OriginalTitle" ||
-            (releaseField?.key === "ManualYear" && isTV);
+            (tvdbOwnsYear && ["release_name.manual_year", "release_name.no_year"].includes(field));
           const valueText =
             savedValue === undefined || savedValue === null
               ? "Unavailable"
@@ -846,7 +873,14 @@ export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>
                 </div>
               ) : null}
               <div className="flex flex-wrap gap-2">
-                <Button type="button" onClick={() => facet.confirmCorrection(refFor(field))}>
+                <Button
+                  type="button"
+                  disabled={
+                    tvdbOwnsYear &&
+                    ["release_name.manual_year", "release_name.no_year"].includes(field)
+                  }
+                  onClick={() => facet.confirmCorrection(refFor(field))}
+                >
                   Keep saved value
                 </Button>
                 <Button type="button" onClick={() => facet.resetCorrection(refFor(field))}>
@@ -885,7 +919,8 @@ export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>
 /**
  * Shows pending edits and applied overrides while the release session owns transport.
  * Auto resets local text drafts; automatic facts are rederived on metadata refresh.
- * Title, original title, and TV year are disabled. Source IDs default to resolved
+ * Title and original title are provider-owned. TV year controls are disabled
+ * only when usable TVDB naming data is available. Source IDs default to resolved
  * tracker data unless the draft supplies an override or an explicit empty value.
  */
 export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>) {
@@ -896,6 +931,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
   const isTV =
     ["tv", "television", "series", "episode"].includes(category) ||
     (!["movie", "film"].includes(category) && release?.Identity.Category === "tv");
+  const tvdbOwnsYear = isTV && view.preview?.Display.TVDBNamingAvailable === true;
   const staleFields = new Set(view.corrections?.corrections.staleContentFields || []);
 
   const [draftResets, setDraftResets] = useState<Record<string, number>>({});
@@ -916,8 +952,8 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
   };
   const confirm = (field: string, trackId = "") => facet.confirmCorrection(refFor(field, trackId));
 
-  const identityAutomatic = (key: keyof ExternalIDOverrides) => Number(release?.Identity[key] || 0);
-  const setIdentity = (key: keyof ExternalIDOverrides, value: number) =>
+  const identityAutomatic = (key: ProviderIDKey) => Number(release?.Identity[key] || 0);
+  const setIdentity = (key: keyof ExternalIDOverrides, value: number | boolean) =>
     facet.changeIdentity({ ...view.intent.identity, [key]: value });
   const setReleaseName = (
     key: keyof ReleaseNameOverrides,
@@ -928,13 +964,34 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
 
   return (
     <div className="grid w-full min-w-0 gap-5" data-testid="input-correction-editor">
+      <div className="flex flex-wrap items-center gap-1 font-semibold">
+        <span>Editing release details</span>
+        <FieldHelp label="Editing release details">
+          Edits are pending until Refresh metadata or Retry metadata prepares the release again.
+          Corrections are saved for this source and feed subsequent naming, checks and descriptions.
+          Auto queues removal of a saved correction; Yes and No are explicit values. Confirm saved
+          keeps a value after an identity change. Tracker naming policies can still enforce their
+          own rules.
+        </FieldHelp>
+      </div>
       <div className={inputSectionClass}>
         <div className={settingsStyle.title}>Provider IDs</div>
+        <p className="text-sm text-muted-foreground">
+          Removing or clearing a provider ID disables that provider for this source after refresh.
+          Trackers requiring it can remain blocked.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Keep existing data preserves that provider when another ID is corrected. This choice is
+          saved for this release. Reset data + refresh fetches fresh data for kept IDs. Changing
+          Movie/TV can still clear incompatible automatic matches. Manual IDs and removals always
+          take precedence.
+        </p>
         <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-x-6 gap-y-5">
-          {identityFields.map(({ field, label, key }) => {
+          {identityFields.map(({ field, label, key, keepKey }) => {
             const manual = hasOwn(view.intent.identity, key);
             const manualValue = view.intent.identity[key];
             const value = manual ? Number(manualValue || 0) : identityAutomatic(key);
+            const keep = view.intent.identity[keepKey] === true;
             return (
               <CorrectionRow
                 key={field}
@@ -950,6 +1007,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     key={draftKey(field)}
                     id={`correction-${field}-value`}
                     label={label}
+                    describedBy={`correction-${field}-value-help`}
                     value={value}
                     imdb={key === "IMDBID"}
                     onChange={(next) => setIdentity(key, next)}
@@ -964,6 +1022,16 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     {manual && value === 0 ? "Removed" : "Remove"}
                   </Button>
                 </div>
+                <label className="flex items-center gap-2 font-normal" htmlFor={`keep-${field}`}>
+                  <Checkbox
+                    id={`keep-${field}`}
+                    aria-label={`Keep existing ${label.replace(" ID", "")} data`}
+                    checked={keep}
+                    disabled={value === 0 && !keep}
+                    onCheckedChange={(checked) => setIdentity(keepKey, checked)}
+                  />
+                  Keep existing data
+                </label>
               </CorrectionRow>
             );
           })}
@@ -972,10 +1040,17 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
 
       <div className={inputSectionClass}>
         <div className={settingsStyle.title}>Release name</div>
+        {isTV ? (
+          <p className="text-sm text-muted-foreground">
+            {tvdbOwnsYear
+              ? "TVDB controls the TV naming year, including when no year belongs in the name. Destination rules may adjust it."
+              : "TVDB naming data is unavailable. Manual year and Omit year can correct the name until TVDB data becomes available."}
+          </p>
+        ) : null}
         <div className={inputGridClass}>
           {releaseStringFields.map(({ field, label, key, automatic, choices, searchable }) => {
             const missing = missingFacts.includes(field);
-            const readOnly = key === "ManualYear" && isTV;
+            const readOnly = key === "ManualYear" && tvdbOwnsYear;
             const manual = !readOnly && view.intent.releaseName[key] != null;
             const rawValue = manual ? view.intent.releaseName[key] : automatic(release);
             const numeric = key === "ManualYear";
@@ -1009,13 +1084,14 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     value={value}
                     options={choices}
                     invalid={missing}
-                    describedBy={missing ? `correction-${field}-missing` : undefined}
+                    describedBy={`correction-${field}-value-help${missing ? ` correction-${field}-missing` : ""}`}
                     onChange={(next) => setReleaseName(key, next)}
                   />
                 ) : key === "Repack" ? (
                   <CorrectionSelect
                     id={`correction-${field}-value`}
                     label={label}
+                    describedBy={`correction-${field}-value-help`}
                     value={String(rawValue ?? "")
                       .trim()
                       .toUpperCase()}
@@ -1035,6 +1111,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                   <input
                     id={`correction-${field}-value`}
                     aria-label={label}
+                    aria-describedby={`correction-${field}-value-help`}
                     type={numeric ? "number" : "text"}
                     readOnly={readOnly}
                     disabled={readOnly}
@@ -1056,23 +1133,25 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
             );
           })}
           <div className="col-span-full border-t border-foreground/10" />
-          {releaseBooleanFields.map(({ field, label, key }) => (
-            <TriStateField
-              key={field}
-              field={field}
-              label={label}
-              value={
-                hasOwn(view.intent.releaseName, key)
-                  ? (view.intent.releaseName[key] as boolean | null | undefined)
-                  : undefined
-              }
-              status={statusFor(field, hasOwn(view.intent.releaseName, key))}
-              stale={staleFields.has(field)}
-              onChange={(value) => setReleaseName(key, value)}
-              onAuto={() => reset(field)}
-              onConfirm={() => confirm(field)}
-            />
-          ))}
+          {releaseBooleanFields
+            .filter(({ key }) => key !== "NoYear" || !tvdbOwnsYear)
+            .map(({ field, label, key }) => (
+              <TriStateField
+                key={field}
+                field={field}
+                label={label}
+                value={
+                  hasOwn(view.intent.releaseName, key)
+                    ? (view.intent.releaseName[key] as boolean | null | undefined)
+                    : undefined
+                }
+                status={statusFor(field, hasOwn(view.intent.releaseName, key))}
+                stale={staleFields.has(field)}
+                onChange={(value) => setReleaseName(key, value)}
+                onAuto={() => reset(field)}
+                onConfirm={() => confirm(field)}
+              />
+            ))}
         </div>
       </div>
 
@@ -1099,6 +1178,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     key={draftKey(field)}
                     id={`correction-${field}-value`}
                     label={label}
+                    describedBy={`correction-${field}-value-help`}
                     value={typeof value === "string" ? value : ""}
                     options={correctionChoices.Distributor}
                     onChange={(next) => setMetadata(key, next)}
@@ -1107,6 +1187,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                   <input
                     id={`correction-${field}-value`}
                     aria-label={label}
+                    aria-describedby={`correction-${field}-value-help`}
                     readOnly={readOnly}
                     disabled={readOnly}
                     value={typeof value === "string" ? value : ""}
@@ -1158,6 +1239,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                   key={draftKey(field)}
                   id={`correction-${field}-value`}
                   label={label}
+                  describedBy={`correction-${field}-value-help`}
                   value={value}
                   onChange={(next) =>
                     hardcoded
@@ -1259,6 +1341,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                       key={draftKey(field, track.ID)}
                       id={`correction-${field}-${track.ID}`}
                       label={label}
+                      describedBy={`correction-${field}-${track.ID}-help`}
                       value={correction?.languages || track.Languages}
                       onChange={(languages) => {
                         const retained = (view.intent.metadata.TrackLanguages || []).filter(
@@ -1322,6 +1405,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                         ))}
                       <Select
                         id={`correction-${originField}-${track.ID}`}
+                        aria-describedby={`correction-${originField}-${track.ID}-help`}
                         value={originCorrection?.origin || track.AudioOrigin || ""}
                         onChange={(event) => {
                           const origin = event.target.value;
@@ -1373,9 +1457,17 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         <div className={inputGridClass}>
           {view.selectedTrackers.map((tracker) => (
             <div className={inputFieldClass} key={tracker} data-tracker-source-id={tracker}>
-              <label htmlFor={`tracker-source-${tracker}`}>{tracker} source ID</label>
+              <span className="flex flex-wrap items-center gap-1">
+                <label htmlFor={`tracker-source-${tracker}`}>{tracker} source ID</label>
+                <FieldHelp label={`${tracker} source ID`} id={`tracker-source-${tracker}-help`}>
+                  Existing torrent ID on this tracker used for source metadata lookup. A detected ID
+                  is shown unless you override it; an explicit blank clears the saved source ID on
+                  refresh.
+                </FieldHelp>
+              </span>
               <input
                 id={`tracker-source-${tracker}`}
+                aria-describedby={`tracker-source-${tracker}-help`}
                 value={
                   view.intent.trackerSourceIDs[tracker] ??
                   view.trackerData.find((data) => data.Tracker === tracker)?.TrackerID ??
@@ -1385,59 +1477,100 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
               />
             </div>
           ))}
-          <label className={settingsStyle.toggle}>
-            <span>Keep source folder</span>
-            <input
-              type="checkbox"
-              checked={view.intent.policy.keepFolder}
-              onChange={(event) =>
-                facet.changePreparationPolicy({
-                  ...view.intent.policy,
-                  keepFolder: event.target.checked,
-                })
-              }
-            />
-          </label>
-          <label className={settingsStyle.toggle}>
-            <span>Keep images</span>
-            <input
-              type="checkbox"
-              checked={view.intent.policy.keepImages}
-              onChange={(event) =>
-                facet.changePreparationPolicy({
-                  ...view.intent.policy,
-                  keepImages: event.target.checked,
-                })
-              }
-            />
-          </label>
-          <label className={settingsStyle.toggle}>
-            <span>Only resolve IDs</span>
-            <input
-              type="checkbox"
-              checked={view.intent.policy.onlyID}
-              onChange={(event) =>
-                facet.changePreparationPolicy({
-                  ...view.intent.policy,
-                  onlyID: event.target.checked,
-                })
-              }
-            />
-          </label>
-          <label className={settingsStyle.toggle}>
-            <span>Skip client search</span>
-            <input
-              type="checkbox"
-              checked={view.intent.search.skip}
-              onChange={(event) =>
-                facet.changeClientSearch({ ...view.intent.search, skip: event.target.checked })
-              }
-            />
-          </label>
+          {view.preview?.Display.CanKeepFolder && (
+            <div className="flex items-start gap-1">
+              <label className={settingsStyle.toggle}>
+                <span>Keep source folder</span>
+                <input
+                  type="checkbox"
+                  aria-describedby="input-keep-folder-help"
+                  checked={view.intent.policy.keepFolder}
+                  onChange={(event) =>
+                    facet.changePreparationPolicy({
+                      ...view.intent.policy,
+                      keepFolder: event.target.checked,
+                    })
+                  }
+                />
+              </label>
+              <FieldHelp label="Keep source folder" id="input-keep-folder-help">
+                Keep this movie or episode inside its source folder; extra files are not included.
+                This does not rename or move the source files.
+              </FieldHelp>
+            </div>
+          )}
+          <div className="flex items-start gap-1">
+            <label className={settingsStyle.toggle}>
+              <span>Collect existing tracker images</span>
+              <input
+                type="checkbox"
+                aria-describedby="input-keep-images-help"
+                checked={view.intent.policy.keepImages}
+                onChange={(event) =>
+                  facet.changePreparationPolicy({
+                    ...view.intent.policy,
+                    keepImages: event.target.checked,
+                  })
+                }
+              />
+            </label>
+            <FieldHelp label="Collect existing tracker images" id="input-keep-images-help">
+              Collect eligible existing tracker images for later reuse on Screenshots. This does not
+              capture new frames; limiting lookup to metadata IDs restricts image enrichment. A
+              globally enabled image-collection setting still applies when this box is unchecked.
+            </FieldHelp>
+          </div>
+          <div className="flex items-start gap-1">
+            <label className={settingsStyle.toggle}>
+              <span>Limit tracker lookup to only metadata ids</span>
+              <input
+                type="checkbox"
+                aria-describedby="input-only-id-help"
+                checked={view.intent.policy.onlyID}
+                onChange={(event) =>
+                  facet.changePreparationPolicy({
+                    ...view.intent.policy,
+                    onlyID: event.target.checked,
+                  })
+                }
+              />
+            </label>
+            <FieldHelp label="Limit tracker lookup to only metadata ids" id="input-only-id-help">
+              Limit supported tracker lookups to metadata IDs rather than full descriptions and
+              images for this preparation. A globally enabled lookup limit still applies when this
+              box is unchecked.
+            </FieldHelp>
+          </div>
+          <div className="flex items-start gap-1">
+            <label className={settingsStyle.toggle}>
+              <span>Skip client search</span>
+              <input
+                type="checkbox"
+                aria-describedby="input-skip-client-help"
+                checked={view.intent.search.skip}
+                onChange={(event) =>
+                  facet.changeClientSearch({ ...view.intent.search, skip: event.target.checked })
+                }
+              />
+            </label>
+            <FieldHelp label="Skip client search" id="input-skip-client-help">
+              Skip searching configured torrent clients for reusable source torrents during
+              preparation. A globally enabled skip setting still applies when this box is unchecked.
+              This does not control later client injection.
+            </FieldHelp>
+          </div>
           <div className={inputFieldClass}>
-            <label htmlFor="input-client-search">Client search name</label>
+            <span className="flex flex-wrap items-center gap-1">
+              <label htmlFor="input-client-search">Torrent client to search</label>
+              <FieldHelp label="Torrent client to search" id="input-client-search-help">
+                Name of the configured torrent-client entry to search. Empty uses the default client
+                selection. Unavailable while Skip client search is enabled; this is a client name,
+                not a release search phrase.
+              </FieldHelp>
+            </span>
             <input
               id="input-client-search"
+              aria-describedby="input-client-search-help"
               value={view.intent.search.client}
               disabled={view.intent.search.skip}
               onChange={(event) =>
@@ -1451,6 +1584,14 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
       {(view.readiness?.schemas || []).length > 0 ? (
         <details className={inputSectionClass} data-testid="input-tracker-fields">
           <summary className="cursor-pointer font-semibold">Tracker Input</summary>
+          <div className="flex items-center gap-1">
+            <span>Tracker-specific fields</span>
+            <FieldHelp label="Tracker-specific fields">
+              These fields and their requirements come from each selected tracker. Required fields
+              are marked with an asterisk. Apply corrections by preparing Input again; keep each
+              field's inline guidance in view.
+            </FieldHelp>
+          </div>
           {(view.readiness?.schemas || []).map((schema) => (
             <section key={schema.Tracker} aria-label={`${schema.Tracker} Input fields`}>
               <h4 className="mb-2 text-sm font-semibold">{schema.Tracker}</h4>

@@ -385,7 +385,7 @@ func TestPreparedExactMediaExcludesFailedHosts(t *testing.T) {
 			}
 			subject.MediaBinding = trackerTestMediaBinding(subject.SourcePath)
 			original := exact.Clone()
-			service := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, &stubRepo{}, registry)
+			service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), api.NopLogger{}, &stubRepo{}, registry)
 			prepared := service.prepareUploadContent(t.Context(), "ALPHA", subject, config.TrackerConfig{}, nil, nil)
 			if prepared.State != preparedUploadContentReady || prepared.Assets == nil ||
 				len(prepared.Assets.MenuImages) != 1 || len(prepared.Assets.Screenshots) != 1 {

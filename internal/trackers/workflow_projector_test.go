@@ -333,6 +333,16 @@ func TestApplyWorkflowProjectionRequirementsKeepsExplicitDVDMenuMinimum(t *testi
 	}
 }
 
+func TestWorkflowProjectionOptionalDescriptionKeepsImagesAndEditor(t *testing.T) {
+	t.Parallel()
+	projection := api.TrackerReleaseProjection{}
+	applyWorkflowProjectionRequirements(&projection, Descriptor{UploadContentMode: UploadContentModeOptionalDescription}, nil, false,
+		config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 4}}, api.UploadSubject{})
+	if !projection.Artifacts.Description || !projection.Artifacts.AllowEmptyDescription || projection.Artifacts.ScreenshotCount != 4 {
+		t.Fatalf("optional description requirements = %+v", projection.Artifacts)
+	}
+}
+
 func TestApplyQuestionnaireInstructionMergesAndClearsTrackerAnswers(t *testing.T) {
 	t.Parallel()
 

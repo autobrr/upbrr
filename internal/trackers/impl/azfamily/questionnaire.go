@@ -4,8 +4,9 @@
 package azfamily
 
 import (
-	"slices"
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/languageutil"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -46,7 +47,7 @@ func (d *Definition) ProjectionQuestionnaire(input trackers.PreparationInput) *a
 func azDialectLanguages(subject api.TrackerValidationSubject) []string {
 	facts := subject.LanguageFacts
 	if !facts.OriginalLanguagesKnown || trackers.ProgrammeLanguageStatus(subject) != api.MetadataEvidenceStatusComplete ||
-		(strings.EqualFold(subject.Type, "REMUX") && (facts.HasOriginalAudio() || slices.Contains(facts.ProgrammeLanguages, "English"))) {
+		(strings.EqualFold(subject.Type, "REMUX") && (facts.HasOriginalAudio() || languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English"))) {
 		return nil
 	}
 	var dialects []string
@@ -56,7 +57,8 @@ func azDialectLanguages(subject api.TrackerValidationSubject) []string {
 			continue
 		}
 		for _, language := range track.Languages {
-			if language != "English" && !slices.Contains(facts.OriginalLanguages, language) && !slices.Contains(dialects, language) {
+			if !languageutil.SameLanguage(language, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, language) &&
+				!languageutil.ContainsLanguage(dialects, language) {
 				dialects = append(dialects, language)
 			}
 		}

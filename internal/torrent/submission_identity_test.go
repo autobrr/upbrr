@@ -46,7 +46,7 @@ func TestSubmissionContentIdentityUsesCanonicalWantedInventory(t *testing.T) {
 		t.Fatalf("canonical identities = %#v and %#v", forwardIdentity, reversedIdentity)
 	}
 
-	expected, ok, err := expectedTorrentFiles(api.TorrentSubject{SourcePath: root, FileList: []string{second, first}})
+	expected, _, ok, err := expectedTorrentFiles(api.TorrentSubject{SourcePath: root, FileList: []string{second, first}})
 	if err != nil || !ok || len(expected) != len(reversed.Files) {
 		t.Fatalf("expected torrent files = %#v, %t, %v", expected, ok, err)
 	}

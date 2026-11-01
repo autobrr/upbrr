@@ -9,8 +9,37 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
+
+func TestGatherQueuePathsPreservesRootWhitespace(t *testing.T) {
+	base := t.TempDir()
+	t.Chdir(base)
+	for _, name := range []string{" media", "media "} {
+		t.Run(name, func(t *testing.T) {
+			if name == "media " && runtime.GOOS == "windows" {
+				t.Skip("ordinary Windows paths do not preserve trailing spaces")
+			}
+			for _, dir := range []string{name, "media"} {
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(name, "selected.mkv"), []byte("synthetic media"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join("media", "wrong.mkv"), []byte("synthetic media"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := GatherQueuePaths(t.Context(), name)
+			want := []string{filepath.Join(base, name, "selected.mkv")}
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("selected wrong root: paths=%v err=%v", got, err)
+			}
+		})
+	}
+}
 
 func TestGatherQueuePathsExpandsFirstLevelCandidates(t *testing.T) {
 	t.Parallel()

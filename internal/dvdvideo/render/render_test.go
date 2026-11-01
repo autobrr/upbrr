@@ -110,3 +110,42 @@ func (r *fakeRunner) Run(_ context.Context, _ string, _ []string, _ int) (Output
 	}
 	return output, err
 }
+
+func TestProbeBlurayRequiresSuccessfulInputProtocolListing(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		output  Output
+		err     error
+		want    bool
+		wantErr bool
+	}{
+		{
+			name:   "input",
+			output: Output{Stdout: []byte("Supported file protocols:\nInput:\n  bluray\nOutput:\n  file\n")},
+			want:   true,
+		},
+		{name: "missing", output: Output{Stdout: []byte("Input:\n  file\nOutput:\n  file\n")}},
+		{name: "output only", output: Output{Stdout: []byte("Input:\n  file\nOutput:\n  bluray\n")}},
+		{name: "build flag is not capability", output: Output{Stdout: []byte("configuration: --enable-libbluray\nInput:\n  file\nOutput:\n  file\n")}},
+		{name: "diagnostic is not capability", output: Output{Stdout: []byte("Input:\n  file\nOutput:\n  file\n"), Stderr: []byte("Input:\nbluray\n")}},
+		{
+			name:    "malformed",
+			output:  Output{Stdout: []byte("bluray\n")},
+			wantErr: true,
+		},
+		{
+			name:    "failed",
+			output:  Output{Stdout: []byte("Input:\nbluray\n")},
+			err:     errors.New("failed"),
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &fakeRunner{outputs: []Output{tc.output}, errors: []error{tc.err}}
+			got, err := ProbeBluray(t.Context(), runner, "ffmpeg")
+			if got != tc.want || (err != nil) != tc.wantErr {
+				t.Fatalf("ProbeBluray = %t, %v; want %t, error=%t", got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}

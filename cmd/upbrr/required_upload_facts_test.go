@@ -53,7 +53,7 @@ func TestCLIUnattendedRequiredFactsDoesNotPromptOrUpload(t *testing.T) {
 			coreSvc := &cliWorkflowCoreFake{current: current}
 			coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return current, nil }
 			var output strings.Builder
-			err = runCLIWorkflowInteractive(t.Context(), coreSvc, args, opts, visited, "example.mkv", api.PlaylistInstruction{}, 0, config.Config{}, cliIO{in: strings.NewReader("y\ncontinue\n"), out: &output}, api.NopLogger{})
+			_, err = runCLIWorkflowInteractive(t.Context(), coreSvc, args, opts, visited, "example.mkv", api.PlaylistInstruction{}, 0, config.Config{}, cliIO{in: strings.NewReader("y\ncontinue\n"), out: &output}, api.NopLogger{})
 			if err == nil || !strings.Contains(err.Error(), "unattended") {
 				t.Fatalf("missing facts error = %v", err)
 			}
@@ -93,7 +93,7 @@ func TestCLIRequiredFactsCorrectionCannotContinue(t *testing.T) {
 				return coreSvc.current, nil
 			}
 			var output strings.Builder
-			err = runCLIWorkflowInteractive(t.Context(), coreSvc, args, opts, visited, "example.mkv", api.PlaylistInstruction{}, 0, config.Config{}, cliIO{in: strings.NewReader("y\ncontinue\n--type ENCODE\ny\n"), out: &output}, api.NopLogger{})
+			_, err = runCLIWorkflowInteractive(t.Context(), coreSvc, args, opts, visited, "example.mkv", api.PlaylistInstruction{}, 0, config.Config{}, cliIO{in: strings.NewReader("y\ncontinue\n--type ENCODE\ny\n"), out: &output}, api.NopLogger{})
 			if err != nil {
 				t.Fatalf("correction: %v output=%q", err, output.String())
 			}

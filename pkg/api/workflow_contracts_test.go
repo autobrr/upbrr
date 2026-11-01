@@ -46,6 +46,23 @@ func TestMediaInfoDisplayPreservesLegacySnapshotFingerprint(t *testing.T) {
 	}
 }
 
+func TestKeepFolderEligibilityContributesToDisplayFingerprint(t *testing.T) {
+	t.Parallel()
+	display := PreparedReleaseDisplay{ReleaseName: "Example.Release.2026-GRP"}
+	eligible := display
+	eligible.CanKeepFolder = true
+	data, err := json.Marshal(eligible)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"CanKeepFolder":true`) {
+		t.Fatalf("eligible folder missing from display JSON: %s", data)
+	}
+	if workflowTestFingerprint(t, display) == workflowTestFingerprint(t, eligible) {
+		t.Fatal("folder eligibility did not contribute to display fingerprint")
+	}
+}
+
 func TestReleaseFactInstructionSnapshotFingerprintAndClonePreserveTriState(t *testing.T) {
 	t.Parallel()
 
@@ -503,6 +520,24 @@ func TestDirectUploadContractsValidateExactLineageAndTerminalOutcomes(t *testing
 	}
 	if err := dryRun.Validate(); err != nil {
 		t.Fatalf("validate direct dry run: %v", err)
+	}
+	blockedDryRun := dryRun
+	blockedDryRun.Reports = append([]TrackerDryRunReport(nil), dryRun.Reports...)
+	blockedDryRun.Status, blockedDryRun.SucceededCount = StageStatusBlocked, 0
+	blockedDryRun.Reports[0].Status = StageStatusBlocked
+	blockedDryRun.Reports[0].ClientInjection.Status = StageStatusPending
+	if err := blockedDryRun.Validate(); err != nil {
+		t.Fatalf("validate dry run awaiting a preparation decision: %v", err)
+	}
+	blockedDryRun.Reports[0].ClientInjection.Status = StageStatusCompleted
+	if err := blockedDryRun.Validate(); err == nil {
+		t.Fatal("blocked preparation claimed completed client injection")
+	}
+	blockedDryRun.Status, blockedDryRun.SucceededCount = StageStatusCompleted, 1
+	blockedDryRun.Reports[0].Status = StageStatusCompleted
+	blockedDryRun.Reports[0].ClientInjection.Status = StageStatusPending
+	if err := blockedDryRun.Validate(); err == nil {
+		t.Fatal("completed preparation retained pending client injection")
 	}
 	missingTargets := dryRun
 	missingTargets.TrackerIDs = nil

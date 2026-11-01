@@ -12,6 +12,7 @@ import (
 // Profile returns GPW identity, preparation, dupe, bans, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:      trackers.ConnectionProbe{Test: testConnection, DraftConfig: trackers.APIKeyProbeConfig},
 		UsesMenuImages:       true,
 		Name:                 "GPW",
 		BaseURL:              baseURL,

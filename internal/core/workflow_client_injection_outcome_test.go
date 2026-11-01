@@ -5,6 +5,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/torrentclient"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -47,6 +49,115 @@ func newInjectionOutcomeReporter(t *testing.T) *dryRunInjectionReporter {
 		t.Fatal(err)
 	}
 	return &dryRunInjectionReporter{repository: repo}
+}
+
+func TestDryRunPreparationDecisionContinuesClientInjection(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"continue", "skip option", "live review", "live test", "no destination", "client failure", "unknown outcome", "another decision", "skip preparation"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			torrentPath := filepath.Join(root, "prepared.torrent")
+			if err := os.WriteFile(torrentPath, []byte("prepared torrent"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			action := api.RequiredAction{Kind: api.RequiredActionResolveTrackerPreparation, Prompt: "Continue preparation?"}
+			service := &workflowRetainedUploadServiceFake{
+				actions: map[api.TrackerID][]api.RequiredAction{"ALPHA": {action}},
+				failures: map[api.TrackerID]trackers.TrackerFailure{"ALPHA": {
+					Tracker: "ALPHA",
+					Code:    "decision_required",
+					Message: "A preparation decision is required.",
+				}},
+				resolved: map[string]trackers.RetainedTrackerPreparation{"ALPHA": {Tracker: "ALPHA", TorrentPath: torrentPath}},
+			}
+			client := &dryRunClientService{}
+			builder := workflowUploadPlanBuilder{
+				resolver: &workflowDescriptionResolverFake{},
+				trackers: service,
+				clients:  client,
+			}
+			options := releaseworkflow.UploadPlanBuildOptions{DryRun: true}
+			wantStatus, wantCode, wantCalls := api.StageStatusCompleted, api.OperationFailureCode(""), 1
+			switch name {
+			case "skip option":
+				options.NoSeed, wantStatus, wantCalls = true, api.StageStatusSkipped, 0
+			case "live review":
+				options.ReviewOnly, wantStatus, wantCalls = true, api.StageStatusSkipped, 0
+			case "live test":
+				builder.liveTest, wantStatus, wantCalls = &api.LiveTestPolicy{}, api.StageStatusSkipped, 0
+			case "no destination":
+				builder.clients, wantStatus, wantCalls = torrentclient.NewService(config.Config{}, nil), api.StageStatusSkipped, 0
+			case "client failure":
+				client.injectErr, wantStatus, wantCode = errors.New("synthetic client failure"), api.StageStatusFailed, api.OperationFailureDryRunClientInjection
+			case "unknown outcome":
+				client.injectErr, wantStatus, wantCode = api.ErrReleaseWorkflowEffectOutcomeUnknown, api.StageStatusFailed, api.OperationFailureUnknownOutcome
+			case "another decision":
+				preparation := service.resolved["ALPHA"]
+				preparation.Preview.RequiredActions = []api.RequiredAction{action}
+				service.resolved["ALPHA"] = preparation
+				wantStatus, wantCalls = api.StageStatusPending, 0
+			case "skip preparation":
+				preparation := service.resolved["ALPHA"]
+				preparation.Failure = &trackers.TrackerFailure{Code: trackers.PreparationFailureCodeSkipped}
+				service.resolved["ALPHA"] = preparation
+				wantStatus, wantCalls = api.StageStatusSkipped, 0
+			}
+			reporter := newInjectionOutcomeReporter(t)
+			ctx := api.WithWorkflowExternalEffectReporter(t.Context(), reporter)
+			build := func() releaseworkflow.RetainedUploadExecution {
+				t.Helper()
+				plan, execution, err := builder.Build(ctx,
+					api.TrackerReleaseProjectionSet{
+						ExecutionMode: api.WorkflowExecutionModeNormal,
+						ReleaseRef:    api.ReleaseRef{SourcePath: root, Generation: 1},
+						Projections: []api.TrackerReleaseProjection{{
+							TrackerID:         "ALPHA",
+							UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+							Readiness:         api.ReadinessStatusReady,
+							UploadReady:       true,
+						}},
+					},
+					api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+						TrackerID: "ALPHA",
+						Decision:  api.DupeDecisionNoMatch,
+						Status:    api.StageStatusCompleted,
+					}}},
+					workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{}, api.DescriptionInstructions{Options: api.UploadOptions{SkipAutoTorrent: true}}, options, time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = execution.Release() })
+				pending := api.StageStatusPending
+				if options.NoSeed || options.ReviewOnly || builder.liveTest != nil {
+					pending = api.StageStatusSkipped
+				}
+				if len(plan.Trackers) != 1 || plan.Trackers[0].ClientInjectionStatus != pending {
+					t.Fatalf("unresolved preparation client state = %s, want %s", plan.Trackers[0].ClientInjectionStatus, pending)
+				}
+				return execution
+			}
+			execution := build()
+			if len(client.injections) != 0 || reporter.attempt != 0 {
+				t.Fatal("pending preparation dispatched a client action")
+			}
+			for attempt := range 2 {
+				resolved, err := execution.ResolveAction(ctx, "ALPHA", action.Kind, true)
+				if err != nil || resolved.ClientInjectionStatus != wantStatus || resolved.ClientFailureCode != wantCode || len(client.injections) != wantCalls {
+					t.Fatalf("resolution %d: status=%s code=%s calls=%d err=%v", attempt, resolved.ClientInjectionStatus, resolved.ClientFailureCode, len(client.injections), err)
+				}
+				if wantStatus == api.StageStatusFailed && (resolved.Eligible || resolved.Status != api.StageStatusFailed || len(resolved.Failures) != 1) {
+					t.Fatalf("client failure was reported as ready: %#v", resolved)
+				}
+				if name == "client failure" {
+					break // A definite failure may retry after a new explicit request.
+				}
+				if name == "continue" {
+					execution = build()
+				}
+			}
+		})
+	}
 }
 
 func TestDryRunClientInjectionRequiresEnabledDestination(t *testing.T) {
@@ -165,6 +276,7 @@ func TestWorkflowQbitInjectionVerifiesRequiredTrackers(t *testing.T) {
 		noTrackers bool
 	}{
 		{name: "unmerged duplicate", body: "Fails."},
+		{name: "primary only", body: "Ok."},
 		{
 			name:    "private duplicate",
 			body:    "Fails.",
@@ -266,6 +378,9 @@ func TestWorkflowQbitInjectionVerifiesRequiredTrackers(t *testing.T) {
 						trackers := []map[string]string{{"url": "https://prepared.example/announce"}}
 						if test.installed && (test.name == "already present" || adds.Load() > 0) {
 							trackers = []map[string]string{{"url": torrent.Announce}, {"url": "https://fallback.example/announce"}}
+						}
+						if test.name == "primary only" {
+							trackers = []map[string]string{{"url": torrent.Announce}}
 						}
 						_ = json.NewEncoder(w).Encode(trackers)
 					default:

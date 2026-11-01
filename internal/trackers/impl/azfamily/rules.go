@@ -6,10 +6,11 @@ package azfamily
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/autobrr/upbrr/internal/languageutil"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -686,10 +687,10 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 				failure.QuestionnaireInput = outcome == trackers.LanguageUnresolved
 				failures = append(failures, failure)
 			}
-		} else if facts.OriginalLanguagesKnown && !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") && facts.HasUnresolvedProgrammeAudioOrigin() {
+		} else if facts.OriginalLanguagesKnown && !facts.HasOriginalAudio() && !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") && facts.HasUnresolvedProgrammeAudioOrigin() {
 			failures = append(failures, trackers.ProgrammeAudioOriginFailures(subject)...)
 		} else if facts.OriginalLanguagesKnown && programmeStatus == api.MetadataEvidenceStatusComplete &&
-			!facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {
+			!facts.HasOriginalAudio() && !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") {
 			failures = append(
 				failures,
 				trackers.LanguageRuleFailure(
@@ -730,7 +731,7 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 				trackers.AutomaticDolbyCompatibilityMix(facts, track) != "" {
 				continue
 			}
-			for _, language := range track.Languages {
+			for _, language := range languageutil.LanguageMatchKeys(track.Languages) {
 				if seen[language] {
 					failures = append(
 						failures,

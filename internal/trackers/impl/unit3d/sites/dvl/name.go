@@ -9,13 +9,14 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dvl/v3", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dvl/v4", trackers.StructuredNamePolicy{
 		Defaults: applyDVLNameDefaults,
 	})
 }
@@ -137,6 +138,9 @@ func dvlLanguageMarker(meta api.UploadSubject) string {
 		case "", "zxx", "no linguistic content", "und", "undetermined":
 			continue
 		default:
+			if label := languageutil.NormalizeLanguageDisplay(value); label != "" {
+				return strings.ToUpper(label)
+			}
 			return strings.ToUpper(strings.TrimSpace(value))
 		}
 	}

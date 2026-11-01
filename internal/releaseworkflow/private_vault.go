@@ -45,6 +45,14 @@ type PrivateArtifactVault struct {
 	codecs   map[string]PrivateResourceCodec
 }
 
+// PrivateArtifactVaultRoot returns the stable database-scoped artifact directory
+// shared by normal workflow runtimes and local recovery sessions.
+func PrivateArtifactVaultRoot(dbPath string) string {
+	dbPath = filepath.Clean(strings.TrimSpace(dbPath))
+	sum := sha256.Sum256([]byte(dbPath))
+	return filepath.Join(filepath.Dir(dbPath), "workflow-private", hex.EncodeToString(sum[:16]))
+}
+
 // NewPrivateArtifactVault opens or creates one restricted private artifact root.
 func NewPrivateArtifactVault(root string, codecs ...PrivateResourceCodec) (*PrivateArtifactVault, error) {
 	root = strings.TrimSpace(root)

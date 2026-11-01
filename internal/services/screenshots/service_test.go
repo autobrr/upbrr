@@ -114,7 +114,7 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	if plan.TrackerImageLinks[0].PreviewURL != "https://one.example/preview.png" || plan.TrackerImageLinks[1].PreviewURL != "" {
 		t.Fatalf("saved tracker image previews = %#v", plan.TrackerImageLinks)
 	}
-	reusable, err := service.ReusableTrackerImageLinks(t.Context(), sourcePath, api.ReleaseInfo{})
+	reusable, err := service.ReusableTrackerImageLinks(t.Context(), sourcePath, "", api.ReleaseInfo{})
 	if err != nil || len(reusable) != 2 {
 		t.Fatalf("reusable tracker images = %#v err=%v", reusable, err)
 	}
@@ -132,7 +132,7 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	if err != nil || len(plan.TrackerImageLinks) != 1 || plan.TrackerImageLinks[0].Path != artifactPaths[1] {
 		t.Fatalf("remaining tracker artifact absent from plan: plan=%#v err=%v", plan, err)
 	}
-	reusable, err = service.ReusableTrackerImageLinks(t.Context(), sourcePath, api.ReleaseInfo{})
+	reusable, err = service.ReusableTrackerImageLinks(t.Context(), sourcePath, "", api.ReleaseInfo{})
 	if err != nil || len(reusable) != 1 || reusable[0].Path != artifactPaths[1] {
 		t.Fatalf("reusable tracker images after deletion = %#v err=%v", reusable, err)
 	}
@@ -144,7 +144,7 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	if err != nil || len(plan.TrackerImageLinks) != 0 || len(plan.FinalSelections) != 0 {
 		t.Fatalf("comparison-only tracker artifact entered screenshot plan: plan=%#v err=%v", plan, err)
 	}
-	reusable, err = service.ReusableTrackerImageLinks(t.Context(), sourcePath, api.ReleaseInfo{})
+	reusable, err = service.ReusableTrackerImageLinks(t.Context(), sourcePath, "", api.ReleaseInfo{})
 	if err != nil || len(reusable) != 0 {
 		t.Fatalf("comparison-only tracker artifact entered reusable inventory: %#v err=%v", reusable, err)
 	}
@@ -279,7 +279,7 @@ func TestLoadTrackerMetadataWithholdsUnverifiedImagesAcrossTrackers(t *testing.T
 	if err := os.WriteFile(verifiedArtifactPath, []byte("truncated image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	links, err := service.ReusableTrackerImageLinks(t.Context(), sourcePath, api.ReleaseInfo{})
+	links, err := service.ReusableTrackerImageLinks(t.Context(), sourcePath, "", api.ReleaseInfo{})
 	if err != nil || len(links) != 0 {
 		t.Fatalf("corrupt tracker image remains reusable: %#v err=%v", links, err)
 	}
@@ -308,6 +308,122 @@ func writeTrackerTestPNG(t *testing.T, pathValue string) {
 	}
 }
 
+func TestTrackerImageReuseChecksCurrentResolutionAcrossStoredRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name, resolution, discType         string
+		width, height, badWidth, badHeight int
+	}{
+		{
+			name:       "measured tier",
+			resolution: "720p",
+			width:      1280,
+			height:     720,
+			badWidth:   1280,
+			badHeight:  400,
+		},
+		{
+			name:       "portrait tier",
+			resolution: "720p",
+			width:      720,
+			height:     1280,
+			badWidth:   480,
+			badHeight:  854,
+		},
+		{
+			name:       "DVD physical height",
+			resolution: "576i",
+			discType:   "DVD",
+			width:      352,
+			height:     600,
+			badWidth:   352,
+			badHeight:  400,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			sourcePath := filepath.Join(root, "Example.Release.2026.mkv")
+			if err := os.WriteFile(sourcePath, []byte("synthetic video"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			miPath := filepath.Join(root, "mediainfo.json")
+			if err := os.WriteFile(miPath, []byte(`{"media":{"track":[{"@type":"General","Duration":"600"},{"@type":"Video","FrameRate":"24.000"}]}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			release := api.ReleaseInfo{Resolution: tc.resolution}
+			repo := openScreenshotTestRepository(t)
+			tmpRoot := t.TempDir()
+			tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, release)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var goodPath, badPath string
+			for index, tracker := range []string{"AITHER", "BLU"} {
+				rawURL := fmt.Sprintf("https://images.example.invalid/frame-%d.png", index)
+				if err := repo.SaveTrackerMetadata(t.Context(), api.TrackerMetadata{
+					SourcePath: sourcePath,
+					Tracker:    tracker,
+					ImageURLs:  []string{rawURL},
+				}); err != nil {
+					t.Fatal(err)
+				}
+				filePath := filepath.Join(tmpDir, strings.ToLower(tracker), buildTrackerImageFilename(rawURL, 0))
+				if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				width, height := tc.width, tc.height
+				if index == 1 {
+					width, height = tc.badWidth, tc.badHeight
+					badPath = filePath
+				} else {
+					goodPath = filePath
+				}
+				file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := png.Encode(file, image.NewGray(image.Rect(0, 0, width, height))); err != nil {
+					file.Close()
+					t.Fatal(err)
+				}
+				if err := file.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			binding := screenshotTestBinding(sourcePath)
+			if err := repo.SaveFinalSelections(t.Context(), binding, []api.ScreenshotFinalSelection{{
+				SourcePath: sourcePath,
+				ImagePath:  badPath,
+				Order:      0,
+				Source:     "tracker",
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			svc := NewServiceWithRepo(config.Config{}, api.NopLogger{}, tmpRoot, nil, repo)
+			links, err := svc.ReusableTrackerImageLinks(t.Context(), sourcePath, tc.discType, release)
+			if err != nil || len(links) != 1 || links[0].Path != goodPath {
+				t.Fatalf("reused image count=%d err=%v, want only current tier", len(links), err)
+			}
+			if tc.discType == "DVD" {
+				// This case verifies the reusable inventory; DVD layout probing is separate.
+				return
+			}
+			plan, err := svc.Plan(t.Context(), api.ScreenshotSubject{
+				MediaBinding:      binding,
+				SourcePath:        sourcePath,
+				DiscType:          tc.discType,
+				Release:           release,
+				MediaInfoJSONPath: miPath,
+			}, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.TrackerImageLinks) != 1 || len(plan.FinalSelections) != 1 || plan.FinalSelections[0].Path != goodPath || len(plan.ExistingTrackerScreenshots) != 0 {
+				t.Fatalf("stale tracker geometry remained selectable: links=%d final=%d unlinked=%d", len(plan.TrackerImageLinks), len(plan.FinalSelections), len(plan.ExistingTrackerScreenshots))
+			}
+		})
+	}
+}
+
 func TestBuildTrackerImageLinksRetainsWebP(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -323,7 +439,7 @@ func TestBuildTrackerImageLinksRetainsWebP(t *testing.T) {
 	if err := os.WriteFile(pathValue, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	links := buildTrackerImageLinks([]api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{rawURL}}}, root, nil)
+	links := buildTrackerImageLinks([]api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{rawURL}}}, root, nil, 0, false)
 	if len(links) != 1 || links[0].Path != pathValue || links[0].URL != rawURL {
 		t.Fatalf("WebP source image was omitted: %#v", links)
 	}
@@ -341,12 +457,12 @@ func TestBuildTrackerImageLinksRejectsLegacyProxyCache(t *testing.T) {
 	legacyPath := filepath.Join(dir, buildTrackerImageFilename(proxyURL, 0))
 	writeTrackerTestPNG(t, legacyPath)
 	records := []api.TrackerMetadata{{Tracker: "AITHER", ImageURLs: []string{proxyURL}}}
-	if links := buildTrackerImageLinks(records, root, nil); len(links) != 0 {
+	if links := buildTrackerImageLinks(records, root, nil, 0, false); len(links) != 0 {
 		t.Fatalf("legacy proxy cache was reused as full-size image: %#v", links)
 	}
 	directPath := filepath.Join(dir, buildTrackerImageFilename(directURL, 0))
 	writeTrackerTestPNG(t, directPath)
-	links := buildTrackerImageLinks(records, root, nil)
+	links := buildTrackerImageLinks(records, root, nil, 0, false)
 	if len(links) != 1 || links[0].Path != directPath || links[0].URL != directURL || links[0].Host != "img.blutopia.cc" {
 		t.Fatalf("direct-source cache was not reused: %#v", links)
 	}
@@ -357,18 +473,30 @@ func TestFilterProtectedTrackerFinalSelectionsKeepsVerifiedAndOrdinaryImages(t *
 	if err != nil {
 		t.Fatalf("create tracker registry: %v", err)
 	}
-	root := t.TempDir()
+	root := filepath.Join(t.TempDir(), "ant")
 	verifiedPath := filepath.Join(root, "aither", "verified.png")
 	legacyPath := filepath.Join(root, "bhd", "comparison.png")
 	ordinaryPath := filepath.Join(root, "capture.png")
 	images := []api.ScreenshotImage{
-		{Path: legacyPath},
-		{Path: ordinaryPath},
-		{Path: verifiedPath},
+		{
+			Path:   legacyPath,
+			Width:  1920,
+			Height: 1080,
+		},
+		{
+			Path:   ordinaryPath,
+			Width:  320,
+			Height: 180,
+		},
+		{
+			Path:   verifiedPath,
+			Width:  1920,
+			Height: 1080,
+		},
 	}
 	links := []api.ScreenshotLinkedImage{{Tracker: "AITHER", Path: verifiedPath}}
-	records := []api.TrackerMetadata{{Tracker: "AITHER"}, {Tracker: "BHD"}}
-	filtered := filterProtectedTrackerFinalSelections(images, links, records, registry)
+	records := []api.TrackerMetadata{{Tracker: "AITHER"}, {Tracker: "BHD"}, {Tracker: "ANT"}}
+	filtered := filterProtectedTrackerFinalSelections(images, links, records, registry, root, 1080, false)
 	if len(filtered) != 2 || filtered[0].Path != ordinaryPath || filtered[1].Path != verifiedPath {
 		t.Fatalf("saved legacy comparison selection survived: %#v", filtered)
 	}

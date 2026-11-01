@@ -143,7 +143,7 @@ func TestCompositeHDRReportsSurviveTerminalRestoration(t *testing.T) {
 						if service.readContextErr != nil || service.readDeadline.IsZero() {
 							t.Error("HDR outcome was not read with a detached bounded context")
 						}
-						publishCLIItemResult(streams, waitErr)
+						publishCLIItemResult(streams, waitErr, "")
 						if waitErr != nil {
 							return waitErr
 						}

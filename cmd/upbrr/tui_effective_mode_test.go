@@ -157,7 +157,8 @@ func TestMetadataEditsReplaceModeBeforeRepreparation(t *testing.T) {
 			}
 			finished := make(chan error, 1)
 			go func() {
-				finished <- runCLIWorkflowInteractive(ctx, core, args, opts, visited, source, api.PlaylistInstruction{}, 0, config.Config{}, streams, api.NopLogger{})
+				_, err := runCLIWorkflowInteractive(ctx, core, args, opts, visited, source, api.PlaylistInstruction{}, 0, config.Config{}, streams, api.NopLogger{})
+				finished <- err
 			}()
 			for index := range 3 {
 				select {

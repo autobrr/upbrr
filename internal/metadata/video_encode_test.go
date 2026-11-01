@@ -165,7 +165,7 @@ func TestDeriveMediaFactsUsesEffectiveTypeForVideoEncode(t *testing.T) {
 			if test.sourceCorrection != "" {
 				input.ReleaseNameOverrides.Source = &test.sourceCorrection
 			}
-			meta, err := NewService(&fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), input)
+			meta, err := newTestService(t, &fakeRepo{}, WithConfig(config.Config{})).deriveMediaFacts(t.Context(), input)
 			if err != nil {
 				t.Fatal(err)
 			}

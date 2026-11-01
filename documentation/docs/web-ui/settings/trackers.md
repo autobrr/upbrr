@@ -30,17 +30,17 @@ Defaults do not bypass workflow eligibility, auth, duplicate checks, validation,
 
 Each tracker shows a different subset.
 
-| Field family                            | Purpose                                                                                      |
-| --------------------------------------- | -------------------------------------------------------------------------------------------- |
-| API key, passkey, announce URL          | Authenticates tracker API, upload, or announce operations as required by that tracker.       |
-| Username, password, OTP URI             | Supports tracker-owned login or automatic relogin. Managed cookie state is shown separately. |
-| **Anonymous**, **Mod queue**, **Draft** | Sets tracker-specific upload flags where supported.                                          |
-| **Image host**                          | Chooses an eligible host for that tracker instead of relying only on global priority.        |
-| **Torrent client**                      | Overrides global client handling for torrents registered by that tracker.                    |
-| **Link dir name**                       | Names the tracker staging directory when torrent-client linking is enabled.                  |
-| **Favicon URL**                         | Overrides the tracker icon source used by the Web UI.                                        |
-| **Skip if rehash**                      | Omits the tracker when preparation must generate new torrent data.                           |
-| **Inject delay**                        | Overrides the global post-upload client-injection delay for that tracker.                    |
+| Field family                                                             | Purpose                                                                                      |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| API key, passkey, announce URL                                           | Authenticates tracker API, upload, or announce operations as required by that tracker.       |
+| Username, password, OTP URI                                              | Supports tracker-owned login or automatic relogin. Managed cookie state is shown separately. |
+| **Anonymous upload**, **Opt into moderation queue**, **Upload as draft** | Sets tracker-specific upload flags where supported.                                          |
+| **Preferred image host for this tracker**                                | Chooses an eligible host for that tracker instead of relying only on global priority.        |
+| **Client receiving this tracker's torrents**                             | Overrides global client handling for torrents registered by that tracker.                    |
+| **Link staging subfolder**                                               | Names the tracker staging directory when torrent-client linking is enabled.                  |
+| **Custom tracker icon URL**                                              | Overrides the tracker icon source used by the Web UI.                                        |
+| **Skip when torrent regeneration is needed**                             | Omits the tracker when preparation must generate new torrent data.                           |
+| **Client injection delay (seconds)**                                     | Overrides the global post-upload client-injection delay for that tracker.                    |
 
 Other fields are tracker-owned. Their labels and defaults come from the running backend, not a universal schema. See [Trackers](../../trackers/index.md) for support boundaries.
 
@@ -48,11 +48,11 @@ Other fields are tracker-owned. Their labels and defaults come from the running 
 
 Every tracker card provides three independent comma-separated release-group lists. Configure each tracker separately; a group listed for one tracker has no effect on another.
 
-| Field                       | Effect for a matching incoming group                                                                                                                                                                |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Duplicate bypass groups** | Ignores confirmed duplicate candidates from other groups. Same-group candidates, exact duplicates, and candidates whose group cannot be determined still receive normal duplicate handling.         |
-| **Personal release groups** | Selects the tracker API's personal-release option when that API supports one. An explicit Personal Release choice on the upload overrides this configured default, including an explicit **false**. |
-| **Internal groups**         | Selects the tracker API's internal option when supported and applies the same-group duplicate behavior described above.                                                                             |
+| Field                                 | Effect for a matching incoming group                                                                                                                                                                |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Same-group duplicate-check groups** | Ignores confirmed duplicate candidates from other groups. Same-group candidates, exact duplicates, and candidates whose group cannot be determined still receive normal duplicate handling.         |
+| **Personal release groups**           | Selects the tracker API's personal-release option when that API supports one. An explicit Personal Release choice on the upload overrides this configured default, including an explicit **false**. |
+| **Internal release groups**           | Selects the tracker API's internal option when supported and applies the same-group duplicate behavior described above.                                                                             |
 
 Enter tags without the conventional leading `-`, for example `GRP, OTHER`. upbrr trims whitespace, removes one accidental leading hyphen, and removes repeated entries case-insensitively. Matching uses the complete group tag; wildcards and partial matches are not supported.
 
@@ -69,7 +69,7 @@ trackers:
 
 JSON uses arrays with the catalog field names `DupeBypassGroups`, `PersonalReleaseGroups`, and `InternalGroups`.
 
-The older per-tracker **Internal** boolean is retained only so existing configuration can be read and exported. It no longer enables internal handling. Add the relevant tags to **Internal groups**; a list match works even when the legacy value is `false`.
+The older per-tracker **Internal** boolean is retained only so existing configuration can be read and exported. It no longer enables internal handling. Add the relevant tags to **Internal release groups**; a list match works even when the legacy value is `false`.
 
 ## Remove a tracker
 

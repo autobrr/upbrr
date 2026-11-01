@@ -324,7 +324,7 @@ func (s *Service) trackerLinkDirName(tracker string) string {
 // torrent-internal names, and resolving them would match against the process
 // working directory instead of the prepared source.
 func sourcePathForLinking(meta api.ClientSubject) (string, error) {
-	if len(meta.FileList) == 1 {
+	if len(meta.FileList) == 1 && !meta.KeepFolder {
 		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" && filepath.IsAbs(candidate) {
 			info, err := os.Stat(candidate)
 			if err == nil && !info.IsDir() {
@@ -356,7 +356,7 @@ func sourcePathForLinking(meta api.ClientSubject) (string, error) {
 // entries are ignored: they are torrent-internal names, and resolving them
 // lexically would anchor the save path to the process working directory.
 func sourcePathForQbitSavePath(meta api.ClientSubject) (string, error) {
-	if len(meta.FileList) == 1 {
+	if len(meta.FileList) == 1 && !meta.KeepFolder {
 		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" && filepath.IsAbs(candidate) {
 			return absLocalPath("qbit mapping source", candidate)
 		}

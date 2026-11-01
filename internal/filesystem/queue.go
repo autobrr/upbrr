@@ -23,13 +23,13 @@ var queueVideoExts = map[string]struct{}{
 // GatherQueuePaths returns sorted absolute host paths for first-level upload
 // candidates. A file root is returned directly; directory children are kept
 // only when they are video files or directories containing video or disc data.
+// Root whitespace is preserved except that an empty or whitespace-only root is rejected.
 func GatherQueuePaths(ctx context.Context, root string) ([]string, error) {
-	trimmed := strings.TrimSpace(root)
-	if trimmed == "" {
+	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("filesystem: empty queue path: %w", internalerrors.ErrInvalidInput)
 	}
 
-	absRoot, err := filepath.Abs(trimmed)
+	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("filesystem: resolve queue path: %w", err)
 	}

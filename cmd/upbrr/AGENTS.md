@@ -19,7 +19,8 @@ Focused `go test`: include touched service/tracker/internal packages.
 - Questionnaire modules: never prompt or inspect CLI flags; return central typed questionnaire actions. CLI owns presentation + interaction policy.
 - `--unattended` / `--ua`: no prompts. Tracker-scoped manual prerequisites: skip tracker, continue viable lanes. Auth-blocked lanes stay blocked in every interaction mode. Workflow-global missing data/unsafe ambiguity: clear error.
 - `--unattended_confirm` / `--uac`: unattended defaults; required confirmation/manual prompts allowed.
-- Post-dupe tracker approval: workflow-global. Show candidate duplicate evidence + reviewed upload names; require explicit non-empty tracker subset. Strict unattended: clear error, no prompting/auto-approval. `--uac` may prompt. Never ask obsolete final upload approval.
+- Post-dupe tracker approval: workflow-global. Show candidate duplicate evidence + reviewed upload names; record the exact non-empty tracker subset through existing workflow feedback. Completed clear checks default Yes (`[Y/n]`); strict unattended applies that default without reading input. Duplicate overrides and incomplete/failed checks never gain automatic Yes. `--uac` may prompt. Never ask obsolete final upload approval.
+- `--skip-dupe-asking` / `-sda`: block duplicate evidence without prompting; continue clear trackers. Preserve separate explicit duplicate overrides, staff-token requirements and authoritative in-client blocks.
 - Code/tests: `api.InteractionModeUnattended` for no-prompt behavior; `api.InteractionModeUnattendedConfirm` only when prompts expected.
 - No-prompt error text: say `unattended`; mention `unattended_confirm`/`--uac` only for prompt opt-in.
 - Preserve unattended safety: no hidden prompts/confirms or ambiguous fallthrough.
@@ -39,5 +40,5 @@ Focused `go test`: include touched service/tracker/internal packages.
 
 ## Parity
 
-- CLI request/options behavior shares WebUI workflow contracts.
+- CLI request/options behavior shares WebUI workflow contracts. Provider flags preserve the root manual-provider authority rule; do not reject independent selections because provider cross-links disagree. Use the shared metadata reconciliation boundary.
 - Request-shape changes usually require checking `pkg/api`, `internal/core`, `internal/webserver`, and `webui/src`.

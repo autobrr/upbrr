@@ -32,6 +32,8 @@ type cliOptions struct {
 	ShowVersion                bool
 	QueueName                  string
 	LimitQueue                 int
+	RefreshQueue               bool
+	RetryQueue                 bool
 	SiteCheck                  bool
 	SiteUpload                 string
 	Trackers                   string
@@ -107,6 +109,7 @@ type cliOptions struct {
 	TrackLanguages             []string
 	TrackAudioOrigins          []string
 	ResetInput                 []string
+	KeepExistingIDs            bool
 	ConfirmInput               []string
 	TrackerInput               []string
 	Anon                       bool
@@ -201,9 +204,11 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.LiveTest, "live-test", false, "Use an isolated live-test profile with tracker and client writes disabled")
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
 	fs.BoolVar(&opts.ShowVersion, "version", false, "Show version and exit")
-	fs.StringVar(&opts.QueueName, "queue", "", "Process an entire folder queue")
-	fs.IntVar(&opts.LimitQueue, "limit-queue", 0, "Limit the number of queued items to process")
-	fs.IntVar(&opts.LimitQueue, "lq", 0, "Limit the number of queued items to process")
+	fs.StringVar(&opts.QueueName, "queue", "", "Create or resume a saved queue in the active data directory")
+	fs.IntVar(&opts.LimitQueue, "limit-queue", 0, "Limit remaining eligible queue items (zero means unlimited)")
+	fs.IntVar(&opts.LimitQueue, "lq", 0, "Limit remaining eligible queue items (zero means unlimited)")
+	fs.BoolVar(&opts.RefreshQueue, "refresh-queue", false, "Add newly discovered queue members while retaining progress (requires --queue)")
+	fs.BoolVar(&opts.RetryQueue, "retry-queue", false, "Include failed, interrupted and skipped items (requires --queue; workflow safety checks still apply)")
 	fs.BoolVar(&opts.SiteCheck, "site-check", false, "Search/check sites without uploading")
 	fs.BoolVar(&opts.SiteCheck, "sc", false, "Search/check sites without uploading")
 	fs.StringVar(&opts.SiteUpload, "site-upload", "", "Process a single tracker upload flow")
@@ -227,8 +232,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.NoSeed, "ns", false, "Do not inject torrent into clients")
 	fs.BoolVar(&opts.SkipAutoTorrent, "skip_auto_torrent", false, "Skip automated torrent client searching")
 	fs.BoolVar(&opts.SkipAutoTorrent, "sat", false, "Skip automated torrent client searching")
-	fs.BoolVar(&opts.KeepFolder, "keep-folder", false, "Keep a supplied folder instead of processing its selected video file directly")
-	fs.BoolVar(&opts.KeepFolder, "kf", false, "Keep a supplied folder instead of processing its selected video file directly")
+	fs.BoolVar(&opts.KeepFolder, "keep-folder", false, "Keep the supplied folder around one movie or episode video, excluding sidecars")
+	fs.BoolVar(&opts.KeepFolder, "kf", false, "Keep the supplied folder around one movie or episode video, excluding sidecars")
 	fs.BoolVar(&opts.OnlyID, "onlyID", false, "Only grab tracker metadata IDs")
 	fs.BoolVar(&opts.UploadOnly, "upload-only", false, "Upload using prepared metadata cache only")
 	fs.StringVar(&opts.Category, "category", "", "Override category")
@@ -251,16 +256,16 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.Presentation, "presentation", "", "Override presentation (IMAX, Open Matte, IMAX Open Matte); empty clears")
 	fs.StringSliceVar(&opts.ReleaseFeatures, "release-features", nil, "Override release features with comma-separated supported IDs; empty clears")
 	fs.StringVar(&opts.Edition, "repack", "", "Override edition text")
-	fs.StringVar(&opts.Season, "season", "", "Override season value (two or four digits, such as 05 or S2026)")
+	fs.StringVar(&opts.Season, "season", "", "Override season value (single number such as 5 or S2026)")
 	fs.StringVar(&opts.Episode, "episode", "", "Override episode value (single token such as 5 or E05)")
 	fs.StringVar(&opts.EpisodeTitle, "episode-title", "", "Override episode title")
 	fs.StringVar(&opts.EpisodeTitle, "manual-episode-title", "", "Override episode title")
 	fs.StringVar(&opts.EpisodeTitle, "met", "", "Override episode title")
-	fs.IntVar(&opts.ManualYear, "manual-year", 0, "Override release year")
-	fs.IntVar(&opts.ManualYear, "year", 0, "Override release year")
+	fs.IntVar(&opts.ManualYear, "manual-year", 0, "Override movie year or TV year without TVDB data")
+	fs.IntVar(&opts.ManualYear, "year", 0, "Override movie year or TV year without TVDB data")
 	fs.StringVar(&opts.ManualDate, "daily", "", "Set daily episode air date (YYYY-MM-DD)")
 	fs.BoolVar(&opts.NoSeason, "no-season", false, "Remove season and episode from name")
-	fs.BoolVar(&opts.NoYear, "no-year", false, "Remove year from name")
+	fs.BoolVar(&opts.NoYear, "no-year", false, "Omit movie year or TV year without TVDB data")
 	fs.BoolVar(&opts.NoAKA, "no-aka", false, "Remove AKA from name")
 	fs.BoolVar(&opts.NoTag, "no-tag", false, "Remove group tag from name")
 	fs.BoolVar(&opts.NoEpisodeTitle, "no-episode-title", false, "Remove episode title from name")
@@ -368,8 +373,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.UnattendedConfirm, "unattended_confirm", false, "Unattended mode with prompts")
 	fs.BoolVar(&opts.SkipDupeCheck, "sdc", false, "Skip dupe check")
 	fs.BoolVar(&opts.SkipDupeCheck, "skip-dupe-check", false, "Skip dupe check")
-	fs.BoolVar(&opts.SkipDupeAsActual, "sda", false, "Skip dupe asking")
-	fs.BoolVar(&opts.SkipDupeAsActual, "skip-dupe-asking", false, "Skip dupe asking")
+	fs.BoolVar(&opts.SkipDupeAsActual, "sda", false, "Skip trackers with duplicate evidence without asking")
+	fs.BoolVar(&opts.SkipDupeAsActual, "skip-dupe-asking", false, "Skip trackers with duplicate evidence without asking")
 	fs.BoolVar(&opts.DoubleDupeCheck, "ddc", false, "Double dupe check")
 	fs.BoolVar(&opts.DoubleDupeCheck, "double-dupe-check", false, "Double dupe check")
 	fs.BoolVar(&opts.Commentary, "mc", false, "Mark release as containing commentary")
@@ -393,6 +398,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringArrayVar(&opts.TrackAudioOrigins, "track-audio-origin", nil, "Classify programme soundtrack as track-id=original|dubbed|unresolved")
 	fs.StringArrayVar(&opts.TrackLanguages, "track-languages", nil, "Override track languages as track-id=language[,language]")
 	fs.StringArrayVar(&opts.ResetInput, "reset-input", nil, "Reset a saved correction field or field:track-id")
+	fs.BoolVar(&opts.KeepExistingIDs, "keep-existing-ids", false, "Keep other providers' existing IDs and data when correcting metadata for this release")
 	fs.StringArrayVar(&opts.ConfirmInput, "confirm-input", nil, "Confirm a saved content correction field or field:track-id")
 	fs.StringArrayVar(&opts.TrackerInput, "tracker-input", nil, "Set tracker input as TRACKER:field=value (auto resets the field)")
 	fs.BoolVar(&opts.Anon, "a", false, "Upload anonymously")
@@ -532,6 +538,12 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 			return errors.New("--queue requires a non-empty queue name")
 		}
 		opts.QueueName = trimmed
+	}
+	if (visited["refresh-queue"] || visited["retry-queue"]) && opts.QueueName == "" {
+		return errors.New("--refresh-queue and --retry-queue require --queue")
+	}
+	if opts.QueueName != "" && (opts.Cleanup || opts.DeleteTmp) {
+		return errors.New("saved queues cannot be combined with --cleanup or --delete-tmp; manage stored releases separately")
 	}
 	if opts.ExportConfigPlaintext && !visited["export-config"] {
 		return errors.New("--export-config-plaintext requires --export-config")
@@ -829,6 +841,8 @@ func formatFlagUsage(fs *pflag.FlagSet, usage string) string {
 		fmt.Fprint(&builder, "      Manage the WebUI password and browse policy locally\n")
 		fmt.Fprint(&builder, "  live-test <init|cleanup> [options]\n")
 		fmt.Fprint(&builder, "      Create an isolated profile or clean up its owned hosted images\n")
+		fmt.Fprint(&builder, "  recover [options]\n")
+		fmt.Fprint(&builder, "      Reconcile interrupted external effects without activating configuration\n")
 	}
 	fmt.Fprint(&builder, "\nOptions:\n")
 	sections := cliHelpSections(fs.Name())
@@ -890,6 +904,8 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Execution", names: []string{
 			"queue",
 			"limit-queue",
+			"refresh-queue",
+			"retry-queue",
 			"site-check",
 			"site-upload",
 			"debug",
@@ -945,7 +961,7 @@ func cliHelpSections(name string) []helpSection {
 			title: "Input Corrections",
 			names: []string{"source-lookup", "track-languages", "track-audio-origin", "reset-input", "confirm-input", "tracker-input"},
 		},
-		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
+		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze", "keep-existing-ids"}},
 		{title: "Tracker Overrides", names: []string{
 			"skip-dupe-check", "skip-dupe-asking", "double-dupe-check", "foreign", "opera", "asian", "disctype",
 			"commentary", "personalrelease", "stream", "webdv", "anime", "anon", "draft", "modq", "channel",
@@ -1246,7 +1262,7 @@ func isCLIInputCorrectionFlag(name string) bool {
 		"no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio", "region", "distributor",
 		"original-language", "commentary", "personalrelease", "stream", "webdv", "anime", "alternate-title",
 		"genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
-		"track-languages", "track-audio-origin", "reset-input", "confirm-input",
+		"track-languages", "track-audio-origin", "reset-input", "confirm-input", "keep-existing-ids",
 	}, name)
 }
 
@@ -1723,6 +1739,13 @@ func buildTrackerIDOverrides(opts cliOptions, visited map[string]bool) (map[stri
 // Invalid input returns an empty override set and an error.
 func buildExternalIDOverrides(opts cliOptions, visited map[string]bool) (api.ExternalIDOverrides, error) {
 	overrides := api.ExternalIDOverrides{}
+	if visited["keep-existing-ids"] {
+		overrides.KeepTMDB = new(opts.KeepExistingIDs)
+		overrides.KeepIMDB = new(opts.KeepExistingIDs)
+		overrides.KeepTVDB = new(opts.KeepExistingIDs)
+		overrides.KeepTVmaze = new(opts.KeepExistingIDs)
+		overrides.KeepMAL = new(opts.KeepExistingIDs)
+	}
 	if visited["tmdb"] {
 		id, _, err := parseTMDBID(opts.TMDB)
 		if err != nil {
