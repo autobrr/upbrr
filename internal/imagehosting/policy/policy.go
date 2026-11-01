@@ -18,6 +18,8 @@ type Metadata struct {
 	TrackerUploadHosts map[string][]string
 	// OwnedHosts maps normalized host names to their owning tracker.
 	OwnedHosts map[string]string
+	// UnavailableConnectionTests maps host names to static safe-probe limitations.
+	UnavailableConnectionTests map[string]string
 }
 
 var uploadHosts = map[string]struct{}{

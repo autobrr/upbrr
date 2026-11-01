@@ -1,0 +1,80 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package unit3d
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/connectiontest"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+func TestConnectionProbeUsesDraftBearerAndRejectsUnrelatedResponses(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, response, want string }{
+		{"authorized empty search", `{"data":[],"meta":{"current_page":1,"total":0}}`, "success"},
+		{"simple pagination empty", `{"data":[],"links":{"first":"/base/api/torrents/filter?page=1","last":null,"prev":null,"next":null,"self":"/base/api/torrents/filter?perPage=1"},"meta":{"current_page":1,"per_page":1,"from":1,"to":0}}`, "success"},
+		{"simple pagination nonempty", `{"data":[{"type":"torrent","id":"1","attributes":{"name":"Synthetic Movie"}}],"links":{"self":"/base/api/torrents/filter?perPage=1","prev":null,"next":"/base/api/torrents/filter?page=2"},"meta":{"current_page":1,"per_page":1,"from":1,"to":1}}`, "success"},
+		{"cursor pagination empty", `{"data":[],"links":{"first":null,"last":null,"prev":null,"next":null},"meta":{"path":"/base/api/torrents/filter","per_page":1,"next_cursor":null,"prev_cursor":null}}`, "success"},
+		{"Laravel simple pagination empty", `{"data":[],"links":{"first":"/base/api/torrents/filter?page=1","last":null,"prev":null,"next":null},"meta":{"current_page":1,"path":"/base/api/torrents/filter","per_page":1,"from":null,"to":null}}`, "success"},
+		{"cursor pagination nonempty", `{"data":[{"type":"torrent","id":"1","attributes":{"name":"Synthetic Movie"}}],"links":{"first":null,"last":null,"prev":null,"next":"/base/api/torrents/filter?cursor=synthetic"},"meta":{"path":"/base/api/torrents/filter","per_page":1,"next_cursor":"synthetic","prev_cursor":null}}`, "success"},
+		{"unrelated pagination path", `{"data":[],"links":{"next":null,"prev":null},"meta":{"path":"/unrelated","per_page":1}}`, "unexpected_response"},
+		{"malformed pagination", `{"data":[],"links":{"self":42},"meta":{"current_page":1,"per_page":1}}`, "unexpected_response"},
+		{"explicit error with search fields", `{"success":false,"message":"synthetic-private-error","data":[],"meta":{"current_page":1,"total":0}}`, "remote_error"},
+		{"login page", `<html><input name="password"></html>`, "unexpected_response"},
+		{"api failure", `{"message":"synthetic-private-error"}`, "unexpected_response"},
+		{"missing pagination", `{"data":[]}`, "unexpected_response"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Method != http.MethodGet || r.URL.Path != "/base/api/torrents/filter" || r.URL.Query().Get("perPage") != "1" ||
+					r.URL.Query().Get("name") != "upbrr.connection.test.synthetic" || r.URL.Query().Has("api_token") || r.Header.Get("Authorization") != "Bearer synthetic-draft-key" {
+					t.Error("probe did not preserve the read-only production API contract")
+				}
+				_, _ = io.WriteString(w, tc.response)
+			}))
+			defer server.Close()
+			definition := NewWithProfile(Profile{Name: "EXAMPLE", BaseURL: server.URL + "/base"})
+			got := connectiontest.Run(t.Context(), func(ctx context.Context, client *http.Client) api.ConnectionTestResult {
+				return definition.ConnectionProbe().Test(ctx, trackers.ConnectionProbeInput{Config: config.TrackerConfig{APIKey: " synthetic-draft-key "}}, client)
+			})
+			if got.Code != tc.want || requests != 1 {
+				t.Fatalf("result=%#v requests=%d", got, requests)
+			}
+			if strings.Contains(got.Message, "synthetic-") {
+				t.Fatal("remote content or key leaked")
+			}
+		})
+	}
+}
+
+func TestConnectionPageLinkRecognizesEquivalentOrigins(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		endpoint, link string
+		want           bool
+	}{
+		{"https://tracker.example/base/api/torrents/filter", "https://TRACKER.EXAMPLE:443/base/api/torrents/filter?page=2", true},
+		{"https://tracker.example:443/base/api/torrents/filter", "https://tracker.example/base/api/torrents/filter?page=2", true},
+		{"http://tracker.example/base/api/torrents/filter", "http://TRACKER.EXAMPLE:80/base/api/torrents/filter?page=2", true},
+		{"https://tracker.example/base/api/torrents/filter", "https://tracker.example:444/base/api/torrents/filter", false},
+		{"https://tracker.example/base/api/torrents/filter", "http://tracker.example/base/api/torrents/filter", false},
+		{"https://tracker.example/base/api/torrents/filter", "https://other.example/base/api/torrents/filter", false},
+		{"https://tracker.example/base/api/torrents/filter", "https://user@tracker.example/base/api/torrents/filter", false},
+		{"https://tracker.example/base/api/torrents/filter", "https://tracker.example/base/api/torrents/filter#fragment", false},
+	} {
+		if got := connectionPageLink(tc.link, tc.endpoint); got != tc.want {
+			t.Errorf("pagination origin valid=%t want=%t", got, tc.want)
+		}
+	}
+}

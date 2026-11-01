@@ -123,17 +123,17 @@ Release Overrides:
   -episode-title, --episode-title, -manual-episode-title, -met string
       Override episode title
   -manual-year, --manual-year, -year int
-      Override release year
+      Override movie year or TV year without TVDB data
   -daily, --daily string
       Set daily episode air date (YYYY-MM-DD)
   -region, --region, -reg string
-      Override disc region
+      Override release country code (for example USA)
   -use-season-episode, --use-season-episode
       Use the explicit season and episode values
   -no-season, --no-season
       Remove season and episode from name
   -no-year, --no-year
-      Remove year from name
+      Omit movie year or TV year without TVDB data
   -no-aka, --no-aka
       Remove AKA from name
   -no-tag, --no-tag
@@ -188,6 +188,8 @@ Metadata IDs:
       Override TVDB id; empty or 0 clears and skips this provider
   -tvmaze, --tvmaze string
       Override TVmaze id; empty or 0 clears and skips this provider
+  -keep-existing-ids, --keep-existing-ids
+      Keep other providers' existing IDs and data when correcting metadata for this release
 
 Tracker Overrides:
   -skip-dupe-check, --skip-dupe-check, -sdc

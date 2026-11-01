@@ -735,6 +735,7 @@ func e2eClientEvidenceSnapshot(
 func e2eBlurayMetadata(sourcePath string) *api.BlurayMetadata {
 	return &api.BlurayMetadata{
 		SourcePath:        sourcePath,
+		Country:           "United States",
 		IMDBID:            1234567,
 		SearchURL:         "https://example.com/search/example-release-2026",
 		SelectedReleaseID: "example-bluray-primary",
@@ -751,13 +752,14 @@ func e2eBlurayMetadata(sourcePath string) *api.BlurayMetadata {
 				Title:      "Example Release 2026 Collector Edition",
 				URL:        "https://example.com/releases/example-bluray-primary",
 				Publisher:  "Example Publisher",
-				Country:    "Exampleland",
-				Region:     "A",
+				Country:    "United States",
+				Region:     "USA",
 				Score:      98,
 				Accepted:   true,
 				Specs: api.BluraySpecs{
-					Video: api.BlurayVideoSpec{Codec: "AVC", Resolution: "1080p"},
-					Audio: []string{"English DD 5.1"},
+					Playback: api.BlurayPlaybackSpec{Region: "A"},
+					Video:    api.BlurayVideoSpec{Codec: "AVC", Resolution: "1080p"},
+					Audio:    []string{"English DD 5.1"},
 					Discs: api.BlurayDiscSpec{
 						Type:   "Blu-ray",
 						Count:  1,
@@ -773,12 +775,13 @@ func e2eBlurayMetadata(sourcePath string) *api.BlurayMetadata {
 				Title:      "Example Release 2026 Standard Edition",
 				URL:        "https://example.com/releases/example-bluray-alternate",
 				Publisher:  "Example Publisher",
-				Country:    "Exampleland",
-				Region:     "B",
+				Country:    "United States",
+				Region:     "USA",
 				Score:      92,
 				Specs: api.BluraySpecs{
-					Video: api.BlurayVideoSpec{Codec: "AVC", Resolution: "1080p"},
-					Audio: []string{"English DD 5.1"},
+					Playback: api.BlurayPlaybackSpec{Region: "B"},
+					Video:    api.BlurayVideoSpec{Codec: "AVC", Resolution: "1080p"},
+					Audio:    []string{"English DD 5.1"},
 					Discs: api.BlurayDiscSpec{
 						Type:   "Blu-ray",
 						Count:  1,

@@ -17,6 +17,7 @@ import (
 // Unknown fields remain unsatisfied; this does not authorize tracker rules.
 func PreparedRequirementsSatisfied(set api.MetadataRequirementSet, release api.PreparedRelease, instructions api.ReleaseFactInstructions) bool {
 	meta := preparationstate.State{
+		SourcePath:           release.Source.SourcePath,
 		Release:              api.ReleaseInfo{Title: release.Naming.Title, Year: release.Naming.Year},
 		SeasonInt:            release.Episode.Season,
 		ReleaseNameOverrides: instructions.ReleaseName,
@@ -170,11 +171,14 @@ func metadataRequirementFieldPresentForCollection(
 		return (tmdbCurrent && strings.TrimSpace(metadata.TMDB.OriginalTitle) != "") ||
 			(tvdbCurrent && strings.TrimSpace(metadata.TVDB.Name) != "") || strings.TrimSpace(meta.Release.Title) != ""
 	case "year":
-		if identity.Category == api.CanonicalCategoryTV {
-			return tvdbCurrent && metadata.TVDB.Year > 0 && metadata.TVDB.YearFromAlias
+		if identity.Category == api.CanonicalCategoryTV && metadata.TVDBNamingAvailable(meta.SourcePath, identity) {
+			return tvdbNamingYear(metadata.TVDB) > 0
 		}
 		if meta.ReleaseNameOverrides.ManualYear != nil {
 			return *meta.ReleaseNameOverrides.ManualYear > 0
+		}
+		if identity.Category == api.CanonicalCategoryTV {
+			return false
 		}
 		return meta.Release.Year > 0 ||
 			(tmdbCurrent && metadata.TMDB.Year > 0) || (imdbCurrent && metadata.IMDB.Year > 0) || (tvdbCurrent && metadata.TVDB.Year > 0)

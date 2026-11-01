@@ -14,6 +14,12 @@ import (
 // Profile returns FF identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe: trackers.ConnectionProbe{
+			Test:                       testConnection,
+			DraftConfig:                trackers.LoginProbeConfig,
+			StoredCookies:              true,
+			CredentialsOverrideCookies: true,
+		},
 		Name:                "FF",
 		BaseURL:             baseURL,
 		DescriptionGroup:    "ff",

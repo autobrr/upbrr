@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,7 +56,10 @@ type Client struct {
 // candidates. Score thresholds use the candidate's 0-100 scale; non-positive
 // values default to 100.
 type LookupInput struct {
-	SourcePath        string
+	SourcePath string
+	// CountryOverride is the explicit release-country correction. Nil derives
+	// the folder marker; empty or unrecognized values retain unrestricted scoring.
+	CountryOverride   *string
 	IMDBID            int
 	DiscType          string
 	Resolution        string
@@ -175,13 +179,6 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 		details.Finish(outcome, unavailable > 0 || failedCatalogues > 0)
 	}
 
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].Score == candidates[j].Score {
-			return candidates[i].Title < candidates[j].Title
-		}
-		return candidates[i].Score > candidates[j].Score
-	})
-
 	result := &api.BlurayMetadata{
 		SourcePath: strings.TrimSpace(input.SourcePath),
 		IMDBID:     input.IMDBID,
@@ -221,12 +218,7 @@ func (c *Client) fetchPage(ctx context.Context, targetURL string, referer string
 	if err != nil {
 		return "", fmt.Errorf("bluray.com: create request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	}
+	setPageHeaders(req.Header, referer)
 	if strings.Contains(targetURL, "menu_ajax.php") {
 		req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	}
@@ -346,7 +338,7 @@ func parseReleaseInfo(htmlText string, input LookupInput, loggers ...api.Logger)
 			if len(match) != 2 {
 				continue
 			}
-			country := previousFlagTitle(root, n)
+			country := previousFlagTitle(section, n)
 			publisher := cleanText(textContent(nextSmallWithStyle(n, "color: #999999")))
 			price := cleanText(textContent(nextSmallWithStyle(n, "color: green")))
 			title := cleanText(attr(n, "title"))
@@ -433,43 +425,61 @@ func parseReleaseDetails(htmlText string, release api.BlurayReleaseCandidate) (a
 	return release, nil
 }
 
-// SelectRelease reapplies automatic matching to score-sorted candidates, including
-// retained results. A recognized folder country constrains automatic selection
-// and its threshold; an explicit manual selection remains authoritative.
+// SelectRelease filters, deduplicates and sorts candidates for fresh or retained
+// results. A unique country match is selected regardless of score; multiple
+// matches use the configured threshold. Manual choices must be in the filtered set.
 func SelectRelease(metadata *api.BlurayMetadata, input LookupInput) {
 	if metadata == nil {
 		return
 	}
 	metadata.SelectedReleaseID, metadata.SelectedURL, metadata.SelectionReason = "", "", ""
 	metadata.AutoSelected = false
-	for idx := range metadata.Candidates {
-		metadata.Candidates[idx].Accepted = false
-	}
-	candidates := metadata.Candidates
-	country := sourceCountry(input.SourcePath)
+	candidates := dedupeReleases(metadata.Candidates)
+	country := input.ReleaseCountry()
 	if country != "" {
-		candidates = nil
-		for _, candidate := range metadata.Candidates {
-			if strings.EqualFold(strings.TrimSpace(candidate.Country), country) {
-				candidates = append(candidates, candidate)
-			}
-		}
+		candidates = slices.DeleteFunc(candidates, func(candidate api.BlurayReleaseCandidate) bool {
+			return !strings.EqualFold(strings.TrimSpace(candidate.Country), country)
+		})
 	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Score == candidates[j].Score {
+			return candidates[i].Title < candidates[j].Title
+		}
+		return candidates[i].Score > candidates[j].Score
+	})
+	for idx := range candidates {
+		candidates[idx].Accepted = false
+	}
+	metadata.Country, metadata.Candidates = country, candidates
 	metadata.Threshold = thresholdForCandidateCount(len(candidates), input)
 	metadata.BestScore = bestCandidateScore(candidates)
-	if requested := strings.TrimSpace(input.SelectedReleaseID); requested != "" && metadata.SelectCandidate(requested, false, "manual") {
-		return
+	uniqueCountry := country != "" && len(candidates) == 1
+	if uniqueCountry {
+		metadata.Threshold = 0
+	}
+	if requested := strings.TrimSpace(input.SelectedReleaseID); requested != "" {
+		if metadata.SelectCandidate(requested, false, "manual") {
+			return
+		}
+		if country != "" {
+			metadata.SelectionReason = "Requested release is not available for release country " + country + "."
+			return
+		}
 	}
 	if len(candidates) == 0 {
 		metadata.SelectionReason = "No release candidates found."
 		if country != "" {
-			metadata.SelectionReason = "No matching release found for folder country " + country + "."
+			metadata.SelectionReason = "No matching release found for release country " + country + "."
 		}
 		return
 	}
 	best := candidates[0]
 	if best.Score >= metadata.Threshold {
-		metadata.SelectCandidate(best.ReleaseID, true, "score")
+		reason := "score"
+		if uniqueCountry {
+			reason = "single_country"
+		}
+		metadata.SelectCandidate(best.ReleaseID, true, reason)
 		return
 	}
 	metadata.SelectionReason = fmt.Sprintf("best score %.1f below threshold %.1f", best.Score, metadata.Threshold)

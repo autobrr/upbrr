@@ -42,6 +42,10 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	}
 
 	category := normalizeNamingCategory(req.Category)
+	if category == "TV" && req.TVDBNamingAvailable {
+		req.ManualYear = 0
+		req.NoYear = false
+	}
 	typeValue := strings.ToUpper(strings.TrimSpace(req.Type))
 	if !req.ManualType {
 		typeValue = normalizeReleaseTypeForCategory(category, typeValue, strings.TrimSpace(req.Source), "")
@@ -187,10 +191,10 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		searchYear := strings.TrimSpace(req.SearchYear)
 		if parsedYear, err := strconv.Atoi(searchYear); err == nil && parsedYear > 0 {
 			title = metautil.TrimTrailingParentheticalYear(title, parsedYear)
-			if !req.NoYear {
+			if !req.NoYear && req.ManualYear <= 0 {
 				year = parsedYear
 			}
-		} else {
+		} else if req.ManualYear <= 0 {
 			year = 0
 		}
 	}
@@ -1296,7 +1300,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	}
 
 	title, altTitle, year := resolveReleaseNameTitle(category, meta)
-	if meta.ReleaseNameOverrides.ManualYear != nil && !strings.EqualFold(category, "TV") {
+	if meta.ReleaseNameOverrides.ManualYear != nil && (!strings.EqualFold(category, "TV") || !matchingTVDBMetadataForNaming(meta)) {
 		year = *meta.ReleaseNameOverrides.ManualYear
 	}
 	searchYear := ""
@@ -1385,6 +1389,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		ManualPresentation:    meta.ReleaseNameOverrides.Presentation != nil,
 		ManualReleaseFeatures: meta.ReleaseNameOverrides.ReleaseFeatures != nil,
 		EditionDisplay:        api.EditionNamingText(meta.EditionDisplay),
+		TVDBNamingAvailable:   strings.EqualFold(category, "TV") && matchingTVDBMetadataForNaming(meta),
 		SearchYear:            searchYear,
 		DailyDate:             dailyDate,
 		ManualDate:            manualDate,
@@ -1479,11 +1484,7 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 			title = nativeTitle
 			altTitle = fillProviderAlternateTitle(altTitle, title, imdbAKA)
 		}
-		if tvdb.Year > 0 && tvdb.YearFromAlias {
-			year = tvdb.Year
-		} else {
-			year = 0
-		}
+		year = tvdbNamingYear(tvdb)
 		return title, altTitle, year
 	}
 
@@ -1513,6 +1514,21 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 	return title, altTitle, year
 }
 
+// tvdbNamingYear preserves the selected eligible title/alias year, including
+// episode-alias enrichment, before falling back to established collision evidence.
+// A premiere year alone does not qualify.
+func tvdbNamingYear(metadata *api.TVDBMetadata) int {
+	if metadata.Year > 0 && metadata.YearFromAlias {
+		return metadata.Year
+	}
+	decision := metadata.NameDisambiguation
+	if decision.IncludeYear && decision.SeriesYear > 0 &&
+		(decision.Status == api.MetadataEvidenceStatusComplete || decision.Status == api.MetadataEvidenceStatusPartial) {
+		return decision.SeriesYear
+	}
+	return 0
+}
+
 // matchingTMDBMetadataForNaming reports whether TMDB can supply the naming title.
 func matchingTMDBMetadataForNaming(meta preparationstate.State) bool {
 	value := meta.ProviderMetadata.TMDB
@@ -1529,10 +1545,7 @@ func matchingIMDBMetadataForNaming(meta preparationstate.State) bool {
 
 // matchingTVDBMetadataForNaming reports whether TVDB can supply the TV naming title.
 func matchingTVDBMetadataForNaming(meta preparationstate.State) bool {
-	value := meta.ProviderMetadata.TVDB
-	return namingProviderMetadataCurrent(meta) && value != nil && meta.Identity.TVDBID > 0 &&
-		value.TVDBID == meta.Identity.TVDBID &&
-		(strings.TrimSpace(value.NameEnglish) != "" || strings.TrimSpace(value.Name) != "")
+	return meta.ProviderMetadata.TVDBNamingAvailable(meta.SourcePath, meta.Identity)
 }
 
 // namingProviderMetadataCurrent reports whether both provider IDs and snapshots

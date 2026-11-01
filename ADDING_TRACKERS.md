@@ -283,7 +283,7 @@ naming fingerprints include the selected provider, so changing it requires renew
 
 Use `CurrentTVDBNameDisambiguation` for identity-bound TV qualifiers when the primary title
 comes from another provider. It rejects stale or mismatched evidence and manual titles;
-tracker-local callbacks still own qualifier placement and manual-year preservation. Do not
+tracker-local callbacks still own qualifier placement and evidenced destination-specific year rules. Usable TVDB naming data controls TV year value and omission, even when the selected qualifier year is zero. Manual year and omission controls apply only when that data is absent; do not infer absence from a zero year or a negative collision decision. Do not
 require rendered title text to equal TVDB's spelling.
 
 `StructuredNamePolicy.Defaults` applies optional presentation preferences. Its editor leaves
@@ -407,6 +407,14 @@ owns status/import/validate/login/2FA/delete coordination across CLI, API, and W
   lane without prompting; `--unattended_confirm` may let the CLI present required manual actions.
 - Hybrid modes must be explicit. For example, API-upload and cookie-form upload can resolve to
   different requirement alternatives without tracker-name branches in generic code.
+
+### Settings connection probes
+
+Definitions may expose `ConnectionProbeProvider`; standalone profiles bind `ConnectionProbe` in `profile.go` with protocol logic in `auth_connection.go`. The registry carries this capability separately from `AuthSessionResolver`. Declare `DraftConfig` to copy only the credential fields consumed by the probe before decryption; nil selects no draft fields for cookie-only checks. A probe receives that selected decrypted config, an optional read-only cookie snapshot scoped to the registered host, and a bounded HTTP client that rejects redirects. It has no database or persistence handle.
+
+For credential-login probes, `CredentialsOverrideCookies` selects a fresh ephemeral login when either username or password is entered. Require both fields, discard the temporary session and never fall back to stored cookies after a failed draft login.
+
+Use a verified authenticated read operation and validate its service-specific response. Return fixed, secret-free `api.ConnectionTestResult` messages. Do not reuse an auth resolver that logs in, refreshes credentials, initializes storage, or persists session state. Never probe by uploading content, adding torrents, or sending an empty upload request. Document genuinely unavailable safe operations without treating an unverified endpoint as unsupported. Tests must use local fakes and synthetic credentials.
 
 ### Torrent-identity contract
 
@@ -1441,6 +1449,7 @@ Declare static capabilities directly in `standalone.Profile`:
 | Profile field             | Typical supporting file      | Purpose                                           |
 | ------------------------- | ---------------------------- | ------------------------------------------------- |
 | `AuthCapability`          | `auth.go`                    | Declares API-key, passkey, cookie, login/2FA      |
+| `ConnectionProbe`         | `auth_connection.go`         | Read-only draft Settings connection check         |
 | `AuthResolver`            | `auth.go`                    | Validates or refreshes remote auth                |
 | `AuthPolicy`              | `profile.go`                 | Auth coordinator semantics                        |
 | `AuthStateManager`        | `auth.go`                    | Cleans tracker-owned persisted auth state         |

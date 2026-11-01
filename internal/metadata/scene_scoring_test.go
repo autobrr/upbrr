@@ -402,8 +402,9 @@ func TestSceneYearIgnoresManualYearForKnownTV(t *testing.T) {
 	for _, manualYear := range []int{0, 2030} {
 		t.Run(strconv.Itoa(manualYear), func(t *testing.T) {
 			meta := preparationstate.State{
-				Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+				Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 123},
 				Release:              api.ReleaseInfo{Year: 2024},
+				ProviderMetadata:     api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{TVDBID: 123, Name: "Example Series"}},
 				ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(manualYear)},
 			}
 			if got := sceneYear(meta); got != 2024 {

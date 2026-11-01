@@ -19,6 +19,7 @@ describe("BlurayCandidatesPage", () => {
         error: "",
         preview: {
           Bluray: {
+            Country: "United States",
             BestScore: 97.5,
             Threshold: 80,
             AutoSelected: false,
@@ -31,8 +32,9 @@ describe("BlurayCandidatesPage", () => {
                 MovieTitle: "Example Release",
                 MovieYear: 2026,
                 Score: 97.5,
-                Country: "Exampleland",
-                Region: "A",
+                Country: "United States",
+                Region: "USA",
+                Specs: { Playback: { Region: "B", RegionNotes: "A, C untested" } },
                 Publisher: "Example Publisher",
                 ReleaseDate: "2020-12-01",
                 URL: "https://example.com/releases/accepted-candidate",
@@ -56,8 +58,8 @@ describe("BlurayCandidatesPage", () => {
                 MovieTitle: "Example Release",
                 MovieYear: 2026,
                 Score: 91,
-                Country: "Exampleland",
-                Region: "B",
+                Country: "United States",
+                Region: "USA",
                 Publisher: "Example Publisher",
                 ReleaseDate: "2024-02-29",
                 URL: "https://example.com/releases/alternate-candidate",
@@ -69,8 +71,8 @@ describe("BlurayCandidatesPage", () => {
                 MovieTitle: "Example Release",
                 MovieYear: 2026,
                 Score: 87,
-                Country: "Exampleland",
-                Region: "C",
+                Country: "United States",
+                Region: "USA",
                 Publisher: "Example Publisher",
                 URL: "https://example.com/releases/third-candidate",
               },
@@ -90,6 +92,10 @@ describe("BlurayCandidatesPage", () => {
     );
 
     expect(screen.getAllByText("Release date")).toHaveLength(3);
+    expect(screen.getByText("Release country")).toBeInTheDocument();
+    expect(screen.getAllByText("Country code")).toHaveLength(3);
+    expect(screen.getAllByText("USA")).toHaveLength(3);
+    expect(screen.getByText("B (A, C untested)")).toBeInTheDocument();
     expect(screen.getByText("2020-12-01")).toHaveAttribute("datetime", "2020-12-01");
     expect(screen.getByText("2024-02-29")).toBeInTheDocument();
     expect(screen.getByText("Unavailable")).toBeInTheDocument();
@@ -137,4 +143,39 @@ describe("BlurayCandidatesPage", () => {
       "https://example.com/images/accepted-back.jpg",
     );
   });
+});
+
+it("explains a unique country match selected below the configured score", () => {
+  const facet = {
+    view: {
+      status: "ready",
+      preview: {
+        Bluray: {
+          Country: "Germany",
+          BestScore: 0,
+          Threshold: 0,
+          AutoSelected: true,
+          SelectedReleaseID: "only-edition",
+          Candidates: [
+            {
+              ReleaseID: "only-edition",
+              Title: "Example Edition",
+              Country: "Germany",
+              Region: "GER",
+              Score: 0,
+              Accepted: true,
+            },
+          ],
+        },
+      },
+    },
+  } as unknown as InputFacet;
+  render(
+    <BlurayCandidatesPage facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+  );
+  expect(screen.getByText("No minimum")).toBeInTheDocument();
+  expect(screen.getByText("0.0/100")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Selected candidate 1: Example Edition" }),
+  ).toBeDisabled();
 });

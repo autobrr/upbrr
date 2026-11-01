@@ -66,11 +66,16 @@ func (e *CorrectionRevisionConflictError) Unwrap() error { return ErrCorrectionC
 type CorrectionField string
 
 const (
-	CorrectionFieldIdentityTMDB   CorrectionField = "identity.tmdb"
-	CorrectionFieldIdentityIMDB   CorrectionField = "identity.imdb"
-	CorrectionFieldIdentityTVDB   CorrectionField = "identity.tvdb"
-	CorrectionFieldIdentityTVmaze CorrectionField = "identity.tvmaze"
-	CorrectionFieldIdentityMAL    CorrectionField = "identity.mal"
+	CorrectionFieldIdentityTMDB       CorrectionField = "identity.tmdb"
+	CorrectionFieldIdentityIMDB       CorrectionField = "identity.imdb"
+	CorrectionFieldIdentityTVDB       CorrectionField = "identity.tvdb"
+	CorrectionFieldIdentityTVmaze     CorrectionField = "identity.tvmaze"
+	CorrectionFieldIdentityMAL        CorrectionField = "identity.mal"
+	CorrectionFieldIdentityKeepTMDB   CorrectionField = "identity.keep_tmdb"
+	CorrectionFieldIdentityKeepIMDB   CorrectionField = "identity.keep_imdb"
+	CorrectionFieldIdentityKeepTVDB   CorrectionField = "identity.keep_tvdb"
+	CorrectionFieldIdentityKeepTVmaze CorrectionField = "identity.keep_tvmaze"
+	CorrectionFieldIdentityKeepMAL    CorrectionField = "identity.keep_mal"
 
 	CorrectionFieldReleaseNameCategory         CorrectionField = "release_name.category"
 	CorrectionFieldReleaseNameType             CorrectionField = "release_name.type"
@@ -439,6 +444,9 @@ func correctionValueRefs(values ReleaseCorrectionValues) (map[string]CorrectionF
 		{CorrectionFieldIdentityTMDB, values.Identity.TMDBID != nil}, {CorrectionFieldIdentityIMDB, values.Identity.IMDBID != nil},
 		{CorrectionFieldIdentityTVDB, values.Identity.TVDBID != nil}, {CorrectionFieldIdentityTVmaze, values.Identity.TVmazeID != nil},
 		{CorrectionFieldIdentityMAL, values.Identity.MALID != nil}, {CorrectionFieldReleaseNameCategory, values.ReleaseName.Category != nil},
+		{CorrectionFieldIdentityKeepTMDB, values.Identity.KeepTMDB != nil}, {CorrectionFieldIdentityKeepIMDB, values.Identity.KeepIMDB != nil},
+		{CorrectionFieldIdentityKeepTVDB, values.Identity.KeepTVDB != nil}, {CorrectionFieldIdentityKeepTVmaze, values.Identity.KeepTVmaze != nil},
+		{CorrectionFieldIdentityKeepMAL, values.Identity.KeepMAL != nil},
 		{CorrectionFieldReleaseNameType, values.ReleaseName.Type != nil}, {CorrectionFieldReleaseNameSource, values.ReleaseName.Source != nil},
 		{CorrectionFieldReleaseNameResolution, values.ReleaseName.Resolution != nil}, {CorrectionFieldReleaseNameTag, values.ReleaseName.Tag != nil},
 		{CorrectionFieldReleaseNamePresentation, values.ReleaseName.Presentation != nil}, {CorrectionFieldReleaseNameReleaseFeatures, values.ReleaseName.ReleaseFeatures != nil},
@@ -605,6 +613,11 @@ var allCorrectionFields = []CorrectionField{
 	CorrectionFieldIdentityTVDB,
 	CorrectionFieldIdentityTVmaze,
 	CorrectionFieldIdentityMAL,
+	CorrectionFieldIdentityKeepTMDB,
+	CorrectionFieldIdentityKeepIMDB,
+	CorrectionFieldIdentityKeepTVDB,
+	CorrectionFieldIdentityKeepTVmaze,
+	CorrectionFieldIdentityKeepMAL,
 	CorrectionFieldReleaseNameCategory,
 	CorrectionFieldReleaseNameType,
 	CorrectionFieldReleaseNameSource,
@@ -672,6 +685,18 @@ func applyReleaseCorrectionValues(stored *StoredReleaseCorrectionsV1, values Rel
 }
 
 func applyExternalIDOverrides(destination *ExternalIDOverrides, source ExternalIDOverrides) {
+	for _, item := range []struct {
+		target **bool
+		value  *bool
+	}{
+		{&destination.KeepTMDB, source.KeepTMDB}, {&destination.KeepIMDB, source.KeepIMDB},
+		{&destination.KeepTVDB, source.KeepTVDB}, {&destination.KeepTVmaze, source.KeepTVmaze},
+		{&destination.KeepMAL, source.KeepMAL},
+	} {
+		if item.value != nil {
+			*item.target = cloneBool(item.value)
+		}
+	}
 	if source.TMDBID != nil {
 		destination.TMDBID = cloneInt(source.TMDBID)
 	}
@@ -804,6 +829,16 @@ func resetStoredCorrectionField(stored *StoredReleaseCorrectionsV1, ref Correcti
 		stored.Identity.TVmazeID = nil
 	case CorrectionFieldIdentityMAL:
 		stored.Identity.MALID = nil
+	case CorrectionFieldIdentityKeepTMDB:
+		stored.Identity.KeepTMDB = nil
+	case CorrectionFieldIdentityKeepIMDB:
+		stored.Identity.KeepIMDB = nil
+	case CorrectionFieldIdentityKeepTVDB:
+		stored.Identity.KeepTVDB = nil
+	case CorrectionFieldIdentityKeepTVmaze:
+		stored.Identity.KeepTVmaze = nil
+	case CorrectionFieldIdentityKeepMAL:
+		stored.Identity.KeepMAL = nil
 	case CorrectionFieldReleaseNameCategory:
 		stored.ReleaseName.Category = nil
 	case CorrectionFieldReleaseNameType:

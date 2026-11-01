@@ -56,10 +56,30 @@ var countryRegionCodes = map[string]string{
 // source folder. Unknown words and country names are not inferred as markers.
 func sourceCountry(sourcePath string) string {
 	for _, token := range strings.FieldsFunc(filepath.Base(sourcePath), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
-		for country, code := range countryRegionCodes {
-			if strings.EqualFold(token, code) {
+		if len(token) == 3 {
+			if country := recognizedCountry(token); country != "" {
 				return country
 			}
+		}
+	}
+	return ""
+}
+
+// ReleaseCountry returns the recognized release country limiting this lookup.
+// An explicit correction, including a clear or unknown value, takes precedence
+// over folder detection. Playback region letters are not country markers.
+func (input LookupInput) ReleaseCountry() string {
+	if input.CountryOverride != nil {
+		return recognizedCountry(*input.CountryOverride)
+	}
+	return sourceCountry(input.SourcePath)
+}
+
+func recognizedCountry(value string) string {
+	value = strings.TrimSpace(value)
+	for country, code := range countryRegionCodes {
+		if strings.EqualFold(value, country) || strings.EqualFold(value, code) {
+			return country
 		}
 	}
 	return ""

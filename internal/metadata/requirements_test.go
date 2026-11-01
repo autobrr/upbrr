@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"path/filepath"
 	"testing"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -107,11 +108,27 @@ func TestPreparedRequirementsSatisfied(t *testing.T) {
 				r.Identity.TVDBID = 22
 				r.ProviderMetadata.TVDB = &api.TVDBMetadata{
 					TVDBID:        22,
+					Name:          "Example Series",
 					Year:          2026,
 					YearFromAlias: true,
 				}
 			},
 			want: true,
+		},
+		{
+			name:   "TV alias year from another source",
+			fields: []api.MetadataRequirementField{"year"},
+			mutate: func(r *api.PreparedRelease, _ *api.ReleaseFactInstructions) {
+				r.Identity.Category = api.CanonicalCategoryTV
+				r.Identity.TVDBID = 22
+				r.ProviderMetadata.SourcePath = filepath.Join(filepath.Dir(r.Source.SourcePath), "Other.2026.mkv")
+				r.ProviderMetadata.TVDB = &api.TVDBMetadata{
+					TVDBID:        22,
+					Name:          "Example Series",
+					Year:          2026,
+					YearFromAlias: true,
+				}
+			},
 		},
 		{
 			name:   "movie localization",
@@ -135,10 +152,16 @@ func TestPreparedRequirementsSatisfied(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			source := filepath.Join(t.TempDir(), "Example.2026.mkv")
 			release := api.PreparedRelease{
-				Naming:   api.NamingFacts{Title: "Example", Year: 2026},
-				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 11},
-				ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+				Source: api.SourceManifest{SourcePath: source},
+				Naming: api.NamingFacts{Title: "Example", Year: 2026},
+				Identity: api.ExternalIdentity{
+					SourcePath: source,
+					Category:   api.CanonicalCategoryMovie,
+					TMDBID:     11,
+				},
+				ProviderMetadata: api.SourceScopedMetadata{SourcePath: source, TMDB: &api.TMDBMetadata{
 					TMDBID:   11,
 					Category: "movie",
 					Title:    "Example",
@@ -283,7 +306,7 @@ func TestLockedMetadataOverridesDoNotSatisfyRequirements(t *testing.T) {
 	}
 }
 
-func TestTVYearRequirementRequiresMatchingAliasDerivedTVDBYear(t *testing.T) {
+func TestTVYearRequirementFollowsTVDBAvailability(t *testing.T) {
 	t.Parallel()
 
 	identity := api.ExternalIdentity{
@@ -295,7 +318,11 @@ func TestTVYearRequirementRequiresMatchingAliasDerivedTVDBYear(t *testing.T) {
 	metadata := api.SourceScopedMetadata{
 		TMDB: &api.TMDBMetadata{TMDBID: 11, Year: 2026},
 		IMDB: &api.IMDBMetadata{IMDBID: 33, Year: 2027},
-		TVDB: &api.TVDBMetadata{TVDBID: 22, Year: 2024},
+		TVDB: &api.TVDBMetadata{
+			TVDBID: 22,
+			Name:   "Example Series",
+			Year:   2024,
+		},
 	}
 	meta := preparationstate.State{Release: api.ReleaseInfo{Year: 2025}, ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)}}
 	if metadataRequirementFieldPresentForCollection("year", meta, identity, metadata) {
@@ -304,5 +331,22 @@ func TestTVYearRequirementRequiresMatchingAliasDerivedTVDBYear(t *testing.T) {
 	metadata.TVDB.YearFromAlias = true
 	if !metadataRequirementFieldPresentForCollection("year", meta, identity, metadata) {
 		t.Fatal("matching alias-derived TVDB year did not satisfy requirement")
+	}
+	metadata.TVDB.YearFromAlias = false
+	metadata.TVDB.NameDisambiguation = api.TVDBNameDisambiguation{
+		IncludeYear: true,
+		SeriesYear:  2024,
+		Status:      api.MetadataEvidenceStatusPartial,
+	}
+	if !metadataRequirementFieldPresentForCollection("year", meta, identity, metadata) {
+		t.Fatal("established TVDB collision year did not satisfy requirement")
+	}
+	metadata.TVDB = nil
+	if !metadataRequirementFieldPresentForCollection("year", meta, identity, metadata) {
+		t.Fatal("manual year fallback was unavailable without TVDB")
+	}
+	meta.ReleaseNameOverrides.ManualYear = new(0)
+	if metadataRequirementFieldPresentForCollection("year", meta, identity, metadata) {
+		t.Fatal("manual year clear satisfied a required year")
 	}
 }

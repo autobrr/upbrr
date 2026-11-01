@@ -12,7 +12,7 @@ import (
 )
 
 func TestPrepareRejectsPreCountryMatchGenerationUntilReprepared(t *testing.T) {
-	for _, version := range []string{"prepared-release-v61", "prepared-release-v63", "prepared-release-v63-package-inventory"} {
+	for _, version := range []string{"prepared-release-v61", "prepared-release-v63", "prepared-release-v63-package-inventory", "prepared-release-v64-bluray-country", "prepared-release-v67", "prepared-release-v68"} {
 		t.Run(version, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "Example.Movie.2026.GER.BluRay-GRP")
 			for _, directory := range []string{"PLAYLIST", "STREAM"} {

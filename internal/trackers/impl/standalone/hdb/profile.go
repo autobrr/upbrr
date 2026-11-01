@@ -19,6 +19,9 @@ import (
 // Profile returns HDB identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe: trackers.ConnectionProbe{Test: testConnection, DraftConfig: func(cfg config.TrackerConfig) config.TrackerConfig {
+			return config.TrackerConfig{Username: cfg.Username, Passkey: cfg.Passkey}
+		}},
 		UsesMenuImages:     true,
 		Name:               "HDB",
 		BaseURL:            hdbBaseURL,

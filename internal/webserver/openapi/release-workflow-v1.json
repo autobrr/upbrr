@@ -875,6 +875,9 @@
               "$ref": "#/components/schemas/BlurayReleaseCandidate"
             }
           },
+          "Country": {
+            "type": "string"
+          },
           "IMDBID": {
             "type": "integer"
           },
@@ -904,6 +907,7 @@
           "AutoSelected",
           "BestScore",
           "Candidates",
+          "Country",
           "IMDBID",
           "SearchURL",
           "SelectedReleaseID",
@@ -2170,6 +2174,56 @@
             "anyOf": [
               {
                 "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepIMDB": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepMAL": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepTMDB": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepTVDB": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepTVmaze": {
+            "anyOf": [
+              {
+                "type": "boolean"
               },
               {
                 "type": "null"
@@ -4312,6 +4366,16 @@
           "id": {
             "$ref": "#/components/schemas/MediaArtifactSetID"
           },
+          "imageHostPreference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "imageHostUploadSkipped": {
             "type": "boolean"
           },
@@ -5981,6 +6045,9 @@
           },
           "ReleaseName": {
             "type": "string"
+          },
+          "TVDBNamingAvailable": {
+            "type": "boolean"
           },
           "TrackerData": {
             "type": "array",

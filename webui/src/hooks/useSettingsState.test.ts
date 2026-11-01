@@ -467,6 +467,167 @@ function readPayload<T>() {
   return JSON.parse(latestPayload || "{}") as T;
 }
 
+function ConnectionSettingsHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+  const arr = state.settingsConfigData?.ArrIntegration as ConfigMap | undefined;
+  return createElement(
+    "div",
+    null,
+    ...Object.entries(arr ?? {}).map(([key, value]) =>
+      state.renderField(key, value, ["ArrIntegration", key]),
+    ),
+  );
+}
+
+describe("draft connection settings", () => {
+  it("tests unsaved URLs and credentials while preserving masks without saving", async () => {
+    const encrypted = "upbrr-enc:v1:synthetic-preserved-envelope";
+    const tested: ConfigMap[] = [];
+    let targetInstance = "";
+    const save = vi.fn();
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          ArrIntegration: {
+            SonarrURL: "http://saved.invalid",
+            SonarrAPIKey: encrypted,
+            SonarrURL1: "http://second.invalid",
+            SonarrAPIKey1: "",
+          },
+        }),
+      GetDefaultConfig: async () => "{}",
+      ListTrackerCatalog: async () => trackerCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      SaveConfig: save,
+      TestConnection: async (payload: string, target: { instance: string }) => {
+        tested.push(JSON.parse(payload) as ConfigMap);
+        targetInstance = target.instance;
+        return { code: "success", message: "Draft accepted" };
+      },
+    });
+    render(createElement(ConnectionSettingsHarness));
+    const url = await screen.findByLabelText("Sonarr primary instance URL");
+    fireEvent.change(url, { target: { value: "http://draft.invalid" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Test connection to Sonarr primary instance" }),
+    );
+    expect(await screen.findByText("Draft accepted")).toBeInTheDocument();
+    const first = tested[0]?.ArrIntegration as ConfigMap | undefined;
+    expect(
+      first?.SonarrURL === "http://draft.invalid" &&
+        first?.SonarrAPIKey === encrypted &&
+        targetInstance === "0",
+    ).toBe(true);
+    const otherKey = screen.getByLabelText("Sonarr additional instance 1 API key");
+    fireEvent.change(otherKey, { target: { value: "synthetic-other-instance-key" } });
+    expect(screen.getByText("Draft accepted")).toBeInTheDocument();
+    const key = screen.getByLabelText("Sonarr primary instance API key");
+    fireEvent.change(key, { target: { value: "synthetic-edited-key" } });
+    expect(screen.queryByText("Draft accepted")).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Test connection to Sonarr primary instance" }),
+    );
+    expect(await screen.findByText("Draft accepted")).toBeInTheDocument();
+    const edited = tested[1]?.ArrIntegration as ConfigMap | undefined;
+    expect(edited?.SonarrAPIKey === "synthetic-edited-key").toBe(true);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it.each(["blu", " BLU "])(
+    "invalidates a masked tracker alias result when %s is reloaded",
+    async (alias) => {
+      let envelope = "upbrr-enc:v1:synthetic-first-tracker-key";
+      installAppOperationMocks({
+        GetConfig: async () =>
+          JSON.stringify({
+            Trackers: { DefaultTrackers: ["BLU"], Trackers: { [alias]: { APIKey: envelope } } },
+          }),
+        GetDefaultConfig: async () => "{}",
+        ListTrackerCatalog: async () =>
+          trackerCatalog(trackerCatalogEntry("BLU", [["APIKey", "", true]])),
+        GetImageHostPolicyMetadata: async () => ({}),
+        TestConnection: async () => ({ code: "success", message: "Tracker session accepted" }),
+      });
+      render(createElement(TrackerReloadRaceHarness));
+      await userEvent.click(
+        await screen.findByText("BLU", { selector: ".settings-card__summary-name" }),
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "Test connection to BLU" }));
+      expect(await screen.findByText("Tracker session accepted")).toBeInTheDocument();
+      envelope = "upbrr-enc:v1:synthetic-replaced-tracker-key";
+      fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+      await waitFor(() =>
+        expect(screen.queryByText("Tracker session accepted")).not.toBeInTheDocument(),
+      );
+    },
+  );
+
+  it("normalizes saved image-host aliases for fields, probe targets and stale results", async () => {
+    let target = "";
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          ImageHosting: {
+            Host1: " Zipline ",
+            Host2: "zipline",
+            ZiplineURL: "https://images.example.invalid/api/upload",
+            ZiplineAPIKey: "upbrr-enc:v1:synthetic-zipline-envelope",
+          },
+        }),
+      GetDefaultConfig: async () => "{}",
+      ListTrackerCatalog: async () => trackerCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      TestConnection: async (_payload: string, selected: { instance: string }) => {
+        target = selected.instance;
+        return { code: "success", message: "Selected image host accepted" };
+      },
+    });
+    render(createElement(ImageHostingHarness));
+    const key = await screen.findByLabelText("Zipline API key");
+    const actions = screen.getAllByRole("button", {
+      name: "Test connection to zipline image hosting",
+    });
+    expect(actions).toHaveLength(1);
+    fireEvent.click(actions[0]);
+    expect(await screen.findByText("Selected image host accepted")).toBeInTheDocument();
+    expect(target).toBe("zipline");
+    fireEvent.change(key, { target: { value: "synthetic-edited-key" } });
+    expect(screen.queryByText("Selected image host accepted")).not.toBeInTheDocument();
+  });
+
+  it("keeps dotted torrent-client names independent when another client's secret changes", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          TorrentClients: {
+            seedbox: {
+              Type: "qbit",
+              QbitURL: "http://first.invalid",
+              QbitPass: "upbrr-enc:v1:synthetic-first",
+            },
+            "seedbox.backup": {
+              Type: "qbit",
+              QbitURL: "http://second.invalid",
+              QbitPass: "upbrr-enc:v1:synthetic-second",
+            },
+          },
+        }),
+      GetDefaultConfig: async () => "{}",
+      ListTrackerCatalog: async () => trackerCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      TestConnection: async () => ({ code: "success", message: "First client accepted" }),
+    });
+    render(createElement(TorrentClientsHarness));
+    fireEvent.click(await screen.findByRole("button", { name: "Test connection to seedbox" }));
+    expect(await screen.findByText("First client accepted")).toBeInTheDocument();
+    const backup = screen.getByRole("group", { name: "seedbox.backup" });
+    fireEvent.change(within(backup).getByLabelText("qBittorrent password"), {
+      target: { value: "synthetic-edited-backup-password" },
+    });
+    expect(screen.getByText("First client accepted")).toBeInTheDocument();
+  });
+});
+
 function SettingsVisibilityHarness() {
   const state = useSettingsState({ activeTab: "settings" });
   return createElement(

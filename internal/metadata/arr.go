@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -58,6 +60,21 @@ func (s *Service) collectArrIdentityEvidence(ctx context.Context, meta preparati
 	case <-ctx.Done():
 		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
+	}
+	previousMAL := meta.Identity.MALID
+	meta.Identity = externalidentity.CompatibleStoredIdentity(meta.Identity.WithoutResetPins(meta.IdentityResetFields))
+	meta.Identity = meta.Identity.WithProviderRetention(meta.ExternalIDOverrides)
+	if meta.ExternalFreshness.RequiresRefresh() || slices.Contains(meta.IdentityResetFields, api.CorrectionFieldReleaseNameCategory) {
+		clearPreviouslyResolvedProviderIDs(&meta.Identity, true)
+		if meta.Identity.Provenance.Category != api.IdentityProvenanceExplicit && meta.Identity.Overrides.Category != api.OverrideStateValue &&
+			meta.Identity.Overrides.Category != api.OverrideStateClear && !meta.Identity.HasRetainedProvider() {
+			meta.Identity.Category = api.CanonicalCategoryUnknown
+			meta.Identity.Provenance.Category = api.IdentityProvenanceUnknown
+			meta.Identity.Overrides.Category = api.OverrideStateUnset
+		}
+	}
+	if previousMAL != 0 && meta.Identity.MALID == 0 && meta.MALID == previousMAL {
+		meta.MALID = 0
 	}
 
 	category := resolveCategoryPreference(meta)

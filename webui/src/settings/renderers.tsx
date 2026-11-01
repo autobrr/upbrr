@@ -13,9 +13,12 @@ import { settingsStyle } from "./style";
 import { FieldHelp } from "../components/ui/field-help";
 import { settingsFieldPresentation } from "./fieldPresentation";
 import { SettingsFieldGroups } from "./FieldGroups";
+import { ConnectionTest } from "./ConnectionTest";
+import type { ConnectionTestTarget } from "../api/app";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
 import {
   nextQbitDirectState,
+  buildPathKey,
   normalizeStringArray,
   normalizeTorrentClientType,
   qbitDefaultClient,
@@ -96,6 +99,8 @@ const CommaSeparatedInput = ({
 
 export type SettingsRenderContext = {
   settingsConfigData: ConfigMap | null;
+  connectionTestSecrets: Readonly<Record<string, string>>;
+  buildConnectionTestPayload: () => string | null;
   updateConfigValue: (path: string[], value: ConfigValue) => void;
   markSettingsChanged: () => void;
   addConfigKey: (path: string[], key: string, value: ConfigValue) => void;
@@ -151,6 +156,29 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
     normalizeImageHostValue,
     removeUnsupported,
   } = context;
+
+  const renderConnectionTest = (
+    target: ConnectionTestTarget,
+    label: string,
+    values: ConfigValue,
+    secretPaths: string[][] = [],
+  ) => {
+    const secrets = secretPaths.map((path) => context.connectionTestSecrets[buildPathKey(path)]);
+    return (
+      <ConnectionTest
+        key={JSON.stringify(target)}
+        identity={JSON.stringify([values, secrets])}
+        target={target}
+        label={label}
+        unavailableReason={
+          target.kind === "image_host"
+            ? imageHostPolicyMetadata?.UnavailableConnectionTests?.[target.instance ?? ""]
+            : undefined
+        }
+        buildPayload={context.buildConnectionTestPayload}
+      />
+    );
+  };
 
   const renderArrayEditor = (
     value: ConfigValue[],
@@ -254,6 +282,27 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
       </span>
     );
     const controlProps = { id: controlId, "aria-describedby": meta?.help ? helpId : undefined };
+
+    let connectionTest = null;
+    if (path[0] === "MainSettings" && label === "TMDBAPI") {
+      connectionTest = renderConnectionTest({ kind: "tmdb" }, "TMDB", value, [path]);
+    } else if (path[0] === "MainSettings" && label === "SceneDetection") {
+      connectionTest = renderConnectionTest({ kind: "srrdb" }, "SRRDB", value);
+    } else if (path[0] === "Metadata" && label === "GetBlurayInfo") {
+      connectionTest = renderConnectionTest({ kind: "bluray" }, "Blu-ray.com", value);
+    } else if (path[0] === "ArrIntegration") {
+      const match = /^(Sonarr|Radarr)APIKey([123]?)$/.exec(label);
+      if (match) {
+        const [, service, slot] = match;
+        const integration = settingsConfigData?.ArrIntegration as ConfigMap | undefined;
+        connectionTest = renderConnectionTest(
+          { kind: service.toLowerCase(), instance: slot || "0" },
+          `${service} ${slot ? `additional instance ${slot}` : "primary instance"}`,
+          [integration?.[`${service}URL${slot}`] ?? "", value],
+          [path],
+        );
+      }
+    }
     if (Array.isArray(value)) {
       if (meta?.commaSeparated) {
         return (
@@ -300,7 +349,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
       );
     }
     if (typeHint === "boolean" || typeof value === "boolean") {
-      return (
+      const control = (
         <div className={settingsStyle.switchRow} key={path.join(".")}>
           {heading}
           <Switch
@@ -310,6 +359,14 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
             onChange={(event) => updateConfigValue(path, event.target.checked)}
           />
         </div>
+      );
+      return connectionTest ? (
+        <div className="settings-field--switch grid min-w-0 gap-2" key={path.join(".")}>
+          {control}
+          {connectionTest}
+        </div>
+      ) : (
+        control
       );
     }
     if (typeHint === "number" || typeof value === "number") {
@@ -371,6 +428,7 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
             onChange={(event) => updateConfigValue(path, event.target.value)}
           />
         )}
+        {connectionTest}
       </div>
     );
   };
@@ -577,6 +635,14 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                       Remove
                     </Button>
                   </div>
+                  {!watchClient
+                    ? renderConnectionTest(
+                        { kind: "torrent_client", instance: name },
+                        name,
+                        client,
+                        Object.keys(client).map((field) => ["TorrentClients", name, field]),
+                      )
+                    : null}
                   <SettingsFieldGroups
                     section="TorrentClients"
                     fields={[
@@ -1083,6 +1149,14 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
             ) : (
               visibleEntries.map(({ entry, value }) => {
                 const key = entry.name;
+                const savedKey =
+                  Object.keys(entriesRoot).find((name) => entriesRoot[name] === value) ?? key;
+                const secretPaths = Object.keys(value).map((field) => [
+                  "Trackers",
+                  "Trackers",
+                  savedKey,
+                  field,
+                ]);
                 const schema = trackerSchemaFor(entry);
                 return (
                   <details
@@ -1126,6 +1200,26 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                       </Button>
                     </summary>
                     <div className={settingsStyle.body}>
+                      {renderConnectionTest(
+                        { kind: "tracker", instance: key },
+                        key,
+                        value,
+                        secretPaths,
+                      )}
+                      {Object.entries(imageHostPolicyMetadata?.OwnedHosts ?? {})
+                        .filter(
+                          ([host, owner]) =>
+                            owner.toUpperCase() === key.toUpperCase() &&
+                            !conditionalImageHostEnabledKeys[host],
+                        )
+                        .map(([host]) =>
+                          renderConnectionTest(
+                            { kind: "image_host", instance: host },
+                            `${host} image hosting`,
+                            value,
+                            secretPaths,
+                          ),
+                        )}
                       <SettingsFieldGroups
                         section="Trackers"
                         fields={schema
@@ -1194,10 +1288,15 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
 
     const imageCfg = settingsConfigData.ImageHosting as ConfigMap;
     const hostFields = ["Host1", "Host2", "Host3", "Host4", "Host5", "Host6"];
+    const selectedHosts = Array.from(
+      new Set(
+        hostFields
+          .map((key) => normalizeImageHostValue(String(imageCfg[key] ?? "")))
+          .filter(Boolean),
+      ),
+    );
     const requiredKeys = new Set<string>();
-    hostFields.forEach((field) => {
-      const selected = String(imageCfg[field] ?? "").trim();
-      if (!selected) return;
+    selectedHosts.forEach((selected) => {
       const keys = imageHostKeyMap[selected];
       if (keys) {
         keys.forEach((key) => requiredKeys.add(key));
@@ -1245,6 +1344,29 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
         </div>
 
         <div className={settingsStyle.subgroup}>
+          <div className={settingsStyle.title}>Connection tests</div>
+          <p className="m-0 text-sm text-muted-foreground">
+            Tests use the current form values without saving settings or uploading images. Provider
+            limitations are shown explicitly.
+          </p>
+          <div className={settingsStyle.grid}>
+            {selectedHosts.map((host) => (
+              <section className="grid min-w-0 gap-2" key={host} aria-label={`${host} connection`}>
+                <h3 className="m-0 text-sm font-semibold">
+                  {imageHostOptions.find((option) => option.value === host)?.label ?? host}
+                </h3>
+                {renderConnectionTest(
+                  { kind: "image_host", instance: host },
+                  `${host} image hosting`,
+                  (imageHostKeyMap[host] ?? []).map((key) => imageCfg[key] ?? ""),
+                  (imageHostKeyMap[host] ?? []).map((key) => ["ImageHosting", key]),
+                )}
+              </section>
+            ))}
+          </div>
+        </div>
+
+        <div className={settingsStyle.subgroup}>
           <div className={settingsStyle.title}>Additional Hosts</div>
           <div className={settingsStyle.grid}>
             <section className="grid min-w-0 content-start gap-3" aria-label="Lostimg">
@@ -1265,6 +1387,12 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                 ["ImageHosting", "LostimgAPI"],
                 sectionFieldMeta.ImageHosting.LostimgAPI,
               )}
+              {renderConnectionTest(
+                { kind: "image_host", instance: "lostimg" },
+                "Lostimg image hosting",
+                [imageCfg.LostimgEnabled, imageCfg.LostimgAPI],
+                [["ImageHosting", "LostimgAPI"]],
+              )}
             </section>
             <section className="grid min-w-0 content-start gap-3" aria-label="ReelFliX">
               <h3 className="m-0 text-sm font-semibold">ReelFliX</h3>
@@ -1284,6 +1412,12 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                 ["ImageHosting", "ReelflixAPI"],
                 sectionFieldMeta.ImageHosting.ReelflixAPI,
               )}
+              {renderConnectionTest(
+                { kind: "image_host", instance: "reelflix" },
+                "ReelFliX image hosting",
+                [imageCfg.ReelflixEnabled, imageCfg.ReelflixAPI],
+                [["ImageHosting", "ReelflixAPI"]],
+              )}
             </section>
             <section className="grid min-w-0 content-start gap-3" aria-label="Samaritano">
               <h3 className="m-0 text-sm font-semibold">Samaritano</h3>
@@ -1302,6 +1436,12 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
                 (imageCfg.SamaritanoAPI as ConfigValue) ?? "",
                 ["ImageHosting", "SamaritanoAPI"],
                 sectionFieldMeta.ImageHosting.SamaritanoAPI,
+              )}
+              {renderConnectionTest(
+                { kind: "image_host", instance: "samaritano" },
+                "Samaritano image hosting",
+                [imageCfg.SamaritanoEnabled, imageCfg.SamaritanoAPI],
+                [["ImageHosting", "SamaritanoAPI"]],
               )}
             </section>
           </div>

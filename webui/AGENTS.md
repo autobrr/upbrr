@@ -2,6 +2,8 @@
 
 `webui`-scoped; root repo rules apply.
 
+Provider-ID edits follow the root manual-provider authority rule through the shared backend: multiple manual selections remain independent despite conflicting provider links. Preserve explicit clear and Auto/reset; do not add a browser agreement gate or display-only workaround.
+
 ## Source Of Truth
 
 - Scripts/dependencies: `package.json`, `pnpm-lock.yaml`.

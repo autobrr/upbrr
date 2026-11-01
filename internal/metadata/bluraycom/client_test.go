@@ -496,14 +496,18 @@ func TestLookupCountryAuthorityAndEditionDates(t *testing.T) {
 	for _, tc := range []struct {
 		marker, selected, want string
 		threshold              float64
+		lowUSA, tie            bool
 	}{
-		{"GER", "", "102", 80},
-		{"USA", "", "101", 80},
-		{"", "", "101", 80},
-		{"XYZ", "", "101", 80},
-		{"GER", "", "", 100},
-		{"JPN", "", "", 80},
-		{"GER", "101", "101", 80},
+		{"GER", "", "102", 80, false, false},
+		{"GER", "", "102", 85, false, false},
+		{"USA", "", "101", 100, true, false},
+		{"", "", "101", 80, false, false},
+		{"XYZ", "", "101", 80, false, false},
+		{"GER", "", "", 100, false, false},
+		{"GER", "", "102", 100, false, true},
+		{"GER", "103", "103", 100, false, false},
+		{"JPN", "", "", 80, false, false},
+		{"GER", "101", "", 80, false, false},
 	} {
 		t.Run(tc.marker+tc.selected+fmt.Sprint(tc.threshold), func(t *testing.T) {
 			client := NewClient(&http.Client{Transport: releaseFixtureTransport(func(r *http.Request) (*http.Response, error) {
@@ -514,13 +518,15 @@ func TestLookupCountryAuthorityAndEditionDates(t *testing.T) {
 				case "/products/menu_ajax.php":
 					var catalogue strings.Builder
 					catalogue.WriteString(`<h3>Blu-ray Editions</h3>`)
-					for i, country := range []string{"United States", "Germany", "Germany"} {
+					countries := []string{"United States", "Germany", "Germany"}
+					for _, i := range []int{2, 0, 1} {
+						country := countries[i]
 						fmt.Fprintf(&catalogue, `<img width="18" height="12" title="%s"><a href="https://www.blu-ray.com/movies/Edition/%d/" title="Edition %d">Edition</a>`, country, 101+i, i)
 					}
 					body = catalogue.String()
 				default:
 					codec := "HEVC / H.265"
-					if strings.Contains(r.URL.Path, "103") {
+					if strings.Contains(r.URL.Path, "103") && !tc.tie || strings.Contains(r.URL.Path, "101") && tc.lowUSA {
 						codec = "AVC"
 					}
 					body = fmt.Sprintf(`<a href="/movies/releasedates.php?year=2020&month=12#December%02d">Release date</a><table><tr><td width="228px" style="font-size: 12px"><span class="subheading">Video</span>Codec: %s<br>Resolution: 2160p<br><span class="subheading">Audio</span><div id="longaudio">English: Dolby TrueHD Atmos 7.1</div><span class="subheading">Subtitles</span><div id="longsubs">English</div><span class="subheading">Discs</span>Single disc (1 BD-100)</td></tr></table>`, map[string]int{
@@ -528,7 +534,7 @@ func TestLookupCountryAuthorityAndEditionDates(t *testing.T) {
 						"/movies/Edition/102/": 2,
 						"/movies/Edition/103/": 3,
 					}[r.URL.Path], codec)
-					if strings.Contains(r.URL.Path, "102") {
+					if strings.Contains(r.URL.Path, "102") && !tc.tie {
 						body = strings.ReplaceAll(body, "English</div>", "French</div>")
 					}
 				}
@@ -554,16 +560,105 @@ func TestLookupCountryAuthorityAndEditionDates(t *testing.T) {
 			if result.SelectedReleaseID != tc.want {
 				t.Fatalf("selected = %q, want %q (%s)", result.SelectedReleaseID, tc.want, result.SelectionReason)
 			}
-			if len(result.Candidates) != 3 || result.Candidates[0].ReleaseID != "101" || result.Candidates[0].Score != 100 {
-				t.Fatalf("scoring/order changed: %#v", result.Candidates)
+			wantIDs := []string{"101", "102", "103"}
+			wantScores := []float64{100, 85, 20}
+			switch tc.marker {
+			case "GER":
+				wantIDs, wantScores = []string{"102", "103"}, []float64{85, 20}
+				if tc.tie {
+					wantScores = []float64{100, 100}
+				}
+			case "USA":
+				wantIDs, wantScores = []string{"101"}, []float64{20}
+			case "JPN":
+				wantIDs, wantScores = nil, nil
+			}
+			if len(result.Candidates) != len(wantIDs) {
+				t.Fatalf("country-scoped candidates = %#v, want IDs %v", result.Candidates, wantIDs)
 			}
 			for i, candidate := range result.Candidates {
-				if candidate.ReleaseDate != fmt.Sprintf("2020-12-%02d", i+1) {
+				if candidate.ReleaseID != wantIDs[i] || candidate.Score != wantScores[i] {
+					t.Fatalf("score/order = %#v, want IDs %v scores %v", result.Candidates, wantIDs, wantScores)
+				}
+				day := map[string]int{
+					"101": 1,
+					"102": 2,
+					"103": 3,
+				}[candidate.ReleaseID]
+				if candidate.ReleaseDate != fmt.Sprintf("2020-12-%02d", day) {
 					t.Fatalf("edition date = %q", candidate.ReleaseDate)
 				}
 			}
 			if tc.marker == "JPN" && !strings.Contains(result.SelectionReason, "Japan") {
 				t.Fatalf("missing country outcome: %s", result.SelectionReason)
+			}
+		})
+	}
+}
+
+func TestSelectReleaseCountsUniqueCountryEditions(t *testing.T) {
+	metadata := &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{
+		{
+			ReleaseID: "foreign",
+			Country:   "Germany",
+			Score:     100,
+		},
+		{
+			ReleaseID: "only",
+			Country:   "United States",
+			Score:     0,
+		},
+		{
+			ReleaseID: "only",
+			Country:   "United States",
+			Score:     0,
+		},
+	}}
+	SelectRelease(metadata, LookupInput{
+		SourcePath:      filepath.Join(t.TempDir(), "Example.Movie.2026.USA.BluRay-GRP"),
+		ScoreThreshold:  100,
+		SingleThreshold: 100,
+	})
+	if metadata.SelectedReleaseID != "only" || !metadata.AutoSelected || len(metadata.Candidates) != 1 || metadata.Threshold != 0 || metadata.SelectionReason != "single_country" {
+		t.Fatalf("unique country edition not selected: %#v", metadata)
+	}
+}
+
+func TestSelectReleaseCountryCorrectionPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name, wantCountry, wantID string
+		correction                *string
+		wantCount                 int
+	}{
+		{"folder", "United States", "usa", nil, 1},
+		{"country correction", "Germany", "ger", new("GER"), 1},
+		{"country name correction", "Germany", "ger", new("Germany"), 1},
+		{"explicit clear", "", "", new(""), 2},
+		{"unknown correction", "", "", new("XYZ"), 2},
+		{"playback region is not country", "", "", new("A"), 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			metadata := &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{
+				{
+					ReleaseID: "ger",
+					Country:   "Germany",
+					Score:     20,
+				},
+				{
+					ReleaseID: "usa",
+					Country:   "United States",
+					Score:     0,
+					Specs:     api.BluraySpecs{Playback: api.BlurayPlaybackSpec{Region: "B"}},
+				},
+			}}
+			SelectRelease(metadata, LookupInput{
+				SourcePath:      filepath.Join(t.TempDir(), "Example.Movie.2026.USA.BluRay-GRP"),
+				CountryOverride: tc.correction,
+				ScoreThreshold:  100,
+				SingleThreshold: 100,
+			})
+			if metadata.Country != tc.wantCountry || metadata.SelectedReleaseID != tc.wantID || len(metadata.Candidates) != tc.wantCount {
+				t.Fatalf("country correction result: country=%q selected=%q candidates=%d", metadata.Country, metadata.SelectedReleaseID, len(metadata.Candidates))
 			}
 		})
 	}
