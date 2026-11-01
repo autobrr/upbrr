@@ -21,7 +21,7 @@ func TestConnectionProbeValidatesSnapshotWithoutLogin(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
 		{`<meta name="_token" content="synthetic-private-token">`, "success"},
 		{`<input name="password"><input name="email"><meta name="_token" content="login-token">`, "credentials_rejected"},
-		{`<title>Just a moment</title><meta name="_token" content="challenge-token">`, "unexpected_response"},
+		{`<title>Just a moment</title><meta name="_token" content="challenge-token">`, "challenge_required"},
 		{`<html>service available</html>`, "unexpected_response"},
 	} {
 		t.Run(tc.want+tc.body[:6], func(t *testing.T) {

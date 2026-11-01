@@ -170,6 +170,11 @@ export const createSettingsRenderers = (context: SettingsRenderContext) => {
         identity={JSON.stringify([values, secrets])}
         target={target}
         label={label}
+        unavailableReason={
+          target.kind === "image_host"
+            ? imageHostPolicyMetadata?.UnavailableConnectionTests?.[target.instance ?? ""]
+            : undefined
+        }
         buildPayload={context.buildConnectionTestPayload}
       />
     );

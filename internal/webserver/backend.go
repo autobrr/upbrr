@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/imagehosting"
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -798,9 +799,15 @@ func (b *Backend) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error)
 		return imagehostpolicy.Metadata{}, fmt.Errorf("webserver: tracker registry: %w", err)
 	}
 	metadata := imagehostpolicy.Metadata{
-		UploadHosts:        imagehostpolicy.KnownUploadHosts(),
-		TrackerUploadHosts: make(map[string][]string),
-		OwnedHosts:         make(map[string]string),
+		UploadHosts:                imagehostpolicy.KnownUploadHosts(),
+		TrackerUploadHosts:         make(map[string][]string),
+		OwnedHosts:                 make(map[string]string),
+		UnavailableConnectionTests: make(map[string]string),
+	}
+	for _, host := range metadata.UploadHosts {
+		if limitation := imagehosting.ConnectionTestLimitation(host); limitation.Code != "" {
+			metadata.UnavailableConnectionTests[host] = limitation.Message
+		}
 	}
 	for _, tracker := range registry.Names() {
 		policy, ok := registry.LookupImageHostPolicy(tracker)

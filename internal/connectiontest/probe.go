@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
+	"golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -153,8 +155,20 @@ func testTorrentClient(ctx context.Context, cfg config.Config, target api.Connec
 		}
 	}
 	endpoint.Path = basePath + "/api/v2/app/version"
-	body, failure := Request(ctx, client, http.MethodGet, endpoint.String(), nil, http.Header{"Referer": {referer.String()}})
+	headers := make(http.Header)
+	if !clientCfg.UsesQuiProxy() {
+		headers.Set("Referer", referer.String())
+	}
+	// qui may forward Referer to qBittorrent, where the proxy origin fails CSRF
+	// validation. Match production proxy reads, which do not send this header.
+	body, failure := Request(ctx, client, http.MethodGet, endpoint.String(), nil, headers)
 	if failure.Code != "" {
+		if clientCfg.UsesQuiProxy() && failure.Code == "authentication_required" {
+			return result(
+				"authentication_required",
+				"The qui proxy or its upstream returned HTTP 401 (Unauthorized). Check the client-proxy URL and key, instance access and upstream authentication. A regular qui API key does not authorize a client-proxy URL.",
+			)
+		}
 		return failure
 	}
 	version := strings.TrimSpace(string(body))
@@ -249,18 +263,24 @@ func request(
 	defer response.Body.Close()
 	switch response.StatusCode {
 	case http.StatusUnauthorized:
-		return nil, result("credentials_rejected", "The service rejected the credentials. Check the key, username or password.")
+		return nil, result(
+			"authentication_required",
+			"The service returned HTTP 401 (Unauthorized). Check authentication and reverse-proxy access; this response alone does not identify which credential or layer rejected the request.",
+		)
 	case http.StatusForbidden:
-		return nil, result("access_denied", "The service denied access. Check credentials, account permissions, IP restrictions and proxy access.")
+		return nil, result(
+			"access_denied",
+			"The service returned HTTP 403 (Forbidden). Check account permissions, IP restrictions, authentication and proxy access.",
+		)
 	case http.StatusTooManyRequests:
-		return nil, result("rate_limited", "The service is rate limiting requests. Wait before testing again.")
+		return nil, result("rate_limited", "The service returned HTTP 429 (Too Many Requests). Wait before testing again.")
 	case http.StatusFound, http.StatusSeeOther:
 		if !login {
-			return nil, UnexpectedResponse()
+			return nil, httpFailure(response.StatusCode)
 		}
 	case http.StatusOK:
 	default:
-		return nil, result("unexpected_response", "The service did not return the expected API response. Check its URL, version and reverse proxy.")
+		return nil, httpFailure(response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
 	if err != nil {
@@ -269,7 +289,117 @@ func request(
 	if len(data) > responseLimit {
 		return nil, result("unexpected_response", "The service response exceeded the connection test limit.")
 	}
+	if failure := responseFailure(data); failure.Code != "" {
+		return nil, failure
+	}
 	return data, api.ConnectionTestResult{}
+}
+
+func httpFailure(status int) api.ConnectionTestResult {
+	if status >= 500 && status <= 599 {
+		return result(
+			"unavailable",
+			fmt.Sprintf("The service or reverse proxy returned HTTP %d. Check service availability and upstream proxy connectivity, then retry.", status),
+		)
+	}
+	if status >= 300 && status <= 399 {
+		return result(
+			"unexpected_response",
+			fmt.Sprintf(
+				"The service returned HTTP %d (redirect). Check the final service URL, login requirements and reverse proxy; connection tests do not follow redirects.",
+				status,
+			),
+		)
+	}
+	return result("unexpected_response", fmt.Sprintf("The service returned HTTP %d. Check its URL, API version and request permissions.", status))
+}
+
+// responseFailure recognizes explicit error envelopes and prominent HTML error
+// markers before provider success parsing. Remote text is never returned; unknown
+// content remains subject to the provider's own strict response validation.
+func responseFailure(body []byte) api.ConnectionTestResult {
+	var envelope map[string]any
+	if json.Unmarshal(body, &envelope) == nil && envelope != nil {
+		success, hasSuccess := envelope["success"].(bool)
+		failed := hasSuccess && !success
+		status, _ := envelope["status"].(string)
+		switch strings.ToLower(status) {
+		case "error", "fail", "failed", "failure":
+			failed = true
+		}
+		for _, field := range []string{"error", "errors"} {
+			switch value := envelope[field].(type) {
+			case bool:
+				failed = failed || value
+			case float64:
+				failed = failed || value != 0
+			case string:
+				failed = failed || strings.TrimSpace(value) != ""
+			case []any:
+				failed = failed || len(value) != 0
+			case map[string]any:
+				failed = failed || len(value) != 0
+			}
+		}
+		if failed {
+			return result(
+				"remote_error",
+				"The service returned an API error response. Check the account's API access, request requirements and service status.",
+			)
+		}
+		return api.ConnectionTestResult{}
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(body)), "<") {
+		return api.ConnectionTestResult{}
+	}
+	doc, err := html.Parse(strings.NewReader(string(body)))
+	if err != nil {
+		return api.ConnectionTestResult{}
+	}
+	for node := range doc.Descendants() {
+		if node.Type != html.ElementNode {
+			continue
+		}
+		var danger, alert, errorClass bool
+		for _, attr := range node.Attr {
+			if attr.Key == "class" {
+				for class := range strings.FieldsSeq(attr.Val) {
+					danger = danger || class == "alert-danger"
+					errorClass = errorClass || class == "error"
+				}
+			}
+			alert = alert || (attr.Key == "role" && attr.Val == "alert")
+		}
+		notice := danger || (alert && errorClass)
+		if node.Data != "title" && node.Data != "h1" && !notice {
+			continue
+		}
+		var content strings.Builder
+		for child := range node.Descendants() {
+			if child.Type == html.TextNode {
+				content.WriteString(child.Data)
+				content.WriteByte(' ')
+			}
+		}
+		text := strings.ToLower(strings.Join(strings.Fields(content.String()), " "))
+		switch {
+		case strings.Contains(text, "just a moment"), strings.Contains(text, "checking your browser"), strings.Contains(text, "verify you are human"):
+			return result(
+				"challenge_required",
+				"The service returned a browser or anti-bot challenge. Check whether its API is accessible from this server and proxy.",
+			)
+		case strings.Contains(text, "service unavailable"),
+			strings.Contains(text, "under maintenance"),
+			strings.Contains(text, "internal server error"),
+			strings.Contains(text, "bad gateway"):
+			return result("unavailable", "The service returned an unavailable or maintenance page. Check service and reverse-proxy status, then retry.")
+		case text == "access denied", text == "forbidden", text == "unauthorized":
+			return result("access_denied", "The service returned an access-denied page. Check account permissions, IP restrictions and proxy access.")
+		case text != "" && notice:
+			return result("remote_error", "The service displayed an error notice. Check the service directly for account or availability issues, then retry.")
+		}
+	}
+	return api.ConnectionTestResult{}
 }
 
 // RequestFailure classifies transport and context errors without exposing their contents.

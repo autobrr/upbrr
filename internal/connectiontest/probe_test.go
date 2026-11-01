@@ -34,9 +34,9 @@ func TestArrChecksSelectedUnsavedInstanceAndResponse(t *testing.T) {
 			status: http.StatusOK,
 		},
 		{
-			name:   "invalid key",
+			name:   "unauthorized",
 			body:   "synthetic-secret",
-			code:   "credentials_rejected",
+			code:   "authentication_required",
 			status: http.StatusUnauthorized,
 		},
 		{
@@ -109,7 +109,7 @@ func TestArrRedirectDoesNotForwardCredentials(t *testing.T) {
 func TestPublicProviderProbesUseFixedContentFreeRequests(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		kind, instance, host, path, method, response string
+		kind, instance, host, path, method, response, code string
 	}{
 		{
 			kind:     "tmdb",
@@ -117,6 +117,15 @@ func TestPublicProviderProbesUseFixedContentFreeRequests(t *testing.T) {
 			path:     "/3/authentication",
 			method:   http.MethodGet,
 			response: `{"success":true,"status_code":1}`,
+			code:     "success",
+		},
+		{
+			kind:     "tmdb",
+			host:     "api.themoviedb.org",
+			path:     "/3/authentication",
+			method:   http.MethodGet,
+			response: `{"success":false,"status_code":7,"status_message":"synthetic-private-error"}`,
+			code:     "remote_error",
 		},
 		{
 			kind:     "srrdb",
@@ -124,6 +133,7 @@ func TestPublicProviderProbesUseFixedContentFreeRequests(t *testing.T) {
 			path:     "/v1/search/r:upbrr.connection.test.synthetic",
 			method:   http.MethodGet,
 			response: `{"resultsCount":0,"results":[]}`,
+			code:     "success",
 		},
 	} {
 		t.Run(tc.kind+tc.instance, func(t *testing.T) {
@@ -150,7 +160,7 @@ func TestPublicProviderProbesUseFixedContentFreeRequests(t *testing.T) {
 			})}
 			cfg := config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "synthetic-tmdb-key"}}
 			got := test(t.Context(), cfg, api.ConnectionTestTarget{Kind: tc.kind, Instance: tc.instance}, client)
-			if got.Code != "success" || requests != 1 {
+			if got.Code != tc.code || requests != 1 || strings.Contains(got.Message, "synthetic-") {
 				t.Fatalf("probe outcome: %s", got.Code)
 			}
 		})
@@ -199,6 +209,9 @@ func TestQbitProbeLoginProxyAndTLS(t *testing.T) {
 					if tc.proxy {
 						t.Error("proxy attempted direct login")
 					}
+					if r.Header.Get("Referer") == "" {
+						t.Error("direct qBittorrent login lost its Referer")
+					}
 					if r.Method != http.MethodPost || r.ParseForm() != nil || r.Form.Get("username") != "synthetic-user" || r.Form.Get("password") != "synthetic-password" {
 						t.Error("login did not use the draft credentials")
 					}
@@ -210,6 +223,10 @@ func TestQbitProbeLoginProxyAndTLS(t *testing.T) {
 					_, _ = io.WriteString(w, tc.loginBody)
 				case "/base/api/v2/app/version":
 					versions.Add(1)
+					if tc.proxy && (r.Header.Get("Referer") != "" || r.Header.Get("Origin") != "") {
+						w.WriteHeader(http.StatusUnauthorized)
+						return
+					}
 					if r.Method != http.MethodGet {
 						t.Error("version probe mutated state")
 					}
@@ -249,6 +266,38 @@ func TestQbitProbeLoginProxyAndTLS(t *testing.T) {
 			}
 			if tc.proxy && logins.Load() != 0 {
 				t.Fatal("proxy used direct login")
+			}
+		})
+	}
+}
+
+func TestProbeExplainsHTTPAndRecognizedErrorsWithoutRemoteContent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, body, code, guidance string
+		status                     int
+	}{
+		{"unauthorized is ambiguous", `synthetic-private-error`, "authentication_required", "HTTP 401", http.StatusUnauthorized},
+		{"missing endpoint", `synthetic-private-error`, "unexpected_response", "HTTP 404", http.StatusNotFound},
+		{"server unavailable", `synthetic-private-error`, "unavailable", "HTTP 503", http.StatusServiceUnavailable},
+		{"bad gateway", `synthetic-private-error`, "unavailable", "HTTP 502", http.StatusBadGateway},
+		{"redirect", `synthetic-private-error`, "unexpected_response", "HTTP 302", http.StatusFound},
+		{"json failure", `{"success":false,"message":"synthetic-private-error","resultsCount":0,"results":[]}`, "remote_error", "error", http.StatusOK},
+		{"json rpc failure", `{"error":{"code":-32000,"message":"synthetic-private-error"},"resultsCount":0,"results":[]}`, "remote_error", "error", http.StatusOK},
+		{"validation failure", `{"errors":{"api_key":["synthetic-private-error"]},"resultsCount":0,"results":[]}`, "remote_error", "error", http.StatusOK},
+		{"maintenance page", `<title>Service Unavailable</title><p>synthetic-private-error</p>`, "unavailable", "unavailable", http.StatusOK},
+		{"challenge page", `<title>Just a moment...</title><p>synthetic-private-error</p>`, "challenge_required", "challenge", http.StatusOK},
+		{"normal response", `{"resultsCount":0,"results":[],"error":null}`, "success", "SRRDB", http.StatusOK},
+		{"spaced empty error array", `{"resultsCount":0,"results":[],"errors":[ ]}`, "success", "SRRDB", http.StatusOK},
+		{"spaced empty error object", "{\"resultsCount\":0,\"results\":[],\"errors\":{\n}}", "success", "SRRDB", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			})}
+			got := test(t.Context(), config.Config{}, api.ConnectionTestTarget{Kind: "srrdb"}, client)
+			if got.Code != tc.code || !strings.Contains(got.Message, tc.guidance) || strings.Contains(got.Message, "synthetic-") {
+				t.Fatalf("unsafe or unexplained response: %#v", got)
 			}
 		})
 	}

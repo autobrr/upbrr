@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/connectiontest"
@@ -30,24 +31,71 @@ func (d *Definition) testConnection(ctx context.Context, input trackers.Connecti
 	// Keep authentication and client identification aligned with production.
 	headers := &http.Request{Header: make(http.Header)}
 	trackerdata.SetUnit3DAPIHeaders(headers, key)
+	endpoint := strings.TrimRight(d.profile.BaseURL, "/") + "/api/torrents/filter"
 	body, failure := connectiontest.Request(ctx, client, http.MethodGet,
-		strings.TrimRight(d.profile.BaseURL, "/")+"/api/torrents/filter?name=upbrr.connection.test.synthetic&perPage=1", nil, headers.Header)
+		endpoint+"?name=upbrr.connection.test.synthetic&perPage=1", nil, headers.Header)
 	if failure.Code != "" {
 		return failure
 	}
 	var response struct {
-		Data json.RawMessage `json:"data"`
-		Meta struct {
-			CurrentPage int  `json:"current_page"`
-			Total       *int `json:"total"`
+		Data  []map[string]json.RawMessage `json:"data"`
+		Links map[string]*string           `json:"links"`
+		Meta  struct {
+			CurrentPage *int   `json:"current_page"`
+			Total       *int   `json:"total"`
+			PerPage     int    `json:"per_page"`
+			Path        string `json:"path"`
 		} `json:"meta"`
 	}
-	if json.Unmarshal(body, &response) != nil || len(response.Data) == 0 || response.Data[0] != '[' ||
-		response.Meta.CurrentPage < 1 || response.Meta.Total == nil || *response.Meta.Total < 0 {
+	if json.Unmarshal(body, &response) != nil || response.Data == nil || len(response.Data) > 1 {
+		return connectiontest.UnexpectedResponse()
+	}
+	for _, item := range response.Data {
+		if item == nil {
+			return connectiontest.UnexpectedResponse()
+		}
+	}
+	// Older length-aware pagination includes total. Current upstream uses
+	// simple pagination (self link) or Laravel cursor pagination (meta.path).
+	// Neither requires total; cursor responses also omit current_page.
+	pageValid := response.Meta.CurrentPage != nil && *response.Meta.CurrentPage >= 1
+	paginationValid := pageValid && response.Meta.Total != nil && *response.Meta.Total >= len(response.Data)
+	if response.Meta.Total == nil && response.Meta.PerPage == 1 {
+		_, hasNext := response.Links["next"]
+		_, hasPrev := response.Links["prev"]
+		linksValid := hasNext && hasPrev
+		for _, link := range response.Links {
+			if link != nil && !connectionPageLink(*link, endpoint) {
+				linksValid = false
+			}
+		}
+		self := response.Links["self"]
+		paginationValid = linksValid && (response.Meta.CurrentPage == nil || pageValid) &&
+			((pageValid && self != nil && connectionPageLink(*self, endpoint)) || connectionPageLink(response.Meta.Path, endpoint))
+	}
+	if !paginationValid {
 		return connectiontest.UnexpectedResponse()
 	}
 	return api.ConnectionTestResult{
 		Code:    "success",
 		Message: "The tracker accepted the API key for a read-only Unit3D search. Upload permission was not tested.",
 	}
+}
+
+// connectionPageLink recognizes pagination for the requested filter without
+// following returned links or trusting arbitrary data arrays as service proof.
+func connectionPageLink(link, endpoint string) bool {
+	if link == "" {
+		return false
+	}
+	base, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	parsed, err := url.Parse(link)
+	if err != nil || parsed.User != nil || parsed.Fragment != "" {
+		return false
+	}
+	parsed = base.ResolveReference(parsed)
+	return parsed.Scheme == base.Scheme && parsed.Host == base.Host && parsed.Path == base.Path
 }

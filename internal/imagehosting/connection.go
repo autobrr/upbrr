@@ -32,6 +32,17 @@ func TestConnection(ctx context.Context, cfg config.ImageHostingConfig, host str
 	if host == "pixhost" {
 		return testPixhost(ctx, client)
 	}
+	return ConnectionTestLimitation(host)
+}
+
+// ConnectionTestLimitation returns safe, static guidance for hosts without a
+// verified probe, or an empty result when TestConnection can perform a check.
+// Settings metadata uses the same guidance without sending credentials or HTTP.
+func ConnectionTestLimitation(host string) api.ConnectionTestResult {
+	switch host {
+	case "imgbox", "zipline", "samaritano", "pixhost":
+		return api.ConnectionTestResult{}
+	}
 	if host == "imgbb" {
 		return connectionResult(
 			"unsupported",
@@ -70,7 +81,9 @@ func connectionResult(code, message string) api.ConnectionTestResult {
 }
 
 func testPixhost(ctx context.Context, client *http.Client) api.ConnectionTestResult {
-	const syntheticImageURL = "https://pixhost.to/show/0/0_upbrr-connection-test.jpg"
+	// Use the documented public show-URL shape with positive numeric IDs.
+	// The fixed synthetic name does not refer to any user-provided image.
+	const syntheticImageURL = "https://pixhost.to/show/1/1_upbrr-connection-test.jpg"
 	body, failure := connectiontest.Request(ctx, client, http.MethodPost, "https://api.pixhost.to/images/status",
 		strings.NewReader(`{"urls":["`+syntheticImageURL+`"]}`), http.Header{"Content-Type": {"application/json"}})
 	if failure.Code != "" {
@@ -88,6 +101,11 @@ func testPixhost(ctx context.Context, client *http.Client) api.ConnectionTestRes
 	switch response.Results[0].Status {
 	case "available", "deleted", "not_found", "pending":
 		return connectionResult("success", "Pixhost returned a valid public image-status response. No credentials are required and no images were uploaded.")
+	case "invalid":
+		return connectionResult(
+			"invalid_probe",
+			"Pixhost rejected the connection test's synthetic image URL as invalid. Its API was reached, but this result does not verify a usable image-status check. No image was uploaded.",
+		)
 	default:
 		return connectiontest.UnexpectedResponse()
 	}

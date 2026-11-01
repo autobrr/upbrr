@@ -62,13 +62,14 @@ func TestZiplineChecksOnlyVerifiedV3ReadEndpoint(t *testing.T) {
 func TestPixhostProbeValidatesReadOnlyStatusContract(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ response, want string }{
-		{`{"results":[{"url":"https://pixhost.to/show/0/0_upbrr-connection-test.jpg","status":"not_found"}]}`, "success"},
-		{`{"results":[{"url":"https://pixhost.to/show/0/0_upbrr-connection-test.jpg","status":"uploaded"}]}`, "unexpected_response"},
+		{`{"results":[{"url":"https://pixhost.to/show/1/1_upbrr-connection-test.jpg","status":"not_found"}]}`, "success"},
+		{`{"results":[{"url":"https://pixhost.to/show/1/1_upbrr-connection-test.jpg","status":"invalid"}]}`, "invalid_probe"},
+		{`{"results":[{"url":"https://pixhost.to/show/1/1_upbrr-connection-test.jpg","status":"uploaded"}]}`, "unexpected_response"},
 		{`{"results":[]}`, "unexpected_response"},
 	} {
 		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			body, err := io.ReadAll(r.Body)
-			if err != nil || r.Method != http.MethodPost || r.URL.String() != "https://api.pixhost.to/images/status" || string(body) != `{"urls":["https://pixhost.to/show/0/0_upbrr-connection-test.jpg"]}` || r.Header.Get("Authorization") != "" {
+			if err != nil || r.Method != http.MethodPost || r.URL.String() != "https://api.pixhost.to/images/status" || string(body) != `{"urls":["https://pixhost.to/show/1/1_upbrr-connection-test.jpg"]}` || r.Header.Get("Authorization") != "" {
 				t.Error("probe sent an unauthorized operation, content or credentials")
 			}
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(tc.response))}, nil

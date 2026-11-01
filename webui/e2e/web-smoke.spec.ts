@@ -796,9 +796,24 @@ test("embedded connection tests use unsaved instance values without saving or up
     await expect(result).toHaveCount(0);
     await action.click();
     await expect(
-      page.getByRole("status").filter({ hasText: "The service rejected the credentials" }),
+      page.getByRole("status").filter({ hasText: "HTTP 401 (Unauthorized)" }),
     ).toBeVisible();
     await expect(page.getByText("synthetic-private-error-must-not-display")).toHaveCount(0);
+    await page.getByRole("button", { name: "Image Hosting", exact: true }).click();
+    const lostimg = page.getByRole("region", { name: "Lostimg", exact: true });
+    await expect(
+      lostimg.getByText(/Connection test unavailable:.*not yet been verified/),
+    ).toBeVisible();
+    await expect(lostimg.getByRole("button", { name: /Test connection/ })).toHaveCount(0);
+    const imgbb = page.getByRole("region", { name: "imgbb connection", exact: true });
+    await expect(
+      imgbb.getByText(/Connection test unavailable:.*only uploads images/),
+    ).toBeVisible();
+    await expect(imgbb.getByRole("button", { name: /Test connection/ })).toHaveCount(0);
+    await page.getByLabel("Image host priority 1", { exact: true }).selectOption("pixhost");
+    await expect(
+      page.getByRole("button", { name: "Test connection to pixhost image hosting", exact: true }),
+    ).toBeVisible();
     const after = JSON.parse(
       await (await page.request.get(new URL("api/app/GetConfig", app.url).toString())).json(),
     );

@@ -11,6 +11,7 @@ type Props = Readonly<{
   label: string;
   identity: string;
   buildPayload: () => string | null;
+  unavailableReason?: string;
 }>;
 
 /** Clears results and cancels requests when the tested values change. Values
@@ -20,6 +21,13 @@ export function ConnectionTest(props: Props) {
   const [generation, setGeneration] = useState({ identity: props.identity, revision: 0 });
   if (generation.identity !== props.identity) {
     setGeneration({ identity: props.identity, revision: generation.revision + 1 });
+  }
+  if (props.unavailableReason) {
+    return (
+      <p className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+        Connection test unavailable: {props.unavailableReason}
+      </p>
+    );
   }
   return <ConnectionTestAction key={generation.revision} {...props} />;
 }

@@ -42,13 +42,17 @@ Wait for the result beside the button. Other instances can be tested independent
 
 Cancellation stops waiting for storage, but a filesystem read already blocked by the operating system may need to finish later. Further storage reads wait for that operation or their own cancellation; canceled tests never start a service request afterward.
 
-A successful check proves only the read operation described in its result. It does not prove upload permission. Connection tests do not upload images or torrents, add torrents to clients, save settings, or refresh stored tracker sessions. Public services may have no credentials to check. Where no safe check is available, the result explains the limitation and does not report success.
+A successful check proves only the read operation described in its result. It does not prove upload permission. Connection tests do not upload images or torrents, add torrents to clients, save settings, or refresh stored tracker sessions. Public services may have no credentials to check. Image hosts without a verified safe check show an explanation instead of a test button.
 
 The checked credential depends on the provider. API probes check the entered API credentials; cookie probes check the imported session. Where temporary credential login is supported, entering either a username or password selects a fresh login and requires both values. A failed login does not fall back to imported cookies. Announce passkeys and credentials used only during upload are not verified by a session-page check.
 
 The result describes the check's scope and limits. An API key may work for reads while a separate web login, two-factor step or upload permission still needs attention. Some supported upload APIs provide no compatible read-only credential check. Custom upload URLs may also have no verified companion read URL. No upload is attempted in these cases. A provider may record normal request or token-use audit information without creating content or refreshing credentials.
 
 An **unverified** result means a compatible authenticated read contract has not yet been established. It is not evidence of invalid credentials or proof that the provider cannot support a safe check. No credentials are sent for an unverified check.
+
+Failed checks identify HTTP status codes and recognized API errors, maintenance pages or browser challenges where possible. An HTTP 401 can come from the provider, an upstream service or a reverse proxy; it does not identify a particular bad credential. For qui, use the client-proxy URL and its client-proxy key, which are separate from regular qui API keys. Check the service directly when a diagnostic reports an error notice. Remote response text is not displayed because it can contain credentials or private endpoints.
+
+Pixhost checks a fixed synthetic public image URL without uploading anything. If Pixhost reports that URL as invalid, the result explains that the API was reached but the status check could not be verified; it does not report success.
 
 ## Secrets and direct actions
 

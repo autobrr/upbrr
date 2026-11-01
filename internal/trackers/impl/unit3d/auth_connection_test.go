@@ -21,6 +21,14 @@ func TestConnectionProbeUsesDraftBearerAndRejectsUnrelatedResponses(t *testing.T
 	t.Parallel()
 	for _, tc := range []struct{ name, response, want string }{
 		{"authorized empty search", `{"data":[],"meta":{"current_page":1,"total":0}}`, "success"},
+		{"simple pagination empty", `{"data":[],"links":{"first":"/base/api/torrents/filter?page=1","last":null,"prev":null,"next":null,"self":"/base/api/torrents/filter?perPage=1"},"meta":{"current_page":1,"per_page":1,"from":1,"to":0}}`, "success"},
+		{"simple pagination nonempty", `{"data":[{"type":"torrent","id":"1","attributes":{"name":"Synthetic Movie"}}],"links":{"self":"/base/api/torrents/filter?perPage=1","prev":null,"next":"/base/api/torrents/filter?page=2"},"meta":{"current_page":1,"per_page":1,"from":1,"to":1}}`, "success"},
+		{"cursor pagination empty", `{"data":[],"links":{"first":null,"last":null,"prev":null,"next":null},"meta":{"path":"/base/api/torrents/filter","per_page":1,"next_cursor":null,"prev_cursor":null}}`, "success"},
+		{"Laravel simple pagination empty", `{"data":[],"links":{"first":"/base/api/torrents/filter?page=1","last":null,"prev":null,"next":null},"meta":{"current_page":1,"path":"/base/api/torrents/filter","per_page":1,"from":null,"to":null}}`, "success"},
+		{"cursor pagination nonempty", `{"data":[{"type":"torrent","id":"1","attributes":{"name":"Synthetic Movie"}}],"links":{"first":null,"last":null,"prev":null,"next":"/base/api/torrents/filter?cursor=synthetic"},"meta":{"path":"/base/api/torrents/filter","per_page":1,"next_cursor":"synthetic","prev_cursor":null}}`, "success"},
+		{"unrelated pagination path", `{"data":[],"links":{"next":null,"prev":null},"meta":{"path":"/unrelated","per_page":1}}`, "unexpected_response"},
+		{"malformed pagination", `{"data":[],"links":{"self":42},"meta":{"current_page":1,"per_page":1}}`, "unexpected_response"},
+		{"explicit error with search fields", `{"success":false,"message":"synthetic-private-error","data":[],"meta":{"current_page":1,"total":0}}`, "remote_error"},
 		{"login page", `<html><input name="password"></html>`, "unexpected_response"},
 		{"api failure", `{"message":"synthetic-private-error"}`, "unexpected_response"},
 		{"missing pagination", `{"data":[]}`, "unexpected_response"},

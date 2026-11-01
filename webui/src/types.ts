@@ -1484,6 +1484,7 @@ export type ImageHostPolicyMetadata = {
   UploadHosts?: string[];
   TrackerUploadHosts?: Record<string, string[]>;
   OwnedHosts?: Record<string, string>;
+  UnavailableConnectionTests?: Record<string, string>;
 };
 export type FieldType = "string" | "number" | "boolean";
 export type FieldMeta = {

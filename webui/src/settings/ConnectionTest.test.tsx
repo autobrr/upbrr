@@ -8,6 +8,25 @@ import { ConnectionTest } from "./ConnectionTest";
 
 afterEach(cleanup);
 
+it("explains an unavailable safe check without offering an action or building a secret payload", () => {
+  const buildPayload = vi.fn(() => "{}");
+  const request = vi.fn();
+  setAppRequestHandlerForTests(request);
+  render(
+    <ConnectionTest
+      target={{ kind: "image_host", instance: "lostimg" }}
+      label="Lostimg image hosting"
+      identity="draft"
+      unavailableReason="A safe connection test has not yet been verified. No request was sent."
+      buildPayload={buildPayload}
+    />,
+  );
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(screen.getByText(/Connection test unavailable: A safe connection test/)).toBeVisible();
+  expect(buildPayload).not.toHaveBeenCalled();
+  expect(request).not.toHaveBeenCalled();
+});
+
 it("cancels edited tests, discards late results and never revives an earlier success", async () => {
   const pending: Array<{ signal: AbortSignal; resolve: (result: unknown) => void }> = [];
   const request = vi.fn(
