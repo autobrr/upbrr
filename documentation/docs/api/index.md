@@ -136,7 +136,7 @@ The level follows asynchronous work and feedback-driven continuation. Stage-base
 
 ## Provider ID selections
 
-Explicit provider IDs select each provider independently, even if returned cross-links disagree. The shared preparation boundary retains successful metadata and the saved selections across refresh and restart. Explicit clears and Auto/reset remain distinct, and inferred IDs still require agreement. See [canonical metadata](../workflow/index.md#2-review-canonical-metadata).
+Explicit provider IDs select each provider independently, even if returned cross-links disagree. The shared preparation boundary retains successful metadata and the saved selections across refresh and restart. Explicit clears and Auto/reset remain distinct. Inferred IDs still require agreement, except that MAL can follow the selected TMDB resource despite conflicting IMDb or TVDB links; a manual MAL ID or explicit MAL clear takes precedence. See [canonical metadata](../workflow/index.md#2-review-canonical-metadata).
 
 ## Browser session API
 

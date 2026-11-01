@@ -157,6 +157,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			ids.SourcePath = meta.SourcePath
 		}
 	} else if storedIDs, err := s.repo.GetExternalIdentity(ctx, meta.SourcePath); err == nil {
+		storedIDs = externalidentity.CompatibleStoredIdentity(storedIDs)
 		copyStoredProviderPins(&ids, storedIDs.WithoutResetPins(meta.IdentityResetFields).WithProviderRetention(meta.ExternalIDOverrides))
 		if ids.HasRetainedProvider() {
 			meta.Identity.Category = ids.Category
@@ -349,7 +350,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 		if category != tmdbCategoryPref {
 			logger.Debugf("metadata: category resolved previous=%s category=%s source=tmdb", tmdbCategoryPref, category)
-			if !overrideIMDB && !clearedIMDB {
+			directIMDb := slices.Contains([]api.IdentityProvenance{
+				api.IdentityProvenanceMediaInfo, api.IdentityProvenanceScene, api.IdentityProvenanceArr, api.IdentityProvenanceTracker,
+			}, ids.Provenance.IMDB)
+			if !overrideIMDB && !clearedIMDB && !directIMDb {
 				clearInferredProviderID(&ids.IMDBID, &ids.Provenance.IMDB)
 				ids.Dependencies.IMDB = api.IdentityDependency{}
 				candidates.IMDB = nil
@@ -851,8 +855,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 		linksConflict := hasExplicitProviderAnchor && candidateHasTMDBLinks && candidateHasTVmazeLinks &&
 			providerExternalLinksConflict(candidateTMDBLinks, candidateTVmazeLinks)
-		// Independent manual selections retain metadata, but disagreeing links
-		// cannot choose an unspecified sibling identity.
+		// Independent manual selections retain metadata. Link disagreement blocks
+		// sibling inference here; MAL follows the selected TMDB resource independently.
 		allowSiblingInference := !linksConflict || !overrideTMDB || !overrideTVmaze
 		if linksConflict && allowSiblingInference {
 			appendIdentityCorrectionWarning(&meta, "TMDB and TVmaze metadata reference different IMDb or TVDB IDs. Correct one of the supplied provider IDs.")
@@ -1281,6 +1285,21 @@ func copyStoredProviderPins(target *api.ExternalIdentity, stored api.ExternalIde
 		stored.Overrides.TVmaze,
 	)
 	copyStoredProviderPin(&target.MALID, &target.Provenance.MAL, &target.Overrides.MAL, stored.MALID, stored.Provenance.MAL, stored.Overrides.MAL)
+	for _, provider := range []struct {
+		retained bool
+		target   *api.IdentityDependency
+		stored   api.IdentityDependency
+	}{
+		{target.Provenance.TMDB == api.IdentityProvenanceRetained, &target.Dependencies.TMDB, stored.Dependencies.TMDB},
+		{target.Provenance.IMDB == api.IdentityProvenanceRetained, &target.Dependencies.IMDB, stored.Dependencies.IMDB},
+		{target.Provenance.TVDB == api.IdentityProvenanceRetained, &target.Dependencies.TVDB, stored.Dependencies.TVDB},
+		{target.Provenance.TVmaze == api.IdentityProvenanceRetained, &target.Dependencies.TVmaze, stored.Dependencies.TVmaze},
+		{target.Provenance.MAL == api.IdentityProvenanceRetained, &target.Dependencies.MAL, stored.Dependencies.MAL},
+	} {
+		if provider.retained {
+			*provider.target = provider.stored
+		}
+	}
 	if target.HasRetainedProvider() {
 		target.Category = stored.Category
 	}
@@ -1384,17 +1403,20 @@ func clearPreviouslyResolvedProviderIDs(ids *api.ExternalIdentity, preserveRetai
 	for _, provider := range []struct {
 		id         *int
 		provenance *api.IdentityProvenance
+		dependency *api.IdentityDependency
 	}{
-		{&ids.TMDBID, &ids.Provenance.TMDB}, {&ids.IMDBID, &ids.Provenance.IMDB},
-		{&ids.TVDBID, &ids.Provenance.TVDB}, {&ids.TVmazeID, &ids.Provenance.TVmaze},
-		{&ids.MALID, &ids.Provenance.MAL},
+		{&ids.TMDBID, &ids.Provenance.TMDB, &ids.Dependencies.TMDB}, {&ids.IMDBID, &ids.Provenance.IMDB, &ids.Dependencies.IMDB},
+		{&ids.TVDBID, &ids.Provenance.TVDB, &ids.Dependencies.TVDB}, {&ids.TVmazeID, &ids.Provenance.TVmaze, &ids.Dependencies.TVmaze},
+		{&ids.MALID, &ids.Provenance.MAL, &ids.Dependencies.MAL},
 	} {
 		if !preserveRetained && *provider.provenance == api.IdentityProvenanceRetained {
 			*provider.provenance = api.IdentityProvenancePersisted
 		}
 		clearInferredProviderID(provider.id, provider.provenance)
+		if *provider.provenance != api.IdentityProvenanceRetained {
+			*provider.dependency = api.IdentityDependency{}
+		}
 	}
-	ids.Dependencies = api.IdentityDependencySet{}
 }
 
 // invalidateIdentityDependencies drops lookup results whose inputs changed.
@@ -1418,9 +1440,12 @@ func invalidateIdentityDependencies(ids *api.ExternalIdentity, invalidateUnrecor
 	for changed := true; changed; {
 		changed = false
 		for _, provider := range providers {
-			if *provider.id == 0 || *provider.provenance == api.IdentityProvenanceExplicit || *provider.provenance == api.IdentityProvenanceRetained ||
+			if *provider.id == 0 || *provider.provenance == api.IdentityProvenanceExplicit ||
 				provider.override == api.OverrideStateValue || provider.override == api.OverrideStateClear {
 				*provider.dependency = api.IdentityDependency{ID: *provider.id}
+				continue
+			}
+			if *provider.provenance == api.IdentityProvenanceRetained {
 				continue
 			}
 			dependency := *provider.dependency

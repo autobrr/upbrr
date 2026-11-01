@@ -31,7 +31,7 @@ Preserve CLI/WebUI behavior unless intentionally changing one entrypoint.
 ## Manual metadata authority
 
 - Shared metadata reconciliation owns the root manual-provider rule for CLI, API and WebUI. Accept each explicitly selected provider resource independently; conflicting sibling cross-links cannot clear its metadata or suppress episode, localized, display or naming consumers.
-- Keep inferred-ID agreement and dependency invalidation, explicit clears, Auto/reset, actual lookup failures and requested-resource/category checks. Disagreeing manual-provider links must not choose an unspecified sibling ID.
+- Keep inferred-ID agreement and dependency invalidation, explicit clears, Auto/reset, actual lookup failures and requested-resource/category checks. Disagreeing manual-provider links must not choose an unspecified sibling ID, except that the selected TMDB resource may supply MAL despite conflicting IMDb or TVDB links. Manual MAL selections and explicit MAL clears still take precedence.
 - Verify saved corrections, evidence reuse, refresh and restart together; bump prepared and identity compatibility when retained facts carry superseded semantics.
 
 ## Canonical Release Ownership

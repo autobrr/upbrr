@@ -1499,6 +1499,10 @@ func TestResolveExternalIDsUsesTMDBExternalMatchCategory(t *testing.T) {
 				result.ProviderMetadata.TMDB == nil || tmdbClient.metaInputs[0].Category != strings.ToLower(test.matched) {
 				t.Fatalf("external match lost selected category or metadata: %+v", result.Identity)
 			}
+			if result.Identity.IMDBID != 555002 || result.Identity.Provenance.IMDB != api.IdentityProvenanceMediaInfo ||
+				result.ProviderMetadata.IMDB == nil || result.Identity.Dependencies.TMDB.IMDBID != 555002 {
+				t.Fatalf("external match discarded current IMDb evidence: %+v", result.Identity)
+			}
 			if test.wantTV {
 				if result.Identity.TVDBID != 555003 || result.Identity.TVmazeID != 555004 || result.ProviderMetadata.TVDB == nil || result.ProviderMetadata.TVmaze == nil {
 					t.Fatalf("TV match did not acquire TV providers: %+v", result.Identity)
@@ -2926,15 +2930,17 @@ func TestResolveExternalIDsKeepsManualMetadataWithoutInferringConflictingSibling
 			} else {
 				overrides.TVmazeID = new(55)
 			}
-			svc := newTestService(t, &fakeRepo{},
-				WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{
+			tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{
 					Title:          "Example Selected Series",
 					TMDBType:       "Scripted",
-					IMDbID:         7654321,
+					IMDbID:         1234567,
 					TVDBID:         222333,
 					ExternalIMDbID: 7654321,
 					ExternalTVDBID: 222333,
-				}}),
+					MALID:          444,
+				}, anilistMetadata: tmdb.AniListMetadataResult{MALID: 444, TitleRomaji: "Example Selected Series"}}
+			svc := newTestService(t, &fakeRepo{},
+				WithTMDBClient(tmdbClient),
 				WithTVmazeClient(&stubTVmaze{result: tvmaze.SearchResult{
 					SelectedID: 55,
 					IMDBID:     7654321,
@@ -2965,6 +2971,21 @@ func TestResolveExternalIDsKeepsManualMetadataWithoutInferringConflictingSibling
 			}
 			if provider == "TMDB" && result.ProviderMetadata.TMDB == nil || provider == "TVmaze" && result.ProviderMetadata.TVmaze == nil {
 				t.Fatal("cross-link disagreement discarded manual provider metadata")
+			}
+			if provider == "TMDB" {
+				if result.Identity.MALID != 444 || result.ProviderMetadata.AniList == nil || result.ProviderMetadata.AniList.MALID != 444 {
+					t.Fatal("selected TMDB did not supply MAL independently of the conflicting IMDb link")
+				}
+				before := tmdbClient.metaCalls
+				result.StoredDataFresh = true
+				result.ExternalIDOverrides.KeepTMDB = new(true)
+				kept, err := svc.resolveExternalIdentity(t.Context(), result)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if kept.Identity.MALID != 444 || kept.ProviderMetadata.AniList == nil || kept.ProviderMetadata.TMDB == nil || tmdbClient.metaCalls != before {
+					t.Fatal("kept TMDB lost MAL recovery or fetched its metadata again")
+				}
 			}
 			if len(result.LookupWarnings) != 0 {
 				t.Fatalf("manual selection blocked: %v", result.LookupWarnings)
@@ -3002,6 +3023,7 @@ func TestResolveExternalIDsReconcilesExplicitTMDBAndTVmazeLinks(t *testing.T) {
 				TVDBID:         222333,
 				ExternalIMDbID: 1234567,
 				ExternalTVDBID: 222333,
+				MALID:          444,
 			}}
 			tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{
 				SelectedID: tvmazeID,
@@ -3045,8 +3067,22 @@ func TestResolveExternalIDsReconcilesExplicitTMDBAndTVmazeLinks(t *testing.T) {
 			if result.Identity.IMDBID != wantIMDBID || result.Identity.TVDBID != wantTVDBID {
 				t.Fatalf("sibling identity = %#v", result.Identity)
 			}
+			wantMALID := 444
+			if result.Identity.MALID != wantMALID {
+				t.Fatalf("selected TMDB supplied MAL %d, want %d", result.Identity.MALID, wantMALID)
+			}
 			if result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.TVmaze == nil {
 				t.Fatalf("provider metadata = %#v", result.ProviderMetadata)
+			}
+			beforeTMDB, beforeTVmaze := tmdbClient.metaCalls, tvmazeClient.calls
+			result.StoredDataFresh = true
+			result.ExternalIDOverrides.KeepTMDB, result.ExternalIDOverrides.KeepTVmaze = new(true), new(true)
+			kept, err := svc.resolveExternalIdentity(t.Context(), result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kept.Identity.MALID != wantMALID || tmdbClient.metaCalls != beforeTMDB || tvmazeClient.calls != beforeTVmaze {
+				t.Fatal("kept TMDB lost MAL recovery or repeated provider lookups")
 			}
 			if len(result.LookupWarnings) != 0 {
 				t.Fatalf("lookup warnings = %#v", result.LookupWarnings)
@@ -7105,5 +7141,152 @@ func TestShouldUseTVDBHonorsExplicitCategoryBeforeParsedEvidence(t *testing.T) {
 				t.Fatalf("TVDB eligible = %t, want %t", got, test.want)
 			}
 		})
+	}
+}
+
+func TestResolveExternalIDsKeepOffRestoresCrossLinkInvalidation(t *testing.T) {
+	tmdbClient := &stubTMDB{
+		findResult: tmdb.FindResult{TMDBID: 101, Category: "MOVIE"},
+		metadata: tmdb.MetadataResult{
+			Title: "Example Movie",
+ TMDBType: "Movie",
+ IMDbID: 202,
+			ExternalIMDbID: 202,
+ LogoLookupAttempted: true,
+		},
+	}
+	repo := &fakeRepo{}
+	svc := newTestService(t, repo, WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{info: imdb.Info{
+IMDbID: "tt0000202",
+ Title: "Example Movie",
+ Type: "movie",
+}}),
+		WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
+	state := preparationstate.State{
+		SourcePath: filepath.Join(t.TempDir(), "Example.Movie.2026.1080p-GRP.mkv"),
+		Release: api.ReleaseInfo{Title: "Example Movie", Category: "MOVIE"},
+		MediaInfoCategory: "MOVIE",
+ MediaInfoIMDBID: 202,
+	}
+	automatic, err := svc.resolveExternalIdentity(t.Context(), state)
+	if err != nil { t.Fatal(err) }
+	if automatic.Identity.TMDBID != 101 || automatic.Identity.Dependencies.TMDB.IMDBID != 202 {
+		t.Fatalf("initial automatic external-ID lookup did not record dependency: %+v", automatic.Identity)
+	}
+	control := automatic
+	control.StoredDataFresh = true
+	control.ExternalIDOverrides = api.ExternalIDOverrides{IMDBID: new(0)}
+	withoutKeep, err := svc.resolveExternalIdentity(t.Context(), control)
+	if err != nil { t.Fatal(err) }
+	if withoutKeep.Identity.TMDBID != 0 || withoutKeep.ProviderMetadata.TMDB != nil {
+		t.Fatalf("control did not invalidate dependent TMDB: %+v", withoutKeep.Identity)
+	}
+	automatic.StoredDataFresh = true
+	automatic.ExternalIDOverrides = api.ExternalIDOverrides{KeepTMDB: new(true), KeepIMDB: new(true)}
+	kept, err := svc.resolveExternalIdentity(t.Context(), automatic)
+	if err != nil { t.Fatal(err) }
+	if kept.Identity.TMDBID != 101 || kept.Identity.IMDBID != 202 || kept.Identity.Provenance.TMDB != api.IdentityProvenanceRetained {
+		t.Fatalf("Keep setup failed: %+v", kept.Identity)
+	}
+	repo.ids, repo.meta = kept.Identity, kept.ProviderMetadata
+	kept, err = svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+		SourcePath: state.SourcePath,
+		MediaInfoCategory: "MOVIE",
+		ExternalIDOverrides: api.ExternalIDOverrides{KeepTMDB: new(true), KeepIMDB: new(true)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Identity.Dependencies.TMDB.IMDBID != 202 {
+		t.Fatal("stored Keep state discarded the original IMDb dependency")
+	}
+	kept.StoredDataFresh = true
+	kept.ExternalIDOverrides = api.ExternalIDOverrides{
+KeepTMDB: new(false),
+ KeepIMDB: new(false),
+ IMDBID: new(0),
+}
+	cleared, err := svc.resolveExternalIdentity(t.Context(), kept)
+	if err != nil { t.Fatal(err) }
+	if cleared.Identity.TMDBID != 0 || cleared.ProviderMetadata.TMDB != nil {
+		t.Fatalf("Keep off plus explicit IMDb clear retained its stale dependent TMDB: identity=%+v metadata=%+v fetches=%d", cleared.Identity, cleared.ProviderMetadata.TMDB, tmdbClient.metaCalls)
+	}
+}
+
+func TestCollectExternalIdentityRebuildsIncompatibleRetainedFacts(t *testing.T) {
+	for _, loaded := range []bool{false, true} {
+		for _, version := range []struct {
+			name, contract string
+			want int
+		}{
+			{
+name: "published Keep contract",
+ contract: "external-identity-v8",
+ want: 303,
+},
+			{
+name: "current contract",
+ contract: externalidentity.ContractVersion,
+ want: 101,
+},
+		} {
+			t.Run(fmt.Sprintf("%s/loaded=%t", version.name, loaded), func(t *testing.T) {
+				source := filepath.Join(t.TempDir(), "Example.Movie.2026.1080p-GRP.mkv")
+				stored := api.ExternalIdentity{
+					SourcePath: source,
+ TMDBID: 101,
+ IMDBID: 202,
+ Category: api.CanonicalCategoryMovie,
+					Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceRetained, IMDB: api.IdentityProvenanceExplicit},
+					Overrides: api.IdentityOverrideState{IMDB: api.OverrideStateValue},
+					Resolution: api.IdentityResolutionKey{ContractVersion: version.contract},
+					Dependencies: api.IdentityDependencySet{TMDB: api.IdentityDependency{ID: 101}},
+				}
+				metadata := api.SourceScopedMetadata{SourcePath: source, TMDB: &api.TMDBMetadata{
+					TMDBID: 101,
+ IMDBID: 202,
+ Category: "movie",
+ Title: "Saved Movie",
+ LogoLookupAttempted: true,
+				}}
+				repo := &fakeRepo{ids: stored, meta: metadata}
+				tmdbClient := &stubTMDB{
+					findResult: tmdb.FindResult{TMDBID: 303, Category: "MOVIE"},
+					metadata: tmdb.MetadataResult{
+Title: "Current Movie",
+ TMDBType: "Movie",
+ IMDbID: 202,
+ ExternalIMDbID: 202,
+},
+				}
+				svc := newTestService(t, repo, WithTMDBClient(tmdbClient),
+					WithIMDBClient(&stubIMDB{info: imdb.Info{IMDbID: "tt0000202", Title: "Example Movie"}}),
+					WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
+				state := preparationstate.State{
+					SourcePath: source,
+ MediaInfoCategory: "MOVIE",
+					ExternalIDOverrides: api.ExternalIDOverrides{IMDBID: new(202), KeepTMDB: new(true)},
+				}
+				if loaded {
+					state.StoredDataFresh, state.Identity, state.ProviderMetadata = true, stored, metadata
+				}
+				result, err := svc.collectExternalIdentityEvidence(t.Context(), state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if result.Identity.TMDBID != version.want || result.Identity.IMDBID != 202 ||
+					result.Identity.Provenance.IMDB != api.IdentityProvenanceExplicit || result.ProviderMetadata.TMDB == nil ||
+					result.Identity.Provenance.TMDB != api.IdentityProvenanceRetained {
+					t.Fatalf("retained compatibility changed selection authority: %+v", result.Identity)
+				}
+				if version.want == 303 && (result.ProviderMetadata.TMDB.Title != "Current Movie" || result.Identity.Dependencies.TMDB.IMDBID != 202) {
+					t.Fatal("incompatible retained facts were reused without rebuilding their dependency")
+				}
+				if version.want == 101 && tmdbClient.metaCalls != 0 {
+					t.Fatal("compatible retained metadata was fetched again")
+				}
+			})
+		}
 	}
 }

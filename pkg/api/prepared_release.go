@@ -695,27 +695,26 @@ func (i ExternalIdentity) ProviderID(provider IdentityProvider) (int, bool) {
 }
 
 // WithProviderRetention applies saved Keep choices without converting automatic
-// matches into manual ID overrides. Turning Keep off leaves manual pins intact.
+// matches into manual ID overrides. Dependencies survive so turning Keep off
+// restores automatic invalidation; manual pins remain intact.
 func (i ExternalIdentity) WithProviderRetention(overrides ExternalIDOverrides) ExternalIdentity {
 	for _, provider := range []struct {
 		keep       *bool
 		id         int
 		provenance *IdentityProvenance
 		override   OverrideState
-		dependency *IdentityDependency
 	}{
-		{overrides.KeepTMDB, i.TMDBID, &i.Provenance.TMDB, i.Overrides.TMDB, &i.Dependencies.TMDB},
-		{overrides.KeepIMDB, i.IMDBID, &i.Provenance.IMDB, i.Overrides.IMDB, &i.Dependencies.IMDB},
-		{overrides.KeepTVDB, i.TVDBID, &i.Provenance.TVDB, i.Overrides.TVDB, &i.Dependencies.TVDB},
-		{overrides.KeepTVmaze, i.TVmazeID, &i.Provenance.TVmaze, i.Overrides.TVmaze, &i.Dependencies.TVmaze},
-		{overrides.KeepMAL, i.MALID, &i.Provenance.MAL, i.Overrides.MAL, &i.Dependencies.MAL},
+		{overrides.KeepTMDB, i.TMDBID, &i.Provenance.TMDB, i.Overrides.TMDB},
+		{overrides.KeepIMDB, i.IMDBID, &i.Provenance.IMDB, i.Overrides.IMDB},
+		{overrides.KeepTVDB, i.TVDBID, &i.Provenance.TVDB, i.Overrides.TVDB},
+		{overrides.KeepTVmaze, i.TVmazeID, &i.Provenance.TVmaze, i.Overrides.TVmaze},
+		{overrides.KeepMAL, i.MALID, &i.Provenance.MAL, i.Overrides.MAL},
 	} {
 		if *provider.provenance == IdentityProvenanceExplicit || provider.override == OverrideStateValue || provider.override == OverrideStateClear {
 			continue
 		}
 		if provider.keep != nil && *provider.keep && provider.id > 0 {
 			*provider.provenance = IdentityProvenanceRetained
-			*provider.dependency = IdentityDependency{ID: provider.id}
 		} else if *provider.provenance == IdentityProvenanceRetained {
 			*provider.provenance = IdentityProvenancePersisted
 		}
