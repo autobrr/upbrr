@@ -1071,7 +1071,8 @@ func TestNamedQueueRetainsUploadOutcomesWhenCompositeFails(t *testing.T) {
 				}
 				defer saved.Close()
 				item := saved.inventory.Items[0]
-				if item.Status != test.want || !reflect.DeepEqual(item.ConfirmedUploads, []api.TrackerID{"ALPHA"}) {
+				if item.Status != test.want || item.WorkflowID != prepared.Workflow.ID ||
+					!reflect.DeepEqual(item.ConfirmedUploads, []api.TrackerID{"ALPHA"}) {
 					t.Fatalf("partial failure lost confirmed submission: %+v", item)
 				}
 			})

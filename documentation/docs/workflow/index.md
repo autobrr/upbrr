@@ -13,7 +13,7 @@ Provide a release folder or file. upbrr resolves the source layout, finds reusab
 
 One input can be active per database, shared by the Web UI and CLI. Tabs in the same browser session resume that input. Another session or process receives a busy result while it is owned. Close the active input before handing it to another session. Closing retains history and reusable images.
 
-Switching during local preparation cancels that work and waits for cleanup. A submission or uncertain remote outcome must finish or be reconciled before switching. Closing a browser tab does not release the input.
+Switching during local preparation cancels that work and waits for cleanup. While an input remains active, a submission or uncertain remote outcome must finish or be reconciled before switching that input. CLI queue continuation follows the recovery rules below after releasing the idle input. Closing a browser tab does not release the input.
 
 If **Legacy workflow recovery** lists an unresolved external effect, inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. Recovery never repeats a submission automatically. The Web UI continues to list every retained workflow that needs recovery. For unknown tracker submissions with durable submission protection, CLI queues attach reconciliation to the affected source and continue independent items after releasing the previous input. Unresolved client-injection and image-hosting effects, and legacy submissions without that protection, still block new inputs until reconciled. A retained workflow without a reliable source still requires manual recovery.
 
