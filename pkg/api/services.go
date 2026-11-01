@@ -2114,6 +2114,13 @@ type ExternalIDOverrides struct {
 	// MALID carries caller intent for the canonical MAL/AniList-compatible
 	// anime identifier. Nil leaves resolution unchanged; zero clears it.
 	MALID *int
+	// Keep* preserves an existing automatic provider match when another provider
+	// changes. Explicit ID values and clears remain independent and take precedence.
+	KeepTMDB   *bool `json:",omitempty"`
+	KeepIMDB   *bool `json:",omitempty"`
+	KeepTVDB   *bool `json:",omitempty"`
+	KeepTVmaze *bool `json:",omitempty"`
+	KeepMAL    *bool `json:",omitempty"`
 }
 
 // AniListMetadata is the AniList media snapshot used for MAL/AniList preview.

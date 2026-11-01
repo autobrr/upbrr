@@ -560,6 +560,8 @@ const (
 	IdentityProvenanceUnknown IdentityProvenance = "unknown"
 	// IdentityProvenanceExplicit identifies a caller-locked fact.
 	IdentityProvenanceExplicit IdentityProvenance = "explicit"
+	// IdentityProvenanceRetained identifies an automatic match the caller chose to keep.
+	IdentityProvenanceRetained IdentityProvenance = "retained"
 	// IdentityProvenancePersisted identifies reusable source-scoped state.
 	IdentityProvenancePersisted IdentityProvenance = "persisted"
 	// IdentityProvenanceMediaInfo identifies embedded MediaInfo evidence.
@@ -690,6 +692,41 @@ func (i ExternalIdentity) ProviderID(provider IdentityProvider) (int, bool) {
 		return 0, false
 	}
 	return id, id > 0
+}
+
+// WithProviderRetention applies saved Keep choices without converting automatic
+// matches into manual ID overrides. Turning Keep off leaves manual pins intact.
+func (i ExternalIdentity) WithProviderRetention(overrides ExternalIDOverrides) ExternalIdentity {
+	for _, provider := range []struct {
+		keep       *bool
+		id         int
+		provenance *IdentityProvenance
+		override   OverrideState
+		dependency *IdentityDependency
+	}{
+		{overrides.KeepTMDB, i.TMDBID, &i.Provenance.TMDB, i.Overrides.TMDB, &i.Dependencies.TMDB},
+		{overrides.KeepIMDB, i.IMDBID, &i.Provenance.IMDB, i.Overrides.IMDB, &i.Dependencies.IMDB},
+		{overrides.KeepTVDB, i.TVDBID, &i.Provenance.TVDB, i.Overrides.TVDB, &i.Dependencies.TVDB},
+		{overrides.KeepTVmaze, i.TVmazeID, &i.Provenance.TVmaze, i.Overrides.TVmaze, &i.Dependencies.TVmaze},
+		{overrides.KeepMAL, i.MALID, &i.Provenance.MAL, i.Overrides.MAL, &i.Dependencies.MAL},
+	} {
+		if *provider.provenance == IdentityProvenanceExplicit || provider.override == OverrideStateValue || provider.override == OverrideStateClear {
+			continue
+		}
+		if provider.keep != nil && *provider.keep && provider.id > 0 {
+			*provider.provenance = IdentityProvenanceRetained
+			*provider.dependency = IdentityDependency{ID: provider.id}
+		} else if *provider.provenance == IdentityProvenanceRetained {
+			*provider.provenance = IdentityProvenancePersisted
+		}
+	}
+	return i
+}
+
+// HasRetainedProvider reports whether a saved Keep choice protects a provider match.
+func (i ExternalIdentity) HasRetainedProvider() bool {
+	return i.Provenance.TMDB == IdentityProvenanceRetained || i.Provenance.IMDB == IdentityProvenanceRetained ||
+		i.Provenance.TVDB == IdentityProvenanceRetained || i.Provenance.TVmaze == IdentityProvenanceRetained || i.Provenance.MAL == IdentityProvenanceRetained
 }
 
 // RequirementKind identifies a canonical prerequisite required by an operation.

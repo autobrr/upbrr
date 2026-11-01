@@ -328,6 +328,14 @@ Multiple provider flags select each provider independently, even when their retu
 
 TMDB also accepts `movie/<id>`, `tv/<id>`, or a URL ending in the ID; a movie/TV hint overrides the category. IMDb accepts numeric IDs or the `tt` prefix. TVDB, TVmaze, and MAL take numeric IDs, not URLs.
 
+Use `--keep-existing-ids` to keep existing provider matches and their data when correcting another provider. You can pass it on the command line or in the correction arguments after **Metadata correct?**. For a release you have already prepared, this updates IMDb while keeping the other matches:
+
+```powershell
+.\upbrr.exe --keep-existing-ids --imdb tt1234567 --input-only "E:\Media\Example.Series.S01E01.1080p-GRP.mkv"
+```
+
+The Keep choices are saved for this release and also appear in the Web UI. A provider's explicit ID change or clear takes precedence. Use `--keep-existing-ids=false` to turn off these choices without removing manual ID corrections. Omitting the flag preserves saved choices. Changing Movie/TV can still clear incompatible automatic matches; a forced fresh preparation reloads data for kept IDs.
+
 During the **Metadata correct?** loop, correcting the same active input reuses provider lookups for unchanged inputs, including lookups that returned no result. A later run can retry those empty results. Completed fetch failures remain retained until the input is removed from **History**. Changing the source, provider ID, or lookup query requests its own result.
 
 ### Clear a metadata provider

@@ -131,29 +131,41 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	meta.Identity = meta.Identity.WithoutResetPins(meta.IdentityResetFields)
 	previousMALID := meta.Identity.MALID
 	meta.Identity = externalidentity.CompatibleStoredIdentity(meta.Identity)
+	meta.Identity = meta.Identity.WithProviderRetention(meta.ExternalIDOverrides)
 	if previousMALID != 0 && meta.MALID == previousMALID && meta.Identity.MALID == 0 {
 		meta.MALID = 0
 	}
 	invalidateMismatchedProviderMetadata(&meta.ProviderMetadata, meta.Identity)
 
 	refreshProviders := meta.ExternalFreshness.RequiresRefresh()
+	previousIdentity := meta.Identity
 	if refreshProviders {
 		meta.Identity = api.ExternalIdentity{SourcePath: meta.SourcePath}
+		if previousIdentity.HasRetainedProvider() {
+			meta.Identity.Category = previousIdentity.Category
+		}
 		meta.MALID = 0
 		meta.ExternalIdentityCandidates = nil
 	}
 	ids := api.ExternalIdentity{SourcePath: meta.SourcePath}
+	if refreshProviders && sourceScopedMetadataMatches(previousIdentity.SourcePath, meta.SourcePath) {
+		copyStoredProviderPins(&ids, previousIdentity)
+	}
 	if !refreshProviders && meta.StoredDataFresh && sourceScopedMetadataMatches(meta.Identity.SourcePath, meta.SourcePath) {
 		ids = meta.Identity
 		if strings.TrimSpace(ids.SourcePath) == "" {
 			ids.SourcePath = meta.SourcePath
 		}
 	} else if storedIDs, err := s.repo.GetExternalIdentity(ctx, meta.SourcePath); err == nil {
-		copyStoredProviderPins(&ids, storedIDs.WithoutResetPins(meta.IdentityResetFields))
+		copyStoredProviderPins(&ids, storedIDs.WithoutResetPins(meta.IdentityResetFields).WithProviderRetention(meta.ExternalIDOverrides))
+		if ids.HasRetainedProvider() {
+			meta.Identity.Category = ids.Category
+		}
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
 		return preparationstate.State{}, fmt.Errorf("metadata: load stored external identity: %w", err)
 	}
 	metadata := api.SourceScopedMetadata{SourcePath: meta.SourcePath}
+	retainedMetadata := meta.ProviderMetadata
 	replayProviders := evidence.Enabled(ctx) && meta.ExternalFreshness == api.ExternalFreshnessLoad
 	if replayProviders {
 		metadata.Bluray = meta.ProviderMetadata.Bluray
@@ -171,6 +183,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if err == nil {
 			metadata.Bluray = storedMeta.Bluray
 			metadata.AniList = storedMeta.AniList
+			retainedMetadata = storedMeta
 		}
 	}
 	candidates := externalIdentityCandidateEvidence{}
@@ -187,16 +200,16 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	applyOverrideID(&ids.TVDBID, &ids.Provenance.TVDB, &ids.Overrides.TVDB, meta.ExternalIDOverrides.TVDBID)
 	applyOverrideID(&ids.TVmazeID, &ids.Provenance.TVmaze, &ids.Overrides.TVmaze, meta.ExternalIDOverrides.TVmazeID)
 	applyOverrideID(&ids.MALID, &ids.Provenance.MAL, &ids.Overrides.MAL, meta.ExternalIDOverrides.MALID)
+	previousMAL := ids.MALID
+	if previousCategory != "" && categoryPref != "" && previousCategory != normalizeCategory(categoryPref) {
+		clearPreviouslyResolvedProviderIDs(&ids, false)
+	}
 	effectiveOverrides := effectiveProviderOverrides(meta.ExternalIDOverrides, ids)
 	overrideTMDB, clearedTMDB := positiveProviderOverride(effectiveOverrides.TMDBID), clearedProviderOverride(effectiveOverrides.TMDBID)
 	overrideIMDB, clearedIMDB := positiveProviderOverride(effectiveOverrides.IMDBID), clearedProviderOverride(effectiveOverrides.IMDBID)
 	overrideTVDB, clearedTVDB := positiveProviderOverride(effectiveOverrides.TVDBID), clearedProviderOverride(effectiveOverrides.TVDBID)
 	overrideTVmaze, clearedTVmaze := positiveProviderOverride(effectiveOverrides.TVmazeID), clearedProviderOverride(effectiveOverrides.TVmazeID)
 	overrideMAL, clearedMAL := positiveProviderOverride(effectiveOverrides.MALID), clearedProviderOverride(effectiveOverrides.MALID)
-	previousMAL := ids.MALID
-	if previousCategory != "" && categoryPref != "" && previousCategory != normalizeCategory(categoryPref) {
-		clearPreviouslyResolvedProviderIDs(&ids)
-	}
 	invalidated := invalidateIdentityDependencies(&ids, clearedTMDB || clearedIMDB || clearedTVDB || clearedTVmaze || clearedMAL)
 	if invalidated > 0 {
 		logger.Debugf("metadata: provider inputs changed decision=resolve_again count=%d", invalidated)
@@ -261,7 +274,15 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 	hasExplicitProviderAnchor := hasPositiveProviderOverride(effectiveOverrides)
 	if hasExplicitProviderAnchor {
-		clearPreviouslyResolvedProviderIDs(&ids)
+		clearPreviouslyResolvedProviderIDs(&ids, true)
+	}
+	if !refreshProviders {
+		copyRetainedProviderMetadata(&metadata, retainedMetadata, ids, effectiveOverrides)
+	}
+	if keepProvider(effectiveOverrides.KeepTMDB) && !overrideMAL && !clearedMAL && ids.MALID == 0 &&
+		usableTMDBMetadata(metadata.TMDB, ids.TMDBID, ids.Category) && metadata.TMDB.MALID > 0 {
+		applyLinkedProviderID(&ids.MALID, &ids.Provenance.MAL, &ids.Dependencies.MAL, metadata.TMDB.MALID,
+			api.IdentityDependency{TMDBID: ids.TMDBID})
 	}
 	logger.Debugf(
 		"metadata: external ids initial tmdb=%d(%s) imdb=%d(%s) tvdb=%d(%s)",
@@ -497,6 +518,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if refreshProviders && tmdbMetadataFetchedID == ids.TMDBID {
 			return false
 		}
+		if !refreshProviders && keepProvider(effectiveOverrides.KeepTMDB) && usableTMDBMetadata(metadata.TMDB, ids.TMDBID, ids.Category) &&
+			!requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTMDB) {
+			return false
+		}
 		if overrideTMDB {
 			return !tmdbAnchorVerificationAttempted
 		}
@@ -538,6 +563,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderIMDB)
 	}
 	shouldFetchTVDBMetadata := func() bool {
+		if !refreshProviders && keepProvider(effectiveOverrides.KeepTVDB) && usableTVDBMetadata(metadata.TVDB, ids.TVDBID) &&
+			!requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTVDB) {
+			return false
+		}
 		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 &&
 			!tvdbMetadataFetchAttempted &&
 			(refreshProviders || !usableTVDBMetadata(metadata.TVDB, ids.TVDBID) ||
@@ -546,6 +575,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 	shouldRefreshTVDBDisambiguation := func() bool {
 		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 &&
+			(refreshProviders || !keepProvider(effectiveOverrides.KeepTVDB)) &&
 			!tvdbDisambiguationFetchAttempted && usableTVDBMetadata(metadata.TVDB, ids.TVDBID) &&
 			!reusableTVDBNameDisambiguation(metadata.TVDB)
 	}
@@ -558,6 +588,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 		if refreshProviders {
 			return true
+		}
+		if keepProvider(effectiveOverrides.KeepTVmaze) && usableTVmazeMetadata(metadata.TVmaze, ids.TVmazeID) &&
+			!requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTVmaze) {
+			return false
 		}
 		if overrideTVmaze {
 			return !tvmazeAnchorVerificationAttempted
@@ -1153,6 +1187,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		appendProviderRefreshWarning(&meta, "TVmaze", tvmazeErr)
 		appendProviderRefreshWarning(&meta, "AniList", anilistErr)
 	}
+	ids = ids.WithProviderRetention(meta.ExternalIDOverrides)
 	logger.Tracef(
 		"metadata: external ids resolved tmdb=%d(%s) imdb=%d(%s) tvdb=%d(%s) tvmaze=%d(%s) mal=%d(%s)",
 		ids.TMDBID,
@@ -1246,6 +1281,9 @@ func copyStoredProviderPins(target *api.ExternalIdentity, stored api.ExternalIde
 		stored.Overrides.TVmaze,
 	)
 	copyStoredProviderPin(&target.MALID, &target.Provenance.MAL, &target.Overrides.MAL, stored.MALID, stored.Provenance.MAL, stored.Overrides.MAL)
+	if target.HasRetainedProvider() {
+		target.Category = stored.Category
+	}
 }
 
 func copyStoredProviderPin(
@@ -1265,6 +1303,10 @@ func copyStoredProviderPin(
 		*target = storedID
 		*provenance = api.IdentityProvenanceExplicit
 		*override = api.OverrideStateValue
+	case storedID > 0 && storedProvenance == api.IdentityProvenanceRetained:
+		*target = storedID
+		*provenance = api.IdentityProvenanceRetained
+		*override = api.OverrideStateUnset
 	}
 }
 
@@ -1281,13 +1323,22 @@ func clearedProviderOverride(value *int) bool {
 	return value != nil && *value == 0
 }
 
+func keepProvider(value *bool) bool {
+	return value != nil && *value
+}
+
 func effectiveProviderOverrides(current api.ExternalIDOverrides, ids api.ExternalIdentity) api.ExternalIDOverrides {
 	return api.ExternalIDOverrides{
-		TMDBID:   effectiveProviderOverride(current.TMDBID, ids.TMDBID, ids.Provenance.TMDB, ids.Overrides.TMDB),
-		IMDBID:   effectiveProviderOverride(current.IMDBID, ids.IMDBID, ids.Provenance.IMDB, ids.Overrides.IMDB),
-		TVDBID:   effectiveProviderOverride(current.TVDBID, ids.TVDBID, ids.Provenance.TVDB, ids.Overrides.TVDB),
-		TVmazeID: effectiveProviderOverride(current.TVmazeID, ids.TVmazeID, ids.Provenance.TVmaze, ids.Overrides.TVmaze),
-		MALID:    effectiveProviderOverride(current.MALID, ids.MALID, ids.Provenance.MAL, ids.Overrides.MAL),
+		TMDBID:     effectiveProviderOverride(current.TMDBID, ids.TMDBID, ids.Provenance.TMDB, ids.Overrides.TMDB),
+		IMDBID:     effectiveProviderOverride(current.IMDBID, ids.IMDBID, ids.Provenance.IMDB, ids.Overrides.IMDB),
+		TVDBID:     effectiveProviderOverride(current.TVDBID, ids.TVDBID, ids.Provenance.TVDB, ids.Overrides.TVDB),
+		TVmazeID:   effectiveProviderOverride(current.TVmazeID, ids.TVmazeID, ids.Provenance.TVmaze, ids.Overrides.TVmaze),
+		MALID:      effectiveProviderOverride(current.MALID, ids.MALID, ids.Provenance.MAL, ids.Overrides.MAL),
+		KeepTMDB:   current.KeepTMDB,
+		KeepIMDB:   current.KeepIMDB,
+		KeepTVDB:   current.KeepTVDB,
+		KeepTVmaze: current.KeepTVmaze,
+		KeepMAL:    current.KeepMAL,
 	}
 }
 
@@ -1298,7 +1349,7 @@ func effectiveProviderOverride(current *int, id int, provenance api.IdentityProv
 	if state == api.OverrideStateClear {
 		return new(0)
 	}
-	if state == api.OverrideStateValue || provenance == api.IdentityProvenanceExplicit {
+	if state == api.OverrideStateValue || provenance == api.IdentityProvenanceExplicit || provenance == api.IdentityProvenanceRetained {
 		return new(id)
 	}
 	return nil
@@ -1326,15 +1377,23 @@ func providerExternalLinksConflict(first, second providerExternalLinks) bool {
 		first.TVDBID != 0 && second.TVDBID != 0 && first.TVDBID != second.TVDBID
 }
 
-func clearPreviouslyResolvedProviderIDs(ids *api.ExternalIdentity) {
+func clearPreviouslyResolvedProviderIDs(ids *api.ExternalIdentity, preserveRetained bool) {
 	if ids == nil {
 		return
 	}
-	clearInferredProviderID(&ids.TMDBID, &ids.Provenance.TMDB)
-	clearInferredProviderID(&ids.IMDBID, &ids.Provenance.IMDB)
-	clearInferredProviderID(&ids.TVDBID, &ids.Provenance.TVDB)
-	clearInferredProviderID(&ids.TVmazeID, &ids.Provenance.TVmaze)
-	clearInferredProviderID(&ids.MALID, &ids.Provenance.MAL)
+	for _, provider := range []struct {
+		id         *int
+		provenance *api.IdentityProvenance
+	}{
+		{&ids.TMDBID, &ids.Provenance.TMDB}, {&ids.IMDBID, &ids.Provenance.IMDB},
+		{&ids.TVDBID, &ids.Provenance.TVDB}, {&ids.TVmazeID, &ids.Provenance.TVmaze},
+		{&ids.MALID, &ids.Provenance.MAL},
+	} {
+		if !preserveRetained && *provider.provenance == api.IdentityProvenanceRetained {
+			*provider.provenance = api.IdentityProvenancePersisted
+		}
+		clearInferredProviderID(provider.id, provider.provenance)
+	}
 	ids.Dependencies = api.IdentityDependencySet{}
 }
 
@@ -1359,7 +1418,7 @@ func invalidateIdentityDependencies(ids *api.ExternalIdentity, invalidateUnrecor
 	for changed := true; changed; {
 		changed = false
 		for _, provider := range providers {
-			if *provider.id == 0 || *provider.provenance == api.IdentityProvenanceExplicit ||
+			if *provider.id == 0 || *provider.provenance == api.IdentityProvenanceExplicit || *provider.provenance == api.IdentityProvenanceRetained ||
 				provider.override == api.OverrideStateValue || provider.override == api.OverrideStateClear {
 				*provider.dependency = api.IdentityDependency{ID: *provider.id}
 				continue
@@ -1398,7 +1457,7 @@ func applyLinkedProviderID(target *int, provenance *api.IdentityProvenance, depe
 }
 
 func clearInferredProviderID(id *int, provenance *api.IdentityProvenance) {
-	if id == nil || provenance == nil || *provenance == api.IdentityProvenanceExplicit {
+	if id == nil || provenance == nil || *provenance == api.IdentityProvenanceExplicit || *provenance == api.IdentityProvenanceRetained {
 		return
 	}
 	*id = 0
@@ -1497,15 +1556,49 @@ func invalidateProviderMetadataForExplicitReconciliation(metadata *api.SourceSco
 	if metadata == nil {
 		return
 	}
-	if positiveProviderOverride(overrides.TMDBID) && (positiveProviderOverride(overrides.IMDBID) || positiveProviderOverride(overrides.TVDBID)) {
+	if !keepProvider(overrides.KeepTMDB) && positiveProviderOverride(overrides.TMDBID) &&
+		(positiveProviderOverride(overrides.IMDBID) || positiveProviderOverride(overrides.TVDBID)) {
 		metadata.TMDB = nil
 	}
-	if positiveProviderOverride(overrides.TVmazeID) && (positiveProviderOverride(overrides.IMDBID) || positiveProviderOverride(overrides.TVDBID)) {
+	if !keepProvider(overrides.KeepTVmaze) && positiveProviderOverride(overrides.TVmazeID) &&
+		(positiveProviderOverride(overrides.IMDBID) || positiveProviderOverride(overrides.TVDBID)) {
 		metadata.TVmaze = nil
 	}
 	if positiveProviderOverride(overrides.TMDBID) && positiveProviderOverride(overrides.TVmazeID) {
-		metadata.TMDB = nil
-		metadata.TVmaze = nil
+		if !keepProvider(overrides.KeepTMDB) {
+			metadata.TMDB = nil
+		}
+		if !keepProvider(overrides.KeepTVmaze) {
+			metadata.TVmaze = nil
+		}
+	}
+}
+
+func copyRetainedProviderMetadata(
+	target *api.SourceScopedMetadata,
+	previous api.SourceScopedMetadata,
+	ids api.ExternalIdentity,
+	overrides api.ExternalIDOverrides,
+) {
+	if !sourceScopedMetadataMatches(previous.SourcePath, ids.SourcePath) {
+		return
+	}
+	if keepProvider(overrides.KeepTMDB) && usableTMDBMetadata(previous.TMDB, ids.TMDBID, ids.Category) {
+		target.TMDB = previous.TMDB
+	}
+	if keepProvider(overrides.KeepIMDB) && usableIMDBMetadata(previous.IMDB, ids.IMDBID) {
+		target.IMDB = previous.IMDB
+	}
+	if shouldUseTVDBForCategory(preparationstate.State{}, ids) {
+		if keepProvider(overrides.KeepTVDB) && usableTVDBMetadata(previous.TVDB, ids.TVDBID) {
+			target.TVDB = previous.TVDB
+		}
+		if keepProvider(overrides.KeepTVmaze) && usableTVmazeMetadata(previous.TVmaze, ids.TVmazeID) {
+			target.TVmaze = previous.TVmaze
+		}
+	}
+	if keepProvider(overrides.KeepMAL) && previous.AniList != nil && ids.MALID > 0 && previous.AniList.MALID == ids.MALID {
+		target.AniList = previous.AniList
 	}
 }
 

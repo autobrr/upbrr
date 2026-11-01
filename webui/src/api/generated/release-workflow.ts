@@ -563,6 +563,11 @@ export type ExternalFreshness = string;
 
 export type ExternalIDOverrides = Readonly<{
   IMDBID?: number | null;
+  KeepIMDB?: boolean | null;
+  KeepMAL?: boolean | null;
+  KeepTMDB?: boolean | null;
+  KeepTVDB?: boolean | null;
+  KeepTVmaze?: boolean | null;
   MALID?: number | null;
   TMDBID?: number | null;
   TVDBID?: number | null;

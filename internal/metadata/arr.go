@@ -63,10 +63,11 @@ func (s *Service) collectArrIdentityEvidence(ctx context.Context, meta preparati
 	}
 	previousMAL := meta.Identity.MALID
 	meta.Identity = externalidentity.CompatibleStoredIdentity(meta.Identity.WithoutResetPins(meta.IdentityResetFields))
+	meta.Identity = meta.Identity.WithProviderRetention(meta.ExternalIDOverrides)
 	if meta.ExternalFreshness.RequiresRefresh() || slices.Contains(meta.IdentityResetFields, api.CorrectionFieldReleaseNameCategory) {
-		clearPreviouslyResolvedProviderIDs(&meta.Identity)
+		clearPreviouslyResolvedProviderIDs(&meta.Identity, true)
 		if meta.Identity.Provenance.Category != api.IdentityProvenanceExplicit && meta.Identity.Overrides.Category != api.OverrideStateValue &&
-			meta.Identity.Overrides.Category != api.OverrideStateClear {
+			meta.Identity.Overrides.Category != api.OverrideStateClear && !meta.Identity.HasRetainedProvider() {
 			meta.Identity.Category = api.CanonicalCategoryUnknown
 			meta.Identity.Provenance.Category = api.IdentityProvenanceUnknown
 			meta.Identity.Overrides.Category = api.OverrideStateUnset

@@ -363,16 +363,19 @@ function TriStateField({
   );
 }
 
+type ProviderIDKey = "TMDBID" | "IMDBID" | "TVDBID" | "TVmazeID" | "MALID";
+
 const identityFields: ReadonlyArray<{
   field: string;
   label: string;
-  key: keyof ExternalIDOverrides;
+  key: ProviderIDKey;
+  keepKey: "KeepTMDB" | "KeepIMDB" | "KeepTVDB" | "KeepTVmaze" | "KeepMAL";
 }> = [
-  { field: "identity.tmdb", label: "TMDB ID", key: "TMDBID" },
-  { field: "identity.imdb", label: "IMDb ID", key: "IMDBID" },
-  { field: "identity.tvdb", label: "TVDB ID", key: "TVDBID" },
-  { field: "identity.tvmaze", label: "TVmaze ID", key: "TVmazeID" },
-  { field: "identity.mal", label: "MyAnimeList ID", key: "MALID" },
+  { field: "identity.tmdb", label: "TMDB ID", key: "TMDBID", keepKey: "KeepTMDB" },
+  { field: "identity.imdb", label: "IMDb ID", key: "IMDBID", keepKey: "KeepIMDB" },
+  { field: "identity.tvdb", label: "TVDB ID", key: "TVDBID", keepKey: "KeepTVDB" },
+  { field: "identity.tvmaze", label: "TVmaze ID", key: "TVmazeID", keepKey: "KeepTVmaze" },
+  { field: "identity.mal", label: "MyAnimeList ID", key: "MALID", keepKey: "KeepMAL" },
 ];
 
 const releaseStringFields: ReadonlyArray<{
@@ -939,8 +942,8 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
   };
   const confirm = (field: string, trackId = "") => facet.confirmCorrection(refFor(field, trackId));
 
-  const identityAutomatic = (key: keyof ExternalIDOverrides) => Number(release?.Identity[key] || 0);
-  const setIdentity = (key: keyof ExternalIDOverrides, value: number) =>
+  const identityAutomatic = (key: ProviderIDKey) => Number(release?.Identity[key] || 0);
+  const setIdentity = (key: keyof ExternalIDOverrides, value: number | boolean) =>
     facet.changeIdentity({ ...view.intent.identity, [key]: value });
   const setReleaseName = (
     key: keyof ReleaseNameOverrides,
@@ -967,11 +970,18 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
           Removing or clearing a provider ID disables that provider for this source after refresh.
           Trackers requiring it can remain blocked.
         </p>
+        <p className="text-sm text-muted-foreground">
+          Keep existing data preserves that provider when another ID is corrected. This choice is
+          saved for this release. Reset data + refresh fetches fresh data for kept IDs. Changing
+          Movie/TV can still clear incompatible automatic matches. Manual IDs and removals always
+          take precedence.
+        </p>
         <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-x-6 gap-y-5">
-          {identityFields.map(({ field, label, key }) => {
+          {identityFields.map(({ field, label, key, keepKey }) => {
             const manual = hasOwn(view.intent.identity, key);
             const manualValue = view.intent.identity[key];
             const value = manual ? Number(manualValue || 0) : identityAutomatic(key);
+            const keep = view.intent.identity[keepKey] === true;
             return (
               <CorrectionRow
                 key={field}
@@ -1002,6 +1012,16 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     {manual && value === 0 ? "Removed" : "Remove"}
                   </Button>
                 </div>
+                <label className="flex items-center gap-2 font-normal" htmlFor={`keep-${field}`}>
+                  <Checkbox
+                    id={`keep-${field}`}
+                    aria-label={`Keep existing ${label.replace(" ID", "")} data`}
+                    checked={keep}
+                    disabled={value === 0 && !keep}
+                    onCheckedChange={(checked) => setIdentity(keepKey, checked)}
+                  />
+                  Keep existing data
+                </label>
               </CorrectionRow>
             );
           })}

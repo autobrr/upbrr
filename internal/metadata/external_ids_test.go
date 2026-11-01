@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -6077,10 +6078,34 @@ func TestResolveExternalIDsProviderCorrectionsRediscoverMAL(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		overrides api.ExternalIDOverrides
+		keptTMDB  bool
 	}{
 		{name: "TMDB", overrides: api.ExternalIDOverrides{TMDBID: new(101)}},
 		{name: "IMDb", overrides: api.ExternalIDOverrides{IMDBID: new(202)}},
 		{name: "TMDB and IMDb", overrides: api.ExternalIDOverrides{TMDBID: new(101), IMDBID: new(202)}},
+		{
+			name:      "kept TMDB",
+			overrides: api.ExternalIDOverrides{IMDBID: new(202), KeepTMDB: new(true)},
+			keptTMDB:  true,
+		},
+		{
+			name: "kept TMDB with MAL clear",
+			overrides: api.ExternalIDOverrides{
+				IMDBID:   new(202),
+				MALID:    new(0),
+				KeepTMDB: new(true),
+			},
+			keptTMDB: true,
+		},
+		{
+			name: "kept TMDB with manual MAL",
+			overrides: api.ExternalIDOverrides{
+				IMDBID:   new(202),
+				MALID:    new(999),
+				KeepTMDB: new(true),
+			},
+			keptTMDB: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			tmdbClient := &stubTMDB{
@@ -6096,26 +6121,55 @@ func TestResolveExternalIDsProviderCorrectionsRediscoverMAL(t *testing.T) {
 					TitleRomaji: "Example Anime",
 				},
 			}
+			wantMAL, wantProvenance := 444, api.IdentityProvenanceProvider
+			if test.overrides.MALID != nil {
+				wantMAL, wantProvenance = *test.overrides.MALID, api.IdentityProvenanceExplicit
+				tmdbClient.anilistMetadata.MALID = wantMAL
+			}
 			svc := newTestService(t, &fakeRepo{},
 				WithTMDBClient(tmdbClient),
 				WithIMDBClient(&stubIMDB{info: imdb.Info{IMDbID: "tt0000202"}}),
 				WithTVDBClient(&stubTVDB{}),
 				WithTVmazeClient(&stubTVmaze{}),
 			)
-			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+			state := preparationstate.State{
 				SourcePath:          "/media/Example.Anime.S01E01.mkv",
 				MediaInfoCategory:   "TV",
 				TrackerData:         []api.TrackerMetadata{{MALID: 111}},
 				SceneMALID:          222,
 				MALID:               333,
 				ExternalIDOverrides: test.overrides,
-			})
+			}
+			if test.keptTMDB {
+				state.StoredDataFresh = true
+				state.Identity = api.ExternalIdentity{
+					SourcePath: state.SourcePath,
+					TMDBID:     101,
+					Category:   api.CanonicalCategoryTV,
+					Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceProvider},
+					Resolution: api.IdentityResolutionKey{ContractVersion: externalidentity.ContractVersion},
+				}
+				state.ProviderMetadata = api.SourceScopedMetadata{SourcePath: state.SourcePath, TMDB: &api.TMDBMetadata{
+					TMDBID:   101,
+					Category: "tv",
+					Title:    "Example Anime",
+					MALID:    444,
+				}}
+			}
+			result, err := svc.resolveExternalIdentity(t.Context(), state)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.Identity.MALID != 444 || result.MALID != 444 || result.Identity.Provenance.MAL != api.IdentityProvenanceProvider ||
-				result.ProviderMetadata.AniList == nil || result.ProviderMetadata.AniList.MALID != 444 {
+			if result.Identity.MALID != wantMAL || result.MALID != wantMAL || result.Identity.Provenance.MAL != wantProvenance ||
+				wantMAL == 0 && result.ProviderMetadata.AniList != nil ||
+				wantMAL != 0 && (result.ProviderMetadata.AniList == nil || result.ProviderMetadata.AniList.MALID != wantMAL) {
 				t.Fatalf("provider correction did not rediscover MAL and its preview: identity=%#v metadata=%#v", result.Identity, result.ProviderMetadata.AniList)
+			}
+			if test.keptTMDB {
+				if tmdbClient.metaCalls != 0 {
+					t.Fatal("MAL recovery re-fetched the kept TMDB metadata")
+				}
+				return
 			}
 			if len(tmdbClient.metaInputs) == 0 {
 				t.Fatal("provider correction did not fetch TMDB metadata")
@@ -6126,6 +6180,114 @@ func TestResolveExternalIDsProviderCorrectionsRediscoverMAL(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestResolveExternalIDsKeepsProvidersIndependently(t *testing.T) {
+	for _, provider := range []api.IdentityProvider{api.IdentityProviderTMDB, api.IdentityProviderIMDB, api.IdentityProviderTVDB, api.IdentityProviderTVmaze, api.IdentityProviderMAL} {
+		for _, keep := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/keep=%t", provider, keep), func(t *testing.T) {
+				source := filepath.Join(t.TempDir(), "Example.Series.S01E01.mkv")
+				ids := api.ExternalIdentity{
+					SourcePath: source,
+					TMDBID:     101,
+					IMDBID:     202,
+					TVDBID:     303,
+					TVmazeID:   404,
+					MALID:      505,
+					Category:   api.CanonicalCategoryTV,
+					Provenance: api.IdentityProvenanceSet{
+						TMDB:   api.IdentityProvenanceRetained,
+						IMDB:   api.IdentityProvenanceRetained,
+						TVDB:   api.IdentityProvenanceRetained,
+						TVmaze: api.IdentityProvenanceRetained,
+						MAL:    api.IdentityProvenanceRetained,
+					},
+					Resolution: api.IdentityResolutionKey{ContractVersion: externalidentity.ContractVersion},
+				}
+				previous := api.SourceScopedMetadata{
+					SourcePath: source,
+					TMDB: &api.TMDBMetadata{
+						TMDBID:   101,
+						Category: "tv",
+						Title:    "Kept Series",
+						IMDBID:   202,
+					},
+					IMDB: &api.IMDBMetadata{
+						IMDBID: 202,
+						Title:  "Kept Series",
+						Type:   "tvSeries",
+					},
+					TVDB: &api.TVDBMetadata{TVDBID: 303, Name: "Kept Series"},
+					TVmaze: &api.TVmazeMetadata{
+						TVmazeID: 404,
+						Name:     "Kept Series",
+						IMDBID:   202,
+					},
+					AniList: &api.AniListMetadata{MALID: 505, TitleRomaji: "Kept Series"},
+				}
+				overrides := api.ExternalIDOverrides{IMDBID: new(999)}
+				switch provider {
+				case api.IdentityProviderTMDB:
+					overrides.KeepTMDB = new(keep)
+				case api.IdentityProviderIMDB:
+					overrides.KeepIMDB, overrides.IMDBID, overrides.TMDBID = new(keep), nil, new(999)
+				case api.IdentityProviderTVDB:
+					overrides.KeepTVDB = new(keep)
+				case api.IdentityProviderTVmaze:
+					overrides.KeepTVmaze = new(keep)
+				case api.IdentityProviderMAL:
+					overrides.KeepMAL = new(keep)
+				}
+				tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Corrected Series", TMDBType: "tv"}}
+				imdbClient := &stubIMDB{info: imdb.Info{
+					IMDbID: "tt0000999",
+					Title:  "Corrected Series",
+					Type:   "tvSeries",
+				}}
+				tvdbClient, tvmazeClient := &stubTVDB{}, &stubTVmaze{}
+				svc := newTestService(t, &fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient),
+					WithTVDBClient(tvdbClient), WithTVmazeClient(tvmazeClient))
+				result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+					SourcePath:          source,
+					StoredDataFresh:     true,
+					Identity:            ids,
+					ProviderMetadata:    previous,
+					ExternalIDOverrides: overrides,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, found := result.Identity.ProviderID(provider)
+				want, _ := ids.ProviderID(provider)
+				if !keep {
+					if found {
+						t.Fatalf("Keep-off retained %s ID %d", provider, got)
+					}
+					return
+				}
+				if !found || got != want {
+					t.Fatalf("kept %s ID = %d, want %d", provider, got, want)
+				}
+				var before, after any
+				var fetches int
+				switch provider {
+				case api.IdentityProviderTMDB:
+					before, after, fetches = previous.TMDB, result.ProviderMetadata.TMDB, tmdbClient.metaCalls
+				case api.IdentityProviderIMDB:
+					before, after, fetches = previous.IMDB, result.ProviderMetadata.IMDB, imdbClient.infoCalls
+				case api.IdentityProviderTVDB:
+					before, after, fetches = previous.TVDB, result.ProviderMetadata.TVDB, tvdbClient.seriesMetadataCalls
+				case api.IdentityProviderTVmaze:
+					before, after, fetches = previous.TVmaze, result.ProviderMetadata.TVmaze, tvmazeClient.calls
+				case api.IdentityProviderMAL:
+					before, after, fetches = previous.AniList, result.ProviderMetadata.AniList, tmdbClient.anilistCalls
+				}
+				if fetches != 0 || !reflect.DeepEqual(before, after) {
+					t.Fatalf("kept %s metadata changed or was fetched again: fetches=%d metadata=%#v", provider, fetches, after)
+				}
+			})
+		}
 	}
 }
 
