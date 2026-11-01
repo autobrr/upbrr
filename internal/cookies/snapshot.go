@@ -39,16 +39,12 @@ func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID
 	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tracker_cookies WHERE tracker_id = ?)`, trackerID).Scan(&present); err != nil {
 		return nil, fmt.Errorf("cookies: snapshot presence: %w", err)
 	}
-	if !present {
-		return fileValues, fileErr
-	}
-	salt, err := getSaltFromDB(ctx, db)
-	if err != nil {
-		return nil, err
-	}
 	state, err := getAuthStateFromDB(ctx, db)
 	if err != nil {
 		return nil, err
+	}
+	if !present && state.Fingerprint == "" {
+		return fileValues, fileErr
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("cookies: snapshot: %w", err)
@@ -70,6 +66,14 @@ func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID
 		if !ok {
 			return nil, ErrAuthHelperUnavailable
 		}
+	}
+	// Known provenance applies to legacy cookies even without a stored row.
+	if !present {
+		return fileValues, fileErr
+	}
+	salt, err := getSaltFromDB(ctx, db)
+	if err != nil {
+		return nil, err
 	}
 	if salt == "" {
 		if len(fileValues) > 0 {

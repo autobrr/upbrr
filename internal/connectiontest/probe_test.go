@@ -110,6 +110,7 @@ func TestPublicProviderProbesUseFixedContentFreeRequests(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		kind, instance, host, path, method, response, code string
+		status                                             int
 	}{
 		{
 			kind:     "tmdb",
@@ -118,6 +119,63 @@ func TestPublicProviderProbesUseFixedContentFreeRequests(t *testing.T) {
 			method:   http.MethodGet,
 			response: `{"success":true,"status_code":1}`,
 			code:     "success",
+		},
+		{
+			kind:     "tmdb",
+			host:     "api.themoviedb.org",
+			path:     "/3/authentication",
+			method:   http.MethodGet,
+			response: `{"status_code":1,"status_message":"Success."}`,
+			code:     "success",
+		},
+		{
+			kind:     "tmdb",
+			host:     "api.themoviedb.org",
+			path:     "/3/authentication",
+			method:   http.MethodGet,
+			response: `{"success":true}`,
+			code:     "success",
+		},
+		{
+			kind:     "tmdb",
+			host:     "api.themoviedb.org",
+			path:     "/3/authentication",
+			method:   http.MethodGet,
+			response: `{}`,
+			code:     "success",
+		},
+		{
+			kind:     "tmdb",
+			host:     "api.themoviedb.org",
+			path:     "/3/authentication",
+			method:   http.MethodGet,
+			response: `{"success":true,"status_code":7}`,
+			code:     "remote_error",
+		},
+		{
+			kind:     "tmdb",
+			host:     "api.themoviedb.org",
+			path:     "/3/authentication",
+			method:   http.MethodGet,
+			response: `<html>Generic availability page</html>`,
+			code:     "unexpected_response",
+		},
+		{
+			kind:     "tmdb",
+			host:     "api.themoviedb.org",
+			path:     "/3/authentication",
+			method:   http.MethodGet,
+			response: `null`,
+			code:     "unexpected_response",
+		},
+		{
+			kind:     "tmdb",
+			host:     "api.themoviedb.org",
+			path:     "/3/authentication",
+			method:   http.MethodGet,
+			response: `{"success":false,"status_code":7,"status_message":"synthetic-private-error"}`,
+			code:     "authentication_required",
+			status:   http.StatusUnauthorized,
 		},
 		{
 			kind:     "tmdb",
@@ -145,15 +203,19 @@ func TestPublicProviderProbesUseFixedContentFreeRequests(t *testing.T) {
 					t.Fatal("probe used an unexpected operation")
 				}
 				if tc.kind == "tmdb" {
-					if r.URL.Query().Get("api_key") != "synthetic-tmdb-key" {
+					if r.URL.Query().Get("api_key") != "synthetic-tmdb-key" || r.Header.Get("Authorization") != "" {
 						t.Fatal("TMDB key was not used")
 					}
 				} else if r.URL.RawQuery != "" || r.Header.Get("Authorization") != "" {
 					t.Fatal("unrelated credentials sent")
 				}
 
+				status := tc.status
+				if status == 0 {
+					status = http.StatusOK
+				}
 				return &http.Response{
-					StatusCode: http.StatusOK,
+					StatusCode: status,
 					Body:       io.NopCloser(strings.NewReader(tc.response)),
 					Header:     make(http.Header),
 				}, nil
@@ -164,6 +226,52 @@ func TestPublicProviderProbesUseFixedContentFreeRequests(t *testing.T) {
 				t.Fatalf("probe outcome: %s", got.Code)
 			}
 		})
+	}
+}
+
+type cancelAtEOFReader struct {
+	*strings.Reader
+	cancel context.CancelFunc
+}
+
+func (r cancelAtEOFReader) Read(buffer []byte) (int, error) {
+	n, err := r.Reader.Read(buffer)
+	if err == io.EOF {
+		r.cancel()
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func TestCanceledAfterBodyReadSkipsNestedHTMLClassification(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	// Each group stays inside net/html's 512-element depth limit; the total
+	// response stays below the probe's byte limit and contains no notice text.
+	group := strings.Repeat(`<div class="alert-danger">`, 500) + strings.Repeat(`</div>`, 500)
+	body := `<html><body>` + strings.Repeat(group, 60) + `</body></html>`
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(cancelAtEOFReader{Reader: strings.NewReader(body), cancel: cancel})}, nil
+	})}
+	got := test(ctx, config.Config{}, api.ConnectionTestTarget{Kind: "srrdb"}, client)
+	if got.Code != "canceled" {
+		t.Fatalf("canceled response was classified: %s", got.Code)
+	}
+}
+
+func BenchmarkConnectionTestNestedEmptyNotices(b *testing.B) {
+	group := strings.Repeat(`<div class="alert-danger">`, 500) + strings.Repeat(`</div>`, 500)
+	body := `<html><body>` + strings.Repeat(group, 60) + `</body></html>`
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	b.ReportAllocs()
+	for b.Loop() {
+		got := test(b.Context(), config.Config{}, api.ConnectionTestTarget{Kind: "srrdb"}, client)
+		if got.Code != "unexpected_response" {
+			b.Fatalf("empty notices identified a service: %s", got.Code)
+		}
 	}
 }
 

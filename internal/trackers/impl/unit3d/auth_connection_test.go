@@ -57,3 +57,24 @@ func TestConnectionProbeUsesDraftBearerAndRejectsUnrelatedResponses(t *testing.T
 		})
 	}
 }
+
+func TestConnectionPageLinkRecognizesEquivalentOrigins(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		endpoint, link string
+		want           bool
+	}{
+		{"https://tracker.example/base/api/torrents/filter", "https://TRACKER.EXAMPLE:443/base/api/torrents/filter?page=2", true},
+		{"https://tracker.example:443/base/api/torrents/filter", "https://tracker.example/base/api/torrents/filter?page=2", true},
+		{"http://tracker.example/base/api/torrents/filter", "http://TRACKER.EXAMPLE:80/base/api/torrents/filter?page=2", true},
+		{"https://tracker.example/base/api/torrents/filter", "https://tracker.example:444/base/api/torrents/filter", false},
+		{"https://tracker.example/base/api/torrents/filter", "http://tracker.example/base/api/torrents/filter", false},
+		{"https://tracker.example/base/api/torrents/filter", "https://other.example/base/api/torrents/filter", false},
+		{"https://tracker.example/base/api/torrents/filter", "https://user@tracker.example/base/api/torrents/filter", false},
+		{"https://tracker.example/base/api/torrents/filter", "https://tracker.example/base/api/torrents/filter#fragment", false},
+	} {
+		if got := connectionPageLink(tc.link, tc.endpoint); got != tc.want {
+			t.Errorf("pagination origin valid=%t want=%t", got, tc.want)
+		}
+	}
+}

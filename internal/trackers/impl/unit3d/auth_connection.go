@@ -97,5 +97,13 @@ func connectionPageLink(link, endpoint string) bool {
 		return false
 	}
 	parsed = base.ResolveReference(parsed)
+	// Match the repository's deployment identity normalization while retaining
+	// this probe's exact scheme/path boundary and never following the link.
+	for _, endpointURL := range []*url.URL{base, parsed} {
+		endpointURL.Host = strings.ToLower(endpointURL.Host)
+		if endpointURL.Scheme == "https" && endpointURL.Port() == "443" || endpointURL.Scheme == "http" && endpointURL.Port() == "80" {
+			endpointURL.Host = strings.TrimSuffix(endpointURL.Host, ":"+endpointURL.Port())
+		}
+	}
 	return parsed.Scheme == base.Scheme && parsed.Host == base.Host && parsed.Path == base.Path
 }

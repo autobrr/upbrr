@@ -73,12 +73,18 @@ func test(ctx context.Context, cfg config.Config, target api.ConnectionTestTarge
 		if failure.Code != "" {
 			return failure
 		}
-		var response struct {
-			Success    bool `json:"success"`
-			StatusCode int  `json:"status_code"`
+		// TMDB defines HTTP 200 with a JSON object as successful validation;
+		// its success and status_code properties are optional in the schema.
+		// Keep malformed bodies and explicit unsuccessful API codes distinct.
+		var response *struct {
+			Success    *bool `json:"success"`
+			StatusCode *int  `json:"status_code"`
 		}
-		if json.Unmarshal(body, &response) != nil || !response.Success || response.StatusCode != 1 {
+		if json.Unmarshal(body, &response) != nil || response == nil {
 			return UnexpectedResponse()
+		}
+		if response.StatusCode != nil && *response.StatusCode != 1 {
+			return result("remote_error", "TMDB returned an unsuccessful API validation response. Check the API key and TMDB service status.")
 		}
 		return result("success", "TMDB accepted the API key.")
 	case "sonarr", "radarr":
@@ -289,7 +295,7 @@ func request(
 	if len(data) > responseLimit {
 		return nil, result("unexpected_response", "The service response exceeded the connection test limit.")
 	}
-	if failure := responseFailure(data); failure.Code != "" {
+	if failure := responseFailure(ctx, data); failure.Code != "" {
 		return nil, failure
 	}
 	return data, api.ConnectionTestResult{}
@@ -317,7 +323,10 @@ func httpFailure(status int) api.ConnectionTestResult {
 // responseFailure recognizes explicit error envelopes and prominent HTML error
 // markers before provider success parsing. Remote text is never returned; unknown
 // content remains subject to the provider's own strict response validation.
-func responseFailure(body []byte) api.ConnectionTestResult {
+func responseFailure(ctx context.Context, body []byte) api.ConnectionTestResult {
+	if ctx.Err() != nil {
+		return RequestFailure(ctx, ctx.Err())
+	}
 	var envelope map[string]any
 	if json.Unmarshal(body, &envelope) == nil && envelope != nil {
 		success, hasSuccess := envelope["success"].(bool)
@@ -353,10 +362,23 @@ func responseFailure(body []byte) api.ConnectionTestResult {
 		return api.ConnectionTestResult{}
 	}
 	doc, err := html.Parse(strings.NewReader(string(body)))
+	if ctx.Err() != nil {
+		return RequestFailure(ctx, ctx.Err())
+	}
 	if err != nil {
 		return api.ConnectionTestResult{}
 	}
+	// Empty selected subtrees cannot contain another diagnostic. Skip their
+	// already-inspected descendants rather than walking every nested notice.
+	skip := 0
 	for node := range doc.Descendants() {
+		if ctx.Err() != nil {
+			return RequestFailure(ctx, ctx.Err())
+		}
+		if skip > 0 {
+			skip--
+			continue
+		}
 		if node.Type != html.ElementNode {
 			continue
 		}
@@ -375,13 +397,22 @@ func responseFailure(body []byte) api.ConnectionTestResult {
 			continue
 		}
 		var content strings.Builder
+		descendants := 0
 		for child := range node.Descendants() {
+			if ctx.Err() != nil {
+				return RequestFailure(ctx, ctx.Err())
+			}
+			descendants++
 			if child.Type == html.TextNode {
 				content.WriteString(child.Data)
 				content.WriteByte(' ')
 			}
 		}
 		text := strings.ToLower(strings.Join(strings.Fields(content.String()), " "))
+		if text == "" {
+			skip = descendants
+			continue
+		}
 		switch {
 		case strings.Contains(text, "just a moment"), strings.Contains(text, "checking your browser"), strings.Contains(text, "verify you are human"):
 			return result(

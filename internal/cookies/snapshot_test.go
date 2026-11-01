@@ -91,10 +91,10 @@ func TestSnapshotFiltersLegacyCookieDomains(t *testing.T) {
 func TestSnapshotLegacyFallbackPreservesProvenance(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name                                            string
-		missingSalt, missingHelper, mismatch, malformed bool
-		legacy                                          bool
-		want                                            string
+		name                                                   string
+		missingSalt, missingHelper, mismatch, malformed, noRow bool
+		legacy                                                 bool
+		want                                                   string
 	}{
 		{
 			name:        "missing salt",
@@ -131,6 +131,18 @@ func TestSnapshotLegacyFallbackPreservesProvenance(t *testing.T) {
 			legacy: true,
 			want:   "stored-session",
 		},
+		{
+name: "matching helper without stored row",
+ noRow: true,
+ legacy: true,
+ want: "legacy-session",
+},
+		{
+name: "mismatching helper without stored row",
+ noRow: true,
+ mismatch: true,
+ legacy: true,
+},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := newTestCookieDB(t)
@@ -144,8 +156,10 @@ func TestSnapshotLegacyFallbackPreservesProvenance(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := store.SaveCookie(t.Context(), "AZ", "session", "stored-session", key); err != nil {
-				t.Fatal(err)
+			if !tc.noRow {
+				if err := store.SaveCookie(t.Context(), "AZ", "session", "stored-session", key); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tc.missingSalt {
 				if _, err := db.ExecContext(t.Context(), `DELETE FROM config_settings WHERE section = ?`, cookieKeyConfigSection); err != nil {

@@ -54,6 +54,8 @@ Failed checks identify HTTP status codes and recognized API errors, maintenance 
 
 Pixhost checks a fixed synthetic public image URL without uploading anything. If Pixhost reports that URL as invalid, the result explains that the API was reached but the status check could not be verified; it does not report success.
 
+TMDB checks the entered API key at its fixed API v3 authentication endpoint. An HTTP 200 JSON validation response confirms that request; optional success fields may be absent. Explicit API errors, HTTP 401 and non-JSON pages are reported as failed checks. The check uses the same API-key authentication as metadata lookup.
+
 ## Secrets and direct actions
 
 Stored credentials appear as `[REDACTED]`. Leave that value unchanged to preserve the secret, enter a new value to replace it, or clear it to remove it. Never include configuration exports, API tokens, cookies, passkeys, or announce URLs in public reports.
