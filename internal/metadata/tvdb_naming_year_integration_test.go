@@ -207,6 +207,100 @@ func TestPreparedTVDBExplicitNamingYear(t *testing.T) {
 	}
 }
 
+func TestKeptTVDBAliasYearStaysBoundToItsDecision(t *testing.T) {
+	registry := trackerimpl.MustNewRegistry()
+	for _, test := range []struct {
+		name                   string
+		seriesYear             int
+		collision, wantInclude bool
+	}{
+		{name: "mismatched negative", seriesYear: 2020},
+		{
+			name:        "matching negative",
+			seriesYear:  2024,
+			wantInclude: true,
+		},
+		{
+			name:        "established collision",
+			seriesYear:  2020,
+			collision:   true,
+			wantInclude: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCorrectionEvidenceFixture(t)
+			fixture.input.Instructions.Identity.TVDBID = new(555003)
+			fixture.input.Instructions.Identity.IMDBID = new(555004)
+			fixture.imdb = &stubIMDB{info: imdb.Info{
+				IMDbID: "tt0555004",
+				Title:  "Example Series",
+				Type:   "tvSeries",
+			}}
+			provider := &stubTVDB{
+				specificAlias: "Example Series (2024)",
+				seriesMetadata: tvdb.SeriesMetadata{
+					TVDBID:      555003,
+					Name:        "Example Series",
+					NameEnglish: "Example Series",
+					Year:        test.seriesYear,
+					NameDisambiguation: tvdb.NameDisambiguation{
+						CanonicalName: "Example Series",
+						SeriesYear:    test.seriesYear,
+						IncludeYear:   test.collision,
+						Status:        api.MetadataEvidenceStatusPartial,
+						Source:        "synthetic",
+					},
+				},
+			}
+			if test.collision {
+				provider.seriesMetadata.NameDisambiguation.SameNameSeries = 1
+			}
+			fixture.tvdb = provider
+			module, _ := fixture.open(t)
+			initial := prepareCorrectionEvidence(t, module, fixture.input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+			original := *initial.Release.ProviderMetadata.TVDB
+			if original.Year != 2024 || !original.YearFromAlias || original.NameDisambiguation.IncludeYear != test.collision {
+				t.Fatalf("episode alias did not enrich the series snapshot: %+v", original)
+			}
+			beforeSeries, beforeSearch := provider.seriesMetadataCalls, len(provider.nameDisambiguationInputs)
+			kept := prepareCorrectionEvidence(t, module, api.PrepareInput{SourcePath: fixture.input.SourcePath, ExternalFreshness: api.ExternalFreshnessReuse}, api.ReleaseCorrectionUpdate{
+				Mode:  api.ReleaseCorrectionUpdatePatch,
+				Patch: &api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{Identity: api.ExternalIDOverrides{KeepTVDB: new(true)}}},
+			})
+			if provider.seriesMetadataCalls != beforeSeries || len(provider.nameDisambiguationInputs) != beforeSearch {
+				t.Fatal("Keep fetched new TVDB naming evidence")
+			}
+			if initial.Release.ProviderMetadata.TVDB.NameDisambiguation != original.NameDisambiguation {
+				t.Fatal("Keep mutated the previous immutable snapshot")
+			}
+			if kept.Release.Naming.Year != 2024 {
+				t.Fatalf("canonical alias year changed: %d", kept.Release.Naming.Year)
+			}
+			subject, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: fixture.input.SourcePath, Generation: kept.Release.Generation}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tracker := range []string{"AITHER", "DP", "BHD"} {
+				descriptor, _ := registry.LookupDescriptor(tracker)
+				prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: tracker, Meta: subject}, descriptor.ReleaseNamePolicy)
+				if failure != nil {
+					t.Fatal(failure)
+				}
+				name, err := prepared.ReviewedUploadName()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(name, fmt.Sprintf(" %d ", test.seriesYear)) != test.wantInclude {
+					t.Errorf("%s kept name=%q, want bound series year=%t", tracker, name, test.wantInclude)
+				}
+			}
+			if kept.Release.ProviderMetadata.TVDB.NameDisambiguation.IncludeYear != test.wantInclude {
+				t.Fatal("Keep promoted an alias into a different series-year decision")
+			}
+		})
+	}
+}
+
 func TestPreparedTVYearAvailabilityTransitions(t *testing.T) {
 	ownerT := t
 	fixture := newCorrectionEvidenceFixture(t)

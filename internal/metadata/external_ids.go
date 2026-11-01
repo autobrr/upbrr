@@ -1616,9 +1616,12 @@ func copyRetainedProviderMetadata(
 	}
 	if shouldUseTVDBForCategory(preparationstate.State{}, ids) {
 		if keepProvider(overrides.KeepTVDB) && usableTVDBMetadata(previous.TVDB, ids.TVDBID) {
-			// Keep freezes provider evidence, not a superseded derived naming decision.
+			// Keep freezes provider evidence. Repair a derived omission only when
+			// the explicit alias year belongs to that stored series-year decision.
 			retained := *previous.TVDB
-			retained.NameDisambiguation.IncludeYear = retained.NameDisambiguation.IncludeYear || tvdbNameDisambiguationInput(&retained).ExplicitNamingYear
+			if tvdbNameDisambiguationInput(&retained).ExplicitNamingYear && retained.NameDisambiguation.SeriesYear == retained.Year {
+				retained.NameDisambiguation.IncludeYear = true
+			}
 			target.TVDB = &retained
 		}
 		if keepProvider(overrides.KeepTVmaze) && usableTVmazeMetadata(previous.TVmaze, ids.TVmazeID) {

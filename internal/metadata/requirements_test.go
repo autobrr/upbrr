@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"path/filepath"
 	"testing"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -136,10 +137,16 @@ func TestPreparedRequirementsSatisfied(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			source := filepath.Join(t.TempDir(), "Example.2026.mkv")
 			release := api.PreparedRelease{
-				Naming:   api.NamingFacts{Title: "Example", Year: 2026},
-				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 11},
-				ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+				Source: api.SourceManifest{SourcePath: source},
+				Naming: api.NamingFacts{Title: "Example", Year: 2026},
+				Identity: api.ExternalIdentity{
+					SourcePath: source,
+					Category:   api.CanonicalCategoryMovie,
+					TMDBID:     11,
+				},
+				ProviderMetadata: api.SourceScopedMetadata{SourcePath: source, TMDB: &api.TMDBMetadata{
 					TMDBID:   11,
 					Category: "movie",
 					Title:    "Example",

@@ -17,6 +17,7 @@ import (
 // Unknown fields remain unsatisfied; this does not authorize tracker rules.
 func PreparedRequirementsSatisfied(set api.MetadataRequirementSet, release api.PreparedRelease, instructions api.ReleaseFactInstructions) bool {
 	meta := preparationstate.State{
+		SourcePath:           release.Source.SourcePath,
 		Release:              api.ReleaseInfo{Title: release.Naming.Title, Year: release.Naming.Year},
 		SeasonInt:            release.Episode.Season,
 		ReleaseNameOverrides: instructions.ReleaseName,
