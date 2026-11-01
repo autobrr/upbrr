@@ -286,3 +286,45 @@ func printCLIWorkflowProgress(output io.Writer, operation api.OperationKind) {
 		_, _ = fmt.Fprintln(output, message)
 	}
 }
+
+// cliMetadataProgress prints at most one intermediate line per 30 seconds,
+// plus one terminal outcome for slow or partially available preparation.
+// Polling and redirected output share this policy; no terminal controls are used.
+type cliMetadataProgress struct {
+	lastPrinted time.Time
+	message     string
+	printed     bool
+}
+
+func (p *cliMetadataProgress) Print(output io.Writer, operation api.WorkflowOperationStatus, now time.Time) {
+	if output == nil || operation.Operation != api.OperationKindPreparation {
+		return
+	}
+	if p.lastPrinted.IsZero() {
+		p.lastPrinted = now
+	}
+	terminal := isTerminalCLIWorkflowOperation(operation.Status)
+	var partial []string
+	for _, item := range operation.Items {
+		if strings.HasPrefix(item.Kind, "preparation_") && item.Status == api.StageStatusPartial {
+			partial = append(partial, item.Label)
+		}
+	}
+	if terminal && !p.printed && len(partial) == 0 {
+		return
+	}
+	message := safeDiagnosticText(strings.TrimSpace(operation.Message))
+	if message == "" {
+		message = string(operation.Status)
+	}
+	if terminal {
+		message = "Preparation " + string(operation.Status) + ". " + message
+		if len(partial) > 0 {
+			message += " Partial metadata: " + strings.Join(partial, ", ") + "."
+		}
+	} else if now.Sub(p.lastPrinted) < 30*time.Second || message == p.message {
+		return
+	}
+	_, _ = fmt.Fprintln(output, "Metadata: "+safeDiagnosticText(message))
+	p.lastPrinted, p.message, p.printed = now, message, true
+}

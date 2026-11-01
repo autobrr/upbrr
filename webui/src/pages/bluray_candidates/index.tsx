@@ -14,6 +14,7 @@ type Props = {
 
 const scoreLabel = (candidate: BlurayReleaseCandidate) => `${candidate.Score.toFixed(1)}/100`;
 
+/** Presents scored disc editions, calendar release dates, and explicit candidate selection. */
 export default function BlurayCandidatesPage(props: Props) {
   const { facet, setLightboxImage, setLightboxAlt } = props;
   const selecting = facet.view.status === "running";
@@ -129,6 +130,16 @@ export default function BlurayCandidatesPage(props: Props) {
                       <div>
                         <p className={pageStyle.label}>Publisher</p>
                         <p className={pageStyle.value}>{candidate.Publisher || "-"}</p>
+                      </div>
+                      <div>
+                        <p className={pageStyle.label}>Release date</p>
+                        <p className={pageStyle.value}>
+                          {candidate.ReleaseDate ? (
+                            <time dateTime={candidate.ReleaseDate}>{candidate.ReleaseDate}</time>
+                          ) : (
+                            "Unavailable"
+                          )}
+                        </p>
                       </div>
                       <div>
                         <p className={pageStyle.label}>Disc</p>

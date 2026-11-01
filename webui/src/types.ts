@@ -957,6 +957,8 @@ export type BluraySpecs = {
 };
 
 export type BlurayReleaseCandidate = {
+  /** Edition-specific YYYY-MM-DD calendar date; empty when unavailable. */
+  ReleaseDate: string;
   ReleaseID: string;
   ProductID: string;
   MovieTitle: string;

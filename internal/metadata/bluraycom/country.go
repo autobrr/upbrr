@@ -5,6 +5,7 @@ package bluraycom
 
 import (
 	"maps"
+	"path/filepath"
 	"strings"
 	"unicode"
 )
@@ -49,6 +50,19 @@ var countryRegionCodes = map[string]string{
 	"United States":        "USA",
 	"United Arab Emirates": "UAE",
 	"Vietnam":              "VIE",
+}
+
+// sourceCountry recognizes only complete, known country-code tokens in the
+// source folder. Unknown words and country names are not inferred as markers.
+func sourceCountry(sourcePath string) string {
+	for _, token := range strings.FieldsFunc(filepath.Base(sourcePath), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+		for country, code := range countryRegionCodes {
+			if strings.EqualFold(token, code) {
+				return country
+			}
+		}
+	}
+	return ""
 }
 
 // CountryRegionCodes returns a copy of the provider's known country-to-region

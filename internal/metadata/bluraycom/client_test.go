@@ -5,8 +5,11 @@ package bluraycom
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -461,4 +464,107 @@ func matchingBDInfo() *discparse.BDInfo {
 
 func hasNote(notes []string, want string) bool {
 	return slices.Contains(notes, want)
+}
+
+func TestReleaseCalendarDates(t *testing.T) {
+	for _, tc := range []struct{ name, link, text, want string }{
+		{"supplied calendar link", "https://www.blu-ray.com/movies/releasedates.php?year=2020&month=12#December01", "Dec 1, 2020", "2020-12-01"},
+		{"relative calendar link", "releasedates.php?year=2020&month=12#December01", "Dec 1, 2020", "2020-12-01"},
+		{"different edition", "/movies/releasedates.php?year=2024&month=2#February29", "Feb 29, 2024", "2024-02-29"},
+		{"invalid day", "/movies/releasedates.php?year=2023&month=2#February29", "Feb 29, 2023", ""},
+		{"month disagrees", "/movies/releasedates.php?year=2020&month=11#December01", "Dec 1, 2020", ""},
+		{"missing day", "/movies/releasedates.php?year=2020&month=12", "December 2020", ""},
+		{"missing date", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate, err := parseReleaseDetails(fmt.Sprintf(`<a href="%s">%s</a>`, tc.link, tc.text), sampleCandidate())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if candidate.ReleaseDate != tc.want {
+				t.Fatalf("release date = %q, want %q", candidate.ReleaseDate, tc.want)
+			}
+		})
+	}
+}
+
+type releaseFixtureTransport func(*http.Request) (*http.Response, error)
+
+func (f releaseFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestLookupCountryAuthorityAndEditionDates(t *testing.T) {
+	for _, tc := range []struct {
+		marker, selected, want string
+		threshold              float64
+	}{
+		{"GER", "", "102", 80},
+		{"USA", "", "101", 80},
+		{"", "", "101", 80},
+		{"XYZ", "", "101", 80},
+		{"GER", "", "", 100},
+		{"JPN", "", "", 80},
+		{"GER", "101", "101", 80},
+	} {
+		t.Run(tc.marker+tc.selected+fmt.Sprint(tc.threshold), func(t *testing.T) {
+			client := NewClient(&http.Client{Transport: releaseFixtureTransport(func(r *http.Request) (*http.Response, error) {
+				var body string
+				switch r.URL.Path {
+				case "/search/":
+					body = `<div class="figure"><a class="alphaborder" href="https://www.blu-ray.com/movies/Example/100/">Example</a></div>`
+				case "/products/menu_ajax.php":
+					var catalogue strings.Builder
+					catalogue.WriteString(`<h3>Blu-ray Editions</h3>`)
+					for i, country := range []string{"United States", "Germany", "Germany"} {
+						fmt.Fprintf(&catalogue, `<img width="18" height="12" title="%s"><a href="https://www.blu-ray.com/movies/Edition/%d/" title="Edition %d">Edition</a>`, country, 101+i, i)
+					}
+					body = catalogue.String()
+				default:
+					codec := "HEVC / H.265"
+					if strings.Contains(r.URL.Path, "103") {
+						codec = "AVC"
+					}
+					body = fmt.Sprintf(`<a href="/movies/releasedates.php?year=2020&month=12#December%02d">Release date</a><table><tr><td width="228px" style="font-size: 12px"><span class="subheading">Video</span>Codec: %s<br>Resolution: 2160p<br><span class="subheading">Audio</span><div id="longaudio">English: Dolby TrueHD Atmos 7.1</div><span class="subheading">Subtitles</span><div id="longsubs">English</div><span class="subheading">Discs</span>Single disc (1 BD-100)</td></tr></table>`, map[string]int{
+						"/movies/Edition/101/": 1,
+						"/movies/Edition/102/": 2,
+						"/movies/Edition/103/": 3,
+					}[r.URL.Path], codec)
+					if strings.Contains(r.URL.Path, "102") {
+						body = strings.ReplaceAll(body, "English</div>", "French</div>")
+					}
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			})})
+			result, err := client.Lookup(t.Context(), LookupInput{
+				IMDBID:            1234567,
+				SourcePath:        filepath.Join(t.TempDir(), "Example.Movie.2020."+tc.marker+".2160p.BluRay-GRP"),
+				DiscType:          "BDMV",
+				Resolution:        "2160p",
+				BDInfo:            matchingBDInfo(),
+				ScoreThreshold:    tc.threshold,
+				SingleThreshold:   tc.threshold,
+				SelectedReleaseID: tc.selected,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.SelectedReleaseID != tc.want {
+				t.Fatalf("selected = %q, want %q (%s)", result.SelectedReleaseID, tc.want, result.SelectionReason)
+			}
+			if len(result.Candidates) != 3 || result.Candidates[0].ReleaseID != "101" || result.Candidates[0].Score != 100 {
+				t.Fatalf("scoring/order changed: %#v", result.Candidates)
+			}
+			for i, candidate := range result.Candidates {
+				if candidate.ReleaseDate != fmt.Sprintf("2020-12-%02d", i+1) {
+					t.Fatalf("edition date = %q", candidate.ReleaseDate)
+				}
+			}
+			if tc.marker == "JPN" && !strings.Contains(result.SelectionReason, "Japan") {
+				t.Fatalf("missing country outcome: %s", result.SelectionReason)
+			}
+		})
+	}
 }

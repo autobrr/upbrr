@@ -971,6 +971,9 @@
           "Region": {
             "type": "string"
           },
+          "ReleaseDate": {
+            "type": "string"
+          },
           "ReleaseID": {
             "type": "string"
           },
@@ -1008,6 +1011,7 @@
           "ProductID",
           "Publisher",
           "Region",
+          "ReleaseDate",
           "ReleaseID",
           "Score",
           "Specs",

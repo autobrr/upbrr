@@ -2228,7 +2228,10 @@ type BlurayMetadata struct {
 	UpdatedAt         time.Time `ts_type:"string"`
 }
 
+// BlurayReleaseCandidate describes one disc edition and its local match evidence.
 type BlurayReleaseCandidate struct {
+	// ReleaseDate is an edition-specific YYYY-MM-DD calendar date, or empty when unavailable.
+	ReleaseDate  string
 	ReleaseID    string
 	ProductID    string
 	MovieTitle   string

@@ -20,6 +20,14 @@ Use **Settings → Metadata** to control how preparation gathers reusable torren
 
 **Limit tracker lookup to only metadata ids** restricts normal description and image enrichment. Inspect the prepared result when combining it with image collection. Imported comparison blocks stay in descriptions and are excluded from the ordinary screenshot set. To reuse eligible saved screenshots, open **Screenshots** and choose **Use saved images** when offered.
 
+## Blu-ray edition matching
+
+A recognized country marker in the selected source folder, such as `USA` or `GER`, restricts automatic matching to that country. Matching and thresholds apply within that set. If none match, no edition is selected automatically; you can still choose a candidate manually. Without a recognized marker, matching uses all candidates as before.
+
+Prepare older stored generations again after upgrading so their automatic edition selections follow these rules. Requiring an existing prepared generation rejects incompatible older facts; this does not require a database migration.
+
+Each release candidate shows its edition-specific **Release date** as `YYYY-MM-DD`, or **Unavailable** when the date cannot be read. Dates are calendar values and are not shifted by your timezone.
+
 ## Verify the change
 
 Save, prepare a synthetic release, then inspect **Tracker Data** and the preparation progress. Blu-ray lookup requires a disc source and IMDb identity; an ordinary video file will not exercise those settings.

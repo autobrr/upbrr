@@ -34,6 +34,7 @@ describe("BlurayCandidatesPage", () => {
                 Country: "Exampleland",
                 Region: "A",
                 Publisher: "Example Publisher",
+                ReleaseDate: "2020-12-01",
                 URL: "https://example.com/releases/accepted-candidate",
                 CoverImages: [
                   {
@@ -58,6 +59,7 @@ describe("BlurayCandidatesPage", () => {
                 Country: "Exampleland",
                 Region: "B",
                 Publisher: "Example Publisher",
+                ReleaseDate: "2024-02-29",
                 URL: "https://example.com/releases/alternate-candidate",
               },
               {
@@ -87,6 +89,10 @@ describe("BlurayCandidatesPage", () => {
       />,
     );
 
+    expect(screen.getAllByText("Release date")).toHaveLength(3);
+    expect(screen.getByText("2020-12-01")).toHaveAttribute("datetime", "2020-12-01");
+    expect(screen.getByText("2024-02-29")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
     expect(screen.getByText("Example Release 2026 Collector Edition")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {

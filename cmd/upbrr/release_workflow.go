@@ -289,6 +289,13 @@ func (s *cliWorkflowSession) waitForOperation(
 	ctx context.Context,
 	operation api.WorkflowOperationStatus,
 ) (api.WorkflowOperationStatus, error) {
+	var metadataProgress cliMetadataProgress
+	reportMetadata := func() {
+		if cliBridgeFromOutput(s.streams.out) == nil {
+			metadataProgress.Print(s.progressWriter, operation, time.Now())
+		}
+	}
+	reportMetadata()
 	s.publishOperationPresentation(ctx, operation)
 	if _, printed := s.printedProgress[operation.Operation]; !printed {
 		if s.printedProgress == nil {
@@ -331,6 +338,7 @@ func (s *cliWorkflowSession) waitForOperation(
 			return api.WorkflowOperationStatus{}, fmt.Errorf("upbrr: poll release workflow command: %w", err)
 		}
 		operation = current
+		reportMetadata()
 		s.publishOperationPresentation(ctx, operation)
 		if err := s.logNewOperationEvents(ctx, operation, &s.eventLogState); err != nil {
 			return api.WorkflowOperationStatus{}, err

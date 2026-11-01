@@ -16,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
+	"github.com/autobrr/upbrr/internal/metadata/progress"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -44,9 +45,15 @@ func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate
 		selectedID = strings.TrimSpace(meta.ProviderMetadata.Bluray.SelectedReleaseID)
 	}
 	if cached := s.reusableBlurayMetadata(meta, imdbID, bdinfo); cached != nil && !evidence.Enabled(ctx) {
-		if selectedID != "" {
-			cached.SelectCandidate(selectedID, false, "manual")
-		}
+		step := progress.Begin(ctx, "Read retained Blu-ray.com candidates")
+		step.Update(len(cached.Candidates), len(cached.Candidates), "Using retained candidates.")
+		step.Finish("Retained candidates ready.", false)
+		bluraycom.SelectRelease(cached, bluraycom.LookupInput{
+			SourcePath:        meta.SourcePath,
+			SelectedReleaseID: selectedID,
+			ScoreThreshold:    s.cfg.Metadata.BlurayScore,
+			SingleThreshold:   s.cfg.Metadata.BluraySingleScore,
+		})
 		meta.ProviderMetadata.Bluray = cached
 		meta = applySelectedBlurayCandidate(meta)
 		return meta

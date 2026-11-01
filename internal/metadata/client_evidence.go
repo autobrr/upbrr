@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
+	"github.com/autobrr/upbrr/internal/metadata/progress"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -20,7 +21,13 @@ func (s *Service) collectClientEvidence(
 	input api.PrepareInput,
 	state preparationstate.State,
 ) (preparationstate.State, error) {
+	step := progress.Begin(ctx, "Search configured torrent clients")
 	evidence, err := s.discoverClientEvidence(ctx, input, state.SourcePath, state.FileList, state.DiscType)
+	message := "Client discovery complete."
+	if err != nil {
+		message = "Client discovery failed."
+	}
+	step.Finish(message, err != nil)
 	if err != nil {
 		return preparationstate.State{}, err
 	}

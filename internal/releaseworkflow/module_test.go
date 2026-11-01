@@ -2728,6 +2728,12 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 				api.PreparationProgressCompleted,
 				"External identity ready.",
 			))
+			substep := api.NewPreparationProgressUpdate(api.PreparationPhaseMediaFacts, api.PreparationProgressRunning, "Waiting for the current edition.")
+			substep.Substep = "Read Blu-ray.com release details"
+			substep.CompletedItems, substep.TotalItems = 7, 100
+			substep.ElapsedSeconds = 10
+			api.EmitPreparationProgress(ctx, substep)
+
 			close(started)
 			select {
 			case <-ctx.Done():
@@ -2761,8 +2767,16 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 		t.Fatal("operation did not start")
 	}
 	progress := waitForWorkflowOperation(t, module, created.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool {
-		return status.Status == api.StageStatusRunning && status.Sequence >= 4 && len(status.Items) > 1
+		return status.Status == api.StageStatusRunning && status.Sequence >= 4 && len(status.Items) > 2
 	})
+	if progress.Completed != 800 || progress.Total != 1200 {
+		t.Fatalf("substep replaced aggregate stage order: %#v", progress)
+	}
+	if !slices.ContainsFunc(progress.Items, func(item api.WorkflowOperationItem) bool {
+		return item.Kind == "preparation_substep" && item.Phase == "media_facts" && item.Completed == 7 && item.Total == 100 && strings.Contains(item.Message, "10s elapsed")
+	}) {
+		t.Fatalf("substep lost in durable operation: %#v", progress.Items)
+	}
 	if progress.Revision != created.Workflow.Revision || progress.Progress == 0 {
 		t.Fatalf("running operation progress = %#v", progress)
 	}
@@ -2770,7 +2784,7 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 		t.Fatalf("operation progress was not sanitized: %q", progress.Message)
 	}
 	if !slices.ContainsFunc(progress.Events, func(event api.WorkflowEvent) bool {
-		return event.ScopeID == string(api.PreparationPhaseExternalIdentity) && event.State == api.StageStatusCompleted
+		return event.ScopeID == string(api.PreparationPhaseMediaFacts) && event.State == api.StageStatusRunning
 	}) {
 		t.Fatalf("running operation omitted changed child event: %#v", progress.Events)
 	}
@@ -5774,5 +5788,27 @@ func TestUploadDryRunReportsPreserveEditionFeatures(t *testing.T) {
 	reports[0].EditionFeatures[0].Selected = false
 	if !features[0].Selected {
 		t.Fatal("dry-run report aliases retained review catalogue")
+	}
+}
+
+func TestPreparationSubstepCountersDoNotMixWithStageOrder(t *testing.T) {
+	status := api.WorkflowOperationStatus{}
+	applyWorkflowProgress(&status, api.WorkflowProgressUpdate{
+		ItemID:    "media_facts",
+		Kind:      "preparation_substep",
+		Status:    api.StageStatusRunning,
+		Completed: 1400,
+		Total:     2000,
+		ItemOnly:  true,
+	})
+	applyWorkflowProgress(&status, api.WorkflowProgressUpdate{
+		ItemID:    "media_facts",
+		Kind:      "preparation_phase",
+		Status:    api.StageStatusCompleted,
+		Completed: 900,
+		Total:     1200,
+	})
+	if status.Completed != 900 || status.Total != 1200 || status.Items[0].Completed != 900 || status.Items[0].Total != 1200 {
+		t.Fatalf("mixed counter units: %#v", status)
 	}
 }

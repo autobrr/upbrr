@@ -203,3 +203,57 @@ func TestBlurayAutomaticSelectionIsReconsideredOnRescore(t *testing.T) {
 		t.Fatalf("manual selection lost or refetched: %#v, requests=%d", result.ProviderMetadata.Bluray, requests)
 	}
 }
+
+func TestRetainedBlurayCountrySelectionAndCalendarDates(t *testing.T) {
+	repo, source := openProviderEvidenceStore(t)
+	source = filepath.Join(filepath.Dir(source), "Example.Movie.2026.GER.BluRay-GRP")
+	metadata := api.SourceScopedMetadata{SourcePath: source, Bluray: &api.BlurayMetadata{
+IMDBID: 1234567,
+ AutoSelected: true,
+ SelectedReleaseID: "usa",
+ Candidates: []api.BlurayReleaseCandidate{
+		{
+ReleaseID: "usa",
+ Country: "United States",
+ Region: "USA",
+ Score: 100,
+ Accepted: true,
+ ReleaseDate: "2020-12-01",
+},
+		{
+ReleaseID: "ger",
+ Country: "Germany",
+ Region: "GER",
+ Score: 95,
+ ReleaseDate: "2024-02-29",
+},
+	},
+}}
+	if err := repo.SaveExternalMetadata(t.Context(), metadata); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := repo.GetExternalMetadata(t.Context(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{cfg: config.Config{Metadata: config.MetadataConfig{
+GetBlurayInfo: true,
+ BlurayScore: 90,
+ BluraySingleScore: 90,
+}}, bluray: bluraycom.NewClient(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("retained candidates triggered a network request")
+		return nil, nil
+	})})}
+	result := service.applyBlurayMetadata(t.Context(), preparationstate.State{
+SourcePath: source,
+ DiscType: "BDMV",
+ Identity: api.ExternalIdentity{IMDBID: 1234567},
+ ProviderMetadata: retained,
+}, nil)
+	if result.ProviderMetadata.Bluray.SelectedReleaseID != "ger" || result.Region != "GER" || result.ProviderMetadata.Bluray.Candidates[1].ReleaseDate != "2024-02-29" {
+		t.Fatalf("retained match = %#v", result.ProviderMetadata.Bluray)
+	}
+	if metadata.Bluray.Candidates[0].ReleaseDate != "2020-12-01" {
+		t.Fatal("original date mutated")
+	}
+}

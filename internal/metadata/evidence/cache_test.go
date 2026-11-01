@@ -19,6 +19,7 @@ import (
 	"time"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/metadata/progress"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -640,6 +641,92 @@ func TestProviderRefreshRetainsIndependentEmptyEvidence(t *testing.T) {
 						t.Fatalf("freshness=%s result=%v error=%v calls=%d want=%d scope=%v", freshness, got, err, calls, wantCalls, scope.Err())
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestOtherMetadataSubstepsReportWaitingAndRetainedEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		domain, label string
+		phase         api.PreparationProgressPhase
+	}{
+		{"tmdb.response.v2", "Read TMDB metadata", api.PreparationPhaseExternalIdentity},
+		{"arr.lookup", "Query Sonarr or Radarr", api.PreparationPhaseArrIdentity},
+		{"tracker.lookup", "Read tracker metadata and assets", api.PreparationPhaseTrackerEvidence},
+		{"scene.exact", "Read scene metadata", api.PreparationPhaseSourceEvidence},
+	} {
+		t.Run(tc.domain, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var mu sync.Mutex
+				var updates []api.PreparationProgressUpdate
+				observed := api.WithPreparationProgressReporter(t.Context(), func(u api.PreparationProgressUpdate) { mu.Lock(); defer mu.Unlock(); updates = append(updates, u) })
+				store := &memoryEvidenceStore{}
+				source := filepath.Join(t.TempDir(), "Example.Movie.2026.mkv")
+				calls := 0
+				for range 2 {
+					ctx, _ := WithScope(observed, store, source, "fingerprint", api.ExternalFreshnessReuse, nil)
+					ctx, finish := progress.StartStage(ctx, tc.phase)
+					value, err := Lookup(ctx, tc.domain, "synthetic-query", func() (int, error) { calls++; time.Sleep(6 * time.Second); return 42, nil }, nil)
+					finish(err)
+					if err != nil || value != 42 {
+						t.Fatalf("lookup = %d, %v", value, err)
+					}
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				waiting, reused := false, false
+				for _, u := range updates {
+					waiting = waiting || (u.Phase == tc.phase && u.Substep == tc.label && u.ElapsedSeconds >= 5 && u.CompletedItems == 0)
+					reused = reused || strings.Contains(u.Message, "retained")
+				}
+				if calls != 1 || !waiting || !reused {
+					t.Fatalf("calls=%d waiting=%v retained=%v", calls, waiting, reused)
+				}
+			})
+		})
+	}
+}
+
+func TestUnavailableAndCanceledEvidenceProgressOutcomes(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprint("canceled=", canceled), func(t *testing.T) {
+			store := &memoryEvidenceStore{}
+			source := filepath.Join(t.TempDir(), "Example.Release.mkv")
+			calls := 0
+			for pass := range 2 {
+				var terminal api.PreparationProgressUpdate
+				observed := api.WithPreparationProgressReporter(t.Context(), func(u api.PreparationProgressUpdate) { terminal = u })
+				ctx, _ := WithScope(observed, store, source, "fingerprint", api.ExternalFreshnessReuse, nil)
+				ctx, finish := progress.StartStage(ctx, api.PreparationPhaseTrackerEvidence)
+				fetchCtx, cancel := context.WithCancel(ctx)
+				_, err := Lookup(fetchCtx, "tracker.lookup", "same-query", func() (int, error) {
+					calls++
+					if canceled {
+						cancel()
+						return 0, context.Canceled
+					}
+					return 0, errors.New("synthetic metadata unavailable")
+				}, nil)
+				cancel()
+				if err == nil {
+					t.Fatal("expected unavailable evidence")
+				}
+				finish(nil) // A best-effort caller continues, or a winning parallel tracker completes the stage.
+				want := api.PreparationProgressPartial
+				if canceled {
+					want = api.PreparationProgressCompleted
+				}
+				if terminal.Status != want {
+					t.Fatalf("pass %d status=%s want %s", pass, terminal.Status, want)
+				}
+			}
+			wantCalls := 1
+			if canceled {
+				wantCalls = 2
+			} // Canceled losing requests must not be retained.
+			if calls != wantCalls {
+				t.Fatalf("fetch calls=%d want %d", calls, wantCalls)
 			}
 		})
 	}
