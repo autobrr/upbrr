@@ -209,6 +209,7 @@ export type BlurayMetadata = Readonly<{
   AutoSelected: boolean;
   BestScore: number;
   Candidates: readonly BlurayReleaseCandidate[];
+  Country: string;
   IMDBID: number;
   SearchURL: string;
   SelectedReleaseID: string;
@@ -236,6 +237,7 @@ export type BlurayReleaseCandidate = Readonly<{
   ProductID: string;
   Publisher: string;
   Region: string;
+  ReleaseDate: string;
   ReleaseID: string;
   Score: number;
   Specs: BluraySpecs;
@@ -563,6 +565,11 @@ export type ExternalFreshness = string;
 
 export type ExternalIDOverrides = Readonly<{
   IMDBID?: number | null;
+  KeepIMDB?: boolean | null;
+  KeepMAL?: boolean | null;
+  KeepTMDB?: boolean | null;
+  KeepTVDB?: boolean | null;
+  KeepTVmaze?: boolean | null;
   MALID?: number | null;
   TMDBID?: number | null;
   TVDBID?: number | null;
@@ -1147,6 +1154,7 @@ export type MediaArtifactSet = Readonly<{
   failures?: readonly WorkflowFailure[];
   hostAttempts?: readonly HostedImageAttempt[];
   id: MediaArtifactSetID;
+  imageHostPreference?: string | null;
   imageHostUploadSkipped?: boolean;
   imageRequirementsPrepared: boolean;
   projectionSet: TrackerReleaseProjectionSetRef;
@@ -1567,6 +1575,7 @@ export type PreparedReleaseDisplay = Readonly<{
   MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
+  TVDBNamingAvailable?: boolean;
   TrackerData: readonly TrackerPreview[];
   hdrTargets?: readonly HDRAnalysisTarget[];
 }>;

@@ -2360,21 +2360,31 @@ func (m *Module) withOperationReporters(
 			itemStatus = api.StageStatusSkipped
 		case api.PreparationProgressFailed:
 			itemStatus = api.StageStatusFailed
+		case api.PreparationProgressPartial:
+			itemStatus = api.StageStatusPartial
+		case api.PreparationProgressCanceled:
+			itemStatus = api.StageStatusCanceled
 		case api.PreparationProgressRunning:
 		}
 		completed := 0
 		if itemStatus != api.StageStatusRunning {
 			completed = min(update.Order, 1200)
 		}
+		kind, total := "preparation_phase", 1200
+		if update.Substep != "" {
+			kind = "preparation_substep"
+			completed, total = update.CompletedItems, update.TotalItems
+		}
 		report(api.WorkflowProgressUpdate{
 			Phase:     string(update.Phase),
 			ItemID:    string(update.Phase),
-			Kind:      "preparation_phase",
+			Kind:      kind,
 			Label:     update.Label,
 			Status:    itemStatus,
 			Completed: completed,
-			Total:     1200,
-			Message:   update.Message,
+			Total:     total,
+			Message:   update.Detail(),
+			ItemOnly:  update.Substep != "",
 		})
 	})
 	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
@@ -2469,8 +2479,12 @@ func applyWorkflowProgress(status *api.WorkflowOperationStatus, update api.Workf
 		Message:   strings.TrimSpace(update.Message),
 	}
 	if itemIndex >= 0 {
-		item.Completed = max(status.Items[itemIndex].Completed, item.Completed)
-		item.Total = max(status.Items[itemIndex].Total, item.Total)
+		// A preparation substep can start a new work set or discover its total.
+		// These local counts never advance aggregate stage-order progress.
+		if update.Kind != "preparation_substep" && status.Items[itemIndex].Kind != "preparation_substep" {
+			item.Completed = max(status.Items[itemIndex].Completed, item.Completed)
+			item.Total = max(status.Items[itemIndex].Total, item.Total)
+		}
 		if progressStatusRank(status.Items[itemIndex].Status) > progressStatusRank(item.Status) {
 			item.Status = status.Items[itemIndex].Status
 			item.Message = status.Items[itemIndex].Message
@@ -6382,6 +6396,7 @@ func (m *Module) uploadMediaImages(
 		artifactIDs,
 		command.Host,
 		command.Retry,
+		command.PreferredHost,
 		now,
 	)
 	if err != nil {
@@ -6415,6 +6430,7 @@ func (m *Module) uploadMediaImages(
 	switch {
 	case strings.TrimSpace(command.Host) == "":
 		updated.ImageRequirementsPrepared = true
+		updated.ImageHostPreference = cloneStringPointer(command.PreferredHost)
 	case leavingSkipMode:
 		// Host-specific upload after skip must not retain full preparation, or
 		// partial host coverage can block other trackers before required hosting runs.
@@ -6705,6 +6721,7 @@ func (m *Module) publishMediaMutation(
 		ImageRequirementsPrepared    bool
 		ImageHostUploadSkipped       bool
 		AutomaticScreenshotSelection bool
+		ImageHostPreference          *string `json:",omitempty"`
 	}{
 		snapshot.CaptureFingerprint,
 		snapshot.Artifacts,
@@ -6713,6 +6730,7 @@ func (m *Module) publishMediaMutation(
 		snapshot.ImageRequirementsPrepared,
 		snapshot.ImageHostUploadSkipped,
 		snapshot.AutomaticScreenshotSelection,
+		snapshot.ImageHostPreference,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint media mutation: %w", err)

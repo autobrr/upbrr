@@ -14,6 +14,7 @@ type Props = {
 
 const scoreLabel = (candidate: BlurayReleaseCandidate) => `${candidate.Score.toFixed(1)}/100`;
 
+/** Presents scored disc editions, calendar release dates, and explicit candidate selection. */
 export default function BlurayCandidatesPage(props: Props) {
   const { facet, setLightboxImage, setLightboxAlt } = props;
   const selecting = facet.view.status === "running";
@@ -28,7 +29,8 @@ export default function BlurayCandidatesPage(props: Props) {
         <p className={pageStyle.eyebrow}>Blu-ray.com</p>
         <h1>Release Candidates</h1>
         <p className={pageStyle.subtitle}>
-          Best accepted match loads by score; select another release here.
+          A single matching-country release is selected automatically. Multiple releases use
+          disc-spec scores; select another eligible release here.
         </p>
       </header>
 
@@ -43,12 +45,18 @@ export default function BlurayCandidatesPage(props: Props) {
           <section className={`${pageStyle.panel} grid gap-2 py-3`}>
             <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2">
               <div>
+                <p className={pageStyle.label}>Release country</p>
+                <p className={pageStyle.value}>{bluray.Country || "Not locked"}</p>
+              </div>
+              <div>
                 <p className={pageStyle.label}>Best score</p>
                 <p className={pageStyle.value}>{bluray.BestScore.toFixed(1)}</p>
               </div>
               <div>
                 <p className={pageStyle.label}>Required score</p>
-                <p className={pageStyle.value}>{bluray.Threshold.toFixed(1)}</p>
+                <p className={pageStyle.value}>
+                  {bluray.Threshold === 0 ? "No minimum" : bluray.Threshold.toFixed(1)}
+                </p>
               </div>
               <div>
                 <p className={pageStyle.label}>Auto-selected</p>
@@ -123,12 +131,22 @@ export default function BlurayCandidatesPage(props: Props) {
                         <p className={pageStyle.value}>{candidate.Country || "-"}</p>
                       </div>
                       <div>
-                        <p className={pageStyle.label}>Region</p>
+                        <p className={pageStyle.label}>Country code</p>
                         <p className={pageStyle.value}>{candidate.Region || "-"}</p>
                       </div>
                       <div>
                         <p className={pageStyle.label}>Publisher</p>
                         <p className={pageStyle.value}>{candidate.Publisher || "-"}</p>
+                      </div>
+                      <div>
+                        <p className={pageStyle.label}>Release date</p>
+                        <p className={pageStyle.value}>
+                          {candidate.ReleaseDate ? (
+                            <time dateTime={candidate.ReleaseDate}>{candidate.ReleaseDate}</time>
+                          ) : (
+                            "Unavailable"
+                          )}
+                        </p>
                       </div>
                       <div>
                         <p className={pageStyle.label}>Disc</p>
@@ -168,6 +186,14 @@ export default function BlurayCandidatesPage(props: Props) {
                         <p className={pageStyle.label}>Subtitles</p>
                         <p className={`${pageStyle.value} [overflow-wrap:anywhere]`}>
                           {(candidate.Specs?.Subtitles || []).slice(0, 6).join(", ") || "-"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className={pageStyle.label}>Playback region</p>
+                        <p className={pageStyle.value}>
+                          {candidate.Specs?.Playback?.Region
+                            ? `${candidate.Specs.Playback.Region}${candidate.Specs.Playback.RegionNotes ? ` (${candidate.Specs.Playback.RegionNotes})` : ""}`
+                            : "-"}
                         </p>
                       </div>
                     </div>

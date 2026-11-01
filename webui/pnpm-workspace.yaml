@@ -4,3 +4,8 @@ minimumReleaseAgeExclude:
   - fast-uri@3.1.5
   - brace-expansion@5.0.9
   - js-yaml@4.3.1
+# GHSA-g3hv-75wg-m249: recheck these exact consumers when their parents update.
+overrides:
+  eslint@10.4.0>minimatch: 11.0.3
+  "@eslint/config-array@0.23.5>minimatch": 11.0.3
+  "@typescript-eslint/typescript-estree@8.60.0>minimatch": 11.0.3

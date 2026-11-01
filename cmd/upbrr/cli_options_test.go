@@ -1684,16 +1684,27 @@ func TestCLIInputFlagOccurrenceSkipsValuesAndLiteralPaths(t *testing.T) {
 
 func TestCLIInputEditReplacesEarlierCorrection(t *testing.T) {
 	t.Parallel()
-	args, err := mergeCLIInputEditArgs([]string{"-g", "GRP", "--alternate-title=Old", "--commentary", "example.mkv"}, []string{"--tag=OTHER", "--alternate-title", "New", "--mc=false"})
+	args, err := mergeCLIInputEditArgs([]string{"-g", "GRP", "--alternate-title=Old", "--commentary", "--keep-existing-ids", "example.mkv"},
+		[]string{"--tag=OTHER", "--alternate-title", "New", "--mc=false", "--keep-existing-ids=false"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts, _, paths, err := parseCLIOptions(args)
+	opts, visited, paths, err := parseCLIOptions(args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Tag != "OTHER" || opts.AlternateTitle != "New" || opts.Commentary || !slices.Equal(paths, []string{"example.mkv"}) {
+	if opts.Tag != "OTHER" || opts.AlternateTitle != "New" || opts.Commentary || opts.KeepExistingIDs || !slices.Equal(paths, []string{"example.mkv"}) {
 		t.Fatalf("edited options = %#v, paths = %v", opts, paths)
+	}
+	request, err := buildCLIRequest(opts, visited, paths, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range []*bool{request.ExternalIDOverrides.KeepTMDB, request.ExternalIDOverrides.KeepIMDB, request.ExternalIDOverrides.KeepTVDB,
+		request.ExternalIDOverrides.KeepTVmaze, request.ExternalIDOverrides.KeepMAL} {
+		if keep == nil || *keep {
+			t.Fatal("interactive Keep-off did not reach the preparation request")
+		}
 	}
 	if _, err := mergeCLIInputEditArgs(args, []string{"--alternate-title=A", "--alternate-title=B"}); err == nil {
 		t.Fatal("duplicate correction within one edit was accepted")

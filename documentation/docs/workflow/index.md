@@ -45,6 +45,10 @@ upbrr prepares one release and creates one torrent rooted at the selected collec
 
 ## 2. Review canonical metadata
 
+Metadata preparation reports the active substep within its parent stage, including provider lookups, client discovery, media inspection, and Blu-ray.com catalogue discovery and release details. Counts describe processed work; an unknown total remains indeterminate. Elapsed updates indicate waiting without claiming more completed work. Reused evidence is identified as retained, and optional metadata failures remain visible as partial outcomes.
+
+The Web UI and TUI update their existing progress display in place. Plain CLI output keeps fast preparation with no unavailable metadata quiet and emits at most one intermediate metadata line every 30 seconds, deduplicating unchanged updates, plus a terminal outcome when intermediate output was needed. Partial metadata outcomes are also reported when preparation finishes. Redirected output follows the same bound and uses ordinary lines. Detailed per-request diagnostics remain at TRACE.
+
 Metadata providers and local media inspection produce shared release facts. Review at least:
 
 - title and year;
@@ -109,7 +113,9 @@ under their existing override rules.
 
 If a composite upload stops because a required global source or type is missing, its operation reports an input failure rather than a completed upload. Edit the missing fields on Input, then retry from the latest workflow state. If another stage stops without a next action, review its retained stop reason before retrying; a stopped operation is not proof of a successful tracker submission.
 
-Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections. An explicit TV category correction permits TVDB lookup even when the filename was parsed as Movie; TV naming year still follows eligible TVDB alias evidence.
+Each manually selected provider ID is authoritative independently, including when several selections conflict with provider cross-links. upbrr retains successfully fetched metadata for each selection through refresh and restart; the disagreement alone does not block preparation. Unspecified IDs still require the existing inference agreement, except that MAL can be discovered from the selected TMDB resource even when its IMDb or TVDB links disagree with other selections. A manual MAL ID or an explicit MAL clear takes precedence; cleared providers stay cleared. Invalid syntax, failed lookups and responses for the wrong requested resource remain errors.
+
+Accepted corrections win over history and provider metadata, except provider-owned fields. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections. An explicit TV category correction permits TVDB lookup even when the filename was parsed as Movie; TV naming year follows usable TVDB naming evidence, including collision qualifiers and automatic omission. Manual year and omission controls apply only while usable TVDB naming data is missing.
 
 When **Saved values need review** appears on Input, review the affected fields and the source or provider identity changes shown with each saved value. Choose **Keep saved value**, edit the value where supported, or choose **Use automatic value** to discard only that field's saved correction. Provider-owned fields remain read-only. **Use automatic values for all affected fields** resets only the fields listed in that review, preserving other corrections and history. Select **Apply and continue** to resume preparation; any unresolved fields remain visible. Automatic values are derived during preparation and are not shown as known while the release snapshot is unavailable. If identity evidence changes again, review the refreshed context before confirming again.
 

@@ -101,6 +101,20 @@ func DecryptImportedConfigSecrets(cfg *Config) (*Config, error) {
 	return decrypted, nil
 }
 
+// HasEncryptedSecrets reports whether decryption of the normalized JSON
+// clone requires helper material. It performs no file access or envelope
+// validation; unused direct credentials in proxy clients are omitted by cloning.
+func HasEncryptedSecrets(cfg *Config) (bool, error) {
+	if cfg == nil {
+		return false, errors.New("config secret inspection: nil config")
+	}
+	cloned, err := cloneConfig(cfg)
+	if err != nil {
+		return false, err
+	}
+	return hasEncryptedSecretEnvelopes(cloned)
+}
+
 // DecryptConfigSecrets returns a cloned config where known encrypted secret
 // fields are decrypted. Helper material is required only when at least one
 // secret envelope is present.

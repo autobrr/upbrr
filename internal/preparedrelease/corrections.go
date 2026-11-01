@@ -31,8 +31,8 @@ func (m *Module) CorrectionsCurrent(ctx context.Context, source string, revision
 // ResolveInput accepts corrections before external collection. Optimistic
 // transactions keep same-source updates atomic without holding a database
 // transaction during source inspection or provider requests.
-// Title and original-title corrections are discarded, along with manual year
-// when the category is already TV. Final identity resolution repeats this cleanup.
+// Title and original-title corrections are discarded; year corrections wait
+// for final TVDB availability. Final identity resolution repeats this cleanup.
 func (m *Module) ResolveInput(ctx context.Context, raw api.PrepareInput, update api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error) {
 	resolved, _, err := m.resolveInput(ctx, raw, update, nil)
 	return resolved, err
@@ -119,7 +119,7 @@ func (m *Module) resolveInput(
 			binding = contentBinding(fingerprint, current.Identity)
 		}
 		applyCorrectionIdentity(&binding, accepted)
-		discardProviderOwnedCorrections(&accepted, binding.Category)
+		discardProviderOwnedCorrections(&accepted, false)
 		if err := normalizeAcceptedCorrections(&accepted); err != nil {
 			return api.ResolvedPreparationInput{}, false, err
 		}
@@ -279,17 +279,19 @@ func normalizeAcceptedCorrections(stored *api.StoredReleaseCorrectionsV1) error 
 }
 
 // discardProviderOwnedCorrections retires legacy overrides and their confirmation
-// evidence. TV year follows TVDB naming policy; movie year remains editable.
-func discardProviderOwnedCorrections(stored *api.StoredReleaseCorrectionsV1, category api.CanonicalCategory) {
+// evidence. Only final usable TVDB naming data retires TV year corrections;
+// missing TVDB data leaves manual fallback and movie year choices intact.
+func discardProviderOwnedCorrections(stored *api.StoredReleaseCorrectionsV1, tvdbOwnsYear bool) {
 	stored.Metadata.Title = nil
 	stored.Metadata.OriginalTitle = nil
-	if category == api.CanonicalCategoryTV {
+	if tvdbOwnsYear {
+		stored.ReleaseName.NoYear = nil
 		stored.ReleaseName.ManualYear = nil
 	}
 	for _, field := range []api.CorrectionField{
-		api.CorrectionFieldMetadataTitle, api.CorrectionFieldMetadataOriginalTitle, api.CorrectionFieldReleaseNameManualYear,
+		api.CorrectionFieldMetadataTitle, api.CorrectionFieldMetadataOriginalTitle, api.CorrectionFieldReleaseNameManualYear, api.CorrectionFieldReleaseNameNoYear,
 	} {
-		if field == api.CorrectionFieldReleaseNameManualYear && category != api.CanonicalCategoryTV {
+		if (field == api.CorrectionFieldReleaseNameManualYear || field == api.CorrectionFieldReleaseNameNoYear) && !tvdbOwnsYear {
 			continue
 		}
 		delete(stored.ContentBindings, field)
@@ -461,13 +463,14 @@ func (m *Module) finalizeCorrectionBindings(
 	ctx context.Context,
 	resolved api.ResolvedPreparationInput,
 	identity api.ExternalIdentity,
+	tvdbOwnsYear bool,
 ) (api.StoredReleaseCorrectionsV1, error) {
 	final, err := api.ApplyReleaseCorrectionUpdate(resolved.Corrections, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
 	if err != nil {
 		return api.StoredReleaseCorrectionsV1{}, fmt.Errorf("prepared release: finalize correction update: %w", err)
 	}
 	binding := contentBinding(resolved.SourceFingerprint, identity)
-	discardProviderOwnedCorrections(&final, identity.Category)
+	discardProviderOwnedCorrections(&final, tvdbOwnsYear)
 	markStaleContent(&final, binding, resolved.ExplicitFields)
 	if len(final.StaleContentFields) > 0 {
 		stored := resolved.Corrections

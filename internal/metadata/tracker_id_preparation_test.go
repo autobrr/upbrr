@@ -25,6 +25,38 @@ import (
 )
 
 func TestPreparedTrackerIDsUpgradeBeforeProviderRequestsAndNaming(t *testing.T) {
+	for _, predecessor := range []struct {
+		name, prepared, identity string
+	}{
+		{
+name: "legacy main",
+ prepared: "prepared-release-v54",
+ identity: "external-identity-v3",
+},
+		{
+name: "main before merge",
+ prepared: "prepared-release-v61",
+ identity: "external-identity-v4",
+},
+		{
+name: "PR before merge",
+ prepared: "prepared-release-v57",
+ identity: "external-identity-v5",
+},
+		{
+name: "owner merge",
+ prepared: "prepared-release-v62",
+ identity: "external-identity-v5",
+},
+	} {
+		t.Run(predecessor.name, func(t *testing.T) {
+			testPreparedTrackerIDsUpgrade(t, predecessor.prepared, predecessor.identity)
+		})
+	}
+}
+
+func testPreparedTrackerIDsUpgrade(t *testing.T, preparedVersion, identityVersion string) {
+	t.Helper()
 	fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Movie.2026.1080p.WEB-DL.H264-GRP.mkv")
 	fixture.input.Policy.OnlyID = true
 	fixture.input.ExternalFreshness = api.ExternalFreshnessReuse
@@ -105,8 +137,8 @@ func TestPreparedTrackerIDsUpgradeBeforeProviderRequestsAndNaming(t *testing.T) 
 	if old.Identity.IMDBID != 1 {
 		t.Fatalf("small valid synthetic ID was not accepted: %+v", old.Identity)
 	}
-	old.Compatibility.ContractVersion = "prepared-release-v54"
-	old.Identity.Resolution.ContractVersion = "external-identity-v3"
+	old.Compatibility.ContractVersion = preparedVersion
+	old.Identity.Resolution.ContractVersion = identityVersion
 	old.Naming.ReleaseName = "Obsolete cached title"
 	if err := repo.CommitPreparedRelease(t.Context(), old); err != nil {
 		t.Fatal(err)

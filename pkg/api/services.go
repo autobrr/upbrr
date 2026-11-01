@@ -2137,7 +2137,8 @@ func filterRuleFailures(failures []RuleFailure, blocking bool) []RuleFailure {
 
 // ExternalIDOverrides carries caller-supplied ID intent into metadata
 // resolution. Nil means the resolver may fill the provider; a positive value
-// locks that provider to the supplied ID; zero locks an explicit clear for the
+// locks that provider independently, even when provider cross-links disagree;
+// zero locks an explicit clear for the
 // current request.
 type ExternalIDOverrides struct {
 	TMDBID   *int
@@ -2147,6 +2148,13 @@ type ExternalIDOverrides struct {
 	// MALID carries caller intent for the canonical MAL/AniList-compatible
 	// anime identifier. Nil leaves resolution unchanged; zero clears it.
 	MALID *int
+	// Keep* preserves an existing automatic provider match when another provider
+	// changes. Explicit ID values and clears remain independent and take precedence.
+	KeepTMDB   *bool `json:",omitempty"`
+	KeepIMDB   *bool `json:",omitempty"`
+	KeepTVDB   *bool `json:",omitempty"`
+	KeepTVmaze *bool `json:",omitempty"`
+	KeepMAL    *bool `json:",omitempty"`
 }
 
 // AniListMetadata is the AniList media snapshot used for MAL/AniList preview.
@@ -2249,7 +2257,9 @@ type AniListExternalLink struct {
 }
 
 type BlurayMetadata struct {
-	SourcePath        string
+	SourcePath string
+	// Country limits Candidates to this recognized release country; empty means unrestricted.
+	Country           string
 	IMDBID            int
 	SearchURL         string
 	SelectedReleaseID string
@@ -2262,16 +2272,20 @@ type BlurayMetadata struct {
 	UpdatedAt         time.Time `ts_type:"string"`
 }
 
+// BlurayReleaseCandidate describes one disc edition and its local match evidence.
 type BlurayReleaseCandidate struct {
-	ReleaseID    string
-	ProductID    string
-	MovieTitle   string
-	MovieYear    string
-	Title        string
-	URL          string
-	Price        string
-	Publisher    string
-	Country      string
+	// ReleaseDate is an edition-specific YYYY-MM-DD calendar date, or empty when unavailable.
+	ReleaseDate string
+	ReleaseID   string
+	ProductID   string
+	MovieTitle  string
+	MovieYear   string
+	Title       string
+	URL         string
+	Price       string
+	Publisher   string
+	Country     string
+	// Region is the release-country code, distinct from Specs.Playback.Region (A/B/C).
 	Region       string
 	Score        float64
 	Accepted     bool

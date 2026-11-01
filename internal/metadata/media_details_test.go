@@ -450,7 +450,7 @@ func TestRebuildReleaseNameOmitsGeneratedEpisodeTitle(t *testing.T) {
 	}
 }
 
-func TestRebuildReleaseNameFinalizesTVPresentationAndHonorsNoYear(t *testing.T) {
+func TestRebuildReleaseNameFinalizesTVPresentationAndIgnoresNoYear(t *testing.T) {
 	meta := preparationstate.State{
 		SourcePath:       "Example.Show.2026.02.03.1080p.WEB-DL.H.264-GRP",
 		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 1234567},
@@ -475,13 +475,13 @@ func TestRebuildReleaseNameFinalizesTVPresentationAndHonorsNoYear(t *testing.T) 
 
 	RebuildReleaseName(&meta, api.NopLogger{})
 
-	if strings.Contains(meta.ReleaseName, "2026 ") {
-		t.Fatalf("NoYear restored TV search year in %q", meta.ReleaseName)
+	if !strings.Contains(meta.ReleaseName, "2026 ") {
+		t.Fatalf("NoYear suppressed TVDB naming year in %q", meta.ReleaseName)
 	}
 	want := api.ReleaseNamePresentation{
 		Version:            api.ReleaseNamePresentationVersionV1,
 		OmitAlternateTitle: true,
-		OmitYear:           true,
+		OmitYear:           false,
 		OmitSeasonEpisode:  true,
 		UseDailyDate:       true,
 	}

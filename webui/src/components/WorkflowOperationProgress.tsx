@@ -12,16 +12,33 @@ export function WorkflowOperationProgress({
 }: Readonly<{ operation?: WorkflowOperationStatus | null }>) {
   if (!operation || operation.operation === "duplicate_check") return null;
 
+  const metadataPreparation = operation.operation === "preparation";
+  const metadataItemIDs = new Set(
+    (operation.items || [])
+      .filter((item) => item.kind.startsWith("preparation_"))
+      .map((item) => item.id),
+  );
   const events = operation.events || [];
+  const latestMetadataMessages = new Map(
+    events
+      .filter((event) => metadataItemIDs.has(event.scopeId || ""))
+      .map((event) => [event.scopeId, event.message]),
+  );
   const scopedEvents = events.filter(
     (event) =>
       event.scopeId !== operation.workflowId &&
+      !(metadataPreparation && metadataItemIDs.has(event.scopeId || "")) &&
       (["queued", "running"].includes(event.lifecycle) ||
         event.severity === "warn" ||
         event.severity === "error"),
   );
   if (
     !visibleStatuses.has(operation.status) &&
+    !operation.items?.some(
+      (item) =>
+        item.kind.startsWith("preparation_") &&
+        (item.status === "partial" || item.status === "canceled"),
+    ) &&
     !events.some((event) => event.severity === "warn" || event.severity === "error")
   )
     return null;
@@ -46,7 +63,11 @@ export function WorkflowOperationProgress({
   const eventScopeIds = new Set(scopedEvents.map((event) => event.scopeId));
   const activeItems = (operation.items || []).filter(
     (item) =>
-      (item.status === "queued" || item.status === "running" || item.status === "failed") &&
+      (item.status === "queued" ||
+        item.status === "running" ||
+        item.status === "failed" ||
+        item.status === "partial" ||
+        (metadataPreparation && item.status === "canceled")) &&
       !eventScopeIds.has(item.id),
   );
 
@@ -67,24 +88,28 @@ export function WorkflowOperationProgress({
           </p>
         </div>
         <span className="text-muted-foreground text-sm">
-          {operation.total > 0 && operation.operation !== "analyze_hdr"
-            ? `${completed}/${operation.total} complete`
-            : `${Math.round(progress)}%`}
+          {metadataPreparation
+            ? "Metadata stages"
+            : operation.total > 0 && operation.operation !== "analyze_hdr"
+              ? `${completed}/${operation.total} complete`
+              : `${Math.round(progress)}%`}
         </span>
       </div>
-      <div
-        aria-label="Release workflow progress"
-        aria-valuemax={100}
-        aria-valuemin={0}
-        aria-valuenow={progress}
-        className="h-2 w-full overflow-hidden rounded-full bg-secondary"
-        role="progressbar"
-      >
+      {!metadataPreparation ? (
         <div
-          className="h-full rounded-full bg-primary transition-[width]"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
+          aria-label="Release workflow progress"
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={progress}
+          className="h-2 w-full overflow-hidden rounded-full bg-secondary"
+          role="progressbar"
+        >
+          <div
+            className="h-full rounded-full bg-primary transition-[width]"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      ) : null}
       {recovery ? <p className="text-muted-foreground text-sm">{recovery}</p> : null}
       {scopedEvents.length ? (
         <div className="grid gap-1 text-sm">
@@ -126,7 +151,7 @@ export function WorkflowOperationProgress({
                   item.status === "failed" ? "text-destructive-text" : "text-muted-foreground"
                 }
               >
-                {item.message || item.status}
+                {item.message || latestMetadataMessages.get(item.id) || item.status}
               </span>
             </div>
           ))}

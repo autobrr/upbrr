@@ -1528,6 +1528,68 @@ test("embedded web applies Release Details source options and persists source ID
   }
 });
 
+test("embedded web keeps selected providers through an IMDb correction and reload", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const keepTMDB = page.getByRole("checkbox", { name: "Keep existing TMDB data", exact: true });
+    const keepTVDB = page.getByRole("checkbox", { name: "Keep existing TVDB data", exact: true });
+    await keepTMDB.check();
+    await keepTVDB.check();
+    await page.getByRole("textbox", { name: "IMDb ID", exact: true }).fill("tt8889999");
+    const updated = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await expect((await updated).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    const restored = waitForAppMethod(page, "GetActiveInput");
+    await page.reload();
+    const current = await activeCurrentFromResponse(await restored);
+    expect(current.release?.release.Identity).toMatchObject({
+      TMDBID: 1001,
+      IMDBID: 8889999,
+      TVDBID: 2001,
+    });
+    expect(current.release?.release.ProviderMetadata.TMDB?.TMDBID).toBe(1001);
+    expect(current.release?.release.ProviderMetadata.TVDB?.TVDBID).toBe(2001);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(keepTMDB).toBeChecked();
+    await expect(keepTVDB).toBeChecked();
+    await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).toHaveValue("1001");
+    await expect(page.getByRole("textbox", { name: "TVDB ID", exact: true })).toHaveValue("2001");
+    expect(current.release?.display.TVDBNamingAvailable).toBe(true);
+    await expect(page.getByLabel("Manual year", { exact: true })).toBeDisabled();
+    await expect(page.getByRole("combobox", { name: "Omit year", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Remove TVDB ID", exact: true }).click();
+    const cleared = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await expect((await cleared).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(page.getByLabel("Manual year", { exact: true })).toBeEnabled();
+    await page.getByLabel("Manual year", { exact: true }).fill("2030");
+    await expect(page.getByRole("combobox", { name: "Omit year", exact: true })).toBeVisible();
+    const corrected = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await expect((await corrected).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    const fallbackReload = waitForAppMethod(page, "GetActiveInput");
+    await page.reload();
+    const fallback = await activeCurrentFromResponse(await fallbackReload);
+    expect(fallback.release?.release.Identity.TVDBID).toBe(0);
+    expect(fallback.release?.display.TVDBNamingAvailable).not.toBe(true);
+    expect(fallback.corrections?.corrections.releaseName.ManualYear).toBe(2030);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(page.getByLabel("Manual year", { exact: true })).toHaveValue("2030");
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded web distinguishes a cleared Release Details provider ID from Auto", async ({
   page,
 }) => {
@@ -1673,7 +1735,7 @@ test("embedded web retains Release Details corrections without downstream workfl
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     const categoryInput = page.getByRole("combobox", { name: "Category", exact: true });
     await categoryInput.selectOption("tv");
-    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeDisabled();
+    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     await categoryInput.selectOption("movie");
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     await page.getByRole("button", { name: "Auto Category", exact: true }).click();
@@ -1852,6 +1914,8 @@ test("embedded web selects a Blu-ray candidate through the authoritative workflo
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "Blu-ray Candidates" }).click();
     await expect(page.getByText("Example Release 2026 Collector Edition")).toBeVisible();
+    await expect(page.getByText("United States", { exact: true })).toHaveCount(3);
+    await expect(page.getByText("USA", { exact: true })).toHaveCount(2);
     await expect(page.getByRole("button", { name: "Selected" })).toBeDisabled();
 
     const response = page.waitForResponse((candidate) =>

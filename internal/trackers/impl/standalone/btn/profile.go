@@ -16,6 +16,7 @@ import (
 // Profile returns BTN identity, preparation, dupe, auth, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:         trackers.ConnectionProbe{Test: testConnection, DraftConfig: trackers.APIKeyProbeConfig},
 		Name:                    "BTN",
 		BaseURL:                 btnDefaultBaseURL,
 		DescriptionGroup:        "btn",

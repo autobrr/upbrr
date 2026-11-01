@@ -391,6 +391,11 @@ export type ExternalIDOverrides = {
   TVmazeID?: number | null;
   /** Canonical MAL/AniList-compatible anime identifier override. */
   MALID?: number | null;
+  KeepTMDB?: boolean | null;
+  KeepIMDB?: boolean | null;
+  KeepTVDB?: boolean | null;
+  KeepTVmaze?: boolean | null;
+  KeepMAL?: boolean | null;
 };
 
 export type ReleaseNameOverrides = {
@@ -924,6 +929,8 @@ export type ProviderDisplay =
   | (ProviderDisplayBase & { Provider: "mal"; Details: { AniList: AniListMetadata } });
 
 export type PreparedReleaseDisplay = {
+  /** Available TVDB naming data owns TV year even when no qualifier is selected. */
+  TVDBNamingAvailable?: boolean;
   CanKeepFolder?: boolean;
   Commentary?: boolean;
   ReleaseName: string;
@@ -957,6 +964,8 @@ export type BluraySpecs = {
 };
 
 export type BlurayReleaseCandidate = {
+  /** Edition-specific YYYY-MM-DD calendar date; empty when unavailable. */
+  ReleaseDate: string;
   ReleaseID: string;
   ProductID: string;
   MovieTitle: string;
@@ -979,6 +988,8 @@ export type BlurayReleaseCandidate = {
 
 export type BlurayMetadata = {
   SourcePath: string;
+  /** Recognized release country limiting Candidates; empty means unrestricted. */
+  Country: string;
   IMDBID: number;
   SearchURL: string;
   SelectedReleaseID: string;
@@ -1484,6 +1495,7 @@ export type ImageHostPolicyMetadata = {
   UploadHosts?: string[];
   TrackerUploadHosts?: Record<string, string[]>;
   OwnedHosts?: Record<string, string>;
+  UnavailableConnectionTests?: Record<string, string>;
 };
 export type FieldType = "string" | "number" | "boolean";
 export type FieldMeta = {

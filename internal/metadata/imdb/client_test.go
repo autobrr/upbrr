@@ -357,6 +357,65 @@ func TestRunSearchUsesStableGraphQLVariables(t *testing.T) {
 	}
 }
 
+func TestSearchSelectsOnlyRequestedCategory(t *testing.T) {
+	for _, test := range []struct {
+		name, category, seriesType string
+		wantID                     int
+		unattended                 bool
+	}{
+		{
+			name:       "movie",
+			category:   "MOVIE",
+			seriesType: "TV Series",
+			wantID:     555001,
+		},
+		{
+			name:       "TV",
+			category:   "TV",
+			seriesType: "TV Series",
+			wantID:     555002,
+		},
+		{
+			name:       "TV miniseries",
+			category:   "TV",
+			seriesType: "TV Mini Series",
+			wantID:     555002,
+		},
+		{
+			name:       "unattended TV",
+			category:   "TV",
+			seriesType: "TV Mini-Series",
+			wantID:     555002,
+			unattended: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"advancedTitleSearch":{"edges":[
+					{"node":{"title":{"id":"tt0555001","titleText":{"text":"Example Title"},"titleType":{"text":"Movie"}}}},
+					{"node":{"title":{"id":"tt0555002","titleText":{"text":"Example Title"},"titleType":{"text":%q}}}}
+				]}}}`, test.seriesType)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			result, err := client.Search(t.Context(), SearchInput{
+				Filename:   "Example Title",
+				Category:   test.category,
+				Unattended: test.unattended,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.IMDbID != test.wantID || !result.AutoSelected || len(result.Candidates) != 0 {
+				t.Fatalf("search category %s selected incompatible or ambiguous results: %+v", test.category, result)
+			}
+		})
+	}
+}
+
 func assertIMDbGraphQLHeaders(t *testing.T, request *http.Request) {
 	t.Helper()
 

@@ -5,6 +5,7 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,6 +23,7 @@ import (
 type metadataClientRecorder struct {
 	calls int
 	input api.ClientSubject
+	err   error
 }
 
 func (*metadataClientRecorder) Inject(context.Context, api.ClientSubject, api.TorrentResult) error {
@@ -41,7 +43,52 @@ func (c *metadataClientRecorder) SearchPathedTorrents(_ context.Context, input a
 		PieceSizeConstraint: "4194304",
 		FoundPreferredPiece: "4194304",
 		MatchedTrackers:     []string{"BTN", "AITHER"},
-	}, nil
+	}, c.err
+}
+
+func TestClientDiscoveryProgressPreservesUnavailableAndSkippedOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		clients *clientdiscovery.Module
+		skip    bool
+		want    api.PreparationProgressStatus
+	}{
+		{name: "missing module", want: api.PreparationProgressPartial},
+		{
+			name: "requested skip without module",
+			skip: true,
+			want: api.PreparationProgressCompleted,
+		},
+		{
+			name:    "failed search",
+			clients: clientdiscovery.New(&metadataClientRecorder{err: errors.New("synthetic client failure")}, api.NopLogger{}),
+			want:    api.PreparationProgressPartial,
+		},
+		{
+			name:    "requested skip",
+			clients: clientdiscovery.New(nil, api.NopLogger{}),
+			skip:    true,
+			want:    api.PreparationProgressCompleted,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var updates []api.PreparationProgressUpdate
+			ctx := api.WithPreparationProgressReporter(t.Context(), func(u api.PreparationProgressUpdate) { updates = append(updates, u) })
+			service := &Service{clients: tc.clients}
+			state, err := collectPreparationStage(ctx, api.PreparationPhaseClientDiscovery, func(ctx context.Context) (preparationstate.State, error) {
+				return service.collectClientEvidence(ctx, api.PrepareInput{Search: api.ClientSearchPolicy{Skip: tc.skip}}, preparationstate.State{SourcePath: "Example.Release.2026.mkv"})
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.skip && state.ClientEvidence.Disposition != preparationstate.ClientEvidenceDispositionSkipped {
+				t.Fatalf("explicit skip disposition = %s", state.ClientEvidence.Disposition)
+			}
+			if got := updates[len(updates)-1]; got.Status != tc.want {
+				t.Fatalf("client discovery terminal outcome = %#v, want %s", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestCollectClientEvidencePrecedesTrackerCandidatesAndPreservesExplicitIDs(t *testing.T) {
@@ -194,5 +241,20 @@ func TestCanonicalEvidencePipelineUsesClientTrackerIDBeforeProviderResolution(t 
 	if client.calls != 1 || enriched.TrackerIDs["ant"] != "client-release-id" ||
 		enriched.ClientEvidence.Result.TrackerIDs["ant"] != "client-release-id" {
 		t.Fatalf("enrichment lost retained evidence or searched again: calls=%d trackers=%v evidence=%#v", client.calls, enriched.TrackerIDs, enriched.ClientEvidence)
+	}
+
+	enrichment.RetainedClientEvidence = &preparationstate.ClientEvidenceSnapshot{Disposition: preparationstate.ClientEvidenceDispositionUnavailable}
+	var retained []api.PreparationProgressUpdate
+	retainedCtx := api.WithPreparationProgressReporter(t.Context(), func(u api.PreparationProgressUpdate) { retained = append(retained, u) })
+	if _, err := service.CollectPreparationEvidence(retainedCtx, enrichment); err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != 1 {
+		t.Fatalf("retained unavailable evidence triggered %d searches", client.calls)
+	}
+	if !slices.ContainsFunc(retained, func(u api.PreparationProgressUpdate) bool {
+		return u.Phase == api.PreparationPhaseClientDiscovery && u.Status == api.PreparationProgressPartial
+	}) {
+		t.Fatal("retained unavailable client evidence was reported as complete")
 	}
 }

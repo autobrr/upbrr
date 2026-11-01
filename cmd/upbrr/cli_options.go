@@ -109,6 +109,7 @@ type cliOptions struct {
 	TrackLanguages             []string
 	TrackAudioOrigins          []string
 	ResetInput                 []string
+	KeepExistingIDs            bool
 	ConfirmInput               []string
 	TrackerInput               []string
 	Anon                       bool
@@ -260,11 +261,11 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.EpisodeTitle, "episode-title", "", "Override episode title")
 	fs.StringVar(&opts.EpisodeTitle, "manual-episode-title", "", "Override episode title")
 	fs.StringVar(&opts.EpisodeTitle, "met", "", "Override episode title")
-	fs.IntVar(&opts.ManualYear, "manual-year", 0, "Override release year")
-	fs.IntVar(&opts.ManualYear, "year", 0, "Override release year")
+	fs.IntVar(&opts.ManualYear, "manual-year", 0, "Override movie year or TV year without TVDB data")
+	fs.IntVar(&opts.ManualYear, "year", 0, "Override movie year or TV year without TVDB data")
 	fs.StringVar(&opts.ManualDate, "daily", "", "Set daily episode air date (YYYY-MM-DD)")
 	fs.BoolVar(&opts.NoSeason, "no-season", false, "Remove season and episode from name")
-	fs.BoolVar(&opts.NoYear, "no-year", false, "Remove year from name")
+	fs.BoolVar(&opts.NoYear, "no-year", false, "Omit movie year or TV year without TVDB data")
 	fs.BoolVar(&opts.NoAKA, "no-aka", false, "Remove AKA from name")
 	fs.BoolVar(&opts.NoTag, "no-tag", false, "Remove group tag from name")
 	fs.BoolVar(&opts.NoEpisodeTitle, "no-episode-title", false, "Remove episode title from name")
@@ -283,8 +284,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.DeleteTmp, "dtmp", false, "Delete stored database content for each input path before upload")
 	fs.BoolVar(&opts.DeleteTmp, "delete-tmp", false, "Delete stored database content for each input path before upload")
 	fs.BoolVar(&opts.Cleanup, "cleanup", false, "Delete all stored database content for all releases and exit")
-	fs.StringVar(&opts.Region, "region", "", "Override disc region")
-	fs.StringVar(&opts.Region, "reg", "", "Override disc region")
+	fs.StringVar(&opts.Region, "region", "", "Override release country code (for example USA)")
+	fs.StringVar(&opts.Region, "reg", "", "Override release country code (for example USA)")
 	fs.StringVar(&opts.TMDB, "tmdb", "", "Override TMDB id; empty or 0 clears and skips this provider")
 	fs.StringVar(&opts.IMDb, "imdb", "", "Override IMDb id; empty or 0 clears and skips this provider")
 	fs.StringVar(&opts.MAL, "mal", "", "Override MAL id; empty or 0 clears and skips this provider")
@@ -397,6 +398,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringArrayVar(&opts.TrackAudioOrigins, "track-audio-origin", nil, "Classify programme soundtrack as track-id=original|dubbed|unresolved")
 	fs.StringArrayVar(&opts.TrackLanguages, "track-languages", nil, "Override track languages as track-id=language[,language]")
 	fs.StringArrayVar(&opts.ResetInput, "reset-input", nil, "Reset a saved correction field or field:track-id")
+	fs.BoolVar(&opts.KeepExistingIDs, "keep-existing-ids", false, "Keep other providers' existing IDs and data when correcting metadata for this release")
 	fs.StringArrayVar(&opts.ConfirmInput, "confirm-input", nil, "Confirm a saved content correction field or field:track-id")
 	fs.StringArrayVar(&opts.TrackerInput, "tracker-input", nil, "Set tracker input as TRACKER:field=value (auto resets the field)")
 	fs.BoolVar(&opts.Anon, "a", false, "Upload anonymously")
@@ -959,7 +961,7 @@ func cliHelpSections(name string) []helpSection {
 			title: "Input Corrections",
 			names: []string{"source-lookup", "track-languages", "track-audio-origin", "reset-input", "confirm-input", "tracker-input"},
 		},
-		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
+		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze", "keep-existing-ids"}},
 		{title: "Tracker Overrides", names: []string{
 			"skip-dupe-check", "skip-dupe-asking", "double-dupe-check", "foreign", "opera", "asian", "disctype",
 			"commentary", "personalrelease", "stream", "webdv", "anime", "anon", "draft", "modq", "channel",
@@ -1260,7 +1262,7 @@ func isCLIInputCorrectionFlag(name string) bool {
 		"no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio", "region", "distributor",
 		"original-language", "commentary", "personalrelease", "stream", "webdv", "anime", "alternate-title",
 		"genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
-		"track-languages", "track-audio-origin", "reset-input", "confirm-input",
+		"track-languages", "track-audio-origin", "reset-input", "confirm-input", "keep-existing-ids",
 	}, name)
 }
 
@@ -1737,6 +1739,13 @@ func buildTrackerIDOverrides(opts cliOptions, visited map[string]bool) (map[stri
 // Invalid input returns an empty override set and an error.
 func buildExternalIDOverrides(opts cliOptions, visited map[string]bool) (api.ExternalIDOverrides, error) {
 	overrides := api.ExternalIDOverrides{}
+	if visited["keep-existing-ids"] {
+		overrides.KeepTMDB = new(opts.KeepExistingIDs)
+		overrides.KeepIMDB = new(opts.KeepExistingIDs)
+		overrides.KeepTVDB = new(opts.KeepExistingIDs)
+		overrides.KeepTVmaze = new(opts.KeepExistingIDs)
+		overrides.KeepMAL = new(opts.KeepExistingIDs)
+	}
 	if visited["tmdb"] {
 		id, _, err := parseTMDBID(opts.TMDB)
 		if err != nil {
