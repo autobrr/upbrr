@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { expect, test } from "@playwright/test";
+import type { HistoryOverview } from "../src/types";
 import {
   createE2EWorkspace,
   createMultiBluraySourceFixture,
@@ -13,6 +14,7 @@ import {
   readE2EAuthCounters,
   releaseWorkflowParityFixture,
   repoRoot,
+  startApp,
 } from "./helpers/e2eHarness";
 
 test("CLI full upload approves trackers before downstream work", async () => {
@@ -331,3 +333,70 @@ test("CLI metadata reports mixed source seasons", async () => {
     await workspace.cleanup();
   }
 });
+
+for (const keepExisting of [false, true]) {
+  test(
+    keepExisting
+      ? "CLI keeps automatic provider IDs through an IMDb correction and restart"
+      : "CLI preserves independent manual provider IDs across sequential edits and restart",
+    async () => {
+      const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+      try {
+        const result = await runCLI(
+          [
+            "--config",
+            workspace.configPath,
+            ...(keepExisting
+              ? ["--keep-existing-ids"]
+              : ["--tmdb=1001", "--imdb=tt7654321", "--tvdb=2001"]),
+            "--no-seed",
+            workspace.sourcePath,
+          ],
+          workspace.env,
+          keepExisting
+            ? "n\n--imdb=tt8889999 --input-only\n"
+            : "n\n--imdb=tt8889999\nn\n--tmdb=1001 --input-only\n",
+        );
+        expect(result.code, result.output).toBe(0);
+        const facts = result.output.match(/^Input facts: (.+)$/m);
+        expect(facts, result.output).toBeTruthy();
+        expect(JSON.parse(facts![1]).identity).toMatchObject({
+          TMDBID: 1001,
+          IMDBID: 8889999,
+          TVDBID: 2001,
+        });
+        const app = await startApp(workspace, { seed: false });
+        try {
+          const auth = (await (await fetch(new URL("api/auth/status", app.url))).json()) as {
+            csrfToken: string;
+          };
+          const response = await fetch(new URL("api/app/GetHistoryOverview", app.url), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Csrf-Token": auth.csrfToken,
+              Origin: new URL(app.url).origin,
+            },
+            body: JSON.stringify({ SourcePath: workspace.sourcePath }),
+          });
+          expect(response.status, await response.clone().text()).toBe(200);
+          const history = (await response.json()) as HistoryOverview;
+          expect(history.Identity).toMatchObject({ TMDBID: 1001, IMDBID: 8889999, TVDBID: 2001 });
+          expect(history.Identity.Provenance.TMDB).toBe(keepExisting ? "retained" : "explicit");
+          expect(
+            history.Display.Providers.find((provider) => provider.Provider === "tmdb"),
+          ).toMatchObject({ ID: 1001, SummaryAvailable: true });
+          expect(
+            history.Display.Providers.find((provider) => provider.Provider === "tvdb"),
+          ).toMatchObject({ ID: 2001, SummaryAvailable: true });
+        } finally {
+          await app.stop();
+        }
+        expect(workspace.fake.counters.trackerUploads).toBe(0);
+        expect(workspace.fake.counters.clientInjections).toBe(0);
+      } finally {
+        await workspace.cleanup();
+      }
+    },
+  );
+}

@@ -1452,14 +1452,19 @@ func cloneCLIPlaylistInstruction(value api.PlaylistInstruction) api.PlaylistInst
 	return value
 }
 
-// cloneCLIExternalIDOverrides detaches all optional provider ID pointers.
+// cloneCLIExternalIDOverrides detaches optional provider selection and retention pointers.
 func cloneCLIExternalIDOverrides(value api.ExternalIDOverrides) api.ExternalIDOverrides {
 	return api.ExternalIDOverrides{
-		TMDBID:   cloneCLIInt(value.TMDBID),
-		IMDBID:   cloneCLIInt(value.IMDBID),
-		TVDBID:   cloneCLIInt(value.TVDBID),
-		TVmazeID: cloneCLIInt(value.TVmazeID),
-		MALID:    cloneCLIInt(value.MALID),
+		TMDBID:     cloneCLIInt(value.TMDBID),
+		IMDBID:     cloneCLIInt(value.IMDBID),
+		TVDBID:     cloneCLIInt(value.TVDBID),
+		TVmazeID:   cloneCLIInt(value.TVmazeID),
+		MALID:      cloneCLIInt(value.MALID),
+		KeepTMDB:   cloneCLIBoolPointer(value.KeepTMDB),
+		KeepIMDB:   cloneCLIBoolPointer(value.KeepIMDB),
+		KeepTVDB:   cloneCLIBoolPointer(value.KeepTVDB),
+		KeepTVmaze: cloneCLIBoolPointer(value.KeepTVmaze),
+		KeepMAL:    cloneCLIBoolPointer(value.KeepMAL),
 	}
 }
 
