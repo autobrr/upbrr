@@ -14,6 +14,8 @@ import (
 // and its trusted legacy location without opening, migrating, initializing or
 // rotating storage. Legacy Netscape cookies are filtered to domain before
 // conversion; stored values override legacy values as in LoadTrackerHTTPCookies.
+// Usable legacy cookies remain available when stored key material is absent;
+// a known auth-helper fingerprint mismatch still rejects the entire snapshot.
 // Cancellation is checked between reads but cannot interrupt OS-blocked file I/O.
 // Connection tests run this under bounded storage admission and stop waiting
 // when canceled without starting replacement readers.
@@ -44,9 +46,6 @@ func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID
 	if err != nil {
 		return nil, err
 	}
-	if salt == "" {
-		return nil, ErrAuthHelperUnavailable
-	}
 	state, err := getAuthStateFromDB(ctx, db)
 	if err != nil {
 		return nil, err
@@ -59,6 +58,9 @@ func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID
 		return nil, fmt.Errorf("cookies: snapshot: %w", ctx.Err())
 	}
 	if err != nil {
+		if errors.Is(err, ErrAuthHelperUnavailable) && len(fileValues) > 0 {
+			return fileValues, nil
+		}
 		return nil, err
 	}
 	helper := helpers[0].Helper
@@ -68,6 +70,12 @@ func SnapshotTrackerCookieMap(ctx context.Context, db *sql.DB, dbPath, trackerID
 		if !ok {
 			return nil, ErrAuthHelperUnavailable
 		}
+	}
+	if salt == "" {
+		if len(fileValues) > 0 {
+			return fileValues, nil
+		}
+		return nil, ErrAuthHelperUnavailable
 	}
 	key, err := DeriveEncryptionKey(helper, salt)
 	if err != nil {

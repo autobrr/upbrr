@@ -21,6 +21,8 @@ import (
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -538,6 +540,70 @@ func TestDraftLoginDoesNotReadUnrelatedStoredSession(t *testing.T) {
 	got := backend.TestConnection(t.Context(), "session", api.ConnectionTestRequest{Target: api.ConnectionTestTarget{Kind: "tracker", Instance: "AR"}, Payload: string(payload)})
 	if got.Code != "missing_configuration" {
 		t.Fatalf("partial draft credentials depended on stored-cookie access: %#v", got)
+	}
+}
+
+type connectionTestTransport func(*http.Request) (*http.Response, error)
+
+func (transport connectionTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return transport(req)
+}
+
+func TestConnectionUsesLegacyCookiesWhenStoredHelperIsUnavailable(t *testing.T) {
+	// This test replaces the process transport; parallel tests run after it.
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	requests := 0
+	http.DefaultTransport = connectionTestTransport(func(req *http.Request) (*http.Response, error) {
+		requests++
+		cookie, err := req.Cookie("session")
+		if req.Method != http.MethodGet || req.URL.Host != "avistaz.to" || req.URL.Path != "/torrents" ||
+			err != nil || cookie.Value != "legacy-session" || len(req.Cookies()) != 1 {
+			t.Error("probe did not use only the trusted legacy session")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`<meta name="_token" content="synthetic-csrf">`))}, nil
+	})
+	for _, legacy := range []bool{true, false} {
+		repo, path := openBackendConfigTestRepo(t, "legacy-session.db")
+		if err := authmaterial.BootstrapAuthFile(path, "admin", "synthetic-legacy-password"); err != nil {
+			t.Fatal(err)
+		}
+		key, err := cookies.NewKeyManager(repo.RawDB()).InitializeEncryptionKey(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store, err := cookies.NewCookieStore(repo.RawDB())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveCookie(t.Context(), "AZ", "session", "unavailable-stored-session", key); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(authmaterial.AuthFilePath(path)); err != nil {
+			t.Fatal(err)
+		}
+		if legacy {
+			candidate := commonhttp.CookiePathCandidates(path, "AZ", ".txt")[0]
+			if err := os.MkdirAll(filepath.Dir(candidate), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			contents := "# Netscape HTTP Cookie File\n.avistaz.to\tTRUE\t/\tTRUE\t2147483647\tsession\tlegacy-session\n.other.example\tTRUE\t/\tTRUE\t2147483647\tother\tmust-not-send\n"
+			if err := os.WriteFile(candidate, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := repo.RawDB().ExecContext(t.Context(), `PRAGMA query_only=ON`); err != nil {
+			t.Fatal(err)
+		}
+		before := requests
+		backend := &Backend{repo: repo}
+		got := backend.TestConnection(t.Context(), "session", api.ConnectionTestRequest{Target: api.ConnectionTestTarget{Kind: "tracker", Instance: "AZ"}, Payload: `{}`})
+		if legacy && (got.Code != "success" || requests != before+1) || !legacy && (got.Code != "unavailable" || requests != before) {
+			t.Fatalf("legacy=%v result=%s requests=%d", legacy, got.Code, requests-before)
+		}
+		if _, err := os.Stat(authmaterial.AuthFilePath(path)); !os.IsNotExist(err) {
+			t.Fatal("probe recreated authentication material")
+		}
 	}
 }
 

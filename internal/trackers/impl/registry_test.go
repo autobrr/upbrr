@@ -1237,8 +1237,13 @@ func TestConnectionProbesRegisteredForVerifiedFamilies(t *testing.T) {
 					t.Errorf("%s missing unsaved-key selection", name)
 					continue
 				}
-				selected := descriptor.ConnectionProbe.DraftConfig(config.TrackerConfig{APIKey: "synthetic-api-key", Passkey: "must-not-select"})
-				if selected.APIKey != "synthetic-api-key" || selected.Passkey != "" {
+				selected := descriptor.ConnectionProbe.DraftConfig(config.TrackerConfig{
+					APIKey:   "synthetic-api-key",
+					Passkey:  "must-not-select",
+					Username: "must-not-select",
+					Password: "must-not-select",
+				})
+				if selected.APIKey != "synthetic-api-key" || selected.Passkey != "" || selected.Username != "" || selected.Password != "" {
 					t.Errorf("%s lost the draft key or selected unrelated credentials", name)
 				}
 			}

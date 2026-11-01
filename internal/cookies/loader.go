@@ -101,6 +101,9 @@ func LoadTrackerHTTPCookies(ctx context.Context, dbPath string, trackerID string
 	}
 
 	fileCookies, err := loadTrackerHTTPCookiesFromFiles(ctx, dbPath, normalizedTrackerID, domain)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("cookies: legacy files: %w", ctxErr)
+	}
 	if err == nil {
 		return CookieMapToHTTPCookies(mergeCookieMaps(httpCookiesToMap(fileCookies), storedValues), domain), nil
 	}
