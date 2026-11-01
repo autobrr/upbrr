@@ -1009,3 +1009,139 @@ async function waitForTerminalOperation(
   }
   throw new Error(`workflow operation ${operationID} did not finish`);
 }
+
+test("API preserves independent manual provider IDs across corrections refresh and restart", async () => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  let app = await startApp(workspace);
+  try {
+    const token = await createE2EAPIToken(workspace);
+    let client = new ReleaseWorkflowV1Client(app.url, token);
+    const settle = async (response: Response) => {
+      if (response.status === 202) return client.accepted(response);
+      expect(response.status, await response.clone().text()).toBe(200);
+      return (await response.json()) as WorkflowV1Current;
+    };
+    const prepare = async (response: Response) => {
+      let prepared = await settle(response);
+      for (let transition = 0; transition < 8 && !prepared.release; transition += 1) {
+        expect(prepared.workflow?.id, JSON.stringify(prepared)).toBeTruthy();
+        prepared = await settle(
+          await client.raw("/continuations", {
+            method: "POST",
+            idempotencyKey: `prepare-manual-provider-${prepared.workflow.revision}`,
+            body: {
+              authority: {
+                workflowId: prepared.workflow.id,
+                expectedRevision: prepared.workflow.revision,
+              },
+              goal: "prepared",
+              intent: {
+                preparation: {
+                  SourcePath: workspace.sourcePath,
+                  Instructions: prepared.factInstructions?.instructions,
+                },
+              },
+            },
+          }),
+        );
+      }
+      expect(prepared.release, JSON.stringify(prepared)).toBeTruthy();
+      return prepared;
+    };
+    let current = await settle(
+      await client.raw("/uploads", {
+        method: "POST",
+        idempotencyKey: "independent-manual-provider-ids",
+        body: {
+          ...uploadBody(workspace.sourcePath, { confirm: false, mode: "upload", noSeed: true }),
+          preparation: {
+            facts: {
+              externalIds: {
+                tmdb: { value: 1001 },
+                imdb: { value: "tt7654321" },
+                tvdb: { value: 2001 },
+              },
+            },
+          },
+        },
+      }),
+    );
+    const assertAuthority = (imdb: number, tmdb: number, metadata: boolean) => {
+      expect(current.release?.release.Identity).toMatchObject({
+        TMDBID: tmdb,
+        IMDBID: imdb,
+        TVDBID: 2001,
+      });
+      expect(Boolean(current.release?.release.ProviderMetadata.TMDB)).toBe(metadata);
+      expect(current.release?.release.ProviderMetadata.TVDB?.TVDBID).toBe(2001);
+      expect(
+        Boolean(
+          current.release?.display.Providers.find((provider) => provider.Provider === "tmdb"),
+        ),
+      ).toBe(metadata);
+    };
+    assertAuthority(7654321, 1001, true);
+    for (const step of [
+      { patch: { values: { Identity: { IMDBID: 8889999 } } }, tmdb: 1001, metadata: true },
+      { patch: { values: { Identity: { TMDBID: 0 } } }, tmdb: 0, metadata: false },
+      { patch: { resetFields: [{ field: "identity.tmdb" }] }, tmdb: 1001, metadata: false },
+      { patch: { values: { Identity: { TMDBID: 1001 } } }, tmdb: 1001, metadata: true },
+    ]) {
+      current = await prepare(
+        await client.raw("/continuations", {
+          method: "POST",
+          idempotencyKey: `manual-provider-correction-${current.workflow.revision}`,
+          body: {
+            authority: {
+              workflowId: current.workflow.id,
+              expectedRevision: current.workflow.revision,
+            },
+            goal: "prepared",
+            intent: {
+              correctionPatch: { ...step.patch, expectedRevision: current.corrections?.revision },
+            },
+          },
+        }),
+      );
+      assertAuthority(8889999, step.tmdb, step.metadata);
+    }
+    current = await prepare(
+      await client.raw("/continuations", {
+        method: "POST",
+        idempotencyKey: "manual-provider-refresh",
+        body: {
+          authority: {
+            workflowId: current.workflow.id,
+            expectedRevision: current.workflow.revision,
+          },
+          goal: "prepared",
+          intent: {
+            preparation: {
+              SourcePath: workspace.sourcePath,
+              ExternalFreshness: "refresh",
+              Instructions: current.factInstructions?.instructions,
+            },
+          },
+        },
+      }),
+    );
+    assertAuthority(8889999, 1001, true);
+    await app.stop();
+    app = await startApp(workspace, { seed: false });
+    client = new ReleaseWorkflowV1Client(app.url, token);
+    const restored = await client.get(current.workflow.id);
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    current = (await restored.json()) as WorkflowV1Current;
+    assertAuthority(8889999, 1001, true);
+    expect(current.corrections?.corrections.identity).toMatchObject({
+      TMDBID: 1001,
+      IMDBID: 8889999,
+      TVDBID: 2001,
+    });
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});

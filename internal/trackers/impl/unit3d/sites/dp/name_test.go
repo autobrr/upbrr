@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -73,7 +74,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dp/v13" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/dp/v14" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("DP policy = %#v", policy)
 	}
 }
@@ -252,6 +253,12 @@ func TestDPApprovedAudioCompositionRows(t *testing.T) {
 			want:      "Dual-Audio",
 		},
 		{
+			name:      "regional variants retain dual language identity",
+			original:  "French",
+			languages: []string{"French [fr-FR]", "French [fr-CA]", "English [en-US]"},
+			want:      "Dual-Audio",
+		},
+		{
 			name:      "Nordic original and English keep dual precedence",
 			original:  "Swedish",
 			languages: []string{"Swedish", "English"},
@@ -327,7 +334,7 @@ func TestDPApprovedAudioCompositionRows(t *testing.T) {
 			}}
 			for _, language := range test.languages {
 				origin := api.TrackAudioDubbed
-				if language == test.original {
+				if languageutil.SameLanguage(language, test.original) {
 					origin = api.TrackAudioOriginal
 				}
 				subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{

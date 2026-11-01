@@ -1528,6 +1528,45 @@ test("embedded web applies Release Details source options and persists source ID
   }
 });
 
+test("embedded web keeps selected providers through an IMDb correction and reload", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const keepTMDB = page.getByRole("checkbox", { name: "Keep existing TMDB data", exact: true });
+    const keepTVDB = page.getByRole("checkbox", { name: "Keep existing TVDB data", exact: true });
+    await keepTMDB.check();
+    await keepTVDB.check();
+    await page.getByRole("textbox", { name: "IMDb ID", exact: true }).fill("tt8889999");
+    const updated = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await expect((await updated).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    const restored = waitForAppMethod(page, "GetActiveInput");
+    await page.reload();
+    const current = await activeCurrentFromResponse(await restored);
+    expect(current.release?.release.Identity).toMatchObject({
+      TMDBID: 1001,
+      IMDBID: 8889999,
+      TVDBID: 2001,
+    });
+    expect(current.release?.release.ProviderMetadata.TMDB?.TMDBID).toBe(1001);
+    expect(current.release?.release.ProviderMetadata.TVDB?.TVDBID).toBe(2001);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(keepTMDB).toBeChecked();
+    await expect(keepTVDB).toBeChecked();
+    await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).toHaveValue("1001");
+    await expect(page.getByRole("textbox", { name: "TVDB ID", exact: true })).toHaveValue("2001");
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded web distinguishes a cleared Release Details provider ID from Auto", async ({
   page,
 }) => {

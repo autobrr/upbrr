@@ -107,20 +107,8 @@ func Enabled(ctx context.Context) bool {
 // not carry endpoint/configuration provenance. Load failures remain fatal to
 // the enclosing collection through Scope.Err.
 func Reusable(ctx context.Context, domain string, query any) bool {
-	scope, _ := ctx.Value(contextKey{}).(*Scope)
-	if scope == nil || scope.store == nil || query == nil {
-		return false
-	}
-	key, err := queryKey(query)
-	if err != nil {
-		scope.fail(err)
-		return false
-	}
-	record, err := scope.store.LoadMetadataEvidence(ctx, scope.source, scope.fingerprint, domain, key)
-	if err != nil {
-		if !errors.Is(err, internalerrors.ErrNotFound) {
-			scope.fail(err)
-		}
+	record, scope, ok := retained(ctx, domain, query)
+	if !ok {
 		return false
 	}
 	if record.Outcome == api.MetadataEvidenceFailed {
@@ -130,6 +118,35 @@ func Reusable(ctx context.Context, domain string, query any) bool {
 		return false
 	}
 	return scope.freshness != api.ExternalFreshnessLoad || record.Outcome != api.MetadataEvidenceEmpty
+}
+
+// Retained decodes an exact source/query outcome without fetching or applying
+// refresh policy. This includes partial values in empty or failed outcomes;
+// callers must validate their compatibility before accepting retained facts.
+// Load failures remain fatal to the enclosing collection through Scope.Err.
+func Retained(ctx context.Context, domain string, query, value any) bool {
+	record, _, ok := retained(ctx, domain, query)
+	return ok && json.Unmarshal(record.Payload, value) == nil
+}
+
+func retained(ctx context.Context, domain string, query any) (api.MetadataEvidence, *Scope, bool) {
+	scope, _ := ctx.Value(contextKey{}).(*Scope)
+	if scope == nil || scope.store == nil || query == nil {
+		return api.MetadataEvidence{}, scope, false
+	}
+	key, err := queryKey(query)
+	if err != nil {
+		scope.fail(err)
+		return api.MetadataEvidence{}, scope, false
+	}
+	record, err := scope.store.LoadMetadataEvidence(ctx, scope.source, scope.fingerprint, domain, key)
+	if err != nil {
+		if !errors.Is(err, internalerrors.ErrNotFound) {
+			scope.fail(err)
+		}
+		return api.MetadataEvidence{}, scope, false
+	}
+	return record, scope, true
 }
 
 func lookup[T any](ctx context.Context, domain string, query any, fetch func() (T, error), empty func(T) bool, retrySuccess bool) (T, error) {

@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -67,8 +69,8 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 			subject.ProvenanceFacts.Status,
 		))
 	}
-	if !otwLanguageFullDisc(meta) && !slices.Contains(subject.LanguageFacts.ProgrammeLanguages, "English") &&
-		!slices.Contains(subject.LanguageFacts.SubtitleLanguages, "English") {
+	if !otwLanguageFullDisc(meta) && !languageutil.ContainsLanguage(subject.LanguageFacts.ProgrammeLanguages, "English") &&
+		!languageutil.ContainsLanguage(subject.LanguageFacts.SubtitleLanguages, "English") {
 		failures = append(
 			failures,
 			trackers.LanguageRuleFailure(subject, "english_accessibility", "try to include English audio or subtitles", trackers.LanguageAdvisory),
@@ -93,8 +95,9 @@ func otwLanguageNamingFailures(subject api.TrackerValidationSubject, meta api.Up
 		return nil
 	}
 	reason := "programme languages, track roles or inspected coverage need review for audio naming"
-	if facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && count > 0 && count == len(facts.ProgrammeLanguages) {
-		if !slices.Contains(facts.ProgrammeLanguages, "English") || facts.OriginalLanguagesKnown && len(facts.OriginalLanguages) > 0 {
+	if facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && count > 0 &&
+		!slices.ContainsFunc(facts.ProgrammeLanguages, func(value string) bool { return !languageutil.IsIdentifiedLanguage(value) }) {
+		if !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") || facts.OriginalLanguagesKnown && len(facts.OriginalLanguages) > 0 {
 			return nil
 		}
 		reason = "original-language evidence is required to determine the English audio naming marker"

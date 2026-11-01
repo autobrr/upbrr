@@ -84,6 +84,17 @@ known language differing from the title's recorded original language does not pr
 a dub. Ordinary matching-language original tracks need no special title or flag.
 Commentary is not programme audio.
 
+Language corrections accept complete names or codes, including explicit regions and
+scripts such as `pt-BR` and `zh-Hant`. These variants remain visible; matching uses
+the base language. Filipino (`fil`), Tagalog (`tgl`) and the collective Philippine
+languages (`phi`) remain distinct. A collective label does not identify its members.
+Absent language, undetermined (`und`), multiple languages (`mul`), uncoded languages
+(`mis`), non-linguistic content (`zxx`) and custom text are retained separately;
+unknown values do not establish English or an original soundtrack. Full and Forced
+subtitle coverage stays separate from language identity. Auto removes a correction;
+an explicitly empty list clears it. For an ambiguous name, choose the suggestion
+with its displayed code or enter the intended code directly.
+
 For a previously inspected source, the CLI accepts
 `--track-audio-origin 'TRACK_ID=original'` (or `dubbed` or `unresolved`). It binds the
 answer to that track's current manifest; changed sources require review again.
@@ -97,6 +108,8 @@ duplicating them on repeated preparation. Custom and final descriptions remain
 under their existing override rules.
 
 If a composite upload stops because a required global source or type is missing, its operation reports an input failure rather than a completed upload. Edit the missing fields on Input, then retry from the latest workflow state. If another stage stops without a next action, review its retained stop reason before retrying; a stopped operation is not proof of a successful tracker submission.
+
+Each manually selected provider ID is authoritative independently, including when several selections conflict with provider cross-links. upbrr retains successfully fetched metadata for each selection through refresh and restart; the disagreement alone does not block preparation. Unspecified IDs still require the existing inference agreement, except that MAL can be discovered from the selected TMDB resource even when its IMDb or TVDB links disagree with other selections. A manual MAL ID or an explicit MAL clear takes precedence; cleared providers stay cleared. Invalid syntax, failed lookups and responses for the wrong requested resource remain errors.
 
 Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections. An explicit TV category correction permits TVDB lookup even when the filename was parsed as Movie; TV naming year still follows eligible TVDB alias evidence.
 

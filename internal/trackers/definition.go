@@ -432,6 +432,8 @@ type DataLookupConfigProvider interface {
 
 // DataLookupPolicy declares tracker-specific lookup orchestration behavior.
 type DataLookupPolicy struct {
+	// LegacyExternalIDsNeedRefresh expires automatic IDs from older normalization contracts.
+	LegacyExternalIDsNeedRefresh bool
 	// Cooldown is the minimum delay applied around tracker lookup operations.
 	Cooldown time.Duration
 	// DeferWhenCollectingImages postpones lookup while the caller is still collecting images.

@@ -89,27 +89,40 @@ func TestPreparedTVDBExplicitNamingYear(t *testing.T) {
 			module, repo := fixture.open(t)
 			input := fixture.input
 			var previous api.PreparedGeneration
-			for _, step := range []string{"prepare", "refresh", "SQLite reopen", "No year", "refresh No year", "reopen No year", "Auto", "prepared-release-v56", "prepared-release-v57", "prepared-release-v58"} {
+			var keptDependencies api.IdentityDependency
+			for _, step := range []string{
+				"prepare", "refresh", "SQLite reopen", "No year", "refresh No year", "reopen No year", "Auto",
+				"prepared-release-v56", "prepared-release-v57", "prepared-release-v58", "prepared-release-v61", "prepared-release-v66",
+				"Keep TVDB", "kept v66", "kept SQLite reopen", "kept No year", "kept Auto",
+			} {
 				update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
+				beforeRequests := fixture.requests()
 				switch step {
 				case "refresh", "refresh No year":
 					input.ExternalFreshness = api.ExternalFreshnessRefresh
-				case "SQLite reopen", "reopen No year":
+				case "SQLite reopen", "reopen No year", "kept SQLite reopen":
 					if err := repo.Close(); err != nil {
 						t.Fatal(err)
 					}
 					module, repo = fixture.open(t)
 					input.ExternalFreshness = api.ExternalFreshnessLoad
-				case "No year":
+				case "No year", "kept No year":
 					update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{Values: api.ReleaseCorrectionValues{ReleaseName: api.ReleaseNameOverrides{NoYear: new(true)}}}}
-				case "Auto":
+				case "Auto", "kept Auto":
 					update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{ResetFields: []api.CorrectionFieldRef{{Field: api.CorrectionFieldReleaseNameNoYear}}}}
-				case "prepared-release-v56", "prepared-release-v57", "prepared-release-v58":
+				case "Keep TVDB":
+					update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: &api.ReleaseCorrectionPatch{
+						Values: api.ReleaseCorrectionValues{Identity: api.ExternalIDOverrides{KeepTVDB: new(true)}},
+					}}
+				case "prepared-release-v56", "prepared-release-v57", "prepared-release-v58", "prepared-release-v61", "prepared-release-v66", "kept v66":
 					old, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
 					if err != nil {
 						t.Fatal(err)
 					}
 					old.Compatibility.ContractVersion = step
+					if step == "kept v66" {
+						old.Compatibility.ContractVersion = "prepared-release-v66"
+					}
 					old.ProviderMetadata.TVDB.NameDisambiguation.IncludeYear = false
 					if err := repo.CommitPreparedRelease(t.Context(), old); err != nil {
 						t.Fatal(err)
@@ -122,10 +135,24 @@ func TestPreparedTVDBExplicitNamingYear(t *testing.T) {
 				result := prepareCorrectionEvidence(t, module, input, update)
 				input = api.PrepareInput{SourcePath: input.SourcePath, ExternalFreshness: api.ExternalFreshnessReuse}
 				if result.Release.Identity.TVDBID != 555003 || result.Release.Identity.IMDBID != 555004 {
-					t.Fatal("linked provider identity was not acquired with TMDB enabled")
+					t.Fatalf("%s: linked provider identity was not acquired with TMDB enabled: %#v", step, result.Release.Identity)
 				}
-				if strings.HasPrefix(step, "prepared-release-v") && result.Release.Generation <= previous {
+				if (strings.HasPrefix(step, "prepared-release-v") || step == "kept v66") && result.Release.Generation <= previous {
 					t.Fatal("reused a pre-fix prepared decision")
+				}
+				if step == "Keep TVDB" {
+					keptDependencies = result.Release.Identity.Dependencies.TVDB
+				}
+				if strings.HasPrefix(step, "kept") {
+					keep := result.Corrections.Corrections.Identity.KeepTVDB
+					if keep == nil || !*keep || result.Release.Identity.Dependencies.TVDB != keptDependencies {
+						t.Fatal("kept TVDB choice or its original dependencies changed")
+					}
+					for endpoint, count := range fixture.requests() {
+						if strings.HasPrefix(endpoint, "/v4/") && count != beforeRequests[endpoint] {
+							t.Fatalf("%s fetched kept TVDB data at %s", step, endpoint)
+						}
+					}
 				}
 				previous = result.Release.Generation
 				wantYear := scenario.wantYear && !strings.Contains(step, "No year")

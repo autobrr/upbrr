@@ -157,4 +157,10 @@ func TestResolveLanguageAcceptsManualCanonicalDisplayName(t *testing.T) {
 	if got := resolveLanguage(meta); got != "2" {
 		t.Fatalf("manual ISO French language ID = %q", got)
 	}
+	meta.EffectiveMetadata.OriginalLanguage = "pt-BR"
+	meta.AudioLanguages = []string{"Portuguese [pt-BR]"}
+	meta.SubtitleLanguages = []string{"Portuguese [pt-BR] (Forced)"}
+	if resolveLanguage(meta) != "8" || resolveAudio(meta) != "4" || resolveSubtitle(meta) != "Embutida" {
+		t.Fatal("regional Portuguese lost its language, audio or subtitle mapping")
+	}
 }

@@ -26,7 +26,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v61"
+const ContractVersion = "prepared-release-v67"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -980,12 +980,24 @@ func cloneResult(result api.PrepareResult) (api.PrepareResult, error) {
 
 func cloneExternalIDOverrides(value api.ExternalIDOverrides) api.ExternalIDOverrides {
 	return api.ExternalIDOverrides{
-		TMDBID:   cloneInt(value.TMDBID),
-		IMDBID:   cloneInt(value.IMDBID),
-		TVDBID:   cloneInt(value.TVDBID),
-		TVmazeID: cloneInt(value.TVmazeID),
-		MALID:    cloneInt(value.MALID),
+		TMDBID:     cloneInt(value.TMDBID),
+		IMDBID:     cloneInt(value.IMDBID),
+		TVDBID:     cloneInt(value.TVDBID),
+		TVmazeID:   cloneInt(value.TVmazeID),
+		MALID:      cloneInt(value.MALID),
+		KeepTMDB:   cloneBool(value.KeepTMDB),
+		KeepIMDB:   cloneBool(value.KeepIMDB),
+		KeepTVDB:   cloneBool(value.KeepTVDB),
+		KeepTVmaze: cloneBool(value.KeepTVmaze),
+		KeepMAL:    cloneBool(value.KeepMAL),
 	}
+}
+
+func cloneBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	return new(*value)
 }
 
 func cloneInt(value *int) *int {

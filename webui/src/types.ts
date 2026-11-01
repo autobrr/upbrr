@@ -391,6 +391,11 @@ export type ExternalIDOverrides = {
   TVmazeID?: number | null;
   /** Canonical MAL/AniList-compatible anime identifier override. */
   MALID?: number | null;
+  KeepTMDB?: boolean | null;
+  KeepIMDB?: boolean | null;
+  KeepTVDB?: boolean | null;
+  KeepTVmaze?: boolean | null;
+  KeepMAL?: boolean | null;
 };
 
 export type ReleaseNameOverrides = {

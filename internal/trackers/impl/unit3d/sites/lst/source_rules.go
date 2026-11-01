@@ -25,12 +25,13 @@ func audioDefects(subject api.TrackerValidationSubject) []audioDefect {
 				continue
 			}
 			for _, language := range track.Languages {
-				code := languageutil.NormalizeLanguageCode(language)
-				if code == "" || code == "und" || code == "mul" || language == "English" || slices.Contains(facts.OriginalLanguages, language) {
+				if !languageutil.IsIdentifiedLanguage(language) || languageutil.SameLanguage(language, "English") ||
+					languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
 					continue
 				}
 				key, label := "extra_dub", "Redundant Audio Tracks — extra programme dub: "
-				if !facts.HasUnresolvedProgrammeAudioOrigin() && !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") {
+				if !facts.HasUnresolvedProgrammeAudioOrigin() && !facts.HasOriginalAudio() &&
+					!languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") {
 					key, label = "non_original_non_english_dub", "Non-Original Non-English Dub — programme audio contains only non-original, non-English dubs: "
 				}
 				defects = append(defects, audioDefect{key: key, reason: label + language})
@@ -61,14 +62,18 @@ func audioDefects(subject api.TrackerValidationSubject) []audioDefect {
 			if counts[track.ResourceID] == nil {
 				counts[track.ResourceID] = map[string]int{}
 			}
-			for _, language := range track.Languages {
+			for _, language := range languageutil.LanguageMatchKeys(track.Languages) {
 				counts[track.ResourceID][language]++
 				if counts[track.ResourceID][language] > 1 {
+					label := language
+					if readable := languageutil.NormalizeLanguageLabel(language); readable != "" {
+						label = readable
+					}
 					defects = append(
 						defects,
 						audioDefect{
 							key:    "redundant_programme",
-							reason: "Redundant Audio Tracks — multiple programme tracks for " + language + " include " + track.ID + "; redundancy has not been verified",
+							reason: "Redundant Audio Tracks — multiple programme tracks for " + label + " include " + track.ID + "; redundancy has not been verified",
 						},
 					)
 				}
@@ -108,14 +113,15 @@ func sourceLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFail
 // burned-in English covers only the single resource inspected by production.
 func needsSubtitlePresentation(subject api.TrackerValidationSubject) bool {
 	facts := subject.LanguageFacts
-	if !facts.OriginalLanguagesKnown || slices.Contains(facts.OriginalLanguages, "English") || slices.Contains(facts.OriginalLanguages, "ZXX") ||
-		!slices.Contains(facts.SubtitleLanguages, "English") {
+	if !facts.OriginalLanguagesKnown || languageutil.ContainsLanguage(facts.OriginalLanguages, "English") ||
+		languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") ||
+		!languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") {
 		return false
 	}
 	resources := map[string]bool{}
 	for _, track := range facts.Tracks {
 		if track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) {
-			resources[track.ResourceID] = resources[track.ResourceID] || slices.Contains(track.Languages, "English")
+			resources[track.ResourceID] = resources[track.ResourceID] || languageutil.ContainsLanguage(track.Languages, "English")
 		}
 	}
 	if len(resources) == 0 || !facts.TrackCoverageComplete {
@@ -131,7 +137,7 @@ func needsSubtitlePresentation(subject api.TrackerValidationSubject) bool {
 		if !slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
 			return track.Kind == api.MediaTrackSubtitle && track.ResourceID == resource && slices.ContainsFunc(track.Languages, func(value string) bool {
 				language, _ := languageutil.SubtitleLanguageParts(value)
-				return language == "English"
+				return languageutil.SameLanguage(language, "English")
 			})
 		}) {
 			return true
@@ -143,7 +149,7 @@ func needsSubtitlePresentation(subject api.TrackerValidationSubject) bool {
 func hardcodedEnglishSubtitles(subject api.TrackerValidationSubject) bool {
 	return slices.ContainsFunc(subject.HardcodedSubtitleLanguages, func(value string) bool {
 		language, _ := languageutil.SubtitleLanguageParts(value)
-		return language == "English"
+		return languageutil.SameLanguage(language, "English")
 	}) || slices.ContainsFunc(subject.HardcodedSubtitleCoverage, func(coverage api.SubtitleLanguageCoverage) bool {
 		return languageutil.NormalizeLanguageDisplay(coverage.Language) == "English"
 	})

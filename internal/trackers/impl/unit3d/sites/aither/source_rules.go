@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -21,7 +23,9 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	for _, track := range additionalMainAudio(subject) {
 		original := slices.ContainsFunc(
 			track.Languages,
-			func(language string) bool { return slices.Contains(subject.LanguageFacts.OriginalLanguages, language) },
+			func(language string) bool {
+				return languageutil.ContainsLanguage(subject.LanguageFacts.OriginalLanguages, language)
+			},
 		)
 		outcome := trackers.LanguageStaffException
 		reason := "additional main audio " + track.ID + " is outside the ordinary original-plus-English programme set"
@@ -52,7 +56,7 @@ func additionalMainAudioAssociationReview(subject api.TrackerValidationSubject) 
 	hasStrictExtra := func(candidate api.TrackerValidationSubject) bool {
 		return slices.ContainsFunc(additionalMainAudio(candidate), func(track api.MediaTrackFacts) bool {
 			return !slices.ContainsFunc(track.Languages, func(language string) bool {
-				return slices.Contains(candidate.LanguageFacts.OriginalLanguages, language)
+				return languageutil.ContainsLanguage(candidate.LanguageFacts.OriginalLanguages, language)
 			})
 		})
 	}
@@ -101,16 +105,16 @@ func additionalMainAudio(subject api.TrackerValidationSubject) []api.MediaTrackF
 			seen[track.ResourceID] = map[string]bool{}
 		}
 		duplicate := false
-		for _, language := range track.Languages {
-			if slices.Contains(facts.OriginalLanguages, language) {
+		for _, language := range languageutil.LanguageMatchKeys(track.Languages) {
+			if languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
 				language = "original"
 			}
 			if seen[track.ResourceID][language] {
 				duplicate = true
 			}
 		}
-		for _, language := range track.Languages {
-			if slices.Contains(facts.OriginalLanguages, language) {
+		for _, language := range languageutil.LanguageMatchKeys(track.Languages) {
+			if languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
 				language = "original"
 			}
 			seen[track.ResourceID][language] = true

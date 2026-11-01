@@ -40,5 +40,5 @@ Focused `go test`: include touched service/tracker/internal packages.
 
 ## Parity
 
-- CLI request/options behavior shares WebUI workflow contracts.
+- CLI request/options behavior shares WebUI workflow contracts. Provider flags preserve the root manual-provider authority rule; do not reject independent selections because provider cross-links disagree. Use the shared metadata reconciliation boundary.
 - Request-shape changes usually require checking `pkg/api`, `internal/core`, `internal/webserver`, and `webui/src`.

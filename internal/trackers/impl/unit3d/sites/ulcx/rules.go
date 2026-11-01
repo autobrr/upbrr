@@ -3,7 +3,6 @@
 package ulcx
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
@@ -64,7 +63,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 
 	facts := subject.LanguageFacts
 	if facts.OriginalLanguagesKnown {
-		foreign := !slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX")
+		foreign := !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX")
 		for _, track := range facts.Tracks {
 			if track.Kind != api.MediaTrackSubtitle {
 				continue
@@ -89,7 +88,8 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 				if !track.Forced && !strings.EqualFold(coverage, "Forced") {
 					continue
 				}
-				if !slices.Contains(facts.OriginalLanguages, language) && (language != "English" || !facts.HasEnglishDub()) {
+				if !languageutil.ContainsLanguage(facts.OriginalLanguages, language) &&
+					(!languageutil.SameLanguage(language, "English") || !facts.HasEnglishDub()) {
 					failures = append(
 						failures,
 						trackers.LanguageRuleFailure(

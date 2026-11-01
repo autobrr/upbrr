@@ -35,7 +35,7 @@ func Profile() standalone.Profile {
 		DupePolicy:          duplicatePolicy(),
 		Rules:               &trackers.RuleSet{RequireTVOnly: true},
 		BannedGroups:        bannedGroups(),
-		DataPolicy:          &trackers.DataLookupPolicy{DeferWhenCollectingImages: true},
+		DataPolicy:          &trackers.DataLookupPolicy{DeferWhenCollectingImages: true, LegacyExternalIDsNeedRefresh: true},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{

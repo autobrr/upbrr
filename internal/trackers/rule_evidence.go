@@ -265,14 +265,7 @@ func knownString(value string) (string, bool) {
 }
 
 func normalizedLanguageSet(values []string) (string, bool) {
-	normalized := make([]string, 0, len(values))
-	for _, value := range values {
-		if language := languageutil.NormalizeLanguageLabel(value); language != "" {
-			normalized = append(normalized, strings.ToLower(language))
-		}
-	}
-	slices.Sort(normalized)
-	normalized = slices.Compact(normalized)
+	normalized := normalizedLanguages(values)
 	if len(normalized) == 0 {
 		return "", false
 	}
@@ -561,10 +554,10 @@ type LanguageCombinationPolicy struct {
 func ValidateLanguageCombination(facts api.MediaFileFacts, policy LanguageCombinationPolicy) []api.RuleFailure {
 	policy.Evidence.ViolationDisposition = api.RuleDispositionWaivable
 	rule := predicateRule(policy.Evidence, "language_combination")
-	original := languageutil.NormalizeLanguageLabel(facts.OriginalLanguage)
+	original := languageutil.NormalizeLanguageCode(facts.OriginalLanguage)
 	needsOriginal := policy.RequireOriginalAudio || policy.RequireOriginalOrEnglishAudio ||
 		policy.RequireOriginalSubtitle || policy.RequireOriginalOrEnglishSubtitle
-	if needsOriginal && original == "" {
+	if needsOriginal && !languageutil.IsIdentifiedLanguage(facts.OriginalLanguage) {
 		return predicateMissing(rule, "original-language evidence is required", facts.LanguageStatus, policy.Evidence)
 	}
 	if len(facts.Files) == 0 {
@@ -592,9 +585,10 @@ func ValidateLanguageCombination(facts api.MediaFileFacts, policy LanguageCombin
 func normalizedLanguages(values []string) []string {
 	normalized := make([]string, 0, len(values))
 	for _, value := range values {
-		if language := languageutil.NormalizeLanguageLabel(value); language != "" {
-			normalized = append(normalized, language)
+		if !languageutil.IsIdentifiedLanguage(value) {
+			return nil
 		}
+		normalized = append(normalized, languageutil.NormalizeLanguageCode(value))
 	}
 	slices.Sort(normalized)
 	return slices.Compact(normalized)
@@ -614,10 +608,10 @@ func languageViolationReason(
 	original string,
 	policy LanguageCombinationPolicy,
 ) string {
-	hasOriginalAudio := containsFolded(audio, original)
-	hasEnglishAudio := containsFolded(audio, "English")
-	hasOriginalSubtitle := containsFolded(subtitles, original)
-	hasEnglishSubtitle := containsFolded(subtitles, "English")
+	hasOriginalAudio := languageutil.ContainsLanguage(audio, original)
+	hasEnglishAudio := languageutil.ContainsLanguage(audio, "English")
+	hasOriginalSubtitle := languageutil.ContainsLanguage(subtitles, original)
+	hasEnglishSubtitle := languageutil.ContainsLanguage(subtitles, "English")
 	switch {
 	case policy.RequireOriginalAudio && !hasOriginalAudio:
 		return "original-language audio is required"

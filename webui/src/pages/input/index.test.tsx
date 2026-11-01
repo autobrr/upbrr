@@ -1220,6 +1220,53 @@ describe("InputPage", () => {
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(4, { NoEdition: false });
   });
 
+  it("keeps providers independently without changing a manual ID", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: {
+          ...release,
+          Identity: { ...release.Identity, TVDBID: 303, TVmazeID: 404 },
+        },
+        intent: { ...base.view.intent, identity: { TMDBID: 901, KeepTMDB: true } },
+      },
+    };
+    const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+    const tmdbKeep = screen.getByRole("checkbox", { name: "Keep existing TMDB data" });
+    expect(tmdbKeep).toBeChecked();
+    fireEvent.click(tmdbKeep);
+    expect(facet.changeIdentity).toHaveBeenLastCalledWith({ TMDBID: 901, KeepTMDB: false });
+    for (const [provider, key] of [
+      ["IMDb", "KeepIMDB"],
+      ["TVDB", "KeepTVDB"],
+      ["TVmaze", "KeepTVmaze"],
+      ["MyAnimeList", "KeepMAL"],
+    ] as const) {
+      fireEvent.click(screen.getByRole("checkbox", { name: `Keep existing ${provider} data` }));
+      expect(facet.changeIdentity).toHaveBeenLastCalledWith({
+        TMDBID: 901,
+        KeepTMDB: true,
+        [key]: true,
+      });
+    }
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            intent: { ...facet.view.intent, identity: { TMDBID: 901, KeepTMDB: false } },
+          },
+        }}
+      />,
+    );
+    expect(tmdbKeep).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: "TMDB ID" })).toHaveValue("901");
+  });
+
   it("removes each metadata provider without overriding untouched IDs", () => {
     const facet = readyInputFacet(1);
     render(
