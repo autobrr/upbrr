@@ -21,11 +21,11 @@ func TestUnknownOriginalCLIReviewDoesNotReadInput(t *testing.T) {
 		for _, languages := range [][]string{{"English"}, nil, {"und"}, {"mul"}, {"Japanese", "English"}} {
 			t.Run(fmt.Sprintf("%s/%v", mode, languages), func(t *testing.T) {
 				media := api.MediaFacts{TrackCoverageComplete: true, Tracks: []api.MediaTrackFacts{{
-					ID: "programme",
- Kind: api.MediaTrackAudio,
- Role: api.AudioRoleProgramme,
+					ID:                  "programme",
+					Kind:                api.MediaTrackAudio,
+					Role:                api.AudioRoleProgramme,
 					ManifestFingerprint: "report",
- Languages: languages,
+					Languages:           languages,
 				}}}
 				readiness, err := trackers.EvaluateInputReadiness(registry, []api.TrackerID{"AITHER", "BHD"}, api.UploadSubject{LanguageFacts: mediafacts.ResolveLanguages(media)})
 				if err != nil {
@@ -37,7 +37,7 @@ func TestUnknownOriginalCLIReviewDoesNotReadInput(t *testing.T) {
 				if err != nil || len(corrections) != 0 {
 					t.Fatalf("language corrections=%#v err=%v", corrections, err)
 				}
-				origins, err := collectCLIInputAudioOrigins(reader, &out, mode, readiness.Fields, media.Tracks)
+				origins, err := collectCLIInputAudioOrigins(reader, &out, mode, readiness.Fields, "Example.Release.mkv", media)
 				if err != nil || len(origins) != 0 || out.Len() != 0 {
 					t.Fatalf("origins=%#v err=%v output=%s", origins, err, out.String())
 				}

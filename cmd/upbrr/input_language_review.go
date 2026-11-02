@@ -61,7 +61,7 @@ func (s *cliWorkflowSession) reviewInputLanguages(ctx context.Context, reader *b
 		return err
 	}
 	origins, err := collectCLIInputAudioOrigins(reader, s.streams.out, s.intent.interaction,
-		s.current.InputReadiness.Fields, s.current.Release.Release.Media.Tracks)
+		s.current.InputReadiness.Fields, s.current.Release.Release.Source.SourcePath, s.current.Release.Release.Media)
 	if err != nil || (len(corrections) == 0 && len(origins) == 0) {
 		return err
 	}

@@ -88,6 +88,14 @@ known language differing from the title's recorded original language does not pr
 a dub. Ordinary matching-language original tracks need no special title or flag.
 Commentary is not programme audio.
 
+When soundtrack review is needed, the plain CLI and TUI show the source, resource,
+track title, codec and channels, title original language, and inspected/effective
+track languages. Missing facts are shown as unknown. The question identifies the
+affected trackers, explains `original`, `dubbed` and `unresolved`, and shows the
+separate title-language, track-language and soundtrack-origin correction options.
+An unresolved answer keeps the affected trackers waiting for evidence; it does
+not confirm a dub or waive a restriction.
+
 When the title's original language is unknown, the original-language comparison
 does not require track-language or soundtrack-origin answers and does not block
 an otherwise eligible upload. Unknown facts remain unknown. Explicit soundtrack
