@@ -559,6 +559,18 @@ func LanguageRuleFailure(subject api.TrackerValidationSubject, key, reason strin
 	return failure
 }
 
+// DubLanguageEvidenceFailure targets unidentified confirmed dubs without
+// requiring language corrections for unrelated unclassified programme tracks.
+func DubLanguageEvidenceFailure(subject api.TrackerValidationSubject, reason string) api.RuleFailure {
+	failure := LanguageRuleFailure(subject, "dub_evidence", reason, LanguageUnresolved)
+	for _, track := range mediafacts.UnresolvedProgrammeLanguages(subject.LanguageFacts) {
+		if subject.LanguageFacts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed {
+			failure.LanguageCorrectionTrackIDs = append(failure.LanguageCorrectionTrackIDs, track.ID)
+		}
+	}
+	return failure
+}
+
 // LanguageQuestionKey binds a language attestation to its tracker and exact
 // prepared evidence, so retained answers cannot authorize changed tracks or sources.
 func LanguageQuestionKey(subject api.TrackerValidationSubject, key string) string {

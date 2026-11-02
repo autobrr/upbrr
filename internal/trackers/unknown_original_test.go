@@ -106,6 +106,94 @@ func TestUnknownOriginalEnglishMixesNeedDubEvidence(t *testing.T) {
 	}
 }
 
+func TestUnknownOriginalConfirmedDubsRetainAggregateEvidenceGates(t *testing.T) {
+	for _, tc := range []struct {
+		tracker, language string
+		contradictory     bool
+	}{
+		{"AZ", "German", false},
+		{"AZ", "German", true},
+		{"AZ", "English", false},
+		{"AZ", "und", false},
+		{"PTP", "German", false},
+		{"PTP", "German", true},
+		{"PTP", "und", false},
+	} {
+		subject := languageSubject("", tc.language)
+		media := api.MediaFacts{
+			Tracks:                   subject.LanguageFacts.Tracks,
+			TrackCoverageComplete:    true,
+			AudioLanguagesProvenance: api.FactProvenanceManualEmpty,
+		}
+		media.Tracks[0].ManifestFingerprint = "report"
+		if tc.language == "und" {
+			media.Tracks = append(media.Tracks, api.MediaTrackFacts{
+				ID: "unclassified",
+ ManifestFingerprint: "report",
+ Kind: api.MediaTrackAudio,
+				Role: api.AudioRoleProgramme,
+ Languages: []string{"und"},
+			})
+		}
+		if tc.contradictory {
+			media.AudioLanguages = []string{"English"}
+			media.AudioLanguagesProvenance = api.FactProvenanceManual
+		}
+		subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+		failures := languageFailures(t, tc.tracker, subject)
+		if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+			return f.Rule == "language_dub_evidence" && api.IsStrictRuleFailure(f) && f.EvidenceStatus == api.MetadataEvidenceStatusPartial &&
+				(tc.language != "und" || slices.Equal(f.LanguageCorrectionTrackIDs, []string{"audio_0"}))
+		}) {
+			t.Errorf("%s language=%s contradictory=%t lost dub evidence gate: %#v", tc.tracker, tc.language, tc.contradictory, failures)
+		}
+		if slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+			return f.Rule == "language_original_evidence" || f.Rule == "language_dub_exception_evidence"
+		}) {
+			t.Errorf("%s requested title language before usable dub-language evidence: %#v", tc.tracker, failures)
+		}
+		if !tc.contradictory && len(subject.LanguageFacts.ProgrammeLanguages) != 0 {
+			t.Fatal("aggregate clear was restored from inspected tracks")
+		}
+	}
+}
+
+func TestKnownEnglishOriginalKeepsHHDDubCountExemption(t *testing.T) {
+	subject := languageSubject("English", "English", "English")
+	for i := range subject.LanguageFacts.Tracks {
+		if subject.LanguageFacts.Tracks[i].Kind == api.MediaTrackAudio {
+			subject.LanguageFacts.Tracks[i].AudioOrigin = api.TrackAudioDubbed
+		}
+	}
+	if failures := languageFailures(t, "HHD", subject); slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+		return f.Rule == "language_english_dub_count"
+	}) {
+		t.Fatalf("English-original title lost the foreign-title count exemption: %#v", failures)
+	}
+}
+
+func TestUnknownOriginalPTPEstablishedCompanionNeedsNoDubReview(t *testing.T) {
+	for _, witness := range []string{"original", "English"} {
+		language := "Japanese"
+		if witness == "English" {
+			language = "English"
+		}
+		subject := languageSubject("", language, "German", "und")
+		media := api.MediaFacts{
+			Tracks: subject.LanguageFacts.Tracks, TrackCoverageComplete: true,
+		}
+		media.Tracks[2].AudioOrigin = ""
+		media.Tracks[0].AudioOrigin = ""
+		if witness == "original" {
+			media.Tracks[0].AudioOrigin = api.TrackAudioOriginal
+		}
+		subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+		if failures := nonAdvisoryFailures(languageFailures(t, "PTP", subject)); len(failures) != 0 {
+			t.Fatalf("established %s witness still required unrelated language review: %#v", witness, failures)
+		}
+	}
+}
+
 func TestUnknownOriginalRetainsEstablishedSoundtrackDefaultAndOrder(t *testing.T) {
 	subject := languageSubject("", "English", "German")
 	subject.LanguageFacts.Tracks[1].AudioOrigin = api.TrackAudioOriginal

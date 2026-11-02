@@ -18,7 +18,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v15", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v16", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -210,7 +210,19 @@ func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 	if len(languages) == 1 && facts.HasEnglishDub() {
 		return "Dubbed", true, nil
 	}
-	if !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) == 0 {
+	originalKnown := facts.OriginalLanguagesKnown && len(facts.OriginalLanguages) > 0
+	if len(languages) == 2 && english && (originalKnown || facts.HasEnglishDub() && !facts.HasUnresolvedProgrammeAudioOrigin()) {
+		for _, language := range languages {
+			if !languageutil.SameLanguage(language, "English") {
+				if originalKnown && languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
+					languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
+					return "", false, nil
+				}
+				return languageutil.NormalizeLanguageDisplay(language) + " MULTi", true, nil
+			}
+		}
+	}
+	if !originalKnown {
 		return "", true, nil
 	}
 	nordic := []string{"da", "fi", "is", "no", "nb", "nn", "sv"}
@@ -225,16 +237,6 @@ func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 	}
 	if len(languages) != 2 {
 		return "", false, nil
-	}
-	if english {
-		for _, language := range languages {
-			if !languageutil.SameLanguage(language, "English") {
-				if languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
-					return "", false, nil
-				}
-				return languageutil.NormalizeLanguageDisplay(language) + " MULTi", true, nil
-			}
-		}
 	}
 	if !original &&
 		languageutil.ContainsLanguage(nordic, languages[0]) && languageutil.ContainsLanguage(nordic, languages[1]) {
