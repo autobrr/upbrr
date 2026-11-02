@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -115,6 +116,36 @@ func TestRuntimeMaintenanceRetriesFailedStartupAndOutlivesCore(t *testing.T) {
 	}
 	maintenance.Close()
 	<-done
+}
+
+func TestRuntimeMaintenanceExpiresResourcesOnTicker(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		vault, err := releaseworkflow.NewPrivateArtifactVault(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		maintenance := &RuntimeMaintenance{vault: vault, logger: api.NopLogger{}}
+		stop, done, err := startWorkflowPrivateVaultCleanupLoop(t.Context(), maintenance.cleanupExpired, time.Hour, maintenance.warnf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			stop()
+			<-done
+		}()
+		resource := &maintenanceReleaseProbe{released: make(chan struct{})}
+		if err := vault.Put("owner", "workflow", "after-startup", resource, time.Now().Add(-time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		// Advance the fake clock after the synchronous startup cleanup has run.
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		select {
+		case <-resource.released:
+		default:
+			t.Fatal("periodic cleanup did not release a resource stored after startup")
+		}
+	})
 }
 
 type maintenanceReleaseProbe struct{ released chan struct{} }

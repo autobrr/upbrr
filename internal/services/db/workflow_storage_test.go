@@ -83,6 +83,14 @@ func TestStructuredWorkflowMigrationRollsBackAndRestarts(t *testing.T) {
 	if err := repo.RawDB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE id = '2026_11_structured_workflow_storage')`).Scan(&applied); err != nil || applied {
 		t.Fatalf("interrupted migration completion = %v, err=%v", applied, err)
 	}
+	var retained int
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name IN (
+		'release_workflow_ownership', 'release_workflow_sources', 'release_workflow_snapshots',
+		'release_workflow_snapshot_refs', 'release_workflow_receipts', 'idx_release_workflow_sources_path',
+		'idx_release_workflow_snapshot_refs_digest', 'idx_input_workflow_associations_workflow'
+	)`).Scan(&retained); err != nil || retained != 0 {
+		t.Fatalf("interrupted migration retained structured storage schema: objects=%d err=%v", retained, err)
+	}
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
