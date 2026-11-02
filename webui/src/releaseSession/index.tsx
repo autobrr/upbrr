@@ -1772,6 +1772,18 @@ export function ReleaseSessionProvider({
         workflowPlan.savedTrackerImages?.length &&
         workflowView.current.media?.savedImagePlanId !== workflowPlan.id
       ) {
+        // Another facet can acquire the workflow while the plan request is pending.
+        if (controllers.current.workflow) {
+          dispatch({
+            type: "workflow_failed",
+            facet: "screenshots",
+            sessionRevision: command.sessionRevision,
+            revision: command.revision,
+            error:
+              "Existing images were not included. Finish the current action, then load suggestions to retry.",
+          });
+          return false;
+        }
         return await runBackendWorkflow(
           (current, commandID, signal) =>
             continueBackendGoal(

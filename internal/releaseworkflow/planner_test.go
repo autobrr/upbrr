@@ -2493,7 +2493,7 @@ func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 		Source:   "tracker",
 	})
 	current.Media.RequirementsFingerprint = testFingerprint(t, "saved-media-requirements")
-	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+	fingerprintInput := struct {
 		Release      api.ReleaseRef
 		ProjectionID api.TrackerReleaseProjectionSetID
 		Revision     api.WorkflowRevision
@@ -2505,7 +2505,8 @@ func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 		Revision:     current.Projections.Revision,
 		Instructions: *request.Intent.Media,
 		Requirements: current.Media.RequirementsFingerprint,
-	})
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint(fingerprintInput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2531,6 +2532,51 @@ func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 	if continuationGoalReached(current, request) || command != nil || stage != "capture-media" {
 		t.Fatalf("partial adoption did not stop for missing media: stage=%q command=%#v", stage, command)
 	}
+	request.Intent.Media.CaptureDVDMenus = true
+	request.Intent.Media.MaxDVDMenuItems = 6
+	for _, status := range []api.StageStatus{api.StageStatusBlocked, api.StageStatusCompleted} {
+		current.Media.Status = status
+		command, stage = planContinuationCommand(request, current, now)
+		if capture, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" ||
+			!capture.Instructions.CaptureDVDMenus || capture.Instructions.MaxDVDMenuItems != 6 {
+			t.Fatalf("%s saved image import skipped requested menus: stage=%q command=%#v", status, stage, command)
+		}
+	}
+	current.Media.Status = api.StageStatusBlocked
+	fingerprintInput.Instructions = *request.Intent.Media
+	current.Media.CaptureFingerprint, err = api.CanonicalWorkflowFingerprint(fingerprintInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, stage = planContinuationCommand(request, current, now)
+	if command != nil || stage != "capture-media" || continuationGoalReached(current, request) {
+		t.Fatalf("exact menu attempt repeated or made partial media ready: stage=%q command=%#v", stage, command)
+	}
+	current.Media.CaptureFingerprint = testFingerprint(t, "media-after-hosting")
+	current.Media.Artifacts = append(current.Media.Artifacts, api.MediaArtifact{
+		ID:       "automatic-menu",
+		Kind:     api.MediaArtifactDVDMenu,
+		Selected: true,
+		Source:   api.ScreenshotSelectionSourceDVDMenu,
+	})
+	command, stage = planContinuationCommand(request, current, now)
+	if command != nil || stage != "capture-media" {
+		t.Fatalf("retained automatic menu was recaptured: stage=%q command=%#v", stage, command)
+	}
+	menu := &current.Media.Artifacts[len(current.Media.Artifacts)-1]
+	for _, fallback := range []struct {
+		source   string
+		selected bool
+	}{{"manual", true}, {api.ScreenshotSelectionSourceDVDMenu, false}} {
+		menu.Source, menu.Selected = fallback.source, fallback.selected
+		command, stage = planContinuationCommand(request, current, now)
+		if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
+			t.Fatalf("invalid menu fallback skipped capture: stage=%q command=%#v", stage, command)
+		}
+	}
+	current.Media.Artifacts = current.Media.Artifacts[:len(current.Media.Artifacts)-1]
+	request.Intent.Media.CaptureDVDMenus = false
+	request.Intent.Media.MaxDVDMenuItems = 0
 	for index := range current.Media.Artifacts {
 		current.Media.Artifacts[index].Selected = false
 	}

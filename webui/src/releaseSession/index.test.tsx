@@ -7319,6 +7319,68 @@ describe("useReleaseSession", () => {
     expect(captureMedia).toHaveBeenCalledOnce();
   });
 
+  it("surfaces saved-image adoption contention and permits retry", async () => {
+    const plan = {
+      ...(await workflowPorts().mediaPlan("workflow-new", new AbortController().signal)),
+      autoAdoptSavedImages: true,
+      savedTrackerImages: [
+        { trackerId: "AITHER", host: "imgbb", url: "https://images.example.invalid/saved.png" },
+      ],
+    };
+    const screenshot = createDeferred<typeof plan>();
+    const mediaPlan = vi.fn(async () => plan);
+    mediaPlan.mockImplementationOnce(() => screenshot.promise);
+    const audio = createDeferred<ReleaseWorkflowCurrent>();
+    let audioCurrent: ReleaseWorkflowCurrent | null = null;
+    const analyzeAudio = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      audioCurrent = current;
+      return audio.promise;
+    });
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({ workflow: workflowPorts({ mediaPlan, analyzeAudio, captureMedia }) }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+
+    let pendingLoad!: Promise<boolean>;
+    act(() => {
+      pendingLoad = result.current.screenshots.load();
+    });
+    let audioCommand!: Promise<boolean>;
+    act(() => {
+      audioCommand = result.current.audioAnalysis.generate({
+        resourceID: "resource-one",
+        selection: "primary",
+        trackIDs: ["audio-main"],
+        variants: ["waveform"],
+      });
+    });
+    await waitFor(() => expect(analyzeAudio).toHaveBeenCalledOnce());
+    screenshot.resolve(plan);
+    await act(async () => expect(await pendingLoad).toBe(false));
+
+    expect(captureMedia).not.toHaveBeenCalled();
+    expect(result.current.screenshots.view.status).toBe("error");
+    expect(result.current.screenshots.view.error).toBe(
+      "Existing images were not included. Finish the current action, then load suggestions to retry.",
+    );
+
+    if (!audioCurrent) throw new Error("audio command did not receive workflow state");
+    audio.resolve(audioCurrent);
+    await act(() => audioCommand);
+    await act(async () => expect(await result.current.screenshots.load()).toBe(true));
+    expect(captureMedia).toHaveBeenCalledOnce();
+    expect(captureMedia).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ selections: [], savedImagePlanId: plan.id }),
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(result.current.screenshots.view.error).toBe("");
+  });
+
   it("keeps untyped screenshot command failures local and safe", async () => {
     const captureMedia = vi.fn(async () => {
       throw new Error("private screenshot transport details");

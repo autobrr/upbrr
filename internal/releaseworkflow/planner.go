@@ -1066,8 +1066,8 @@ func continuationPreflightCurrent(current CommandResult, now time.Time) bool {
 		current.Preflight.ProjectionSet.Revision == current.Projections.Revision
 }
 
-// continuationMediaCaptureSatisfied treats explicit final selections as
-// satisfied only when each screenshot index is retained.
+// continuationMediaCaptureSatisfied recognizes retained capture results and
+// completed imports. Overall media readiness is checked separately by the planner.
 func continuationMediaCaptureSatisfied(current CommandResult, desired *api.MediaCaptureInstructions) bool {
 	if desired == nil || current.Media == nil {
 		return desired == nil && current.Media != nil
@@ -1088,7 +1088,14 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.SavedImagePlanID != "" &&
 		desired.ScreenshotCount == 0 && len(desired.Selections) == 0 && len(desired.ManualFrames) == 0 {
 		// Adoption can be complete while media minimums or deselection still block readiness.
-		return (stageSucceeded(current.Media.Status) || current.Media.Status == api.StageStatusBlocked) &&
+		// Requested menus still need an exact attempt or a retained automatic capture.
+		menusSatisfied := !desired.CaptureDVDMenus ||
+			(err == nil && current.Media.CaptureFingerprint == expected) ||
+			slices.ContainsFunc(current.Media.Artifacts, func(artifact api.MediaArtifact) bool {
+				return artifact.Kind == api.MediaArtifactDVDMenu && artifact.Selected &&
+					artifact.Source == api.ScreenshotSelectionSourceDVDMenu
+			})
+		return menusSatisfied && (stageSucceeded(current.Media.Status) || current.Media.Status == api.StageStatusBlocked) &&
 			current.Media.SavedImagePlanID == desired.SavedImagePlanID &&
 			slices.ContainsFunc(current.Media.Artifacts, func(artifact api.MediaArtifact) bool {
 				if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source == "tracker" {
