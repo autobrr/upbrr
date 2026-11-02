@@ -82,6 +82,9 @@ func renderFrame(ctx context.Context, runner Runner, executable string, req capt
 				if len(frame.Processing.Steps) > 0 {
 					frame.Processing.Warning = processingWarning(frame.Processing)
 					screenshotLogger(logger).Warnf("screenshots: timestamp_seconds=%.3f %s", req.Timestamp, frame.Processing.Warning)
+				} else {
+					screenshotLogger(logger).Infof("screenshots: timestamp_seconds=%.3f renderer=%s tonemapped=%t",
+						req.Timestamp, mode, attempt.ToneMap)
 				}
 				return frame, nil
 			}

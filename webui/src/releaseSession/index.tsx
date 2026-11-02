@@ -1867,7 +1867,7 @@ export function ReleaseSessionProvider({
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         image: preview.contentUrl,
-        warning: preview.processing?.warning,
+        processing: preview.processing ?? undefined,
         timestampSeconds: preview.timestampSeconds,
       });
       return !command.controller.signal.aborted;
@@ -3375,7 +3375,7 @@ export function ReleaseSessionProvider({
         selections: state.screenshots.selections,
         finalSelectionArtifactIDs: selectedScreenshotIDs,
         previewImage: state.screenshots.previewImage,
-        previewWarning: state.screenshots.previewWarning,
+        previewProcessing: state.screenshots.previewProcessing,
         previewTimestampSeconds: state.screenshots.previewTimestampSeconds,
         staleReason: state.screenshots.staleReason,
         mutationBlockedReason: screenshotMutationBlockedReason,

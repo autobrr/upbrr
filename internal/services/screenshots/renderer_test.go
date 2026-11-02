@@ -204,6 +204,9 @@ func TestRenderRecoveryAgreesForPreviewAndCapture(t *testing.T) {
 				}
 				var modes []string
 				for _, args := range runner.args {
+					if ffmpegValueAfter(args, "-map") != "0:V:0?" {
+						t.Fatal("ordinary input must prefer video over attached pictures without rejecting cover-only inputs")
+					}
 					filter := ffmpegValueAfter(args, "-vf")
 					mode := "none"
 					if strings.Contains(filter, "libplacebo=") {

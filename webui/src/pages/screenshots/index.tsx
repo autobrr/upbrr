@@ -587,9 +587,10 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
               </div>
             </div>
             <div className="grid gap-[9px]">
-              {view.previewImage && view.previewWarning && (
+              {view.previewImage && view.previewProcessing && (
                 <p role="status" className="text-sm text-muted-foreground">
-                  {view.previewWarning}
+                  {view.previewProcessing.warning ||
+                    `Renderer: ${view.previewProcessing.renderer}; tonemapping applied: ${view.previewProcessing.tonemapped ? "yes" : "no"}.`}
                 </p>
               )}
               {view.previewImage && view.previewTimestampSeconds !== undefined && (

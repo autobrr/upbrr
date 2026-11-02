@@ -1066,6 +1066,7 @@ func (b workflowMediaBuilder) BuildIncremental(
 			if cloneErr != nil {
 				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media clone existing capture: %w", cloneErr)
 			}
+			refreshMediaProcessing(&snapshot, retained)
 			return snapshot, retained, nil
 		}
 	}
@@ -1229,6 +1230,7 @@ func (b workflowMediaBuilder) BuildIncremental(
 		retained.dvdMenuSubject = capturedRetained.dvdMenuSubject
 	}
 	rebuildWorkflowMediaLocalSlices(&retained, combined)
+	refreshMediaProcessing(&combined, retained)
 	return combined, retained, nil
 }
 
@@ -1321,7 +1323,8 @@ func isImportedWorkflowImage(image api.ScreenshotImage) bool {
 // RestoreCompatible re-materializes a fresh current-generation media snapshot
 // from independently verified reusable assets. When the caller retains an
 // exact current snapshot and its private resource, it instead rebinds that
-// snapshot to current tracker requirements without reloading local media.
+// snapshot to current tracker requirements without querying the reusable cache.
+// Republished processing claims are verified against the current local bytes.
 func (b workflowMediaBuilder) RestoreCompatible(
 	ctx context.Context,
 	release api.ReleaseRef,
@@ -1348,6 +1351,7 @@ func (b workflowMediaBuilder) RestoreCompatible(
 		}
 		snapshot.RequirementsFingerprint = requirements
 		retained = cloneWorkflowMediaPrivateArtifacts(retained)
+		refreshMediaProcessing(&snapshot, retained)
 		if attempts, prepared := b.restoredHostedImageAttempts(ctx, release, snapshot, retained, projections.Projections); prepared {
 			snapshot.HostAttempts = slices.DeleteFunc(snapshot.HostAttempts, func(attempt api.HostedImageAttempt) bool {
 				return attempt.Status == api.StageStatusCompleted
@@ -2505,6 +2509,8 @@ func (b workflowMediaBuilder) UploadImages(
 		delete(failedHosts, host)
 	}
 	snapshot.FailedHosts = sortedMapKeys(failedHosts)
+	snapshot.Artifacts = slices.Clone(snapshot.Artifacts)
+	refreshMediaProcessing(&snapshot, retained)
 	return snapshot, retained, attempts, nil
 }
 
@@ -3006,6 +3012,7 @@ func (b workflowMediaBuilder) RemoveHostedImages(
 		}
 	}
 	snapshot.Artifacts = artifacts
+	refreshMediaProcessing(&snapshot, retained)
 	return snapshot, retained, nil
 }
 
@@ -3020,7 +3027,13 @@ func (b workflowMediaBuilder) mediaMutationBase(
 		if !ok {
 			return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, errors.New("workflow media retained resource is incompatible")
 		}
-		return *existing, cloneWorkflowMediaPrivateArtifacts(retained), nil
+		snapshot, err := existing.Clone()
+		if err != nil {
+			return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media clone existing capture: %w", err)
+		}
+		retained = cloneWorkflowMediaPrivateArtifacts(retained)
+		refreshMediaProcessing(&snapshot, retained)
+		return snapshot, retained, nil
 	}
 	requirements, err := workflowMediaRequirementsFingerprint(projections.Projections)
 	if err != nil {
@@ -3132,7 +3145,7 @@ func publicMediaArtifact(
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s\x00%s\x00%d", fingerprint, kindKey, index))
 	idFingerprint := hex.EncodeToString(sum[:])
 	return api.MediaArtifact{
-		Processing:       image.Processing,
+		Processing:       verifiedScreenshotProcessing(image),
 		ID:               api.PublicResourceID("media_" + idFingerprint[:24]),
 		DiscID:           image.DiscID,
 		DiscName:         image.DiscName,
@@ -3147,6 +3160,24 @@ func publicMediaArtifact(
 		Height:           image.Height,
 		SizeBytes:        image.SizeBytes,
 		Host:             strings.TrimSpace(image.Host),
+	}
+}
+
+// Processing claims belong to the captured bytes, not the reusable pathname.
+func verifiedScreenshotProcessing(image api.ScreenshotImage) *api.ScreenshotProcessing {
+	if image.Processing == nil || imageevidence.Tonemapping(image.Path, image.ContentSHA256, image.Tonemapping) == "" {
+		return nil
+	}
+	return image.Processing
+}
+
+// Refresh only claims already present in a cloned snapshot before publishing it.
+func refreshMediaProcessing(snapshot *api.MediaArtifactSet, retained workflowMediaPrivateArtifacts) {
+	for i := range snapshot.Artifacts {
+		artifact := &snapshot.Artifacts[i]
+		if artifact.Processing != nil {
+			artifact.Processing = verifiedScreenshotProcessing(retained.ArtifactImages[artifact.ID])
+		}
 	}
 }
 

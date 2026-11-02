@@ -28,6 +28,28 @@ const current = (workflowID: string, revision: number): ReleaseWorkflowCurrent =
   }) as unknown as ReleaseWorkflowCurrent;
 
 describe("sessionReducer upload intent", () => {
+  it("retains full successful preview processing and clears it for a new source", () => {
+    const initial = initialSessionState();
+    const processing = {
+      requestedRenderer: "software",
+      renderer: "software",
+      tonemapped: true,
+      degraded: false,
+    };
+    const state = sessionReducer(initial, {
+      type: "screenshot_previewed",
+      sessionRevision: initial.sessionRevision,
+      revision: initial.screenshots.revision,
+      image: "/preview.png",
+      timestampSeconds: 12.5,
+      processing,
+    });
+    expect(state.screenshots.previewProcessing).toEqual(processing);
+    expect(state.screenshots.previewTimestampSeconds).toBe(12.5);
+    const reset = sessionReducer(state, { type: "source_selected", sourcePath: "Other.mkv" });
+    expect(reset.screenshots.previewProcessing).toBeUndefined();
+  });
+
   it("preserves selection-only edit counts with Input drafts and resets both revisions for a new source", () => {
     const initial = initialSessionState();
     const sourcePath = "C:\\media\\Example.Release.2026.mkv";

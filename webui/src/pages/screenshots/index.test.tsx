@@ -88,6 +88,27 @@ const facet = (): ScreenshotsFacet => {
 };
 
 describe("ScreenshotsPage", () => {
+  it.each([
+    { renderer: "libplacebo", tonemapped: true, applied: "yes" },
+    { renderer: "none", tonemapped: false, applied: "no" },
+  ])("shows successful $renderer preview processing", ({ renderer, tonemapped, applied }) => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        previewProcessing: { requestedRenderer: renderer, renderer, tonemapped, degraded: false },
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+    const preview = screen.getByRole("heading", { name: "Live Preview" }).closest("section")!;
+    expect(within(preview).getByRole("status")).toHaveTextContent(
+      `Renderer: ${renderer}; tonemapping applied: ${applied}.`,
+    );
+  });
+
   it("keeps each recovered image warning beside its image", () => {
     const base = facet();
     const artifacts = base.view.artifacts!;
@@ -95,8 +116,14 @@ describe("ScreenshotsPage", () => {
       ...base,
       view: {
         ...base.view,
-        previewWarning:
-          "Requested libplacebo; device failed. Using software; tonemapping applied: true.",
+        previewProcessing: {
+          requestedRenderer: "libplacebo",
+          renderer: "software",
+          tonemapped: true,
+          degraded: false,
+          warning:
+            "Requested libplacebo; device failed. Using software; tonemapping applied: true.",
+        },
         previewTimestampSeconds: 12.5,
         artifacts: {
           ...artifacts,

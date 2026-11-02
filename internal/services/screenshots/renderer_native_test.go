@@ -46,16 +46,17 @@ func TestNativeScreenshotRenderer(t *testing.T) {
 					continue
 				}
 				req := captureRequest{
-InputPath: input,
- Timestamp: 0.5,
- FrameRate: 24,
- ToneMap: hdr,
- UseLibplacebo: lib,
- FrameOverlay: true,
- OverlaySize: 18,
- Resolution: "1080p",
- HDRFacts: api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatHDR10}},
-}
+					InputPath:     input,
+					Timestamp:     0.5,
+					FrameRate:     24,
+					ToneMap:       hdr,
+					UseLibplacebo: lib,
+					FrameOverlay:  true,
+					OverlaySize:   18,
+					Resolution:    "1080p",
+					HDRFacts:      api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatHDR10}},
+				}
+
 				preview, processing, err := captureFrameBytes(t.Context(), commandRunner{}, executable, req, api.NopLogger{})
 				if err != nil {
 					t.Fatal(err)
@@ -110,5 +111,50 @@ InputPath: input,
 				}
 			}
 		})
+	}
+}
+
+func TestNativeScreenshotVideoAndCoverSelection(t *testing.T) {
+	if os.Getenv("UPBRR_SCREENSHOT_NATIVE_TEST") != "1" {
+		t.Skip("set UPBRR_SCREENSHOT_NATIVE_TEST=1 for real FFmpeg checks")
+	}
+	executable, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Fatal("native check requires FFmpeg")
+	}
+	root := t.TempDir()
+	cover := filepath.Join(root, "cover.png")
+	if _, err := (commandRunner{}).Run(t.Context(), executable, []string{
+		"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=red:size=32x32", "-frames:v", "1", cover,
+	}, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, coverOnly := range []bool{false, true} {
+		input := filepath.Join(root, "movie.mp4")
+		args := []string{"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=blue:size=64x48:duration=1", "-i", cover,
+			"-map", "0:v", "-map", "1:v", "-c:v:0", "libx264", "-c:v:1", "png", "-disposition:v:1", "attached_pic"}
+		if coverOnly {
+			input = filepath.Join(root, "cover-only.m4a")
+			args = []string{"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=1", "-i", cover,
+				"-map", "0:a", "-map", "1:v", "-c:a", "aac", "-c:v", "png", "-disposition:v", "attached_pic"}
+		}
+		if _, err := (commandRunner{}).Run(t.Context(), executable, append(args, input), ""); err != nil {
+			t.Fatal(err)
+		}
+		payload, _, err := captureFrameBytes(t.Context(), commandRunner{}, executable, captureRequest{InputPath: input}, api.NopLogger{})
+		if err != nil {
+			t.Fatalf("cover_only=%t: %v", coverOnly, err)
+		}
+		decoded, _, err := image.Decode(bytes.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := image.Rect(0, 0, 64, 48)
+		if coverOnly {
+			want = image.Rect(0, 0, 32, 32)
+		}
+		if decoded.Bounds() != want {
+			t.Fatalf("cover_only=%t captured geometry=%v want=%v", coverOnly, decoded.Bounds(), want)
+		}
 	}
 }

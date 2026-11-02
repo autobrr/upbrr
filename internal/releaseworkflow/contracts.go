@@ -395,7 +395,7 @@ type IncrementalMediaArtifactBuilder interface {
 
 // CompatibleMediaRestorer adopts verified reusable bytes into a new exact generation,
 // or refreshes current tracker coverage from an existing snapshot and private resource
-// without reloading its bytes. Retained artifacts keep their identity and selection.
+// without querying the reusable cache. Retained artifacts keep their identity and selection.
 type CompatibleMediaRestorer interface {
 	RestoreCompatible(
 		context.Context,

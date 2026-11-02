@@ -19,6 +19,7 @@ import type {
   CorrectionFieldRef,
   ReleaseCorrectionValues,
   ReleaseWorkflowCurrent,
+  ScreenshotProcessing,
 } from "../api/generated/release-workflow";
 import type {
   FacetStatus,
@@ -45,7 +46,7 @@ type ScreenshotState = WorkflowState<ScreenshotPlan> &
     /** Preserve existing frame drafts when replacing an expired plan. */
     planStale: boolean;
     previewImage: string;
-    previewWarning?: string;
+    previewProcessing?: ScreenshotProcessing;
     previewTimestampSeconds?: number;
     selections: readonly ScreenshotSelection[];
     finalSelectionArtifactIDs: readonly string[];
@@ -301,7 +302,7 @@ export type SessionAction =
     }>
   | Readonly<{
       type: "screenshot_previewed";
-      warning?: string;
+      processing?: ScreenshotProcessing;
       timestampSeconds?: number;
       sessionRevision: number;
       revision: number;
@@ -444,7 +445,7 @@ export const initialSessionState = (): SessionState => ({
     ...emptyWorkflow<ScreenshotPlan>(),
     planStale: false,
     previewImage: "",
-    previewWarning: "",
+    previewProcessing: undefined,
     previewTimestampSeconds: undefined,
     selections: [],
     finalSelectionArtifactIDs: [],
@@ -558,7 +559,7 @@ const invalidateReleaseWork = (state: SessionState, reason: string) => ({
     ...invalidate(state.screenshots, reason, true),
     planStale: false,
     previewImage: "",
-    previewWarning: "",
+    previewProcessing: undefined,
     previewTimestampSeconds: undefined,
     selections: [],
     finalSelectionArtifactIDs: [],
@@ -1816,7 +1817,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         screenshots: {
           ...readyWorkflow(state.screenshots),
           previewImage: action.image,
-          previewWarning: action.warning || "",
+          previewProcessing: action.processing,
           previewTimestampSeconds: action.timestampSeconds,
         },
       };

@@ -395,7 +395,8 @@ func buildFFmpegArgs(req captureRequest, useLibplacebo bool) []string {
 	args = append(args, "-ss", fmt.Sprintf("%.3f", req.Timestamp))
 	args = append(args, screenshotInputArgs(req.InputPath, req.Playlist)...)
 	if req.Playlist == "" {
-		args = append(args, "-map", "0:v:0")
+		// Prefer actual video; keep automatic selection for cover-only inputs.
+		args = append(args, "-map", "0:V:0?")
 	}
 	args = append(args, "-an", "-sn", "-dn", "-frames:v", "1",
 		"-vf", buildFilterChain(req, useLibplacebo), "-vcodec", "png",
