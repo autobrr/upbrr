@@ -33,6 +33,8 @@ type MediaArtifactContent struct {
 // MediaPreviewContent retains one non-authoritative frame preview without
 // exposing image bytes or filesystem identity in workflow snapshots.
 type MediaPreviewContent struct {
+	Processing       api.ScreenshotProcessing
+	TimestampSeconds float64
 	// DiscID identifies the prepared disc used for this preview.
 	DiscID string
 	// DiscName is the safe page-facing label for DiscID.

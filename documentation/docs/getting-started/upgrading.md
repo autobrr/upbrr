@@ -71,3 +71,5 @@ The CLI presents the same confirmation for a remaining recovery action when run 
 Never start an older binary against the upgraded database. To roll back, stop every upbrr process and restore the matching pre-upgrade state backup before starting the older version.
 
 :::
+
+Development builds for v0.4.2 also add per-image screenshot renderer outcomes. Existing captures keep their known tone-mapping status but have no invented renderer history. The capture compatibility version changes, so older automatic captures are not reused as if they were made by the new renderer policy. Stop the service and back up the whole state directory before testing; restore that backup when returning to an older version.

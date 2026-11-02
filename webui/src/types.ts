@@ -3,6 +3,7 @@
 
 import type {
   MediaFileFacts,
+  ScreenshotProcessing,
   SubtitleLanguageCoverage,
   TrackAudioOrigin,
   TrackAudioOriginCorrection,
@@ -1160,6 +1161,8 @@ export type ScreenshotSelection = {
 export type ScreenshotTonemapping = "tonemapped" | "not_tonemapped";
 
 export type ScreenshotImage = {
+  /** Observed renderer outcome; omitted for legacy or imported images. */
+  Processing?: ScreenshotProcessing;
   Tonemapping?: ScreenshotTonemapping;
   ContentSHA256?: string;
   /** Prepared disc identity; omitted only for unscoped single-disc artifacts. */

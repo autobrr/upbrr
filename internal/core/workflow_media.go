@@ -150,12 +150,14 @@ func (b workflowMediaBuilder) PreviewFrame(
 		contentType = "application/octet-stream"
 	}
 	return releaseworkflow.MediaPreviewContent{
-		DiscID:      preview.DiscID,
-		DiscName:    preview.DiscName,
-		Bytes:       append([]byte(nil), preview.ImageBytes...),
-		ContentType: contentType,
-		Width:       preview.Width,
-		Height:      preview.Height,
+		Processing:       preview.Processing,
+		TimestampSeconds: preview.TimestampSeconds,
+		DiscID:           preview.DiscID,
+		DiscName:         preview.DiscName,
+		Bytes:            append([]byte(nil), preview.ImageBytes...),
+		ContentType:      contentType,
+		Width:            preview.Width,
+		Height:           preview.Height,
 	}, nil
 }
 
@@ -2543,6 +2545,7 @@ func (b workflowMediaBuilder) persistReusableWorkflowMedia(
 		}
 		if image.ContentSHA256 != contentSHA256 {
 			image.Tonemapping = ""
+			image.Processing = nil
 		}
 		image.ContentSHA256 = contentSHA256
 		captureFingerprint, err := workflowMediaReuseCaptureFingerprint(b.config, binding.CompatibilityKey, artifact.Kind, image)
@@ -2624,7 +2627,7 @@ func workflowMediaReuseCaptureFingerprint(
 		TonemapAlgorithm  string
 		Desat             float64
 	}{
-		Version:           "media-capture-v1",
+		Version:           "media-capture-v2",
 		CompatibilityKey:  compatibilityKey,
 		Kind:              kind,
 		Purpose:           image.Purpose,
@@ -3129,6 +3132,7 @@ func publicMediaArtifact(
 	sum := sha256.Sum256(fmt.Appendf(nil, "%s\x00%s\x00%d", fingerprint, kindKey, index))
 	idFingerprint := hex.EncodeToString(sum[:])
 	return api.MediaArtifact{
+		Processing:       image.Processing,
 		ID:               api.PublicResourceID("media_" + idFingerprint[:24]),
 		DiscID:           image.DiscID,
 		DiscName:         image.DiscName,

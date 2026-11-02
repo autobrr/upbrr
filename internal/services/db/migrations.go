@@ -70,6 +70,11 @@ var migrationRegistry = []migrationStep{
 		apply: migrateStructuredWorkflowStorage,
 	},
 	{
+		id:        "2026_11_screenshot_renderer_outcomes",
+		dependsOn: []string{"2026_09_add_media_reuse_associations"},
+		apply:     migrateScreenshotRendererOutcomes,
+	},
+	{
 		id:        "2026_10_imported_screenshot_evidence",
 		dependsOn: []string{"2026_07_add_canonical_release_generations"},
 		apply:     migrateImportedScreenshotEvidence,
@@ -2056,6 +2061,30 @@ func migrateHDRAnalysisAssociation(ctx context.Context, exec migrationExecutor) 
 	_, err = exec.ExecContext(ctx, `ALTER TABLE input_workflow_associations ADD COLUMN hdr_analysis_id TEXT`)
 	if err != nil {
 		return fmt.Errorf("db migrate HDR association: %w", err)
+	}
+	return nil
+}
+
+// migrateScreenshotRendererOutcomes leaves historical renderers unknown.
+func migrateScreenshotRendererOutcomes(ctx context.Context, exec migrationExecutor) error {
+	for _, table := range []string{"screenshots", "media_reusable_assets"} {
+		present, err := tableExists(ctx, exec, table)
+		if err != nil {
+			return err
+		}
+		if !present {
+			continue
+		}
+		exists, err := tableColumnExists(ctx, exec, table, "processing_json")
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := exec.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN processing_json TEXT NOT NULL DEFAULT ''`, table)); err != nil {
+			return fmt.Errorf("db add screenshot renderer outcome: %w", err)
+		}
 	}
 	return nil
 }

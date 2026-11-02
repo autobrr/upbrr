@@ -99,6 +99,18 @@ func (m *Module) restoreReusableMedia(
 func (m *Module) logMediaInventory(ctx context.Context, stage string, artifacts []api.MediaArtifact) {
 	var localImages, selectedLocalImages, hostedLinks, selectedHostedLinks int
 	for _, artifact := range artifacts {
+		if artifact.Kind == api.MediaArtifactScreenshot && artifact.Selected && artifact.Processing != nil && artifact.Processing.Warning != "" {
+			logging.FromContext(
+				ctx,
+				m.logger,
+			).Warnf(
+				"screenshots: reused stage=%s index=%d timestamp_seconds=%.3f %s",
+				stage,
+				artifact.Index,
+				artifact.TimestampSeconds,
+				logging.SanitizeMessage(artifact.Processing.Warning),
+			)
+		}
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot, api.MediaArtifactDVDMenu:
 			localImages++

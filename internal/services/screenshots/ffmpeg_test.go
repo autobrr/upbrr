@@ -124,7 +124,7 @@ func TestBuildFilterChainRoundsPARScaleToEven(t *testing.T) {
 		WidthScale:   1.0,
 		HeightScale:  1.001,
 	}, false)
-	if !strings.HasPrefix(filter, "scale=854:480,") {
+	if !strings.HasPrefix(filter, "trim=end_frame=1,scale=854:480,") {
 		t.Fatalf("expected scale dimensions rounded to even first in filter chain, got %q", filter)
 	}
 }
@@ -162,7 +162,7 @@ func TestBuildFFmpegArgsPreservesPNGCompressionBounds(t *testing.T) {
 func TestCaptureFrameBytesRejectsEmptySuccessfulOutput(t *testing.T) {
 	runner := &singleResultRunner{result: CommandResult{ExitCode: 0}}
 
-	payload, err := captureFrameBytes(context.Background(), runner, "ffmpeg", previewRequest{
+	payload, _, err := captureFrameBytes(context.Background(), runner, "ffmpeg", captureRequest{
 		InputPath: "example.mkv",
 		Timestamp: 1,
 	}, api.NopLogger{})
@@ -180,7 +180,7 @@ func TestCaptureFrameBytesRejectsEmptySuccessfulOutput(t *testing.T) {
 func TestCaptureFrameBytesRejectsBlackSuccessfulOutput(t *testing.T) {
 	runner := &singleResultRunner{result: CommandResult{Stdout: testPNGBytes(t, color.RGBA{A: 255}), ExitCode: 0}}
 
-	payload, err := captureFrameBytes(context.Background(), runner, "ffmpeg", previewRequest{
+	payload, _, err := captureFrameBytes(context.Background(), runner, "ffmpeg", captureRequest{
 		InputPath: "example.mkv",
 		Timestamp: 1,
 	}, api.NopLogger{})
@@ -521,11 +521,11 @@ func TestBlurayInputOptionsStayBeforeInputForCaptureAndPreview(t *testing.T) {
 			Playlist:  "800",
 			Timestamp: 90,
 		}, false),
-		buildFFmpegPreviewArgs(previewRequest{
+		buildFFmpegArgs(captureRequest{
 			InputPath: source,
 			Playlist:  "800",
 			Timestamp: 90,
-		}),
+		}, false),
 	} {
 		playlist := slices.Index(args, "-playlist")
 		input := slices.Index(args, "-i")

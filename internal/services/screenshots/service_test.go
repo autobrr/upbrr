@@ -1063,7 +1063,7 @@ func TestPreviewFrameTonemapsHDR(t *testing.T) {
 		t.Fatalf("preview frame: %v", err)
 	}
 
-	want := "zscale=transfer=linear,tonemap=tonemap=hable:desat=0.25,zscale=transfer=bt709,format=rgb24"
+	want := "trim=end_frame=1,zscale=transfer=linear,format=gbrpf32le,tonemap=tonemap=hable:desat=0.25,zscale=primaries=bt709:transfer=bt709:matrix=bt709:range=tv,format=rgb24"
 	if got := ffmpegValueAfter(runner.calls[0].args, "-vf"); got != want {
 		t.Fatalf("preview filter = %q, want %q", got, want)
 	}

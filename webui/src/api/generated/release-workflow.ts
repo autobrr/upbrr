@@ -619,6 +619,7 @@ export type FramePreview = Readonly<{
   discName?: string;
   expiresAt: string;
   id: PublicResourceID;
+  processing?: ScreenshotProcessing | null;
   release: ReleaseSnapshotRef;
   timestampSeconds: number;
   workflowId: WorkflowID;
@@ -1134,6 +1135,7 @@ export type MediaArtifact = Readonly<{
   index?: number;
   kind: MediaArtifactKind;
   order?: number;
+  processing?: ScreenshotProcessing | null;
   purpose: ScreenshotPurpose;
   selected: boolean;
   sizeBytes?: number;
@@ -2303,7 +2305,22 @@ export type SaveReleaseWorkflowDescriptionOverrideRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type ScreenshotProcessing = Readonly<{
+  degraded: boolean;
+  renderer: string;
+  requestedRenderer: string;
+  steps?: readonly ScreenshotRenderStep[];
+  tonemapped: boolean;
+  warning?: string;
+}>;
+
 export type ScreenshotPurpose = string;
+
+export type ScreenshotRenderStep = Readonly<{
+  reason: string;
+  renderer: string;
+  stage: string;
+}>;
 
 export type ScreenshotSelection = Readonly<{
   DiscID: string;

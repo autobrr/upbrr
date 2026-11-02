@@ -266,6 +266,8 @@ export type ScreenshotsFacet = Readonly<{
     selections: readonly ScreenshotSelection[];
     finalSelectionArtifactIDs: readonly string[];
     previewImage: string;
+    previewWarning?: string;
+    previewTimestampSeconds?: number;
     staleReason: string;
     mutationBlockedReason: string;
     error: string;

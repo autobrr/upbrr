@@ -45,6 +45,8 @@ type ScreenshotState = WorkflowState<ScreenshotPlan> &
     /** Preserve existing frame drafts when replacing an expired plan. */
     planStale: boolean;
     previewImage: string;
+    previewWarning?: string;
+    previewTimestampSeconds?: number;
     selections: readonly ScreenshotSelection[];
     finalSelectionArtifactIDs: readonly string[];
   }>;
@@ -299,6 +301,8 @@ export type SessionAction =
     }>
   | Readonly<{
       type: "screenshot_previewed";
+      warning?: string;
+      timestampSeconds?: number;
       sessionRevision: number;
       revision: number;
       image: string;
@@ -440,6 +444,8 @@ export const initialSessionState = (): SessionState => ({
     ...emptyWorkflow<ScreenshotPlan>(),
     planStale: false,
     previewImage: "",
+    previewWarning: "",
+    previewTimestampSeconds: undefined,
     selections: [],
     finalSelectionArtifactIDs: [],
   },
@@ -552,6 +558,8 @@ const invalidateReleaseWork = (state: SessionState, reason: string) => ({
     ...invalidate(state.screenshots, reason, true),
     planStale: false,
     previewImage: "",
+    previewWarning: "",
+    previewTimestampSeconds: undefined,
     selections: [],
     finalSelectionArtifactIDs: [],
   },
@@ -1805,7 +1813,12 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         return state;
       return {
         ...state,
-        screenshots: { ...readyWorkflow(state.screenshots), previewImage: action.image },
+        screenshots: {
+          ...readyWorkflow(state.screenshots),
+          previewImage: action.image,
+          previewWarning: action.warning || "",
+          previewTimestampSeconds: action.timestampSeconds,
+        },
       };
     case "menu_images_loaded":
       if (!workflowMatches(state, "menuImages", action.sessionRevision, action.revision))

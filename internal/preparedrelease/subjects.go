@@ -461,6 +461,7 @@ func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPl
 		MediaInfoJSONPath:     resources.mediaInfoJSONPath,
 		MediaCategory:         string(release.Identity.Category),
 		HDR:                   release.Media.HDR,
+		HDRFacts:              release.Media.HDRFacts,
 		TVPack:                release.Episode.Pack,
 		Episode:               release.Episode.Episode,
 		Release:               releaseInfo(release),

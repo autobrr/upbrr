@@ -160,7 +160,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     UseLibplacebo: field(
       "Use Vulkan/libplacebo tone mapping",
-      "Needed for Dolby Vision Profile 5 inputs to avoid green/purple screenshots. Uses FFmpeg Vulkan/libplacebo when tone mapping is enabled and frame overlay is disabled. Requires a compatible FFmpeg/Vulkan setup; failed captures can fall back to software tone mapping.",
+      "Needed for Dolby Vision Profile 5 inputs to avoid green/purple screenshots. Uses FFmpeg Vulkan/libplacebo for previews and captures, including frame overlays, when tone mapping is enabled. Requires a compatible FFmpeg/Vulkan setup. Failed rendering can use compatible software tone mapping or a non-tonemapped image with a visible warning.",
     ),
     FFmpegCompression: field(
       "PNG compression level",
