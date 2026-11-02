@@ -7564,16 +7564,20 @@ describe("useReleaseSession", () => {
                 order: 0,
                 index: 0,
               },
-              {
-                id: "screen-generated",
-                discId: "disc-two",
-                discName: "Disc 2",
-                kind: "screenshot" as const,
-                purpose: "final" as const,
-                selected: true,
-                order: 1,
-                index: 1,
-              },
+              ...(instructions.selections?.length
+                ? [
+                    {
+                      id: "screen-generated",
+                      discId: "disc-two",
+                      discName: "Disc 2",
+                      kind: "screenshot" as const,
+                      purpose: "final" as const,
+                      selected: true,
+                      order: 1,
+                      index: 1,
+                    },
+                  ]
+                : []),
             ],
             status: "completed" as const,
             createdAt: "2026-07-20T00:00:00Z",
@@ -7688,6 +7692,7 @@ describe("useReleaseSession", () => {
     );
     await act(() => result.current.screenshots.load());
     expect(captureMedia).toHaveBeenCalledTimes(1);
+    expect(result.current.screenshots.view.finalSelectionArtifactIDs).toEqual(["screen-existing"]);
     await act(() => result.current.screenshots.generate("final"));
 
     expect(captureMedia).toHaveBeenCalledWith(
