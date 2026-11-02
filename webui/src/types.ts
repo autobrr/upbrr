@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type {
+  BlurayDetailRequest,
+  BluraySelection,
   MediaFileFacts,
   SubtitleLanguageCoverage,
   TrackAudioOrigin,
@@ -346,7 +348,7 @@ export type PrepareInput = {
       TrackAudioOrigins?: readonly TrackAudioOriginCorrection[];
     };
     SourceLookup: string;
-    Bluray?: { Mode: string; Release: string } | null;
+    Bluray?: BluraySelection | null;
     Playlist: PlaylistInstruction;
     TrackerIDs?: Record<string, string>;
   };
@@ -359,7 +361,7 @@ export type PrepareInput = {
   Controls?: {
     Interaction: "interactive" | "unattended" | "unattended_confirm";
     CaptureHDRMetadata?: boolean;
-    BlurayDetails?: { ReleaseID: string; All: boolean };
+    BlurayDetails?: BlurayDetailRequest;
     ConfirmBDMVRescan: boolean;
     ForceRecheck?: boolean | null;
   };

@@ -18,6 +18,7 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  BluraySelection,
   HDRAnalysisResult,
   HDRAnalysisInstructions,
   HDRComparisonSourceRef,
@@ -99,7 +100,7 @@ export type PlaylistStatus =
 
 export type PreparationIntent = Readonly<{
   sourceLookupURL: string;
-  bluray?: Readonly<{ Mode: string; Release: string }> | null;
+  bluray?: BluraySelection | null;
   identity: Readonly<ExternalIDOverrides>;
   metadata: Readonly<MetadataOverrides>;
   releaseName: Readonly<ReleaseNameOverrides>;

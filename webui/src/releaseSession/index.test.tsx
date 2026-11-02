@@ -8769,3 +8769,76 @@ it("requests single/all Blu-ray details through exact preparation authority and 
   );
   unmount();
 });
+
+it.each([
+  "owned preparation",
+  "existing preparation",
+  "existing audio analysis",
+  "concurrent preparation",
+])("limits candidate cancellation to its own operation: %s", async (scenario) => {
+  const workflowID = "workflow-bluray-cancellation";
+  const sourcePath = "Example.Release.2026.mkv";
+  const ownsOperation = scenario === "owned preparation";
+  const operation: WorkflowOperationStatus = {
+    id: ownsOperation ? "candidate-operation" : "existing-operation",
+    workflowId: workflowID,
+    revision: 2,
+    sequence: 1,
+    command: "fixture",
+    operation: scenario === "existing audio analysis" ? "analyze_audio" : "preparation",
+    status: "running",
+    progress: 0,
+    completed: 0,
+    total: 1,
+    startedAt: "2026-07-20T00:00:00Z",
+    updatedAt: "2026-07-20T00:00:00Z",
+  };
+  const canceled: WorkflowOperationStatus = { ...operation, status: "canceled", sequence: 2 };
+  let current = workflowCurrentFromPreview(workflowCurrent(workflowID, 2), preview(sourcePath, 1));
+  if (scenario.startsWith("existing")) current = { ...current, operation };
+  const terminal = createDeferred<WorkflowOperationStatus>();
+  const continuation = vi.fn(async () => {
+    current = { ...current, operation };
+    return ownsOperation ? { ...current, preparationOperationId: operation.id } : current;
+  });
+  const cancelOperation = vi.fn(async () => {
+    current = { ...current, operation: canceled };
+    terminal.resolve(canceled);
+    return canceled;
+  });
+  const cancelWorkflow = vi.fn();
+  const { result, unmount } = renderHook(useReleaseSession, {
+    wrapper: wrapperFor(
+      portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => current,
+          continue: continuation,
+          operation: async () => terminal.promise,
+          cancelOperation,
+          cancel: cancelWorkflow,
+        }),
+      }),
+    ),
+  });
+  await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
+  expect(result.current.input.view.candidateDetailsCancelable).toBe(false);
+  let pending: Promise<boolean> | undefined;
+  act(() => {
+    pending = result.current.input.fetchCandidateDetails("101");
+  });
+  await waitFor(() => expect(continuation).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(result.current.input.view.candidateDetailsCancelable).toBe(ownsOperation),
+  );
+  await act(() => result.current.input.cancelCandidateDetails());
+  if (ownsOperation) {
+    expect(cancelOperation).toHaveBeenCalledWith(workflowID, operation.id, expect.any(AbortSignal));
+  } else {
+    expect(cancelOperation).not.toHaveBeenCalled();
+  }
+  expect(cancelWorkflow).not.toHaveBeenCalled();
+  unmount();
+  terminal.resolve(canceled);
+  await act(() => pending);
+});

@@ -812,6 +812,9 @@ type ReleaseWorkflow struct {
 // ReleaseWorkflowCurrent is the complete safe current projection returned to
 // every workflow adapter. Private execution resources never appear here.
 type ReleaseWorkflowCurrent struct {
+	// PreparationOperationID identifies forced preparation accepted by this
+	// continuation response. Busy responses and passive reads omit it.
+	PreparationOperationID WorkflowOperationID                   `json:"preparationOperationId,omitempty"`
 	Workflow               ReleaseWorkflow                       `json:"workflow"`
 	FactInstructions       *ReleaseFactInstructionSnapshot       `json:"factInstructions,omitempty"`
 	Release                *ReleaseSnapshot                      `json:"release,omitempty"`

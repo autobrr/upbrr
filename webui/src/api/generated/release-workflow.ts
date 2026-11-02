@@ -194,7 +194,10 @@ export type AudioAnalysisVariant = string;
 export type AudioTrackRole = string;
 
 export type BlurayDetailRequest = Readonly<{
-  All: boolean;
+  All: true;
+  ReleaseID?: string;
+}> | Readonly<{
+  All?: false;
   ReleaseID: string;
 }>;
 
@@ -254,8 +257,11 @@ export type BlurayReleaseCandidate = Readonly<{
 }>;
 
 export type BluraySelection = Readonly<{
-  Mode: string;
+  Mode: "manual";
   Release: string;
+}> | Readonly<{
+  Mode: "skip" | "auto";
+  Release?: string;
 }>;
 
 export type BluraySpecs = Readonly<{
@@ -1904,6 +1910,7 @@ export type ReleaseWorkflowCurrent = Readonly<{
   media?: MediaArtifactSet | null;
   operation?: Operation | null;
   preflight?: TrackerPreflightAssessment | null;
+  preparationOperationId?: WorkflowOperationID;
   projectionInstructions?: TrackerProjectionInstructionSnapshot | null;
   projections?: TrackerReleaseProjectionSet | null;
   release?: ReleaseSnapshot | null;

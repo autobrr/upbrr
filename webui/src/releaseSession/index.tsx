@@ -17,6 +17,8 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  BlurayDetailRequest,
+  BluraySelection,
   HDRAnalysisInstructions,
   AudioAnalysisInstructions,
   DescriptionInstructions,
@@ -245,6 +247,10 @@ export function ReleaseSessionProvider({
     operationSequence: number;
     status: "running" | "error";
     message: string;
+  }> | null>(null);
+  const [candidateOperation, setCandidateOperation] = useState<Readonly<{
+    workflowID: string;
+    operationID: string;
   }> | null>(null);
   const [questionnaireRefresh, setQuestionnaireRefresh] = useState<Readonly<{
     key: string;
@@ -551,6 +557,7 @@ export function ReleaseSessionProvider({
     idempotencyKey: string,
     signal: AbortSignal,
     extra: Pick<ContinueReleaseWorkflowRequest, "answers" | "approval"> = {},
+    onOperation?: (current: ReleaseWorkflowCurrent) => void,
   ): Promise<ReleaseWorkflowCurrent> => {
     if (goal === "uploaded" && !mutationsAllowed) {
       throw new Error("Tracker submission is unavailable in this runtime.");
@@ -578,6 +585,7 @@ export function ReleaseSessionProvider({
       if (signal.aborted || !activeSlotMatches(expectedSlot)) {
         throw new DOMException("Active input changed.", "AbortError");
       }
+      onOperation?.(continued);
       const next = await awaitWorkflowCommand(continued, signal, expectedSlot);
       // A dry-run action owns one assessment; partial results need an explicit retry.
       if (
@@ -960,11 +968,12 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const cancelBackendWorkflow = async (reason: string, operationOnly = false): Promise<boolean> => {
+  const cancelBackendWorkflow = async (reason: string, operationID?: string): Promise<boolean> => {
     const workflowID = workflowView.current?.workflow.id || activeAuthority.current.workflowID;
     if (!workflowID) return false;
     const operation = workflowView.current?.operation;
-    if (operationOnly && !isActiveWorkflowOperation(operation)) return false;
+    if (operationID && (!isActiveWorkflowOperation(operation) || operation?.id !== operationID))
+      return false;
     abortController("workflow");
     const controller = new AbortController();
     controllers.current.workflow = controller;
@@ -1334,8 +1343,8 @@ export function ReleaseSessionProvider({
       confirmBDMVRescan: boolean;
       captureHDRMetadata?: boolean;
       acceptPendingInput?: boolean;
-      blurayDetails?: { ReleaseID: string; All: boolean };
-      bluraySelection?: { Mode: string; Release: string };
+      blurayDetails?: BlurayDetailRequest;
+      bluraySelection?: BluraySelection;
     }>,
     commandRevision: number,
     correlationID: string,
@@ -1385,6 +1394,16 @@ export function ReleaseSessionProvider({
           },
           commandID,
           controller.signal,
+          {},
+          (continued) => {
+            const started = continued.operation;
+            if (
+              started?.operation === "preparation" &&
+              continued.preparationOperationId === started.id
+            ) {
+              setCandidateOperation({ workflowID: continued.workflow.id, operationID: started.id });
+            }
+          },
         );
       } else if (operation === "reset") {
         const previous = workflowView.current;
@@ -1584,8 +1603,8 @@ export function ReleaseSessionProvider({
   };
 
   const runCandidateAction = async (
-    selection?: { Mode: string; Release: string },
-    details?: { ReleaseID: string; All: boolean },
+    selection?: BluraySelection,
+    details?: BlurayDetailRequest,
   ): Promise<boolean> => {
     const sourcePath = state.selectedSource.trim();
     if (!sourcePath) return false;
@@ -2754,6 +2773,13 @@ export function ReleaseSessionProvider({
     }
   };
 
+  const candidateDetailsCancelable = Boolean(
+    candidateOperation &&
+    candidateOperation.workflowID === workflowView.current?.workflow.id &&
+    candidateOperation.operationID === workflowView.current?.operation?.id &&
+    isActiveWorkflowOperation(workflowView.current?.operation),
+  );
+
   const session: ReleaseSession = {
     workflow: {
       view: workflowView,
@@ -2915,7 +2941,7 @@ export function ReleaseSessionProvider({
         failure: state.preparation.failure,
         activeInput: state.activeInput,
         sourceVerification: state.sourceVerification,
-        candidateDetailsCancelable: isActiveWorkflowOperation(workflowView.current?.operation),
+        candidateDetailsCancelable,
         preparationDirty: state.preparationDirty,
         correctionDirty: state.correctionDirty,
         intent: state.preparationIntent,
@@ -3060,11 +3086,18 @@ export function ReleaseSessionProvider({
       },
       selectCandidate: (releaseID) => runCandidateAction({ Mode: "manual", Release: releaseID }),
       cancelCandidateDetails: () => {
+        if (!candidateDetailsCancelable || !candidateOperation) return Promise.resolve(false);
         cancelPreparation();
-        return cancelBackendWorkflow("Blu-ray.com inspection canceled.", true);
+        return cancelBackendWorkflow(
+          "Blu-ray.com inspection canceled.",
+          candidateOperation.operationID,
+        );
       },
       fetchCandidateDetails: (releaseID) =>
-        runCandidateAction(undefined, { ReleaseID: releaseID ?? "", All: !releaseID }),
+        runCandidateAction(
+          undefined,
+          releaseID ? { ReleaseID: releaseID, All: false } : { ReleaseID: "", All: true },
+        ),
       setCandidateSelection: (mode) => runCandidateAction({ Mode: mode, Release: "" }),
     },
     duplicates: {

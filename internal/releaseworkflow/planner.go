@@ -177,7 +177,9 @@ func (m *Module) Continue(
 		if startErr != nil {
 			return CommandResult{}, fmt.Errorf("release workflow continue reprepare: %w", startErr)
 		}
-		return m.Current(ctx, ownerID, operation.WorkflowID)
+		accepted, currentErr := m.Current(ctx, ownerID, operation.WorkflowID)
+		accepted.PreparationOperationID = operation.ID
+		return accepted, currentErr
 	}
 
 	if updated, handled, factsErr := m.reconcileContinuationFacts(ctx, ownerID, request, current); handled || factsErr != nil {

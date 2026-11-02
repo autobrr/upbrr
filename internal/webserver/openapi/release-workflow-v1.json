@@ -823,18 +823,43 @@
         "type": "string"
       },
       "BlurayDetailRequest": {
-        "type": "object",
-        "properties": {
-          "All": {
-            "type": "boolean"
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "All": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "ReleaseID": {
+                "type": "string",
+                "pattern": "^[\t-\r    - \u2028\u2029  　]*$"
+              }
+            },
+            "required": [
+              "All"
+            ]
           },
-          "ReleaseID": {
-            "type": "string"
+          {
+            "type": "object",
+            "properties": {
+              "All": {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              },
+              "ReleaseID": {
+                "type": "string",
+                "pattern": "[^\t-\r    - \u2028\u2029  　]"
+              }
+            },
+            "required": [
+              "ReleaseID"
+            ]
           }
-        },
-        "required": [
-          "All",
-          "ReleaseID"
         ]
       },
       "BlurayDiscSpec": {
@@ -1045,18 +1070,45 @@
         ]
       },
       "BluraySelection": {
-        "type": "object",
-        "properties": {
-          "Mode": {
-            "type": "string"
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "Mode": {
+                "type": "string",
+                "enum": [
+                  "manual"
+                ]
+              },
+              "Release": {
+                "type": "string",
+                "pattern": "[^\t-\r    - \u2028\u2029  　]"
+              }
+            },
+            "required": [
+              "Mode",
+              "Release"
+            ]
           },
-          "Release": {
-            "type": "string"
+          {
+            "type": "object",
+            "properties": {
+              "Mode": {
+                "type": "string",
+                "enum": [
+                  "skip",
+                  "auto"
+                ]
+              },
+              "Release": {
+                "type": "string",
+                "pattern": "^[\t-\r    - \u2028\u2029  　]*$"
+              }
+            },
+            "required": [
+              "Mode"
+            ]
           }
-        },
-        "required": [
-          "Mode",
-          "Release"
         ]
       },
       "BluraySpecs": {
@@ -7638,6 +7690,9 @@
                 "type": "null"
               }
             ]
+          },
+          "preparationOperationId": {
+            "$ref": "#/components/schemas/WorkflowOperationID"
           },
           "projectionInstructions": {
             "anyOf": [
