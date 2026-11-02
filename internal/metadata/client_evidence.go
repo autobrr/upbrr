@@ -55,6 +55,7 @@ func (s *Service) discoverClientEvidence(
 		SourcePath:   sourcePath,
 		FileList:     fileList,
 		DiscType:     discType,
+		KeepFolder:   input.Policy.KeepFolder,
 		Policy:       input.Search,
 		ForceRecheck: input.Controls.ForceRecheck,
 	})
@@ -102,6 +103,7 @@ func clientEvidenceSnapshot(input api.PrepareInput, evidence clientdiscovery.Evi
 	result := api.ClientSearchResult{
 		InfoHash:            evidence.InfoHash,
 		TorrentPath:         evidence.TorrentPath,
+		TorrentCandidates:   append([]api.ClientTorrentCandidate(nil), evidence.TorrentCandidates...),
 		TorrentDataVerified: evidence.TorrentDataVerified,
 		TrackerIDs:          cloneTrackerIDs(evidence.TrackerIDs),
 		FoundTrackerMatch:   evidence.FoundTrackerMatch,
@@ -181,6 +183,7 @@ func cloneTorrentMatches(values []api.TorrentMatch) []api.TorrentMatch {
 		result[index] = value
 		result[index].TrackerURLsRaw = append([]string(nil), value.TrackerURLsRaw...)
 		result[index].TrackerURLs = append([]api.TrackerMatch(nil), value.TrackerURLs...)
+		result[index].MatchedTrackers = append([]string(nil), value.MatchedTrackers...)
 	}
 	return result
 }

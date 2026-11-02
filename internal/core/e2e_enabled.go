@@ -411,6 +411,7 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 				SourcePath:   sourcePath,
 				FileList:     meta.FileList,
 				DiscType:     request.Layout.DiscType,
+				KeepFolder:   input.Policy.KeepFolder,
 				Policy:       input.Search,
 				ForceRecheck: input.Controls.ForceRecheck,
 			})
@@ -683,6 +684,7 @@ func (s e2eMetadataService) HydrateClientEvidence(
 		SourcePath:   request.Manifest.SourcePath,
 		FileList:     files,
 		DiscType:     discType,
+		KeepFolder:   request.Input.Policy.KeepFolder,
 		Policy:       request.Input.Search,
 		ForceRecheck: request.Input.Controls.ForceRecheck,
 	})
@@ -721,6 +723,7 @@ func e2eClientEvidenceSnapshot(
 		Result: api.ClientSearchResult{
 			InfoHash:            evidence.InfoHash,
 			TorrentPath:         evidence.TorrentPath,
+			TorrentCandidates:   append([]api.ClientTorrentCandidate(nil), evidence.TorrentCandidates...),
 			TorrentDataVerified: evidence.TorrentDataVerified,
 			TrackerIDs:          evidence.TrackerIDs,
 			FoundTrackerMatch:   evidence.FoundTrackerMatch,

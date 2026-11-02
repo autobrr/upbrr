@@ -448,6 +448,12 @@ type UploadSubject struct {
 	TrackerData             []TrackerMetadata
 	CrossSeedTorrents       []UploadedTorrent
 	ClientTorrentPath       string
+	// ClientTorrentCandidates are captured alternatives, each bound to its infohash.
+	ClientTorrentCandidates []ClientTorrentCandidate `json:"-"`
+	// ClientSearchPolicy retains the private discovery choice for a later policy-driven search.
+	ClientSearchPolicy ClientSearchPolicy `json:"-"`
+	// ClientSearchPerformed allows further client search only if preparation searched.
+	ClientSearchPerformed bool `json:"-"`
 	// ClientTorrentDataVerified reports that ClientTorrentPath and InfoHash came
 	// from a complete client record bound to the prepared source path.
 	ClientTorrentDataVerified bool
@@ -2008,11 +2014,19 @@ type TorrentSubject struct {
 	ClientTorrentPath string
 	// ClientTorrentInfoHash is the infohash captured with ClientTorrentPath.
 	ClientTorrentInfoHash string
-	// ClientTorrentDataVerified permits skipping piece verification only for
-	// ClientTorrentPath when its current infohash still matches complete,
-	// source-path-bound client evidence.
+	// ClientTorrentCandidates are captured client artifacts available for policy selection.
+	ClientTorrentCandidates []ClientTorrentCandidate
+	// ClientTorrentDataVerified records complete, source-path-bound client evidence.
+	// Ordinary artifact reuse does not require this evidence.
 	ClientTorrentDataVerified bool
-	Trackers                  []string
+	// ForceRecheck requests a local piece check before reusing a candidate.
+	ForceRecheck bool
+	// DeferWrapperConversion lets an operation search for exact-layout alternatives first.
+	DeferWrapperConversion bool
+	// DeferGenerationPublication transfers a newly generated artifact to the caller
+	// for publication after its source-stability fence succeeds.
+	DeferGenerationPublication bool `json:"-"`
+	Trackers                   []string
 	// SkipIfRehashTrackers lists selected tracker names to omit when their
 	// torrent policy would otherwise require regeneration. Names are case-insensitive.
 	SkipIfRehashTrackers []string
@@ -2028,6 +2042,8 @@ type ClientSubject struct {
 	DiscType        string
 	KeepFolder      bool
 	ClientOverrides ClientOverrides
+	// FindAllCandidates requests additional exports when current artifacts do not satisfy policy.
+	FindAllCandidates bool
 }
 
 // RuleDisposition identifies how a failed tracker rule affects live upload.
@@ -2676,9 +2692,18 @@ type ClientSearchResult struct {
 	FoundPreferredPiece string
 	MatchedTrackers     []string
 	TorrentPath         string
+	// TorrentCandidates retains alternative captured exports for later policy selection.
+	TorrentCandidates []ClientTorrentCandidate
 	// TorrentDataVerified reports that TorrentPath was selected from a complete
 	// client record whose content path exactly matched the searched source.
 	TorrentDataVerified bool
+}
+
+// ClientTorrentCandidate binds a captured metainfo artifact to its client infohash and bytes.
+type ClientTorrentCandidate struct {
+	Path          string
+	InfoHash      string
+	ContentSHA256 string
 }
 
 type TorrentMatch struct {
@@ -2694,7 +2719,9 @@ type TorrentMatch struct {
 	Comment           string
 	TrackerURLsRaw    []string
 	TrackerURLs       []TrackerMatch
-	HasTracker        bool
+	// MatchedTrackers identifies tracker URLs even when no tracker ID was extracted.
+	MatchedTrackers []string
+	HasTracker      bool
 }
 
 type TrackerMatch struct {
@@ -2794,10 +2821,18 @@ type TorrentResult struct {
 	URL       string
 	Tracker   string
 	CrossSeed bool
+	// PendingPublication owns an unpublished generated file, never a reused artifact.
+	PendingPublication TorrentPublication `json:"-"`
 	// RehashedTrackers lists selected trackers whose preparation required the
 	// created base torrent and should be scheduled after reusable uploads.
 	RehashedTrackers []string
 	// SkippedTrackers lists selected trackers omitted by SkipIfRehashTrackers.
 	// Path can be empty when every selected tracker was skipped.
 	SkippedTrackers []string
+}
+
+// TorrentPublication owns a generated artifact until it is published or discarded.
+type TorrentPublication interface {
+	Publish() (string, error)
+	Discard() error
 }

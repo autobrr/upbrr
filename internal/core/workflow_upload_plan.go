@@ -18,7 +18,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -318,6 +320,7 @@ func (b workflowUploadPlanBuilder) Build(
 	subject.ImageHostOverrides.SkipUpload = &skipImageUpload
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)
 	torrentSubject := workflowSubmissionTorrentSubject(subject)
+	torrentSubject.ForceRecheck = descriptionInstructions.Client.ForceRecheck != nil && *descriptionInstructions.Client.ForceRecheck
 	torrentSubject.Trackers = workflowProjectionTrackerNames(eligible)
 	torrentSubject.SkipIfRehashTrackers = workflowSkipIfRehashTrackers(b.config, eligible)
 	torrentSubject.TorrentOverrides = descriptionInstructions.Torrent
@@ -327,18 +330,28 @@ func (b workflowUploadPlanBuilder) Build(
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: source stability: %w", err)
 		}
 		sourceManifest = &subject.SourceManifest
+		torrentSubject.DeferGenerationPublication = true
 		identity, identityErr := workflowSubmissionContentIdentity(torrentSubject, subject.SourceIdentity)
 		if identityErr != nil {
 			return api.UploadPlan{}, nil, identityErr
 		}
 		subject.SubmissionContentIdentity = identity
 	}
+	var pendingTorrent api.TorrentPublication
 	if len(eligible) > 0 && b.torrents != nil && !descriptionInstructions.Options.SkipAutoTorrent {
-		torrent, err := b.torrents.Create(ctx, torrentSubject)
+		torrent, err := b.prepareWorkflowTorrent(ctx, subject, torrentSubject)
 		if err != nil {
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare torrent: %w", err)
 		}
 		subject.TorrentPath = torrent.Path
+		pendingTorrent = torrent.PendingPublication
+		if pendingTorrent != nil {
+			defer func() {
+				if err := pendingTorrent.Discard(); err != nil {
+					logging.FromContext(ctx, api.NopLogger{}).Warnf("workflow: discard pending torrent failed err=%s", redaction.RedactValue(err.Error(), nil))
+				}
+			}()
+		}
 		skipped := make(map[api.TrackerID]struct{}, len(torrent.SkippedTrackers))
 		for _, tracker := range torrent.SkippedTrackers {
 			trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(tracker)))
@@ -363,8 +376,20 @@ func (b workflowUploadPlanBuilder) Build(
 	}
 	if sourceManifest != nil {
 		if err := preparedrelease.VerifySourceManifestStability(ctx, *sourceManifest); err != nil {
+			if pendingTorrent != nil {
+				emitWorkflowTorrentOutcome(ctx, torrentSubject, "failed", "Source changed during torrent generation")
+			}
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: source changed during torrent preparation: %w", err)
 		}
+	}
+	if pendingTorrent != nil {
+		path, err := pendingTorrent.Publish()
+		if err != nil {
+			emitWorkflowTorrentOutcome(ctx, torrentSubject, "failed", "Torrent publication failed")
+			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: publish generated torrent: %w", err)
+		}
+		subject.TorrentPath = path
+		emitWorkflowTorrentOutcome(ctx, torrentSubject, "completed", "Torrent ready")
 	}
 	var retained workflowRetainedUploadPlan
 	if len(eligible) > 0 {
@@ -556,6 +581,64 @@ func (b workflowUploadPlanBuilder) Build(
 		inputFingerprint: inputFingerprint,
 		trackers:         append([]api.UploadPlanTracker(nil), plan.Trackers...),
 	}, nil
+}
+
+func emitWorkflowTorrentOutcome(ctx context.Context, subject api.TorrentSubject, status, message string) {
+	tracker := ""
+	if len(subject.Trackers) == 1 {
+		tracker = subject.Trackers[0]
+	}
+	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
+		SourcePath: subject.SourcePath,
+		Tracker:    tracker,
+		Task:       "torrent",
+		Status:     status,
+		Message:    message,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// prepareWorkflowTorrent searches further only after current artifacts fail the
+// requested policy. The probe never generates and does not apply skip-if-rehash.
+func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
+	ctx context.Context,
+	subject api.UploadSubject,
+	input api.TorrentSubject,
+) (api.TorrentResult, error) {
+	forcedRehash := input.TorrentOverrides.Rehash != nil && *input.TorrentOverrides.Rehash
+	if b.clients != nil && subject.ClientSearchPerformed && !subject.ClientSearchPolicy.Skip && !forcedRehash {
+		probe := input
+		probe.TorrentOverrides.NoHash = new(true)
+		probe.SkipIfRehashTrackers = nil
+		probe.DeferWrapperConversion = true
+		result, err := b.torrents.Create(ctx, probe)
+		if err == nil {
+			return result, nil
+		}
+		if !errors.Is(err, internalerrors.ErrNotFound) {
+			return api.TorrentResult{}, fmt.Errorf("probe reusable torrent: %w", err)
+		}
+		found, searchErr := clientdiscovery.New(b.clients, api.NopLogger{}).Discover(ctx, clientdiscovery.SearchInput{
+			SourcePath:        input.SourcePath,
+			FileList:          append([]string(nil), input.FileList...),
+			DiscType:          input.DiscType,
+			KeepFolder:        input.KeepFolder,
+			Policy:            subject.ClientSearchPolicy,
+			ForceRecheck:      new(input.ForceRecheck),
+			FindAllCandidates: true,
+		})
+		if ctx.Err() != nil {
+			return api.TorrentResult{}, fmt.Errorf("workflow torrent search canceled: %w", ctx.Err())
+		}
+		if searchErr == nil {
+			input.ClientTorrentCandidates = append(input.ClientTorrentCandidates, found.TorrentCandidates...)
+		}
+	}
+	result, err := b.torrents.Create(ctx, input)
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("prepare torrent: %w", err)
+	}
+	return result, nil
 }
 
 func workflowSubmissionContentIdentity(
