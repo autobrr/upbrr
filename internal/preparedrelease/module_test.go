@@ -281,30 +281,39 @@ func TestInvalidateDropsOnlyPublishedPreparedGeneration(t *testing.T) {
 	}
 }
 
-func TestExplicitHDRCheckBypassesCompatiblePreparedCacheOnce(t *testing.T) {
-	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
-	collector := &recordingCollector{}
-	module := newTestModule(t, newMemoryStore(), collector)
-	input := api.PrepareInput{SourcePath: path}
-	first, err := module.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input.Controls.CaptureHDRMetadata = true
-	checked, err := module.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if checked.Release.Generation <= first.Release.Generation || collector.callCount() != 2 {
-		t.Fatalf("explicit check reused generation: generation=%d calls=%d", checked.Release.Generation, collector.callCount())
-	}
-	input.Controls.CaptureHDRMetadata = false
-	reused, err := module.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reused.Release.Generation != checked.Release.Generation || collector.callCount() != 2 {
-		t.Fatalf("consumed check was replayed: generation=%d calls=%d", reused.Release.Generation, collector.callCount())
+func TestExplicitInspectionBypassesCompatiblePreparedCacheOnce(t *testing.T) {
+	for _, blurayDetails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bluray details %t", blurayDetails), func(t *testing.T) {
+			path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+			collector := &recordingCollector{}
+			module := newTestModule(t, newMemoryStore(), collector)
+			input := api.PrepareInput{SourcePath: path}
+			first, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if blurayDetails {
+				input.Controls.BlurayDetails = &api.BlurayDetailRequest{All: true}
+			} else {
+				input.Controls.CaptureHDRMetadata = true
+			}
+			checked, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if checked.Release.Generation <= first.Release.Generation || collector.callCount() != 2 {
+				t.Fatalf("explicit check reused generation: generation=%d calls=%d", checked.Release.Generation, collector.callCount())
+			}
+			input.Controls.CaptureHDRMetadata = false
+			input.Controls.BlurayDetails = nil
+			reused, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reused.Release.Generation != checked.Release.Generation || collector.callCount() != 2 {
+				t.Fatalf("consumed check was replayed: generation=%d calls=%d", reused.Release.Generation, collector.callCount())
+			}
+		})
 	}
 }
 

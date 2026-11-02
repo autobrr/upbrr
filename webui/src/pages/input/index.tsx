@@ -1302,10 +1302,10 @@ export default function InputPage(props: Props) {
                   className={compactInputClass}
                   value={sourceLookupURL}
                   onChange={(event) => setSourceLookupURL(event.target.value)}
-                  placeholder="Paste tracker or media URL for ID lookup"
+                  placeholder="Paste tracker, metadata, or Blu-ray.com release URL"
                 />
                 <span className="text-xs leading-tight text-muted-foreground">
-                  Metadata ID and tracker description/image lookup.
+                  Metadata IDs, tracker description/images, or an exact Blu-ray.com release.
                 </span>
               </label>
 

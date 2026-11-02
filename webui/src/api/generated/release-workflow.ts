@@ -193,6 +193,14 @@ export type AudioAnalysisVariant = string;
 
 export type AudioTrackRole = string;
 
+export type BlurayDetailRequest = Readonly<{
+  All: true;
+  ReleaseID?: string;
+}> | Readonly<{
+  All?: false;
+  ReleaseID: string;
+}>;
+
 export type BlurayDiscSpec = Readonly<{
   Count: number;
   Format: string;
@@ -229,6 +237,7 @@ export type BlurayReleaseCandidate = Readonly<{
   Accepted: boolean;
   Country: string;
   CoverImages: readonly BlurayImage[];
+  DetailsStatus: string;
   GenericDisc: boolean;
   MatchNotes: readonly string[];
   MovieTitle: string;
@@ -245,6 +254,14 @@ export type BlurayReleaseCandidate = Readonly<{
   Title: string;
   URL: string;
   Warnings: readonly string[];
+}>;
+
+export type BluraySelection = Readonly<{
+  Mode: "manual";
+  Release: string;
+}> | Readonly<{
+  Mode: "skip" | "auto";
+  Release?: string;
 }>;
 
 export type BluraySpecs = Readonly<{
@@ -1522,6 +1539,7 @@ export type PreparationCompatibility = Readonly<{
 }>;
 
 export type PreparationControls = Readonly<{
+  BlurayDetails?: BlurayDetailRequest | null;
   CaptureHDRMetadata?: boolean;
   ConfirmBDMVRescan: boolean;
   ForceRecheck?: boolean | null;
@@ -1708,7 +1726,7 @@ export type ReleaseFactInstructionSnapshotRef = Readonly<{
 }>;
 
 export type ReleaseFactInstructions = Readonly<{
-  BlurayReleaseID: string;
+  Bluray?: BluraySelection | null;
   Category?: CanonicalCategory | null;
   Identity: ExternalIDOverrides;
   Metadata: MetadataOverrides;
@@ -1894,6 +1912,7 @@ export type ReleaseWorkflowCurrent = Readonly<{
   media?: MediaArtifactSet | null;
   operation?: Operation | null;
   preflight?: TrackerPreflightAssessment | null;
+  preparationOperationId?: WorkflowOperationID;
   projectionInstructions?: TrackerProjectionInstructionSnapshot | null;
   projections?: TrackerReleaseProjectionSet | null;
   release?: ReleaseSnapshot | null;
@@ -1988,6 +2007,7 @@ export type ReleaseWorkflowUploadExternalIDs = Readonly<{
 }>;
 
 export type ReleaseWorkflowUploadFacts = Readonly<{
+  bluray?: BluraySelection | null;
   category?: CanonicalCategory | null;
   externalIds?: ReleaseWorkflowUploadExternalIDs;
   metadata?: ReleaseWorkflowUploadMetadata;
@@ -3343,6 +3363,7 @@ export type WorkflowMediaSelection = Readonly<{
 export type WorkflowOperationID = string;
 
 export type WorkflowOperationItem = Readonly<{
+  blurayCandidate?: BlurayReleaseCandidate | null;
   completed?: number;
   id: string;
   kind: string;

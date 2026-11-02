@@ -197,6 +197,19 @@ func TestParseReleaseDetailsExtractsSpecsAndImages(t *testing.T) {
 	}
 }
 
+func TestReleaseDetailsWithoutTechnicalSpecsRetainCoversAndRejectEmptyResponses(t *testing.T) {
+	release, err := parseReleaseDetails(`<script>$("#x").append('<img id="frontimage" src="https://img.example/front.jpg">')</script>`, sampleCandidate())
+	if err != nil || !release.SpecsMissing || len(release.CoverImages) != 1 {
+		t.Fatalf("cover-only edition lost its available cover: %#v %v", release, err)
+	}
+	if _, err := parseReleaseDetails("", sampleCandidate()); err == nil {
+		t.Fatal("empty response was treated as a completed comparison")
+	}
+	if _, err := parseReleaseDetails(`<link rel="canonical" href="https://www.blu-ray.com/dvd/Other/123/">`, sampleCandidate()); err == nil {
+		t.Fatal("same numeric ID from a different release namespace was accepted")
+	}
+}
+
 func TestExtractCoverImagesPairsPreviewsWithFullImages(t *testing.T) {
 	htmlText := `<div id="triggers">
 		<img id="frontimage_overlay" src="https://img.example/front_large.jpg?t=1">
@@ -235,15 +248,18 @@ func TestParseReleaseDetailsEdgeCases(t *testing.T) {
 		name             string
 		html             string
 		wantSpecsMissing bool
+		wantError        bool
 		wantImages       int
 	}{
 		{
-			name:             "malformed html has missing specs",
+			name:             "malformed html is unavailable",
+			wantError:        true,
 			html:             `<table><tr><td><span`,
 			wantSpecsMissing: true,
 		},
 		{
-			name:             "missing specs node has missing specs",
+			name:             "unidentified page is unavailable",
+			wantError:        true,
 			html:             `<html><body>No specs</body></html>`,
 			wantSpecsMissing: true,
 		},
@@ -277,8 +293,11 @@ func TestParseReleaseDetailsEdgeCases(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			release, err := parseReleaseDetails(tc.html, sampleCandidate())
-			if err != nil {
+			if (err != nil) != tc.wantError {
 				t.Fatalf("parse details: %v", err)
+			}
+			if tc.wantError {
+				return
 			}
 			if release.SpecsMissing != tc.wantSpecsMissing {
 				t.Fatalf("expected SpecsMissing=%v, got %#v", tc.wantSpecsMissing, release)
@@ -477,7 +496,7 @@ func TestReleaseCalendarDates(t *testing.T) {
 		{"missing date", "", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			candidate, err := parseReleaseDetails(fmt.Sprintf(`<a href="%s">%s</a>`, tc.link, tc.text), sampleCandidate())
+			candidate, err := parseReleaseDetails(fmt.Sprintf(`<link rel="canonical" href="https://www.blu-ray.com/movies/Example-Blu-ray/123/"><a href="%s">%s</a>`, tc.link, tc.text), sampleCandidate())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -545,6 +564,7 @@ func TestLookupCountryAuthorityAndEditionDates(t *testing.T) {
 				}, nil
 			})})
 			result, err := client.Lookup(t.Context(), LookupInput{
+				Details:           &api.BlurayDetailRequest{All: true},
 				IMDBID:            1234567,
 				SourcePath:        filepath.Join(t.TempDir(), "Example.Movie.2020."+tc.marker+".2160p.BluRay-GRP"),
 				DiscType:          "BDMV",
@@ -597,7 +617,7 @@ func TestLookupCountryAuthorityAndEditionDates(t *testing.T) {
 }
 
 func TestSelectReleaseCountsUniqueCountryEditions(t *testing.T) {
-	metadata := &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{
+	metadata := &api.BlurayMetadata{SearchURL: "https://www.blu-ray.com/search/", Candidates: []api.BlurayReleaseCandidate{
 		{
 			ReleaseID: "foreign",
 			Country:   "Germany",
@@ -638,7 +658,7 @@ func TestSelectReleaseCountryCorrectionPrecedence(t *testing.T) {
 		{"playback region is not country", "", "", new("A"), 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			metadata := &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{
+			metadata := &api.BlurayMetadata{SearchURL: "https://www.blu-ray.com/search/", Candidates: []api.BlurayReleaseCandidate{
 				{
 					ReleaseID: "ger",
 					Country:   "Germany",

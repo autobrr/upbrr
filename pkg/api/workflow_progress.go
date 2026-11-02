@@ -8,14 +8,16 @@ import "context"
 // WorkflowProgressUpdate is one frontend-safe absolute stage snapshot used by
 // workflow stages that do not have a narrower existing progress contract.
 type WorkflowProgressUpdate struct {
-	Phase     string
-	ItemID    string
-	Kind      string
-	Label     string
-	Status    StageStatus
-	Completed int
-	Total     int
-	Message   string
+	// BlurayCandidate enriches a retained listing without changing canonical selection.
+	BlurayCandidate *BlurayReleaseCandidate
+	Phase           string
+	ItemID          string
+	Kind            string
+	Label           string
+	Status          StageStatus
+	Completed       int
+	Total           int
+	Message         string
 	// ItemOnly updates the named item without advancing aggregate stage progress.
 	ItemOnly bool
 }

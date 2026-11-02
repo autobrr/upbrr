@@ -11,6 +11,8 @@ afterEach(cleanup);
 describe("BlurayCandidatesPage", () => {
   it("preserves candidate cards, cover preview, selection, and accepted state", () => {
     const selectCandidate = vi.fn<InputFacet["selectCandidate"]>();
+    const fetchCandidateDetails = vi.fn();
+    const setCandidateSelection = vi.fn();
     const setLightboxImage = vi.fn();
     const setLightboxAlt = vi.fn();
     const facet = {
@@ -31,6 +33,16 @@ describe("BlurayCandidatesPage", () => {
                 Title: "Example Release 2026 Collector Edition",
                 MovieTitle: "Example Release",
                 MovieYear: 2026,
+                DetailsStatus: "complete",
+                MatchNotes: [
+                  "disc matches",
+                  "codec matches",
+                  "resolution matches",
+                  "audio matches",
+                  "subtitles match",
+                  "sixth scoring reason",
+                  "seventh scoring reason",
+                ],
                 Score: 97.5,
                 Country: "United States",
                 Region: "USA",
@@ -57,6 +69,7 @@ describe("BlurayCandidatesPage", () => {
                 Title: "Example Release 2026 Standard Edition",
                 MovieTitle: "Example Release",
                 MovieYear: 2026,
+                DetailsStatus: "complete",
                 Score: 91,
                 Country: "United States",
                 Region: "USA",
@@ -70,6 +83,7 @@ describe("BlurayCandidatesPage", () => {
                 Title: "Example Release 2026 Budget Edition",
                 MovieTitle: "Example Release",
                 MovieYear: 2026,
+                DetailsStatus: "complete",
                 Score: 87,
                 Country: "United States",
                 Region: "USA",
@@ -81,6 +95,8 @@ describe("BlurayCandidatesPage", () => {
         },
       },
       selectCandidate,
+      fetchCandidateDetails,
+      setCandidateSelection,
     } as unknown as InputFacet;
 
     render(
@@ -91,6 +107,27 @@ describe("BlurayCandidatesPage", () => {
       />,
     );
 
+    const summary = screen.getByLabelText(
+      "Score details for candidate 1: Example Release 2026 Collector Edition",
+    );
+    expect(screen.getByText("seventh scoring reason")).not.toBeVisible();
+    fireEvent.click(summary);
+    expect(screen.getByText("sixth scoring reason")).toBeVisible();
+    expect(screen.getByText("seventh scoring reason")).toBeVisible();
+    fireEvent.click(summary);
+    expect(screen.getByText("seventh scoring reason")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Fetch all release details" }));
+    expect(fetchCandidateDetails).toHaveBeenLastCalledWith();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Fetch details for candidate 2: Example Release 2026 Standard Edition",
+      }),
+    );
+    expect(fetchCandidateDetails).toHaveBeenLastCalledWith("alternate-candidate");
+    fireEvent.click(screen.getByRole("button", { name: "Skip selection" }));
+    expect(setCandidateSelection).toHaveBeenLastCalledWith("skip");
+    fireEvent.click(screen.getByRole("button", { name: "Auto selection" }));
+    expect(setCandidateSelection).toHaveBeenLastCalledWith("auto");
     expect(screen.getAllByText("Release date")).toHaveLength(3);
     expect(screen.getByText("Release country")).toBeInTheDocument();
     expect(screen.getAllByText("Country code")).toHaveLength(3);
@@ -162,6 +199,7 @@ it("explains a unique country match selected below the configured score", () => 
               Title: "Example Edition",
               Country: "Germany",
               Region: "GER",
+              DetailsStatus: "complete",
               Score: 0,
               Accepted: true,
             },

@@ -1113,6 +1113,7 @@ func compositeCLIFacts(instructions api.ReleaseFactInstructions) api.ReleaseWork
 		},
 		Category: cloneCLICategoryPointer(instructions.Category),
 	}
+	facts.Bluray = instructions.Bluray
 	if instructions.SourceLookup != "" {
 		facts.SourceLookup = cloneCLIStringPointer(&instructions.SourceLookup)
 	}
