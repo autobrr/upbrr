@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/core"
 	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -229,6 +230,9 @@ func (i backendRuntimeInstaller) Install(generation RuntimeGeneration) RetiredRu
 		generation.Logger,
 		generation.Bundle,
 	)
+	if service, ok := generation.Owner.(*core.Core); ok {
+		service.ActivateMaintenance()
+	}
 	if i.backend.hub != nil {
 		i.backend.hub.SetLogger(generation.Logger)
 	}
@@ -304,6 +308,7 @@ func (b *Backend) runtimeActivator() (*RuntimeActivator, error) {
 	activator.deps.build = func(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (RuntimeGeneration, error) {
 		return buildRuntimeGenerationWithCoordinator(
 			ctx, cfg, repo, b.liveTest, b.workflowCoordinator, activator.buildingConfigGeneration, activator.buildingConfigFingerprint,
+			b.runtimeMaintenance,
 		)
 	}
 	b.activator = activator

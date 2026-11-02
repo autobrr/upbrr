@@ -1091,7 +1091,7 @@ func TestWorkflowAudioAnalysisStartupCleanupPreservesAttemptsAndRejectsCorruptAr
 			vault.InvalidateAll()
 			test.corrupt(t, corruptPath)
 
-			stop, done, err := startWorkflowPrivateVaultCleanup(t.Context(), vault, time.Hour, api.NopLogger{})
+			stop, done, err := startWorkflowPrivateVaultCleanupLoop(t.Context(), vault.CleanupExpired, time.Hour, api.NopLogger{}.Warnf)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1148,7 +1148,7 @@ func TestWorkflowAudioAnalysisStartupCleanupPreservesAttemptWhenVaultAuthorityIs
 		t.Fatal(err)
 	}
 
-	stop, done, err := startWorkflowPrivateVaultCleanup(t.Context(), vault, time.Hour, api.NopLogger{})
+	stop, done, err := startWorkflowPrivateVaultCleanupLoop(t.Context(), vault.CleanupExpired, time.Hour, api.NopLogger{}.Warnf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1188,7 +1188,7 @@ func TestWorkflowPrivateVaultCleanupPreservesAudioAttemptWithoutExpiry(t *testin
 	if err := vault.PutWithoutExpiry("owner", "workflow", "audio-analysis:retained", resource); err != nil {
 		t.Fatal(err)
 	}
-	stop, done, err := startWorkflowPrivateVaultCleanup(t.Context(), vault, 20*time.Millisecond, api.NopLogger{})
+	stop, done, err := startWorkflowPrivateVaultCleanupLoop(t.Context(), vault.CleanupExpired, 20*time.Millisecond, api.NopLogger{}.Warnf)
 	if err != nil {
 		t.Fatal(err)
 	}
