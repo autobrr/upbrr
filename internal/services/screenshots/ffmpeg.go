@@ -15,10 +15,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -511,10 +513,66 @@ func overlayFilters(req captureRequest) []string {
 	if req.ToneMap {
 		filters = append(
 			filters,
-			fmt.Sprintf("drawtext=text='Tonemapped HDR':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", fontSize, xAll, yHDR),
+			fmt.Sprintf("drawtext=text='Source\\: %s - Tonemapped':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5",
+				hdrOverlaySourceLabel(req.HDRFacts), fontSize, xAll, yHDR),
 		)
 	}
 	return filters
+}
+
+// hdrOverlaySourceLabel describes source evidence, not the output colour space
+// or which source layer the renderer used. Only closed labels and normalized
+// numeric profiles enter drawtext; filenames and raw evidence never do.
+func hdrOverlaySourceLabel(facts api.HDRFacts) string {
+	if facts.Origin != api.HDREvidenceMediaInfo && facts.Origin != api.HDREvidenceBDInfo || facts.Status == api.HDREvidenceMissing {
+		return "HDR type unknown"
+	}
+	names := map[api.HDRFormat]string{
+		api.HDRFormatSDR:         "SDR",
+		api.HDRFormatDolbyVision: "Dolby Vision",
+		api.HDRFormatHDR10:       "HDR10",
+		api.HDRFormatHDR10Plus:   "HDR10+",
+		api.HDRFormatHLG:         "HLG",
+		api.HDRFormatPQ10:        "PQ10",
+		api.HDRFormatHDRVivid:    "HDR Vivid",
+		api.HDRFormatWCG:         "Wide colour gamut",
+	}
+	var parts []string
+	var seen []api.HDRFormat
+	if len(facts.Formats) == 0 && len(facts.FallbackFormats) > 0 {
+		parts = append(parts, "HDR type unknown")
+	}
+	for _, format := range slices.Concat(facts.Formats, facts.FallbackFormats) {
+		if slices.Contains(seen, format) {
+			continue
+		}
+		seen = append(seen, format)
+		label := names[format]
+		if label == "" {
+			label = "HDR type unknown"
+		}
+		if format == api.HDRFormatDolbyVision {
+			if profile := mediafacts.DolbyVisionProfile("Profile " + facts.DolbyVisionProfile); profile != "" && profile == facts.DolbyVisionProfile {
+				label += " Profile " + profile
+			} else {
+				label += " (profile unknown)"
+			}
+		}
+		if slices.Contains(facts.FallbackFormats, format) {
+			label += " (compatible)"
+		}
+		parts = append(parts, label)
+	}
+	if len(parts) == 0 {
+		return "HDR type unknown"
+	}
+	label := strings.Join(parts, " + ")
+	if facts.Status == api.HDREvidenceContradictory || len(facts.Contradictions) > 0 {
+		label += " (conflicting evidence)"
+	} else if facts.Status != api.HDREvidenceComplete {
+		label += " (incomplete evidence)"
+	}
+	return label
 }
 
 var (

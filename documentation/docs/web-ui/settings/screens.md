@@ -19,6 +19,8 @@ Use **Settings → Screenshot capture** for generated screenshots, automatic DVD
 
 Frame type reports FFmpeg's picture type (I, P, or B), or **Unknown** when that information is unavailable. Enabling the overlay does not change which frame is selected.
 
+When tone mapping is applied, the overlay identifies the source format from inspected media metadata, such as **HLG**, **HDR10**, or **Dolby Vision Profile 5**, separately from the **Tonemapped** treatment. Reported compatibility formats remain labelled **compatible**; they do not identify the output colour space or prove which layer was processed. Missing or name-only evidence shows **HDR type unknown**. Incomplete or conflicting source evidence is qualified, and an unknown Dolby Vision profile is never guessed. No tonemapped marker appears when tone mapping is disabled or falls back to non-tonemapped output. Existing images retain their original overlays; recapture them to get the new source labels.
+
 ## Advanced fields
 
 | Field                               | Default  | Effect                                                                                     |

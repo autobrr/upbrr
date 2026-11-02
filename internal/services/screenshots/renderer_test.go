@@ -229,7 +229,7 @@ func TestRenderRecoveryAgreesForPreviewAndCapture(t *testing.T) {
 				if strings.Contains(ffmpegValueAfter(runner.args[len(runner.args)-2], "-vf"), "drawtext=") || !strings.Contains(ffmpegValueAfter(runner.args[len(runner.args)-1], "-vf"), "drawtext=") {
 					t.Fatal("overlay preceded source validation")
 				}
-				if test.degraded && strings.Contains(ffmpegValueAfter(runner.args[len(runner.args)-1], "-vf"), "Tonemapped HDR") {
+				if test.degraded && strings.Contains(ffmpegValueAfter(runner.args[len(runner.args)-1], "-vf"), "Tonemapped") {
 					t.Fatal("degraded image was labelled tonemapped")
 				}
 				if len(test.modes) > 1 || test.degraded {
