@@ -209,7 +209,7 @@ func TestDPOriginalAudioDiscBoundary(t *testing.T) {
 func TestDPOriginalAudioPreservesConstructibility(t *testing.T) {
 	t.Parallel()
 	definition := unit3d.NewWithProfile(Profile())
-	if got := definition.ValidationPolicy().ID; got != "unit3d-dp-constructibility-v1+unit3d-dp-policy-v6" {
+	if got := definition.ValidationPolicy().ID; got != "unit3d-dp-constructibility-v1+unit3d-dp-policy-v7" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 	meta := dpEligibilitySubject("Danish", "Swedish", "English")
