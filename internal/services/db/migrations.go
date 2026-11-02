@@ -61,6 +61,15 @@ type migrationExecutor interface {
 //     bridge mapping also changed historically.
 var migrationRegistry = []migrationStep{
 	{
+		id: "2026_11_structured_workflow_storage",
+		dependsOn: []string{
+			"2026_10_add_hdr_analysis_association",
+			"2026_09_mark_uploaded_audio_analysis",
+			"2026_07_add_release_workflow_work_leases",
+		},
+		apply: migrateStructuredWorkflowStorage,
+	},
+	{
 		id:        "2026_10_imported_screenshot_evidence",
 		dependsOn: []string{"2026_07_add_canonical_release_generations"},
 		apply:     migrateImportedScreenshotEvidence,
@@ -1452,7 +1461,11 @@ func migrateContextWithRegistry(ctx context.Context, db *sql.DB, registry []migr
 	committed := false
 	defer func() {
 		if !committed {
-			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+			// A canceled migration must release its manual transaction before
+			// this connection returns to the pool.
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			_, _ = conn.ExecContext(rollbackCtx, `ROLLBACK`)
 		}
 	}()
 

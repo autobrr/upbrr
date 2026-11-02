@@ -3895,25 +3895,18 @@ type storedReleaseWorkflowIntentSource struct {
 }
 
 func (r *SQLiteRepository) listStoredReleaseWorkflowPaths(ctx context.Context) ([]string, error) {
-	rows, err := r.historyQuery(ctx).QueryContext(ctx, `SELECT state_json FROM release_workflow_states`)
+	rows, err := r.historyQuery(ctx).QueryContext(ctx, `SELECT DISTINCT source_path FROM release_workflow_sources ORDER BY source_path`)
 	if err != nil {
 		return nil, fmt.Errorf("db list stored release workflow paths: %w", err)
 	}
 	defer rows.Close()
-
-	paths := make([]string, 0)
-	seen := make(map[string]struct{})
+	var paths []string
 	for rows.Next() {
-		var payload []byte
-		if err := rows.Scan(&payload); err != nil {
+		var sourcePath string
+		if err := rows.Scan(&sourcePath); err != nil {
 			return nil, fmt.Errorf("db scan stored release workflow path: %w", err)
 		}
-		for _, sourcePath := range storedReleaseWorkflowSourcePaths(payload) {
-			if _, exists := seen[sourcePath]; !exists {
-				seen[sourcePath] = struct{}{}
-				paths = append(paths, sourcePath)
-			}
-		}
+		paths = append(paths, sourcePath)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("db iterate stored release workflow paths: %w", err)
@@ -3922,29 +3915,7 @@ func (r *SQLiteRepository) listStoredReleaseWorkflowPaths(ctx context.Context) (
 }
 
 func storedReleaseWorkflowSourcePaths(payload []byte) []string {
-	var state storedReleaseWorkflowSource
-	if err := json.Unmarshal(payload, &state); err != nil {
-		return nil
-	}
-	paths := make([]string, 0, len(state.Releases)+2)
-	if sourcePath := strings.TrimSpace(state.SourcePath); sourcePath != "" {
-		paths = append(paths, sourcePath)
-	}
-	if state.PreparationInput != nil {
-		if sourcePath := strings.TrimSpace(state.PreparationInput.SourcePath); sourcePath != "" {
-			paths = append(paths, sourcePath)
-		}
-	}
-	if state.Composite != nil && state.Composite.Intent.Preparation != nil {
-		if sourcePath := strings.TrimSpace(state.Composite.Intent.Preparation.SourcePath); sourcePath != "" {
-			paths = append(paths, sourcePath)
-		}
-	}
-	for _, release := range state.Releases {
-		if sourcePath := strings.TrimSpace(release.Release.Source.SourcePath); sourcePath != "" {
-			paths = append(paths, sourcePath)
-		}
-	}
+	_, paths, _ := decodeWorkflowOwnership(payload)
 	return paths
 }
 
@@ -3958,29 +3929,30 @@ func matchingStoredReleaseWorkflowStates(
 	query historyQueryer,
 	path string,
 ) ([]storedReleaseWorkflowStateID, error) {
-	rows, err := query.QueryContext(ctx, `SELECT owner_id, workflow_id, state_json FROM release_workflow_states`)
+	if err := requireWorkflowOwnershipCertain(ctx, query); err != nil {
+		return nil, err
+	}
+	// SamePath also recognizes aliases through existing symlink prefixes. Keep
+	// that filesystem contract while scanning only the small source rows.
+	rows, err := query.QueryContext(ctx, `SELECT owner_id, workflow_id, source_path FROM release_workflow_sources
+		ORDER BY owner_id, workflow_id, source_path`)
 	if err != nil {
-		return nil, fmt.Errorf("db purge content list release workflow states: %w", err)
+		return nil, fmt.Errorf("db purge content list release workflow sources: %w", err)
 	}
 	defer rows.Close()
-
-	matches := make([]storedReleaseWorkflowStateID, 0)
+	var matches []storedReleaseWorkflowStateID
 	for rows.Next() {
-		var ownerID string
-		var workflowID api.WorkflowID
-		var payload []byte
-		if err := rows.Scan(&ownerID, &workflowID, &payload); err != nil {
-			return nil, fmt.Errorf("db purge content scan release workflow state: %w", err)
+		var id storedReleaseWorkflowStateID
+		var sourcePath string
+		if err := rows.Scan(&id.ownerID, &id.workflowID, &sourcePath); err != nil {
+			return nil, fmt.Errorf("db purge content scan release workflow source: %w", err)
 		}
-		for _, sourcePath := range storedReleaseWorkflowSourcePaths(payload) {
-			if pathutil.SamePath(sourcePath, path) {
-				matches = append(matches, storedReleaseWorkflowStateID{ownerID: ownerID, workflowID: workflowID})
-				break
-			}
+		if pathutil.SamePath(sourcePath, path) && !slices.Contains(matches, id) {
+			matches = append(matches, id)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("db purge content iterate release workflow states: %w", err)
+		return nil, fmt.Errorf("db purge content iterate release workflow sources: %w", err)
 	}
 	return matches, nil
 }

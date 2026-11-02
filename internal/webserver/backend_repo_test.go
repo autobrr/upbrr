@@ -1398,6 +1398,10 @@ func TestBackendInvalidStartupSharesCoordinatorAcrossRuntimeActivations(t *testi
 	if coordinator == nil {
 		t.Fatal("expected backend coordinator before config repair")
 	}
+	orphan := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	if err := backend.repo.Save(t.Context(), db.FileMetadata{Path: orphan, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
 
 	repaired := backendConfigTestConfig(repoPath)
 	payload, err := config.ExportToJSON(&repaired)
@@ -1410,6 +1414,19 @@ func TestBackendInvalidStartupSharesCoordinatorAcrossRuntimeActivations(t *testi
 	if got := backendWorkflowCoordinator(t, backend); got != coordinator {
 		t.Fatal("config repair built a core with a different coordinator")
 	}
+	if _, err := backend.repo.GetByPath(t.Context(), orphan); !errors.Is(err, internalerrors.ErrNotFound) {
+		t.Fatalf("first successful config repair skipped startup orphan cleanup: %v", err)
+	}
+	// New state created during this process is not a startup orphan. Runtime
+	// replacement must not repeat the historical scan or private-vault walk.
+	if err := backend.repo.Save(t.Context(), db.FileMetadata{Path: orphan, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	corruptVaultMetadata := filepath.Join(releaseworkflow.PrivateArtifactVaultRoot(repoPath), "corrupt.json")
+	if err := os.WriteFile(corruptVaultMetadata, []byte(`{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(corruptVaultMetadata) })
 	workflowRepo, err := releaseworkflow.NewPersistentRepository(backend.repo)
 	if err != nil {
 		t.Fatalf("new workflow repository: %v", err)
@@ -1452,6 +1469,9 @@ func TestBackendInvalidStartupSharesCoordinatorAcrossRuntimeActivations(t *testi
 	}
 	if got := backendWorkflowCoordinator(t, backend); got != coordinator {
 		t.Fatal("subsequent config activation built a core with a different coordinator")
+	}
+	if _, err := backend.repo.GetByPath(t.Context(), orphan); err != nil {
+		t.Fatalf("settings activation repeated startup orphan cleanup: %v", err)
 	}
 	activeCore, ok := backend.coreOwner.(*core.Core)
 	if !ok {

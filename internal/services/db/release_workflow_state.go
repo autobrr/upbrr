@@ -16,7 +16,7 @@ import (
 )
 
 type workflowStateQueryer interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
+	historyQueryer
 }
 
 // CreateReleaseWorkflowState atomically creates one workflow or returns the
@@ -73,6 +73,9 @@ func (r *SQLiteRepository) CreateReleaseWorkflowState(
 		if err != nil {
 			return fmt.Errorf("db create release workflow state: %w", err)
 		}
+		if err := syncWorkflowStorage(ctx, tx, record); err != nil {
+			return err
+		}
 		result = cloneWorkflowStateRecord(record)
 		return nil
 	})
@@ -82,13 +85,29 @@ func (r *SQLiteRepository) CreateReleaseWorkflowState(
 	return result, idempotent, nil
 }
 
-// LoadReleaseWorkflowState returns one exact owner-scoped workflow row.
+// LoadReleaseWorkflowState returns one exact owner-scoped workflow revision and
+// its immutable snapshots from a single read transaction.
 func (r *SQLiteRepository) LoadReleaseWorkflowState(
 	ctx context.Context,
 	ownerID string,
 	workflowID api.WorkflowID,
 ) (api.ReleaseWorkflowStateRecord, error) {
-	return loadWorkflowState(ctx, r.db, strings.TrimSpace(ownerID), workflowID)
+	if tx := r.historyTransaction(ctx); tx != nil {
+		return loadWorkflowState(ctx, tx, strings.TrimSpace(ownerID), workflowID)
+	}
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return api.ReleaseWorkflowStateRecord{}, fmt.Errorf("db read release workflow begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	record, err := loadWorkflowState(ctx, tx, strings.TrimSpace(ownerID), workflowID)
+	if err != nil {
+		return api.ReleaseWorkflowStateRecord{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return api.ReleaseWorkflowStateRecord{}, fmt.Errorf("db read release workflow commit: %w", err)
+	}
+	return record, nil
 }
 
 // SaveReleaseWorkflowState applies one optimistic revision update.
@@ -127,6 +146,9 @@ func (r *SQLiteRepository) SaveReleaseWorkflowState(
 			return fmt.Errorf("db save release workflow state rows: %w", err)
 		}
 		if rows == 1 {
+			if err := syncWorkflowStorage(ctx, tx, record); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(
 				ctx,
 				`UPDATE input_workflow_associations SET hdr_analysis_id = json_extract(?, '$.Workflow.hdrAnalysis.id') WHERE owner_id = ? AND workflow_id = ?`,
@@ -237,7 +259,7 @@ func loadWorkflowState(
 	if ownerID == "" || strings.TrimSpace(string(workflowID)) == "" {
 		return api.ReleaseWorkflowStateRecord{}, api.ErrReleaseWorkflowStateNotFound
 	}
-	return scanWorkflowState(queryer.QueryRowContext(ctx, `
+	return scanStoredWorkflowState(ctx, queryer, queryer.QueryRowContext(ctx, `
 		SELECT owner_id, workflow_id, revision, status, creation_key,
 			creation_fingerprint, state_json, created_at, updated_at
 		FROM release_workflow_states
@@ -251,7 +273,7 @@ func loadWorkflowStateByCreationKey(
 	ownerID string,
 	creationKey string,
 ) (api.ReleaseWorkflowStateRecord, error) {
-	return scanWorkflowState(queryer.QueryRowContext(ctx, `
+	return scanStoredWorkflowState(ctx, queryer, queryer.QueryRowContext(ctx, `
 		SELECT owner_id, workflow_id, revision, status, creation_key,
 			creation_fingerprint, state_json, created_at, updated_at
 		FROM release_workflow_states
@@ -288,6 +310,14 @@ func scanWorkflowState(row *sql.Row) (api.ReleaseWorkflowStateRecord, error) {
 		return api.ReleaseWorkflowStateRecord{}, fmt.Errorf("db load release workflow state updated_at: %w", err)
 	}
 	return cloneWorkflowStateRecord(record), nil
+}
+
+func scanStoredWorkflowState(ctx context.Context, queryer historyQueryer, row *sql.Row) (api.ReleaseWorkflowStateRecord, error) {
+	record, err := scanWorkflowState(row)
+	if err != nil {
+		return api.ReleaseWorkflowStateRecord{}, err
+	}
+	return loadWorkflowSnapshotStorage(ctx, queryer, record)
 }
 
 func validateWorkflowStateRecord(record api.ReleaseWorkflowStateRecord) error {

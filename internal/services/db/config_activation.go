@@ -805,6 +805,9 @@ func applyConfigActivationWorkflowImpacts(
 		if rows != 1 {
 			return api.ErrReleaseWorkflowRevisionConflict
 		}
+		if err := syncWorkflowStorage(ctx, tx, next); err != nil {
+			return err
+		}
 		record = next
 	}
 	return nil
