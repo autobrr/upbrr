@@ -2403,7 +2403,7 @@ export function ReleaseSessionProvider({
       (artifact) =>
         artifact.kind === "hosted_image" &&
         artifact.selected &&
-        selectedImageSourceIDs.has(artifact.source || ""),
+        (artifact.sourceUnavailable || selectedImageSourceIDs.has(artifact.source || "")),
     )
     .map((artifact) => ({
       artifactID: artifact.id,

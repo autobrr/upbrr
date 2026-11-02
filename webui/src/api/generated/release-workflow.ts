@@ -1157,6 +1157,7 @@ export type MediaArtifact = Readonly<{
   selected: boolean;
   sizeBytes?: number;
   source?: string;
+  sourceUnavailable?: boolean;
   timestampSeconds?: number;
   url?: string;
   width?: number;

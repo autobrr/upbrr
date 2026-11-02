@@ -571,6 +571,9 @@ type MediaArtifact struct {
 	SizeBytes        int64             `json:"sizeBytes,omitempty"`
 	Host             string            `json:"host,omitempty"`
 	URL              string            `json:"url,omitempty"`
+	// SourceUnavailable identifies a restored hosted link whose local image could
+	// not be verified. It remains removable without becoming an upload candidate.
+	SourceUnavailable bool `json:"sourceUnavailable,omitempty"`
 }
 
 // MediaCaptureInstructions are transport-safe capture choices. Local paths

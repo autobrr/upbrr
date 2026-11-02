@@ -340,7 +340,7 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 	}
 	if len(snapshot.Artifacts) != 2 || snapshot.Artifacts[0].Kind != api.MediaArtifactScreenshot ||
 		snapshot.Artifacts[0].Order != 3 || snapshot.Artifacts[1].Kind != api.MediaArtifactHostedImage ||
-		snapshot.Artifacts[1].Source != string(snapshot.Artifacts[0].ID) {
+		snapshot.Artifacts[1].Source != string(snapshot.Artifacts[0].ID) || snapshot.Artifacts[1].SourceUnavailable {
 		t.Fatalf("restored artifacts = %#v", snapshot.Artifacts)
 	}
 	if len(repository.saved) != 0 {
@@ -1152,7 +1152,7 @@ func TestCopyReusableMediaImagePreservesDifferentDestination(t *testing.T) {
 	}
 }
 
-func TestWorkflowMediaRestoreCompatiblePreservesHostedLinkWhenLocalImageIsMissing(t *testing.T) {
+func TestWorkflowMediaRestoreCompatiblePreservesHostedLinkWhenLocalImageIsUnavailable(t *testing.T) {
 	t.Parallel()
 
 	compatibilityKey := api.MediaCompatibilityKey(workflowMediaTestSHA256("verified source"))
@@ -1191,12 +1191,21 @@ func TestWorkflowMediaRestoreCompatiblePreservesHostedLinkWhenLocalImageIsMissin
 		resolver: workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{MediaBinding: binding, SourcePath: binding.SourcePath}},
 		media:    &mediaModule{repo: repository, mediaReuse: repository},
 	}
-	snapshot, _, err := builder.RestoreCompatible(t.Context(), api.ReleaseRef{SourcePath: binding.SourcePath, Generation: binding.PreparedGeneration}, api.TrackerReleaseProjectionSet{}, nil, nil, time.Now())
-	if err != nil {
-		t.Fatalf("restore compatible hosted link: %v", err)
-	}
-	if len(snapshot.Artifacts) != 1 || snapshot.Artifacts[0].Kind != api.MediaArtifactHostedImage || snapshot.Artifacts[0].URL == "" {
-		t.Fatalf("hosted link was not retained independently: %#v", snapshot.Artifacts)
+	for _, state := range []string{"missing", "changed"} {
+		t.Run(state, func(t *testing.T) {
+			if state == "changed" {
+				if err := os.WriteFile(image.Path, []byte("changed bytes"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			snapshot, _, err := builder.RestoreCompatible(t.Context(), api.ReleaseRef{SourcePath: binding.SourcePath, Generation: binding.PreparedGeneration}, api.TrackerReleaseProjectionSet{}, nil, nil, time.Now())
+			if err != nil {
+				t.Fatalf("restore compatible hosted link: %v", err)
+			}
+			if len(snapshot.Artifacts) != 1 || snapshot.Artifacts[0].Kind != api.MediaArtifactHostedImage || snapshot.Artifacts[0].URL == "" || !snapshot.Artifacts[0].SourceUnavailable {
+				t.Fatalf("hosted link was not retained independently: %#v", snapshot.Artifacts)
+			}
+		})
 	}
 }
 

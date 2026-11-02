@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Locator, type Page, type Response } from "@playwright/test";
 import type {
@@ -2436,6 +2436,38 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
     expect(workspace.fake.counters.imageUploads).toBe(3);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
     expect(workspace.fake.counters.clientInjections).toBe(0);
+
+    await app.stop();
+    await rm(path.join(workspace.root, "tmp"), { recursive: true });
+    app = await startApp(workspace, { seed: false });
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    const unavailable = await runDuplicateCheck(page);
+    expect(
+      unavailable.media?.artifacts.filter((artifact) => artifact.kind === "screenshot"),
+    ).toHaveLength(0);
+    const hosted = unavailable.media!.artifacts.filter(
+      (artifact) => artifact.kind === "hosted_image",
+    );
+    expect(hosted).toHaveLength(3);
+    expect(hosted.every((artifact) => artifact.sourceUnavailable)).toBe(true);
+    await page.getByRole("button", { name: "Upload Images" }).click();
+    await expect(page.getByText("3 saved")).toBeVisible();
+    const removedURL = hosted[0]!.url!;
+    await expect(page.getByRole("link", { name: removedURL, exact: true })).toBeVisible();
+    const removed = waitForAppMethod(page, "RemoveReleaseWorkflowHostedImages");
+    await page.getByRole("button", { name: "Remove published image 1", exact: false }).click();
+    expect((await removed).ok()).toBe(true);
+    await expect(page.getByText("2 saved")).toBeVisible();
+    await expect(page.getByRole("link", { name: removedURL, exact: true })).toHaveCount(0);
+    await page.reload();
+    await page.getByRole("button", { name: "Upload Images" }).click();
+    await expect(page.getByText("2 saved")).toBeVisible();
+    await expect(page.getByRole("link", { name: removedURL, exact: true })).toHaveCount(0);
+    expect(workspace.fake.counters.imageUploads).toBe(3);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {
     await app?.stop();
     await workspace.cleanup();

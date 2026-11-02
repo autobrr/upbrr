@@ -8166,8 +8166,8 @@ describe("useReleaseSession", () => {
     );
   });
 
-  it.each(["deselected", "deleted"] as const)(
-    "hides hosted URLs for %s sources through loading and re-entry",
+  it.each(["deselected", "deleted", "unavailable"] as const)(
+    "projects hosted URLs for %s sources through loading and re-entry",
     async (change) => {
       const sourcePath = "C:\\media\\Example";
       const captureMedia = async (current: ReleaseWorkflowCurrent) => {
@@ -8217,6 +8217,7 @@ describe("useReleaseSession", () => {
                 purpose: "final" as const,
                 selected: true,
                 source: "removed",
+                sourceUnavailable: change === "unavailable",
                 url: "https://images.example.invalid/removed.png",
               },
               {
@@ -8233,19 +8234,23 @@ describe("useReleaseSession", () => {
           },
         };
       };
+      const expectedURLs = [
+        "https://images.example.invalid/kept.png",
+        ...(change === "unavailable" ? ["https://images.example.invalid/removed.png"] : []),
+      ];
       const { result, unmount } = renderHook(useReleaseSession, {
         wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ captureMedia }) })),
       });
       await selectAndPrepare(result, sourcePath);
       await act(() => result.current.screenshots.generate("final"));
       const current = result.current.workflow.view.current!;
-      expect(result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual([
-        "https://images.example.invalid/kept.png",
-      ]);
+      expect(result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual(
+        expectedURLs,
+      );
       await act(() => result.current.uploadedImages.load());
-      expect(result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual([
-        "https://images.example.invalid/kept.png",
-      ]);
+      expect(result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual(
+        expectedURLs,
+      );
       unmount();
 
       const resumed = renderHook(useReleaseSession, {
@@ -8258,7 +8263,7 @@ describe("useReleaseSession", () => {
       });
       await waitFor(() => expect(resumed.result.current.workflow.view.current?.media).toBeTruthy());
       expect(resumed.result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual(
-        ["https://images.example.invalid/kept.png"],
+        expectedURLs,
       );
       resumed.unmount();
     },

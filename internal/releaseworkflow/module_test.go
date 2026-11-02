@@ -3984,6 +3984,13 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 	if deleted.Media == nil || len(deleted.Media.Artifacts) != 0 || privateMedia.stats.deletions != 2 {
 		t.Fatalf("deleted media = %#v deletions=%d", deleted.Media, privateMedia.stats.deletions)
 	}
+	stored, err := module.private.Get(testOwnerID, deleted.Workflow.ID, mediaPrivateResourceID(deleted.Media.ID), module.clock.Now().UTC())
+	if err != nil {
+		t.Fatalf("read stored media resource: %v", err)
+	}
+	if resource, ok := stored.(*retainedMediaResourceFake); !ok || resource == privateMedia || resource.pending {
+		t.Fatalf("stored media resource did not retain the committed deletion result: %#v", stored)
+	}
 	if privateMedia.stats.staged != 3 {
 		t.Fatalf("staged deletion attempts = %d, want 3", privateMedia.stats.staged)
 	}

@@ -1484,23 +1484,23 @@ func (b workflowMediaBuilder) RestoreCompatible(
 			if scopeErr != nil || accountScope != link.AccountScope || hostedImageURL(link) == "" {
 				continue
 			}
-			if localAvailable {
-				link.ImagePath = image.Path
-			}
+			// Retain the association key for removal even when the local image is unavailable.
+			link.ImagePath = image.Path
 			link.SourcePath = binding.SourcePath
 			link.PreparedMediaFingerprint = binding.PreparedMediaFingerprint
 			link.PreparedGeneration = binding.PreparedGeneration
 			hostedID := restoredHostedArtifactID(snapshot.CaptureFingerprint, sourceID, linkIndex, link)
 			hosted := api.MediaArtifact{
-				ID:        hostedID,
-				Kind:      api.MediaArtifactHostedImage,
-				Purpose:   image.Purpose,
-				Selected:  asset.Selected,
-				Order:     asset.Order,
-				Source:    string(sourceID),
-				SizeBytes: link.SizeBytes,
-				Host:      strings.ToLower(strings.TrimSpace(link.Host)),
-				URL:       hostedImageURL(link),
+				ID:                hostedID,
+				Kind:              api.MediaArtifactHostedImage,
+				Purpose:           image.Purpose,
+				Selected:          asset.Selected,
+				Order:             asset.Order,
+				Source:            string(sourceID),
+				SourceUnavailable: !localAvailable,
+				SizeBytes:         link.SizeBytes,
+				Host:              strings.ToLower(strings.TrimSpace(link.Host)),
+				URL:               hostedImageURL(link),
 			}
 			snapshot.Artifacts = append(snapshot.Artifacts, hosted)
 			retained.HostedImages[hostedID] = link

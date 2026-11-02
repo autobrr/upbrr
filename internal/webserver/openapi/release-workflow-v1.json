@@ -4413,6 +4413,9 @@
           "source": {
             "type": "string"
           },
+          "sourceUnavailable": {
+            "type": "boolean"
+          },
           "timestampSeconds": {
             "type": "number"
           },
