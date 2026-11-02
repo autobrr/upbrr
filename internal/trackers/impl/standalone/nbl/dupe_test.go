@@ -132,7 +132,7 @@ func TestNBLSearchUsesTagsAndTraversesAllPages(t *testing.T) {
 					"group_id":101,
 					"season":1,
 					"size":1000,
-					"tags":["hdr"]
+					"tags":["hdr","3D"]
 				}]
 			}`)
 		case 1:
@@ -188,6 +188,10 @@ func TestNBLSearchUsesTagsAndTraversesAllPages(t *testing.T) {
 		!slices.Equal(entries[1].HDR.Formats, []api.HDRFormat{api.HDRFormatDolbyVision}) {
 		t.Fatalf("page 1 HDR evidence = %#v", entries[1].HDR)
 	}
+	if entries[0].ThreeD != "3d" || entries[1].ThreeD != "" {
+		t.Fatalf("structured 3D evidence = %q / %q", entries[0].ThreeD, entries[1].ThreeD)
+	}
+
 	if !entries[0].Pack || entries[0].Season != 1 || entries[1].Pack || entries[1].Episode != 1 {
 		t.Fatalf("NBL candidate coordinates = %#v", entries)
 	}

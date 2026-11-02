@@ -412,6 +412,7 @@ type UploadSubject struct {
 	DiscType                   string
 	VideoPath                  string
 	FileList                   []string
+	PackageInventory           PackageInventory
 	// KeepFolder retains the supplied root around one selected movie or episode video.
 	KeepFolder          bool
 	SourceSize          int64
@@ -560,6 +561,7 @@ func NewImageHostingSubject(subject UploadSubject) ImageHostingSubject {
 // RuleSubject contains only stable facts used by generic and tracker-specific
 // eligibility rules.
 type RuleSubject struct {
+	PackageInventory PackageInventory
 	// CheckSourceFolder includes the retained folder in modified-release checks.
 	CheckSourceFolder          bool
 	MediaFileFacts             MediaFileFacts
@@ -630,10 +632,28 @@ type SeasonEpisodeFacts struct {
 	Episodes []int
 }
 
+// PackageInventory records the files selected by the torrent inclusion policy.
+// Complete means enumeration succeeded, independently of episode or media coverage.
+// Files are host paths; a filtered media list alone is not complete evidence.
+// Scope preserves the effective torrent layout, including single-file collapse.
+// Empty Files are omitted from JSON.
+type PackageInventory struct {
+	Status MetadataEvidenceStatus
+	Scope  SubmissionContentScope
+	Files  []string `json:",omitempty"`
+}
+
+// Clone detaches the inventory's file paths from the prepared generation.
+func (i PackageInventory) Clone() PackageInventory {
+	i.Files = slices.Clone(i.Files)
+	return i
+}
+
 // PackageFacts contains source-layout facts derived without filesystem I/O.
-// Status remains partial until the caller supplies a complete all-file list.
+// Status follows the authoritative inventory, or remains partial for a bare file list.
 type PackageFacts struct {
 	Status                    MetadataEvidenceStatus
+	Scope                     SubmissionContentScope
 	KnownFileCount            int
 	MediaFileCount            int
 	ArchiveFileCount          int
@@ -913,7 +933,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		BDInfoCount:          bdInfoEvidence.Count,
 		SceneNFO:             strings.TrimSpace(subject.SceneNFOPath) != "",
 	})
-	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
+	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList, subject.PackageInventory)
 	mediaFacts := deriveValidationMediaFileFacts(subject, packageFacts.MediaFileCount)
 	assetFacts := deriveValidationAssetFacts(subject)
 	assetFacts.HDRArtifacts = subject.HDRArtifactEvidence(tracker)
@@ -938,7 +958,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		HardcodedSubtitleCoverage:   slices.Clone(subject.HardcodedSubtitleCoverage),
 		SourcePath:                  subject.SourcePath,
 		VideoPath:                   subject.VideoPath,
-		FileList:                    slices.Clone(subject.FileList),
+		FileList:                    validationPackageFiles(subject.FileList, subject.PackageInventory),
 		SourceSize:                  subject.SourceSize,
 		DiscType:                    subject.DiscType,
 		Scene:                       subject.Scene,
@@ -1093,8 +1113,20 @@ var validationSubtitleExtensions = map[string]struct{}{
 	".vtt": {},
 }
 
-func deriveValidationPackageFacts(sourcePath string, fileList []string) PackageFacts {
+func validationPackageFiles(fileList []string, inventory PackageInventory) []string {
+	if inventory.Status != "" {
+		return slices.Clone(inventory.Files)
+	}
+	return slices.Clone(fileList)
+}
+
+func deriveValidationPackageFacts(sourcePath string, fileList []string, inventory PackageInventory) PackageFacts {
 	facts := PackageFacts{Status: MetadataEvidenceStatusUnavailable}
+	if inventory.Status != "" {
+		fileList = inventory.Files
+		facts.Status = inventory.Status
+		facts.Scope = inventory.Scope
+	}
 	extensions := make(map[string]struct{})
 	extraKinds := make(map[PackageFileKind]struct{})
 	detectedEpisodes := make(map[int]map[int]struct{})
@@ -1148,8 +1180,10 @@ func deriveValidationPackageFacts(sourcePath string, fileList []string) PackageF
 	if facts.KnownFileCount == 0 {
 		return facts
 	}
-	facts.Status = MetadataEvidenceStatusPartial
-	facts.SingleFileFolder = facts.KnownFileCount == 1 && folderCandidate
+	if inventory.Status == "" {
+		facts.Status = MetadataEvidenceStatusPartial
+	}
+	facts.SingleFileFolder = facts.KnownFileCount == 1 && folderCandidate && inventory.Scope != SubmissionContentScopeSingleFile
 	facts.Extensions = make([]string, 0, len(extensions))
 	for extension := range extensions {
 		facts.Extensions = append(facts.Extensions, extension)
@@ -1674,7 +1708,7 @@ func validationIdentityProvenanceValueKnown(provenance IdentityProvenance) bool 
 // NewTrackerValidationSubjectFromRuleSubject preserves the legacy generic-rule
 // entry point while routing custom checks through the validation contract.
 func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker string) TrackerValidationSubject {
-	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
+	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList, subject.PackageInventory)
 	mediaFacts := deriveValidationRuleMediaFileFacts(subject, packageFacts.MediaFileCount)
 	return TrackerValidationSubject{
 		CheckSourceFolder:          subject.CheckSourceFolder,
@@ -1688,7 +1722,7 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 		HardcodedSubtitleCoverage:  slices.Clone(subject.HardcodedSubtitleCoverage),
 		SourcePath:                 subject.SourcePath,
 		VideoPath:                  subject.VideoPath,
-		FileList:                   slices.Clone(subject.FileList),
+		FileList:                   validationPackageFiles(subject.FileList, subject.PackageInventory),
 		DiscType:                   subject.DiscType,
 		Scene:                      subject.Scene,
 		SceneNFOReady:              strings.TrimSpace(subject.SceneNFOPath) != "",
@@ -1744,6 +1778,7 @@ func NewRuleSubject(subject UploadSubject) RuleSubject {
 		SourcePath:                 subject.SourcePath,
 		VideoPath:                  subject.VideoPath,
 		FileList:                   append([]string(nil), subject.FileList...),
+		PackageInventory:           subject.PackageInventory.Clone(),
 		DiscType:                   subject.DiscType,
 		Scene:                      subject.Scene,
 		SceneNFOPath:               subject.SceneNFOPath,

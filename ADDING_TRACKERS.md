@@ -37,6 +37,12 @@ AvistaZ-family (`azfamily`) trackers are intentionally out of scope.
 - Pre-duplicate validation is side-effect-free. It consumes detached canonical facts, projected
   questionnaire/config overrides, and prepared-resource readiness only—never network, filesystem
   reads, runtime secrets, mutable services, or payload submission.
+- Package completeness comes from the prepared source's `PackageInventory`, collected through
+  the torrent inclusion policy. Validation receives those intended files, including full-disc
+  structure and deliberate exclusions. A bare media-selection `FileList` remains partial.
+  Complete inventory does not imply complete episode, technical, or language coverage; included
+  prohibited files still produce violations. Retain the torrent scope so a collapsed single-file
+  payload is not mistaken for a retained folder. Preserve inventory authority through rule adapters.
 - Upload and dry-run must share payload preparation. Dry-run must not submit the upload or repeat
   workflow-level discovery and duplicate checking.
 
@@ -1179,6 +1185,14 @@ presentation evidence. Structured API and prepared provider values remain author
 including custom provider codes, and genuine title conflicts remain contradictory. Known service
 aliases normalize to the same identity in both sources; punctuation in service names remains
 significant (for example, Disney and Disney+).
+
+Carry positive structured 3D labels through `DupeEntry.ThreeD`, raw type/source labels, or
+structured flags. Use `dupe.ThreeDFromLabels` for tag arrays that otherwise discard non-HDR
+labels. Name fallback uses explicit stereoscopic tokens in bounded release metadata, excluding
+title text and ambiguous group suffixes, and remains partial. Empty tags or a missing marker
+never prove 2D; only explicit 2D evidence may establish that presentation.
+Mixed 2D/3D labels do not establish either presentation. Conflicting title markers require
+review, and title-only presentation facts cannot establish automatic coexistence.
 
 Use `DupePolicy.Slots` for conditional ordinary-slot matrices, with complete normalized
 predicates and shared IDs only for presentations that compete in the same slot. Unlisted or

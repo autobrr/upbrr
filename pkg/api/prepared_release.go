@@ -81,6 +81,7 @@ const (
 // SourceManifest is the finalized source inventory and measurement set for one
 // prepared release.
 type SourceManifest struct {
+	PackageInventory  PackageInventory
 	SourcePath        string
 	Size              int64
 	Entries           []SourceManifestEntry

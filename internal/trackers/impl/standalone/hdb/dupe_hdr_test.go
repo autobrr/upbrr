@@ -22,7 +22,7 @@ func TestHDBAPIHDRSlots(t *testing.T) {
 			Header:     make(http.Header),
 			Body: io.NopCloser(strings.NewReader(`{"status":0,"data":[
 				{"id":1,"name":"Example Series S01E04 2160p WEB-DL DoVi HEVC-NTb","tags":["Dolby Vision"]},
-				{"id":2,"name":"Example Series S01E04 2160p WEB-DL DoVi HDR10+ HEVC-NTb","tags":["Dolby Vision","HDR10","HDR10+"]},
+				{"id":2,"name":"Example Series S01E04 2160p WEB-DL DoVi HDR10+ HEVC-NTb","tags":["Dolby Vision","HDR10","HDR10+","3D"]},
 				{"id":3,"name":"Example Series S01E04 2160p WEB-DL HEVC-NTb","tags":[]},
 				{"id":4,"name":"Example Series S01E04 2160p WEB-DL HDR HEVC-NTb","tags":["HDR10"]},
 				{"id":5,"name":"Example Series S01E04 2160p WEB-DL HEVC-NTb"},
@@ -70,6 +70,9 @@ func TestHDBAPIHDRSlots(t *testing.T) {
 		}
 		if got := result.Candidates[0].Relation; got != want || result.RequiresAction != (want == api.DupeRelationSameSlot) {
 			t.Fatalf("id=%s HDR slot evaluation = %#v, want %s", entry.ID, result, want)
+		}
+		if index == 1 && (result.Candidates[0].Facts.ThreeD.Value != "3d" || result.Candidates[0].Facts.ThreeD.Status != dupe.FactComplete) {
+			t.Fatalf("structured 3D tag did not reach comparison: %+v", result.Candidates[0].Facts.ThreeD)
 		}
 		if index == 1 && result.Candidates[0].Facts.HDR.Status != api.HDREvidenceComplete {
 			t.Fatalf("HDR10 fallback created a false contradiction: %#v", result.Candidates[0].Facts.HDR)
