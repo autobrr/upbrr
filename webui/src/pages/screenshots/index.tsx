@@ -412,6 +412,15 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                               </span>
                             )}
                           </button>
+                          {artifact.processing && (
+                            <p className="text-sm text-muted-foreground">
+                              {artifact.processing.warning ||
+                                `Renderer: ${artifact.processing.renderer}; tonemapping applied: ${artifact.processing.tonemapped ? "yes" : "no"}.`}
+                            </p>
+                          )}
+                          <p className="text-sm text-muted-foreground">
+                            Captured at {(artifact.timestampSeconds || 0).toFixed(3)} seconds
+                          </p>
                           <button
                             className="ghost"
                             type="button"
@@ -578,6 +587,17 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
               </div>
             </div>
             <div className="grid gap-[9px]">
+              {view.previewImage && view.previewProcessing && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {view.previewProcessing.warning ||
+                    `Renderer: ${view.previewProcessing.renderer}; tonemapping applied: ${view.previewProcessing.tonemapped ? "yes" : "no"}.`}
+                </p>
+              )}
+              {view.previewImage && view.previewTimestampSeconds !== undefined && (
+                <p className="text-sm text-muted-foreground">
+                  Preview at {view.previewTimestampSeconds.toFixed(3)} seconds
+                </p>
+              )}
               {view.previewImage ? (
                 <button
                   className="overflow-hidden rounded-[14px] border border-foreground/10 bg-card/60 p-0 text-left cursor-pointer [&>img]:block [&>img]:w-full max-w-md"

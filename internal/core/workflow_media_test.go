@@ -52,6 +52,54 @@ func TestMediaPlanSavedImagesRetainsPreviewURL(t *testing.T) {
 	}
 }
 
+func TestPublishedMediaProcessingRequiresUnchangedImageBytes(t *testing.T) {
+	t.Parallel()
+	for _, replaced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replaced=%t", replaced), func(t *testing.T) {
+			pathValue := filepath.Join(t.TempDir(), "screen.png")
+			content := []byte("original captured bytes")
+			if err := os.WriteFile(pathValue, content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			image := api.ScreenshotImage{
+				Path:          pathValue,
+				ContentSHA256: workflowMediaTestSHA256(string(content)),
+				Tonemapping:   api.ScreenshotTonemapped,
+				Processing:    &api.ScreenshotProcessing{Renderer: "libplacebo", Tonemapped: true},
+			}
+			original := publicMediaArtifact("capture", "screenshot", 0, api.MediaArtifactScreenshot, api.ScreenshotPurposeFinal, image)
+			if original.Processing == nil {
+				t.Fatal("fresh image lost processing evidence")
+			}
+			if replaced {
+				if err := os.WriteFile(pathValue, []byte("replacement image bytes"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			snapshot := api.MediaArtifactSet{Artifacts: []api.MediaArtifact{original}}
+			retained := workflowMediaPrivateArtifacts{ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{original.ID: image}}
+			builder := workflowMediaBuilder{}
+			rebound, _, err := builder.RestoreCompatible(t.Context(), api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, &snapshot, retained, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutated, _, err := builder.mediaMutationBase(api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, &snapshot, retained)
+			if err != nil {
+				t.Fatal(err)
+			}
+			projected := publicMediaArtifact("capture", "screenshot", 0, api.MediaArtifactScreenshot, api.ScreenshotPurposeFinal, image)
+			for _, artifact := range []api.MediaArtifact{projected, rebound.Artifacts[0], mutated.Artifacts[0]} {
+				if (artifact.Processing == nil) != replaced {
+					t.Fatalf("replaced=%t published processing=%+v", replaced, artifact.Processing)
+				}
+			}
+			if snapshot.Artifacts[0].Processing == nil {
+				t.Fatal("republishing mutated the historical snapshot")
+			}
+		})
+	}
+}
+
 type workflowMediaResolverFake struct {
 	screenshotSubject *api.ScreenshotSubject
 }

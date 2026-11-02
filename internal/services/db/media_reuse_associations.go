@@ -194,8 +194,8 @@ func (r *SQLiteRepository) CommitReusableMedia(
 			INSERT INTO media_reusable_assets (
 				source_path, prepared_media_fingerprint, prepared_generation, compatibility_key,
 				capture_fingerprint, content_sha256, kind, purpose, disc_id, image_path,
-			image_index, timestamp_seconds, width, height, size_bytes, imported, selected, sort_order, captured_at, tonemapping
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_index, timestamp_seconds, width, height, size_bytes, imported, selected, sort_order, captured_at, tonemapping, processing_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		if err != nil {
 			return fmt.Errorf("db reusable media: prepare asset: %w", err)
@@ -226,7 +226,7 @@ func (r *SQLiteRepository) CommitReusableMedia(
 				asset.CaptureFingerprint, strings.ToLower(asset.ContentSHA256), asset.Kind, image.Purpose,
 				strings.TrimSpace(image.DiscID), strings.TrimSpace(image.Path), image.Index, image.TimestampSeconds,
 				image.Width, image.Height, image.SizeBytes, boolToInt(asset.Imported), boolToInt(asset.Selected), asset.Order,
-				time.Now().UTC().Format(time.RFC3339Nano), image.Tonemapping,
+				time.Now().UTC().Format(time.RFC3339Nano), image.Tonemapping, encodeOptionalJSON(image.Processing),
 			); err != nil {
 				return fmt.Errorf("db reusable media: insert asset: %w", err)
 			}
@@ -298,7 +298,7 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT source_path, prepared_media_fingerprint, prepared_generation, capture_fingerprint, content_sha256,
 			kind, purpose, disc_id, image_path, image_index, timestamp_seconds, width, height, size_bytes,
-			imported, selected, sort_order, tonemapping
+			imported, selected, sort_order, tonemapping, processing_json
 		FROM media_reusable_assets AS asset
 		WHERE compatibility_key = ? AND NOT EXISTS (
 			SELECT 1 FROM media_reusable_tombstones AS tombstone
@@ -318,13 +318,18 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 	for rows.Next() {
 		var asset api.ReusableMediaAsset
 		var imported, selected int
+		var processingJSON string
 		if err := rows.Scan(
 			&asset.Binding.SourcePath, &asset.Binding.PreparedMediaFingerprint, &asset.Binding.PreparedGeneration,
 			&asset.CaptureFingerprint, &asset.ContentSHA256, &asset.Kind, &asset.Image.Purpose, &asset.Image.DiscID,
 			&asset.Image.Path, &asset.Image.Index, &asset.Image.TimestampSeconds, &asset.Image.Width, &asset.Image.Height,
-			&asset.Image.SizeBytes, &imported, &selected, &asset.Order, &asset.Image.Tonemapping,
+			&asset.Image.SizeBytes, &imported, &selected, &asset.Order, &asset.Image.Tonemapping, &processingJSON,
 		); err != nil {
 			return nil, fmt.Errorf("db reusable media: scan asset: %w", err)
+		}
+		asset.Image.Processing, err = decodeOptionalJSON[api.ScreenshotProcessing](processingJSON)
+		if err != nil {
+			return nil, err
 		}
 		asset.CompatibilityKey = compatibilityKey
 		asset.Image.ContentSHA256 = asset.ContentSHA256

@@ -7940,6 +7940,30 @@ describe("useReleaseSession", () => {
     expect(dryRunUploads).toHaveBeenCalledOnce();
   });
 
+  it("exposes successful preview processing with its resolved timestamp", async () => {
+    const previewFrame = workflowPorts().previewFrame;
+    const processing = {
+      requestedRenderer: "libplacebo",
+      renderer: "libplacebo",
+      tonemapped: true,
+      degraded: false,
+    };
+    const workflow = workflowPorts({
+      previewFrame: async (...args: Parameters<typeof previewFrame>) => ({
+        ...(await previewFrame(...args)),
+        timestampSeconds: 12.5,
+        processing,
+      }),
+    });
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow })),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+    await act(() => result.current.screenshots.previewFrame("", 12));
+    expect(result.current.screenshots.view.previewProcessing).toEqual(processing);
+    expect(result.current.screenshots.view.previewTimestampSeconds).toBe(12.5);
+  });
+
   it("hydrates hosted-image outcomes from the workflow media snapshot", async () => {
     const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => {
       const revision = current.workflow.revision + 1;

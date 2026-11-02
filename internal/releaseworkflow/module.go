@@ -2830,13 +2830,14 @@ func (m *Module) PreviewFrame(
 		return api.FramePreview{}, fmt.Errorf("release workflow retain frame preview: %w", err)
 	}
 	return api.FramePreview{
+		Processing:       &content.Processing,
 		ID:               previewID,
 		WorkflowID:       workflowID,
 		WorkflowRevision: expectedRevision,
 		Release:          *state.Workflow.Release,
 		DiscID:           content.DiscID,
 		DiscName:         content.DiscName,
-		TimestampSeconds: timestampSeconds,
+		TimestampSeconds: content.TimestampSeconds,
 		ExpiresAt:        expiresAt,
 	}, nil
 }

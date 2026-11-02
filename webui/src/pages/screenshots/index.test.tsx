@@ -88,6 +88,74 @@ const facet = (): ScreenshotsFacet => {
 };
 
 describe("ScreenshotsPage", () => {
+  it.each([
+    { renderer: "libplacebo", tonemapped: true, applied: "yes" },
+    { renderer: "none", tonemapped: false, applied: "no" },
+  ])("shows successful $renderer preview processing", ({ renderer, tonemapped, applied }) => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        previewProcessing: { requestedRenderer: renderer, renderer, tonemapped, degraded: false },
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+    const preview = screen.getByRole("heading", { name: "Live Preview" }).closest("section")!;
+    expect(within(preview).getByRole("status")).toHaveTextContent(
+      `Renderer: ${renderer}; tonemapping applied: ${applied}.`,
+    );
+  });
+
+  it("keeps each recovered image warning beside its image", () => {
+    const base = facet();
+    const artifacts = base.view.artifacts!;
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        previewProcessing: {
+          requestedRenderer: "libplacebo",
+          renderer: "software",
+          tonemapped: true,
+          degraded: false,
+          warning:
+            "Requested libplacebo; device failed. Using software; tonemapping applied: true.",
+        },
+        previewTimestampSeconds: 12.5,
+        artifacts: {
+          ...artifacts,
+          artifacts: artifacts.artifacts.map((artifact) => ({
+            ...artifact,
+            timestampSeconds: 14.5,
+            processing: {
+              requestedRenderer: "libplacebo",
+              renderer: "none",
+              tonemapped: false,
+              degraded: true,
+              warning: "Non-tonemapped output; colours may be inaccurate.",
+            },
+          })),
+        },
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+    const preview = screen.getByRole("heading", { name: "Live Preview" }).closest("section")!;
+    const generated = screen
+      .getByRole("heading", { name: "Generated Screenshots" })
+      .closest("section")!;
+    expect(within(preview).getByRole("status")).toHaveTextContent("Using software");
+    expect(within(preview).getByText("Preview at 12.500 seconds")).toBeVisible();
+    expect(
+      within(generated).getByText("Non-tonemapped output; colours may be inaccurate."),
+    ).toBeVisible();
+    expect(within(generated).getByText("Captured at 14.500 seconds")).toBeVisible();
+  });
+
   it("requires a frame selection for Generate screenshots", () => {
     const base = facet();
     const screenshots: ScreenshotsFacet = {

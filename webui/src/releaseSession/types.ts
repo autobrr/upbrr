@@ -43,6 +43,7 @@ import type {
   ReleaseCorrectionsSnapshot,
   RequiredAction,
   ReleaseWorkflowCurrent,
+  ScreenshotProcessing,
   TrackerLaneOutcome,
   SubmissionExclusion,
   TrackerPreflightAssessment,
@@ -266,6 +267,8 @@ export type ScreenshotsFacet = Readonly<{
     selections: readonly ScreenshotSelection[];
     finalSelectionArtifactIDs: readonly string[];
     previewImage: string;
+    previewProcessing?: ScreenshotProcessing;
+    previewTimestampSeconds?: number;
     staleReason: string;
     mutationBlockedReason: string;
     error: string;

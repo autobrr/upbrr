@@ -2421,6 +2421,16 @@
           "id": {
             "$ref": "#/components/schemas/PublicResourceID"
           },
+          "processing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScreenshotProcessing"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "release": {
             "$ref": "#/components/schemas/ReleaseSnapshotRef"
           },
@@ -4294,6 +4304,16 @@
           },
           "order": {
             "type": "integer"
+          },
+          "processing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScreenshotProcessing"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "purpose": {
             "$ref": "#/components/schemas/ScreenshotPurpose"
@@ -9590,8 +9610,59 @@
           "workflowId"
         ]
       },
+      "ScreenshotProcessing": {
+        "type": "object",
+        "properties": {
+          "degraded": {
+            "type": "boolean"
+          },
+          "renderer": {
+            "type": "string"
+          },
+          "requestedRenderer": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScreenshotRenderStep"
+            }
+          },
+          "tonemapped": {
+            "type": "boolean"
+          },
+          "warning": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "degraded",
+          "renderer",
+          "requestedRenderer",
+          "tonemapped"
+        ]
+      },
       "ScreenshotPurpose": {
         "type": "string"
+      },
+      "ScreenshotRenderStep": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "renderer": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "renderer",
+          "stage"
+        ]
       },
       "ScreenshotSelection": {
         "type": "object",
