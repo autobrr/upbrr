@@ -88,6 +88,15 @@ known language differing from the title's recorded original language does not pr
 a dub. Ordinary matching-language original tracks need no special title or flag.
 Commentary is not programme audio.
 
+When the title's original language is unknown, the original-language comparison
+does not require track-language or soundtrack-origin answers and does not block
+an otherwise eligible upload. Unknown facts remain unknown. Explicit soundtrack
+evidence still supports applicable audio order and default-track rules. Confirmed dubs still
+follow the selected tracker's restrictions; a dub-specific rule may need further
+facts. Independent payload and media requirements still apply. Supplying an
+original language restores the ordinary comparison; clearing it or resetting to
+an unknown automatic value removes that comparison again.
+
 Language corrections accept complete names or codes, including explicit regions and
 scripts such as `pt-BR` and `zh-Hant`. These variants remain visible; matching uses
 the base language. Filipino (`fil`), Tagalog (`tgl`) and the collective Philippine

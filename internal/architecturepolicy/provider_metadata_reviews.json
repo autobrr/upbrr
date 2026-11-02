@@ -72,8 +72,8 @@
     "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "reason": "PHD explicitly opts into the maintainer-selected English-language fallback over finalized LanguageFacts; this is not a verified PHD policy. The existing evaluator, provider consumers, manual metadata precedence, country and age routing, constructibility, and AZ/CZ language policies are unchanged. The shared callback exposes canonical source corrections and the versioned binding invalidates prior projections.",
-    "sha256": "0ff41a22d1c0fff8225ecc82971a57a06704f876c188aff31a08feff0c6834cd"
+    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. PHD explicitly opts into the maintainer-selected English-language fallback over finalized LanguageFacts; this is not a verified PHD policy. The existing evaluator, provider consumers, manual metadata precedence, country and age routing, constructibility, and AZ/CZ language policies are unchanged. The shared callback exposes canonical source corrections and the versioned binding invalidates prior projections.",
+    "sha256": "84595621fbf424955b785c5fe19544604542d0c5c787093a2e9b84af967aafcc"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
     "reason": "Appends the AZ/CZ language assessment using finalized LanguageFacts without a provider fallback. Existing TMDB origin-country routing, manual-aware age checks and constructibility remain unchanged; conflicting-provider corrections and explicit clears remain authoritative.",
@@ -384,8 +384,8 @@
     "sha256": "fd11af9de2fb77db136a7fcaff830b30d5bff684b96b612cea0c1ee12926db79"
   },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
-    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
-    "sha256": "6a0f298c229e7ace66cff19ca36c97bbbaab8547480e8edb27f15a356b3ce0f8"
+    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
+    "sha256": "a4ec6882cc85f867aea4171272169f2323a46bdb5b5d4e1a8f4b94d6aa1e3641"
   },
   "internal/trackers/impl/standalone/bhd/rules.go:languageAssessment": {
     "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
@@ -700,8 +700,8 @@
     "sha256": "4f28f2bb7db460b918bdc55682b0a9d289800e06d51d3d811459844220a708e8"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
-    "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "4ab53f154667ad2a16b5c819ebecf06a083e33fd38451775145ddab6c6669a2c"
+    "reason": "Issue 904: unknown original metadata skips only original-language comparison. Confirmed dubs retain a concrete staff-assessment evidence need; Foreign/country, anime, source and manual-finalized facts remain authoritative. Known-original and manual-clear controls plus synthetic correction/repreparation coverage verify the boundary.",
+    "sha256": "fc2d7abc01498963a881be38041264f1bd93ccd352844f78afbadd43b8c8dd9d"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageValidationPolicy": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
@@ -912,8 +912,8 @@
     "sha256": "157993f3722ac5dec52aaae574dd3ad9a0a647c541ec29e6d62354c1d297014e"
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
-    "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "651a16359fc19040dd6261d3da588c07851a80ee347167f2d49d92fd0636fa81"
+    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
+    "sha256": "b5d1eb2e0afe93098f6b9cdcc76cf5c0f7de6cc9b508961a18d8cdb208f25f33"
   },
   "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1464,16 +1464,16 @@
     "sha256": "31f03c020b50ac67eecc6fa7d688fb167cb03619651bb0d8b4992339e46e7450"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:releaseNamePolicy": {
-    "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "2d67f4009b6273631d5d6238b5a6b0dfd466c3e35e53c78863e3f59623df403b"
+    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
+    "sha256": "57588fd197cc7b2e2dc1758657d4abe7d90317dbcdab07546b7d3f138e3a8570"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
     "reason": "Wires the OTW v7 release-name policy that preserves explicit upload names and finalized manual title, year and edition corrections. Existing TMDB selection, required metadata, language validation, season-zero behavior and duplicate policy remain unchanged.",
     "sha256": "fbd0fecbceb671c4a492e27adc1a4b13a58a7c8ec23469bf4ad3c2627642abf9"
   },
   "internal/trackers/impl/unit3d/sites/otw/rules.go:ValidationPolicy": {
-    "reason": "Advances the validation fingerprint for season-zero support without changing provider consumers, callback wiring, finalized metadata authority, manual precedence, or independent eligibility checks.",
-    "sha256": "0c564eeefe9df1df12068dc9b34ff86496f3b0e38622e8e27709b9bafa47713c"
+    "reason": "Issue 904 advances the validation fingerprint after removing the unknown-original naming blocker. Provider callbacks, finalized metadata and manual precedence are unchanged; existing constructibility checks and language naming controls remain.",
+    "sha256": "aadf272eff8859195430fd05f19ac1b3ad0b9b526567300c17388e48c9296865"
   },
   "internal/trackers/impl/unit3d/sites/otw/validation.go:checkRequirements": {
     "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",

@@ -74,7 +74,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dp/v14" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/dp/v15" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("DP policy = %#v", policy)
 	}
 }
@@ -430,6 +430,30 @@ func reversedDPLanguages(languages []string) []string {
 	reversed := slices.Clone(languages)
 	slices.Reverse(reversed)
 	return reversed
+}
+
+func TestDPUnknownOriginalPreservesEstablishedMarkers(t *testing.T) {
+	for _, tc := range []struct {
+		languages []string
+		want      string
+	}{
+		{[]string{"English"}, "Dubbed"},
+		{[]string{"Japanese", "English"}, "Dual-Audio"},
+		{[]string{"Japanese", "English", "German"}, "MULTi"},
+	} {
+		meta := dpEligibilitySubject(tc.languages...)
+		for i := range meta.LanguageFacts.Tracks {
+			if meta.LanguageFacts.Tracks[i].Languages[0] == "Japanese" {
+				meta.LanguageFacts.Tracks[i].AudioOrigin = api.TrackAudioOriginal
+			}
+		}
+		meta.LanguageFacts.OriginalLanguagesKnown = false
+		meta.LanguageFacts.OriginalLanguages = nil
+		label, established, err := audioLabelForFacts(meta)
+		if err != nil || !established || label != tc.want {
+			t.Fatalf("languages=%v label=%q established=%t err=%v", tc.languages, label, established, err)
+		}
+	}
 }
 
 func TestDPLanguageMultiNameIgnoresPrimaryAndDefaultLanguage(t *testing.T) {

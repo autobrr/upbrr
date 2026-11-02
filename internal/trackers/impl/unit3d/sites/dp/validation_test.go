@@ -94,6 +94,7 @@ func TestDPOriginalAudioRequiresCompleteFinalFacts(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		edit func(*api.UploadSubject)
+		comparisonUnavailable bool
 	}{
 		{name: "partial programme", edit: func(meta *api.UploadSubject) { meta.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial }},
 		{name: "contradictory programme", edit: func(meta *api.UploadSubject) {
@@ -110,10 +111,18 @@ func TestDPOriginalAudioRequiresCompleteFinalFacts(t *testing.T) {
 				TrackCoverageComplete: true,
 			})
 		}},
-		{name: "missing original", edit: func(meta *api.UploadSubject) { meta.LanguageFacts.OriginalLanguagesKnown = false }},
-		{name: "cleared original", edit: func(meta *api.UploadSubject) {
+		{
+name: "missing original",
+ comparisonUnavailable: true,
+ edit: func(meta *api.UploadSubject) { meta.LanguageFacts.OriginalLanguagesKnown = false },
+},
+		{
+name: "cleared original",
+ edit: func(meta *api.UploadSubject) {
 			meta.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{Tracks: meta.LanguageFacts.Tracks, TrackCoverageComplete: true})
-		}},
+		},
+ comparisonUnavailable: true,
+},
 		{name: "cleared programme languages", edit: func(meta *api.UploadSubject) {
 			meta.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
 				OriginalLanguage:         "Japanese",
@@ -129,7 +138,11 @@ func TestDPOriginalAudioRequiresCompleteFinalFacts(t *testing.T) {
 			meta.AudioLanguages = []string{"Japanese", "Danish", "Swedish"}
 			meta.ProviderMetadata.TMDB = &api.TMDBMetadata{OriginalLanguage: "Danish"}
 			test.edit(&meta)
-			requireDPLanguageFailure(t, dpValidationFailures(t, meta), "language_multilingual_evidence", trackers.LanguageUnresolved)
+			if test.comparisonUnavailable {
+				requireDPLanguageFailure(t, dpValidationFailures(t, meta), "language_multilingual_original", trackers.LanguageProhibited)
+			} else {
+				requireDPLanguageFailure(t, dpValidationFailures(t, meta), "language_multilingual_evidence", trackers.LanguageUnresolved)
+			}
 		})
 	}
 	for _, meta := range []api.UploadSubject{
@@ -143,12 +156,8 @@ func TestDPOriginalAudioRequiresCompleteFinalFacts(t *testing.T) {
 	} {
 		meta.LanguageFacts.OriginalLanguagesKnown = false
 		failures := dpValidationFailures(t, meta)
-		if meta.LanguageFacts.AudioAbsent {
-			if len(failures) != 0 {
-				t.Fatalf("audio-absent release required original language: %+v", failures)
-			}
-		} else {
-			requireDPLanguageFailure(t, failures, "language_multilingual_evidence", trackers.LanguageUnresolved)
+		if len(failures) != 0 {
+			t.Fatalf("unknown original required comparison: %+v", failures)
 		}
 	}
 }
@@ -200,7 +209,7 @@ func TestDPOriginalAudioDiscBoundary(t *testing.T) {
 func TestDPOriginalAudioPreservesConstructibility(t *testing.T) {
 	t.Parallel()
 	definition := unit3d.NewWithProfile(Profile())
-	if got := definition.ValidationPolicy().ID; got != "unit3d-dp-constructibility-v1+unit3d-dp-policy-v4" {
+	if got := definition.ValidationPolicy().ID; got != "unit3d-dp-constructibility-v1+unit3d-dp-policy-v5" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 	meta := dpEligibilitySubject("Danish", "Swedish", "English")

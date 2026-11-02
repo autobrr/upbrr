@@ -18,7 +18,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v14", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v15", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -186,11 +186,12 @@ func audioLabel(values []string) string {
 
 // audioLabelForFacts applies established DP rows. A false boolean identifies an
 // uncovered complete composition needing manual choice. Incomplete facts select
-// no marker; ambiguous primary-track evidence returns a naming error.
+// no marker; ambiguous primary-track evidence returns a naming error. Unknown
+// title language permits only markers established by explicit soundtrack facts.
 func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 	facts := meta.LanguageFacts
 	languages := languageutil.LanguageMatchKeys(facts.ProgrammeLanguages)
-	if !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) == 0 || facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete ||
+	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete ||
 		slices.ContainsFunc(facts.ProgrammeLanguages, func(value string) bool { return !languageutil.IsIdentifiedLanguage(value) }) ||
 		len(languages) == 0 {
 		return "", true, nil
@@ -208,6 +209,9 @@ func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 	}
 	if len(languages) == 1 && facts.HasEnglishDub() {
 		return "Dubbed", true, nil
+	}
+	if !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) == 0 {
+		return "", true, nil
 	}
 	nordic := []string{"da", "fi", "is", "no", "nb", "nn", "sv"}
 	if len(languages) == 1 && !original && !english && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {

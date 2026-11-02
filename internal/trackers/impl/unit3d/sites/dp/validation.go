@@ -16,7 +16,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:                 "unit3d-dp-policy-v4",
+		ID:                 "unit3d-dp-policy-v5",
 		Check:              checkLanguageRequirements,
 		LanguageAssessment: languageAssessment,
 	}
@@ -48,17 +48,12 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	if count == 0 && facts.AudioAbsent {
 		return nil
 	}
-	if !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) == 0 {
-		return []api.RuleFailure{trackers.LanguageRuleFailure(
-			subject, "multilingual_evidence", "original-language evidence is required for DP language naming", trackers.LanguageUnresolved,
-		)}
-	}
 	_, manualMarker := manualAudioLabel(subject)
-	if facts.HasUnresolvedProgrammeAudioOrigin() && (count >= 3 && !facts.HasOriginalAudio() || count < 3 && !manualMarker) {
+	if facts.OriginalLanguagesKnown && facts.HasUnresolvedProgrammeAudioOrigin() && (count >= 3 && !facts.HasOriginalAudio() || count < 3 && !manualMarker) {
 		return trackers.ProgrammeAudioOriginFailures(subject)
 	}
 	var failures []api.RuleFailure
-	if count >= 3 && !facts.HasOriginalAudio() {
+	if count >= 3 && !facts.HasOriginalAudio() && (facts.OriginalLanguagesKnown || !facts.HasUnresolvedProgrammeAudioOrigin()) {
 		failures = append(failures, trackers.LanguageRuleFailure(
 			subject, "multilingual_original", "three or more programme languages require original-language audio", trackers.LanguageProhibited,
 		))

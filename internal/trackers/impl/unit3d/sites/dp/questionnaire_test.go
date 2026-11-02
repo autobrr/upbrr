@@ -305,8 +305,6 @@ func TestDPManualLanguageMarkerDiscAndStrictEligibilityBoundaries(t *testing.T) 
 	requireDPLanguageFailure(t, dpValidationFailures(t, meta), "language_multilingual_original", trackers.LanguageProhibited)
 	meta = dpManualMarkerSubject(t, []string{"Japanese"}, "German", "French")
 	for _, edit := range []func(*api.LanguageFacts){
-		func(facts *api.LanguageFacts) { facts.OriginalLanguagesKnown = false },
-		func(facts *api.LanguageFacts) { facts.OriginalLanguages = nil },
 		func(facts *api.LanguageFacts) { facts.ProgrammeStatus = api.MetadataEvidenceStatusPartial },
 		func(facts *api.LanguageFacts) { facts.ProgrammeStatus = api.MetadataEvidenceStatusContradictory },
 		func(facts *api.LanguageFacts) { facts.ProgrammeLanguages = nil },
