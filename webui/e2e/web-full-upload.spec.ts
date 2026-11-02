@@ -1908,33 +1908,72 @@ test("embedded web retains Release Details corrections without downstream workfl
   }
 });
 
-test("embedded web selects a Blu-ray candidate through the authoritative workflow", async ({
+test("embedded web inspects Blu-ray listings and preserves the manual release across reload", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
-  workspace.env.UPBRR_E2E_BLURAY_CANDIDATES = "1";
+  workspace.env.UPBRR_E2E_BLURAY_CANDIDATES = "lazy";
   let app: AppServer | undefined;
   try {
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "Blu-ray Candidates" }).click();
     await expect(page.getByText("Example Release 2026 Collector Edition")).toBeVisible();
-    await expect(page.getByText("United States", { exact: true })).toHaveCount(3);
-    await expect(page.getByText("USA", { exact: true })).toHaveCount(2);
-    await expect(page.getByRole("button", { name: "Selected" })).toBeDisabled();
-
-    const response = page.waitForResponse((candidate) =>
-      candidate.url().includes("/api/app/ContinueReleaseWorkflow"),
+    await expect(page.getByText("Details not fetched", { exact: true })).toHaveCount(2);
+    const one = page.waitForRequest((request) =>
+      request.url().includes("/api/app/ContinueReleaseWorkflow"),
     );
+    await page.getByRole("button", { name: /Fetch details for candidate 1:/ }).click();
+    expect((await one).postDataJSON().intent.preparation.Controls.BlurayDetails).toEqual({
+      ReleaseID: "example-bluray-primary",
+      All: false,
+    });
+    await expect(page.getByText("Details fetched", { exact: true })).toHaveCount(1);
+    await expect(page.getByText("Details not fetched", { exact: true })).toHaveCount(1);
+    const summary = page.getByLabel(
+      "Score details for candidate 1: Example Release 2026 Collector Edition",
+    );
+    await summary.focus();
+    await page.keyboard.press("Space");
+    await expect(page.getByText("seventh scoring reason", { exact: true })).toBeVisible();
+    await page.keyboard.press("Space");
+    await expect(page.getByText("seventh scoring reason", { exact: true })).toBeHidden();
     await page
       .getByRole("button", {
         name: /^Select candidate \d+: Example Release 2026 Standard Edition$/,
       })
       .click();
-    await expect((await response).ok()).toBe(true);
-    await expect(page.getByText("Example Release 2026 Standard Edition")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Selected" })).toBeDisabled();
-    await expect(page.getByText("B").first()).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: /^Selected candidate \d+: Example Release 2026 Standard Edition$/,
+      }),
+    ).toBeDisabled();
+    const all = page.waitForRequest((request) =>
+      request.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Fetch all release details" }).click();
+    expect((await all).postDataJSON().intent.preparation.Controls.BlurayDetails).toEqual({
+      ReleaseID: "",
+      All: true,
+    });
+    await expect(page.getByText("Details fetched", { exact: true })).toHaveCount(2);
+    await expect(
+      page.getByRole("button", {
+        name: /^Selected candidate \d+: Example Release 2026 Standard Edition$/,
+      }),
+    ).toBeDisabled();
+    await page.reload();
+    await page.getByRole("button", { name: "Blu-ray Candidates" }).click();
+    await expect(page.getByText("Details fetched", { exact: true })).toHaveCount(2);
+    await expect(
+      page.getByRole("button", {
+        name: /^Selected candidate \d+: Example Release 2026 Standard Edition$/,
+      }),
+    ).toBeDisabled();
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
   } finally {
     await app?.stop();
     await workspace.cleanup();

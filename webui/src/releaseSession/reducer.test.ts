@@ -28,6 +28,28 @@ const current = (workflowID: string, revision: number): ReleaseWorkflowCurrent =
   }) as unknown as ReleaseWorkflowCurrent;
 
 describe("sessionReducer upload intent", () => {
+  it("retains full successful preview processing and clears it for a new source", () => {
+    const initial = initialSessionState();
+    const processing = {
+      requestedRenderer: "software",
+      renderer: "software",
+      tonemapped: true,
+      degraded: false,
+    };
+    const state = sessionReducer(initial, {
+      type: "screenshot_previewed",
+      sessionRevision: initial.sessionRevision,
+      revision: initial.screenshots.revision,
+      image: "/preview.png",
+      timestampSeconds: 12.5,
+      processing,
+    });
+    expect(state.screenshots.previewProcessing).toEqual(processing);
+    expect(state.screenshots.previewTimestampSeconds).toBe(12.5);
+    const reset = sessionReducer(state, { type: "source_selected", sourcePath: "Other.mkv" });
+    expect(reset.screenshots.previewProcessing).toBeUndefined();
+  });
+
   it("preserves selection-only edit counts with Input drafts and resets both revisions for a new source", () => {
     const initial = initialSessionState();
     const sourcePath = "C:\\media\\Example.Release.2026.mkv";
@@ -1384,4 +1406,27 @@ describe("screenshot plan authority", () => {
       expect(state).toBe(refreshed);
     },
   );
+});
+
+it("routes Blu-ray site overrides while preserving manual selection for unrelated tracker URLs", () => {
+  const empty = initialSessionState();
+  const initial = {
+    ...empty,
+    preparationIntent: {
+      ...empty.preparationIntent,
+      bluray: { Mode: "manual" as const, Release: "102" },
+    },
+  };
+  const tracker = sessionReducer(initial, {
+    type: "source_lookup_changed",
+    value: "https://tracker.example/torrents/blu-ray.com/123",
+  });
+  expect(tracker.preparationIntent.bluray).toEqual({ Mode: "manual", Release: "102" });
+  const exact = sessionReducer(tracker, {
+    type: "source_lookup_changed",
+    value: "https://WWW.BLU-RAY.COM/movies/Example/123/",
+  });
+  expect(exact.preparationIntent.bluray).toBeNull();
+  const cleared = sessionReducer(exact, { type: "source_lookup_changed", value: "" });
+  expect(cleared.preparationIntent.bluray).toEqual({ Mode: "auto", Release: "" });
 });

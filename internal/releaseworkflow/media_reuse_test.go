@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,11 +21,19 @@ func TestDuplicateCompletionRestoresMediaUnderCurrentTrackerAuthority(t *testing
 	t.Parallel()
 	for _, mode := range []TrackerDecisionMode{TrackerDecisionModeWebUIControls, TrackerDecisionModePostDupeGate} {
 		t.Run(string(mode), func(t *testing.T) {
-			restorer := &compatibleMediaRestorerFake{testing: t}
+			logger := &screenshotReuseLogger{}
+			restorer := &compatibleMediaRestorerFake{testing: t, processing: &api.ScreenshotProcessing{
+				RequestedRenderer: "libplacebo",
+				Renderer:          "none",
+				Degraded:          true,
+				Warning:           "Non-tonemapped output; colours may be inaccurate.",
+			}}
+
 			module, repository := newTestModule(t, testPreparer(),
 				WithTrackerPreflightBuilder(readyPreflightBuilder(t)),
 				WithDupeAssessmentBuilder(readyDupeBuilder(t)),
 				WithMediaArtifactBuilder(restorer),
+				WithLogger(logger),
 			)
 			result := executeCommand(t, module, CreateWorkflowCommand{TrackerDecisionMode: mode})
 			result = executeCommand(t, module, PrepareReleaseCommand{
@@ -83,11 +92,14 @@ func TestDuplicateCompletionRestoresMediaUnderCurrentTrackerAuthority(t *testing
 					t.Fatal("duplicate command replay repeated restoration")
 				}
 			}
+			if len(logger.warnings) != 1 || !strings.Contains(logger.warnings[0], "Non-tonemapped output; colours may be inaccurate.") {
+				t.Fatalf("retained processing warning absent or replayed: %v", logger.warnings)
+			}
 			if restorer.calls != 1 || !slices.Equal(restorer.trackers, wantTrackers) {
 				t.Fatalf("restore calls=%d trackers=%v", restorer.calls, restorer.trackers)
 			}
 			if result.Media == nil || result.Media.WorkflowID != result.Workflow.ID || result.Media.Release != *result.Workflow.Release ||
-				result.Media.ProjectionSet != *result.Workflow.TrackerProjections || result.Media.Artifacts[0].Selected || result.Media.Artifacts[0].Order != 7 {
+				result.Media.ProjectionSet != *result.Workflow.TrackerProjections || !result.Media.Artifacts[0].Selected || result.Media.Artifacts[0].Order != 7 {
 				t.Fatalf("restored media lost current authority or selection/order: %#v", result.Media)
 			}
 			if _, err := module.private.Get(testOwnerID, result.Workflow.ID, mediaPrivateResourceID(result.Media.ID), module.clock.Now()); err != nil {
@@ -221,10 +233,11 @@ func TestDuplicateDecisionsRetainAndRebindCurrentMedia(t *testing.T) {
 }
 
 type compatibleMediaRestorerFake struct {
-	testing  *testing.T
-	calls    int
-	rebinds  int
-	trackers []api.TrackerID
+	processing *api.ScreenshotProcessing
+	testing    *testing.T
+	calls      int
+	rebinds    int
+	trackers   []api.TrackerID
 }
 
 func (*compatibleMediaRestorerFake) Build(context.Context, api.ReleaseRef, api.TrackerReleaseProjectionSet, api.MediaCaptureInstructions, time.Time) (api.MediaArtifactSet, any, error) {
@@ -257,10 +270,12 @@ func (f *compatibleMediaRestorerFake) RestoreCompatible(_ context.Context, _ api
 		CaptureFingerprint:      testFingerprint(f.testing, "restored-media"),
 		RequirementsFingerprint: requirements,
 		Artifacts: []api.MediaArtifact{{
-			ID:      "restored-screen",
-			Kind:    api.MediaArtifactScreenshot,
-			Purpose: api.ScreenshotPurposeFinal,
-			Order:   7,
+			Processing: f.processing,
+			Selected:   f.processing != nil,
+			ID:         "restored-screen",
+			Kind:       api.MediaArtifactScreenshot,
+			Purpose:    api.ScreenshotPurposeFinal,
+			Order:      7,
 		}},
 		HostAttempts: []api.HostedImageAttempt{{
 			ID:     "restored-host",
@@ -723,4 +738,13 @@ func (f *reusableMediaRecorderFake) RecordReusableMedia(
 
 func (f *reusableMediaRecorderFake) HasReusableMediaCommit(_ context.Context, snapshot api.MediaArtifactSet) (bool, error) {
 	return f.committedMedia[api.MediaArtifactSetRef{ID: snapshot.ID, Revision: snapshot.Revision}], nil
+}
+
+type screenshotReuseLogger struct {
+	api.NopLogger
+	warnings []string
+}
+
+func (l *screenshotReuseLogger) Warnf(format string, args ...any) {
+	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
 }

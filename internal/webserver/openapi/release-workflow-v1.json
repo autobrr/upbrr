@@ -822,6 +822,46 @@
       "AudioTrackRole": {
         "type": "string"
       },
+      "BlurayDetailRequest": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "All": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "ReleaseID": {
+                "type": "string",
+                "pattern": "^[\t-\r    - \u2028\u2029  　]*$"
+              }
+            },
+            "required": [
+              "All"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "All": {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              },
+              "ReleaseID": {
+                "type": "string",
+                "pattern": "[^\t-\r    - \u2028\u2029  　]"
+              }
+            },
+            "required": [
+              "ReleaseID"
+            ]
+          }
+        ]
+      },
       "BlurayDiscSpec": {
         "type": "object",
         "properties": {
@@ -948,6 +988,9 @@
               "$ref": "#/components/schemas/BlurayImage"
             }
           },
+          "DetailsStatus": {
+            "type": "string"
+          },
           "GenericDisc": {
             "type": "boolean"
           },
@@ -1007,6 +1050,7 @@
           "Accepted",
           "Country",
           "CoverImages",
+          "DetailsStatus",
           "GenericDisc",
           "MatchNotes",
           "MovieTitle",
@@ -1023,6 +1067,48 @@
           "Title",
           "URL",
           "Warnings"
+        ]
+      },
+      "BluraySelection": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "Mode": {
+                "type": "string",
+                "enum": [
+                  "manual"
+                ]
+              },
+              "Release": {
+                "type": "string",
+                "pattern": "[^\t-\r    - \u2028\u2029  　]"
+              }
+            },
+            "required": [
+              "Mode",
+              "Release"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "Mode": {
+                "type": "string",
+                "enum": [
+                  "skip",
+                  "auto"
+                ]
+              },
+              "Release": {
+                "type": "string",
+                "pattern": "^[\t-\r    - \u2028\u2029  　]*$"
+              }
+            },
+            "required": [
+              "Mode"
+            ]
+          }
         ]
       },
       "BluraySpecs": {
@@ -2420,6 +2506,16 @@
           },
           "id": {
             "$ref": "#/components/schemas/PublicResourceID"
+          },
+          "processing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScreenshotProcessing"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "release": {
             "$ref": "#/components/schemas/ReleaseSnapshotRef"
@@ -4295,6 +4391,16 @@
           "order": {
             "type": "integer"
           },
+          "processing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScreenshotProcessing"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "purpose": {
             "$ref": "#/components/schemas/ScreenshotPurpose"
           },
@@ -5879,6 +5985,16 @@
       "PreparationControls": {
         "type": "object",
         "properties": {
+          "BlurayDetails": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BlurayDetailRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "CaptureHDRMetadata": {
             "type": "boolean"
           },
@@ -6545,8 +6661,15 @@
       "ReleaseFactInstructions": {
         "type": "object",
         "properties": {
-          "BlurayReleaseID": {
-            "type": "string"
+          "Bluray": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BluraySelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "Category": {
             "anyOf": [
@@ -6581,7 +6704,6 @@
           }
         },
         "required": [
-          "BlurayReleaseID",
           "Identity",
           "Metadata",
           "Playlist",
@@ -7592,6 +7714,9 @@
               }
             ]
           },
+          "preparationOperationId": {
+            "$ref": "#/components/schemas/WorkflowOperationID"
+          },
           "projectionInstructions": {
             "anyOf": [
               {
@@ -8058,6 +8183,16 @@
       "ReleaseWorkflowUploadFacts": {
         "type": "object",
         "properties": {
+          "bluray": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BluraySelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "category": {
             "anyOf": [
               {
@@ -9593,8 +9728,59 @@
           "workflowId"
         ]
       },
+      "ScreenshotProcessing": {
+        "type": "object",
+        "properties": {
+          "degraded": {
+            "type": "boolean"
+          },
+          "renderer": {
+            "type": "string"
+          },
+          "requestedRenderer": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScreenshotRenderStep"
+            }
+          },
+          "tonemapped": {
+            "type": "boolean"
+          },
+          "warning": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "degraded",
+          "renderer",
+          "requestedRenderer",
+          "tonemapped"
+        ]
+      },
       "ScreenshotPurpose": {
         "type": "string"
+      },
+      "ScreenshotRenderStep": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "renderer": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "renderer",
+          "stage"
+        ]
       },
       "ScreenshotSelection": {
         "type": "object",
@@ -13531,6 +13717,16 @@
       "WorkflowOperationItem": {
         "type": "object",
         "properties": {
+          "blurayCandidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BlurayReleaseCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "completed": {
             "type": "integer"
           },

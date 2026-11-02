@@ -4,11 +4,13 @@
 package metadata
 
 import (
+	"errors"
 	"fmt"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,10 +89,11 @@ func TestShouldLookupBlurayWhenDescriptionNeedsBlurayData(t *testing.T) {
 	}
 }
 
-func TestReusableBlurayMetadataRefreshesCandidatesScoredWithoutBDInfo(t *testing.T) {
+func TestReusableBlurayMetadataRetainsPagesForLocalRescoring(t *testing.T) {
 	service := &Service{}
 	meta := preparationstate.State{ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{
-		IMDBID: 1234567,
+		SearchURL: "https://www.blu-ray.com/search/",
+		IMDBID:    1234567,
 		Candidates: []api.BlurayReleaseCandidate{{
 			MatchNotes: []string{"local BDInfo unavailable (-15)"},
 		}},
@@ -98,8 +101,8 @@ func TestReusableBlurayMetadataRefreshesCandidatesScoredWithoutBDInfo(t *testing
 	if cached := service.reusableBlurayMetadata(meta, bluraycom.LookupInput{IMDBID: 1234567}); cached == nil {
 		t.Fatal("candidate scored without BDInfo should remain reusable while BDInfo is unavailable")
 	}
-	if cached := service.reusableBlurayMetadata(meta, bluraycom.LookupInput{IMDBID: 1234567, BDInfo: &discparse.BDInfo{Playlist: "00001"}}); cached != nil {
-		t.Fatal("candidate scored without BDInfo should be refreshed when the summary becomes available")
+	if cached := service.reusableBlurayMetadata(meta, bluraycom.LookupInput{IMDBID: 1234567, BDInfo: &discparse.BDInfo{Playlist: "00001"}}); cached == nil {
+		t.Fatal("candidate pages should be reused for rescoring when the summary becomes available")
 	}
 	meta.ProviderMetadata.Bluray.Candidates[0].MatchNotes = []string{"video codec matches"}
 	if cached := service.reusableBlurayMetadata(meta, bluraycom.LookupInput{IMDBID: 1234567, BDInfo: &discparse.BDInfo{Playlist: "00001"}}); cached == nil {
@@ -110,22 +113,25 @@ func TestReusableBlurayMetadataRefreshesCandidatesScoredWithoutBDInfo(t *testing
 func TestBlurayInstructionSelectsFactsBeforeNaming(t *testing.T) {
 	service := &Service{cfg: config.Config{Metadata: config.MetadataConfig{GetBlurayInfo: true}}, bluray: bluraycom.NewClient(nil)}
 	meta := preparationstate.State{
-		SourcePath:      filepath.Join(t.TempDir(), "Example.Movie.2026.COMPLETE.BLURAY-GRP"),
-		DiscType:        "BDMV",
-		BlurayReleaseID: "second",
-		Identity:        api.ExternalIdentity{IMDBID: 1234567},
+		SourcePath: filepath.Join(t.TempDir(), "Example.Movie.2026.COMPLETE.BLURAY-GRP"),
+		DiscType:   "BDMV",
+		Bluray:     &api.BluraySelection{Mode: "manual", Release: "102"},
+		Identity:   api.ExternalIdentity{IMDBID: 1234567},
 		ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{
+			SearchURL:         "https://www.blu-ray.com/search/",
 			IMDBID:            1234567,
-			SelectedReleaseID: "first",
+			SelectedReleaseID: "101",
 			Candidates: []api.BlurayReleaseCandidate{
 				{
-					ReleaseID: "first",
+					ReleaseID: "101",
+					URL:       "https://www.blu-ray.com/movies/Example-A/101/",
 					Country:   "United States",
 					Region:    "USA",
 					Publisher: "First Publisher",
 				},
 				{
-					ReleaseID: "second",
+					ReleaseID: "102",
+					URL:       "https://www.blu-ray.com/movies/Example-B/102/",
 					Country:   "Germany",
 					Region:    "GER",
 					Publisher: "Second Publisher",
@@ -133,8 +139,11 @@ func TestBlurayInstructionSelectsFactsBeforeNaming(t *testing.T) {
 			},
 		}},
 	}
-	result := service.applyBlurayMetadata(t.Context(), meta, nil)
-	if result.ProviderMetadata.Bluray.SelectedReleaseID != "second" || result.Region != "GER" || result.Distributor != "SECOND PUBLISHER" {
+	result, err := service.applyBlurayMetadata(t.Context(), meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ProviderMetadata.Bluray.SelectedReleaseID != "102" || result.Region != "GER" || result.Distributor != "SECOND PUBLISHER" {
 		t.Fatalf("selected facts = %#v", result)
 	}
 }
@@ -182,13 +191,17 @@ func TestBlurayAutomaticSelectionIsReconsideredOnRescore(t *testing.T) {
 		Release:    api.ReleaseInfo{Resolution: "2160p"},
 		Identity:   api.ExternalIdentity{IMDBID: 1234567},
 		ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{
+			SearchURL:         "https://www.blu-ray.com/search/",
 			IMDBID:            1234567,
 			SelectedReleaseID: "101",
 			AutoSelected:      true,
 		}},
 	}
 	ctx, scope := evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessReuse, nil)
-	result := service.applyBlurayMetadata(ctx, meta, nil)
+	result, err := service.applyBlurayMetadata(ctx, meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := scope.Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +211,10 @@ func TestBlurayAutomaticSelectionIsReconsideredOnRescore(t *testing.T) {
 	initialRequests := requests
 	meta.ProviderMetadata.Bluray.AutoSelected = false
 	ctx, scope = evidence.WithScope(t.Context(), repo, source, "fingerprint", api.ExternalFreshnessReuse, nil)
-	result = service.applyBlurayMetadata(ctx, meta, nil)
+	result, err = service.applyBlurayMetadata(ctx, meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := scope.Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +227,7 @@ func TestRetainedBlurayCountrySelectionAndCalendarDates(t *testing.T) {
 	repo, source := openProviderEvidenceStore(t)
 	source = filepath.Join(filepath.Dir(source), "Example.Movie.2026.GER.BluRay-GRP")
 	metadata := api.SourceScopedMetadata{SourcePath: source, Bluray: &api.BlurayMetadata{
+		SearchURL:         "https://www.blu-ray.com/search/",
 		IMDBID:            1234567,
 		AutoSelected:      true,
 		SelectedReleaseID: "usa",
@@ -247,12 +264,15 @@ func TestRetainedBlurayCountrySelectionAndCalendarDates(t *testing.T) {
 		t.Fatal("retained candidates triggered a network request")
 		return nil, nil
 	})})}
-	result := service.applyBlurayMetadata(t.Context(), preparationstate.State{
+	result, err := service.applyBlurayMetadata(t.Context(), preparationstate.State{
 		SourcePath:       source,
 		DiscType:         "BDMV",
 		Identity:         api.ExternalIdentity{IMDBID: 1234567},
 		ProviderMetadata: retained,
 	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.ProviderMetadata.Bluray.SelectedReleaseID != "ger" || result.Region != "GER" || len(result.ProviderMetadata.Bluray.Candidates) != 1 || result.ProviderMetadata.Bluray.Candidates[0].ReleaseDate != "2024-02-29" {
 		t.Fatalf("retained match = %#v", result.ProviderMetadata.Bluray)
 	}
@@ -295,6 +315,7 @@ func TestBlurayCountryCorrectionsReconsiderFilteredCatalogues(t *testing.T) {
 				DiscType:   "BDMV",
 				Identity:   api.ExternalIdentity{IMDBID: 1234567},
 				ProviderMetadata: api.SourceScopedMetadata{SourcePath: source, Bluray: &api.BlurayMetadata{
+					SearchURL:         "https://www.blu-ray.com/search/",
 					SourcePath:        source,
 					IMDBID:            1234567,
 					Country:           "United States",
@@ -326,7 +347,11 @@ func TestBlurayCountryCorrectionsReconsiderFilteredCatalogues(t *testing.T) {
 				if retainedPages {
 					ctx, scope = evidence.WithScope(ctx, repo, source, "synthetic-fingerprint", api.ExternalFreshnessReuse, nil)
 				}
-				meta = service.applyBlurayMetadata(ctx, meta, nil)
+				var err error
+				meta, err = service.applyBlurayMetadata(ctx, meta, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
 				if scope != nil && scope.Err() != nil {
 					t.Fatal(scope.Err())
 				}
@@ -335,13 +360,12 @@ func TestBlurayCountryCorrectionsReconsiderFilteredCatalogues(t *testing.T) {
 				if got.Country != tc.country || got.SelectedReleaseID != tc.selected || len(got.Candidates) != tc.count || meta.Region != tc.region {
 					t.Fatalf("correction %d: country=%q selected=%q count=%d region=%q", index, got.Country, got.SelectedReleaseID, len(got.Candidates), meta.Region)
 				}
-				if retainedPages && requests != 4 {
+				if retainedPages && requests != 2 {
 					t.Fatalf("country correction refetched retained pages: %d requests", requests)
 				}
 				if err := repo.SaveExternalMetadata(ctx, meta.ProviderMetadata); err != nil {
 					t.Fatal(err)
 				}
-				var err error
 				meta.ProviderMetadata, err = repo.GetExternalMetadata(ctx, source)
 				if err != nil {
 					t.Fatal(err)
@@ -388,6 +412,7 @@ func TestBlurayCountryLockSurvivesUnavailableLookup(t *testing.T) {
 					Region:     "USA",
 					Identity:   api.ExternalIdentity{IMDBID: 1234567},
 					ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{
+						SearchURL:         "https://www.blu-ray.com/search/",
 						Country:           oldCountry,
 						IMDBID:            1234567,
 						AutoSelected:      true,
@@ -397,7 +422,10 @@ func TestBlurayCountryLockSurvivesUnavailableLookup(t *testing.T) {
 				}
 				service := &Service{cfg: config.Config{Metadata: config.MetadataConfig{GetBlurayInfo: enabled}}, bluray: client}
 				ctx, _ := evidence.WithScope(t.Context(), repo, source, "synthetic-fingerprint", api.ExternalFreshnessReuse, nil)
-				result := service.applyBlurayMetadata(ctx, meta, nil)
+				result, err := service.applyBlurayMetadata(ctx, meta, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
 				got := result.ProviderMetadata.Bluray
 				if oldCountry != "" {
 					if got != nil {
@@ -411,5 +439,77 @@ func TestBlurayCountryLockSurvivesUnavailableLookup(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestExactBlurayInstructionsResolveTheSameFinalFactsWithoutCatalogueRequests(t *testing.T) {
+	t.Parallel()
+	for _, release := range []string{"123", "https://www.blu-ray.com/movies/Example/123/"} {
+		t.Run(release, func(t *testing.T) {
+			requests := 0
+			client := bluraycom.NewClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				requests++
+				if r.URL.Path != "/movies/movies.php" && r.URL.Path != "/movies/Example/123/" {
+					t.Fatalf("exact selection scanned unrelated page %s", r.URL.Path)
+				}
+				body := `<link rel="canonical" href="https://www.blu-ray.com/movies/Example/123/"><a><h1>Example Blu-ray</h1></a><img src="https://images.static-bluray.com/flags/US.png" title="United States"><br><a href="/movies/movies.php?studioid=123">Example Publisher</a>`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+					Request:    r,
+				}, nil
+			})})
+			service := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}), WithBlurayClient(client), WithSceneDetector(stubSceneDetector{}))
+			meta := bdInfoAudioState("Audio: English / LPCM Audio / 2.0 / 48 kHz / 2304 kbps / 24-bit")
+			meta.Bluray = &api.BluraySelection{Mode: "manual", Release: release}
+			result, err := service.deriveMediaFacts(t.Context(), meta)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if requests != 1 || result.ProviderMetadata.Bluray.SelectedReleaseID != "123" || result.Region != "USA" || result.Distributor != "EXAMPLE PUBLISHER" || !slices.Equal(result.AudioLanguages, []string{"English"}) {
+				t.Fatalf("exact facts: requests=%d region=%s publisher=%s languages=%v", requests, result.Region, result.Distributor, result.AudioLanguages)
+			}
+		})
+	}
+}
+
+func TestLegacyEnrichedBlurayScoresRefreshLocallyWithoutOverwritingManualChoice(t *testing.T) {
+	t.Parallel()
+	requests := 0
+	client := bluraycom.NewClient(&http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		requests++
+		return nil, errors.New("unexpected provider request")
+	})})
+	service := &Service{cfg: config.Config{Metadata: config.MetadataConfig{GetBlurayInfo: true}}, bluray: client}
+	meta := bdInfoAudioState("Audio: English / LPCM Audio / 2.0 / 48 kHz / 2304 kbps / 24-bit")
+	meta.Identity.IMDBID = 1234567
+	meta.ProviderMetadata.Bluray = &api.BlurayMetadata{
+		SearchURL:         "https://www.blu-ray.com/search/",
+		IMDBID:            1234567,
+		SelectedReleaseID: "101",
+		Candidates: []api.BlurayReleaseCandidate{{
+			ReleaseID:  "101",
+			Title:      "Example A",
+			Country:    "United States",
+			Score:      85,
+			MatchNotes: []string{"local BDInfo unavailable (-15)"},
+			Specs: api.BluraySpecs{
+				Video: api.BlurayVideoSpec{Codec: "AVC", Resolution: "1080p"},
+				Audio: []string{"English: LPCM 2.0"},
+				Discs: api.BlurayDiscSpec{Format: "BD-25"},
+			},
+		}},
+	}
+	result, err := service.applyBlurayMetadata(t.Context(), meta, &discparse.BDInfo{Playlist: "00001.MPLS"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := result.ProviderMetadata.Bluray.SelectedCandidate()
+	if requests != 0 || candidate == nil || candidate.DetailsStatus != "complete" || slices.Contains(candidate.MatchNotes, "local BDInfo unavailable (-15)") || result.ProviderMetadata.Bluray.AutoSelected {
+		t.Fatalf("legacy detail evidence was not rescored locally: requests=%d candidate=%#v", requests, candidate)
+	}
+	if meta.ProviderMetadata.Bluray.Candidates[0].DetailsStatus != "" {
+		t.Fatal("legacy normalization mutated the previous provider snapshot")
 	}
 }

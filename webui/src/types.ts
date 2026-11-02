@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type {
+  BlurayDetailRequest,
+  BluraySelection,
   MediaFileFacts,
+  ScreenshotProcessing,
   SubtitleLanguageCoverage,
   TrackAudioOrigin,
   TrackAudioOriginCorrection,
@@ -346,7 +349,7 @@ export type PrepareInput = {
       TrackAudioOrigins?: readonly TrackAudioOriginCorrection[];
     };
     SourceLookup: string;
-    BlurayReleaseID?: string;
+    Bluray?: BluraySelection | null;
     Playlist: PlaylistInstruction;
     TrackerIDs?: Record<string, string>;
   };
@@ -359,6 +362,7 @@ export type PrepareInput = {
   Controls?: {
     Interaction: "interactive" | "unattended" | "unattended_confirm";
     CaptureHDRMetadata?: boolean;
+    BlurayDetails?: BlurayDetailRequest;
     ConfirmBDMVRescan: boolean;
     ForceRecheck?: boolean | null;
   };
@@ -964,6 +968,7 @@ export type BluraySpecs = {
 };
 
 export type BlurayReleaseCandidate = {
+  DetailsStatus?: string;
   /** Edition-specific YYYY-MM-DD calendar date; empty when unavailable. */
   ReleaseDate: string;
   ReleaseID: string;
@@ -1160,6 +1165,8 @@ export type ScreenshotSelection = {
 export type ScreenshotTonemapping = "tonemapped" | "not_tonemapped";
 
 export type ScreenshotImage = {
+  /** Observed renderer outcome; omitted for legacy or imported images. */
+  Processing?: ScreenshotProcessing;
   Tonemapping?: ScreenshotTonemapping;
   ContentSHA256?: string;
   /** Prepared disc identity; omitted only for unscoped single-disc artifacts. */

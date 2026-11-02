@@ -98,7 +98,10 @@ func (s ReleaseFactInstructionSnapshot) Normalize() (ReleaseFactInstructionSnaps
 		return ReleaseFactInstructionSnapshot{}, err
 	}
 	normalized.Instructions.SourceLookup = strings.TrimSpace(normalized.Instructions.SourceLookup)
-	normalized.Instructions.BlurayReleaseID = strings.TrimSpace(normalized.Instructions.BlurayReleaseID)
+	normalized.Instructions.Bluray, err = normalized.Instructions.Bluray.Normalize()
+	if err != nil {
+		return ReleaseFactInstructionSnapshot{}, err
+	}
 	if normalized.Instructions.TrackerIDs != nil {
 		trackerIDs := make(map[string]string, len(normalized.Instructions.TrackerIDs))
 		for tracker, id := range normalized.Instructions.TrackerIDs {

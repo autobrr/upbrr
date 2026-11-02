@@ -553,7 +553,8 @@ const (
 
 // MediaArtifact is a safe opaque projection of one retained private artifact.
 type MediaArtifact struct {
-	ID PublicResourceID `json:"id"`
+	Processing *ScreenshotProcessing `json:"processing,omitempty"`
+	ID         PublicResourceID      `json:"id"`
 	// DiscID identifies the prepared disc that produced this artifact.
 	DiscID string `json:"discId,omitempty"`
 	// DiscName is the safe page-facing label derived from prepared facts.
@@ -813,6 +814,9 @@ type ReleaseWorkflow struct {
 // ReleaseWorkflowCurrent is the complete safe current projection returned to
 // every workflow adapter. Private execution resources never appear here.
 type ReleaseWorkflowCurrent struct {
+	// PreparationOperationID identifies forced preparation accepted by this
+	// continuation response. Busy responses and passive reads omit it.
+	PreparationOperationID WorkflowOperationID                   `json:"preparationOperationId,omitempty"`
 	Workflow               ReleaseWorkflow                       `json:"workflow"`
 	FactInstructions       *ReleaseFactInstructionSnapshot       `json:"factInstructions,omitempty"`
 	Release                *ReleaseSnapshot                      `json:"release,omitempty"`

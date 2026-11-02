@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,6 +34,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/progress"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -418,7 +420,8 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		SourceFingerprint:    request.SourceFingerprint,
 		SourcePath:           primary,
 		SourceLookupURL:      strings.TrimSpace(input.Instructions.SourceLookup),
-		BlurayReleaseID:      strings.TrimSpace(input.Instructions.BlurayReleaseID),
+		Bluray:               input.Instructions.Bluray,
+		BlurayDetails:        input.Controls.BlurayDetails,
 		Paths:                normalizedPaths,
 		Policy: preparationstate.CollectionPolicy{
 			OnlyID:          input.Policy.OnlyID,
@@ -431,6 +434,17 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		MetadataOverrides:    input.Instructions.Metadata,
 		ExternalIDOverrides:  input.Instructions.Identity,
 		ReleaseNameOverrides: input.Instructions.ReleaseName,
+	}
+	lookupURL, _ := url.Parse(meta.SourceLookupURL)
+	if raw := meta.SourceLookupURL; lookupURL != nil &&
+		(strings.EqualFold(lookupURL.Hostname(), "www.blu-ray.com") || strings.EqualFold(lookupURL.Hostname(), "blu-ray.com")) {
+		if _, _, parseErr := providerid.ParseBlurayRelease(raw); parseErr != nil {
+			return preparationstate.State{}, fmt.Errorf("metadata: parse Blu-ray source URL: %w", parseErr)
+		}
+		if meta.Bluray == nil {
+			meta.Bluray = &api.BluraySelection{Mode: "manual", Release: raw}
+		}
+		meta.SourceLookupURL = ""
 	}
 	applySourceLookupOverrideWithRegistry(&meta, s.registry)
 	meta.Release = ParseReleaseInfo(primary)

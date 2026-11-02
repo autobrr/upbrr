@@ -1919,8 +1919,8 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedM
 	result, err := r.execWrite(ctx, "save screenshot", `
 		INSERT INTO screenshots (
 			source_path, prepared_media_fingerprint, prepared_generation, disc_id,
-			image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256, processing_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(image_path) DO UPDATE SET
 			source_path = excluded.source_path,
 			prepared_media_fingerprint = excluded.prepared_media_fingerprint,
@@ -1933,7 +1933,8 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedM
 			purpose = excluded.purpose,
 			captured_at = excluded.captured_at,
 			tonemapping = excluded.tonemapping,
-			content_sha256 = excluded.content_sha256
+			content_sha256 = excluded.content_sha256,
+ processing_json = excluded.processing_json
 		WHERE screenshots.source_path = excluded.source_path AND (
 			(screenshots.prepared_generation = excluded.prepared_generation AND
 			 screenshots.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
@@ -1948,7 +1949,7 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedM
 	`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration, strings.TrimSpace(screenshot.DiscID),
 		screenshot.ImagePath, screenshot.Timestamp, screenshot.FrameNumber,
 		screenshot.Width, screenshot.Height, screenshot.Purpose, screenshot.CapturedAt.UTC().Format(time.RFC3339Nano),
-		screenshot.Tonemapping, screenshot.ContentSHA256)
+		screenshot.Tonemapping, screenshot.ContentSHA256, encodeOptionalJSON(screenshot.Processing))
 	if err != nil {
 		return fmt.Errorf("db save screenshot: %w", err)
 	}
@@ -1967,7 +1968,7 @@ func (r *SQLiteRepository) ListScreenshotsByPath(ctx context.Context, binding Pr
 		return nil, internalerrors.ErrInvalidInput
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT disc_id, image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
+		SELECT disc_id, image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256, processing_json
 		FROM screenshots
 		WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
 		ORDER BY disc_id ASC, timestamp ASC, image_path ASC
@@ -1981,7 +1982,7 @@ func (r *SQLiteRepository) ListScreenshotsByPath(ctx context.Context, binding Pr
 	for rows.Next() {
 		var shot Screenshot
 		var purpose string
-		var capturedAt string
+		var capturedAt, processingJSON string
 		if err := rows.Scan(
 			&shot.DiscID,
 			&shot.ImagePath,
@@ -1993,8 +1994,13 @@ func (r *SQLiteRepository) ListScreenshotsByPath(ctx context.Context, binding Pr
 			&capturedAt,
 			&shot.Tonemapping,
 			&shot.ContentSHA256,
+			&processingJSON,
 		); err != nil {
 			return nil, fmt.Errorf("db list screenshots: %w", err)
+		}
+		shot.Processing, err = decodeOptionalJSON[api.ScreenshotProcessing](processingJSON)
+		if err != nil {
+			return nil, err
 		}
 		shot.SourcePath = bound.SourcePath
 		shot.PreparedMediaFingerprint = bound.PreparedMediaFingerprint
@@ -2362,9 +2368,9 @@ func (r *SQLiteRepository) DeleteDiscMenuScreenshot(
 		}
 		var screenshot Screenshot
 		var purpose string
-		var capturedAt string
+		var capturedAt, processingJSON string
 		err = tx.QueryRowContext(ctx, `
-			SELECT disc_id, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
+			SELECT disc_id, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256, processing_json
 			FROM screenshots
 			WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND image_path = ?
 		`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration, trimmedImage).Scan(
@@ -2377,11 +2383,16 @@ func (r *SQLiteRepository) DeleteDiscMenuScreenshot(
 			&capturedAt,
 			&screenshot.Tonemapping,
 			&screenshot.ContentSHA256,
+			&processingJSON,
 		)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("db delete disc menu screenshot: load screenshot: %w", err)
 		}
 		if err == nil {
+			screenshot.Processing, err = decodeOptionalJSON[api.ScreenshotProcessing](processingJSON)
+			if err != nil {
+				return err
+			}
 			screenshot.SourcePath = bound.SourcePath
 			screenshot.PreparedMediaFingerprint = bound.PreparedMediaFingerprint
 			screenshot.PreparedGeneration = bound.PreparedGeneration
@@ -2841,8 +2852,8 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO screenshots (
 			source_path, prepared_media_fingerprint, prepared_generation, disc_id,
-			image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256, processing_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(image_path) DO UPDATE SET
 			source_path = excluded.source_path,
 			prepared_media_fingerprint = excluded.prepared_media_fingerprint,
@@ -2855,7 +2866,8 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 			purpose = excluded.purpose,
 			captured_at = excluded.captured_at,
 			tonemapping = excluded.tonemapping,
-			content_sha256 = excluded.content_sha256
+			content_sha256 = excluded.content_sha256,
+ processing_json = excluded.processing_json
 		WHERE screenshots.source_path = excluded.source_path AND (
 			(screenshots.prepared_generation = excluded.prepared_generation AND
 			 screenshots.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
@@ -2893,6 +2905,7 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 			capturedAt.UTC().Format(time.RFC3339Nano),
 			screenshot.Tonemapping,
 			screenshot.ContentSHA256,
+			encodeOptionalJSON(screenshot.Processing),
 		)
 		if err != nil {
 			return fmt.Errorf("db save menu screenshots: insert: %w", err)

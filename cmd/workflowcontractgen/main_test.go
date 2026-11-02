@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -565,6 +566,48 @@ func TestQuestionnaireAnswerAuthoritySchemaAllowsLegacyOmission(t *testing.T) {
 	for _, required := range projection.Required {
 		if required == "questionnaireAnswers" {
 			t.Fatal("legacy omitted answer authority declared required")
+		}
+	}
+}
+
+func TestBlurayInstructionSchemasMatchRuntimeChoices(t *testing.T) {
+	t.Parallel()
+	builder := buildContractSchemaBuilder()
+	for _, test := range []struct {
+		schema, choiceField, releaseField string
+		choice                            any
+		release                           string
+		valid                             bool
+	}{
+		{"BluraySelection", "Mode", "Release", "manual", "123", true},
+		{"BluraySelection", "Mode", "Release", "manual", " \t", false},
+		{"BluraySelection", "Mode", "Release", "skip", "", true},
+		{"BluraySelection", "Mode", "Release", "auto", "\u0085\u2000", true},
+		{"BluraySelection", "Mode", "Release", "auto", "123", false},
+		{"BluraySelection", "Mode", "Release", "skip", "123", false},
+		{"BluraySelection", "Mode", "Release", "automatic", "", false},
+		{"BlurayDetailRequest", "All", "ReleaseID", true, "", true},
+		{"BlurayDetailRequest", "All", "ReleaseID", true, "\u0085\u2000", true},
+		{"BlurayDetailRequest", "All", "ReleaseID", true, "123", false},
+		{"BlurayDetailRequest", "All", "ReleaseID", false, "123", true},
+		{"BlurayDetailRequest", "All", "ReleaseID", false, " \t", false},
+	} {
+		definition := builder.schemas[test.schema]
+		matches := 0
+		for _, branch := range definition.AnyOf {
+			pattern := regexp.MustCompile(branch.Properties[test.releaseField].Pattern)
+			if slices.Contains(branch.Properties[test.choiceField].Enum, test.choice) && pattern.MatchString(test.release) {
+				matches++
+			}
+		}
+		if (matches == 1) != test.valid || matches > 1 {
+			t.Errorf("%s choice=%v release=%q matched %d branches; valid=%t", test.schema, test.choice, test.release, matches, test.valid)
+		}
+	}
+	generated := string(generateTypeScript(builder.schemas))
+	for _, discriminator := range []string{"All: true;", "All?: false;", `Mode: "manual";`, `Mode: "skip" | "auto";`} {
+		if !strings.Contains(generated, discriminator) {
+			t.Errorf("TypeScript lacks instruction discriminator %s", discriminator)
 		}
 	}
 }

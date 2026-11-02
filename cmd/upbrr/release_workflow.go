@@ -685,6 +685,20 @@ func runCLIWorkflowInteractive(
 			}
 			return outcome, exitError(2, errors.New("saved input corrections require confirmation"))
 		}
+		if err := session.reviewBlurayReleases(ctx, reader); err != nil {
+			return outcome, err
+		}
+		if selection := session.uploadRequest.Bluray; selection != nil {
+			value := selection.Release
+			if selection.Mode == "auto" {
+				value = "auto"
+			}
+			currentArgs, err = mergeCLIInputEditArgs(currentArgs, []string{"--bluray-release=" + value})
+			if err != nil {
+				return outcome, err
+			}
+			currentOpts.BlurayRelease, currentVisited["bluray-release"] = value, true
+		}
 		if err := session.reviewInputLanguages(ctx, reader, currentOpts.Debug || coreSvc.LiveTestEnabled(), cfg.Trackers.DefaultTrackers); err != nil {
 			return outcome, err
 		}

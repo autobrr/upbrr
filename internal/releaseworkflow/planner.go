@@ -177,7 +177,9 @@ func (m *Module) Continue(
 		if startErr != nil {
 			return CommandResult{}, fmt.Errorf("release workflow continue reprepare: %w", startErr)
 		}
-		return m.Current(ctx, ownerID, operation.WorkflowID)
+		accepted, currentErr := m.Current(ctx, ownerID, operation.WorkflowID)
+		accepted.PreparationOperationID = operation.ID
+		return accepted, currentErr
 	}
 
 	if updated, handled, factsErr := m.reconcileContinuationFacts(ctx, ownerID, request, current); handled || factsErr != nil {
@@ -461,6 +463,7 @@ func (m *Module) hydrateContinuationPreparedRelease(
 	input.Force = false
 	input.ExternalFreshness = api.ExternalFreshnessReuse
 	input.RequirePrepared = true
+	input.Controls.BlurayDetails = nil
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
 	input.Controls.CaptureHDRMetadata = false
@@ -1440,7 +1443,9 @@ func continuationPreparationSatisfied(current *api.ReleaseSnapshot, desired *api
 // preparationLineageFingerprint identifies the facts that a retained prepared
 // generation can satisfy. Intent, freshness, prepared-generation requirements,
 // and controls are consumed while obtaining that generation; carrying them
-// into a later continuation must not request another preparation.
+// into a later continuation must not request another preparation. The requested
+// Blu-ray detail target remains in this lineage so single/all enrichment requests
+// are distinguishable while canonical preparation compatibility stays unchanged.
 func preparationLineageFingerprint(input api.PrepareInput) (api.WorkflowFingerprint, error) {
 	input.Intent = ""
 	input.ExternalFreshness = api.ExternalFreshnessReuse

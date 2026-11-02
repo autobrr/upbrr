@@ -1095,7 +1095,12 @@ func TestModuleResetAndBlurayCandidateSelectionUseExactRetainedAuthority(t *test
 				Source:     api.SourceManifest{SourcePath: input.SourcePath},
 				Naming:     api.NamingFacts{ReleaseName: "Example.Release.2026.1080p-GRP"},
 				ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{
-					SelectedReleaseID: input.Instructions.BlurayReleaseID,
+					SelectedReleaseID: func() string {
+						if input.Instructions.Bluray != nil {
+							return input.Instructions.Bluray.Release
+						}
+						return ""
+					}(),
 					Candidates: []api.BlurayReleaseCandidate{
 						{ReleaseID: "candidate-retained", MovieTitle: "Example Release"},
 					},
@@ -1140,10 +1145,10 @@ func TestModuleResetAndBlurayCandidateSelectionUseExactRetainedAuthority(t *test
 		ReleaseID:        "candidate-retained",
 		IdempotencyKey:   "select-candidate",
 	})
-	if result.FactInstructions == nil || result.FactInstructions.Instructions.BlurayReleaseID != "candidate-retained" {
+	if result.FactInstructions == nil || result.FactInstructions.Instructions.Bluray.Release != "candidate-retained" {
 		t.Fatalf("candidate fact instructions = %#v", result.FactInstructions)
 	}
-	if !inputs[len(inputs)-1].Force || inputs[len(inputs)-1].Instructions.BlurayReleaseID != "candidate-retained" {
+	if !inputs[len(inputs)-1].Force || inputs[len(inputs)-1].Instructions.Bluray.Release != "candidate-retained" {
 		t.Fatalf("candidate prepare input = %#v", inputs[len(inputs)-1])
 	}
 
@@ -2733,6 +2738,14 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 			substep.CompletedItems, substep.TotalItems = 7, 100
 			substep.ElapsedSeconds = 10
 			api.EmitPreparationProgress(ctx, substep)
+			detail := api.NewPreparationProgressUpdate(api.PreparationPhaseMediaFacts, api.PreparationProgressRunning, "Release inspection complete.")
+			detail.BlurayCandidate = &api.BlurayReleaseCandidate{
+				ReleaseID:     "101",
+				Title:         "Example edition",
+				DetailsStatus: "complete",
+				ReleaseDate:   "2026-01-02",
+			}
+			api.EmitPreparationProgress(ctx, detail)
 
 			close(started)
 			select {
@@ -2767,7 +2780,7 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 		t.Fatal("operation did not start")
 	}
 	progress := waitForWorkflowOperation(t, module, created.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool {
-		return status.Status == api.StageStatusRunning && status.Sequence >= 4 && len(status.Items) > 2
+		return status.Status == api.StageStatusRunning && status.Sequence >= 5 && len(status.Items) > 3
 	})
 	if progress.Completed != 800 || progress.Total != 1200 {
 		t.Fatalf("substep replaced aggregate stage order: %#v", progress)
@@ -2776,6 +2789,11 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 		return item.Kind == "preparation_substep" && item.Phase == "media_facts" && item.Completed == 7 && item.Total == 100 && strings.Contains(item.Message, "10s elapsed")
 	}) {
 		t.Fatalf("substep lost in durable operation: %#v", progress.Items)
+	}
+	if !slices.ContainsFunc(progress.Items, func(item api.WorkflowOperationItem) bool {
+		return item.Kind == "bluray_detail" && item.BlurayCandidate != nil && item.BlurayCandidate.ReleaseID == "101" && item.BlurayCandidate.ReleaseDate == "2026-01-02"
+	}) {
+		t.Fatal("progressive candidate details were not retained with the operation")
 	}
 	if progress.Revision != created.Workflow.Revision || progress.Progress == 0 {
 		t.Fatalf("running operation progress = %#v", progress)
@@ -5309,16 +5327,16 @@ func TestResolveImageHostingReconciliationInvalidatesMissingPrivateMedia(t *test
 		{name: "unavailable dupes"},
 		{name: "current dupes", available: true},
 		{
-name: "stale media dependencies",
- available: true,
- privateMedia: true,
-},
+			name:         "stale media dependencies",
+			available:    true,
+			privateMedia: true,
+		},
 		{
-name: "ledger precedes snapshot",
- available: true,
- privateMedia: true,
- unpublishedAction: true,
-},
+			name:              "ledger precedes snapshot",
+			available:         true,
+			privateMedia:      true,
+			unpublishedAction: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			module, repository := newTestModule(t, testPreparer())

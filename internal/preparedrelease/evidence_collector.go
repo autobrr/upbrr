@@ -15,6 +15,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -73,7 +74,7 @@ func (c *EvidenceCollector) Collect(
 		return CollectedFacts{}, fmt.Errorf("prepared release: collected source differs from manifest: %w", internalerrors.ErrInvalidInput)
 	}
 	meta.ProviderMetadata = cloneCollectedProviderMetadata(meta.ProviderMetadata)
-	if err := applyBlurayFactInstruction(&meta, request.Input.Instructions.BlurayReleaseID); err != nil {
+	if err := applyBlurayFactInstruction(&meta, request.Input.Instructions.Bluray); err != nil {
 		return CollectedFacts{}, err
 	}
 
@@ -134,25 +135,24 @@ func (c *EvidenceCollector) HydratePrivateResources(
 	return collectedResources(state), nil
 }
 
-func applyBlurayFactInstruction(meta *preparationstate.State, releaseID string) error {
-	releaseID = strings.TrimSpace(releaseID)
-	if releaseID == "" {
+// applyBlurayFactInstruction validates the retained selection without rewriting
+// facts already finalized by metadata derivation and its correction overlay.
+func applyBlurayFactInstruction(meta *preparationstate.State, selection *api.BluraySelection) error {
+	if selection == nil || selection.Mode != "manual" {
 		return nil
 	}
-	if meta == nil || meta.ProviderMetadata.Bluray == nil || !meta.ProviderMetadata.Bluray.SelectCandidate(releaseID, false, "manual") {
+	releaseID := selection.Release
+	if strings.Contains(releaseID, "://") {
+		var err error
+		releaseID, _, err = providerid.ParseBlurayRelease(releaseID)
+		if err != nil {
+			return fmt.Errorf("prepared release: parse Blu-ray selection: %w", err)
+		}
+	}
+	if meta == nil || meta.ProviderMetadata.Bluray == nil || releaseID == "" || !meta.ProviderMetadata.Bluray.SelectCandidate(releaseID, false, "manual") {
 		return fmt.Errorf("prepared release: Blu-ray candidate %q: %w", releaseID, internalerrors.ErrNotFound)
 	}
-	candidate := meta.ProviderMetadata.Bluray.SelectedCandidate()
-	if candidate == nil {
-		return fmt.Errorf("prepared release: Blu-ray candidate %q: %w", releaseID, internalerrors.ErrNotFound)
-	}
-	if region := strings.TrimSpace(candidate.Region); region != "" {
-		meta.Region = region
-		meta.Release.Region = region
-	}
-	if publisher := strings.TrimSpace(candidate.Publisher); publisher != "" {
-		meta.Distributor = strings.ToUpper(publisher)
-	}
+
 	return nil
 }
 

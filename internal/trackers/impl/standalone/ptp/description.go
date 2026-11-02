@@ -89,7 +89,7 @@ func buildScreenshotSection(meta api.UploadSubject, screenshots []api.Screenshot
 	if len(allowed) < minimum {
 		return ""
 	}
-	return strings.Join(allowed, "\n")
+	return strings.Join(allowed, "\n\n")
 }
 
 func isPTPImageHost(host string) bool {
