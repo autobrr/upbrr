@@ -542,8 +542,10 @@ func hdrOverlaySourceLabel(facts api.HDRFacts) string {
 	if len(facts.Formats) == 0 && len(facts.FallbackFormats) > 0 {
 		parts = append(parts, "HDR type unknown")
 	}
-	for _, format := range slices.Concat(facts.Formats, facts.FallbackFormats) {
-		if slices.Contains(seen, format) {
+	formats := slices.Concat(facts.Formats, facts.FallbackFormats)
+	for _, format := range formats {
+		// HDR10 compatibility is implicit in HDR10+; avoid repeating the base format.
+		if slices.Contains(seen, format) || format == api.HDRFormatHDR10 && slices.Contains(formats, api.HDRFormatHDR10Plus) {
 			continue
 		}
 		seen = append(seen, format)

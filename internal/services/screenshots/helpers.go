@@ -1046,7 +1046,8 @@ func shouldTonemap(meta api.ScreenshotSubject, cfg config.Config) bool {
 	if !cfg.ScreenshotHandling.ToneMap {
 		return false
 	}
-	return strings.Contains(strings.ToUpper(meta.HDR), "HDR") || strings.Contains(strings.ToUpper(meta.HDR), "DV")
+	hdr := strings.ToUpper(meta.HDR)
+	return strings.Contains(hdr, "HDR") || strings.Contains(hdr, "DV") || strings.Contains(hdr, "HLG") || strings.Contains(hdr, "PQ10")
 }
 
 func screenshotLogger(logger api.Logger) api.Logger {

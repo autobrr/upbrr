@@ -1041,31 +1041,75 @@ func TestPreviewFrameTonemapsHDR(t *testing.T) {
 	}
 	t.Chdir(ffmpegRoot)
 
-	runner := &scriptedRunner{results: []CommandResult{{
-		Stdout: testPNGBytes(t, color.RGBA{
-			R: 16,
-			G: 16,
-			B: 16,
-			A: 255,
-		}),
-		ExitCode: 0,
-	}}}
-	service := NewService(config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{
-		ToneMap:          true,
-		TonemapAlgorithm: "hable",
-		Desat:            0.25,
-	}}, api.NopLogger{}, t.TempDir(), runner)
-	_, err := service.PreviewFrame(context.Background(), api.ScreenshotSubject{
-		SourcePath: "Example.Release.2026.1080p-GRP.mkv",
-		HDR:        "HDR10",
-	}, "", 1)
-	if err != nil {
-		t.Fatalf("preview frame: %v", err)
-	}
+	for _, test := range []struct {
+		name     string
+		hdr      string
+		disabled bool
+		want     bool
+	}{
+		{
+			name: "HDR10",
+			hdr:  "HDR10",
+			want: true,
+		},
+		{
+			name: "Dolby Vision",
+			hdr:  "dv",
+			want: true,
+		},
+		{
+			name: "HLG",
+			hdr:  "HLG",
+			want: true,
+		},
+		{
+			name: "PQ10",
+			hdr:  "pq10",
+			want: true,
+		},
+		{name: "SDR"},
+		{name: "wide gamut", hdr: "WCG"},
+		{
+			name:     "disabled HLG",
+			hdr:      "HLG",
+			disabled: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &scriptedRunner{results: []CommandResult{{
+				Stdout: testPNGBytes(t, color.RGBA{
+					R: 16,
+					G: 16,
+					B: 16,
+					A: 255,
+				}),
+				ExitCode: 0,
+			}}}
+			service := NewService(config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{
+				ToneMap:          !test.disabled,
+				TonemapAlgorithm: "hable",
+				Desat:            0.25,
+			}}, api.NopLogger{}, t.TempDir(), runner)
+			preview, err := service.PreviewFrame(t.Context(), api.ScreenshotSubject{
+				SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+				HDR:        test.hdr,
+			}, "", 1)
+			if err != nil {
+				t.Fatalf("preview frame: %v", err)
+			}
 
-	want := "trim=end_frame=1,zscale=transfer=linear,format=gbrpf32le,tonemap=tonemap=hable:desat=0.25,zscale=primaries=bt709:transfer=bt709:matrix=bt709:range=tv,format=rgb24"
-	if got := ffmpegValueAfter(runner.calls[0].args, "-vf"); got != want {
-		t.Fatalf("preview filter = %q, want %q", got, want)
+			want := "trim=end_frame=1,"
+			if test.want {
+				want += "zscale=transfer=linear,format=gbrpf32le,tonemap=tonemap=hable:desat=0.25,zscale=primaries=bt709:transfer=bt709:matrix=bt709:range=tv,"
+			}
+			want += "format=rgb24"
+			if got := ffmpegValueAfter(runner.calls[0].args, "-vf"); got != want {
+				t.Fatalf("preview filter = %q, want %q", got, want)
+			}
+			if preview.Processing.Tonemapped != test.want {
+				t.Fatalf("preview tonemapped = %t, want %t", preview.Processing.Tonemapped, test.want)
+			}
+		})
 	}
 }
 

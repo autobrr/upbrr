@@ -83,6 +83,8 @@ func TestOverlayReportsSourceHDRFacts(t *testing.T) {
 	p8.FallbackFormats = []api.HDRFormat{api.HDRFormatHDR10}
 	p7 := source("7", api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus)
 	p7.FallbackFormats = []api.HDRFormat{api.HDRFormatHDR10Plus, api.HDRFormatHDR10}
+	p8Plus := source("8", api.HDRFormatDolbyVision)
+	p8Plus.FallbackFormats = []api.HDRFormat{api.HDRFormatHDR10Plus, api.HDRFormatHDR10}
 	hlgDV := source("8.4", api.HDRFormatDolbyVision)
 	hlgDV.FallbackFormats = []api.HDRFormat{api.HDRFormatHLG}
 	partial := source("", api.HDRFormatHLG)
@@ -144,7 +146,12 @@ name: "profile8.1 HDR10 layer",
 		{
 name: "profile7 HDR10plus compatibility",
  facts: p7,
- want: "Dolby Vision Profile 7 + HDR10+ (compatible) + HDR10 (compatible)",
+ want: "Dolby Vision Profile 7 + HDR10+ (compatible)",
+},
+		{
+name: "profile8 HDR10plus compatibility",
+ facts: p8Plus,
+ want: "Dolby Vision Profile 8 + HDR10+ (compatible)",
 },
 		{
 name: "profile8.4 HLG compatibility",
