@@ -251,7 +251,10 @@ func TestCloseIdleActiveInputDetachesUnresolvedEffects(t *testing.T) {
 			}
 			active := createIdleActiveInputForTest(ctx, t, repo, now, workflow.OwnerID, workflow.WorkflowID, "first-coordinator")
 			activeCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: active.CoordinatorID, Fence: active.Fence})
-			effect, _, err := repo.BeginReleaseWorkflowEffect(activeCtx, workflowEffectForTest(workflow, "operation", "effect", "PTP", now))
+			submission := submissionFenceTestEffect(workflow, "effect", submissionFenceTestIdentity(t, "a"), now)
+			submission.Submission.CoordinatorID = active.CoordinatorID
+			submission.Submission.Fence = active.Fence
+			effect, _, err := repo.BeginReleaseWorkflowEffect(activeCtx, submission)
 			if err != nil {
 				t.Fatalf("begin effect: %v", err)
 			}
@@ -296,16 +299,16 @@ func TestCloseIdleActiveInputDetachesUnresolvedEffects(t *testing.T) {
 				RequestedPath:  filepath.Join(t.TempDir(), "source.mkv"),
 				IdempotencyKey: "open",
 			}
-			if err := repo.CompareAndSwapActiveInput(
-				ctx,
-				closed,
-				opening,
-				now.Add(3*time.Second),
-			); !errors.Is(
-				err,
-				api.ErrReleaseWorkflowEffectOutcomeUnknown,
-			) {
-				t.Fatalf("open after detached %s effect = %v, want %v", status, err, api.ErrReleaseWorkflowEffectOutcomeUnknown)
+			if err := repo.CompareAndSwapActiveInput(ctx, closed, opening, now.Add(3*time.Second)); err != nil {
+				t.Fatalf("reserve unrelated input after detached %s effect: %v", status, err)
+			}
+			// Reserving unrelated work must not permit rebinding the affected workflow.
+			affected := opening
+			affected.State, affected.Revision = api.ActiveInputActive, opening.Revision+1
+			affected.InputID, affected.SourceVersion, affected.WorkflowID = active.InputID, active.SourceVersion, active.WorkflowID
+			affected.ReservationID, affected.RequestedPath = "", ""
+			if err := repo.CompareAndSwapActiveInput(ctx, opening, affected, now.Add(4*time.Second)); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+				t.Fatalf("affected workflow bypassed its %s effect: %v", status, err)
 			}
 		})
 	}
