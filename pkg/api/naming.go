@@ -63,8 +63,11 @@ func (p ReleaseNameElementPolicy) Normalized() ReleaseNameElementPolicy {
 }
 
 type ReleaseNameRequest struct {
-	Category string
-	Type     string
+	// TVDBNamingAvailable makes the TVDB naming-year decision authoritative,
+	// including an automatic omission; manual year controls apply only without it.
+	TVDBNamingAvailable bool
+	Category            string
+	Type                string
 	// ManualType keeps an explicit type correction authoritative over inferred source signals.
 	ManualType bool
 	Title      string
@@ -165,21 +168,25 @@ type ReleaseNameOverrides struct {
 	Season          *string
 	Episode         *string
 	EpisodeTitle    *string
-	// ManualYear replaces the derived year; zero explicitly clears it and nil restores automatic resolution.
+	// ManualYear replaces the derived year for movies or TV without usable TVDB naming data.
+	// Zero explicitly clears it; available TVDB naming data takes precedence.
 	ManualYear       *int
 	ManualDate       *string
 	UseSeasonEpisode *bool
 	NoSeason         *bool
-	NoYear           *bool
-	NoAKA            *bool
-	NoTag            *bool
-	NoEpisodeTitle   *bool
-	NoDistributor    *bool
-	NoEdition        *bool
-	NoDub            *bool
-	NoDual           *bool
-	DualAudio        *bool
-	Region           *string
+	// NoYear omits the year only for movies or TV without usable TVDB naming data.
+	NoYear         *bool
+	NoAKA          *bool
+	NoTag          *bool
+	NoEpisodeTitle *bool
+	NoDistributor  *bool
+	NoEdition      *bool
+	NoDub          *bool
+	NoDual         *bool
+	DualAudio      *bool
+	// Region replaces the release-country naming fact; empty clears it and nil keeps detection.
+	// This does not change Blu-ray playback compatibility (A/B/C).
+	Region *string
 }
 
 // IsSupportedReleaseVersion reports whether value names a supported release version

@@ -575,8 +575,11 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 			verifier := &hashingActiveInputVerifier{}
 			restarted := newActiveInputRecoveryModule(t, recoveryRepository, recoveryInputs, verifier, clock, "second-coordinator")
 			if test.liveInput {
+				// Keep the foreign lease live during cancellation regardless of setup speed.
+				waiting := newActiveInputRecoveryModule(t, recoveryRepository, recoveryInputs, verifier,
+					fixedClock{now: opened.LeaseExpiresAt.Add(-time.Hour)}, "second-coordinator", WithCoordinator(restarted.Coordinator))
 				waitCtx, cancel := context.WithTimeout(ctx, 40*time.Millisecond)
-				err := restarted.ResetIdleInputOnStartup(waitCtx)
+				err := waiting.ResetIdleInputOnStartup(waitCtx)
 				cancel()
 				if !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("live input startup wait = %v, want caller deadline", err)

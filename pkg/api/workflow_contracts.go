@@ -235,14 +235,15 @@ type TrackerArtifactRequirements struct {
 	// ScreenshotCount is the minimum number of selected normal screenshots.
 	ScreenshotCount int `json:"screenshotCount"`
 	// DVDMenuCount is a tracker-declared minimum, not an automatic-capture cap.
-	DVDMenuCount      int      `json:"dvdMenuCount"`
-	MediaInfo         bool     `json:"mediaInfo"`
-	BDInfo            bool     `json:"bdInfo"`
-	NFO               bool     `json:"nfo"`
-	Description       bool     `json:"description"`
-	ImageHosting      bool     `json:"imageHosting"`
-	AllowedImageHosts []string `json:"allowedImageHosts,omitempty"`
-	Torrent           bool     `json:"torrent"`
+	DVDMenuCount          int      `json:"dvdMenuCount"`
+	MediaInfo             bool     `json:"mediaInfo"`
+	BDInfo                bool     `json:"bdInfo"`
+	NFO                   bool     `json:"nfo"`
+	Description           bool     `json:"description"`
+	AllowEmptyDescription bool     `json:"allowEmptyDescription,omitempty"`
+	ImageHosting          bool     `json:"imageHosting"`
+	AllowedImageHosts     []string `json:"allowedImageHosts,omitempty"`
+	Torrent               bool     `json:"torrent"`
 }
 
 // TrackerQuestionnaireRequirement describes one non-secret tracker input requirement.
@@ -609,6 +610,8 @@ type MediaArtifactSet struct {
 	// ImageRequirementsPrepared records that required image preparation is satisfied
 	// through hosting or explicit skip. Status still determines overall media readiness.
 	ImageRequirementsPrepared bool `json:"imageRequirementsPrepared"`
+	// ImageHostPreference records the automatic hosting policy used for the completed barrier.
+	ImageHostPreference *string `json:"imageHostPreference,omitempty"`
 	// ImageHostUploadSkipped records preparation without new host uploads. Cached
 	// links remain reusable, and unknown external outcomes still require reconciliation.
 	ImageHostUploadSkipped bool              `json:"imageHostUploadSkipped,omitempty"`

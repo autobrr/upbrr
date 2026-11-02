@@ -32,6 +32,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -60,6 +61,10 @@ const (
 	e2eNamingModeEnv    = "UPBRR_E2E_NAMING_MODE"
 	e2eAudioAnalysisEnv = "UPBRR_E2E_AUDIO_ANALYSIS"
 	e2eHDRAnalysisEnv   = "UPBRR_E2E_HDR_ANALYSIS"
+	e2ePlanFailuresEnv  = "UPBRR_E2E_PLAN_FAILURE_TRACKERS"
+	e2ePlanSkipsEnv     = "UPBRR_E2E_PLAN_SKIP_TRACKERS"
+	e2ePlanAttemptsEnv  = "UPBRR_E2E_RECORD_PLAN_ATTEMPTS"
+	e2ePlanWaitEnv      = "UPBRR_E2E_WAIT_FOR_PLAN_CANCELLATION"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -118,11 +123,7 @@ func maybeApplyE2EServices(
 			repo:     repositories.Media(),
 		}
 		if os.Getenv("UPBRR_E2E_SAVED_DESCRIPTION_IMAGE") == "1" {
-			image, err := e2eManagedScreenshot(screenshots.shotPath, tmpRoot, "existing-description", "", 0)
-			if err != nil {
-				return err
-			}
-			screenshots.savedImage = &image
+			screenshots.savedImages = &e2eSavedScreenshotSet{bySource: make(map[string]api.ScreenshotImage)}
 		}
 		services.Screenshots = screenshots
 	}
@@ -414,6 +415,7 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 				SourcePath:   sourcePath,
 				FileList:     meta.FileList,
 				DiscType:     request.Layout.DiscType,
+				KeepFolder:   input.Policy.KeepFolder,
 				Policy:       input.Search,
 				ForceRecheck: input.Controls.ForceRecheck,
 			})
@@ -686,6 +688,7 @@ func (s e2eMetadataService) HydrateClientEvidence(
 		SourcePath:   request.Manifest.SourcePath,
 		FileList:     files,
 		DiscType:     discType,
+		KeepFolder:   request.Input.Policy.KeepFolder,
 		Policy:       request.Input.Search,
 		ForceRecheck: request.Input.Controls.ForceRecheck,
 	})
@@ -724,6 +727,7 @@ func e2eClientEvidenceSnapshot(
 		Result: api.ClientSearchResult{
 			InfoHash:            evidence.InfoHash,
 			TorrentPath:         evidence.TorrentPath,
+			TorrentCandidates:   append([]api.ClientTorrentCandidate(nil), evidence.TorrentCandidates...),
 			TorrentDataVerified: evidence.TorrentDataVerified,
 			TrackerIDs:          evidence.TrackerIDs,
 			FoundTrackerMatch:   evidence.FoundTrackerMatch,
@@ -738,6 +742,7 @@ func e2eClientEvidenceSnapshot(
 func e2eBlurayMetadata(sourcePath string) *api.BlurayMetadata {
 	return &api.BlurayMetadata{
 		SourcePath:        sourcePath,
+		Country:           "United States",
 		IMDBID:            1234567,
 		SearchURL:         "https://example.com/search/example-release-2026",
 		SelectedReleaseID: "example-bluray-primary",
@@ -754,13 +759,14 @@ func e2eBlurayMetadata(sourcePath string) *api.BlurayMetadata {
 				Title:      "Example Release 2026 Collector Edition",
 				URL:        "https://example.com/releases/example-bluray-primary",
 				Publisher:  "Example Publisher",
-				Country:    "Exampleland",
-				Region:     "A",
+				Country:    "United States",
+				Region:     "USA",
 				Score:      98,
 				Accepted:   true,
 				Specs: api.BluraySpecs{
-					Video: api.BlurayVideoSpec{Codec: "AVC", Resolution: "1080p"},
-					Audio: []string{"English DD 5.1"},
+					Playback: api.BlurayPlaybackSpec{Region: "A"},
+					Video:    api.BlurayVideoSpec{Codec: "AVC", Resolution: "1080p"},
+					Audio:    []string{"English DD 5.1"},
 					Discs: api.BlurayDiscSpec{
 						Type:   "Blu-ray",
 						Count:  1,
@@ -776,12 +782,13 @@ func e2eBlurayMetadata(sourcePath string) *api.BlurayMetadata {
 				Title:      "Example Release 2026 Standard Edition",
 				URL:        "https://example.com/releases/example-bluray-alternate",
 				Publisher:  "Example Publisher",
-				Country:    "Exampleland",
-				Region:     "B",
+				Country:    "United States",
+				Region:     "USA",
 				Score:      92,
 				Specs: api.BluraySpecs{
-					Video: api.BlurayVideoSpec{Codec: "AVC", Resolution: "1080p"},
-					Audio: []string{"English DD 5.1"},
+					Playback: api.BlurayPlaybackSpec{Region: "B"},
+					Video:    api.BlurayVideoSpec{Codec: "AVC", Resolution: "1080p"},
+					Audio:    []string{"English DD 5.1"},
 					Discs: api.BlurayDiscSpec{
 						Type:   "Blu-ray",
 						Count:  1,
@@ -799,13 +806,13 @@ type e2eTorrentService struct {
 }
 
 func (s e2eTorrentService) Create(_ context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
-	root := filepath.Dir(strings.TrimSpace(s.dbPath))
-	if root == "." || root == "" {
-		root = os.TempDir()
+	root, err := db.Subdir(s.dbPath, "tmp")
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("e2e torrent: tmp root: %w", err)
 	}
-	dir := filepath.Join(root, "e2e-artifacts")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return api.TorrentResult{}, fmt.Errorf("e2e torrent: mkdir: %w", err)
+	dir, _, err := paths.ReleaseTempDirFor(root, meta.SourcePath, api.ReleaseInfo{})
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("e2e torrent: release owner: %w", err)
 	}
 	info, err := e2eTorrentInfo(meta.SourcePath)
 	if err != nil {
@@ -1308,7 +1315,7 @@ func (s e2eDVDMenuService) Capture(
 	}
 	images := make([]api.DVDMenuCaptureImage, 0, limit)
 	for index, disc := range discs[:limit] {
-		image, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(subject.SourcePath), "menu-"+disc.ID, index+1)
+		image, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, subject.SourcePath, "menu-"+disc.ID, index+1)
 		if err != nil {
 			return api.DVDMenuCaptureResult{}, err
 		}
@@ -1382,17 +1389,55 @@ func (s e2eTrackerService) PrepareRetainedUploadPlan(
 	if len(trackerNames) == 0 {
 		return nil, errors.New("e2e tracker: retained plan has no eligible trackers")
 	}
+	// Record actual plan builds independently of browser continuation requests.
+	if os.Getenv(e2ePlanAttemptsEnv) == "1" {
+		path, err := db.FileInSubdir(s.dbPath, "tmp", "e2e-plan-attempts.txt")
+		if err != nil {
+			return nil, fmt.Errorf("e2e tracker: resolve plan receipt: %w", err)
+		}
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("e2e tracker: open plan receipt: %w", err)
+		}
+		_, writeErr := io.WriteString(file, "attempt\n")
+		closeErr := file.Close()
+		if err := errors.Join(writeErr, closeErr); err != nil {
+			return nil, fmt.Errorf("e2e tracker: record plan attempt: %w", err)
+		}
+	}
+	// Keep the attempted preparation active until the test cancels its operation.
+	if os.Getenv(e2ePlanWaitEnv) == "1" {
+		<-ctx.Done()
+		return nil, fmt.Errorf("e2e tracker: retained plan canceled: %w", ctx.Err())
+	}
 	previews, err := s.BuildUploadDryRun(ctx, subject, trackerNames)
 	if err != nil {
 		return nil, fmt.Errorf("e2e tracker: prepare retained previews: %w", err)
 	}
 	preparations := make([]trackers.RetainedTrackerPreparation, 0, len(previews))
+	failedTrackers := e2eTrackerSet(e2ePlanFailuresEnv)
+	skippedTrackers := e2eTrackerSet(e2ePlanSkipsEnv)
 	for _, preview := range previews {
-		preparations = append(preparations, trackers.RetainedTrackerPreparation{
+		preparation := trackers.RetainedTrackerPreparation{
 			Tracker:     preview.Tracker,
 			TorrentPath: subject.TorrentPath,
 			Preview:     preview,
-		})
+		}
+		if _, failed := failedTrackers[preview.Tracker]; failed {
+			preparation.Failure = &trackers.TrackerFailure{
+				Tracker: preview.Tracker,
+				Code:    "e2e_preparation_failed",
+				Message: "E2E tracker preparation failed. Retry explicitly.",
+			}
+		}
+		if _, skipped := skippedTrackers[preview.Tracker]; skipped {
+			preparation.Failure = &trackers.TrackerFailure{
+				Tracker: preview.Tracker,
+				Code:    trackers.PreparationFailureCodeSkipped,
+				Message: "E2E tracker preparation skipped.",
+			}
+		}
+		preparations = append(preparations, preparation)
 	}
 	subject.Trackers = append([]string(nil), trackerNames...)
 	return &e2eRetainedUploadPlan{
@@ -1716,7 +1761,7 @@ type e2eImageService struct {
 }
 
 func (s e2eImageService) ListCandidates(_ context.Context, meta api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
-	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), "", 1)
+	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, meta.SourcePath, "", 1)
 	if err != nil {
 		return nil, err
 	}
@@ -1800,10 +1845,15 @@ func postE2EImageUpload(ctx context.Context, endpoint string, host string, image
 }
 
 type e2eScreenshotService struct {
-	savedImage *api.ScreenshotImage
-	shotPath   string
-	tmpRoot    string
-	repo       api.ScreenshotLifecycleRepository
+	savedImages *e2eSavedScreenshotSet
+	shotPath    string
+	tmpRoot     string
+	repo        api.ScreenshotLifecycleRepository
+}
+
+type e2eSavedScreenshotSet struct {
+	mu       sync.Mutex
+	bySource map[string]api.ScreenshotImage
 }
 
 func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject, count int) (api.ScreenshotPlan, error) {
@@ -1853,13 +1903,24 @@ func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject
 			SuggestedSelections: selections,
 		})
 	}
-	if s.savedImage != nil {
+	if saved := s.savedImages; saved != nil {
+		saved.mu.Lock()
+		defer saved.mu.Unlock()
+		image, known := saved.bySource[meta.SourcePath]
+		if !known {
+			var err error
+			image, err = e2eManagedScreenshot(s.shotPath, s.tmpRoot, meta.SourcePath, "existing-description", 0)
+			if err != nil {
+				return api.ScreenshotPlan{}, err
+			}
+			saved.bySource[meta.SourcePath] = image
+		}
 		// Deletion removes the managed fixture; planning must not recreate it.
-		if _, err := os.Stat(s.savedImage.Path); err == nil {
-			plan.FinalSelections = []api.ScreenshotImage{*s.savedImage}
+		if _, err := os.Stat(image.Path); err == nil {
+			plan.FinalSelections = []api.ScreenshotImage{image}
 			plan.TrackerImageLinks = []api.ScreenshotLinkedImage{{
 				Tracker: "AITHER",
-				Path:    s.savedImage.Path,
+				Path:    image.Path,
 				Host:    "imgbb",
 				URL:     "https://i.ibb.co/e2e-existing.png",
 			}}
@@ -1921,14 +1982,15 @@ func (s e2eScreenshotService) PreviewFrame(
 	}, nil
 }
 
-func (s e2eScreenshotService) Delete(ctx context.Context, _ api.ScreenshotSubject, imagePath string) error {
+func (s e2eScreenshotService) Delete(ctx context.Context, subject api.ScreenshotSubject, imagePath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	root, err := filepath.Abs(filepath.Join(s.tmpRoot, "e2e"))
+	root, _, err := paths.ReleaseTempDirFor(s.tmpRoot, subject.SourcePath, subject.Release)
 	if err != nil {
 		return fmt.Errorf("e2e screenshots: resolve managed root: %w", err)
 	}
+	root = filepath.Join(root, "e2e")
 	target, err := filepath.Abs(strings.TrimSpace(imagePath))
 	if err != nil {
 		return fmt.Errorf("e2e screenshots: resolve delete target: %w", err)
@@ -1960,7 +2022,7 @@ func (s e2eScreenshotService) SaveFinalSelections(ctx context.Context, meta api.
 }
 
 func (s e2eScreenshotService) imageAt(meta api.ScreenshotSubject, discID string, index int) (api.ScreenshotImage, error) {
-	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), discID, index)
+	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, meta.SourcePath, discID, index)
 }
 
 func e2eScreenshotDiscName(meta api.ScreenshotSubject, discID string) string {
@@ -1972,7 +2034,8 @@ func e2eScreenshotDiscName(meta api.ScreenshotSubject, discID string) string {
 	return meta.DiscName
 }
 
-func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, scope string, index int) (api.ScreenshotImage, error) {
+// e2eManagedScreenshot copies a fixture beneath the source's managed release owner.
+func e2eManagedScreenshot(shotPath string, tmpRoot string, sourcePath string, scope string, index int) (api.ScreenshotImage, error) {
 	path := strings.TrimSpace(shotPath)
 	if path == "" {
 		return api.ScreenshotImage{}, errors.New("e2e screenshots: screenshot path is required")
@@ -1985,10 +2048,7 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, s
 	if err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: read fixture: %w", err)
 	}
-	release := strings.TrimSpace(releaseName)
-	if release == "" {
-		release = "e2e-release"
-	}
+	release := filepath.Base(strings.TrimSpace(sourcePath))
 	if strings.TrimSpace(scope) != "" {
 		release += "-" + strings.TrimSpace(scope)
 	}
@@ -2000,7 +2060,11 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, s
 			return r
 		}
 	}, release)
-	managedDir := filepath.Join(root, "e2e", release)
+	owner, _, err := paths.ReleaseTempDirFor(root, sourcePath, api.ReleaseInfo{})
+	if err != nil {
+		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: resolve release owner: %w", err)
+	}
+	managedDir := filepath.Join(owner, "e2e", release)
 	if err := os.MkdirAll(managedDir, 0o755); err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: create managed dir: %w", err)
 	}

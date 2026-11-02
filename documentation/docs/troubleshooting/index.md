@@ -48,6 +48,8 @@ Startup retains completed operation checkpoints and marks unfinished operations 
 
 For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup retains unresolved external attempts as uncertain and keeps their retry blocks; an interrupted operation is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
 
+An unresolved tracker submission does not prevent independent CLI queue items from running when its durable submission protection remains available. Legacy attempts without that protection still require reconciliation before new inputs. The affected source remains protected until reconciliation; resuming the queue selects its other pending items. Missing or contradictory retained source information still requires manual recovery.
+
 If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Resolve the uncertainty before activating the changed configuration.
 
 If **Legacy workflow recovery** still appears, inspect each listed remote outcome. Choose **Confirmed not completed; allow a fresh exact attempt** only after confirming it did not complete. Do not delete History simply to bypass an uncertain outcome: deletion also removes local repeat-submission protection.
@@ -113,6 +115,8 @@ The selected FFmpeg must expose the `dvdvideo` demuxer plus `menu`, `menu_lu`, `
 Use manual disc-menu image import when automatic capture is not available.
 
 ## A metadata provider fails or selects the wrong title
+
+Updates that change external-ID interpretation rebuild older automatic identity data when the input is prepared again. Explicit ID selections and cleared providers remain authoritative; compatible cached descriptions and images are retained.
 
 Supply the correct provider ID, or clear the provider when you want to continue without it. For example, `--tmdb=` or `--tmdb=0` clears TMDB in the CLI. See [clearing a metadata provider](../cli/index.md#clear-a-metadata-provider) for all supported flags and examples.
 

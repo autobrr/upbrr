@@ -20,7 +20,7 @@ import (
 )
 
 // workflowDescriptionRendererVersion invalidates generated output when composition changes.
-const workflowDescriptionRendererVersion = "description-renderer-v3"
+const workflowDescriptionRendererVersion = "description-renderer-v4"
 
 type workflowDescriptionSubjectResolver interface {
 	ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
@@ -162,6 +162,7 @@ func (b workflowDescriptionBuilder) Build(
 		return api.DescriptionSet{
 			InputFingerprint:    inputFingerprint,
 			TemplateFingerprint: templateFingerprint,
+			Descriptions:        []api.RenderedDescription{},
 			Status:              api.StageStatusSkipped,
 		}, nil
 	}
@@ -189,9 +190,14 @@ func (b workflowDescriptionBuilder) Build(
 	snapshot := api.DescriptionSet{
 		InputFingerprint:    inputFingerprint,
 		TemplateFingerprint: templateFingerprint,
+		Descriptions:        make([]api.RenderedDescription, 0, len(preview.Descriptions)),
 		Status:              api.StageStatusCompleted,
 	}
 	projectionByName := workflowProjectionByName(descriptionTargets)
+	allowEmpty := make(map[api.TrackerID]bool, len(descriptionTargets))
+	for _, projection := range descriptionTargets {
+		allowEmpty[projection.TrackerID] = projection.Artifacts.AllowEmptyDescription
+	}
 	trackerResults := make(map[api.TrackerID]api.DescriptionTrackerResult, len(descriptionTargets))
 	terminalTrackers := 0
 	recordTrackerResult := func(
@@ -239,10 +245,16 @@ func (b workflowDescriptionBuilder) Build(
 			if len(trackerIDs) == 0 {
 				snapshot.Failures = append(snapshot.Failures, workflowDescriptionFailure(message, "", entry.GroupKey))
 			}
-			for _, trackerID := range trackerIDs {
+			trackerIDs = slices.DeleteFunc(trackerIDs, func(trackerID api.TrackerID) bool {
+				if allowEmpty[trackerID] {
+					return false
+				}
 				recordTrackerResult(trackerID, entry.GroupKey, api.StageStatusFailed, message, true)
+				return true
+			})
+			if len(trackerIDs) == 0 {
+				continue
 			}
-			continue
 		}
 		rendered := strings.TrimSpace(entry.RawDescriptionHTML)
 		if rendered == "" {

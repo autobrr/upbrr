@@ -60,10 +60,12 @@ Each run creates a separate directory under `--audio-output`, preserving earlier
 1. Prepare the release on **Input**.
 2. Open **Audio Analysis** after its navigation item becomes available.
 3. Choose the primary track, all tracks, or individual tracks.
-4. Choose waveform, spectrogram, or both.
+4. Choose waveform, spectrogram, amplitude statistics, or a combination; at least one output is required.
 5. Adjust **Threads per decoder** if the default does not suit the host.
 6. Click **Generate**.
 7. Preview, open, or download each successful PNG, and view or download any generated amplitude statistics text file.
+
+Use the information icons beside track selection, outputs, decoder threads, actions and results for contextual help. With multiple prepared resources, choose **Prepared resource** first; **All** and **Selected** apply only to that resource, and changing resources clears the individual selection. Help supports keyboard focus and touch without changing selections or starting analysis.
 
 Opening the page does not start work. Leaving it unopened or disabled does not block upload.
 

@@ -92,7 +92,7 @@ func standaloneHDRMeasurements(ctx context.Context, session *hdranalysis.Session
 		}
 	}()
 	// Probe reports are private, short-lived metadata, separate from shareable output.
-	probeRoot, err := os.MkdirTemp("", "upbrr-hdr-probe-")
+	probeRoot, err := os.MkdirTemp(directory, ".inspection-")
 	if err != nil {
 		return nil, fmt.Errorf("create HDR probe directory: %w", err)
 	}

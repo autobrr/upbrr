@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -111,7 +112,9 @@ func (l *dataLookup) requestFirst(ctx context.Context, payload map[string]any) (
 		return nil, false, fmt.Errorf("trackerdata: hdb request failed status=%d", resp.StatusCode)
 	}
 	result := map[string]any{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	decoder := json.NewDecoder(resp.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
 		return nil, false, fmt.Errorf("trackerdata: hdb decode: %w", err)
 	}
 	if status := hdbInt(result["status"]); status != 0 {
@@ -152,5 +155,5 @@ func hdbInt(value any) int {
 
 func hdbNestedInt(value map[string]any, root, key string) int {
 	node, _ := value[root].(map[string]any)
-	return hdbInt(node[key])
+	return providerid.ParseDecimal(hdbString(node[key]))
 }

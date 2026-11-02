@@ -70,6 +70,8 @@ States are `pending`, `running`, `completed`, `failed`, `interrupted` and `skipp
 
 Retry selection does not bypass input ownership, confirmed-upload exclusions or uncertain-submission reconciliation. A tracker submission with an unknown outcome still requires the existing recovery process; no remote submission is retried automatically. Confirmed tracker uploads are recorded separately from item progress, including partial failures. `completed` means the requested processing finished: Input-only and debug/site-check runs can complete without uploading. Skips and declined actions do not prove an upload. Use a different queue name when starting a different task, such as switching a completed Input-only queue to uploads.
 
+An unknown tracker outcome leaves the affected queue item interrupted while independent pending items continue. Legacy attempts without durable submission protection still block new inputs until reconciled. The affected item's original workflow and submission protection remain available after restart. Reopen that source interactively or with `--unattended_confirm` only after checking the remote outcome; declining reconciliation leaves its outcome unresolved. If a retained workflow's source cannot be identified reliably, manual recovery is still required.
+
 Membership stays unchanged until explicitly refreshed:
 
 ```powershell
@@ -109,6 +111,10 @@ The torrent contains only the original ISO, with its physical size and source pa
 The CLI shares one active-input slot with every process using its database. Queue entries run serially. If another session owns the input, the command returns a busy error; unattended mode never prompts or takes over a live input. After its terminal result, the CLI closes its owned input. Cancellation uses bounded cleanup; a reported cleanup failure requires recovery before further work.
 
 After an interrupted legacy workflow, check the tracker or torrent client before answering the recovery confirmation. Confirm that the operation did not complete only when you have verified its outcome. Interactive mode and `--unattended_confirm` can ask this question; `--unattended` exits without prompting or starting a new submission. Recovery does not submit anything by itself.
+
+If a configuration change blocks startup because an external outcome is unresolved, stop other processes using that database and run `upbrr recover`. Pass the same `--config` option and environment as the original command so recovery selects the existing database. Check each tracker, image host or torrent client before confirming that its action did not complete; answer No for completed or uncertain outcomes.
+
+This maintenance command does not activate configuration or start external work. It opens the retained local artifacts and saves each confirmation together with its workflow checkpoint in one database transaction. After recovery succeeds, rerun the original command to activate configuration and continue through the normal preparation and review checks. Keep the database if recovery reports an error and follow its diagnostic before retrying.
 
 After you answer tracker questions, the CLI rebuilds the affected tracker stages and refreshes duplicate evidence before asking for duplicate review. Follow-up questions can depend on earlier answers. Accepted answers, reviewed names, and rule acknowledgements remain valid only while their underlying inputs still match. Previous duplicate review decisions are requested again after evidence changes; explicit duplicate-policy options still apply. Answering tracker questions does not approve duplicates or authorize upload.
 
@@ -222,7 +228,7 @@ Title and original title are read-only provider values. Use `--alternate-title` 
 | `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.                              |
 | `--tracker-input "<tracker-id>:<field>=<answer>"` | Answer a field shown by the current tracker questionnaire.                                             |
 
-Language entries accept one or more comma-separated values. Blank segments are ignored, duplicate languages are removed, and multiword names remain intact. Use `--audio-languages=` for an explicit empty list. Original production language remains separate from track languages.
+Language entries accept one or more comma-separated values. Blank segments are ignored, duplicate languages are removed, and multiword names remain intact. Use `--audio-languages=` for an explicit empty list. Original production language remains separate from track languages. Regional/script tags and Full/Forced coverage are retained; collectives and unknown values do not establish a specific language. See [language corrections](../workflow/index.md#2-review-canonical-metadata) for identity and clear/Auto behavior.
 
 Run `--input-only` first to obtain track IDs. Track corrections require the retained scan manifest and one source. If the source, playlist, or track order changes, inspect the source again and select a current track. Release-level lists do not assign languages to individual streams.
 
@@ -251,7 +257,9 @@ The review is tracker-specific. Strict `--unattended` never prompts and skips a 
 
 ### Naming fields
 
-Season tokens require exactly two or four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`. Source names can use `S01E03` or `S2026E03` for an episode and `S01` or `S2026` for a season pack. One- and three-digit seasons and x-separated forms such as `1x05` are not recognized; use `S01E05` instead.
+Manual season and episode inputs accept plain numbers: `--season 5 --episode 5` produces `S05E05` in generated naming. For daily-dated TV releases, also set `--use-season-episode` to prefer these coordinates over the date. Padded and prefixed forms such as `05`, `S05`, and `E05` remain supported. Seasons accept up to four digits, including year-numbered seasons such as `--season 2026` or `--season S2026`; episodes accept up to three digits. Supply one value per field, without ranges or combined tokens.
+
+Automatic filename detection still requires exactly two or four season digits. Source names can use `S01E03` or `S2026E03` for an episode and `S01` or `S2026` for a season pack. One- and three-digit seasons and x-separated forms such as `1x05` are not recognized in filenames; use `S01E05` instead.
 
 Specials can use `S00E01` in a source name or `--season S00 --episode 01`. An explicit season zero is distinct from an unknown season; episode zero is invalid. Use `--season=` to clear the season or `--reset-input release_name.season` to restore automatic detection. Tracker eligibility still determines whether a special or a pack can be uploaded. Changing the episode coordinates does not remove known multi-episode source membership.
 
@@ -270,15 +278,15 @@ Existing prepared releases are rebuilt after this update. Older binaries do not 
 | `--edition <value>`           | `-edition`, `-repack`                             | Override cut/edition text and multi-edition set labels; independent presentation and features remain. |
 | `--presentation <value>`      | `-presentation`                                   | Set `IMAX`, `Open Matte`, or `IMAX Open Matte`; `--presentation=` clears it.                          |
 | `--release-features <list>`   | `-release-features`                               | Replace release features using comma-separated IDs; `--release-features=` clears them.                |
-| `--season <value>`            | `-season`                                         | Override one season token, such as `05` or `S05`.                                                     |
+| `--season <value>`            | `-season`                                         | Override one season number, such as `5`, `05`, or `S05`.                                              |
 | `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`.                                                     |
 | `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                               |
-| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                                      |
+| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override movie year or TV year without usable TVDB data; `0` clears it.                               |
 | `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                                                                           |
 | `--use-season-episode`        | `-use-season-episode`                             | Prefer explicit or TMDB-matched season/episode naming over a daily date.                              |
-| `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                                                                                 |
+| `--region <value>`            | `-region`, `-reg`                                 | Override release country code, such as USA or GER.                                                    |
 | `--no-season`                 | `-no-season`                                      | Remove season and episode from name.                                                                  |
-| `--no-year`                   | `-no-year`                                        | Remove year from name.                                                                                |
+| `--no-year`                   | `-no-year`                                        | Omit movie year or TV year without usable TVDB data.                                                  |
 | `--no-aka`                    | `-no-aka`                                         | Remove AKA from name.                                                                                 |
 | `--no-tag`                    | `-no-tag`                                         | Remove group tag from name.                                                                           |
 | `--no-episode-title`          | `-no-episode-title`, `-net`                       | Remove episode title from name.                                                                       |
@@ -318,7 +326,17 @@ Strict `--unattended` reports the missing facts and exits without prompting. Int
 | `--tvdb <id>`   | `-tvdb`   | Override TVDB ID.   |
 | `--tvmaze <id>` | `-tvmaze` | Override TVmaze ID. |
 
+Multiple provider flags select each provider independently, even when their returned cross-links disagree. Each successful lookup remains available for preparation. See [manual metadata authority](../workflow/index.md#2-review-canonical-metadata).
+
 TMDB also accepts `movie/<id>`, `tv/<id>`, or a URL ending in the ID; a movie/TV hint overrides the category. IMDb accepts numeric IDs or the `tt` prefix. TVDB, TVmaze, and MAL take numeric IDs, not URLs.
+
+Use `--keep-existing-ids` to keep existing provider matches and their data when correcting another provider. You can pass it on the command line or in the correction arguments after **Metadata correct?**. For a release you have already prepared, this updates IMDb while keeping the other matches:
+
+```powershell
+.\upbrr.exe --keep-existing-ids --imdb tt1234567 --input-only "E:\Media\Example.Series.S01E01.1080p-GRP.mkv"
+```
+
+The Keep choices are saved for this release and also appear in the Web UI. A provider's explicit ID change or clear takes precedence. Use `--keep-existing-ids=false` to turn off these choices without removing manual ID corrections. Omitting the flag preserves saved choices. Changing Movie/TV can still clear incompatible automatic matches; a forced fresh preparation reloads data for kept IDs.
 
 During the **Metadata correct?** loop, correcting the same active input reuses provider lookups for unchanged inputs, including lookups that returned no result. A later run can retry those empty results. Completed fetch failures remain retained until the input is removed from **History**. Changing the source, provider ID, or lookup query requests its own result.
 
@@ -367,6 +385,8 @@ TIK `--disctype` accepts `BD100`, `BD66`, `BD50`, `BD25`, `NTSC DVD9`, `NTSC DVD
 ## Screenshots, images, and descriptions
 
 Without `--screens`, the CLI uses `screenshot_handling.screens` when selected trackers require screenshots. Tracker-specific image counts and limits still apply. An override below a tracker's screenshot requirements can block that upload.
+
+When required release images are missing, the CLI stops with the media failure and recovery guidance, or the existing prompt to capture, select, or host images. Resolve that media prerequisite before retrying. This block does not open a tracker questionnaire or prompt for media recovery, including with `--unattended_confirm`; required images continue to block upload in every interaction mode.
 
 | Option                       | Aliases                             | Purpose                                                                        |
 | ---------------------------- | ----------------------------------- | ------------------------------------------------------------------------------ |
@@ -466,17 +486,23 @@ During upload, the CLI prints the path of every successfully retained PNG and st
 | `--client <name>`        | `-client`                          | Override torrent client.                                                                 |
 | `--qbit-tag <value>`     | `-qbit-tag`, `-qbt`                | Override qBittorrent tag.                                                                |
 | `--qbit-cat <value>`     | `-qbit-cat`, `-qbc`                | Override qBittorrent category.                                                           |
-| `--force-recheck`        | `-force-recheck`, `-frc`           | Force recheck of matched qBittorrent torrents before validation.                         |
+| `--force-recheck`        | `-force-recheck`, `-frc`           | Recheck matched qBittorrent torrents and verify reusable torrent data.                   |
 | `--no-seed`              | `-no-seed`, `-ns`                  | Do not inject into torrent clients.                                                      |
 | `--skip_auto_torrent`    | `-skip_auto_torrent`, `-sat`       | Skip automated torrent-client searching.                                                 |
-| `--keep-folder`          | `-keep-folder`, `-kf`              | Keep a supplied folder instead of selecting its video file.                              |
+| `--keep-folder`          | `-keep-folder`, `-kf`              | Keep the supplied folder around one movie or episode video.                              |
 | `--onlyID`               | `-onlyID`                          | Limit tracker metadata lookup to IDs where supported; does not stop the upload workflow. |
 | `--infohash <hash>`      | `-infohash`, `-th`, `-torrenthash` | Supply a 40-character hexadecimal v1 info hash.                                          |
 | `--max-piece-size <MiB>` | `-max-piece-size`, `-mps`          | Override the configured maximum: `1`, `2`, `4`, `8`, `16`, `32`, `64`, or `128` MiB.     |
 | `--nohash`               | `-nohash`, `-nh`                   | Reuse existing torrents only; do not generate a new torrent.                             |
 | `--rehash`               | `-rehash`, `-rh`                   | Force generation of a fresh torrent.                                                     |
 
+`--keep-folder` applies only when a supplied folder contains one selected movie or episode video. The torrent retains that folder as its root and includes only the selected video; samples, NFOs, text files, and other sidecars are excluded. The default remains a single-file torrent. Season packs, multi-video folders, disc sources, and direct file inputs are unchanged. Reused torrents must match the requested layout.
+
 `--nohash` and `--rehash` cannot be combined, even with explicit false values.
+
+Ordinary torrent reuse checks the metainfo, requested file layout and applicable limits without reading every media byte. This does not prove that same-sized media bytes match the piece hashes. Use `--force-recheck` to request a piece check, or `--rehash` to create a fresh torrent. A reusable artifact may need a metadata-only layout change; `--nohash` permits that but fails if new pieces are required.
+
+Reuse currently supports v1 torrents; v2 and hybrid v1/v2 torrents require a new torrent, so `--nohash` cannot use them.
 
 ## `serve`
 

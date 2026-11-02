@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -32,6 +34,7 @@ func TestPrepareReusesCurrentPartialPackLanguageFactsAfterRestart(t *testing.T) 
 				Languages:           []string{"English"},
 				ResourceID:          "selected-resource",
 				ManifestFingerprint: "selected-report",
+				LanguageProvenance:  api.FactProvenanceManual,
 			},
 			{
 				ID:                  "japanese",
@@ -81,5 +84,36 @@ func TestPrepareReusesCurrentPartialPackLanguageFactsAfterRestart(t *testing.T) 
 	}
 	if !reflect.DeepEqual(subject.LanguageFacts, previous.Release.Media.LanguageFacts) || restartedCollector.collectCount() != 0 {
 		t.Fatal("projection changed partial canonical language evidence or recollected it")
+	}
+
+	stale := reused.Release
+	stale.Compatibility.ContractVersion = "prepared-release-v56"
+	stale.Media.SubtitleLanguages = []string{"phi"}
+	store.mu.Lock()
+	store.current[canonicalSourceKey(path)] = stale
+	store.mu.Unlock()
+	media.SubtitleLanguages = languageutil.NormalizeLanguageList([]string{"phi"})
+	media.LanguageFacts = mediafacts.ResolveLanguages(media)
+	updatedCollector := &clientEvidenceTestCollector{base: recordingCollector{facts: &CollectedFacts{
+		Media: media,
+		Resources: CollectedResources{
+			SourcePath: path,
+			VideoPath:  files[0],
+			FileList:   files,
+		},
+	}}}
+	updated := newTestModule(t, store, updatedCollector)
+	current, err := updated.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedCollector.collectCount() != 1 || current.Release.Generation != previous.Release.Generation+1 ||
+		current.Release.Compatibility.ContractVersion != ContractVersion ||
+		!reflect.DeepEqual(current.Release.Media.SubtitleLanguages, []string{"Philippine languages"}) ||
+		!reflect.DeepEqual(current.Release.Media.Tracks, previous.Release.Media.Tracks) {
+		t.Fatalf("old language semantics reused or manual/source binding changed: generation=%d calls=%d media=%+v", current.Release.Generation, updatedCollector.collectCount(), current.Release.Media)
+	}
+	if _, err := updated.Prepare(t.Context(), input); err != nil || updatedCollector.collectCount() != 1 {
+		t.Fatalf("current language generation was not reused: calls=%d err=%v", updatedCollector.collectCount(), err)
 	}
 }

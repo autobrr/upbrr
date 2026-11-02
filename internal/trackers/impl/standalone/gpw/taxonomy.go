@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -87,12 +89,12 @@ func resolveSubtitleType(meta api.UploadSubject) string {
 func resolveSubtitles(meta api.UploadSubject) []string {
 	out := make([]string, 0, len(meta.SubtitleLanguages))
 	for _, lang := range meta.SubtitleLanguages {
-		switch strings.ToLower(strings.TrimSpace(lang)) {
-		case "english", "en":
+		switch languageutil.NormalizeLanguageCode(lang) {
+		case "en":
 			out = append(out, "English")
-		case "chinese", "zh":
+		case "zh", "cmn":
 			out = append(out, "Chinese")
-		case "portuguese", "pt":
+		case "pt":
 			out = append(out, "Portuguese")
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -29,6 +30,7 @@ func TestDPOriginalAudioEligibility(t *testing.T) {
 		{name: "one dub", languages: []string{"English"}},
 		{name: "two dubs", languages: []string{"Danish", "Swedish"}},
 		{name: "duplicate languages", languages: []string{"Danish", "Swedish", "Danish"}},
+		{name: "regional original variants", languages: []string{"Japanese", "Japanese [ja-JP]", "English [en-US]"}},
 		{name: "three with original", languages: []string{"Japanese", "Danish", "Swedish"}},
 		{
 			name:      "three without original",
@@ -312,7 +314,7 @@ func dpEligibilitySubject(languages ...string) api.UploadSubject {
 	// These fixtures represent reviewed alternate-language programme dubs.
 	for index := range media.Tracks {
 		track := &media.Tracks[index]
-		if len(track.Languages) == 1 && track.Languages[0] != "Japanese" && track.Languages[0] != "" && track.Languages[0] != "und" && track.Languages[0] != "mul" {
+		if len(track.Languages) == 1 && !languageutil.SameLanguage(track.Languages[0], "Japanese") && languageutil.IsIdentifiedLanguage(track.Languages[0]) {
 			track.AudioOrigin = api.TrackAudioDubbed
 		}
 	}

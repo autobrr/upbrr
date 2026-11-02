@@ -6,6 +6,8 @@ package fl
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -77,21 +79,9 @@ func isSD(meta api.UploadSubject) bool {
 }
 
 func hasRomanianAudio(meta api.UploadSubject) bool {
-	for _, lang := range meta.AudioLanguages {
-		lower := strings.ToLower(strings.TrimSpace(lang))
-		if lower == "romanian" || lower == "ro" {
-			return true
-		}
-	}
-	return false
+	return languageutil.ContainsLanguage(meta.AudioLanguages, "ro")
 }
 
 func hasRomanianSub(meta api.UploadSubject) bool {
-	for _, lang := range meta.SubtitleLanguages {
-		lower := strings.ToLower(strings.TrimSpace(lang))
-		if lower == "romanian" || lower == "ro" {
-			return true
-		}
-	}
-	return false
+	return languageutil.ContainsLanguage(meta.SubtitleLanguages, "ro")
 }

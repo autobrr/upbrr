@@ -397,6 +397,10 @@ func (s *cliWorkflowSession) publishPresentation(ctx context.Context) {
 		bridge.mu.Unlock()
 		if current {
 			for _, operationItem := range op.Items[:min(len(op.Items), cliTelemetryLimit)] {
+				phase := operationItem.Label + ": " + operationItem.Phase + " / " + string(operationItem.Status)
+				if strings.HasPrefix(operationItem.Kind, "preparation_") {
+					phase = operationItem.Label + ": " + operationItem.Message
+				}
 				bridge.Progress(cliTelemetry{
 					Item:        item,
 					Epoch:       epoch,
@@ -404,7 +408,9 @@ func (s *cliWorkflowSession) publishPresentation(ctx context.Context) {
 					OperationID: string(op.ID),
 					Lane:        operationItem.ID,
 					Attempt:     string(op.ID),
-					Phase:       operationItem.Label + ": " + operationItem.Phase + " / " + string(operationItem.Status),
+					Phase:       phase,
+					Kind:        operationItem.Kind,
+					Status:      operationItem.Status,
 					Completed:   operationItem.Completed,
 					Total:       operationItem.Total,
 					ItemOnly:    true,

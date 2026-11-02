@@ -5,7 +5,6 @@ package core
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -225,20 +224,5 @@ func TestApplyContinuationPreparationDefaultsUsesActiveConfigEachTime(t *testing
 	if first.Intent.Preparation == nil || second.Intent.Preparation == nil ||
 		!first.Intent.Preparation.Policy.OnlyID || !second.Intent.Preparation.Policy.OnlyID {
 		t.Fatalf("configured only-id default was not applied consistently: %#v, %#v", first.Intent.Preparation, second.Intent.Preparation)
-	}
-}
-
-func TestWorkflowPrivateVaultRootIsDatabaseScoped(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	firstDB := filepath.Join(root, "first.db")
-	secondDB := filepath.Join(root, "second.db")
-	first := workflowPrivateVaultRoot(firstDB)
-	if first != workflowPrivateVaultRoot(firstDB) {
-		t.Fatal("same database path produced unstable private vault root")
-	}
-	if first == workflowPrivateVaultRoot(secondDB) {
-		t.Fatal("distinct databases in one directory shared a private vault root")
 	}
 }

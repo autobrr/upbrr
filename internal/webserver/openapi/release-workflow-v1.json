@@ -875,6 +875,9 @@
               "$ref": "#/components/schemas/BlurayReleaseCandidate"
             }
           },
+          "Country": {
+            "type": "string"
+          },
           "IMDBID": {
             "type": "integer"
           },
@@ -904,6 +907,7 @@
           "AutoSelected",
           "BestScore",
           "Candidates",
+          "Country",
           "IMDBID",
           "SearchURL",
           "SelectedReleaseID",
@@ -971,6 +975,9 @@
           "Region": {
             "type": "string"
           },
+          "ReleaseDate": {
+            "type": "string"
+          },
           "ReleaseID": {
             "type": "string"
           },
@@ -1008,6 +1015,7 @@
           "ProductID",
           "Publisher",
           "Region",
+          "ReleaseDate",
           "ReleaseID",
           "Score",
           "Specs",
@@ -2166,6 +2174,56 @@
             "anyOf": [
               {
                 "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepIMDB": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepMAL": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepTMDB": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepTVDB": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "KeepTVmaze": {
+            "anyOf": [
+              {
+                "type": "boolean"
               },
               {
                 "type": "null"
@@ -4308,6 +4366,16 @@
           "id": {
             "$ref": "#/components/schemas/MediaArtifactSetID"
           },
+          "imageHostPreference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "imageHostUploadSkipped": {
             "type": "boolean"
           },
@@ -5685,6 +5753,27 @@
       "OverrideState": {
         "type": "string"
       },
+      "PackageInventory": {
+        "type": "object",
+        "properties": {
+          "Files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Scope": {
+            "$ref": "#/components/schemas/SubmissionContentScope"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          }
+        },
+        "required": [
+          "Scope",
+          "Status"
+        ]
+      },
       "PlaylistInfo": {
         "type": "object",
         "properties": {
@@ -5963,6 +6052,9 @@
       "PreparedReleaseDisplay": {
         "type": "object",
         "properties": {
+          "CanKeepFolder": {
+            "type": "boolean"
+          },
           "Commentary": {
             "type": "boolean"
           },
@@ -5977,6 +6069,9 @@
           },
           "ReleaseName": {
             "type": "string"
+          },
+          "TVDBNamingAvailable": {
+            "type": "boolean"
           },
           "TrackerData": {
             "type": "array",
@@ -9679,6 +9774,9 @@
               "$ref": "#/components/schemas/SourceManifestEntry"
             }
           },
+          "PackageInventory": {
+            "$ref": "#/components/schemas/PackageInventory"
+          },
           "SelectedPlaylists": {
             "type": "array",
             "items": {
@@ -9695,6 +9793,7 @@
         "required": [
           "Classification",
           "Entries",
+          "PackageInventory",
           "SelectedPlaylists",
           "Size",
           "SourcePath"
@@ -9893,6 +9992,9 @@
           "releaseName",
           "version"
         ]
+      },
+      "SubmissionContentScope": {
+        "type": "string"
       },
       "SubmissionExclusion": {
         "type": "object",
@@ -10814,6 +10916,9 @@
       "TrackerArtifactRequirements": {
         "type": "object",
         "properties": {
+          "allowEmptyDescription": {
+            "type": "boolean"
+          },
           "allowedImageHosts": {
             "type": "array",
             "items": {

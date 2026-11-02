@@ -450,7 +450,7 @@ func TestRebuildReleaseNameOmitsGeneratedEpisodeTitle(t *testing.T) {
 	}
 }
 
-func TestRebuildReleaseNameFinalizesTVPresentationAndHonorsNoYear(t *testing.T) {
+func TestRebuildReleaseNameFinalizesTVPresentationAndIgnoresNoYear(t *testing.T) {
 	meta := preparationstate.State{
 		SourcePath:       "Example.Show.2026.02.03.1080p.WEB-DL.H.264-GRP",
 		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 1234567},
@@ -475,13 +475,13 @@ func TestRebuildReleaseNameFinalizesTVPresentationAndHonorsNoYear(t *testing.T) 
 
 	RebuildReleaseName(&meta, api.NopLogger{})
 
-	if strings.Contains(meta.ReleaseName, "2026 ") {
-		t.Fatalf("NoYear restored TV search year in %q", meta.ReleaseName)
+	if !strings.Contains(meta.ReleaseName, "2026 ") {
+		t.Fatalf("NoYear suppressed TVDB naming year in %q", meta.ReleaseName)
 	}
 	want := api.ReleaseNamePresentation{
 		Version:            api.ReleaseNamePresentationVersionV1,
 		OmitAlternateTitle: true,
-		OmitYear:           true,
+		OmitYear:           false,
 		OmitSeasonEpisode:  true,
 		UseDailyDate:       true,
 	}
@@ -2684,6 +2684,17 @@ func TestAudioFromMediaAddsDualAudioForEnglishAndOriginalLanguage(t *testing.T) 
 	}
 	if channels != "5.1" || commentary {
 		t.Fatalf("expected 5.1 with no commentary, got channels=%q commentary=%t", channels, commentary)
+	}
+	meta.ProviderMetadata.TMDB.OriginalLanguage = "gaa"
+	doc.Media.Track[2]["Language"] = ""
+	doc.Media.Track[2]["Language_String"] = "Ga"
+	if audio, _, _ := audioFromMedia(meta, doc, nil); audio != "Dual-Audio DD 5.1" {
+		t.Fatalf("human-name ingress lost original Ga audio: %q", audio)
+	}
+	meta.ProviderMetadata.TMDB.OriginalLanguage = "en"
+	doc.Media.Track[1]["Language"], doc.Media.Track[2]["Language"] = "en-US", "en-GB"
+	if audio, _, _ := audioFromMedia(meta, doc, nil); audio != "DD 5.1" {
+		t.Fatalf("English variants invented Dual-Audio: %q", audio)
 	}
 }
 

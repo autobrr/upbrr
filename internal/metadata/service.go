@@ -30,11 +30,13 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/metadata/progress"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/torrent"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -360,7 +362,15 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 
 	bdinfoActive := false
 	bdinfoTerminal := false
+	var discProgress *progress.Step
 	reportBDInfo := func(status api.PreparationProgressStatus, message string) {
+		if discProgress == nil {
+			discProgress = progress.Begin(ctx, "Analyze selected Blu-ray playlists")
+		}
+		discProgress.Update(0, 0, message)
+		if status != api.PreparationProgressRunning {
+			discProgress.Finish(message, status == api.PreparationProgressFailed)
+		}
 		api.EmitPreparationProgress(ctx, api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, status, message))
 	}
 	defer func() {
@@ -491,6 +501,15 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		return preparationstate.State{}, fmt.Errorf("metadata: source size: %w", err)
 	}
 	meta.SourceSize = size
+	meta.PackageInventory, err = torrent.ResolvePackageInventory(api.TorrentSubject{
+		SourcePath: primary,
+		DiscType:   meta.DiscType,
+		FileList:   meta.FileList,
+		KeepFolder: request.Input.Policy.KeepFolder && !meta.TVPack,
+	})
+	if err != nil {
+		return preparationstate.State{}, fmt.Errorf("metadata: package inventory: %w", err)
+	}
 	applyDVDCapacity(&meta)
 	logger.Debugf("metadata: source size %d bytes", size)
 
@@ -617,14 +636,20 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 			fingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
 		}
 		meta.MediaInspectionFingerprint = fingerprint
+		miProgress := progress.Begin(ctx, "Inspect primary MediaInfo reports")
 		miResult, err := s.mi.Export(ctx, mediainfo.Request{
-			SourcePath:  meta.SourcePath,
-			DiscType:    meta.DiscType,
-			VideoPath:   meta.VideoPath,
-			TempRoot:    tmpRoot,
-			ArtifactDir: fileMediaInfoArtifactDir(tmpRoot, meta.VideoPath, fingerprint),
-			Release:     meta.Release,
+			SourcePath:        meta.SourcePath,
+			DiscType:          meta.DiscType,
+			VideoPath:         meta.VideoPath,
+			TempRoot:          tmpRoot,
+			SourceFingerprint: fingerprint,
+			Release:           meta.Release,
 		})
+		miMessage := "MediaInfo reports ready (retained or inspected)."
+		if err != nil {
+			miMessage = "MediaInfo inspection failed."
+		}
+		miProgress.Finish(miMessage, err != nil)
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: mediainfo: %w", err)
 		}
@@ -845,14 +870,34 @@ func (s *Service) collectDiscEvidence(
 		}
 
 		if s.mi != nil && !disc.Image {
+			fingerprint := request.SourceFingerprint
+			if request.Input.VerifiedSource != nil {
+				fingerprint += ":" + request.Input.VerifiedSource.Identity.Digest
+			}
+			reportDir := artifactDir
+			if len(resources) == 0 {
+				// The selected primary disc owns the release-root reports too.
+				reportDir = releaseTemp
+			}
+			miProgress := progress.Begin(ctx, "Inspect disc MediaInfo reports")
+			miProgress.Update(len(resources), len(request.Layout.Discs), "Reports may be retained or newly inspected.")
 			result, err := s.mi.Export(ctx, mediainfo.Request{
-				SourcePath:  disc.Root,
-				DiscType:    disc.Type,
-				VideoPath:   resource.VideoPath,
-				TempRoot:    tmpRoot,
-				ArtifactDir: artifactDir,
-				Release:     meta.Release,
+				SourcePath:        disc.Root,
+				OwnerSource:       meta.SourcePath,
+				SourceFingerprint: fingerprint,
+				DiscType:          disc.Type,
+				VideoPath:         resource.VideoPath,
+				TempRoot:          tmpRoot,
+				ArtifactDir:       reportDir,
+				Release:           meta.Release,
 			})
+			miMessage := "Disc MediaInfo reports ready (retained or inspected)."
+			if err != nil {
+				miMessage = "Disc MediaInfo inspection failed."
+			} else {
+				miProgress.Update(len(resources)+1, len(request.Layout.Discs), miMessage)
+			}
+			miProgress.Finish(miMessage, err != nil)
 			if err != nil {
 				return fmt.Errorf("metadata: disc MediaInfo: %w", err)
 			}

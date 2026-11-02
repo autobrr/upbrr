@@ -6,8 +6,10 @@ package dp
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -36,7 +38,9 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	}
 	facts := subject.LanguageFacts
 	count := trackers.KnownProgrammeLanguageCount(facts)
-	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || count != len(facts.ProgrammeLanguages) || count == 0 && !facts.AudioAbsent {
+	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete ||
+		slices.ContainsFunc(facts.ProgrammeLanguages, func(value string) bool { return !languageutil.IsIdentifiedLanguage(value) }) ||
+		count == 0 && !facts.AudioAbsent {
 		failure := trackers.LanguageRuleFailure(subject, "evidence", "complete programme-language evidence is required", trackers.LanguageUnresolved)
 		failure.Rule = "language_multilingual_evidence"
 		return []api.RuleFailure{failure}

@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { WorkflowContinuation } from "../api/generated/release-workflow";
+import type { PreparedRelease, WorkflowContinuation } from "../api/generated/release-workflow";
+import { missingRequiredFacts } from "./requiredFacts";
 import type { ReleaseRoute, RouteAccess } from "./types";
 
 export type TrackerWorkflowRequirements = Readonly<{
@@ -9,13 +10,14 @@ export type TrackerWorkflowRequirements = Readonly<{
   needsDescriptions: boolean;
 }>;
 
-/** Projects backend goal availability into the existing release navigation contract. */
+/** Projects backend goals and saved required facts into release navigation availability. */
 export const routeAccess = (
   continuation: WorkflowContinuation | null | undefined,
   hasTrackerData: boolean,
   requirements: TrackerWorkflowRequirements,
   hasAudioData = false,
   hasHDRData = false,
+  release: PreparedRelease | null = null,
 ): Readonly<Record<ReleaseRoute, RouteAccess>> => {
   const goal = (name: string): RouteAccess => {
     const availability = continuation?.availableGoals.find((candidate) => candidate.goal === name);
@@ -46,7 +48,14 @@ export const routeAccess = (
       available: hasAudioData,
       reason: hasAudioData ? "" : "Prepare a source with authoritative audio-track facts first.",
     },
-    duplicates: trackerAssessment,
+    duplicates:
+      trackerAssessment.available && missingRequiredFacts(release).length > 0
+        ? {
+            available: false,
+            reason:
+              "Complete the required facts on Input and refresh metadata before opening Dupe Check.",
+          }
+        : trackerAssessment,
     screenshots: {
       available: media.available && requirements.needsImages,
       reasonCode: requirements.needsImages ? media.reasonCode : undefined,

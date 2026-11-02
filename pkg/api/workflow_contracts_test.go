@@ -46,6 +46,23 @@ func TestMediaInfoDisplayPreservesLegacySnapshotFingerprint(t *testing.T) {
 	}
 }
 
+func TestKeepFolderEligibilityContributesToDisplayFingerprint(t *testing.T) {
+	t.Parallel()
+	display := PreparedReleaseDisplay{ReleaseName: "Example.Release.2026-GRP"}
+	eligible := display
+	eligible.CanKeepFolder = true
+	data, err := json.Marshal(eligible)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"CanKeepFolder":true`) {
+		t.Fatalf("eligible folder missing from display JSON: %s", data)
+	}
+	if workflowTestFingerprint(t, display) == workflowTestFingerprint(t, eligible) {
+		t.Fatal("folder eligibility did not contribute to display fingerprint")
+	}
+}
+
 func TestReleaseFactInstructionSnapshotFingerprintAndClonePreserveTriState(t *testing.T) {
 	t.Parallel()
 

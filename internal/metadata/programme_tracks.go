@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/metadata/progress"
 
 	"github.com/autobrr/upbrr/internal/pathing"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -39,9 +40,23 @@ func (s *Service) inspectProgrammeTracks(ctx context.Context, meta preparationst
 	if fingerprint == "" {
 		fingerprint = meta.SourceFingerprint
 	}
+	step := progress.Begin(ctx, "Inspect programme MediaInfo reports")
+	processed := 0
+	defer func() {
+		message := "Programme inspection complete."
+		if !complete {
+			message = "Programme inspection partial."
+		}
+		if ctx.Err() != nil {
+			message = "Programme inspection canceled."
+		}
+		step.Finish(message, !complete)
+	}()
 	for _, file := range meta.FileList {
+		step.Update(processed, len(meta.FileList), "Reports may be retained or newly inspected.")
+		processed++
 		primary := pathing.SamePath(file, meta.VideoPath)
-		doc, inspectErr := inspectFileMediaInfo(ctx, s.mi, file, fingerprint, root)
+		doc, _, inspectErr := inspectReleaseMediaInfoReports(ctx, s.mi, meta, file, fingerprint, root)
 		if inspectErr != nil {
 			if ctx.Err() != nil {
 				return meta, fmt.Errorf("programme track inspection canceled: %w", ctx.Err())
@@ -53,6 +68,7 @@ func (s *Service) inspectProgrammeTracks(ctx context.Context, meta preparationst
 		resource.VideoPath = file
 		tracks, primaryAudioID, _, _, trackErr := mediaTrackFacts(resource, doc)
 		if trackErr != nil {
+			complete = false
 			return meta, fmt.Errorf("programme track facts: %w", trackErr)
 		}
 		if len(doc.Media.Track) == 0 {
@@ -102,6 +118,7 @@ func (s *Service) inspectProgrammeTracks(ctx context.Context, meta preparationst
 			SubtitleStatus:      api.MetadataEvidenceStatusComplete,
 		}, tracks))
 	}
+	step.Update(processed, len(meta.FileList), "Programme reports processed.")
 	meta.TrackCoverageComplete = complete
 	meta.MediaFileFacts = mediafacts.SummarizeFiles(meta.MediaFileFacts)
 	meta.TrackAudioLanguages = aggregateTrackLanguages(meta.MediaTracks, api.MediaTrackAudio)

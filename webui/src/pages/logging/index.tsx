@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { FieldHelp } from "../../components/ui/field-help";
 import { pageStyle } from "../../components/ui/pageStyle";
 import type { ReactElement } from "react";
 import LogSettingsPanel from "../../components/LogSettingsPanel";
@@ -49,13 +50,21 @@ export default function LoggingPage(props: Props) {
       <section className={pageStyle.panel}>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <p className={pageStyle.label}>Logging controls</p>
-            <p className="helper">Changes apply immediately and are saved to SQLite.</p>
+            <div className="flex items-center gap-1">
+              <p className={pageStyle.label}>Logging controls</p>
+              <FieldHelp label="Logging settings actions" id="logging-settings-actions-help">
+                Save persists the settings draft and activates runtime logging changes. Reload
+                fetches saved configuration and asks before discarding unsaved settings. Live-view
+                filters do not require Save; muted messages are saved immediately.
+              </FieldHelp>
+            </div>
+            <p className="helper">Save activates logging settings and stores them in SQLite.</p>
           </div>
           <div className="flex items-center gap-2">
             <button
               className="ghost"
               type="button"
+              aria-describedby="logging-settings-actions-help"
               onClick={() => {
                 if (!settingsDirty || window.confirm("Discard unsaved settings and reload?")) {
                   loadSettings();
@@ -68,6 +77,7 @@ export default function LoggingPage(props: Props) {
             <button
               className="primary"
               type="button"
+              aria-describedby="logging-settings-actions-help"
               onClick={handleSaveSettings}
               disabled={settingsLoading || !settingsDirty}
             >

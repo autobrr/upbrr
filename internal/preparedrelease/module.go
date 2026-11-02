@@ -26,7 +26,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v56"
+const ContractVersion = "prepared-release-v70-package-inventory-3d"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -57,6 +57,7 @@ type Collector interface {
 // metadata are supplied by IdentityResolver; source-tracker image receipts
 // remain separate until the owner stamps their exact prepared generation.
 type CollectedFacts struct {
+	PackageInventory           api.PackageInventory
 	ImportedScreenshotEvidence *api.ImportedScreenshotEvidence
 	// NamingCategory records the category used to derive the collected names.
 	// A concrete movie/TV mismatch with the resolved identity prevents generation commit.
@@ -384,13 +385,15 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		return api.PrepareResult{}, fmt.Errorf("prepared release: resolve identity: %w", err)
 	}
 	identityFinish(nil)
+	tvdbOwnsYear := identityResult.Identity.Category == api.CanonicalCategoryTV &&
+		identityResult.ProviderMetadata.TVDBNamingAvailable(input.SourcePath, identityResult.Identity)
 	if collected.NamingCategory == api.CanonicalCategoryMovie && identityResult.Identity.Category == api.CanonicalCategoryTV ||
 		collected.NamingCategory == api.CanonicalCategoryTV && identityResult.Identity.Category == api.CanonicalCategoryMovie {
 		cleaned, err := api.ApplyReleaseCorrectionUpdate(resolved.Corrections, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
 		if err != nil {
 			return api.PrepareResult{}, fmt.Errorf("prepared release: sanitize mismatched corrections: %w", err)
 		}
-		discardProviderOwnedCorrections(&cleaned, identityResult.Identity.Category)
+		discardProviderOwnedCorrections(&cleaned, tvdbOwnsYear)
 		if !reflect.DeepEqual(cleaned, resolved.Corrections.Corrections) {
 			if _, err := m.store.CompareAndSwapReleaseCorrections(ctx, input.SourcePath, resolved.Corrections.Revision, cleaned); err != nil {
 				return api.PrepareResult{}, fmt.Errorf("prepared release: persist sanitized corrections: %w", err)
@@ -401,7 +404,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 			Reason: "resolved category differs from collected names; select Category and refresh metadata",
 		}
 	}
-	finalCorrections, err := m.finalizeCorrectionBindings(ctx, resolved, identityResult.Identity)
+	finalCorrections, err := m.finalizeCorrectionBindings(ctx, resolved, identityResult.Identity, tvdbOwnsYear)
 	if err != nil {
 		return api.PrepareResult{}, err
 	}
@@ -422,6 +425,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	// Only current collection receipts enter the generation; prior provider
 	// snapshots cannot restore missing or superseded image acceptance.
 	identityResult.ProviderMetadata.ImportedScreenshotEvidence = collected.ImportedScreenshotEvidence.Clone()
+	manifest.PackageInventory = collected.PackageInventory.Clone()
 	release := api.PreparedRelease{
 		Generation:       generation,
 		Compatibility:    compatibility,
@@ -980,12 +984,24 @@ func cloneResult(result api.PrepareResult) (api.PrepareResult, error) {
 
 func cloneExternalIDOverrides(value api.ExternalIDOverrides) api.ExternalIDOverrides {
 	return api.ExternalIDOverrides{
-		TMDBID:   cloneInt(value.TMDBID),
-		IMDBID:   cloneInt(value.IMDBID),
-		TVDBID:   cloneInt(value.TVDBID),
-		TVmazeID: cloneInt(value.TVmazeID),
-		MALID:    cloneInt(value.MALID),
+		TMDBID:     cloneInt(value.TMDBID),
+		IMDBID:     cloneInt(value.IMDBID),
+		TVDBID:     cloneInt(value.TVDBID),
+		TVmazeID:   cloneInt(value.TVmazeID),
+		MALID:      cloneInt(value.MALID),
+		KeepTMDB:   cloneBool(value.KeepTMDB),
+		KeepIMDB:   cloneBool(value.KeepIMDB),
+		KeepTVDB:   cloneBool(value.KeepTVDB),
+		KeepTVmaze: cloneBool(value.KeepTVmaze),
+		KeepMAL:    cloneBool(value.KeepMAL),
 	}
+}
+
+func cloneBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	return new(*value)
 }
 
 func cloneInt(value *int) *int {

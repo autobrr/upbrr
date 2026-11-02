@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -20,6 +21,100 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestCLIANTTrumpReviewReachesDuplicateApproval(t *testing.T) {
+	for _, test := range []struct {
+		name, input, choice, reason string
+	}{
+		{"intended trump", "y\nverified improvement\n", "yes", "verified improvement"},
+		{"optional reason", "y\n\n", "yes", ""},
+		{"ordinary upload", "n\n\n", "no", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registry := impl.MustNewRegistry()
+			trackerConfig := config.TrackerConfig{GuruTrump: true}
+			projector, err := trackers.NewWorkflowProjector(registry, config.Config{
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"ANT": trackerConfig}},
+			}, api.NopLogger{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			subject := nativeCompatibilityProjectionSubject(t)
+			policy, _ := registry.LookupDupePolicy("ANT")
+			project := func() releaseworkflow.CommandResult {
+				projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
+					Tracker:       "ANT",
+					TrackerConfig: trackerConfig,
+					Meta:          subject,
+				}, "input", "catalog", "config")
+				if failure != nil || !projection.DupeReady {
+					t.Fatalf("ANT projection is not ready: %+v, %v", projection, failure)
+				}
+				projections := api.TrackerReleaseProjectionSet{
+					ID:          "projection",
+					Revision:    1,
+					Projections: []api.TrackerReleaseProjection{projection},
+				}
+				assessment := projector.DuplicateQuestionnaires(subject, projections, api.DupeAssessment{
+					WorkflowID:    "workflow",
+					ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
+					Results: []api.TrackerDupeAssessment{{
+						TrackerID: "ANT",
+						Decision:  api.DupeDecisionPending,
+						Matches:   []api.DupeMatchProjection{{ID: "123", Relation: api.DupeRelationSameSlot}},
+						RequiresStaffToken: policy.StaffTokenOverrideRequired(trackerConfig, api.DuplicateSubject{
+							SourcePath: subject.SourcePath,
+							Identity:   subject.Identity,
+							Projection: &projection,
+						}, []api.DupeCandidateEvaluation{{Relation: api.DupeRelationSameSlot}}),
+					}},
+				})
+				return releaseworkflow.CommandResult{
+					Workflow:    api.ReleaseWorkflow{ID: "workflow"},
+					Projections: &projections,
+					Dupes:       &assessment,
+				}
+			}
+			var output strings.Builder
+			session := &cliWorkflowSession{
+				streams:       cliIO{out: &output},
+				intent:        cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+				uploadRequest: api.Request{Trackers: []string{"ANT"}},
+				current:       project(),
+			}
+			fields := session.current.Dupes.Results[0].Questionnaire
+			if len(fields) != 2 {
+				t.Fatalf("missing trump questions: %+v", fields)
+			}
+			action := api.RequiredAction{Kind: api.RequiredActionReviewDuplicates, TrackerID: "ANT"}
+			feedback, _, err := session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader(test.input)), action, api.ReleaseWorkflowUploadFeedback{})
+			if err != nil || feedback.Response.Questionnaire == nil {
+				t.Fatalf("trump input was gated behind comparison review: %+v, %v", feedback, err)
+			}
+			answers := map[string]string{}
+			for key, value := range feedback.Response.Questionnaire.Answers {
+				if value != nil {
+					answers[key] = *value
+				}
+			}
+			if answers[fields[0].Key] != test.choice || answers[fields[1].Key] != test.reason {
+				t.Fatalf("trump intention was not retained: %+v", answers)
+			}
+			subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"ANT": answers}
+			session.current = project()
+			if session.current.Dupes.Results[0].RequiresStaffToken != (test.choice == "no") {
+				t.Fatal("reviewed trump intention did not reach the duplicate policy")
+			}
+			feedback, _, err = session.collectCompositeDuplicateFeedback(bufio.NewReader(strings.NewReader("y\n")), action, api.ReleaseWorkflowUploadFeedback{})
+			if err != nil || feedback.Response.DuplicateReview == nil || feedback.Response.DuplicateReview.Decision != api.DupeDecisionIgnored {
+				t.Fatalf("trump questionnaire repeated instead of reaching duplicate approval: %+v, %v", feedback, err)
+			}
+			if strings.Contains(output.String(), "Review comparison evidence") || strings.Count(output.String(), "Intended ANT trump [y/n]") != 1 {
+				t.Fatalf("unexpected trump prompts: %s", output.String())
+			}
+		})
+	}
+}
 
 func TestCLICollectsNativeQuestionnaireCorrections(t *testing.T) {
 	registry := impl.MustNewRegistry()

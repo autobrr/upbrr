@@ -30,6 +30,25 @@ type SubmissionContentInventory struct {
 	Files []SubmissionContentFile
 }
 
+// ResolvePackageInventory accounts for the files selected by torrent creation,
+// including deliberate exclusions. Failed enumeration returns an error; a source
+// with no local submitted-content scope has unavailable evidence.
+func ResolvePackageInventory(meta api.TorrentSubject) (api.PackageInventory, error) {
+	inventory, complete, err := ResolveSubmissionContentInventory(meta)
+	if err != nil {
+		return api.PackageInventory{}, err
+	}
+	result := api.PackageInventory{Status: api.MetadataEvidenceStatusUnavailable}
+	if complete {
+		result.Status = api.MetadataEvidenceStatusComplete
+		result.Scope = inventory.Scope
+		for _, file := range inventory.Files {
+			result.Files = append(result.Files, file.LocalPath)
+		}
+	}
+	return result, nil
+}
+
 // ResolveSubmissionContentInventory resolves the same effective file inventory
 // used to validate torrent content. A false result means the TorrentSubject
 // names a .torrent artifact or no source and has no local submitted-content scope.
@@ -68,7 +87,7 @@ func ResolveSubmissionContentInventory(meta api.TorrentSubject) (SubmissionConte
 	if len(wanted) == 0 {
 		return SubmissionContentInventory{}, false, errors.New("torrent: no valid wanted files")
 	}
-	if len(wanted) == 1 {
+	if len(wanted) == 1 && !meta.KeepFolder {
 		info, err := os.Stat(wanted[0])
 		if err != nil {
 			return SubmissionContentInventory{}, false, fmt.Errorf("torrent: stat wanted file %q: %w", wanted[0], err)

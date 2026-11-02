@@ -76,11 +76,16 @@ func cloneStringMap(value map[string]string) map[string]string {
 
 func cloneExternalIDOverrides(value ExternalIDOverrides) ExternalIDOverrides {
 	return ExternalIDOverrides{
-		TMDBID:   cloneInt(value.TMDBID),
-		IMDBID:   cloneInt(value.IMDBID),
-		TVDBID:   cloneInt(value.TVDBID),
-		TVmazeID: cloneInt(value.TVmazeID),
-		MALID:    cloneInt(value.MALID),
+		TMDBID:     cloneInt(value.TMDBID),
+		IMDBID:     cloneInt(value.IMDBID),
+		TVDBID:     cloneInt(value.TVDBID),
+		TVmazeID:   cloneInt(value.TVmazeID),
+		MALID:      cloneInt(value.MALID),
+		KeepTMDB:   cloneBool(value.KeepTMDB),
+		KeepIMDB:   cloneBool(value.KeepIMDB),
+		KeepTVDB:   cloneBool(value.KeepTVDB),
+		KeepTVmaze: cloneBool(value.KeepTVmaze),
+		KeepMAL:    cloneBool(value.KeepMAL),
 	}
 }
 

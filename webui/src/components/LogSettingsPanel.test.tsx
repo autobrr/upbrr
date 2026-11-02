@@ -47,7 +47,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={updateConfigValue}
       />,
@@ -55,7 +55,14 @@ describe("LogSettingsPanel", () => {
 
     await waitFor(() => expect(screen.getByText("C:/logs/upbrr.log")).toBeInTheDocument());
 
-    await userEvent.selectOptions(screen.getByLabelText("Verbosity"), "debug");
+    expect(screen.getByLabelText("Runtime log level")).toHaveAccessibleDescription(/after Save/);
+    await userEvent.hover(screen.getByRole("button", { name: "Help for Visible log levels" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("do not change which events");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByLabelText("INFO", { exact: true })).toBeChecked();
+    expect(updateConfigValue).not.toHaveBeenCalled();
+    expect(loggingClient.updateExclusions).not.toHaveBeenCalled();
+    await userEvent.selectOptions(screen.getByLabelText("Runtime log level"), "debug");
 
     expect(updateConfigValue).toHaveBeenCalledWith(["Logging", "Level"], "debug");
   });
@@ -66,13 +73,13 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "TRACE_LEGACY" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={vi.fn()}
       />,
     );
 
-    const level = screen.getByRole("combobox", { name: "Verbosity" });
+    const level = screen.getByRole("combobox", { name: "Runtime log level" });
     expect(level).toHaveValue("TRACE_LEGACY");
     expect(screen.getByRole("option", { name: "TRACE_LEGACY (saved)" })).toBeInTheDocument();
   });
@@ -99,7 +106,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={vi.fn()}
       />,
@@ -132,7 +139,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={vi.fn()}
       />,
@@ -148,7 +155,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={vi.fn()}
       />,
@@ -172,7 +179,7 @@ describe("LogSettingsPanel", () => {
     render(
       <LogSettingsPanel
         configData={{ Logging: { Level: "info" } }}
-        fieldMeta={{ Level: { key: "Level", label: "Verbosity" } }}
+        fieldMeta={{ Level: { key: "Level", label: "Runtime log level" } }}
         renderField={(label) => <div key={label}>{label}</div>}
         updateConfigValue={vi.fn()}
       />,

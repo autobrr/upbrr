@@ -5,9 +5,6 @@
 package layout
 
 import (
-	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,18 +21,11 @@ func ReleaseTempDir(tmpRoot string, meta preparationstate.State, source string) 
 }
 
 // ReleaseTempDirFor creates missing release-specific directories below tmpRoot
-// with mode 0700 and returns the full path and stable base name.
+// with mode 0700, claims its source owner, and returns the full path and stable
+// filename base. A conflicting directory basename receives a normalized-source
+// suffix without extending artifact filenames.
 func ReleaseTempDirFor(tmpRoot string, source string, release api.ReleaseInfo) (string, string, error) {
-	trimmed := strings.TrimSpace(tmpRoot)
-	if trimmed == "" {
-		return "", "", errors.New("paths: tmp root is required")
-	}
-	base := ReleaseTempBaseFor(source, release)
-	contentDir := filepath.Join(trimmed, base)
-	if err := os.MkdirAll(contentDir, 0o700); err != nil {
-		return "", "", fmt.Errorf("paths: create tmp dir: %w", err)
-	}
-	return contentDir, base, nil
+	return claimReleaseDirectory(tmpRoot, source, release)
 }
 
 // ReleaseTempBase returns the stable directory name used for release temporary files.

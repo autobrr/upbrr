@@ -1065,7 +1065,7 @@ func (i DescriptionInstructions) Validate() error {
 	seen := make(map[string]struct{}, len(i.Overrides))
 	for _, override := range i.Overrides {
 		key := strings.ToLower(strings.TrimSpace(override.GroupKey))
-		if key == "" || strings.TrimSpace(override.Source) == "" {
+		if key == "" || strings.TrimSpace(override.Source) == "" && !override.Final {
 			return errors.New("description overrides require a group key and source")
 		}
 		if _, ok := seen[key]; ok {

@@ -209,6 +209,7 @@ export type BlurayMetadata = Readonly<{
   AutoSelected: boolean;
   BestScore: number;
   Candidates: readonly BlurayReleaseCandidate[];
+  Country: string;
   IMDBID: number;
   SearchURL: string;
   SelectedReleaseID: string;
@@ -236,6 +237,7 @@ export type BlurayReleaseCandidate = Readonly<{
   ProductID: string;
   Publisher: string;
   Region: string;
+  ReleaseDate: string;
   ReleaseID: string;
   Score: number;
   Specs: BluraySpecs;
@@ -563,6 +565,11 @@ export type ExternalFreshness = string;
 
 export type ExternalIDOverrides = Readonly<{
   IMDBID?: number | null;
+  KeepIMDB?: boolean | null;
+  KeepMAL?: boolean | null;
+  KeepTMDB?: boolean | null;
+  KeepTVDB?: boolean | null;
+  KeepTVmaze?: boolean | null;
   MALID?: number | null;
   TMDBID?: number | null;
   TVDBID?: number | null;
@@ -1147,6 +1154,7 @@ export type MediaArtifactSet = Readonly<{
   failures?: readonly WorkflowFailure[];
   hostAttempts?: readonly HostedImageAttempt[];
   id: MediaArtifactSetID;
+  imageHostPreference?: string | null;
   imageHostUploadSkipped?: boolean;
   imageRequirementsPrepared: boolean;
   projectionSet: TrackerReleaseProjectionSetRef;
@@ -1477,6 +1485,12 @@ export type OperationRecovery = string;
 
 export type OverrideState = string;
 
+export type PackageInventory = Readonly<{
+  Files?: readonly string[];
+  Scope: SubmissionContentScope;
+  Status: MetadataEvidenceStatus;
+}>;
+
 export type PlaylistInfo = Readonly<{
   discId: string;
   discName: string;
@@ -1557,10 +1571,12 @@ export type PreparedRelease = Readonly<{
 }>;
 
 export type PreparedReleaseDisplay = Readonly<{
+  CanKeepFolder?: boolean;
   Commentary?: boolean;
   MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
+  TVDBNamingAvailable?: boolean;
   TrackerData: readonly TrackerPreview[];
   hdrTargets?: readonly HDRAnalysisTarget[];
 }>;
@@ -2342,6 +2358,7 @@ export type SourceEntryType = string;
 export type SourceManifest = Readonly<{
   Classification: SourceClassification;
   Entries: readonly SourceManifestEntry[];
+  PackageInventory: PackageInventory;
   SelectedPlaylists: readonly PlaylistInfo[];
   Size: number;
   SourcePath: string;
@@ -2383,6 +2400,8 @@ export type StoredReleaseCorrectionsV1 = Readonly<{
   staleContentFields?: readonly CorrectionField[];
   version: number;
 }>;
+
+export type SubmissionContentScope = string;
 
 export type SubmissionExclusion = Readonly<{
   confirmedAt: string;
@@ -2618,6 +2637,7 @@ export type TrackerApprovalSnapshotRef = Readonly<{
 }>;
 
 export type TrackerArtifactRequirements = Readonly<{
+  allowEmptyDescription?: boolean;
   allowedImageHosts?: readonly string[];
   bdInfo: boolean;
   description: boolean;

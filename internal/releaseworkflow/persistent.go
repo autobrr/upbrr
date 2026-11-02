@@ -370,8 +370,14 @@ func workflowStateRecord(ownerID string, state State) (api.ReleaseWorkflowStateR
 		cloned := pending.Clone()
 		reuse = &cloned
 	}
+	var resolution *api.ReleaseWorkflowEffectResolution
+	if state.effectResolution != nil {
+		cloned := *state.effectResolution
+		resolution = &cloned
+	}
 	return api.ReleaseWorkflowStateRecord{
 		DescriptionReuse: reuse,
+		EffectResolution: resolution,
 		OwnerID:          strings.TrimSpace(ownerID),
 		WorkflowID:       state.Workflow.ID,
 		Revision:         state.Workflow.Revision,

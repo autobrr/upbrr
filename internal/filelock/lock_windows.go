@@ -10,10 +10,14 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func lockFile(file *os.File) error {
+func lockFile(file *os.File, wait bool) error {
+	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
+	if !wait {
+		flags |= windows.LOCKFILE_FAIL_IMMEDIATELY
+	}
 	if err := windows.LockFileEx(
 		windows.Handle(file.Fd()),
-		windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
+		flags,
 		0,
 		1,
 		0,

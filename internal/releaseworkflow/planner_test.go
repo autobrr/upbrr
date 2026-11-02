@@ -2102,6 +2102,52 @@ func TestContinuationPlannerAdvancesRunnableSiblingPastPendingDupe(t *testing.T)
 	}
 }
 
+func TestContinuationAcceptsTrackerEditsBeforeDuplicateReview(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []TrackerDecisionMode{TrackerDecisionModePostDupeGate, TrackerDecisionModeWebUIControls} {
+		t.Run(string(mode), func(t *testing.T) {
+			current := readyContinuationPlannerResult(t, time.Now())
+			current.Workflow.RequiredActions = []api.RequiredAction{{
+				Kind:      api.RequiredActionReviewDuplicates,
+				Status:    api.RequiredActionStatusPending,
+				TrackerID: "ALPHA",
+			}}
+			current.Dupes.Status = api.StageStatusBlocked
+			current.Dupes.Results[0].Status = api.StageStatusBlocked
+			current.Dupes.Results[0].Decision = api.DupeDecisionPending
+			request := api.ContinueReleaseWorkflowRequest{
+				Goal: api.WorkflowGoalTrackersAssessed,
+				Intent: api.WorkflowIntent{
+					TrackerIDs: []api.TrackerID{"ALPHA"},
+					ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{
+						"ALPHA": {Questionnaire: map[string]*string{"upload_intent": new("yes")}},
+					},
+				},
+			}
+			module := &Module{}
+			_, handled, err := module.resolveContinuationAnswer(t.Context(), testOwnerID, request, current, mode)
+			if err != nil || handled {
+				t.Fatalf("duplicate review blocked tracker edits: handled=%t err=%v", handled, err)
+			}
+			command, stage := planContinuationCommand(request, current, time.Now())
+			if _, ok := command.(ProjectTrackersCommand); !ok || stage != "project-trackers" {
+				t.Fatalf("tracker edits were not planned: stage=%q command=%#v", stage, command)
+			}
+			if current.Dupes.Results[0].Decision != api.DupeDecisionPending {
+				t.Fatal("editing tracker inputs resolved duplicate review")
+			}
+
+			current.ProjectionInstructions.Instructions = request.Intent.ProjectionInstructions
+			request.Goal = api.WorkflowGoalMediaReady
+			_, handled, err = module.resolveContinuationAnswer(t.Context(), testOwnerID, request, current, mode)
+			if err != nil || !handled {
+				t.Fatalf("unchanged answers bypassed duplicate review: handled=%t err=%v", handled, err)
+			}
+		})
+	}
+}
+
 func TestContinuationPlannerPreservesAuthBlockedLaneWhileCheckingReadySibling(t *testing.T) {
 	t.Parallel()
 
@@ -2480,16 +2526,27 @@ func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 	if command != nil || stage != "" {
 		t.Fatalf("hosted saved image import planned another capture: stage=%q command=%#v", stage, command)
 	}
+	current.Media.Status = api.StageStatusBlocked
+	command, stage = planContinuationCommand(request, current, now)
+	if continuationGoalReached(current, request) || command != nil || stage != "capture-media" {
+		t.Fatalf("partial adoption did not stop for missing media: stage=%q command=%#v", stage, command)
+	}
 	for index := range current.Media.Artifacts {
 		current.Media.Artifacts[index].Selected = false
 	}
-	if !continuationGoalReached(current, request) {
-		t.Fatal("unselecting adopted images made the completed import pending")
+	if continuationGoalReached(current, request) {
+		t.Fatal("unselected imported images satisfied media readiness")
 	}
 	command, stage = planContinuationCommand(request, current, now)
-	if command != nil || stage != "" {
+	if command != nil || stage != "capture-media" {
 		t.Fatalf("unselected saved images planned another capture: stage=%q command=%#v", stage, command)
 	}
+	current.Media.Status = api.StageStatusFailed
+	command, stage = planContinuationCommand(request, current, now)
+	if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
+		t.Fatalf("failed import did not retain its retry: stage=%q command=%#v", stage, command)
+	}
+	current.Media.Status = api.StageStatusCompleted
 	originalArtifacts := current.Media.Artifacts
 	current.Media.Artifacts = []api.MediaArtifact{
 		{

@@ -21,7 +21,7 @@ const GeneralDuplicatePolicyID = "general/duplicate/v10"
 // DuplicateSearchContractID versions authoritative search scope and completion semantics.
 // Projection/catalog fingerprints and persisted private evidence carry this ID so older
 // search results cannot authorize fresh tracker submissions.
-const DuplicateSearchContractID = "duplicate-search/work-scope/v2"
+const DuplicateSearchContractID = "duplicate-search/work-scope/v4"
 
 // ErrSubmitted2FARejected marks tracker auth failure after a supplied manual 2FA code was rejected.
 var ErrSubmitted2FARejected = errors.New("trackers: submitted 2FA rejected")
@@ -432,6 +432,8 @@ type DataLookupConfigProvider interface {
 
 // DataLookupPolicy declares tracker-specific lookup orchestration behavior.
 type DataLookupPolicy struct {
+	// LegacyExternalIDsNeedRefresh expires automatic IDs from older normalization contracts.
+	LegacyExternalIDsNeedRefresh bool
 	// Cooldown is the minimum delay applied around tracker lookup operations.
 	Cooldown time.Duration
 	// DeferWhenCollectingImages postpones lookup while the caller is still collecting images.
@@ -544,6 +546,12 @@ type DupePolicy struct {
 	// StaffTokenOverride requires owner attestation of staff-token possession to
 	// override duplicate or incomplete-search evidence. No token value is retained.
 	StaffTokenOverride bool `json:",omitempty"`
+	// StaffTokenOverrideRequired optionally resolves attestation against the reviewed
+	// release and evaluated candidates. It does not change duplicate relations.
+	StaffTokenOverrideRequired func(config.TrackerConfig, api.DuplicateSubject, []api.DupeCandidateEvaluation) bool `json:"-"`
+	// DecisionInputs projects tracker-owned inputs that must invalidate retained
+	// duplicate decisions when questionnaire answers change. Omit payload-only answers.
+	DecisionInputs func(PreparationInput) map[string]string `json:"-"`
 	// ID is the stable versioned comparison-policy identifier.
 	ID string
 	// EvidenceID identifies the policy evidence backing automatic
@@ -998,6 +1006,8 @@ type Descriptor struct {
 	ClaimFactory ClaimCheckerFactory
 	// ClaimPolicy contains optional generic claim orchestration settings.
 	ClaimPolicy *ClaimPolicy
+	// ConnectionProbe tests draft credentials without activating or persisting them.
+	ConnectionProbe ConnectionProbe
 	// AuthResolver performs optional tracker-owned auth resolution.
 	AuthResolver AuthSessionResolver
 	// AuthCapability describes optional interactive auth support.

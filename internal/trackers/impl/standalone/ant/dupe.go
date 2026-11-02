@@ -203,6 +203,7 @@ func antDupeEntries(payload map[string]any) []api.DupeEntry {
 			fileCount = len(files)
 		}
 		entry := api.DupeEntry{
+			ID:            antCandidateID(item),
 			Name:          antCandidateName(item, files),
 			Files:         files,
 			FileCount:     fileCount,
@@ -256,6 +257,24 @@ func antDupeEntries(payload map[string]any) []api.DupeEntry {
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+// antCandidateID accepts only torrent identity from ANT's HTTPS details link.
+// A group ID or generated filename does not establish torrent identity.
+func antCandidateID(item map[string]any) string {
+	link, err := url.Parse(strings.ReplaceAll(antString(item["guid"]), "&amp;", "&"))
+	if err != nil || link.Scheme != "https" || link.Host != "anthelion.me" || link.User != nil || link.Path != "/torrents.php" {
+		return ""
+	}
+	query, err := url.ParseQuery(link.RawQuery)
+	if err != nil || len(query["torrentid"]) != 1 {
+		return ""
+	}
+	id, err := strconv.ParseUint(query.Get("torrentid"), 10, 63)
+	if err != nil || id == 0 {
+		return ""
+	}
+	return strconv.FormatUint(id, 10)
 }
 
 // antCandidateName prefers the listed content name for single-file torrents and ANT's torrent filename for multi-file torrents.

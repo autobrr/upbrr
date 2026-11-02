@@ -12,6 +12,7 @@ import (
 // Profile returns PTS identity, preparation, dupe, auth, and artifact behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:         trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
 		Name:                    "PTS",
 		BaseURL:                 baseURL,
 		DescriptionGroup:        "pts",

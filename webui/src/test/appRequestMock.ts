@@ -32,6 +32,7 @@ export const invokeAppRequestMock = async (
     BrowseDirectory: [payload.path, payload.mode],
     RenderDescription: [payload.Raw],
     SaveConfig: [payload.Payload],
+    TestConnection: [payload.payload, payload.target, _options.signal],
     GetRecentLogs: [payload.Limit],
     StopLogStream: [payload.StreamID],
     UpdateLogExclusions: [payload.Patterns],

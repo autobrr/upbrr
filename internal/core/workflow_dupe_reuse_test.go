@@ -548,6 +548,90 @@ func TestNamingQuestionnaireEditsRemainDuplicateRelevant(t *testing.T) {
 	}
 }
 
+func TestANTTrumpIntentInvalidatesDuplicateReuse(t *testing.T) {
+	registry := trackerimpl.MustNewRegistry()
+	source := t.TempDir()
+	input := trackers.PreparationInput{
+		Tracker:       "ANT",
+		TrackerConfig: config.TrackerConfig{GuruTrump: true},
+		Meta: api.UploadSubject{
+			SourcePath:        source,
+			ReleaseName:       "Example.Film.2026.1080p.WEB.H264-GRP",
+			Type:              "WEBDL",
+			Source:            "WEB",
+			VideoCodec:        "H.264",
+			MediaInfoTextPath: filepath.Join(source, "mediainfo.txt"),
+			Identity: api.ExternalIdentity{
+				SourcePath: source,
+				Generation: 1,
+				Category:   api.CanonicalCategoryMovie,
+				TMDBID:     123,
+			},
+			Release: api.ReleaseInfo{
+				Category:   "MOVIE",
+				Title:      "Example Film",
+				Year:       2026,
+				Resolution: "1080p",
+			},
+			ProviderMetadata: api.SourceScopedMetadata{
+				SourcePath: source,
+				Generation: 1,
+				TMDB: &api.TMDBMetadata{
+					TMDBID:   123,
+					Category: "MOVIE",
+					Title:    "Example Film",
+					Year:     2026,
+					Genres:   "Drama",
+				},
+			},
+			TrackerQuestionnaireAnswers: map[string]map[string]string{"ANT": {"type": "Feature Film", "tags": "drama"}},
+		},
+	}
+	first, failure := registry.ProjectRelease(t.Context(), input, "", "", "")
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	var choice, reason string
+	for _, field := range first.Questionnaire {
+		if strings.HasPrefix(field.Key, "intended_trump_") {
+			choice = field.Key
+		} else if strings.HasPrefix(field.Key, "trump_reason_") {
+			reason = field.Key
+		}
+	}
+	if choice == "" || reason == "" {
+		t.Fatalf("missing source-bound trump choice: %+v", first)
+	}
+	previous, err := reusableDupeProjectionFingerprint(first, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edit := range []struct {
+		key, value  string
+		invalidates bool
+	}{
+		{choice, "yes", true},
+		{"tags", "drama,mystery", false},
+		{"requestid", "5", false},
+		{reason, "verified improvement", false},
+		{choice, "no", true},
+	} {
+		input.Meta.TrackerQuestionnaireAnswers["ANT"][edit.key] = edit.value
+		projection, failure := registry.ProjectRelease(t.Context(), input, "", "", "")
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		current, err := reusableDupeProjectionFingerprint(projection, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (current != previous) != edit.invalidates {
+			t.Fatalf("editing %s to %q: invalidates duplicate decision = %t, want %t", edit.key, edit.value, current != previous, edit.invalidates)
+		}
+		previous = current
+	}
+}
+
 func TestQuestionnaireRebindPreservesUnchangedSkippedSibling(t *testing.T) {
 	f := newWorkflowDupeReuseFixture(t)
 	f.reuse.QuestionnaireOnly = true

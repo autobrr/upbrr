@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -936,6 +937,38 @@ func TestCLIAnimeCorrection(t *testing.T) {
 	}
 }
 
+func TestCLIPlainSeasonEpisodeCorrections(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		want  api.ReleaseNameOverrides
+	}{
+		{"season only", []string{"--season", "2"}, api.ReleaseNameOverrides{Season: new("2")}},
+		{"episode only", []string{"--episode", "5"}, api.ReleaseNameOverrides{Episode: new("5")}},
+		{"both", []string{"--season", "5", "--episode", "5"}, api.ReleaseNameOverrides{Season: new("5"), Episode: new("5")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, visited, paths, err := parseCLIOptions(append(tc.flags, "Example.Series.S01E01.mkv"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := buildCLIRequest(opts, visited, paths, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values, err := buildCLIInputCorrectionValues(opts, visited)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, got := range []api.ReleaseNameOverrides{req.ReleaseNameOverrides, values.ReleaseName} {
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("episode coordinate corrections = %#v, want %#v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestParseCLIOptionsRejectsNegativeQueueLimit(t *testing.T) {
 	if _, _, _, err := parseCLIOptions([]string{"--limit-queue", "-1", "movie.mkv"}); err == nil {
 		t.Fatal("expected negative limit-queue to fail")
@@ -1651,16 +1684,27 @@ func TestCLIInputFlagOccurrenceSkipsValuesAndLiteralPaths(t *testing.T) {
 
 func TestCLIInputEditReplacesEarlierCorrection(t *testing.T) {
 	t.Parallel()
-	args, err := mergeCLIInputEditArgs([]string{"-g", "GRP", "--alternate-title=Old", "--commentary", "example.mkv"}, []string{"--tag=OTHER", "--alternate-title", "New", "--mc=false"})
+	args, err := mergeCLIInputEditArgs([]string{"-g", "GRP", "--alternate-title=Old", "--commentary", "--keep-existing-ids", "example.mkv"},
+		[]string{"--tag=OTHER", "--alternate-title", "New", "--mc=false", "--keep-existing-ids=false"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts, _, paths, err := parseCLIOptions(args)
+	opts, visited, paths, err := parseCLIOptions(args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Tag != "OTHER" || opts.AlternateTitle != "New" || opts.Commentary || !slices.Equal(paths, []string{"example.mkv"}) {
+	if opts.Tag != "OTHER" || opts.AlternateTitle != "New" || opts.Commentary || opts.KeepExistingIDs || !slices.Equal(paths, []string{"example.mkv"}) {
 		t.Fatalf("edited options = %#v, paths = %v", opts, paths)
+	}
+	request, err := buildCLIRequest(opts, visited, paths, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range []*bool{request.ExternalIDOverrides.KeepTMDB, request.ExternalIDOverrides.KeepIMDB, request.ExternalIDOverrides.KeepTVDB,
+		request.ExternalIDOverrides.KeepTVmaze, request.ExternalIDOverrides.KeepMAL} {
+		if keep == nil || *keep {
+			t.Fatal("interactive Keep-off did not reach the preparation request")
+		}
 	}
 	if _, err := mergeCLIInputEditArgs(args, []string{"--alternate-title=A", "--alternate-title=B"}); err == nil {
 		t.Fatal("duplicate correction within one edit was accepted")

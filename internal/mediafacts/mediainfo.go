@@ -339,7 +339,7 @@ func EnglishSubtitleEvidenceFromMediaInfoText(value string) (english, known bool
 		}
 		if section == "text" && key == "language" {
 			languages := languageutil.NormalizeLanguageList([]string{value})
-			if slices.Contains(languages, "English") {
+			if languageutil.ContainsLanguage(languages, "en") {
 				english = true
 			}
 			textKnown = knownLanguages(languages)

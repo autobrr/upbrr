@@ -627,6 +627,11 @@ const identityFieldKeys = {
   "identity.tvdb": "TVDBID",
   "identity.tvmaze": "TVmazeID",
   "identity.mal": "MALID",
+  "identity.keep_tmdb": "KeepTMDB",
+  "identity.keep_imdb": "KeepIMDB",
+  "identity.keep_tvdb": "KeepTVDB",
+  "identity.keep_tvmaze": "KeepTVmaze",
+  "identity.keep_mal": "KeepMAL",
 } as const;
 
 const releaseNameFieldKeys = {

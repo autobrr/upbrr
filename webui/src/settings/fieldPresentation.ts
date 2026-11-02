@@ -15,6 +15,24 @@ export const hiddenSettingsFields: Record<string, readonly string[]> = {
 
 /** Display-only metadata: configuration keys and values remain owned by the existing schema. */
 export const settingsFieldPresentation: Record<string, Record<string, Presentation>> = {
+  Logging: {
+    Level: field(
+      "Runtime log level",
+      "Minimum runtime verbosity after Save: Trace includes detailed cache, parser and lifecycle evidence; Debug adds effective facts and decisions; Info shows progress and outcomes; Warn highlights problems needing attention; Error shows failures. The viewer filters below do not change this threshold.",
+    ),
+    FileEnabled: field(
+      "Write log files",
+      "After Save, write application logs to the displayed server-local path. Showing a path does not mean file logging is enabled. Live viewing is available independently of file output.",
+    ),
+    MaxTotalSizeMB: field(
+      "Total log-file budget (MB)",
+      "Approximate total file budget in megabytes. Default: 20; must be positive when file logging is enabled. The per-file rotation threshold is this value divided by Retained log files.",
+    ),
+    MaxFiles: field(
+      "Retained log files",
+      "File-rotation depth used with the total-size budget. Default: 3; must be positive when file logging is enabled. Rotation can remove older log files.",
+    ),
+  },
   MainSettings: {
     UpdateNotification: field(
       "Update notifications (compatibility)",
@@ -88,11 +106,11 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     BlurayScore: field(
       "Blu-ray match threshold",
-      "Minimum candidate score for automatic selection when multiple releases are found. Default: 94.5. A non-positive value uses 100.",
+      "Minimum score when multiple eligible releases are found. A known release country limits eligibility. Default: 94.5. A non-positive value uses 100.",
     ),
     BluraySingleScore: field(
       "Single-candidate Blu-ray threshold",
-      "Minimum score for automatic selection when one release is found. Default: 89.5. A non-positive value uses 100.",
+      "Minimum score for one release when no country is locked. A unique matching-country release is selected regardless of score. Default: 89.5. A non-positive value uses 100.",
     ),
     CheckPredb: field(
       "PreDB check preference (compatibility)",

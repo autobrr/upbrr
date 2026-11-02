@@ -452,6 +452,7 @@ func checkGoFile(path string, relative string) ([]Violation, error) {
 			Message: message,
 		})
 	}
+	checkArtifactOwnership(parsed, relative, add)
 	ast.Inspect(parsed, func(node ast.Node) bool {
 		if strings.HasSuffix(relative, "_test.go") {
 			return true

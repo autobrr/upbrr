@@ -104,6 +104,17 @@ Production documentation is built from the exact release tag and published only 
 
 ### Temporary dependency exceptions
 
+#### WebUI glob matcher resolution
+
+The WebUI pins minimatch 11.0.3 for the exact ESLint 10.4.0,
+`@eslint/config-array` 0.23.5 and TypeScript-ESLint estree 8.60.0 consumers to
+address GHSA-g3hv-75wg-m249. Published parent upgrades still require affected
+minimatch 10 releases. The override is limited to their retained matching APIs;
+minimatch 11 removes APIs such as `makeRe` and changes some glob semantics.
+Reassess the override when updating these parents, and remove it once their
+declared ranges resolve a patched version. Keep frozen installs, cache-free lint,
+frontend checks and embedded E2E validation; no advisory is excluded from scans.
+
 #### Blu-ray collector development pin
 
 The go-bdinfo collector API baseline follows the reviewed head of
@@ -374,7 +385,8 @@ Alternatively, `make precommit` and `make prepush` run the configured Lefthook c
 - Before tracker changes, follow [`ADDING_TRACKERS.md`](ADDING_TRACKERS.md) for semantic file ownership, registration/config, auth, naming, questions, immutable upload preparation and validation contracts. Do not duplicate those algorithms in generic infrastructure or UI. In particular, [content-filename transformations are prohibited](ADDING_TRACKERS.md#content-filename-policy); upload/search-title resolution is separate.
 - Metadata producers resolve parser/provider/media/user precedence before publishing a generation. Trackers consume [finalized facts](ADDING_TRACKERS.md#finalized-metadata-source-of-truth), preserving provider overrides and presentation-independent facts. Changes need producer-to-projection coverage, conflicting/empty parser cases and a prepared-contract version bump when cached semantics change.
 - Generic release policy, paths, clients and metainfo live under `internal/releasepolicy`, `internal/pathing`, `internal/torrentclient` and `internal/torrent/metainfo`. Generic BBCode, descriptions and image hosting live under `internal/{bbcode,description,imagehosting}`; tracker policy stays tracker-owned.
-- `make architecturepolicy` enforces tracker semantic ownership and reviewed-name boundaries. Generated frontend bundles, populated embedded assets, Playwright output and local binaries remain uncommitted local artifacts.
+- Managed release files share the `internal/pathing/layout.ReleaseTempDirFor` owner under application `tmp`; feature outputs may nest inside it. Source fingerprints and verified-content identity govern reuse independently of names. Artifact layout changes require coordinated producers, persistence/hydration, consumers, History cleanup and upgrade docs; never add automatic legacy cache discovery or migration.
+- `make architecturepolicy` enforces release artifact roots, tracker semantic ownership and reviewed-name boundaries; `make pathpolicy` checks filesystem portability and containment conventions. Generated frontend bundles, populated embedded assets, Playwright output and local binaries remain uncommitted local artifacts.
 
 ### Shareable fixtures and examples
 

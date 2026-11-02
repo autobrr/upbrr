@@ -34,6 +34,19 @@ func nonNilAppList[T any](values []T) []T {
 // request-shape adapters on mux.
 func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 	s.registerReleaseWorkflowAppRoutes(mux)
+	mux.HandleFunc("/api/app/TestConnection", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, configImportRequestEnvelopeMaxBytes)
+		var req api.ConnectionTestRequest
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid connection test request."})
+			return
+		}
+		writeJSON(w, http.StatusOK, s.backend.TestConnection(r.Context(), current.ID, req))
+	}))
 	mux.HandleFunc("/api/app/ListTrackerAuthCapabilities", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

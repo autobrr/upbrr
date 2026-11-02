@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -41,8 +43,8 @@ func sourceLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFail
 
 func needsSubtitleAcknowledgement(facts api.LanguageFacts) bool {
 	return facts.OriginalLanguagesKnown && len(facts.OriginalLanguages) > 0 &&
-		!slices.Contains(facts.OriginalLanguages, "English") && !slices.Contains(facts.OriginalLanguages, "ZXX") &&
-		!slices.Contains(facts.SubtitleLanguages, "English")
+		!languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
+		!languageutil.ContainsLanguage(facts.SubtitleLanguages, "English")
 }
 
 func webSourceVideo(subject api.TrackerValidationSubject) bool {
