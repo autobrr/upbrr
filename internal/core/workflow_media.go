@@ -242,6 +242,8 @@ func (a workflowMediaPrivateArtifacts) OpenArtifact(
 	}, nil
 }
 
+// DeleteArtifacts stages managed local cleanup and drops the deleted sources'
+// hosted references from a cloned resource. Commit finalizes local deletion.
 func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 	ctx context.Context,
 	snapshot api.MediaArtifactSet,
@@ -308,6 +310,12 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		case api.MediaArtifactDVDMenu:
 			result.DVDMenus = append(result.DVDMenus, dvdMenu)
 		case api.MediaArtifactHostedImage:
+		}
+	}
+	for hostedID, sourceID := range result.HostedSources {
+		if _, remove := deleted[sourceID]; remove {
+			delete(result.HostedImages, hostedID)
+			delete(result.HostedSources, hostedID)
 		}
 	}
 	result.commitState = &workflowMediaCommitState{pending: pending}

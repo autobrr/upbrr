@@ -61,6 +61,8 @@ With **Settings → Metadata → Collect existing tracker images** enabled, prep
 
 Existing description images are marked with unknown capture timestamps and provenance. Their chronological order cannot be inferred, including relative to newly captured screenshots. Review the displayed selection and order before continuing. Compatible existing URLs remain subject to the selected trackers’ image-host policies.
 
+Unselected or deleted screenshots are excluded from the links shown on **Upload Images** and from generated descriptions. You can select an unselected screenshot again to include it.
+
 Review the final screenshot selection and order before continuing. Existing URLs are reused only when the destination tracker and chosen image host allow them; other images need rehosting. Imported comparison blocks remain part of the description and do not count as ordinary screenshots. See [image-host requirements](./settings/image-hosting.md).
 
 ### Generate audio analysis

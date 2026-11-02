@@ -2027,15 +2027,6 @@ export function ReleaseSessionProvider({
           },
           contentURL: activePorts.workflow.mediaURL(workflowView.current!, artifact.id),
         }));
-      const uploaded = (media?.artifacts || [])
-        .filter((artifact) => artifact.kind === "hosted_image")
-        .map((artifact) => ({
-          artifactID: artifact.id,
-          host: artifact.host || "",
-          url: artifact.url || "",
-          sizeBytes: artifact.sizeBytes || 0,
-          uploadedAt: media?.createdAt || "",
-        }));
       const failures: UploadImageHostFailure[] = (media?.hostAttempts || []).flatMap((attempt) =>
         (attempt.failures || []).map((failure) => ({
           Host: attempt.host,
@@ -2049,7 +2040,7 @@ export function ReleaseSessionProvider({
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         candidates,
-        uploaded,
+        uploaded: workflowUploadedImages,
         failures,
         failedHosts: media?.failedHosts || [],
       });
@@ -2404,8 +2395,16 @@ export function ReleaseSessionProvider({
       candidates: workflowUploadCandidates,
     });
   }, [workflowUploadCandidates]);
+  const selectedImageSourceIDs = new Set(
+    workflowUploadCandidates.map((candidate) => candidate.image.artifactID),
+  );
   const workflowUploadedImages = (workflowMedia?.artifacts || [])
-    .filter((artifact) => artifact.kind === "hosted_image")
+    .filter(
+      (artifact) =>
+        artifact.kind === "hosted_image" &&
+        artifact.selected &&
+        selectedImageSourceIDs.has(artifact.source || ""),
+    )
     .map((artifact) => ({
       artifactID: artifact.id,
       host: artifact.host || "",

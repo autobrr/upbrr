@@ -6624,8 +6624,8 @@ func validateMediaRequirementsFingerprint(snapshot api.MediaArtifactSet, project
 	return nil
 }
 
-// deleteMediaArtifacts removes requested artifacts from retained media and clears
-// preparation and skip mode before publishing the remaining selection's readiness.
+// deleteMediaArtifacts removes local artifacts and their hosted URL associations,
+// then clears preparation and skip mode before publishing the remaining readiness.
 func (m *Module) deleteMediaArtifacts(
 	ctx context.Context,
 	ownerID string,
@@ -6649,9 +6649,15 @@ func (m *Module) deleteMediaArtifacts(
 	}
 	artifacts := make([]api.MediaArtifact, 0, len(snapshot.Artifacts)-len(deleted))
 	for _, artifact := range snapshot.Artifacts {
-		if _, ok := deleted[artifact.ID]; !ok {
-			artifacts = append(artifacts, artifact)
+		if _, remove := deleted[artifact.ID]; remove {
+			continue
 		}
+		if artifact.Kind == api.MediaArtifactHostedImage {
+			if _, remove := deleted[api.PublicResourceID(artifact.Source)]; remove {
+				continue
+			}
+		}
+		artifacts = append(artifacts, artifact)
 	}
 	snapshot.Artifacts = artifacts
 	snapshot.ImageRequirementsPrepared = false

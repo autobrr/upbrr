@@ -3770,6 +3770,14 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 				Kind:     api.MediaArtifactScreenshot,
 				Purpose:  api.ScreenshotPurposeFinal,
 				Selected: false,
+			}, {
+				ID:       "hosted-1",
+				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+				Source:   "artifact-1",
+				Host:     "example",
+				URL:      "https://images.example.invalid/retained.png",
 			}},
 			Status: api.StageStatusCompleted,
 		}, privateMedia, nil
@@ -3950,7 +3958,7 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 			t.Fatalf("durable workflow advanced past failed delete: %#v", state.Workflow)
 		}
 		media, ok := state.Media[state.Workflow.Media.ID]
-		if !ok || len(media.Artifacts) != 1 || media.Artifacts[0].ID != "artifact-1" {
+		if !ok || len(media.Artifacts) != 2 || media.Artifacts[0].ID != "artifact-1" || media.Artifacts[1].ID != "hosted-1" {
 			t.Fatalf("durable media lost the artifact after failed delete: %#v", media.Artifacts)
 		}
 	}

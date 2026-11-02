@@ -1706,6 +1706,11 @@ func (s e2eTrackerService) BuildPreparation(_ context.Context, meta api.Descript
 			continue
 		}
 		source := "E2E description fixture."
+		if os.Getenv("UPBRR_E2E_DESCRIPTION_MEDIA_LINKS") == "1" && meta.ExactMedia != nil {
+			for _, link := range meta.ExactMedia.ScreenshotUploads {
+				source += "\n[img]" + hostedImageURL(link) + "[/img]"
+			}
+		}
 		for _, group := range meta.DescriptionGroups {
 			if group.HasOverride && (strings.EqualFold(group.GroupKey, name) || slices.Contains(group.Trackers, name)) {
 				source = group.RawDescription

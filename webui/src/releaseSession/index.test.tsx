@@ -8166,6 +8166,104 @@ describe("useReleaseSession", () => {
     );
   });
 
+  it.each(["deselected", "deleted"] as const)(
+    "hides hosted URLs for %s sources through loading and re-entry",
+    async (change) => {
+      const sourcePath = "C:\\media\\Example";
+      const captureMedia = async (current: ReleaseWorkflowCurrent) => {
+        const revision = current.workflow.revision + 1;
+        return {
+          ...current,
+          workflow: { ...current.workflow, revision, media: { id: "media-links", revision } },
+          media: {
+            id: "media-links",
+            workflowId: current.workflow.id,
+            revision,
+            release: current.workflow.release!,
+            releaseRef: { SourcePath: sourcePath, Generation: 1 },
+            projectionSet: current.workflow.trackerProjections!,
+            captureFingerprint: "5".repeat(64),
+            requirementsFingerprint: "6".repeat(64),
+            imageRequirementsPrepared: true,
+            artifacts: [
+              {
+                id: "kept",
+                kind: "screenshot" as const,
+                purpose: "final" as const,
+                selected: true,
+              },
+              ...(change === "deselected"
+                ? [
+                    {
+                      id: "removed",
+                      kind: "screenshot" as const,
+                      purpose: "final" as const,
+                      selected: false,
+                    },
+                  ]
+                : []),
+              {
+                id: "hosted-kept",
+                kind: "hosted_image" as const,
+                purpose: "final" as const,
+                selected: true,
+                source: "kept",
+                url: "https://images.example.invalid/kept.png",
+              },
+              // Legacy snapshots can retain a selected hosted record after its source changes.
+              {
+                id: "hosted-removed",
+                kind: "hosted_image" as const,
+                purpose: "final" as const,
+                selected: true,
+                source: "removed",
+                url: "https://images.example.invalid/removed.png",
+              },
+              {
+                id: "hosted-disabled",
+                kind: "hosted_image" as const,
+                purpose: "final" as const,
+                selected: false,
+                source: "kept",
+                url: "https://images.example.invalid/disabled.png",
+              },
+            ],
+            status: "completed" as const,
+            createdAt: "2026-07-16T00:00:00Z",
+          },
+        };
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ captureMedia }) })),
+      });
+      await selectAndPrepare(result, sourcePath);
+      await act(() => result.current.screenshots.generate("final"));
+      const current = result.current.workflow.view.current!;
+      expect(result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual([
+        "https://images.example.invalid/kept.png",
+      ]);
+      await act(() => result.current.uploadedImages.load());
+      expect(result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual([
+        "https://images.example.invalid/kept.png",
+      ]);
+      unmount();
+
+      const resumed = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: current.workflow.id,
+            workflow: workflowPorts({ current: async () => current }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(resumed.result.current.workflow.view.current?.media).toBeTruthy());
+      expect(resumed.result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual(
+        ["https://images.example.invalid/kept.png"],
+      );
+      resumed.unmount();
+    },
+  );
+
   it("marks Input dirty while backend reconciliation accepts a changed tracker selection", async () => {
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(portsFor()),

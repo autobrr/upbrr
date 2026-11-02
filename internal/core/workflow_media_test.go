@@ -4661,12 +4661,30 @@ func TestWorkflowMediaPrivateResourceDeletesThroughManagedServices(t *testing.T)
 			Path:      "C:\\private\\menu.png",
 			Discovery: api.DVDMenuDiscoveryReachable,
 		}},
+		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
+			"hosted-screen": {RawURL: "https://images.example.invalid/screen.png"},
+			"hosted-menu":   {RawURL: "https://images.example.invalid/menu.png"},
+		},
+		HostedSources: map[api.PublicResourceID]api.PublicResourceID{
+			"hosted-screen": "screen-1",
+			"hosted-menu":   "menu-1",
+		},
 		screenshotService: screenshots,
 		dvdMenuService:    dvdMenus,
 	}
 	snapshot := api.MediaArtifactSet{Artifacts: []api.MediaArtifact{
 		{ID: "screen-1", Kind: api.MediaArtifactScreenshot},
 		{ID: "menu-1", Kind: api.MediaArtifactDVDMenu},
+		{
+			ID:     "hosted-screen",
+			Kind:   api.MediaArtifactHostedImage,
+			Source: "screen-1",
+		},
+		{
+			ID:     "hosted-menu",
+			Kind:   api.MediaArtifactHostedImage,
+			Source: "menu-1",
+		},
 	}}
 	retained, err := resource.DeleteArtifacts(context.Background(), snapshot, []api.PublicResourceID{"screen-1"})
 	if err != nil {
@@ -4676,6 +4694,10 @@ func TestWorkflowMediaPrivateResourceDeletesThroughManagedServices(t *testing.T)
 	if !ok || len(updated.Screenshots) != 0 || len(updated.DVDMenus) != 1 ||
 		updated.DVDMenus[0].Discovery != api.DVDMenuDiscoveryReachable {
 		t.Fatalf("retained media = %#v", retained)
+	}
+	if len(updated.HostedImages) != 1 || len(updated.HostedSources) != 1 || updated.HostedSources["hosted-menu"] != "menu-1" ||
+		len(resource.HostedImages) != 2 || len(resource.HostedSources) != 2 {
+		t.Fatalf("deleted source retained hosted links or mutated the prior snapshot: %#v", updated)
 	}
 	if len(screenshots.deleted) != 0 || len(dvdMenus.deleted) != 0 {
 		t.Fatalf("media deletion ran before commit screenshots=%v menus=%v", screenshots.deleted, dvdMenus.deleted)
