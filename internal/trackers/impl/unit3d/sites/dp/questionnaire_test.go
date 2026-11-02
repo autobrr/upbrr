@@ -123,6 +123,30 @@ func TestDPManualLanguageMarkerPreservesAutomaticRows(t *testing.T) {
 	}
 }
 
+func TestDPUnknownTitleOriginalAndDubRequireExplicitUncoveredMarker(t *testing.T) {
+	meta := dpManualMarkerSubject(t, []string{"English"}, "English", "German")
+	meta.LanguageFacts.OriginalLanguagesKnown = false
+	meta.LanguageFacts.OriginalLanguages = nil
+	if marker, established, err := audioLabelForFacts(meta); err != nil || established || marker != "" {
+		t.Fatalf("unknown title language silently established an empty marker: %q/%t/%v", marker, established, err)
+	}
+	field := dpManualMarkerField(t, meta)
+	if !slices.Contains(field.Options, "German MULTi") {
+		t.Fatal("existing naming choice does not offer the inspected dub's marker")
+	}
+	requireDPManualMarkerBlocked(t, meta)
+	dpSetManualMarkerAnswer(&meta, "German MULTi")
+	if failures := dpValidationFailures(t, meta); len(failures) != 0 {
+		t.Fatalf("explicit marker remained blocked: %#v", failures)
+	}
+	if name := dpReviewedName(t, meta, nil); !strings.Contains(name, "German MULTi AAC 2.0") {
+		t.Fatalf("explicit marker did not reach the upload name: %s", name)
+	}
+	if meta.LanguageFacts.OriginalLanguagesKnown || len(meta.LanguageFacts.OriginalLanguages) != 0 {
+		t.Fatal("naming choice invented title-language metadata")
+	}
+}
+
 func TestDPManualLanguageMarkerRejectsInvalidAnswers(t *testing.T) {
 	t.Parallel()
 	for _, answer := range []string{

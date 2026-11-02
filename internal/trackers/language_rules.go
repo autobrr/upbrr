@@ -559,13 +559,25 @@ func LanguageRuleFailure(subject api.TrackerValidationSubject, key, reason strin
 	return failure
 }
 
-// DubLanguageEvidenceFailure targets unidentified confirmed dubs without
-// requiring language corrections for unrelated unclassified programme tracks.
+// DubLanguageEvidenceFailure first identifies confirmed dubs, then offers
+// unresolved companion origins when an original or English soundtrack is needed.
+// Cleared or contradictory aggregate evidence must be reconciled separately.
 func DubLanguageEvidenceFailure(subject api.TrackerValidationSubject, reason string) api.RuleFailure {
 	failure := LanguageRuleFailure(subject, "dub_evidence", reason, LanguageUnresolved)
 	for _, track := range mediafacts.UnresolvedProgrammeLanguages(subject.LanguageFacts) {
 		if subject.LanguageFacts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed {
 			failure.LanguageCorrectionTrackIDs = append(failure.LanguageCorrectionTrackIDs, track.ID)
+		}
+	}
+	if len(failure.LanguageCorrectionTrackIDs) == 0 && len(subject.LanguageFacts.ProgrammeLanguages) > 0 &&
+		subject.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusContradictory {
+		for _, track := range mediafacts.UnresolvedProgrammeAudioOrigins(subject.LanguageFacts) {
+			failure.AudioOriginCorrectionTrackIDs = append(failure.AudioOriginCorrectionTrackIDs, track.ID)
+		}
+		if len(failure.AudioOriginCorrectionTrackIDs) > 0 {
+			failure.Reason = LanguageRuleFailure(subject, "dub_evidence",
+				"a confirmed dub needs an original or English soundtrack companion; review a companion's soundtrack origin or identify English programme audio",
+				LanguageUnresolved).Reason
 		}
 	}
 	return failure

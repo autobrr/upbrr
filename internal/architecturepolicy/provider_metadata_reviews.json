@@ -72,8 +72,8 @@
     "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. PHD explicitly opts into the maintainer-selected English-language fallback over finalized LanguageFacts; this is not a verified PHD policy. The existing evaluator, provider consumers, manual metadata precedence, country and age routing, constructibility, and AZ/CZ language policies are unchanged. The shared callback exposes canonical source corrections and the versioned binding invalidates prior projections. Confirmed-dub review fix advances the owned validation binding version; provider selection, manual precedence and existing payload/category checks remain unchanged.",
-    "sha256": "82c854bf301584aadf2a4e0d3d3432f7b32f144e4ba7f6a3e14be6556d4f7b31"
+    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. PHD explicitly opts into the maintainer-selected English-language fallback over finalized LanguageFacts; this is not a verified PHD policy. The existing evaluator, provider consumers, manual metadata precedence, country and age routing, constructibility, and AZ/CZ language policies are unchanged. The shared callback exposes canonical source corrections and the versioned binding invalidates prior projections. Confirmed-dub review fix advances the owned validation binding version; provider selection, manual precedence and existing payload/category checks remain unchanged. Staged companion-origin correction advances the owned validation version; the callback and all provider/manual selectors remain unchanged.",
+    "sha256": "20884c0ddb0d424c52f9ff73fec0d2ced9d4c4eb4064ef558c2fda11faf45c97"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
     "reason": "Appends the AZ/CZ language assessment using finalized LanguageFacts without a provider fallback. Existing TMDB origin-country routing, manual-aware age checks and constructibility remain unchanged; conflicting-provider corrections and explicit clears remain authoritative.",
@@ -1140,8 +1140,8 @@
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "reason": "Full-DVD eligibility review: the strict check consumes finalized DiscType and release Type through the existing full-disc predicate; an absent disc label uses the finalized DVD/PAL/NTSC source family. HD DVD and DVD-derived remuxes/encodes remain distinct. Current-source provider selectors, explicit manual metadata precedence, language assessment and taxonomy are unchanged. The policy version invalidates retained approvals. Confirmed-dub review fix advances the owned validation binding version; provider selection, manual precedence and existing payload/category checks remain unchanged.",
-    "sha256": "588de54616a1c522146a69cf077ee15b057fd5e415416e8837dd0b2ed1028279"
+    "reason": "Full-DVD eligibility review: the strict check consumes finalized DiscType and release Type through the existing full-disc predicate; an absent disc label uses the finalized DVD/PAL/NTSC source family. HD DVD and DVD-derived remuxes/encodes remain distinct. Current-source provider selectors, explicit manual metadata precedence, language assessment and taxonomy are unchanged. The policy version invalidates retained approvals. Confirmed-dub review fix advances the owned validation binding version; provider selection, manual precedence and existing payload/category checks remain unchanged. Staged companion-origin correction advances the owned validation version; the callback and all provider/manual selectors remain unchanged.",
+    "sha256": "75bdd6a4763d131cb2b95219429b429a5b58101e48d001ce6a3523a2fd76afdf"
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

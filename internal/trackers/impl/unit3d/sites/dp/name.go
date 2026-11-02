@@ -18,7 +18,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v16", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v17", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -185,7 +185,8 @@ func audioLabel(values []string) string {
 }
 
 // audioLabelForFacts applies established DP rows. A false boolean identifies an
-// uncovered complete composition needing manual choice. Incomplete facts select
+// uncovered complete composition needing manual choice, including explicit
+// original/dub combinations without a title-language comparison. Incomplete facts select
 // no marker; ambiguous primary-track evidence returns a naming error. Unknown
 // title language permits only markers established by explicit soundtrack facts.
 func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
@@ -223,6 +224,11 @@ func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 		}
 	}
 	if !originalKnown {
+		if original && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+			return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed
+		}) {
+			return "", false, nil
+		}
 		return "", true, nil
 	}
 	nordic := []string{"da", "fi", "is", "no", "nb", "nn", "sv"}

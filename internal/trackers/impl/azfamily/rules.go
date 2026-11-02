@@ -21,7 +21,10 @@ import (
 // policy binding.
 func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
 	version := "constructibility-v2"
-	if d.site.Name == "AZ" || d.site.Name == "CZ" {
+	switch d.site.Name {
+	case "AZ":
+		version = "policy-v9"
+	case "CZ":
 		version = "policy-v8"
 	}
 	binding := trackers.ValidationPolicyBinding{
@@ -655,7 +658,7 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 			slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
 				return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed
 			}) {
-			if programmeStatus != api.MetadataEvidenceStatusComplete {
+			if programmeStatus != api.MetadataEvidenceStatusComplete || facts.HasUnresolvedProgrammeAudioOrigin() {
 				failures = append(failures, trackers.DubLanguageEvidenceFailure(
 					subject,
 					"a confirmed dub needs usable programme-language and inspected-coverage evidence; identify its language and correct or reset cleared or contradictory Audio languages before assessing the dub exception",

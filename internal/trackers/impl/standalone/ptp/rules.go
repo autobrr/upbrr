@@ -34,7 +34,8 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 			}))
 	})
 	switch {
-	case !facts.OriginalLanguagesKnown && needsDubEvidence && programmeStatus != api.MetadataEvidenceStatusComplete &&
+	case !facts.OriginalLanguagesKnown && needsDubEvidence &&
+		(programmeStatus != api.MetadataEvidenceStatusComplete || facts.HasUnresolvedProgrammeAudioOrigin()) &&
 		(programmeStatus == api.MetadataEvidenceStatusContradictory || !facts.HasOriginalAudio() && !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English")):
 		failures = append(failures, trackers.DubLanguageEvidenceFailure(
 			subject,

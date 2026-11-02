@@ -16,7 +16,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:                 "unit3d-dp-policy-v5",
+		ID:                 "unit3d-dp-policy-v6",
 		Check:              checkLanguageRequirements,
 		LanguageAssessment: languageAssessment,
 	}

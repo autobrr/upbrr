@@ -93,7 +93,12 @@ does not require track-language or soundtrack-origin answers and does not block
 an otherwise eligible upload. Unknown facts remain unknown. Explicit soundtrack
 evidence still supports applicable audio order and default-track rules. Confirmed dubs still
 follow the selected tracker's restrictions; a dub-specific rule may need further
-facts. Independent payload and media requirements still apply. Supplying an
+facts. Review first identifies an unknown confirmed dub, then offers companion
+soundtrack classification if an original or English soundtrack is still needed.
+Existing evidence that satisfies the rule removes that request. An uncovered
+release-name audio marker may require an explicit choice from verified track
+facts; this does not supply the title's original language.
+Independent payload and media requirements still apply. Supplying an
 original language restores the ordinary comparison; clearing it or resetting to
 an unknown automatic value removes that comparison again.
 
