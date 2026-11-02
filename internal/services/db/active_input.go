@@ -282,6 +282,9 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 			if rows != 1 {
 				return api.ErrReleaseWorkflowRevisionConflict
 			}
+			if err := syncWorkflowStorage(ctx, tx, *workflow); err != nil {
+				return err
+			}
 		}
 		return writeActiveInput(ctx, tx, next)
 	})

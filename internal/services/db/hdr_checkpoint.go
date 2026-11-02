@@ -37,7 +37,7 @@ func (r *SQLiteRepository) CheckpointReleaseWorkflowResources(ctx context.Contex
 			return fmt.Errorf("db checkpoint HDR resources rows: %w", err)
 		}
 		if rows == 1 {
-			return nil
+			return syncWorkflowStorage(ctx, tx, record)
 		}
 		if _, err := loadWorkflowState(ctx, tx, record.OwnerID, record.WorkflowID); err != nil {
 			return err

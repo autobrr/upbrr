@@ -62,6 +62,7 @@ type Backend struct {
 	activationInitMu    sync.Mutex
 	activator           *RuntimeActivator
 	workflowCoordinator *releaseworkflow.Coordinator
+	runtimeMaintenance  *core.RuntimeMaintenance
 }
 
 type backendLogStream struct {
@@ -128,6 +129,7 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 		_ = logger.Close()
 		return nil, fmt.Errorf("web: initialize workflow coordinator: %w", err)
 	}
+	runtimeMaintenance := &core.RuntimeMaintenance{}
 	var capabilities CoreCapabilities
 	var coreOwner LifecycleOwner
 	var coreInitErr error
@@ -154,12 +156,13 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 			EnforceConfigActivationGeneration: true,
 			ConfigActivationGeneration:        activation.ActiveGeneration,
 			ConfigActivationFingerprint:       activation.Fingerprint,
-		}, workflowCoordinator)
+		}, workflowCoordinator, runtimeMaintenance)
 		if coreErr != nil {
 			_ = repo.Close()
 			_ = logger.Close()
 			return nil, fmt.Errorf("web: %w", coreErr)
 		}
+		coreSvc.ActivateMaintenance()
 		capabilities, coreOwner = BindCoreCapabilities(coreSvc)
 		initialBundle.setResources(coreOwner, logger)
 		coreSvc.SetOperationLifetime(initialBundle.borrow)
@@ -178,8 +181,10 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 		hub:                 hub,
 		streams:             make(map[string]*backendLogStream),
 		workflowCoordinator: workflowCoordinator,
+		runtimeMaintenance:  runtimeMaintenance,
 	}
 	if _, err := backend.runtimeActivator(); err != nil {
+		runtimeMaintenance.Close()
 		if coreOwner != nil {
 			_ = coreOwner.Close()
 		}
@@ -209,6 +214,7 @@ func (b *Backend) CloseContext(ctx context.Context) error {
 	} else if b.workflowCoordinator != nil {
 		_ = b.workflowCoordinator.Shutdown(shutdownCtx)
 	}
+	b.runtimeMaintenance.Close()
 	if runtime.bundle != nil {
 		runtime.bundle.retire()
 	} else if runtime.coreOwner != nil {

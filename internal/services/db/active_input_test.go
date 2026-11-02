@@ -9,6 +9,7 @@ import (
 	"errors"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -426,7 +427,26 @@ func TestInputRecordPreservesIdentityAcrossVerification(t *testing.T) {
 
 func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T) {
 	t.Parallel()
-	repo := openMigratedTestRepo(t)
+	repo, err := Open(filepath.Join(t.TempDir(), "legacy-audio.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	legacy := slices.DeleteFunc(slices.Clone(migrationRegistry), func(step migrationStep) bool {
+		return step.id == "2026_11_structured_workflow_storage"
+	})
+	if err := migrateContextWithRegistry(t.Context(), repo.RawDB(), legacy); err != nil {
+		t.Fatal(err)
+	}
+	insertLegacyState := func(state api.ReleaseWorkflowStateRecord) {
+		t.Helper()
+		if _, err := repo.RawDB().ExecContext(t.Context(), `INSERT INTO release_workflow_states
+			(owner_id, workflow_id, revision, status, state_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			state.OwnerID, state.WorkflowID, state.Revision, state.Status, state.Payload,
+			formatWorkflowStateTime(state.CreatedAt), formatWorkflowStateTime(state.UpdatedAt)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
 	now := time.Now().UTC()
 	for _, item := range []struct {
@@ -460,9 +480,7 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		}
 		state := workflowStateRecordForTest(item.id, api.WorkflowStatusDraft, item.updated, string(payload))
 		state.OwnerID = item.owner
-		if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), state); err != nil {
-			t.Fatal(err)
-		}
+		insertLegacyState(state)
 	}
 	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
 		ID:            "input",
@@ -491,9 +509,7 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		t.Fatal(err)
 	}
 	changedState := workflowStateRecordForTest("workflow-before-change", api.WorkflowStatusDraft, now, string(changedPayload))
-	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), changedState); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacyState(changedState)
 	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
 		ID:            "changed-input",
 		CanonicalPath: changedSource,
@@ -519,9 +535,7 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		t.Fatal(err)
 	}
 	subsecondState := workflowStateRecordForTest("workflow-subsecond", api.WorkflowStatusDraft, now, string(subsecondPayload))
-	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), subsecondState); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacyState(subsecondState)
 	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
 		ID:            "subsecond-input",
 		CanonicalPath: subsecondSource,
@@ -550,9 +564,7 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		t.Fatal(err)
 	}
 	latestState := workflowStateRecordForTest("workflow-latest", api.WorkflowStatusDraft, now, string(latestPayload))
-	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), latestState); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacyState(latestState)
 	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
 		ID:            "latest-input",
 		CanonicalPath: latestSource,
@@ -585,9 +597,7 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		t.Fatal(err)
 	}
 	disabledState := workflowStateRecordForTest("workflow-disabled", api.WorkflowStatusDraft, now, string(disabledPayload))
-	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), disabledState); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacyState(disabledState)
 	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
 		ID:            "disabled-input",
 		CanonicalPath: disabledSource,

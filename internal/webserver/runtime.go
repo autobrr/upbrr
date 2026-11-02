@@ -134,6 +134,7 @@ func buildRuntimeGenerationWithCoordinator(
 	coordinator *releaseworkflow.Coordinator,
 	configGeneration uint64,
 	configFingerprint api.WorkflowFingerprint,
+	maintenance ...*core.RuntimeMaintenance,
 ) (RuntimeGeneration, error) {
 	if ctx == nil {
 		return RuntimeGeneration{}, errors.New("webserver: context is required")
@@ -157,7 +158,7 @@ func buildRuntimeGenerationWithCoordinator(
 		EnforceConfigActivationGeneration: true,
 		ConfigActivationGeneration:        configGeneration,
 		ConfigActivationFingerprint:       configFingerprint,
-	}, coordinator)
+	}, coordinator, maintenance...)
 	if err != nil {
 		_ = logger.Close()
 		return RuntimeGeneration{}, fmt.Errorf("web: %w", err)

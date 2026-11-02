@@ -2202,6 +2202,11 @@ func TestSQLitePurgeContentDataRemovesInactiveUnknownEffectsBeforeFirstInput(t *
 		target.Payload, formatWorkflowStateTime(target.CreatedAt), formatWorkflowStateTime(target.UpdatedAt)); err != nil {
 		t.Fatalf("insert inactive workflow: %v", err)
 	}
+	// The opening slot prevents public workflow creation. Keep this manually
+	// seeded current-format fixture consistent with its structured storage.
+	if err := syncWorkflowStorage(ctx, repo.RawDB(), target); err != nil {
+		t.Fatal(err)
+	}
 	insertWorkflowHistoryEffectForTest(t, repo, target, api.WorkflowEffectStatusUnknown, now)
 	active := opening
 	active.State, active.Revision = api.ActiveInputActive, opening.Revision+1
