@@ -118,6 +118,21 @@ func TestPlanFindsHashedTrackerArtifactsAndDeletesOnlyMatchingURL(t *testing.T) 
 	if err != nil || len(reusable) != 2 {
 		t.Fatalf("reusable tracker images = %#v err=%v", reusable, err)
 	}
+	// Format evidence has a byte budget; an unknown format must not discard a
+	// hosted reference whose local image header still satisfies the geometry check.
+	oversized, err := os.OpenFile(artifactPaths[0], os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	truncateErr := oversized.Truncate(20*1024*1024 + 1)
+	closeErr := oversized.Close()
+	if truncateErr != nil || closeErr != nil {
+		t.Fatalf("extend valid image: truncate=%v close=%v", truncateErr, closeErr)
+	}
+	plan, err = service.Plan(t.Context(), meta, 4)
+	if err != nil || len(plan.TrackerImageLinks) != 2 || len(plan.FinalSelections) != 2 || plan.FinalSelections[0].Format != "" {
+		t.Fatalf("unknown format discarded a hosted reference: plan=%#v err=%v", plan, err)
+	}
 	if err := service.Delete(t.Context(), meta, artifactPaths[0]); err != nil {
 		t.Fatalf("delete first tracker artifact: %v", err)
 	}

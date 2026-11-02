@@ -200,7 +200,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
             onClick={() => void facet.generate("final")}
             disabled={mutationsBlocked || selections.length === 0}
           >
-            {busy ? "Capturing..." : "Generate screenshots"}
+            {busy ? "Working..." : "Generate screenshots"}
           </button>
         </div>
       </section>

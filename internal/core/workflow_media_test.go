@@ -3658,6 +3658,7 @@ func TestWorkflowMediaSavedImagePlanIDIgnoresCaptureOverrides(t *testing.T) {
 	}
 	for _, explicitImport := range []bool{false, true} {
 		screenshots.selections = nil
+		screenshots.plans = 0
 		instructions := api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal}
 		wantImages := 2
 		if explicitImport {
@@ -3676,6 +3677,9 @@ func TestWorkflowMediaSavedImagePlanIDIgnoresCaptureOverrides(t *testing.T) {
 		snapshot, _, err = builder.Build(t.Context(), release, projections, decoded, time.Now())
 		if err != nil || countMediaArtifacts(snapshot.Artifacts, api.MediaArtifactScreenshot) != wantImages || len(screenshots.selections) != wantImages-1 {
 			t.Fatalf("import-only=%t: images=%#v captured=%#v err=%v", explicitImport, snapshot.Artifacts, screenshots.selections, err)
+		}
+		if screenshots.plans != 1 {
+			t.Fatalf("import-only=%t: rebuilt identical screenshot plan %d times", explicitImport, screenshots.plans)
 		}
 	}
 }

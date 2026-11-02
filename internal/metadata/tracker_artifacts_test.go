@@ -400,18 +400,14 @@ func TestPersistUnit3DArtifactsMaxConcurrentImageDownloads(t *testing.T) {
 
 	var inFlight atomic.Int32
 	var maxInFlight atomic.Int32
+	var started atomic.Int32
+	downloadsReady := make(chan struct{})
 
-	png1x1 := []byte{
-		137, 80, 78, 71, 13, 10, 26, 10,
-		0, 0, 0, 13, 73, 72, 68, 82,
-		0, 0, 0, 1, 0, 0, 0, 1,
-		8, 6, 0, 0, 0, 31, 21, 196,
-		137, 0, 0, 0, 13, 73, 68, 65,
-		84, 120, 156, 99, 248, 15, 4, 0,
-		9, 251, 3, 253, 160, 158, 134, 129,
-		0, 0, 0, 0, 73, 69, 78, 68,
-		174, 66, 96, 130,
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
 	}
+	png1x1 := encoded.Bytes()
 
 	previousHTTPClient := newUnit3DArtifactImageHTTPClient
 	newUnit3DArtifactImageHTTPClient = func() *http.Client {
@@ -436,7 +432,14 @@ func TestPersistUnit3DArtifactsMaxConcurrentImageDownloads(t *testing.T) {
 			}
 			defer inFlight.Add(-1)
 
-			time.Sleep(75 * time.Millisecond)
+			if started.Add(1) == unit3dImageWorkers {
+				close(downloadsReady)
+			}
+			select {
+			case <-downloadsReady:
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
 			return &http.Response{
 				StatusCode:    http.StatusOK,
 				Header:        http.Header{"Content-Type": []string{"image/png"}},
@@ -466,7 +469,9 @@ func TestPersistUnit3DArtifactsMaxConcurrentImageDownloads(t *testing.T) {
 	meta := preparationstate.State{SourcePath: filepath.Join(tempDir, "source")}
 	result := trackerdata.Result{Validated: validated}
 
-	successful, _ := svc.persistTrackerArtifacts(context.Background(), meta, "BHD", result, true)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	successful, _ := svc.persistTrackerArtifacts(ctx, meta, "BHD", result, true)
 	if len(successful) != imageCount {
 		t.Fatalf("expected %d downloaded images, got %d", imageCount, len(successful))
 	}

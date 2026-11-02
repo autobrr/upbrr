@@ -578,7 +578,7 @@ func (b workflowMediaBuilder) Build(
 			Label:   "Screenshots",
 			Status:  api.StageStatusRunning,
 			Total:   screenshotCount,
-			Message: "Capturing screenshots.",
+			Message: "Preparing screenshot images.",
 		})
 		if b.screenshots == nil {
 			return failedMediaSnapshot(snapshot, "Screenshot capture service is unavailable."), privateArtifacts, nil
@@ -609,17 +609,22 @@ func (b workflowMediaBuilder) Build(
 		}
 		importedScreenshots := importedTrackerScreenshots(plan)
 		if instructions.SavedImagePlanID != "" {
-			reviewedSubject, planErr := b.resolver.ResolveScreenshotSubject(ctx, api.MediaPlanInput{
-				Release: release,
-				Count:   projectedScreenshots,
-				Purpose: api.ScreenshotPurposeFinal,
-			})
-			if planErr != nil {
-				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media resolve saved image plan subject: %w", planErr)
-			}
-			reviewedPlan, planErr := b.screenshots.Plan(ctx, reviewedSubject, projectedScreenshots)
-			if planErr != nil {
-				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media saved image plan: %w", planErr)
+			// The current capture plan also validates the saved plan unless capture
+			// overrides changed its inputs. Keep review independent of those overrides.
+			reviewedPlan := plan
+			if screenshotCount != projectedScreenshots || purpose != api.ScreenshotPurposeFinal || len(instructions.ManualFrames) > 0 {
+				reviewedSubject, planErr := b.resolver.ResolveScreenshotSubject(ctx, api.MediaPlanInput{
+					Release: release,
+					Count:   projectedScreenshots,
+					Purpose: api.ScreenshotPurposeFinal,
+				})
+				if planErr != nil {
+					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media resolve saved image plan subject: %w", planErr)
+				}
+				reviewedPlan, err = b.screenshots.Plan(ctx, reviewedSubject, projectedScreenshots)
+				if err != nil {
+					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media saved image plan: %w", err)
+				}
 			}
 			currentPlanID, planErr := api.MediaPlanContentID(release, projections, reviewedPlan.SuggestedSelections, mediaPlanSavedImages(reviewedPlan))
 			if planErr != nil {
@@ -662,6 +667,15 @@ func (b workflowMediaBuilder) Build(
 		}
 		capture := api.ScreenshotResult{Purpose: purpose}
 		if len(selections) > 0 {
+			api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+				Phase:   "screenshots",
+				ItemID:  "screenshots",
+				Kind:    "media",
+				Label:   "Screenshots",
+				Status:  api.StageStatusRunning,
+				Total:   len(selections),
+				Message: "Capturing screenshots.",
+			})
 			capture, err = b.screenshots.Capture(ctx, subject, selections, purpose)
 			if err != nil {
 				if ctx.Err() != nil {
@@ -697,6 +711,9 @@ func (b workflowMediaBuilder) Build(
 		privateArtifacts.Screenshots = append(privateArtifacts.Screenshots, images...)
 		captureStatus := api.StageStatusCompleted
 		captureMessage := "Screenshot capture complete."
+		if len(selections) == 0 {
+			captureMessage = "Existing screenshot images included."
+		}
 		if len(capture.Errors) > 0 {
 			captureStatus = api.StageStatusPartial
 			captureMessage = "Screenshot capture completed with partial coverage."
