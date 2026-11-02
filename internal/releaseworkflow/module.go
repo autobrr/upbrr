@@ -2352,6 +2352,25 @@ func (m *Module) withOperationReporters(
 		newDurableExternalEffectReporter(m, ownerID, workflowID, operationID),
 	)
 	ctx = api.WithPreparationProgressReporter(ctx, func(update api.PreparationProgressUpdate) {
+		if candidate := update.BlurayCandidate; candidate != nil {
+			status := api.StageStatusCompleted
+			if candidate.DetailsStatus == "failed" {
+				status = api.StageStatusFailed
+			}
+			report(api.WorkflowProgressUpdate{
+				Phase:           string(update.Phase),
+				ItemID:          "bluray:" + candidate.ReleaseID,
+				Kind:            "bluray_detail",
+				Label:           candidate.Title,
+				Status:          status,
+				Completed:       1,
+				Total:           1,
+				Message:         update.Message,
+				ItemOnly:        true,
+				BlurayCandidate: candidate,
+			})
+			return
+		}
 		itemStatus := api.StageStatusRunning
 		switch update.Status {
 		case api.PreparationProgressCompleted:
@@ -2469,14 +2488,15 @@ func applyWorkflowProgress(status *api.WorkflowOperationStatus, update api.Workf
 		return
 	}
 	item := api.WorkflowOperationItem{
-		ID:        itemID,
-		Kind:      strings.TrimSpace(update.Kind),
-		Label:     strings.TrimSpace(update.Label),
-		Phase:     strings.TrimSpace(update.Phase),
-		Status:    update.Status,
-		Completed: max(0, update.Completed),
-		Total:     max(0, update.Total),
-		Message:   strings.TrimSpace(update.Message),
+		BlurayCandidate: update.BlurayCandidate,
+		ID:              itemID,
+		Kind:            strings.TrimSpace(update.Kind),
+		Label:           strings.TrimSpace(update.Label),
+		Phase:           strings.TrimSpace(update.Phase),
+		Status:          update.Status,
+		Completed:       max(0, update.Completed),
+		Total:           max(0, update.Total),
+		Message:         strings.TrimSpace(update.Message),
 	}
 	if itemIndex >= 0 {
 		// A preparation substep can start a new work set or discover its total.
@@ -4694,7 +4714,7 @@ func (m *Module) selectBlurayCandidate(
 		return CommandResult{}, fmt.Errorf("%w: fact instructions unavailable", ErrInvalidTransition)
 	}
 	instructions := facts.Instructions
-	instructions.BlurayReleaseID = releaseID
+	instructions.Bluray = &api.BluraySelection{Mode: "manual", Release: releaseID}
 	return m.replaceFactsAndPrepare(ctx, ownerID, state, nextRevision, now, api.PrepareInput{
 		SourcePath:   current.Release.Source.SourcePath,
 		Intent:       api.PreparationIntentPreview,

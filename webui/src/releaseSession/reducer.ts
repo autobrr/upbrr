@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { isBluraySiteURL } from "../utils/providerId";
+
 import type {
   ExternalIDOverrides,
   ImageUploadProgressUpdate,
@@ -362,6 +364,7 @@ const emptyIntent = (): PreparationIntent => ({
 
 const clonePreparationIntent = (intent: PreparationIntent): PreparationIntent => ({
   sourceLookupURL: intent.sourceLookupURL,
+  bluray: intent.bluray ? { ...intent.bluray } : null,
   identity: { ...intent.identity },
   metadata: { ...intent.metadata },
   releaseName: { ...intent.releaseName },
@@ -1276,6 +1279,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         {
           ...state.preparationIntent,
           sourceLookupURL: action.value,
+          bluray: isBluraySiteURL(action.value)
+            ? null
+            : !action.value.trim() && isBluraySiteURL(state.preparationIntent.sourceLookupURL)
+              ? { Mode: "auto", Release: "" }
+              : state.preparationIntent.bluray,
         },
         false,
       );

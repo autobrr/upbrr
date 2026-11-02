@@ -1385,3 +1385,26 @@ describe("screenshot plan authority", () => {
     },
   );
 });
+
+it("routes Blu-ray site overrides while preserving manual selection for unrelated tracker URLs", () => {
+  const empty = initialSessionState();
+  const initial = {
+    ...empty,
+    preparationIntent: {
+      ...empty.preparationIntent,
+      bluray: { Mode: "manual" as const, Release: "102" },
+    },
+  };
+  const tracker = sessionReducer(initial, {
+    type: "source_lookup_changed",
+    value: "https://tracker.example/torrents/blu-ray.com/123",
+  });
+  expect(tracker.preparationIntent.bluray).toEqual({ Mode: "manual", Release: "102" });
+  const exact = sessionReducer(tracker, {
+    type: "source_lookup_changed",
+    value: "https://WWW.BLU-RAY.COM/movies/Example/123/",
+  });
+  expect(exact.preparationIntent.bluray).toBeNull();
+  const cleared = sessionReducer(exact, { type: "source_lookup_changed", value: "" });
+  expect(cleared.preparationIntent.bluray).toEqual({ Mode: "auto", Release: "" });
+});

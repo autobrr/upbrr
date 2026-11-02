@@ -134,7 +134,7 @@ const workflowCurrent = (workflowID: string, revision: number): ReleaseWorkflowC
       ReleaseName: {},
       Metadata: {},
       SourceLookup: "",
-      BlurayReleaseID: "",
+      Bluray: null,
       Playlist: { Set: false, Selected: [], UseAll: false },
       TrackerIDs: {},
     },
@@ -8701,4 +8701,71 @@ describe("saved-image plan authority", () => {
       unmount();
     }
   });
+});
+
+it("requests single/all Blu-ray details through exact preparation authority and retains manual selection", async () => {
+  const workflowID = "workflow-bluray-details";
+  const sourcePath = "Example.Release.2026.mkv";
+  let current = workflowCurrentFromPreview(workflowCurrent(workflowID, 2), preview(sourcePath, 1));
+  current = {
+    ...current,
+    factInstructions: {
+      ...current.factInstructions!,
+      instructions: {
+        ...current.factInstructions!.instructions,
+        Bluray: { Mode: "manual", Release: "102" },
+        SourceLookup: "https://tracker.example/torrents/blu-ray.com/123",
+      },
+    },
+  };
+  const continuation = vi.fn(async (request: ContinueReleaseWorkflowRequest) => {
+    if (request.intent.preparation) {
+      current = {
+        ...current,
+        workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+        factInstructions: {
+          ...current.factInstructions!,
+          instructions: request.intent.preparation.Instructions,
+        },
+      };
+    }
+    return current;
+  });
+  const { result, unmount } = renderHook(useReleaseSession, {
+    wrapper: wrapperFor(
+      portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({ current: async () => current, continue: continuation }),
+      }),
+    ),
+  });
+  await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
+  for (const [releaseID, request] of [
+    ["101", { ReleaseID: "101", All: false }],
+    [undefined, { ReleaseID: "", All: true }],
+  ] as const) {
+    await act(() => result.current.input.fetchCandidateDetails(releaseID));
+    expect(continuation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authority: { workflowId: workflowID, expectedRevision: current.workflow.revision - 1 },
+        intent: expect.objectContaining({
+          preparation: expect.objectContaining({
+            Force: true,
+            Instructions: expect.objectContaining({ Bluray: { Mode: "manual", Release: "102" } }),
+            Controls: expect.objectContaining({ BlurayDetails: request }),
+          }),
+        }),
+      }),
+      expect.any(AbortSignal),
+    );
+  }
+  await act(() => result.current.input.selectCandidate("101"));
+  await act(() => result.current.input.setCandidateSelection("skip"));
+  expect(current.factInstructions!.instructions.Bluray).toEqual({ Mode: "skip", Release: "" });
+  await act(() => result.current.input.setCandidateSelection("auto"));
+  expect(current.factInstructions!.instructions.Bluray).toEqual({ Mode: "auto", Release: "" });
+  expect(current.factInstructions!.instructions.SourceLookup).toBe(
+    "https://tracker.example/torrents/blu-ray.com/123",
+  );
+  unmount();
 });

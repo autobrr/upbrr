@@ -822,6 +822,21 @@
       "AudioTrackRole": {
         "type": "string"
       },
+      "BlurayDetailRequest": {
+        "type": "object",
+        "properties": {
+          "All": {
+            "type": "boolean"
+          },
+          "ReleaseID": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "All",
+          "ReleaseID"
+        ]
+      },
       "BlurayDiscSpec": {
         "type": "object",
         "properties": {
@@ -948,6 +963,9 @@
               "$ref": "#/components/schemas/BlurayImage"
             }
           },
+          "DetailsStatus": {
+            "type": "string"
+          },
           "GenericDisc": {
             "type": "boolean"
           },
@@ -1007,6 +1025,7 @@
           "Accepted",
           "Country",
           "CoverImages",
+          "DetailsStatus",
           "GenericDisc",
           "MatchNotes",
           "MovieTitle",
@@ -1023,6 +1042,21 @@
           "Title",
           "URL",
           "Warnings"
+        ]
+      },
+      "BluraySelection": {
+        "type": "object",
+        "properties": {
+          "Mode": {
+            "type": "string"
+          },
+          "Release": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Mode",
+          "Release"
         ]
       },
       "BluraySpecs": {
@@ -5876,6 +5910,16 @@
       "PreparationControls": {
         "type": "object",
         "properties": {
+          "BlurayDetails": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BlurayDetailRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "CaptureHDRMetadata": {
             "type": "boolean"
           },
@@ -6542,8 +6586,15 @@
       "ReleaseFactInstructions": {
         "type": "object",
         "properties": {
-          "BlurayReleaseID": {
-            "type": "string"
+          "Bluray": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BluraySelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "Category": {
             "anyOf": [
@@ -6578,7 +6629,6 @@
           }
         },
         "required": [
-          "BlurayReleaseID",
           "Identity",
           "Metadata",
           "Playlist",
@@ -8055,6 +8105,16 @@
       "ReleaseWorkflowUploadFacts": {
         "type": "object",
         "properties": {
+          "bluray": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BluraySelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "category": {
             "anyOf": [
               {
@@ -13528,6 +13588,16 @@
       "WorkflowOperationItem": {
         "type": "object",
         "properties": {
+          "blurayCandidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BlurayReleaseCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "completed": {
             "type": "integer"
           },

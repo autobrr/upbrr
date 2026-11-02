@@ -346,7 +346,7 @@ export type PrepareInput = {
       TrackAudioOrigins?: readonly TrackAudioOriginCorrection[];
     };
     SourceLookup: string;
-    BlurayReleaseID?: string;
+    Bluray?: { Mode: string; Release: string } | null;
     Playlist: PlaylistInstruction;
     TrackerIDs?: Record<string, string>;
   };
@@ -359,6 +359,7 @@ export type PrepareInput = {
   Controls?: {
     Interaction: "interactive" | "unattended" | "unattended_confirm";
     CaptureHDRMetadata?: boolean;
+    BlurayDetails?: { ReleaseID: string; All: boolean };
     ConfirmBDMVRescan: boolean;
     ForceRecheck?: boolean | null;
   };
@@ -964,6 +965,7 @@ export type BluraySpecs = {
 };
 
 export type BlurayReleaseCandidate = {
+  DetailsStatus?: string;
   /** Edition-specific YYYY-MM-DD calendar date; empty when unavailable. */
   ReleaseDate: string;
   ReleaseID: string;

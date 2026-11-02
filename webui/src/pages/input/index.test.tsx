@@ -224,6 +224,9 @@ const inputFacet = (): InputFacet => ({
   reset: vi.fn(async () => true),
   confirmBDMVRescan: vi.fn(async () => true),
   selectCandidate: vi.fn(async () => true),
+  fetchCandidateDetails: vi.fn(async () => true),
+  cancelCandidateDetails: vi.fn(async () => true),
+  setCandidateSelection: vi.fn(async () => true),
 });
 
 it("shows an unanswered required tracker choice and preserves a saved unknown answer", () => {

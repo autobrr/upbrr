@@ -400,31 +400,40 @@ func TestMapCollectedFactsPublishesResolvedAlternateTitle(t *testing.T) {
 	}
 }
 
-func TestApplyBlurayFactInstructionSelectsCandidateBeforePublication(t *testing.T) {
+func TestApplyBlurayFactInstructionPreservesFinalizedCorrections(t *testing.T) {
 	t.Parallel()
-	meta := preparationstate.State{
-		ProviderMetadata: api.SourceScopedMetadata{
-			Bluray: &api.BlurayMetadata{
-				Candidates: []api.BlurayReleaseCandidate{{
-					ReleaseID: "candidate-2",
-					Region:    "B",
-					Publisher: "Example Publisher",
-				}},
+	for _, corrected := range []string{"Manual value", ""} {
+		meta := preparationstate.State{
+			Region:      corrected,
+			Distributor: corrected,
+			Release:     api.ReleaseInfo{Region: corrected},
+			ProviderMetadata: api.SourceScopedMetadata{
+				Bluray: &api.BlurayMetadata{
+					Candidates: []api.BlurayReleaseCandidate{{
+						ReleaseID: "candidate-2",
+						Region:    "B",
+						Publisher: "Example Publisher",
+					}},
+				},
 			},
-		},
-	}
-	if err := applyBlurayFactInstruction(&meta, "candidate-2"); err != nil {
-		t.Fatalf("apply Blu-ray instruction: %v", err)
-	}
-	if meta.ProviderMetadata.Bluray.SelectedReleaseID != "candidate-2" || meta.Release.Region != "B" || meta.Distributor != "EXAMPLE PUBLISHER" {
-		t.Fatalf("selected facts = %#v", meta)
+		}
+		if err := applyBlurayFactInstruction(&meta, &api.BluraySelection{Mode: "manual", Release: "candidate-2"}); err != nil {
+			t.Fatalf("apply Blu-ray instruction: %v", err)
+		}
+		if meta.ProviderMetadata.Bluray.SelectedReleaseID != "candidate-2" || meta.Release.Region != corrected || meta.Region != corrected || meta.Distributor != corrected {
+			t.Fatalf("selected facts = %#v", meta)
+		}
+		facts := mapCollectedFacts(meta)
+		if facts.Media.Region != corrected || facts.Naming.Region != corrected || facts.Media.Distributor != corrected {
+			t.Fatal("finalized corrections were lost in publication")
+		}
 	}
 }
 
 func TestApplyBlurayFactInstructionRejectsUnknownCandidate(t *testing.T) {
 	t.Parallel()
 	meta := preparationstate.State{ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{}}}
-	if err := applyBlurayFactInstruction(&meta, "missing"); !errors.Is(err, internalerrors.ErrNotFound) {
+	if err := applyBlurayFactInstruction(&meta, &api.BluraySelection{Mode: "manual", Release: "missing"}); !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("error = %v, want not found", err)
 	}
 }

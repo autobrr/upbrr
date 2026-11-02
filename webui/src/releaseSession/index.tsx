@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { isBluraySiteURL } from "../utils/providerId";
+
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
@@ -45,6 +47,7 @@ import {
   isActiveWorkflowOperation,
   isFailedWorkflowOperation,
   metadataPreviewFromWorkflow,
+  metadataPreviewWithBlurayDetails,
   normalizedNames,
   playlistSelectionComplete,
   preparationInputForWorkflow,
@@ -957,10 +960,11 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const cancelBackendWorkflow = async (reason: string): Promise<boolean> => {
+  const cancelBackendWorkflow = async (reason: string, operationOnly = false): Promise<boolean> => {
     const workflowID = workflowView.current?.workflow.id || activeAuthority.current.workflowID;
     if (!workflowID) return false;
     const operation = workflowView.current?.operation;
+    if (operationOnly && !isActiveWorkflowOperation(operation)) return false;
     abortController("workflow");
     const controller = new AbortController();
     controllers.current.workflow = controller;
@@ -1330,12 +1334,13 @@ export function ReleaseSessionProvider({
       confirmBDMVRescan: boolean;
       captureHDRMetadata?: boolean;
       acceptPendingInput?: boolean;
+      blurayDetails?: { ReleaseID: string; All: boolean };
+      bluraySelection?: { Mode: string; Release: string };
     }>,
     commandRevision: number,
     correlationID: string,
     controller: AbortController,
     update: PendingInputUpdate,
-    releaseID = "",
   ): Promise<boolean> => {
     try {
       const input = preparationInputForWorkflow(
@@ -1357,7 +1362,15 @@ export function ReleaseSessionProvider({
         const commandID = `workflow-candidate-${Date.now().toString(36)}-${previous.workflow.revision.toString(36)}`;
         const candidateInput = workflowPrepareInput({
           ...input,
-          Instructions: { ...input.Instructions, BlurayReleaseID: releaseID },
+          Instructions: {
+            ...input.Instructions,
+            Bluray:
+              controls.bluraySelection ?? previous.factInstructions?.instructions.Bluray ?? null,
+          },
+          Controls: {
+            ...input.Controls!,
+            ...(controls.blurayDetails ? { BlurayDetails: controls.blurayDetails } : {}),
+          },
           Force: true,
         });
         current = await continueBackendGoal(
@@ -1570,10 +1583,12 @@ export function ReleaseSessionProvider({
     return runPreparationFor(operation, sourcePath, intent);
   };
 
-  const selectCandidate = async (releaseID: string): Promise<boolean> => {
+  const runCandidateAction = async (
+    selection?: { Mode: string; Release: string },
+    details?: { ReleaseID: string; All: boolean },
+  ): Promise<boolean> => {
     const sourcePath = state.selectedSource.trim();
-    const candidateID = releaseID.trim();
-    if (!sourcePath || !candidateID) return false;
+    if (!sourcePath) return false;
     abortController("preparation");
     abortWorkflowFacets();
     const controller = new AbortController();
@@ -1581,7 +1596,17 @@ export function ReleaseSessionProvider({
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
-    const intent = cloneIntent(state.preparationIntent);
+    const intent = {
+      ...cloneIntent(state.preparationIntent),
+      ...(selection
+        ? {
+            bluray: selection,
+            sourceLookupURL: isBluraySiteURL(state.preparationIntent.sourceLookupURL)
+              ? ""
+              : state.preparationIntent.sourceLookupURL,
+          }
+        : {}),
+    };
     const update: PendingInputUpdate = {
       inputEditRevision: state.inputEditRevision,
       correctionDirty: state.correctionDirty,
@@ -1608,12 +1633,11 @@ export function ReleaseSessionProvider({
       "candidate",
       sourcePath,
       intent,
-      { confirmBDMVRescan: false },
+      { confirmBDMVRescan: false, blurayDetails: details, bluraySelection: selection },
       commandRevision,
       correlationID,
       controller,
       update,
-      candidateID,
     );
   };
 
@@ -2891,6 +2915,7 @@ export function ReleaseSessionProvider({
         failure: state.preparation.failure,
         activeInput: state.activeInput,
         sourceVerification: state.sourceVerification,
+        candidateDetailsCancelable: isActiveWorkflowOperation(workflowView.current?.operation),
         preparationDirty: state.preparationDirty,
         correctionDirty: state.correctionDirty,
         intent: state.preparationIntent,
@@ -2901,7 +2926,7 @@ export function ReleaseSessionProvider({
         confirmFields: state.correctionConfirmFields,
         trackerInputAnswers,
         selectedTrackers: state.selectedTrackers,
-        preview: state.preview,
+        preview: metadataPreviewWithBlurayDetails(state.preview, workflowView.current),
         release: workflowView.current?.release
           ? workflowViewValue(workflowView.current.release.release)
           : null,
@@ -3033,7 +3058,14 @@ export function ReleaseSessionProvider({
           captureHDRMetadata: retry.captureHDRMetadata,
         });
       },
-      selectCandidate,
+      selectCandidate: (releaseID) => runCandidateAction({ Mode: "manual", Release: releaseID }),
+      cancelCandidateDetails: () => {
+        cancelPreparation();
+        return cancelBackendWorkflow("Blu-ray.com inspection canceled.", true);
+      },
+      fetchCandidateDetails: (releaseID) =>
+        runCandidateAction(undefined, { ReleaseID: releaseID ?? "", All: !releaseID }),
+      setCandidateSelection: (mode) => runCandidateAction({ Mode: mode, Release: "" }),
     },
     duplicates: {
       view: {
