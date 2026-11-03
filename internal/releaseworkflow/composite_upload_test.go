@@ -467,9 +467,10 @@ func TestCompositeUploadAdoptsReadyTrackerScope(t *testing.T) {
 			wantSingleReevaluation: true,
 		},
 		{
-			name:    "explicit selection overrides retained scope",
-			include: []api.TrackerID{"BETA"},
-			want:    []api.TrackerID{"BETA"},
+			name:                   "explicit selection overrides retained scope",
+			include:                []api.TrackerID{"BETA"},
+			want:                   []api.TrackerID{"BETA"},
+			wantSingleReevaluation: true,
 		},
 		{
 			name:   "remove one retained tracker",
@@ -516,10 +517,22 @@ func TestCompositeUploadAdoptsReadyTrackerScope(t *testing.T) {
 					current.Operation.Failures[0].Failure.Code != api.OperationFailureNoEligibleTrackers || current.Dupes != nil {
 					t.Fatalf("all-removed handoff operation=%#v dupes=%#v", current.Operation, current.Dupes)
 				}
-			} else if current.Operation.Status != api.StageStatusBlocked || current.Projections == nil ||
-				current.Selection == nil || !slices.Equal(current.Selection.TrackerIDs, tc.want) {
-				t.Fatalf("adopted handoff status=%s selection=%#v projections=%t failures=%#v",
-					current.Operation.Status, current.Selection, current.Projections != nil, current.Operation.Failures)
+			} else {
+				if current.Operation.Status != api.StageStatusBlocked || current.Projections == nil ||
+					current.Selection == nil || !slices.Equal(current.Selection.TrackerIDs, tc.want) {
+					t.Fatalf("adopted handoff status=%s selection=%#v projections=%t failures=%#v",
+						current.Operation.Status, current.Selection, current.Projections != nil, current.Operation.Failures)
+				}
+				projected := make([]api.TrackerID, len(current.Projections.Projections))
+				for index, projection := range current.Projections.Projections {
+					projected[index] = projection.TrackerID
+				}
+				if !slices.Equal(projected, tc.want) {
+					t.Fatalf("projected trackers = %v, want %v", projected, tc.want)
+				}
+				if current.InputReadiness == nil || !slices.Equal(current.InputReadiness.SelectedTrackerIDs, tc.want) {
+					t.Fatalf("adopted handoff readiness does not match trackers %v: %#v", tc.want, current.InputReadiness)
+				}
 			}
 			state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
 			if err != nil {
