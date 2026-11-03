@@ -77,6 +77,17 @@ func TestE2EArtifactsUseReleaseOwner(t *testing.T) {
 	if err != nil || len(plan.FinalSelections) != 0 || len(plan.TrackerImageLinks) != 0 {
 		t.Fatalf("planning recreated a deleted saved image: plan=%#v err=%v", plan, err)
 	}
+	// Reconstruct the service as a process restart would, retaining only disk state.
+	services = api.ServiceSet{}
+	if err := maybeApplyE2EServices(t.Context(), &services,
+		config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(state, "db.sqlite")}},
+		api.RepositoryCapabilities{}, nil, api.NopLogger{}); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = services.Screenshots.Plan(t.Context(), subject, 1)
+	if err != nil || len(plan.FinalSelections) != 0 || len(plan.TrackerImageLinks) != 0 {
+		t.Fatalf("restart recreated a deleted saved image: plan=%#v err=%v", plan, err)
+	}
 }
 
 func TestE2EMetadataUsesNestedManifestVideos(t *testing.T) {

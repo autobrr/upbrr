@@ -162,7 +162,7 @@ func TestDryRunPreparationDecisionContinuesClientInjection(t *testing.T) {
 
 func TestWorkflowClientInjectionRequiresEnabledDestination(t *testing.T) {
 	t.Parallel()
-	for _, selection := range []string{"no clients", "no selection", "disabled selector", "disabled client", "watch folder"} {
+	for _, selection := range []string{"no clients", "no selection", "disabled selector", "disabled client", "watch folder", "URL-only watch folder"} {
 		t.Run(selection, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -179,7 +179,7 @@ func TestWorkflowClientInjectionRequiresEnabledDestination(t *testing.T) {
 				cfg.ClientSetup.DefaultClient = "none"
 			case "disabled client":
 				cfg.ClientSetup.DefaultClient = "other"
-			case "watch folder":
+			case "watch folder", "URL-only watch folder":
 				watch := filepath.Join(root, "watch")
 				if err := os.Mkdir(watch, 0o700); err != nil {
 					t.Fatal(err)
@@ -188,9 +188,13 @@ func TestWorkflowClientInjectionRequiresEnabledDestination(t *testing.T) {
 				cfg.ClientSetup.DefaultClient = "watch"
 			}
 			clients := torrentclient.NewService(cfg, nil)
+			torrent := api.TorrentResult{Path: torrentPath, Tracker: "ALPHA"}
+			if selection == "URL-only watch folder" {
+				torrent.Path, torrent.URL = "", "https://registered.example/download"
+			}
 			if selection != "watch folder" {
 				// Ordinary callers retain their established no-op behavior.
-				if err := clients.Inject(t.Context(), api.ClientSubject{}, api.TorrentResult{Path: torrentPath}); err != nil {
+				if err := clients.Inject(t.Context(), api.ClientSubject{}, torrent); err != nil {
 					t.Fatalf("ordinary injection: %v", err)
 				}
 			}
@@ -201,18 +205,24 @@ func TestWorkflowClientInjectionRequiresEnabledDestination(t *testing.T) {
 				if selection == "watch folder" {
 					wantStatus = api.StageStatusCompleted
 				}
-				status, _, code, err := injectWorkflowDryRunClient(ctx, clients, api.ClientSubject{},
-					api.TrackerReleaseProjection{TrackerID: "ALPHA"}, torrentPath, 0, 1)
-				if err != nil || status != wantStatus || code != "" {
-					t.Fatalf("dry-run dispatch status=%s code=%s err=%v", status, code, err)
+				if selection != "URL-only watch folder" { // Prepared dry runs always have a local artifact.
+					status, _, code, err := injectWorkflowDryRunClient(ctx, clients, api.ClientSubject{},
+						api.TrackerReleaseProjection{TrackerID: "ALPHA"}, torrentPath, 0, 1)
+					if err != nil || status != wantStatus || code != "" {
+						t.Fatalf("dry-run dispatch status=%s code=%s err=%v", status, code, err)
+					}
 				}
-				live := executeWorkflowClientInjection(ctx, clients, api.ClientSubject{}, "ALPHA", api.TorrentResult{Path: torrentPath, Tracker: "ALPHA"})
+				live := executeWorkflowClientInjection(ctx, clients, api.ClientSubject{}, "ALPHA", torrent)
 				if live.SubmissionStatus != api.StageStatusCompleted || live.ClientInjectionStatus != wantStatus || live.ClientInjected != (selection == "watch folder") {
 					t.Fatalf("live dispatch: submission=%s injection=%s injected=%t", live.SubmissionStatus, live.ClientInjectionStatus, live.ClientInjected)
 				}
 				execution := &workflowUploadExecution{
 					clients:    clients,
-					crossSeeds: []api.UploadedTorrent{{Tracker: "ALPHA", TorrentPath: torrentPath}},
+					crossSeeds: []api.UploadedTorrent{{
+						Tracker:     "ALPHA",
+						TorrentPath: torrent.Path,
+						DownloadURL: torrent.URL,
+					}},
 				}
 				crossSeeds, err := execution.Execute(ctx, nil)
 				if err != nil || len(crossSeeds) != 1 {
