@@ -252,7 +252,7 @@ func (q *cliNamedQueue) finish(index int, outcome cliQueueOutcome, attemptErr er
 	}
 	if attemptErr != nil {
 		item.Status = "failed"
-		if errors.Is(attemptErr, context.Canceled) || errors.Is(attemptErr, context.DeadlineExceeded) ||
+		if outcome.Status == "interrupted" || errors.Is(attemptErr, context.Canceled) || errors.Is(attemptErr, context.DeadlineExceeded) ||
 			errors.Is(attemptErr, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
 			item.Status = "interrupted"
 		}
@@ -357,7 +357,10 @@ func cliQueueWorkflowOutcome(session *cliWorkflowSession, inputOnly bool) cliQue
 			if status == api.StageStatusCompleted {
 				outcome.ConfirmedUploads = append(outcome.ConfirmedUploads, tracker.TrackerID)
 			}
-			if status == api.StageStatusInterrupted || status == api.StageStatusCanceled || status == api.StageStatusRunning {
+			if status == api.StageStatusInterrupted || status == api.StageStatusCanceled || status == api.StageStatusRunning ||
+				slices.ContainsFunc(tracker.Failures, func(failure api.WorkflowFailure) bool {
+					return failure.Failure.Code == api.OperationFailureUnknownOutcome && failure.Failure.Operation == api.OperationKindUploadExecute
+				}) {
 				outcome.Status = "interrupted"
 			}
 			if outcome.Status != "interrupted" && (status == api.StageStatusFailed || status == api.StageStatusUnavailable) {

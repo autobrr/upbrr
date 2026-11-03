@@ -154,7 +154,9 @@ const historyArtifactPathsQuery = `
 `
 
 const historyProtectedWorkflowStatesQuery = `
-	SELECT busy.owner_id, busy.workflow_id, workflow.state_json
+	SELECT busy.owner_id, busy.workflow_id,
+		ownership.revision IS NULL OR ownership.revision <> workflow.revision OR COALESCE(ownership.ambiguous, 1),
+		sources.source_path
 	FROM (
 		SELECT owner_id, workflow_id
 		FROM release_workflow_operations
@@ -166,6 +168,10 @@ const historyProtectedWorkflowStatesQuery = `
 	) AS busy
 	LEFT JOIN release_workflow_states AS workflow
 		ON workflow.owner_id = busy.owner_id AND workflow.workflow_id = busy.workflow_id
+	LEFT JOIN release_workflow_ownership AS ownership
+		ON ownership.owner_id = busy.owner_id AND ownership.workflow_id = busy.workflow_id
+	LEFT JOIN release_workflow_sources AS sources
+		ON sources.owner_id = busy.owner_id AND sources.workflow_id = busy.workflow_id
 `
 
 type historyProtectedSources struct {
@@ -225,16 +231,32 @@ func (r *SQLiteRepository) listHistoryProtectedSources(ctx context.Context) (his
 			}
 		}
 		if slot.WorkflowID != "" {
-			var payload []byte
-			err := query.QueryRowContext(ctx, `SELECT state_json FROM release_workflow_states
-				WHERE owner_id = ? AND workflow_id = ?`, slot.OwnerID, slot.WorkflowID).Scan(&payload)
-			switch {
-			case err == nil:
-				for _, path := range storedReleaseWorkflowSourcePaths(payload) {
-					add(path)
-				}
-			case !errors.Is(err, sql.ErrNoRows):
+			rows, err := query.QueryContext(ctx, `SELECT sources.source_path,
+				ownership.revision IS NULL OR ownership.revision <> state.revision OR COALESCE(ownership.ambiguous, 1)
+				FROM release_workflow_states AS state
+				LEFT JOIN release_workflow_ownership AS ownership USING (owner_id, workflow_id)
+				LEFT JOIN release_workflow_sources AS sources USING (owner_id, workflow_id)
+				WHERE state.owner_id = ? AND state.workflow_id = ?`, slot.OwnerID, slot.WorkflowID)
+			if err != nil {
 				return historyProtectedSources{}, fmt.Errorf("db list history protected active workflow: %w", err)
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var sourcePath sql.NullString
+				var uncertain bool
+				if err := rows.Scan(&sourcePath, &uncertain); err != nil {
+					_ = rows.Close()
+					return historyProtectedSources{}, fmt.Errorf("db scan history protected active workflow: %w", err)
+				}
+				add(sourcePath.String)
+				protected.missingSource = protected.missingSource || uncertain
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return historyProtectedSources{}, fmt.Errorf("db list history protected active workflow: %w", err)
+			}
+			if err := rows.Close(); err != nil {
+				return historyProtectedSources{}, fmt.Errorf("db close history protected active workflow: %w", err)
 			}
 		}
 		if len(protected.paths) == pathCount {
@@ -256,19 +278,14 @@ func (r *SQLiteRepository) listHistoryProtectedSources(ctx context.Context) (his
 	for rows.Next() {
 		var ownerID string
 		var workflowID api.WorkflowID
-		var payload []byte
-		if err := rows.Scan(&ownerID, &workflowID, &payload); err != nil {
+		var sourcePath sql.NullString
+		var uncertain bool
+		if err := rows.Scan(&ownerID, &workflowID, &uncertain, &sourcePath); err != nil {
 			return historyProtectedSources{}, fmt.Errorf("db scan history protected workflow: %w", err)
 		}
 		protected.scopes[api.WorkflowScope{OwnerID: ownerID, WorkflowID: workflowID}] = struct{}{}
-		workflowPaths := storedReleaseWorkflowSourcePaths(payload)
-		if len(workflowPaths) == 0 {
-			protected.missingSource = true
-			continue
-		}
-		for _, path := range workflowPaths {
-			add(path)
-		}
+		protected.missingSource = protected.missingSource || uncertain || !sourcePath.Valid
+		add(sourcePath.String)
 	}
 	if err := rows.Err(); err != nil {
 		return historyProtectedSources{}, fmt.Errorf("db iterate history protected workflows: %w", err)

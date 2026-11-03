@@ -17,7 +17,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestVerifiedFormatRequiresCompleteBoundedImage(t *testing.T) {
@@ -109,9 +108,11 @@ var (
 	formatTestActive   atomic.Int32
 	formatTestMaximum  atomic.Int32
 	formatTestCalls    atomic.Int32
+	formatTestEntered  chan struct{}
+	formatTestRelease  chan struct{}
 )
 
-func TestVerifiedFormatSerializesDecodes(t *testing.T) {
+func TestVerifiedFormatReusesContentAndSerializesDecodes(t *testing.T) {
 	formatTestRegister.Do(func() {
 		image.RegisterFormat("serialized-evidence-test", "evidence-format-test", func(io.Reader) (image.Image, error) {
 			active := formatTestActive.Add(1)
@@ -122,7 +123,8 @@ func TestVerifiedFormatSerializesDecodes(t *testing.T) {
 				}
 			}
 			formatTestCalls.Add(1)
-			time.Sleep(5 * time.Millisecond)
+			formatTestEntered <- struct{}{}
+			<-formatTestRelease
 			return image.NewRGBA(image.Rect(0, 0, 1, 1)), nil
 		}, func(io.Reader) (image.Config, error) {
 			return image.Config{
@@ -134,6 +136,11 @@ func TestVerifiedFormatSerializesDecodes(t *testing.T) {
 	})
 	formatTestMaximum.Store(0)
 	formatTestCalls.Store(0)
+	formatTestEntered = make(chan struct{}, 9)
+	formatTestRelease = make(chan struct{})
+	formatDecodeMu.Lock()
+	clear(verifiedFormats)
+	formatDecodeMu.Unlock()
 	file := filepath.Join(t.TempDir(), "synthetic")
 	if err := os.WriteFile(file, []byte("evidence-format-test"), 0o600); err != nil {
 		t.Fatal(err)
@@ -149,8 +156,41 @@ func TestVerifiedFormatSerializesDecodes(t *testing.T) {
 		})
 	}
 	close(start)
+	<-formatTestEntered
+	close(formatTestRelease)
 	workers.Wait()
-	if formatTestCalls.Load() != 8 || formatTestMaximum.Load() != 1 {
+	if formatTestCalls.Load() != 1 || formatTestMaximum.Load() != 1 {
+		t.Fatalf("calls=%d peak decodes=%d", formatTestCalls.Load(), formatTestMaximum.Load())
+	}
+	// Different bytes at the same path must not reuse an earlier format verdict,
+	// even when the file's size and timestamp are unchanged.
+	info, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, bytes.Repeat([]byte("x"), int(info.Size())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(file, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if got := VerifiedFormat(file); got != "" {
+		t.Fatalf("replacement retained format %q", got)
+	}
+	// Content validation at download time also seeds evidence for local readers.
+	if got := VerifiedFormatBytes([]byte("evidence-format-test")); got != "serialized-evidence-test" || formatTestCalls.Load() != 1 {
+		t.Fatalf("repeated payload format=%q calls=%d", got, formatTestCalls.Load())
+	}
+	for index := range 8 {
+		workers.Go(func() {
+			payload := append([]byte("evidence-format-test"), byte(index))
+			if got := VerifiedFormatBytes(payload); got != "serialized-evidence-test" {
+				t.Errorf("format=%q", got)
+			}
+		})
+	}
+	workers.Wait()
+	if formatTestCalls.Load() != 9 || formatTestMaximum.Load() != 1 {
 		t.Fatalf("calls=%d peak decodes=%d", formatTestCalls.Load(), formatTestMaximum.Load())
 	}
 }

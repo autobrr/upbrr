@@ -33,6 +33,8 @@ type MediaArtifactContent struct {
 // MediaPreviewContent retains one non-authoritative frame preview without
 // exposing image bytes or filesystem identity in workflow snapshots.
 type MediaPreviewContent struct {
+	Processing       api.ScreenshotProcessing
+	TimestampSeconds float64
 	// DiscID identifies the prepared disc used for this preview.
 	DiscID string
 	// DiscName is the safe page-facing label for DiscID.
@@ -393,7 +395,7 @@ type IncrementalMediaArtifactBuilder interface {
 
 // CompatibleMediaRestorer adopts verified reusable bytes into a new exact generation,
 // or refreshes current tracker coverage from an existing snapshot and private resource
-// without reloading its bytes. Retained artifacts keep their identity and selection.
+// without querying the reusable cache. Retained artifacts keep their identity and selection.
 type CompatibleMediaRestorer interface {
 	RestoreCompatible(
 		context.Context,
@@ -1342,18 +1344,11 @@ func (DryRunUploadsCommand) userIntent()                      {}
 func (DryRunUploadsCommand) operationKind() api.OperationKind { return api.OperationKindUploadDryRun }
 func (c DryRunUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
 	// The default payload must keep receipts written before ReviewOnly existed.
-	if !c.ReviewOnly {
-		return canonicalCommandFingerprint(struct {
-			ExpectedRevision api.WorkflowRevision
-			NoSeed           bool
-			TrackerIDs       []api.TrackerID
-		}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs})
-	}
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool
 		TrackerIDs       []api.TrackerID
-		ReviewOnly       bool
+		ReviewOnly       bool `json:",omitempty"`
 	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs, c.ReviewOnly})
 }
 

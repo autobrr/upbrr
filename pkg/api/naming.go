@@ -184,7 +184,9 @@ type ReleaseNameOverrides struct {
 	NoDub          *bool
 	NoDual         *bool
 	DualAudio      *bool
-	Region         *string
+	// Region replaces the release-country naming fact; empty clears it and nil keeps detection.
+	// This does not change Blu-ray playback compatibility (A/B/C).
+	Region *string
 }
 
 // IsSupportedReleaseVersion reports whether value names a supported release version

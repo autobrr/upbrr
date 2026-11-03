@@ -19,6 +19,7 @@ import (
 
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -51,6 +52,7 @@ type cliOptions struct {
 	Type                       string
 	Source                     string
 	SourceLookup               string
+	BlurayRelease              string
 	Resolution                 string
 	Tag                        string
 	Service                    string
@@ -284,8 +286,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.DeleteTmp, "dtmp", false, "Delete stored database content for each input path before upload")
 	fs.BoolVar(&opts.DeleteTmp, "delete-tmp", false, "Delete stored database content for each input path before upload")
 	fs.BoolVar(&opts.Cleanup, "cleanup", false, "Delete all stored database content for all releases and exit")
-	fs.StringVar(&opts.Region, "region", "", "Override disc region")
-	fs.StringVar(&opts.Region, "reg", "", "Override disc region")
+	fs.StringVar(&opts.Region, "region", "", "Override release country code (for example USA)")
+	fs.StringVar(&opts.Region, "reg", "", "Override release country code (for example USA)")
 	fs.StringVar(&opts.TMDB, "tmdb", "", "Override TMDB id; empty or 0 clears and skips this provider")
 	fs.StringVar(&opts.IMDb, "imdb", "", "Override IMDb id; empty or 0 clears and skips this provider")
 	fs.StringVar(&opts.MAL, "mal", "", "Override MAL id; empty or 0 clears and skips this provider")
@@ -309,8 +311,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.QbitTag, "qbt", "", "Override qBittorrent tag")
 	fs.StringVar(&opts.QbitCategory, "qbit-cat", "", "Override qBittorrent category")
 	fs.StringVar(&opts.QbitCategory, "qbc", "", "Override qBittorrent category")
-	fs.BoolVar(&opts.ForceRecheck, "force-recheck", false, "Force recheck matched qBittorrent torrents before validation")
-	fs.BoolVar(&opts.ForceRecheck, "frc", false, "Force recheck matched qBittorrent torrents before validation")
+	fs.BoolVar(&opts.ForceRecheck, "force-recheck", false, "Recheck matched qBittorrent torrents and verify reusable torrent data")
+	fs.BoolVar(&opts.ForceRecheck, "frc", false, "Recheck matched qBittorrent torrents and verify reusable torrent data")
 	fs.BoolVar(&opts.Foreign, "foreign", false, "Mark TIK release as foreign")
 	fs.BoolVar(&opts.Opera, "opera", false, "Mark TIK release as opera or musical")
 	fs.BoolVar(&opts.Asian, "asian", false, "Mark TIK release as asian")
@@ -387,6 +389,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.Anime, "anime", false, "Force release to be treated as anime")
 	fs.BoolVar(&opts.UseSeasonEpisode, "use-season-episode", false, "Use the explicit season and episode values")
 	fs.BoolVar(&opts.InputOnly, "input-only", false, "Prepare and evaluate local tracker input without remote tracker work")
+	fs.StringVar(&opts.BlurayRelease, "bluray-release", "", "Select a Blu-ray.com release URL or ID (empty skips; auto resets)")
 	fs.StringVar(&opts.SourceLookup, "source-lookup", "", "Use a tracker source URL for metadata lookup")
 	fs.StringVar(&opts.AlternateTitle, "alternate-title", "", "Override alternate title")
 	fs.StringVar(&opts.Genres, "genres", "", "Override genres (comma-separated)")
@@ -959,7 +962,7 @@ func cliHelpSections(name string) []helpSection {
 		}},
 		{
 			title: "Input Corrections",
-			names: []string{"source-lookup", "track-languages", "track-audio-origin", "reset-input", "confirm-input", "tracker-input"},
+			names: []string{"bluray-release", "source-lookup", "track-languages", "track-audio-origin", "reset-input", "confirm-input", "tracker-input"},
 		},
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze", "keep-existing-ids"}},
 		{title: "Tracker Overrides", names: []string{
@@ -1156,6 +1159,18 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 		ScreenshotOverrides:         buildScreenshotOverrides(opts, visited),
 		TorrentOverrides:            buildTorrentOverrides(opts, visited),
 		ConfirmBDMVRescan:           opts.ConfirmBDMVRescan,
+	}
+	if visited["bluray-release"] {
+		release := strings.TrimSpace(opts.BlurayRelease)
+		selection := &api.BluraySelection{Mode: "manual", Release: release}
+		if release == "" {
+			selection.Mode = "skip"
+		} else if strings.EqualFold(release, "auto") {
+			selection.Mode, selection.Release = "auto", ""
+		} else if _, _, err := providerid.ParseBlurayRelease(release); err != nil {
+			return api.Request{}, fmt.Errorf("upbrr: parse Blu-ray release: %w", err)
+		}
+		req.Bluray = selection
 	}
 	if req.Execution.SiteUploadTracker != "" {
 		req.Trackers = []string{req.Execution.SiteUploadTracker}

@@ -127,7 +127,7 @@ Release Overrides:
   -daily, --daily string
       Set daily episode air date (YYYY-MM-DD)
   -region, --region, -reg string
-      Override disc region
+      Override release country code (for example USA)
   -use-season-episode, --use-season-episode
       Use the explicit season and episode values
   -no-season, --no-season
@@ -164,6 +164,8 @@ Release Overrides:
       Override hardcoded subtitle languages (comma-separated)
 
 Input Corrections:
+  -bluray-release, --bluray-release string
+      Select a Blu-ray.com release URL or ID (empty skips; auto resets)
   -source-lookup, --source-lookup string
       Use a tracker source URL for metadata lookup
   -track-languages, --track-languages stringArray
@@ -281,7 +283,7 @@ Client and Torrent:
   -qbit-cat, --qbit-cat, -qbc string
       Override qBittorrent category
   -force-recheck, --force-recheck, -frc
-      Force recheck matched qBittorrent torrents before validation
+      Recheck matched qBittorrent torrents and verify reusable torrent data
   -no-seed, --no-seed, -ns
       Do not inject torrent into clients
   -skip_auto_torrent, --skip_auto_torrent, -sat

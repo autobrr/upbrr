@@ -48,6 +48,8 @@ Startup retains completed operation checkpoints and marks unfinished operations 
 
 For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup retains unresolved external attempts as uncertain and keeps their retry blocks; an interrupted operation is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
 
+An unresolved tracker submission does not prevent independent CLI queue items from running when its durable submission protection remains available. Legacy attempts without that protection still require reconciliation before new inputs. The affected source remains protected until reconciliation; resuming the queue selects its other pending items. Missing or contradictory retained source information still requires manual recovery.
+
 If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Resolve the uncertainty before activating the changed configuration.
 
 If **Legacy workflow recovery** still appears, inspect each listed remote outcome. Choose **Confirmed not completed; allow a fresh exact attempt** only after confirming it did not complete. Do not delete History simply to bypass an uncertain outcome: deletion also removes local repeat-submission protection.
@@ -139,8 +141,9 @@ Upload preflight can validate sessions and perform tracker-supported automatic l
 ## No screenshots or image links
 
 - Confirm FFmpeg access and screenshot count.
-- For imported screenshots, enable **Settings → Metadata → Keep images**, inspect **Tracker Data**, and use **Saved tracker images → Use saved images** on **Screenshots** when offered. Only usable validated images are eligible; an imported comparison block alone does not supply ordinary screenshots.
+- For imported screenshots, enable **Settings → Metadata → Collect existing tracker images**, inspect **Tracker Data**, and open **Screenshots** to review the automatically included images. Unselect or delete unwanted images in the normal screenshot list. Only usable validated images are eligible; an imported comparison block alone does not supply ordinary screenshots.
 - Confirm the chosen image host is configured and allowed by the tracker. Images tied to their source tracker may need downloading and rehosting, even when they display correctly in the original description.
+- If a saved screenshot’s local file is missing or changed, its retained hosted URL remains listed under **Upload Images**, where you can remove the saved association. It is not a local upload candidate.
 - Review host-specific failure messages without copying credentials or raw responses.
 - Check `min_successful_image_uploads`: zero requires the whole batch to succeed; a positive value permits a partially successful batch only after that many images publish.
 - Use `--skip-imagehost-upload` only when you will supply valid hosted images another way.

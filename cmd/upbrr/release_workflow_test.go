@@ -45,6 +45,8 @@ type cliWorkflowCoreFake struct {
 	inputHistory           api.InputHistory
 	inputHistoryErr        error
 	activeInput            api.ActiveInputSnapshot
+	sourceRecoveryInputs   map[string]api.ActiveInputSnapshot
+	recoverySourceQueries  []string
 	releaseRequests        []api.ReleaseActiveInputRequest
 	cleanupContextErr      error
 	activeInputContextErr  error
@@ -82,6 +84,18 @@ func (c *cliWorkflowActiveInputCore) GetActiveInput(ctx context.Context, ownerID
 	return snapshot, nil
 }
 
+func (c *cliWorkflowActiveInputCore) GetActiveInputForSource(ctx context.Context, owner, source string) (api.ActiveInputSnapshot, error) {
+	active, err := c.GetActiveInput(ctx, owner)
+	if err != nil || active.State != api.ActiveInputEmpty {
+		return active, err
+	}
+	active.RecoveryWorkflowIDs, err = c.module.LegacyRecoveryWorkflowIDsForSource(ctx, owner, source)
+	if err != nil {
+		return active, fmt.Errorf("test source recovery: %w", err)
+	}
+	return active, nil
+}
+
 func (c *cliWorkflowActiveInputCore) ContinueReleaseWorkflow(
 	ctx context.Context,
 	ownerID string,
@@ -96,12 +110,22 @@ func (c *cliWorkflowActiveInputCore) ContinueReleaseWorkflow(
 
 func (f *cliWorkflowCoreFake) RecoverLegacyActiveInput(context.Context, string, api.RecoverLegacyActiveInputRequest) (api.ActiveInputSnapshot, error) {
 	f.recoverCalls++
+	f.activeInput = f.recoveryInput
 	return f.recoveryInput, nil
 }
 
 func (f *cliWorkflowCoreFake) ReconcileActiveInput(_ context.Context, _ string, request api.ReconcileActiveInputRequest) (api.ActiveInputSnapshot, error) {
 	f.reconcileRequests = append(f.reconcileRequests, request)
-	return api.ActiveInputSnapshot{State: api.ActiveInputEmpty}, nil
+	f.activeInput = api.ActiveInputSnapshot{State: api.ActiveInputEmpty}
+	return f.activeInput, nil
+}
+
+func (f *cliWorkflowCoreFake) GetActiveInputForSource(ctx context.Context, owner, source string) (api.ActiveInputSnapshot, error) {
+	f.recoverySourceQueries = append(f.recoverySourceQueries, source)
+	if result, ok := f.sourceRecoveryInputs[source]; ok {
+		return result, nil
+	}
+	return f.GetActiveInput(ctx, owner)
 }
 
 func (f *cliWorkflowCoreFake) GetActiveInput(ctx context.Context, _ string) (api.ActiveInputSnapshot, error) {
@@ -113,7 +137,8 @@ func (f *cliWorkflowCoreFake) GetActiveInput(ctx context.Context, _ string) (api
 func (f *cliWorkflowCoreFake) ReleaseActiveInput(ctx context.Context, _ string, request api.ReleaseActiveInputRequest) (api.ActiveInputSnapshot, error) {
 	f.cleanupContextErr = ctx.Err()
 	f.releaseRequests = append(f.releaseRequests, request)
-	return api.ActiveInputSnapshot{State: api.ActiveInputEmpty}, nil
+	f.activeInput = api.ActiveInputSnapshot{State: api.ActiveInputEmpty, Revision: request.ExpectedRevision + 1}
+	return f.activeInput, nil
 }
 
 func TestCLIReleasesOnlyOwnedInputWithFreshCleanupContext(t *testing.T) {
@@ -136,7 +161,11 @@ func TestCLIReleasesOnlyOwnedInputWithFreshCleanupContext(t *testing.T) {
 	if core.cleanupContextErr != nil || len(core.releaseRequests) != 1 || core.releaseRequests[0].ExpectedRevision != 7 {
 		t.Fatalf("cleanup requests = %#v, context = %v", core.releaseRequests, core.cleanupContextErr)
 	}
-	core.activeInput.Current.Workflow.ID = "workflow-other"
+	core.activeInput = api.ActiveInputSnapshot{
+		State:    api.ActiveInputActive,
+		Revision: 8,
+		Current:  &api.ReleaseWorkflowCurrent{Workflow: api.ReleaseWorkflow{ID: "workflow-other"}},
+	}
 	session.releaseActiveInput(ctx)
 	if len(core.releaseRequests) != 1 {
 		t.Fatal("cleanup released a replacement input")

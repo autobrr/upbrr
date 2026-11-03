@@ -29,6 +29,7 @@ const cliWorkflowOwnerID = "cli"
 // It deliberately excludes HTTP and every legacy operation-specific entrypoint.
 type cliReleaseWorkflowCore interface {
 	GetActiveInput(context.Context, string) (api.ActiveInputSnapshot, error)
+	GetActiveInputForSource(context.Context, string, string) (api.ActiveInputSnapshot, error)
 	ReleaseActiveInput(context.Context, string, api.ReleaseActiveInputRequest) (api.ActiveInputSnapshot, error)
 	RecoverLegacyActiveInput(context.Context, string, api.RecoverLegacyActiveInputRequest) (api.ActiveInputSnapshot, error)
 	ReconcileActiveInput(context.Context, string, api.ReconcileActiveInputRequest) (api.ActiveInputSnapshot, error)
@@ -289,6 +290,13 @@ func (s *cliWorkflowSession) waitForOperation(
 	ctx context.Context,
 	operation api.WorkflowOperationStatus,
 ) (api.WorkflowOperationStatus, error) {
+	var metadataProgress cliMetadataProgress
+	reportMetadata := func() {
+		if cliBridgeFromOutput(s.streams.out) == nil {
+			metadataProgress.Print(s.progressWriter, operation, time.Now())
+		}
+	}
+	reportMetadata()
 	s.publishOperationPresentation(ctx, operation)
 	if _, printed := s.printedProgress[operation.Operation]; !printed {
 		if s.printedProgress == nil {
@@ -331,6 +339,7 @@ func (s *cliWorkflowSession) waitForOperation(
 			return api.WorkflowOperationStatus{}, fmt.Errorf("upbrr: poll release workflow command: %w", err)
 		}
 		operation = current
+		reportMetadata()
 		s.publishOperationPresentation(ctx, operation)
 		if err := s.logNewOperationEvents(ctx, operation, &s.eventLogState); err != nil {
 			return api.WorkflowOperationStatus{}, err
@@ -675,6 +684,20 @@ func runCLIWorkflowInteractive(
 				}
 			}
 			return outcome, exitError(2, errors.New("saved input corrections require confirmation"))
+		}
+		if err := session.reviewBlurayReleases(ctx, reader); err != nil {
+			return outcome, err
+		}
+		if selection := session.uploadRequest.Bluray; selection != nil {
+			value := selection.Release
+			if selection.Mode == "auto" {
+				value = "auto"
+			}
+			currentArgs, err = mergeCLIInputEditArgs(currentArgs, []string{"--bluray-release=" + value})
+			if err != nil {
+				return outcome, err
+			}
+			currentOpts.BlurayRelease, currentVisited["bluray-release"] = value, true
 		}
 		if err := session.reviewInputLanguages(ctx, reader, currentOpts.Debug || coreSvc.LiveTestEnabled(), cfg.Trackers.DefaultTrackers); err != nil {
 			return outcome, err

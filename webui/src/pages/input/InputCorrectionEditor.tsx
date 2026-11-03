@@ -486,7 +486,7 @@ const releaseStringFields: ReadonlyArray<{
   },
   {
     field: "release_name.region",
-    label: "Region",
+    label: "Release country",
     key: "Region",
     choices: correctionChoices.Region,
     searchable: true,

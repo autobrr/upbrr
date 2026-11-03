@@ -224,6 +224,9 @@ const inputFacet = (): InputFacet => ({
   reset: vi.fn(async () => true),
   confirmBDMVRescan: vi.fn(async () => true),
   selectCandidate: vi.fn(async () => true),
+  fetchCandidateDetails: vi.fn(async () => true),
+  cancelCandidateDetails: vi.fn(async () => true),
+  setCandidateSelection: vi.fn(async () => true),
 });
 
 it("shows an unanswered required tracker choice and preserves a saved unknown answer", () => {
@@ -2888,12 +2891,12 @@ it("shows automatic choices and confirms retained values without changing correc
   fireEvent.click(screen.getByRole("button", { name: "Confirm saved Service" }));
   expect(facet.confirmCorrection).toHaveBeenCalledWith({ field: "release_name.service" });
   expect(facet.changeReleaseName).not.toHaveBeenCalled();
-  const region = screen.getByRole("combobox", { name: "Region" });
+  const region = screen.getByRole("combobox", { name: "Release country" });
   expect(region).toHaveValue("A");
   fireEvent.focus(region);
-  const count = within(screen.getByRole("listbox", { name: "Region suggestions" })).getAllByRole(
-    "option",
-  ).length;
+  const count = within(
+    screen.getByRole("listbox", { name: "Release country suggestions" }),
+  ).getAllByRole("option").length;
   expect(count).toBeGreaterThan(20);
   fireEvent.change(region, { target: { value: "kIngdom" } });
   expect(screen.getByRole("option", { name: "United Kingdom (GBR)" })).toBeInTheDocument();

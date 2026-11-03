@@ -1939,68 +1939,76 @@ func TestContinuationPlannerRequiresDryRunFromCurrentAttempt(t *testing.T) {
 	}
 }
 
-func TestContinuationPlannerUploadsReadyLaneFromPartialDryRun(t *testing.T) {
+func TestContinuationPlannerUploadsReadyLaneFromMixedDryRun(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
-	current := readyContinuationPlannerResult(t, now)
-	current.Selection.TrackerIDs = []api.TrackerID{"ALPHA", "BETA"}
-	current.Projections.Projections = append(current.Projections.Projections, api.TrackerReleaseProjection{
-		TrackerID:   "BETA",
-		Readiness:   api.ReadinessStatusReady,
-		DupeReady:   true,
-		UploadReady: true,
-	})
-	current.Dupes.Results = append(current.Dupes.Results, api.TrackerDupeAssessment{
-		TrackerID: "BETA",
-		Status:    api.StageStatusCompleted,
-		Decision:  api.DupeDecisionNoMatch,
-	})
-	current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted}
-	current.Descriptions = &api.DescriptionSet{Status: api.StageStatusSkipped}
-	current.DryRun = &api.UploadDryRunResult{
-		NoSeed:     true,
-		TrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
-		Status:     api.StageStatusPartial,
-		Reports: []api.TrackerDryRunReport{
-			{TrackerID: "ALPHA", Status: api.StageStatusCompleted},
-			{TrackerID: "BETA", Status: api.StageStatusFailed},
-		},
-	}
-	request := api.ContinueReleaseWorkflowRequest{
-		Goal: api.WorkflowGoalUploaded,
-		Intent: api.WorkflowIntent{
-			NoSeed: true, UploadTrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
-		},
-	}
-	command, stage := planContinuationCommand(request, current, now)
-	uploadCommand, ok := command.(ExecuteUploadsCommand)
-	if !ok || stage != "execute-uploads" || !slices.Equal(uploadCommand.TrackerIDs, []api.TrackerID{"ALPHA"}) {
-		t.Fatalf("partial dry run upload plan: stage=%q command=%#v", stage, command)
-	}
-	selected, err := validateUploadExecutionTrackerIDs([]api.UploadPlanTracker{
-		{
-			TrackerID: "ALPHA",
-			Eligible:  true,
-			Status:    api.StageStatusReady,
-		},
-		{TrackerID: "BETA", Status: api.StageStatusFailed},
-	}, uploadCommand.TrackerIDs)
-	if err != nil || !slices.Equal(selected, []api.TrackerID{"ALPHA"}) {
-		t.Fatalf("partial dry run upload selection: selected=%v err=%v", selected, err)
-	}
+	for _, siblingStatus := range []api.StageStatus{api.StageStatusFailed, api.StageStatusBlocked} {
+		t.Run(string(siblingStatus), func(t *testing.T) {
+			status := api.StageStatusPartial
+			if siblingStatus == api.StageStatusBlocked {
+				status = api.StageStatusBlocked
+			}
+			now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+			current := readyContinuationPlannerResult(t, now)
+			current.Selection.TrackerIDs = []api.TrackerID{"ALPHA", "BETA"}
+			current.Projections.Projections = append(current.Projections.Projections, api.TrackerReleaseProjection{
+				TrackerID:   "BETA",
+				Readiness:   api.ReadinessStatusReady,
+				DupeReady:   true,
+				UploadReady: true,
+			})
+			current.Dupes.Results = append(current.Dupes.Results, api.TrackerDupeAssessment{
+				TrackerID: "BETA",
+				Status:    api.StageStatusCompleted,
+				Decision:  api.DupeDecisionNoMatch,
+			})
+			current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted}
+			current.Descriptions = &api.DescriptionSet{Status: api.StageStatusSkipped}
+			current.DryRun = &api.UploadDryRunResult{
+				NoSeed:     true,
+				TrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
+				Status:     status,
+				Reports: []api.TrackerDryRunReport{
+					{TrackerID: "ALPHA", Status: api.StageStatusCompleted},
+					{TrackerID: "BETA", Status: siblingStatus},
+				},
+			}
+			request := api.ContinueReleaseWorkflowRequest{
+				Goal: api.WorkflowGoalUploaded,
+				Intent: api.WorkflowIntent{
+					NoSeed: true, UploadTrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
+				},
+			}
+			command, stage := planContinuationCommand(request, current, now)
+			uploadCommand, ok := command.(ExecuteUploadsCommand)
+			if !ok || stage != "execute-uploads" || !slices.Equal(uploadCommand.TrackerIDs, []api.TrackerID{"ALPHA"}) {
+				t.Fatalf("partial dry run upload plan: stage=%q command=%#v", stage, command)
+			}
+			selected, err := validateUploadExecutionTrackerIDs([]api.UploadPlanTracker{
+				{
+					TrackerID: "ALPHA",
+					Eligible:  true,
+					Status:    api.StageStatusReady,
+				},
+				{TrackerID: "BETA", Status: siblingStatus},
+			}, uploadCommand.TrackerIDs)
+			if err != nil || !slices.Equal(selected, []api.TrackerID{"ALPHA"}) {
+				t.Fatalf("partial dry run upload selection: selected=%v err=%v", selected, err)
+			}
 
-	request.Goal = api.WorkflowGoalDryRun
-	command, stage = planContinuationCommand(request, current, now)
-	if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
-		t.Fatalf("explicit dry-run retry plan: stage=%q command=%#v", stage, command)
-	}
+			request.Goal = api.WorkflowGoalDryRun
+			command, stage = planContinuationCommand(request, current, now)
+			if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
+				t.Fatalf("explicit dry-run retry plan: stage=%q command=%#v", stage, command)
+			}
 
-	request.Goal = api.WorkflowGoalUploaded
-	current.DryRun.Reports[0].Status = api.StageStatusFailed
-	command, stage = planContinuationCommand(request, current, now)
-	if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
-		t.Fatalf("partial dry run without a ready lane: stage=%q command=%#v", stage, command)
+			request.Goal = api.WorkflowGoalUploaded
+			current.DryRun.Reports[0].Status = api.StageStatusFailed
+			command, stage = planContinuationCommand(request, current, now)
+			if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
+				t.Fatalf("partial dry run without a ready lane: stage=%q command=%#v", stage, command)
+			}
+		})
 	}
 }
 
@@ -2469,6 +2477,16 @@ func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 			},
 		},
 	}
+	// Persisted workflow requests omit empty selection slices. Import authority
+	// must survive that wire round trip instead of becoming automatic capture.
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = api.ContinueReleaseWorkflowRequest{}
+	if err := json.Unmarshal(encoded, &request); err != nil {
+		t.Fatal(err)
+	}
 	for _, status := range []api.StageStatus{api.StageStatusBlocked, api.StageStatusCompleted} {
 		current.Media.Status = status
 		command, stage := planContinuationCommand(request, current, now)
@@ -2484,7 +2502,7 @@ func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 		Source:   "tracker",
 	})
 	current.Media.RequirementsFingerprint = testFingerprint(t, "saved-media-requirements")
-	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+	fingerprintInput := struct {
 		Release      api.ReleaseRef
 		ProjectionID api.TrackerReleaseProjectionSetID
 		Revision     api.WorkflowRevision
@@ -2496,7 +2514,8 @@ func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 		Revision:     current.Projections.Revision,
 		Instructions: *request.Intent.Media,
 		Requirements: current.Media.RequirementsFingerprint,
-	})
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint(fingerprintInput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2517,6 +2536,72 @@ func TestContinuationPlannerImportsSavedImagesWithExistingMedia(t *testing.T) {
 	if command != nil || stage != "" {
 		t.Fatalf("hosted saved image import planned another capture: stage=%q command=%#v", stage, command)
 	}
+	current.Media.Status = api.StageStatusBlocked
+	command, stage = planContinuationCommand(request, current, now)
+	if continuationGoalReached(current, request) || command != nil || stage != "capture-media" {
+		t.Fatalf("partial adoption did not stop for missing media: stage=%q command=%#v", stage, command)
+	}
+	request.Intent.Media.CaptureDVDMenus = true
+	request.Intent.Media.MaxDVDMenuItems = 6
+	for _, status := range []api.StageStatus{api.StageStatusBlocked, api.StageStatusCompleted} {
+		current.Media.Status = status
+		command, stage = planContinuationCommand(request, current, now)
+		if capture, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" ||
+			!capture.Instructions.CaptureDVDMenus || capture.Instructions.MaxDVDMenuItems != 6 {
+			t.Fatalf("%s saved image import skipped requested menus: stage=%q command=%#v", status, stage, command)
+		}
+	}
+	current.Media.Status = api.StageStatusBlocked
+	fingerprintInput.Instructions = *request.Intent.Media
+	current.Media.CaptureFingerprint, err = api.CanonicalWorkflowFingerprint(fingerprintInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, stage = planContinuationCommand(request, current, now)
+	if command != nil || stage != "capture-media" || continuationGoalReached(current, request) {
+		t.Fatalf("exact menu attempt repeated or made partial media ready: stage=%q command=%#v", stage, command)
+	}
+	current.Media.CaptureFingerprint = testFingerprint(t, "media-after-hosting")
+	current.Media.Artifacts = append(current.Media.Artifacts, api.MediaArtifact{
+		ID:       "automatic-menu",
+		Kind:     api.MediaArtifactDVDMenu,
+		Selected: true,
+		Source:   api.ScreenshotSelectionSourceDVDMenu,
+	})
+	command, stage = planContinuationCommand(request, current, now)
+	if command != nil || stage != "capture-media" {
+		t.Fatalf("retained automatic menu was recaptured: stage=%q command=%#v", stage, command)
+	}
+	menu := &current.Media.Artifacts[len(current.Media.Artifacts)-1]
+	for _, fallback := range []struct {
+		source   string
+		selected bool
+	}{{"manual", true}, {api.ScreenshotSelectionSourceDVDMenu, false}} {
+		menu.Source, menu.Selected = fallback.source, fallback.selected
+		command, stage = planContinuationCommand(request, current, now)
+		if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
+			t.Fatalf("invalid menu fallback skipped capture: stage=%q command=%#v", stage, command)
+		}
+	}
+	current.Media.Artifacts = current.Media.Artifacts[:len(current.Media.Artifacts)-1]
+	request.Intent.Media.CaptureDVDMenus = false
+	request.Intent.Media.MaxDVDMenuItems = 0
+	for index := range current.Media.Artifacts {
+		current.Media.Artifacts[index].Selected = false
+	}
+	if continuationGoalReached(current, request) {
+		t.Fatal("unselected imported images satisfied media readiness")
+	}
+	command, stage = planContinuationCommand(request, current, now)
+	if command != nil || stage != "capture-media" {
+		t.Fatalf("unselected saved images planned another capture: stage=%q command=%#v", stage, command)
+	}
+	current.Media.Status = api.StageStatusFailed
+	command, stage = planContinuationCommand(request, current, now)
+	if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
+		t.Fatalf("failed import did not retain its retry: stage=%q command=%#v", stage, command)
+	}
+	current.Media.Status = api.StageStatusCompleted
 	originalArtifacts := current.Media.Artifacts
 	current.Media.Artifacts = []api.MediaArtifact{
 		{
@@ -2637,5 +2722,69 @@ func TestContinuationSeparatesExplicitDryRunFromLiveReview(t *testing.T) {
 	command, stage := planContinuationCommand(request, current, now)
 	if command != nil || stage != "" {
 		t.Fatalf("completed dry run repeated side effects: %q %#v", stage, command)
+	}
+}
+
+func TestContinueReportsOnlyItsAcceptedForcedPreparationOperation(t *testing.T) {
+	t.Parallel()
+	base := testPreparer()
+	release := make(chan struct{})
+	started := make(chan struct{})
+	preparer := base
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		if input.Controls.BlurayDetails != nil {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return api.PrepareResult{}, ctx.Err()
+			}
+		}
+		return base.Prepare(ctx, input)
+	}
+	module, _ := newTestModule(t, preparer)
+	t.Cleanup(func() { close(release) })
+	input := api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026")}
+	created := executeCommand(t, module, CreateWorkflowCommand{SourcePath: input.SourcePath, IdempotencyKey: "create-candidate"})
+	prepared := executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       created.Workflow.ID,
+		ExpectedRevision: created.Workflow.Revision,
+		Input:            input,
+		IdempotencyKey:   "prepare-candidate",
+	})
+	input.Force = true
+	input.Controls.BlurayDetails = &api.BlurayDetailRequest{All: true}
+	request := api.ContinueReleaseWorkflowRequest{
+		Authority:      &api.WorkflowAuthority{WorkflowID: prepared.Workflow.ID, ExpectedRevision: prepared.Workflow.Revision},
+		Goal:           api.WorkflowGoalInputReady,
+		Intent:         api.WorkflowIntent{Preparation: &input},
+		IdempotencyKey: "candidate-inspection",
+	}
+	accepted, err := module.Continue(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Operation == nil || accepted.PreparationOperationID == "" || accepted.PreparationOperationID != accepted.Operation.ID {
+		t.Fatalf("candidate command did not identify its accepted preparation: %#v", accepted.Operation)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("candidate preparation did not start")
+	}
+	request.IdempotencyKey = "another-tab"
+	busy, err := module.Continue(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if busy.Operation == nil || busy.Operation.ID != accepted.Operation.ID || busy.PreparationOperationID != "" {
+		t.Fatal("busy continuation claimed another command's preparation")
+	}
+	passive, err := module.Current(t.Context(), testOwnerID, prepared.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if passive.PreparationOperationID != "" {
+		t.Fatal("passive projection claimed operation ownership")
 	}
 }

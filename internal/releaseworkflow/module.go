@@ -2356,6 +2356,25 @@ func (m *Module) withOperationReporters(
 		newDurableExternalEffectReporter(m, ownerID, workflowID, operationID),
 	)
 	ctx = api.WithPreparationProgressReporter(ctx, func(update api.PreparationProgressUpdate) {
+		if candidate := update.BlurayCandidate; candidate != nil {
+			status := api.StageStatusCompleted
+			if candidate.DetailsStatus == "failed" {
+				status = api.StageStatusFailed
+			}
+			report(api.WorkflowProgressUpdate{
+				Phase:           string(update.Phase),
+				ItemID:          "bluray:" + candidate.ReleaseID,
+				Kind:            "bluray_detail",
+				Label:           candidate.Title,
+				Status:          status,
+				Completed:       1,
+				Total:           1,
+				Message:         update.Message,
+				ItemOnly:        true,
+				BlurayCandidate: candidate,
+			})
+			return
+		}
 		itemStatus := api.StageStatusRunning
 		switch update.Status {
 		case api.PreparationProgressCompleted:
@@ -2364,21 +2383,31 @@ func (m *Module) withOperationReporters(
 			itemStatus = api.StageStatusSkipped
 		case api.PreparationProgressFailed:
 			itemStatus = api.StageStatusFailed
+		case api.PreparationProgressPartial:
+			itemStatus = api.StageStatusPartial
+		case api.PreparationProgressCanceled:
+			itemStatus = api.StageStatusCanceled
 		case api.PreparationProgressRunning:
 		}
 		completed := 0
 		if itemStatus != api.StageStatusRunning {
 			completed = min(update.Order, 1200)
 		}
+		kind, total := "preparation_phase", 1200
+		if update.Substep != "" {
+			kind = "preparation_substep"
+			completed, total = update.CompletedItems, update.TotalItems
+		}
 		report(api.WorkflowProgressUpdate{
 			Phase:     string(update.Phase),
 			ItemID:    string(update.Phase),
-			Kind:      "preparation_phase",
+			Kind:      kind,
 			Label:     update.Label,
 			Status:    itemStatus,
 			Completed: completed,
-			Total:     1200,
-			Message:   update.Message,
+			Total:     total,
+			Message:   update.Detail(),
+			ItemOnly:  update.Substep != "",
 		})
 	})
 	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
@@ -2463,18 +2492,23 @@ func applyWorkflowProgress(status *api.WorkflowOperationStatus, update api.Workf
 		return
 	}
 	item := api.WorkflowOperationItem{
-		ID:        itemID,
-		Kind:      strings.TrimSpace(update.Kind),
-		Label:     strings.TrimSpace(update.Label),
-		Phase:     strings.TrimSpace(update.Phase),
-		Status:    update.Status,
-		Completed: max(0, update.Completed),
-		Total:     max(0, update.Total),
-		Message:   strings.TrimSpace(update.Message),
+		BlurayCandidate: update.BlurayCandidate,
+		ID:              itemID,
+		Kind:            strings.TrimSpace(update.Kind),
+		Label:           strings.TrimSpace(update.Label),
+		Phase:           strings.TrimSpace(update.Phase),
+		Status:          update.Status,
+		Completed:       max(0, update.Completed),
+		Total:           max(0, update.Total),
+		Message:         strings.TrimSpace(update.Message),
 	}
 	if itemIndex >= 0 {
-		item.Completed = max(status.Items[itemIndex].Completed, item.Completed)
-		item.Total = max(status.Items[itemIndex].Total, item.Total)
+		// A preparation substep can start a new work set or discover its total.
+		// These local counts never advance aggregate stage-order progress.
+		if update.Kind != "preparation_substep" && status.Items[itemIndex].Kind != "preparation_substep" {
+			item.Completed = max(status.Items[itemIndex].Completed, item.Completed)
+			item.Total = max(status.Items[itemIndex].Total, item.Total)
+		}
 		if progressStatusRank(status.Items[itemIndex].Status) > progressStatusRank(item.Status) {
 			item.Status = status.Items[itemIndex].Status
 			item.Message = status.Items[itemIndex].Message
@@ -2820,13 +2854,14 @@ func (m *Module) PreviewFrame(
 		return api.FramePreview{}, fmt.Errorf("release workflow retain frame preview: %w", err)
 	}
 	return api.FramePreview{
+		Processing:       &content.Processing,
 		ID:               previewID,
 		WorkflowID:       workflowID,
 		WorkflowRevision: expectedRevision,
 		Release:          *state.Workflow.Release,
 		DiscID:           content.DiscID,
 		DiscName:         content.DiscName,
-		TimestampSeconds: timestampSeconds,
+		TimestampSeconds: content.TimestampSeconds,
 		ExpiresAt:        expiresAt,
 	}, nil
 }
@@ -4688,7 +4723,7 @@ func (m *Module) selectBlurayCandidate(
 		return CommandResult{}, fmt.Errorf("%w: fact instructions unavailable", ErrInvalidTransition)
 	}
 	instructions := facts.Instructions
-	instructions.BlurayReleaseID = releaseID
+	instructions.Bluray = &api.BluraySelection{Mode: "manual", Release: releaseID}
 	return m.replaceFactsAndPrepare(ctx, ownerID, state, nextRevision, now, api.PrepareInput{
 		SourcePath:   current.Release.Source.SourcePath,
 		Intent:       api.PreparationIntentPreview,
@@ -6597,8 +6632,8 @@ func validateMediaRequirementsFingerprint(snapshot api.MediaArtifactSet, project
 	return nil
 }
 
-// deleteMediaArtifacts removes requested artifacts from retained media and clears
-// preparation and skip mode before publishing the remaining selection's readiness.
+// deleteMediaArtifacts removes local artifacts and their hosted URL associations,
+// then clears preparation and skip mode before publishing the remaining readiness.
 func (m *Module) deleteMediaArtifacts(
 	ctx context.Context,
 	ownerID string,
@@ -6622,9 +6657,15 @@ func (m *Module) deleteMediaArtifacts(
 	}
 	artifacts := make([]api.MediaArtifact, 0, len(snapshot.Artifacts)-len(deleted))
 	for _, artifact := range snapshot.Artifacts {
-		if _, ok := deleted[artifact.ID]; !ok {
-			artifacts = append(artifacts, artifact)
+		if _, remove := deleted[artifact.ID]; remove {
+			continue
 		}
+		if artifact.Kind == api.MediaArtifactHostedImage {
+			if _, remove := deleted[api.PublicResourceID(artifact.Source)]; remove {
+				continue
+			}
+		}
+		artifacts = append(artifacts, artifact)
 	}
 	snapshot.Artifacts = artifacts
 	snapshot.ImageRequirementsPrepared = false

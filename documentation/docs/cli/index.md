@@ -70,6 +70,8 @@ States are `pending`, `running`, `completed`, `failed`, `interrupted` and `skipp
 
 Retry selection does not bypass input ownership, confirmed-upload exclusions or uncertain-submission reconciliation. A tracker submission with an unknown outcome still requires the existing recovery process; no remote submission is retried automatically. Confirmed tracker uploads are recorded separately from item progress, including partial failures. `completed` means the requested processing finished: Input-only and debug/site-check runs can complete without uploading. Skips and declined actions do not prove an upload. Use a different queue name when starting a different task, such as switching a completed Input-only queue to uploads.
 
+An unknown tracker outcome leaves the affected queue item interrupted while independent pending items continue. Legacy attempts without durable submission protection still block new inputs until reconciled. The affected item's original workflow and submission protection remain available after restart. Reopen that source interactively or with `--unattended_confirm` only after checking the remote outcome; declining reconciliation leaves its outcome unresolved. If a retained workflow's source cannot be identified reliably, manual recovery is still required.
+
 Membership stays unchanged until explicitly refreshed:
 
 ```powershell
@@ -89,6 +91,12 @@ Pass the collection parent, not each disc separately:
 For BDMV, interactive preparation groups playlist choices by disc and requires at least one selection from every disc. `--unattended` stops if no complete stored or configured selection can be resolved; `--unattended_confirm` can show the required prompt.
 
 `--manual_frames 240,480` requests both frames from every prepared disc. The selected parent remains one collection-root torrent containing all disc folders.
+
+### Blu-ray.com release inspection
+
+When Blu-ray.com lookup is enabled, the CLI and TUI first show the release listing. Enter a release number to select its available country, publisher and release URL; enabled cover handling inspects only that edition. Enter `a` to fetch and score all eligible editions, then choose a release or `n` to skip. Unattended runs do not prompt or implicitly fetch all details. Country filtering and automatic unique-country selection still apply.
+
+Use `--bluray-release "https://www.blu-ray.com/movies/Example-Release-Blu-ray/123/"` or `--bluray-release 123` for an exact release. Numeric IDs use the source's Blu-ray or DVD catalogue; a URL identifies its own catalogue. This fetches only that edition when its details are needed to resolve it. `--bluray-release=""` explicitly skips selection; `--bluray-release auto` restores automatic matching. Compatible listings, details and manual choices survive ordinary corrections. The separate `--blu` argument remains the torrent-site source argument.
 
 ### Decrypted 3D Blu-ray ISO input
 
@@ -212,19 +220,20 @@ Exit code `0` means Input is ready. Exit code `2` means required input prevents 
 
 Title and original title are read-only provider values. Use `--alternate-title` to correct the alternate title.
 
-| Option                                            | Purpose                                                                                                |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `--alternate-title <text>`                        | Override the alternate title.                                                                          |
-| `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                                             |
-| `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                                         |
-| `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                            |
-| `--hardcoded-subs` / `-hc`                        | Enable hardcoded subtitles; `-hc Spanish` supplies a language; `--hardcoded-subs=false` disables them. |
-| `--hardcoded-subtitle-languages "English"`        | Set hardcoded languages and enable them; an empty list disables them.                                  |
-| `--track-languages "<track-id>=English, Spanish"` | Correct one previously inspected track. Repeat for distinct track IDs.                                 |
-| `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                                           |
-| `--reset-input <field>`                           | Remove one saved correction. Repeat for distinct fields.                                               |
-| `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.                              |
-| `--tracker-input "<tracker-id>:<field>=<answer>"` | Answer a field shown by the current tracker questionnaire.                                             |
+| Option                                            | Purpose                                                                                                                             |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `--alternate-title <text>`                        | Override the alternate title.                                                                                                       |
+| `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                                                                          |
+| `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                                                                      |
+| `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                                                         |
+| `--hardcoded-subs` / `-hc`                        | Enable hardcoded subtitles; `-hc Spanish` supplies a language; `--hardcoded-subs=false` disables them.                              |
+| `--hardcoded-subtitle-languages "English"`        | Set hardcoded languages and enable them; an empty list disables them.                                                               |
+| `--track-languages "<track-id>=English, Spanish"` | Correct one previously inspected track. Repeat for distinct track IDs.                                                              |
+| `--bluray-release "<release-url-or-id>"`          | Select one Blu-ray.com edition without scanning unrelated release pages. Empty skips selection; `auto` restores automatic matching. |
+| `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                                                                        |
+| `--reset-input <field>`                           | Remove one saved correction. Repeat for distinct fields.                                                                            |
+| `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.                                                           |
+| `--tracker-input "<tracker-id>:<field>=<answer>"` | Answer a field shown by the current tracker questionnaire.                                                                          |
 
 Language entries accept one or more comma-separated values. Blank segments are ignored, duplicate languages are removed, and multiword names remain intact. Use `--audio-languages=` for an explicit empty list. Original production language remains separate from track languages. Regional/script tags and Full/Forced coverage are retained; collectives and unknown values do not establish a specific language. See [language corrections](../workflow/index.md#2-review-canonical-metadata) for identity and clear/Auto behavior.
 
@@ -282,7 +291,7 @@ Existing prepared releases are rebuilt after this update. Older binaries do not 
 | `--manual-year <year>`        | `-manual-year`, `-year`                           | Override movie year or TV year without usable TVDB data; `0` clears it.                               |
 | `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                                                                           |
 | `--use-season-episode`        | `-use-season-episode`                             | Prefer explicit or TMDB-matched season/episode naming over a daily date.                              |
-| `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                                                                                 |
+| `--region <value>`            | `-region`, `-reg`                                 | Override release country code, such as USA or GER.                                                    |
 | `--no-season`                 | `-no-season`                                      | Remove season and episode from name.                                                                  |
 | `--no-year`                   | `-no-year`                                        | Omit movie year or TV year without usable TVDB data.                                                  |
 | `--no-aka`                    | `-no-aka`                                         | Remove AKA from name.                                                                                 |
@@ -484,7 +493,7 @@ During upload, the CLI prints the path of every successfully retained PNG and st
 | `--client <name>`        | `-client`                          | Override torrent client.                                                                 |
 | `--qbit-tag <value>`     | `-qbit-tag`, `-qbt`                | Override qBittorrent tag.                                                                |
 | `--qbit-cat <value>`     | `-qbit-cat`, `-qbc`                | Override qBittorrent category.                                                           |
-| `--force-recheck`        | `-force-recheck`, `-frc`           | Force recheck of matched qBittorrent torrents before validation.                         |
+| `--force-recheck`        | `-force-recheck`, `-frc`           | Recheck matched qBittorrent torrents and verify reusable torrent data.                   |
 | `--no-seed`              | `-no-seed`, `-ns`                  | Do not inject into torrent clients.                                                      |
 | `--skip_auto_torrent`    | `-skip_auto_torrent`, `-sat`       | Skip automated torrent-client searching.                                                 |
 | `--keep-folder`          | `-keep-folder`, `-kf`              | Keep the supplied folder around one movie or episode video.                              |
@@ -497,6 +506,10 @@ During upload, the CLI prints the path of every successfully retained PNG and st
 `--keep-folder` applies only when a supplied folder contains one selected movie or episode video. The torrent retains that folder as its root and includes only the selected video; samples, NFOs, text files, and other sidecars are excluded. The default remains a single-file torrent. Season packs, multi-video folders, disc sources, and direct file inputs are unchanged. Reused torrents must match the requested layout.
 
 `--nohash` and `--rehash` cannot be combined, even with explicit false values.
+
+Ordinary torrent reuse checks the metainfo, requested file layout and applicable limits without reading every media byte. This does not prove that same-sized media bytes match the piece hashes. Use `--force-recheck` to request a piece check, or `--rehash` to create a fresh torrent. A reusable artifact may need a metadata-only layout change; `--nohash` permits that but fails if new pieces are required.
+
+Reuse currently supports v1 torrents; v2 and hybrid v1/v2 torrents require a new torrent, so `--nohash` cannot use them.
 
 ## `serve`
 

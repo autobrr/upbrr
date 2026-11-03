@@ -14,6 +14,10 @@ Use **Settings → Torrent preparation** for torrent reuse and rehash scheduling
 
 **Prefer reusable torrents with pieces up to 16 MiB** affects selection among reusable client torrents; it does not impose a piece size on every newly generated torrent. A negative rehash cooldown behaves as zero.
 
+Compatible existing torrents are checked for metainfo, layout and applicable limits without automatically reading every media byte. Those checks do not prove that same-sized media bytes match the piece hashes. Explicit recheck verifies pieces; rehash creates a fresh torrent. Tracker metadata personalization and eligible wrapper-only changes can reuse existing pieces.
+
+Reuse currently supports v1 torrents. V2 and hybrid v1/v2 torrents require a new torrent.
+
 :::note Compatibility field
 
 **Mkbrr threads** remains in the schema but has no current runtime reader.

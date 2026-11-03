@@ -119,6 +119,8 @@ See [Audio analysis](../workflow/audio-analysis.md) for user-facing behavior. Us
 
 One active input is shared by all processes using the same database. Reads do not acquire its lease or recover interrupted work. Startup waits for prior-process leases to expire, preserves completed work, and marks unfinished operations interrupted without replaying external work. It abandons unresolved prior-process effects without verifying their remote outcome; check the tracker or torrent client before explicitly retrying an interrupted stage. Unknown external outcomes during the running process still require reconciliation before another submission. If a continuation or workflow command returns a revision conflict, fetch the current workflow and review its required actions before sending a new command; do not replay a write with the old revision.
 
+A forced-preparation continuation returns `preparationOperationId` when it accepts that preparation operation. Passive reads and responses returning an already active operation omit it. To associate cancellation with that request, require this ID to match the returned operation; a newly observed operation can belong to another tab or process.
+
 ## Base-path example
 
 ```powershell

@@ -88,6 +88,74 @@ const facet = (): ScreenshotsFacet => {
 };
 
 describe("ScreenshotsPage", () => {
+  it.each([
+    { renderer: "libplacebo", tonemapped: true, applied: "yes" },
+    { renderer: "none", tonemapped: false, applied: "no" },
+  ])("shows successful $renderer preview processing", ({ renderer, tonemapped, applied }) => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        previewProcessing: { requestedRenderer: renderer, renderer, tonemapped, degraded: false },
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+    const preview = screen.getByRole("heading", { name: "Live Preview" }).closest("section")!;
+    expect(within(preview).getByRole("status")).toHaveTextContent(
+      `Renderer: ${renderer}; tonemapping applied: ${applied}.`,
+    );
+  });
+
+  it("keeps each recovered image warning beside its image", () => {
+    const base = facet();
+    const artifacts = base.view.artifacts!;
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        previewProcessing: {
+          requestedRenderer: "libplacebo",
+          renderer: "software",
+          tonemapped: true,
+          degraded: false,
+          warning:
+            "Requested libplacebo; device failed. Using software; tonemapping applied: true.",
+        },
+        previewTimestampSeconds: 12.5,
+        artifacts: {
+          ...artifacts,
+          artifacts: artifacts.artifacts.map((artifact) => ({
+            ...artifact,
+            timestampSeconds: 14.5,
+            processing: {
+              requestedRenderer: "libplacebo",
+              renderer: "none",
+              tonemapped: false,
+              degraded: true,
+              warning: "Non-tonemapped output; colours may be inaccurate.",
+            },
+          })),
+        },
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+    const preview = screen.getByRole("heading", { name: "Live Preview" }).closest("section")!;
+    const generated = screen
+      .getByRole("heading", { name: "Generated Screenshots" })
+      .closest("section")!;
+    expect(within(preview).getByRole("status")).toHaveTextContent("Using software");
+    expect(within(preview).getByText("Preview at 12.500 seconds")).toBeVisible();
+    expect(
+      within(generated).getByText("Non-tonemapped output; colours may be inaccurate."),
+    ).toBeVisible();
+    expect(within(generated).getByText("Captured at 14.500 seconds")).toBeVisible();
+  });
+
   it("requires a frame selection for Generate screenshots", () => {
     const base = facet();
     const screenshots: ScreenshotsFacet = {
@@ -100,100 +168,45 @@ describe("ScreenshotsPage", () => {
     expect(screen.getByRole("button", { name: "Generate screenshots" })).toBeDisabled();
   });
 
-  it("shows saved tracker images and prepares them without capturing suggested frames", () => {
+  it("labels imported images alongside new captures and keeps their normal selection and deletion controls", () => {
     const base = facet();
     const screenshots: ScreenshotsFacet = {
       ...base,
       view: {
         ...base.view,
-        plan: {
-          ...plan(),
-          SavedTrackerImages: [
+        artifacts: {
+          ...base.view.artifacts!,
+          artifacts: [
+            { ...base.view.artifacts!.artifacts[0], source: "tracker" },
             {
-              TrackerID: "AITHER",
-              Host: "imgbb",
-              URL: "https://images.example.invalid/one.png",
-              PreviewURL: "https://images.example.invalid/one-preview.png",
+              ...base.view.artifacts!.artifacts[0],
+              id: "new-capture",
+              source: "final",
+              order: 1,
+              timestampSeconds: 12.5,
             },
-            { TrackerID: "AITHER", Host: "imgbb", URL: "https://images.example.invalid/two.png" },
           ],
         },
-        artifacts: null,
       },
     };
     const lightbox = vi.fn();
     render(
       <ScreenshotsPage facet={screenshots} setLightboxImage={lightbox} setLightboxAlt={vi.fn()} />,
     );
-    expect(screen.getByAltText("Saved screenshot 1 from AITHER")).toHaveAttribute(
-      "src",
-      "https://images.example.invalid/one-preview.png",
-    );
-    expect(screen.getByAltText("Saved screenshot 2 from AITHER")).toBeInTheDocument();
-    fireEvent.click(screen.getByAltText("Saved screenshot 1 from AITHER"));
-    expect(lightbox).toHaveBeenCalledWith("https://images.example.invalid/one.png");
-    fireEvent.click(screen.getByRole("button", { name: "Use saved images" }));
-    expect(screenshots.generate).toHaveBeenCalledWith("final", []);
-  });
-
-  it("hides saved tracker images already retained as hosted artifacts", () => {
-    const base = facet();
-    const savedURL = "https://images.example.invalid/saved.png";
-    const screenshots: ScreenshotsFacet = {
-      ...base,
-      view: {
-        ...base.view,
-        plan: {
-          ...plan(),
-          SavedTrackerImages: [{ TrackerID: "AITHER", Host: "imgbb", URL: savedURL }],
-        },
-        artifacts: {
-          ...base.view.artifacts!,
-          artifacts: [
-            ...base.view.artifacts!.artifacts,
-            {
-              id: "hosted-saved",
-              kind: "hosted_image",
-              purpose: "final",
-              selected: true,
-              source: "artifact-1",
-              url: savedURL,
-            },
-          ],
-        },
-      },
-    };
-    render(
-      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
-    );
+    expect(screen.getByRole("note")).toHaveTextContent("chronological order cannot be determined");
+    expect(
+      screen.getAllByText("Existing description image · capture timestamp and provenance unknown"),
+    ).toHaveLength(1);
+    expect(screen.queryByText("Captured at 0.000 seconds")).not.toBeInTheDocument();
+    expect(screen.getByText("Captured at 12.500 seconds")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Use saved images" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Saved tracker images" })).not.toBeInTheDocument();
-  });
-
-  it("lets a saved-image-only plan prepare screenshots without frame suggestions", () => {
-    const base = facet();
-    const screenshots: ScreenshotsFacet = {
-      ...base,
-      view: {
-        ...base.view,
-        plan: {
-          ...plan(),
-          SuggestedSelections: [],
-          RequiresManualFrames: true,
-          SavedTrackerImages: [
-            { TrackerID: "AITHER", Host: "imgbb", URL: "https://images.example.invalid/one.png" },
-          ],
-        },
-        selections: [],
-        artifacts: null,
-      },
-    };
-    render(
-      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
-    );
-    expect(screen.getByRole("button", { name: "Generate screenshots" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Use saved images" }));
-    expect(screenshots.generate).toHaveBeenCalledWith("final", []);
+    fireEvent.click(screen.getByAltText("Screenshot 1"));
+    expect(lightbox).toHaveBeenCalledWith(base.view.artifacts!.artifacts[0].url);
+    fireEvent.click(screen.getByRole("button", { name: "Unselect Screenshot 1" }));
+    expect(screenshots.selectArtifact).toHaveBeenCalledWith("artifact-1", false);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Screenshot 1" }));
+    expect(screenshots.deleteArtifacts).toHaveBeenCalledWith(["artifact-1"]);
+    expect(screen.getByRole("button", { name: "Unselect Screenshot 2" })).toBeEnabled();
   });
 
   it("shows saved screenshots without a disc assignment beside planned discs", () => {
@@ -517,7 +530,7 @@ describe("ScreenshotsPage", () => {
       <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
     );
 
-    expect(screen.getByText("4 captured screenshot(s)")).toBeInTheDocument();
+    expect(screen.getByText("4 retained screenshot(s)")).toBeInTheDocument();
     expect(screen.getAllByAltText(/^Screenshot \d$/)).toHaveLength(4);
   });
 

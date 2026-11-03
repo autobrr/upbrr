@@ -12,8 +12,10 @@ type Props = {
   setLightboxAlt: (alt: string) => void;
 };
 
-const scoreLabel = (candidate: BlurayReleaseCandidate) => `${candidate.Score.toFixed(1)}/100`;
+const scoreLabel = (candidate: BlurayReleaseCandidate) =>
+  candidate.DetailsStatus === "complete" ? `${candidate.Score.toFixed(1)}/100` : "Not compared";
 
+/** Presents scored disc editions, calendar release dates, on-demand inspection, and explicit candidate selection. */
 export default function BlurayCandidatesPage(props: Props) {
   const { facet, setLightboxImage, setLightboxAlt } = props;
   const selecting = facet.view.status === "running";
@@ -28,7 +30,8 @@ export default function BlurayCandidatesPage(props: Props) {
         <p className={pageStyle.eyebrow}>Blu-ray.com</p>
         <h1>Release Candidates</h1>
         <p className={pageStyle.subtitle}>
-          Best accepted match loads by score; select another release here.
+          A single matching-country release is selected automatically. Multiple releases use
+          disc-spec scores; select another eligible release here.
         </p>
       </header>
 
@@ -41,14 +44,61 @@ export default function BlurayCandidatesPage(props: Props) {
       ) : (
         <>
           <section className={`${pageStyle.panel} grid gap-2 py-3`}>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="primary"
+                disabled={selecting || !candidates.length}
+                onClick={() => void facet.fetchCandidateDetails()}
+              >
+                Fetch all release details
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                disabled={selecting}
+                onClick={() => void facet.setCandidateSelection("skip")}
+              >
+                Skip selection
+              </button>
+              <button
+                type="button"
+                className="ghost"
+                disabled={selecting}
+                onClick={() => void facet.setCandidateSelection("auto")}
+              >
+                Auto selection
+              </button>
+              {selecting ? (
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={!facet.view.candidateDetailsCancelable}
+                  onClick={() => void facet.cancelCandidateDetails()}
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+            {selecting ? <p role="status">Processing requested Blu-ray.com work…</p> : null}
             <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2">
               <div>
+                <p className={pageStyle.label}>Release country</p>
+                <p className={pageStyle.value}>{bluray.Country || "Not locked"}</p>
+              </div>
+              <div>
                 <p className={pageStyle.label}>Best score</p>
-                <p className={pageStyle.value}>{bluray.BestScore.toFixed(1)}</p>
+                <p className={pageStyle.value}>
+                  {candidates.some((c) => c.DetailsStatus === "complete")
+                    ? bluray.BestScore.toFixed(1)
+                    : "Not compared"}
+                </p>
               </div>
               <div>
                 <p className={pageStyle.label}>Required score</p>
-                <p className={pageStyle.value}>{bluray.Threshold.toFixed(1)}</p>
+                <p className={pageStyle.value}>
+                  {bluray.Threshold === 0 ? "No minimum" : bluray.Threshold.toFixed(1)}
+                </p>
               </div>
               <div>
                 <p className={pageStyle.label}>Auto-selected</p>
@@ -113,6 +163,24 @@ export default function BlurayCandidatesPage(props: Props) {
                       </button>
                     </div>
 
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={selecting}
+                        aria-label={`Fetch details for ${candidateLabel}`}
+                        onClick={() => void facet.fetchCandidateDetails(candidate.ReleaseID)}
+                      >
+                        Fetch release details
+                      </button>
+                      <p role={candidate.DetailsStatus === "failed" ? "alert" : undefined}>
+                        {candidate.DetailsStatus === "complete"
+                          ? "Details fetched"
+                          : candidate.DetailsStatus === "failed"
+                            ? "Release details unavailable"
+                            : "Details not fetched"}
+                      </p>
+                    </div>
                     <div className="grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-2">
                       <div>
                         <p className={pageStyle.label}>Score</p>
@@ -123,12 +191,24 @@ export default function BlurayCandidatesPage(props: Props) {
                         <p className={pageStyle.value}>{candidate.Country || "-"}</p>
                       </div>
                       <div>
-                        <p className={pageStyle.label}>Region</p>
+                        <p className={pageStyle.label}>Country code</p>
                         <p className={pageStyle.value}>{candidate.Region || "-"}</p>
                       </div>
                       <div>
                         <p className={pageStyle.label}>Publisher</p>
                         <p className={pageStyle.value}>{candidate.Publisher || "-"}</p>
+                      </div>
+                      <div>
+                        <p className={pageStyle.label}>Release date</p>
+                        <p className={pageStyle.value}>
+                          {candidate.ReleaseDate ? (
+                            <time dateTime={candidate.ReleaseDate}>{candidate.ReleaseDate}</time>
+                          ) : candidate.DetailsStatus ? (
+                            "Unavailable"
+                          ) : (
+                            "Not fetched"
+                          )}
+                        </p>
                       </div>
                       <div>
                         <p className={pageStyle.label}>Disc</p>
@@ -170,15 +250,30 @@ export default function BlurayCandidatesPage(props: Props) {
                           {(candidate.Specs?.Subtitles || []).slice(0, 6).join(", ") || "-"}
                         </p>
                       </div>
+                      <div>
+                        <p className={pageStyle.label}>Playback region</p>
+                        <p className={pageStyle.value}>
+                          {candidate.Specs?.Playback?.Region
+                            ? `${candidate.Specs.Playback.Region}${candidate.Specs.Playback.RegionNotes ? ` (${candidate.Specs.Playback.RegionNotes})` : ""}`
+                            : "-"}
+                        </p>
+                      </div>
                     </div>
 
                     {candidate.MatchNotes?.length ? (
-                      <div>
-                        <p className={pageStyle.label}>Score notes</p>
-                        <p className={`${pageStyle.value} [overflow-wrap:anywhere]`}>
-                          {candidate.MatchNotes.slice(0, 5).join(" | ")}
-                        </p>
-                      </div>
+                      <details className="min-w-0 rounded-md border border-border p-3">
+                        <summary
+                          className="cursor-pointer font-semibold focus-visible:outline-2 focus-visible:outline-ring"
+                          aria-label={`Score details for ${candidateLabel}`}
+                        >
+                          Score details ({candidate.MatchNotes.length})
+                        </summary>
+                        <ul className="mt-2 list-disc pl-5 text-sm [overflow-wrap:anywhere]">
+                          {candidate.MatchNotes.map((note, noteIndex) => (
+                            <li key={noteIndex}>{note}</li>
+                          ))}
+                        </ul>
+                      </details>
                     ) : null}
 
                     {candidate.CoverImages?.length ? (

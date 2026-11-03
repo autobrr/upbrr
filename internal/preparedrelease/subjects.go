@@ -43,6 +43,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 	options := input.Options
 	options.KeepFolder = resources.policy.KeepFolder
 	subject := api.UploadSubject{
+		PackageInventory:            release.Source.PackageInventory.Clone(),
 		MediaFileFacts:              release.Media.MediaFileFacts.Clone(),
 		SourceIdentity:              release.SourceIdentity,
 		LanguageFacts:               release.Media.LanguageFacts.Clone(),
@@ -139,6 +140,9 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		ArrReleaseGroup:             release.Naming.Group,
 		InfoHash:                    resources.clientEvidence.Result.InfoHash,
 		ClientTorrentPath:           resources.clientEvidence.Result.TorrentPath,
+		ClientTorrentCandidates:     resources.clientEvidence.Result.TorrentCandidates,
+		ClientSearchPolicy:          resources.clientEvidence.Policy,
+		ClientSearchPerformed:       resources.clientEvidence.Disposition == preparationstate.ClientEvidenceDispositionSearched,
 		ClientTorrentDataVerified:   resources.clientEvidence.Result.TorrentDataVerified,
 		TrackerIDs:                  maps.Clone(resources.clientEvidence.Result.TrackerIDs),
 		MatchedTrackers:             append([]string(nil), resources.clientEvidence.Result.MatchedTrackers...),
@@ -158,6 +162,12 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		Files:               append([]api.VerifiedSourceFile(nil), subject.SourceIdentity.Files...),
 	}
 	cloned.SourceManifest = release.Source
+	cloned.ClientTorrentCandidates = append([]api.ClientTorrentCandidate(nil), subject.ClientTorrentCandidates...)
+	cloned.ClientSearchPolicy = subject.ClientSearchPolicy
+	if subject.ClientSearchPolicy.Client != nil {
+		cloned.ClientSearchPolicy.Client = new(*subject.ClientSearchPolicy.Client)
+	}
+	cloned.ClientSearchPerformed = subject.ClientSearchPerformed
 	cloned.StaffUploadTokens = maps.Clone(input.StaffUploadTokens)
 	return cloned, nil
 }
@@ -451,10 +461,12 @@ func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPl
 		MediaInfoJSONPath:     resources.mediaInfoJSONPath,
 		MediaCategory:         string(release.Identity.Category),
 		HDR:                   release.Media.HDR,
+		HDRFacts:              release.Media.HDRFacts,
 		TVPack:                release.Episode.Pack,
 		Episode:               release.Episode.Episode,
 		Release:               releaseInfo(release),
 		SelectedBDMVPlaylists: selectedPlaylists,
+		KeepImages:            resources.policy.KeepImages,
 		DefaultCount:          input.Count,
 		ManualFrames:          append([]int(nil), input.Options.ManualFrames...),
 		Discs:                 discs,

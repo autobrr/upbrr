@@ -1095,7 +1095,12 @@ func TestModuleResetAndBlurayCandidateSelectionUseExactRetainedAuthority(t *test
 				Source:     api.SourceManifest{SourcePath: input.SourcePath},
 				Naming:     api.NamingFacts{ReleaseName: "Example.Release.2026.1080p-GRP"},
 				ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{
-					SelectedReleaseID: input.Instructions.BlurayReleaseID,
+					SelectedReleaseID: func() string {
+						if input.Instructions.Bluray != nil {
+							return input.Instructions.Bluray.Release
+						}
+						return ""
+					}(),
 					Candidates: []api.BlurayReleaseCandidate{
 						{ReleaseID: "candidate-retained", MovieTitle: "Example Release"},
 					},
@@ -1140,10 +1145,10 @@ func TestModuleResetAndBlurayCandidateSelectionUseExactRetainedAuthority(t *test
 		ReleaseID:        "candidate-retained",
 		IdempotencyKey:   "select-candidate",
 	})
-	if result.FactInstructions == nil || result.FactInstructions.Instructions.BlurayReleaseID != "candidate-retained" {
+	if result.FactInstructions == nil || result.FactInstructions.Instructions.Bluray.Release != "candidate-retained" {
 		t.Fatalf("candidate fact instructions = %#v", result.FactInstructions)
 	}
-	if !inputs[len(inputs)-1].Force || inputs[len(inputs)-1].Instructions.BlurayReleaseID != "candidate-retained" {
+	if !inputs[len(inputs)-1].Force || inputs[len(inputs)-1].Instructions.Bluray.Release != "candidate-retained" {
 		t.Fatalf("candidate prepare input = %#v", inputs[len(inputs)-1])
 	}
 
@@ -2728,6 +2733,20 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 				api.PreparationProgressCompleted,
 				"External identity ready.",
 			))
+			substep := api.NewPreparationProgressUpdate(api.PreparationPhaseMediaFacts, api.PreparationProgressRunning, "Waiting for the current edition.")
+			substep.Substep = "Read Blu-ray.com release details"
+			substep.CompletedItems, substep.TotalItems = 7, 100
+			substep.ElapsedSeconds = 10
+			api.EmitPreparationProgress(ctx, substep)
+			detail := api.NewPreparationProgressUpdate(api.PreparationPhaseMediaFacts, api.PreparationProgressRunning, "Release inspection complete.")
+			detail.BlurayCandidate = &api.BlurayReleaseCandidate{
+				ReleaseID:     "101",
+				Title:         "Example edition",
+				DetailsStatus: "complete",
+				ReleaseDate:   "2026-01-02",
+			}
+			api.EmitPreparationProgress(ctx, detail)
+
 			close(started)
 			select {
 			case <-ctx.Done():
@@ -2761,8 +2780,21 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 		t.Fatal("operation did not start")
 	}
 	progress := waitForWorkflowOperation(t, module, created.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool {
-		return status.Status == api.StageStatusRunning && status.Sequence >= 4 && len(status.Items) > 1
+		return status.Status == api.StageStatusRunning && status.Sequence >= 5 && len(status.Items) > 3
 	})
+	if progress.Completed != 800 || progress.Total != 1200 {
+		t.Fatalf("substep replaced aggregate stage order: %#v", progress)
+	}
+	if !slices.ContainsFunc(progress.Items, func(item api.WorkflowOperationItem) bool {
+		return item.Kind == "preparation_substep" && item.Phase == "media_facts" && item.Completed == 7 && item.Total == 100 && strings.Contains(item.Message, "10s elapsed")
+	}) {
+		t.Fatalf("substep lost in durable operation: %#v", progress.Items)
+	}
+	if !slices.ContainsFunc(progress.Items, func(item api.WorkflowOperationItem) bool {
+		return item.Kind == "bluray_detail" && item.BlurayCandidate != nil && item.BlurayCandidate.ReleaseID == "101" && item.BlurayCandidate.ReleaseDate == "2026-01-02"
+	}) {
+		t.Fatal("progressive candidate details were not retained with the operation")
+	}
 	if progress.Revision != created.Workflow.Revision || progress.Progress == 0 {
 		t.Fatalf("running operation progress = %#v", progress)
 	}
@@ -2770,7 +2802,7 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 		t.Fatalf("operation progress was not sanitized: %q", progress.Message)
 	}
 	if !slices.ContainsFunc(progress.Events, func(event api.WorkflowEvent) bool {
-		return event.ScopeID == string(api.PreparationPhaseExternalIdentity) && event.State == api.StageStatusCompleted
+		return event.ScopeID == string(api.PreparationPhaseMediaFacts) && event.State == api.StageStatusRunning
 	}) {
 		t.Fatalf("running operation omitted changed child event: %#v", progress.Events)
 	}
@@ -3738,6 +3770,14 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 				Kind:     api.MediaArtifactScreenshot,
 				Purpose:  api.ScreenshotPurposeFinal,
 				Selected: false,
+			}, {
+				ID:       "hosted-1",
+				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+				Source:   "artifact-1",
+				Host:     "example",
+				URL:      "https://images.example.invalid/retained.png",
 			}},
 			Status: api.StageStatusCompleted,
 		}, privateMedia, nil
@@ -3918,7 +3958,7 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 			t.Fatalf("durable workflow advanced past failed delete: %#v", state.Workflow)
 		}
 		media, ok := state.Media[state.Workflow.Media.ID]
-		if !ok || len(media.Artifacts) != 1 || media.Artifacts[0].ID != "artifact-1" {
+		if !ok || len(media.Artifacts) != 2 || media.Artifacts[0].ID != "artifact-1" || media.Artifacts[1].ID != "hosted-1" {
 			t.Fatalf("durable media lost the artifact after failed delete: %#v", media.Artifacts)
 		}
 	}
@@ -3943,6 +3983,13 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 	deleted := executeCommand(t, module, retry)
 	if deleted.Media == nil || len(deleted.Media.Artifacts) != 0 || privateMedia.stats.deletions != 2 {
 		t.Fatalf("deleted media = %#v deletions=%d", deleted.Media, privateMedia.stats.deletions)
+	}
+	stored, err := module.private.Get(testOwnerID, deleted.Workflow.ID, mediaPrivateResourceID(deleted.Media.ID), module.clock.Now().UTC())
+	if err != nil {
+		t.Fatalf("read stored media resource: %v", err)
+	}
+	if resource, ok := stored.(*retainedMediaResourceFake); !ok || resource == privateMedia || resource.pending {
+		t.Fatalf("stored media resource did not retain the committed deletion result: %#v", stored)
 	}
 	if privateMedia.stats.staged != 3 {
 		t.Fatalf("staged deletion attempts = %d, want 3", privateMedia.stats.staged)
@@ -5806,5 +5853,27 @@ func TestUploadDryRunReportsPreserveEditionFeatures(t *testing.T) {
 	reports[0].EditionFeatures[0].Selected = false
 	if !features[0].Selected {
 		t.Fatal("dry-run report aliases retained review catalogue")
+	}
+}
+
+func TestPreparationSubstepCountersDoNotMixWithStageOrder(t *testing.T) {
+	status := api.WorkflowOperationStatus{}
+	applyWorkflowProgress(&status, api.WorkflowProgressUpdate{
+		ItemID:    "media_facts",
+		Kind:      "preparation_substep",
+		Status:    api.StageStatusRunning,
+		Completed: 1400,
+		Total:     2000,
+		ItemOnly:  true,
+	})
+	applyWorkflowProgress(&status, api.WorkflowProgressUpdate{
+		ItemID:    "media_facts",
+		Kind:      "preparation_phase",
+		Status:    api.StageStatusCompleted,
+		Completed: 900,
+		Total:     1200,
+	})
+	if status.Completed != 900 || status.Total != 1200 || status.Items[0].Completed != 900 || status.Items[0].Total != 1200 {
+		t.Fatalf("mixed counter units: %#v", status)
 	}
 }

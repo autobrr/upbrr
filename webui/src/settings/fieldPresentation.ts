@@ -86,11 +86,11 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     KeepImages: field(
       "Collect existing tracker images",
-      "Collect eligible images from supported tracker descriptions for later reuse. On Screenshots, use saved images when offered; collecting them does not capture new frames. Imported comparison images remain in descriptions.",
+      "Collect eligible images from supported tracker descriptions for later reuse. Eligible images are included automatically on Screenshots, where you can review or remove them. Collecting them does not capture new frames. Imported comparison images remain in descriptions.",
     ),
     OnlyID: field(
       "Limit tracker lookup to only metadata ids",
-      "Request identity fields rather than full description metadata from supported trackers. This restricts normal description/image enrichment; inspect the prepared result when combining with image collection.",
+      "Request identity fields rather than full description metadata from supported trackers. Image collection is controlled separately; supported trackers can still provide images when both settings are enabled.",
     ),
     UserOverrides: field(
       "User overrides (compatibility)",
@@ -106,11 +106,11 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     BlurayScore: field(
       "Blu-ray match threshold",
-      "Minimum candidate score for automatic selection when multiple releases are found. Default: 94.5. A non-positive value uses 100.",
+      "Minimum score when multiple eligible releases are found. A known release country limits eligibility. Default: 94.5. A non-positive value uses 100.",
     ),
     BluraySingleScore: field(
       "Single-candidate Blu-ray threshold",
-      "Minimum score for automatic selection when one release is found. Default: 89.5. A non-positive value uses 100.",
+      "Minimum score for one release when no country is locked. A unique matching-country release is selected regardless of score. Default: 89.5. A non-positive value uses 100.",
     ),
     CheckPredb: field(
       "PreDB check preference (compatibility)",
@@ -160,7 +160,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     UseLibplacebo: field(
       "Use Vulkan/libplacebo tone mapping",
-      "Needed for Dolby Vision Profile 5 inputs to avoid green/purple screenshots. Uses FFmpeg Vulkan/libplacebo when tone mapping is enabled and frame overlay is disabled. Requires a compatible FFmpeg/Vulkan setup; failed captures can fall back to software tone mapping.",
+      "Needed for Dolby Vision Profile 5 inputs to avoid green/purple screenshots. Uses FFmpeg Vulkan/libplacebo for previews and captures, including frame overlays, when tone mapping is enabled. Requires a compatible FFmpeg/Vulkan setup. Failed rendering can use compatible software tone mapping or a non-tonemapped image with a visible warning.",
     ),
     FFmpegCompression: field(
       "PNG compression level",

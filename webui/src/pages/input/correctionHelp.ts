@@ -34,7 +34,7 @@ export const correctionHelp: Record<string, string> = {
   "release_name.manual_date":
     "Set a daily episode date in YYYY-MM-DD form. Daily-date naming can replace season/episode naming; explicit season-zero specials retain their episode identity.",
   "release_name.region":
-    "Correct the release region using a country-code suggestion or a custom value. This is a prepared release fact, separate from audio and subtitle languages.",
+    "Correct the release country using a country-code suggestion or a custom value. A recognized country overrides the source-folder marker for Blu-ray matching. This does not change playback Region A/B/C.",
   "release_name.use_season_episode":
     "Yes requests season/episode naming when that evidence is available; No uses a known daily date. Auto restores the derived naming choice. This does not invent missing episode evidence.",
   "release_name.three_d":

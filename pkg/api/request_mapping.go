@@ -54,6 +54,11 @@ func MapPreparationRequest(request Request, intent PreparationIntent) (PrepareIn
 			ForceRecheck:       cloneBool(request.ClientOverrides.ForceRecheck),
 		},
 	}
+	var err error
+	input.Instructions.Bluray, err = request.Bluray.Normalize()
+	if err != nil {
+		return PrepareInput{}, err
+	}
 	if request.ReleaseNameOverrides.Category != nil {
 		category, err := NormalizeCanonicalCategory(*request.ReleaseNameOverrides.Category)
 		if err != nil {

@@ -35,6 +35,10 @@ func normalizePrepareInput(input api.PrepareInput) (normalizedPrepareInput, erro
 		return normalizedPrepareInput{}, err
 	}
 	input.SourcePath = primary
+	input.Instructions.Bluray, err = input.Instructions.Bluray.Normalize()
+	if err != nil {
+		return normalizedPrepareInput{}, fmt.Errorf("prepared release: normalize Blu-ray selection: %w", err)
+	}
 	input.Instructions.SourceLookup = strings.TrimSpace(input.Instructions.SourceLookup)
 	input.Instructions.Playlist.Selected = normalizePlaylistSelection(input.Instructions.Playlist.Selected)
 	input.Instructions.TrackerIDs = normalizeTrackerIDs(input.Instructions.TrackerIDs)

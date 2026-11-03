@@ -193,6 +193,14 @@ export type AudioAnalysisVariant = string;
 
 export type AudioTrackRole = string;
 
+export type BlurayDetailRequest = Readonly<{
+  All: true;
+  ReleaseID?: string;
+}> | Readonly<{
+  All?: false;
+  ReleaseID: string;
+}>;
+
 export type BlurayDiscSpec = Readonly<{
   Count: number;
   Format: string;
@@ -209,6 +217,7 @@ export type BlurayMetadata = Readonly<{
   AutoSelected: boolean;
   BestScore: number;
   Candidates: readonly BlurayReleaseCandidate[];
+  Country: string;
   IMDBID: number;
   SearchURL: string;
   SelectedReleaseID: string;
@@ -228,6 +237,7 @@ export type BlurayReleaseCandidate = Readonly<{
   Accepted: boolean;
   Country: string;
   CoverImages: readonly BlurayImage[];
+  DetailsStatus: string;
   GenericDisc: boolean;
   MatchNotes: readonly string[];
   MovieTitle: string;
@@ -236,6 +246,7 @@ export type BlurayReleaseCandidate = Readonly<{
   ProductID: string;
   Publisher: string;
   Region: string;
+  ReleaseDate: string;
   ReleaseID: string;
   Score: number;
   Specs: BluraySpecs;
@@ -243,6 +254,14 @@ export type BlurayReleaseCandidate = Readonly<{
   Title: string;
   URL: string;
   Warnings: readonly string[];
+}>;
+
+export type BluraySelection = Readonly<{
+  Mode: "manual";
+  Release: string;
+}> | Readonly<{
+  Mode: "skip" | "auto";
+  Release?: string;
 }>;
 
 export type BluraySpecs = Readonly<{
@@ -617,6 +636,7 @@ export type FramePreview = Readonly<{
   discName?: string;
   expiresAt: string;
   id: PublicResourceID;
+  processing?: ScreenshotProcessing | null;
   release: ReleaseSnapshotRef;
   timestampSeconds: number;
   workflowId: WorkflowID;
@@ -1132,10 +1152,12 @@ export type MediaArtifact = Readonly<{
   index?: number;
   kind: MediaArtifactKind;
   order?: number;
+  processing?: ScreenshotProcessing | null;
   purpose: ScreenshotPurpose;
   selected: boolean;
   sizeBytes?: number;
   source?: string;
+  sourceUnavailable?: boolean;
   timestampSeconds?: number;
   url?: string;
   width?: number;
@@ -1293,6 +1315,7 @@ export type MediaFileFacts = Readonly<{
 }>;
 
 export type MediaPlan = Readonly<{
+  autoAdoptSavedImages?: boolean;
   createdAt: string;
   discType?: string;
   discs?: readonly MediaDiscPlan[];
@@ -1482,6 +1505,12 @@ export type OperationRecovery = string;
 
 export type OverrideState = string;
 
+export type PackageInventory = Readonly<{
+  Files?: readonly string[];
+  Scope: SubmissionContentScope;
+  Status: MetadataEvidenceStatus;
+}>;
+
 export type PlaylistInfo = Readonly<{
   discId: string;
   discName: string;
@@ -1512,6 +1541,7 @@ export type PreparationCompatibility = Readonly<{
 }>;
 
 export type PreparationControls = Readonly<{
+  BlurayDetails?: BlurayDetailRequest | null;
   CaptureHDRMetadata?: boolean;
   ConfirmBDMVRescan: boolean;
   ForceRecheck?: boolean | null;
@@ -1698,7 +1728,7 @@ export type ReleaseFactInstructionSnapshotRef = Readonly<{
 }>;
 
 export type ReleaseFactInstructions = Readonly<{
-  BlurayReleaseID: string;
+  Bluray?: BluraySelection | null;
   Category?: CanonicalCategory | null;
   Identity: ExternalIDOverrides;
   Metadata: MetadataOverrides;
@@ -1884,6 +1914,7 @@ export type ReleaseWorkflowCurrent = Readonly<{
   media?: MediaArtifactSet | null;
   operation?: Operation | null;
   preflight?: TrackerPreflightAssessment | null;
+  preparationOperationId?: WorkflowOperationID;
   projectionInstructions?: TrackerProjectionInstructionSnapshot | null;
   projections?: TrackerReleaseProjectionSet | null;
   release?: ReleaseSnapshot | null;
@@ -1978,6 +2009,7 @@ export type ReleaseWorkflowUploadExternalIDs = Readonly<{
 }>;
 
 export type ReleaseWorkflowUploadFacts = Readonly<{
+  bluray?: BluraySelection | null;
   category?: CanonicalCategory | null;
   externalIds?: ReleaseWorkflowUploadExternalIDs;
   metadata?: ReleaseWorkflowUploadMetadata;
@@ -2295,7 +2327,22 @@ export type SaveReleaseWorkflowDescriptionOverrideRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type ScreenshotProcessing = Readonly<{
+  degraded: boolean;
+  renderer: string;
+  requestedRenderer: string;
+  steps?: readonly ScreenshotRenderStep[];
+  tonemapped: boolean;
+  warning?: string;
+}>;
+
 export type ScreenshotPurpose = string;
+
+export type ScreenshotRenderStep = Readonly<{
+  reason: string;
+  renderer: string;
+  stage: string;
+}>;
 
 export type ScreenshotSelection = Readonly<{
   DiscID: string;
@@ -2349,6 +2396,7 @@ export type SourceEntryType = string;
 export type SourceManifest = Readonly<{
   Classification: SourceClassification;
   Entries: readonly SourceManifestEntry[];
+  PackageInventory: PackageInventory;
   SelectedPlaylists: readonly PlaylistInfo[];
   Size: number;
   SourcePath: string;
@@ -2390,6 +2438,8 @@ export type StoredReleaseCorrectionsV1 = Readonly<{
   staleContentFields?: readonly CorrectionField[];
   version: number;
 }>;
+
+export type SubmissionContentScope = string;
 
 export type SubmissionExclusion = Readonly<{
   confirmedAt: string;
@@ -3317,6 +3367,7 @@ export type WorkflowMediaSelection = Readonly<{
 export type WorkflowOperationID = string;
 
 export type WorkflowOperationItem = Readonly<{
+  blurayCandidate?: BlurayReleaseCandidate | null;
   completed?: number;
   id: string;
   kind: string;

@@ -16,6 +16,7 @@ type Request struct {
 	SkipDupeAsActual            bool
 	DoubleDupeCheck             bool
 	SourceLookupURL             string
+	Bluray                      *BluraySelection
 	DescriptionOverrideRaw      string
 	DescriptionOverrideURL      string
 	DescriptionOverrideGroup    string

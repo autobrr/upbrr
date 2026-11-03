@@ -50,11 +50,13 @@ func TestConnection(ctx context.Context, client *http.Client) api.ConnectionTest
 }
 
 // setPageHeaders keeps public connection checks aligned with normal lookups.
+// Referrers preserve the page query but omit navigation fragments.
 func setPageHeaders(headers http.Header, referer string) {
 	headers.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	headers.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	headers.Set("Accept-Language", "en-US,en;q=0.9")
 	if referer != "" {
+		referer, _, _ = strings.Cut(referer, "#")
 		headers.Set("Referer", referer)
 	}
 }

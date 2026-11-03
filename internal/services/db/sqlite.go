@@ -1919,8 +1919,8 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedM
 	result, err := r.execWrite(ctx, "save screenshot", `
 		INSERT INTO screenshots (
 			source_path, prepared_media_fingerprint, prepared_generation, disc_id,
-			image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256, processing_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(image_path) DO UPDATE SET
 			source_path = excluded.source_path,
 			prepared_media_fingerprint = excluded.prepared_media_fingerprint,
@@ -1933,7 +1933,8 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedM
 			purpose = excluded.purpose,
 			captured_at = excluded.captured_at,
 			tonemapping = excluded.tonemapping,
-			content_sha256 = excluded.content_sha256
+			content_sha256 = excluded.content_sha256,
+ processing_json = excluded.processing_json
 		WHERE screenshots.source_path = excluded.source_path AND (
 			(screenshots.prepared_generation = excluded.prepared_generation AND
 			 screenshots.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
@@ -1948,7 +1949,7 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedM
 	`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration, strings.TrimSpace(screenshot.DiscID),
 		screenshot.ImagePath, screenshot.Timestamp, screenshot.FrameNumber,
 		screenshot.Width, screenshot.Height, screenshot.Purpose, screenshot.CapturedAt.UTC().Format(time.RFC3339Nano),
-		screenshot.Tonemapping, screenshot.ContentSHA256)
+		screenshot.Tonemapping, screenshot.ContentSHA256, encodeOptionalJSON(screenshot.Processing))
 	if err != nil {
 		return fmt.Errorf("db save screenshot: %w", err)
 	}
@@ -1967,7 +1968,7 @@ func (r *SQLiteRepository) ListScreenshotsByPath(ctx context.Context, binding Pr
 		return nil, internalerrors.ErrInvalidInput
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT disc_id, image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
+		SELECT disc_id, image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256, processing_json
 		FROM screenshots
 		WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
 		ORDER BY disc_id ASC, timestamp ASC, image_path ASC
@@ -1981,7 +1982,7 @@ func (r *SQLiteRepository) ListScreenshotsByPath(ctx context.Context, binding Pr
 	for rows.Next() {
 		var shot Screenshot
 		var purpose string
-		var capturedAt string
+		var capturedAt, processingJSON string
 		if err := rows.Scan(
 			&shot.DiscID,
 			&shot.ImagePath,
@@ -1993,8 +1994,13 @@ func (r *SQLiteRepository) ListScreenshotsByPath(ctx context.Context, binding Pr
 			&capturedAt,
 			&shot.Tonemapping,
 			&shot.ContentSHA256,
+			&processingJSON,
 		); err != nil {
 			return nil, fmt.Errorf("db list screenshots: %w", err)
+		}
+		shot.Processing, err = decodeOptionalJSON[api.ScreenshotProcessing](processingJSON)
+		if err != nil {
+			return nil, err
 		}
 		shot.SourcePath = bound.SourcePath
 		shot.PreparedMediaFingerprint = bound.PreparedMediaFingerprint
@@ -2362,9 +2368,9 @@ func (r *SQLiteRepository) DeleteDiscMenuScreenshot(
 		}
 		var screenshot Screenshot
 		var purpose string
-		var capturedAt string
+		var capturedAt, processingJSON string
 		err = tx.QueryRowContext(ctx, `
-			SELECT disc_id, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
+			SELECT disc_id, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256, processing_json
 			FROM screenshots
 			WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND image_path = ?
 		`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration, trimmedImage).Scan(
@@ -2377,11 +2383,16 @@ func (r *SQLiteRepository) DeleteDiscMenuScreenshot(
 			&capturedAt,
 			&screenshot.Tonemapping,
 			&screenshot.ContentSHA256,
+			&processingJSON,
 		)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("db delete disc menu screenshot: load screenshot: %w", err)
 		}
 		if err == nil {
+			screenshot.Processing, err = decodeOptionalJSON[api.ScreenshotProcessing](processingJSON)
+			if err != nil {
+				return err
+			}
 			screenshot.SourcePath = bound.SourcePath
 			screenshot.PreparedMediaFingerprint = bound.PreparedMediaFingerprint
 			screenshot.PreparedGeneration = bound.PreparedGeneration
@@ -2841,8 +2852,8 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO screenshots (
 			source_path, prepared_media_fingerprint, prepared_generation, disc_id,
-			image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			image_path, timestamp, frame_number, width, height, purpose, captured_at, tonemapping, content_sha256, processing_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(image_path) DO UPDATE SET
 			source_path = excluded.source_path,
 			prepared_media_fingerprint = excluded.prepared_media_fingerprint,
@@ -2855,7 +2866,8 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 			purpose = excluded.purpose,
 			captured_at = excluded.captured_at,
 			tonemapping = excluded.tonemapping,
-			content_sha256 = excluded.content_sha256
+			content_sha256 = excluded.content_sha256,
+ processing_json = excluded.processing_json
 		WHERE screenshots.source_path = excluded.source_path AND (
 			(screenshots.prepared_generation = excluded.prepared_generation AND
 			 screenshots.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
@@ -2893,6 +2905,7 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 			capturedAt.UTC().Format(time.RFC3339Nano),
 			screenshot.Tonemapping,
 			screenshot.ContentSHA256,
+			encodeOptionalJSON(screenshot.Processing),
 		)
 		if err != nil {
 			return fmt.Errorf("db save menu screenshots: insert: %w", err)
@@ -3895,25 +3908,18 @@ type storedReleaseWorkflowIntentSource struct {
 }
 
 func (r *SQLiteRepository) listStoredReleaseWorkflowPaths(ctx context.Context) ([]string, error) {
-	rows, err := r.historyQuery(ctx).QueryContext(ctx, `SELECT state_json FROM release_workflow_states`)
+	rows, err := r.historyQuery(ctx).QueryContext(ctx, `SELECT DISTINCT source_path FROM release_workflow_sources ORDER BY source_path`)
 	if err != nil {
 		return nil, fmt.Errorf("db list stored release workflow paths: %w", err)
 	}
 	defer rows.Close()
-
-	paths := make([]string, 0)
-	seen := make(map[string]struct{})
+	var paths []string
 	for rows.Next() {
-		var payload []byte
-		if err := rows.Scan(&payload); err != nil {
+		var sourcePath string
+		if err := rows.Scan(&sourcePath); err != nil {
 			return nil, fmt.Errorf("db scan stored release workflow path: %w", err)
 		}
-		for _, sourcePath := range storedReleaseWorkflowSourcePaths(payload) {
-			if _, exists := seen[sourcePath]; !exists {
-				seen[sourcePath] = struct{}{}
-				paths = append(paths, sourcePath)
-			}
-		}
+		paths = append(paths, sourcePath)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("db iterate stored release workflow paths: %w", err)
@@ -3922,29 +3928,7 @@ func (r *SQLiteRepository) listStoredReleaseWorkflowPaths(ctx context.Context) (
 }
 
 func storedReleaseWorkflowSourcePaths(payload []byte) []string {
-	var state storedReleaseWorkflowSource
-	if err := json.Unmarshal(payload, &state); err != nil {
-		return nil
-	}
-	paths := make([]string, 0, len(state.Releases)+2)
-	if sourcePath := strings.TrimSpace(state.SourcePath); sourcePath != "" {
-		paths = append(paths, sourcePath)
-	}
-	if state.PreparationInput != nil {
-		if sourcePath := strings.TrimSpace(state.PreparationInput.SourcePath); sourcePath != "" {
-			paths = append(paths, sourcePath)
-		}
-	}
-	if state.Composite != nil && state.Composite.Intent.Preparation != nil {
-		if sourcePath := strings.TrimSpace(state.Composite.Intent.Preparation.SourcePath); sourcePath != "" {
-			paths = append(paths, sourcePath)
-		}
-	}
-	for _, release := range state.Releases {
-		if sourcePath := strings.TrimSpace(release.Release.Source.SourcePath); sourcePath != "" {
-			paths = append(paths, sourcePath)
-		}
-	}
+	_, paths, _ := decodeWorkflowOwnership(payload)
 	return paths
 }
 
@@ -3958,29 +3942,30 @@ func matchingStoredReleaseWorkflowStates(
 	query historyQueryer,
 	path string,
 ) ([]storedReleaseWorkflowStateID, error) {
-	rows, err := query.QueryContext(ctx, `SELECT owner_id, workflow_id, state_json FROM release_workflow_states`)
+	if err := requireWorkflowOwnershipCertain(ctx, query); err != nil {
+		return nil, err
+	}
+	// SamePath also recognizes aliases through existing symlink prefixes. Keep
+	// that filesystem contract while scanning only the small source rows.
+	rows, err := query.QueryContext(ctx, `SELECT owner_id, workflow_id, source_path FROM release_workflow_sources
+		ORDER BY owner_id, workflow_id, source_path`)
 	if err != nil {
-		return nil, fmt.Errorf("db purge content list release workflow states: %w", err)
+		return nil, fmt.Errorf("db purge content list release workflow sources: %w", err)
 	}
 	defer rows.Close()
-
-	matches := make([]storedReleaseWorkflowStateID, 0)
+	var matches []storedReleaseWorkflowStateID
 	for rows.Next() {
-		var ownerID string
-		var workflowID api.WorkflowID
-		var payload []byte
-		if err := rows.Scan(&ownerID, &workflowID, &payload); err != nil {
-			return nil, fmt.Errorf("db purge content scan release workflow state: %w", err)
+		var id storedReleaseWorkflowStateID
+		var sourcePath string
+		if err := rows.Scan(&id.ownerID, &id.workflowID, &sourcePath); err != nil {
+			return nil, fmt.Errorf("db purge content scan release workflow source: %w", err)
 		}
-		for _, sourcePath := range storedReleaseWorkflowSourcePaths(payload) {
-			if pathutil.SamePath(sourcePath, path) {
-				matches = append(matches, storedReleaseWorkflowStateID{ownerID: ownerID, workflowID: workflowID})
-				break
-			}
+		if pathutil.SamePath(sourcePath, path) && !slices.Contains(matches, id) {
+			matches = append(matches, id)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("db purge content iterate release workflow states: %w", err)
+		return nil, fmt.Errorf("db purge content iterate release workflow sources: %w", err)
 	}
 	return matches, nil
 }

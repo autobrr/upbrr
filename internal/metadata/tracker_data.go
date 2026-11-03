@@ -128,10 +128,7 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 					if currentID != strings.TrimSpace(record.TrackerID) {
 						continue
 					}
-				} else if meta.InfoHash == "" || record.InfoHash == "" {
-					continue
-				}
-				if meta.InfoHash != "" && record.InfoHash != "" && !strings.EqualFold(meta.InfoHash, record.InfoHash) {
+				} else if meta.InfoHash == "" || record.InfoHash == "" || !strings.EqualFold(meta.InfoHash, record.InfoHash) {
 					continue
 				}
 				if cachedIndex < 0 || hasTrackerMetadataIDs(record) {
@@ -590,6 +587,11 @@ func (s *Service) lookupTrackerData(
 	now time.Time,
 ) (api.TrackerMetadata, bool, bool, error) {
 	logger := logging.FromContext(ctx, s.logger)
+	// Metadata can come from a different client torrent than the selected
+	// reusable artifact. Keep its tracker-specific hash local to this lookup.
+	if hash := trackerEvidenceInfoHash(meta, tracker); hash != "" {
+		meta.InfoHash = hash
+	}
 
 	select {
 	case <-ctx.Done():
@@ -679,6 +681,25 @@ func (s *Service) lookupTrackerData(
 		return api.TrackerMetadata{}, false, false, nil
 	}
 	return record, true, hasTrackerMetadataIDs(record), nil
+}
+
+func trackerEvidenceInfoHash(meta preparationstate.State, tracker string) string {
+	id := trackerIDFor(meta, tracker)
+	for _, match := range meta.TorrentComments {
+		for _, evidence := range match.TrackerURLs {
+			if strings.EqualFold(evidence.ID, tracker) && (id == "" || strings.TrimSpace(evidence.TrackerID) == id) {
+				if hash := strings.TrimSpace(match.Hash); hash != "" {
+					return hash
+				}
+			}
+		}
+		if id == "" && slices.ContainsFunc(match.MatchedTrackers, func(name string) bool { return strings.EqualFold(name, tracker) }) {
+			if hash := strings.TrimSpace(match.Hash); hash != "" {
+				return hash
+			}
+		}
+	}
+	return ""
 }
 
 func trackerLookupSubject(meta preparationstate.State) api.UploadSubject {

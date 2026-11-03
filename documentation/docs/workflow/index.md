@@ -13,9 +13,9 @@ Provide a release folder or file. upbrr resolves the source layout, finds reusab
 
 One input can be active per database, shared by the Web UI and CLI. Tabs in the same browser session resume that input. Another session or process receives a busy result while it is owned. Close the active input before handing it to another session. Closing retains history and reusable images.
 
-Switching during local preparation cancels that work and waits for cleanup. A submission or uncertain remote outcome must finish or be reconciled before switching. Closing a browser tab does not release the input.
+Switching during local preparation cancels that work and waits for cleanup. While an input remains active, a submission or uncertain remote outcome must finish or be reconciled before switching that input. CLI queue continuation follows the recovery rules below after releasing the idle input. Closing a browser tab does not release the input.
 
-If **Legacy workflow recovery** lists an unresolved external effect, inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. Recovery never repeats a submission automatically. Resolve every listed workflow before opening a new input.
+If **Legacy workflow recovery** lists an unresolved external effect, inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. Recovery never repeats a submission automatically. The Web UI continues to list every retained workflow that needs recovery. For unknown tracker submissions with durable submission protection, CLI queues attach reconciliation to the affected source and continue independent items after releasing the previous input. Unresolved client-injection and image-hosting effects, and legacy submissions without that protection, still block new inputs until reconciled. A retained workflow without a reliable source still requires manual recovery.
 
 Every explicit open, history restore, or refresh checks the source path and inventory and hashes at most the first 1 MiB of each file. File sizes and modification times are checked before and after sampling. This is a lightweight identity check, not verification of every source byte. Torrent creation still performs its required piece hashing. A plain page reload reads the current state without starting another verification.
 
@@ -44,6 +44,10 @@ Example BDMV Collection/
 upbrr prepares one release and creates one torrent rooted at the selected collection, preserving every disc folder. For BDMV, select at least one playlist for every disc. Duplicate playlist names such as `00001.MPLS` remain separate because upbrr tracks their disc identity.
 
 ## 2. Review canonical metadata
+
+Metadata preparation reports the active substep within its parent stage, including provider lookups, client discovery, media inspection, and Blu-ray.com catalogue discovery and release details. Counts describe processed work; an unknown total remains indeterminate. Elapsed updates indicate waiting without claiming more completed work. Reused evidence is identified as retained, and optional metadata failures remain visible as partial outcomes.
+
+The Web UI and TUI update their existing progress display in place. Plain CLI output keeps fast preparation with no unavailable metadata quiet and emits at most one intermediate metadata line every 30 seconds, deduplicating unchanged updates, plus a terminal outcome when intermediate output was needed. Partial metadata outcomes are also reported when preparation finishes. Redirected output follows the same bound and uses ordinary lines. Detailed per-request diagnostics remain at TRACE.
 
 Metadata providers and local media inspection produce shared release facts. Review at least:
 
@@ -165,7 +169,7 @@ Depending on the source and trackers, upbrr can:
 
 Automatic screenshot plans distribute the requested images across all prepared discs, with at least one planned image per disc. Manual frame numbers apply to every disc. Screenshot previews, captures, and DVD menu images remain grouped by disc; DVD menu capture can warn about partial coverage when its collection-wide safety cap or the available menus leave a disc uncovered.
 
-With **Keep images** enabled, validated tracker screenshots can supply the screenshot set and reduce the number of new captures. In the Web UI, review **Saved tracker images** on **Screenshots** and choose **Use saved images**. Missing, invalid, or insufficient saved images can require new captures. Imported comparison blocks remain in descriptions and are excluded from ordinary screenshot selection.
+With **Collect existing tracker images** enabled, validated tracker screenshots can supply the screenshot set and reduce the number of new captures. In the Web UI, eligible existing description images load automatically on **Screenshots**, with the same selection and deletion controls as new captures. Loading does not capture missing frames; use **Generate screenshots** when more images are needed. Existing images have unknown capture timestamps and provenance, so their chronological order relative to new captures is unknown. Imported comparison blocks remain in descriptions and are excluded from ordinary screenshot selection.
 
 Where a tracker permits source-description references, an existing image link may remain usable when its format cannot be inspected. upbrr retains this separately from local screenshot files and reports unknown image properties as guidance, not proof of quality or preservation. Reuse requires a current prepared-source receipt and the tracker's normal image-host policy; rejected URLs and older records without that evidence do not qualify. Explicit screenshot requests and other selected trackers' requirements still apply. Review the final description before upload.
 

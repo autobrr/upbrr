@@ -279,6 +279,11 @@ func RuleSubjectFromValidation(subject api.TrackerValidationSubject) api.RuleSub
 		sceneNFOPath = "ready"
 	}
 	return api.RuleSubject{
+		PackageInventory: api.PackageInventory{
+			Status: subject.PackageFacts.Status,
+			Scope:  subject.PackageFacts.Scope,
+			Files:  append([]string(nil), subject.FileList...),
+		},
 		CheckSourceFolder:          subject.CheckSourceFolder,
 		MediaFileFacts:             subject.MediaFileFacts.Clone(),
 		TitleSearchEvidence:        subject.TitleSearchEvidence,

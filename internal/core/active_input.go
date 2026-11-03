@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -16,6 +17,20 @@ import (
 
 // GetActiveInput projects only the caller's current input and workflow.
 func (c *Core) GetActiveInput(ctx context.Context, owner string) (api.ActiveInputSnapshot, error) {
+	return c.getActiveInput(ctx, owner, "")
+}
+
+// GetActiveInputForSource narrows empty-slot recovery discovery to the requested
+// source without claiming or resolving unrelated workflows. Missing retained
+// source authority remains visible as a recovery requirement.
+func (c *Core) GetActiveInputForSource(ctx context.Context, owner, source string) (api.ActiveInputSnapshot, error) {
+	if strings.TrimSpace(source) == "" {
+		return api.ActiveInputSnapshot{}, api.ErrPreparationSourceRequired
+	}
+	return c.getActiveInput(ctx, owner, source)
+}
+
+func (c *Core) getActiveInput(ctx context.Context, owner, source string) (api.ActiveInputSnapshot, error) {
 	slot, err := c.workflow.ActiveInput(ctx, owner)
 	if err != nil {
 		return api.ActiveInputSnapshot{}, classifyOperationError(api.OperationKindPreparation, err)
@@ -52,7 +67,13 @@ func (c *Core) GetActiveInput(ctx context.Context, owner string) (api.ActiveInpu
 		view.Current = &current
 	}
 	if slot.State == api.ActiveInputEmpty {
-		workflowIDs, recoveryErr := c.workflow.LegacyRecoveryWorkflowIDs(ctx, owner)
+		var workflowIDs []api.WorkflowID
+		var recoveryErr error
+		if source == "" {
+			workflowIDs, recoveryErr = c.workflow.LegacyRecoveryWorkflowIDs(ctx, owner)
+		} else {
+			workflowIDs, recoveryErr = c.workflow.LegacyRecoveryWorkflowIDsForSource(ctx, owner, source)
+		}
 		if recoveryErr != nil {
 			return api.ActiveInputSnapshot{}, fmt.Errorf("list active input recovery workflows: %w", recoveryErr)
 		}

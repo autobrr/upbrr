@@ -74,15 +74,31 @@ func (e *StaleContentCorrectionsError) Unwrap() error { return ErrCorrectionConf
 // ReleaseFactInstructions contains caller intent that can change finalized
 // reusable release facts.
 type ReleaseFactInstructions struct {
-	Identity        ExternalIDOverrides
-	Category        *CanonicalCategory
-	ReleaseName     ReleaseNameOverrides
-	Metadata        MetadataOverrides
-	SourceLookup    string
-	BlurayReleaseID string
-	Playlist        PlaylistInstruction
+	Identity     ExternalIDOverrides
+	Category     *CanonicalCategory
+	ReleaseName  ReleaseNameOverrides
+	Metadata     MetadataOverrides
+	SourceLookup string
+	// Bluray selects an exact release, skips selection, or restores automatic matching.
+	// Nil retains a compatible manual choice.
+	Bluray   *BluraySelection
+	Playlist PlaylistInstruction
 	// TrackerIDs maps normalized tracker names to caller-supplied source IDs.
 	TrackerIDs map[string]string
+}
+
+// BluraySelection keeps manual selection, explicit skip and Auto distinct.
+// Mode is "manual", "skip" or "auto"; Release accepts a release ID or URL only in manual mode.
+type BluraySelection struct {
+	Mode    string
+	Release string
+}
+
+// BlurayDetailRequest requests one retained release or all retained releases.
+// It never changes selection authority.
+type BlurayDetailRequest struct {
+	ReleaseID string
+	All       bool
 }
 
 // PlaylistInstruction preserves tri-state playlist selection: Set=false means
@@ -114,6 +130,8 @@ type ClientSearchPolicy struct {
 // PreparationControls contains one-shot permissions and presentation choices.
 // These values never participate in preparation compatibility.
 type PreparationControls struct {
+	// BlurayDetails explicitly requests release-page inspection for this preparation only.
+	BlurayDetails *BlurayDetailRequest `json:"BlurayDetails,omitempty"`
 	// CaptureHDRMetadata requests one-shot native collection, including a scan when text reports are cached.
 	CaptureHDRMetadata bool `json:"CaptureHDRMetadata,omitempty"`
 	// Interaction determines whether preparation may request manual input.

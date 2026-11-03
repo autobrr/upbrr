@@ -6,7 +6,9 @@
 package torrent
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -63,10 +65,8 @@ func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *tracker
 
 // Create returns the first reusable torrent in client, source, temporary, then
 // adjacent-path order, unless Rehash requests a new artifact. Reused candidates
-// are checked against tracker policy and source layout. Client-discovered
-// candidates with explicit source-bound complete-data evidence skip local
-// source-byte revalidation; all other candidates are checked against source bytes. NoHash
-// fails when none qualify, while Rehash takes precedence when both overrides
+// are checked against tracker policy and source layout without reading media
+// bytes. ForceRecheck verifies pieces; NoHash fails when none qualify, while Rehash takes precedence when both overrides
 // are enabled.
 //
 // Selected trackers share one combined base policy. When regeneration is
@@ -112,7 +112,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		if info.IsDir() {
 			return api.TorrentResult{}, internalerrors.ErrInvalidInput
 		}
-		if err := validateCandidateTorrent(source, resolveTrackerPolicy(meta, s.registry), meta, logger); err != nil {
+		if err := validateCandidateTorrent(ctx, source, resolveTrackerPolicy(meta, s.registry), meta, logger); err != nil {
 			return api.TorrentResult{}, fmt.Errorf("torrent: provided torrent %q: %w", source, err)
 		}
 		logger.Debugf("torrent: using provided torrent %s", source)
@@ -126,8 +126,23 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	validationCache := make(map[string]error, len(candidates))
 	policy := resolveTrackerPolicy(meta, s.registry)
 	if !forceRehash {
-		if reusable := findReusableTorrent(candidates, policy, meta, validationCache, logger); reusable != "" {
+		if reusable := findReusableTorrent(ctx, candidates, policy, meta, validationCache, logger); reusable != "" {
 			return resultFromExistingTorrent(ctx, meta, reusable, "Reusing existing torrent")
+		}
+		if !meta.DeferWrapperConversion {
+			for _, candidate := range candidates {
+				converted, err := convertSingleFileWrapper(s.tmpRoot, candidate, meta)
+				if err != nil {
+					return api.TorrentResult{}, err
+				}
+				if converted == "" {
+					continue
+				}
+				candidates = appendUniqueTorrentCandidate(candidates, converted)
+				if reusable := findReusableTorrent(ctx, []string{converted}, policy, meta, validationCache, logger); reusable != "" {
+					return resultFromExistingTorrent(ctx, meta, reusable, "Reusing torrent pieces with a single-file layout")
+				}
+			}
 		}
 	}
 
@@ -138,7 +153,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		meta.Trackers = removeTrackerNames(meta.Trackers, skippedTrackers)
 		rehashedTrackers = normalizedTrackerNames(meta.Trackers)
 	} else if hasExistingTorrentCandidate(candidates) {
-		compatible := reusableTrackers(candidates, meta, validationCache, logger, s.registry)
+		compatible := reusableTrackers(ctx, candidates, meta, validationCache, logger, s.registry)
 		for _, tracker := range selectedTrackerNames(meta.Trackers, meta.SkipIfRehashTrackers) {
 			if _, ok := compatible[tracker]; !ok {
 				skippedTrackers = append(skippedTrackers, tracker)
@@ -146,7 +161,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 		meta.Trackers = removeTrackerNames(meta.Trackers, skippedTrackers)
 		policy = resolveTrackerPolicy(meta, s.registry)
-		if reusable := findReusableTorrent(candidates, policy, meta, validationCache, logger); reusable != "" {
+		if reusable := findReusableTorrent(ctx, candidates, policy, meta, validationCache, logger); reusable != "" {
 			result, resultErr := resultFromExistingTorrent(ctx, meta, reusable, "Reusing existing torrent")
 			result.SkippedTrackers = skippedTrackers
 			return result, resultErr
@@ -211,6 +226,24 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	if err != nil {
 		return api.TorrentResult{}, err
 	}
+	staged, err := os.CreateTemp(filepath.Dir(outputPath), ".generating-*.torrent")
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("torrent: stage generated artifact: %w", err)
+	}
+	stagePath := staged.Name()
+	if err := staged.Close(); err != nil {
+		_ = os.Remove(stagePath)
+		return api.TorrentResult{}, fmt.Errorf("torrent: close generation staging file: %w", err)
+	}
+	publication := &generatedTorrentPublication{stage: stagePath, destination: outputPath}
+	owned := true
+	defer func() {
+		if owned {
+			if err := publication.Discard(); err != nil {
+				logger.Warnf("torrent: failed to discard generation staging file err=%s", redaction.RedactValue(err.Error(), nil))
+			}
+		}
+	}()
 	pieceOptions := mkbrrPieceOptions{maxPieceExp: 27}
 	if policy != nil {
 		pieceOptions = policy.createOptions(meta)
@@ -219,7 +252,11 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 	}
 	logger.Infof("torrent: creating torrent output=%s max_piece_exp=%d piece_exp_set=%t", outputPath, pieceOptions.maxPieceExp, pieceOptions.pieceExp != nil)
-	emitTorrentProgress(ctx, meta, "running", "Creating torrent with mkbrr")
+	reason := "Hashing torrent: no compatible reusable artifact"
+	if forceRehash {
+		reason = "Hashing torrent: rehash requested"
+	}
+	emitTorrentProgress(ctx, meta, "running", reason)
 
 	trackerURLs := []string(nil)
 	if pieceOptions.profileURL != "" {
@@ -228,7 +265,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	info, err := mkbrr.Create(mkbrr.CreateOptions{
 		Path:             createSpec.path,
 		Name:             createSpec.name,
-		OutputPath:       outputPath,
+		OutputPath:       stagePath,
 		IsPrivate:        true,
 		TrackerURLs:      trackerURLs,
 		MaxPieceLength:   &pieceOptions.maxPieceExp,
@@ -258,14 +295,30 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		emitTorrentProgress(ctx, meta, "failed", "Torrent metadata update failed")
 		return api.TorrentResult{}, err
 	}
-	emitTorrentProgress(ctx, meta, "completed", "Torrent ready")
-	logger.Infof("torrent: created torrent %s", info.Path)
+	resultPath := info.Path
+	var pending api.TorrentPublication
+	if meta.DeferGenerationPublication {
+		pending = publication
+	} else {
+		resultPath, err = publication.Publish()
+		if err != nil {
+			return api.TorrentResult{}, err
+		}
+	}
+	owned = false
+	if pending != nil {
+		emitTorrentProgress(ctx, meta, "running", "Checking source before publishing torrent")
+	} else {
+		emitTorrentProgress(ctx, meta, "completed", "Torrent ready")
+	}
+	logger.Infof("torrent: created torrent %s", resultPath)
 
 	return api.TorrentResult{
-		Path:             info.Path,
-		InfoHash:         info.InfoHash,
-		RehashedTrackers: rehashedTrackers,
-		SkippedTrackers:  skippedTrackers,
+		Path:               resultPath,
+		InfoHash:           info.InfoHash,
+		PendingPublication: pending,
+		RehashedTrackers:   rehashedTrackers,
+		SkippedTrackers:    skippedTrackers,
 	}, nil
 }
 
@@ -292,6 +345,33 @@ func setUploadMetadata(path string) error {
 	return nil
 }
 
+type generatedTorrentPublication struct {
+	stage       string
+	destination string
+}
+
+func (p *generatedTorrentPublication) Publish() (string, error) {
+	if p.stage == "" {
+		return "", errors.New("torrent: generation staging file is no longer available")
+	}
+	if err := os.Rename(p.stage, p.destination); err != nil {
+		return "", fmt.Errorf("torrent: publish generated artifact: %w", err)
+	}
+	p.stage = ""
+	return p.destination, nil
+}
+
+func (p *generatedTorrentPublication) Discard() error {
+	if p.stage == "" {
+		return nil
+	}
+	if err := os.Remove(p.stage); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("torrent: discard generated artifact: %w", err)
+	}
+	p.stage = ""
+	return nil
+}
+
 func resultFromExistingTorrent(ctx context.Context, meta api.TorrentSubject, path string, message string) (api.TorrentResult, error) {
 	result, err := resultFromPath(path)
 	if err != nil {
@@ -311,16 +391,14 @@ func torrentProgressCallback(ctx context.Context, meta api.TorrentSubject) mkbrr
 			emitTorrentHashProgress(ctx, meta, "running", "Preparing torrent pieces", completed, total, hashRate)
 			return
 		}
-		status := "running"
 		message := fmt.Sprintf("Hashing pieces... %d%% (%d/%d pieces)", progressPercent(completed, total), completed, total)
 		if hashRate > 0 {
 			message = fmt.Sprintf("Hashing pieces... [%.0f MiB/s] %d%% (%d/%d pieces)", hashRate, progressPercent(completed, total), completed, total)
 		}
 		if completed >= total {
-			status = "completed"
 			message = "Hashing complete"
 		}
-		emitTorrentHashProgress(ctx, meta, status, message, completed, total, hashRate)
+		emitTorrentHashProgress(ctx, meta, "running", message, completed, total, hashRate)
 	}
 }
 
@@ -366,6 +444,9 @@ func torrentOverrideEnabled(value *bool) bool {
 func reusableTorrentCandidates(tmpRoot string, meta api.TorrentSubject) ([]string, error) {
 	candidates := make([]string, 0, 3)
 	candidates = appendUniqueTorrentCandidate(candidates, meta.ClientTorrentPath)
+	for _, candidate := range meta.ClientTorrentCandidates {
+		candidates = appendUniqueTorrentCandidate(candidates, candidate.Path)
+	}
 	if strings.TrimSpace(tmpRoot) != "" {
 		tmpTorrentPath, err := TempTorrentPath(tmpRoot, meta.SourcePath)
 		if err != nil {
@@ -406,6 +487,7 @@ func hasExistingTorrentCandidate(candidates []string) bool {
 // findReusableTorrent returns the first candidate that satisfies the provided
 // tracker policy and source content. Content verification is cached by path.
 func findReusableTorrent(
+	ctx context.Context,
 	candidates []string,
 	policy *trackerTorrentPolicy,
 	meta api.TorrentSubject,
@@ -422,7 +504,7 @@ func findReusableTorrent(
 		}
 		validationErr, checked := validationCache[candidate]
 		if !checked {
-			validationErr = validateCandidateTorrentContent(candidate, meta, logger)
+			validationErr = validateCandidateTorrentContent(ctx, candidate, meta, logger)
 			validationCache[candidate] = validationErr
 		}
 		if validationErr == nil {
@@ -438,6 +520,7 @@ func findReusableTorrent(
 // reusableTrackers returns trackers for which at least one candidate satisfies
 // that tracker's policy and the prepared source content.
 func reusableTrackers(
+	ctx context.Context,
 	candidates []string,
 	meta api.TorrentSubject,
 	validationCache map[string]error,
@@ -448,7 +531,7 @@ func reusableTrackers(
 	for _, tracker := range normalizedTrackerNames(meta.Trackers) {
 		trackerMeta := meta
 		trackerMeta.Trackers = []string{tracker}
-		if findReusableTorrent(candidates, resolveTrackerPolicy(trackerMeta, registry), trackerMeta, validationCache, logger) != "" {
+		if findReusableTorrent(ctx, candidates, resolveTrackerPolicy(trackerMeta, registry), trackerMeta, validationCache, logger) != "" {
 			compatible[tracker] = struct{}{}
 		}
 	}
@@ -505,11 +588,11 @@ func normalizedTrackerNames(trackers []string) []string {
 // validateCandidateTorrent checks an existing torrent against the active
 // tracker policy and prepared source layout. Expected candidate rejection is
 // logged at debug level so discovery can continue without operator warnings.
-func validateCandidateTorrent(path string, policy *trackerTorrentPolicy, meta api.TorrentSubject, logger api.Logger) error {
+func validateCandidateTorrent(ctx context.Context, path string, policy *trackerTorrentPolicy, meta api.TorrentSubject, logger api.Logger) error {
 	if err := validateCandidateTorrentPolicy(path, policy, meta, logger); err != nil {
 		return err
 	}
-	return validateCandidateTorrentContent(path, meta, logger)
+	return validateCandidateTorrentContent(ctx, path, meta, logger)
 }
 
 func validateCandidateTorrentPolicy(path string, policy *trackerTorrentPolicy, meta api.TorrentSubject, logger api.Logger) error {
@@ -525,21 +608,24 @@ func validateCandidateTorrentPolicy(path string, policy *trackerTorrentPolicy, m
 	return nil
 }
 
-func validateCandidateTorrentContent(path string, meta api.TorrentSubject, logger api.Logger) error {
+func validateCandidateTorrentContent(ctx context.Context, path string, meta api.TorrentSubject, logger api.Logger) error {
 	if err := validateTorrentContent(path, meta); err != nil {
 		if logger != nil {
 			logger.Debugf("torrent: reusable candidate rejected path=%s stage=content_layout reason=%s", path, redaction.RedactValue(err.Error(), nil))
 		}
 		return err
 	}
-	if meta.ClientTorrentDataVerified && pathutil.SamePath(path, meta.ClientTorrentPath) {
-		candidateInfoHash, err := loadInfoHash(path)
-		if err == nil && strings.TrimSpace(meta.ClientTorrentInfoHash) != "" &&
-			strings.EqualFold(candidateInfoHash, strings.TrimSpace(meta.ClientTorrentInfoHash)) {
-			return nil
-		}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("torrent: read client artifact: %w", err)
 	}
-	if err := verifyCandidateTorrentData(path, meta); err != nil {
+	if err := validateClientCandidateBytes(path, data, meta); err != nil {
+		return err
+	}
+	if !meta.ForceRecheck {
+		return nil
+	}
+	if err := verifyCandidateTorrentData(ctx, path, meta); err != nil {
 		if logger != nil {
 			logger.Debugf("torrent: reusable candidate rejected path=%s stage=piece_hash reason=%s", path, redaction.RedactValue(err.Error(), nil))
 		}
@@ -548,23 +634,63 @@ func validateCandidateTorrentContent(path string, meta api.TorrentSubject, logge
 	return nil
 }
 
-func verifyCandidateTorrentData(path string, meta api.TorrentSubject) error {
+func validateClientCandidateBytes(path string, data []byte, meta api.TorrentSubject) error {
+	expectedHash := ""
+	if pathutil.SamePath(path, meta.ClientTorrentPath) {
+		expectedHash = strings.TrimSpace(meta.ClientTorrentInfoHash)
+	}
+	for _, candidate := range meta.ClientTorrentCandidates {
+		if pathutil.SamePath(path, candidate.Path) {
+			expectedHash = strings.TrimSpace(candidate.InfoHash)
+			if expectedHash == "" {
+				return errors.New("torrent: client artifact infohash missing")
+			}
+			if candidate.ContentSHA256 != "" {
+				if !strings.EqualFold(fmt.Sprintf("%x", sha256.Sum256(data)), candidate.ContentSHA256) {
+					return errors.New("torrent: client artifact bytes changed")
+				}
+			}
+			break
+		}
+	}
+	if expectedHash != "" {
+		candidate, err := metainfo.Load(bytes.NewReader(data))
+		if err != nil || !strings.EqualFold(candidate.HashInfoBytes().String(), expectedHash) {
+			return errors.New("torrent: client artifact infohash changed")
+		}
+	}
+	return nil
+}
+
+func verifyCandidateTorrentData(ctx context.Context, path string, meta api.TorrentSubject) error {
 	contentPath := strings.TrimSpace(meta.SourcePath)
 	if contentPath == "" || strings.EqualFold(filepath.Ext(contentPath), ".torrent") {
-		return nil
+		return errors.New("torrent: local source data is required for recheck")
 	}
 	if strings.TrimSpace(meta.DiscType) != "" {
 		contentPath = normalizeDiscSource(contentPath)
+	}
+	inventory, ok, err := ResolveSubmissionContentInventory(meta)
+	if err != nil {
+		return err
+	}
+	if ok && inventory.Scope == api.SubmissionContentScopeSingleFile && len(inventory.Files) == 1 {
+		contentPath = inventory.Files[0].LocalPath
 	}
 	result, err := mkbrr.VerifyData(mkbrr.VerifyOptions{
 		TorrentPath: path,
 		ContentPath: contentPath,
 		Quiet:       true,
+		ProgressCallback: func(completed, total int, rate float64) {
+			emitTorrentHashProgress(ctx, meta, "running", "Verifying torrent pieces", completed, total, rate)
+		},
 	})
 	if err != nil {
+		emitTorrentProgress(ctx, meta, "failed", "Torrent piece verification failed")
 		return fmt.Errorf("torrent: verify candidate data: %w", err)
 	}
 	if result.BadPieces > 0 || result.MissingPieces > 0 || len(result.MissingFiles) > 0 || result.GoodPieces != result.TotalPieces {
+		emitTorrentProgress(ctx, meta, "failed", "Torrent piece verification failed")
 		return fmt.Errorf(
 			"torrent: candidate piece mismatch good=%d total=%d bad=%d missing=%d",
 			result.GoodPieces,
@@ -573,6 +699,7 @@ func verifyCandidateTorrentData(path string, meta api.TorrentSubject) error {
 			result.MissingPieces,
 		)
 	}
+	emitTorrentProgress(ctx, meta, "completed", "Torrent pieces verified")
 	return nil
 }
 
@@ -835,6 +962,22 @@ func globLiteral(value string) string {
 }
 
 func validateTorrentContent(path string, meta api.TorrentSubject) error {
+	torrentMeta, err := metainfo.LoadFromFile(path)
+	if err != nil {
+		return fmt.Errorf("torrent: read candidate metadata: %w", err)
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		return fmt.Errorf("torrent: unmarshal candidate info: %w", err)
+	}
+	return ValidateTorrentLayout(info, meta)
+}
+
+// ValidateTorrentLayout checks piece metadata and the exact requested source layout.
+func ValidateTorrentLayout(info metainfo.Info, meta api.TorrentSubject) error {
+	if err := ValidatePieceMetadata(info); err != nil {
+		return err
+	}
 	expectedFiles, scope, ok, err := expectedTorrentFiles(meta)
 	if err != nil {
 		return err
@@ -847,14 +990,6 @@ func validateTorrentContent(path string, meta api.TorrentSubject) error {
 		return nil
 	}
 	expected := sourceContentPaths(expectedFiles)
-	torrentMeta, err := metainfo.LoadFromFile(path)
-	if err != nil {
-		return fmt.Errorf("torrent: read candidate metadata: %w", err)
-	}
-	info, err := torrentMeta.UnmarshalInfo()
-	if err != nil {
-		return fmt.Errorf("torrent: unmarshal candidate info: %w", err)
-	}
 	if nameOK && info.BestName() != expectedName {
 		return errors.New("torrent: candidate name mismatch")
 	}
@@ -870,6 +1005,44 @@ func validateTorrentContent(path string, meta api.TorrentSubject) error {
 		return errors.New("torrent: candidate content mismatch")
 	}
 	return nil
+}
+
+// ValidatePieceMetadata checks that a v1 piece table spans safe declared files.
+func ValidatePieceMetadata(info metainfo.Info) error {
+	if !info.HasV1() || info.HasV2() || info.PieceLength <= 0 || len(info.Pieces)%metainfo.HashSize != 0 {
+		return errors.New("torrent: unsupported or invalid piece metadata")
+	}
+	if !safeTorrentComponent(info.Name) {
+		return errors.New("torrent: unsafe name metadata")
+	}
+	if info.NameUtf8 != "" && info.NameUtf8 != info.Name {
+		return errors.New("torrent: ambiguous name metadata")
+	}
+	length := info.Length
+	if len(info.Files) > 0 {
+		length = 0
+		for _, file := range info.Files {
+			if file.Length < 0 || length > math.MaxInt64-file.Length || len(file.Path) == 0 ||
+				(len(file.PathUtf8) > 0 && !slices.Equal(file.Path, file.PathUtf8)) {
+				return errors.New("torrent: invalid file metadata")
+			}
+			for _, component := range file.Path {
+				if !safeTorrentComponent(component) {
+					return errors.New("torrent: unsafe file path metadata")
+				}
+			}
+			length += file.Length
+		}
+	}
+	if length < 0 || (length == 0 && len(info.Pieces) != 0) ||
+		(length > 0 && int64(len(info.Pieces)/metainfo.HashSize) != 1+(length-1)/info.PieceLength) {
+		return errors.New("torrent: incomplete piece metadata")
+	}
+	return nil
+}
+
+func safeTorrentComponent(value string) bool {
+	return value != "" && value != "." && value != ".." && !strings.ContainsAny(value, "/\\:\x00")
 }
 
 func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, api.SubmissionContentScope, bool, error) {
@@ -943,9 +1116,6 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 	paths := make([]sourceContentFile, 0)
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			if os.IsNotExist(walkErr) {
-				return nil
-			}
 			return walkErr
 		}
 		if entry.IsDir() {
@@ -969,9 +1139,6 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
 			return fmt.Errorf("disc file info: %w", err)
 		}
 		if !info.Mode().IsRegular() {

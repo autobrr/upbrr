@@ -5,6 +5,7 @@ package db
 
 import (
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -248,6 +249,12 @@ func TestReusableScreenshotProvenanceSurvivesReopen(t *testing.T) {
 		ContentSHA256:      digest,
 		Kind:               api.MediaArtifactScreenshot,
 		Image: api.ScreenshotImage{
+			Processing:    &api.ScreenshotProcessing{
+RequestedRenderer: "libplacebo",
+ Renderer: "software",
+ Tonemapped: true,
+ Warning: "Libplacebo unavailable; using software tonemapping.",
+},
 			Path:          filepath.Join(root, "image.png"),
 			Purpose:       api.ScreenshotPurposeFinal,
 			Tonemapping:   api.ScreenshotTonemapped,
@@ -287,18 +294,19 @@ func TestReusableScreenshotProvenanceSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(assets) != 1 || assets[0].Image.Tonemapping != api.ScreenshotTonemapped || assets[0].Image.ContentSHA256 != digest ||
+	if len(assets) != 1 || assets[0].Image.Tonemapping != api.ScreenshotTonemapped || assets[0].Image.ContentSHA256 != digest || !reflect.DeepEqual(assets[0].Image.Processing, asset.Image.Processing) ||
 		len(assets[0].HostedLinks) != 2 || assets[0].HostedLinks[0].Tonemapping != api.ScreenshotTonemapped ||
 		assets[0].HostedLinks[0].ContentSHA256 != digest || assets[0].HostedLinks[0].RawURL != asset.HostedLinks[0].RawURL ||
 		assets[0].HostedLinks[1].Tonemapping != "" {
 		t.Fatalf("reusable provenance = %#v", assets)
 	}
 	asset.Image.Tonemapping = ""
+	asset.Image.Processing = nil
 	if err := reopened.CommitReusableMedia(t.Context(), binding, key, []api.ReusableMediaAsset{asset}, reusableMediaCommitForTest(binding)); err != nil {
 		t.Fatal(err)
 	}
 	assets, err = reopened.LoadReusableMediaAssets(t.Context(), key)
-	if err != nil || len(assets) != 1 || assets[0].Image.Tonemapping != "" ||
+	if err != nil || len(assets) != 1 || assets[0].Image.Tonemapping != "" || assets[0].Image.Processing != nil ||
 		len(assets[0].HostedLinks) != 2 || assets[0].HostedLinks[0].Tonemapping != api.ScreenshotTonemapped || assets[0].HostedLinks[1].Tonemapping != "" {
 		t.Fatalf("reusable replacement retained provenance: %#v, %v", assets, err)
 	}
