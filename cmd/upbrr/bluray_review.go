@@ -46,9 +46,14 @@ func (s *cliWorkflowSession) reviewBlurayReleases(ctx context.Context, reader *b
 			}
 		}
 		fmt.Fprintln(&listing, "a. Fetch details and score all releases\nn. Skip Blu-ray.com selection")
-		fmt.Fprint(s.streams.out, listing.String())
 		bindCLIQuestion(ctx, s.streams.out, s.current.Workflow.ID, s.current.Workflow.Revision, "", listing.String())
-		answer, err := promptLine(reader, s.streams.out, "Release number, a (all), or n (skip): ")
+		answer, err := askCLIField(reader, s.streams.out, cliPrompt{
+			Kind:     cliPromptText,
+			Question: "Release number, a (all), or n (skip): ",
+			Evidence: listing.String(),
+			Help: "A number selects that edition and fetches its details if needed. a fetches details and scores all listed editions before another choice. n skips selection. " +
+				"Use --bluray-release ID or URL for an exact edition on a later run, or --bluray-release auto to restore automatic matching.",
+		})
 		if err != nil {
 			return err
 		}
