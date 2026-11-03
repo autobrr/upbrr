@@ -200,6 +200,8 @@ The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic 
 
 Omitting `--trackers` uses the configured default trackers. `--site-upload` replaces the requested tracker list with its one tracker; `--trackers-remove` still excludes named trackers. Tracker ID flags supply lookup identities and do not select upload destinations.
 
+Upload keeps the tracker scope established by local input checks when no new `--trackers` selection is supplied. Removing every selected tracker stops the upload.
+
 ## Release overrides
 
 Explicit corrections take precedence over saved history and provider metadata. Omitting a correction flag preserves the saved value. Resetting a field removes its manual value and restores automatic detection. A boolean value such as `--commentary=false` is an explicit correction, not a reset.
