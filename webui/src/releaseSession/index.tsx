@@ -1808,6 +1808,46 @@ export function ReleaseSessionProvider({
         reseedDrafts: !state.screenshots.planStale,
         finalSelectionArtifactIDs: selectedArtifactIDs,
       });
+      // The backend projects the effective prepared collection policy, including overrides.
+      // Import through the workflow so selection, deletion and URL reuse keep one owner.
+      if (
+        workflowPlan.autoAdoptSavedImages &&
+        workflowPlan.savedTrackerImages?.length &&
+        workflowView.current.media?.savedImagePlanId !== workflowPlan.id
+      ) {
+        // Another facet can acquire the workflow while the plan request is pending.
+        if (controllers.current.workflow) {
+          dispatch({
+            type: "workflow_failed",
+            facet: "screenshots",
+            sessionRevision: command.sessionRevision,
+            revision: command.revision,
+            error:
+              "Existing images were not included. Finish the current action, then load suggestions to retry.",
+          });
+          return false;
+        }
+        return await runBackendWorkflow(
+          (current, commandID, signal) =>
+            continueBackendGoal(
+              current,
+              "media_ready",
+              {
+                media: {
+                  screenshotCount: 0,
+                  purpose: "final",
+                  selections: [],
+                  savedImagePlanId: workflowPlan.id,
+                  captureDvdMenus: false,
+                  maxDvdMenuItems: 0,
+                },
+              },
+              commandID,
+              signal,
+            ),
+          screenshotCommandCallbacks(true),
+        );
+      }
       return !command.controller.signal.aborted;
     } catch (error) {
       failWorkflow("screenshots", command, error);
@@ -1987,15 +2027,6 @@ export function ReleaseSessionProvider({
           },
           contentURL: activePorts.workflow.mediaURL(workflowView.current!, artifact.id),
         }));
-      const uploaded = (media?.artifacts || [])
-        .filter((artifact) => artifact.kind === "hosted_image")
-        .map((artifact) => ({
-          artifactID: artifact.id,
-          host: artifact.host || "",
-          url: artifact.url || "",
-          sizeBytes: artifact.sizeBytes || 0,
-          uploadedAt: media?.createdAt || "",
-        }));
       const failures: UploadImageHostFailure[] = (media?.hostAttempts || []).flatMap((attempt) =>
         (attempt.failures || []).map((failure) => ({
           Host: attempt.host,
@@ -2009,7 +2040,7 @@ export function ReleaseSessionProvider({
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         candidates,
-        uploaded,
+        uploaded: workflowUploadedImages,
         failures,
         failedHosts: media?.failedHosts || [],
       });
@@ -2364,8 +2395,16 @@ export function ReleaseSessionProvider({
       candidates: workflowUploadCandidates,
     });
   }, [workflowUploadCandidates]);
+  const selectedImageSourceIDs = new Set(
+    workflowUploadCandidates.map((candidate) => candidate.image.artifactID),
+  );
   const workflowUploadedImages = (workflowMedia?.artifacts || [])
-    .filter((artifact) => artifact.kind === "hosted_image")
+    .filter(
+      (artifact) =>
+        artifact.kind === "hosted_image" &&
+        artifact.selected &&
+        (artifact.sourceUnavailable || selectedImageSourceIDs.has(artifact.source || "")),
+    )
     .map((artifact) => ({
       artifactID: artifact.id,
       host: artifact.host || "",
@@ -3566,7 +3605,7 @@ export function ReleaseSessionProvider({
     uploadedImages: {
       view: {
         revision: state.uploadedImages.revision,
-        status: state.uploadedImages.status,
+        status: workflowView.status === "running" ? "running" : state.uploadedImages.status,
         candidates: workflowUploadCandidates,
         uploaded: workflowUploadedImages,
         selectedArtifactIDs: state.uploadedImages.selectedArtifactIDs,

@@ -571,6 +571,9 @@ type MediaArtifact struct {
 	SizeBytes        int64             `json:"sizeBytes,omitempty"`
 	Host             string            `json:"host,omitempty"`
 	URL              string            `json:"url,omitempty"`
+	// SourceUnavailable identifies a restored hosted link whose local image could
+	// not be verified. It remains removable without becoming an upload candidate.
+	SourceUnavailable bool `json:"sourceUnavailable,omitempty"`
 }
 
 // MediaCaptureInstructions are transport-safe capture choices. Local paths
@@ -579,7 +582,8 @@ type MediaCaptureInstructions struct {
 	ScreenshotCount int                   `json:"screenshotCount"`
 	Purpose         ScreenshotPurpose     `json:"purpose"`
 	Selections      []ScreenshotSelection `json:"selections,omitempty"`
-	// SavedImagePlanID binds an explicit saved-image import to its reviewed plan.
+	// SavedImagePlanID binds a saved-image import to its reviewed plan. With no
+	// requested count, selections or manual frames, only saved images are imported.
 	SavedImagePlanID MediaPlanID `json:"savedImagePlanId,omitempty"`
 	// ManualFrames applies the same raw frame numbers to every prepared disc.
 	ManualFrames    []int `json:"manualFrames,omitempty"`

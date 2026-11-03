@@ -3770,6 +3770,14 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 				Kind:     api.MediaArtifactScreenshot,
 				Purpose:  api.ScreenshotPurposeFinal,
 				Selected: false,
+			}, {
+				ID:       "hosted-1",
+				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+				Source:   "artifact-1",
+				Host:     "example",
+				URL:      "https://images.example.invalid/retained.png",
 			}},
 			Status: api.StageStatusCompleted,
 		}, privateMedia, nil
@@ -3950,7 +3958,7 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 			t.Fatalf("durable workflow advanced past failed delete: %#v", state.Workflow)
 		}
 		media, ok := state.Media[state.Workflow.Media.ID]
-		if !ok || len(media.Artifacts) != 1 || media.Artifacts[0].ID != "artifact-1" {
+		if !ok || len(media.Artifacts) != 2 || media.Artifacts[0].ID != "artifact-1" || media.Artifacts[1].ID != "hosted-1" {
 			t.Fatalf("durable media lost the artifact after failed delete: %#v", media.Artifacts)
 		}
 	}
@@ -3975,6 +3983,13 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 	deleted := executeCommand(t, module, retry)
 	if deleted.Media == nil || len(deleted.Media.Artifacts) != 0 || privateMedia.stats.deletions != 2 {
 		t.Fatalf("deleted media = %#v deletions=%d", deleted.Media, privateMedia.stats.deletions)
+	}
+	stored, err := module.private.Get(testOwnerID, deleted.Workflow.ID, mediaPrivateResourceID(deleted.Media.ID), module.clock.Now().UTC())
+	if err != nil {
+		t.Fatalf("read stored media resource: %v", err)
+	}
+	if resource, ok := stored.(*retainedMediaResourceFake); !ok || resource == privateMedia || resource.pending {
+		t.Fatalf("stored media resource did not retain the committed deletion result: %#v", stored)
 	}
 	if privateMedia.stats.staged != 3 {
 		t.Fatalf("staged deletion attempts = %d, want 3", privateMedia.stats.staged)

@@ -119,11 +119,15 @@ func maybeApplyE2EServices(
 		}
 	}
 	if services.Screenshots == nil {
-		services.Screenshots = e2eScreenshotService{
+		screenshots := e2eScreenshotService{
 			shotPath: os.Getenv(e2eShotPathEnv),
 			tmpRoot:  tmpRoot,
 			repo:     repositories.Media(),
 		}
+		if os.Getenv("UPBRR_E2E_SAVED_DESCRIPTION_IMAGE") == "1" {
+			screenshots.savedImages = &e2eSavedScreenshotSet{bySource: make(map[string]api.ScreenshotImage)}
+		}
+		services.Screenshots = screenshots
 	}
 	if services.DVDMenus == nil {
 		services.DVDMenus = e2eDVDMenuService{shotPath: os.Getenv(e2eShotPathEnv), tmpRoot: tmpRoot}
@@ -1702,6 +1706,11 @@ func (s e2eTrackerService) BuildPreparation(_ context.Context, meta api.Descript
 			continue
 		}
 		source := "E2E description fixture."
+		if os.Getenv("UPBRR_E2E_DESCRIPTION_MEDIA_LINKS") == "1" && meta.ExactMedia != nil {
+			for _, link := range meta.ExactMedia.ScreenshotUploads {
+				source += "\n[img]" + hostedImageURL(link) + "[/img]"
+			}
+		}
 		for _, group := range meta.DescriptionGroups {
 			if group.HasOverride && (strings.EqualFold(group.GroupKey, name) || slices.Contains(group.Trackers, name)) {
 				source = group.RawDescription
@@ -1898,9 +1907,15 @@ func postE2EImageUpload(ctx context.Context, endpoint string, host string, image
 }
 
 type e2eScreenshotService struct {
-	shotPath string
-	tmpRoot  string
-	repo     api.ScreenshotLifecycleRepository
+	savedImages *e2eSavedScreenshotSet
+	shotPath    string
+	tmpRoot     string
+	repo        api.ScreenshotLifecycleRepository
+}
+
+type e2eSavedScreenshotSet struct {
+	mu       sync.Mutex
+	bySource map[string]api.ScreenshotImage
 }
 
 func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject, count int) (api.ScreenshotPlan, error) {
@@ -1949,6 +1964,31 @@ func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject
 			FrameRate:           24,
 			SuggestedSelections: selections,
 		})
+	}
+	if saved := s.savedImages; saved != nil {
+		saved.mu.Lock()
+		defer saved.mu.Unlock()
+		image, known := saved.bySource[meta.SourcePath]
+		if !known {
+			var err error
+			image, err = e2eManagedScreenshot(s.shotPath, s.tmpRoot, meta.SourcePath, "existing-description", 0)
+			if err != nil {
+				return api.ScreenshotPlan{}, err
+			}
+			saved.bySource[meta.SourcePath] = image
+		}
+		// Deletion removes the managed fixture; planning must not recreate it.
+		if _, err := os.Stat(image.Path); err == nil {
+			plan.FinalSelections = []api.ScreenshotImage{image}
+			plan.TrackerImageLinks = []api.ScreenshotLinkedImage{{
+				Tracker: "AITHER",
+				Path:    image.Path,
+				Host:    "imgbb",
+				URL:     "https://i.ibb.co/e2e-existing.png",
+			}}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return api.ScreenshotPlan{}, err
+		}
 	}
 	return plan, nil
 }
@@ -2056,7 +2096,8 @@ func e2eScreenshotDiscName(meta api.ScreenshotSubject, discID string) string {
 	return meta.DiscName
 }
 
-func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, scope string, index int) (api.ScreenshotImage, error) {
+// e2eManagedScreenshot copies a fixture beneath the source's managed release owner.
+func e2eManagedScreenshot(shotPath string, tmpRoot string, sourcePath string, scope string, index int) (api.ScreenshotImage, error) {
 	path := strings.TrimSpace(shotPath)
 	if path == "" {
 		return api.ScreenshotImage{}, errors.New("e2e screenshots: screenshot path is required")
@@ -2069,7 +2110,7 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, s
 	if err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: read fixture: %w", err)
 	}
-	release := filepath.Base(strings.TrimSpace(releaseName))
+	release := filepath.Base(strings.TrimSpace(sourcePath))
 	if strings.TrimSpace(scope) != "" {
 		release += "-" + strings.TrimSpace(scope)
 	}
@@ -2081,7 +2122,7 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, s
 			return r
 		}
 	}, release)
-	owner, _, err := paths.ReleaseTempDirFor(root, releaseName, api.ReleaseInfo{})
+	owner, _, err := paths.ReleaseTempDirFor(root, sourcePath, api.ReleaseInfo{})
 	if err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: resolve release owner: %w", err)
 	}

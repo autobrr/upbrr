@@ -40,7 +40,9 @@ type MediaPlan struct {
 	// Discs contains ordered per-disc timing and suggestions.
 	Discs        []MediaDiscPlan           `json:"discs,omitempty"`
 	Requirements []MediaCaptureRequirement `json:"requirements,omitempty"`
-	// SavedTrackerImages lists validated tracker image URLs offered for explicit import.
+	// AutoAdoptSavedImages reflects the prepared generation's effective collection policy.
+	AutoAdoptSavedImages bool `json:"autoAdoptSavedImages,omitempty"`
+	// SavedTrackerImages lists validated tracker image URLs available for import.
 	SavedTrackerImages []MediaPlanSavedImage `json:"savedTrackerImages,omitempty"`
 	ExistingArtifacts  []MediaArtifact       `json:"existingArtifacts,omitempty"`
 	CreatedAt          time.Time             `json:"createdAt" ts_type:"string"`

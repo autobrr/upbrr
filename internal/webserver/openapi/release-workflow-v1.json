@@ -4413,6 +4413,9 @@
           "source": {
             "type": "string"
           },
+          "sourceUnavailable": {
+            "type": "boolean"
+          },
           "timestampSeconds": {
             "type": "number"
           },
@@ -5038,6 +5041,9 @@
       "MediaPlan": {
         "type": "object",
         "properties": {
+          "autoAdoptSavedImages": {
+            "type": "boolean"
+          },
           "createdAt": {
             "type": "string"
           },

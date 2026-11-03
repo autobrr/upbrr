@@ -1157,6 +1157,7 @@ export type MediaArtifact = Readonly<{
   selected: boolean;
   sizeBytes?: number;
   source?: string;
+  sourceUnavailable?: boolean;
   timestampSeconds?: number;
   url?: string;
   width?: number;
@@ -1314,6 +1315,7 @@ export type MediaFileFacts = Readonly<{
 }>;
 
 export type MediaPlan = Readonly<{
+  autoAdoptSavedImages?: boolean;
   createdAt: string;
   discType?: string;
   discs?: readonly MediaDiscPlan[];
