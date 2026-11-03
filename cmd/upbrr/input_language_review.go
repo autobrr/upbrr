@@ -62,7 +62,8 @@ func (s *cliWorkflowSession) reviewInputLanguages(ctx context.Context, reader *b
 		return err
 	}
 	origins, err := collectCLIInputAudioOrigins(reader, s.streams.out, s.intent.interaction,
-		s.current.InputReadiness.Fields, s.current.Release.Release.Source.SourcePath, s.current.Release.Release.Media)
+		s.current.InputReadiness.Fields, s.current.Release.Release.Source.SourcePath,
+		cliPromptMediaWithTrackLanguages(s.current.Release.Release.Media, corrections))
 	if err != nil || (len(corrections) == 0 && len(origins) == 0) {
 		return err
 	}
@@ -77,6 +78,20 @@ func (s *cliWorkflowSession) reviewInputLanguages(ctx context.Context, reader *b
 		Goal:           api.WorkflowGoalInputReady,
 		Intent:         api.WorkflowIntent{TrackerIDs: trackerIDs, CorrectionPatch: patch},
 	})
+}
+
+// cliPromptMediaWithTrackLanguages overlays accepted answers only for the next
+// prompt. Inspected facts and canonical correction authority remain unchanged.
+func cliPromptMediaWithTrackLanguages(media api.MediaFacts, corrections []api.TrackLanguageCorrection) api.MediaFacts {
+	media.Tracks = slices.Clone(media.Tracks)
+	for _, correction := range corrections {
+		for i := range media.Tracks {
+			if media.Tracks[i].ID == correction.TrackID {
+				media.Tracks[i].Languages = slices.Clone(correction.Languages)
+			}
+		}
+	}
+	return media
 }
 
 func languageReviewTrackerScope(selected []api.TrackerID, removed []string) []api.TrackerID {
