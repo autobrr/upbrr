@@ -18,7 +18,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v18", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v19", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -186,7 +186,8 @@ func audioLabel(values []string) string {
 
 // audioLabelForFacts applies established DP rows. A false boolean identifies an
 // uncovered complete composition needing manual choice, including explicit
-// original/dub combinations and Nordic dubs with unknown title-language exclusions.
+// original/dub combinations, confirmed non-Nordic dub pairs and Nordic dubs with unknown
+// title-language exclusions.
 // Incomplete facts select no marker; ambiguous primary-track evidence returns a
 // naming error. Unknown title language permits only established automatic markers.
 func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
@@ -229,7 +230,9 @@ func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 			return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed && languageutil.ContainsLanguage(track.Languages, languages[0])
 		})
 	if !originalKnown {
-		if nordicDub || original && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+		confirmedDubPair := len(languages) == 2 && !original && !facts.HasUnresolvedProgrammeAudioOrigin() &&
+			!slices.ContainsFunc(languages, func(language string) bool { return languageutil.ContainsLanguage(nordic, language) })
+		if nordicDub || confirmedDubPair || original && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
 			return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed
 		}) {
 			return "", false, nil

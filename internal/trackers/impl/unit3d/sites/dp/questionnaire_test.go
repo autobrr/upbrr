@@ -130,6 +130,8 @@ func TestDPUnknownTitleDubsRequireExplicitUncoveredMarker(t *testing.T) {
 	}{
 		{"original and dub", "English", "German MULTi", []string{"English", "German"}},
 		{"single Nordic dub", "Japanese", "Swedish Dubbed", []string{"Swedish"}},
+		{"two confirmed dubs", "Japanese", "German MULTi", []string{"German", "French"}},
+		{"reversed confirmed dubs", "Japanese", "French MULTi", []string{"French", "German"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			meta := dpManualMarkerSubject(t, []string{tc.original}, tc.languages...)
@@ -150,8 +152,56 @@ func TestDPUnknownTitleDubsRequireExplicitUncoveredMarker(t *testing.T) {
 			if name := dpReviewedName(t, meta, nil); !strings.Contains(name, tc.marker+" AAC 2.0") {
 				t.Fatalf("explicit marker did not reach the upload name: %s", name)
 			}
+			dpSetManualMarkerAnswer(&meta, omittedLanguageMarker)
+			if failures := dpValidationFailures(t, meta); len(failures) != 0 {
+				t.Fatalf("explicit omission remained blocked: %#v", failures)
+			}
+			if name := dpReviewedName(t, meta, nil); name != "Example 2026 1080p WEB-DL AAC 2.0 H.265-GRP" {
+				t.Fatalf("explicit omission did not reach the upload name: %s", name)
+			}
 			if meta.LanguageFacts.OriginalLanguagesKnown || len(meta.LanguageFacts.OriginalLanguages) != 0 {
 				t.Fatal("naming choice invented title-language metadata")
+			}
+		})
+	}
+}
+
+func TestDPUnknownTitleTwoLanguagesRequireConfirmedProgrammeDubs(t *testing.T) {
+	for _, control := range []string{"unclassified", "one unresolved", "commentary", "unknown language", "partial", "Nordic pair", "Nordic companion"} {
+		t.Run(control, func(t *testing.T) {
+			meta := dpManualMarkerSubject(t, nil, "German", "French")
+			meta.LanguageFacts.OriginalLanguagesKnown = false
+			switch control {
+			case "unclassified":
+				for i := range meta.LanguageFacts.Tracks {
+					meta.LanguageFacts.Tracks[i].AudioOrigin = ""
+				}
+			case "one unresolved":
+				meta.LanguageFacts.Tracks[1].AudioOrigin = api.TrackAudioUnresolved
+			case "commentary":
+				for i := range meta.LanguageFacts.Tracks {
+					meta.LanguageFacts.Tracks[i].Role = api.AudioRoleCommentary
+				}
+			case "unknown language":
+				meta.LanguageFacts.ProgrammeLanguages[1] = "und"
+				meta.LanguageFacts.Tracks[1].Languages = []string{"und"}
+			case "partial":
+				meta.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial
+			case "Nordic pair":
+				meta = dpManualMarkerSubject(t, nil, "Danish", "Swedish")
+				meta.LanguageFacts.OriginalLanguagesKnown = false
+			case "Nordic companion":
+				meta = dpManualMarkerSubject(t, nil, "Swedish", "German")
+				meta.LanguageFacts.OriginalLanguagesKnown = false
+			}
+			if schema := unit3d.NewWithProfile(Profile()).ProjectionQuestionnaire(trackers.PreparationInput{Meta: meta}); schema != nil {
+				t.Fatalf("unconfirmed composition acquired marker review: %+v", schema)
+			}
+			failures := dpValidationFailures(t, meta)
+			if control == "unknown language" || control == "partial" {
+				requireDPLanguageFailure(t, failures, "language_multilingual_evidence", trackers.LanguageUnresolved)
+			} else if len(failures) != 0 {
+				t.Fatalf("unconfirmed composition blocked upload: %+v", failures)
 			}
 		})
 	}

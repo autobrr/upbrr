@@ -26,40 +26,73 @@ func TestPlainPromptShowsEvidenceAndHelp(t *testing.T) {
 		var writer io.Writer = &output
 		if wrapped {
 			writer = &cliPresentationWriter{
-Writer: &output,
- ctx: t.Context(),
- presenter: &cliPlainPresenter{reader: reader, output: &output},
-}
+				Writer:    &output,
+				ctx:       t.Context(),
+				presenter: &cliPlainPresenter{reader: reader, output: &output},
+			}
 		}
 		answer, err := askCLIField(reader, writer, cliPrompt{
 			Question: "Soundtrack origin: ",
 			Evidence: "Source: Example.Release.mkv; title original language: Japanese",
 			Help:     "Enter original, dubbed, or unresolved.",
 		})
-		if err != nil || answer != "unresolved" || !strings.Contains(output.String(), "Source: Example.Release.mkv") || !strings.Contains(output.String(), "Enter original, dubbed, or unresolved.") {
+		text := output.String()
+		evidenceAt := strings.Index(text, "Source: Example.Release.mkv")
+		helpAt := strings.Index(text, "Enter original, dubbed, or unresolved.")
+		questionAt := strings.Index(text, "Soundtrack origin: ")
+		if err != nil || answer != "unresolved" || evidenceAt < 0 || helpAt <= evidenceAt || questionAt <= helpAt {
 			t.Fatalf("wrapped=%t answer=%q err=%v output=%q", wrapped, answer, err, output.String())
+		}
+	}
+}
+
+func TestSoundtrackContextSanitizesSourceResourceAndTrackersInPlainAndTUI(t *testing.T) {
+	hostile := "\n\x1b]52;c;CLIPBOARD\a\x1b[2Jpassword=SECRET_SENTINEL"
+	track := api.MediaTrackFacts{
+		ID:         "track_example",
+		ResourceID: "resource",
+		Title:      "Main" + hostile,
+	}
+	media := api.MediaFacts{MediaFileFacts: api.MediaFileFacts{Files: []api.MediaFileFact{{ResourceID: "resource", FileName: "Resource" + hostile}}}}
+	field := api.InputReadinessFieldOutcome{TrackerIDs: []api.TrackerID{api.TrackerID("TRACKER" + hostile)}}
+	prompt := cliAudioOriginPrompt("Source"+hostile, media, field, track)
+	for _, terminal := range []bool{false, true} {
+		text := cliPlainPromptText(prompt)
+		if terminal {
+			model := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
+			model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+			model.Update(cliPromptRequest{prompt: prompt, reply: make(chan cliAnswer, 1)})
+			text = model.evidence.GetContent()
+		}
+		for _, expected := range []string{"Source: Source", "Resource: Resource", "Required by TRACKER", "title: Main"} {
+			if !strings.Contains(text, expected) {
+				t.Fatalf("terminal=%t: missing safe field %q", terminal, expected)
+			}
+		}
+		if strings.ContainsAny(text, "\x00\x1b\a\r\t") || strings.Contains(text, "CLIPBOARD") || strings.Contains(text, "SECRET_SENTINEL") {
+			t.Fatalf("terminal=%t: source context escaped producer sanitization", terminal)
 		}
 	}
 }
 
 func TestSoundtrackReviewExplainsKnownOriginalAmbiguityInPlainAndTUI(t *testing.T) {
 	media := api.MediaFacts{
-		OriginalLanguage: "Japanese",
- TrackCoverageComplete: true,
-		MediaFileFacts: api.MediaFileFacts{Files: []api.MediaFileFact{{ResourceID: "resource", FileName: filepath.Join("source", "Example.S01E01.mkv")}}},
+		OriginalLanguage:      "Japanese",
+		TrackCoverageComplete: true,
+		MediaFileFacts:        api.MediaFileFacts{Files: []api.MediaFileFact{{ResourceID: "resource", FileName: filepath.Join("source", "Example.S01E01.mkv")}}},
 		Tracks: []api.MediaTrackFacts{{
-			ID: "track_example",
- ResourceID: "resource",
- ManifestFingerprint: "scan",
- Kind: api.MediaTrackAudio,
-			Role: api.AudioRoleProgramme,
- Ordinal: 1,
- Title: "Main surround",
- Codec: "AC-3",
- Channels: 6,
- ChannelsKnown: true,
-			DetectedLanguages: []string{"de"},
- Languages: []string{"German"},
+			ID:                  "track_example",
+			ResourceID:          "resource",
+			ManifestFingerprint: "scan",
+			Kind:                api.MediaTrackAudio,
+			Role:                api.AudioRoleProgramme,
+			Ordinal:             1,
+			Title:               "Main surround",
+			Codec:               "AC-3",
+			Channels:            6,
+			ChannelsKnown:       true,
+			DetectedLanguages:   []string{"de"},
+			Languages:           []string{"German"},
 		}},
 	}
 	media.LanguageFacts = mediafacts.ResolveLanguages(media)
@@ -83,11 +116,11 @@ func TestSoundtrackReviewExplainsKnownOriginalAmbiguityInPlainAndTUI(t *testing.
 				presenter = terminalPresenter
 			}
 			writer := &cliPresentationWriter{
-Writer: &out,
- presenter: presenter,
- ctx: t.Context(),
- terminal: terminal,
-}
+				Writer:    &out,
+				presenter: presenter,
+				ctx:       t.Context(),
+				terminal:  terminal,
+			}
 			corrections, err := collectCLIInputAudioOrigins(reader, writer, mode, readiness.Fields, "Example Season", media)
 			if err != nil || len(corrections) != 1 || corrections[0].Origin != api.TrackAudioOrigin(answer) {
 				t.Fatalf("terminal=%t answer=%s corrections=%#v err=%v", terminal, answer, corrections, err)
