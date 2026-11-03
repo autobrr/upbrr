@@ -92,7 +92,7 @@ func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate
 		if meta.ExternalFreshness.RequiresRefresh() {
 			appendProviderRefreshWarning(&meta, "Blu-ray.com", err)
 		}
-		if errors.Is(err, bluraycom.ErrDetailReleaseNotRetained) {
+		if errors.Is(err, bluraycom.ErrDetailReleaseNotRetained) || meta.BlurayDetails != nil {
 			return meta, fmt.Errorf("metadata: Blu-ray inspection: %w", err)
 		}
 		if meta.Bluray != nil && meta.Bluray.Mode == "manual" {
