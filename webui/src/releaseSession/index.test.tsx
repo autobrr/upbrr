@@ -9019,91 +9019,104 @@ it.each([
   unmount();
 });
 
-it.each(["unmount", "deadline"])("bounds candidate cancellation polling: %s", async (end) => {
-  const workflowID = "workflow-bluray-bounded-cancel";
-  const sourcePath = "Example.Release.2026.mkv";
-  const operation: WorkflowOperationStatus = {
-    id: "candidate-operation",
-    workflowId: workflowID,
-    revision: 2,
-    sequence: 1,
-    command: "prepare_release",
-    operation: "preparation",
-    status: "running",
-    progress: 0,
-    completed: 0,
-    total: 1,
-    startedAt: "2026-07-20T00:00:00Z",
-    updatedAt: "2026-07-20T00:00:00Z",
-  };
-  const canceled = { ...operation, status: "canceled" as const };
-  const current = workflowCurrentFromPreview(
-    workflowCurrent(workflowID, 2),
-    preview(sourcePath, 1),
-  );
-  const waits: ReturnType<typeof createDeferred<WorkflowOperationStatus>>[] = [];
-  const pollSignals: AbortSignal[] = [];
-  const poll = vi.fn(async (_workflowID: string, _operationID: string, signal: AbortSignal) => {
-    pollSignals.push(signal);
-    const wait = createDeferred<WorkflowOperationStatus>();
-    waits.push(wait);
-    signal.addEventListener("abort", () => wait.reject(signal.reason), { once: true });
-    return wait.promise;
-  });
-  let cancellationSignal!: AbortSignal;
-  const cancel = vi.fn(async (_workflowID: string, _operationID: string, signal: AbortSignal) => {
-    cancellationSignal = signal;
-    return operation;
-  });
-  const { result, unmount } = renderHook(useReleaseSession, {
-    wrapper: wrapperFor(
-      portsFor({
-        resumeWorkflowID: workflowID,
-        workflow: workflowPorts({
-          current: async () => current,
-          continue: async () => ({ ...current, operation, preparationOperationId: operation.id }),
-          operation: poll,
-          cancelOperation: cancel,
+it.each(["unmount", "deadline", "cancel request deadline"])(
+  "bounds candidate cancellation polling: %s",
+  async (end) => {
+    const workflowID = "workflow-bluray-bounded-cancel";
+    const sourcePath = "Example.Release.2026.mkv";
+    const operation: WorkflowOperationStatus = {
+      id: "candidate-operation",
+      workflowId: workflowID,
+      revision: 2,
+      sequence: 1,
+      command: "prepare_release",
+      operation: "preparation",
+      status: "running",
+      progress: 0,
+      completed: 0,
+      total: 1,
+      startedAt: "2026-07-20T00:00:00Z",
+      updatedAt: "2026-07-20T00:00:00Z",
+    };
+    const canceled = { ...operation, status: "canceled" as const };
+    const current = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 2),
+      preview(sourcePath, 1),
+    );
+    const waits: ReturnType<typeof createDeferred<WorkflowOperationStatus>>[] = [];
+    const pollSignals: AbortSignal[] = [];
+    const pendingOperation = (signal: AbortSignal) => {
+      const wait = createDeferred<WorkflowOperationStatus>();
+      waits.push(wait);
+      signal.addEventListener("abort", () => wait.reject(signal.reason), { once: true });
+      return wait.promise;
+    };
+    const poll = vi.fn(async (_workflowID: string, _operationID: string, signal: AbortSignal) => {
+      pollSignals.push(signal);
+      return pendingOperation(signal);
+    });
+    let cancellationSignal!: AbortSignal;
+    const cancel = vi.fn(async (_workflowID: string, _operationID: string, signal: AbortSignal) => {
+      cancellationSignal = signal;
+      return end === "cancel request deadline" ? pendingOperation(signal) : operation;
+    });
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => current,
+            continue: async () => ({ ...current, operation, preparationOperationId: operation.id }),
+            operation: poll,
+            cancelOperation: cancel,
+          }),
         }),
-      }),
-    ),
-  });
-  await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  let pending!: Promise<boolean>;
-  let cancellation!: Promise<boolean>;
-  try {
-    act(() => {
-      pending = result.current.input.fetchCandidateDetails("101");
+      ),
     });
-    await act(async () => vi.advanceTimersByTimeAsync(0));
-    expect(result.current.input.view.candidateDetailsCancelable).toBe(true);
-    act(() => {
-      cancellation = result.current.input.cancelCandidateDetails();
-    });
-    await act(async () => vi.advanceTimersByTimeAsync(1000));
-    expect(pollSignals).toContain(cancellationSignal);
-    expect(cancellationSignal.aborted).toBe(false);
-    if (end === "unmount") unmount();
-    else await act(async () => vi.advanceTimersByTimeAsync(29_000));
-    expect(cancellationSignal.aborted).toBe(true);
-    await act(() => Promise.all([pending, cancellation]));
-    const calls = poll.mock.calls.length;
-    await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(poll).toHaveBeenCalledTimes(calls);
-    if (end === "deadline") {
-      expect(result.current.input.view.status).toBe("error");
-      expect(result.current.input.view.error).toMatch(/could not confirm cancellation/i);
+    await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let pending!: Promise<boolean>;
+    let cancellation!: Promise<boolean>;
+    let cancellationSettled = false;
+    try {
+      act(() => {
+        pending = result.current.input.fetchCandidateDetails("101");
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(result.current.input.view.candidateDetailsCancelable).toBe(true);
+      act(() => {
+        cancellation = result.current.input.cancelCandidateDetails();
+        void cancellation.then(() => {
+          cancellationSettled = true;
+        });
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      if (end === "cancel request deadline") expect(pollSignals).not.toContain(cancellationSignal);
+      else expect(pollSignals).toContain(cancellationSignal);
+      expect(cancellationSettled).toBe(false);
+      expect(cancellationSignal.aborted).toBe(false);
+      if (end === "unmount") unmount();
+      else await act(async () => vi.advanceTimersByTimeAsync(29_000));
+      expect(cancellationSignal.aborted).toBe(true);
+      await act(() => Promise.all([pending, cancellation]));
+      expect(cancellationSettled).toBe(true);
+      const calls = poll.mock.calls.length;
+      await act(async () => vi.advanceTimersByTimeAsync(2000));
+      expect(poll).toHaveBeenCalledTimes(calls);
+      if (end !== "unmount") {
+        expect(result.current.input.view.status).toBe("error");
+        expect(result.current.input.view.error).toMatch(/could not confirm cancellation/i);
+      }
+    } finally {
+      unmount();
+      await act(async () => {
+        waits.forEach((wait) => wait.resolve(canceled));
+        await Promise.all([pending, cancellation]);
+      });
+      vi.useRealTimers();
     }
-  } finally {
-    await act(async () => {
-      waits.forEach((wait) => wait.resolve(canceled));
-      await Promise.all([pending, cancellation]);
-    });
-    unmount();
-    vi.useRealTimers();
-  }
-});
+  },
+);
 
 it("reports uncertain candidate cancellation when the acceptance response is lost", async () => {
   const workflowID = "workflow-bluray-uncertain-cancel";
