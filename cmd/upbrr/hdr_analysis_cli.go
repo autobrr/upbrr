@@ -82,19 +82,19 @@ func validateCLIHDR(opts cliOptions, visited map[string]bool) error {
 			return err
 		}
 		if _, err := api.HDRAnalysisFormats(opts.HDRFormats).Normalize(); err != nil {
-			return fmt.Errorf("HDR formats: %w", err)
+			return fmt.Errorf("invalid --hdr-formats; choose auto, hdr10plus, dolby-vision, or both: %w", err)
 		}
 		if _, err := api.HDRPeakSource(opts.HDRPeakSource).Normalize(); err != nil {
-			return fmt.Errorf("hdr_analysis_cli: %w", err)
+			return fmt.Errorf("invalid --hdr-peak-source; choose histogram, histogram99, max-scl, or max-scl-luminance: %w", err)
 		}
 		if opts.HDRTargets != "" {
 			if _, err := parseCLIHDRTargets(opts.HDRTargets); err != nil {
-				return fmt.Errorf("hdr_analysis_cli: %w", err)
+				return fmt.Errorf("invalid --hdr-targets: %w", err)
 			}
 		}
 		if opts.HDRPlaylist != "" {
 			if _, err := api.NormalizeHDRPlaylist(opts.HDRPlaylist); err != nil {
-				return fmt.Errorf("hdr_analysis_cli: %w", err)
+				return fmt.Errorf("invalid --hdr-playlist: %w", err)
 			}
 		}
 	}
@@ -176,11 +176,11 @@ func cliHDRUploadRequest(opts cliOptions) *api.HDRAnalysisRequest {
 func hdrOutputParent(source, output string, disc bool) (string, error) {
 	sourceReal, err := filepath.EvalSymlinks(source)
 	if err != nil {
-		return "", fmt.Errorf("hdr_analysis_cli: %w", err)
+		return "", fmt.Errorf("resolve HDR source for output separation: %w", err)
 	}
 	parent, err := filepath.Abs(output)
 	if err != nil {
-		return "", fmt.Errorf("hdr_analysis_cli: %w", err)
+		return "", fmt.Errorf("resolve --hdr-output-dir: %w", err)
 	}
 	ancestor := parent
 	for {
@@ -189,24 +189,24 @@ func hdrOutputParent(source, output string, disc bool) (string, error) {
 			break
 		}
 		if !errors.Is(err, fs.ErrNotExist) || filepath.Dir(ancestor) == ancestor {
-			return "", fmt.Errorf("hdr_analysis_cli: %w", err)
+			return "", fmt.Errorf("inspect --hdr-output-dir parent: %w", err)
 		}
 		ancestor = filepath.Dir(ancestor)
 	}
 	resolved, err := filepath.EvalSymlinks(ancestor)
 	if err != nil {
-		return "", fmt.Errorf("hdr_analysis_cli: %w", err)
+		return "", fmt.Errorf("resolve --hdr-output-dir parent: %w", err)
 	}
 	relative, err := filepath.Rel(ancestor, parent)
 	if err != nil {
-		return "", fmt.Errorf("hdr_analysis_cli: %w", err)
+		return "", fmt.Errorf("locate --hdr-output-dir beneath its existing parent: %w", err)
 	}
 	resolved = filepath.Join(resolved, relative)
 	if pathutil.SamePath(sourceReal, resolved) || disc && pathutil.IsWithinRoot(sourceReal, resolved) {
-		return "", errors.New("HDR output must be outside the source")
+		return "", errors.New("--hdr-output-dir must be outside the HDR source")
 	}
 	if info, err := os.Stat(parent); err == nil && !info.IsDir() {
-		return "", errors.New("HDR output parent must be a directory")
+		return "", errors.New("--hdr-output-dir must be a directory")
 	}
 	return resolved, nil
 }
@@ -222,10 +222,10 @@ func hdrSourceIdentity(ctx context.Context, source string) (api.WorkflowFingerpr
 	// #nosec G703 -- The local CLI explicitly permits inspecting user-selected disc source paths.
 	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
-			return fmt.Errorf("hdr_analysis_cli: %w", err)
+			return fmt.Errorf("read HDR source directory: %w", err)
 		}
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("hdr_analysis_cli: %w", err)
+			return fmt.Errorf("inspect HDR source interrupted: %w", err)
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			return errors.New("HDR disc sources cannot contain symlinks")
@@ -235,7 +235,7 @@ func hdrSourceIdentity(ctx context.Context, source string) (api.WorkflowFingerpr
 		}
 		info, err := entry.Info()
 		if err != nil {
-			return fmt.Errorf("hdr_analysis_cli: %w", err)
+			return fmt.Errorf("inspect HDR source file: %w", err)
 		}
 		if !info.Mode().IsRegular() {
 			return errors.New("HDR source contains a non-regular file")
@@ -248,7 +248,7 @@ func hdrSourceIdentity(ctx context.Context, source string) (api.WorkflowFingerpr
 		return nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("hdr_analysis_cli: %w", err)
+		return "", fmt.Errorf("check HDR source for changes: %w", err)
 	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(stamps)
 	if err != nil {
@@ -312,16 +312,16 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 	}
 	source, err := filepath.Abs(paths[0])
 	if err != nil {
-		return fmt.Errorf("hdr_analysis_cli: %w", err)
+		return fmt.Errorf("resolve HDR source path; check the input path: %w", err)
 	}
 	source, err = filepath.EvalSymlinks(source)
 	if err != nil {
-		return fmt.Errorf("hdr_analysis_cli: %w", err)
+		return fmt.Errorf("resolve HDR source; check its path and read permissions: %w", err)
 	}
 	// #nosec G703 -- The local CLI explicitly permits reading user-selected source paths.
 	info, err := os.Stat(source)
 	if err != nil {
-		return fmt.Errorf("hdr_analysis_cli: %w", err)
+		return fmt.Errorf("inspect HDR source; check its read permissions: %w", err)
 	}
 	disc := info.IsDir()
 	extension := strings.ToLower(filepath.Ext(source))
@@ -338,15 +338,15 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 	}
 	parent, err := hdrOutputParent(source, opts.HDROutputDir, disc)
 	if err != nil {
-		return fmt.Errorf("hdr_analysis_cli: %w", err)
+		return fmt.Errorf("prepare HDR output: %w", err)
 	}
 	peak, err := api.HDRPeakSource(opts.HDRPeakSource).Normalize()
 	if err != nil {
-		return fmt.Errorf("hdr_analysis_cli: %w", err)
+		return fmt.Errorf("invalid --hdr-peak-source: %w", err)
 	}
 	identity, err := hdrSourceIdentity(ctx, source)
 	if err != nil {
-		return fmt.Errorf("hdr_analysis_cli: %w", err)
+		return fmt.Errorf("inspect HDR source before analysis: %w", err)
 	}
 	primaryFingerprint := ""
 	if !disc && (!opts.HDRMetadataOnly || opts.HDRSceneSync || opts.HDRActiveArea || opts.HDRGrade || opts.HDRColour) {
@@ -354,7 +354,7 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 		verified, verifyErr := releaseworkflow.VerifyHDRComparisonSource(verifyCtx, source, verifyStandaloneHDRInput)
 		cancel()
 		if verifyErr != nil {
-			return fmt.Errorf("bind standalone HDR source: %w", verifyErr)
+			return fmt.Errorf("inspect HDR video source: %w", verifyErr)
 		}
 		primaryFingerprint = verified.SourceVersion
 	}
@@ -363,7 +363,7 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 		if opts.HDRPlaylist != "" {
 			playlist, err = api.NormalizeHDRPlaylist(opts.HDRPlaylist)
 			if err != nil {
-				return fmt.Errorf("hdr_analysis_cli: %w", err)
+				return fmt.Errorf("invalid --hdr-playlist: %w", err)
 			}
 		}
 		settings := bd.DefaultSettings(parent)
@@ -374,19 +374,19 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 			IncludeTimeline: true,
 		})
 		if err != nil {
-			return fmt.Errorf("hdr_analysis_cli: %w", hdranalysis.Classify(err))
+			return fmt.Errorf("inspect HDR disc playlists: %w", hdranalysis.Classify(err))
 		}
 		playlist, err = standaloneHDRPlaylist(discovered, playlist)
 		if err != nil {
-			return fmt.Errorf("hdr_analysis_cli: %w", err)
+			return fmt.Errorf("select an HDR disc playlist: %w", err)
 		}
 	}
 	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return fmt.Errorf("hdr_analysis_cli: %w", err)
+		return fmt.Errorf("create HDR output parent; choose a writable --hdr-output-dir: %w", err)
 	}
 	directory, err := os.MkdirTemp(parent, "hdr-analysis-")
 	if err != nil {
-		return fmt.Errorf("hdr_analysis_cli: %w", err)
+		return fmt.Errorf("create HDR analysis directory; check --hdr-output-dir write permissions: %w", err)
 	}
 	complete := false
 	defer func() {
@@ -429,12 +429,12 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 			}, formats, 0)
 			defer outcome.Release()
 			if scanErr != nil {
-				return fmt.Errorf("scan HDR disc: %w", scanErr)
+				return fmt.Errorf("read HDR disc metadata: %w", hdranalysis.Classify(scanErr))
 			}
 			var takeErr error
 			native, timeline, takeErr = outcome.TakePlaylist(playlist, 0)
 			if takeErr != nil {
-				return fmt.Errorf("assemble native HDR playlist: %w", takeErr)
+				return fmt.Errorf("select HDR playlist metadata: %w", hdranalysis.Classify(takeErr))
 			}
 		default:
 			var readErr error
@@ -444,13 +444,13 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 				native, readErr = session.ExtractNativeFile(ctx, source, formats)
 			}
 			if readErr != nil {
-				return fmt.Errorf("read HDR source: %w", readErr)
+				return fmt.Errorf("read HDR source: %w", hdranalysis.Classify(readErr))
 			}
 		}
 		defer native.Release()
 		evidence, evidenceErr := native.Evidence(formats, api.HDRSourceEvidence{})
 		if evidenceErr != nil {
-			return fmt.Errorf("prepare HDR evidence: %w", evidenceErr)
+			return fmt.Errorf("prepare HDR metadata results: %w", hdranalysis.Classify(evidenceErr))
 		}
 		defer evidence.Release()
 		evidence.Timeline = timeline
@@ -543,7 +543,8 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 				return evidence.WriteReport(publishCtx, writer, peak, playlist, target, reports)
 			},
 		); err != nil {
-			return fmt.Errorf("publish HDR summary: %w", err)
+			// Classify the cause before adding context so the terminal retains the failed operation.
+			return fmt.Errorf("save HDR summary: %w", hdranalysis.Classify(err))
 		}
 		complete = true
 		if err := ctx.Err(); err != nil {
@@ -565,7 +566,10 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 		fmt.Fprintf(streams.out, "HDR analysis output: %s\n", directory)
 	}
 	if err != nil {
-		return fmt.Errorf("hdr_analysis_cli: %w", hdranalysis.Classify(err))
+		if complete {
+			return fmt.Errorf("HDR analysis did not complete; inspect the retained output directory: %w", hdranalysis.Classify(err))
+		}
+		return fmt.Errorf("analyze HDR source: %w", hdranalysis.Classify(err))
 	}
 	return nil
 }
