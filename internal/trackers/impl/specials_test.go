@@ -13,8 +13,8 @@ import (
 func TestOnlyOptedInUnit3DSitesAllowExplicitSingleSpecials(t *testing.T) {
 	allowedPolicies := map[string]string{
 		"AITHER": "unit3d-aither-constructibility-v1+unit3d-aither-policy-v11/languages-v3",
-		"DP":     "unit3d-dp-constructibility-v1+unit3d-dp-policy-v5",
-		"HHD":    "unit3d-hhd-constructibility-v1+unit3d-hhd-deterministic-v6/languages-v3",
+		"DP":     "unit3d-dp-constructibility-v1+unit3d-dp-policy-v7",
+		"HHD":    "unit3d-hhd-constructibility-v1+unit3d-hhd-deterministic-v7/languages-v3",
 		"LUME":   "unit3d-lume-constructibility-v1+unit3d-lume-constructibility-v5/languages-v3",
 		"OTW":    "unit3d-otw-constructibility-v1+unit3d-otw-policy-v7",
 		"ULCX":   "unit3d-ulcx-constructibility-v1+unit3d-ulcx-policy-v12/languages-v3",

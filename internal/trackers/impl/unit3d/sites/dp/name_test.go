@@ -74,7 +74,7 @@ func TestDPStructuredReleaseNamePolicyUsesTVDBRoles(t *testing.T) {
 		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/dp/v15" || policy.Structured == nil || policy.Resolver != nil {
+	if policy.ID != "unit3d/dp/v18" || policy.Structured == nil || policy.Resolver != nil {
 		t.Fatalf("DP policy = %#v", policy)
 	}
 }
@@ -438,6 +438,8 @@ func TestDPUnknownOriginalPreservesEstablishedMarkers(t *testing.T) {
 		want      string
 	}{
 		{[]string{"English"}, "Dubbed"},
+		{[]string{"English", "German"}, "German MULTi"},
+		{[]string{"German", "English"}, "German MULTi"},
 		{[]string{"Japanese", "English"}, "Dual-Audio"},
 		{[]string{"Japanese", "English", "German"}, "MULTi"},
 	} {

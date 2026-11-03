@@ -2303,15 +2303,17 @@ type BlurayReleaseCandidate struct {
 	Publisher   string
 	Country     string
 	// Region is the release-country code, distinct from Specs.Playback.Region (A/B/C).
-	Region       string
-	Score        float64
-	Accepted     bool
-	Warnings     []string
-	MatchNotes   []string
-	Specs        BluraySpecs
-	CoverImages  []BlurayImage
-	GenericDisc  bool
-	SpecsMissing bool
+	Region string
+	// DetailsStatus is empty until requested, then complete or failed.
+	DetailsStatus string
+	Score         float64
+	Accepted      bool
+	Warnings      []string
+	MatchNotes    []string
+	Specs         BluraySpecs
+	CoverImages   []BlurayImage
+	GenericDisc   bool
+	SpecsMissing  bool
 }
 
 type BluraySpecs struct {

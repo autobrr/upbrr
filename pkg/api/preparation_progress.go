@@ -67,6 +67,8 @@ const (
 // PreparationProgressUpdate is one frontend-safe advisory preparation event.
 // CorrelationID and Timestamp are injected by the WebUI transport boundary.
 type PreparationProgressUpdate struct {
+	// BlurayCandidate is advisory inspection output for one existing listing, never selection authority.
+	BlurayCandidate *BlurayReleaseCandidate `json:"blurayCandidate,omitempty"`
 	// CorrelationID binds the update to one frontend preparation command.
 	CorrelationID string `json:"correlationID"`
 	// Phase identifies the stable preparation stage.

@@ -2597,3 +2597,67 @@ func TestStrictUnattendedSkipsTrackerReleaseNameConfirmation(t *testing.T) {
 		t.Fatal("unattended-confirm mode skipped interactive release-name confirmation")
 	}
 }
+
+func TestContinueReportsOnlyItsAcceptedForcedPreparationOperation(t *testing.T) {
+	t.Parallel()
+	base := testPreparer()
+	release := make(chan struct{})
+	started := make(chan struct{})
+	preparer := base
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		if input.Controls.BlurayDetails != nil {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return api.PrepareResult{}, ctx.Err()
+			}
+		}
+		return base.Prepare(ctx, input)
+	}
+	module, _ := newTestModule(t, preparer)
+	t.Cleanup(func() { close(release) })
+	input := api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026")}
+	created := executeCommand(t, module, CreateWorkflowCommand{SourcePath: input.SourcePath, IdempotencyKey: "create-candidate"})
+	prepared := executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       created.Workflow.ID,
+		ExpectedRevision: created.Workflow.Revision,
+		Input:            input,
+		IdempotencyKey:   "prepare-candidate",
+	})
+	input.Force = true
+	input.Controls.BlurayDetails = &api.BlurayDetailRequest{All: true}
+	request := api.ContinueReleaseWorkflowRequest{
+		Authority:      &api.WorkflowAuthority{WorkflowID: prepared.Workflow.ID, ExpectedRevision: prepared.Workflow.Revision},
+		Goal:           api.WorkflowGoalInputReady,
+		Intent:         api.WorkflowIntent{Preparation: &input},
+		IdempotencyKey: "candidate-inspection",
+	}
+	accepted, err := module.Continue(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Operation == nil || accepted.PreparationOperationID == "" || accepted.PreparationOperationID != accepted.Operation.ID {
+		t.Fatalf("candidate command did not identify its accepted preparation: %#v", accepted.Operation)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("candidate preparation did not start")
+	}
+	request.IdempotencyKey = "another-tab"
+	busy, err := module.Continue(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if busy.Operation == nil || busy.Operation.ID != accepted.Operation.ID || busy.PreparationOperationID != "" {
+		t.Fatal("busy continuation claimed another command's preparation")
+	}
+	passive, err := module.Current(t.Context(), testOwnerID, prepared.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if passive.PreparationOperationID != "" {
+		t.Fatal("passive projection claimed operation ownership")
+	}
+}

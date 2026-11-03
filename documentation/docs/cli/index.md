@@ -92,6 +92,12 @@ For BDMV, interactive preparation groups playlist choices by disc and requires a
 
 `--manual_frames 240,480` requests both frames from every prepared disc. The selected parent remains one collection-root torrent containing all disc folders.
 
+### Blu-ray.com release inspection
+
+When Blu-ray.com lookup is enabled, the CLI and TUI first show the release listing. Enter a release number to select its available country, publisher and release URL; enabled cover handling inspects only that edition. Enter `a` to fetch and score all eligible editions, then choose a release or `n` to skip. Unattended runs do not prompt or implicitly fetch all details. Country filtering and automatic unique-country selection still apply.
+
+Use `--bluray-release "https://www.blu-ray.com/movies/Example-Release-Blu-ray/123/"` or `--bluray-release 123` for an exact release. Numeric IDs use the source's Blu-ray or DVD catalogue; a URL identifies its own catalogue. This fetches only that edition when its details are needed to resolve it. `--bluray-release=""` explicitly skips selection; `--bluray-release auto` restores automatic matching. Compatible listings, details and manual choices survive ordinary corrections. The separate `--blu` argument remains the torrent-site source argument.
+
 ### Decrypted 3D Blu-ray ISO input
 
 Select the original `.iso` file in the WebUI file browser, or pass it directly to the CLI:
@@ -214,19 +220,20 @@ Exit code `0` means Input is ready. Exit code `2` means required input prevents 
 
 Title and original title are read-only provider values. Use `--alternate-title` to correct the alternate title.
 
-| Option                                            | Purpose                                                                                                |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `--alternate-title <text>`                        | Override the alternate title.                                                                          |
-| `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                                             |
-| `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                                         |
-| `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                            |
-| `--hardcoded-subs` / `-hc`                        | Enable hardcoded subtitles; `-hc Spanish` supplies a language; `--hardcoded-subs=false` disables them. |
-| `--hardcoded-subtitle-languages "English"`        | Set hardcoded languages and enable them; an empty list disables them.                                  |
-| `--track-languages "<track-id>=English, Spanish"` | Correct one previously inspected track. Repeat for distinct track IDs.                                 |
-| `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                                           |
-| `--reset-input <field>`                           | Remove one saved correction. Repeat for distinct fields.                                               |
-| `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.                              |
-| `--tracker-input "<tracker-id>:<field>=<answer>"` | Answer a field shown by the current tracker questionnaire.                                             |
+| Option                                            | Purpose                                                                                                                             |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `--alternate-title <text>`                        | Override the alternate title.                                                                                                       |
+| `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                                                                          |
+| `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                                                                      |
+| `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                                                         |
+| `--hardcoded-subs` / `-hc`                        | Enable hardcoded subtitles; `-hc Spanish` supplies a language; `--hardcoded-subs=false` disables them.                              |
+| `--hardcoded-subtitle-languages "English"`        | Set hardcoded languages and enable them; an empty list disables them.                                                               |
+| `--track-languages "<track-id>=English, Spanish"` | Correct one previously inspected track. Repeat for distinct track IDs.                                                              |
+| `--bluray-release "<release-url-or-id>"`          | Select one Blu-ray.com edition without scanning unrelated release pages. Empty skips selection; `auto` restores automatic matching. |
+| `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                                                                        |
+| `--reset-input <field>`                           | Remove one saved correction. Repeat for distinct fields.                                                                            |
+| `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.                                                           |
+| `--tracker-input "<tracker-id>:<field>=<answer>"` | Answer a field shown by the current tracker questionnaire.                                                                          |
 
 Language entries accept one or more comma-separated values. Blank segments are ignored, duplicate languages are removed, and multiword names remain intact. Use `--audio-languages=` for an explicit empty list. Original production language remains separate from track languages. Regional/script tags and Full/Forced coverage are retained; collectives and unknown values do not establish a specific language. See [language corrections](../workflow/index.md#2-review-canonical-metadata) for identity and clear/Auto behavior.
 

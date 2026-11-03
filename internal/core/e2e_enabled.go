@@ -27,6 +27,7 @@ import (
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/metadata/bluraycom"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
@@ -93,8 +94,9 @@ func maybeApplyE2EServices(
 	}
 	if services.Metadata == nil {
 		services.Metadata = e2eMetadataService{
-			repo:    repositories.ReleaseState(),
-			clients: clientdiscovery.New(services.Clients, logger),
+			repo:     repositories.ReleaseState(),
+			prepared: repositories.Prepared(),
+			clients:  clientdiscovery.New(services.Clients, logger),
 		}
 	}
 	if services.Torrents == nil {
@@ -211,7 +213,8 @@ func e2eReleaseWorkflowOptions() []releaseworkflow.Option {
 // e2eMetadataService supplies deterministic preparation evidence under the
 // e2e-only fake-services gate.
 type e2eMetadataService struct {
-	repo interface {
+	prepared api.PreparedReleaseRepository
+	repo     interface {
 		Save(context.Context, api.FileMetadata) error
 	}
 	clients *clientdiscovery.Module
@@ -483,6 +486,60 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 	}
 	if value := strings.TrimSpace(os.Getenv(e2eBlurayEnv)); value == "1" || strings.EqualFold(value, "true") {
 		meta.ProviderMetadata.Bluray = e2eBlurayMetadata(sourcePath)
+	} else if value == "lazy" {
+		bluray := e2eBlurayMetadata(sourcePath)
+		var retained *api.BlurayMetadata
+		if s.prepared != nil {
+			if previous, err := s.prepared.LoadPreparedRelease(ctx, sourcePath); err == nil {
+				retained = previous.ProviderMetadata.Bluray
+			}
+		}
+		for i := range bluray.Candidates {
+			candidate := &bluray.Candidates[i]
+			if old := retained.CandidateByID(candidate.ReleaseID); old != nil && old.DetailsStatus == "complete" {
+				*candidate = *old
+				continue
+			}
+			request := input.Controls.BlurayDetails
+			if request != nil && (request.All || request.ReleaseID == candidate.ReleaseID) {
+				candidate.DetailsStatus = "complete"
+				candidate.ReleaseDate = "2026-01-02"
+
+			} else {
+				candidate.Score, candidate.Specs, candidate.CoverImages = 0, api.BluraySpecs{}, nil
+			}
+		}
+		selection := input.Instructions.Bluray
+		selected := ""
+		if selection == nil && retained != nil && !retained.AutoSelected {
+			selected = retained.SelectedReleaseID
+		}
+		if selection != nil && selection.Mode == "manual" {
+			selected = selection.Release
+		}
+		bluraycom.SelectRelease(
+			bluray,
+			bluraycom.LookupInput{
+				CountryOverride:   new("USA"),
+				SelectedReleaseID: selected,
+				SkipSelection:     selection != nil && selection.Mode == "skip",
+				ScoreThreshold:    80,
+			},
+		)
+		for i := range bluray.Candidates {
+			if bluray.Candidates[i].DetailsStatus == "complete" {
+				bluray.Candidates[i].MatchNotes = []string{
+					"disc matches",
+					"codec matches",
+					"resolution matches",
+					"audio matches",
+					"subtitle comparison",
+					"sixth scoring reason",
+					"seventh scoring reason",
+				}
+			}
+		}
+		meta.ProviderMetadata.Bluray = bluray
 	}
 	if s.repo != nil {
 		if info, err := os.Stat(sourcePath); err == nil {

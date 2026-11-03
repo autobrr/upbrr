@@ -42,11 +42,11 @@ func TestLookupOmitsFragmentFromCatalogueReferer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SelectedReleaseID != "101" || !got.AutoSelected || got.Threshold != 0 || len(got.Candidates) != 1 || got.Candidates[0].Country != "United States" || got.Candidates[0].Region != "USA" || got.Candidates[0].Score != 85 {
+	if got.SelectedReleaseID != "101" || !got.AutoSelected || got.Threshold != 0 || len(got.Candidates) != 1 || got.Candidates[0].Country != "United States" || got.Candidates[0].Region != "USA" || got.Candidates[0].DetailsStatus != "" || len(got.Candidates[0].MatchNotes) != 0 {
 		t.Fatalf("country discovery/selection: %#v", got)
 	}
-	if requests != 4 {
-		t.Fatalf("requests=%d, want search, catalogue and two edition details", requests)
+	if requests != 2 {
+		t.Fatalf("requests=%d, want search and catalogue only", requests)
 	}
 }
 
