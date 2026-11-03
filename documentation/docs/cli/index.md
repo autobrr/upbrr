@@ -94,7 +94,7 @@ For BDMV, interactive preparation groups playlist choices by disc and requires a
 
 ### Blu-ray.com release inspection
 
-When Blu-ray.com lookup is enabled, the CLI and TUI first show the release listing. Enter a release number to select its available country, publisher and release URL; enabled cover handling inspects only that edition. Enter `a` to fetch and score all eligible editions, then choose a release or `n` to skip. Unattended runs do not prompt or implicitly fetch all details. Country filtering and automatic unique-country selection still apply.
+When Blu-ray.com lookup is enabled, the CLI and TUI first show the release listing, including each edition’s release ID. Enter a release number to select its available country, publisher and release URL; enabled cover handling inspects only that edition. Enter `a` to fetch and score all eligible editions, then choose a release or `n` to skip. Unattended runs do not prompt or implicitly fetch all details. Country filtering and automatic unique-country selection still apply.
 
 Use `--bluray-release "https://www.blu-ray.com/movies/Example-Release-Blu-ray/123/"` or `--bluray-release 123` for an exact release. Numeric IDs use the source's Blu-ray or DVD catalogue; a URL identifies its own catalogue. This fetches only that edition when its details are needed to resolve it. `--bluray-release=""` explicitly skips selection; `--bluray-release auto` restores automatic matching. Compatible listings, details and manual choices survive ordinary corrections. The separate `--blu` argument remains the torrent-site source argument.
 

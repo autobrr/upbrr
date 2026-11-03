@@ -940,6 +940,19 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 	if strings.Count(output.String(), "Duplicate candidates:") != 2 || strings.Count(output.String(), "[y/N]:") != 2 {
 		t.Fatal("duplicate review repeated or omitted tracker evidence or decisions")
 	}
+	text := output.String()
+	alpha, beta := strings.Index(text, "Tracker: ALPHA"), strings.Index(text, "Tracker: BETA")
+	if alpha < 0 || beta <= alpha {
+		t.Fatal("duplicate review tracker sections are out of order")
+	}
+	for _, name := range []string{"Example.Release.2026.1080p.WEB-DL-GRP", "Example.Release.2026.1080p.BluRay-GRP"} {
+		if !strings.Contains(text[alpha:beta], name) || strings.Contains(text[beta:], name) {
+			t.Fatalf("ALPHA duplicate %q was not confined to its tracker", name)
+		}
+	}
+	if strings.Contains(text[alpha:beta], "Example.Release.2026.1080p.Encode-GRP") || !strings.Contains(text[beta:], "Example.Release.2026.1080p.Encode-GRP") {
+		t.Fatal("BETA duplicate was not confined to its tracker")
+	}
 	if strings.Contains(output.String(), "never-print-this") {
 		t.Fatalf("duplicate review output exposed passkey: %q", output.String())
 	}

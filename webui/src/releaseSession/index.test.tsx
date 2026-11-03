@@ -8783,6 +8783,19 @@ it("requests single/all Blu-ray details through exact preparation authority and 
       expect.any(AbortSignal),
     );
   }
+  act(() => result.current.input.changeSourceLookupURL("https://www.blu-ray.com/movies/New/103/"));
+  await act(() => result.current.input.fetchCandidateDetails("101"));
+  const editedRequest = continuation.mock.calls
+    .map(([request]) => request)
+    .reverse()
+    .find((request) => request.intent.preparation?.Controls?.BlurayDetails);
+  expect(editedRequest?.intent.preparation?.Instructions).toMatchObject({
+    Bluray: null,
+    SourceLookup: "https://www.blu-ray.com/movies/New/103/",
+  });
+  act(() =>
+    result.current.input.changeSourceLookupURL("https://tracker.example/torrents/blu-ray.com/123"),
+  );
   await act(() => result.current.input.selectCandidate("101"));
   await act(() => result.current.input.setCandidateSelection("skip"));
   expect(current.factInstructions!.instructions.Bluray).toEqual({ Mode: "skip", Release: "" });
@@ -8796,13 +8809,14 @@ it("requests single/all Blu-ray details through exact preparation authority and 
 
 it.each([
   "owned preparation",
+  "owned input cancellation",
   "existing preparation",
   "existing audio analysis",
   "concurrent preparation",
 ])("limits candidate cancellation to its own operation: %s", async (scenario) => {
   const workflowID = "workflow-bluray-cancellation";
   const sourcePath = "Example.Release.2026.mkv";
-  const ownsOperation = scenario === "owned preparation";
+  const ownsOperation = scenario.startsWith("owned");
   const operation: WorkflowOperationStatus = {
     id: ownsOperation ? "candidate-operation" : "existing-operation",
     workflowId: workflowID,
@@ -8855,7 +8869,12 @@ it.each([
   await waitFor(() =>
     expect(result.current.input.view.candidateDetailsCancelable).toBe(ownsOperation),
   );
-  await act(() => result.current.input.cancelCandidateDetails());
+  if (scenario === "owned input cancellation") {
+    act(() => result.current.input.cancelPreparation());
+    await waitFor(() => expect(cancelOperation).toHaveBeenCalled());
+  } else {
+    await act(() => result.current.input.cancelCandidateDetails());
+  }
   if (ownsOperation) {
     expect(cancelOperation).toHaveBeenCalledWith(workflowID, operation.id, expect.any(AbortSignal));
   } else {
@@ -8865,4 +8884,168 @@ it.each([
   unmount();
   terminal.resolve(canceled);
   await act(() => pending);
+});
+
+it.each([
+  "owned",
+  "owned after refresh",
+  "owned marker with newer operation",
+  "owned marker without current operation",
+  "owned marker lookup failed",
+  "owned marker already canceled",
+  "owned marker already completed",
+  "other tab",
+  "correction only",
+])("handles Input Cancel before candidate acceptance: %s", async (scenario) => {
+  const workflowID = "workflow-bluray-pending-cancel";
+  const sourcePath = "Example.Release.2026.mkv";
+  const operation: WorkflowOperationStatus = {
+    id: "candidate-operation",
+    workflowId: workflowID,
+    revision: 2,
+    sequence: 1,
+    command: "fixture",
+    operation: "preparation",
+    status: "running",
+    progress: 0,
+    completed: 0,
+    total: 1,
+    startedAt: "2026-07-20T00:00:00Z",
+    updatedAt: "2026-07-20T00:00:00Z",
+  };
+  const current = workflowCurrentFromPreview(
+    workflowCurrent(workflowID, 2),
+    preview(sourcePath, 1),
+  );
+  const accepted = createDeferred<ReleaseWorkflowCurrent>();
+  const terminal = createDeferred<WorkflowOperationStatus>();
+  let calls = 0;
+  const continuation = vi.fn(
+    async (_request: ContinueReleaseWorkflowRequest, _signal: AbortSignal) => {
+      calls += 1;
+      if (scenario === "owned after refresh" && calls === 1)
+        return {
+          ...current,
+          workflow: { ...current.workflow, revision: 3 },
+          operation: { ...operation, id: "completed-operation", status: "completed" as const },
+        };
+      return accepted.promise;
+    },
+  );
+  const cancelOperation = vi.fn(async () => operation);
+  const operationStatus = vi.fn(async (_workflowID: string, operationID: string) => {
+    expect(operationID).toBe(operation.id);
+    if (scenario === "owned marker lookup failed") throw new Error("status unavailable");
+    if (scenario.startsWith("owned marker") && operationStatus.mock.calls.length === 1)
+      return {
+        ...operation,
+        status: scenario.endsWith("already canceled")
+          ? ("canceled" as const)
+          : scenario.endsWith("already completed")
+            ? ("completed" as const)
+            : operation.status,
+      };
+    return terminal.promise;
+  });
+  const { result, unmount } = renderHook(useReleaseSession, {
+    wrapper: wrapperFor(
+      portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => current,
+          continue: continuation,
+          cancelOperation,
+          operation: operationStatus,
+        }),
+      }),
+    ),
+  });
+  await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
+  let pending!: Promise<boolean>;
+  act(() => {
+    pending = result.current.input.fetchCandidateDetails("101");
+  });
+  await waitFor(() =>
+    expect(continuation).toHaveBeenCalledTimes(scenario === "owned after refresh" ? 2 : 1),
+  );
+  expect(result.current.input.view.candidateDetailsCancelable).toBe(false);
+  act(() => result.current.input.cancelPreparation());
+  expect(continuation.mock.calls[0][1].aborted).toBe(false);
+  expect(result.current.input.view.status).not.toBe("cancelled");
+  act(() => result.current.input.cancelPreparation());
+  accepted.resolve(
+    scenario.startsWith("owned marker")
+      ? {
+          ...current,
+          operation:
+            scenario === "owned marker without current operation"
+              ? undefined
+              : { ...operation, id: "another-tabs-operation" },
+          preparationOperationId: operation.id,
+        }
+      : scenario.startsWith("owned")
+        ? { ...current, operation, preparationOperationId: operation.id }
+        : scenario === "other tab"
+          ? { ...current, operation: { ...operation, id: "another-tabs-operation" } }
+          : { ...current, workflow: { ...current.workflow, revision: 3 } },
+  );
+  const owned =
+    scenario.startsWith("owned") &&
+    scenario !== "owned marker lookup failed" &&
+    !scenario.includes("already");
+  if (owned) {
+    await waitFor(() => expect(cancelOperation).toHaveBeenCalledOnce());
+    expect(result.current.input.view.status).not.toBe("cancelled");
+    terminal.resolve({ ...operation, status: "canceled" });
+  }
+  await act(() => pending);
+  if (owned)
+    expect(cancelOperation).toHaveBeenCalledWith(workflowID, operation.id, expect.any(AbortSignal));
+  else expect(cancelOperation).not.toHaveBeenCalled();
+  expect(continuation).toHaveBeenCalledTimes(scenario === "owned after refresh" ? 2 : 1);
+  if (scenario === "owned marker lookup failed") {
+    expect(result.current.input.view.status).toBe("error");
+    expect(result.current.input.view.error).toMatch(/could not confirm cancellation/i);
+  } else if (scenario === "owned marker already completed") {
+    expect(result.current.input.view.status).toBe("error");
+    expect(result.current.input.view.error).toMatch(/finished before cancellation/i);
+  } else expect(result.current.input.view.status).toBe("cancelled");
+  unmount();
+});
+
+it("reports uncertain candidate cancellation when the acceptance response is lost", async () => {
+  const workflowID = "workflow-bluray-uncertain-cancel";
+  const sourcePath = "Example.Release.2026.mkv";
+  const current = workflowCurrentFromPreview(
+    workflowCurrent(workflowID, 2),
+    preview(sourcePath, 1),
+  );
+  const accepted = createDeferred<ReleaseWorkflowCurrent>();
+  const continuation = vi.fn(async () => accepted.promise);
+  const cancelOperation = vi.fn();
+  const { result, unmount } = renderHook(useReleaseSession, {
+    wrapper: wrapperFor(
+      portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => current,
+          continue: continuation,
+          cancelOperation,
+        }),
+      }),
+    ),
+  });
+  await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
+  let pending!: Promise<boolean>;
+  act(() => {
+    pending = result.current.input.fetchCandidateDetails("101");
+  });
+  await waitFor(() => expect(continuation).toHaveBeenCalledOnce());
+  act(() => result.current.input.cancelPreparation());
+  accepted.reject(new Error("response lost"));
+  await act(() => pending);
+  expect(cancelOperation).not.toHaveBeenCalled();
+  expect(result.current.input.view.status).toBe("error");
+  expect(result.current.input.view.error).toMatch(/could not confirm cancellation/i);
+  unmount();
 });

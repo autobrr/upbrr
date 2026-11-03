@@ -266,6 +266,15 @@ export function ReleaseSessionProvider({
   );
   const questionnaireController = useRef<AbortController | null>(null);
   const controllers = useRef<Partial<Record<ControllerKey, AbortController>>>({});
+  const candidateAttempt = useRef<{
+    controller: AbortController;
+    sourcePath: string;
+    commandRevision: number;
+    correlationID: string;
+    cancelRequested: boolean;
+    cancellation: Promise<boolean> | null;
+    operation: { workflowID: string; status: WorkflowOperationStatus } | null;
+  } | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const activeAuthority = useRef({
@@ -537,6 +546,60 @@ export function ReleaseSessionProvider({
     return operation;
   };
 
+  const cancelAcceptedCandidate = (
+    attempt: NonNullable<typeof candidateAttempt.current>,
+    workflowID: string,
+    operation: WorkflowOperationStatus,
+  ): Promise<boolean> => {
+    if (attempt.cancellation) return attempt.cancellation;
+    attempt.cancelRequested = true;
+    attempt.cancellation = (async () => {
+      let finished = false;
+      try {
+        const controller = new AbortController();
+        const slot = activeSlotAuthority();
+        let terminal = isActiveWorkflowOperation(operation)
+          ? await activePorts.workflow.cancelOperation(workflowID, operation.id, controller.signal)
+          : operation;
+        while (isActiveWorkflowOperation(terminal)) {
+          await waitForWorkflowPoll(controller.signal);
+          terminal = await activePorts.workflow.operation(
+            workflowID,
+            operation.id,
+            controller.signal,
+          );
+        }
+        if ((terminal as WorkflowOperationStatus).status !== "canceled") {
+          finished = true;
+          throw new Error("Inspection did not cancel.");
+        }
+        attempt.controller.abort();
+        if (
+          activeSlotMatches(slot) &&
+          stateRef.current.workflowView.current?.operation?.id === operation.id
+        ) {
+          dispatch({ type: "workflow_operation_updated", workflowID, operation: terminal });
+        }
+        dispatch({ type: "preparation_cancelled", correlationID: attempt.correlationID });
+        return true;
+      } catch {
+        attempt.controller.abort();
+        dispatch({
+          type: "preparation_failed",
+          sourcePath: attempt.sourcePath,
+          commandRevision: attempt.commandRevision,
+          correlationID: attempt.correlationID,
+          error: finished
+            ? "Inspection finished before cancellation. Refresh the workflow to review its result."
+            : "Could not confirm cancellation; inspection may still be running. Refresh the workflow before retrying.",
+          failure: null,
+        });
+        return false;
+      }
+    })();
+    return attempt.cancellation;
+  };
+
   const failBackendWorkflow = (error: unknown) => {
     const failure = operationFailureFromError(error);
     if (failure?.Code === "missing_prerequisite" && failure.Recovery === "refresh_release") {
@@ -557,7 +620,7 @@ export function ReleaseSessionProvider({
     idempotencyKey: string,
     signal: AbortSignal,
     extra: Pick<ContinueReleaseWorkflowRequest, "answers" | "approval"> = {},
-    onOperation?: (current: ReleaseWorkflowCurrent) => void,
+    onOperation?: (current: ReleaseWorkflowCurrent | null) => void | Promise<void>,
   ): Promise<ReleaseWorkflowCurrent> => {
     if (goal === "uploaded" && !mutationsAllowed) {
       throw new Error("Tracker submission is unavailable in this runtime.");
@@ -569,6 +632,8 @@ export function ReleaseSessionProvider({
         throw new DOMException("Active input changed.", "AbortError");
       }
       const expectedSlot = activeSlotAuthority();
+      await onOperation?.(null);
+      if (signal.aborted) throw new DOMException("Preparation canceled.", "AbortError");
       const continued = await activePorts.workflow.continue(
         {
           authority: {
@@ -585,7 +650,7 @@ export function ReleaseSessionProvider({
       if (signal.aborted || !activeSlotMatches(expectedSlot)) {
         throw new DOMException("Active input changed.", "AbortError");
       }
-      onOperation?.(continued);
+      await onOperation?.(continued);
       const next = await awaitWorkflowCommand(continued, signal, expectedSlot);
       // A dry-run action owns one assessment; partial results need an explicit retry.
       if (
@@ -968,12 +1033,10 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const cancelBackendWorkflow = async (reason: string, operationID?: string): Promise<boolean> => {
+  const cancelBackendWorkflow = async (reason: string): Promise<boolean> => {
     const workflowID = workflowView.current?.workflow.id || activeAuthority.current.workflowID;
     if (!workflowID) return false;
     const operation = workflowView.current?.operation;
-    if (operationID && (!isActiveWorkflowOperation(operation) || operation?.id !== operationID))
-      return false;
     abortController("workflow");
     const controller = new AbortController();
     controllers.current.workflow = controller;
@@ -1344,7 +1407,6 @@ export function ReleaseSessionProvider({
       captureHDRMetadata?: boolean;
       acceptPendingInput?: boolean;
       blurayDetails?: BlurayDetailRequest;
-      bluraySelection?: BluraySelection;
     }>,
     commandRevision: number,
     correlationID: string,
@@ -1368,14 +1430,12 @@ export function ReleaseSessionProvider({
           throw new Error("Blu-ray candidate selection requires the current prepared workflow.");
         }
         dispatch({ type: "active_input_loading" });
-        const commandID = `workflow-candidate-${Date.now().toString(36)}-${previous.workflow.revision.toString(36)}`;
+        const nonce = Array.from(crypto.getRandomValues(new Uint32Array(4)), (value) =>
+          value.toString(36),
+        ).join("-");
+        const commandID = `workflow-candidate-${nonce}-${previous.workflow.revision.toString(36)}`;
         const candidateInput = workflowPrepareInput({
           ...input,
-          Instructions: {
-            ...input.Instructions,
-            Bluray:
-              controls.bluraySelection ?? previous.factInstructions?.instructions.Bluray ?? null,
-          },
           Controls: {
             ...input.Controls!,
             ...(controls.blurayDetails ? { BlurayDetails: controls.blurayDetails } : {}),
@@ -1395,13 +1455,48 @@ export function ReleaseSessionProvider({
           commandID,
           controller.signal,
           {},
-          (continued) => {
-            const started = continued.operation;
+          async (continued) => {
+            const attempt = candidateAttempt.current;
+            if (!attempt || attempt.controller !== controller) return;
+            if (!continued) {
+              attempt.operation = null;
+              if (attempt.cancelRequested) {
+                controller.abort();
+                dispatch({ type: "preparation_cancelled", correlationID });
+              }
+              return;
+            }
+            const acceptedID = continued.preparationOperationId;
+            const started =
+              acceptedID && continued.operation?.id !== acceptedID
+                ? await activePorts.workflow.operation(
+                    continued.workflow.id,
+                    acceptedID,
+                    controller.signal,
+                  )
+                : continued.operation;
+            if (candidateAttempt.current !== attempt || controller.signal.aborted) return;
+            if (acceptedID && (started?.id !== acceptedID || started.operation !== "preparation")) {
+              throw new Error("Could not identify the accepted inspection operation.");
+            }
             if (
               started?.operation === "preparation" &&
               continued.preparationOperationId === started.id
             ) {
+              attempt.operation = { workflowID: continued.workflow.id, status: started };
               setCandidateOperation({ workflowID: continued.workflow.id, operationID: started.id });
+            }
+            if (attempt.cancelRequested) {
+              if (attempt.operation) {
+                await cancelAcceptedCandidate(
+                  attempt,
+                  attempt.operation.workflowID,
+                  attempt.operation.status,
+                );
+              } else {
+                controller.abort();
+                dispatch({ type: "preparation_cancelled", correlationID });
+              }
             }
           },
         );
@@ -1500,13 +1595,26 @@ export function ReleaseSessionProvider({
       }
       return !controller.signal.aborted;
     } catch (error) {
+      const cancellation =
+        candidateAttempt.current?.controller === controller
+          ? candidateAttempt.current.cancellation
+          : null;
+      if (cancellation) {
+        await cancellation;
+        return false;
+      }
       if (!controller.signal.aborted) {
+        const pendingCancel =
+          candidateAttempt.current?.controller === controller &&
+          candidateAttempt.current.cancelRequested;
         dispatch({
           type: "preparation_failed",
           sourcePath,
           commandRevision,
           correlationID,
-          error: errorText(error),
+          error: pendingCancel
+            ? "Could not confirm cancellation; inspection may still be running. Refresh the workflow before retrying."
+            : errorText(error),
           failure: operationFailureFromError(error),
         });
       }
@@ -1615,6 +1723,16 @@ export function ReleaseSessionProvider({
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
+    const attempt: NonNullable<typeof candidateAttempt.current> = {
+      controller,
+      sourcePath,
+      commandRevision,
+      correlationID,
+      cancelRequested: false,
+      cancellation: null,
+      operation: null,
+    };
+    candidateAttempt.current = attempt;
     const intent = {
       ...cloneIntent(state.preparationIntent),
       ...(selection
@@ -1648,16 +1766,20 @@ export function ReleaseSessionProvider({
       correlationID,
       intent,
     });
-    return executePreparation(
-      "candidate",
-      sourcePath,
-      intent,
-      { confirmBDMVRescan: false, blurayDetails: details, bluraySelection: selection },
-      commandRevision,
-      correlationID,
-      controller,
-      update,
-    );
+    try {
+      return await executePreparation(
+        "candidate",
+        sourcePath,
+        intent,
+        { confirmBDMVRescan: false, blurayDetails: details },
+        commandRevision,
+        correlationID,
+        controller,
+        update,
+      );
+    } finally {
+      if (candidateAttempt.current === attempt) candidateAttempt.current = null;
+    }
   };
 
   const beginWorkflow = (facet: WorkflowFacet, unavailableReason = ""): WorkflowCommand | null => {
@@ -2781,6 +2903,11 @@ export function ReleaseSessionProvider({
     candidateOperation.operationID === workflowView.current?.operation?.id &&
     isActiveWorkflowOperation(workflowView.current?.operation),
   );
+  const cancelCandidateDetails = () => {
+    const attempt = candidateAttempt.current;
+    if (!attempt?.operation || !candidateDetailsCancelable) return Promise.resolve(false);
+    return cancelAcceptedCandidate(attempt, attempt.operation.workflowID, attempt.operation.status);
+  };
 
   const session: ReleaseSession = {
     workflow: {
@@ -3065,7 +3192,20 @@ export function ReleaseSessionProvider({
         abortController("preparation");
         dispatch({ type: "playlist_dismissed" });
       },
-      cancelPreparation,
+      cancelPreparation: () => {
+        const attempt = candidateAttempt.current;
+        if (!attempt || attempt.controller !== controllers.current.preparation) {
+          cancelPreparation();
+        } else if (attempt.operation) {
+          void cancelAcceptedCandidate(
+            attempt,
+            attempt.operation.workflowID,
+            attempt.operation.status,
+          );
+        } else {
+          attempt.cancelRequested = true;
+        }
+      },
       prepareSource: (sourcePath, intent) => runPreparationFor("prepare", sourcePath, intent),
       openSource: (sourcePath) =>
         runPreparationFor("prepare", sourcePath, emptyPreparationIntent(), {
@@ -3087,14 +3227,7 @@ export function ReleaseSessionProvider({
         });
       },
       selectCandidate: (releaseID) => runCandidateAction({ Mode: "manual", Release: releaseID }),
-      cancelCandidateDetails: () => {
-        if (!candidateDetailsCancelable || !candidateOperation) return Promise.resolve(false);
-        cancelPreparation();
-        return cancelBackendWorkflow(
-          "Blu-ray.com inspection canceled.",
-          candidateOperation.operationID,
-        );
-      },
+      cancelCandidateDetails,
       fetchCandidateDetails: (releaseID) =>
         runCandidateAction(
           undefined,

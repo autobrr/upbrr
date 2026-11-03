@@ -85,6 +85,8 @@ type cliWorkflowSession struct {
 	logger                   api.Logger
 	current                  releaseworkflow.CommandResult
 	intent                   cliWorkflowIntent
+	preparationPolicy        api.PreparationPolicy
+	clientSearch             api.ClientSearchPolicy
 	uploadRequest            api.Request
 	screenshotCountIsDefault bool
 	idempotencyRun           string
@@ -429,13 +431,15 @@ func newCLIWorkflowSession(
 		return nil, fmt.Errorf("upbrr: map workflow preparation: %w", err)
 	}
 	session := &cliWorkflowSession{
-		core:           coreSvc,
-		logger:         logger,
-		intent:         mapCLIWorkflowIntent(request),
-		uploadRequest:  request,
-		idempotencyRun: strings.ToLower(rand.Text()),
-		progressWriter: streams.out,
-		streams:        streams,
+		core:              coreSvc,
+		logger:            logger,
+		intent:            mapCLIWorkflowIntent(request),
+		preparationPolicy: input.Policy,
+		clientSearch:      input.Search,
+		uploadRequest:     request,
+		idempotencyRun:    strings.ToLower(rand.Text()),
+		progressWriter:    streams.out,
+		streams:           streams,
 	}
 	ready := false
 	defer func() {
