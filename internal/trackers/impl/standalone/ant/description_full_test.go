@@ -61,7 +61,7 @@ func TestANTFullDescriptionKeepsContentAndSeparatesScreenshots(t *testing.T) {
 	if strings.Contains(result.Description, "logo.png") {
 		t.Errorf("TMDB logo leaked into ANT description: %q", result.Description)
 	}
-	if Profile().UploadContentMode != trackers.UploadContentModeDescription {
+	if !Profile().UploadContentMode.UsesDescription() {
 		t.Error("ANT must consume full shared descriptions")
 	}
 
@@ -90,6 +90,11 @@ func TestANTFullDescriptionKeepsContentAndSeparatesScreenshots(t *testing.T) {
 	}
 	if state.fields["release_desc"] != result.Description || state.fields["screenshots"] != screenshot {
 		t.Fatalf("description/screenshot payload mismatch: description=%q screenshots=%q", state.fields["release_desc"], state.fields["screenshots"])
+	}
+	input.Assets.Description = ""
+	state, err = prepareUploadState(t.Context(), input)
+	if err != nil || state.fields["release_desc"] != "" || state.fields["screenshots"] != screenshot {
+		t.Fatalf("empty reviewed description or separate screenshots changed: err=%v", err)
 	}
 }
 

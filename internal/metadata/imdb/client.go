@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -328,7 +329,10 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 			time.Sleep(1 * time.Second)
 		}
 		attempted++
-		return c.runSearch(ctx, name, year, category, input.DurationMinutes, wide)
+		results := c.runSearch(ctx, name, year, category, input.DurationMinutes, wide)
+		return slices.DeleteFunc(results, func(result map[string]any) bool {
+			return !typeMatches(category, getStringFromMap(result, "node", "title", "titleType", "text"))
+		})
 	}
 
 	if len(results) == 0 {
@@ -854,10 +858,12 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 
 func typeMatches(category, titleType string) bool {
 	category = strings.ToLower(category)
+	titleType = strings.ToLower(strings.ReplaceAll(titleType, "-", " "))
+	isSeries := strings.Contains(titleType, "tv series") || strings.Contains(titleType, "tv mini series")
 	if category == "tv" {
-		return strings.Contains(titleType, "tv series")
+		return isSeries
 	}
-	return !strings.Contains(titleType, "tv series")
+	return !isSeries
 }
 
 func trimLeadingThe(value string) string {

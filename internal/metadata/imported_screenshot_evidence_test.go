@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"github.com/autobrr/upbrr/internal/externalidentity"
 	"path/filepath"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func TestImportedScreenshotHandoffDropsCompetingSourceReceipts(t *testing.T) {
 	other.TrackerID, other.TMDBID = "99", 123456
 	other.UninspectedImages = []api.ImportedScreenshotReference{{RawURL: "https://images.example/other"}}
 	other.ImportedImageDescriptionFingerprint = "other-description-images"
-	service := NewService(&fakeRepo{}, WithTrackerDataLookup(&stubTrackerLookup{results: map[string]trackerdata.Result{"AITHER": result, "BLU": other}}))
+	service := newTestService(t, &fakeRepo{}, WithTrackerDataLookup(&stubTrackerLookup{results: map[string]trackerdata.Result{"AITHER": result, "BLU": other}}))
 	meta := preparationstate.State{
 		SourcePath:        filepath.Join(t.TempDir(), "Synthetic.mkv"),
 		SourceFingerprint: "source",
@@ -59,13 +60,14 @@ func TestImportedScreenshotHandoffDoesNotRecoverReceiptFromSourceCache(t *testin
 		},
 	}
 	lookup := &stubTrackerLookup{}
-	service := NewService(&fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}, WithTrackerDataLookup(lookup),
+	service := newTestService(t, &fakeRepo{trackerMetadata: []api.TrackerMetadata{stored}}, WithTrackerDataLookup(lookup),
 		WithConfig(config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"ANT": {APIKey: "synthetic-key"}}}}),
 		WithTrackerRegistry(trackerDataTestRegistry(t)))
 	got, err := service.collectTrackerEvidence(t.Context(), preparationstate.State{
 		SourcePath:        source,
 		SourceFingerprint: "source",
 		StoredDataFresh:   true,
+		Identity:          api.ExternalIdentity{SourcePath: source, Resolution: api.IdentityResolutionKey{ContractVersion: externalidentity.ContractVersion}},
 		TrackerIDs:        map[string]string{"ant": "42"},
 		Policy:            preparationstate.CollectionPolicy{KeepImages: true},
 	})

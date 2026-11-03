@@ -20,7 +20,7 @@ func TestResolveExternalIdentityClearIMDbRefreshesDependentTVDB(t *testing.T) {
 	tmdbClient := &stubTMDB{}
 	imdbClient := &stubIMDB{}
 	tvdbClient := &stubTVDB{id: 1003, name: "Example Series"}
-	svc := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient),
+	svc := newTestService(t, &fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient), WithTVmazeClient(&stubTVmaze{}))
 
 	result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
@@ -65,7 +65,7 @@ func TestResolveExternalIdentityClearIMDbRefreshesDependentTVDB(t *testing.T) {
 func TestResolveExternalIdentityInvalidatesTransitiveDependenciesAndPreservesIndependentFacts(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "Example.Series.S01E01.mkv")
 	tvdbClient := &stubTVDB{}
-	svc := NewService(&fakeRepo{}, WithTMDBClient(&stubTMDB{}), WithIMDBClient(&stubIMDB{}),
+	svc := newTestService(t, &fakeRepo{}, WithTMDBClient(&stubTMDB{}), WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(tvdbClient), WithTVmazeClient(&stubTVmaze{}))
 
 	result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
@@ -150,7 +150,7 @@ func TestResolveExternalIdentityClearReResolvesLegacyAutomaticIDs(t *testing.T) 
 	imdbClient := &stubIMDB{searchResult: imdb.SearchResult{IMDbID: 1302}}
 	tvdbClient := &stubTVDB{id: 1303, name: "Legacy Series"}
 	tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{SelectedID: 1304}}
-	svc := NewService(&fakeRepo{}, WithTMDBClient(&stubTMDB{}), WithIMDBClient(imdbClient),
+	svc := newTestService(t, &fakeRepo{}, WithTMDBClient(&stubTMDB{}), WithIMDBClient(imdbClient),
 		WithTVDBClient(tvdbClient), WithTVmazeClient(tvmazeClient))
 
 	result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
@@ -206,10 +206,10 @@ func TestResolveExternalIdentityTVDBNameFallbackPolicy(t *testing.T) {
 			wantNameSearch: true,
 		},
 		{
-name: "no external IDs",
- category: "TV",
- wantNameSearch: true,
-},
+			name:           "no external IDs",
+			category:       "TV",
+			wantNameSearch: true,
+		},
 		{
 			name:           "TVDB clear",
 			category:       "TV",
@@ -223,10 +223,10 @@ name: "no external IDs",
 			wantNameSearch: false,
 		},
 		{
-name: "movie category",
- category: "MOVIE",
- wantNameSearch: false,
-},
+			name:           "movie category",
+			category:       "MOVIE",
+			wantNameSearch: false,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sourcePath := filepath.Join(t.TempDir(), "Example.Series.S01E01.mkv")
@@ -234,7 +234,7 @@ name: "movie category",
 				searchID:      1403,
 				searchResults: []tvdb.SeriesSearchResult{{TVDBID: 1403, Name: "Example Series"}},
 			}
-			svc := NewService(&fakeRepo{}, WithTMDBClient(&stubTMDB{}), WithIMDBClient(&stubIMDB{}),
+			svc := newTestService(t, &fakeRepo{}, WithTMDBClient(&stubTMDB{}), WithIMDBClient(&stubIMDB{}),
 				WithTVDBClient(tvdbClient), WithTVmazeClient(&stubTVmaze{}))
 			identity := tc.identity
 			identity.SourcePath = sourcePath

@@ -26,10 +26,14 @@ type SearchInput struct {
 	FileList []string
 	// DiscType identifies disc layouts whose files require client-specific matching.
 	DiscType string
+	// KeepFolder preserves a supplied directory in the requested torrent layout.
+	KeepFolder bool
 	// Policy controls skipping and optional client selection.
 	Policy api.ClientSearchPolicy
 	// ForceRecheck forwards an explicit hash-recheck choice to the selected client.
 	ForceRecheck *bool
+	// FindAllCandidates requests additional exports after existing artifacts fail policy.
+	FindAllCandidates bool
 }
 
 // Disposition identifies whether a discovery request searched, was explicitly
@@ -51,6 +55,8 @@ type Evidence struct {
 	InfoHash string
 	// TorrentPath is the reusable local metainfo path returned by the client search.
 	TorrentPath string
+	// TorrentCandidates carries captured alternatives with their own infohashes.
+	TorrentCandidates []api.ClientTorrentCandidate
 	// TorrentDataVerified reports that TorrentPath belongs to a complete client
 	// record whose content path exactly matched the searched source.
 	TorrentDataVerified bool
@@ -112,9 +118,11 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 
 	logger.Debugf("client discovery: decision=start files=%d disc=%t", len(input.FileList), strings.TrimSpace(input.DiscType) != "")
 	result, err := m.clients.SearchPathedTorrents(ctx, api.ClientSubject{
-		SourcePath: strings.TrimSpace(input.SourcePath),
-		FileList:   append([]string(nil), input.FileList...),
-		DiscType:   strings.TrimSpace(input.DiscType),
+		SourcePath:        strings.TrimSpace(input.SourcePath),
+		FileList:          append([]string(nil), input.FileList...),
+		DiscType:          strings.TrimSpace(input.DiscType),
+		KeepFolder:        input.KeepFolder,
+		FindAllCandidates: input.FindAllCandidates,
 		ClientOverrides: api.ClientOverrides{
 			Client:       cloneString(input.Policy.Client),
 			ForceRecheck: cloneBool(input.ForceRecheck),
@@ -148,6 +156,7 @@ func normalizeEvidence(value api.ClientSearchResult) Evidence {
 	return Evidence{
 		InfoHash:            strings.TrimSpace(value.InfoHash),
 		TorrentPath:         strings.TrimSpace(value.TorrentPath),
+		TorrentCandidates:   append([]api.ClientTorrentCandidate(nil), value.TorrentCandidates...),
 		TorrentDataVerified: value.TorrentDataVerified,
 		TrackerIDs:          normalizeTrackerIDs(value.TrackerIDs),
 		FoundTrackerMatch:   value.FoundTrackerMatch,
@@ -206,6 +215,7 @@ func cloneTorrentMatches(values []api.TorrentMatch) []api.TorrentMatch {
 		result[index] = value
 		result[index].TrackerURLsRaw = append([]string(nil), value.TrackerURLsRaw...)
 		result[index].TrackerURLs = append([]api.TrackerMatch(nil), value.TrackerURLs...)
+		result[index].MatchedTrackers = append([]string(nil), value.MatchedTrackers...)
 	}
 	return result
 }

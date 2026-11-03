@@ -47,6 +47,8 @@ type DiscReportResource struct {
 
 // DiscResource contains all preparation-private evidence for one source disc.
 type DiscResource struct {
+	// BluRayISO keeps virtual disc resources separate from extracted stream paths.
+	BluRayISO           bool
 	HDRCaptures         map[string]HDRCaptureResource
 	ID                  string
 	Name                string
@@ -145,6 +147,7 @@ func (s State) requiresMediaInfoUniqueID() bool {
 // instruction, or transport state. Callers must project it into canonical fact
 // groups or operation-owned subjects before it leaves this boundary.
 type State struct {
+	PackageInventory           api.PackageInventory
 	VideoEncoder               string
 	MediaInspectionFingerprint string
 	MetadataRequirements       api.MetadataRequirementSet
@@ -156,47 +159,47 @@ type State struct {
 	SourceLookupMode           string
 	SourceLookupTracker        string
 	SourceLookupTrackerID      string
-	// BlurayReleaseID reapplies a manual selection after cached catalogue rescoring.
-	BlurayReleaseID         string
-	LookupWarnings          []string
-	Paths                   []string
-	DiscType                string
-	Discs                   []DiscResource
-	VideoPath               string
-	FileList                []string
-	SourceSize              int64
-	MediaInfoJSONPath       string
-	HDRFileEligibility      map[string]bool
-	HDRFileEvidence         map[string]api.HDRSourceEvidence
-	MediaInfoTextPath       string
-	DVDIFOPath              string
-	DVDVOBPath              string
-	DVDVOBSet               string
-	DVDVOBMediaInfoJSON     string
-	DVDVOBMediaInfoText     string
-	MediaInfoUniqueID       string
-	Scene                   bool
-	SceneName               string
-	SceneTMDBID             int
-	SceneIMDB               int
-	SceneTVDBID             int
-	SceneTVmazeID           int
-	SceneMALID              int
-	SceneNFOPath            string
-	SceneNFONew             bool
-	SceneRenamed            bool
-	SceneRenamedReason      string
-	EvidenceTrackers        []string
-	Policy                  CollectionPolicy
-	MatchedEvidenceTrackers []string
-	Tag                     string
-	Release                 api.ReleaseInfo
-	ResolvedNaming          ResolvedNaming
-	TagOverride             *api.TagOverride
-	MetadataOverrides       api.MetadataOverrides
-	EffectiveMetadata       api.EffectiveMetadata
-	PersonalRelease         bool
-	InfoHash                string
+	Bluray                     *api.BluraySelection
+	BlurayDetails              *api.BlurayDetailRequest
+	LookupWarnings             []string
+	Paths                      []string
+	DiscType                   string
+	Discs                      []DiscResource
+	VideoPath                  string
+	FileList                   []string
+	SourceSize                 int64
+	MediaInfoJSONPath          string
+	HDRFileEligibility         map[string]bool
+	HDRFileEvidence            map[string]api.HDRSourceEvidence
+	MediaInfoTextPath          string
+	DVDIFOPath                 string
+	DVDVOBPath                 string
+	DVDVOBSet                  string
+	DVDVOBMediaInfoJSON        string
+	DVDVOBMediaInfoText        string
+	MediaInfoUniqueID          string
+	Scene                      bool
+	SceneName                  string
+	SceneTMDBID                int
+	SceneIMDB                  int
+	SceneTVDBID                int
+	SceneTVmazeID              int
+	SceneMALID                 int
+	SceneNFOPath               string
+	SceneNFONew                bool
+	SceneRenamed               bool
+	SceneRenamedReason         string
+	EvidenceTrackers           []string
+	Policy                     CollectionPolicy
+	MatchedEvidenceTrackers    []string
+	Tag                        string
+	Release                    api.ReleaseInfo
+	ResolvedNaming             ResolvedNaming
+	TagOverride                *api.TagOverride
+	MetadataOverrides          api.MetadataOverrides
+	EffectiveMetadata          api.EffectiveMetadata
+	PersonalRelease            bool
+	InfoHash                   string
 	// ClientEvidence retains the complete detached preparation-owned client snapshot.
 	ClientEvidence ClientEvidenceSnapshot
 	// DiscoveredTorrentPath is a reusable local metainfo path found during client discovery.

@@ -348,6 +348,9 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	if prior.State != api.ActiveInputActive && prior.State != api.ActiveInputEmpty {
 		return api.ActiveInputRecord{}, api.ErrActiveInputBusy
 	}
+	if err := m.requireInputSourceReconciled(ctx, owner, request.Input.SourcePath); err != nil {
+		return api.ActiveInputRecord{}, err
+	}
 	reservation, err := m.newID("input_open")
 	if err != nil {
 		return api.ActiveInputRecord{}, err
@@ -395,6 +398,10 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	record, err := m.inputVerifier(ctx, request.Input)
 	if err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow verify input: %w", err)
+	}
+	// Verification may resolve a different canonical path than the requested alias.
+	if err := m.requireInputSourceReconciled(ctx, owner, record.CanonicalPath); err != nil {
+		return api.ActiveInputRecord{}, err
 	}
 	record.ID, err = m.newID("input")
 	if err != nil {

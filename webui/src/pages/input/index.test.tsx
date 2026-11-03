@@ -20,6 +20,55 @@ import InputPage from "./index";
 
 afterEach(cleanup);
 
+it("offers folder preservation only when the backend marks the source eligible", () => {
+  const base = readyInputFacet(1);
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      preview: {
+        ...base.view.preview!,
+        Display: { ...base.view.preview!.Display, CanKeepFolder: true },
+      },
+      intent: {
+        ...base.view.intent,
+        policy: { keepFolder: false, keepImages: true, onlyID: false },
+      },
+    },
+  };
+  const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+  fireEvent.click(screen.getByText("Source options", { exact: true }));
+  const checkbox = screen.getByRole("checkbox", { name: "Keep source folder" });
+  expect(checkbox).not.toBeChecked();
+  expect(checkbox).toHaveAccessibleDescription(
+    "Keep this movie or episode inside its source folder; extra files are not included. This does not rename or move the source files.",
+  );
+  fireEvent.click(checkbox);
+  expect(facet.changePreparationPolicy).toHaveBeenLastCalledWith({
+    keepFolder: true,
+    keepImages: true,
+    onlyID: false,
+  });
+
+  for (const CanKeepFolder of [false, undefined]) {
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            preview: {
+              ...facet.view.preview!,
+              Display: { ...facet.view.preview!.Display, CanKeepFolder },
+            },
+          },
+        }}
+      />,
+    );
+    expect(screen.queryByRole("checkbox", { name: "Keep source folder" })).not.toBeInTheDocument();
+  }
+});
+
 it("keeps aggregate language corrections independent", () => {
   const base = readyInputFacet(1);
   const metadata = {
@@ -175,6 +224,9 @@ const inputFacet = (): InputFacet => ({
   reset: vi.fn(async () => true),
   confirmBDMVRescan: vi.fn(async () => true),
   selectCandidate: vi.fn(async () => true),
+  fetchCandidateDetails: vi.fn(async () => true),
+  cancelCandidateDetails: vi.fn(async () => true),
+  setCandidateSelection: vi.fn(async () => true),
 });
 
 it("shows an unanswered required tracker choice and preserves a saved unknown answer", () => {
@@ -1158,15 +1210,64 @@ describe("InputPage", () => {
     );
 
     fireEvent.click(screen.getByText("Edit Release Details"));
-    fireEvent.change(screen.getByLabelText("No episode title"), { target: { value: "yes" } });
-    fireEvent.change(screen.getByLabelText("No distributor"), { target: { value: "yes" } });
+    fireEvent.change(screen.getByLabelText("Clear episode title"), { target: { value: "yes" } });
+    fireEvent.change(screen.getByLabelText("Clear distributor"), { target: { value: "yes" } });
 
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(1, { NoEpisodeTitle: true });
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(2, { NoDistributor: true });
-    fireEvent.change(screen.getByLabelText("No edition"), { target: { value: "yes" } });
+    fireEvent.change(screen.getByLabelText("Suppress edition labels"), {
+      target: { value: "yes" },
+    });
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(3, { NoEdition: true });
-    fireEvent.change(screen.getByLabelText("No edition"), { target: { value: "no" } });
+    fireEvent.change(screen.getByLabelText("Suppress edition labels"), { target: { value: "no" } });
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(4, { NoEdition: false });
+  });
+
+  it("keeps providers independently without changing a manual ID", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: {
+          ...release,
+          Identity: { ...release.Identity, TVDBID: 303, TVmazeID: 404 },
+        },
+        intent: { ...base.view.intent, identity: { TMDBID: 901, KeepTMDB: true } },
+      },
+    };
+    const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+    const tmdbKeep = screen.getByRole("checkbox", { name: "Keep existing TMDB data" });
+    expect(tmdbKeep).toBeChecked();
+    fireEvent.click(tmdbKeep);
+    expect(facet.changeIdentity).toHaveBeenLastCalledWith({ TMDBID: 901, KeepTMDB: false });
+    for (const [provider, key] of [
+      ["IMDb", "KeepIMDB"],
+      ["TVDB", "KeepTVDB"],
+      ["TVmaze", "KeepTVmaze"],
+      ["MyAnimeList", "KeepMAL"],
+    ] as const) {
+      fireEvent.click(screen.getByRole("checkbox", { name: `Keep existing ${provider} data` }));
+      expect(facet.changeIdentity).toHaveBeenLastCalledWith({
+        TMDBID: 901,
+        KeepTMDB: true,
+        [key]: true,
+      });
+    }
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            intent: { ...facet.view.intent, identity: { TMDBID: 901, KeepTMDB: false } },
+          },
+        }}
+      />,
+    );
+    expect(tmdbKeep).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: "TMDB ID" })).toHaveValue("901");
   });
 
   it("removes each metadata provider without overriding untouched IDs", () => {
@@ -1186,10 +1287,10 @@ describe("InputPage", () => {
     );
 
     fireEvent.click(screen.getByText("Edit Release Details"));
-    fireEvent.click(screen.getByRole("button", { name: "Remove MAL ID" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove MyAnimeList ID" }));
     expect(facet.changeIdentity).toHaveBeenLastCalledWith({ MALID: 0 });
 
-    for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze"]) {
+    for (const provider of ["TMDB", "IMDb", "TVDB", "TVmaze"]) {
       fireEvent.click(screen.getByRole("button", { name: `Remove ${provider} ID` }));
     }
     expect(facet.changeIdentity).toHaveBeenCalledTimes(5);
@@ -1233,7 +1334,7 @@ describe("InputPage", () => {
     const { rerender } = render(<InputPage facet={facet} {...pageProps} />);
 
     fireEvent.click(screen.getByText("Edit Release Details"));
-    for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze", "MAL"]) {
+    for (const provider of ["TMDB", "IMDb", "TVDB", "TVmaze", "MyAnimeList"]) {
       expect(screen.getByRole("button", { name: `Remove ${provider} ID` })).toBeDisabled();
     }
 
@@ -1344,14 +1445,14 @@ describe("InputPage", () => {
       },
     };
     render(<InputCorrectionEditor facet={facet} />);
-    fireEvent.change(screen.getByLabelText("IMDB ID"), { target: { value: "keep-invalid" } });
+    fireEvent.change(screen.getByLabelText("IMDb ID"), { target: { value: "keep-invalid" } });
     for (const invalid of ["invalid", "invalid-again"]) {
       fireEvent.focus(screen.getByLabelText("TMDB ID"));
       fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: invalid } });
       fireEvent.click(screen.getByRole("button", { name: "Auto TMDB ID" }));
       expect(screen.getByLabelText("TMDB ID")).toHaveValue("101");
       expect(screen.getByLabelText("TMDB ID")).toHaveAttribute("aria-invalid", "false");
-      expect(screen.getByLabelText("IMDB ID")).toHaveValue("keep-invalid");
+      expect(screen.getByLabelText("IMDb ID")).toHaveValue("keep-invalid");
     }
     expect(facet.resetCorrection).toHaveBeenCalledTimes(2);
   });
@@ -1572,15 +1673,23 @@ describe("InputPage", () => {
     expect(facet.changeMetadata).toHaveBeenCalledWith({ SubtitleLanguages: [] });
   });
 
-  it.each(["movie", "tv"] as const)(
-    "locks provider titles and preserves the %s year policy",
-    (category) => {
+  it.each([
+    ["movie", false],
+    ["tv", true],
+    ["tv", false],
+  ] as const)(
+    "locks provider titles and preserves the %s year policy with TVDB availability %s",
+    (category, tvdbAvailable) => {
       const base = readyInputFacet(1);
       const release = preparedRelease();
       const facet: InputFacet = {
         ...base,
         view: {
           ...base.view,
+          preview: {
+            ...base.view.preview!,
+            Display: { ...base.view.preview!.Display, TVDBNamingAvailable: tvdbAvailable },
+          },
           release: { ...release, Identity: { ...release.Identity, Category: category } },
           intent: {
             ...base.view.intent,
@@ -1603,19 +1712,27 @@ describe("InputPage", () => {
       }
       expect(facet.changeMetadata).not.toHaveBeenCalled();
       const year = screen.getByLabelText("Manual year");
-      if (category === "tv") {
+      if (category === "tv" && tvdbAvailable) {
         expect(year).toHaveAttribute("readonly");
         expect(year).toBeDisabled();
         expect(year).toHaveValue(2026);
         expect(screen.queryByRole("button", { name: "Auto Manual year" })).not.toBeInTheDocument();
         fireEvent.change(year, { target: { value: "2002" } });
         expect(facet.changeReleaseName).not.toHaveBeenCalled();
+        expect(screen.queryByRole("combobox", { name: "Omit year" })).not.toBeInTheDocument();
       } else {
         expect(year).not.toHaveAttribute("readonly");
         expect(year).toBeEnabled();
         expect(year).toHaveValue(2001);
         fireEvent.change(year, { target: { value: "2002" } });
         expect(facet.changeReleaseName).toHaveBeenCalledWith({ ManualYear: 2002 });
+        fireEvent.change(screen.getByRole("combobox", { name: "Omit year" }), {
+          target: { value: "yes" },
+        });
+        expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+          ManualYear: 2001,
+          NoYear: true,
+        });
       }
       expect(screen.getByLabelText("Alternate title")).not.toHaveAttribute("readonly");
     },
@@ -1641,7 +1758,15 @@ describe("InputPage", () => {
         ...base,
         view: {
           ...base.view,
-          release: { ...release, Identity: { ...release.Identity, Category: preparedCategory } },
+          preview: {
+            ...base.view.preview!,
+            Display: { ...base.view.preview!.Display, TVDBNamingAvailable: true },
+          },
+          release: {
+            ...release,
+            Naming: { ...release.Naming, Year: 0 },
+            Identity: { ...release.Identity, Category: preparedCategory },
+          },
         },
       };
       const { rerender } = render(<InputCorrectionEditor facet={facet} />);
@@ -2325,7 +2450,7 @@ describe("InputPage", () => {
     fireEvent.click(screen.getByText("Source options", { exact: true }));
     fireEvent.change(screen.getByLabelText("AITHER source ID"), { target: { value: "123" } });
     expect(facet.changeTrackerSourceID).toHaveBeenCalledWith("AITHER", "123");
-    fireEvent.click(screen.getByLabelText("Keep images"));
+    fireEvent.click(screen.getByLabelText("Collect existing tracker images"));
     expect(facet.changePreparationPolicy).toHaveBeenCalledWith({
       keepFolder: false,
       keepImages: true,
@@ -2647,6 +2772,10 @@ describe("saved correction review", () => {
       ...base,
       view: {
         ...base.view,
+        preview: {
+          ...metadataPreview(1),
+          Display: { ...metadataPreview(1).Display, TVDBNamingAvailable: true },
+        },
         correctionDirty: true,
         confirmFields: [{ field: "metadata.alternate_title" }],
         correctionReview: {
@@ -2666,6 +2795,11 @@ describe("saved correction review", () => {
     render(<InputPage facet={facet} {...inputPageProps()} />);
     expect(screen.getByLabelText("Edit Title")).toBeDisabled();
     expect(screen.getByLabelText("Edit Manual year")).toBeDisabled();
+    expect(
+      within(screen.getByRole("group", { name: "Manual year" })).getByRole("button", {
+        name: "Keep saved value",
+      }),
+    ).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Apply and continue" }));
     expect(facet.prepareSource).toHaveBeenCalledWith(facet.view.selectedSource, facet.view.intent);
   });
@@ -2757,12 +2891,12 @@ it("shows automatic choices and confirms retained values without changing correc
   fireEvent.click(screen.getByRole("button", { name: "Confirm saved Service" }));
   expect(facet.confirmCorrection).toHaveBeenCalledWith({ field: "release_name.service" });
   expect(facet.changeReleaseName).not.toHaveBeenCalled();
-  const region = screen.getByRole("combobox", { name: "Region" });
+  const region = screen.getByRole("combobox", { name: "Release country" });
   expect(region).toHaveValue("A");
   fireEvent.focus(region);
-  const count = within(screen.getByRole("listbox", { name: "Region suggestions" })).getAllByRole(
-    "option",
-  ).length;
+  const count = within(
+    screen.getByRole("listbox", { name: "Release country suggestions" }),
+  ).getAllByRole("option").length;
   expect(count).toBeGreaterThan(20);
   fireEvent.change(region, { target: { value: "kIngdom" } });
   expect(screen.getByRole("option", { name: "United Kingdom (GBR)" })).toBeInTheDocument();
@@ -2884,14 +3018,14 @@ describe("required saved release facts", () => {
           release.Media[field] = value as string;
         }
         rerender(<InputPage facet={{ ...facet, view: { ...facet.view } }} {...inputPageProps()} />);
-        expect(screen.getByText(warning)).toHaveClass("text-destructive-text");
+        expect(screen.getByRole("alert")).toHaveTextContent(warning);
         expect(screen.queryByText(helper)).not.toBeInTheDocument();
         for (const name of fields) {
           const control = screen.getByRole("combobox", { name });
           if (name === field) {
             expect(control).toHaveAttribute("aria-invalid", "true");
             expect(control).toHaveAccessibleDescription(
-              "Required fact missing from saved metadata.",
+              /Required fact missing from saved metadata\./,
             );
             expect(control).toHaveClass("border-destructive");
           } else {
@@ -3014,4 +3148,35 @@ describe("required saved release facts", () => {
     for (const name of fields)
       expect(screen.getByRole("combobox", { name })).not.toHaveAttribute("aria-invalid", "true");
   });
+});
+
+it("keeps repeated track help independent without changing corrections or preparing Input", async () => {
+  const user = userEvent.setup();
+  const base = readyInputFacet(1);
+  const release = preparedRelease();
+  const first = release.Media.Tracks[0]!;
+  release.Media.Tracks = [first, { ...first, ID: "audio:resource-2:1", ResourceID: "resource-2" }];
+  const facet: InputFacet = { ...base, view: { ...base.view, release } };
+  render(<InputCorrectionEditor facet={facet} />);
+  fireEvent.click(screen.getByText("Inspected tracks", { exact: true }));
+  const controls = screen.getAllByRole("textbox", { name: "Audio track 1 languages" });
+  expect(controls).toHaveLength(2);
+  const descriptions = controls.map((control) => control.getAttribute("aria-describedby"));
+  expect(new Set(descriptions).size).toBe(2);
+  for (const control of controls) {
+    expect(control).toHaveAccessibleDescription(/this inspected track only/);
+  }
+  const helps = screen.getAllByRole("button", { name: "Help for Audio track 1 languages" });
+  await user.pointer([
+    { keys: "[TouchA>]", target: helps[1] },
+    { keys: "[/TouchA]", target: helps[1] },
+  ]);
+  expect(screen.getByRole("tooltip")).toHaveTextContent("bound to its track manifest");
+  expect(helps[0]).toHaveAttribute("aria-expanded", "false");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  expect(controls[1]).toHaveAccessibleDescription(/this inspected track only/);
+  expect(facet.changeMetadata).not.toHaveBeenCalled();
+  expect(facet.resetCorrection).not.toHaveBeenCalled();
+  expect(facet.prepareSource).not.toHaveBeenCalled();
 });

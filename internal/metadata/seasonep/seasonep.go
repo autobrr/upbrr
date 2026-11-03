@@ -141,8 +141,8 @@ func Extract(path string, meta preparationstate.State) Result {
 }
 
 // ParseSeasonInstruction parses one explicit caller-supplied season token: a
-// bare or S-prefixed number with exactly two or four digits ("05", "S05",
-// "2026", "S2026"). "00"/"S00" identifies specials; an empty value explicitly
+// bare or S-prefixed number of at most four digits ("5", "05", "S05",
+// "2026", "S2026"). Zero identifies specials; an empty value explicitly
 // clears the season. Both return zero, so callers must preserve token presence. Combined,
 // ranged, overflowing, or otherwise malformed values are rejected with a
 // typed invalid-input error.
@@ -168,7 +168,7 @@ func parseInstructionToken(value string, prefix string, maxDigits int, label str
 	if len(digits) > 1 && strings.EqualFold(digits[:1], prefix) {
 		digits = digits[1:]
 	}
-	if len(digits) > maxDigits || prefix == "S" && len(digits) != 2 && len(digits) != 4 {
+	if len(digits) > maxDigits {
 		return 0, instructionTokenError(label, value, prefix)
 	}
 	for _, char := range digits {
@@ -188,7 +188,7 @@ func instructionTokenError(label string, value string, prefix string) error {
 		"%s instruction %q: expected a single valid token such as %q or %q: %w",
 		label,
 		value,
-		"05",
+		"5",
 		prefix+"05",
 		internalerrors.ErrInvalidInput,
 	)

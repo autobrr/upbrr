@@ -4,6 +4,8 @@
 package ant
 
 import (
+	"time"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -13,11 +15,12 @@ import (
 // Profile returns ANT identity, preparation, dupe, rules, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:         trackers.ConnectionProbe{Test: testConnection, DraftConfig: trackers.APIKeyProbeConfig},
 		UsesMenuImages:          true,
 		Name:                    "ANT",
 		BaseURL:                 "https://anthelion.me",
 		DescriptionGroup:        "ant",
-		UploadContentMode:       trackers.UploadContentModeDescription,
+		UploadContentMode:       trackers.UploadContentModeOptionalDescription,
 		AuthCapability:          authcontract.APIKeyCapability("ANT"),
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
@@ -33,6 +36,7 @@ func Profile() standalone.Profile {
 		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "ANT", RequireAnnounce: true},
 		DupePolicy:           duplicatePolicy(),
+		DataPolicy:           &trackers.DataLookupPolicy{Cooldown: 15 * time.Second, LegacyExternalIDsNeedRefresh: true},
 		AudioPolicy: &trackers.AudioPolicy{
 			AllowedLanguages: []string{"english"}, BlockEnglishOriginalWithForeign: true,
 		},

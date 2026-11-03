@@ -154,7 +154,7 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	if overrides.NoDistributor != nil && *overrides.NoDistributor {
 		meta.Distributor = ""
 	}
-	if overrides.ManualYear != nil && resolveCategoryPreference(*meta) != "TV" {
+	if overrides.ManualYear != nil && (resolveCategoryPreference(*meta) != "TV" || !matchingTVDBMetadataForNaming(*meta)) {
 		meta.Release.Year = *overrides.ManualYear
 	}
 	if overrides.ManualDate != nil {
@@ -293,7 +293,7 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 	if overrides.NoSeason != nil {
 		req.NoSeason = *overrides.NoSeason
 	}
-	if overrides.NoYear != nil {
+	if overrides.NoYear != nil && !req.TVDBNamingAvailable {
 		req.NoYear = *overrides.NoYear
 	}
 	if overrides.NoAKA != nil {

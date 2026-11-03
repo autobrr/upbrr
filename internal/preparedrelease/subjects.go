@@ -11,6 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/filesystem"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -40,6 +43,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 	options := input.Options
 	options.KeepFolder = resources.policy.KeepFolder
 	subject := api.UploadSubject{
+		PackageInventory:            release.Source.PackageInventory.Clone(),
 		MediaFileFacts:              release.Media.MediaFileFacts.Clone(),
 		SourceIdentity:              release.SourceIdentity,
 		LanguageFacts:               release.Media.LanguageFacts.Clone(),
@@ -54,6 +58,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		DiscType:                    discType,
 		VideoPath:                   resources.videoPath,
 		FileList:                    fileList,
+		KeepFolder:                  resources.policy.KeepFolder && canKeepSourceFolder(owned),
 		SourceSize:                  release.Source.Size,
 		MediaInfoJSONPath:           resources.mediaInfoJSONPath,
 		MediaInfoTextPath:           resources.mediaInfoTextPath,
@@ -135,6 +140,9 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		ArrReleaseGroup:             release.Naming.Group,
 		InfoHash:                    resources.clientEvidence.Result.InfoHash,
 		ClientTorrentPath:           resources.clientEvidence.Result.TorrentPath,
+		ClientTorrentCandidates:     resources.clientEvidence.Result.TorrentCandidates,
+		ClientSearchPolicy:          resources.clientEvidence.Policy,
+		ClientSearchPerformed:       resources.clientEvidence.Disposition == preparationstate.ClientEvidenceDispositionSearched,
 		ClientTorrentDataVerified:   resources.clientEvidence.Result.TorrentDataVerified,
 		TrackerIDs:                  maps.Clone(resources.clientEvidence.Result.TrackerIDs),
 		MatchedTrackers:             append([]string(nil), resources.clientEvidence.Result.MatchedTrackers...),
@@ -154,8 +162,36 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		Files:               append([]api.VerifiedSourceFile(nil), subject.SourceIdentity.Files...),
 	}
 	cloned.SourceManifest = release.Source
+	cloned.ClientTorrentCandidates = append([]api.ClientTorrentCandidate(nil), subject.ClientTorrentCandidates...)
+	cloned.ClientSearchPolicy = subject.ClientSearchPolicy
+	if subject.ClientSearchPolicy.Client != nil {
+		cloned.ClientSearchPolicy.Client = new(*subject.ClientSearchPolicy.Client)
+	}
+	cloned.ClientSearchPerformed = subject.ClientSearchPerformed
 	cloned.StaffUploadTokens = maps.Clone(input.StaffUploadTokens)
 	return cloned, nil
+}
+
+// canKeepSourceFolder uses the prepared selection, not every file in the directory.
+// Samples and sidecars cannot make the folder eligible or enter its torrent payload.
+func canKeepSourceFolder(owned envelope) bool {
+	release := owned.result.Release
+	if release.Episode.Pack || release.Disc.Type != "" || release.Source.Classification.DiscType != "" {
+		return false
+	}
+	files := owned.resources.fileList
+	if len(files) == 0 {
+		files = manifestFiles(release.Source)
+	}
+	if len(files) != 1 || !filesystem.IsVideoFile(files[0]) || !pathutil.SamePath(filepath.Dir(files[0]), release.Source.SourcePath) {
+		return false
+	}
+	for _, entry := range release.Source.Entries {
+		if entry.Type == api.SourceEntryTypeDirectory && pathutil.SamePath(entry.Path, release.Source.SourcePath) {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolveDuplicateSubject validates and projects one exact prepared generation
@@ -395,7 +431,19 @@ func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPl
 	}
 	discs := make([]api.ScreenshotDiscSubject, 0, len(resources.discs))
 	for _, disc := range resources.discs {
+		var summary string
+		if disc.BluRayISO {
+			primary := paths.PrimaryBDMVPlaylistFor(disc.SelectedPlaylists)
+			for _, report := range disc.Reports {
+				if strings.EqualFold(report.Playlist.File, primary) {
+					summary = report.Summary
+					break
+				}
+			}
+		}
 		discs = append(discs, api.ScreenshotDiscSubject{
+			BDInfoSummary:         summary,
+			BluRayISO:             disc.BluRayISO,
 			ID:                    disc.ID,
 			Name:                  disc.Name,
 			Type:                  disc.Type,
@@ -413,10 +461,12 @@ func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPl
 		MediaInfoJSONPath:     resources.mediaInfoJSONPath,
 		MediaCategory:         string(release.Identity.Category),
 		HDR:                   release.Media.HDR,
+		HDRFacts:              release.Media.HDRFacts,
 		TVPack:                release.Episode.Pack,
 		Episode:               release.Episode.Episode,
 		Release:               releaseInfo(release),
 		SelectedBDMVPlaylists: selectedPlaylists,
+		KeepImages:            resources.policy.KeepImages,
 		DefaultCount:          input.Count,
 		ManualFrames:          append([]int(nil), input.Options.ManualFrames...),
 		Discs:                 discs,

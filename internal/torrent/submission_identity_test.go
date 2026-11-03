@@ -46,7 +46,7 @@ func TestSubmissionContentIdentityUsesCanonicalWantedInventory(t *testing.T) {
 		t.Fatalf("canonical identities = %#v and %#v", forwardIdentity, reversedIdentity)
 	}
 
-	expected, ok, err := expectedTorrentFiles(api.TorrentSubject{SourcePath: root, FileList: []string{second, first}})
+	expected, _, ok, err := expectedTorrentFiles(api.TorrentSubject{SourcePath: root, FileList: []string{second, first}})
 	if err != nil || !ok || len(expected) != len(reversed.Files) {
 		t.Fatalf("expected torrent files = %#v, %t, %v", expected, ok, err)
 	}
@@ -139,6 +139,21 @@ func verifySubmissionSource(t *testing.T, source string) api.SourceContentIdenti
 		t.Fatalf("verify source %q: %v", source, err)
 	}
 	return verified.Identity
+}
+
+func TestPackageInventoryRejectsUnresolvedIncludedFile(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "Example.mkv")
+	writeSubmissionIdentityFile(t, file, "synthetic media")
+	if _, err := ResolvePackageInventory(api.TorrentSubject{SourcePath: root, FileList: []string{file, filepath.Join(root, "missing.mkv")}}); err == nil {
+		t.Fatal("missing selected file produced a complete inventory")
+	}
+	if err := os.Symlink(filepath.Join(root, "missing.mkv"), filepath.Join(root, "unresolved.mkv")); err != nil {
+		t.Skip("symlink creation is unavailable")
+	}
+	if _, err := ResolvePackageInventory(api.TorrentSubject{SourcePath: root, DiscType: "BDMV"}); err == nil {
+		t.Fatal("unresolved included disc entry produced a complete inventory")
+	}
 }
 
 func writeSubmissionIdentityFile(t *testing.T, path string, content string) {

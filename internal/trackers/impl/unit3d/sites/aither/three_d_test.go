@@ -76,19 +76,24 @@ func TestThreeDDVDNameKeepsResolutionBeforeSubtype(t *testing.T) {
 
 func TestThreeDISORejectsOtherMediaWithDerivedFacts(t *testing.T) {
 	for _, test := range []struct {
-		name    string
-		files   []string
-		blocked bool
+		name             string
+		files            []string
+		blocked          bool
+		missingAuthority bool
 	}{
-		{"ISO only", []string{"disc.iso"}, false},
-		{"ISO plus MKV", []string{"disc.iso", "extra.mkv"}, true},
-		{"ISO plus MP4", []string{"disc.iso", "extra.mp4"}, true},
-		{"ISO plus EVO", []string{"disc.iso", "extra.evo"}, true},
-		{"ISO plus extras", []string{"disc.iso", "release.nfo", "proof.jpg"}, false},
+		{"ISO only", []string{"disc.iso"}, false, false},
+		{"ISO without inventory authority", []string{"disc.iso"}, true, true},
+		{"ISO plus MKV", []string{"disc.iso", "extra.mkv"}, true, false},
+		{"ISO plus MP4", []string{"disc.iso", "extra.mp4"}, true, false},
+		{"ISO plus EVO", []string{"disc.iso", "extra.evo"}, true, false},
+		{"ISO plus extras", []string{"disc.iso", "release.nfo", "proof.jpg"}, false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			facts := api.NewTrackerValidationSubject(api.UploadSubject{FileList: test.files}, "AITHER").PackageFacts
-			facts.Status = api.MetadataEvidenceStatusComplete
+			upload := api.UploadSubject{FileList: test.files}
+			if !test.missingAuthority {
+				upload.PackageInventory = api.PackageInventory{Status: api.MetadataEvidenceStatusComplete, Files: test.files}
+			}
+			facts := api.NewTrackerValidationSubject(upload, "AITHER").PackageFacts
 			subject := aitherPassingSubject()
 			subject.Type, subject.DiscType, subject.Is3D = "DISC", "BDMV", "3D"
 			subject.PackageFacts = facts

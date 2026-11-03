@@ -1,11 +1,12 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Locator, type Page, type Response } from "@playwright/test";
 import type {
   ActiveInputSnapshot,
+  ContinueReleaseWorkflowRequest,
   ReleaseWorkflowCurrent,
 } from "../src/api/generated/release-workflow";
 import {
@@ -161,6 +162,173 @@ const answerAntTags = async (page: Page) => {
   await applyTrackerAnswers(page);
 };
 
+test("embedded web blocks Dupe Check until missing saved facts are corrected", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  let seedMissingSource = true;
+  try {
+    app = await startApp(workspace);
+    // The fake metadata collector always supplies Source; model an incomplete saved response here.
+    await page.route(
+      /\/api\/app\/(OpenActiveInput|ContinueReleaseWorkflow|GetActiveInput)$/,
+      async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        const current = body.current ?? body;
+        if (seedMissingSource && current.release) current.release.release.Media.Source = "";
+        await route.fulfill({ response, json: body });
+      },
+    );
+    await page.goto(app.url);
+    await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+    await page.getByLabel("Source path", { exact: true }).press("Escape");
+    await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+    const warning = page.getByRole("alert");
+    await expect(warning).toContainText("Required facts missing, please edit release details.");
+    await expect(page.getByRole("button", { name: "Fetch metadata", exact: true })).toBeEnabled();
+    const dupeCheck = page.getByRole("button", { name: "Dupe Check", exact: true });
+    await expect(dupeCheck).toBeDisabled();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await warning.scrollIntoViewIfNeeded();
+    await expect(warning).toBeInViewport();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const source = page.getByRole("combobox", { name: "Source", exact: true });
+    await expect(source).toHaveAttribute("aria-invalid", "true");
+    await source.selectOption("Web");
+    await expect(dupeCheck).toBeDisabled();
+    await expect(warning).toBeVisible();
+    seedMissingSource = false;
+    const refreshed = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await refreshed).ok()).toBe(true);
+    const corrected = await waitForMetadataReady(page, app.url);
+    expect(corrected.current?.corrections?.corrections.releaseName.Source).toBe("Web");
+    await expect(warning).toBeHidden();
+    await dupeCheck.click();
+    await expect(page.getByRole("heading", { name: "Check Trackers", exact: true })).toBeVisible();
+  } finally {
+    try {
+      // Drain intercepted fetches while their server is still running.
+      await page.unrouteAll({ behavior: "wait" });
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  }
+});
+
+for (const skipInjection of [false, true]) {
+  test(`embedded web continues a paused explicit dry run with skip injection ${skipInjection}`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace({ mediaKind: "tv", preparedMediaInfo: true });
+    workspace.env.UPBRR_E2E_PLAN_DECISION_TRACKERS = "BTN";
+    let app: AppServer | undefined;
+    try {
+      app = await startApp(workspace);
+      const current = async () => {
+        const response = await page
+          .context()
+          .request.get(new URL("api/app/GetActiveInput", app!.url).toString());
+        expect(response.ok()).toBe(true);
+        return ((await response.json()) as ActiveInputSnapshot).current!;
+      };
+      await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+      await runDuplicateCheck(page);
+      await page.getByRole("button", { name: "Upload", exact: true }).click();
+      await page.getByLabel("Skip client injection").setChecked(skipInjection);
+      await page.getByRole("button", { name: "Run dry run", exact: true }).click();
+      const prompt = page.getByText("Continue the prepared torrent decision?", { exact: true });
+      await expect(prompt).toBeVisible();
+      const pending = await current();
+      expect(pending.dryRun).toMatchObject({
+        explicitDryRun: true,
+        noSeed: skipInjection,
+        status: "blocked",
+        reports: [
+          expect.objectContaining({
+            clientInjection: expect.objectContaining({
+              status: skipInjection ? "skipped" : "pending",
+            }),
+          }),
+        ],
+      });
+      expect(Boolean(pending.dryRun?.clientInjectionRequested)).toBe(!skipInjection);
+      expect(
+        pending.continuation.trackerOutcomes?.find((lane) => lane.trackerId === "BTN"),
+      ).toMatchObject({ lifecycle: "waiting", disposition: "needs_action" });
+      expect(workspace.fake.counters.clientInjections).toBe(0);
+      expect(workspace.fake.counters.trackerUploads).toBe(0);
+      await page.reload();
+      await expect(prompt).toBeVisible();
+      expect((await current()).dryRun?.id).toBe(pending.dryRun?.id);
+      const answered = page.waitForResponse((response) => {
+        if (
+          !response.url().endsWith("/api/app/ContinueReleaseWorkflow") ||
+          response.request().method() !== "POST"
+        )
+          return false;
+        return Boolean(
+          (response.request().postDataJSON() as ContinueReleaseWorkflowRequest).answers?.length,
+        );
+      });
+      await page.getByRole("button", { name: "Continue preparation", exact: true }).click();
+      const answerResponse = await answered;
+      expect(answerResponse.ok()).toBe(true);
+      const answerRequest = answerResponse
+        .request()
+        .postDataJSON() as ContinueReleaseWorkflowRequest;
+      expect(answerRequest.goal).toBe("dry_run");
+      await expect(prompt).toHaveCount(0);
+      await expect.poll(async () => (await current()).dryRun?.status).toBe("completed");
+      await expect.poll(async () => (await current()).operation?.status).toBe("completed");
+      const completed = await current();
+      expect(completed.operation?.result).toMatchObject({
+        kind: "dry_run",
+        refId: completed.dryRun?.id,
+        refRevision: completed.dryRun?.revision,
+      });
+      expect(completed.dryRun).toMatchObject({
+        explicitDryRun: true,
+        noSeed: skipInjection,
+        reports: [
+          expect.objectContaining({
+            clientInjection: expect.objectContaining({
+              status: skipInjection ? "skipped" : "completed",
+            }),
+          }),
+        ],
+      });
+      expect(Boolean(completed.dryRun?.clientInjectionRequested)).toBe(!skipInjection);
+      expect(workspace.fake.counters.clientInjections).toBe(skipInjection ? 0 : 1);
+      expect(workspace.fake.counters.trackerUploads).toBe(0);
+      const auth = await page.context().request.get(new URL("api/auth/status", app.url).toString());
+      const { csrfToken } = (await auth.json()) as { csrfToken: string };
+      const duplicate = await page
+        .context()
+        .request.post(new URL("api/app/ContinueReleaseWorkflow", app.url).toString(), {
+          headers: { Origin: new URL(app.url).origin, "X-CSRF-Token": csrfToken },
+          data: answerRequest,
+        });
+      expect(duplicate.status()).toBe(409);
+      await page.reload();
+      await expect(
+        page.getByRole("heading", { name: "Release workflow needs input", exact: true }),
+      ).toHaveCount(0);
+      expect((await current()).dryRun?.id).toBe(completed.dryRun?.id);
+      expect(workspace.fake.counters.clientInjections).toBe(skipInjection ? 0 : 1);
+      expect(workspace.fake.counters.trackerUploads).toBe(0);
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}
+
 for (const scenario of [
   {
     name: "none trackers bypass shared content pages",
@@ -202,7 +370,7 @@ for (const scenario of [
     try {
       app = await startApp(workspace);
       await fetchMetadata(page, app.url, workspace.sourcePath, scenario.releaseDisplayName);
-      await page.getByRole("button", { name: "Dupe Check" }).click();
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
       const defaultTracker = page.getByRole("checkbox", {
         name: releaseWorkflowParityFixture.trackerID,
       });
@@ -223,15 +391,15 @@ for (const scenario of [
       await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
 
       await expectEnabledState(
-        page.getByRole("button", { name: "Screenshots" }),
+        page.getByRole("button", { name: "Screenshots", exact: true }),
         scenario.screenshots,
       );
       await expectEnabledState(
-        page.getByRole("button", { name: "Upload Images" }),
+        page.getByRole("button", { name: "Upload Images", exact: true }),
         scenario.screenshots,
       );
       await expectEnabledState(
-        page.getByRole("button", { name: "Descriptions" }),
+        page.getByRole("button", { name: "Descriptions", exact: true }),
         scenario.descriptions,
       );
       await expectEnabledState(
@@ -246,11 +414,15 @@ for (const scenario of [
   });
 }
 
-for (const tracker of ["ANT", "BTN"] as const) {
+for (const { tracker, emptyDescription } of [
+  { tracker: "ANT", emptyDescription: false },
+  { tracker: "ANT", emptyDescription: true },
+  { tracker: "BTN", emptyDescription: false },
+] as const) {
   for (const action of ["Run dry run", "Start upload"] as const) {
     const contentFlow =
       tracker === "ANT"
-        ? "reviews saved descriptions and retains hosted screenshots"
+        ? `${emptyDescription ? "reviews an empty saved description" : "reviews saved descriptions"} and retains hosted screenshots`
         : "prepares content without the description editor";
     test(`embedded web ${tracker} ${action} ${contentFlow}`, async ({ page }) => {
       const workspace = await createE2EWorkspace({
@@ -266,7 +438,7 @@ for (const tracker of ["ANT", "BTN"] as const) {
           workspace.sourcePath,
           tracker === "BTN" ? "E2E.Show.2026.S01E01.1080p.WEB-DL" : undefined,
         );
-        await page.getByRole("button", { name: "Dupe Check" }).click();
+        await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
         if (tracker !== releaseWorkflowParityFixture.trackerID) {
           await page
             .getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID })
@@ -279,29 +451,34 @@ for (const tracker of ["ANT", "BTN"] as const) {
         await runDuplicateCheck(page);
         if (tracker === "ANT") {
           await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
-          await page.getByRole("button", { name: "Screenshots" }).click();
+          await page.getByRole("button", { name: "Screenshots", exact: true }).click();
           await page.getByRole("button", { name: "Generate screenshots" }).click();
-          await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
-          await expect(page.getByRole("button", { name: "Descriptions" })).toBeEnabled();
+          await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
+          await expect(
+            page.getByRole("button", { name: "Descriptions", exact: true }),
+          ).toBeEnabled();
           await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeDisabled();
-          await page.getByRole("button", { name: "Upload Images" }).click();
+          await page.getByRole("button", { name: "Upload Images", exact: true }).click();
           await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
           await expect(page.getByText("1 saved")).toBeVisible();
           expect(workspace.fake.counters.imageUploads).toBe(1);
-          await page.getByRole("button", { name: "Descriptions" }).click();
+          await page.getByRole("button", { name: "Descriptions", exact: true }).click();
           await page.getByRole("button", { name: "Refresh descriptions" }).click();
           await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
           const editor = page.getByRole("textbox", { name: "Raw description for ANT" });
           await expect(editor).toHaveValue("E2E description fixture.");
-          const editedDescription =
-            "[b]ANT release notes[/b]\n[quote]Screenshots are hosted separately.[/quote]";
+          const editedDescription = emptyDescription
+            ? ""
+            : "[b]ANT release notes[/b]\n[quote]Screenshots are hosted separately.[/quote]";
           await editor.fill(editedDescription);
           await page.getByRole("button", { name: "Render ANT", exact: true }).click();
           const rendered = page.locator(".tracker-description.rendered");
-          await expect(rendered.locator("b")).toHaveText("ANT release notes");
-          await expect(rendered.locator("blockquote")).toHaveText(
-            "QuoteScreenshots are hosted separately.",
-          );
+          if (!emptyDescription) {
+            await expect(rendered.locator("b")).toHaveText("ANT release notes");
+            await expect(rendered.locator("blockquote")).toHaveText(
+              "QuoteScreenshots are hosted separately.",
+            );
+          }
           const saved = waitForAppMethod(page, "SaveReleaseWorkflowDescriptionOverride");
           await page.getByRole("button", { name: "Save group ANT", exact: true }).click();
           expect((await saved).ok()).toBe(true);
@@ -322,14 +499,18 @@ for (const tracker of ["ANT", "BTN"] as const) {
               .filter((artifact) => artifact.kind === "hosted_image")
               .map((artifact) => artifact.url),
           ).toEqual([`${workspace.fake.url}/image/1`]);
-          await page.getByRole("button", { name: "Descriptions" }).click();
+          await page.getByRole("button", { name: "Descriptions", exact: true }).click();
           await page.getByRole("button", { name: "Expand ANT", exact: true }).click();
           await expect(editor).toHaveValue(editedDescription);
-          await expect(rendered.locator("b")).toHaveText("ANT release notes");
-          await page.getByRole("button", { name: "Upload Images" }).click();
+          if (!emptyDescription) {
+            await expect(rendered.locator("b")).toHaveText("ANT release notes");
+          }
+          await page.getByRole("button", { name: "Upload Images", exact: true }).click();
           await expect(page.getByText("1 saved")).toBeVisible();
         } else {
-          await expect(page.getByRole("button", { name: "Descriptions" })).toBeDisabled();
+          await expect(
+            page.getByRole("button", { name: "Descriptions", exact: true }),
+          ).toBeDisabled();
         }
         await page.getByRole("button", { name: "Upload", exact: true }).click();
         await page.getByRole("button", { name: action, exact: true }).click();
@@ -345,10 +526,10 @@ for (const tracker of ["ANT", "BTN"] as const) {
           ).toBeVisible();
           await expect(page.getByRole("button", { name: `Expand ${tracker}` })).toBeVisible();
           expect(workspace.fake.counters.trackerUploads).toBe(0);
-          expect(workspace.fake.counters.clientInjections).toBe(0);
+          expect(workspace.fake.counters.clientInjections).toBe(1);
         }
         await expectEnabledState(
-          page.getByRole("button", { name: "Descriptions" }),
+          page.getByRole("button", { name: "Descriptions", exact: true }),
           tracker === "ANT" && action === "Run dry run",
         );
         expect(workspace.fake.counters.imageUploads).toBe(tracker === "ANT" ? 1 : 0);
@@ -386,7 +567,7 @@ test("embedded web reviews default tracker questions before dupes and retains co
       }
     });
     const projected = waitForWorkflowGoal(page, "trackers_projected");
-    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     const response = await projected;
     expect(response.ok()).toBe(true);
     const current = (await response.json()) as ReleaseWorkflowCurrent;
@@ -452,12 +633,79 @@ test("embedded web reviews default tracker questions before dupes and retains co
     expect([...goals.values()].filter((goal) => goal === "trackers_assessed")).toHaveLength(2);
     await expect(tags).toHaveValue("drama,mystery");
     await expect(summary).not.toContainText("Unapplied changes");
-    await expect(page.getByRole("button", { name: "Screenshots" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Screenshots", exact: true })).toBeEnabled();
   } finally {
     await app?.stop();
     await workspace.cleanup();
   }
 });
+
+for (const checkFirst of [false, true]) {
+  test(`embedded web retains ANT trump answers with duplicate check first=${checkFirst}`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace({ preparedMediaInfo: true });
+    workspace.env.UPBRR_E2E_DUPE_SCENARIOS = "ANT=manual";
+    let app: AppServer | undefined;
+    try {
+      const config = await readFile(workspace.configPath, "utf8");
+      await writeFile(
+        workspace.configPath,
+        config.replace(
+          '  ANT:\n    api_key: "e2e"',
+          '  ANT:\n    guru_trump: true\n    api_key: "e2e"',
+        ),
+      );
+      app = await startApp(workspace);
+      await fetchMetadata(page, app.url, workspace.sourcePath);
+      await page.getByRole("button", { name: "Dupe Check" }).click();
+      await page.getByRole("checkbox", { name: "BTN", exact: true }).uncheck();
+      await page.getByRole("checkbox", { name: "ANT", exact: true }).check();
+      const questions = antQuestionPanel(page);
+      await questions.locator("summary").click();
+      await questions.getByRole("textbox", { name: "Tags *", exact: true }).fill("drama");
+      if (checkFirst) await runDuplicateCheck(page, "blocked");
+
+      const choice = questions.getByRole("combobox", { name: "Intended ANT trump", exact: true });
+      const reason = questions.getByRole("textbox", { name: "ANT trump reason", exact: true });
+      await choice.selectOption("yes");
+      await reason.fill("verified improvement");
+      const applied = await applyTrackerAnswers(page);
+      const fields = applied.projections!.projections[0].questionnaire!;
+      const choiceKey = fields.find((field) => field.label === "Intended ANT trump")!.key;
+      const reasonKey = fields.find((field) => field.label === "ANT trump reason")!.key;
+      expect(applied.projections!.projections[0].questionnaireAnswers).toMatchObject({
+        [choiceKey]: "yes",
+        [reasonKey]: "verified improvement",
+      });
+      await expect(choice).toHaveValue("yes");
+      await expect(reason).toHaveValue("verified improvement");
+      const checked = await runDuplicateCheck(page, "blocked");
+      expect(checked.projections!.projections[0].questionnaireAnswers).toMatchObject({
+        [choiceKey]: "yes",
+        [reasonKey]: "verified improvement",
+      });
+      await expect(choice).toHaveValue("yes");
+      await expect(reason).toHaveValue("verified improvement");
+      await expect(questions.locator("summary")).not.toContainText("Unapplied changes");
+      await page.getByLabel("Acknowledge dupe risk for ANT").click();
+      await expect(page.getByText("1 potential dupe · acknowledged")).toBeVisible();
+      await expect(choice).toHaveValue("yes");
+      await expect(reason).toHaveValue("verified improvement");
+      await reason.fill("reviewed improvement");
+      const updated = await applyTrackerAnswers(page);
+      expect(updated.projections!.projections[0].questionnaireAnswers).toMatchObject({
+        [choiceKey]: "yes",
+        [reasonKey]: "reviewed improvement",
+      });
+      await expect(choice).toHaveValue("yes");
+      await expect(reason).toHaveValue("reviewed improvement");
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}
 
 test("embedded web reload restores the authoritative prepared workflow", async ({ page }) => {
   const workspace = await createE2EWorkspace({ preparedMediaInfo: true });
@@ -498,7 +746,7 @@ test("embedded web reload restores the authoritative prepared workflow", async (
     await expect(page.locator("html")).toHaveAttribute("data-theme", "swizzin");
     await mediaInfoPanel.locator("summary").first().click();
     await expect(mediaInfoPanel.locator(".mediainfo__video")).toContainText("AVC");
-    await expect(page.getByRole("button", { name: "Dupe Check" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Dupe Check", exact: true })).toBeEnabled();
     expect(workspace.fake.counters).toEqual(counters);
   } finally {
     await app?.stop();
@@ -618,7 +866,7 @@ for (const mode of ["rebuild", "reject"] as const) {
       await page.getByLabel("Source path").fill(workspace.sourcePath);
       await page.getByRole("button", { name: "Fetch metadata" }).click();
       await waitForMetadataReady(page, app.url);
-      await page.getByRole("button", { name: "Dupe Check" }).click();
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
       await runDuplicateCheck(page, mode === "reject" ? "failed" : "completed");
       await expect.poll(() => suppliedName).toBe(true);
       await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
@@ -641,7 +889,7 @@ for (const mode of ["rebuild", "reject"] as const) {
         const confirmedReload = waitForAppMethod(page, "GetActiveInput");
         await page.reload();
         const confirmedCurrent = await activeCurrentFromResponse(await confirmedReload);
-        await page.getByRole("button", { name: "Dupe Check" }).click();
+        await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
         await expect(confirmName).toBeChecked();
         await expect(name).toHaveValue(reviewedName);
         await expect(notices.getByText(/controls edition/)).toBeVisible();
@@ -663,7 +911,7 @@ for (const mode of ["rebuild", "reject"] as const) {
         expect(
           current.projectionInstructions?.instructions.BTN.confirmedNameFingerprint,
         ).toBeTruthy();
-        await page.getByRole("button", { name: "Dupe Check" }).click();
+        await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
         await expect(confirmName).toBeChecked();
       } else {
         const tracker = page
@@ -680,7 +928,7 @@ for (const mode of ["rebuild", "reject"] as const) {
         expect(
           current.projections?.projections.find((projection) => projection.trackerId === "BTN"),
         ).toMatchObject({ readiness: "blocked", dupeReady: false, uploadReady: false });
-        await page.getByRole("button", { name: "Dupe Check" }).click();
+        await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
         await expect(
           tracker.getByText(/opaque name cannot satisfy mandatory component rules/),
         ).toBeVisible();
@@ -695,6 +943,32 @@ for (const mode of ["rebuild", "reject"] as const) {
 }
 
 type CorrectionValue = string | number | boolean | readonly string[];
+test("embedded Input applies plain season and episode together", async ({ page }) => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await page.getByRole("textbox", { name: "Season", exact: true }).fill("5");
+    await page.getByRole("textbox", { name: "Episode", exact: true }).fill("5");
+    const saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    expect((await saved).ok()).toBe(true);
+    const snapshot = await waitForMetadataReady(page, app.url);
+    expect(snapshot.current?.corrections?.corrections.releaseName).toMatchObject({
+      Season: "5",
+      Episode: "5",
+    });
+    await expect(page.getByRole("textbox", { name: "Season", exact: true })).toHaveValue("5");
+    await expect(page.getByRole("textbox", { name: "Episode", exact: true })).toHaveValue("5");
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 type CorrectionCase = {
   field: string;
   label: string;
@@ -728,11 +1002,19 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
     values: ["NF", "AMZN", ""],
   },
   {
+    field: "release_name.season",
+    label: "Season",
+    group: "ReleaseName",
+    key: "Season",
+    values: ["2", "5", "S05", ""],
+    mediaKind: "tv",
+  },
+  {
     field: "release_name.episode",
     label: "Episode",
     group: "ReleaseName",
     key: "Episode",
-    values: ["E02", ""],
+    values: ["5", "E02", ""],
     mediaKind: "tv",
   },
   {
@@ -744,7 +1026,7 @@ const releaseDetailCorrections: readonly CorrectionCase[] = [
   },
   {
     field: "release_name.no_episode_title",
-    label: "No episode title",
+    label: "Clear episode title",
     group: "ReleaseName",
     key: "NoEpisodeTitle",
     values: [true, false],
@@ -840,7 +1122,10 @@ for (const correction of releaseDetailCorrections) {
         ? await control.locator("span").first().innerText()
         : await control.inputValue();
       const expectControlValue = async (value: string) => {
-        if (languages) await expect(control).toHaveAccessibleDescription(value || "None");
+        if (languages)
+          await expect(control).toHaveAccessibleDescription(
+            new RegExp(`^${RegExp.escape(value || "None")} `),
+          );
         else await expect(control).toHaveValue(value);
       };
       const storedGroup = correction.group === "ReleaseName" ? "releaseName" : "metadata";
@@ -1224,6 +1509,45 @@ test("embedded web persists Release Details audio track language edits, clear an
   }
 });
 
+test("embedded web keeps an eligible movie folder through preparation", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    const sourceFolder = path.join(path.dirname(workspace.sourcePath), "E2E.Movie.2026");
+    await mkdir(sourceFolder);
+    await writeFile(
+      path.join(sourceFolder, path.basename(workspace.sourcePath)),
+      await readFile(workspace.sourcePath),
+    );
+    await writeFile(path.join(sourceFolder, "release.nfo"), "synthetic sidecar");
+    await writeFile(path.join(sourceFolder, "sample.mkv"), "synthetic sample");
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, sourceFolder);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const sourceOptions = page.getByTestId("input-source-options");
+    await sourceOptions.locator("summary").click();
+    const keepFolder = sourceOptions.getByRole("checkbox", {
+      name: "Keep source folder",
+      exact: true,
+    });
+    await expect(keepFolder).not.toBeChecked();
+    await keepFolder.check();
+    const saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    const response = await saved;
+    expect(response.ok()).toBe(true);
+    const command = workflowCommandBody("OpenActiveInput", response.request().postDataJSON());
+    expect(command.intent).toHaveProperty("preparation.Policy.KeepFolder", true);
+    const current = await waitForMetadataReady(page, app.url);
+    expect(current.current?.release?.display.CanKeepFolder).toBe(true);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded web applies Release Details source options and persists source IDs", async ({
   page,
 }) => {
@@ -1234,7 +1558,10 @@ test("embedded web applies Release Details source options and persists source ID
     await fetchMetadata(page, app.url, workspace.sourcePath);
     const sourceOptions = page.getByTestId("input-source-options");
     const sourceID = sourceOptions.getByRole("textbox", { name: "BTN source ID", exact: true });
-    const client = sourceOptions.getByRole("textbox", { name: "Client search name", exact: true });
+    const client = sourceOptions.getByRole("textbox", {
+      name: "Torrent client to search",
+      exact: true,
+    });
     const skip = sourceOptions.getByRole("checkbox", { name: "Skip client search", exact: true });
     for (const values of [
       { sourceID: "12345", policy: true, skip: true, client: "example-client" },
@@ -1243,8 +1570,14 @@ test("embedded web applies Release Details source options and persists source ID
     ]) {
       await page.getByText("Edit Release Details", { exact: true }).click();
       await sourceOptions.locator("summary").click();
+      await expect(
+        sourceOptions.getByRole("checkbox", { name: "Keep source folder", exact: true }),
+      ).toHaveCount(0);
       await sourceID.fill(values.sourceID);
-      for (const label of ["Keep source folder", "Keep images", "Only resolve IDs"]) {
+      for (const label of [
+        "Collect existing tracker images",
+        "Limit tracker lookup to only metadata ids",
+      ]) {
         await sourceOptions
           .getByRole("checkbox", { name: label, exact: true })
           .setChecked(values.policy);
@@ -1264,7 +1597,7 @@ test("embedded web applies Release Details source options and persists source ID
         values.sourceID ? { BTN: values.sourceID } : {},
       );
       expect(command.intent).toHaveProperty("preparation.Policy", {
-        KeepFolder: values.policy,
+        KeepFolder: false,
         KeepImages: values.policy,
         OnlyID: values.policy,
       });
@@ -1287,9 +1620,8 @@ test("embedded web applies Release Details source options and persists source ID
       await expect(sourceID).toHaveValue(values.sourceID);
       // Preparation/search options are per-command choices; source IDs are durable facts.
       for (const label of [
-        "Keep source folder",
-        "Keep images",
-        "Only resolve IDs",
+        "Collect existing tracker images",
+        "Limit tracker lookup to only metadata ids",
         "Skip client search",
       ]) {
         await expect(
@@ -1311,6 +1643,68 @@ test("embedded web applies Release Details source options and persists source ID
   }
 });
 
+test("embedded web keeps selected providers through an IMDb correction and reload", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const keepTMDB = page.getByRole("checkbox", { name: "Keep existing TMDB data", exact: true });
+    const keepTVDB = page.getByRole("checkbox", { name: "Keep existing TVDB data", exact: true });
+    await keepTMDB.check();
+    await keepTVDB.check();
+    await page.getByRole("textbox", { name: "IMDb ID", exact: true }).fill("tt8889999");
+    const updated = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await expect((await updated).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    const restored = waitForAppMethod(page, "GetActiveInput");
+    await page.reload();
+    const current = await activeCurrentFromResponse(await restored);
+    expect(current.release?.release.Identity).toMatchObject({
+      TMDBID: 1001,
+      IMDBID: 8889999,
+      TVDBID: 2001,
+    });
+    expect(current.release?.release.ProviderMetadata.TMDB?.TMDBID).toBe(1001);
+    expect(current.release?.release.ProviderMetadata.TVDB?.TVDBID).toBe(2001);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(keepTMDB).toBeChecked();
+    await expect(keepTVDB).toBeChecked();
+    await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).toHaveValue("1001");
+    await expect(page.getByRole("textbox", { name: "TVDB ID", exact: true })).toHaveValue("2001");
+    expect(current.release?.display.TVDBNamingAvailable).toBe(true);
+    await expect(page.getByLabel("Manual year", { exact: true })).toBeDisabled();
+    await expect(page.getByRole("combobox", { name: "Omit year", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Remove TVDB ID", exact: true }).click();
+    const cleared = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await expect((await cleared).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(page.getByLabel("Manual year", { exact: true })).toBeEnabled();
+    await page.getByLabel("Manual year", { exact: true }).fill("2030");
+    await expect(page.getByRole("combobox", { name: "Omit year", exact: true })).toBeVisible();
+    const corrected = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await expect((await corrected).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    const fallbackReload = waitForAppMethod(page, "GetActiveInput");
+    await page.reload();
+    const fallback = await activeCurrentFromResponse(await fallbackReload);
+    expect(fallback.release?.release.Identity.TVDBID).toBe(0);
+    expect(fallback.release?.display.TVDBNamingAvailable).not.toBe(true);
+    expect(fallback.corrections?.corrections.releaseName.ManualYear).toBe(2030);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(page.getByLabel("Manual year", { exact: true })).toHaveValue("2030");
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded web distinguishes a cleared Release Details provider ID from Auto", async ({
   page,
 }) => {
@@ -1322,7 +1716,7 @@ test("embedded web distinguishes a cleared Release Details provider ID from Auto
 
     await page.getByText("Edit Release Details", { exact: true }).click();
     const malRow = page.locator('[data-correction-field="identity.mal"]');
-    const malInput = page.getByRole("textbox", { name: "MAL ID", exact: true });
+    const malInput = page.getByRole("textbox", { name: "MyAnimeList ID", exact: true });
     await expect(malInput).toHaveValue("");
     await expect(malRow.getByText("Automatic value", { exact: true })).toBeVisible();
     await malInput.fill("0");
@@ -1339,7 +1733,7 @@ test("embedded web distinguishes a cleared Release Details provider ID from Auto
     await expect(malInput).toHaveValue("");
     await expect(malRow.getByText("Manual value · Applied", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Auto MAL ID" }).click();
+    await page.getByRole("button", { name: "Auto MyAnimeList ID" }).click();
     const reset = waitForAppMethod(page, "OpenActiveInput");
     await page.getByRole("button", { name: "Refresh metadata" }).click();
     await expect((await reset).ok()).toBe(true);
@@ -1443,8 +1837,8 @@ test("embedded web retains Release Details corrections without downstream workfl
 
     await page.getByText("Edit Release Details", { exact: true }).click();
     const inputEditor = page.getByTestId("input-correction-editor");
-    const dupeCheck = page.getByRole("button", { name: "Dupe Check" });
-    for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze", "MAL"]) {
+    const dupeCheck = page.getByRole("button", { name: "Dupe Check", exact: true });
+    for (const provider of ["TMDB", "IMDb", "TVDB", "TVmaze", "MyAnimeList"]) {
       await expect(
         page.getByRole("button", { name: `Remove ${provider} ID`, exact: true }),
       ).toBeEnabled();
@@ -1456,7 +1850,7 @@ test("embedded web retains Release Details corrections without downstream workfl
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     const categoryInput = page.getByRole("combobox", { name: "Category", exact: true });
     await categoryInput.selectOption("tv");
-    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeDisabled();
+    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     await categoryInput.selectOption("movie");
     await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
     await page.getByRole("button", { name: "Auto Category", exact: true }).click();
@@ -1616,7 +2010,7 @@ test("embedded web retains Release Details corrections without downstream workfl
     await expect(removeTMDB).toHaveText("Removed");
     await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).toHaveValue("");
     await expect(page.getByRole("button", { name: /^TMDB \d+ Source:/ })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Remove IMDB ID", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Remove IMDb ID", exact: true })).toBeEnabled();
     expect(workspace.fake.counters).toEqual(reopenedCounters);
   } finally {
     await app?.stop();
@@ -1624,36 +2018,249 @@ test("embedded web retains Release Details corrections without downstream workfl
   }
 });
 
-test("embedded web selects a Blu-ray candidate through the authoritative workflow", async ({
+test("embedded web inspects Blu-ray listings and preserves the manual release across reload", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
-  workspace.env.UPBRR_E2E_BLURAY_CANDIDATES = "1";
+  workspace.env.UPBRR_E2E_BLURAY_CANDIDATES = "lazy";
   let app: AppServer | undefined;
   try {
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "Blu-ray Candidates" }).click();
     await expect(page.getByText("Example Release 2026 Collector Edition")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Selected" })).toBeDisabled();
-
-    const response = page.waitForResponse((candidate) =>
-      candidate.url().includes("/api/app/ContinueReleaseWorkflow"),
+    await expect(page.getByText("Details not fetched", { exact: true })).toHaveCount(2);
+    const one = page.waitForRequest((request) =>
+      request.url().includes("/api/app/ContinueReleaseWorkflow"),
     );
+    await page.getByRole("button", { name: /Fetch details for candidate 1:/ }).click();
+    expect((await one).postDataJSON().intent.preparation.Controls.BlurayDetails).toEqual({
+      ReleaseID: "example-bluray-primary",
+      All: false,
+    });
+    await expect(page.getByText("Details fetched", { exact: true })).toHaveCount(1);
+    await expect(page.getByText("Details not fetched", { exact: true })).toHaveCount(1);
+    const summary = page.getByLabel(
+      "Score details for candidate 1: Example Release 2026 Collector Edition",
+    );
+    await summary.focus();
+    await page.keyboard.press("Space");
+    await expect(page.getByText("seventh scoring reason", { exact: true })).toBeVisible();
+    await page.keyboard.press("Space");
+    await expect(page.getByText("seventh scoring reason", { exact: true })).toBeHidden();
     await page
       .getByRole("button", {
         name: /^Select candidate \d+: Example Release 2026 Standard Edition$/,
       })
       .click();
-    await expect((await response).ok()).toBe(true);
-    await expect(page.getByText("Example Release 2026 Standard Edition")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Selected" })).toBeDisabled();
-    await expect(page.getByText("B").first()).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: /^Selected candidate \d+: Example Release 2026 Standard Edition$/,
+      }),
+    ).toBeDisabled();
+    const all = page.waitForRequest((request) =>
+      request.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Fetch all release details" }).click();
+    expect((await all).postDataJSON().intent.preparation.Controls.BlurayDetails).toEqual({
+      ReleaseID: "",
+      All: true,
+    });
+    await expect(page.getByText("Details fetched", { exact: true })).toHaveCount(2);
+    await expect(
+      page.getByRole("button", {
+        name: /^Selected candidate \d+: Example Release 2026 Standard Edition$/,
+      }),
+    ).toBeDisabled();
+    await page.reload();
+    await page.getByRole("button", { name: "Blu-ray Candidates" }).click();
+    await expect(page.getByText("Details fetched", { exact: true })).toHaveCount(2);
+    await expect(
+      page.getByRole("button", {
+        name: /^Selected candidate \d+: Example Release 2026 Standard Edition$/,
+      }),
+    ).toBeDisabled();
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
   } finally {
     await app?.stop();
     await workspace.cleanup();
   }
 });
+
+test("embedded screenshots automatically adopt description images and preserve removal across reloads", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ screenshotCount: 3 });
+  workspace.env.UPBRR_E2E_SAVED_DESCRIPTION_IMAGE = "1";
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    await runDuplicateCheck(page);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
+    await expect(page.getByRole("note")).toContainText("chronological order cannot be determined");
+    await expect(page.getByRole("button", { name: "Use saved images" })).toHaveCount(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+
+    await page.getByRole("button", { name: "Unselect Screenshot 1", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Select Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    await page.reload();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Select Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    await page.getByRole("button", { name: "Generate screenshots", exact: true }).click();
+    await expect(page.getByText("4 retained screenshot(s)")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Select Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    await expect(
+      page.getByText("Existing description image · capture timestamp and provenance unknown"),
+    ).toHaveCount(1);
+    await page.getByRole("button", { name: "Delete Screenshot 1", exact: true }).click();
+    await expect(page.getByText("3 retained screenshot(s)")).toBeVisible();
+    await page.reload();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await page.getByRole("button", { name: "Load suggestions", exact: true }).click();
+    await expect(page.getByText("3 retained screenshot(s)")).toBeVisible();
+    await expect(page.getByRole("note")).toHaveCount(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+for (const change of ["deselect", "delete"] as const) {
+  for (const nextPage of ["Upload Images", "Descriptions"] as const) {
+    test(`existing image URLs follow ${change} before opening ${nextPage}`, async ({ page }) => {
+      const workspace = await createE2EWorkspace({ screenshotCount: 1 });
+      workspace.env.UPBRR_E2E_SAVED_DESCRIPTION_IMAGE = "1";
+      workspace.env.UPBRR_E2E_DESCRIPTION_MEDIA_LINKS = "1";
+      await page.route("https://i.ibb.co/**", async (route) => {
+        await route.fulfill({
+          contentType: "image/png",
+          body: await readFile(workspace.screenshotPath),
+        });
+      });
+      let app: AppServer | undefined;
+      try {
+        app = await startApp(workspace);
+        await fetchMetadata(page, app.url, workspace.sourcePath);
+        await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+        await page
+          .getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID })
+          .uncheck();
+        await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+        await runDuplicateCheck(page);
+        await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+        await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
+        await page.getByRole("button", { name: "Generate screenshots", exact: true }).click();
+        await expect(page.getByText("2 retained screenshot(s)")).toBeVisible();
+        await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+        await page.getByRole("button", { name: "Prepare required hosts (2)", exact: true }).click();
+        await expect(page.getByText("2 saved", { exact: true })).toBeVisible();
+
+        const current = await activeCurrentFromResponse(
+          await page.request.get(new URL("api/app/GetActiveInput", app.url).toString()),
+        );
+        const imported = current.media!.artifacts.find(
+          (artifact) => artifact.kind === "screenshot" && artifact.source === "tracker",
+        )!;
+        const removedURL = current.media!.artifacts.find(
+          (artifact) =>
+            artifact.kind === "hosted_image" &&
+            artifact.selected &&
+            artifact.source === imported.id,
+        )!.url!;
+        const keptURL = current.media!.artifacts.find(
+          (artifact) =>
+            artifact.kind === "hosted_image" &&
+            artifact.selected &&
+            artifact.source !== imported.id,
+        )!.url!;
+        await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+        await page.getByRole("button", { name: "Refresh descriptions", exact: true }).click();
+        await expect
+          .poll(async () => {
+            const generated = await activeCurrentFromResponse(
+              await page.request.get(new URL("api/app/GetActiveInput", app.url).toString()),
+            );
+            return (
+              generated.descriptions?.descriptions.map((group) => group.source).join("\n") || ""
+            );
+          })
+          .toContain(removedURL);
+        const uploads = workspace.fake.counters.imageUploads;
+
+        await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+        const changed = waitForAppMethod(
+          page,
+          change === "deselect" ? "SetReleaseWorkflowMediaSelection" : "DeleteReleaseWorkflowMedia",
+        );
+        await page
+          .getByRole("button", {
+            name: change === "deselect" ? "Unselect Screenshot 1" : "Delete Screenshot 1",
+            exact: true,
+          })
+          .click();
+        expect((await changed).ok()).toBe(true);
+        await page.getByRole("button", { name: nextPage, exact: true }).click();
+        if (nextPage === "Upload Images") {
+          await expect(page.getByText("1 saved", { exact: true })).toBeVisible();
+          await expect(page.getByRole("link", { name: removedURL, exact: true })).toHaveCount(0);
+          await expect(page.getByRole("link", { name: keptURL, exact: true })).toBeVisible();
+          await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+        }
+        await page.getByRole("button", { name: "Refresh descriptions", exact: true }).click();
+        await page.getByRole("button", { name: "Expand HDS", exact: true }).click();
+        await expect.poll(() => page.getByRole("textbox").inputValue()).toContain(keptURL);
+        expect(await page.getByRole("textbox").inputValue()).not.toContain(removedURL);
+
+        if (change === "delete" && nextPage === "Descriptions") {
+          await app.stop();
+          app = await startApp(workspace, { seed: false });
+          await fetchMetadata(page, app.url, workspace.sourcePath);
+          await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+          const defaultTracker = page.getByRole("checkbox", {
+            name: releaseWorkflowParityFixture.trackerID,
+          });
+          if (await defaultTracker.isChecked()) await defaultTracker.uncheck();
+          await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+          await runDuplicateCheck(page);
+        } else {
+          await page.reload();
+        }
+        await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+        await expect(page.getByText("1 saved", { exact: true })).toBeVisible();
+        await expect(page.getByRole("link", { name: removedURL, exact: true })).toHaveCount(0);
+        await expect(page.getByRole("link", { name: keptURL, exact: true })).toBeVisible();
+        if (change === "deselect") {
+          await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+          await page.getByRole("button", { name: "Select Screenshot 1", exact: true }).click();
+          await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+          await expect(page.getByText("2 saved", { exact: true })).toBeVisible();
+          await expect(page.getByRole("link", { name: removedURL, exact: true })).toBeVisible();
+        }
+        expect(workspace.fake.counters.imageUploads).toBe(uploads);
+        expect(workspace.fake.counters.trackerUploads).toBe(0);
+      } finally {
+        await app?.stop();
+        await workspace.cleanup();
+      }
+    });
+  }
+}
 
 test("embedded web runs image upload, direct tracker upload, and history", async ({ page }) => {
   const workspace = await createE2EWorkspace();
@@ -1693,7 +2300,7 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     );
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect((await captureResponse).ok()).toBe(true);
-    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
     await expect(page.getByAltText("Screenshot 1")).toBeVisible();
     const frameSelection = page.getByText(/^Frame Selection · 1 frame$/);
     await expect(frameSelection).toBeVisible();
@@ -1826,7 +2433,7 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     const reopened = await fetchMetadata(page, app.url, workspace.sourcePath);
     expect(reopened.current?.workflow.id).toBeTruthy();
     expect(reopened.current?.workflow.id).not.toBe(deletedWorkflowID);
-    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
     const afterDeletion = await runDuplicateCheck(page);
@@ -1850,18 +2457,24 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
   try {
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
-    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
     await runDuplicateCheck(page);
-    await page.getByRole("button", { name: "Screenshots" }).click();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
-    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("4 retained screenshot(s)")).toBeVisible();
+    const sourceCard = page.getByAltText("Screenshot 3").locator("../..");
+    const targetCard = page.getByAltText("Screenshot 1").locator("../..");
+    await expect(sourceCard).toHaveAttribute("draggable", "true");
+    await expect(targetCard).toHaveAttribute("draggable", "true");
     const reordered = waitForAppMethod(page, "ReorderReleaseWorkflowMedia");
-    await page
-      .getByAltText("Screenshot 3")
-      .locator("../..")
-      .dragTo(page.getByAltText("Screenshot 1").locator("../.."));
+    await sourceCard.hover();
+    await page.mouse.down();
+    // A second target move reliably delivers the dragover that accepts a native drop.
+    await targetCard.hover();
+    await targetCard.hover();
+    await page.mouse.up();
     expect((await reordered).ok()).toBe(true);
     const deselected = waitForAppMethod(page, "SetReleaseWorkflowMediaSelection");
     await page
@@ -1870,7 +2483,7 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
       .getByRole("button", { name: "Unselect" })
       .click();
     expect((await deselected).ok()).toBe(true);
-    await page.getByRole("button", { name: "Upload Images" }).click();
+    await page.getByRole("button", { name: "Upload Images", exact: true }).click();
     await page.getByRole("button", { name: "Prepare required hosts (3)" }).click();
     await expect(page.getByText("3 saved")).toBeVisible();
     expect(workspace.fake.counters.imageUploads).toBe(3);
@@ -1897,7 +2510,7 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
     await expect(page.getByLabel("Source path", { exact: true })).toHaveValue("");
     await expect(page.getByRole("button", { name: "Close input" })).toBeDisabled();
     await fetchMetadata(page, app.url, workspace.sourcePath);
-    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
     const restored = await runDuplicateCheck(page);
@@ -1913,10 +2526,10 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
         .map((artifact) => artifact.url)
         .sort(),
     ).toEqual(savedURLs);
-    await page.getByRole("button", { name: "Screenshots" }).click();
-    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await expect(page.getByText("4 retained screenshot(s)")).toBeVisible();
     await expect(page.getByAltText("Screenshot 1")).toBeVisible();
-    await page.getByRole("button", { name: "Upload Images" }).click();
+    await page.getByRole("button", { name: "Upload Images", exact: true }).click();
     await expect(page.getByText("3 saved")).toBeVisible();
     const reuseResponse = waitForAppMethod(page, "UploadReleaseWorkflowImages");
     await page.getByRole("button", { name: "Prepare required hosts (3)" }).click();
@@ -1939,6 +2552,38 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
     expect(workspace.fake.counters.imageUploads).toBe(3);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
     expect(workspace.fake.counters.clientInjections).toBe(0);
+
+    await app.stop();
+    await rm(path.join(workspace.root, "tmp"), { recursive: true });
+    app = await startApp(workspace, { seed: false });
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    const unavailable = await runDuplicateCheck(page);
+    expect(
+      unavailable.media?.artifacts.filter((artifact) => artifact.kind === "screenshot"),
+    ).toHaveLength(0);
+    const hosted = unavailable.media!.artifacts.filter(
+      (artifact) => artifact.kind === "hosted_image",
+    );
+    expect(hosted).toHaveLength(3);
+    expect(hosted.every((artifact) => artifact.sourceUnavailable)).toBe(true);
+    await page.getByRole("button", { name: "Upload Images" }).click();
+    await expect(page.getByText("3 saved")).toBeVisible();
+    const removedURL = hosted[0]!.url!;
+    await expect(page.getByRole("link", { name: removedURL, exact: true })).toBeVisible();
+    const removed = waitForAppMethod(page, "RemoveReleaseWorkflowHostedImages");
+    await page.getByRole("button", { name: "Remove published image 1", exact: false }).click();
+    expect((await removed).ok()).toBe(true);
+    await expect(page.getByText("2 saved")).toBeVisible();
+    await expect(page.getByRole("link", { name: removedURL, exact: true })).toHaveCount(0);
+    await page.reload();
+    await page.getByRole("button", { name: "Upload Images" }).click();
+    await expect(page.getByText("2 saved")).toBeVisible();
+    await expect(page.getByRole("link", { name: removedURL, exact: true })).toHaveCount(0);
+    expect(workspace.fake.counters.imageUploads).toBe(3);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {
     await app?.stop();
     await workspace.cleanup();
@@ -1959,7 +2604,7 @@ test("embedded HDR description opens a full-size lightbox without a saved previe
     await runDuplicateCheck(page);
     await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
-    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
     await page.getByRole("button", { name: "Upload Images", exact: true }).click();
     await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
     await expect(page.getByText("1 saved")).toBeVisible();
@@ -2026,17 +2671,17 @@ test("embedded web restores edited descriptions after reopening an input", async
     await page.clock.install();
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
-    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
     await runDuplicateCheck(page);
-    await page.getByRole("button", { name: "Screenshots" }).click();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
-    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
-    await page.getByRole("button", { name: "Upload Images" }).click();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
+    await page.getByRole("button", { name: "Upload Images", exact: true }).click();
     await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
     await expect(page.getByText("1 saved")).toBeVisible();
-    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
@@ -2113,11 +2758,11 @@ test("embedded web restores edited descriptions after reopening an input", async
     await page.goto(app.url);
     await expect(page.getByLabel("Source path", { exact: true })).toHaveValue("");
     await fetchMetadata(page, app.url, workspace.sourcePath);
-    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
     await runDuplicateCheck(page);
-    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue(editedDescription);
@@ -2140,6 +2785,144 @@ test("embedded web restores edited descriptions after reopening an input", async
   }
 });
 
+for (const scenario of [
+  { status: "completed", failed: "", skipped: "", attempts: 1, btn: "completed", hds: "completed" },
+  { status: "partial", failed: "HDS", skipped: "", attempts: 2, btn: "completed", hds: "failed" },
+  { status: "failed", failed: "BTN,HDS", skipped: "", attempts: 2, btn: "failed", hds: "failed" },
+  { status: "canceled", failed: "", skipped: "", attempts: 1, btn: "", hds: "" },
+  {
+    status: "skipped",
+    failed: "",
+    skipped: "BTN,HDS",
+    attempts: 1,
+    btn: "skipped",
+    hds: "skipped",
+  },
+] as const) {
+  test(`embedded web retains one ${scenario.status} dry run per explicit action`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace({ mediaKind: "tv", preparedMediaInfo: true });
+    const attemptsPath = path.join(path.dirname(workspace.dbPath), "tmp", "e2e-plan-attempts.txt");
+    workspace.env.UPBRR_E2E_PLAN_FAILURE_TRACKERS = scenario.failed;
+    workspace.env.UPBRR_E2E_PLAN_SKIP_TRACKERS = scenario.skipped;
+    workspace.env.UPBRR_E2E_RECORD_PLAN_ATTEMPTS = "1";
+    if (scenario.status === "canceled") workspace.env.UPBRR_E2E_WAIT_FOR_PLAN_CANCELLATION = "1";
+    let app: AppServer | undefined;
+    try {
+      app = await startApp(workspace);
+      await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+      await page.getByRole("button", { name: "Dupe Check" }).click();
+      await page.getByRole("checkbox", { name: "HDS" }).check();
+      await runDuplicateCheck(page);
+      await page.getByRole("button", { name: "Screenshots" }).click();
+      await page.getByRole("button", { name: "Generate screenshots" }).click();
+      await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
+      await page.getByRole("button", { name: "Descriptions" }).click();
+      await page.getByRole("button", { name: "Refresh descriptions" }).click();
+      await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: "Upload", exact: true }).click();
+      await page.getByLabel("Skip client injection").check();
+
+      const dryRun = page.getByRole("button", { name: "Run dry run", exact: true });
+      const reportStatus = page
+        .getByRole("heading", { name: "Tracker uploads" })
+        .locator("..")
+        .getByText(scenario.status, { exact: true });
+      let previousReportID: string | undefined;
+      for (let attempt = 1; attempt <= scenario.attempts; attempt++) {
+        await dryRun.click();
+        if (scenario.status === "canceled") {
+          await expect.poll(() => readFile(attemptsPath, "utf8").catch(() => "")).toBe("attempt\n");
+          const activeResponse = await page
+            .context()
+            .request.get(new URL("api/app/GetActiveInput", app.url).toString());
+          expect(activeResponse.ok()).toBe(true);
+          const active = ((await activeResponse.json()) as ActiveInputSnapshot).current!;
+          expect(active.operation?.operation).toBe("upload_dry_run");
+          const authResponse = await page
+            .context()
+            .request.get(new URL("api/auth/status", app.url).toString());
+          expect(authResponse.ok()).toBe(true);
+          const { csrfToken } = (await authResponse.json()) as { csrfToken: string };
+          const canceled = await page
+            .context()
+            .request.post(new URL("api/app/CancelReleaseWorkflowOperation", app.url).toString(), {
+              headers: { Origin: new URL(app.url).origin, "X-CSRF-Token": csrfToken },
+              data: { workflowId: active.workflow.id, operationId: active.operation!.id },
+            });
+          expect(canceled.status()).toBe(200);
+          await expect
+            .poll(async () => {
+              const response = await page
+                .context()
+                .request.get(new URL("api/app/GetActiveInput", app!.url).toString());
+              expect(response.ok()).toBe(true);
+              const snapshot = (await response.json()) as ActiveInputSnapshot;
+              return snapshot.current?.operation?.status;
+            })
+            .toBe("canceled");
+          await expect(dryRun).toBeEnabled();
+          expect(await readFile(attemptsPath, "utf8")).toBe("attempt\n");
+          expect(workspace.fake.counters.clientInjections).toBe(0);
+          expect(workspace.fake.counters.trackerUploads).toBe(0);
+          break;
+        }
+        await expect(reportStatus).toBeVisible();
+        await expect(dryRun).toBeEnabled();
+        expect(await readFile(attemptsPath, "utf8")).toBe("attempt\n".repeat(attempt));
+        const response = await page
+          .context()
+          .request.get(new URL("api/app/GetActiveInput", app.url).toString());
+        expect(response.ok()).toBe(true);
+        const snapshot = (await response.json()) as ActiveInputSnapshot;
+        const report = snapshot.current?.dryRun;
+        expect(report).toMatchObject({ status: scenario.status, noSeed: true });
+        expect(report?.reports).toEqual([
+          expect.objectContaining({ trackerId: "BTN", status: scenario.btn }),
+          expect.objectContaining({ trackerId: "HDS", status: scenario.hds }),
+        ]);
+        expect(report?.id).not.toBe(previousReportID);
+        previousReportID = report!.id;
+        expect(workspace.fake.counters.clientInjections).toBe(0);
+        expect(workspace.fake.counters.trackerUploads).toBe(0);
+      }
+
+      const restored = waitForAppMethod(page, "GetActiveInput");
+      await page.reload();
+      const current = await activeCurrentFromResponse(await restored);
+      expect(current.dryRun?.id).toBe(previousReportID);
+      if (scenario.status === "canceled") {
+        expect(current.operation?.status).toBe("canceled");
+      } else {
+        await expect(reportStatus).toBeVisible();
+      }
+      await expect(dryRun).toBeEnabled();
+      expect(await readFile(attemptsPath, "utf8")).toBe("attempt\n".repeat(scenario.attempts));
+      expect(workspace.fake.counters.clientInjections).toBe(0);
+      expect(workspace.fake.counters.trackerUploads).toBe(0);
+      if (scenario.status === "partial") {
+        await page.getByLabel("Skip client injection").check();
+        const upload = page.getByRole("button", { name: "Start upload", exact: true });
+        await expect(upload).toBeEnabled();
+        await upload.click();
+        await expect(page.getByRole("heading", { name: "Workflow upload result" })).toBeVisible();
+        expect(workspace.fake.counters.trackerUploads).toBe(1);
+        expect(
+          workspace.fake.trackerUploadBodies.map(
+            (body) => /name="tracker"\r\n\r\n([^\r\n]+)/.exec(body.toString("latin1"))?.[1],
+          ),
+        ).toEqual(["BTN"]);
+        expect(workspace.fake.counters.clientInjections).toBe(0);
+        expect(await readFile(attemptsPath, "utf8")).toBe("attempt\n".repeat(scenario.attempts));
+      }
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}
+
 test("embedded web reports an optional tracker dry run after a duplicate override", async ({
   page,
 }) => {
@@ -2149,13 +2932,13 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
   try {
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
-    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
     const checked = await runDuplicateCheck(page);
     const workflowID = checked.workflow.id;
     await expect(page.getByText("Example.Release.2026.1080p-GRP")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Screenshots" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Screenshots", exact: true })).toBeDisabled();
     const restored = waitForAppMethod(page, "GetActiveInput");
     await page.goto(new URL("screenshots", app.url).toString());
     const current = await activeCurrentFromResponse(await restored);
@@ -2176,10 +2959,10 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
       snapshot.current?.dupes?.results.find((result) => result.trackerId === "HDS")?.decision,
     ).toBe("ignored");
 
-    await page.getByRole("button", { name: "Screenshots" }).click();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
-    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
-    await page.getByRole("button", { name: "Descriptions" }).click();
+    await expect(page.getByText("1 retained screenshot(s)")).toBeVisible();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
@@ -2191,10 +2974,8 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await expect(page.getByRole("heading", { name: "Tracker uploads" })).toBeVisible();
     await expect(page.getByText("HDS").first()).toBeVisible();
     await page.getByRole("button", { name: "Expand HDS" }).click();
-    await expect(
-      page.getByText(/Client injection: skipped · Client injection deferred/),
-    ).toBeVisible();
-    expect(workspace.fake.counters.clientInjections).toBe(0);
+    await expect(page.getByText(/Client injection: completed/)).toBeVisible();
+    expect(workspace.fake.counters.clientInjections).toBe(1);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
 
     await page.getByLabel("Skip client injection").check();
@@ -2202,7 +2983,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await expect(
       page.getByText(/Client injection: skipped · Client injection disabled/),
     ).toBeVisible();
-    expect(workspace.fake.counters.clientInjections).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(1);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {
     await app?.stop();
@@ -2217,7 +2998,7 @@ test("embedded web renders mixed, incomplete, and manual duplicate evidence", as
   try {
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
-    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     for (const tracker of ["HDS", "PTP"]) {
       await page.getByRole("checkbox", { name: tracker }).check();
@@ -2320,7 +3101,7 @@ test("embedded web tracks BDMV playlist preparation and opens duplicate checking
     ).toBeLessThanOrEqual(0);
     await page.setViewportSize({ width: 1280, height: 720 });
     await expect(page.getByText("Blu-ray analysis complete.")).toHaveCount(0);
-    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "AITHER" }).check();
     await runDuplicateCheck(page);
@@ -2341,43 +3122,43 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, sourcePath);
     await expect(page.getByText(/Prepared source: 2 DVD discs/i)).toBeVisible();
-    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
     await runDuplicateCheck(page);
     await expect(page.getByText("HDS").first()).toBeVisible();
 
-    await page.getByRole("button", { name: "Screenshots" }).click();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     await expect(page.getByText(/^Frame Selection · 4 frames$/)).toBeVisible();
     const screenshotCaptureResponse = page.waitForResponse((response) =>
       response.url().includes("/api/app/ContinueReleaseWorkflow"),
     );
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect((await screenshotCaptureResponse).ok()).toBe(true);
-    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByText("4 retained screenshot(s)")).toBeVisible();
     await expect(page.getByAltText(/^Disc [12] screenshot \d$/)).toHaveCount(4);
     await expect(page.getByRole("heading", { name: "Disc 1" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Disc 2" })).toBeVisible();
     await expect(page.getByText("Action required")).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Upload Images" }).click();
+    await page.getByRole("button", { name: "Upload Images", exact: true }).click();
     await expect(page.getByRole("button", { name: "Prepare required hosts (4)" })).toBeEnabled();
     await page.getByRole("button", { name: "Prepare required hosts (4)" }).click();
     await expect.poll(() => workspace.fake.counters.imageUploads).toBe(4);
     await expect(page.getByText("4 saved")).toBeVisible();
 
-    await page.getByRole("button", { name: "Menu Images" }).click();
+    await page.getByRole("button", { name: "Menu Images", exact: true }).click();
     await expect(page.getByRole("button", { name: "Capture DVD menus" })).toBeVisible();
     await expect(page.getByText("0 captured menu image(s)")).toBeVisible();
 
-    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await expect(page.getByRole("button", { name: "Refresh descriptions" })).toBeEnabled();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
     await expect(page.getByText("Action required")).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Menu Images" }).click();
+    await page.getByRole("button", { name: "Menu Images", exact: true }).click();
     const captureResponse = page.waitForResponse(
       (response) =>
         response.url().includes("/api/app/ContinueReleaseWorkflow") &&
@@ -2391,16 +3172,16 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     await expect(page.getByRole("heading", { name: "Disc 2" })).toBeVisible();
 
     await page.reload();
-    await page.getByRole("button", { name: "Screenshots" }).click();
-    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await expect(page.getByText("4 retained screenshot(s)")).toBeVisible();
     await expect(page.getByAltText(/^Disc [12] screenshot \d$/)).toHaveCount(4);
 
-    await page.getByRole("button", { name: "Upload Images" }).click();
+    await page.getByRole("button", { name: "Upload Images", exact: true }).click();
     await page.getByRole("button", { name: /^Prepare required hosts \(\d+\)$/ }).click();
     await expect.poll(() => workspace.fake.counters.imageUploads).toBe(6);
     await expect(page.getByText("6 saved")).toBeVisible();
 
-    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await expect(page.getByRole("button", { name: "Refresh descriptions" })).toBeEnabled();
     await page.getByRole("button", { name: "Expand" }).click();

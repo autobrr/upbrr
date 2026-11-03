@@ -625,10 +625,15 @@ for (const theme of ["minimal", "swizzin"]) {
           }
           const screenshots = settings.getByRole("region", { name: "Screenshot layout" });
           await expect(screenshots.locator("input")).toHaveCount(4);
-          const header = settings.getByRole("textbox", { name: "Tonemapped Header", exact: true });
+          const header = settings.getByRole("textbox", {
+            name: "Tone-mapped screenshot notice",
+            exact: true,
+          });
           await expect(header).toHaveJSProperty("tagName", "TEXTAREA");
           if (width >= 1440) {
-            const columns = screenshots.getByRole("textbox", { name: "Screens Per Row" });
+            const columns = screenshots.getByRole("textbox", {
+              name: "Screenshots per description row",
+            });
             expect((await columns.boundingBox())?.y).toBe((await numeric.boundingBox())?.y);
             expect((await columns.boundingBox())?.x).toBeGreaterThan(
               (await numeric.boundingBox())!.x,
@@ -661,7 +666,7 @@ for (const theme of ["minimal", "swizzin"]) {
             await settings.getByRole("switch", { name: "Show advanced" }).click();
             await expect(
               settings.getByRole("heading", { name: "Limits and processing" }),
-            ).toBeVisible();
+            ).toHaveCount(0);
             await expect(header).toHaveValue(text);
             await page.getByRole("button", { name: "Save", exact: true }).click();
             await expect(
@@ -862,21 +867,21 @@ test("inventory rendered controls across routes and settings sections", async ({
     await page.goto(new URL("settings", app.url).toString());
     await page.getByRole("heading", { level: 1 }).first().waitFor();
     const sections = [
-      "Main",
+      "General",
       "Image Hosting",
       "Metadata",
-      "Screens",
+      "Screenshot capture",
       "Description",
-      "Arr",
+      "Sonarr and Radarr",
       "Post Upload",
       "Trackers",
       "Torrent Clients",
       "Client Handling",
-      "Torrent Specific",
+      "Torrent preparation",
       "Appearance",
       "Application Details",
       "API Tokens",
-      "Tracker Auth",
+      "Tracker authentication",
     ];
     for (const section of sections) {
       await page
@@ -2250,8 +2255,8 @@ test("capture all settings subsections and their visible controls", async ({ pag
       "Tone mapping",
       "Processing and compression",
     ],
-    Description: ["Content", "Screenshot layout", "Custom headers", "Limits and processing"],
-    Arr: ["Sonarr", "Radarr", "Media paths"],
+    Description: ["Content", "Screenshot layout", "Custom headers"],
+    Arr: ["Sonarr", "Radarr"],
     "Post Upload": ["Tracker handling", "Upload output", "Cross-seeding", "Client injection"],
     Trackers: ["Connection and credentials", "Upload preferences", "Client handling"],
     "Torrent Clients": ["Connection", "Folders", "Labels and tags", "Linking and path mapping"],

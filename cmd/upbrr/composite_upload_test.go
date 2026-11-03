@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -143,6 +144,75 @@ func TestCLICompositeMediaUsesConfiguredScreenshotsUnlessOverridden(t *testing.T
 				t.Fatalf("media screenshots = %#v, want count %d frames %v", mapped.Media.Screenshots, tc.count, tc.frames)
 			}
 		})
+	}
+}
+
+func TestCLICompositeBlockedMediaStopsWithoutTrackerFeedback(t *testing.T) {
+	t.Parallel()
+
+	const prompt = "Capture, select, or host the required release images before continuing."
+	failure := api.OperationFailure{
+		Code:      api.OperationFailureInternal,
+		Operation: api.OperationKindMedia,
+		Message:   "Screenshot capture failed. Repair source media before retrying.",
+		Recovery:  api.OperationRecoveryRetry,
+	}
+	for _, interaction := range []api.InteractionMode{
+		api.InteractionModeInteractive,
+		api.InteractionModeUnattended,
+		api.InteractionModeUnattendedConfirm,
+	} {
+		for _, withFailure := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/failure=%t", interaction, withFailure), func(t *testing.T) {
+				t.Parallel()
+				action := api.RequiredAction{
+					ID:               "media-required",
+					Kind:             api.RequiredActionProvideTrackerInput,
+					Status:           api.RequiredActionStatusPending,
+					WorkflowRevision: 3,
+					Prompt:           prompt,
+				}
+				media := &api.MediaArtifactSet{Status: api.StageStatusBlocked}
+				if withFailure {
+					media.Failures = []api.WorkflowFailure{{Failure: failure}}
+				}
+				coreSvc := &cliWorkflowCoreFake{current: releaseworkflow.CommandResult{
+					Workflow: api.ReleaseWorkflow{
+						ID:       "workflow-media-blocked",
+						Revision: 3,
+						Status:   api.WorkflowStatusBlocked,
+					},
+					Media:        media,
+					Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{action}},
+				}}
+				var output strings.Builder
+				session := &cliWorkflowSession{
+					core:    coreSvc,
+					intent:  cliWorkflowIntent{interaction: interaction},
+					streams: cliIO{out: &output},
+					uploadRequest: api.Request{
+						SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+						Options:    api.UploadOptions{InteractionMode: interaction},
+					},
+				}
+				// A nil reader makes any accidental questionnaire prompt fail the test.
+				uploaded, err := session.completeComposite(t.Context(), false, nil, config.Config{}, api.NopLogger{})
+				if err == nil || uploaded != 0 || len(coreSvc.uploadFeedback) != 0 {
+					t.Fatalf("blocked media = uploaded:%d feedback:%d err:%v", uploaded, len(coreSvc.uploadFeedback), err)
+				}
+				if strings.Contains(err.Error(), "outside tracker projection feedback") || output.Len() != 0 {
+					t.Fatalf("media recovery entered tracker feedback: err:%v output:%q", err, output.String())
+				}
+				if withFailure {
+					got, ok := api.AsOperationFailure(err)
+					if !ok || got != failure || formatCLIError(err) != failure.Message+" (recovery: retry)" {
+						t.Fatalf("media recovery was lost: failure:%#v err:%v", got, err)
+					}
+				} else if !strings.Contains(err.Error(), prompt) || !strings.Contains(err.Error(), "media blocked") {
+					t.Fatalf("media recovery prompt was lost: %v", err)
+				}
+			})
+		}
 	}
 }
 
@@ -643,15 +713,18 @@ func TestCLICompositeTrackerFeedbackConfirmsOrEditsReleaseName(t *testing.T) {
 					Trackers: []string{"AR"},
 				},
 				current: releaseworkflow.CommandResult{
+					Media: &api.MediaArtifactSet{Status: api.StageStatusBlocked},
 					Projections: &api.TrackerReleaseProjectionSet{
 						Projections: []api.TrackerReleaseProjection{{TrackerID: "AR"}},
 					},
 				},
 			}
-			feedback, declined, err := session.collectCompositeTrackerFeedback(
+			feedback, declined, err := session.collectCompositeUploadFeedback(
+				t.Context(),
 				bufio.NewReader(strings.NewReader(test.input)),
+				config.Config{},
+				api.NopLogger{},
 				action,
-				api.ReleaseWorkflowUploadFeedback{},
 			)
 			if err != nil {
 				t.Fatalf("collect tracker feedback: %v", err)
@@ -1001,6 +1074,7 @@ func TestCLICompositeTrackerFeedbackCollectsCurrentLateQuestionnaire(t *testing.
 				uploadRequest: api.Request{Trackers: []string{test.tracker}, TrackerQuestionnaireAnswers: map[string]map[string]string{test.tracker: {test.key: test.previous}}},
 				current: releaseworkflow.CommandResult{
 					Workflow: api.ReleaseWorkflow{ID: "workflow"},
+					Media:    &api.MediaArtifactSet{Status: api.StageStatusBlocked},
 					Projections: &api.TrackerReleaseProjectionSet{
 						ID:          "projection",
 						Revision:    3,
@@ -1018,7 +1092,7 @@ func TestCLICompositeTrackerFeedbackCollectsCurrentLateQuestionnaire(t *testing.
 					},
 				},
 			}
-			feedback, declined, err := session.collectCompositeTrackerFeedback(bufio.NewReader(strings.NewReader(test.answer+"\n")), api.RequiredAction{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: api.TrackerID(test.tracker)}, api.ReleaseWorkflowUploadFeedback{})
+			feedback, declined, err := session.collectCompositeUploadFeedback(t.Context(), bufio.NewReader(strings.NewReader(test.answer+"\n")), config.Config{}, api.NopLogger{}, api.RequiredAction{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: api.TrackerID(test.tracker)})
 			if err != nil || declined || feedback.Response.Questionnaire == nil {
 				t.Fatalf("late questionnaire feedback=%+v declined=%t error=%v", feedback, declined, err)
 			}

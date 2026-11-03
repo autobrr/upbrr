@@ -53,6 +53,22 @@ func TestUnit3DSearchEntriesDeriveHDRFromMediaInfo(t *testing.T) {
 	}
 }
 
+func TestUnit3DStructuredTypeCarriesThreeDWithoutNameMarker(t *testing.T) {
+	var payload unit3dSearchResponse
+	if err := json.Unmarshal([]byte(`{"data":[{"id":1,"attributes":{"name":"Example.2026.1080p.BluRay-GRP","type":"Blu-ray 3D","resolution":"1080p"}}]}`), &payload); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := buildUnit3DSearchEntries(payload.Data, 0, true)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d", len(entries))
+	}
+	result := dupe.Evaluate(api.TrackerDuplicateTarget{}, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entries[0], "EXAMPLE")},
+		trackers.DupePolicy{ID: "synthetic-v1"}, dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+	if fact := result.Candidates[0].Facts.ThreeD; fact.Value != "3d" || fact.Status != dupe.FactComplete {
+		t.Fatalf("structured type evidence = %+v", fact)
+	}
+}
+
 func TestUnit3DEntriesDeriveCompleteHDRFromRecognizableTitles(t *testing.T) {
 	t.Parallel()
 

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -77,6 +78,71 @@ func (m *Module) LegacyRecoveryWorkflowIDs(ctx context.Context, ownerID string) 
 		return nil, fmt.Errorf("release workflow list recovery workflows: %w", err)
 	}
 	return workflowIDs, nil
+}
+
+// LegacyRecoveryWorkflowIDsForSource selects unresolved owner workflows for one
+// source. Missing or contradictory retained source authority remains blocking.
+// This query never claims an input, reconciles an effect, or resumes work.
+func (m *Module) LegacyRecoveryWorkflowIDsForSource(ctx context.Context, ownerID, source string) ([]api.WorkflowID, error) {
+	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(source) == "" {
+		return nil, errors.New("release workflow: recovery owner and source are required")
+	}
+	ids, err := m.durability.ListLegacyRecoveryWorkflowIDs(ctx, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("release workflow list source recovery workflows: %w", err)
+	}
+	selected := make([]api.WorkflowID, 0, len(ids))
+	for _, id := range ids {
+		state, err := m.repository.Load(ctx, ownerID, id)
+		if err != nil && !errors.Is(err, ErrWorkflowNotFound) {
+			return nil, fmt.Errorf("release workflow read recovery source: %w", err)
+		}
+		if err != nil {
+			selected = append(selected, id)
+			continue
+		}
+		bound, known := workflowRecoverySourcePath(&state)
+		if !known || pathing.SamePath(bound, source) {
+			selected = append(selected, id)
+		}
+	}
+	return selected, nil
+}
+
+func workflowRecoverySourcePath(state *State) (string, bool) {
+	paths := []string{state.SourcePath}
+	if state.PreparationInput != nil {
+		paths = append(paths, state.PreparationInput.SourcePath)
+	}
+	if ref := state.Workflow.Release; ref != nil {
+		release, ok := state.Releases[ref.ID]
+		if !ok || release.Revision != ref.Revision {
+			return "", false
+		}
+		paths = append(paths, release.Release.Source.SourcePath)
+	}
+	var source string
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		if source != "" && !pathing.SamePath(source, path) {
+			return "", false
+		}
+		source = path
+	}
+	return source, source != ""
+}
+
+func (m *Module) requireInputSourceReconciled(ctx context.Context, owner, source string) error {
+	ids, err := m.LegacyRecoveryWorkflowIDsForSource(ctx, owner, source)
+	if err != nil {
+		return err
+	}
+	if len(ids) != 0 {
+		return api.ErrReleaseWorkflowEffectOutcomeUnknown
+	}
+	return nil
 }
 
 func (m *Module) claimLegacyRecoverySlot(

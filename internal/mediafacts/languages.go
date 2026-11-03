@@ -140,13 +140,22 @@ func InspectedProgrammeStatus(facts api.LanguageFacts) api.MetadataEvidenceStatu
 
 func knownLanguages(values []string) bool {
 	return len(values) > 0 && !slices.ContainsFunc(values, func(value string) bool {
-		code := languageutil.NormalizeLanguageCode(value)
-		return code == "" || code == "und" || code == "mul"
+		return !languageutil.IsIdentifiedLanguage(value)
 	})
 }
 
 func sameLanguages(left, right []string) bool {
-	return len(left) == len(right) && !slices.ContainsFunc(left, func(value string) bool { return !slices.Contains(right, value) })
+	for _, value := range left {
+		if !languageutil.ContainsLanguage(right, value) {
+			return false
+		}
+	}
+	for _, value := range right {
+		if !languageutil.ContainsLanguage(left, value) {
+			return false
+		}
+	}
+	return true
 }
 
 func subtitleBaseLanguages(values []string) []string {
@@ -160,14 +169,14 @@ func subtitleBaseLanguages(values []string) []string {
 
 func fullSubtitleLanguages(media api.MediaFacts) []string {
 	var full []string
-	forcedOnly := map[string]bool{}
+	var forcedOnly []string
 	for _, value := range languageutil.NormalizeLanguageList(media.SubtitleLanguages) {
 		language, coverage := languageutil.SubtitleLanguageParts(value)
 		switch strings.ToLower(coverage) {
 		case "full":
 			full = append(full, language)
 		case "forced":
-			forcedOnly[language] = true
+			forcedOnly = append(forcedOnly, language)
 		}
 	}
 	for _, track := range media.Tracks {
@@ -176,10 +185,10 @@ func fullSubtitleLanguages(media api.MediaFacts) []string {
 		}
 		for _, value := range track.Languages {
 			language, coverage := languageutil.SubtitleLanguageParts(value)
-			if strings.EqualFold(coverage, "Forced") || (media.SubtitleLanguagesProvenance.IsManual() && forcedOnly[language]) {
+			if strings.EqualFold(coverage, "Forced") || (media.SubtitleLanguagesProvenance.IsManual() && languageutil.ContainsLanguage(forcedOnly, language)) {
 				continue
 			}
-			if slices.Contains(subtitleBaseLanguages(media.SubtitleLanguages), language) {
+			if languageutil.ContainsLanguage(subtitleBaseLanguages(media.SubtitleLanguages), language) {
 				full = append(full, language)
 			}
 		}

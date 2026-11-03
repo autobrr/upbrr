@@ -19,6 +19,9 @@ import (
 // Its missing-IMDb metadata result is advisory and does not block upload.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe: trackers.ConnectionProbe{Test: testConnection, DraftConfig: func(cfg config.TrackerConfig) config.TrackerConfig {
+			return config.TrackerConfig{PTPAPIUser: cfg.PTPAPIUser, PTPAPIKey: cfg.PTPAPIKey}
+		}},
 		ProjectionQuestionnaire: projectionQuestionnaire,
 		Name:                    "PTP",
 		BaseURL:                 ptpBaseURL,
@@ -39,7 +42,7 @@ func Profile() standalone.Profile {
 		Rules:               &trackers.RuleSet{RequireMovieOnly: true},
 		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
-		DataPolicy:          &trackers.DataLookupPolicy{Cooldown: time.Minute},
+		DataPolicy:          &trackers.DataLookupPolicy{Cooldown: time.Minute, LegacyExternalIDsNeedRefresh: true},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{Requirements: []trackers.MetadataRequirement{{
 			Scope:       trackers.MetadataScopeAny,
 			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly},

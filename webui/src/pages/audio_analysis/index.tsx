@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { FieldHelp } from "../../components/ui/field-help";
 import { pageStyle } from "../../components/ui/pageStyle";
 import { useMemo, useState } from "react";
 import { Select } from "../../components/ui/select";
@@ -102,9 +103,18 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
         </div>
 
         {resourceIDs.length > 1 ? (
-          <label className="grid gap-1">
-            <span>Prepared resource</span>
+          <div className="grid gap-1">
+            <span className="flex flex-wrap items-center gap-1">
+              <label htmlFor="audio-resource">Prepared resource</label>
+              <FieldHelp label="Prepared resource" id="audio-resource-help">
+                Choose which prepared media resource supplies the tracks. Track selection is reset
+                when you change resources. All and Selected apply only to the chosen resource;
+                analysis remains bound to this prepared generation.
+              </FieldHelp>
+            </span>
             <Select
+              aria-describedby="audio-resource-help"
+              id="audio-resource"
               value={effectiveResourceID}
               disabled={mutationsBlocked}
               onChange={(event) => {
@@ -118,15 +128,26 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                 </option>
               ))}
             </Select>
-          </label>
+          </div>
         ) : null}
 
-        <fieldset className="grid gap-2" disabled={mutationsBlocked}>
-          <legend>Tracks</legend>
+        <fieldset className="grid gap-2" aria-label="Tracks" disabled={mutationsBlocked}>
+          <legend>
+            <span className="inline-flex items-center gap-1">
+              Tracks
+              <FieldHelp label="Audio track selection" id="audio-tracks-help">
+                Primary uses the prepared primary track and is unavailable when none exists in this
+                resource. All selects every inspected track in this resource, including commentary.
+                Selected lets you choose individual tracks. This does not change the release's
+                primary audio or remove tracks.
+              </FieldHelp>
+            </span>
+          </legend>
           <div className="flex flex-wrap items-center gap-4">
             <label className="inline-flex min-h-9 cursor-pointer items-center gap-2">
               <input
                 type="radio"
+                aria-describedby="audio-tracks-help"
                 name="audio-analysis-selection"
                 value="primary"
                 checked={selection === "primary"}
@@ -138,6 +159,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
             <label className="inline-flex min-h-9 cursor-pointer items-center gap-2">
               <input
                 type="radio"
+                aria-describedby="audio-tracks-help"
                 name="audio-analysis-selection"
                 value="all"
                 checked={selection === "all"}
@@ -148,6 +170,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
             <label className="inline-flex min-h-9 cursor-pointer items-center gap-2">
               <input
                 type="radio"
+                aria-describedby="audio-tracks-help"
                 name="audio-analysis-selection"
                 value="selected"
                 checked={selection === "selected"}
@@ -155,9 +178,18 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               />{" "}
               Selected
             </label>
-            <label className="flex min-h-9 basis-full items-center gap-2 whitespace-nowrap sm:basis-auto">
-              <span>Threads per decoder</span>
+            <div className="flex min-h-9 basis-full items-center gap-2 whitespace-nowrap sm:basis-auto">
+              <span className="flex flex-wrap items-center gap-1">
+                <label htmlFor="audio-threads">Threads per decoder</label>
+                <FieldHelp label="Threads per decoder" id="audio-threads-help">
+                  Maximum FFmpeg threads per selected audio decoder. Default: 2; choose 1, 2, 4, 8
+                  or 16 here. Higher values may not be faster. Changing this setting starts fresh
+                  analysis rather than reusing incompatible outputs.
+                </FieldHelp>
+              </span>
               <Select
+                aria-describedby="audio-threads-help"
+                id="audio-threads"
                 className="max-w-20 min-w-20"
                 value={decoderThreads}
                 onChange={(event) => setDecoderThreads(Number(event.target.value))}
@@ -168,7 +200,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                   </option>
                 ))}
               </Select>
-            </label>
+            </div>
           </div>
           {selection === "selected" && requestedTrackIDs.length === 0 ? (
             <p className={pageStyle.error} role="alert">
@@ -181,6 +213,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                 {selection === "selected" ? (
                   <input
                     type="checkbox"
+                    aria-describedby="audio-tracks-help"
                     checked={selected.has(track.ID)}
                     onChange={(event) => toggleSelectedTrack(track.ID, event.target.checked)}
                   />
@@ -205,8 +238,18 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
           </div>
         </fieldset>
 
-        <fieldset className="grid gap-2" disabled={mutationsBlocked}>
-          <legend>Outputs</legend>
+        <fieldset className="grid gap-2" aria-label="Outputs" disabled={mutationsBlocked}>
+          <legend>
+            <span className="inline-flex items-center gap-1">
+              Outputs
+              <FieldHelp label="Audio outputs" id="audio-outputs-help">
+                Waveform shows amplitude over time; Spectrogram shows frequency content over time.
+                Each image stacks channels separately. Amplitude statistics supplies decoded sample
+                measurements as text. Choose at least one output; analysis does not convert or
+                replace source audio.
+              </FieldHelp>
+            </span>
+          </legend>
           <div className="flex flex-wrap gap-4">
             {[
               ["waveform", "Waveform"],
@@ -219,6 +262,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               >
                 <input
                   type="checkbox"
+                  aria-describedby="audio-outputs-help"
                   checked={variants.includes(variant)}
                   onChange={(event) => toggleVariant(variant, event.target.checked)}
                 />{" "}
@@ -233,18 +277,39 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
           ) : null}
         </fieldset>
 
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="font-medium">Analysis actions</span>
+          <FieldHelp label="Audio analysis actions" id="audio-actions-help">
+            Generate uses the selected tracks and outputs; Generate again uses the current choices.
+            Retry failed work regenerates missing or failed variants when the retained request is
+            compatible. Cancel stops active work. Disable waits for work to stop and hides the
+            current result without immediately deleting retained files. Progress is completed work,
+            not a time estimate.
+          </FieldHelp>
+        </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" disabled={!canGenerate} onClick={() => void generate()}>
+          <button
+            aria-describedby="audio-actions-help"
+            type="button"
+            disabled={!canGenerate}
+            onClick={() => void generate()}
+          >
             {view.result ? "Generate again" : "Generate"}
           </button>
           {busy ? (
-            <button type="button" className="secondary" onClick={() => void facet.cancel()}>
+            <button
+              aria-describedby="audio-actions-help"
+              type="button"
+              className="secondary"
+              onClick={() => void facet.cancel()}
+            >
               Cancel
             </button>
           ) : null}
           {view.enabled ? (
             <button
               type="button"
+              aria-describedby="audio-actions-help"
               className="secondary"
               disabled={Boolean(view.mutationBlockedReason)}
               onClick={() => void facet.disable()}
@@ -255,7 +320,12 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
           {view.result &&
           ["partial", "failed", "canceled", "interrupted"].includes(view.result.status) &&
           !mutationsBlocked ? (
-            <button type="button" className="secondary" onClick={() => void facet.retry()}>
+            <button
+              aria-describedby="audio-actions-help"
+              type="button"
+              className="secondary"
+              onClick={() => void facet.retry()}
+            >
               Retry failed work
             </button>
           ) : null}
@@ -296,12 +366,24 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
       {view.result ? (
         <section className="grid gap-4" aria-labelledby="audio-analysis-results">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="audio-analysis-results">Results</h2>
+            <div className="flex items-center gap-1">
+              <h2 id="audio-analysis-results">Results</h2>
+              <FieldHelp label="Audio analysis results" id="audio-results-help">
+                Each track and output has its own outcome. Partial results can retain successful
+                outputs alongside failures. Open an image to preview it at full size or download its
+                native PNG; statistics can be read here or downloaded as text. These measurements do
+                not establish source quality or tracker eligibility.
+              </FieldHelp>
+            </div>
             <span className="text-muted-foreground">{view.result.status}</span>
           </div>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))] items-start gap-3">
             {view.result.tracks.map((track) => (
-              <article key={track.trackId} className={`${pageStyle.panel} grid min-w-0 gap-3`}>
+              <article
+                key={track.trackId}
+                aria-describedby="audio-results-help"
+                className={`${pageStyle.panel} grid min-w-0 gap-3`}
+              >
                 <div>
                   <h3 className="break-words">{trackLabel(track.ordinal, track.title || "")}</h3>
                   <p className="text-muted-foreground">

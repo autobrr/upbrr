@@ -27,13 +27,15 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
 		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
 	}
-	needsOriginal := slices.ContainsFunc(facts.ProgrammeLanguages, func(language string) bool { return language != "English" && language != "ZXX" })
+	needsOriginal := slices.ContainsFunc(facts.ProgrammeLanguages, func(language string) bool {
+		return !languageutil.SameLanguage(language, "English") && !languageutil.SameLanguage(language, "ZXX")
+	})
 	switch {
 	case (needsOriginal && !facts.OriginalLanguagesKnown) || programmeStatus != api.MetadataEvidenceStatusComplete:
 		add("evidence", "original/programme language and track-role evidence is unresolved", trackers.LanguageUnresolved)
-	case !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English") && facts.HasUnresolvedProgrammeAudioOrigin():
+	case !facts.HasOriginalAudio() && !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") && facts.HasUnresolvedProgrammeAudioOrigin():
 		failures = append(failures, trackers.ProgrammeAudioOriginFailures(subject)...)
-	case len(facts.ProgrammeLanguages) > 0 && !facts.HasOriginalAudio() && !slices.Contains(facts.ProgrammeLanguages, "English"):
+	case len(facts.ProgrammeLanguages) > 0 && !facts.HasOriginalAudio() && !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English"):
 		add("non_english_dub", "Non-English Language Dub; a replacement must resolve this defect", trackers.LanguageTrumpable)
 	}
 	failures = append(failures, ptpRemuxLanguageFailures(subject)...)
@@ -50,7 +52,7 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		failures = append(failures, failure)
 	}
 	primary := ptpPrimaryProgrammeLanguage(facts)
-	if primary == "" && programmeStatus == api.MetadataEvidenceStatusComplete && !slices.Contains(facts.SubtitleLanguages, "English") {
+	if primary == "" && programmeStatus == api.MetadataEvidenceStatusComplete && !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") {
 		failure := trackers.LanguageRuleFailure(
 			subject,
 			"primary_evidence",
@@ -60,7 +62,8 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
 		failures = append(failures, failure)
 	}
-	if primary != "" && primary != "English" && primary != "ZXX" && !slices.Contains(facts.SubtitleLanguages, "English") {
+	if primary != "" && !languageutil.SameLanguage(primary, "English") && !languageutil.SameLanguage(primary, "ZXX") &&
+		!languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") {
 		failure := trackers.LanguageRuleFailure(
 			subject,
 			"english_subtitles",
@@ -126,8 +129,8 @@ func ptpAnimeRemuxProgrammeIssue(facts api.LanguageFacts) (string, trackers.Lang
 		if len(track.Languages) != 1 {
 			return "anime remux programme-track languages do not establish the one-Japanese/one-English track count", trackers.LanguageUnresolved
 		}
-		language := languageutil.NormalizeLanguageLabel(track.Languages[0])
-		if (language != "Japanese" && language != "English") || seen[language] {
+		language := languageutil.NormalizeLanguageCode(track.Languages[0])
+		if (language != "ja" && language != "en") || seen[language] {
 			excess = true
 		}
 		seen[language] = true
@@ -166,7 +169,7 @@ func ptpProgrammeTrackDetails(facts api.LanguageFacts) string {
 
 func ptpNoProgrammeDialogue(facts api.LanguageFacts) bool {
 	return (facts.AudioAbsent && len(facts.ProgrammeLanguages) == 0) ||
-		(facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && slices.Equal(facts.ProgrammeLanguages, []string{"ZXX"}))
+		(facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && len(facts.ProgrammeLanguages) == 1 && languageutil.ContainsLanguage(facts.ProgrammeLanguages, "ZXX"))
 }
 
 // ptpPrimaryProgrammeLanguage uses the inspected primary stream, never original
@@ -176,8 +179,7 @@ func ptpPrimaryProgrammeLanguage(facts api.LanguageFacts) string {
 	if !ok || len(track.Languages) != 1 {
 		return ""
 	}
-	code := languageutil.NormalizeLanguageCode(track.Languages[0])
-	if code == "" || code == "und" || code == "mul" {
+	if !languageutil.IsIdentifiedLanguage(track.Languages[0]) {
 		return ""
 	}
 	return languageutil.NormalizeLanguageLabel(track.Languages[0])
@@ -196,7 +198,7 @@ func ptpNeedsTrackPurposeReview(facts api.LanguageFacts) bool {
 			continue
 		}
 		programmeTracks++
-		for _, language := range track.Languages {
+		for _, language := range languageutil.LanguageMatchKeys(track.Languages) {
 			if seen[language] {
 				return true
 			}
@@ -204,6 +206,7 @@ func ptpNeedsTrackPurposeReview(facts api.LanguageFacts) bool {
 		}
 	}
 	return programmeTracks > 1 && facts.OriginalLanguagesKnown && slices.ContainsFunc(facts.ProgrammeLanguages, func(language string) bool {
-		return language != "English" && language != "ZXX" && !slices.Contains(facts.OriginalLanguages, language)
+		return !languageutil.SameLanguage(language, "English") && !languageutil.SameLanguage(language, "ZXX") &&
+			!languageutil.ContainsLanguage(facts.OriginalLanguages, language)
 	})
 }

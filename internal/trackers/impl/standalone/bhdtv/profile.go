@@ -13,6 +13,9 @@ import (
 // Profile returns BHDTV identity, preparation, dupe, and artifact behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe: trackers.ConnectionProbe{
+			UnverifiedReason: "BHDTV uses this API key for torrent submission. A compatible authenticated read has not been verified; no credentials or upload request were sent.",
+		},
 		Name:                "BHDTV",
 		BaseURL:             "https://www.bit-hdtv.com",
 		DescriptionGroup:    "bhdtv",

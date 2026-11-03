@@ -55,7 +55,7 @@ func newHDRNativePreparationFixture(t *testing.T, codec byte) hdrNativePreparati
 	}
 	bdService := bdinfo.New(api.NopLogger{})
 	bdService.SetHDRService(hdranalysis.New(hdranalysis.NewAdmission(), api.NopLogger{}))
-	service := NewService(repo,
+	service := newTestService(t, repo,
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		WithBDInfoService(bdService), WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}),
 		WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{Title: "Synthetic Capture", Year: 2026}}),
@@ -224,6 +224,10 @@ type hdrCancelClient struct {
 
 func (hdrCancelClient) Inject(context.Context, api.ClientSubject, api.TorrentResult) error {
 	return nil
+}
+
+func (hdrCancelClient) InjectionDestinationFingerprint(api.ClientSubject, api.TorrentResult) (api.WorkflowFingerprint, error) {
+	return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil
 }
 
 func (client hdrCancelClient) SearchPathedTorrents(context.Context, api.ClientSubject) (api.ClientSearchResult, error) {

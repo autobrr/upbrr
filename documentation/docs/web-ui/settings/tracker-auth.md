@@ -1,13 +1,13 @@
 ---
-title: Tracker Auth
+title: Tracker authentication
 description: Manage encrypted tracker cookies, remote validation, automatic relogin, and 2FA state.
 ---
 
-# Tracker Auth
+# Tracker authentication
 
-Use **Settings → Tracker Auth** after saving a tracker entry. The page shows only configured trackers whose backend capability requires managed cookies, login, refresh, or 2FA handling.
+Use **Settings → Tracker authentication** after saving a tracker entry. The page shows only configured trackers whose backend capability requires managed cookies, login, refresh, or 2FA handling.
 
-Tracker Auth actions persist immediately and do not use the page-level **Save** button. Static API keys, passkeys, usernames, passwords, and OTP URIs remain under [Trackers](./trackers.md).
+Tracker authentication actions persist immediately and do not use the page-level **Save** button. Static API keys, passkeys, usernames, passwords, and OTP URIs remain under [Trackers](./trackers.md).
 
 For browser cookies, follow [Export and import cookies](#export-and-import-cookies), then [verify authentication](#verify-authentication). If a step fails, use [Cookie troubleshooting](#cookie-troubleshooting).
 
@@ -58,7 +58,7 @@ Firefox containers and profiles hold separate sessions. Exporting a different on
 ### Import through the Web UI
 
 1. Under **Settings → Trackers**, configure the tracker and select **Save**. Wait for any pending save to activate.
-2. Open **Settings → Tracker Auth**, find that tracker's card, and select **Import Cookies**.
+2. Open **Settings → Tracker authentication**, find that tracker's card, and select **Import Cookies**.
 3. Choose the exported `.txt` file from your browser's file picker. It must be no larger than **1 MiB (1,048,576 bytes)**.
 4. Wait for the import result, then [verify authentication](#verify-authentication).
 
@@ -99,7 +99,7 @@ Folder migration supports the two object forms as `<tracker-id>.json`; use the W
 
 ## Verify authentication
 
-1. Open **Settings → Tracker Auth** and inspect the tracker's status and **Cookies:** count. **Has cookies** and a nonzero count confirm stored cookie data, not acceptance by the tracker.
+1. Open **Settings → Tracker authentication** and inspect the tracker's status and **Cookies:** count. **Has cookies** and a nonzero count confirm stored cookie data, not acceptance by the tracker.
 2. Select **Check Auth** where offered. Read the returned status and message, complete supported 2FA if requested, and check again. Not every cookie tracker provides remote validation, so this action may be absent.
 3. Before a live upload, select **Skip client injection** and run **Dry Run** to check tracker preparation without tracker submission or client injection.
 
@@ -121,7 +121,7 @@ Check the active database directory, exact tracker-ID filename, lowercase `.txt`
 
 ### Import Cookies is missing
 
-Save the tracker entry and wait for activation, then return to **Tracker Auth**. Clear any tracker filter. Only configured trackers with cookie-file support offer **Import Cookies**. If the tracker uses an API key, passkey, or another auth method instead, use its fields under [Trackers settings](./trackers.md).
+Save the tracker entry and wait for activation, then return to **Tracker authentication**. Clear any tracker filter. Only configured trackers with cookie-file support offer **Import Cookies**. If the tracker uses an API key, passkey, or another auth method instead, use its fields under [Trackers settings](./trackers.md).
 
 ### Cookies are stored but remote checks fail
 

@@ -12,6 +12,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -28,17 +29,18 @@ func TestTonemappingRestoresOnlyMatchingScreenshotBytes(t *testing.T) {
 		ImagePath:     path,
 		ContentSHA256: digest,
 		Tonemapping:   api.ScreenshotTonemapped,
+		Processing:    &api.ScreenshotProcessing{Renderer: "software", Tonemapped: true},
 	}}
 	images := []api.ScreenshotImage{{Path: path}}
 	restoreScreenshotTonemapping(images, records)
-	if images[0].Tonemapping != api.ScreenshotTonemapped {
+	if images[0].Tonemapping != api.ScreenshotTonemapped || images[0].Processing == nil {
 		t.Fatal("lost saved processing")
 	}
 	if err := os.WriteFile(path, []byte("other"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	restoreScreenshotTonemapping(images, records)
-	if images[0].Tonemapping != "" {
+	if images[0].Tonemapping != "" || images[0].Processing != nil {
 		t.Fatal("replacement inherited processing")
 	}
 }
@@ -210,7 +212,7 @@ func TestTonemappingCaptureSurvivesRepositoryRestartAndPreferenceChange(t *testi
 			if enabled {
 				want = api.ScreenshotTonemapped
 			}
-			if image.Tonemapping != want || len(image.ContentSHA256) != 64 {
+			if image.Tonemapping != want || len(image.ContentSHA256) != 64 || image.Processing == nil {
 				t.Fatalf("capture evidence=%+v", image)
 			}
 			if err := service.SaveFinalSelections(t.Context(), subject, result.Images); err != nil {
@@ -245,7 +247,7 @@ func TestTonemappingCaptureSurvivesRepositoryRestartAndPreferenceChange(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(restored.FinalSelections) != 1 || restored.FinalSelections[0].Tonemapping != want {
+			if len(restored.FinalSelections) != 1 || restored.FinalSelections[0].Tonemapping != want || !reflect.DeepEqual(restored.FinalSelections[0].Processing, image.Processing) {
 				t.Fatalf("restored=%+v", restored.FinalSelections)
 			}
 			links, err := repo.ListUploadedImagesByPath(t.Context(), subject.MediaBinding)

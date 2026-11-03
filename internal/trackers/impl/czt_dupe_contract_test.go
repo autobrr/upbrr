@@ -5,6 +5,7 @@ package impl_test
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 
 func TestCZTServiceIgnoresAPIKeyOnlyConfig(t *testing.T) {
 	t.Parallel()
-	cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"CZT": {APIKey: "bearer-token"}}}}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}, Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"CZT": {APIKey: "bearer-token"}}}}
 	registry, err := trackerimpl.NewRegistry()
 	if err != nil {
 		t.Fatalf("registry: %v", err)

@@ -200,6 +200,7 @@ type PlaylistSelection struct {
 }
 
 type Screenshot struct {
+	Processing *ScreenshotProcessing `json:",omitempty"`
 	// Tonemapping records actual processing; empty means unknown. ContentSHA256 binds it to image bytes.
 	Tonemapping              ScreenshotTonemapping `json:",omitempty"`
 	ContentSHA256            string                `json:",omitempty"`
@@ -414,6 +415,21 @@ type ReleaseWorkflowStateRecord struct {
 	// DescriptionReuse is a pending cache write coupled to a successful state
 	// update. It is intentionally excluded from transport and state payload JSON.
 	DescriptionReuse *ReusableDescriptionRecord `json:"-"`
+	// EffectResolution commits a verified non-completion and its workflow
+	// checkpoint together. It is not part of transport or state payload JSON.
+	EffectResolution *ReleaseWorkflowEffectResolution `json:"-"`
+}
+
+// ReleaseWorkflowEffectResolution identifies the latest effect whose verified
+// non-completion accompanies a workflow save. Started or succeeded effects reject
+// the entire save, preserving their outcome and submission fence. Tracker
+// submissions also require exact attempt identity and no retained acceptance.
+type ReleaseWorkflowEffectResolution struct {
+	Kind    WorkflowExternalEffectKind
+	ScopeID string
+	// Expected binds reconciliation to one operation/effect pair. It is required
+	// for tracker submissions and may be omitted for older non-submission actions.
+	Expected []WorkflowExternalEffectReceipt
 }
 
 // ReleaseWorkflowStateRepository persists safe public workflow state with

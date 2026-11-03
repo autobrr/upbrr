@@ -12,6 +12,7 @@ import (
 // Profile returns IS identity, preparation, dupe, auth, and artifact behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:       trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
 		UsesMenuImages:        true,
 		Name:                  "IS",
 		BaseURL:               baseURL,

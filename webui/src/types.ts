@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type {
+  BlurayDetailRequest,
+  BluraySelection,
   MediaFileFacts,
+  ScreenshotProcessing,
   SubtitleLanguageCoverage,
   TrackAudioOrigin,
   TrackAudioOriginCorrection,
@@ -346,7 +349,7 @@ export type PrepareInput = {
       TrackAudioOrigins?: readonly TrackAudioOriginCorrection[];
     };
     SourceLookup: string;
-    BlurayReleaseID?: string;
+    Bluray?: BluraySelection | null;
     Playlist: PlaylistInstruction;
     TrackerIDs?: Record<string, string>;
   };
@@ -359,6 +362,7 @@ export type PrepareInput = {
   Controls?: {
     Interaction: "interactive" | "unattended" | "unattended_confirm";
     CaptureHDRMetadata?: boolean;
+    BlurayDetails?: BlurayDetailRequest;
     ConfirmBDMVRescan: boolean;
     ForceRecheck?: boolean | null;
   };
@@ -391,6 +395,11 @@ export type ExternalIDOverrides = {
   TVmazeID?: number | null;
   /** Canonical MAL/AniList-compatible anime identifier override. */
   MALID?: number | null;
+  KeepTMDB?: boolean | null;
+  KeepIMDB?: boolean | null;
+  KeepTVDB?: boolean | null;
+  KeepTVmaze?: boolean | null;
+  KeepMAL?: boolean | null;
 };
 
 export type ReleaseNameOverrides = {
@@ -924,6 +933,9 @@ export type ProviderDisplay =
   | (ProviderDisplayBase & { Provider: "mal"; Details: { AniList: AniListMetadata } });
 
 export type PreparedReleaseDisplay = {
+  /** Available TVDB naming data owns TV year even when no qualifier is selected. */
+  TVDBNamingAvailable?: boolean;
+  CanKeepFolder?: boolean;
   Commentary?: boolean;
   ReleaseName: string;
   Providers: ProviderDisplay[];
@@ -956,6 +968,9 @@ export type BluraySpecs = {
 };
 
 export type BlurayReleaseCandidate = {
+  DetailsStatus?: string;
+  /** Edition-specific YYYY-MM-DD calendar date; empty when unavailable. */
+  ReleaseDate: string;
   ReleaseID: string;
   ProductID: string;
   MovieTitle: string;
@@ -978,6 +993,8 @@ export type BlurayReleaseCandidate = {
 
 export type BlurayMetadata = {
   SourcePath: string;
+  /** Recognized release country limiting Candidates; empty means unrestricted. */
+  Country: string;
   IMDBID: number;
   SearchURL: string;
   SelectedReleaseID: string;
@@ -1148,6 +1165,8 @@ export type ScreenshotSelection = {
 export type ScreenshotTonemapping = "tonemapped" | "not_tonemapped";
 
 export type ScreenshotImage = {
+  /** Observed renderer outcome; omitted for legacy or imported images. */
+  Processing?: ScreenshotProcessing;
   Tonemapping?: ScreenshotTonemapping;
   ContentSHA256?: string;
   /** Prepared disc identity; omitted only for unscoped single-disc artifacts. */
@@ -1470,7 +1489,7 @@ export type TrackerCatalogEntry = {
   name: string;
   family: "unit3d" | "azfamily" | "standalone" | string;
   baseURL: string;
-  uploadContentMode: "none" | "screenshots" | "description";
+  uploadContentMode: "none" | "screenshots" | "description" | "optional_description";
   fields: TrackerCatalogField[];
   configured: boolean;
   default?: boolean;
@@ -1483,11 +1502,13 @@ export type ImageHostPolicyMetadata = {
   UploadHosts?: string[];
   TrackerUploadHosts?: Record<string, string[]>;
   OwnedHosts?: Record<string, string>;
+  UnavailableConnectionTests?: Record<string, string>;
 };
 export type FieldType = "string" | "number" | "boolean";
 export type FieldMeta = {
   key: string;
   label?: string;
+  help?: string;
   type?: FieldType;
   advanced?: boolean;
   sensitive?: boolean;

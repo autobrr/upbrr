@@ -491,7 +491,8 @@ func workflowDescriptionSnapshotFullyCompleted(
 	covered := make(map[api.TrackerID]struct{}, len(targets))
 	for _, description := range snapshot.Descriptions {
 		baseGroup := strings.TrimSpace(strings.SplitN(description.GroupKey, "|", 2)[0])
-		if baseGroup == "" || strings.TrimSpace(description.Source) == "" || strings.TrimSpace(description.Rendered) == "" {
+		empty := strings.TrimSpace(description.Source) == ""
+		if baseGroup == "" || empty != (strings.TrimSpace(description.Rendered) == "") {
 			return false
 		}
 		for _, trackerID := range description.TrackerIDs {
@@ -501,6 +502,7 @@ func workflowDescriptionSnapshotFullyCompleted(
 			matched := false
 			for _, projection := range targets {
 				if projection.TrackerID == trackerID &&
+					(!empty || projection.Artifacts.AllowEmptyDescription) &&
 					(projection.DescriptionGroup == "" || strings.EqualFold(strings.TrimSpace(projection.DescriptionGroup), baseGroup)) {
 					matched = true
 					break

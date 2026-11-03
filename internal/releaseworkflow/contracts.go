@@ -33,6 +33,8 @@ type MediaArtifactContent struct {
 // MediaPreviewContent retains one non-authoritative frame preview without
 // exposing image bytes or filesystem identity in workflow snapshots.
 type MediaPreviewContent struct {
+	Processing       api.ScreenshotProcessing
+	TimestampSeconds float64
 	// DiscID identifies the prepared disc used for this preview.
 	DiscID string
 	// DiscName is the safe page-facing label for DiscID.
@@ -393,7 +395,7 @@ type IncrementalMediaArtifactBuilder interface {
 
 // CompatibleMediaRestorer adopts verified reusable bytes into a new exact generation,
 // or refreshes current tracker coverage from an existing snapshot and private resource
-// without reloading its bytes. Retained artifacts keep their identity and selection.
+// without querying the reusable cache. Retained artifacts keep their identity and selection.
 type CompatibleMediaRestorer interface {
 	RestoreCompatible(
 		context.Context,
@@ -433,6 +435,7 @@ type MediaArtifactMutator interface {
 		[]api.PublicResourceID,
 		string,
 		bool,
+		*string,
 		time.Time,
 	) (api.MediaArtifactSet, RetainedMediaResource, []api.HostedImageAttempt, error)
 	RemoveHostedImages(
@@ -516,7 +519,9 @@ type RegisteredArtifactAuthority struct {
 // UploadPlanBuildOptions controls side effects and execution policy for one
 // retained upload preparation.
 type UploadPlanBuildOptions struct {
-	DryRun               bool
+	DryRun bool
+	// ReviewOnly defers client injection until a registered tracker torrent exists.
+	ReviewOnly           bool
 	NoSeed               bool
 	TrackerIDs           []api.TrackerID
 	TrackerApproval      *api.TrackerApprovalSnapshotRef
@@ -642,6 +647,8 @@ type State struct {
 	OwnerID                 string
 	// descriptionReuse accompanies one atomic save and is never durable workflow payload.
 	descriptionReuse *api.ReusableDescriptionRecord
+	// effectResolution accompanies one atomic save and is never durable payload.
+	effectResolution *api.ReleaseWorkflowEffectResolution
 	// SourcePath durably binds this workflow to its source before preparation.
 	SourcePath          string `json:",omitempty"`
 	ProcessEpoch        string
@@ -1189,7 +1196,9 @@ type UploadMediaImagesCommand struct {
 	// empty Host, explicit IDs replace local selection without changing hosted selection.
 	ArtifactIDs []api.PublicResourceID
 	// Host selects one host; an empty value prepares all required image hosts.
-	Host           string
+	Host string
+	// PreferredHost preserves automatic policy precedence and compatible saved-link reuse.
+	PreferredHost  *string
 	Retry          bool
 	SkipUpload     bool
 	IdempotencyKey string
@@ -1211,7 +1220,8 @@ func (c UploadMediaImagesCommand) commandFingerprint() (api.WorkflowFingerprint,
 		ArtifactIDs      []api.PublicResourceID
 		Host             string
 		Retry            bool
-		SkipUpload       bool `json:",omitempty"`
+		SkipUpload       bool    `json:",omitempty"`
+		PreferredHost    *string `json:",omitempty"`
 	}{
 		ExpectedRevision: c.ExpectedRevision,
 		Media:            c.Media,
@@ -1219,6 +1229,7 @@ func (c UploadMediaImagesCommand) commandFingerprint() (api.WorkflowFingerprint,
 		Host:             c.Host,
 		Retry:            c.Retry,
 		SkipUpload:       c.SkipUpload,
+		PreferredHost:    c.PreferredHost,
 	}
 	return canonicalCommandFingerprint(payload)
 }
@@ -1319,6 +1330,8 @@ type descriptionsPublication struct {
 
 // DryRunUploadsCommand prepares sanitized reports without tracker submission.
 type DryRunUploadsCommand struct {
+	// ReviewOnly prepares a live-upload review without injecting the prepared torrent.
+	ReviewOnly       bool
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	NoSeed           bool
@@ -1330,11 +1343,13 @@ func (DryRunUploadsCommand) commandName() string              { return "dry_run_
 func (DryRunUploadsCommand) userIntent()                      {}
 func (DryRunUploadsCommand) operationKind() api.OperationKind { return api.OperationKindUploadDryRun }
 func (c DryRunUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	// The default payload must keep receipts written before ReviewOnly existed.
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool
 		TrackerIDs       []api.TrackerID
-	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs})
+		ReviewOnly       bool `json:",omitempty"`
+	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs, c.ReviewOnly})
 }
 
 // ExecuteUploadsCommand directly prepares and executes eligible trackers.
@@ -1458,6 +1473,15 @@ type ResolveActionCommand struct {
 func (ResolveActionCommand) commandName() string              { return "resolve_action" }
 func (ResolveActionCommand) userIntent()                      {}
 func (ResolveActionCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
+
+// resolveTrackerPreparationCommand continues a retained preparation with durable
+// client-effect reporting. Other action answers remain synchronous.
+type resolveTrackerPreparationCommand struct{ ResolveActionCommand }
+
+func (resolveTrackerPreparationCommand) commandName() string { return "resolve_tracker_preparation" }
+func (resolveTrackerPreparationCommand) operationKind() api.OperationKind {
+	return api.OperationKindUploadDryRun
+}
 
 // CommandOperationKind classifies one user intent without transport-owned type switches.
 func CommandOperationKind(command Command) (api.OperationKind, bool) {

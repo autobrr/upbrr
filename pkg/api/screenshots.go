@@ -17,6 +17,26 @@ const (
 	ScreenshotNotTonemapped ScreenshotTonemapping = "not_tonemapped"
 )
 
+// ScreenshotProcessing describes the observed renderer for one image. Empty
+// processing on retained/imported images means the renderer is unknown.
+// Steps contain bounded, path-free failure/skip reasons, never FFmpeg stderr.
+type ScreenshotProcessing struct {
+	RequestedRenderer string `json:"requestedRenderer"`
+	Renderer          string `json:"renderer"`
+	Tonemapped        bool   `json:"tonemapped"`
+	// Degraded means requested tonemapping was omitted, not just that the renderer changed.
+	Degraded bool                   `json:"degraded"`
+	Warning  string                 `json:"warning,omitempty"`
+	Steps    []ScreenshotRenderStep `json:"steps,omitempty"`
+}
+
+// ScreenshotRenderStep records a failed or skipped stage preceding a usable image.
+type ScreenshotRenderStep struct {
+	Renderer string `json:"renderer"`
+	Stage    string `json:"stage"`
+	Reason   string `json:"reason"`
+}
+
 // ScreenshotPurpose classifies an image within preview, final-selection, and
 // disc-menu workflows.
 type ScreenshotPurpose string
@@ -76,6 +96,10 @@ type ScreenshotOverrides struct {
 // ScreenshotSubject contains only source facts required to plan and manage
 // screenshots. Workflow modules build it from an exact prepared generation.
 type ScreenshotSubject struct {
+	// BluRayISO requires an explicit selected playlist against the original ISO.
+	BluRayISO bool
+	// BDInfoSummary is the prepared primary ISO playlist summary, not a transport payload.
+	BDInfoSummary string
 	// MediaBinding owns persisted media for one exact prepared generation.
 	MediaBinding PreparedMediaBinding
 	SourcePath   string
@@ -88,20 +112,27 @@ type ScreenshotSubject struct {
 	MediaInfoJSONPath     string
 	MediaCategory         string
 	HDR                   string
+	HDRFacts              HDRFacts
 	TVPack                bool
 	Episode               int
 	Release               ReleaseInfo
 	SelectedBDMVPlaylists []PlaylistInfo
-	DefaultCount          int
-	ManualFrames          []int
-	Discs                 []ScreenshotDiscSubject
+	// KeepImages is the effective image-collection policy for this prepared generation.
+	KeepImages   bool
+	DefaultCount int
+	ManualFrames []int
+	Discs        []ScreenshotDiscSubject
 }
 
 // ScreenshotDiscSubject contains private capture inputs for one ordered disc.
 type ScreenshotDiscSubject struct {
-	ID   string
-	Name string
-	Type string
+	// BluRayISO identifies a validated image rather than an extracted disc tree.
+	BluRayISO bool
+	// BDInfoSummary is the prepared primary ISO playlist summary, not a transport payload.
+	BDInfoSummary string
+	ID            string
+	Name          string
+	Type          string
 	// Root is the private filesystem root for this disc.
 	Root                  string
 	VideoPath             string
@@ -191,6 +222,7 @@ type ScreenshotLinkedImage struct {
 }
 
 type ScreenshotImage struct {
+	Processing *ScreenshotProcessing `json:",omitempty"`
 	// Tonemapping records actual processing; empty means unknown. ContentSHA256 binds it to image bytes.
 	Tonemapping   ScreenshotTonemapping `json:",omitempty"`
 	ContentSHA256 string                `json:",omitempty"`
@@ -215,8 +247,10 @@ type ScreenshotImage struct {
 }
 
 type ScreenshotPreview struct {
-	DiscID           string
-	DiscName         string
+	Processing ScreenshotProcessing
+	DiscID     string
+	DiscName   string
+	// TimestampSeconds is the resolved capture time, which may change after independent frame recovery.
 	TimestampSeconds float64
 	ImageBytes       []byte
 	Width            int
@@ -225,9 +259,10 @@ type ScreenshotPreview struct {
 }
 
 type ScreenshotResult struct {
-	SourcePath     string
-	Purpose        ScreenshotPurpose
-	Images         []ScreenshotImage
+	SourcePath string
+	Purpose    ScreenshotPurpose
+	Images     []ScreenshotImage
+	// Tonemapped is true only when every returned image was actually tonemapped.
 	Tonemapped     bool
 	UsedLibplacebo bool
 	Errors         []ScreenshotError

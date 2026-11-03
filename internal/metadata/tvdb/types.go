@@ -45,8 +45,8 @@ type SeriesMetadata struct {
 	NameDisambiguation             NameDisambiguation
 }
 
-// NameDisambiguation contains the general TVDB name-search evidence for one
-// selected series.
+// NameDisambiguation combines explicit naming-year and general TVDB name-search
+// evidence for one selected series.
 type NameDisambiguation struct {
 	// CanonicalName is the selected English series name used for comparison.
 	CanonicalName string
@@ -60,7 +60,8 @@ type NameDisambiguation struct {
 	// SameNameAndYearSeries counts SameNameSeries entries with a matching known
 	// year.
 	SameNameAndYearSeries int
-	// IncludeYear and IncludeLocale are prepared decisions for naming callers.
+	// IncludeYear preserves explicit title/alias years or positive collisions;
+	// IncludeLocale requires a same-name, same-year collision.
 	IncludeYear   bool
 	IncludeLocale bool
 	// Status describes the completeness of the general-name search evidence.

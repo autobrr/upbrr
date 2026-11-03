@@ -46,6 +46,8 @@ Tracker settings can restrict duplicate competition by incoming release group. W
 
 A completed search with no matches can still require duplicate-policy review when ordinary-slot eligibility, source availability, or staff-owned decisions are unresolved. Review these reasons alongside potential duplicates. Acknowledgement records your decision for the current evidence; it does not establish tracker staff approval or missing source evidence. Changing the reviewed name, relevant facts, or review reasons requires a new decision.
 
+Duplicate checks use structured 3D labels when available. Release-name fallback recognizes explicit stereoscopic markers in release metadata, while ambiguous title text remains unknown. Missing 3D information does not prove that an existing release is 2D.
+
 `--skip-dupe-check` and similar bypasses remove safeguards. Use them only when you have manually completed the equivalent tracker checks.
 
 ### Approve tracker warnings
@@ -68,6 +70,8 @@ Review the assessment displayed for each selected tracker:
 
 Check the tracker's current rules to understand what each finding means for your release. upbrr's assessment is not a substitute for those rules.
 
+Package checks use the files intended for the torrent, following its inclusion policy. A complete inventory can still contain prohibited files or a missing episode in a sequence. Inventory completeness is separate from the technical and language coverage of inspected media. ISO inputs retain their image-file identity during package validation. Older prepared generations require preparation again to collect this evidence.
+
 Track order and the default flag are separate facts. An original-language track can be present without being first or default. Ordering recommendations appear as non-blocking **Guidance**, including for personal releases, and require no answer or acknowledgement. Independent requirements for original audio, default flags, permitted dubs, subtitles and compatibility tracks still apply.
 
 Ordinary audio tracks contribute their inspected languages without needing an "Original" title or flag. Identified commentary, descriptive audio and other secondary tracks do not establish original programme audio or count as programme dubs. Missing or conflicting language evidence still needs review. Prepare the release again after updating so retained track facts are rebuilt before tracker checks.
@@ -86,6 +90,8 @@ On **Dupe Checking**, open **Tracker questions** for a selected tracker, review 
 
 Questions remain for genuine upload inputs, naming choices and ambiguous track associations that available metadata cannot supply. Available provider genres can supply genre tags automatically; unsupported or missing defaults may use a supported fallback provider. Explicit tag answers and genre corrections, including clears, take precedence. An optional tag field may remain empty when the destination can obtain genres from its metadata provider. Required fields with supplied values are identified separately from missing answers; optional controls do not require a response. Correct missing canonical facts on **Input**. An answer cannot waive an independent prohibited or staff-only finding. Existing debug-mode policy bypasses also leave eligibility-only questions optional; evidence needed to construct names, payloads or required descriptions remains necessary.
 
+Where supported, an opt-in class-based replacement setting exposes an explicit intended-replacement choice and optional reason in tracker questions. The setting alone does not approve a replacement: review the current release and duplicate evidence, then confirm upload as usual. Changing the source generation requires a fresh intention. Exact duplicates and files already present in the client keep their existing protections. Staff-managed authorization remains site-side and requires no token value in these controls. Unattended operation does not supply missing confirmations.
+
 ## Names and payloads
 
 Automatic downscale markers require explicit evidence in the source name; output resolution alone does not establish a downscaled source. A destination may omit or position an evidenced marker differently. Review the projected name, and use a complete name override when a source does not provide enough evidence.
@@ -94,7 +100,9 @@ upbrr resolves upload and search names before duplicate checking. Review the pro
 
 Correct `PROPER`, `REPACK`, their supported numbered variants, or `RERIP` with the independent **Release version** control on **Input**, then refresh metadata and review the projected names again. Clearing **Edition** does not clear the release version; see [Input corrections](../web-ui/index.md#correct-input-facts) for **None**, **Auto**, and the legacy **No edition** behavior.
 
-Automatic title and year sources can differ by destination. A required title must come from matching metadata for the current release; missing or outdated evidence blocks that name instead of silently substituting another provider. Refresh metadata and prepare the release again when requested. Explicit manual titles and complete name overrides remain authoritative, while an automatic duplicate-search name can still require its own provider evidence. These naming choices do not change the shared release facts or another destination's name. TV series-year disambiguation can use a different provider from the primary title. Established evidence may add or omit an automatic series year; manual title and year choices remain authoritative.
+Automatic title and year sources can differ by destination. A required title must come from matching metadata for the current release; missing or outdated evidence blocks that name instead of silently substituting another provider. Refresh metadata and prepare the release again when requested. Explicit manual titles and complete name overrides remain authoritative, while an automatic duplicate-search name can still require its own provider evidence. These naming choices do not change the shared release facts or another destination's name. TV series-year disambiguation can use a different provider from the primary title. Established evidence may add or omit an automatic series year; manual title choices remain authoritative.
+
+When a destination uses TVDB year disambiguation, an explicit naming year in the selected TVDB title or an eligible alias remains valid even if a name search finds no collision. A premiere year alone does not establish a naming year. Available TVDB naming data controls the TV year, including a decision that no year qualifier belongs in the name. **Manual year** and **Omit year** cannot override it. When usable TVDB data is missing, those controls are available for correction; newly available TVDB data supersedes the fallback. Destination-specific year rules still apply. Movie year controls are unchanged. Prepare the release again after updating so retained naming decisions are recomputed.
 
 Generated DVDRip release names include the known resolution, such as `480p` or `576p`, after the movie year or TV season/episode segment. Missing or unknown resolution stays absent, and complete manual names remain unchanged.
 

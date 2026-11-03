@@ -129,6 +129,7 @@ type ReleaseWorkflowUploadFacts struct {
 	ReleaseName  ReleaseWorkflowUploadReleaseName `json:"releaseName,omitempty"`
 	Metadata     ReleaseWorkflowUploadMetadata    `json:"metadata,omitempty"`
 	Category     *CanonicalCategory               `json:"category,omitempty"`
+	Bluray       *BluraySelection                 `json:"bluray,omitempty"`
 	SourceLookup *string                          `json:"sourceLookup,omitempty"`
 	Playlist     *ReleaseWorkflowUploadPlaylist   `json:"playlist,omitempty"`
 }

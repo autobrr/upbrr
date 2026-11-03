@@ -18,7 +18,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -69,17 +71,17 @@ type workflowUploadPlanBuilder struct {
 }
 
 type workflowUploadExecution struct {
-	sourceManifest      *api.SourceManifest
-	plan                workflowRetainedUploadPlan
-	clients             api.ClientService
-	clientSubject       api.ClientSubject
-	noSeed              bool
-	dryRunInjected      map[api.TrackerID]struct{}
-	registeredArtifacts map[api.TrackerID]api.TorrentResult
-	crossSeeds          []api.UploadedTorrent
-	projections         map[api.TrackerID]api.TrackerReleaseProjection
-	inputFingerprint    api.WorkflowFingerprint
-	trackers            []api.UploadPlanTracker
+	sourceManifest        *api.SourceManifest
+	plan                  workflowRetainedUploadPlan
+	clients               api.ClientService
+	clientSubject         api.ClientSubject
+	noSeed                bool
+	injectPreparedTorrent bool
+	registeredArtifacts   map[api.TrackerID]api.TorrentResult
+	crossSeeds            []api.UploadedTorrent
+	projections           map[api.TrackerID]api.TrackerReleaseProjection
+	inputFingerprint      api.WorkflowFingerprint
+	trackers              []api.UploadPlanTracker
 }
 
 func newWorkflowUploadPlanBuilder(
@@ -319,6 +321,7 @@ func (b workflowUploadPlanBuilder) Build(
 	subject.ImageHostOverrides.SkipUpload = &skipImageUpload
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)
 	torrentSubject := workflowSubmissionTorrentSubject(subject)
+	torrentSubject.ForceRecheck = descriptionInstructions.Client.ForceRecheck != nil && *descriptionInstructions.Client.ForceRecheck
 	torrentSubject.Trackers = workflowProjectionTrackerNames(eligible)
 	torrentSubject.SkipIfRehashTrackers = workflowSkipIfRehashTrackers(b.config, eligible)
 	torrentSubject.TorrentOverrides = descriptionInstructions.Torrent
@@ -328,18 +331,28 @@ func (b workflowUploadPlanBuilder) Build(
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: source stability: %w", err)
 		}
 		sourceManifest = &subject.SourceManifest
+		torrentSubject.DeferGenerationPublication = true
 		identity, identityErr := workflowSubmissionContentIdentity(torrentSubject, subject.SourceIdentity)
 		if identityErr != nil {
 			return api.UploadPlan{}, nil, identityErr
 		}
 		subject.SubmissionContentIdentity = identity
 	}
+	var pendingTorrent api.TorrentPublication
 	if len(eligible) > 0 && b.torrents != nil && !descriptionInstructions.Options.SkipAutoTorrent {
-		torrent, err := b.torrents.Create(ctx, torrentSubject)
+		torrent, err := b.prepareWorkflowTorrent(ctx, subject, torrentSubject)
 		if err != nil {
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare torrent: %w", err)
 		}
 		subject.TorrentPath = torrent.Path
+		pendingTorrent = torrent.PendingPublication
+		if pendingTorrent != nil {
+			defer func() {
+				if err := pendingTorrent.Discard(); err != nil {
+					logging.FromContext(ctx, api.NopLogger{}).Warnf("workflow: discard pending torrent failed err=%s", redaction.RedactValue(err.Error(), nil))
+				}
+			}()
+		}
 		skipped := make(map[api.TrackerID]struct{}, len(torrent.SkippedTrackers))
 		for _, tracker := range torrent.SkippedTrackers {
 			trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(tracker)))
@@ -364,8 +377,20 @@ func (b workflowUploadPlanBuilder) Build(
 	}
 	if sourceManifest != nil {
 		if err := preparedrelease.VerifySourceManifestStability(ctx, *sourceManifest); err != nil {
+			if pendingTorrent != nil {
+				emitWorkflowTorrentOutcome(ctx, torrentSubject, "failed", "Source changed during torrent generation")
+			}
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: source changed during torrent preparation: %w", err)
 		}
+	}
+	if pendingTorrent != nil {
+		path, err := pendingTorrent.Publish()
+		if err != nil {
+			emitWorkflowTorrentOutcome(ctx, torrentSubject, "failed", "Torrent publication failed")
+			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: publish generated torrent: %w", err)
+		}
+		subject.TorrentPath = path
+		emitWorkflowTorrentOutcome(ctx, torrentSubject, "completed", "Torrent ready")
 	}
 	var retained workflowRetainedUploadPlan
 	if len(eligible) > 0 {
@@ -384,11 +409,20 @@ func (b workflowUploadPlanBuilder) Build(
 		SourcePath:      subject.SourcePath,
 		FileList:        append([]string(nil), subject.FileList...),
 		DiscType:        subject.DiscType,
+		KeepFolder:      subject.KeepFolder,
 		ClientOverrides: descriptionInstructions.Client,
 	}
-	injectPreparedTorrent := options.DryRun &&
-		api.NormalizeWorkflowExecutionMode(projections.ExecutionMode) == api.WorkflowExecutionModeDebug
-	dryRunInjected := make(map[api.TrackerID]struct{})
+	execution := &workflowUploadExecution{
+		sourceManifest:        sourceManifest,
+		plan:                  retained,
+		clients:               b.clients,
+		clientSubject:         clientSubject,
+		noSeed:                options.NoSeed,
+		injectPreparedTorrent: options.DryRun && !options.ReviewOnly,
+		crossSeeds:            append([]api.UploadedTorrent(nil), subject.CrossSeedTorrents...),
+		projections:           workflowProjectionMap(planProjections),
+		inputFingerprint:      inputFingerprint,
+	}
 	readyCount := 0
 	skippedCount := 0
 	for index, projection := range planProjections {
@@ -459,49 +493,17 @@ func (b workflowUploadPlanBuilder) Build(
 			}
 			tracker.Eligible = true
 			tracker.Status = api.StageStatusReady
-			readyCount++
-			if injectPreparedTorrent {
-				switch {
-				case options.NoSeed:
-					tracker.ClientInjectionStatus = api.StageStatusSkipped
-					tracker.ClientInjectionMessage = "Client injection disabled by the skip option."
-				default:
-					injectionStatus, injectionMessage, failureCode, injected, injectionErr := injectWorkflowDryRunClient(
-						ctx,
-						b.clients,
-						clientSubject,
-						projection,
-						preparation.TorrentPath,
-						index,
-						len(planProjections),
-					)
-					if injectionErr != nil {
-						if retained != nil {
-							_ = retained.Release()
-						}
-						return api.UploadPlan{}, nil, injectionErr
-					}
-					tracker.ClientInjectionStatus = injectionStatus
-					tracker.ClientInjectionMessage = injectionMessage
-					tracker.ClientFailureCode = failureCode
-					if failureCode != "" {
-						tracker.Failures = append(
-							tracker.Failures,
-							workflowDryRunClientFailure(projection.TrackerID, failureCode, injectionMessage),
-						)
-					}
-					if injected {
-						dryRunInjected[projection.TrackerID] = struct{}{}
-					} else if injectionStatus == api.StageStatusFailed {
-						tracker.Eligible = false
-						tracker.Status = api.StageStatusFailed
-						readyCount--
-					}
+		}
+		if options.DryRun {
+			if err := execution.prepareClientInjection(ctx, &tracker, projection, preparation.TorrentPath, index, len(planProjections)); err != nil {
+				if retained != nil {
+					_ = retained.Release()
 				}
+				return api.UploadPlan{}, nil, err
 			}
 		}
-		if options.DryRun && tracker.ClientInjectionStatus == "" {
-			projectDeferredWorkflowClientInjection(&tracker, options.NoSeed)
+		if tracker.Eligible && tracker.Status == api.StageStatusReady {
+			readyCount++
 		}
 		semanticFingerprint, err := workflowUploadTrackerSemanticFingerprint(projection, tracker)
 		if err != nil {
@@ -517,6 +519,12 @@ func (b workflowUploadPlanBuilder) Build(
 		}
 		itemStatus := tracker.Status
 		message := "Tracker upload operation prepared."
+		if slices.ContainsFunc(tracker.RequiredActions, func(action api.RequiredAction) bool {
+			return action.Kind == api.RequiredActionResolveTrackerPreparation
+		}) {
+			itemStatus = api.StageStatusBlocked
+			message = "Tracker preparation is waiting for a decision."
+		}
 		switch tracker.Status {
 		case api.StageStatusSkipped:
 			message = "Tracker upload skipped."
@@ -544,18 +552,66 @@ func (b workflowUploadPlanBuilder) Build(
 	} else if len(plan.Trackers) > 0 && skippedCount == len(plan.Trackers) {
 		plan.Status = api.StageStatusSkipped
 	}
-	return plan, &workflowUploadExecution{
-		sourceManifest:   sourceManifest,
-		plan:             retained,
-		clients:          b.clients,
-		clientSubject:    clientSubject,
-		noSeed:           options.NoSeed,
-		dryRunInjected:   dryRunInjected,
-		crossSeeds:       append([]api.UploadedTorrent(nil), subject.CrossSeedTorrents...),
-		projections:      workflowProjectionMap(planProjections),
-		inputFingerprint: inputFingerprint,
-		trackers:         append([]api.UploadPlanTracker(nil), plan.Trackers...),
-	}, nil
+	execution.trackers = append([]api.UploadPlanTracker(nil), plan.Trackers...)
+	return plan, execution, nil
+}
+
+func emitWorkflowTorrentOutcome(ctx context.Context, subject api.TorrentSubject, status, message string) {
+	tracker := ""
+	if len(subject.Trackers) == 1 {
+		tracker = subject.Trackers[0]
+	}
+	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
+		SourcePath: subject.SourcePath,
+		Tracker:    tracker,
+		Task:       "torrent",
+		Status:     status,
+		Message:    message,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// prepareWorkflowTorrent searches further only after current artifacts fail the
+// requested policy. The probe never generates and does not apply skip-if-rehash.
+func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
+	ctx context.Context,
+	subject api.UploadSubject,
+	input api.TorrentSubject,
+) (api.TorrentResult, error) {
+	forcedRehash := input.TorrentOverrides.Rehash != nil && *input.TorrentOverrides.Rehash
+	if b.clients != nil && subject.ClientSearchPerformed && !subject.ClientSearchPolicy.Skip && !forcedRehash {
+		probe := input
+		probe.TorrentOverrides.NoHash = new(true)
+		probe.SkipIfRehashTrackers = nil
+		probe.DeferWrapperConversion = true
+		result, err := b.torrents.Create(ctx, probe)
+		if err == nil {
+			return result, nil
+		}
+		if !errors.Is(err, internalerrors.ErrNotFound) {
+			return api.TorrentResult{}, fmt.Errorf("probe reusable torrent: %w", err)
+		}
+		found, searchErr := clientdiscovery.New(b.clients, api.NopLogger{}).Discover(ctx, clientdiscovery.SearchInput{
+			SourcePath:        input.SourcePath,
+			FileList:          append([]string(nil), input.FileList...),
+			DiscType:          input.DiscType,
+			KeepFolder:        input.KeepFolder,
+			Policy:            subject.ClientSearchPolicy,
+			ForceRecheck:      new(input.ForceRecheck),
+			FindAllCandidates: true,
+		})
+		if ctx.Err() != nil {
+			return api.TorrentResult{}, fmt.Errorf("workflow torrent search canceled: %w", ctx.Err())
+		}
+		if searchErr == nil {
+			input.ClientTorrentCandidates = append(input.ClientTorrentCandidates, found.TorrentCandidates...)
+		}
+	}
+	result, err := b.torrents.Create(ctx, input)
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("prepare torrent: %w", err)
+	}
+	return result, nil
 }
 
 func workflowSubmissionContentIdentity(
@@ -687,7 +743,7 @@ func workflowDryRunClientFailure(
 	case api.OperationFailureLiveTestMutationDisabled:
 		operation = api.OperationKindClientInjection
 		recovery = api.OperationRecoveryNone
-	case api.OperationFailureMissingExactTorrent:
+	case api.OperationFailureMissingExactTorrent, api.OperationFailureStaleGeneration:
 		recovery = api.OperationRecoveryReprepare
 	case api.OperationFailureUnknownOutcome:
 		operation = api.OperationKindClientInjection
@@ -697,7 +753,6 @@ func workflowDryRunClientFailure(
 		api.OperationFailureActiveInputBusy,
 		api.OperationFailureInvalidSource,
 		api.OperationFailureConfirmationRequired,
-		api.OperationFailureStaleGeneration,
 		api.OperationFailureIncompatibleGeneration,
 		api.OperationFailureMissingPrerequisite,
 		api.OperationFailureTrackerAuthRequired,
@@ -751,6 +806,59 @@ func markWorkflowUploadTrackerMissingExactTorrent(tracker *api.UploadPlanTracker
 		},
 		TrackerID: trackerID,
 	}}
+}
+
+// prepareClientInjection continues only the explicit dry run's captured authority.
+// Preparation decisions and source verification precede the durable client fence.
+func (e *workflowUploadExecution) prepareClientInjection(
+	ctx context.Context,
+	tracker *api.UploadPlanTracker,
+	projection api.TrackerReleaseProjection,
+	torrentPath string,
+	processedBefore, total int,
+) error {
+	projectDeferredWorkflowClientInjection(tracker, e.noSeed)
+	if !e.injectPreparedTorrent || e.noSeed {
+		return nil
+	}
+	if slices.ContainsFunc(tracker.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionResolveTrackerPreparation
+	}) {
+		tracker.ClientInjectionStatus = api.StageStatusPending
+		tracker.ClientInjectionMessage = "Client injection is waiting for the preparation decision."
+		return nil
+	}
+	if tracker.Status != api.StageStatusReady {
+		return nil
+	}
+	if e.sourceManifest != nil {
+		if err := preparedrelease.VerifySourceManifestStability(ctx, *e.sourceManifest); err != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return fmt.Errorf("workflow dry-run source verification: %w", contextErr)
+			}
+			tracker.ClientInjectionStatus = api.StageStatusFailed
+			tracker.ClientInjectionMessage = "Source changed since preparation. Prepare the release again before client injection."
+			tracker.ClientFailureCode = api.OperationFailureStaleGeneration
+			tracker.Eligible, tracker.Status = false, api.StageStatusFailed
+			tracker.Failures = append(
+				tracker.Failures,
+				workflowDryRunClientFailure(tracker.TrackerID, tracker.ClientFailureCode, tracker.ClientInjectionMessage),
+			)
+			return nil
+		}
+	}
+	status, message, code, err := injectWorkflowDryRunClient(ctx, e.clients, e.clientSubject, projection, torrentPath, processedBefore, total)
+	if err != nil {
+		return err
+	}
+	tracker.ClientInjectionStatus, tracker.ClientInjectionMessage, tracker.ClientFailureCode = status, message, code
+	if code != "" {
+		tracker.Failures = append(tracker.Failures, workflowDryRunClientFailure(tracker.TrackerID, code, message))
+	}
+	if status == api.StageStatusFailed {
+		tracker.Eligible, tracker.Status = false, api.StageStatusFailed
+	}
+	return nil
 }
 
 func projectDeferredWorkflowClientInjection(tracker *api.UploadPlanTracker, noSeed bool) {
@@ -809,9 +917,9 @@ func injectWorkflowDryRunClient(
 	torrentPath string,
 	processedBefore int,
 	total int,
-) (api.StageStatus, string, api.OperationFailureCode, bool, error) {
+) (api.StageStatus, string, api.OperationFailureCode, error) {
 	if err := ctx.Err(); err != nil {
-		return "", "", "", false, fmt.Errorf("workflow dry-run client injection: %w", err)
+		return "", "", "", fmt.Errorf("workflow dry-run client injection: %w", err)
 	}
 	trackerID := projection.TrackerID
 	total = max(1, total)
@@ -826,7 +934,7 @@ func injectWorkflowDryRunClient(
 			total,
 			"Dry-run client injection failed.",
 		)
-		return api.StageStatusFailed, "Client injection failed because no client service is configured.", api.OperationFailureDryRunClientInjection, false, nil
+		return api.StageStatusFailed, "Client injection failed because no client service is configured.", api.OperationFailureDryRunClientInjection, nil
 	}
 	torrentPath = strings.TrimSpace(torrentPath)
 	if torrentPath == "" {
@@ -838,10 +946,21 @@ func injectWorkflowDryRunClient(
 			total,
 			"Dry-run client injection failed.",
 		)
-		return api.StageStatusFailed, "Client injection failed because no prepared tracker torrent is available.", api.OperationFailureMissingExactTorrent, false, nil
+		return api.StageStatusFailed, "Client injection failed because no prepared tracker torrent is available.", api.OperationFailureMissingExactTorrent, nil
 	}
-	effectFingerprint, err := workflowClientInjectionFingerprint(trackerID, torrentPath, false)
+	effectFingerprint, err := workflowClientInjectionFingerprint(clients, subject, trackerID, torrentPath, false)
 	if err != nil {
+		if errors.Is(err, api.ErrNoClientInjectionDestination) {
+			emitWorkflowClientInjectionProgress(
+				ctx,
+				projection,
+				api.StageStatusSkipped,
+				processedAfter,
+				total,
+				"Dry-run client injection has no enabled destination.",
+			)
+			return api.StageStatusSkipped, "Client injection skipped because no enabled client destination is selected.", "", nil
+		}
 		emitWorkflowClientInjectionProgress(
 			ctx,
 			projection,
@@ -850,7 +969,7 @@ func injectWorkflowDryRunClient(
 			total,
 			"Dry-run client injection preparation failed.",
 		)
-		return "", "", "", false, err
+		return "", "", "", err
 	}
 	effectReceipt, err := api.BeginWorkflowExternalEffect(ctx, api.WorkflowExternalEffect{
 		Kind:                api.WorkflowExternalEffectClientInjection,
@@ -870,7 +989,6 @@ func injectWorkflowDryRunClient(
 			return api.StageStatusFailed,
 				"Client injection may have succeeded before interruption. Verify the client before retrying.",
 				api.OperationFailureUnknownOutcome,
-				false,
 				nil
 		}
 		emitWorkflowClientInjectionProgress(
@@ -881,7 +999,7 @@ func injectWorkflowDryRunClient(
 			total,
 			"Dry-run client injection could not start.",
 		)
-		return "", "", "", false, fmt.Errorf("workflow dry-run client injection fence: %w", err)
+		return "", "", "", fmt.Errorf("workflow dry-run client injection fence: %w", err)
 	}
 	if effectReceipt.AlreadySucceeded {
 		emitWorkflowClientInjectionProgress(
@@ -892,7 +1010,7 @@ func injectWorkflowDryRunClient(
 			total,
 			"Prior dry-run client injection receipt retained.",
 		)
-		return api.StageStatusCompleted, "Prior client injection receipt retained.", "", true, nil
+		return api.StageStatusCompleted, "Prior client injection receipt retained.", "", nil
 	}
 	emitWorkflowClientInjectionProgress(
 		ctx,
@@ -902,7 +1020,18 @@ func injectWorkflowDryRunClient(
 		total,
 		"Injecting dry-run torrent into the client.",
 	)
-	injectErr := clients.Inject(ctx, subject, api.TorrentResult{Path: torrentPath, Tracker: string(trackerID)})
+	injectErr := clients.Inject(ctx, subject, api.TorrentResult{
+		Path:            torrentPath,
+		Tracker:         string(trackerID),
+		VerifyInjection: true,
+	})
+	if errors.Is(injectErr, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		emitWorkflowClientInjectionProgress(ctx, projection, api.StageStatusFailed, processedAfter, total, "Dry-run client injection outcome is unknown.")
+		return api.StageStatusFailed,
+			"Client injection could not verify the required torrent trackers. Verify the client before retrying.",
+			api.OperationFailureUnknownOutcome,
+			nil
+	}
 	receiptErr := api.CompleteWorkflowExternalEffect(ctx, effectReceipt, injectErr == nil)
 	if receiptErr != nil {
 		emitWorkflowClientInjectionProgress(
@@ -916,12 +1045,11 @@ func injectWorkflowDryRunClient(
 		return api.StageStatusFailed,
 			"Client injection may have succeeded, but its terminal receipt could not be retained. Verify the client before retrying.",
 			api.OperationFailureUnknownOutcome,
-			false,
 			nil
 	}
 	if injectErr != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
-			return "", "", "", false, fmt.Errorf("workflow dry-run client injection: %w", contextErr)
+			return "", "", "", fmt.Errorf("workflow dry-run client injection: %w", contextErr)
 		}
 		emitWorkflowClientInjectionProgress(
 			ctx,
@@ -932,9 +1060,9 @@ func injectWorkflowDryRunClient(
 			"Dry-run client injection failed.",
 		)
 		if errors.Is(injectErr, api.ErrLiveTestMutationDisabled) {
-			return api.StageStatusFailed, "Live testing prohibits torrent-client writes.", api.OperationFailureLiveTestMutationDisabled, false, nil
+			return api.StageStatusFailed, "Live testing prohibits torrent-client writes.", api.OperationFailureLiveTestMutationDisabled, nil
 		}
-		return api.StageStatusFailed, "Client injection failed. Review client settings and retry.", api.OperationFailureDryRunClientInjection, false, nil
+		return api.StageStatusFailed, "Client injection failed. Review client settings and retry.", api.OperationFailureDryRunClientInjection, nil
 	}
 	emitWorkflowClientInjectionProgress(
 		ctx,
@@ -944,7 +1072,7 @@ func injectWorkflowDryRunClient(
 		total,
 		"Dry-run client injection completed.",
 	)
-	return api.StageStatusCompleted, "Client injection completed.", "", true, nil
+	return api.StageStatusCompleted, "Client injection completed.", "", nil
 }
 
 func emitWorkflowClientInjectionProgress(
@@ -969,23 +1097,33 @@ func emitWorkflowClientInjectionProgress(
 }
 
 func workflowClientInjectionFingerprint(
+	clients api.ClientService,
+	subject api.ClientSubject,
 	trackerID api.TrackerID,
 	torrentPath string,
 	crossSeed bool,
 ) (api.WorkflowFingerprint, error) {
+	destination, err := clients.InjectionDestinationFingerprint(subject, api.TorrentResult{Path: torrentPath, Tracker: string(trackerID)})
+	if err != nil {
+		return "", fmt.Errorf("workflow client injection destination: %w", err)
+	}
 	payload, err := os.ReadFile(strings.TrimSpace(torrentPath))
 	if err != nil {
 		return "", fmt.Errorf("workflow client injection read exact torrent: %w", err)
 	}
 	sum := sha256.Sum256(payload)
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Tracker   api.TrackerID
-		Torrent   string
-		CrossSeed bool
+		Tracker         api.TrackerID
+		Torrent         string
+		CrossSeed       bool
+		Destination     api.WorkflowFingerprint
+		VerifyInjection bool
 	}{
-		Tracker:   trackerID,
-		Torrent:   hex.EncodeToString(sum[:]),
-		CrossSeed: crossSeed,
+		Tracker:         trackerID,
+		Torrent:         hex.EncodeToString(sum[:]),
+		CrossSeed:       crossSeed,
+		Destination:     destination,
+		VerifyInjection: true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("workflow client injection fingerprint: %w", err)
@@ -1015,7 +1153,6 @@ func (e *workflowUploadExecution) ResolveAction(
 		return api.UploadPlanTracker{}, fmt.Errorf("workflow upload action: %w", err)
 	}
 	updated := e.trackers[index]
-	previousTorrentFingerprint := updated.TorrentFingerprint
 	updated.RequiredActions = append([]api.RequiredAction(nil), preparation.Preview.RequiredActions...)
 	updated.Questionnaire = sanitizeWorkflowQuestionnaire(preparation.Preview.Questionnaire)
 	updated.Warnings = nil
@@ -1070,9 +1207,8 @@ func (e *workflowUploadExecution) ResolveAction(
 			updated.Status = api.StageStatusReady
 		}
 	}
-	projectDeferredWorkflowClientInjection(&updated, e.noSeed)
-	if updated.TorrentFingerprint != previousTorrentFingerprint {
-		delete(e.dryRunInjected, trackerID)
+	if err := e.prepareClientInjection(ctx, &updated, projection, preparation.TorrentPath, index, len(e.trackers)); err != nil {
+		return api.UploadPlanTracker{}, err
 	}
 	updated.SemanticFingerprint, err = workflowUploadTrackerSemanticFingerprint(projection, updated)
 	if err != nil {
@@ -1219,14 +1355,10 @@ func (e *workflowUploadExecution) Execute(
 			outcome.RemoteID = strings.TrimSpace(uploaded.TorrentID)
 			outcome.RemoteURL = sanitizeWorkflowRemoteURL(uploaded.TorrentURL)
 		}
-		_, alreadyInjected := e.dryRunInjected[trackerID]
 		switch {
 		case result.Summary.PendingPublication && !hasUploaded:
 			outcome.ClientInjectionStatus = api.StageStatusSkipped
 			outcome.ClientInjectionMessage = "Client injection skipped while tracker publication is pending."
-		case alreadyInjected:
-			outcome.ClientInjected = true
-			outcome.ClientInjectionStatus = api.StageStatusCompleted
 		case e.noSeed:
 			outcome.ClientInjectionStatus = api.StageStatusSkipped
 		case !hasUploaded:
@@ -1281,14 +1413,17 @@ func (e *workflowUploadExecution) Execute(
 				return public, injectErr
 			}
 			outcome := api.UploadTrackerResult{
-				TrackerID:             trackerID,
-				SubmissionStatus:      api.StageStatusSkipped,
-				ClientInjectionStatus: api.StageStatusCompleted,
-				CrossSeeded:           injected,
+				TrackerID:              trackerID,
+				SubmissionStatus:       api.StageStatusSkipped,
+				ClientInjectionStatus:  api.StageStatusCompleted,
+				ClientInjectionMessage: failureMessage,
+				CrossSeeded:            injected,
+			}
+			if !injected {
+				outcome.ClientInjectionStatus = api.StageStatusSkipped
 			}
 			if failureCode != "" {
 				outcome.ClientInjectionStatus = api.StageStatusFailed
-				outcome.ClientInjectionMessage = failureMessage
 				outcome.ClientFailureCode = failureCode
 				outcome.Failures = []api.WorkflowFailure{{
 					Failure: api.OperationFailure{
@@ -1391,10 +1526,14 @@ func executeWorkflowClientInjection(
 		return workflowClientInjectionFailure(trackerID, failureCode, message)
 	}
 	outcome := api.UploadTrackerResult{
-		TrackerID:             trackerID,
-		SubmissionStatus:      api.StageStatusCompleted,
-		ClientInjectionStatus: api.StageStatusCompleted,
-		ClientInjected:        injected,
+		TrackerID:              trackerID,
+		SubmissionStatus:       api.StageStatusCompleted,
+		ClientInjectionStatus:  api.StageStatusCompleted,
+		ClientInjectionMessage: message,
+		ClientInjected:         injected,
+	}
+	if !injected {
+		outcome.ClientInjectionStatus = api.StageStatusSkipped
 	}
 	outcome.Status = outcome.DerivedStatus()
 	return outcome
@@ -1468,6 +1607,12 @@ func injectWorkflowClientWithFence(
 	scopeID string,
 	crossSeed bool,
 ) (bool, api.OperationFailureCode, string, error) {
+	if _, err := clients.InjectionDestinationFingerprint(subject, torrent); err != nil {
+		if errors.Is(err, api.ErrNoClientInjectionDestination) {
+			return false, "", "Client injection skipped because no enabled client destination is selected.", nil
+		}
+		return false, "", "", fmt.Errorf("workflow client injection destination: %w", err)
+	}
 	trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(torrent.Tracker)))
 	fingerprint, err := workflowClientEffectFingerprint(trackerID, torrent, crossSeed)
 	if err != nil {
@@ -1490,7 +1635,12 @@ func injectWorkflowClientWithFence(
 	if receipt.AlreadySucceeded {
 		return true, "", "", nil
 	}
+	torrent.VerifyInjection = true
 	injectErr := clients.Inject(ctx, subject, torrent)
+	if errors.Is(injectErr, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		return false, api.OperationFailureUnknownOutcome,
+			"Client injection could not verify the required torrent trackers. Verify the client before retrying.", nil
+	}
 	if err := api.CompleteWorkflowExternalEffect(ctx, receipt, injectErr == nil); err != nil {
 		return false,
 			api.OperationFailureUnknownOutcome,
@@ -1527,13 +1677,15 @@ func workflowClientEffectFingerprint(
 		return "", errors.New("workflow client effect exact torrent identity is unavailable")
 	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Tracker   api.TrackerID
-		Torrent   string
-		CrossSeed bool
+		Tracker         api.TrackerID
+		Torrent         string
+		CrossSeed       bool
+		VerifyInjection bool
 	}{
-		Tracker:   trackerID,
-		Torrent:   torrentIdentity,
-		CrossSeed: crossSeed,
+		Tracker:         trackerID,
+		Torrent:         torrentIdentity,
+		CrossSeed:       crossSeed,
+		VerifyInjection: true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("workflow client effect fingerprint: %w", err)

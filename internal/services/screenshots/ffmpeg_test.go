@@ -70,6 +70,170 @@ func TestParseShowInfoFrameType(t *testing.T) {
 	}
 }
 
+func TestOverlayReportsSourceHDRFacts(t *testing.T) {
+	source := func(profile string, formats ...api.HDRFormat) api.HDRFacts {
+		return api.HDRFacts{
+			Formats: formats,
+ DolbyVisionProfile: profile,
+			Origin: api.HDREvidenceMediaInfo,
+ Status: api.HDREvidenceComplete,
+		}
+	}
+	p8 := source("8.1", api.HDRFormatDolbyVision, api.HDRFormatHDR10)
+	p8.FallbackFormats = []api.HDRFormat{api.HDRFormatHDR10}
+	p7 := source("7", api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus)
+	p7.FallbackFormats = []api.HDRFormat{api.HDRFormatHDR10Plus, api.HDRFormatHDR10}
+	p8Plus := source("8", api.HDRFormatDolbyVision)
+	p8Plus.FallbackFormats = []api.HDRFormat{api.HDRFormatHDR10Plus, api.HDRFormatHDR10}
+	hlgDV := source("8.4", api.HDRFormatDolbyVision)
+	hlgDV.FallbackFormats = []api.HDRFormat{api.HDRFormatHLG}
+	partial := source("", api.HDRFormatHLG)
+	partial.Status = api.HDREvidencePartial
+	conflict := source("", api.HDRFormatHDR10)
+	conflict.Status = api.HDREvidenceContradictory
+	conflict.Contradictions = []string{"release_name_hdr_differs"}
+	bdinfo := source("5", api.HDRFormatDolbyVision)
+	bdinfo.Origin = api.HDREvidenceBDInfo
+	missing := source("", api.HDRFormatHDR10)
+	missing.Status = api.HDREvidenceMissing
+	fallbackOnly := source("")
+	fallbackOnly.FallbackFormats = []api.HDRFormat{api.HDRFormatHDR10}
+	for _, test := range []struct {
+		name  string
+		facts api.HDRFacts
+		want  string
+	}{
+		{
+name: "HLG",
+ facts: source("", api.HDRFormatHLG),
+ want: "HLG",
+},
+		{
+name: "HDR10",
+ facts: source("", api.HDRFormatHDR10),
+ want: "HDR10",
+},
+		{
+name: "HDR10 plus",
+ facts: source("", api.HDRFormatHDR10Plus),
+ want: "HDR10+",
+},
+		{
+name: "PQ10",
+ facts: source("", api.HDRFormatPQ10),
+ want: "PQ10",
+},
+		{
+name: "HDR Vivid",
+ facts: source("", api.HDRFormatHDRVivid),
+ want: "HDR Vivid",
+},
+		{
+name: "wide gamut",
+ facts: source("", api.HDRFormatWCG),
+ want: "Wide colour gamut",
+},
+		{
+name: "profile5",
+ facts: bdinfo,
+ want: "Dolby Vision Profile 5",
+},
+		{
+name: "profile8.1 HDR10 layer",
+ facts: p8,
+ want: "Dolby Vision Profile 8.1 + HDR10 (compatible)",
+},
+		{
+name: "profile7 HDR10plus compatibility",
+ facts: p7,
+ want: "Dolby Vision Profile 7 + HDR10+ (compatible)",
+},
+		{
+name: "profile8 HDR10plus compatibility",
+ facts: p8Plus,
+ want: "Dolby Vision Profile 8 + HDR10+ (compatible)",
+},
+		{
+name: "profile8.4 HLG compatibility",
+ facts: hlgDV,
+ want: "Dolby Vision Profile 8.4 + HLG (compatible)",
+},
+		{
+name: "profile unknown",
+ facts: source("", api.HDRFormatDolbyVision),
+ want: "Dolby Vision (profile unknown)",
+},
+		{
+name: "profile escaping rejected",
+ facts: source("5':%{n},drawtext=bad\\", api.HDRFormatDolbyVision),
+ want: "Dolby Vision (profile unknown)",
+},
+		{
+name: "orphan profile ignored",
+ facts: source("5", api.HDRFormatHDR10),
+ want: "HDR10",
+},
+		{name: "absent facts", want: "HDR type unknown"},
+		{
+name: "missing evidence",
+ facts: missing,
+ want: "HDR type unknown",
+},
+		{
+name: "unknown format escaping rejected",
+ facts: source("", "unrecognized':%{n},drawtext=bad"),
+ want: "HDR type unknown",
+},
+		{
+name: "partial source",
+ facts: partial,
+ want: "HLG (incomplete evidence)",
+},
+		{
+name: "conflict retains source facts",
+ facts: conflict,
+ want: "HDR10 (conflicting evidence)",
+},
+		{
+name: "compatibility without source type",
+ facts: fallbackOnly,
+ want: "HDR type unknown + HDR10 (compatible)",
+},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := overlayFilters(captureRequest{
+				InputPath: "Example.DV.Profile5.HLG.mkv",
+ Timestamp: 0.5,
+ FrameRate: 24,
+				ToneMap: true,
+ UseLibplacebo: true,
+ HDRFacts: test.facts,
+			})
+			want := []string{
+				"drawtext=text='Frame Number\\: 12':fontcolor=white:fontsize=18:x=10:y=10:box=1:boxcolor=black@0.5",
+				"drawtext=text='Frame Type\\: Unknown':fontcolor=white:fontsize=18:x=10:y=29:box=1:boxcolor=black@0.5",
+				"drawtext=text='Source\\: " + test.want + " - Tonemapped':fontcolor=white:fontsize=18:x=10:y=48:box=1:boxcolor=black@0.5",
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("overlay=%q want=%q", got, want)
+			}
+		})
+	}
+	for _, origin := range []api.HDREvidenceOrigin{api.HDREvidenceUnknown, api.HDREvidenceContentFilename, api.HDREvidenceReleaseName, api.HDREvidenceTrackerTitle} {
+		facts := source("5", api.HDRFormatDolbyVision)
+		facts.Origin = origin
+		if got := hdrOverlaySourceLabel(facts); got != "HDR type unknown" {
+			t.Fatalf("origin=%s inferred label=%q", origin, got)
+		}
+	}
+	for _, facts := range []api.HDRFacts{source("", api.HDRFormatSDR), p8, bdinfo} {
+		filters := overlayFilters(captureRequest{HDRFacts: facts, UseLibplacebo: true})
+		if len(filters) != 2 || strings.Contains(strings.Join(filters, ","), "Tonemapped") {
+			t.Fatalf("non-tonemapped/SDR overlay=%q", filters)
+		}
+	}
+}
+
 func TestBundledFFmpegPathPrefersWorkingDirectory(t *testing.T) {
 	folder := osFolder()
 	if folder == "" {
@@ -124,7 +288,7 @@ func TestBuildFilterChainRoundsPARScaleToEven(t *testing.T) {
 		WidthScale:   1.0,
 		HeightScale:  1.001,
 	}, false)
-	if !strings.HasPrefix(filter, "scale=854:480,") {
+	if !strings.HasPrefix(filter, "trim=end_frame=1,scale=854:480,") {
 		t.Fatalf("expected scale dimensions rounded to even first in filter chain, got %q", filter)
 	}
 }
@@ -162,7 +326,7 @@ func TestBuildFFmpegArgsPreservesPNGCompressionBounds(t *testing.T) {
 func TestCaptureFrameBytesRejectsEmptySuccessfulOutput(t *testing.T) {
 	runner := &singleResultRunner{result: CommandResult{ExitCode: 0}}
 
-	payload, err := captureFrameBytes(context.Background(), runner, "ffmpeg", previewRequest{
+	payload, _, err := captureFrameBytes(context.Background(), runner, "ffmpeg", captureRequest{
 		InputPath: "example.mkv",
 		Timestamp: 1,
 	}, api.NopLogger{})
@@ -180,7 +344,7 @@ func TestCaptureFrameBytesRejectsEmptySuccessfulOutput(t *testing.T) {
 func TestCaptureFrameBytesRejectsBlackSuccessfulOutput(t *testing.T) {
 	runner := &singleResultRunner{result: CommandResult{Stdout: testPNGBytes(t, color.RGBA{A: 255}), ExitCode: 0}}
 
-	payload, err := captureFrameBytes(context.Background(), runner, "ffmpeg", previewRequest{
+	payload, _, err := captureFrameBytes(context.Background(), runner, "ffmpeg", captureRequest{
 		InputPath: "example.mkv",
 		Timestamp: 1,
 	}, api.NopLogger{})
@@ -511,4 +675,31 @@ func testPNGBytes(t *testing.T, pixel color.RGBA) []byte {
 		t.Fatalf("encode png: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func TestBlurayInputOptionsStayBeforeInputForCaptureAndPreview(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "Example.3D.iso")
+	for _, args := range [][]string{
+		buildFFmpegArgs(captureRequest{
+			InputPath: source,
+			Playlist:  "800",
+			Timestamp: 90,
+		}, false),
+		buildFFmpegArgs(captureRequest{
+			InputPath: source,
+			Playlist:  "800",
+			Timestamp: 90,
+		}, false),
+	} {
+		playlist := slices.Index(args, "-playlist")
+		input := slices.Index(args, "-i")
+		seek := slices.Index(args, "-ss")
+		if playlist < 0 || input <= playlist || args[playlist+1] != "800" || args[input+1] != "bluray:"+source || seek < 0 || args[seek+1] != "90.000" {
+			t.Fatalf("selected ISO playlist/timeline lost: %v", args)
+		}
+	}
+	ordinary := buildFFmpegArgs(captureRequest{InputPath: source}, false)
+	if slices.Contains(ordinary, "-playlist") || slices.Contains(ordinary, "bluray:"+source) {
+		t.Fatalf("ordinary input behavior changed: %v", ordinary)
+	}
 }

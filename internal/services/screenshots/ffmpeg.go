@@ -15,10 +15,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -125,36 +127,32 @@ func osFolder() string {
 }
 
 type captureRequest struct {
-	InputPath     string
-	OutputPath    string
-	Timestamp     float64
-	FrameRate     float64
-	Resolution    string
-	UseLibplacebo bool
-	ToneMap       bool
-	Algorithm     string
-	Desat         float64
-	Compression   int
-	FrameOverlay  bool
-	OverlaySize   int
-	FrameInfo     frameInfoResult
-	SourceWidth   int
-	SourceHeight  int
-	WidthScale    float64
-	HeightScale   float64
+	HDRFacts       api.HDRFacts
+	TimelineOffset float64
+	InspectFrame   bool
+	Playlist       string
+	InputPath      string
+	OutputPath     string
+	Timestamp      float64
+	FrameRate      float64
+	Resolution     string
+	UseLibplacebo  bool
+	ToneMap        bool
+	Algorithm      string
+	Desat          float64
+	Compression    int
+	FrameOverlay   bool
+	OverlaySize    int
+	FrameInfo      frameInfoResult
+	SourceWidth    int
+	SourceHeight   int
+	WidthScale     float64
+	HeightScale    float64
 }
 
 type frameInfoResult struct {
 	FrameType string
 	PTSTime   float64
-}
-
-type previewRequest struct {
-	InputPath string
-	Timestamp float64
-	ToneMap   bool
-	Algorithm string
-	Desat     float64
 }
 
 const (
@@ -171,8 +169,9 @@ var ffmpegDurationPattern = regexp.MustCompile(`(?m)Duration:\s*(\d{2,}:\d{2}:\d
 // ffmpeg image validation errors are returned after ffmpeg exits successfully
 // but fails to produce a usable screenshot frame.
 var (
-	errFFmpegNoImage    = errors.New("ffmpeg produced no image")
-	errFFmpegBlackImage = errors.New("ffmpeg produced black image")
+	errFFmpegNoImage      = errors.New("ffmpeg produced no image")
+	errFFmpegBlackImage   = errors.New("ffmpeg produced black image")
+	errFFmpegDOVIMetadata = errors.New("decoded Dolby Vision metadata unavailable")
 )
 
 var ffmpegFrameCorruptionIndicators = []string{
@@ -188,14 +187,14 @@ var ffmpegFrameCorruptionIndicators = []string{
 // tried when FFmpeg produces a black image at the initial frame timestamp.
 var blackFrameTimestampOffsets = []float64{0, 2, 4, 8, 16, 32, 64, -2, -4, -8, -16, -32, -64}
 
-// captureFrame writes one PNG frame and returns whether the successful attempt
-// used libplacebo. Libplacebo captures retry once before falling back to the
-// software filter chain so transient Vulkan setup failures remain recoverable.
+// captureFrame writes one validated PNG and reports its actual processing.
+// Renderer recovery preserves the timestamp; only black-frame recovery below
+// can move it, and the returned timestamp records that movement.
 // Black output images automatically retry near the requested timestamp using
 // relative offsets before failing.
-func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) (bool, error) {
+func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) (renderedFrame, error) {
 	var lastErr error
-	var lastUsedLib bool
+	var lastFrame renderedFrame
 	retryingBlackFrame := false
 
 	for _, offset := range blackFrameTimestampOffsets {
@@ -205,8 +204,11 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 		}
 		attemptReq := req
 		attemptReq.Timestamp = candidateTS
+		if offset != 0 {
+			attemptReq.FrameInfo = frameInfoResult{}
+		}
 
-		usedLib, err := captureFrameSingle(ctx, runner, cmdPath, attemptReq, logger)
+		frame, err := captureFrameSingle(ctx, runner, cmdPath, attemptReq, logger)
 		if err == nil {
 			if offset != 0 {
 				l := screenshotLogger(logger)
@@ -217,11 +219,11 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 					candidateTS,
 				)
 			}
-			return usedLib, nil
+			return frame, nil
 		}
 
 		lastErr = err
-		lastUsedLib = usedLib
+		lastFrame = frame
 
 		if errors.Is(err, errFFmpegBlackImage) {
 			retryingBlackFrame = true
@@ -235,119 +237,14 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 		)
 	}
 
-	return lastUsedLib, lastErr
+	return lastFrame, lastErr
 }
 
-func captureFrameSingle(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) (bool, error) {
-	logger = screenshotLogger(logger)
-	if strings.TrimSpace(req.InputPath) == "" {
-		return false, errors.New("screenshots: input path required")
-	}
+func captureFrameSingle(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) (renderedFrame, error) {
 	if strings.TrimSpace(req.OutputPath) == "" {
-		return false, errors.New("screenshots: output path required")
+		return renderedFrame{}, errors.New("screenshots: output path required")
 	}
-	if req.FrameOverlay {
-		// Validate before drawtext can make a black source frame appear usable.
-		validationFile, err := os.CreateTemp(filepath.Dir(req.OutputPath), ".upbrr-overlay-check-*.png")
-		if err != nil {
-			return false, fmt.Errorf("screenshots: create overlay validation output: %w", err)
-		}
-		validationPath := validationFile.Name()
-		if err := validationFile.Close(); err != nil {
-			_ = os.Remove(validationPath)
-			return false, fmt.Errorf("screenshots: close overlay validation output: %w", err)
-		}
-		defer func() { _ = os.Remove(validationPath) }()
-
-		validationReq := req
-		validationReq.OutputPath = validationPath
-		validationReq.FrameOverlay = false
-		validationReq.UseLibplacebo = false
-		if _, err := captureFrameSingle(ctx, runner, cmdPath, validationReq, logger); err != nil {
-			return false, err
-		}
-	}
-
-	useLibplacebo := req.UseLibplacebo && req.ToneMap && !req.FrameOverlay
-	args := buildFFmpegArgs(req, useLibplacebo)
-	logger.Tracef(
-		"screenshots: ffmpeg capture attempt mode=%s timestamp_seconds=%.3f input=%s output=%s filters=%s",
-		ffmpegModeLabel(useLibplacebo),
-		req.Timestamp,
-		req.InputPath,
-		req.OutputPath,
-		ffmpegFilterFromArgs(args),
-	)
-	result, err := runner.Run(ctx, cmdPath, args, "")
-	if corruptionErr := rejectCorruptCaptureOutput(req.OutputPath, result); corruptionErr != nil {
-		return useLibplacebo, corruptionErr
-	}
-	if err == nil && result.ExitCode == 0 {
-		if err = validateCaptureOutput(req.OutputPath); err == nil {
-			logger.Tracef("screenshots: ffmpeg capture ok mode=%s exit_code=%d", ffmpegModeLabel(useLibplacebo), result.ExitCode)
-			return useLibplacebo, nil
-		}
-	}
-
-	if useLibplacebo {
-		logger.Debugf("screenshots: ffmpeg capture retry mode=%s reason=%s", ffmpegModeLabel(true), ffmpegResultPreview(result, err))
-		args = buildFFmpegArgs(req, true)
-		logger.Tracef(
-			"screenshots: ffmpeg capture attempt mode=%s retry=%t timestamp_seconds=%.3f input=%s output=%s filters=%s",
-			ffmpegModeLabel(true),
-			true,
-			req.Timestamp,
-			req.InputPath,
-			req.OutputPath,
-			ffmpegFilterFromArgs(args),
-		)
-		result, err = runner.Run(ctx, cmdPath, args, "")
-		if corruptionErr := rejectCorruptCaptureOutput(req.OutputPath, result); corruptionErr != nil {
-			return true, corruptionErr
-		}
-		if err == nil && result.ExitCode == 0 {
-			if err = validateCaptureOutput(req.OutputPath); err == nil {
-				logger.Tracef("screenshots: ffmpeg capture ok mode=%s retry=%t exit_code=%d", ffmpegModeLabel(true), true, result.ExitCode)
-				return true, nil
-			}
-		}
-
-		logger.Debugf(
-			"screenshots: ffmpeg capture fallback from_mode=%s to_mode=%s reason=%s",
-			ffmpegModeLabel(true),
-			ffmpegModeLabel(false),
-			ffmpegResultPreview(result, err),
-		)
-		args = buildFFmpegArgs(req, false)
-		logger.Tracef(
-			"screenshots: ffmpeg capture attempt mode=%s timestamp_seconds=%.3f input=%s output=%s filters=%s",
-			ffmpegModeLabel(false),
-			req.Timestamp,
-			req.InputPath,
-			req.OutputPath,
-			ffmpegFilterFromArgs(args),
-		)
-		result, err = runner.Run(ctx, cmdPath, args, "")
-		if corruptionErr := rejectCorruptCaptureOutput(req.OutputPath, result); corruptionErr != nil {
-			return false, corruptionErr
-		}
-		if err == nil && result.ExitCode == 0 {
-			if err = validateCaptureOutput(req.OutputPath); err == nil {
-				logger.Tracef("screenshots: ffmpeg capture ok mode=%s exit_code=%d", ffmpegModeLabel(false), result.ExitCode)
-				return false, nil
-			}
-		}
-	}
-
-	stderr := strings.TrimSpace(string(result.Stderr))
-	if stderr == "" && err != nil {
-		stderr = err.Error()
-	}
-	logger.Debugf("screenshots: ffmpeg capture exhausted mode=%s reason=%s", ffmpegModeLabel(useLibplacebo), ffmpegResultPreview(result, err))
-	if err != nil {
-		return useLibplacebo, fmt.Errorf("screenshots: ffmpeg capture failed: %w", err)
-	}
-	return useLibplacebo, fmt.Errorf("screenshots: ffmpeg capture failed: %s", stderr)
+	return renderFrame(ctx, runner, cmdPath, req, logger)
 }
 
 // validateCaptureOutput verifies that ffmpeg wrote a decodable, non-black
@@ -369,42 +266,12 @@ func validateCaptureOutput(path string) error {
 	return nil
 }
 
-// captureFrameBytes returns a single non-black preview frame encoded as PNG
-// bytes from stdout. Empty or all-black ffmpeg output is treated as a failed
-// preview so callers can try alternate screenshot inputs.
-func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req previewRequest, logger api.Logger) ([]byte, error) {
-	logger = screenshotLogger(logger)
-	if strings.TrimSpace(req.InputPath) == "" {
-		return nil, errors.New("screenshots: input path required")
-	}
-	if req.Timestamp < 0 {
-		return nil, errors.New("screenshots: timestamp required")
-	}
-
-	args := buildFFmpegPreviewArgs(req)
-	logger.Tracef("screenshots: ffmpeg preview attempt timestamp_seconds=%.3f input=%s", req.Timestamp, req.InputPath)
-	result, err := runner.Run(ctx, cmdPath, args, "")
-	if corruptionErr := ffmpegFrameCorruptionError(result.Stderr); corruptionErr != nil {
-		return nil, corruptionErr
-	}
-	if err == nil && result.ExitCode == 0 && len(result.Stdout) > 0 {
-		if err := validateImagePayload(result.Stdout); err != nil {
-			logger.Debugf("screenshots: ffmpeg preview rejected reason=%s", redaction.RedactValue(err.Error(), nil))
-			return nil, fmt.Errorf("screenshots: ffmpeg preview failed: %s", err.Error())
-		}
-		logger.Tracef("screenshots: ffmpeg preview ok bytes=%d exit_code=%d", len(result.Stdout), result.ExitCode)
-		return result.Stdout, nil
-	}
-	if err == nil && result.ExitCode == 0 {
-		err = errFFmpegNoImage
-	}
-
-	stderr := strings.TrimSpace(string(result.Stderr))
-	if stderr == "" && err != nil {
-		stderr = err.Error()
-	}
-	logger.Debugf("screenshots: ffmpeg preview exhausted reason=%s", ffmpegResultPreview(result, err))
-	return nil, fmt.Errorf("screenshots: ffmpeg preview failed: %s", stderr)
+// captureFrameBytes uses the same renderer policy and validation as final capture,
+// returning a non-black PNG and its processing outcome without persisting it.
+func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) ([]byte, api.ScreenshotProcessing, error) {
+	req.OutputPath = ""
+	frame, err := renderFrame(ctx, runner, cmdPath, req, logger)
+	return frame.Payload, frame.Processing, err
 }
 
 // probeVideoDuration reads FFmpeg's container timing without decoding the VOB.
@@ -487,22 +354,6 @@ func imagePayloadIsBlack(payload []byte) (bool, error) {
 	return true, nil
 }
 
-func ffmpegModeLabel(useLibplacebo bool) string {
-	if useLibplacebo {
-		return "libplacebo"
-	}
-	return "software"
-}
-
-func ffmpegFilterFromArgs(args []string) string {
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "-vf" {
-			return args[i+1]
-		}
-	}
-	return "none"
-}
-
 // ffmpegResultPreview returns a bounded, redacted diagnostic string for logs
 // while leaving the caller-owned error text unchanged.
 func ffmpegResultPreview(result CommandResult, err error) string {
@@ -531,49 +382,39 @@ func ffmpegFrameCorruptionError(stderr []byte) error {
 	return nil
 }
 
-func rejectCorruptCaptureOutput(outputPath string, result CommandResult) error {
-	err := ffmpegFrameCorruptionError(result.Stderr)
-	if err != nil {
-		_ = os.Remove(outputPath)
-	}
-	return err
-}
-
-func buildFFmpegPreviewArgs(req previewRequest) []string {
-	return []string{
-		"-hide_banner",
-		"-loglevel", "error",
-		"-hwaccel", "auto",
-		"-ss", fmt.Sprintf("%.3f", req.Timestamp),
-		"-i", req.InputPath,
-		"-an",
-		"-sn",
-		"-dn",
-		"-frames:v", "1",
-		"-vf", buildFilterChain(captureRequest{
-			ToneMap:   req.ToneMap,
-			Algorithm: req.Algorithm,
-			Desat:     req.Desat,
-		}, false),
-		"-f", "image2pipe",
-		"-vcodec", "png",
-		"-",
-	}
-}
-
 func buildFFmpegArgs(req captureRequest, useLibplacebo bool) []string {
-	vf := buildFilterChain(req, useLibplacebo)
-
-	args := []string{"-hide_banner", "-y", "-loglevel", "error", "-ss", fmt.Sprintf("%.3f", req.Timestamp), "-i", req.InputPath, "-frames:v", "1"}
-	if useLibplacebo {
-		args = append(args, "-init_hw_device", "vulkan")
+	args := []string{"-hide_banner", "-y", "-loglevel", "error"}
+	if req.InspectFrame {
+		args[3] = "info"
 	}
-	args = append(args, "-vf", vf, "-compression_level", strconv.Itoa(req.Compression), "-pred", "mixed", req.OutputPath)
-	return args
+	if useLibplacebo {
+		args = append(args, "-init_hw_device", "vulkan=upbrr", "-filter_hw_device", "upbrr")
+	}
+	// Software decoding preserves decoded Dolby Vision metadata and avoids making
+	// optional CUDA/X11 decoding a prerequisite for either entrypoint.
+	args = append(args, "-ss", fmt.Sprintf("%.3f", req.Timestamp))
+	args = append(args, screenshotInputArgs(req.InputPath, req.Playlist)...)
+	if req.Playlist == "" {
+		// Prefer actual video; keep automatic selection for cover-only inputs.
+		args = append(args, "-map", "0:V:0?")
+	}
+	args = append(args, "-an", "-sn", "-dn", "-frames:v", "1",
+		"-vf", buildFilterChain(req, useLibplacebo), "-vcodec", "png",
+		"-compression_level", strconv.Itoa(req.Compression), "-pred", "mixed")
+	args = append(args, "-f", "image2pipe")
+	if req.OutputPath == "" {
+		return append(args, "-")
+	}
+	return append(args, req.OutputPath)
 }
 
 func buildFilterChain(req captureRequest, useLibplacebo bool) string {
-	filters := make([]string, 0, 6)
+	// Limit input as well as output: buffered renderers must not select or mix
+	// later decoded frames while producing a single requested screenshot.
+	filters := []string{"trim=end_frame=1"}
+	if req.InspectFrame {
+		filters = append(filters, "showinfo")
+	}
 
 	if scale := buildPARScaleFilter(req); scale != "" {
 		filters = append(filters, scale)
@@ -581,7 +422,12 @@ func buildFilterChain(req captureRequest, useLibplacebo bool) string {
 
 	if req.ToneMap {
 		if useLibplacebo {
-			filters = append(filters, "libplacebo=tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv")
+			// Keep decoded software frames (and Dolby Vision side data) intact;
+			// libplacebo owns GPU transfer and returns the explicit PNG/drawtext format.
+			filters = append(
+				filters,
+				"libplacebo=apply_dolbyvision=1:tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=rgb24",
+			)
 		} else {
 			algo := strings.TrimSpace(req.Algorithm)
 			if algo == "" {
@@ -589,8 +435,9 @@ func buildFilterChain(req captureRequest, useLibplacebo bool) string {
 			}
 			filters = append(filters,
 				"zscale=transfer=linear",
+				"format=gbrpf32le",
 				fmt.Sprintf("tonemap=tonemap=%s:desat=%.2f", algo, req.Desat),
-				"zscale=transfer=bt709",
+				"zscale=primaries=bt709:transfer=bt709:matrix=bt709:range=tv",
 			)
 		}
 	}
@@ -654,10 +501,7 @@ func overlayFilters(req captureRequest) []string {
 	yType := yNumber + lineSpacing
 	yHDR := yType + lineSpacing
 
-	frameNumber := int(req.Timestamp * req.FrameRate)
-	if req.FrameInfo.PTSTime > 1.0 && absFloat(req.FrameInfo.PTSTime-req.Timestamp) < 10 {
-		frameNumber = int(req.FrameInfo.PTSTime * req.FrameRate)
-	}
+	frameNumber := int((req.Timestamp + req.TimelineOffset) * req.FrameRate)
 	frameType := req.FrameInfo.FrameType
 	if strings.TrimSpace(frameType) == "" {
 		frameType = "Unknown"
@@ -670,38 +514,74 @@ func overlayFilters(req captureRequest) []string {
 	if req.ToneMap {
 		filters = append(
 			filters,
-			fmt.Sprintf("drawtext=text='Tonemapped HDR':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", fontSize, xAll, yHDR),
+			fmt.Sprintf("drawtext=text='Source\\: %s - Tonemapped':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5",
+				hdrOverlaySourceLabel(req.HDRFacts), fontSize, xAll, yHDR),
 		)
 	}
 	return filters
 }
 
-func getFrameInfo(ctx context.Context, runner Runner, cmdPath string, inputPath string, timestamp float64) (frameInfoResult, error) {
-	args := []string{
-		"-hide_banner",
-		"-loglevel", "info",
-		"-ss", fmt.Sprintf("%.3f", timestamp),
-		"-i", inputPath,
-		"-frames:v", "1",
-		"-vf", "showinfo",
-		"-f", "null",
-		"-",
+// hdrOverlaySourceLabel describes source evidence, not the output colour space
+// or which source layer the renderer used. Only closed labels and normalized
+// numeric profiles enter drawtext; filenames and raw evidence never do.
+func hdrOverlaySourceLabel(facts api.HDRFacts) string {
+	if facts.Origin != api.HDREvidenceMediaInfo && facts.Origin != api.HDREvidenceBDInfo || facts.Status == api.HDREvidenceMissing {
+		return "HDR type unknown"
 	}
-	result, err := runner.Run(ctx, cmdPath, args, "")
-	if err != nil && result.ExitCode == 0 {
-		err = nil
+	names := map[api.HDRFormat]string{
+		api.HDRFormatSDR:         "SDR",
+		api.HDRFormatDolbyVision: "Dolby Vision",
+		api.HDRFormatHDR10:       "HDR10",
+		api.HDRFormatHDR10Plus:   "HDR10+",
+		api.HDRFormatHLG:         "HLG",
+		api.HDRFormatPQ10:        "PQ10",
+		api.HDRFormatHDRVivid:    "HDR Vivid",
+		api.HDRFormatWCG:         "Wide colour gamut",
 	}
-	if err != nil && result.ExitCode != 0 {
-		return frameInfoResult{}, err
+	var parts []string
+	var seen []api.HDRFormat
+	if len(facts.Formats) == 0 && len(facts.FallbackFormats) > 0 {
+		parts = append(parts, "HDR type unknown")
 	}
-
-	stderr := string(result.Stderr)
-	return parseShowInfo(stderr), nil
+	formats := slices.Concat(facts.Formats, facts.FallbackFormats)
+	for _, format := range formats {
+		// HDR10 compatibility is implicit in HDR10+; avoid repeating the base format.
+		if slices.Contains(seen, format) || format == api.HDRFormatHDR10 && slices.Contains(formats, api.HDRFormatHDR10Plus) {
+			continue
+		}
+		seen = append(seen, format)
+		label := names[format]
+		if label == "" {
+			label = "HDR type unknown"
+		}
+		if format == api.HDRFormatDolbyVision {
+			if profile := mediafacts.DolbyVisionProfile("Profile " + facts.DolbyVisionProfile); profile != "" && profile == facts.DolbyVisionProfile {
+				label += " Profile " + profile
+			} else {
+				label += " (profile unknown)"
+			}
+		}
+		if slices.Contains(facts.FallbackFormats, format) {
+			label += " (compatible)"
+		}
+		parts = append(parts, label)
+	}
+	if len(parts) == 0 {
+		return "HDR type unknown"
+	}
+	label := strings.Join(parts, " + ")
+	if facts.Status == api.HDREvidenceContradictory || len(facts.Contradictions) > 0 {
+		label += " (conflicting evidence)"
+	} else if facts.Status != api.HDREvidenceComplete {
+		label += " (incomplete evidence)"
+	}
+	return label
 }
 
 var (
-	showInfoType = regexp.MustCompile(`\btype:([A-Z])\b`)
-	showInfoPTS  = regexp.MustCompile(`pts_time:([0-9.]+)`)
+	showInfoDOVIMetadata = regexp.MustCompile(`(?m)^\[Parsed_showinfo_\d+ @ [^\]\r\n]+\]\s+side data - Dolby Vision Metadata:`)
+	showInfoType         = regexp.MustCompile(`\btype:([A-Z])\b`)
+	showInfoPTS          = regexp.MustCompile(`pts_time:([0-9.]+)`)
 )
 
 func parseShowInfo(output string) frameInfoResult {
@@ -734,9 +614,11 @@ func digitsOnly(value string) int {
 	return int(parseFloat(buf.String()))
 }
 
-func absFloat(value float64) float64 {
-	if value < 0 {
-		return -value
+// screenshotInputArgs keeps protocol options before -i. An empty playlist
+// preserves ordinary-file and extracted-disc capture behavior.
+func screenshotInputArgs(source, playlist string) []string {
+	if playlist != "" {
+		return []string{"-playlist", playlist, "-i", "bluray:" + source, "-map", "0:v:0"}
 	}
-	return value
+	return []string{"-i", source}
 }

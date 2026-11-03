@@ -44,7 +44,16 @@ type TorrentService interface {
 	Create(ctx context.Context, subject TorrentSubject) (TorrentResult, error)
 }
 
+// ErrNoClientInjectionDestination reports that selection resolved no enabled
+// clients. Explicit dry runs must not retain a successful injection receipt.
+var ErrNoClientInjectionDestination = errors.New("api: no enabled client injection destination")
+
 type ClientService interface {
+	// InjectionDestinationFingerprint identifies the effective selected clients
+	// without performing client I/O. Only the digest may enter workflow receipts;
+	// resolved client configuration can contain credentials and private endpoints.
+	// ErrNoClientInjectionDestination distinguishes an empty or disabled selection.
+	InjectionDestinationFingerprint(subject ClientSubject, torrent TorrentResult) (WorkflowFingerprint, error)
 	Inject(ctx context.Context, subject ClientSubject, torrent TorrentResult) error
 	SearchPathedTorrents(ctx context.Context, subject ClientSubject) (ClientSearchResult, error)
 }
@@ -412,16 +421,19 @@ type UploadSubject struct {
 	DiscType                   string
 	VideoPath                  string
 	FileList                   []string
-	SourceSize                 int64
-	MediaInfoJSONPath          string
-	MediaInfoTextPath          string
-	DVDVOBMediaInfoText        string
-	Scene                      bool
-	SceneName                  string
-	SceneNFOPath               string
-	SceneRenamed               bool
-	SceneRenamedReason         string
-	DescriptionGroups          []DescriptionBuilderGroup
+	PackageInventory           PackageInventory
+	// KeepFolder retains the supplied root around one selected movie or episode video.
+	KeepFolder          bool
+	SourceSize          int64
+	MediaInfoJSONPath   string
+	MediaInfoTextPath   string
+	DVDVOBMediaInfoText string
+	Scene               bool
+	SceneName           string
+	SceneNFOPath        string
+	SceneRenamed        bool
+	SceneRenamedReason  string
+	DescriptionGroups   []DescriptionBuilderGroup
 	// DescriptionGroupsFinal distinguishes retained description output from
 	// pre-description subjects whose content may still be generated.
 	DescriptionGroupsFinal bool
@@ -445,6 +457,12 @@ type UploadSubject struct {
 	TrackerData             []TrackerMetadata
 	CrossSeedTorrents       []UploadedTorrent
 	ClientTorrentPath       string
+	// ClientTorrentCandidates are captured alternatives, each bound to its infohash.
+	ClientTorrentCandidates []ClientTorrentCandidate `json:"-"`
+	// ClientSearchPolicy retains the private discovery choice for a later policy-driven search.
+	ClientSearchPolicy ClientSearchPolicy `json:"-"`
+	// ClientSearchPerformed allows further client search only if preparation searched.
+	ClientSearchPerformed bool `json:"-"`
 	// ClientTorrentDataVerified reports that ClientTorrentPath and InfoHash came
 	// from a complete client record bound to the prepared source path.
 	ClientTorrentDataVerified bool
@@ -558,6 +576,7 @@ func NewImageHostingSubject(subject UploadSubject) ImageHostingSubject {
 // RuleSubject contains only stable facts used by generic and tracker-specific
 // eligibility rules.
 type RuleSubject struct {
+	PackageInventory PackageInventory
 	// CheckSourceFolder includes the retained folder in modified-release checks.
 	CheckSourceFolder          bool
 	MediaFileFacts             MediaFileFacts
@@ -628,10 +647,28 @@ type SeasonEpisodeFacts struct {
 	Episodes []int
 }
 
+// PackageInventory records the files selected by the torrent inclusion policy.
+// Complete means enumeration succeeded, independently of episode or media coverage.
+// Files are host paths; a filtered media list alone is not complete evidence.
+// Scope preserves the effective torrent layout, including single-file collapse.
+// Empty Files are omitted from JSON.
+type PackageInventory struct {
+	Status MetadataEvidenceStatus
+	Scope  SubmissionContentScope
+	Files  []string `json:",omitempty"`
+}
+
+// Clone detaches the inventory's file paths from the prepared generation.
+func (i PackageInventory) Clone() PackageInventory {
+	i.Files = slices.Clone(i.Files)
+	return i
+}
+
 // PackageFacts contains source-layout facts derived without filesystem I/O.
-// Status remains partial until the caller supplies a complete all-file list.
+// Status follows the authoritative inventory, or remains partial for a bare file list.
 type PackageFacts struct {
 	Status                    MetadataEvidenceStatus
+	Scope                     SubmissionContentScope
 	KnownFileCount            int
 	MediaFileCount            int
 	ArchiveFileCount          int
@@ -911,7 +948,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		BDInfoCount:          bdInfoEvidence.Count,
 		SceneNFO:             strings.TrimSpace(subject.SceneNFOPath) != "",
 	})
-	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
+	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList, subject.PackageInventory)
 	mediaFacts := deriveValidationMediaFileFacts(subject, packageFacts.MediaFileCount)
 	assetFacts := deriveValidationAssetFacts(subject)
 	assetFacts.HDRArtifacts = subject.HDRArtifactEvidence(tracker)
@@ -936,7 +973,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		HardcodedSubtitleCoverage:   slices.Clone(subject.HardcodedSubtitleCoverage),
 		SourcePath:                  subject.SourcePath,
 		VideoPath:                   subject.VideoPath,
-		FileList:                    slices.Clone(subject.FileList),
+		FileList:                    validationPackageFiles(subject.FileList, subject.PackageInventory),
 		SourceSize:                  subject.SourceSize,
 		DiscType:                    subject.DiscType,
 		Scene:                       subject.Scene,
@@ -1026,7 +1063,7 @@ func (s UploadSubject) TrackerDescriptionOverride(tracker string) (string, bool)
 		if !matchesTracker {
 			continue
 		}
-		if description := strings.TrimSpace(group.Source()); description != "" {
+		if description := strings.TrimSpace(group.Source()); description != "" || s.DescriptionGroupsFinal || group.Final {
 			return description, s.DescriptionGroupsFinal || group.Final
 		}
 	}
@@ -1091,8 +1128,20 @@ var validationSubtitleExtensions = map[string]struct{}{
 	".vtt": {},
 }
 
-func deriveValidationPackageFacts(sourcePath string, fileList []string) PackageFacts {
+func validationPackageFiles(fileList []string, inventory PackageInventory) []string {
+	if inventory.Status != "" {
+		return slices.Clone(inventory.Files)
+	}
+	return slices.Clone(fileList)
+}
+
+func deriveValidationPackageFacts(sourcePath string, fileList []string, inventory PackageInventory) PackageFacts {
 	facts := PackageFacts{Status: MetadataEvidenceStatusUnavailable}
+	if inventory.Status != "" {
+		fileList = inventory.Files
+		facts.Status = inventory.Status
+		facts.Scope = inventory.Scope
+	}
 	extensions := make(map[string]struct{})
 	extraKinds := make(map[PackageFileKind]struct{})
 	detectedEpisodes := make(map[int]map[int]struct{})
@@ -1146,8 +1195,10 @@ func deriveValidationPackageFacts(sourcePath string, fileList []string) PackageF
 	if facts.KnownFileCount == 0 {
 		return facts
 	}
-	facts.Status = MetadataEvidenceStatusPartial
-	facts.SingleFileFolder = facts.KnownFileCount == 1 && folderCandidate
+	if inventory.Status == "" {
+		facts.Status = MetadataEvidenceStatusPartial
+	}
+	facts.SingleFileFolder = facts.KnownFileCount == 1 && folderCandidate && inventory.Scope != SubmissionContentScopeSingleFile
 	facts.Extensions = make([]string, 0, len(extensions))
 	for extension := range extensions {
 		facts.Extensions = append(facts.Extensions, extension)
@@ -1672,7 +1723,7 @@ func validationIdentityProvenanceValueKnown(provenance IdentityProvenance) bool 
 // NewTrackerValidationSubjectFromRuleSubject preserves the legacy generic-rule
 // entry point while routing custom checks through the validation contract.
 func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker string) TrackerValidationSubject {
-	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
+	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList, subject.PackageInventory)
 	mediaFacts := deriveValidationRuleMediaFileFacts(subject, packageFacts.MediaFileCount)
 	return TrackerValidationSubject{
 		CheckSourceFolder:          subject.CheckSourceFolder,
@@ -1686,7 +1737,7 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 		HardcodedSubtitleCoverage:  slices.Clone(subject.HardcodedSubtitleCoverage),
 		SourcePath:                 subject.SourcePath,
 		VideoPath:                  subject.VideoPath,
-		FileList:                   slices.Clone(subject.FileList),
+		FileList:                   validationPackageFiles(subject.FileList, subject.PackageInventory),
 		DiscType:                   subject.DiscType,
 		Scene:                      subject.Scene,
 		SceneNFOReady:              strings.TrimSpace(subject.SceneNFOPath) != "",
@@ -1742,6 +1793,7 @@ func NewRuleSubject(subject UploadSubject) RuleSubject {
 		SourcePath:                 subject.SourcePath,
 		VideoPath:                  subject.VideoPath,
 		FileList:                   append([]string(nil), subject.FileList...),
+		PackageInventory:           subject.PackageInventory.Clone(),
 		DiscType:                   subject.DiscType,
 		Scene:                      subject.Scene,
 		SceneNFOPath:               subject.SceneNFOPath,
@@ -1965,15 +2017,25 @@ type TorrentSubject struct {
 	SourceSize int64
 	FileList   []string
 	DiscType   string
+	// KeepFolder preserves a selected single video's directory without adding sidecars.
+	KeepFolder bool
 	// ClientTorrentPath is reusable metainfo selected by client discovery.
 	ClientTorrentPath string
 	// ClientTorrentInfoHash is the infohash captured with ClientTorrentPath.
 	ClientTorrentInfoHash string
-	// ClientTorrentDataVerified permits skipping piece verification only for
-	// ClientTorrentPath when its current infohash still matches complete,
-	// source-path-bound client evidence.
+	// ClientTorrentCandidates are captured client artifacts available for policy selection.
+	ClientTorrentCandidates []ClientTorrentCandidate
+	// ClientTorrentDataVerified records complete, source-path-bound client evidence.
+	// Ordinary artifact reuse does not require this evidence.
 	ClientTorrentDataVerified bool
-	Trackers                  []string
+	// ForceRecheck requests a local piece check before reusing a candidate.
+	ForceRecheck bool
+	// DeferWrapperConversion lets an operation search for exact-layout alternatives first.
+	DeferWrapperConversion bool
+	// DeferGenerationPublication transfers a newly generated artifact to the caller
+	// for publication after its source-stability fence succeeds.
+	DeferGenerationPublication bool `json:"-"`
+	Trackers                   []string
 	// SkipIfRehashTrackers lists selected tracker names to omit when their
 	// torrent policy would otherwise require regeneration. Names are case-insensitive.
 	SkipIfRehashTrackers []string
@@ -1987,7 +2049,10 @@ type ClientSubject struct {
 	SourcePath      string
 	FileList        []string
 	DiscType        string
+	KeepFolder      bool
 	ClientOverrides ClientOverrides
+	// FindAllCandidates requests additional exports when current artifacts do not satisfy policy.
+	FindAllCandidates bool
 }
 
 // RuleDisposition identifies how a failed tracker rule affects live upload.
@@ -2098,7 +2163,8 @@ func filterRuleFailures(failures []RuleFailure, blocking bool) []RuleFailure {
 
 // ExternalIDOverrides carries caller-supplied ID intent into metadata
 // resolution. Nil means the resolver may fill the provider; a positive value
-// locks that provider to the supplied ID; zero locks an explicit clear for the
+// locks that provider independently, even when provider cross-links disagree;
+// zero locks an explicit clear for the
 // current request.
 type ExternalIDOverrides struct {
 	TMDBID   *int
@@ -2108,6 +2174,13 @@ type ExternalIDOverrides struct {
 	// MALID carries caller intent for the canonical MAL/AniList-compatible
 	// anime identifier. Nil leaves resolution unchanged; zero clears it.
 	MALID *int
+	// Keep* preserves an existing automatic provider match when another provider
+	// changes. Explicit ID values and clears remain independent and take precedence.
+	KeepTMDB   *bool `json:",omitempty"`
+	KeepIMDB   *bool `json:",omitempty"`
+	KeepTVDB   *bool `json:",omitempty"`
+	KeepTVmaze *bool `json:",omitempty"`
+	KeepMAL    *bool `json:",omitempty"`
 }
 
 // AniListMetadata is the AniList media snapshot used for MAL/AniList preview.
@@ -2210,7 +2283,9 @@ type AniListExternalLink struct {
 }
 
 type BlurayMetadata struct {
-	SourcePath        string
+	SourcePath string
+	// Country limits Candidates to this recognized release country; empty means unrestricted.
+	Country           string
 	IMDBID            int
 	SearchURL         string
 	SelectedReleaseID string
@@ -2223,25 +2298,31 @@ type BlurayMetadata struct {
 	UpdatedAt         time.Time `ts_type:"string"`
 }
 
+// BlurayReleaseCandidate describes one disc edition and its local match evidence.
 type BlurayReleaseCandidate struct {
-	ReleaseID    string
-	ProductID    string
-	MovieTitle   string
-	MovieYear    string
-	Title        string
-	URL          string
-	Price        string
-	Publisher    string
-	Country      string
-	Region       string
-	Score        float64
-	Accepted     bool
-	Warnings     []string
-	MatchNotes   []string
-	Specs        BluraySpecs
-	CoverImages  []BlurayImage
-	GenericDisc  bool
-	SpecsMissing bool
+	// ReleaseDate is an edition-specific YYYY-MM-DD calendar date, or empty when unavailable.
+	ReleaseDate string
+	ReleaseID   string
+	ProductID   string
+	MovieTitle  string
+	MovieYear   string
+	Title       string
+	URL         string
+	Price       string
+	Publisher   string
+	Country     string
+	// Region is the release-country code, distinct from Specs.Playback.Region (A/B/C).
+	Region string
+	// DetailsStatus is empty until requested, then complete or failed.
+	DetailsStatus string
+	Score         float64
+	Accepted      bool
+	Warnings      []string
+	MatchNotes    []string
+	Specs         BluraySpecs
+	CoverImages   []BlurayImage
+	GenericDisc   bool
+	SpecsMissing  bool
 }
 
 type BluraySpecs struct {
@@ -2622,9 +2703,18 @@ type ClientSearchResult struct {
 	FoundPreferredPiece string
 	MatchedTrackers     []string
 	TorrentPath         string
+	// TorrentCandidates retains alternative captured exports for later policy selection.
+	TorrentCandidates []ClientTorrentCandidate
 	// TorrentDataVerified reports that TorrentPath was selected from a complete
 	// client record whose content path exactly matched the searched source.
 	TorrentDataVerified bool
+}
+
+// ClientTorrentCandidate binds a captured metainfo artifact to its client infohash and bytes.
+type ClientTorrentCandidate struct {
+	Path          string
+	InfoHash      string
+	ContentSHA256 string
 }
 
 type TorrentMatch struct {
@@ -2640,7 +2730,9 @@ type TorrentMatch struct {
 	Comment           string
 	TrackerURLsRaw    []string
 	TrackerURLs       []TrackerMatch
-	HasTracker        bool
+	// MatchedTrackers identifies tracker URLs even when no tracker ID was extracted.
+	MatchedTrackers []string
+	HasTracker      bool
 }
 
 type TrackerMatch struct {
@@ -2740,10 +2832,23 @@ type TorrentResult struct {
 	URL       string
 	Tracker   string
 	CrossSeed bool
+	// VerifyInjection requires proof that qBittorrent has the local artifact's
+	// infohash and required announce URLs instead of trusting its add response.
+	// URL-only qBittorrent adds cannot provide that proof. Workflow callers set
+	// this explicitly; false preserves legacy qBittorrent add behavior.
+	VerifyInjection bool
+	// PendingPublication owns an unpublished generated file, never a reused artifact.
+	PendingPublication TorrentPublication `json:"-"`
 	// RehashedTrackers lists selected trackers whose preparation required the
 	// created base torrent and should be scheduled after reusable uploads.
 	RehashedTrackers []string
 	// SkippedTrackers lists selected trackers omitted by SkipIfRehashTrackers.
 	// Path can be empty when every selected tracker was skipped.
 	SkippedTrackers []string
+}
+
+// TorrentPublication owns a generated artifact until it is published or discarded.
+type TorrentPublication interface {
+	Publish() (string, error)
+	Discard() error
 }

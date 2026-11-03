@@ -155,7 +155,8 @@ func showBrowseEntry(mode string, name string, isDir bool) bool {
 	if mode == "folder" {
 		return false
 	}
-	return filesystem.IsVideoFile(name)
+	// ISO visibility is provisional; shared preparation validates 3D Blu-ray evidence.
+	return filesystem.IsVideoFile(name) || strings.EqualFold(filepath.Ext(name), ".iso")
 }
 
 func normalizedBrowseRoots(rootPaths []string) ([]string, error) {

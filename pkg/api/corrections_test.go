@@ -63,8 +63,8 @@ func TestReleaseCorrectionPatchAcceptsClosedResetFields(t *testing.T) {
 	if err := (ReleaseCorrectionPatch{ResetFields: refs}).Validate(); err != nil {
 		t.Fatalf("full reset enum validation: %v", err)
 	}
-	if len(refs) != 50 {
-		t.Fatalf("reset enum count = %d, want 50", len(refs))
+	if len(refs) != 55 {
+		t.Fatalf("reset enum count = %d, want 55", len(refs))
 	}
 }
 
@@ -167,7 +167,11 @@ func TestApplyReleaseCorrectionUpdatePreservesExplicitZeroFalseAndEmpty(t *testi
 		Mode: ReleaseCorrectionUpdatePatch,
 		Patch: &ReleaseCorrectionPatch{
 			Values: ReleaseCorrectionValues{
-				Identity: ExternalIDOverrides{TMDBID: &zero},
+				Identity: ExternalIDOverrides{
+					TMDBID:   &zero,
+					KeepTMDB: &no,
+					KeepIMDB: new(true),
+				},
 				Metadata: MetadataOverrides{
 					PersonalRelease: &no,
 					AudioLanguages:  &empty,
@@ -188,6 +192,13 @@ func TestApplyReleaseCorrectionUpdatePreservesExplicitZeroFalseAndEmpty(t *testi
 	if got.Identity.TMDBID == nil || *got.Identity.TMDBID != 0 || got.Metadata.PersonalRelease == nil || *got.Metadata.PersonalRelease ||
 		got.Metadata.AudioLanguages == nil || len(*got.Metadata.AudioLanguages) != 0 {
 		t.Fatalf("explicit values were not preserved: %#v", got)
+	}
+	if got.Identity.KeepTMDB == nil || *got.Identity.KeepTMDB || got.Identity.KeepIMDB == nil || !*got.Identity.KeepIMDB {
+		t.Fatalf("provider retention choices were not preserved: %#v", got.Identity)
+	}
+	*update.Patch.Values.Identity.KeepIMDB = false
+	if !*got.Identity.KeepIMDB {
+		t.Fatal("stored Keep choice aliases caller intent")
 	}
 	if got.Metadata.TrackLanguages[0].ManifestFingerprint != "new-manifest" || got.Metadata.TrackLanguages[0].Languages == nil ||
 		len(got.Metadata.TrackLanguages[0].Languages) != 0 {

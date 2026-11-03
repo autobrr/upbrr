@@ -1,8 +1,9 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { createServer } from "node:http";
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { expect } from "@playwright/test";
@@ -254,7 +255,7 @@ test("dirty settings survive navigation and require confirmation before logout o
     await page.getByRole("heading", { name: "Build Release Name" }).waitFor();
 
     await page.getByRole("button", { name: "Logging" }).click();
-    const level = page.getByRole("combobox", { name: "Level" });
+    const level = page.getByRole("combobox", { name: "Runtime log level" });
     await expect(level).toBeVisible();
     const originalLevel = await level.inputValue();
     const changedLevel = originalLevel === "debug" ? "trace" : "debug";
@@ -318,7 +319,7 @@ test("session loss in another tab discards private drafts and cached data", asyn
     await page.getByRole("heading", { name: "Build Release Name" }).waitFor();
 
     await page.getByRole("button", { name: "Logging" }).click();
-    const level = page.getByRole("combobox", { name: "Level" });
+    const level = page.getByRole("combobox", { name: "Runtime log level" });
     const originalLevel = await level.inputValue();
     await level.selectOption(originalLevel === "debug" ? "trace" : "debug");
     await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
@@ -340,7 +341,9 @@ test("session loss in another tab discards private drafts and cached data", asyn
     await page.getByRole("button", { name: "Sign In" }).click();
     await page.getByRole("heading", { name: "History" }).waitFor();
     await page.getByRole("button", { name: "Logging" }).click();
-    await expect(page.getByRole("combobox", { name: "Level" })).toHaveValue(originalLevel);
+    await expect(page.getByRole("combobox", { name: "Runtime log level" })).toHaveValue(
+      originalLevel,
+    );
   } finally {
     await app?.stop();
     await workspace.cleanup();
@@ -357,8 +360,8 @@ test("embedded settings generates and revokes a persistent API token", async ({ 
     await page.getByRole("button", { name: "API Tokens" }).click();
     await expect(page.getByRole("heading", { name: "Generate API token" })).toBeVisible();
 
-    await page.getByLabel("Name").fill("WebUI automation");
-    await page.getByLabel("Owner").fill("webui-owner");
+    await page.getByLabel("Name", { exact: true }).fill("WebUI automation");
+    await page.getByLabel("Owner", { exact: true }).fill("webui-owner");
     await page.getByRole("button", { name: "Generate token" }).click();
     const generatedInput = page.getByLabel("Generated API token");
     await expect(generatedInput).toBeVisible();
@@ -433,17 +436,17 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
       .locator("details.settings-card")
       .filter({ has: page.locator("summary", { hasText: "BLU" }) });
     await expect(bluCard).toBeVisible();
-    await expect(
-      bluCard.locator("label.settings-field > span, .settings-switch-row > span"),
-    ).toHaveText([
+    for (const label of [
       "API key",
-      "Anonymous",
-      "Image host",
-      "Duplicate bypass groups",
+      "Anonymous upload",
+      "Preferred image host for this tracker",
+      "Same-group duplicate-check groups",
       "Personal release groups",
-      "Internal groups",
-    ]);
-    await bluCard.getByLabel("API key").fill("e2e-blu-activation");
+      "Internal release groups",
+    ]) {
+      await expect(bluCard.getByLabel(label, { exact: true })).toBeVisible();
+    }
+    await bluCard.getByLabel("API key", { exact: true }).fill("e2e-blu-activation");
 
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Settings saved and applied.")).toBeVisible();
@@ -557,3 +560,274 @@ for (const rootCount of [1, 2]) {
     }
   });
 }
+
+test("embedded settings omit retired controls and keep path mapping pairs together", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    const config = await readFile(workspace.configPath, "utf8");
+    await writeFile(
+      workspace.configPath,
+      config.replace(
+        "torrent_clients: {}",
+        `torrent_clients:
+  layout:
+    type: qbit
+    qbit_url: "http://127.0.0.1"
+    linked_folder: ["/synthetic/links"]
+    automatic_management_paths: ["/synthetic/automatic"]
+    local_path: ["/synthetic/local"]
+    remote_path: ["/synthetic/client"]`,
+      ),
+    );
+    app = await startApp(workspace);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(new URL("settings", app.url).toString());
+    await page.getByRole("button", { name: "Metadata", exact: true }).click();
+    await page.getByLabel("Show advanced", { exact: true }).check();
+    await expect(
+      page.getByRole("switch", { name: "Limit tracker lookup to only metadata ids", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByLabel(/Legacy BTN API key|^BTNAPI$/)).toHaveCount(0);
+    await page.getByRole("button", { name: "Screenshot capture", exact: true }).click();
+    const vulkan = page.getByRole("button", {
+      name: "Help for Use Vulkan/libplacebo tone mapping",
+      exact: true,
+    });
+    await vulkan.hover();
+    await expect(page.getByTestId("field-help-content")).toContainText("Dolby Vision Profile 5");
+    await expect(page.getByTestId("field-help-content")).toContainText("green/purple");
+    await vulkan.press("Escape");
+    await page.getByRole("button", { name: "Description", exact: true }).click();
+    await page.getByLabel("Show advanced", { exact: true }).check();
+    await expect(
+      page.getByRole("heading", { name: "Limits and processing", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByLabel(/Pack screenshot count|Pack thumbnail width/)).toHaveCount(0);
+    const covers = page.getByRole("button", {
+      name: "Help for Disc cover width (pixels)",
+      exact: true,
+    });
+    await covers.hover();
+    await expect(page.getByTestId("field-help-content")).toContainText("smaller width");
+    await covers.press("Escape");
+    await page.getByRole("button", { name: "Sonarr and Radarr", exact: true }).click();
+    await page.getByLabel("Show advanced", { exact: true }).check();
+    await expect(page.getByRole("heading", { name: "Media paths", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Torrent Clients", exact: true }).click();
+    const card = page.getByRole("group", { name: "layout", exact: true });
+    await expect(card).toBeVisible();
+    const bounds = await Promise.all(
+      [
+        "Link staging folders 1",
+        "Automatic-management source roots 1",
+        "Local path mapping roots 1",
+        "Client path mapping roots 1",
+      ].map((label) => card.getByRole("textbox", { name: label, exact: true }).boundingBox()),
+    );
+    const [linked, automatic, local, client] = bounds;
+    expect(linked && automatic && local && client).toBeTruthy();
+    expect(Math.abs(linked!.x - automatic!.x)).toBeLessThan(1);
+    expect(automatic!.y).toBeGreaterThan(linked!.y);
+    expect(Math.abs(local!.x - client!.x)).toBeLessThan(1);
+    expect(client!.y).toBeGreaterThan(local!.y);
+    expect(local!.x).toBeGreaterThan(linked!.x);
+    for (const label of ["Local path mapping roots", "Client path mapping roots"]) {
+      const help = card.getByRole("button", { name: `Help for ${label}`, exact: true });
+      await help.hover();
+      await expect(page.getByTestId("field-help-content")).toContainText("Docker setups");
+      await help.press("Escape");
+    }
+    for (const width of [1280, 1024, 768, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+    }
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test.describe("Settings help", () => {
+  test.use({ hasTouch: true });
+
+  test("supports touch, focus and dismissal without changing settings on narrow screens", async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace();
+    let app: AppServer | undefined;
+    try {
+      app = await startApp(workspace);
+      await page.setViewportSize({ width: 360, height: 780 });
+      await page.goto(new URL("settings", app.url).toString());
+      const control = page.getByRole("switch", { name: "Show tracker icons", exact: true });
+      const checked = await control.isChecked();
+      const help = page.getByRole("button", { name: "Help for Show tracker icons", exact: true });
+      const save = page.getByRole("button", { name: "Save", exact: true });
+      await expect(save).toBeDisabled();
+      await help.scrollIntoViewIfNeeded();
+      const touchAnchor = await help.boundingBox();
+      const controlAnchor = await control.boundingBox();
+      const formHeight = await page
+        .getByTestId("settings-page")
+        .evaluate((element) => element.scrollHeight);
+      await help.tap();
+      const openedTouchAnchor = await help.boundingBox();
+      expect(openedTouchAnchor!.x).toBeCloseTo(touchAnchor!.x, 1);
+      expect(openedTouchAnchor!.y).toBeCloseTo(touchAnchor!.y, 1);
+      await expect(help).toHaveAttribute("aria-expanded", "true");
+      const text = page.getByTestId("field-help-content");
+      await expect(text).toBeVisible();
+      const box = await text.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(360);
+      expect(box!.width).toBeLessThanOrEqual(320);
+      expect(await control.boundingBox()).toEqual(controlAnchor);
+      expect(
+        await page.getByTestId("settings-page").evaluate((element) => element.scrollHeight),
+      ).toBe(formHeight);
+      // Floating content occupies a different vertical band from its trigger.
+      expect(
+        box!.y + box!.height <= touchAnchor!.y || box!.y >= touchAnchor!.y + touchAnchor!.height,
+      ).toBe(true);
+      await help.tap();
+      await expect(text).toBeHidden();
+      await help.tap();
+      await expect(text).toBeVisible();
+      await page.getByRole("heading", { name: "Settings", exact: true }).tap();
+      await expect(text).toBeHidden();
+      await help.tap();
+      await expect(text).toBeVisible();
+      await expect(control).toBeChecked({ checked });
+      await expect(save).toBeDisabled();
+      await help.press("Escape");
+      await expect(text).toBeHidden();
+      await control.focus();
+      await help.focus();
+      await expect(text).toBeVisible();
+      await help.press("Escape");
+      await expect(text).toBeHidden();
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await control.focus();
+      await help.scrollIntoViewIfNeeded();
+      const hoverAnchor = await help.boundingBox();
+      // Hovering the label/row must not open optional help.
+      await page
+        .locator("label[for]")
+        .filter({ hasText: /^Show tracker icons$/ })
+        .hover();
+      await expect(text).toBeHidden();
+      await help.hover();
+      await expect(text).toBeVisible();
+      const openedHoverAnchor = await help.boundingBox();
+      expect(openedHoverAnchor!.x).toBeCloseTo(hoverAnchor!.x, 1);
+      expect(openedHoverAnchor!.y).toBeCloseTo(hoverAnchor!.y, 1);
+      await text.hover();
+      await expect(text).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(text).toBeHidden();
+      await page.getByRole("heading", { name: "Settings", exact: true }).hover();
+      await help.hover();
+      await expect(text).toBeVisible();
+      const heading = await page
+        .getByRole("heading", { name: "Settings", exact: true })
+        .boundingBox();
+      await page.mouse.move(heading!.x + heading!.width / 2, heading!.y + heading!.height / 2, {
+        steps: 10,
+      });
+      await expect(text).toBeHidden();
+      await expect(save).toBeDisabled();
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+});
+
+test("embedded connection tests use unsaved instance values without saving or uploading", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  const requests: string[] = [];
+  const provider = createServer((request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    expect(request.method).toBe("GET");
+    expect(request.url).toBe("/draft/api/v3/system/status");
+    response.setHeader("Content-Type", "application/json");
+    if (request.headers["x-api-key"] === "synthetic-draft-key") {
+      response.end(JSON.stringify({ appName: "Sonarr", version: "4.0.0" }));
+    } else {
+      response.statusCode = 401;
+      response.end(JSON.stringify({ error: "synthetic-private-error-must-not-display" }));
+    }
+  });
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const address = provider.address();
+  if (!address || typeof address === "string") throw new Error("Missing local provider address");
+  try {
+    app = await startApp(workspace);
+    await page.goto(new URL("settings", app.url).toString());
+    const before = JSON.parse(
+      await (await page.request.get(new URL("api/app/GetConfig", app.url).toString())).json(),
+    );
+    await page.getByRole("button", { name: "Sonarr and Radarr", exact: true }).click();
+    await page
+      .getByLabel("Sonarr primary instance URL", { exact: true })
+      .fill(`http://127.0.0.1:${address.port}/draft`);
+    const key = page.getByLabel("Sonarr primary instance API key", { exact: true });
+    await key.fill("synthetic-draft-key");
+    const action = page.getByRole("button", {
+      name: "Test connection to Sonarr primary instance",
+      exact: true,
+    });
+    await action.click();
+    const result = page
+      .getByRole("status")
+      .filter({ hasText: "authenticated API v3 status response" });
+    await expect(result).toBeVisible();
+    await key.fill("synthetic-rejected-key");
+    await expect(result).toHaveCount(0);
+    await action.click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "HTTP 401 (Unauthorized)" }),
+    ).toBeVisible();
+    await expect(page.getByText("synthetic-private-error-must-not-display")).toHaveCount(0);
+    await page.getByRole("button", { name: "Image Hosting", exact: true }).click();
+    const lostimg = page.getByRole("region", { name: "Lostimg", exact: true });
+    await expect(
+      lostimg.getByText(/Connection test unavailable:.*not yet been verified/),
+    ).toBeVisible();
+    await expect(lostimg.getByRole("button", { name: /Test connection/ })).toHaveCount(0);
+    const imgbb = page.getByRole("region", { name: "imgbb connection", exact: true });
+    await expect(
+      imgbb.getByText(/Connection test unavailable:.*only uploads images/),
+    ).toBeVisible();
+    await expect(imgbb.getByRole("button", { name: /Test connection/ })).toHaveCount(0);
+    await page.getByLabel("Image host priority 1", { exact: true }).selectOption("pixhost");
+    await expect(
+      page.getByRole("button", { name: "Test connection to pixhost image hosting", exact: true }),
+    ).toBeVisible();
+    const after = JSON.parse(
+      await (await page.request.get(new URL("api/app/GetConfig", app.url).toString())).json(),
+    );
+    expect(after.ArrIntegration.SonarrURL).toBe(before.ArrIntegration.SonarrURL);
+    expect(after.ArrIntegration.SonarrAPIKey).toBe(before.ArrIntegration.SonarrAPIKey);
+    expect(requests).toHaveLength(2);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app?.stop();
+    await new Promise<void>((resolve, reject) =>
+      provider.close((error) => (error ? reject(error) : resolve())),
+    );
+    await workspace.cleanup();
+  }
+});

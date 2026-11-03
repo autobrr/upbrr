@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { isBluraySiteURL } from "../utils/providerId";
+
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
@@ -15,6 +17,8 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  BlurayDetailRequest,
+  BluraySelection,
   HDRAnalysisInstructions,
   AudioAnalysisInstructions,
   DescriptionInstructions,
@@ -45,6 +49,7 @@ import {
   isActiveWorkflowOperation,
   isFailedWorkflowOperation,
   metadataPreviewFromWorkflow,
+  metadataPreviewWithBlurayDetails,
   normalizedNames,
   playlistSelectionComplete,
   preparationInputForWorkflow,
@@ -242,6 +247,10 @@ export function ReleaseSessionProvider({
     operationSequence: number;
     status: "running" | "error";
     message: string;
+  }> | null>(null);
+  const [candidateOperation, setCandidateOperation] = useState<Readonly<{
+    workflowID: string;
+    operationID: string;
   }> | null>(null);
   const [questionnaireRefresh, setQuestionnaireRefresh] = useState<Readonly<{
     key: string;
@@ -548,6 +557,7 @@ export function ReleaseSessionProvider({
     idempotencyKey: string,
     signal: AbortSignal,
     extra: Pick<ContinueReleaseWorkflowRequest, "answers" | "approval"> = {},
+    onOperation?: (current: ReleaseWorkflowCurrent) => void,
   ): Promise<ReleaseWorkflowCurrent> => {
     if (goal === "uploaded" && !mutationsAllowed) {
       throw new Error("Tracker submission is unavailable in this runtime.");
@@ -575,7 +585,16 @@ export function ReleaseSessionProvider({
       if (signal.aborted || !activeSlotMatches(expectedSlot)) {
         throw new DOMException("Active input changed.", "AbortError");
       }
+      onOperation?.(continued);
       const next = await awaitWorkflowCommand(continued, signal, expectedSlot);
+      // Each dry run or live-upload review owns one assessment; retries are explicit.
+      if (
+        (goal === "dry_run" || goal === "upload_reviewed") &&
+        next.dryRun &&
+        (next.dryRun.id !== current.dryRun?.id || next.dryRun.revision !== current.dryRun?.revision)
+      ) {
+        return next;
+      }
       if (next.workflow.revision === current.workflow.revision) return next;
       current = next;
       // Review decisions acknowledge one assessment; a refresh requires another review.
@@ -949,10 +968,12 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const cancelBackendWorkflow = async (reason: string): Promise<boolean> => {
+  const cancelBackendWorkflow = async (reason: string, operationID?: string): Promise<boolean> => {
     const workflowID = workflowView.current?.workflow.id || activeAuthority.current.workflowID;
     if (!workflowID) return false;
     const operation = workflowView.current?.operation;
+    if (operationID && (!isActiveWorkflowOperation(operation) || operation?.id !== operationID))
+      return false;
     abortController("workflow");
     const controller = new AbortController();
     controllers.current.workflow = controller;
@@ -1322,12 +1343,13 @@ export function ReleaseSessionProvider({
       confirmBDMVRescan: boolean;
       captureHDRMetadata?: boolean;
       acceptPendingInput?: boolean;
+      blurayDetails?: BlurayDetailRequest;
+      bluraySelection?: BluraySelection;
     }>,
     commandRevision: number,
     correlationID: string,
     controller: AbortController,
     update: PendingInputUpdate,
-    releaseID = "",
   ): Promise<boolean> => {
     try {
       const input = preparationInputForWorkflow(
@@ -1349,7 +1371,15 @@ export function ReleaseSessionProvider({
         const commandID = `workflow-candidate-${Date.now().toString(36)}-${previous.workflow.revision.toString(36)}`;
         const candidateInput = workflowPrepareInput({
           ...input,
-          Instructions: { ...input.Instructions, BlurayReleaseID: releaseID },
+          Instructions: {
+            ...input.Instructions,
+            Bluray:
+              controls.bluraySelection ?? previous.factInstructions?.instructions.Bluray ?? null,
+          },
+          Controls: {
+            ...input.Controls!,
+            ...(controls.blurayDetails ? { BlurayDetails: controls.blurayDetails } : {}),
+          },
           Force: true,
         });
         current = await continueBackendGoal(
@@ -1364,6 +1394,16 @@ export function ReleaseSessionProvider({
           },
           commandID,
           controller.signal,
+          {},
+          (continued) => {
+            const started = continued.operation;
+            if (
+              started?.operation === "preparation" &&
+              continued.preparationOperationId === started.id
+            ) {
+              setCandidateOperation({ workflowID: continued.workflow.id, operationID: started.id });
+            }
+          },
         );
       } else if (operation === "reset") {
         const previous = workflowView.current;
@@ -1562,10 +1602,12 @@ export function ReleaseSessionProvider({
     return runPreparationFor(operation, sourcePath, intent);
   };
 
-  const selectCandidate = async (releaseID: string): Promise<boolean> => {
+  const runCandidateAction = async (
+    selection?: BluraySelection,
+    details?: BlurayDetailRequest,
+  ): Promise<boolean> => {
     const sourcePath = state.selectedSource.trim();
-    const candidateID = releaseID.trim();
-    if (!sourcePath || !candidateID) return false;
+    if (!sourcePath) return false;
     abortController("preparation");
     abortWorkflowFacets();
     const controller = new AbortController();
@@ -1573,7 +1615,17 @@ export function ReleaseSessionProvider({
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
-    const intent = cloneIntent(state.preparationIntent);
+    const intent = {
+      ...cloneIntent(state.preparationIntent),
+      ...(selection
+        ? {
+            bluray: selection,
+            sourceLookupURL: isBluraySiteURL(state.preparationIntent.sourceLookupURL)
+              ? ""
+              : state.preparationIntent.sourceLookupURL,
+          }
+        : {}),
+    };
     const update: PendingInputUpdate = {
       inputEditRevision: state.inputEditRevision,
       correctionDirty: state.correctionDirty,
@@ -1600,12 +1652,11 @@ export function ReleaseSessionProvider({
       "candidate",
       sourcePath,
       intent,
-      { confirmBDMVRescan: false },
+      { confirmBDMVRescan: false, blurayDetails: details, bluraySelection: selection },
       commandRevision,
       correlationID,
       controller,
       update,
-      candidateID,
     );
   };
 
@@ -1757,6 +1808,46 @@ export function ReleaseSessionProvider({
         reseedDrafts: !state.screenshots.planStale,
         finalSelectionArtifactIDs: selectedArtifactIDs,
       });
+      // The backend projects the effective prepared collection policy, including overrides.
+      // Import through the workflow so selection, deletion and URL reuse keep one owner.
+      if (
+        workflowPlan.autoAdoptSavedImages &&
+        workflowPlan.savedTrackerImages?.length &&
+        workflowView.current.media?.savedImagePlanId !== workflowPlan.id
+      ) {
+        // Another facet can acquire the workflow while the plan request is pending.
+        if (controllers.current.workflow) {
+          dispatch({
+            type: "workflow_failed",
+            facet: "screenshots",
+            sessionRevision: command.sessionRevision,
+            revision: command.revision,
+            error:
+              "Existing images were not included. Finish the current action, then load suggestions to retry.",
+          });
+          return false;
+        }
+        return await runBackendWorkflow(
+          (current, commandID, signal) =>
+            continueBackendGoal(
+              current,
+              "media_ready",
+              {
+                media: {
+                  screenshotCount: 0,
+                  purpose: "final",
+                  selections: [],
+                  savedImagePlanId: workflowPlan.id,
+                  captureDvdMenus: false,
+                  maxDvdMenuItems: 0,
+                },
+              },
+              commandID,
+              signal,
+            ),
+          screenshotCommandCallbacks(true),
+        );
+      }
       return !command.controller.signal.aborted;
     } catch (error) {
       failWorkflow("screenshots", command, error);
@@ -1859,6 +1950,8 @@ export function ReleaseSessionProvider({
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         image: preview.contentUrl,
+        processing: preview.processing ?? undefined,
+        timestampSeconds: preview.timestampSeconds,
       });
       return !command.controller.signal.aborted;
     } catch (error) {
@@ -1934,15 +2027,6 @@ export function ReleaseSessionProvider({
           },
           contentURL: activePorts.workflow.mediaURL(workflowView.current!, artifact.id),
         }));
-      const uploaded = (media?.artifacts || [])
-        .filter((artifact) => artifact.kind === "hosted_image")
-        .map((artifact) => ({
-          artifactID: artifact.id,
-          host: artifact.host || "",
-          url: artifact.url || "",
-          sizeBytes: artifact.sizeBytes || 0,
-          uploadedAt: media?.createdAt || "",
-        }));
       const failures: UploadImageHostFailure[] = (media?.hostAttempts || []).flatMap((attempt) =>
         (attempt.failures || []).map((failure) => ({
           Host: attempt.host,
@@ -1956,7 +2040,7 @@ export function ReleaseSessionProvider({
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         candidates,
-        uploaded,
+        uploaded: workflowUploadedImages,
         failures,
         failedHosts: media?.failedHosts || [],
       });
@@ -2138,7 +2222,7 @@ export function ReleaseSessionProvider({
       if (!current.dryRun) {
         current = await continueBackendGoal(
           current,
-          "dry_run",
+          "upload_reviewed",
           backendResolvedUploadIntent(current),
           `${commandID}-review`,
           controller.signal,
@@ -2257,6 +2341,7 @@ export function ReleaseSessionProvider({
             ),
           ),
           Boolean(workflowView.current?.release?.display.hdrTargets?.length),
+          workflowView.current?.release?.release ?? null,
         );
   const workflowMedia = workflowView.current?.media;
   const workflowMediaURL = (artifactID: string) =>
@@ -2310,8 +2395,16 @@ export function ReleaseSessionProvider({
       candidates: workflowUploadCandidates,
     });
   }, [workflowUploadCandidates]);
+  const selectedImageSourceIDs = new Set(
+    workflowUploadCandidates.map((candidate) => candidate.image.artifactID),
+  );
   const workflowUploadedImages = (workflowMedia?.artifacts || [])
-    .filter((artifact) => artifact.kind === "hosted_image")
+    .filter(
+      (artifact) =>
+        artifact.kind === "hosted_image" &&
+        artifact.selected &&
+        (artifact.sourceUnavailable || selectedImageSourceIDs.has(artifact.source || "")),
+    )
     .map((artifact) => ({
       artifactID: artifact.id,
       host: artifact.host || "",
@@ -2721,6 +2814,13 @@ export function ReleaseSessionProvider({
     }
   };
 
+  const candidateDetailsCancelable = Boolean(
+    candidateOperation &&
+    candidateOperation.workflowID === workflowView.current?.workflow.id &&
+    candidateOperation.operationID === workflowView.current?.operation?.id &&
+    isActiveWorkflowOperation(workflowView.current?.operation),
+  );
+
   const session: ReleaseSession = {
     workflow: {
       view: workflowView,
@@ -2801,7 +2901,11 @@ export function ReleaseSessionProvider({
         return runBackendWorkflow((current, commandID, signal) =>
           continueBackendGoal(
             current,
-            liveTest ? "dry_run" : "uploaded",
+            liveTest ||
+              (action.kind === "resolve_tracker_preparation" &&
+                (current.dryRun?.explicitDryRun || current.dryRun?.clientInjectionRequested))
+              ? "dry_run"
+              : "uploaded",
             backendResolvedUploadIntent(current),
             commandID,
             signal,
@@ -2875,6 +2979,7 @@ export function ReleaseSessionProvider({
         failure: state.preparation.failure,
         activeInput: state.activeInput,
         sourceVerification: state.sourceVerification,
+        candidateDetailsCancelable,
         preparationDirty: state.preparationDirty,
         correctionDirty: state.correctionDirty,
         intent: state.preparationIntent,
@@ -2885,7 +2990,7 @@ export function ReleaseSessionProvider({
         confirmFields: state.correctionConfirmFields,
         trackerInputAnswers,
         selectedTrackers: state.selectedTrackers,
-        preview: state.preview,
+        preview: metadataPreviewWithBlurayDetails(state.preview, workflowView.current),
         release: workflowView.current?.release
           ? workflowViewValue(workflowView.current.release.release)
           : null,
@@ -3017,7 +3122,21 @@ export function ReleaseSessionProvider({
           captureHDRMetadata: retry.captureHDRMetadata,
         });
       },
-      selectCandidate,
+      selectCandidate: (releaseID) => runCandidateAction({ Mode: "manual", Release: releaseID }),
+      cancelCandidateDetails: () => {
+        if (!candidateDetailsCancelable || !candidateOperation) return Promise.resolve(false);
+        cancelPreparation();
+        return cancelBackendWorkflow(
+          "Blu-ray.com inspection canceled.",
+          candidateOperation.operationID,
+        );
+      },
+      fetchCandidateDetails: (releaseID) =>
+        runCandidateAction(
+          undefined,
+          releaseID ? { ReleaseID: releaseID, All: false } : { ReleaseID: "", All: true },
+        ),
+      setCandidateSelection: (mode) => runCandidateAction({ Mode: mode, Release: "" }),
     },
     duplicates: {
       view: {
@@ -3357,6 +3476,8 @@ export function ReleaseSessionProvider({
         selections: state.screenshots.selections,
         finalSelectionArtifactIDs: selectedScreenshotIDs,
         previewImage: state.screenshots.previewImage,
+        previewProcessing: state.screenshots.previewProcessing,
+        previewTimestampSeconds: state.screenshots.previewTimestampSeconds,
         staleReason: state.screenshots.staleReason,
         mutationBlockedReason: screenshotMutationBlockedReason,
         error: screenshotError,
@@ -3481,7 +3602,7 @@ export function ReleaseSessionProvider({
     uploadedImages: {
       view: {
         revision: state.uploadedImages.revision,
-        status: state.uploadedImages.status,
+        status: workflowView.status === "running" ? "running" : state.uploadedImages.status,
         candidates: workflowUploadCandidates,
         uploaded: workflowUploadedImages,
         selectedArtifactIDs: state.uploadedImages.selectedArtifactIDs,

@@ -346,6 +346,70 @@ func TestNewTrackerValidationSubjectDerivesFailSafeEvidence(t *testing.T) {
 	}
 }
 
+func TestPackageInventoryJSONOmitsUnavailableFiles(t *testing.T) {
+	for _, inventory := range []PackageInventory{
+		{},
+		{Status: MetadataEvidenceStatusUnavailable},
+		{Status: MetadataEvidenceStatusComplete, Files: []string{"Example.iso"}},
+	} {
+		encoded, err := json.Marshal(SourceManifest{PackageInventory: inventory})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded struct {
+			PackageInventory map[string]json.RawMessage
+		}
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		files, present := decoded.PackageInventory["Files"]
+		if present != (len(inventory.Files) > 0) || present && string(files) != `["Example.iso"]` {
+			t.Fatalf("inventory files = %s (present %t), status %q", files, present, inventory.Status)
+		}
+	}
+}
+
+func TestValidationUsesInventoryAuthorityIndependentlyOfMediaCoverage(t *testing.T) {
+	root := t.TempDir()
+	files := []string{filepath.Join(root, "Example.S01E01.mkv"), filepath.Join(root, "Example.S01E03.mkv"), filepath.Join(root, "included.rar")}
+	for _, status := range []MetadataEvidenceStatus{"", MetadataEvidenceStatusComplete, MetadataEvidenceStatusPartial, MetadataEvidenceStatusUnavailable} {
+		t.Run(string(status), func(t *testing.T) {
+			upload := UploadSubject{
+				SourcePath:     root,
+				VideoPath:      files[0],
+				FileList:       files[:1],
+				Container:      "MKV",
+				AudioLanguages: []string{"English"},
+			}
+			if status != "" {
+				upload.PackageInventory = PackageInventory{Status: status, Files: slices.Clone(files)}
+			}
+			wantStatus, wantCount := status, len(files)
+			if status == "" {
+				wantStatus, wantCount = MetadataEvidenceStatusPartial, 1
+			}
+			for _, projected := range []TrackerValidationSubject{
+				NewTrackerValidationSubject(upload, "EXAMPLE"),
+				NewTrackerValidationSubjectFromRuleSubject(NewRuleSubject(upload), "EXAMPLE"),
+			} {
+				if projected.PackageFacts.Status != wantStatus || projected.PackageFacts.KnownFileCount != wantCount {
+					t.Fatalf("inventory = %+v, want status %s count %d", projected.PackageFacts, wantStatus, wantCount)
+				}
+				if status != "" && (projected.PackageFacts.ArchiveFileCount != 1 || !slices.Equal(projected.FileList, files)) {
+					t.Fatal("inventory lost included files")
+				}
+				if projected.MediaFileFacts.LanguageStatus == MetadataEvidenceStatusComplete {
+					t.Fatal("inventory status promoted language coverage")
+				}
+				projected.FileList[0] = "changed"
+				if upload.FileList[0] != files[0] || status != "" && upload.PackageInventory.Files[0] != files[0] {
+					t.Fatal("projection aliases inventory")
+				}
+			}
+		})
+	}
+}
+
 func TestNewTrackerValidationSubjectProjectsFinalTrackerDescription(t *testing.T) {
 	t.Parallel()
 
@@ -726,9 +790,20 @@ func TestNewTrackerValidationSubjectSelectsGroupContentAndFinalityTogether(t *te
 		},
 		{name: "no group falls back to direct override", want: "direct override"},
 		{
-			name:   "empty matching group falls back to direct override",
-			groups: []DescriptionBuilderGroup{{Trackers: []string{"SP"}, Final: true}},
+			name:   "empty pending group falls back to direct override",
+			groups: []DescriptionBuilderGroup{{Trackers: []string{"SP"}}},
 			want:   "direct override",
+		},
+		{
+			name:   "empty final group overrides direct text",
+			groups: []DescriptionBuilderGroup{{Trackers: []string{"SP"}, Final: true}},
+			final:  true,
+		},
+		{
+			name:        "empty globally final group overrides direct text",
+			groups:      []DescriptionBuilderGroup{{Trackers: []string{"SP"}}},
+			globalFinal: true,
+			final:       true,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

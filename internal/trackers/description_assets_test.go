@@ -1069,34 +1069,38 @@ func TestApplyResolvedDescriptionScreenshotsRetainsFinalBuilderScreenshotAssets(
 func TestPrepareUploadContentKeepsFinalDescriptionAndSeparateMedia(t *testing.T) {
 	t.Parallel()
 
-	const body = "[b]Reviewed description[/b]"
-	shot := api.ScreenshotImage{RawURL: "https://images.example/screen.png"}
-	menu := api.ScreenshotImage{RawURL: "https://images.example/menu.png", Purpose: api.ScreenshotPurposeMenu}
-	meta := api.UploadSubject{
-		SourcePath:             filepath.Join(t.TempDir(), "Example.Release.2026"),
-		DescriptionGroupsFinal: true,
-		DescriptionGroups: []api.DescriptionBuilderGroup{{
-			GroupKey:       "unit3d",
-			Trackers:       []string{"AITHER"},
-			RawDescription: body,
-		}},
-		ExactMedia: &api.ExactMediaAssets{DVDMenus: []api.DVDMenuCaptureImage{{ScreenshotImage: menu}}},
-	}
-	registry := descriptionAssetsTestRegistry(t)
-	service := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, &stubRepo{}, registry)
-	content := service.prepareUploadContent(t.Context(), "AITHER", meta, config.TrackerConfig{}, nil, imageHostPreflight{
-		"AITHER": {screenshots: []api.ScreenshotImage{shot}},
-	})
-	if content.Failure != nil || content.Assets == nil {
-		t.Fatalf("prepare final content: %+v", content)
-	}
-	assets := content.Assets
-	if !assets.Final || assets.Description != body {
-		t.Fatalf("final description changed: %+v", assets)
-	}
-	if len(assets.Screenshots) != 1 || assets.Screenshots[0].RawURL != shot.RawURL ||
-		len(assets.MenuImages) != 1 || assets.MenuImages[0].RawURL != menu.RawURL {
-		t.Fatalf("separate upload media lost: %+v", assets)
+	for _, body := range []string{"[b]Reviewed description[/b]", ""} {
+		t.Run(body, func(t *testing.T) {
+			shot := api.ScreenshotImage{RawURL: "https://images.example/screen.png"}
+			menu := api.ScreenshotImage{RawURL: "https://images.example/menu.png", Purpose: api.ScreenshotPurposeMenu}
+			meta := api.UploadSubject{
+				SourcePath:             filepath.Join(t.TempDir(), "Example.Release.2026"),
+				DescriptionGroupsFinal: true,
+				DescriptionOverride:    "Stale notes must not replace reviewed text",
+				DescriptionGroups: []api.DescriptionBuilderGroup{{
+					GroupKey:       "unit3d",
+					Trackers:       []string{"AITHER"},
+					RawDescription: body,
+				}},
+				ExactMedia: &api.ExactMediaAssets{DVDMenus: []api.DVDMenuCaptureImage{{ScreenshotImage: menu}}},
+			}
+			registry := descriptionAssetsTestRegistry(t)
+			service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), api.NopLogger{}, &stubRepo{}, registry)
+			content := service.prepareUploadContent(t.Context(), "AITHER", meta, config.TrackerConfig{}, nil, imageHostPreflight{
+				"AITHER": {screenshots: []api.ScreenshotImage{shot}},
+			})
+			if content.Failure != nil || content.Assets == nil {
+				t.Fatalf("prepare final content: %+v", content)
+			}
+			assets := content.Assets
+			if !assets.Final || assets.Description != body {
+				t.Fatalf("final description changed: %+v", assets)
+			}
+			if len(assets.Screenshots) != 1 || assets.Screenshots[0].RawURL != shot.RawURL ||
+				len(assets.MenuImages) != 1 || assets.MenuImages[0].RawURL != menu.RawURL {
+				t.Fatalf("separate upload media lost: %+v", assets)
+			}
+		})
 	}
 }
 

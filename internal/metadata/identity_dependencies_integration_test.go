@@ -28,20 +28,20 @@ func TestPreparedIdentityDependenciesSurviveRemovalAndRestart(t *testing.T) {
 	dbPath := filepath.Join(base, "metadata.sqlite")
 	tmdbClient := &stubTMDB{
 		searchOutcome: tmdb.SearchOutcome{TMDBID: 401001, Category: "TV"},
-		metadata:      tmdb.MetadataResult{
-TMDBType: "TV",
- Title: "Different Series",
- TVDBID: 401004,
- ExternalTVDBID: 401004,
-},
+		metadata: tmdb.MetadataResult{
+			TMDBType:       "TV",
+			Title:          "Different Series",
+			TVDBID:         401004,
+			ExternalTVDBID: 401004,
+		},
 	}
 	imdbClient := &stubIMDB{
 		searchResult: imdb.SearchResult{IMDbID: 401002},
-		info:         imdb.Info{
-IMDbID: "tt401002",
- Title: "Example Series",
- Type: "tvSeries",
-},
+		info: imdb.Info{
+			IMDbID: "tt401002",
+			Title:  "Example Series",
+			Type:   "tvSeries",
+		},
 	}
 	tvdbClient := &stubTVDB{
 		id:             401003,
@@ -57,7 +57,7 @@ IMDbID: "tt401002",
 		if err := repo.Migrate(); err != nil {
 			t.Fatal(err)
 		}
-		service := NewService(repo,
+		service := newTestService(t, repo,
 			WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 			WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}),
 			WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient), WithTVDBClient(tvdbClient), WithTVmazeClient(&stubTVmaze{}))

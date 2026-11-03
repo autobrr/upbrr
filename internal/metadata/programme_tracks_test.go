@@ -28,7 +28,7 @@ func TestProgrammeInspectionUsesEveryResourceAndRetainsPrimary(t *testing.T) {
 		}
 	}
 	analyzer := &packAnalyzer{}
-	service := NewService(
+	service := newTestService(t,
 		&stubRepo{},
 		WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)),
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}),
@@ -88,8 +88,13 @@ func (a *programmeReportAnalyzer) Analyze(_ context.Context, target string) (str
 func TestProgrammeInspectionRefreshesPrimaryAndRejectsIncompleteReports(t *testing.T) {
 	root := t.TempDir()
 	first, second := filepath.Join(root, "a.mkv"), filepath.Join(root, "b.mkv")
+	for _, file := range []string{first, second} {
+		if err := os.WriteFile(file, []byte("synthetic media"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	analyzer := &programmeReportAnalyzer{report: packMediaReport}
-	service := NewService(
+	service := newTestService(t,
 		&stubRepo{},
 		WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)),
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}),
@@ -151,12 +156,17 @@ func TestProgrammeDerivationUsesFreshPrimaryTechnicalEvidence(t *testing.T) {
 	fresh := strings.ReplaceAll(packMediaReport, `"BitDepth":"8"`, `"BitDepth":"10"`)
 	fresh = strings.ReplaceAll(fresh, `"Format":"AVC"`, `"Format":"HEVC"`)
 	analyzer := &programmeReportAnalyzer{report: fresh}
-	service := NewService(
+	service := newTestService(t,
 		&stubRepo{},
 		WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)),
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "db.sqlite")}}),
 	)
 	first, second := filepath.Join(root, "a.mkv"), filepath.Join(root, "b.mkv")
+	for _, file := range []string{first, second} {
+		if err := os.WriteFile(file, []byte("synthetic media"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	state := preparationstate.State{
 		SourcePath:           root,
 		VideoPath:            first,
@@ -188,6 +198,9 @@ func TestProgrammeDerivationUsesFreshPrimaryTechnicalEvidence(t *testing.T) {
 func TestSingleResourceInspectionOverridesMisleadingNames(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "Example.2160p.avi")
+	if err := os.WriteFile(file, []byte("synthetic media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	stale := filepath.Join(root, "old.json")
 	if err := os.WriteFile(stale, []byte(packMediaReport), 0o600); err != nil {
 		t.Fatal(err)
@@ -195,7 +208,7 @@ func TestSingleResourceInspectionOverridesMisleadingNames(t *testing.T) {
 	for _, codec := range []string{"WavPack", "unclassified-format", "WMA", "DTS-HD High-Res Audio", "ADPCM"} {
 		report := strings.ReplaceAll(packMediaReport, `"Format":"AC-3"`, `"Format":"`+codec+`"`)
 		analyzer := &programmeReportAnalyzer{report: report}
-		service := NewService(&stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, codec, "db.sqlite")}}))
+		service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(mediainfo.NewService(nil, analyzer)), WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, codec, "db.sqlite")}}))
 		state := preparationstate.State{
 			SourcePath:           file,
 			VideoPath:            file,

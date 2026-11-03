@@ -13,9 +13,9 @@ Provide a release folder or file. upbrr resolves the source layout, finds reusab
 
 One input can be active per database, shared by the Web UI and CLI. Tabs in the same browser session resume that input. Another session or process receives a busy result while it is owned. Close the active input before handing it to another session. Closing retains history and reusable images.
 
-Switching during local preparation cancels that work and waits for cleanup. A submission or uncertain remote outcome must finish or be reconciled before switching. Closing a browser tab does not release the input.
+Switching during local preparation cancels that work and waits for cleanup. While an input remains active, a submission or uncertain remote outcome must finish or be reconciled before switching that input. CLI queue continuation follows the recovery rules below after releasing the idle input. Closing a browser tab does not release the input.
 
-If **Legacy workflow recovery** lists an unresolved external effect, inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. Recovery never repeats a submission automatically. Resolve every listed workflow before opening a new input.
+If **Legacy workflow recovery** lists an unresolved external effect, inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. Recovery never repeats a submission automatically. The Web UI continues to list every retained workflow that needs recovery. For unknown tracker submissions with durable submission protection, CLI queues attach reconciliation to the affected source and continue independent items after releasing the previous input. Unresolved client-injection and image-hosting effects, and legacy submissions without that protection, still block new inputs until reconciled. A retained workflow without a reliable source still requires manual recovery.
 
 Every explicit open, history restore, or refresh checks the source path and inventory and hashes at most the first 1 MiB of each file. File sizes and modification times are checked before and after sampling. This is a lightweight identity check, not verification of every source byte. Torrent creation still performs its required piece hashing. A plain page reload reads the current state without starting another verification.
 
@@ -45,6 +45,10 @@ upbrr prepares one release and creates one torrent rooted at the selected collec
 
 ## 2. Review canonical metadata
 
+Metadata preparation reports the active substep within its parent stage, including provider lookups, client discovery, media inspection, and Blu-ray.com catalogue discovery and release details. Counts describe processed work; an unknown total remains indeterminate. Elapsed updates indicate waiting without claiming more completed work. Reused evidence is identified as retained, and optional metadata failures remain visible as partial outcomes.
+
+The Web UI and TUI update their existing progress display in place. Plain CLI output keeps fast preparation with no unavailable metadata quiet and emits at most one intermediate metadata line every 30 seconds, deduplicating unchanged updates, plus a terminal outcome when intermediate output was needed. Partial metadata outcomes are also reported when preparation finishes. Redirected output follows the same bound and uses ordinary lines. Detailed per-request diagnostics remain at TRACE.
+
 Metadata providers and local media inspection produce shared release facts. Review at least:
 
 - title and year;
@@ -54,7 +58,7 @@ Metadata providers and local media inspection produce shared release facts. Revi
 - external IDs;
 - generated release name.
 
-Automatic category detection checks source folders and filenames for TV hints before using the parsed release category, with Movie as the final fallback. Parent folders affect category only; they do not replace the parsed release title. A `Season 1` directory is a TV-category hint without supplying a season number; canonical season tokens still require two or four digits. Tracker-provided categories take precedence over automatic detection, and an explicit category correction in Input or `--category` remains authoritative.
+Automatic category detection checks source folders and filenames for TV hints before using the parsed release category, with Movie as the final fallback. Parent folders affect category only; they do not replace the parsed release title. A `Season 1` directory is a TV-category hint without supplying a season number; filename season tokens still require two or four digits. Manual season and episode corrections accept plain numbers; see [naming fields](../cli/index.md#naming-fields). Tracker-provided categories take precedence over automatic detection, and an explicit category correction in Input or `--category` remains authoritative.
 
 Overrides change the prepared generation. Later operations must use that exact generation rather than silently rebuilding it.
 
@@ -84,6 +88,17 @@ known language differing from the title's recorded original language does not pr
 a dub. Ordinary matching-language original tracks need no special title or flag.
 Commentary is not programme audio.
 
+Language corrections accept complete names or codes, including explicit regions and
+scripts such as `pt-BR` and `zh-Hant`. These variants remain visible; matching uses
+the base language. Filipino (`fil`), Tagalog (`tgl`) and the collective Philippine
+languages (`phi`) remain distinct. A collective label does not identify its members.
+Absent language, undetermined (`und`), multiple languages (`mul`), uncoded languages
+(`mis`), non-linguistic content (`zxx`) and custom text are retained separately;
+unknown values do not establish English or an original soundtrack. Full and Forced
+subtitle coverage stays separate from language identity. Auto removes a correction;
+an explicitly empty list clears it. For an ambiguous name, choose the suggestion
+with its displayed code or enter the intended code directly.
+
 For a previously inspected source, the CLI accepts
 `--track-audio-origin 'TRACK_ID=original'` (or `dubbed` or `unresolved`). It binds the
 answer to that track's current manifest; changed sources require review again.
@@ -98,7 +113,9 @@ under their existing override rules.
 
 If a composite upload stops because a required global source or type is missing, its operation reports an input failure rather than a completed upload. Edit the missing fields on Input, then retry from the latest workflow state. If another stage stops without a next action, review its retained stop reason before retrying; a stopped operation is not proof of a successful tracker submission.
 
-Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections. An explicit TV category correction permits TVDB lookup even when the filename was parsed as Movie; TV naming year still follows eligible TVDB alias evidence.
+Each manually selected provider ID is authoritative independently, including when several selections conflict with provider cross-links. upbrr retains successfully fetched metadata for each selection through refresh and restart; the disagreement alone does not block preparation. Unspecified IDs still require the existing inference agreement, except that MAL can be discovered from the selected TMDB resource even when its IMDb or TVDB links disagree with other selections. A manual MAL ID or an explicit MAL clear takes precedence; cleared providers stay cleared. Invalid syntax, failed lookups and responses for the wrong requested resource remain errors.
+
+Accepted corrections win over history and provider metadata, except provider-owned fields. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections. An explicit TV category correction permits TVDB lookup even when the filename was parsed as Movie; TV naming year follows usable TVDB naming evidence, including collision qualifiers and automatic omission. Manual year and omission controls apply only while usable TVDB naming data is missing.
 
 When **Saved values need review** appears on Input, review the affected fields and the source or provider identity changes shown with each saved value. Choose **Keep saved value**, edit the value where supported, or choose **Use automatic value** to discard only that field's saved correction. Provider-owned fields remain read-only. **Use automatic values for all affected fields** resets only the fields listed in that review, preserving other corrections and history. Select **Apply and continue** to resume preparation; any unresolved fields remain visible. Automatic values are derived during preparation and are not shown as known while the release snapshot is unavailable. If identity evidence changes again, review the refreshed context before confirming again.
 
@@ -152,7 +169,7 @@ Depending on the source and trackers, upbrr can:
 
 Automatic screenshot plans distribute the requested images across all prepared discs, with at least one planned image per disc. Manual frame numbers apply to every disc. Screenshot previews, captures, and DVD menu images remain grouped by disc; DVD menu capture can warn about partial coverage when its collection-wide safety cap or the available menus leave a disc uncovered.
 
-With **Keep images** enabled, validated tracker screenshots can supply the screenshot set and reduce the number of new captures. In the Web UI, review **Saved tracker images** on **Screenshots** and choose **Use saved images**. Missing, invalid, or insufficient saved images can require new captures. Imported comparison blocks remain in descriptions and are excluded from ordinary screenshot selection.
+With **Collect existing tracker images** enabled, validated tracker screenshots can supply the screenshot set and reduce the number of new captures. In the Web UI, eligible existing description images load automatically on **Screenshots**, with the same selection and deletion controls as new captures. Loading does not capture missing frames; use **Generate screenshots** when more images are needed. Existing images have unknown capture timestamps and provenance, so their chronological order relative to new captures is unknown. Imported comparison blocks remain in descriptions and are excluded from ordinary screenshot selection.
 
 Where a tracker permits source-description references, an existing image link may remain usable when its format cannot be inspected. upbrr retains this separately from local screenshot files and reports unknown image properties as guidance, not proof of quality or preservation. Reuse requires a current prepared-source receipt and the tracker's normal image-host policy; rejected URLs and older records without that evidence do not qualify. Explicit screenshot requests and other selected trackers' requirements still apply. Review the final description before upload.
 
@@ -178,19 +195,31 @@ Tracker preparation captures an immutable operation. Payload preview and live su
 - **Dry run** and upload review can prepare a preview but cannot submit it.
 - **Upload** consumes the approved operation once.
 
+An explicit **Dry Run** injects the prepared torrent into the configured client unless **Skip client injection** is enabled. It never submits to the tracker. Automatic review before a live upload does not inject the prepared torrent; live uploads wait for the tracker-registered torrent.
+
 Short-lived remote tokens can still be acquired at submission time when required by a tracker.
 
 ## 7. Submit and retain registered torrents
 
-After confirmed tracker success, upbrr records the tracker result and attempts to retain the tracker-registered torrent. Client injection consumes that registered artifact, not the pre-upload torrent.
+After confirmed tracker success, upbrr records the tracker result and attempts to retain the tracker-registered torrent. Client injection consumes that registered artifact, not the pre-upload torrent, even if an earlier explicit dry run already injected the prepared torrent.
 
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
 
 Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. While an unknown outcome is retained, it requires reconciliation and is never treated as confirmed success. Restarting does not clear its retry block; verify and reconcile the remote outcome before another attempt.
 
+Automatically managed reports, screenshots, descriptions, torrent exports and analysis files share the release's `tmp/<release>/` folder in the active state directory. Analysis and secondary-file reports may use nested folders. Compatible source evidence is reused; changing the source requires fresh evidence. History deletion includes these nested files and preserves active or shared ownership. See the [v0.4.2 artifact notice](../changelog/v0.4.2.md) for legacy cache removal.
+
 ## 8. Inject into clients
 
 Client injection is enabled by default when configured. Disable it explicitly with CLI `--no-seed` or the corresponding Web UI upload option.
+
+Workflow client injection is skipped when no enabled client is selected. Tracker preparation remains eligible and a successful tracker submission stays completed; a skipped or empty client selection is not a completed injection.
+
+If an explicit dry run pauses for a tracker preparation decision, answering it automatically continues client injection once preparation is ready. You do not need to choose **Run dry run** again. Further preparation decisions keep injection pending. Before injecting, upbrr rechecks the captured source manifest; a changed source blocks injection and requires re-preparation. The original **Skip client injection** choice still applies, and a live-upload review continues to defer injection until tracker registration.
+
+Completed dry-run receipts identify only enabled destinations, so editing a selected disabled client does not repeat delivery. Older receipts that included disabled destinations can permit another client action on a later explicit request after upgrading; watch-folder delivery can repeat. An unresolved attempt still blocks another injection.
+
+Workflow injection into qBittorrent verifies that the torrent's infohash and required announce URLs are present in the client. An existing torrent with the same infohash can still have different trackers; upbrr does not change tracker-merging settings or edit its trackers. Verification requires a local v1 torrent artifact. URL-only artifacts cannot be verified and report an injection failure separately from the successful tracker submission. If an add was sent but verification remains uncertain, inspect and reconcile the client outcome before retrying; upbrr keeps the attempt blocked against another add.
 
 A successful draft can be injected before publication when the tracker integration supplies registered torrent authority. It remains unpublished on the tracker. If that artifact is unavailable or injection fails, the result reports the local failure separately from the completed submission.
 

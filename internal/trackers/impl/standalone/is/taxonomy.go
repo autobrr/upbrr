@@ -6,6 +6,8 @@ package is
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -87,13 +89,7 @@ func resolveCategoryID(meta api.UploadSubject) int {
 }
 
 func hasEnglishAudio(meta api.UploadSubject) bool {
-	for _, language := range meta.AudioLanguages {
-		lower := strings.ToLower(strings.TrimSpace(language))
-		if lower == "english" || lower == "en" {
-			return true
-		}
-	}
-	return false
+	return languageutil.ContainsLanguage(meta.AudioLanguages, "en")
 }
 
 func resolveGenres(meta api.UploadSubject) string {

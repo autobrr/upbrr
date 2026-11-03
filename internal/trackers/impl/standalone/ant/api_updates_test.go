@@ -368,7 +368,7 @@ func TestANTSearchUsesPageTotalsAndTMDBID(t *testing.T) {
 	r := dupe.NewAdapter(
 		New(),
 		"ANT",
-		antDupeTestConfig(),
+		antDupeTestConfig(t),
 		client,
 		api.NopLogger{},
 	).Search(

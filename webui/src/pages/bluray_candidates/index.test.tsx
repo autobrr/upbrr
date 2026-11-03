@@ -11,6 +11,8 @@ afterEach(cleanup);
 describe("BlurayCandidatesPage", () => {
   it("preserves candidate cards, cover preview, selection, and accepted state", () => {
     const selectCandidate = vi.fn<InputFacet["selectCandidate"]>();
+    const fetchCandidateDetails = vi.fn();
+    const setCandidateSelection = vi.fn();
     const setLightboxImage = vi.fn();
     const setLightboxAlt = vi.fn();
     const facet = {
@@ -19,6 +21,7 @@ describe("BlurayCandidatesPage", () => {
         error: "",
         preview: {
           Bluray: {
+            Country: "United States",
             BestScore: 97.5,
             Threshold: 80,
             AutoSelected: false,
@@ -30,10 +33,22 @@ describe("BlurayCandidatesPage", () => {
                 Title: "Example Release 2026 Collector Edition",
                 MovieTitle: "Example Release",
                 MovieYear: 2026,
+                DetailsStatus: "complete",
+                MatchNotes: [
+                  "disc matches",
+                  "codec matches",
+                  "resolution matches",
+                  "audio matches",
+                  "subtitles match",
+                  "sixth scoring reason",
+                  "seventh scoring reason",
+                ],
                 Score: 97.5,
-                Country: "Exampleland",
-                Region: "A",
+                Country: "United States",
+                Region: "USA",
+                Specs: { Playback: { Region: "B", RegionNotes: "A, C untested" } },
                 Publisher: "Example Publisher",
+                ReleaseDate: "2020-12-01",
                 URL: "https://example.com/releases/accepted-candidate",
                 CoverImages: [
                   {
@@ -54,10 +69,12 @@ describe("BlurayCandidatesPage", () => {
                 Title: "Example Release 2026 Standard Edition",
                 MovieTitle: "Example Release",
                 MovieYear: 2026,
+                DetailsStatus: "complete",
                 Score: 91,
-                Country: "Exampleland",
-                Region: "B",
+                Country: "United States",
+                Region: "USA",
                 Publisher: "Example Publisher",
+                ReleaseDate: "2024-02-29",
                 URL: "https://example.com/releases/alternate-candidate",
               },
               {
@@ -66,9 +83,10 @@ describe("BlurayCandidatesPage", () => {
                 Title: "Example Release 2026 Budget Edition",
                 MovieTitle: "Example Release",
                 MovieYear: 2026,
+                DetailsStatus: "complete",
                 Score: 87,
-                Country: "Exampleland",
-                Region: "C",
+                Country: "United States",
+                Region: "USA",
                 Publisher: "Example Publisher",
                 URL: "https://example.com/releases/third-candidate",
               },
@@ -77,6 +95,8 @@ describe("BlurayCandidatesPage", () => {
         },
       },
       selectCandidate,
+      fetchCandidateDetails,
+      setCandidateSelection,
     } as unknown as InputFacet;
 
     render(
@@ -87,6 +107,35 @@ describe("BlurayCandidatesPage", () => {
       />,
     );
 
+    const summary = screen.getByLabelText(
+      "Score details for candidate 1: Example Release 2026 Collector Edition",
+    );
+    expect(screen.getByText("seventh scoring reason")).not.toBeVisible();
+    fireEvent.click(summary);
+    expect(screen.getByText("sixth scoring reason")).toBeVisible();
+    expect(screen.getByText("seventh scoring reason")).toBeVisible();
+    fireEvent.click(summary);
+    expect(screen.getByText("seventh scoring reason")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Fetch all release details" }));
+    expect(fetchCandidateDetails).toHaveBeenLastCalledWith();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Fetch details for candidate 2: Example Release 2026 Standard Edition",
+      }),
+    );
+    expect(fetchCandidateDetails).toHaveBeenLastCalledWith("alternate-candidate");
+    fireEvent.click(screen.getByRole("button", { name: "Skip selection" }));
+    expect(setCandidateSelection).toHaveBeenLastCalledWith("skip");
+    fireEvent.click(screen.getByRole("button", { name: "Auto selection" }));
+    expect(setCandidateSelection).toHaveBeenLastCalledWith("auto");
+    expect(screen.getAllByText("Release date")).toHaveLength(3);
+    expect(screen.getByText("Release country")).toBeInTheDocument();
+    expect(screen.getAllByText("Country code")).toHaveLength(3);
+    expect(screen.getAllByText("USA")).toHaveLength(3);
+    expect(screen.getByText("B (A, C untested)")).toBeInTheDocument();
+    expect(screen.getByText("2020-12-01")).toHaveAttribute("datetime", "2020-12-01");
+    expect(screen.getByText("2024-02-29")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
     expect(screen.getByText("Example Release 2026 Collector Edition")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
@@ -131,4 +180,40 @@ describe("BlurayCandidatesPage", () => {
       "https://example.com/images/accepted-back.jpg",
     );
   });
+});
+
+it("explains a unique country match selected below the configured score", () => {
+  const facet = {
+    view: {
+      status: "ready",
+      preview: {
+        Bluray: {
+          Country: "Germany",
+          BestScore: 0,
+          Threshold: 0,
+          AutoSelected: true,
+          SelectedReleaseID: "only-edition",
+          Candidates: [
+            {
+              ReleaseID: "only-edition",
+              Title: "Example Edition",
+              Country: "Germany",
+              Region: "GER",
+              DetailsStatus: "complete",
+              Score: 0,
+              Accepted: true,
+            },
+          ],
+        },
+      },
+    },
+  } as unknown as InputFacet;
+  render(
+    <BlurayCandidatesPage facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+  );
+  expect(screen.getByText("No minimum")).toBeInTheDocument();
+  expect(screen.getByText("0.0/100")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Selected candidate 1: Example Edition" }),
+  ).toBeDisabled();
 });

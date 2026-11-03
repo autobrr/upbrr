@@ -64,8 +64,8 @@ func (r *SQLiteRepository) CompareAndSwapActiveInput(
 // CloseIdleActiveInput atomically closes one exact committed input without
 // requiring its prior coordinator to still hold a live lease. It is limited
 // to idle active records so a restarted process cannot clear in-flight work.
-// Unresolved effects remain durable and continue to block a fresh opening
-// until explicit reconciliation resolves them.
+// Unresolved effects remain durable for source-scoped recovery; detaching an
+// input does not authorize retrying its external effects.
 func (r *SQLiteRepository) CloseIdleActiveInput(ctx context.Context, expected api.ActiveInputRecord, now time.Time) error {
 	if expected.State != api.ActiveInputActive || expected.Revision >= math.MaxInt64 {
 		return api.ErrActiveInputChanged
@@ -141,6 +141,16 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 		}
 		acquiring := current.State == api.ActiveInputEmpty || !current.LeaseExpiresAt.After(now)
 		legacyRecoveryAcquire := current.State == api.ActiveInputEmpty && next.State == api.ActiveInputRecovering
+		if legacyRecoveryAcquire {
+			var leased int
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_work
+				WHERE completed_at IS NULL AND lease_expires_at > ?)`, formatWorkflowStateTime(now)).Scan(&leased); err != nil {
+				return fmt.Errorf("db inspect legacy recovery work leases: %w", err)
+			}
+			if leased != 0 {
+				return api.ErrActiveInputBusy
+			}
+		}
 		if acquiring {
 			if next.Fence != current.Fence+1 || next.CoordinatorID == "" || next.OwnerID == "" || !next.LeaseExpiresAt.After(now) {
 				return api.ErrActiveInputLeaseLost
@@ -181,8 +191,17 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 			current.WorkflowID != "" && next.State == api.ActiveInputEmpty
 		if next.State != api.ActiveInputRecovering && !restoringOwnedInput && !legacyRecoveryClose {
 			var unresolved int
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_effects
-				WHERE status IN ('started', 'unknown'))`).Scan(&unresolved); err != nil {
+			// Only tracker receipts with an exact protective global fence can be
+			// isolated. Other effects and unfenced legacy receipts remain blocking.
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_effects e
+				WHERE e.status IN ('started', 'unknown') AND
+				(e.kind <> 'tracker_submission' OR NOT EXISTS (
+					SELECT 1 FROM submission_fences f
+					WHERE f.owner_id = e.owner_id AND f.workflow_id = e.workflow_id
+					AND f.operation_id = e.operation_id AND f.effect_id = e.effect_id
+					AND f.status IN ('started', 'unknown', 'succeeded')
+				) OR (e.owner_id = ? AND e.workflow_id = ?) OR (e.owner_id = ? AND e.workflow_id = ?)))`,
+				current.OwnerID, current.WorkflowID, next.OwnerID, next.WorkflowID).Scan(&unresolved); err != nil {
 				return fmt.Errorf("db inspect active input effects: %w", err)
 			}
 			if unresolved != 0 {
@@ -262,6 +281,9 @@ func (r *SQLiteRepository) transitionActiveInput(ctx context.Context, expected, 
 			}
 			if rows != 1 {
 				return api.ErrReleaseWorkflowRevisionConflict
+			}
+			if err := syncWorkflowStorage(ctx, tx, *workflow); err != nil {
+				return err
 			}
 		}
 		return writeActiveInput(ctx, tx, next)

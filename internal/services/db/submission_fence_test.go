@@ -93,101 +93,125 @@ func TestSubmissionFencePersistsSuccessAndFencesUnknownAttempts(t *testing.T) {
 
 func TestSubmissionRecoveryCannotClearAcceptedOrDifferentAttempt(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "receipt.sqlite")
-	repo, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	workflow := workflowStateRecordForTest("receipt", api.WorkflowStatusActive, now, `{"revision":1}`)
-	ctx := t.Context()
-	if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
-		t.Fatal(err)
-	}
-	if err := activateSubmissionFenceTestInput(ctx, repo, workflow, now); err != nil {
-		t.Fatal(err)
-	}
-	ctx = api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: "submission-fence-test", Fence: 1})
-	identity := submissionFenceTestIdentity(t, "a")
-	effect := submissionFenceTestEffect(workflow, "accepted", identity, now)
-	if _, _, err := repo.BeginReleaseWorkflowEffect(ctx, effect); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.MarkReleaseWorkflowOperationEffectsUnknown(ctx, workflow.OwnerID, workflow.WorkflowID, effect.OperationID, now); err != nil {
-		t.Fatal(err)
-	}
-	retain := func(operation api.WorkflowOperationID, effectID string) {
-		t.Helper()
-		payload, err := json.Marshal(struct{ UploadResults map[string]api.UploadResult }{
-			UploadResults: map[string]api.UploadResult{"result": {
-				WorkflowID: workflow.WorkflowID,
-				Results: []api.UploadTrackerResult{{
-					TrackerID:             api.TrackerID(effect.ScopeID),
-					SubmissionStatus:      api.StageStatusCompleted,
-					SubmissionReceiptID:   effectID,
-					SubmissionOperationID: operation,
-					Failures:              []api.WorkflowFailure{{Resource: effectID, Failure: api.OperationFailure{Code: api.OperationFailureReceiptRetention}}},
-				}},
-			}},
+	for _, mode := range []string{"direct", "checkpoint"} {
+		t.Run(mode, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "receipt.sqlite")
+			repo, err := Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.Migrate(); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			workflow := workflowStateRecordForTest("receipt", api.WorkflowStatusActive, now, `{"revision":1}`)
+			ctx := t.Context()
+			if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
+				t.Fatal(err)
+			}
+			if err := activateSubmissionFenceTestInput(ctx, repo, workflow, now); err != nil {
+				t.Fatal(err)
+			}
+			ctx = api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: "submission-fence-test", Fence: 1})
+			identity := submissionFenceTestIdentity(t, "a")
+			effect := submissionFenceTestEffect(workflow, "accepted", identity, now)
+			if _, _, err := repo.BeginReleaseWorkflowEffect(ctx, effect); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.MarkReleaseWorkflowOperationEffectsUnknown(ctx, workflow.OwnerID, workflow.WorkflowID, effect.OperationID, now); err != nil {
+				t.Fatal(err)
+			}
+			retain := func(operation api.WorkflowOperationID, effectID string) {
+				t.Helper()
+				payload, err := json.Marshal(struct{ UploadResults map[string]api.UploadResult }{
+					UploadResults: map[string]api.UploadResult{"result": {
+						WorkflowID: workflow.WorkflowID,
+						Results: []api.UploadTrackerResult{{
+							TrackerID:             api.TrackerID(effect.ScopeID),
+							SubmissionStatus:      api.StageStatusCompleted,
+							SubmissionReceiptID:   effectID,
+							SubmissionOperationID: operation,
+							Failures:              []api.WorkflowFailure{{Resource: effectID, Failure: api.OperationFailure{Code: api.OperationFailureReceiptRetention}}},
+						}},
+					}},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				prior := workflow.Revision
+				workflow.Revision++
+				workflow.Payload = payload
+				if err := repo.SaveReleaseWorkflowState(ctx, prior, workflow); err != nil {
+					t.Fatal(err)
+				}
+			}
+			retain(effect.OperationID, effect.EffectID)
+			if err := repo.Close(); err != nil {
+				t.Fatal(err)
+			}
+			repo, err = Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolve := func(expected ...api.WorkflowExternalEffectReceipt) error {
+				if mode == "direct" {
+					return repo.ResolveReleaseWorkflowEffectUnknown(ctx, workflow.OwnerID, workflow.WorkflowID, api.WorkflowExternalEffectTrackerSubmission, effect.ScopeID, now.Add(time.Second), expected...)
+				}
+				next := workflow
+				next.Revision++
+				next.UpdatedAt = now.Add(time.Second)
+				next.EffectResolution = &api.ReleaseWorkflowEffectResolution{
+					Kind:     api.WorkflowExternalEffectTrackerSubmission,
+					ScopeID:  effect.ScopeID,
+					Expected: expected,
+				}
+				err := repo.SaveReleaseWorkflowState(ctx, workflow.Revision, next)
+				if err == nil {
+					workflow = next
+					workflow.EffectResolution = nil
+				}
+				retained, loadErr := repo.LoadReleaseWorkflowState(ctx, workflow.OwnerID, workflow.WorkflowID)
+				if loadErr != nil || retained.Revision != workflow.Revision {
+					t.Fatalf("reconciliation checkpoint revision=%d want=%d err=%v", retained.Revision, workflow.Revision, loadErr)
+				}
+				return err
+			}
+			exact := api.WorkflowExternalEffectReceipt{EffectID: effect.EffectID, OperationID: effect.OperationID}
+			for _, expected := range [][]api.WorkflowExternalEffectReceipt{nil, {exact}} {
+				if err := resolve(expected...); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
+					t.Fatalf("accepted resolution=%v", err)
+				}
+			}
+			if fence, err := repo.LoadSubmissionFence(ctx, identity, effect.Submission.TrackerSite); err != nil || fence.Status != api.WorkflowEffectStatusUnknown {
+				t.Fatalf("accepted attempt fence=%#v err=%v", fence, err)
+			}
+			// Another operation's retained acceptance cannot resolve or prove this attempt.
+			retain("different-operation", effect.EffectID)
+			if err := resolve(api.WorkflowExternalEffectReceipt{EffectID: effect.EffectID, OperationID: "different-operation"}); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
+				t.Fatalf("wrong operation=%v", err)
+			}
+			retain(effect.OperationID, "different-effect")
+			if err := resolve(api.WorkflowExternalEffectReceipt{EffectID: "different-effect", OperationID: effect.OperationID}); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
+				t.Fatalf("wrong effect=%v", err)
+			}
+			if err := resolve(exact); err != nil {
+				t.Fatalf("unproven exact resolution=%v", err)
+			}
+			retry := submissionFenceTestEffect(workflow, "next-attempt", identity, now.Add(2*time.Second))
+			if _, _, err := repo.BeginReleaseWorkflowEffect(ctx, retry); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.MarkReleaseWorkflowOperationEffectsUnknown(ctx, workflow.OwnerID, workflow.WorkflowID, retry.OperationID, now.Add(3*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if err := resolve(exact); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
+				t.Fatalf("stale attempt=%v", err)
+			}
+			if fence, err := repo.LoadSubmissionFence(ctx, identity, effect.Submission.TrackerSite); err != nil || fence.EffectID != retry.EffectID || fence.Status != api.WorkflowEffectStatusUnknown {
+				t.Fatalf("next attempt fence=%#v err=%v", fence, err)
+			}
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		prior := workflow.Revision
-		workflow.Revision++
-		workflow.Payload = payload
-		if err := repo.SaveReleaseWorkflowState(ctx, prior, workflow); err != nil {
-			t.Fatal(err)
-		}
-	}
-	retain(effect.OperationID, effect.EffectID)
-	if err := repo.Close(); err != nil {
-		t.Fatal(err)
-	}
-	repo, err = Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resolve := func(expected ...api.WorkflowExternalEffectReceipt) error {
-		return repo.ResolveReleaseWorkflowEffectUnknown(ctx, workflow.OwnerID, workflow.WorkflowID, api.WorkflowExternalEffectTrackerSubmission, effect.ScopeID, now.Add(time.Second), expected...)
-	}
-	exact := api.WorkflowExternalEffectReceipt{EffectID: effect.EffectID, OperationID: effect.OperationID}
-	for _, expected := range [][]api.WorkflowExternalEffectReceipt{nil, {exact}} {
-		if err := resolve(expected...); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
-			t.Fatalf("accepted resolution=%v", err)
-		}
-	}
-	if fence, err := repo.LoadSubmissionFence(ctx, identity, effect.Submission.TrackerSite); err != nil || fence.Status != api.WorkflowEffectStatusUnknown {
-		t.Fatalf("accepted attempt fence=%#v err=%v", fence, err)
-	}
-	// Another operation's retained acceptance cannot resolve or prove this attempt.
-	retain("different-operation", effect.EffectID)
-	if err := resolve(api.WorkflowExternalEffectReceipt{EffectID: effect.EffectID, OperationID: "different-operation"}); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
-		t.Fatalf("wrong operation=%v", err)
-	}
-	retain(effect.OperationID, "different-effect")
-	if err := resolve(api.WorkflowExternalEffectReceipt{EffectID: "different-effect", OperationID: effect.OperationID}); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
-		t.Fatalf("wrong effect=%v", err)
-	}
-	if err := resolve(exact); err != nil {
-		t.Fatalf("unproven exact resolution=%v", err)
-	}
-	retry := submissionFenceTestEffect(workflow, "next-attempt", identity, now.Add(2*time.Second))
-	if _, _, err := repo.BeginReleaseWorkflowEffect(ctx, retry); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.MarkReleaseWorkflowOperationEffectsUnknown(ctx, workflow.OwnerID, workflow.WorkflowID, retry.OperationID, now.Add(3*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if err := resolve(exact); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
-		t.Fatalf("stale attempt=%v", err)
-	}
-	if fence, err := repo.LoadSubmissionFence(ctx, identity, effect.Submission.TrackerSite); err != nil || fence.EffectID != retry.EffectID || fence.Status != api.WorkflowEffectStatusUnknown {
-		t.Fatalf("next attempt fence=%#v err=%v", fence, err)
 	}
 }
 

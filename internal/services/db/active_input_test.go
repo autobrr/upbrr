@@ -9,6 +9,7 @@ import (
 	"errors"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -251,7 +252,10 @@ func TestCloseIdleActiveInputDetachesUnresolvedEffects(t *testing.T) {
 			}
 			active := createIdleActiveInputForTest(ctx, t, repo, now, workflow.OwnerID, workflow.WorkflowID, "first-coordinator")
 			activeCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: active.CoordinatorID, Fence: active.Fence})
-			effect, _, err := repo.BeginReleaseWorkflowEffect(activeCtx, workflowEffectForTest(workflow, "operation", "effect", "PTP", now))
+			submission := submissionFenceTestEffect(workflow, "effect", submissionFenceTestIdentity(t, "a"), now)
+			submission.Submission.CoordinatorID = active.CoordinatorID
+			submission.Submission.Fence = active.Fence
+			effect, _, err := repo.BeginReleaseWorkflowEffect(activeCtx, submission)
 			if err != nil {
 				t.Fatalf("begin effect: %v", err)
 			}
@@ -296,16 +300,16 @@ func TestCloseIdleActiveInputDetachesUnresolvedEffects(t *testing.T) {
 				RequestedPath:  filepath.Join(t.TempDir(), "source.mkv"),
 				IdempotencyKey: "open",
 			}
-			if err := repo.CompareAndSwapActiveInput(
-				ctx,
-				closed,
-				opening,
-				now.Add(3*time.Second),
-			); !errors.Is(
-				err,
-				api.ErrReleaseWorkflowEffectOutcomeUnknown,
-			) {
-				t.Fatalf("open after detached %s effect = %v, want %v", status, err, api.ErrReleaseWorkflowEffectOutcomeUnknown)
+			if err := repo.CompareAndSwapActiveInput(ctx, closed, opening, now.Add(3*time.Second)); err != nil {
+				t.Fatalf("reserve unrelated input after detached %s effect: %v", status, err)
+			}
+			// Reserving unrelated work must not permit rebinding the affected workflow.
+			affected := opening
+			affected.State, affected.Revision = api.ActiveInputActive, opening.Revision+1
+			affected.InputID, affected.SourceVersion, affected.WorkflowID = active.InputID, active.SourceVersion, active.WorkflowID
+			affected.ReservationID, affected.RequestedPath = "", ""
+			if err := repo.CompareAndSwapActiveInput(ctx, opening, affected, now.Add(4*time.Second)); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+				t.Fatalf("affected workflow bypassed its %s effect: %v", status, err)
 			}
 		})
 	}
@@ -423,7 +427,26 @@ func TestInputRecordPreservesIdentityAcrossVerification(t *testing.T) {
 
 func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T) {
 	t.Parallel()
-	repo := openMigratedTestRepo(t)
+	repo, err := Open(filepath.Join(t.TempDir(), "legacy-audio.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	legacy := slices.DeleteFunc(slices.Clone(migrationRegistry), func(step migrationStep) bool {
+		return step.id == "2026_11_structured_workflow_storage"
+	})
+	if err := migrateContextWithRegistry(t.Context(), repo.RawDB(), legacy); err != nil {
+		t.Fatal(err)
+	}
+	insertLegacyState := func(state api.ReleaseWorkflowStateRecord) {
+		t.Helper()
+		if _, err := repo.RawDB().ExecContext(t.Context(), `INSERT INTO release_workflow_states
+			(owner_id, workflow_id, revision, status, state_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			state.OwnerID, state.WorkflowID, state.Revision, state.Status, state.Payload,
+			formatWorkflowStateTime(state.CreatedAt), formatWorkflowStateTime(state.UpdatedAt)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
 	now := time.Now().UTC()
 	for _, item := range []struct {
@@ -457,9 +480,7 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		}
 		state := workflowStateRecordForTest(item.id, api.WorkflowStatusDraft, item.updated, string(payload))
 		state.OwnerID = item.owner
-		if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), state); err != nil {
-			t.Fatal(err)
-		}
+		insertLegacyState(state)
 	}
 	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
 		ID:            "input",
@@ -488,9 +509,7 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		t.Fatal(err)
 	}
 	changedState := workflowStateRecordForTest("workflow-before-change", api.WorkflowStatusDraft, now, string(changedPayload))
-	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), changedState); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacyState(changedState)
 	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
 		ID:            "changed-input",
 		CanonicalPath: changedSource,
@@ -516,9 +535,7 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		t.Fatal(err)
 	}
 	subsecondState := workflowStateRecordForTest("workflow-subsecond", api.WorkflowStatusDraft, now, string(subsecondPayload))
-	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), subsecondState); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacyState(subsecondState)
 	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
 		ID:            "subsecond-input",
 		CanonicalPath: subsecondSource,
@@ -547,9 +564,7 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		t.Fatal(err)
 	}
 	latestState := workflowStateRecordForTest("workflow-latest", api.WorkflowStatusDraft, now, string(latestPayload))
-	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), latestState); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacyState(latestState)
 	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
 		ID:            "latest-input",
 		CanonicalPath: latestSource,
@@ -582,9 +597,7 @@ func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T)
 		t.Fatal(err)
 	}
 	disabledState := workflowStateRecordForTest("workflow-disabled", api.WorkflowStatusDraft, now, string(disabledPayload))
-	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), disabledState); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacyState(disabledState)
 	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
 		ID:            "disabled-input",
 		CanonicalPath: disabledSource,

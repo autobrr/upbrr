@@ -8,6 +8,10 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/text/language"
+
+	"github.com/autobrr/upbrr/internal/languageutil"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -15,7 +19,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/acm/v4", trackers.StructuredNamePolicy{Defaults: applyACMNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/acm/v5", trackers.StructuredNamePolicy{Defaults: applyACMNameDefaults})
 }
 
 func applyACMNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -174,8 +178,19 @@ func firstACMPresentRole(present []api.ReleaseNameRole, candidates ...api.Releas
 func acmSubtitleCodesFor(meta api.UploadSubject) []string {
 	out := make([]string, 0, len(meta.SubtitleLanguages))
 	seen := make(map[string]struct{}, len(meta.SubtitleLanguages))
-	for _, language := range meta.SubtitleLanguages {
-		code, ok := acmSubtitleCodes[strings.ToLower(strings.TrimSpace(language))]
+	for _, value := range meta.SubtitleLanguages {
+		key := strings.ToLower(strings.TrimSpace(value))
+		if tag, ok := languageutil.LanguageTag(value); ok {
+			tag, _ = language.All.Canonicalize(tag)
+			base, _, region := tag.Raw()
+			key = base.String()
+			if key == "pt" && region.String() == "BR" {
+				key = "pt-br"
+			} else if key == "nb" || key == "nn" {
+				key = "no"
+			}
+		}
+		code, ok := acmSubtitleCodes[key]
 		if !ok {
 			continue
 		}
@@ -202,136 +217,55 @@ func acmSubtitleTag(subtitles []string) string {
 }
 
 var acmSubtitleCodes = map[string]string{
-	"arabic":                "Ara",
-	"ara":                   "Ara",
 	"ar":                    "Ara",
-	"brazilian portuguese":  "Por-BR",
 	"brazilian":             "Por-BR",
 	"portuguese-br":         "Por-BR",
 	"pt-br":                 "Por-BR",
-	"bulgarian":             "Bul",
-	"bul":                   "Bul",
 	"bg":                    "Bul",
-	"chinese":               "Chi",
-	"chi":                   "Chi",
 	"zh":                    "Chi",
-	"chinese (simplified)":  "Chi",
-	"chinese (traditional)": "Chi",
-	"croatian":              "Cro",
-	"hrv":                   "Cro",
 	"hr":                    "Cro",
 	"scr":                   "Cro",
-	"czech":                 "Cze",
-	"cze":                   "Cze",
 	"cz":                    "Cze",
 	"cs":                    "Cze",
-	"danish":                "Dan",
-	"dan":                   "Dan",
 	"da":                    "Dan",
-	"dutch":                 "Dut",
-	"dut":                   "Dut",
 	"nl":                    "Dut",
-	"english":               "Eng",
-	"eng":                   "Eng",
 	"en":                    "Eng",
 	"english (cc)":          "Eng",
 	"english - sdh":         "Eng",
-	"english - forced":      "Eng",
-	"english (forced)":      "Eng",
-	"en (forced)":           "Eng",
 	"english intertitles":   "Eng",
 	"english (intertitles)": "Eng",
 	"english - intertitles": "Eng",
 	"en (intertitles)":      "Eng",
-	"estonian":              "Est",
-	"est":                   "Est",
 	"et":                    "Est",
-	"finnish":               "Fin",
-	"fin":                   "Fin",
 	"fi":                    "Fin",
-	"french":                "Fre",
-	"fre":                   "Fre",
 	"fr":                    "Fre",
-	"german":                "Ger",
-	"ger":                   "Ger",
 	"de":                    "Ger",
-	"greek":                 "Gre",
-	"gre":                   "Gre",
 	"el":                    "Gre",
-	"hebrew":                "Heb",
-	"heb":                   "Heb",
 	"he":                    "Heb",
-	"hindi":                 "Hin",
-	"hin":                   "Hin",
 	"hi":                    "Hin",
-	"hungarian":             "Hun",
-	"hun":                   "Hun",
 	"hu":                    "Hun",
-	"icelandic":             "Ice",
-	"ice":                   "Ice",
 	"is":                    "Ice",
-	"indonesian":            "Ind",
-	"ind":                   "Ind",
 	"id":                    "Ind",
-	"italian":               "Ita",
-	"ita":                   "Ita",
 	"it":                    "Ita",
-	"japanese":              "Jpn",
-	"jpn":                   "Jpn",
 	"ja":                    "Jpn",
-	"korean":                "Kor",
-	"kor":                   "Kor",
 	"ko":                    "Kor",
-	"latvian":               "Lav",
-	"lav":                   "Lav",
 	"lv":                    "Lav",
-	"lithuanian":            "Lit",
-	"lit":                   "Lit",
 	"lt":                    "Lit",
-	"norwegian":             "Nor",
-	"nor":                   "Nor",
 	"no":                    "Nor",
-	"persian":               "Per",
 	"fa":                    "Per",
 	"far":                   "Per",
-	"polish":                "Pol",
-	"pol":                   "Pol",
 	"pl":                    "Pol",
-	"portuguese":            "Por",
-	"por":                   "Por",
 	"pt":                    "Por",
-	"romanian":              "Rom",
-	"rum":                   "Rom",
 	"ro":                    "Rom",
-	"russian":               "Rus",
-	"rus":                   "Rus",
 	"ru":                    "Rus",
-	"serbian":               "Ser",
-	"srp":                   "Ser",
 	"sr":                    "Ser",
 	"scc":                   "Ser",
-	"slovak":                "Slo",
-	"slo":                   "Slo",
 	"sk":                    "Slo",
-	"slovenian":             "Slv",
-	"slv":                   "Slv",
 	"sl":                    "Slv",
-	"spanish":               "Spa",
-	"spa":                   "Spa",
 	"es":                    "Spa",
-	"swedish":               "Swe",
-	"swe":                   "Swe",
 	"sv":                    "Swe",
-	"thai":                  "Tha",
-	"tha":                   "Tha",
 	"th":                    "Tha",
-	"turkish":               "Tur",
-	"tur":                   "Tur",
 	"tr":                    "Tur",
-	"ukrainian":             "Ukr",
-	"ukr":                   "Ukr",
 	"uk":                    "Ukr",
-	"vietnamese":            "Vie",
-	"vie":                   "Vie",
 	"vi":                    "Vie",
 }

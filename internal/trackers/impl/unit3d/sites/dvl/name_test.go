@@ -109,7 +109,7 @@ func TestDVLStructuredReleaseNamePolicy(t *testing.T) {
 				Audio:       "DD 2.0",
 				Tag:         "-GRP",
 			},
-			languages: []string{"Japanese"},
+			languages: []string{"Japanese [ja-JP]"},
 			want:      "Example Movie 2001 JAPANESE DVDRip DD 2.0 x264-GRP",
 		},
 		{

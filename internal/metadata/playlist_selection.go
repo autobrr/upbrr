@@ -55,7 +55,7 @@ func (s *Service) resolveBDMVPlaylistSelection(ctx context.Context, request prep
 		}
 		storedFingerprint := strings.TrimSpace(stored.SourceFingerprint)
 		currentFingerprint := strings.TrimSpace(request.SourceFingerprint)
-		if storedFingerprint != currentFingerprint && (storedFingerprint != "" || len(discs) != 1) {
+		if storedFingerprint != currentFingerprint && (storedFingerprint != "" || len(discs) != 1 || discs[0].Image) {
 			return nil, playlistSelectionRequired(request, candidates)
 		}
 		selected = append([]string(nil), stored.SelectedPlaylists...)

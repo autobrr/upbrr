@@ -69,7 +69,7 @@ func TestImportedTrackerSelectionsRetainDecodedEvidenceWithoutSource(t *testing.
 			t.Fatal(err)
 		}
 	}
-	links := buildTrackerImageLinks([]api.TrackerMetadata{record}, root, nil)
+	links := buildTrackerImageLinks([]api.TrackerMetadata{record}, root, nil, 0, false)
 	selected := mergeTrackerImagesIntoFinalSelections(nil, links)
 	if len(selected) != 8 {
 		t.Fatalf("imported image count = %d", len(selected))

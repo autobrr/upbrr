@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/metadata/progress"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -107,20 +108,8 @@ func Enabled(ctx context.Context) bool {
 // not carry endpoint/configuration provenance. Load failures remain fatal to
 // the enclosing collection through Scope.Err.
 func Reusable(ctx context.Context, domain string, query any) bool {
-	scope, _ := ctx.Value(contextKey{}).(*Scope)
-	if scope == nil || scope.store == nil || query == nil {
-		return false
-	}
-	key, err := queryKey(query)
-	if err != nil {
-		scope.fail(err)
-		return false
-	}
-	record, err := scope.store.LoadMetadataEvidence(ctx, scope.source, scope.fingerprint, domain, key)
-	if err != nil {
-		if !errors.Is(err, internalerrors.ErrNotFound) {
-			scope.fail(err)
-		}
+	record, scope, ok := retained(ctx, domain, query)
+	if !ok {
 		return false
 	}
 	if record.Outcome == api.MetadataEvidenceFailed {
@@ -132,6 +121,35 @@ func Reusable(ctx context.Context, domain string, query any) bool {
 	return scope.freshness != api.ExternalFreshnessLoad || record.Outcome != api.MetadataEvidenceEmpty
 }
 
+// Retained decodes an exact source/query outcome without fetching or applying
+// refresh policy. This includes partial values in empty or failed outcomes;
+// callers must validate their compatibility before accepting retained facts.
+// Load failures remain fatal to the enclosing collection through Scope.Err.
+func Retained(ctx context.Context, domain string, query, value any) bool {
+	record, _, ok := retained(ctx, domain, query)
+	return ok && json.Unmarshal(record.Payload, value) == nil
+}
+
+func retained(ctx context.Context, domain string, query any) (api.MetadataEvidence, *Scope, bool) {
+	scope, _ := ctx.Value(contextKey{}).(*Scope)
+	if scope == nil || scope.store == nil || query == nil {
+		return api.MetadataEvidence{}, scope, false
+	}
+	key, err := queryKey(query)
+	if err != nil {
+		scope.fail(err)
+		return api.MetadataEvidence{}, scope, false
+	}
+	record, err := scope.store.LoadMetadataEvidence(ctx, scope.source, scope.fingerprint, domain, key)
+	if err != nil {
+		if !errors.Is(err, internalerrors.ErrNotFound) {
+			scope.fail(err)
+		}
+		return api.MetadataEvidence{}, scope, false
+	}
+	return record, scope, true
+}
+
 func lookup[T any](ctx context.Context, domain string, query any, fetch func() (T, error), empty func(T) bool, retrySuccess bool) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {
@@ -139,7 +157,7 @@ func lookup[T any](ctx context.Context, domain string, query any, fetch func() (
 	}
 	scope, _ := ctx.Value(contextKey{}).(*Scope)
 	if scope == nil || scope.store == nil {
-		return fetch()
+		return observeFetch(ctx, domain, fetch)
 	}
 	key, err := queryKey(query)
 	if err != nil {
@@ -171,6 +189,7 @@ func lookup[T any](ctx context.Context, domain string, query any, fetch func() (
 			!seen &&
 				(scope.freshness.RequiresRefresh() && refreshesProviderDomain(domain) || (scope.freshness == api.ExternalFreshnessLoad && record.Outcome == api.MetadataEvidenceEmpty))
 		if record.Outcome == api.MetadataEvidenceFailed {
+			progress.Retained(ctx, true)
 			if scope.logger != nil {
 				scope.logger.Tracef("metadata: evidence domain=%s decision=retain_failed", domain)
 			}
@@ -189,6 +208,7 @@ func lookup[T any](ctx context.Context, domain string, query any, fetch func() (
 				if scope.logger != nil {
 					scope.logger.Tracef("metadata: evidence domain=%s decision=reuse", domain)
 				}
+				progress.Retained(ctx, false)
 				return result, nil
 			}
 		}
@@ -196,7 +216,7 @@ func lookup[T any](ctx context.Context, domain string, query any, fetch func() (
 	if scope.logger != nil {
 		scope.logger.Tracef("metadata: evidence domain=%s decision=collect", domain)
 	}
-	result, fetchErr := fetch()
+	result, fetchErr := observeFetch(ctx, domain, fetch)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return result, fmt.Errorf("metadata evidence canceled: %w", ctxErr)
 	}
@@ -288,4 +308,44 @@ func RetainAlias(ctx context.Context, domain string, query, alias any) error {
 // collect through their own dependency keys.
 func refreshesProviderDomain(domain string) bool {
 	return !strings.HasPrefix(domain, "tracker.") && !strings.HasPrefix(domain, "scene.") && !strings.HasPrefix(domain, "bluray.")
+}
+
+// observeFetch labels provider work at the evidence owner, after the reuse
+// decision. Blu-ray pages have catalogue-wide counters owned by their client.
+func observeFetch[T any](ctx context.Context, domain string, fetch func() (T, error)) (T, error) {
+	if strings.HasPrefix(domain, "bluray.") {
+		return fetch()
+	}
+	label := "Read metadata evidence"
+	switch {
+	case strings.Contains(domain, "tmdb"):
+		label = "Read TMDB metadata"
+	case strings.Contains(domain, "imdb"):
+		label = "Read IMDb metadata"
+	case strings.Contains(domain, "tvdb"):
+		label = "Read TVDB metadata"
+	case strings.Contains(domain, "tvmaze"):
+		label = "Read TVmaze metadata"
+	case strings.Contains(domain, "anilist"):
+		label = "Read AniList metadata"
+	case strings.HasPrefix(domain, "arr."):
+		label = "Query Sonarr or Radarr"
+	case strings.HasPrefix(domain, "tracker."):
+		label = "Read tracker metadata and assets"
+	case strings.HasPrefix(domain, "scene."):
+		label = "Read scene metadata"
+	case strings.HasPrefix(domain, "thexem."):
+		label = "Resolve episode numbering"
+	}
+	step := progress.Begin(ctx, label)
+	result, err := fetch()
+	message := "Complete."
+	if err != nil {
+		message = "Unavailable; collection will report its final outcome."
+	}
+	if ctx.Err() != nil {
+		message = "Canceled."
+	}
+	step.Finish(message, err != nil && ctx.Err() == nil)
+	return result, err
 }
