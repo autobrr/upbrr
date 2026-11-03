@@ -18,7 +18,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v15", trackers.StructuredNamePolicy{
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v19", trackers.StructuredNamePolicy{
 		Defaults: applyDPNameDefaults,
 	})
 }
@@ -185,9 +185,11 @@ func audioLabel(values []string) string {
 }
 
 // audioLabelForFacts applies established DP rows. A false boolean identifies an
-// uncovered complete composition needing manual choice. Incomplete facts select
-// no marker; ambiguous primary-track evidence returns a naming error. Unknown
-// title language permits only markers established by explicit soundtrack facts.
+// uncovered complete composition needing manual choice, including explicit
+// original/dub combinations, confirmed non-Nordic dub pairs and Nordic dubs with unknown
+// title-language exclusions.
+// Incomplete facts select no marker; ambiguous primary-track evidence returns a
+// naming error. Unknown title language permits only established automatic markers.
 func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 	facts := meta.LanguageFacts
 	languages := languageutil.LanguageMatchKeys(facts.ProgrammeLanguages)
@@ -210,31 +212,42 @@ func audioLabelForFacts(meta api.UploadSubject) (string, bool, error) {
 	if len(languages) == 1 && facts.HasEnglishDub() {
 		return "Dubbed", true, nil
 	}
-	if !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) == 0 {
-		return "", true, nil
-	}
-	nordic := []string{"da", "fi", "is", "no", "nb", "nn", "sv"}
-	if len(languages) == 1 && !original && !english && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
-		return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed && languageutil.ContainsLanguage(track.Languages, languages[0])
-	}) && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
-		!slices.ContainsFunc(
-			facts.OriginalLanguages,
-			func(language string) bool { return languageutil.ContainsLanguage(nordic, language) },
-		) && languageutil.ContainsLanguage(nordic, languages[0]) {
-		return languageutil.NormalizeLanguageDisplay(languages[0]) + " Dubbed", true, nil
-	}
-	if len(languages) != 2 {
-		return "", false, nil
-	}
-	if english {
+	originalKnown := facts.OriginalLanguagesKnown && len(facts.OriginalLanguages) > 0
+	if len(languages) == 2 && english && (originalKnown || facts.HasEnglishDub() && !facts.HasUnresolvedProgrammeAudioOrigin()) {
 		for _, language := range languages {
 			if !languageutil.SameLanguage(language, "English") {
-				if languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
+				if originalKnown && languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
+					languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
 					return "", false, nil
 				}
 				return languageutil.NormalizeLanguageDisplay(language) + " MULTi", true, nil
 			}
 		}
+	}
+	nordic := []string{"da", "fi", "is", "no", "nb", "nn", "sv"}
+	nordicDub := len(languages) == 1 && !original && !english && languageutil.ContainsLanguage(nordic, languages[0]) &&
+		slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+			return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed && languageutil.ContainsLanguage(track.Languages, languages[0])
+		})
+	if !originalKnown {
+		confirmedDubPair := len(languages) == 2 && !original && !facts.HasUnresolvedProgrammeAudioOrigin() &&
+			!slices.ContainsFunc(languages, func(language string) bool { return languageutil.ContainsLanguage(nordic, language) })
+		if nordicDub || confirmedDubPair || original && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+			return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed
+		}) {
+			return "", false, nil
+		}
+		return "", true, nil
+	}
+	if nordicDub && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
+		!slices.ContainsFunc(
+			facts.OriginalLanguages,
+			func(language string) bool { return languageutil.ContainsLanguage(nordic, language) },
+		) {
+		return languageutil.NormalizeLanguageDisplay(languages[0]) + " Dubbed", true, nil
+	}
+	if len(languages) != 2 {
+		return "", false, nil
 	}
 	if !original &&
 		languageutil.ContainsLanguage(nordic, languages[0]) && languageutil.ContainsLanguage(nordic, languages[1]) {

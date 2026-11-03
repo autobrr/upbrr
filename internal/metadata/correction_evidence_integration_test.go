@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/imdb"
+	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/metadata/tvdb"
 	"github.com/autobrr/upbrr/internal/metadata/tvmaze"
@@ -1246,6 +1247,7 @@ func preserveCorrectionGeneration(t *testing.T, release *api.PreparedRelease) {
 
 type correctionEvidenceFixture struct {
 	dbPath          string
+	mediaInfo       mediainfo.Exporter
 	input           api.PrepareInput
 	http            *http.Client
 	tvdb            TVDBClient
@@ -1425,9 +1427,13 @@ func (f *correctionEvidenceFixture) open(t *testing.T) (*preparedrelease.Module,
 	if err := repo.MigrateContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	mediaInfo := f.mediaInfo
+	if mediaInfo == nil {
+		mediaInfo = &stubMediaInfo{}
+	}
 	service := newTestService(t, repo,
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: f.dbPath}}),
-		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithMediaInfoExporter(mediaInfo),
 		WithSceneDetector(newSRRDBDetector(f.http, "https://scene.example.invalid", "", "")),
 		WithTMDBClient(tmdb.NewClient(f.http, nil, "synthetic-api-key")),
 		WithIMDBClient(f.imdb), WithTVDBClient(f.tvdb), WithTVmazeClient(f.tvmaze))
