@@ -8,6 +8,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,5 +60,40 @@ func TestWriteAppErrorUntypedFallbackIsStructuredAndSafe(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), "secret-value") || strings.Contains(recorder.Body.String(), `C:\private`) {
 		t.Fatalf("unsafe response: %s", recorder.Body.String())
+	}
+}
+
+func TestWriteAppErrorHDRFailureKeepsCodeAndRecovery(t *testing.T) {
+	t.Parallel()
+	for _, code := range []api.HDRAnalysisFailureCode{api.HDRAnalysisFailureRead, api.HDRAnalysisFailureOutput} {
+		t.Run(string(code), func(t *testing.T) {
+			cause := &os.PathError{
+Op: "mkdir",
+ Path: filepath.Join(t.TempDir(), "private-output"),
+ Err: os.ErrPermission,
+}
+			failure := api.OperationFailure{
+				Code:            api.OperationFailureHDRAnalysis,
+				Operation:       api.OperationKindHDRAnalysis,
+				Message:         "Synthetic HDR operation failed.",
+				Recovery:        api.OperationRecoveryRetry,
+				HDRAnalysisCode: code,
+			}
+			recorder := httptest.NewRecorder()
+			writeAppError(recorder, api.NewOperationError(failure, cause))
+			var payload struct {
+				Error   string               `json:"error"`
+				Failure api.OperationFailure `json:"failure"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Code != http.StatusConflict || payload.Error != failure.Message || payload.Failure != failure {
+				t.Fatalf("HDR failure response changed: status=%d payload=%#v", recorder.Code, payload)
+			}
+			if strings.Contains(recorder.Body.String(), cause.Path) {
+				t.Fatal("HDR failure response exposed its private filesystem cause")
+			}
+		})
 	}
 }

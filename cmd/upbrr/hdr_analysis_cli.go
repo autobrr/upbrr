@@ -444,7 +444,11 @@ func runHDRAnalysisOnly(ctx context.Context, opts cliOptions, paths []string, st
 				native, readErr = session.ExtractNativeFile(ctx, source, formats)
 			}
 			if readErr != nil {
-				return fmt.Errorf("read HDR source: %w", hdranalysis.Classify(readErr))
+				operation := "read HDR source"
+				if failure, typed := api.AsHDRAnalysisFailure(readErr); typed && failure.Code == api.HDRAnalysisFailureOutput {
+					operation = "prepare HDR analysis output"
+				}
+				return fmt.Errorf("%s: %w", operation, hdranalysis.Classify(readErr))
 			}
 		}
 		defer native.Release()

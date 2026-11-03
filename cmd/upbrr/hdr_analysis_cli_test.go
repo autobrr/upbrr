@@ -16,6 +16,7 @@ import (
 	bd "github.com/autobrr/go-bdinfo/pkg/bdinfo"
 	"github.com/autobrr/go-bdinfo/pkg/bdinfo/video"
 
+	"github.com/autobrr/upbrr/internal/services/hdranalysis"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -208,6 +209,51 @@ func TestHDRCLISetupDiagnosticSafetyAndModes(t *testing.T) {
 		if strings.Contains(result.stderr, "SECRET_SENTINEL") || strings.ContainsAny(result.stderr, "\x1b\a\r") {
 			t.Fatal("standalone HDR error exposed a secret or terminal control")
 		}
+	}
+}
+
+func TestHDRCLIAutomaticOutputFailure(t *testing.T) {
+	if _, err := hdranalysis.CurrentDecoderFingerprint(t.Context()); err != nil {
+		t.Skip("requires a working FFmpeg version probe")
+	}
+	parent := t.TempDir()
+	blocked := false
+	var stdout, stderr bytes.Buffer
+	writer := hdrCLIProgressWriter(func(data []byte) (int, error) {
+		if !blocked && strings.Contains(string(data), "HDR analysis: inspecting:") {
+			entries, err := os.ReadDir(parent)
+			if err != nil || len(entries) != 1 {
+				t.Fatal("expected one empty HDR output attempt")
+			}
+			directory := filepath.Join(parent, entries[0].Name())
+			if err := os.Remove(directory); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(directory, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			blocked = true
+		}
+		return stderr.Write(data)
+	})
+	err := executeCLI(t.Context(), []string{
+		"--hdr-analysis-only", "--hdr-output-dir", parent,
+		filepath.Join("..", "..", "internal", "services", "hdranalysis", "testdata", "decoded-pq-cuts-25.mkv"),
+	}, cliIO{out: &stdout, errOut: writer})
+	printCLIError(&stderr, err)
+	failure, typed := api.AsHDRAnalysisFailure(err)
+	_, filesystemCause := errors.AsType[*os.PathError](err)
+	entries, readErr := os.ReadDir(parent)
+	if !blocked || !typed || failure.Code != api.HDRAnalysisFailureOutput || !filesystemCause ||
+		stdout.Len() != 0 || readErr != nil || len(entries) != 0 {
+		t.Fatalf("output failure: blocked=%t typed=%t code=%s filesystem=%t stdout=%q entries=%v read=%v stderr=%q",
+			blocked, typed, failure.Code, filesystemCause, stdout.String(), entries, readErr, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "prepare HDR analysis output") || strings.Contains(stderr.String(), "read HDR source") {
+		t.Fatalf("output failure was reported as source reading: %q", stderr.String())
+	}
+	if exitErr, ok := errors.AsType[*cliExitError](err); ok && exitErr.code != 1 {
+		t.Fatalf("output failure exit status = %d", exitErr.code)
 	}
 }
 
