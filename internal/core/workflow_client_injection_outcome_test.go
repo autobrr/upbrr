@@ -160,16 +160,14 @@ func TestDryRunPreparationDecisionContinuesClientInjection(t *testing.T) {
 	}
 }
 
-func TestDryRunClientInjectionRequiresEnabledDestination(t *testing.T) {
+func TestWorkflowClientInjectionRequiresEnabledDestination(t *testing.T) {
 	t.Parallel()
 	for _, selection := range []string{"no clients", "no selection", "disabled selector", "disabled client", "watch folder"} {
 		t.Run(selection, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			torrentPath := filepath.Join(root, "Example.Release.2026.torrent")
-			if err := os.WriteFile(torrentPath, []byte("prepared torrent"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeWorkflowRegisteredTorrent(t, torrentPath, "ALPHA")
 			cfg := config.Config{TorrentClients: map[string]config.TorrentClientConfig{
 				"watch": {Type: "watch", WatchFolder: root},
 				"other": {Type: "disabled"},
@@ -199,14 +197,29 @@ func TestDryRunClientInjectionRequiresEnabledDestination(t *testing.T) {
 			reporter := newInjectionOutcomeReporter(t)
 			ctx := api.WithWorkflowExternalEffectReporter(t.Context(), reporter)
 			for range 2 {
+				wantStatus := api.StageStatusSkipped
+				if selection == "watch folder" {
+					wantStatus = api.StageStatusCompleted
+				}
 				status, _, code, err := injectWorkflowDryRunClient(ctx, clients, api.ClientSubject{},
 					api.TrackerReleaseProjection{TrackerID: "ALPHA"}, torrentPath, 0, 1)
-				if selection == "watch folder" {
-					if err != nil || status != api.StageStatusCompleted || code != "" {
-						t.Fatalf("configured injection status=%s code=%s err=%v", status, code, err)
-					}
-				} else if err != nil || status != api.StageStatusSkipped || code != "" {
-					t.Fatalf("empty dispatch status=%s code=%s err=%v", status, code, err)
+				if err != nil || status != wantStatus || code != "" {
+					t.Fatalf("dry-run dispatch status=%s code=%s err=%v", status, code, err)
+				}
+				live := executeWorkflowClientInjection(ctx, clients, api.ClientSubject{}, "ALPHA", api.TorrentResult{Path: torrentPath, Tracker: "ALPHA"})
+				if live.SubmissionStatus != api.StageStatusCompleted || live.ClientInjectionStatus != wantStatus || live.ClientInjected != (selection == "watch folder") {
+					t.Fatalf("live dispatch: submission=%s injection=%s injected=%t", live.SubmissionStatus, live.ClientInjectionStatus, live.ClientInjected)
+				}
+				execution := &workflowUploadExecution{
+					clients:    clients,
+					crossSeeds: []api.UploadedTorrent{{Tracker: "ALPHA", TorrentPath: torrentPath}},
+				}
+				crossSeeds, err := execution.Execute(ctx, nil)
+				if err != nil || len(crossSeeds) != 1 {
+					t.Fatalf("cross-seed dispatch results=%d err=%v", len(crossSeeds), err)
+				}
+				if crossSeeds[0].ClientInjectionStatus != wantStatus || crossSeeds[0].CrossSeeded != (selection == "watch folder") {
+					t.Fatalf("cross-seed dispatch: status=%s seeded=%t", crossSeeds[0].ClientInjectionStatus, crossSeeds[0].CrossSeeded)
 				}
 			}
 			if selection == "watch folder" {

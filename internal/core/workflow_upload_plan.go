@@ -742,7 +742,7 @@ func workflowDryRunClientFailure(
 	case api.OperationFailureLiveTestMutationDisabled:
 		operation = api.OperationKindClientInjection
 		recovery = api.OperationRecoveryNone
-	case api.OperationFailureMissingExactTorrent:
+	case api.OperationFailureMissingExactTorrent, api.OperationFailureStaleGeneration:
 		recovery = api.OperationRecoveryReprepare
 	case api.OperationFailureUnknownOutcome:
 		operation = api.OperationKindClientInjection
@@ -752,7 +752,6 @@ func workflowDryRunClientFailure(
 		api.OperationFailureActiveInputBusy,
 		api.OperationFailureInvalidSource,
 		api.OperationFailureConfirmationRequired,
-		api.OperationFailureStaleGeneration,
 		api.OperationFailureIncompatibleGeneration,
 		api.OperationFailureMissingPrerequisite,
 		api.OperationFailureTrackerAuthRequired,
@@ -808,7 +807,7 @@ func markWorkflowUploadTrackerMissingExactTorrent(tracker *api.UploadPlanTracker
 }
 
 // prepareClientInjection continues only the explicit dry run's captured authority.
-// Preparation decisions must finish before the existing durable client fence runs.
+// Preparation decisions and source verification precede the durable client fence.
 func (e *workflowUploadExecution) prepareClientInjection(
 	ctx context.Context,
 	tracker *api.UploadPlanTracker,
@@ -829,6 +828,22 @@ func (e *workflowUploadExecution) prepareClientInjection(
 	}
 	if tracker.Status != api.StageStatusReady {
 		return nil
+	}
+	if e.sourceManifest != nil {
+		if err := preparedrelease.VerifySourceManifestStability(ctx, *e.sourceManifest); err != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return fmt.Errorf("workflow dry-run source verification: %w", contextErr)
+			}
+			tracker.ClientInjectionStatus = api.StageStatusFailed
+			tracker.ClientInjectionMessage = "Source changed since preparation. Prepare the release again before client injection."
+			tracker.ClientFailureCode = api.OperationFailureStaleGeneration
+			tracker.Eligible, tracker.Status = false, api.StageStatusFailed
+			tracker.Failures = append(
+				tracker.Failures,
+				workflowDryRunClientFailure(tracker.TrackerID, tracker.ClientFailureCode, tracker.ClientInjectionMessage),
+			)
+			return nil
+		}
 	}
 	status, message, code, err := injectWorkflowDryRunClient(ctx, e.clients, e.clientSubject, projection, torrentPath, processedBefore, total)
 	if err != nil {
@@ -1339,14 +1354,17 @@ func (e *workflowUploadExecution) Execute(
 				return public, injectErr
 			}
 			outcome := api.UploadTrackerResult{
-				TrackerID:             trackerID,
-				SubmissionStatus:      api.StageStatusSkipped,
-				ClientInjectionStatus: api.StageStatusCompleted,
-				CrossSeeded:           injected,
+				TrackerID:              trackerID,
+				SubmissionStatus:       api.StageStatusSkipped,
+				ClientInjectionStatus:  api.StageStatusCompleted,
+				ClientInjectionMessage: failureMessage,
+				CrossSeeded:            injected,
+			}
+			if !injected {
+				outcome.ClientInjectionStatus = api.StageStatusSkipped
 			}
 			if failureCode != "" {
 				outcome.ClientInjectionStatus = api.StageStatusFailed
-				outcome.ClientInjectionMessage = failureMessage
 				outcome.ClientFailureCode = failureCode
 				outcome.Failures = []api.WorkflowFailure{{
 					Failure: api.OperationFailure{
@@ -1449,10 +1467,14 @@ func executeWorkflowClientInjection(
 		return workflowClientInjectionFailure(trackerID, failureCode, message)
 	}
 	outcome := api.UploadTrackerResult{
-		TrackerID:             trackerID,
-		SubmissionStatus:      api.StageStatusCompleted,
-		ClientInjectionStatus: api.StageStatusCompleted,
-		ClientInjected:        injected,
+		TrackerID:              trackerID,
+		SubmissionStatus:       api.StageStatusCompleted,
+		ClientInjectionStatus:  api.StageStatusCompleted,
+		ClientInjectionMessage: message,
+		ClientInjected:         injected,
+	}
+	if !injected {
+		outcome.ClientInjectionStatus = api.StageStatusSkipped
 	}
 	outcome.Status = outcome.DerivedStatus()
 	return outcome
@@ -1525,6 +1547,12 @@ func injectWorkflowClientWithFence(
 	scopeID string,
 	crossSeed bool,
 ) (bool, api.OperationFailureCode, string, error) {
+	if _, err := clients.InjectionDestinationFingerprint(subject, torrent); err != nil {
+		if errors.Is(err, api.ErrNoClientInjectionDestination) {
+			return false, "", "Client injection skipped because no enabled client destination is selected.", nil
+		}
+		return false, "", "", fmt.Errorf("workflow client injection destination: %w", err)
+	}
 	trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(torrent.Tracker)))
 	fingerprint, err := workflowClientEffectFingerprint(trackerID, torrent, crossSeed)
 	if err != nil {

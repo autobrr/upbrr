@@ -213,9 +213,9 @@ Automatically managed reports, screenshots, descriptions, torrent exports and an
 
 Client injection is enabled by default when configured. Disable it explicitly with CLI `--no-seed` or the corresponding Web UI upload option.
 
-An explicit dry run reports client injection as skipped when no enabled client is selected. Tracker preparation remains eligible; a skipped or empty client selection is not a completed injection.
+Workflow client injection is skipped when no enabled client is selected. Tracker preparation remains eligible and a successful tracker submission stays completed; a skipped or empty client selection is not a completed injection.
 
-If an explicit dry run pauses for a tracker preparation decision, answering it automatically continues client injection once preparation is ready. You do not need to choose **Run dry run** again. Further preparation decisions keep injection pending. The original **Skip client injection** choice still applies, and a live-upload review continues to defer injection until tracker registration.
+If an explicit dry run pauses for a tracker preparation decision, answering it automatically continues client injection once preparation is ready. You do not need to choose **Run dry run** again. Further preparation decisions keep injection pending. Before injecting, upbrr rechecks the captured source manifest; a changed source blocks injection and requires re-preparation. The original **Skip client injection** choice still applies, and a live-upload review continues to defer injection until tracker registration.
 
 Completed dry-run receipts identify only enabled destinations, so editing a selected disabled client does not repeat delivery. Older receipts that included disabled destinations can permit another client action on a later explicit request after upgrading; watch-folder delivery can repeat. An unresolved attempt still blocks another injection.
 
