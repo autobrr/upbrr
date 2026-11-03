@@ -3,7 +3,15 @@
 
 import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
-import { act, cleanup, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApplicationInfo, MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
@@ -26,6 +34,7 @@ import ScreenshotsPage from "../pages/screenshots";
 import DupeCheckPage from "../pages/dupe_check";
 import TrackerUploadPage from "../pages/tracker_upload";
 import HDRAnalysisPage from "../pages/hdr_analysis";
+import BlurayCandidatesPage from "../pages/bluray_candidates";
 import type { ReleaseSessionPorts } from "./ports";
 import { setAppRequestHandlerForTests } from "../api/client";
 import { productionReleaseSessionPorts } from "./production";
@@ -8730,7 +8739,18 @@ describe("saved-image plan authority", () => {
 it("requests single/all Blu-ray details through exact preparation authority and retains manual selection", async () => {
   const workflowID = "workflow-bluray-details";
   const sourcePath = "Example.Release.2026.mkv";
-  let current = workflowCurrentFromPreview(workflowCurrent(workflowID, 2), preview(sourcePath, 1));
+  const listing = {
+    ...preview(sourcePath, 1),
+    Bluray: {
+      SelectedReleaseID: "102",
+      Threshold: 0,
+      Candidates: [
+        { ReleaseID: "101", Title: "Example A", Score: 0, Accepted: false },
+        { ReleaseID: "102", Title: "Example B", Score: 0, Accepted: true },
+      ],
+    },
+  } as MetadataPreview;
+  let current = workflowCurrentFromPreview(workflowCurrent(workflowID, 2), listing);
   current = {
     ...current,
     factInstructions: {
@@ -8751,16 +8771,59 @@ it("requests single/all Blu-ray details through exact preparation authority and 
           ...current.factInstructions!,
           instructions: request.intent.preparation.Instructions,
         },
+        operation: {
+          id: "detail-operation",
+          workflowId: workflowID,
+          revision: current.workflow.revision + 1,
+          sequence: 1,
+          command: "prepare_release",
+          operation: "preparation",
+          status: "completed",
+          progress: 100,
+          completed: 1,
+          total: 1,
+          startedAt: "2026-07-20T00:00:00Z",
+          updatedAt: "2026-07-20T00:00:00Z",
+          items: [
+            {
+              id: "101",
+              kind: "bluray_detail",
+              label: "Example A",
+              status: "completed",
+              blurayCandidate: {
+                ...listing.Bluray!.Candidates[0],
+                DetailsStatus: "complete",
+                Score: 98,
+                ReleaseDate: "2026-01-02",
+              },
+            },
+          ],
+        },
       };
     }
     return current;
   });
+  function CandidateCards() {
+    return (
+      <BlurayCandidatesPage
+        facet={useReleaseSession().input}
+        setLightboxImage={() => undefined}
+        setLightboxAlt={() => undefined}
+      />
+    );
+  }
+  const Wrapper = wrapperFor(
+    portsFor({
+      resumeWorkflowID: workflowID,
+      workflow: workflowPorts({ current: async () => current, continue: continuation }),
+    }),
+  );
   const { result, unmount } = renderHook(useReleaseSession, {
-    wrapper: wrapperFor(
-      portsFor({
-        resumeWorkflowID: workflowID,
-        workflow: workflowPorts({ current: async () => current, continue: continuation }),
-      }),
+    wrapper: ({ children }) => (
+      <Wrapper>
+        {children}
+        <CandidateCards />
+      </Wrapper>
     ),
   });
   await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
@@ -8782,6 +8845,9 @@ it("requests single/all Blu-ray details through exact preparation authority and 
       }),
       expect.any(AbortSignal),
     );
+    const card = within(screen.getByRole("heading", { name: "Example A" }).closest("section")!);
+    expect(card.getByText("98.0/100")).toBeVisible();
+    expect(card.getByText("2026-01-02")).toBeVisible();
   }
   act(() => result.current.input.changeSourceLookupURL("https://www.blu-ray.com/movies/New/103/"));
   await act(() => result.current.input.fetchCandidateDetails("101"));
@@ -8797,6 +8863,7 @@ it("requests single/all Blu-ray details through exact preparation authority and 
     result.current.input.changeSourceLookupURL("https://tracker.example/torrents/blu-ray.com/123"),
   );
   await act(() => result.current.input.selectCandidate("101"));
+  expect(current.factInstructions!.instructions.Bluray).toEqual({ Mode: "manual", Release: "101" });
   await act(() => result.current.input.setCandidateSelection("skip"));
   expect(current.factInstructions!.instructions.Bluray).toEqual({ Mode: "skip", Release: "" });
   await act(() => result.current.input.setCandidateSelection("auto"));
@@ -8883,6 +8950,7 @@ it.each([
   }
   if (ownsOperation) {
     expect(cancelOperation).toHaveBeenCalledWith(workflowID, operation.id, expect.any(AbortSignal));
+    await waitFor(() => expect(result.current.input.view.status).toBe("cancelled"));
   } else {
     expect(cancelOperation).not.toHaveBeenCalled();
   }
