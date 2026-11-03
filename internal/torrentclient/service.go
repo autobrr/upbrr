@@ -262,6 +262,13 @@ func (s *Service) resolveInjectionDestinations(meta api.ClientSubject, torrent a
 	explicit := overrides.Client != nil && strings.TrimSpace(*overrides.Client) != ""
 	if strings.TrimSpace(torrent.Path) == "" && strings.TrimSpace(torrent.URL) != "" && !explicit {
 		clients = withURLCapableInjectFallback(clients, s.cfg.TorrentClients)
+		// Default watch-only URL dispatch is an intentional no-op. Resolve it
+		// here so workflow callers do not admit a successful delivery receipt.
+		for name, client := range clients {
+			if strings.EqualFold(strings.TrimSpace(client.ClientType()), "watch") {
+				delete(clients, name)
+			}
+		}
 	}
 	return overrides, clients
 }
@@ -420,13 +427,51 @@ func (s *Service) injectQbit(
 	// values, so a transient body cannot create an authenticated session.
 	qbitHTTP.Transport = qbitLoginValidatingTransport{base: baseTransport}
 
+	var staging linkStagingResult
+	if verification == nil {
+		staging, err = s.prepareLinkStaging(ctx, name, client, meta, torrent)
+		if err != nil {
+			return err
+		}
+	}
+
+	qbitCtx, cancel := context.WithTimeout(ctx, qbitInjectHTTPTimeout)
+	defer cancel()
+
+	logger.Debugf(
+		"clients: connecting to qbit client=%s timeout=%s retries=%d",
+		name,
+		qbitInjectHTTPTimeout,
+		qbitInjectHTTPRetryAttempts,
+	)
+	if !client.UsesQuiProxy() {
+		if err := qbit.LoginCtx(qbitCtx); err != nil {
+			s.cleanupFailedLinkStaging(ctx, name, torrent.Tracker, staging)
+			return fmt.Errorf("clients: %s qbit login: %w", name, err)
+		}
+		logger.Debugf("clients: connected to qbit client %s", name)
+	} else {
+		logger.Debugf("clients: using qbit proxy for client %s", name)
+	}
+
+	if verification != nil {
+		// Reuse installed state before creating any staging for a new add.
+		if installed, _ := verification.installed(qbitCtx, qbit); installed {
+			return nil
+		}
+		cancel()
+		staging, err = s.prepareLinkStaging(ctx, name, client, meta, torrent)
+		if err != nil {
+			return err
+		}
+		// Local staging must not consume the add/readback HTTP deadline.
+		qbitCtx, cancel = context.WithTimeout(ctx, qbitInjectHTTPTimeout)
+		defer cancel()
+	}
+
 	options := qbittorrent.TorrentAddOptions{}
 	logger.Debugf("clients: preparing qbit add options client=%s tracker=%s cross_seed=%t", name, strings.TrimSpace(torrent.Tracker), torrent.CrossSeed)
 	optionsStart := time.Now()
-	staging, err := s.prepareLinkStaging(ctx, name, client, meta, torrent)
-	if err != nil {
-		return err
-	}
 	options.SkipHashCheck = true
 	if staging.Linked {
 		options.SavePath = staging.SavePath
@@ -471,31 +516,7 @@ func (s *Service) injectQbit(
 		time.Since(optionsStart).Round(time.Millisecond),
 	)
 
-	qbitCtx, cancel := context.WithTimeout(ctx, qbitInjectHTTPTimeout)
-	defer cancel()
-
-	logger.Debugf(
-		"clients: connecting to qbit client=%s timeout=%s retries=%d",
-		name,
-		qbitInjectHTTPTimeout,
-		qbitInjectHTTPRetryAttempts,
-	)
-	if !client.UsesQuiProxy() {
-		if err := qbit.LoginCtx(qbitCtx); err != nil {
-			s.cleanupFailedLinkStaging(ctx, name, torrent.Tracker, staging)
-			return fmt.Errorf("clients: %s qbit login: %w", name, err)
-		}
-		logger.Debugf("clients: connected to qbit client %s", name)
-	} else {
-		logger.Debugf("clients: using qbit proxy for client %s", name)
-	}
-
 	if torrentPath := strings.TrimSpace(torrent.Path); torrentPath != "" {
-		if verification != nil {
-			if installed, _ := verification.installed(qbitCtx, qbit); installed {
-				return nil
-			}
-		}
 		logger.Debugf("clients: adding torrent file to qbit client %s for %s", name, meta.SourcePath)
 		_, addErr := qbit.AddTorrentFromFileCtx(qbitCtx, torrentPath, addOptions)
 		if verification != nil {

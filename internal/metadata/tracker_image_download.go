@@ -140,14 +140,19 @@ func downloadImageWithReference(
 
 // trackerImageHasResolution verifies cached content and checks current geometry policy.
 func trackerImageHasResolution(path string, expectedHeight int, isDVD bool) bool {
-	if imageevidence.VerifiedFormat(path) == "" {
-		return false
-	}
 	file, err := os.Open(path)
 	if err != nil {
 		return false
 	}
 	defer file.Close()
-	config, _, err := image.DecodeConfig(io.LimitReader(file, unit3dMaxImageBytes))
+	stat, err := file.Stat()
+	if err != nil || !stat.Mode().IsRegular() || stat.Size() > unit3dMaxImageBytes {
+		return false
+	}
+	payload, err := io.ReadAll(io.LimitReader(file, unit3dMaxImageBytes+1))
+	if err != nil || len(payload) > unit3dMaxImageBytes || imageevidence.VerifiedFormatBytes(payload) == "" {
+		return false
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(payload))
 	return err == nil && imageevidence.ResolutionMismatch(config, expectedHeight, isDVD) == ""
 }
