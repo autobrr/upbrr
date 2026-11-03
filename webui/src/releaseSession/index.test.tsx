@@ -391,6 +391,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
           );
         }
         break;
+      case "upload_reviewed":
       case "dry_run":
         if (step === 0) {
           next = await activePorts.dryRunUploads(
@@ -3936,51 +3937,89 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("declines a tracker preparation action to request its fallback", async () => {
-    const workflowID = "workflow-resolve-tracker-preparation";
-    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
-    const action = {
-      createdAt: "2026-07-20T00:00:00Z",
-      id: "action-btn-autofill",
-      kind: "resolve_tracker_preparation" as const,
-      prompt: "Continue with BTN's autofill result?",
-      status: "pending" as const,
-      workflowRevision: 7,
-    };
-    const base = workflowCurrent(workflowID, 7);
-    const retained: ReleaseWorkflowCurrent = {
-      ...base,
-      workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
-      continuation: { ...base.continuation, requiredActions: [action] },
-    };
-    const continueWorkflow = vi.fn(async () => retained);
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(
-        portsFor({
-          resumeWorkflowID: workflowID,
-          workflow: workflowPorts({
-            current: async () => retained,
-            continue: continueWorkflow,
+  it.each([
+    { mode: "live upload", explicit: false, noSeed: false },
+    { mode: "explicit dry run", explicit: true, noSeed: false },
+    { mode: "skipped injection dry run", explicit: true, noSeed: true },
+  ])(
+    "resolves a tracker preparation action for $mode after reload",
+    async ({ explicit, noSeed }) => {
+      const workflowID = "workflow-resolve-tracker-preparation";
+      window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+      const action = {
+        createdAt: "2026-07-20T00:00:00Z",
+        id: "action-btn-autofill",
+        kind: "resolve_tracker_preparation" as const,
+        prompt: "Continue with BTN's autofill result?",
+        status: "pending" as const,
+        workflowRevision: 7,
+      };
+      const base = workflowCurrent(workflowID, 7);
+      const retained: ReleaseWorkflowCurrent = {
+        ...base,
+        workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
+        continuation: { ...base.continuation, requiredActions: [action] },
+        dryRun: explicit
+          ? {
+              id: "dry-run-preparation-action",
+              workflowId: workflowID,
+              revision: 7,
+              createdAt: action.createdAt,
+              projectionSet: { id: "projections", revision: 7 },
+              dupes: { id: "dupes", revision: 7 },
+              media: { id: "media", revision: 7 },
+              descriptions: { id: "descriptions", revision: 7 },
+              inputFingerprint: "a".repeat(64),
+              explicitDryRun: true,
+              clientInjectionRequested: !noSeed,
+              noSeed,
+              trackerIds: ["BTN"],
+              reports: [
+                {
+                  trackerId: "BTN",
+                  displayName: "BTN",
+                  uploadReleaseName: "Example.Release.2026.S01E01-GRP",
+                  semanticFingerprint: "b".repeat(64),
+                  status: "blocked",
+                  clientInjection: { status: noSeed ? "skipped" : "pending" },
+                },
+              ],
+              succeededCount: 0,
+              failedCount: 0,
+              skippedCount: 0,
+              status: "blocked",
+            }
+          : undefined,
+      };
+      const continueWorkflow = vi.fn(async () => retained);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({
+              current: async () => retained,
+              continue: continueWorkflow,
+            }),
           }),
+        ),
+      });
+
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+      await act(async () => {
+        expect(await result.current.workflow.confirmAction(action, false)).toBe(true);
+      });
+      expect(continueWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          goal: explicit ? "dry_run" : "uploaded",
+          answers: [{ actionId: action.id, workflowRevision: 7, confirmed: false }],
         }),
-      ),
-    });
+        expect.any(AbortSignal),
+      );
 
-    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
-    await act(async () => {
-      expect(await result.current.workflow.confirmAction(action, false)).toBe(true);
-    });
-    expect(continueWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        goal: "uploaded",
-        answers: [{ actionId: action.id, workflowRevision: 7, confirmed: false }],
-      }),
-      expect.any(AbortSignal),
-    );
-
-    unmount();
-    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
-  });
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+    },
+  );
 
   it("submits a release-wide modified-source refusal once", async () => {
     const workflowID = "workflow-modified-release";
@@ -4047,14 +4086,13 @@ describe("useReleaseSession", () => {
       },
     };
     const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const workflow = workflowPorts({ current: async () => retained, executeUploads });
+    const continueWorkflow = vi.spyOn(workflow, "continue");
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
           resumeWorkflowID: workflowID,
-          workflow: workflowPorts({
-            current: async () => retained,
-            executeUploads,
-          }),
+          workflow,
         }),
       ),
     });
@@ -4065,6 +4103,10 @@ describe("useReleaseSession", () => {
       expect(await result.current.upload.start()).toBe(true);
     });
 
+    const goals = continueWorkflow.mock.calls.map(([request]) => request.goal);
+    expect(goals).toContain("upload_reviewed");
+    expect(goals).not.toContain("dry_run");
+    expect(goals[goals.length - 1]).toBe("uploaded");
     expect(executeUploads).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: workflowID }) }),
       false,
@@ -4118,7 +4160,17 @@ describe("useReleaseSession", () => {
         status: "failed",
       },
     } as unknown as ReleaseWorkflowCurrent;
-    const dryRunUploads = vi.fn(async () => failedDryRun);
+    let assessments = 0;
+    const continueWorkflow = vi.fn(async (_request: ContinueReleaseWorkflowRequest) => {
+      assessments += 1;
+      const revision = 7 + assessments;
+      const id = `dry-run-failed-${assessments}`;
+      return {
+        ...failedDryRun,
+        workflow: { ...failedDryRun.workflow, revision, dryRun: { id, revision } },
+        dryRun: { ...failedDryRun.dryRun!, id, revision },
+      };
+    });
     const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
@@ -4126,7 +4178,7 @@ describe("useReleaseSession", () => {
           resumeWorkflowID: workflowID,
           workflow: workflowPorts({
             current: async () => retained,
-            dryRunUploads,
+            continue: continueWorkflow,
             executeUploads,
           }),
         }),
@@ -4139,11 +4191,15 @@ describe("useReleaseSession", () => {
       expect(await result.current.upload.start()).toBe(false);
     });
     expect(executeUploads).not.toHaveBeenCalled();
-    expect(result.current.upload.view.dryRunResult?.id).toBe("dry-run-failed");
+    expect(result.current.upload.view.dryRunResult?.id).toBe("dry-run-failed-1");
+    expect(continueWorkflow).toHaveBeenCalledOnce();
+    expect(continueWorkflow.mock.calls[0]?.[0]).toMatchObject({ goal: "upload_reviewed" });
     await act(async () => {
       expect(await result.current.upload.runDryRun()).toBe(true);
     });
-    expect(dryRunUploads).toHaveBeenCalledTimes(2);
+    expect(continueWorkflow).toHaveBeenCalledTimes(2);
+    expect(continueWorkflow.mock.calls[1]?.[0]).toMatchObject({ goal: "dry_run" });
+    expect(result.current.upload.view.dryRunResult?.id).toBe("dry-run-failed-2");
     expect(executeUploads).not.toHaveBeenCalled();
 
     unmount();

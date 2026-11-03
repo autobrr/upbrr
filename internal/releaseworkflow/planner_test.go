@@ -1035,7 +1035,8 @@ func TestContinuationGoalReachedReconcilesImageHostSkipMode(t *testing.T) {
 			}},
 		},
 		DryRun: &api.UploadDryRunResult{
-			Status: api.StageStatusCompleted,
+			Status:                   api.StageStatusCompleted,
+			ClientInjectionRequested: true,
 		},
 	}
 	for _, goal := range []api.WorkflowGoal{
@@ -1938,68 +1939,76 @@ func TestContinuationPlannerRequiresDryRunFromCurrentAttempt(t *testing.T) {
 	}
 }
 
-func TestContinuationPlannerUploadsReadyLaneFromPartialDryRun(t *testing.T) {
+func TestContinuationPlannerUploadsReadyLaneFromMixedDryRun(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
-	current := readyContinuationPlannerResult(t, now)
-	current.Selection.TrackerIDs = []api.TrackerID{"ALPHA", "BETA"}
-	current.Projections.Projections = append(current.Projections.Projections, api.TrackerReleaseProjection{
-		TrackerID:   "BETA",
-		Readiness:   api.ReadinessStatusReady,
-		DupeReady:   true,
-		UploadReady: true,
-	})
-	current.Dupes.Results = append(current.Dupes.Results, api.TrackerDupeAssessment{
-		TrackerID: "BETA",
-		Status:    api.StageStatusCompleted,
-		Decision:  api.DupeDecisionNoMatch,
-	})
-	current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted}
-	current.Descriptions = &api.DescriptionSet{Status: api.StageStatusSkipped}
-	current.DryRun = &api.UploadDryRunResult{
-		NoSeed:     true,
-		TrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
-		Status:     api.StageStatusPartial,
-		Reports: []api.TrackerDryRunReport{
-			{TrackerID: "ALPHA", Status: api.StageStatusCompleted},
-			{TrackerID: "BETA", Status: api.StageStatusFailed},
-		},
-	}
-	request := api.ContinueReleaseWorkflowRequest{
-		Goal: api.WorkflowGoalUploaded,
-		Intent: api.WorkflowIntent{
-			NoSeed: true, UploadTrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
-		},
-	}
-	command, stage := planContinuationCommand(request, current, now)
-	uploadCommand, ok := command.(ExecuteUploadsCommand)
-	if !ok || stage != "execute-uploads" || !slices.Equal(uploadCommand.TrackerIDs, []api.TrackerID{"ALPHA"}) {
-		t.Fatalf("partial dry run upload plan: stage=%q command=%#v", stage, command)
-	}
-	selected, err := validateUploadExecutionTrackerIDs([]api.UploadPlanTracker{
-		{
-			TrackerID: "ALPHA",
-			Eligible:  true,
-			Status:    api.StageStatusReady,
-		},
-		{TrackerID: "BETA", Status: api.StageStatusFailed},
-	}, uploadCommand.TrackerIDs)
-	if err != nil || !slices.Equal(selected, []api.TrackerID{"ALPHA"}) {
-		t.Fatalf("partial dry run upload selection: selected=%v err=%v", selected, err)
-	}
+	for _, siblingStatus := range []api.StageStatus{api.StageStatusFailed, api.StageStatusBlocked} {
+		t.Run(string(siblingStatus), func(t *testing.T) {
+			status := api.StageStatusPartial
+			if siblingStatus == api.StageStatusBlocked {
+				status = api.StageStatusBlocked
+			}
+			now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+			current := readyContinuationPlannerResult(t, now)
+			current.Selection.TrackerIDs = []api.TrackerID{"ALPHA", "BETA"}
+			current.Projections.Projections = append(current.Projections.Projections, api.TrackerReleaseProjection{
+				TrackerID:   "BETA",
+				Readiness:   api.ReadinessStatusReady,
+				DupeReady:   true,
+				UploadReady: true,
+			})
+			current.Dupes.Results = append(current.Dupes.Results, api.TrackerDupeAssessment{
+				TrackerID: "BETA",
+				Status:    api.StageStatusCompleted,
+				Decision:  api.DupeDecisionNoMatch,
+			})
+			current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted}
+			current.Descriptions = &api.DescriptionSet{Status: api.StageStatusSkipped}
+			current.DryRun = &api.UploadDryRunResult{
+				NoSeed:     true,
+				TrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
+				Status:     status,
+				Reports: []api.TrackerDryRunReport{
+					{TrackerID: "ALPHA", Status: api.StageStatusCompleted},
+					{TrackerID: "BETA", Status: siblingStatus},
+				},
+			}
+			request := api.ContinueReleaseWorkflowRequest{
+				Goal: api.WorkflowGoalUploaded,
+				Intent: api.WorkflowIntent{
+					NoSeed: true, UploadTrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
+				},
+			}
+			command, stage := planContinuationCommand(request, current, now)
+			uploadCommand, ok := command.(ExecuteUploadsCommand)
+			if !ok || stage != "execute-uploads" || !slices.Equal(uploadCommand.TrackerIDs, []api.TrackerID{"ALPHA"}) {
+				t.Fatalf("partial dry run upload plan: stage=%q command=%#v", stage, command)
+			}
+			selected, err := validateUploadExecutionTrackerIDs([]api.UploadPlanTracker{
+				{
+					TrackerID: "ALPHA",
+					Eligible:  true,
+					Status:    api.StageStatusReady,
+				},
+				{TrackerID: "BETA", Status: siblingStatus},
+			}, uploadCommand.TrackerIDs)
+			if err != nil || !slices.Equal(selected, []api.TrackerID{"ALPHA"}) {
+				t.Fatalf("partial dry run upload selection: selected=%v err=%v", selected, err)
+			}
 
-	request.Goal = api.WorkflowGoalDryRun
-	command, stage = planContinuationCommand(request, current, now)
-	if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
-		t.Fatalf("explicit dry-run retry plan: stage=%q command=%#v", stage, command)
-	}
+			request.Goal = api.WorkflowGoalDryRun
+			command, stage = planContinuationCommand(request, current, now)
+			if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
+				t.Fatalf("explicit dry-run retry plan: stage=%q command=%#v", stage, command)
+			}
 
-	request.Goal = api.WorkflowGoalUploaded
-	current.DryRun.Reports[0].Status = api.StageStatusFailed
-	command, stage = planContinuationCommand(request, current, now)
-	if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
-		t.Fatalf("partial dry run without a ready lane: stage=%q command=%#v", stage, command)
+			request.Goal = api.WorkflowGoalUploaded
+			current.DryRun.Reports[0].Status = api.StageStatusFailed
+			command, stage = planContinuationCommand(request, current, now)
+			if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
+				t.Fatalf("partial dry run without a ready lane: stage=%q command=%#v", stage, command)
+			}
+		})
 	}
 }
 
@@ -2673,6 +2682,46 @@ func TestStrictUnattendedSkipsTrackerReleaseNameConfirmation(t *testing.T) {
 		Interaction: api.InteractionModeUnattendedConfirm,
 	}, action) {
 		t.Fatal("unattended-confirm mode skipped interactive release-name confirmation")
+	}
+}
+
+func TestContinuationSeparatesExplicitDryRunFromLiveReview(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted}
+	current.Descriptions = &api.DescriptionSet{Status: api.StageStatusSkipped}
+
+	for _, goal := range []api.WorkflowGoal{api.WorkflowGoalDryRun, api.WorkflowGoalUploadReviewed, api.WorkflowGoalUploaded} {
+		t.Run(string(goal), func(t *testing.T) {
+			var request api.ContinueReleaseWorkflowRequest
+			// This is the normal-mode request sent by the WebUI, not CLI debug mode.
+			if err := json.Unmarshal([]byte(`{"goal":"`+string(goal)+`","intent":{"noSeed":false}}`), &request); err != nil {
+				t.Fatal(err)
+			}
+			command, stage := planContinuationCommand(request, current, now)
+			dryRun, ok := command.(DryRunUploadsCommand)
+			if !ok || stage != "review-uploads" || dryRun.NoSeed || dryRun.ReviewOnly != (goal != api.WorkflowGoalDryRun) {
+				t.Fatalf("request planned stage=%q command=%#v", stage, command)
+			}
+		})
+	}
+	current.DryRun = &api.UploadDryRunResult{Status: api.StageStatusCompleted, TrackerIDs: []api.TrackerID{"ALPHA"}}
+	request := api.ContinueReleaseWorkflowRequest{Goal: api.WorkflowGoalDryRun}
+	if continuationGoalReached(current, request) {
+		t.Fatal("live review incorrectly satisfied explicit client-injection request")
+	}
+	command, _ := planContinuationCommand(request, current, now)
+	if dryRun, ok := command.(DryRunUploadsCommand); !ok || dryRun.ReviewOnly {
+		t.Fatalf("explicit dry run after review = %#v", command)
+	}
+	current.DryRun.ClientInjectionRequested = true
+	if !continuationGoalReached(current, request) {
+		t.Fatal("completed explicit dry run was not reusable")
+	}
+	command, stage := planContinuationCommand(request, current, now)
+	if command != nil || stage != "" {
+		t.Fatalf("completed dry run repeated side effects: %q %#v", stage, command)
 	}
 }
 

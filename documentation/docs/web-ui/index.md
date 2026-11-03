@@ -216,4 +216,8 @@ Each **Run dry run** action performs one assessment after its prerequisites fini
 
 Use **Dry Run** on the Upload page and disable client injection for the first test. Compare every tracker tab with the tracker's current upload form and rules before allowing submission.
 
+**Dry Run** never submits to a tracker, but it injects the prepared torrent into your configured client unless **Skip client injection** is enabled. Review any injection failure in the dry-run result before proceeding. The automatic review before a live upload instead waits for successful tracker registration before injecting.
+
+When a dry run requests a preparation decision, answer it to continue that same dry run automatically. Client injection remains pending until preparation is ready; no second **Run dry run** click is needed. The original skip-client-injection choice remains in effect.
+
 See [Upload workflow](../workflow/index.md) for stage ownership and review boundaries.

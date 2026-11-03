@@ -12889,6 +12889,9 @@
       "UploadDryRunResult": {
         "type": "object",
         "properties": {
+          "clientInjectionRequested": {
+            "type": "boolean"
+          },
           "createdAt": {
             "type": "string"
           },
@@ -12897,6 +12900,9 @@
           },
           "dupes": {
             "$ref": "#/components/schemas/DupeAssessmentRef"
+          },
+          "explicitDryRun": {
+            "type": "boolean"
           },
           "failedCount": {
             "type": "integer"

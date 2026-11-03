@@ -3156,9 +3156,11 @@ export type UploadApproval = Readonly<{
 }>;
 
 export type UploadDryRunResult = Readonly<{
+  clientInjectionRequested?: boolean;
   createdAt: string;
   descriptions: DescriptionSetRef;
   dupes: DupeAssessmentRef;
+  explicitDryRun?: boolean;
   failedCount: number;
   id: UploadDryRunResultID;
   inputFingerprint: WorkflowFingerprint;

@@ -521,6 +521,24 @@ func TestDirectUploadContractsValidateExactLineageAndTerminalOutcomes(t *testing
 	if err := dryRun.Validate(); err != nil {
 		t.Fatalf("validate direct dry run: %v", err)
 	}
+	blockedDryRun := dryRun
+	blockedDryRun.Reports = append([]TrackerDryRunReport(nil), dryRun.Reports...)
+	blockedDryRun.Status, blockedDryRun.SucceededCount = StageStatusBlocked, 0
+	blockedDryRun.Reports[0].Status = StageStatusBlocked
+	blockedDryRun.Reports[0].ClientInjection.Status = StageStatusPending
+	if err := blockedDryRun.Validate(); err != nil {
+		t.Fatalf("validate dry run awaiting a preparation decision: %v", err)
+	}
+	blockedDryRun.Reports[0].ClientInjection.Status = StageStatusCompleted
+	if err := blockedDryRun.Validate(); err == nil {
+		t.Fatal("blocked preparation claimed completed client injection")
+	}
+	blockedDryRun.Status, blockedDryRun.SucceededCount = StageStatusCompleted, 1
+	blockedDryRun.Reports[0].Status = StageStatusCompleted
+	blockedDryRun.Reports[0].ClientInjection.Status = StageStatusPending
+	if err := blockedDryRun.Validate(); err == nil {
+		t.Fatal("completed preparation retained pending client injection")
+	}
 	missingTargets := dryRun
 	missingTargets.TrackerIDs = nil
 	if err := missingTargets.Validate(); err == nil || !strings.Contains(err.Error(), "target tracker IDs") {

@@ -587,9 +587,9 @@ export function ReleaseSessionProvider({
       }
       onOperation?.(continued);
       const next = await awaitWorkflowCommand(continued, signal, expectedSlot);
-      // A dry-run action owns one assessment; partial results need an explicit retry.
+      // Each dry run or live-upload review owns one assessment; retries are explicit.
       if (
-        goal === "dry_run" &&
+        (goal === "dry_run" || goal === "upload_reviewed") &&
         next.dryRun &&
         (next.dryRun.id !== current.dryRun?.id || next.dryRun.revision !== current.dryRun?.revision)
       ) {
@@ -2222,7 +2222,7 @@ export function ReleaseSessionProvider({
       if (!current.dryRun) {
         current = await continueBackendGoal(
           current,
-          "dry_run",
+          "upload_reviewed",
           backendResolvedUploadIntent(current),
           `${commandID}-review`,
           controller.signal,
@@ -2901,7 +2901,11 @@ export function ReleaseSessionProvider({
         return runBackendWorkflow((current, commandID, signal) =>
           continueBackendGoal(
             current,
-            liveTest ? "dry_run" : "uploaded",
+            liveTest ||
+              (action.kind === "resolve_tracker_preparation" &&
+                (current.dryRun?.explicitDryRun || current.dryRun?.clientInjectionRequested))
+              ? "dry_run"
+              : "uploaded",
             backendResolvedUploadIntent(current),
             commandID,
             signal,

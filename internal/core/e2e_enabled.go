@@ -66,6 +66,7 @@ const (
 	e2ePlanSkipsEnv     = "UPBRR_E2E_PLAN_SKIP_TRACKERS"
 	e2ePlanAttemptsEnv  = "UPBRR_E2E_RECORD_PLAN_ATTEMPTS"
 	e2ePlanWaitEnv      = "UPBRR_E2E_WAIT_FOR_PLAN_CANCELLATION"
+	e2ePlanDecisionsEnv = "UPBRR_E2E_PLAN_DECISION_TRACKERS"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -948,6 +949,14 @@ type e2eClientService struct {
 	endpoint string
 }
 
+func (s e2eClientService) InjectionDestinationFingerprint(api.ClientSubject, api.TorrentResult) (api.WorkflowFingerprint, error) {
+	fingerprint, err := api.CanonicalWorkflowFingerprint(strings.TrimRight(strings.TrimSpace(s.endpoint), "/"))
+	if err != nil {
+		return "", fmt.Errorf("e2e client: destination fingerprint: %w", err)
+	}
+	return fingerprint, nil
+}
+
 func (s e2eClientService) Inject(ctx context.Context, _ api.ClientSubject, _ api.TorrentResult) error {
 	endpoint := strings.TrimRight(strings.TrimSpace(s.endpoint), "/")
 	if endpoint == "" {
@@ -1474,6 +1483,7 @@ func (s e2eTrackerService) PrepareRetainedUploadPlan(
 	preparations := make([]trackers.RetainedTrackerPreparation, 0, len(previews))
 	failedTrackers := e2eTrackerSet(e2ePlanFailuresEnv)
 	skippedTrackers := e2eTrackerSet(e2ePlanSkipsEnv)
+	decisionTrackers := e2eTrackerSet(e2ePlanDecisionsEnv)
 	for _, preview := range previews {
 		preparation := trackers.RetainedTrackerPreparation{
 			Tracker:     preview.Tracker,
@@ -1494,6 +1504,18 @@ func (s e2eTrackerService) PrepareRetainedUploadPlan(
 				Message: "E2E tracker preparation skipped.",
 			}
 		}
+		if _, pending := decisionTrackers[preview.Tracker]; pending {
+			preparation.Preview.RequiredActions = []api.RequiredAction{{
+				Kind:    api.RequiredActionResolveTrackerPreparation,
+				Prompt:  "Continue the prepared torrent decision?",
+				Options: []api.RequiredActionOption{{Value: "confirm", Label: "Continue preparation"}},
+			}}
+			preparation.Failure = &trackers.TrackerFailure{
+				Tracker: preview.Tracker,
+				Code:    "e2e_preparation_decision",
+				Message: "A preparation decision is required.",
+			}
+		}
 		preparations = append(preparations, preparation)
 	}
 	subject.Trackers = append([]string(nil), trackerNames...)
@@ -1512,11 +1534,34 @@ func (p *e2eRetainedUploadPlan) Preparations() []trackers.RetainedTrackerPrepara
 }
 
 func (p *e2eRetainedUploadPlan) ResolveAction(
-	context.Context,
-	string,
-	api.RequiredActionKind,
-	bool,
+	ctx context.Context,
+	trackerID string,
+	kind api.RequiredActionKind,
+	confirmed bool,
 ) (trackers.RetainedTrackerPreparation, error) {
+	if err := ctx.Err(); err != nil {
+		return trackers.RetainedTrackerPreparation{}, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.executed || p.released || kind != api.RequiredActionResolveTrackerPreparation {
+		return trackers.RetainedTrackerPreparation{}, trackers.ErrPlanActionUnavailable
+	}
+	for index, preparation := range p.preparations {
+		if !strings.EqualFold(preparation.Tracker, trackerID) || len(preparation.Preview.RequiredActions) == 0 {
+			continue
+		}
+		preparation.Preview.RequiredActions, preparation.Failure = nil, nil
+		if !confirmed {
+			preparation.Failure = &trackers.TrackerFailure{
+				Tracker: trackerID,
+				Code:    trackers.PreparationFailureCodeSkipped,
+				Message: "Preparation declined.",
+			}
+		}
+		p.preparations[index] = preparation
+		return preparation, nil
+	}
 	return trackers.RetainedTrackerPreparation{}, trackers.ErrPlanActionUnavailable
 }
 

@@ -24,6 +24,10 @@ func (*recordingClient) Inject(context.Context, api.ClientSubject, api.TorrentRe
 	return nil
 }
 
+func (*recordingClient) InjectionDestinationFingerprint(api.ClientSubject, api.TorrentResult) (api.WorkflowFingerprint, error) {
+	return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil
+}
+
 func (c *recordingClient) SearchPathedTorrents(_ context.Context, input api.ClientSubject) (api.ClientSearchResult, error) {
 	c.calls++
 	c.input = input
