@@ -456,6 +456,7 @@ func TestCompositeUploadAdoptsReadyTrackerScope(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name                   string
+		retained               []api.TrackerID
 		include, remove        []api.TrackerID
 		want                   []api.TrackerID
 		wantNoTrackers         bool
@@ -463,22 +464,32 @@ func TestCompositeUploadAdoptsReadyTrackerScope(t *testing.T) {
 	}{
 		{
 			name:                   "retained defaults",
+			retained:               []api.TrackerID{"ALPHA", "BETA"},
 			want:                   []api.TrackerID{"ALPHA", "BETA"},
 			wantSingleReevaluation: true,
 		},
 		{
+			name:                   "retained scope differs from defaults",
+			retained:               []api.TrackerID{"BETA"},
+			want:                   []api.TrackerID{"BETA"},
+			wantSingleReevaluation: true,
+		},
+		{
 			name:                   "explicit selection overrides retained scope",
+			retained:               []api.TrackerID{"ALPHA", "BETA"},
 			include:                []api.TrackerID{"BETA"},
 			want:                   []api.TrackerID{"BETA"},
 			wantSingleReevaluation: true,
 		},
 		{
-			name:   "remove one retained tracker",
-			remove: []api.TrackerID{"ALPHA"},
-			want:   []api.TrackerID{"BETA"},
+			name:     "remove one retained tracker",
+			retained: []api.TrackerID{"ALPHA", "BETA"},
+			remove:   []api.TrackerID{"ALPHA"},
+			want:     []api.TrackerID{"BETA"},
 		},
 		{
 			name:                   "remove every retained tracker",
+			retained:               []api.TrackerID{"ALPHA", "BETA"},
 			remove:                 []api.TrackerID{"ALPHA", "BETA"},
 			wantNoTrackers:         true,
 			wantSingleReevaluation: true,
@@ -498,7 +509,7 @@ func TestCompositeUploadAdoptsReadyTrackerScope(t *testing.T) {
 			current = executeCommand(t, module, EvaluateInputReadinessCommand{
 				WorkflowID:       current.Workflow.ID,
 				ExpectedRevision: current.Workflow.Revision,
-				TrackerIDs:       []api.TrackerID{"ALPHA", "BETA"},
+				TrackerIDs:       tc.retained,
 			})
 			if current.Selection != nil || current.InputReadiness == nil || inputReadinessBlocked(current.InputReadiness) {
 				t.Fatalf("prepared handoff selection/readiness = %#v/%#v", current.Selection, current.InputReadiness)
