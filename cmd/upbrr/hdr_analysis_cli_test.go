@@ -133,7 +133,7 @@ name: "invalid peak option",
  output: t.TempDir(),
  flags: []string{"--hdr-peak-source=unknown"},
  code: 2,
- want: "--hdr-peak-source",
+ want: "invalid --hdr-peak-source; choose histogram, histogram99, max-scl, or max-scl-luminance",
 },
 		{
 name: "invalid playlist option",
@@ -149,7 +149,7 @@ name: "invalid formats option",
  output: t.TempDir(),
  flags: []string{"--hdr-formats=unknown"},
  code: 2,
- want: "--hdr-formats",
+ want: "invalid --hdr-formats; choose auto, hdr10plus, dolby-vision, or both",
 },
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -216,22 +216,33 @@ type hdrCLIProgressWriter func([]byte) (int, error)
 func (w hdrCLIProgressWriter) Write(data []byte) (int, error) { return w(data) }
 
 func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
-	for _, failSummary := range []bool{false, true} {
-		name := "complete"
-		if failSummary {
-			name = "summary failure"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		failSummary bool
+		alias       bool
+	}{
+		{name: "complete"},
+		{name: "summary failure", failSummary: true},
+		{
+			name:        "summary failure through alias",
+			failSummary: true,
+			alias:       true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			parent := t.TempDir()
+			if test.alias {
+				alias := filepath.Join(t.TempDir(), "output-alias")
+				if err := os.Symlink(parent, alias); err != nil {
+					t.Skipf("output-directory alias unavailable: %v", err)
+				}
+				parent = alias
+			}
 			var stdout bytes.Buffer
 			var diagnostic bytes.Buffer
 			var stderr io.Writer = &diagnostic
 			blockedSummary := false
-			if failSummary {
-				alias := filepath.Join(t.TempDir(), "output-alias")
-				if err := os.Symlink(parent, alias); err == nil {
-					parent = alias
-				}
+			if test.failSummary {
 				stderr = hdrCLIProgressWriter(func(data []byte) (int, error) {
 					if strings.Contains(string(data), "HDR analysis: saving") {
 						entries, err := os.ReadDir(parent)
@@ -255,7 +266,7 @@ func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
-			if failSummary {
+			if test.failSummary {
 				if !blockedSummary || !errors.Is(err, os.ErrExist) || len(entries) != 1 || stdout.Len() == 0 {
 					t.Fatalf("failed summary lost completed output: blocked=%t err=%v entries=%v stdout=%q", blockedSummary, err, entries, stdout.String())
 				}
