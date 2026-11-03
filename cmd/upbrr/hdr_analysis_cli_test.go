@@ -201,7 +201,8 @@ func TestHDRCLISetupDiagnosticSafetyAndModes(t *testing.T) {
 		args := []string{"--hdr-analysis-only", "--hdr-metadata-only", "--hdr-output-dir", t.TempDir()}
 		args = append(args, flags...)
 		result := executeCLIForTest(t.Context(), t, append(args, source))
-		if result.code != 1 || !errors.Is(result.err, os.ErrNotExist) || !strings.Contains(result.stderr, "HDR source") || result.stdout != "" {
+		_, pathFailure := errors.AsType[*os.PathError](result.err)
+		if result.code != 1 || !pathFailure || !strings.Contains(result.stderr, "HDR source") || result.stdout != "" {
 			t.Fatal("standalone HDR setup did not report the source failure through the command")
 		}
 		if strings.Contains(result.stderr, "SECRET_SENTINEL") || strings.ContainsAny(result.stderr, "\x1b\a\r") {
@@ -227,6 +228,10 @@ func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
 			var stderr io.Writer = &diagnostic
 			blockedSummary := false
 			if failSummary {
+				alias := filepath.Join(t.TempDir(), "output-alias")
+				if err := os.Symlink(parent, alias); err == nil {
+					parent = alias
+				}
 				stderr = hdrCLIProgressWriter(func(data []byte) (int, error) {
 					if strings.Contains(string(data), "HDR analysis: saving") {
 						entries, err := os.ReadDir(parent)
@@ -262,7 +267,11 @@ func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
 					!strings.Contains(diagnostic.String(), "retained") {
 					t.Fatalf("summary failure lost its operation or retained-output guidance: %q", diagnostic.String())
 				}
-				if want := "HDR analysis output: " + filepath.Join(parent, entries[0].Name()) + "\n"; stdout.String() != want {
+				resolvedParent, resolveErr := filepath.EvalSymlinks(parent)
+				if resolveErr != nil {
+					t.Fatal(resolveErr)
+				}
+				if want := "HDR analysis output: " + filepath.Join(resolvedParent, entries[0].Name()) + "\n"; stdout.String() != want {
 					t.Fatalf("artifact-location stdout changed: %q", stdout.String())
 				}
 				return
