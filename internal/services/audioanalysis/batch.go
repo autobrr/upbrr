@@ -270,7 +270,11 @@ func (b *Batch) FinishEach(ctx context.Context, outputErrors []error, processErr
 		return nil
 	}
 	if len(outputErrors) != len(b.analyses)-len(b.failures) || b.released || b.finished || publish == nil {
-		b.service.logger.Warnf("audioanalysis: state=blocked phase=shared_completion expected=%d received=%d", len(b.analyses), len(outputErrors))
+		b.service.logger.Warnf(
+			"Audio analysis could not finish because its shared decode results are unavailable or no longer current. audioanalysis: state=blocked phase=shared_completion expected=%d received=%d",
+			len(b.analyses),
+			len(outputErrors),
+		)
 		return errors.New("shared audio batch has invalid completion authority")
 	}
 	b.finished = true
@@ -292,17 +296,14 @@ func (b *Batch) FinishEach(ctx context.Context, outputErrors []error, processErr
 			if err == nil {
 				b.CorrectiveDecode = true
 				corrected = true
-				b.service.logger.Infof(
-					"audioanalysis: state=retrying phase=decode track_ordinal=%d reason=spectrogram_geometry",
-					analysis.binding.track.Ordinal,
-				)
 				analysis, err = b.service.retryGeometry(ctx, b.decoder, b.path, analysis, b.variants,
 					api.AudioAnalysisResourceLimits{DecoderThreads: api.AudioAnalysisDefaultDecoderThreads})
 			}
 		}
 		if err != nil {
 			failure := failureForError(err)
-			b.service.logger.Warnf("audioanalysis: state=failed phase=shared_decode track_ordinal=%d code=%s", analysis.binding.track.Ordinal, failure.Code)
+			b.service.logger.Warnf("Audio track %d could not be analyzed; its analysis files were not saved. "+
+				"audioanalysis: state=failed phase=shared_decode track_ordinal=%d code=%s", analysis.binding.track.Ordinal, analysis.binding.track.Ordinal, failure.Code)
 			analysis.public.Status, analysis.public.Failure = api.StageStatusFailed, &failure
 			if publishErr := publish(TrackResult{Public: analysis.public, CorrectiveDecode: corrected}); publishErr != nil {
 				return publishErr
@@ -321,7 +322,8 @@ func (b *Batch) FinishEach(ctx context.Context, outputErrors []error, processErr
 		}
 		b.analyses[i] = nil
 		if err != nil {
-			b.service.logger.Warnf("audioanalysis: state=failed phase=shared_publish track_ordinal=%d", analysis.binding.track.Ordinal)
+			b.service.logger.Warnf("Audio analysis could not save all outputs for track %d; check write access and free space. "+
+				"audioanalysis: state=failed phase=shared_publish track_ordinal=%d", analysis.binding.track.Ordinal, analysis.binding.track.Ordinal)
 			return err
 		}
 	}
@@ -331,6 +333,8 @@ func (b *Batch) FinishEach(ctx context.Context, outputErrors []error, processErr
 func (s *Service) retryGeometry(ctx context.Context, decoder decoder, path string, original *trackAnalysis,
 	variants []api.AudioAnalysisVariant, limits api.AudioAnalysisResourceLimits,
 ) (*trackAnalysis, error) {
+	s.logger.Infof("Rereading audio track %d to align the spectrogram with the measured duration; verifying the decoded audio before saving results. "+
+		"audioanalysis: state=retrying phase=decode track_ordinal=%d reason=spectrogram_geometry", original.binding.track.Ordinal, original.binding.track.Ordinal)
 	retry := newTrackAnalysis(original.binding, variants)
 	retry.totalFrames = original.frames
 	request := decodeRequest{

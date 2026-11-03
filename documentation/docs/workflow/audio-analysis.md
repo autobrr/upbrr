@@ -86,6 +86,8 @@ One waveform and one spectrogram can be produced for each selected audio track. 
 
 FFmpeg streams decoded audio directly to the Go analyzer. Tracks that need the same image types normally share one pass over the source. If a source reports a missing or inaccurate duration, upbrr may decode an affected track again to use the measured frame count for spectrogram timing; it verifies that the decoded audio matches before publishing. Retrying missing images can also require separate passes.
 
+For the separate Audio Analysis operation, application logs identify the selected track count and requested outputs. They distinguish a retry after an incomplete shared decode from a reread to align spectrogram timing with the measured duration. The terminal analysis summary counts completed, partial, and failed tracks and saved files; incomplete results are warnings, even when other tracks succeed. Decoder threads and spectrogram processing settings are available at debug level. Standalone `--audio-analysis-only` uses the separate progress and result output described above.
+
 Samples retain their native sample rate and channel layout. The analysis does not normalize, resample, or downmix the audio.
 
 Waveforms show each pixel column's peak range on a linear amplitude scale. Columns containing a full-scale sample are marked in red, like Audacity's waveform view with clipping display enabled.

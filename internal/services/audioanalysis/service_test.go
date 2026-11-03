@@ -361,12 +361,21 @@ func TestServiceRetriesSpectrogramWhenDurationChangesGeometry(t *testing.T) {
 				channels:        1,
 				durationSeconds: test.estimatedSeconds,
 			}}, pcm: pcm}
-			results, err := newService(api.NopLogger{}, decoder).Analyze(
+			logger := analysisTestLogger(t)
+			results, err := newService(logger, decoder).Analyze(
 				t.Context(), subject, instructions, "attempt_"+test.name, t.TempDir(),
 			)
 			if err != nil || decoder.decodes != test.wantDecodes || len(results) != 1 ||
 				results[0].Public.Status != api.StageStatusCompleted || len(results[0].Artifacts) != 1 {
 				t.Fatalf("error = %v, decodes = %d, results = %#v", err, decoder.decodes, results)
+			}
+			if test.wantDecodes > 1 {
+				assertAnalysisLog(t, logger, "info", "reason=spectrogram_geometry", "measured duration", "track_ordinal=1")
+				for _, entry := range logger.Recent(100) {
+					if strings.Contains(entry.Message, "reason=batch_incomplete") {
+						t.Fatalf("geometry reread mislabeled as incomplete decode: %s", entry.Message)
+					}
+				}
 			}
 			imageBytes, err := os.ReadFile(results[0].Artifacts[0].Path)
 			if err != nil {
@@ -424,7 +433,8 @@ func TestServiceStreamsSelectedTracksInOneDecodePass(t *testing.T) {
 		},
 		pcm: frames,
 	}
-	service := newService(api.NopLogger{}, decoder)
+	logger := analysisTestLogger(t)
+	service := newService(logger, decoder)
 	tracks := []api.MediaTrackFacts{
 		{
 			ID:                  "track_one",
@@ -473,6 +483,7 @@ func TestServiceStreamsSelectedTracksInOneDecodePass(t *testing.T) {
 		results[1].Public.Status != api.StageStatusCompleted {
 		t.Fatalf("decode passes = %d, results = %#v", decoder.decodes, results)
 	}
+	assertAnalysisLog(t, logger, "info", "state=completed", "completed_count=2", "partial_count=0", "failed_count=0", "artifact_count=2")
 }
 
 func TestServiceStopsPublishingRemainingTracksAfterCancellation(t *testing.T) {
@@ -648,7 +659,8 @@ func TestServicePublishesCompletedTrackWhenSiblingDecodeStops(t *testing.T) {
 				retryFirst:     test.retryFirst,
 				cancel:         cancel,
 			}
-			service := newService(api.NopLogger{}, decoder)
+			logger := analysisTestLogger(t)
+			service := newService(logger, decoder)
 			tracks := []api.MediaTrackFacts{
 				{
 					ID:                  "track_one",
@@ -696,6 +708,10 @@ func TestServicePublishesCompletedTrackWhenSiblingDecodeStops(t *testing.T) {
 			if len(results) != 2 || results[0].Public.Status != api.StageStatusCompleted || len(results[0].Artifacts) != 1 ||
 				results[1].Public.Status != api.StageStatusFailed {
 				t.Fatalf("results = %#v", results)
+			}
+			if !test.wantTopLevel {
+				assertAnalysisLog(t, logger, "info", "reason=batch_incomplete", "did not confirm a complete result")
+				assertAnalysisLog(t, logger, "warn", "state=partial", "completed_count=1", "partial_count=0", "failed_count=1", "artifact_count=1")
 			}
 		})
 	}
@@ -956,7 +972,8 @@ func TestServiceRetainsSiblingAfterVariantLocalPublishFailure(t *testing.T) {
 		}},
 		pcm: encodePCM([][]float32{{0.25}, {-0.25}, {0.5}, {-0.5}}),
 	}
-	service := newService(api.NopLogger{}, decoder)
+	logger := analysisTestLogger(t)
+	service := newService(logger, decoder)
 	publishCalls := 0
 	service.publishPNG = func(root string, path string, rendered image.Image) error {
 		publishCalls++
@@ -1002,6 +1019,7 @@ func TestServiceRetainsSiblingAfterVariantLocalPublishFailure(t *testing.T) {
 		result[0].Public.Artifacts[1].Status != api.StageStatusCompleted {
 		t.Fatalf("publish calls = %d, result = %#v", publishCalls, result)
 	}
+	assertAnalysisLog(t, logger, "warn", "state=partial", "completed_count=0", "partial_count=1", "failed_count=0", "artifact_count=1")
 }
 
 func TestServiceReturnsServiceWidePublishFailure(t *testing.T) {
