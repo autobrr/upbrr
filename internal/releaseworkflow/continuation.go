@@ -203,10 +203,15 @@ func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome 
 				continue
 			}
 			lane.Failures = append(lane.Failures, report.Failures...)
-			if stageSucceeded(report.Status) && stageSucceeded(report.ClientInjection.Status) {
+			switch {
+			case report.Status == api.StageStatusBlocked:
+				lane.Lifecycle = api.OperationLifecycleWaiting
+				lane.Disposition = api.WorkflowDispositionNeedsAction
+				lane.Retryable = false
+			case stageSucceeded(report.Status) && stageSucceeded(report.ClientInjection.Status):
 				advanceLane(lane, api.WorkflowGoalDryRun)
 				lane.Disposition = api.WorkflowDispositionSucceeded
-			} else {
+			default:
 				lane.Lifecycle = api.OperationLifecycleTerminal
 				lane.Disposition = api.WorkflowDispositionFailed
 				lane.Retryable = true

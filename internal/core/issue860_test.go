@@ -171,6 +171,10 @@ func TestWorkflowUploadPlanUsesRealTorrentReuseAndRecheck(t *testing.T) {
 	}
 }
 
+func (*issue860Client) InjectionDestinationFingerprint(api.ClientSubject, api.TorrentResult) (api.WorkflowFingerprint, error) {
+	return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil
+}
+
 func (c *issue860Client) Inject(context.Context, api.ClientSubject, api.TorrentResult) error {
 	return nil
 }

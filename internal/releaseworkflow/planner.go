@@ -583,7 +583,7 @@ func (m *Module) resolveContinuationAnswer(
 			}
 			continue
 		}
-		result, err := m.Execute(ctx, ownerID, ResolveActionCommand{
+		command := ResolveActionCommand{
 			WorkflowID:       current.Workflow.ID,
 			ExpectedRevision: current.Workflow.Revision,
 			Answer:           request.Answers[answerIndex],
@@ -592,7 +592,16 @@ func (m *Module) resolveContinuationAnswer(
 				"answer-"+string(action.ID),
 				current.Workflow.Revision,
 			),
-		})
+		}
+		if action.Kind == api.RequiredActionResolveTrackerPreparation {
+			operation, err := m.Start(ctx, ownerID, resolveTrackerPreparationCommand{command})
+			if err != nil {
+				return CommandResult{}, true, err
+			}
+			updated, err := m.Current(ctx, ownerID, operation.WorkflowID)
+			return updated, true, err
+		}
+		result, err := m.Execute(ctx, ownerID, command)
 		if err != nil {
 			return CommandResult{}, true, err
 		}
@@ -1037,8 +1046,9 @@ func planContinuationCommandWithReadiness(
 	if request.Goal == api.WorkflowGoalUploaded {
 		partialReadyIDs = partialDryRunReadyTrackerIDs(dryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs)
 	}
-	if !dryRunGoalSatisfied(dryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) && len(partialReadyIDs) == 0 {
+	if !dryRunGoalSatisfied(dryRun, request.Goal, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) && len(partialReadyIDs) == 0 {
 		return DryRunUploadsCommand{
+			ReviewOnly:       request.Goal != api.WorkflowGoalDryRun,
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
 			NoSeed:           request.Intent.NoSeed,
@@ -1077,8 +1087,8 @@ func continuationPreflightCurrent(current CommandResult, now time.Time) bool {
 		current.Preflight.ProjectionSet.Revision == current.Projections.Revision
 }
 
-// continuationMediaCaptureSatisfied treats explicit final selections as
-// satisfied only when each screenshot index is retained.
+// continuationMediaCaptureSatisfied recognizes retained capture results and
+// completed imports. Overall media readiness is checked separately by the planner.
 func continuationMediaCaptureSatisfied(current CommandResult, desired *api.MediaCaptureInstructions) bool {
 	if desired == nil || current.Media == nil {
 		return desired == nil && current.Media != nil
@@ -1096,19 +1106,29 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		Instructions: *desired,
 		Requirements: current.Media.RequirementsFingerprint,
 	})
-	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil && len(desired.Selections) == 0 {
-		if !stageSucceeded(current.Media.Status) || (desired.SavedImagePlanID == "" && (err != nil || current.Media.CaptureFingerprint != expected)) {
-			return false
-		}
-		return desired.SavedImagePlanID == "" ||
-			(current.Media.SavedImagePlanID == desired.SavedImagePlanID && slices.ContainsFunc(current.Media.Artifacts, func(artifact api.MediaArtifact) bool {
-				if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source == "tracker" && artifact.Selected {
+	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.SavedImagePlanID != "" &&
+		desired.ScreenshotCount == 0 && len(desired.Selections) == 0 && len(desired.ManualFrames) == 0 {
+		// Adoption can be complete while media minimums or deselection still block readiness.
+		// Requested menus still need an exact attempt or a retained automatic capture.
+		menusSatisfied := !desired.CaptureDVDMenus ||
+			(err == nil && current.Media.CaptureFingerprint == expected) ||
+			slices.ContainsFunc(current.Media.Artifacts, func(artifact api.MediaArtifact) bool {
+				return artifact.Kind == api.MediaArtifactDVDMenu && artifact.Selected &&
+					artifact.Source == api.ScreenshotSelectionSourceDVDMenu
+			})
+		return menusSatisfied && (stageSucceeded(current.Media.Status) || current.Media.Status == api.StageStatusBlocked) &&
+			current.Media.SavedImagePlanID == desired.SavedImagePlanID &&
+			slices.ContainsFunc(current.Media.Artifacts, func(artifact api.MediaArtifact) bool {
+				if artifact.Kind == api.MediaArtifactScreenshot && artifact.Source == "tracker" {
 					return true
 				}
-				return artifact.Kind == api.MediaArtifactHostedImage && artifact.Selected && slices.ContainsFunc(current.Media.Artifacts, func(source api.MediaArtifact) bool {
-					return source.Kind == api.MediaArtifactScreenshot && source.Selected && string(source.ID) == artifact.Source
+				return artifact.Kind == api.MediaArtifactHostedImage && slices.ContainsFunc(current.Media.Artifacts, func(source api.MediaArtifact) bool {
+					return source.Kind == api.MediaArtifactScreenshot && string(source.ID) == artifact.Source
 				})
-			}))
+			})
+	}
+	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil && len(desired.Selections) == 0 {
+		return stageSucceeded(current.Media.Status) && err == nil && current.Media.CaptureFingerprint == expected
 	}
 	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil {
 		retained := make(map[int]struct{}, len(current.Media.Artifacts))
@@ -1366,7 +1386,7 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 		return descriptionsHaveViableTracker(current.Descriptions) &&
 			mediaRequirementsPreparedForImagePolicy(current.Media, request.Intent)
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
-		return dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) &&
+		return dryRunGoalSatisfied(current.DryRun, request.Goal, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) &&
 			mediaRequirementsPreparedForImagePolicy(current.Media, request.Intent)
 	case api.WorkflowGoalUploaded:
 		return current.UploadResult != nil &&
@@ -1376,14 +1396,16 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 	}
 }
 
-func dryRunGoalSatisfied(dryRun *api.UploadDryRunResult, noSeed bool, trackerIDs []api.TrackerID) bool {
+func dryRunGoalSatisfied(dryRun *api.UploadDryRunResult, goal api.WorkflowGoal, noSeed bool, trackerIDs []api.TrackerID) bool {
 	return dryRun != nil &&
+		(goal != api.WorkflowGoalDryRun || noSeed || dryRun.Status == api.StageStatusSkipped || dryRun.ClientInjectionRequested) &&
 		(dryRun.Status == api.StageStatusCompleted || dryRun.Status == api.StageStatusSkipped) &&
 		dryRunMatchesIntent(dryRun, noSeed, trackerIDs)
 }
 
 func partialDryRunReadyTrackerIDs(dryRun *api.UploadDryRunResult, noSeed bool, trackerIDs []api.TrackerID) []api.TrackerID {
-	if dryRun == nil || dryRun.Status != api.StageStatusPartial || !dryRunMatchesIntent(dryRun, noSeed, trackerIDs) {
+	if dryRun == nil || (dryRun.Status != api.StageStatusPartial && dryRun.Status != api.StageStatusBlocked) ||
+		!dryRunMatchesIntent(dryRun, noSeed, trackerIDs) {
 		return nil
 	}
 	var ready []api.TrackerID
