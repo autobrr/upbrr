@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/metadata/evidence"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -50,7 +51,8 @@ func TestLookupListingSingleAllAndSelectionReuse(t *testing.T) {
 	if err != nil || len(counts) != 2 || selected.SelectedReleaseID != "102" || selected.AutoSelected {
 		t.Fatalf("selection fetched pages or lost authority: %v %#v %v", err, selected, counts)
 	}
-	input.Retained, input.Details = selected, &api.BlurayDetailRequest{ReleaseID: "101"}
+	input.Retained, input.Details = selected, &api.BlurayDetailRequest{ReleaseID: " 101 "}
+	input.FetchSelected = true
 	one, err := client.Lookup(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +77,155 @@ func TestLookupListingSingleAllAndSelectionReuse(t *testing.T) {
 	skipped, err := client.Lookup(t.Context(), input)
 	if err != nil || skipped.SelectedReleaseID != "" || len(counts) != 4 {
 		t.Fatalf("skip performed detail work: %v %v", err, counts)
+	}
+}
+
+func TestDetailRedirectMustRetainReleaseIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, location, status string
+	}{
+		{
+			name:     "same edition",
+			location: "https://www.blu-ray.com/movies/Renamed/101/",
+			status:   "complete",
+		},
+		{
+			name:     "different edition",
+			location: "https://www.blu-ray.com/movies/Other/102/",
+			status:   "failed",
+		},
+		{
+			name:     "different namespace",
+			location: "https://www.blu-ray.com/dvd/Other/101/",
+			status:   "failed",
+		},
+		{
+			name:     "different host",
+			location: "https://other.invalid/movies/Other/101/",
+			status:   "failed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewClient(&http.Client{Transport: releaseFixtureTransport(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == "/movies/Original/101/" {
+					response := blurayEvidenceResponse(r, http.StatusFound, "")
+					response.Header.Set("Location", tc.location)
+					return response, nil
+				}
+				return blurayEvidenceResponse(r, http.StatusOK, `<script>$("#x").append('<img id="frontimage" src="https://img.example/front.jpg">')</script>`), nil
+			})})
+			result, err := client.Lookup(t.Context(), LookupInput{Retained: &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{{
+				ReleaseID: "101",
+				Title:     "Example",
+				URL:       "https://www.blu-ray.com/movies/Original/101/",
+			}}}, Details: &api.BlurayDetailRequest{ReleaseID: "101"}})
+			if err != nil || result.CandidateByID("101").DetailsStatus != tc.status {
+				t.Fatalf("redirect status: %#v, error %v", result, err)
+			}
+		})
+	}
+}
+
+func TestDetailLookupDoesNotReuseUnverifiedPageEvidence(t *testing.T) {
+	const target = "https://www.blu-ray.com/movies/Original/101/"
+	store := pageEvidenceStore{}
+	ctx, scope := evidence.WithScope(t.Context(), store, "Example.Release", "fingerprint", api.ExternalFreshnessReuse, nil)
+	_, err := evidence.Lookup(ctx, "bluray.page", []string{target, baseURL + "/"}, func() (string, error) {
+		return `<script>$("#x").append('<img id="frontimage" src="https://img.example/stale.jpg">')</script>`, nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	client := NewClient(&http.Client{Transport: releaseFixtureTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return blurayEvidenceResponse(r, http.StatusOK, `<link rel="canonical" href="https://www.blu-ray.com/movies/Original/101/"><h1>Current edition</h1><script>$("#x").append('<img id="frontimage" src="https://img.example/current.jpg">')</script>`), nil
+	})})
+	result, err := client.Lookup(ctx, LookupInput{Retained: &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{{
+		ReleaseID: "101",
+		Title:     "Example",
+		URL:       target,
+	}}}, Details: &api.BlurayDetailRequest{ReleaseID: "101"}})
+	if err != nil || scope.Err() != nil || calls != 1 || result == nil || result.CandidateByID("101") == nil || len(result.CandidateByID("101").CoverImages) != 1 || result.CandidateByID("101").CoverImages[0].URL != "https://img.example/current.jpg" {
+		t.Fatalf("unverified page evidence was reused: calls=%d result=%#v err=%v", calls, result, err)
+	}
+}
+
+func TestDetailLookupPreservesLegacyFailedEvidence(t *testing.T) {
+	const target = "https://www.blu-ray.com/movies/Original/101/"
+	ctx, _ := evidence.WithScope(t.Context(), pageEvidenceStore{}, "Example.Release", "fingerprint", api.ExternalFreshnessReuse, nil)
+	_, _ = evidence.Lookup(ctx, "bluray.page", []string{target, baseURL + "/"}, func() (string, error) {
+		return "", errors.New("synthetic provider failure")
+	}, nil)
+	calls := 0
+	client := NewClient(&http.Client{Transport: releaseFixtureTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return blurayEvidenceResponse(r, http.StatusOK, evidenceDetailsHTML), nil
+	})})
+	result, err := client.Lookup(ctx, LookupInput{Retained: &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{{
+		ReleaseID: "101",
+		Title:     "Example",
+		URL:       target,
+	}}}, Details: &api.BlurayDetailRequest{ReleaseID: "101"}})
+	if err != nil || calls != 0 || result.CandidateByID("101").DetailsStatus != "failed" {
+		t.Fatalf("legacy failed evidence was retried: calls=%d result=%#v err=%v", calls, result, err)
+	}
+}
+
+func TestDetailLookupDoesNotTrustUnverifiedRetainedDetails(t *testing.T) {
+	const target = "https://www.blu-ray.com/movies/Original/101/"
+	ctx, _ := evidence.WithScope(t.Context(), pageEvidenceStore{}, "Example.Release", "fingerprint", api.ExternalFreshnessReuse, nil)
+	calls := 0
+	client := NewClient(&http.Client{Transport: releaseFixtureTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return blurayEvidenceResponse(r, http.StatusOK, `<link rel="canonical" href="https://www.blu-ray.com/movies/Original/101/"><h1>Current edition</h1><script>$("#x").append('<img id="frontimage" src="https://img.example/current.jpg">')</script>`), nil
+	})})
+	result, err := client.Lookup(ctx, LookupInput{
+		SelectedReleaseID: "101",
+		Retained: &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{{
+			ReleaseID:     "101",
+			Title:         "Example",
+			URL:           target,
+			DetailsStatus: "complete",
+			CoverImages:   []api.BlurayImage{{Kind: "front", URL: "https://img.example/stale.jpg"}},
+		}}},
+		Details: &api.BlurayDetailRequest{ReleaseID: "101"},
+	})
+	if err != nil || calls != 1 || result == nil || result.SelectedReleaseID != "101" || result.AutoSelected || result.CandidateByID("101") == nil || len(result.CandidateByID("101").CoverImages) != 1 || result.CandidateByID("101").CoverImages[0].URL != "https://img.example/current.jpg" {
+		t.Fatalf("unverified retained details were reused: calls=%d result=%#v err=%v", calls, result, err)
+	}
+	if _, err := client.Lookup(t.Context(), LookupInput{
+		Retained:          result,
+		SelectedReleaseID: "101",
+		Details:           &api.BlurayDetailRequest{ReleaseID: "101"},
+	}); err != nil || calls != 1 {
+		t.Fatalf("verified details were not reused without an evidence scope: calls=%d error=%v", calls, err)
+	}
+	_, err = client.Lookup(t.Context(), LookupInput{Retained: &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{{
+		ReleaseID:     "101",
+		URL:           target,
+		DetailsStatus: "complete",
+	}}}, Details: &api.BlurayDetailRequest{ReleaseID: "101"}})
+	if !errors.Is(err, ErrDetailReleaseNotRetained) || calls != 1 {
+		t.Fatalf("unverifiable unselected details were fetched or reused: calls=%d error=%v", calls, err)
+	}
+}
+
+func TestSingleDetailRequestRejectsUnavailableOrFilteredCandidate(t *testing.T) {
+	client := NewClient(&http.Client{Transport: releaseFixtureTransport(func(r *http.Request) (*http.Response, error) {
+		return blurayEvidenceResponse(r, http.StatusOK, "<html>No results</html>"), nil
+	})})
+	_, err := client.Lookup(t.Context(), LookupInput{IMDBID: 1234567, Details: &api.BlurayDetailRequest{ReleaseID: "101"}})
+	if !errors.Is(err, ErrDetailReleaseNotRetained) {
+		t.Fatalf("empty catalogue did not reject the requested candidate: %v", err)
+	}
+	_, err = client.Lookup(t.Context(), LookupInput{
+		CountryOverride: new("GER"),
+		Retained:        &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{{ReleaseID: "101", Country: "United States"}}},
+		Details:         &api.BlurayDetailRequest{ReleaseID: "101"},
+	})
+	if !errors.Is(err, ErrDetailReleaseNotRetained) {
+		t.Fatalf("country-filtered candidate was silently accepted: %v", err)
 	}
 }
 
@@ -180,6 +331,10 @@ func TestRequestedDetailsRetainPerReleaseFailuresAndHonorCancellation(t *testing
 	if retained.Candidates[0].DetailsStatus != "" {
 		t.Fatal("inspection mutated retained generation")
 	}
+	reused, err := client.Lookup(t.Context(), LookupInput{Retained: result})
+	if err != nil || reused == nil || calls != 2 || reused.CandidateByID("101").DetailsStatus != "complete" || reused.CandidateByID("102").DetailsStatus != "failed" {
+		t.Fatalf("ordinary reuse lost partial inspection: calls=%d result=%#v error=%v", calls, reused, err)
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	client = NewClient(&http.Client{Transport: releaseFixtureTransport(func(_ *http.Request) (*http.Response, error) {
 		cancel()
@@ -187,6 +342,58 @@ func TestRequestedDetailsRetainPerReleaseFailuresAndHonorCancellation(t *testing
 	})})
 	if _, err := client.Lookup(ctx, input); !errors.Is(err, context.Canceled) {
 		t.Fatalf("detail cancellation: %v", err)
+	}
+}
+
+func TestExactAndLegacyInspectionControlsRespectCountryAndSingleScope(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		for _, all := range []bool{false, true} {
+			details := &api.BlurayDetailRequest{All: all}
+			if !all {
+				details.ReleaseID = "101"
+			}
+			calls := map[string]int{}
+			client := NewClient(&http.Client{Transport: releaseFixtureTransport(func(r *http.Request) (*http.Response, error) {
+				calls[r.URL.Path]++
+				body := evidenceDetailsHTML
+				switch r.URL.Path {
+				case "/search/":
+					body = evidenceSearchHTML
+				case "/products/menu_ajax.php":
+					body = strings.Replace(evidenceReleasesHTML, "title=\"United States\"><a href=\"https://www.blu-ray.com/movies/Example-B", "title=\"Germany\"><a href=\"https://www.blu-ray.com/movies/Example-B", 1)
+				case "/movies/Exact/103/":
+					body = `<link rel="canonical" href="https://www.blu-ray.com/movies/Exact/103/"><a><h1>Exact edition</h1></a><img src="https://images.static-bluray.com/flags/US.png" title="United States"><br>` + body
+				}
+				return blurayEvidenceResponse(r, http.StatusOK, body), nil
+			})})
+			input := LookupInput{
+				IMDBID:          1234567,
+				DiscType:        "BDMV",
+				CountryOverride: new("USA"),
+				Details:         details,
+				ExactRelease:    "https://www.blu-ray.com/movies/Exact/103/",
+			}
+			if legacy {
+				input.ExactRelease = ""
+				input.SelectedReleaseID = "103"
+				input.Retained = &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{{
+					ReleaseID:     "103",
+					URL:           "https://www.blu-ray.com/movies/Exact/103/",
+					DetailsStatus: "complete",
+				}}}
+			}
+			_, err := client.Lookup(t.Context(), input)
+			if legacy || !all {
+				if !errors.Is(err, ErrDetailReleaseNotRetained) {
+					t.Fatalf("conflicting inspection controls accepted: legacy=%t all=%t error=%v", legacy, all, err)
+				}
+				if calls["/movies/Exact/103/"] != 0 || calls["/movies/Example-A/101/"] != 0 || calls["/movies/Example-B/102/"] != 0 {
+					t.Fatal("rejected inspection performed detail work")
+				}
+			} else if err != nil || calls["/movies/Example-B/102/"] != 0 || calls["/movies/Example-A/101/"] != 1 || calls["/movies/Exact/103/"] != 1 {
+				t.Fatalf("all inspection escaped country scope: error=%v calls=%v", err, calls)
+			}
+		}
 	}
 }
 

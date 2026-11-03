@@ -148,6 +148,48 @@ func TestBlurayInstructionSelectsFactsBeforeNaming(t *testing.T) {
 	}
 }
 
+func TestBlurayDetailsFetchAutomaticSelectionAndRejectUnknownCandidate(t *testing.T) {
+	calls := 0
+	client := bluraycom.NewClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`<script>$("#x").append('<img id="frontimage" src="https://img.example/front.jpg">')</script>`)),
+			Request:    r,
+		}, nil
+	})})
+	service := &Service{cfg: config.Config{Description: config.DescriptionSettingsConfig{UseBlurayImages: true}}, bluray: client}
+	meta := preparationstate.State{
+		SourcePath: "Example.Movie.USA.BluRay-GRP",
+		DiscType:   "BDMV",
+		Identity:   api.ExternalIdentity{IMDBID: 1234567},
+		ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{
+			SearchURL: "https://www.blu-ray.com/search/",
+			IMDBID:    1234567,
+			Candidates: []api.BlurayReleaseCandidate{{
+				ReleaseID: "101",
+				Title:     "Example",
+				Country:   "United States",
+				URL:       "https://www.blu-ray.com/movies/Example/101/",
+			}},
+		}},
+	}
+	result, err := service.applyBlurayMetadata(t.Context(), meta, nil)
+	if err != nil || calls != 1 || result.ProviderMetadata.Bluray.SelectedReleaseID != "101" || result.ProviderMetadata.Bluray.CandidateByID("101").DetailsStatus != "complete" || len(result.ProviderMetadata.Bluray.CandidateByID("101").CoverImages) != 1 {
+		t.Fatalf("automatic cover fetch: calls=%d result=%#v err=%v", calls, result.ProviderMetadata.Bluray, err)
+	}
+	meta.BlurayDetails = &api.BlurayDetailRequest{ReleaseID: "999"}
+	if _, err := service.applyBlurayMetadata(t.Context(), meta, nil); err == nil {
+		t.Fatal("unknown requested candidate was silently ignored")
+	}
+	meta.Identity.IMDBID = 0
+	meta.ProviderMetadata.Bluray = nil
+	if _, err := service.applyBlurayMetadata(t.Context(), meta, nil); err == nil {
+		t.Fatal("inspection without lookup prerequisites was silently ignored")
+	}
+}
+
 func TestBlurayAutomaticSelectionIsReconsideredOnRescore(t *testing.T) {
 	root := t.TempDir()
 	repo, err := db.Open(filepath.Join(root, "metadata.sqlite"))
@@ -233,19 +275,21 @@ func TestRetainedBlurayCountrySelectionAndCalendarDates(t *testing.T) {
 		SelectedReleaseID: "usa",
 		Candidates: []api.BlurayReleaseCandidate{
 			{
-				ReleaseID:   "usa",
-				Country:     "United States",
-				Region:      "USA",
-				Score:       100,
-				Accepted:    true,
-				ReleaseDate: "2020-12-01",
+				ReleaseID:              "usa",
+				Country:                "United States",
+				Region:                 "USA",
+				Score:                  100,
+				Accepted:               true,
+				ReleaseDate:            "2020-12-01",
+				DetailsIdentityVersion: bluraycom.DetailsIdentityVersion,
 			},
 			{
-				ReleaseID:   "ger",
-				Country:     "Germany",
-				Region:      "GER",
-				Score:       95,
-				ReleaseDate: "2024-02-29",
+				ReleaseID:              "ger",
+				Country:                "Germany",
+				Region:                 "GER",
+				Score:                  95,
+				ReleaseDate:            "2024-02-29",
+				DetailsIdentityVersion: bluraycom.DetailsIdentityVersion,
 			},
 		},
 	}}
@@ -474,7 +518,7 @@ func TestExactBlurayInstructionsResolveTheSameFinalFactsWithoutCatalogueRequests
 	}
 }
 
-func TestLegacyEnrichedBlurayScoresRefreshLocallyWithoutOverwritingManualChoice(t *testing.T) {
+func TestVerifiedEnrichedBlurayScoresRefreshLocallyWithoutOverwritingManualChoice(t *testing.T) {
 	t.Parallel()
 	requests := 0
 	client := bluraycom.NewClient(&http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
@@ -489,11 +533,12 @@ func TestLegacyEnrichedBlurayScoresRefreshLocallyWithoutOverwritingManualChoice(
 		IMDBID:            1234567,
 		SelectedReleaseID: "101",
 		Candidates: []api.BlurayReleaseCandidate{{
-			ReleaseID:  "101",
-			Title:      "Example A",
-			Country:    "United States",
-			Score:      85,
-			MatchNotes: []string{"local BDInfo unavailable (-15)"},
+			ReleaseID:              "101",
+			DetailsIdentityVersion: bluraycom.DetailsIdentityVersion,
+			Title:                  "Example A",
+			Country:                "United States",
+			Score:                  85,
+			MatchNotes:             []string{"local BDInfo unavailable (-15)"},
 			Specs: api.BluraySpecs{
 				Video: api.BlurayVideoSpec{Codec: "AVC", Resolution: "1080p"},
 				Audio: []string{"English: LPCM 2.0"},
@@ -507,9 +552,62 @@ func TestLegacyEnrichedBlurayScoresRefreshLocallyWithoutOverwritingManualChoice(
 	}
 	candidate := result.ProviderMetadata.Bluray.SelectedCandidate()
 	if requests != 0 || candidate == nil || candidate.DetailsStatus != "complete" || slices.Contains(candidate.MatchNotes, "local BDInfo unavailable (-15)") || result.ProviderMetadata.Bluray.AutoSelected {
-		t.Fatalf("legacy detail evidence was not rescored locally: requests=%d candidate=%#v", requests, candidate)
+		t.Fatalf("verified detail evidence was not rescored locally: requests=%d candidate=%#v", requests, candidate)
 	}
 	if meta.ProviderMetadata.Bluray.Candidates[0].DetailsStatus != "" {
 		t.Fatal("legacy normalization mutated the previous provider snapshot")
+	}
+}
+
+func TestLegacyBlurayDetailsRebuildBeforeCountrySelection(t *testing.T) {
+	calls := map[string]int{}
+	client := bluraycom.NewClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls[r.URL.Path]++
+		body := ""
+		switch r.URL.Path {
+		case "/search/":
+			body = `<div class="figure"><a class="alphaborder" href="https://www.blu-ray.com/Example/900/">Example</a></div>`
+		case "/products/menu_ajax.php":
+			body = `<h3>Blu-ray Editions</h3><img width="18" height="12" title="United States"><a href="https://www.blu-ray.com/movies/Example/101/">Example</a>`
+		case "/movies/Example/101/":
+			body = `<a href="/movies/movies.php?studioid=123">Current Publisher</a><script>$("#x").append('<img id="frontimage" src="https://img.example/current.jpg">')</script>`
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})})
+	service := &Service{cfg: config.Config{Description: config.DescriptionSettingsConfig{UseBlurayImages: true}}, bluray: client}
+	meta := preparationstate.State{
+		SourcePath: "Example.Movie.USA.BluRay-GRP",
+		DiscType:   "BDMV",
+		Identity:   api.ExternalIdentity{IMDBID: 1234567},
+		ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{
+			IMDBID:            1234567,
+			Country:           "United States",
+			AutoSelected:      true,
+			SelectedReleaseID: "101",
+			Candidates: []api.BlurayReleaseCandidate{{
+				ReleaseID:     "101",
+				URL:           "https://www.blu-ray.com/movies/Example/101/",
+				Title:         "Old edition",
+				Country:       "Germany",
+				Publisher:     "Wrong Publisher",
+				DetailsStatus: "complete",
+				CoverImages:   []api.BlurayImage{{URL: "https://img.example/wrong.jpg"}},
+			}},
+		}},
+	}
+	result, err := service.applyBlurayMetadata(t.Context(), meta, nil)
+	if err != nil || result.ProviderMetadata.Bluray == nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	candidate := result.ProviderMetadata.Bluray.SelectedCandidate()
+	if candidate == nil || candidate.Country != "United States" || result.Distributor != "CURRENT PUBLISHER" || len(candidate.CoverImages) != 1 || candidate.CoverImages[0].URL != "https://img.example/current.jpg" || calls["/movies/Example/101/"] != 1 {
+		t.Fatalf("legacy facts affected selection or naming: %#v %v", result, calls)
 	}
 }

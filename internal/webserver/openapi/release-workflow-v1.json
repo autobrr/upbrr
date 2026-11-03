@@ -988,6 +988,9 @@
               "$ref": "#/components/schemas/BlurayImage"
             }
           },
+          "DetailsIdentityVersion": {
+            "type": "string"
+          },
           "DetailsStatus": {
             "type": "string"
           },

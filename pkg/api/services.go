@@ -2306,14 +2306,16 @@ type BlurayReleaseCandidate struct {
 	Region string
 	// DetailsStatus is empty until requested, then complete or failed.
 	DetailsStatus string
-	Score         float64
-	Accepted      bool
-	Warnings      []string
-	MatchNotes    []string
-	Specs         BluraySpecs
-	CoverImages   []BlurayImage
-	GenericDisc   bool
-	SpecsMissing  bool
+	// DetailsIdentityVersion records the identity-handling contract for complete or failed inspection outcomes.
+	DetailsIdentityVersion string `json:",omitempty"`
+	Score                  float64
+	Accepted               bool
+	Warnings               []string
+	MatchNotes             []string
+	Specs                  BluraySpecs
+	CoverImages            []BlurayImage
+	GenericDisc            bool
+	SpecsMissing           bool
 }
 
 type BluraySpecs struct {

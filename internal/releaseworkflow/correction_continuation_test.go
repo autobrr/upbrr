@@ -108,6 +108,9 @@ func TestContinuationRefreshesCorrectionsChangedByAnotherWorkflow(t *testing.T) 
 			if updated.Operation == nil {
 				t.Fatal("changed source corrections reused old preparation")
 			}
+			if updated.PreparationOperationID != updated.Operation.ID {
+				t.Fatal("correction refresh did not identify its accepted preparation")
+			}
 			waitForWorkflowOperation(
 				t,
 				module,
