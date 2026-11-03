@@ -519,7 +519,9 @@ type RegisteredArtifactAuthority struct {
 // UploadPlanBuildOptions controls side effects and execution policy for one
 // retained upload preparation.
 type UploadPlanBuildOptions struct {
-	DryRun               bool
+	DryRun bool
+	// ReviewOnly defers client injection until a registered tracker torrent exists.
+	ReviewOnly           bool
 	NoSeed               bool
 	TrackerIDs           []api.TrackerID
 	TrackerApproval      *api.TrackerApprovalSnapshotRef
@@ -1328,6 +1330,8 @@ type descriptionsPublication struct {
 
 // DryRunUploadsCommand prepares sanitized reports without tracker submission.
 type DryRunUploadsCommand struct {
+	// ReviewOnly prepares a live-upload review without injecting the prepared torrent.
+	ReviewOnly       bool
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	NoSeed           bool
@@ -1339,11 +1343,13 @@ func (DryRunUploadsCommand) commandName() string              { return "dry_run_
 func (DryRunUploadsCommand) userIntent()                      {}
 func (DryRunUploadsCommand) operationKind() api.OperationKind { return api.OperationKindUploadDryRun }
 func (c DryRunUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	// The default payload must keep receipts written before ReviewOnly existed.
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool
 		TrackerIDs       []api.TrackerID
-	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs})
+		ReviewOnly       bool `json:",omitempty"`
+	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs, c.ReviewOnly})
 }
 
 // ExecuteUploadsCommand directly prepares and executes eligible trackers.
@@ -1467,6 +1473,15 @@ type ResolveActionCommand struct {
 func (ResolveActionCommand) commandName() string              { return "resolve_action" }
 func (ResolveActionCommand) userIntent()                      {}
 func (ResolveActionCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
+
+// resolveTrackerPreparationCommand continues a retained preparation with durable
+// client-effect reporting. Other action answers remain synchronous.
+type resolveTrackerPreparationCommand struct{ ResolveActionCommand }
+
+func (resolveTrackerPreparationCommand) commandName() string { return "resolve_tracker_preparation" }
+func (resolveTrackerPreparationCommand) operationKind() api.OperationKind {
+	return api.OperationKindUploadDryRun
+}
 
 // CommandOperationKind classifies one user intent without transport-owned type switches.
 func CommandOperationKind(command Command) (api.OperationKind, bool) {

@@ -75,6 +75,8 @@ func decodeDurableOperationCommand(payload []byte) (any, error) {
 		command = &GenerateDescriptionsCommand{}
 	case (DryRunUploadsCommand{}).commandName():
 		command = &DryRunUploadsCommand{}
+	case (resolveTrackerPreparationCommand{}).commandName():
+		command = &resolveTrackerPreparationCommand{}
 	case (ExecuteUploadsCommand{}).commandName():
 		command = &ExecuteUploadsCommand{}
 	case (RetryFailedUploadsCommand{}).commandName():
@@ -124,6 +126,8 @@ func operationCommandValue(command Command) Command {
 	case *GenerateDescriptionsCommand:
 		return *typed
 	case *DryRunUploadsCommand:
+		return *typed
+	case *resolveTrackerPreparationCommand:
 		return *typed
 	case *ExecuteUploadsCommand:
 		return *typed

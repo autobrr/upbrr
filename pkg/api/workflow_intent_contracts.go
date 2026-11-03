@@ -40,7 +40,9 @@ type MediaPlan struct {
 	// Discs contains ordered per-disc timing and suggestions.
 	Discs        []MediaDiscPlan           `json:"discs,omitempty"`
 	Requirements []MediaCaptureRequirement `json:"requirements,omitempty"`
-	// SavedTrackerImages lists validated tracker image URLs offered for explicit import.
+	// AutoAdoptSavedImages reflects the prepared generation's effective collection policy.
+	AutoAdoptSavedImages bool `json:"autoAdoptSavedImages,omitempty"`
+	// SavedTrackerImages lists validated tracker image URLs available for import.
 	SavedTrackerImages []MediaPlanSavedImage `json:"savedTrackerImages,omitempty"`
 	ExistingArtifacts  []MediaArtifact       `json:"existingArtifacts,omitempty"`
 	CreatedAt          time.Time             `json:"createdAt" ts_type:"string"`
@@ -164,23 +166,28 @@ type TrackerDryRunReport struct {
 
 // UploadDryRunResult retains one report per applicable tracker.
 type UploadDryRunResult struct {
-	ID               UploadDryRunResultID           `json:"id"`
-	WorkflowID       WorkflowID                     `json:"workflowId"`
-	Revision         WorkflowRevision               `json:"revision"`
-	ProjectionSet    TrackerReleaseProjectionSetRef `json:"projectionSet"`
-	Dupes            DupeAssessmentRef              `json:"dupes"`
-	TrackerApproval  *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
-	Media            MediaArtifactSetRef            `json:"media"`
-	Descriptions     DescriptionSetRef              `json:"descriptions"`
-	InputFingerprint WorkflowFingerprint            `json:"inputFingerprint"`
-	NoSeed           bool                           `json:"noSeed"`
-	TrackerIDs       []TrackerID                    `json:"trackerIds"`
-	Reports          []TrackerDryRunReport          `json:"reports"`
-	SucceededCount   int                            `json:"succeededCount"`
-	FailedCount      int                            `json:"failedCount"`
-	SkippedCount     int                            `json:"skippedCount"`
-	Status           StageStatus                    `json:"status"`
-	CreatedAt        time.Time                      `json:"createdAt" ts_type:"string"`
+	// ExplicitDryRun preserves the requested mode across preparation decisions,
+	// including when NoSeed disables client injection.
+	ExplicitDryRun bool `json:"explicitDryRun,omitempty"`
+	// ClientInjectionRequested records effective permission to inject the prepared torrent.
+	ClientInjectionRequested bool                           `json:"clientInjectionRequested,omitempty"`
+	ID                       UploadDryRunResultID           `json:"id"`
+	WorkflowID               WorkflowID                     `json:"workflowId"`
+	Revision                 WorkflowRevision               `json:"revision"`
+	ProjectionSet            TrackerReleaseProjectionSetRef `json:"projectionSet"`
+	Dupes                    DupeAssessmentRef              `json:"dupes"`
+	TrackerApproval          *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
+	Media                    MediaArtifactSetRef            `json:"media"`
+	Descriptions             DescriptionSetRef              `json:"descriptions"`
+	InputFingerprint         WorkflowFingerprint            `json:"inputFingerprint"`
+	NoSeed                   bool                           `json:"noSeed"`
+	TrackerIDs               []TrackerID                    `json:"trackerIds"`
+	Reports                  []TrackerDryRunReport          `json:"reports"`
+	SucceededCount           int                            `json:"succeededCount"`
+	FailedCount              int                            `json:"failedCount"`
+	SkippedCount             int                            `json:"skippedCount"`
+	Status                   StageStatus                    `json:"status"`
+	CreatedAt                time.Time                      `json:"createdAt" ts_type:"string"`
 }
 
 // FailedTrackerRetryRef targets only failed trackers from one exact prior result.

@@ -4416,6 +4416,9 @@
           "source": {
             "type": "string"
           },
+          "sourceUnavailable": {
+            "type": "boolean"
+          },
           "timestampSeconds": {
             "type": "number"
           },
@@ -5041,6 +5044,9 @@
       "MediaPlan": {
         "type": "object",
         "properties": {
+          "autoAdoptSavedImages": {
+            "type": "boolean"
+          },
           "createdAt": {
             "type": "string"
           },
@@ -12886,6 +12892,9 @@
       "UploadDryRunResult": {
         "type": "object",
         "properties": {
+          "clientInjectionRequested": {
+            "type": "boolean"
+          },
           "createdAt": {
             "type": "string"
           },
@@ -12894,6 +12903,9 @@
           },
           "dupes": {
             "$ref": "#/components/schemas/DupeAssessmentRef"
+          },
+          "explicitDryRun": {
+            "type": "boolean"
           },
           "failedCount": {
             "type": "integer"

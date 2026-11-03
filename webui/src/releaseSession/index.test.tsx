@@ -400,6 +400,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
           );
         }
         break;
+      case "upload_reviewed":
       case "dry_run":
         if (step === 0) {
           next = await activePorts.dryRunUploads(
@@ -3945,51 +3946,89 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("declines a tracker preparation action to request its fallback", async () => {
-    const workflowID = "workflow-resolve-tracker-preparation";
-    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
-    const action = {
-      createdAt: "2026-07-20T00:00:00Z",
-      id: "action-btn-autofill",
-      kind: "resolve_tracker_preparation" as const,
-      prompt: "Continue with BTN's autofill result?",
-      status: "pending" as const,
-      workflowRevision: 7,
-    };
-    const base = workflowCurrent(workflowID, 7);
-    const retained: ReleaseWorkflowCurrent = {
-      ...base,
-      workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
-      continuation: { ...base.continuation, requiredActions: [action] },
-    };
-    const continueWorkflow = vi.fn(async () => retained);
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(
-        portsFor({
-          resumeWorkflowID: workflowID,
-          workflow: workflowPorts({
-            current: async () => retained,
-            continue: continueWorkflow,
+  it.each([
+    { mode: "live upload", explicit: false, noSeed: false },
+    { mode: "explicit dry run", explicit: true, noSeed: false },
+    { mode: "skipped injection dry run", explicit: true, noSeed: true },
+  ])(
+    "resolves a tracker preparation action for $mode after reload",
+    async ({ explicit, noSeed }) => {
+      const workflowID = "workflow-resolve-tracker-preparation";
+      window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+      const action = {
+        createdAt: "2026-07-20T00:00:00Z",
+        id: "action-btn-autofill",
+        kind: "resolve_tracker_preparation" as const,
+        prompt: "Continue with BTN's autofill result?",
+        status: "pending" as const,
+        workflowRevision: 7,
+      };
+      const base = workflowCurrent(workflowID, 7);
+      const retained: ReleaseWorkflowCurrent = {
+        ...base,
+        workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
+        continuation: { ...base.continuation, requiredActions: [action] },
+        dryRun: explicit
+          ? {
+              id: "dry-run-preparation-action",
+              workflowId: workflowID,
+              revision: 7,
+              createdAt: action.createdAt,
+              projectionSet: { id: "projections", revision: 7 },
+              dupes: { id: "dupes", revision: 7 },
+              media: { id: "media", revision: 7 },
+              descriptions: { id: "descriptions", revision: 7 },
+              inputFingerprint: "a".repeat(64),
+              explicitDryRun: true,
+              clientInjectionRequested: !noSeed,
+              noSeed,
+              trackerIds: ["BTN"],
+              reports: [
+                {
+                  trackerId: "BTN",
+                  displayName: "BTN",
+                  uploadReleaseName: "Example.Release.2026.S01E01-GRP",
+                  semanticFingerprint: "b".repeat(64),
+                  status: "blocked",
+                  clientInjection: { status: noSeed ? "skipped" : "pending" },
+                },
+              ],
+              succeededCount: 0,
+              failedCount: 0,
+              skippedCount: 0,
+              status: "blocked",
+            }
+          : undefined,
+      };
+      const continueWorkflow = vi.fn(async () => retained);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({
+              current: async () => retained,
+              continue: continueWorkflow,
+            }),
           }),
+        ),
+      });
+
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+      await act(async () => {
+        expect(await result.current.workflow.confirmAction(action, false)).toBe(true);
+      });
+      expect(continueWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          goal: explicit ? "dry_run" : "uploaded",
+          answers: [{ actionId: action.id, workflowRevision: 7, confirmed: false }],
         }),
-      ),
-    });
+        expect.any(AbortSignal),
+      );
 
-    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
-    await act(async () => {
-      expect(await result.current.workflow.confirmAction(action, false)).toBe(true);
-    });
-    expect(continueWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        goal: "uploaded",
-        answers: [{ actionId: action.id, workflowRevision: 7, confirmed: false }],
-      }),
-      expect.any(AbortSignal),
-    );
-
-    unmount();
-    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
-  });
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+    },
+  );
 
   it("submits a release-wide modified-source refusal once", async () => {
     const workflowID = "workflow-modified-release";
@@ -4056,14 +4095,13 @@ describe("useReleaseSession", () => {
       },
     };
     const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const workflow = workflowPorts({ current: async () => retained, executeUploads });
+    const continueWorkflow = vi.spyOn(workflow, "continue");
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
           resumeWorkflowID: workflowID,
-          workflow: workflowPorts({
-            current: async () => retained,
-            executeUploads,
-          }),
+          workflow,
         }),
       ),
     });
@@ -4074,6 +4112,10 @@ describe("useReleaseSession", () => {
       expect(await result.current.upload.start()).toBe(true);
     });
 
+    const goals = continueWorkflow.mock.calls.map(([request]) => request.goal);
+    expect(goals).toContain("upload_reviewed");
+    expect(goals).not.toContain("dry_run");
+    expect(goals[goals.length - 1]).toBe("uploaded");
     expect(executeUploads).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: workflowID }) }),
       false,
@@ -4127,7 +4169,17 @@ describe("useReleaseSession", () => {
         status: "failed",
       },
     } as unknown as ReleaseWorkflowCurrent;
-    const dryRunUploads = vi.fn(async () => failedDryRun);
+    let assessments = 0;
+    const continueWorkflow = vi.fn(async (_request: ContinueReleaseWorkflowRequest) => {
+      assessments += 1;
+      const revision = 7 + assessments;
+      const id = `dry-run-failed-${assessments}`;
+      return {
+        ...failedDryRun,
+        workflow: { ...failedDryRun.workflow, revision, dryRun: { id, revision } },
+        dryRun: { ...failedDryRun.dryRun!, id, revision },
+      };
+    });
     const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
@@ -4135,7 +4187,7 @@ describe("useReleaseSession", () => {
           resumeWorkflowID: workflowID,
           workflow: workflowPorts({
             current: async () => retained,
-            dryRunUploads,
+            continue: continueWorkflow,
             executeUploads,
           }),
         }),
@@ -4148,11 +4200,15 @@ describe("useReleaseSession", () => {
       expect(await result.current.upload.start()).toBe(false);
     });
     expect(executeUploads).not.toHaveBeenCalled();
-    expect(result.current.upload.view.dryRunResult?.id).toBe("dry-run-failed");
+    expect(result.current.upload.view.dryRunResult?.id).toBe("dry-run-failed-1");
+    expect(continueWorkflow).toHaveBeenCalledOnce();
+    expect(continueWorkflow.mock.calls[0]?.[0]).toMatchObject({ goal: "upload_reviewed" });
     await act(async () => {
       expect(await result.current.upload.runDryRun()).toBe(true);
     });
-    expect(dryRunUploads).toHaveBeenCalledTimes(2);
+    expect(continueWorkflow).toHaveBeenCalledTimes(2);
+    expect(continueWorkflow.mock.calls[1]?.[0]).toMatchObject({ goal: "dry_run" });
+    expect(result.current.upload.view.dryRunResult?.id).toBe("dry-run-failed-2");
     expect(executeUploads).not.toHaveBeenCalled();
 
     unmount();
@@ -7328,6 +7384,68 @@ describe("useReleaseSession", () => {
     expect(captureMedia).toHaveBeenCalledOnce();
   });
 
+  it("surfaces saved-image adoption contention and permits retry", async () => {
+    const plan = {
+      ...(await workflowPorts().mediaPlan("workflow-new", new AbortController().signal)),
+      autoAdoptSavedImages: true,
+      savedTrackerImages: [
+        { trackerId: "AITHER", host: "imgbb", url: "https://images.example.invalid/saved.png" },
+      ],
+    };
+    const screenshot = createDeferred<typeof plan>();
+    const mediaPlan = vi.fn(async () => plan);
+    mediaPlan.mockImplementationOnce(() => screenshot.promise);
+    const audio = createDeferred<ReleaseWorkflowCurrent>();
+    let audioCurrent: ReleaseWorkflowCurrent | null = null;
+    const analyzeAudio = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      audioCurrent = current;
+      return audio.promise;
+    });
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({ workflow: workflowPorts({ mediaPlan, analyzeAudio, captureMedia }) }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+
+    let pendingLoad!: Promise<boolean>;
+    act(() => {
+      pendingLoad = result.current.screenshots.load();
+    });
+    let audioCommand!: Promise<boolean>;
+    act(() => {
+      audioCommand = result.current.audioAnalysis.generate({
+        resourceID: "resource-one",
+        selection: "primary",
+        trackIDs: ["audio-main"],
+        variants: ["waveform"],
+      });
+    });
+    await waitFor(() => expect(analyzeAudio).toHaveBeenCalledOnce());
+    screenshot.resolve(plan);
+    await act(async () => expect(await pendingLoad).toBe(false));
+
+    expect(captureMedia).not.toHaveBeenCalled();
+    expect(result.current.screenshots.view.status).toBe("error");
+    expect(result.current.screenshots.view.error).toBe(
+      "Existing images were not included. Finish the current action, then load suggestions to retry.",
+    );
+
+    if (!audioCurrent) throw new Error("audio command did not receive workflow state");
+    audio.resolve(audioCurrent);
+    await act(() => audioCommand);
+    await act(async () => expect(await result.current.screenshots.load()).toBe(true));
+    expect(captureMedia).toHaveBeenCalledOnce();
+    expect(captureMedia).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ selections: [], savedImagePlanId: plan.id }),
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(result.current.screenshots.view.error).toBe("");
+  });
+
   it("keeps untyped screenshot command failures local and safe", async () => {
     const captureMedia = vi.fn(async () => {
       throw new Error("private screenshot transport details");
@@ -7541,52 +7659,59 @@ describe("useReleaseSession", () => {
 
   it("publishes and reorders opaque final screenshots through workflow commands", async () => {
     const sourcePath = "C:\\media\\Example";
-    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => {
-      const revision = current.workflow.revision + 1;
-      return {
-        ...current,
-        workflow: {
-          ...current.workflow,
-          revision,
-          media: { id: "media-final", revision },
-        },
-        media: {
-          id: "media-final",
-          workflowId: current.workflow.id,
-          revision,
-          release: current.workflow.release!,
-          releaseRef: { SourcePath: sourcePath, Generation: 1 },
-          projectionSet: current.workflow.trackerProjections!,
-          captureFingerprint: "5".repeat(64),
-          requirementsFingerprint: "6".repeat(64),
-          imageRequirementsPrepared: false,
-          artifacts: [
-            {
-              id: "screen-existing",
-              discId: "disc-one",
-              discName: "Disc 1",
-              kind: "screenshot" as const,
-              purpose: "final" as const,
-              selected: true,
-              order: 0,
-              index: 0,
-            },
-            {
-              id: "screen-generated",
-              discId: "disc-two",
-              discName: "Disc 2",
-              kind: "screenshot" as const,
-              purpose: "final" as const,
-              selected: true,
-              order: 1,
-              index: 1,
-            },
-          ],
-          status: "completed" as const,
-          createdAt: "2026-07-20T00:00:00Z",
-        },
-      };
-    });
+    const captureMedia = vi.fn(
+      async (current: ReleaseWorkflowCurrent, instructions: MediaCaptureInstructions) => {
+        const revision = current.workflow.revision + 1;
+        return {
+          ...current,
+          workflow: {
+            ...current.workflow,
+            revision,
+            media: { id: "media-final", revision },
+          },
+          media: {
+            savedImagePlanId: instructions.savedImagePlanId,
+            id: "media-final",
+            workflowId: current.workflow.id,
+            revision,
+            release: current.workflow.release!,
+            releaseRef: { SourcePath: sourcePath, Generation: 1 },
+            projectionSet: current.workflow.trackerProjections!,
+            captureFingerprint: "5".repeat(64),
+            requirementsFingerprint: "6".repeat(64),
+            imageRequirementsPrepared: false,
+            artifacts: [
+              {
+                id: "screen-existing",
+                discId: "disc-one",
+                discName: "Disc 1",
+                kind: "screenshot" as const,
+                purpose: "final" as const,
+                selected: true,
+                order: 0,
+                index: 0,
+              },
+              ...(instructions.selections?.length
+                ? [
+                    {
+                      id: "screen-generated",
+                      discId: "disc-two",
+                      discName: "Disc 2",
+                      kind: "screenshot" as const,
+                      purpose: "final" as const,
+                      selected: true,
+                      order: 1,
+                      index: 1,
+                    },
+                  ]
+                : []),
+            ],
+            status: "completed" as const,
+            createdAt: "2026-07-20T00:00:00Z",
+          },
+        };
+      },
+    );
     const reorderMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
@@ -7649,6 +7774,7 @@ describe("useReleaseSession", () => {
                   Source: "auto",
                 },
               ],
+              autoAdoptSavedImages: true,
               savedTrackerImages: [
                 {
                   trackerId: "AITHER",
@@ -7681,7 +7807,6 @@ describe("useReleaseSession", () => {
       },
     ]);
     expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe("media-plan-1");
-    await act(() => result.current.screenshots.generate("final", []));
     expect(captureMedia).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: "workflow-new" }) }),
       expect.objectContaining({
@@ -7693,6 +7818,8 @@ describe("useReleaseSession", () => {
       expect.any(AbortSignal),
     );
     await act(() => result.current.screenshots.load());
+    expect(captureMedia).toHaveBeenCalledTimes(1);
+    expect(result.current.screenshots.view.finalSelectionArtifactIDs).toEqual(["screen-existing"]);
     await act(() => result.current.screenshots.generate("final"));
 
     expect(captureMedia).toHaveBeenCalledWith(
@@ -7973,8 +8100,10 @@ describe("useReleaseSession", () => {
     expect(result.current.screenshots.view.previewTimestampSeconds).toBe(12.5);
   });
 
-  it("hydrates hosted-image outcomes from the workflow media snapshot", async () => {
+  it("keeps image hosting busy during capture and hydrates hosted outcomes", async () => {
+    const captureComplete = createDeferred<void>();
     const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      await captureComplete.promise;
       const revision = current.workflow.revision + 1;
       return {
         ...current,
@@ -8057,12 +8186,21 @@ describe("useReleaseSession", () => {
     await waitFor(() =>
       expect(result.current.navigation.view.access.uploadedImages.available).toBe(true),
     );
-    await act(() =>
-      result.current.screenshots.generate("final", [
+    let capture!: Promise<boolean>;
+    act(() => {
+      capture = result.current.screenshots.generate("final", [
         { Index: 0, TimestampSeconds: 1, Frame: 24, Source: "manual" },
         { Index: 1, TimestampSeconds: 2, Frame: 48, Source: "manual" },
-      ]),
-    );
+      ]);
+    });
+    try {
+      expect(result.current.uploadedImages.view.status).toBe("running");
+    } finally {
+      await act(async () => {
+        captureComplete.resolve();
+        await capture;
+      });
+    }
     expect(result.current.uploadedImages.view.staleReason).not.toBe("");
     await act(() => result.current.uploadedImages.load());
     expect(result.current.uploadedImages.view.selectedArtifactIDs).toEqual([
@@ -8092,6 +8230,109 @@ describe("useReleaseSession", () => {
       }),
     );
   });
+
+  it.each(["deselected", "deleted", "unavailable"] as const)(
+    "projects hosted URLs for %s sources through loading and re-entry",
+    async (change) => {
+      const sourcePath = "C:\\media\\Example";
+      const captureMedia = async (current: ReleaseWorkflowCurrent) => {
+        const revision = current.workflow.revision + 1;
+        return {
+          ...current,
+          workflow: { ...current.workflow, revision, media: { id: "media-links", revision } },
+          media: {
+            id: "media-links",
+            workflowId: current.workflow.id,
+            revision,
+            release: current.workflow.release!,
+            releaseRef: { SourcePath: sourcePath, Generation: 1 },
+            projectionSet: current.workflow.trackerProjections!,
+            captureFingerprint: "5".repeat(64),
+            requirementsFingerprint: "6".repeat(64),
+            imageRequirementsPrepared: true,
+            artifacts: [
+              {
+                id: "kept",
+                kind: "screenshot" as const,
+                purpose: "final" as const,
+                selected: true,
+              },
+              ...(change === "deselected"
+                ? [
+                    {
+                      id: "removed",
+                      kind: "screenshot" as const,
+                      purpose: "final" as const,
+                      selected: false,
+                    },
+                  ]
+                : []),
+              {
+                id: "hosted-kept",
+                kind: "hosted_image" as const,
+                purpose: "final" as const,
+                selected: true,
+                source: "kept",
+                url: "https://images.example.invalid/kept.png",
+              },
+              // Legacy snapshots can retain a selected hosted record after its source changes.
+              {
+                id: "hosted-removed",
+                kind: "hosted_image" as const,
+                purpose: "final" as const,
+                selected: true,
+                source: "removed",
+                sourceUnavailable: change === "unavailable",
+                url: "https://images.example.invalid/removed.png",
+              },
+              {
+                id: "hosted-disabled",
+                kind: "hosted_image" as const,
+                purpose: "final" as const,
+                selected: false,
+                source: "kept",
+                url: "https://images.example.invalid/disabled.png",
+              },
+            ],
+            status: "completed" as const,
+            createdAt: "2026-07-16T00:00:00Z",
+          },
+        };
+      };
+      const expectedURLs = [
+        "https://images.example.invalid/kept.png",
+        ...(change === "unavailable" ? ["https://images.example.invalid/removed.png"] : []),
+      ];
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ captureMedia }) })),
+      });
+      await selectAndPrepare(result, sourcePath);
+      await act(() => result.current.screenshots.generate("final"));
+      const current = result.current.workflow.view.current!;
+      expect(result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual(
+        expectedURLs,
+      );
+      await act(() => result.current.uploadedImages.load());
+      expect(result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual(
+        expectedURLs,
+      );
+      unmount();
+
+      const resumed = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: current.workflow.id,
+            workflow: workflowPorts({ current: async () => current }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(resumed.result.current.workflow.view.current?.media).toBeTruthy());
+      expect(resumed.result.current.uploadedImages.view.uploaded.map((image) => image.url)).toEqual(
+        expectedURLs,
+      );
+      resumed.unmount();
+    },
+  );
 
   it("marks Input dirty while backend reconciliation accepts a changed tracker selection", async () => {
     const { result } = renderHook(useReleaseSession, {
@@ -8605,9 +8846,12 @@ describe("saved-image plan authority", () => {
     "tracker reassessment",
     "another tab",
     "another tab during plan load",
+    "collection disabled",
+    "collection flag absent",
   ])("refreshes saved-image authority after %s without resetting frame drafts", async (change) => {
     const sourcePath = "C:\\media\\Example.Release.2026.mkv";
     let planID = "plan-before";
+    let autoAdoptSavedImages: boolean | undefined = true;
     let externalSnapshot: ActiveInputSnapshot = { state: "empty", revision: 0 };
     let notifyChange: () => void = () => undefined;
     const deferredPlan =
@@ -8629,6 +8873,7 @@ describe("saved-image plan authority", () => {
         suggestedSelections: [
           { DiscID: "", Index: 0, TimestampSeconds: 10, Frame: 240, Source: "auto" },
         ],
+        autoAdoptSavedImages,
         savedTrackerImages: [
           { trackerId: "AITHER", host: "imgbb", url: "https://images.example.invalid/saved.png" },
         ],
@@ -8682,6 +8927,9 @@ describe("saved-image plan authority", () => {
         });
       }
       planID = "plan-after";
+      if (change.startsWith("collection")) {
+        autoAdoptSavedImages = change === "collection disabled" ? false : undefined;
+      }
       if (change.startsWith("another tab")) {
         const current = result.current.workflow.view.current!;
         const active = result.current.input.view.activeInput;
@@ -8721,15 +8969,18 @@ describe("saved-image plan authority", () => {
       }
       expect(result.current.screenshots.view.selections).toEqual(selections);
       expect(mediaPlan).toHaveBeenCalledTimes(pendingLoad ? 3 : 2);
-      fireEvent.click(screen.getByRole("button", { name: "Use saved images" }));
-      await waitFor(() =>
-        expect(captureMedia).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.objectContaining({ savedImagePlanId: "plan-after", selections: [] }),
-          expect.any(String),
-          expect.any(AbortSignal),
-        ),
-      );
+      if (change.startsWith("collection")) {
+        expect(captureMedia).toHaveBeenCalledTimes(1);
+      } else {
+        await waitFor(() =>
+          expect(captureMedia).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ savedImagePlanId: "plan-after", selections: [] }),
+            expect.any(String),
+            expect.any(AbortSignal),
+          ),
+        );
+      }
     } finally {
       unmount();
     }
