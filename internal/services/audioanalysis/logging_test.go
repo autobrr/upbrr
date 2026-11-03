@@ -5,7 +5,9 @@ package audioanalysis
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"image"
 	"io"
 	"os"
 	"path/filepath"
@@ -161,4 +163,67 @@ func TestServiceFailedTrackWithNilErrorDoesNotLogSuccess(t *testing.T) {
 		t.Fatalf("empty decode contract changed: results=%+v err=%v decodes=%d", results, err, decoder.decodes)
 	}
 	assertAnalysisLog(t, logger, "warn", "state=failed", "completed_count=0", "partial_count=0", "failed_count=1", "artifact_count=0")
+}
+
+func TestServiceEmptySelectionPreservesNormalizationPrecedence(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		generation api.PreparedGeneration
+		want       string
+	}{
+		{
+			name:       "otherwise valid",
+			generation: 1,
+			want:       "audio analysis requires at least one track",
+		},
+		{name: "invalid release first", want: "audio analysis release reference is required"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			logger := analysisTestLogger(t)
+			decoder := &fakeDecoder{err: errors.New("inspection must not replace validation")}
+			results, err := newService(logger, decoder).Analyze(t.Context(), api.AudioAnalysisSubject{}, api.AudioAnalysisInstructions{
+				Release:    api.ReleaseRef{SourcePath: "Example.Audio.2026.mkv", Generation: test.generation},
+				ResourceID: "resource",
+				Selection:  api.AudioAnalysisSelectionPrimary,
+				Variants:   []api.AudioAnalysisVariant{api.AudioAnalysisWaveform},
+			}, "empty-selection", t.TempDir())
+			_, typed := api.AsAudioAnalysisFailure(err)
+			if err == nil || err.Error() != "audio analysis: normalize instructions: "+test.want || typed || results != nil || decoder.decodes != 0 {
+				t.Fatalf("normalization contract changed: results=%+v err=%v typed=%v decodes=%d", results, err, typed, decoder.decodes)
+			}
+			assertAnalysisLog(t, logger, "warn", "reason=invalid_instructions")
+		})
+	}
+}
+
+func TestServiceLogsRetainedResultsWhenCanceledAfterLastPublication(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	logger := analysisTestLogger(t)
+	decoder := &fakeDecoder{
+		streams: []inspectedStream{{
+			codec:      "pcm",
+			sampleRate: 48000,
+			channels:   1,
+			layout:     "mono",
+		}},
+		pcm: encodePCM([][]float32{{0.25}, {-0.25}}),
+	}
+	service := newService(logger, decoder)
+	service.publishPNG = func(root, path string, rendered image.Image) error {
+		err := writePNGAtomic(root, path, rendered)
+		cancel()
+		return err
+	}
+	results, err := service.AnalyzeFile(ctx, "Example.Audio.2026.mkv", api.AudioAnalysisSelectionAll, nil,
+		[]api.AudioAnalysisVariant{api.AudioAnalysisWaveform}, t.TempDir())
+	failure, typed := api.AsAudioAnalysisFailure(err)
+	if !errors.Is(err, context.Canceled) || !typed || failure.Code != api.AudioAnalysisFailureCanceled || decoder.decodes != 1 ||
+		len(results) != 1 || results[0].Public.Status != api.StageStatusCompleted || len(results[0].Artifacts) != 1 {
+		t.Fatalf("late cancellation contract changed: results=%+v err=%v failure=%+v decodes=%d", results, err, failure, decoder.decodes)
+	}
+	if _, err := os.Stat(results[0].Artifacts[0].Path); err != nil {
+		t.Fatalf("retained artifact missing: %v", err)
+	}
+	assertAnalysisLog(t, logger, "warn", "state=canceled", "code=canceled", "completed_count=1", "partial_count=0", "failed_count=0", "artifact_count=1")
 }
