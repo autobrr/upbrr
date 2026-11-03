@@ -1845,6 +1845,31 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 			unwanted: []string{"Required evidence to review:", "Advisory evidence"},
 		},
 		{
+			name: "global category",
+			fields: []api.InputReadinessFieldOutcome{{
+				Key:             "category",
+				Status:          api.InputReadinessFieldMissing,
+				CorrectionField: new(api.CorrectionFieldReleaseNameCategory),
+				Disposition:     api.RuleDispositionStrict,
+				Message:         "Release category is required.",
+			}},
+			blocked: true,
+			want:    []string{"category (missing", "Release category is required.", "--category CATEGORY"},
+		},
+		{
+			name: "tracker category",
+			fields: []api.InputReadinessFieldOutcome{{
+				Key:             "metadata.category",
+				Status:          api.InputReadinessFieldMissing,
+				CorrectionField: new(api.CorrectionFieldReleaseNameCategory),
+				TrackerIDs:      []api.TrackerID{"AITHER"},
+				Disposition:     api.RuleDispositionStrict,
+				Message:         "missing category required to select tracker metadata requirements",
+			}},
+			blocked: true,
+			want:    []string{"metadata.category (missing", "AITHER", "--category CATEGORY"},
+		},
+		{
 			name: "missing provider fact",
 			fields: []api.InputReadinessFieldOutcome{{
 				Key: "metadata.title",
