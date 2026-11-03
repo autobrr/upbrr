@@ -37,6 +37,9 @@ func newLiveTestCommand(streams cliIO) *cobra.Command {
 	cmd.SetIn(streams.in)
 	cmd.SetOut(streams.out)
 	cmd.SetErr(streams.errOut)
+	// Keep Cobra's help and usage local before attaching to the upload root.
+	cmd.SetHelpFunc(cmd.HelpFunc())
+	cmd.SetUsageFunc(cmd.UsageFunc())
 	var runDir, sourceConfig string
 	var preferDeletableHosts bool
 	initCmd := &cobra.Command{

@@ -211,15 +211,18 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.IntVar(&opts.LimitQueue, "lq", 0, "Limit remaining eligible queue items (zero means unlimited)")
 	fs.BoolVar(&opts.RefreshQueue, "refresh-queue", false, "Add newly discovered queue members while retaining progress (requires --queue)")
 	fs.BoolVar(&opts.RetryQueue, "retry-queue", false, "Include failed, interrupted and skipped items (requires --queue; workflow safety checks still apply)")
-	fs.BoolVar(&opts.SiteCheck, "site-check", false, "Search/check sites without uploading")
-	fs.BoolVar(&opts.SiteCheck, "sc", false, "Search/check sites without uploading")
+	fs.BoolVar(&opts.SiteCheck, "site-check", false,
+		"Check sites and preview without tracker submission; may upload images and inject torrents into clients (use --no-seed to skip injection)")
+	fs.BoolVar(&opts.SiteCheck, "sc", false,
+		"Check sites and preview without tracker submission; may upload images and inject torrents into clients (use --no-seed to skip injection)")
 	fs.StringVar(&opts.SiteUpload, "site-upload", "", "Process a single tracker upload flow")
 	fs.StringVar(&opts.SiteUpload, "su", "", "Process a single tracker upload flow")
 	fs.StringVar(&opts.Trackers, "trackers", "", "Upload to these trackers (comma-separated)")
 	fs.StringVar(&opts.Trackers, "tk", "", "Upload to these trackers (comma-separated)")
 	fs.StringVar(&opts.TrackersRemove, "trackers-remove", "", "Remove these trackers (comma-separated)")
 	fs.StringVar(&opts.TrackersRemove, "rtk", "", "Remove these trackers (comma-separated)")
-	fs.BoolVar(&opts.Debug, "debug", false, "Enable debug mode")
+	fs.BoolVar(&opts.Debug, "debug", false,
+		"Prepare and preview without tracker submission; may upload images and inject torrents into clients (use --no-seed to skip injection)")
 	fs.StringVar(&opts.LogLevel, "log-level", "", "Set application log level for this run (error, warn, info, debug, trace)")
 	fs.StringVar(
 		&opts.ConsoleLogLevel,

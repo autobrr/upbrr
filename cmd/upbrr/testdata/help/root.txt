@@ -43,11 +43,11 @@ Execution:
   -retry-queue, --retry-queue
       Include failed, interrupted and skipped items (requires --queue; workflow safety checks still apply)
   -site-check, --site-check, -sc
-      Search/check sites without uploading
+      Check sites and preview without tracker submission; may upload images and inject torrents into clients (use --no-seed to skip injection)
   -site-upload, --site-upload, -su string
       Process a single tracker upload flow
   -debug, --debug
-      Enable debug mode
+      Prepare and preview without tracker submission; may upload images and inject torrents into clients (use --no-seed to skip injection)
   -live-test, --live-test
       Use an isolated live-test profile with tracker and client writes disabled
   -live-test-max-images, --live-test-max-images int
