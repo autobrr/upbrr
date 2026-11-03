@@ -190,6 +190,37 @@ func TestBlurayDetailsFetchAutomaticSelectionAndRejectUnknownCandidate(t *testin
 	}
 }
 
+func TestBlurayExplicitInspectionReportsSearchFailure(t *testing.T) {
+	searchFailure := errors.New("fixture search unavailable")
+	for _, stage := range []string{"search", "catalogue"} {
+		t.Run(stage, func(t *testing.T) {
+			for _, details := range []*api.BlurayDetailRequest{nil, {ReleaseID: "101"}, {All: true}} {
+				service := &Service{
+					cfg: config.Config{Metadata: config.MetadataConfig{GetBlurayInfo: true}},
+					bluray: bluraycom.NewClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+						if stage == "catalogue" && r.URL.Path == "/search/" {
+							return &http.Response{
+								StatusCode: http.StatusOK,
+								Body:       io.NopCloser(strings.NewReader(`<div class="figure"><a class="alphaborder" href="https://www.blu-ray.com/Example/900/">Example</a><div style="font-weight: bold">Example</div></div>`)),
+								Request:    r,
+							}, nil
+						}
+						return nil, searchFailure
+					})}),
+				}
+				_, err := service.applyBlurayMetadata(t.Context(), preparationstate.State{
+					DiscType:      "BDMV",
+					Identity:      api.ExternalIdentity{IMDBID: 1234567},
+					BlurayDetails: details,
+				}, nil)
+				if details == nil && err != nil || details != nil && !errors.Is(err, searchFailure) {
+					t.Errorf("inspection failure contract: explicit=%t all=%t error=%v", details != nil, details != nil && details.All, err)
+				}
+			}
+		})
+	}
+}
+
 func TestBlurayAutomaticSelectionIsReconsideredOnRescore(t *testing.T) {
 	root := t.TempDir()
 	repo, err := db.Open(filepath.Join(root, "metadata.sqlite"))

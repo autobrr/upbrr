@@ -110,8 +110,9 @@ func NewClient(client *http.Client, loggers ...api.Logger) *Client {
 
 // Lookup discovers listings without release-page requests. Details are fetched
 // only for an explicit request, an exact release absent from retained listings,
-// or a selected release needed for cover handling. Successful pages are reused;
-// failed detail requests retain the listing and other successful candidates.
+// or a selected release needed for cover handling. Successful pages are reused.
+// Explicit inspections report catalogue failures; individual failed detail
+// requests retain the listing and other successful candidates.
 func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMetadata, error) {
 	if c == nil {
 		c = NewClient(nil)
@@ -208,6 +209,14 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 					sameReleaseNamespace(old.URL, listing.URL) {
 					listing.DetailsStatus, listing.Specs, listing.ReleaseDate = old.DetailsStatus, old.Specs, old.ReleaseDate
 					listing.DetailsIdentityVersion = old.DetailsIdentityVersion
+					if old.DetailsStatus == "complete" {
+						if old.Country != "" && !strings.EqualFold(old.Country, "Unknown") {
+							listing.Country, listing.Region = old.Country, old.Region
+						}
+						if old.Publisher != "" {
+							listing.Publisher = old.Publisher
+						}
+					}
 					listing.CoverImages, listing.Warnings, listing.MatchNotes = old.CoverImages, old.Warnings, old.MatchNotes
 					listing.GenericDisc, listing.SpecsMissing = old.GenericDisc, old.SpecsMissing
 				}
@@ -389,11 +398,17 @@ func (c *Client) discover(ctx context.Context, input LookupInput) (*api.BlurayMe
 			if ctx.Err() != nil {
 				return nil, fmt.Errorf("bluray.com lookup canceled: %w", ctx.Err())
 			}
+			if input.Details != nil {
+				return nil, fmt.Errorf("bluray.com edition catalogue: %w", fetchErr)
+			}
 			continue
 		}
 		releases, parseErr := parseReleaseInfo(releasesHTML, input, logging.FromContext(ctx, c.logger))
 		if parseErr != nil {
 			discovery.Finish("Edition catalogue could not be read.", true)
+			if input.Details != nil {
+				return nil, fmt.Errorf("bluray.com edition catalogue: %w", parseErr)
+			}
 			continue
 		}
 		discovered += len(releases)

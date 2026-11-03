@@ -80,7 +80,12 @@ import type {
 const SessionContext = createContext<ReleaseSession | null>(null);
 
 type WorkflowFacet = "screenshots" | "menuImages" | "uploadedImages" | "descriptions";
-type ControllerKey = WorkflowFacet | "activeInput" | "preparation" | "workflow";
+type ControllerKey =
+  | WorkflowFacet
+  | "activeInput"
+  | "preparation"
+  | "workflow"
+  | "candidateCancellation";
 type WorkflowCommand = Readonly<{
   controller: AbortController;
   release: ReleaseRef;
@@ -554,9 +559,12 @@ export function ReleaseSessionProvider({
     if (attempt.cancellation) return attempt.cancellation;
     attempt.cancelRequested = true;
     attempt.cancellation = (async () => {
+      abortController("candidateCancellation");
+      const controller = new AbortController();
+      controllers.current.candidateCancellation = controller;
+      const timeout = window.setTimeout(() => controller.abort(), 30_000);
       let finished = false;
       try {
-        const controller = new AbortController();
         const slot = activeSlotAuthority();
         let terminal = isActiveWorkflowOperation(operation)
           ? await activePorts.workflow.cancelOperation(workflowID, operation.id, controller.signal)
@@ -569,6 +577,7 @@ export function ReleaseSessionProvider({
             controller.signal,
           );
         }
+        if (controller.signal.aborted) throw new Error("Inspection confirmation ended.");
         if ((terminal as WorkflowOperationStatus).status !== "canceled") {
           finished = true;
           throw new Error("Inspection did not cancel.");
@@ -584,6 +593,7 @@ export function ReleaseSessionProvider({
         return true;
       } catch {
         attempt.controller.abort();
+        if (controllers.current.candidateCancellation !== controller) return false;
         dispatch({
           type: "preparation_failed",
           sourcePath: attempt.sourcePath,
@@ -595,6 +605,10 @@ export function ReleaseSessionProvider({
           failure: null,
         });
         return false;
+      } finally {
+        window.clearTimeout(timeout);
+        if (controllers.current.candidateCancellation === controller)
+          delete controllers.current.candidateCancellation;
       }
     })();
     return attempt.cancellation;

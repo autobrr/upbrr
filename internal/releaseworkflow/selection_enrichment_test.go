@@ -95,6 +95,53 @@ func TestContinueRefreshesPreparationForChangedSelectedMetadataDemand(t *testing
 	}
 }
 
+func TestCandidateContinuationIdentifiesReadinessForChangedTrackerSelection(t *testing.T) {
+	preparer := testPreparer()
+	prepare := preparer.PrepareFunc
+	var prepares atomic.Int32
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		if !input.RequirePrepared {
+			prepares.Add(1)
+		}
+		return prepare(ctx, input)
+	}
+	module, _ := newTestModule(t, preparer, WithClock(&selectionEnrichmentClock{}), WithInputReadinessEvaluator(selectionDemandEvaluator{}))
+	input := api.PrepareInput{
+		SourcePath: "Example.Release.2026",
+		Force:      true,
+		Controls:   api.PreparationControls{BlurayDetails: &api.BlurayDetailRequest{ReleaseID: "101"}},
+	}
+	current := executeCommand(t, module, CreateWorkflowCommand{})
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            input,
+		TrackerIDs:       []api.TrackerID{"ALPHA"},
+	})
+	current = executeCommand(t, module, EvaluateInputReadinessCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA"},
+	})
+	accepted, err := module.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		Authority:      &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision},
+		IdempotencyKey: "candidate-new-trackers",
+		Goal:           api.WorkflowGoalInputReady,
+		Intent:         api.WorkflowIntent{Preparation: &input, TrackerIDs: []api.TrackerID{"DELTA"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Operation == nil || accepted.Operation.Command != "evaluate_input_readiness" || accepted.PreparationOperationID != accepted.Operation.ID {
+		t.Fatal("candidate continuation lost its accepted readiness operation")
+	}
+	waitForWorkflowOperation(t, module, accepted.Workflow.ID, accepted.Operation.ID, func(status api.WorkflowOperationStatus) bool { return isTerminalProgressStatus(status.Status) })
+	finished, err := module.Current(t.Context(), testOwnerID, accepted.Workflow.ID)
+	if err != nil || prepares.Load() != 1 || finished.InputReadiness == nil || len(finished.InputReadiness.SelectedTrackerIDs) != 1 || finished.InputReadiness.SelectedTrackerIDs[0] != "DELTA" {
+		t.Fatal("tracker selection was not evaluated against the retained preparation")
+	}
+}
+
 func continueForSelectionEnrichment(
 	t *testing.T,
 	module *Module,

@@ -440,6 +440,62 @@ func TestAutoDiscoversCatalogueAfterExactReleaseAndReusesItsDetails(t *testing.T
 	}
 }
 
+func TestRebuiltCatalogueRetainsOnlyVerifiedKnownReleaseFacts(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, version, country, publisher, listedFlag string
+		wantEligible                                          bool
+		wantPublisher                                         string
+	}{
+		{"verified details", "complete", DetailsIdentityVersion, "United States", "Verified Publisher", "", true, "Verified Publisher"},
+		{"failed inspection", "failed", DetailsIdentityVersion, "Germany", "Old Publisher", `<img width="18" height="12" title="United States">`, true, "Catalogue Publisher"},
+		{"missing detail fields", "complete", DetailsIdentityVersion, "Unknown", "", `<img width="18" height="12" title="United States">`, true, "Catalogue Publisher"},
+		{"unverified details", "complete", "", "United States", "Old Publisher", "", false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			client := NewClient(&http.Client{Transport: releaseFixtureTransport(func(r *http.Request) (*http.Response, error) {
+				calls++
+				body := evidenceSearchHTML
+				if r.URL.Path == "/products/menu_ajax.php" {
+					body = `<table><tr><td><h3>4K Blu-ray Editions</h3></td></tr><tr><td>` + tc.listedFlag + `<a href="https://www.blu-ray.com/movies/Example-A/101/">Example A</a><small style="color: #999999">Catalogue Publisher</small></td></tr></table>`
+				} else if r.URL.Path != "/search/" {
+					t.Fatal("catalogue rebuild repeated a detail request")
+				}
+				return blurayEvidenceResponse(r, http.StatusOK, body), nil
+			})})
+			retained := &api.BlurayMetadata{Candidates: []api.BlurayReleaseCandidate{{
+				ReleaseID:              "101",
+				URL:                    "https://www.blu-ray.com/movies/Example-A/101/",
+				DetailsStatus:          tc.status,
+				DetailsIdentityVersion: tc.version,
+				Country:                tc.country,
+				Region:                 countryToRegion(tc.country),
+				Publisher:              tc.publisher,
+			}}}
+			result, err := client.Lookup(t.Context(), LookupInput{
+				IMDBID:          1234567,
+				DiscType:        "BDMV",
+				CountryOverride: new("USA"),
+				Retained:        retained,
+			})
+			if err != nil || calls != 2 || result == nil {
+				t.Fatalf("catalogue rebuild: calls=%d error=%v", calls, err)
+			}
+			selected := result.SelectedCandidate()
+			if !tc.wantEligible {
+				if selected != nil || len(result.Candidates) != 0 {
+					t.Fatal("unverified facts affected country filtering")
+				}
+			} else if selected == nil || selected.ReleaseID != "101" || selected.Country != "United States" || selected.Region != "USA" || selected.Publisher != tc.wantPublisher {
+				t.Fatalf("verified or fresh listing facts lost: %#v", selected)
+			}
+			if retained.Candidates[0].Country != tc.country || retained.Candidates[0].Publisher != tc.publisher {
+				t.Fatal("catalogue rebuilding changed the retained generation")
+			}
+		})
+	}
+}
+
 func TestFetchAllPreservesSavedManualReleaseAcrossNamespaceCollision(t *testing.T) {
 	t.Parallel()
 	requests := 0
