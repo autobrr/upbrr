@@ -137,7 +137,13 @@ advancing it. Eventual merged upstream adoption remains separate in
 
 #### Vulnerability workflow history
 
-The scheduled vulnerability workflow retains Stylelint and all CSS checks. The former
+The scheduled vulnerability workflow scans `go.mod`, `webui/pnpm-lock.yaml` and
+`documentation/pnpm-lock.yaml` explicitly. Documentation dependency matches include
+build/SSG and local development/preview tooling; a package match does not establish
+exposure in the deployed static site. Scan and lookup failures remain failures and
+reach the existing failure-reporting job, without advisory suppressions.
+
+The workflow retains Stylelint and all CSS checks. The former
 WebUI-only exception for GHSA-vfj7-8cjw-p6xm was removed after the advisory was withdrawn
 and a full WebUI scan without exceptions passed. The earlier
 [temporary risk acceptance](https://github.com/autobrr/upbrr/issues/585) was not remediation;
