@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -5619,7 +5620,8 @@ func testPreparer() ReleasePreparerFunc {
 	return ReleasePreparerFunc{
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 			return api.PrepareResult{Release: api.PreparedRelease{
-				Generation: 1,
+				Compatibility: api.PreparationCompatibility{ContractVersion: preparedrelease.ContractVersion},
+				Generation:    1,
 				Source: api.SourceManifest{
 					SourcePath: input.SourcePath,
 				},

@@ -13,6 +13,8 @@ The upgrade from `v0.4.0` to `v0.4.1` adds stored acceptance evidence for import
 
 The upcoming `v0.4.2` moves workflow source ownership and command receipts into separate database rows and stores exact immutable snapshot references. The first startup backfills existing workflows; allow extra time and disk space for that transaction. An interrupted migration rolls back and retries on the next startup. Retained History and command results are preserved. Malformed or uncertain source ownership defers cleanup so recoverable evidence remains available. This storage format is forward-only: restore the complete stopped-service backup before returning to an earlier version, rather than replacing only the binary or image tag.
 
+If a retained workflow reports incompatible prepared data after an update, prepare the input again before continuing. Repeating continuation does not rebuild that data. Saved corrections remain available; preparation and the normal review steps must complete again. Check and reconcile any uncertain external outcome before retrying a tracker or client operation.
+
 ## 1. Stop upbrr
 
 For the upcoming `v0.4.2` artifact layout, also follow the [manual legacy report-cache cleanup notice](../changelog/v0.4.2.md#remove-the-legacy-report-cache). No automatic migration or legacy cache discovery is performed; releases must be prepared again.
