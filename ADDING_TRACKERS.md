@@ -401,7 +401,9 @@ responses without adding requests or auth requirements. Bind site-owned header n
 message policy in `auth.go`; Unit3D profiles expose it through `Site.APIKeyGuidance`. Shared
 preflight emits one advisory decision per tracker, while upload preparation and submission
 log newly learned advice once per prepared plan. Retained preflight snapshots prevent
-repeating the same message after questionnaire reprojection. Observations remain process-local and
+repeating the same message after questionnaire reprojection within an upload attempt;
+new attempts show it again. Passive account advice does not invalidate otherwise compatible
+duplicate evidence. Observations remain process-local and
 credential-digest scoped; raw keys and headers are never retained in this guidance cache.
 Keep missing, malformed and reported expiry distinct. This capability cannot block uploads,
 request confirmation, or change authentication and submission outcomes.

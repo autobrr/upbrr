@@ -3657,6 +3657,7 @@ func (m *Module) create(
 	state.FactInstructions[facts.ID] = facts
 	state.Composite = command.Composite
 	if state.Composite != nil {
+		state.Composite.StartedRevision = workflow.Revision
 		state.Composite.LastCommittedRevision = workflow.Revision
 	}
 	state, idempotent, err := m.repository.Create(ctx, ownerID, command.IdempotencyKey, fingerprint, state)

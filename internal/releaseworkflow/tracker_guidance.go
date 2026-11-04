@@ -12,28 +12,38 @@ import (
 type trackerGuidanceHistoryKey struct{}
 
 // withTrackerGuidanceHistory reuses retained preflight snapshots under the
-// command lock, so reprojection does not reset advisory presentation history.
+// command lock. Composite feedback keeps history since the attempt started;
+// direct stage workflows use the current prepared snapshot.
 func withTrackerGuidanceHistory(ctx context.Context, state State) context.Context {
-	return context.WithValue(ctx, trackerGuidanceHistoryKey{}, state.Projections)
-}
-
-// TrackerGuidanceWasPresented reports whether this workflow already published
-// the same advisory. History is command-local, read-only, and absent for callers
-// outside the workflow coordinator; no credentials or new state are retained.
-func TrackerGuidanceWasPresented(ctx context.Context, tracker api.TrackerID, code, message string) bool {
-	history, _ := ctx.Value(trackerGuidanceHistoryKey{}).(map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet)
-	for _, snapshot := range history {
+	var history []api.TrackerReleaseProjection
+	for _, snapshot := range state.Projections {
 		if snapshot.Preflight == nil {
 			continue
 		}
-		for _, projection := range snapshot.Projections {
-			if projection.TrackerID != tracker {
+		if state.Composite != nil && state.Composite.StartedRevision > 0 {
+			if snapshot.Revision < state.Composite.StartedRevision {
 				continue
 			}
-			for _, decision := range projection.PolicyDecisions {
-				if decision.Code == code && decision.Message == message {
-					return true
-				}
+		} else if state.Workflow.Release == nil || snapshot.Release != *state.Workflow.Release {
+			continue
+		}
+		history = append(history, snapshot.Projections...)
+	}
+	return context.WithValue(ctx, trackerGuidanceHistoryKey{}, history)
+}
+
+// TrackerGuidanceWasPresented reports whether this attempt already published
+// the same advisory. History is command-local, read-only, and absent for callers
+// outside the workflow coordinator; no credentials or new state are retained.
+func TrackerGuidanceWasPresented(ctx context.Context, tracker api.TrackerID, code, message string) bool {
+	history, _ := ctx.Value(trackerGuidanceHistoryKey{}).([]api.TrackerReleaseProjection)
+	for _, projection := range history {
+		if projection.TrackerID != tracker {
+			continue
+		}
+		for _, decision := range projection.PolicyDecisions {
+			if decision.Code == code && decision.Message == message {
+				return true
 			}
 		}
 	}

@@ -184,4 +184,56 @@ func TestCompositeDuplicateComparisonReprojectsBoundCandidatesAndRechecks(t *tes
 	if guidancePresentations != 1 {
 		t.Fatal("feedback reprojection repeated account guidance")
 	}
+	priorRelease := *current.Workflow.Release
+	request.Authority = &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision}
+	request.IdempotencyKey = "new-account-guidance-attempt"
+	request.Trackers.Include = []api.TrackerID{"ALPHA"}
+	started, err = module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current = waitCompositeUploadTestOperation(t, module, started)
+	if *current.Workflow.Release != priorRelease || guidancePresentations != 2 {
+		t.Fatalf("new attempt on the same release lost guidance: release=%+v presentations=%d", current.Workflow.Release, guidancePresentations)
+	}
+}
+
+func TestTrackerGuidanceHistoryRespectsAttemptAndPreparationBoundaries(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		release api.ReleaseSnapshotRef
+		started api.WorkflowRevision
+		want    bool
+	}{
+		{"same preparation", api.ReleaseSnapshotRef{ID: "release", Revision: 1}, 0, true},
+		{"new snapshot with cached generation", api.ReleaseSnapshotRef{ID: "new-release", Revision: 2}, 0, false},
+		{"new snapshot revision", api.ReleaseSnapshotRef{ID: "release", Revision: 2}, 0, false},
+		{"feedback reprepare within attempt", api.ReleaseSnapshotRef{ID: "new-release", Revision: 2}, 1, true},
+		{"new attempt on same snapshot", api.ReleaseSnapshotRef{ID: "release", Revision: 1}, 3, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := State{
+				Workflow: api.ReleaseWorkflow{Release: &tc.release},
+				Projections: map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet{
+					"previous": {
+						Revision:   2,
+						Release:    api.ReleaseSnapshotRef{ID: "release", Revision: 1},
+						ReleaseRef: api.ReleaseRef{Generation: 1},
+						Preflight:  &api.TrackerPreflightAssessmentRef{ID: "preflight", Revision: 1},
+						Projections: []api.TrackerReleaseProjection{{TrackerID: "ALPHA", PolicyDecisions: []api.TrackerPolicyDecision{{
+							Code: "guidance_api_key_expiry", Message: "Review the account key configuration.",
+						}}}},
+					},
+				},
+			}
+			if tc.started > 0 {
+				state.Composite = &compositeUploadSession{StartedRevision: tc.started}
+			}
+			ctx := withTrackerGuidanceHistory(t.Context(), state)
+			if TrackerGuidanceWasPresented(ctx, "ALPHA", "guidance_api_key_expiry", "Review the account key configuration.") != tc.want {
+				t.Fatal("advisory history crossed a preparation boundary")
+			}
+		})
+	}
 }

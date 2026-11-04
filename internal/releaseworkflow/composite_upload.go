@@ -28,9 +28,11 @@ const (
 )
 
 type compositeUploadSession struct {
-	ComparisonSelection               *api.HDRComparisonSelection                 `json:"comparisonSelection,omitempty"`
-	Version                           int                                         `json:"version"`
-	RequestFingerprint                api.WorkflowFingerprint                     `json:"requestFingerprint"`
+	ComparisonSelection *api.HDRComparisonSelection `json:"comparisonSelection,omitempty"`
+	Version             int                         `json:"version"`
+	RequestFingerprint  api.WorkflowFingerprint     `json:"requestFingerprint"`
+	// StartedRevision separates a new upload attempt from retained preflight history.
+	StartedRevision                   api.WorkflowRevision                        `json:"startedRevision,omitempty"`
 	Intent                            api.WorkflowIntent                          `json:"intent"`
 	Goal                              api.WorkflowGoal                            `json:"goal"`
 	Confirm                           bool                                        `json:"confirm"`
@@ -353,6 +355,7 @@ func (m *Module) adoptCompositeInput(
 	}
 	state.Composite = session
 	state.Workflow.Revision++
+	state.Composite.StartedRevision = state.Workflow.Revision
 	state.Workflow.UpdatedAt = m.clock.Now()
 	state.Workflow.Status = api.WorkflowStatusActive
 	state.Workflow.RequiredActions, state.Workflow.Failures, state.Workflow.SubmissionExclusions = nil, nil, nil
