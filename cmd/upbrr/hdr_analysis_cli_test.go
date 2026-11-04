@@ -266,9 +266,16 @@ func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
 		name        string
 		failSummary bool
 		alias       bool
+		prepared    bool
 	}{
 		{name: "complete"},
+		{name: "prepared complete", prepared: true},
 		{name: "summary failure", failSummary: true},
+		{
+			name:        "prepared summary failure",
+			failSummary: true,
+			prepared:    true,
+		},
 		{
 			name:        "summary failure through alias",
 			failSummary: true,
@@ -303,16 +310,22 @@ func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
 					return diagnostic.Write(data)
 				})
 			}
-			err := executeCLI(t.Context(), []string{
-				"--hdr-analysis-only", "--hdr-metadata-only", "--hdr-output-dir", parent,
-				filepath.Join("testdata", "synthetic-cli-hdr.mkv"),
-			}, cliIO{out: &stdout, errOut: stderr})
+			args := []string{"--hdr-analysis-only", "--hdr-output-dir", parent}
+			if test.prepared {
+				args = append(args, "--hdr-audio-only", "--hdr-all-audio-tracks")
+			} else {
+				args = append(args, "--hdr-metadata-only")
+			}
+			err := executeCLI(t.Context(), append(args, filepath.Join("testdata", "synthetic-cli-hdr.mkv")), cliIO{out: &stdout, errOut: stderr})
 			printCLIError(&diagnostic, err)
 			entries, readErr := os.ReadDir(parent)
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
 			if test.failSummary {
+				if exitErr, ok := errors.AsType[*cliExitError](err); ok && exitErr.code != 1 {
+					t.Fatalf("summary failure exit status = %d", exitErr.code)
+				}
 				if !blockedSummary || !errors.Is(err, os.ErrExist) || len(entries) != 1 || stdout.Len() == 0 {
 					t.Fatalf("failed summary lost completed output: blocked=%t err=%v entries=%v stdout=%q", blockedSummary, err, entries, stdout.String())
 				}

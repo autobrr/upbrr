@@ -269,7 +269,7 @@ func standalonePreparedHDR(ctx context.Context, session *hdranalysis.Session, op
 	if err := hdranalysis.PublishFile(verifyCtx, filepath.Join(directory, "summary.json"), func(out io.Writer) error {
 		return evidence.WriteReport(verifyCtx, out, peak, "", target, reports)
 	}); err != nil {
-		return complete, fmt.Errorf("publish prepared HDR summary: %w", err)
+		return complete, fmt.Errorf("save HDR summary: %w", hdranalysis.Classify(err))
 	}
 	if runErr == nil && target.Status != api.StageStatusCompleted {
 		runErr = api.NewHDRAnalysisError(api.HDRAnalysisFailure{Code: api.HDRAnalysisFailureIncomplete,
