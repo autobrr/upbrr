@@ -253,7 +253,11 @@ func TestIncompatibleContinuationPreservesReviewAndExternalEffectAuthority(t *te
 	base := preparer.PrepareFunc
 	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 		result, err := base(ctx, input)
-		result.Release.Compatibility.ContractVersion = "prepared-release-v73"
+		if input.Force {
+			result.Release.Generation++
+		} else {
+			result.Release.Compatibility.ContractVersion = "prepared-release-v73"
+		}
 		return result, err
 	}
 	module, repository := newTestModule(t, preparer)
@@ -342,6 +346,24 @@ func TestIncompatibleContinuationPreservesReviewAndExternalEffectAuthority(t *te
 	retained, err := repository.Load(ctx, testOwnerID, current.Workflow.ID)
 	if err != nil || !reflect.DeepEqual(retained, state) {
 		t.Fatalf("continuation changed reviews, confirmed outcomes or authority: %v", err)
+	}
+	input.Force = true
+	request.Goal = api.WorkflowGoalPrepared
+	request.IdempotencyKey = "retained-safety-reprepare"
+	recovery, err := module.Continue(ctx, testOwnerID, request)
+	if err != nil || recovery.Operation == nil {
+		t.Fatalf("explicit continuation reprepare: %v", err)
+	}
+	terminal := waitForWorkflowOperation(t, module, current.Workflow.ID, recovery.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
+	if terminal.Status != api.StageStatusCompleted {
+		t.Fatalf("explicit reprepare failed: %+v", terminal)
+	}
+	recovered, err := module.Current(ctx, testOwnerID, current.Workflow.ID)
+	if err != nil || recovered.Release == nil || recovered.Release.Release.Generation != current.Release.Release.Generation+1 ||
+		recovered.Release.Release.Compatibility.ContractVersion != preparedrelease.ContractVersion {
+		t.Fatalf("explicit reprepare did not replace the incompatible generation: result=%+v err=%v", recovered, err)
 	}
 	for _, effect := range effects {
 		prior, replayed, err := repository.BeginEffect(ctx, effect)
