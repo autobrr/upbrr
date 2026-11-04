@@ -25,6 +25,16 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		slices.ContainsFunc(subject.EffectiveMetadata.Genres, func(genre string) bool { return strings.EqualFold(genre, "Animation") })
 	facts := subject.LanguageFacts
 	englishDub := facts.HasEnglishDub()
+	if !englishDub && !animated && slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+		return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed && languageutil.ContainsLanguage(track.Languages, "English")
+	}) {
+		failures = append(failures, trackers.LanguageRuleFailure(
+			subject,
+			"english_dub_evidence",
+			"Audio languages is cleared or inconsistent with an inspected English dub; correct or reset that correction before assessing the English-dub restriction",
+			trackers.LanguageUnresolved,
+		))
+	}
 	if !animated && (!remux || facts.HasOriginalAudio()) && facts.OriginalLanguagesKnown &&
 		!languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
 		languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") {

@@ -44,6 +44,34 @@ func TestProgrammeAudioOriginEvidence(t *testing.T) {
 	}
 }
 
+func TestExplicitOriginsSurviveUnknownOriginalLanguage(t *testing.T) {
+	facts := LanguageFacts{
+		ProgrammeLanguages: []string{"Japanese", "English"},
+		ProgrammeStatus: MetadataEvidenceStatusComplete,
+		Tracks: []MediaTrackFacts{
+			{
+Kind: MediaTrackAudio,
+ Role: AudioRoleProgramme,
+ Languages: []string{"Japanese"},
+ AudioOrigin: TrackAudioOriginal,
+},
+			{
+Kind: MediaTrackAudio,
+ Role: AudioRoleProgramme,
+ Languages: []string{"English"},
+ AudioOrigin: TrackAudioDubbed,
+},
+		},
+	}
+	if !facts.HasOriginalAudio() || !facts.HasEnglishDub() || facts.OriginalLanguagesKnown {
+		t.Fatalf("lost explicit source evidence: %#v", facts)
+	}
+	facts.Tracks[0].AudioOrigin, facts.Tracks[1].AudioOrigin = "", ""
+	if facts.HasOriginalAudio() || facts.HasEnglishDub() {
+		t.Fatal("unknown original inferred programme origins")
+	}
+}
+
 func TestEnglishDubInferredFromSeparateOriginalTrack(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
