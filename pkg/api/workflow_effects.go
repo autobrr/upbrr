@@ -29,8 +29,10 @@ type WorkflowExternalEffect struct {
 	Submission *SubmissionFenceAuthority
 }
 
-// WorkflowExternalEffectReceipt is private in-process authority to complete a
-// previously persisted attempt_started record.
+// WorkflowExternalEffectReceipt identifies a previously persisted attempt.
+// A newly admitted Begin grants completion authority. A receipt accompanying
+// ErrReleaseWorkflowEffectOutcomeUnknown only identifies a local blocker for
+// reconciliation; callers must not submit or complete that denied attempt.
 type WorkflowExternalEffectReceipt struct {
 	EffectID string
 	// OperationID binds retained protocol evidence to the attempt's originating operation.
@@ -69,6 +71,8 @@ func WithWorkflowExternalEffectReporter(
 // current workflow operation installed a reporter. Invalid effect authority is rejected first.
 // Without a reporter, effects lacking submission authority return an empty receipt;
 // effects carrying submission authority require a reporter.
+// ErrReleaseWorkflowEffectOutcomeUnknown may accompany the blocking local receipt
+// for reconciliation, but never authorizes submission or completion.
 func BeginWorkflowExternalEffect(
 	ctx context.Context,
 	effect WorkflowExternalEffect,
@@ -85,6 +89,9 @@ func BeginWorkflowExternalEffect(
 	}
 	receipt, err := reporter.Begin(ctx, effect)
 	if err != nil {
+		if errors.Is(err, ErrReleaseWorkflowEffectOutcomeUnknown) {
+			return receipt, fmt.Errorf("workflow external effect begin: %w", err)
+		}
 		return WorkflowExternalEffectReceipt{}, fmt.Errorf("workflow external effect begin: %w", err)
 	}
 	return receipt, nil

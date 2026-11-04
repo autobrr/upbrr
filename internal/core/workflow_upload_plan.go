@@ -1308,7 +1308,10 @@ func (e *workflowUploadExecution) Execute(
 			submissionStatus := api.StageStatusFailed
 			if result.Failure.Code == "unknown_outcome" {
 				failureCode = api.OperationFailureUnknownOutcome
-				recovery = api.OperationRecoveryConfirm
+				recovery = api.OperationRecoveryNone
+				if result.SubmissionReceiptID != "" && result.SubmissionOperationID != "" {
+					recovery = api.OperationRecoveryConfirm
+				}
 				warning := "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing."
 				if message != "" {
 					warning += " Reason: " + message

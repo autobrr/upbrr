@@ -230,7 +230,8 @@ func (r *PersistentRepository) LoadEvents(
 	return events, mapPersistentRepositoryError(err)
 }
 
-// BeginEffect durably fences one exact external attempt.
+// BeginEffect durably fences one exact external attempt. An unknown-outcome error
+// may carry the blocking local record for reconciliation without admitting a new attempt.
 func (r *PersistentRepository) BeginEffect(
 	ctx context.Context,
 	record api.ReleaseWorkflowEffectRecord,

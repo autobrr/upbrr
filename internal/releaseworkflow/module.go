@@ -8658,6 +8658,7 @@ func (m *Module) publishUploadResult(
 			if failure.Failure.Code != api.OperationFailureUnknownOutcome {
 				continue
 			}
+			state.Workflow.Failures = append(state.Workflow.Failures, failure)
 			effectKind := api.WorkflowExternalEffectTrackerSubmission
 			effectScopeID := string(result.TrackerID)
 			prompt := "Verify that the tracker submission did not complete before preparing and reviewing a replacement exact upload plan."
@@ -8665,6 +8666,10 @@ func (m *Module) publishUploadResult(
 				effectKind = api.WorkflowExternalEffectClientInjection
 				effectScopeID = failure.Resource
 				prompt = "Verify that the client injection did not complete before retrying the retained registered tracker artifact."
+			}
+			if effectKind == api.WorkflowExternalEffectTrackerSubmission && (failure.Failure.Recovery != api.OperationRecoveryConfirm ||
+				result.SubmissionReceiptID == "" || result.SubmissionOperationID == "") {
+				continue
 			}
 			action, actionErr := m.newReconcileAction(
 				nextRevision,
@@ -8682,7 +8687,6 @@ func (m *Module) publishUploadResult(
 				action.EffectOperationID = result.SubmissionOperationID
 			}
 			state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
-			state.Workflow.Failures = append(state.Workflow.Failures, failure)
 		}
 	}
 	if hasPendingRequiredAction(state.Workflow.RequiredActions) {

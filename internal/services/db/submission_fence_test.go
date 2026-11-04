@@ -75,8 +75,15 @@ func TestSubmissionFencePersistsSuccessAndFencesUnknownAttempts(t *testing.T) {
 		t.Fatalf("unknown fence = %#v, err=%v", fence, err)
 	}
 	retry := submissionFenceTestEffect(workflow, "effect-retry", unknownIdentity, completedAt.Add(4*time.Second))
-	if _, _, err := repo.BeginReleaseWorkflowEffect(ctx, retry); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
-		t.Fatalf("unknown retry = %v", err)
+	if prior, _, err := repo.BeginReleaseWorkflowEffect(ctx, retry); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) ||
+		prior.EffectID != unknown.EffectID || prior.OperationID != unknown.OperationID {
+		t.Fatalf("unknown retry lost its exact local binding: record=%#v error=%v", prior, err)
+	}
+	otherScope := retry
+	otherScope.ScopeID = "BETA"
+	if prior, _, err := repo.BeginReleaseWorkflowEffect(ctx, otherScope); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) ||
+		prior.EffectID != "" || prior.OperationID != "" {
+		t.Fatalf("different scope acquired reconciliation identity: record=%#v error=%v", prior, err)
 	}
 	if err := repo.ResolveReleaseWorkflowEffectUnknown(ctx, workflow.OwnerID, workflow.WorkflowID,
 		api.WorkflowExternalEffectTrackerSubmission, unknown.ScopeID, completedAt.Add(5*time.Second),
@@ -238,7 +245,8 @@ func TestSubmissionFenceCanonicalizesTrackerSiteForClaimAndCompletion(t *testing
 			}
 			canonical := submissionFenceTestEffect(workflow, "canonical", identity, now.Add(time.Second))
 			prior, idempotent, err := repo.BeginReleaseWorkflowEffect(ctx, canonical)
-			if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || idempotent || prior.EffectID != "" {
+			if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || idempotent || prior.EffectID != started.EffectID ||
+				prior.OperationID != started.OperationID || prior.Status != api.WorkflowEffectStatusStarted {
 				t.Fatalf("canonical claim = %#v, idempotent=%v, err=%v", prior, idempotent, err)
 			}
 

@@ -512,7 +512,8 @@ func (r *MemoryRepository) LoadEvents(
 	return result, nil
 }
 
-// BeginEffect fences one in-memory external attempt.
+// BeginEffect fences one in-memory external attempt. An unknown-outcome error
+// returns the blocking local record for reconciliation, without admitting an attempt.
 func (r *MemoryRepository) BeginEffect(
 	ctx context.Context,
 	record api.ReleaseWorkflowEffectRecord,
@@ -537,7 +538,7 @@ func (r *MemoryRepository) BeginEffect(
 	if found {
 		switch latest.Status {
 		case api.WorkflowEffectStatusStarted, api.WorkflowEffectStatusUnknown:
-			return api.ReleaseWorkflowEffectRecord{}, false, api.ErrReleaseWorkflowEffectOutcomeUnknown
+			return latest, false, api.ErrReleaseWorkflowEffectOutcomeUnknown
 		case api.WorkflowEffectStatusSucceeded:
 			if latest.SemanticFingerprint != record.SemanticFingerprint {
 				break

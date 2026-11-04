@@ -552,6 +552,8 @@ type ReleaseWorkflowDurabilityRepository interface {
 	SaveReleaseWorkflowContinuation(context.Context, ReleaseWorkflowContinuationRecord) error
 	AppendReleaseWorkflowEvents(context.Context, string, WorkflowID, []WorkflowEvent) ([]WorkflowEvent, error)
 	LoadReleaseWorkflowEvents(context.Context, string, WorkflowID, uint64, int) ([]WorkflowEvent, error)
+	// BeginReleaseWorkflowEffect may return the blocking local record with
+	// ErrReleaseWorkflowEffectOutcomeUnknown for reconciliation, without admitting an attempt.
 	BeginReleaseWorkflowEffect(context.Context, ReleaseWorkflowEffectRecord) (ReleaseWorkflowEffectRecord, bool, error)
 	CompleteReleaseWorkflowEffect(context.Context, WorkflowEffectStatus, ReleaseWorkflowEffectRecord) error
 	MarkReleaseWorkflowOperationEffectsUnknown(context.Context, string, WorkflowID, WorkflowOperationID, time.Time) error

@@ -4823,6 +4823,18 @@ func TestResolveReconciliationRequiresExactAnswerAndForcesFreshReview(t *testing
 	if err := repository.MarkOperationEffectsUnknown(ctx, testOwnerID, workflowID, operationID, now.Add(time.Second)); err != nil {
 		t.Fatalf("mark effect unknown: %v", err)
 	}
+	reporter := newDurableExternalEffectReporter(module, testOwnerID, workflowID, "replacement-operation")
+	receipt, err := api.BeginWorkflowExternalEffect(api.WithWorkflowExternalEffectReporter(ctx, reporter), api.WorkflowExternalEffect{
+		Kind:                api.WorkflowExternalEffectTrackerSubmission,
+		ScopeID:             started.ScopeID,
+		SemanticFingerprint: "replacement-semantic",
+	})
+	if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || receipt.EffectID != started.EffectID || receipt.OperationID != operationID {
+		t.Fatalf("denied begin lost the original recovery binding: receipt=%#v error=%v", receipt, err)
+	}
+	if err := reporter.Complete(ctx, receipt, false); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
+		t.Fatalf("denied begin acquired completion authority: %v", err)
+	}
 	action := api.RequiredAction{
 		ID:                "action-reconcile",
 		Kind:              api.RequiredActionReconcileSubmission,
@@ -4831,8 +4843,8 @@ func TestResolveReconciliationRequiresExactAnswerAndForcesFreshReview(t *testing
 		TrackerID:         "ALPHA",
 		EffectKind:        api.WorkflowExternalEffectTrackerSubmission,
 		EffectScopeID:     "ALPHA",
-		EffectID:          started.EffectID,
-		EffectOperationID: started.OperationID,
+		EffectID:          receipt.EffectID,
+		EffectOperationID: receipt.OperationID,
 		Prompt:            "Verify the external effect.",
 		Options: []api.RequiredActionOption{{
 			Value: api.RequiredActionReconcileNotCompleted,
@@ -4909,6 +4921,64 @@ func TestResolveReconciliationRequiresExactAnswerAndForcesFreshReview(t *testing
 	retry.UpdatedAt = retry.StartedAt
 	if _, idempotent, err := repository.BeginEffect(ctx, retry); err != nil || idempotent {
 		t.Fatalf("begin reconciled retry idempotent=%v err=%v", idempotent, err)
+	}
+}
+
+func TestPublishUploadResultRequiresBoundTrackerRecovery(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, receiptID string
+		operationID     api.WorkflowOperationID
+		recovery        api.OperationRecovery
+		wantActions     int
+	}{
+		{"bound", "effect", "operation", api.OperationRecoveryConfirm, 1},
+		{"unbound", "", "", api.OperationRecoveryNone, 0},
+		{"unbound confirmation", "", "", api.OperationRecoveryConfirm, 0},
+		{"partial binding", "effect", "", api.OperationRecoveryConfirm, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			module, repository := newTestModule(t, testPreparer())
+			created, err := module.Execute(t.Context(), testOwnerID, CreateWorkflowCommand{IdempotencyKey: "unbound-recovery"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state, err := repository.Load(t.Context(), testOwnerID, created.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failure := api.WorkflowFailure{TrackerID: "EXAMPLE", Failure: api.OperationFailure{
+				Code:      api.OperationFailureUnknownOutcome,
+				Operation: api.OperationKindUploadExecute,
+				Message:   "An existing attempt is uncertain.",
+				Recovery:  test.recovery,
+			}}
+			_, err = module.publishUploadResult(t.Context(), testOwnerID, &state, state.Workflow.Revision+1, module.clock.Now(), preparedUploads{
+				projections:  api.TrackerReleaseProjectionSet{ID: "projections", Revision: 1},
+				dupes:        api.DupeAssessment{ID: "dupes", Revision: 1},
+				media:        api.MediaArtifactSet{ID: "media", Revision: 1},
+				descriptions: api.DescriptionSet{ID: "descriptions", Revision: 1},
+				plan:         api.UploadPlan{InputFingerprint: testFingerprint(t, "unknown-result")},
+			}, []api.UploadTrackerResult{{
+				TrackerID:             "EXAMPLE",
+				Status:                api.StageStatusFailed,
+				SubmissionStatus:      api.StageStatusUnavailable,
+				ClientInjectionStatus: api.StageStatusPending,
+				SubmissionReceiptID:   test.receiptID,
+				SubmissionOperationID: test.operationID,
+				Failures:              []api.WorkflowFailure{failure},
+			}}, RegisteredArtifactAuthority{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(state.Workflow.RequiredActions) != test.wantActions || len(state.Workflow.Failures) != 1 || state.Workflow.Failures[0] != failure {
+				t.Fatalf("actions=%#v failures=%#v", state.Workflow.RequiredActions, state.Workflow.Failures)
+			}
+			if test.wantActions != 0 && (state.Workflow.RequiredActions[0].EffectID != test.receiptID ||
+				state.Workflow.RequiredActions[0].EffectOperationID != test.operationID) {
+				t.Fatalf("published a different binding: %#v", state.Workflow.RequiredActions)
+			}
+		})
 	}
 }
 

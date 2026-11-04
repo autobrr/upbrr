@@ -850,6 +850,8 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				SemanticFingerprint: effectFingerprint,
 				Submission:          submissionAuthority,
 			})
+			slot.submissionReceiptID = effectReceipt.EffectID
+			slot.submissionOperationID = effectReceipt.OperationID
 			if effectErr != nil {
 				code := "effect_fence"
 				if errors.Is(effectErr, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
@@ -861,8 +863,6 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				phase.Done()
 				continue
 			}
-			slot.submissionReceiptID = effectReceipt.EffectID
-			slot.submissionOperationID = effectReceipt.OperationID
 			if effectReceipt.AlreadySucceeded {
 				slot.submissionOutcome = submission.Accepted
 				slot.alreadySucceeded = true

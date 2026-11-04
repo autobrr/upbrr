@@ -587,6 +587,8 @@ type DurabilityRepository interface {
 	SaveContinuation(context.Context, api.ReleaseWorkflowContinuationRecord) error
 	AppendEvents(context.Context, string, api.WorkflowID, []api.WorkflowEvent) ([]api.WorkflowEvent, error)
 	LoadEvents(context.Context, string, api.WorkflowID, uint64, int) ([]api.WorkflowEvent, error)
+	// BeginEffect may return the blocking local record with ErrReleaseWorkflowEffectOutcomeUnknown
+	// for reconciliation; an error never admits another external attempt.
 	BeginEffect(context.Context, api.ReleaseWorkflowEffectRecord) (api.ReleaseWorkflowEffectRecord, bool, error)
 	CompleteEffect(context.Context, api.WorkflowEffectStatus, api.ReleaseWorkflowEffectRecord) error
 	MarkOperationEffectsUnknown(context.Context, string, api.WorkflowID, api.WorkflowOperationID, time.Time) error

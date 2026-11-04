@@ -1345,6 +1345,7 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 		wantSubmission    api.StageStatus
 		wantRedaction     bool
 		wantPathPreserved bool
+		unbound           bool
 	}{
 		{
 			name:              "submission detail",
@@ -1385,14 +1386,28 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing.",
 			wantSubmission: api.StageStatusUnavailable,
 		},
+		{
+			name:           "unknown fence without local identity",
+			code:           "unknown_outcome",
+			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing.",
+			wantSubmission: api.StageStatusUnavailable,
+			unbound:        true,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			receiptID := "effect-example"
+			operationID := api.WorkflowOperationID("operation-example")
+			if test.unbound {
+				receiptID, operationID = "", ""
+			}
 			execution := &workflowUploadExecution{
 				plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
-					Tracker: "EXAMPLE",
-					Failure: &trackers.TrackerFailure{Code: test.code, Message: test.message},
+					Tracker:               "EXAMPLE",
+					SubmissionReceiptID:   receiptID,
+					SubmissionOperationID: operationID,
+					Failure:               &trackers.TrackerFailure{Code: test.code, Message: test.message},
 				}}},
 			}
 			results, err := execution.Execute(t.Context(), nil)
@@ -1409,6 +1424,12 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			wantCode, wantRecovery := api.OperationFailureInternal, api.OperationRecoveryRetry
 			if test.code == "unknown_outcome" {
 				wantCode, wantRecovery = api.OperationFailureUnknownOutcome, api.OperationRecoveryConfirm
+				if test.unbound {
+					wantRecovery = api.OperationRecoveryNone
+				}
+				if results[0].SubmissionRetryable() {
+					t.Fatal("unknown outcome permitted a fresh submission")
+				}
 			}
 			if failure.Code != wantCode || failure.Recovery != wantRecovery {
 				t.Fatalf("upload failure changed recovery semantics: %#v", failure)

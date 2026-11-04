@@ -132,7 +132,8 @@ func submitPreparedUpload(
 	}
 	id := extractTorrentID(decoded.Response)
 	status := strings.ToLower(strings.TrimSpace(fmt.Sprint(decoded.Status)))
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 && (status == "success" || status == "ok" || (status == "200" && id != "")) {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && strings.TrimSpace(decoded.Error) == "" &&
+		(status == "success" || status == "ok" || (status == "200" && id != "")) {
 		tURL := ""
 		if id != "" {
 			tURL = torrentURL + id

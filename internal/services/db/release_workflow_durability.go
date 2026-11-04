@@ -195,6 +195,8 @@ func (r *SQLiteRepository) LoadReleaseWorkflowEvents(
 }
 
 // BeginReleaseWorkflowEffect persists attempt_started before an external side effect.
+// An unknown-outcome error returns a blocking record only when its exact local
+// owner, workflow, kind and scope match; it does not admit another attempt.
 func (r *SQLiteRepository) BeginReleaseWorkflowEffect(
 	ctx context.Context,
 	record api.ReleaseWorkflowEffectRecord,
@@ -224,6 +226,7 @@ func (r *SQLiteRepository) BeginReleaseWorkflowEffect(
 		)
 		switch {
 		case loadErr == nil && (prior.Status == api.WorkflowEffectStatusStarted || prior.Status == api.WorkflowEffectStatusUnknown):
+			result = prior
 			return api.ErrReleaseWorkflowEffectOutcomeUnknown
 		case loadErr == nil && prior.Status == api.WorkflowEffectStatusSucceeded &&
 			prior.SemanticFingerprint == record.SemanticFingerprint:
@@ -252,6 +255,9 @@ func (r *SQLiteRepository) BeginReleaseWorkflowEffect(
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+			return result, false, err
+		}
 		return api.ReleaseWorkflowEffectRecord{}, false, err
 	}
 	return result, idempotent, nil
@@ -287,6 +293,16 @@ func (r *SQLiteRepository) beginSubmissionFence(
 			idempotent = true
 			return nil
 		case err == nil && (prior.Status == api.WorkflowEffectStatusStarted || prior.Status == api.WorkflowEffectStatusUnknown):
+			if prior.OwnerID == record.OwnerID && prior.WorkflowID == record.WorkflowID {
+				local, loadErr := loadLatestReleaseWorkflowEffect(ctx, tx, record.OwnerID, record.WorkflowID, record.Kind, record.ScopeID)
+				if loadErr != nil && !errors.Is(loadErr, api.ErrReleaseWorkflowStateNotFound) {
+					return loadErr
+				}
+				if loadErr == nil && local.EffectID == prior.EffectID && local.OperationID == prior.OperationID &&
+					(local.Status == api.WorkflowEffectStatusStarted || local.Status == api.WorkflowEffectStatusUnknown) {
+					result = local
+				}
+			}
 			return api.ErrReleaseWorkflowEffectOutcomeUnknown
 		case err == nil:
 			return api.ErrReleaseWorkflowEffectConflict
@@ -322,6 +338,9 @@ func (r *SQLiteRepository) beginSubmissionFence(
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+			return result, false, err
+		}
 		return api.ReleaseWorkflowEffectRecord{}, false, err
 	}
 	return result, idempotent, nil

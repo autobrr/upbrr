@@ -52,6 +52,8 @@ A tracker response that explicitly rejects an upload is a failed submission, rat
 
 During legacy recovery, retained proof for the exact accepted attempt settles that effect so it no longer keeps the shared input slot occupied. Other uncertain attempts still require reconciliation, and the accepted upload's retry blocks remain in place.
 
+An upload blocked by an older uncertain attempt offers confirmation only when the exact receipt belongs to the current workflow. A fence owned by another workflow remains protected and cannot be confirmed from the new workflow.
+
 An unresolved tracker submission does not prevent independent CLI queue items from running when its durable submission protection remains available. Legacy attempts without that protection still require reconciliation before new inputs. The affected source remains protected until reconciliation; resuming the queue selects its other pending items. Missing or contradictory retained source information still requires manual recovery.
 
 If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Resolve the uncertainty before activating the changed configuration.

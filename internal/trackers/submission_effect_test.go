@@ -43,7 +43,8 @@ func (r *sqliteSubmissionReporter) Begin(ctx context.Context, effect api.Workflo
 		Submission:          effect.Submission,
 	})
 	if err != nil {
-		return api.WorkflowExternalEffectReceipt{}, fmt.Errorf("begin synthetic submission effect: %w", err)
+		return api.WorkflowExternalEffectReceipt{EffectID: record.EffectID, OperationID: record.OperationID},
+			fmt.Errorf("begin synthetic submission effect: %w", err)
 	}
 	r.record = record
 	return api.WorkflowExternalEffectReceipt{
@@ -199,6 +200,15 @@ func TestSubmissionOutcomePersistsAndControlsRetryAfterReopen(t *testing.T) {
 	history, err := repo.ListUploadHistoryByPath(ctx, sourcePath)
 	if err != nil || len(history) != len(cases) {
 		t.Fatalf("history=%v error=%v", history, err)
+	}
+	// Older content fences remain unbound when another effect owns the latest
+	// local scope; only the exact current local blocker can offer confirmation.
+	last := len(cases) - 1
+	blocked, calls := execute(identities[last], nil)
+	if calls != 0 || blocked.failure == nil || blocked.failure.Code != "unknown_outcome" ||
+		blocked.submissionReceiptID != fmt.Sprintf("effect-%d", last+1) || blocked.submissionOperationID != "operation" {
+		t.Fatalf("denied begin lost the current local recovery binding: calls=%d effect=%s operation=%s failure=%v", calls,
+			blocked.submissionReceiptID, blocked.submissionOperationID, blocked.failure)
 	}
 	for i, test := range cases {
 		var status string
