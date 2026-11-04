@@ -16,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -398,6 +399,26 @@ func (b workflowPreflightBuilder) Build(
 			}
 		}
 		finalProjection := projection
+		if policy, ok := b.registry.LookupAuthPolicy(trackerName); ok {
+			trackerConfig, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, trackerName)
+			finalProjection.PolicyDecisions = slices.DeleteFunc(slices.Clone(finalProjection.PolicyDecisions), func(decision api.TrackerPolicyDecision) bool {
+				return decision.Code == trackers.APIKeyGuidanceCode
+			})
+			if message := policy.APIKeyGuidance.Guidance(trackerConfig.APIKey, assessedAt); message != "" {
+				alreadyPresented := releaseworkflow.TrackerGuidanceWasPresented(ctx, projection.TrackerID, trackers.APIKeyGuidanceCode, message)
+				if !alreadyPresented && !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+					return decision.Code == trackers.APIKeyGuidanceCode && decision.Message == message
+				}) {
+					b.logger.Infof("tracker preflight: guidance tracker=%s message=%s", trackerName, message)
+				}
+				finalProjection.PolicyDecisions = append(finalProjection.PolicyDecisions, api.TrackerPolicyDecision{
+					Code:        trackers.APIKeyGuidanceCode,
+					Decision:    "advisory",
+					Disposition: api.RuleDispositionAdvisory,
+					Message:     message,
+				})
+			}
+		}
 		if debugMode && result.State == api.TrackerPreflightStateReady {
 			if descriptor.Capabilities.StaticBannedGroups || descriptor.Capabilities.DynamicBannedGroups {
 				appendBypassedRuntimeDecision(

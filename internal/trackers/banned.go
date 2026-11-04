@@ -460,7 +460,8 @@ func fetchDynamicBannedGroupsWithClient(
 	seenCursors := make(map[string]struct{})
 
 	for page := 1; ; page++ {
-		pageGroups, pageRaw, nextCursor, err := fetchDynamicBannedGroupsPage(ctx, client, endpoint, tracker, apiKey, cursor, policy.RawAPIKeyFallback)
+		pageGroups, pageRaw, nextCursor, err := fetchDynamicBannedGroupsPage(ctx, client, endpoint, tracker, apiKey, cursor, policy.RawAPIKeyFallback,
+			func(header http.Header, status int) { registry.ObserveAPIResponse(tracker, apiKey, header, status) })
 		if err != nil {
 			return nil, nil, err
 		}
@@ -709,13 +710,14 @@ func fetchDynamicBannedGroupsPage(
 	apiKey string,
 	cursor string,
 	rawAPIKeyFallback bool,
+	observe ...func(http.Header, int),
 ) ([]string, []json.RawMessage, string, error) {
 	var raw json.RawMessage
 	var statusCode int
 	var err error
 	authValues := bannedGroupsAuthValues(apiKey, rawAPIKeyFallback)
 	for idx, authValue := range authValues {
-		raw, statusCode, err = doBannedGroupsRequest(ctx, client, endpoint, tracker, authValue, cursor)
+		raw, statusCode, err = doBannedGroupsRequest(ctx, client, endpoint, tracker, authValue, cursor, observe...)
 		if err != nil {
 			return nil, nil, "", err
 		}
@@ -750,6 +752,7 @@ func doBannedGroupsRequest(
 	tracker string,
 	authValue string,
 	cursor string,
+	observe ...func(http.Header, int),
 ) (json.RawMessage, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -770,6 +773,9 @@ func doBannedGroupsRequest(
 		return nil, 0, fmt.Errorf("fetch banned groups %s: %w", tracker, err)
 	}
 	defer resp.Body.Close()
+	for _, observer := range observe {
+		observer(resp.Header, resp.StatusCode)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, resp.StatusCode, nil
 	}

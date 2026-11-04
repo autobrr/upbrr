@@ -430,6 +430,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err != nil {
 		return CommandResult{}, err
 	}
+	ctx = withTrackerGuidanceHistory(ctx, state)
 	receiptKey := commandReceiptKey(command.commandName(), idempotencyKey, fingerprint)
 	if receipt, ok := state.Receipts[receiptKey]; ok {
 		if receipt.Fingerprint != fingerprint {

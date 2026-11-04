@@ -48,6 +48,7 @@ func submitUnit3DUpload(
 	meta api.UploadSubject,
 	dbPath string,
 	logger api.Logger,
+	observe ...func(http.Header, int),
 ) (api.UploadSummary, error) {
 	logger.Infof("trackers: starting upload to %s for release: %s", trackerName, releaseName)
 	logger.Debugf("trackers: %s upload URL: %s", trackerName, uploadURL)
@@ -66,6 +67,9 @@ func submitUnit3DUpload(
 	logger.Debugf("trackers: %s sending upload request...", trackerName)
 	client := &http.Client{Timeout: 40 * time.Second}
 	execution, err := commonhttp.ExecuteUpload(client, httpReq, commonhttp.UploadExecutionOptions{Tracker: trackerName})
+	for _, observer := range observe {
+		observer(execution.Header, execution.StatusCode)
+	}
 	if err != nil && !execution.BodyComplete {
 		logger.Errorf("trackers: %s upload request failed: %v", trackerName, err)
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s execute upload: %w", trackerName, err)
@@ -166,6 +170,8 @@ func prepareUnit3DUpload(
 	if !strings.EqualFold(preview.Status, "ready") {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s upload blocked: %s", preview.Tracker, preview.Message)
 	}
+	reportGuidance := apiKeyGuidanceReporter(req, firstSiteProfile(profiles).APIKeyGuidance)
+	reportGuidance(nil, 0)
 
 	logger := req.Logger
 	if logger == nil {
@@ -194,6 +200,7 @@ func prepareUnit3DUpload(
 			req.Meta,
 			req.Runtime.DBPath,
 			logger,
+			reportGuidance,
 		)
 	}, nil), nil
 }

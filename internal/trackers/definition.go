@@ -314,6 +314,8 @@ type AuthRequirementsResolver func(config.Config, config.TrackerConfig) Effectiv
 // AuthPolicy declares coordinator behavior that cannot be inferred from the
 // user-facing auth capability alone.
 type AuthPolicy struct {
+	// APIKeyGuidance observes account expiry without contributing auth requirements.
+	APIKeyGuidance *APIKeyGuidance
 	// ResolveRequirements returns the secret-free auth facts for the effective
 	// tracker mode.
 	ResolveRequirements AuthRequirementsResolver

@@ -296,6 +296,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 		return Result{}, fmt.Errorf("unit3d: request: %w", err)
 	}
 	defer resp.Body.Close()
+	c.registry.ObserveAPIResponse(tracker, apiKey, resp.Header, resp.StatusCode)
 	if resp.StatusCode == http.StatusNotFound {
 		return Result{}, nil
 	}
@@ -791,6 +792,7 @@ func (c *Client) searchUnit3DEndpoint(
 		if err != nil {
 			return unit3dEndpointSearchResult{}, fmt.Errorf("unit3d: request: %w", err)
 		}
+		c.registry.ObserveAPIResponse(tracker, apiKey, resp.Header, resp.StatusCode)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			resp.Body.Close()
 			if c.logger != nil {

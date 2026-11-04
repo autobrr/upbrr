@@ -98,6 +98,31 @@ func TestDuplicateQuestionnaireFeedbackRequiresCurrentCandidateQuestions(t *test
 
 func TestCompositeDuplicateComparisonReprojectsBoundCandidatesAndRechecks(t *testing.T) {
 	module, _, uploads := newCompositeUploadTestModule(t)
+	basePreflight := module.trackerPreflight
+	guidancePresentations := 0
+	module.trackerPreflight = trackerPreflightBuilderFunc(func(ctx context.Context, subject api.UploadSubject, catalog api.TrackerCatalogSnapshot,
+		runtime api.TrackerRuntimeSnapshot, initial api.TrackerReleaseProjectionSet, now time.Time,
+	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
+		assessment, finalized, err := basePreflight.Build(ctx, subject, catalog, runtime, initial, now)
+		if err != nil {
+			return assessment, finalized, fmt.Errorf("build account guidance preflight fixture: %w", err)
+		}
+		const message = "Review the account key configuration."
+		if !TrackerGuidanceWasPresented(ctx, "ALPHA", "guidance_api_key_expiry", message) {
+			guidancePresentations++
+		}
+		for index := range finalized {
+			if finalized[index].TrackerID == "ALPHA" {
+				finalized[index].PolicyDecisions = append(finalized[index].PolicyDecisions, api.TrackerPolicyDecision{
+					Code:        "guidance_api_key_expiry",
+					Decision:    "advisory",
+					Disposition: api.RuleDispositionAdvisory,
+					Message:     message,
+				})
+			}
+		}
+		return assessment, finalized, nil
+	})
 	baseProjector := module.trackerProjector
 	bound := false
 	module.trackerProjector = trackerProjectionBuilderFunc(func(ctx context.Context, release api.ReleaseSnapshot, subject api.UploadSubject, ids []api.TrackerID, instructions map[api.TrackerID]api.TrackerProjectionInstructions, authorizations map[api.TrackerID]api.WorkflowFingerprint, mode api.WorkflowExecutionMode) (api.TrackerCatalogSnapshot, api.TrackerRuntimeSnapshot, api.TrackerSelection, api.TrackerReleaseProjectionSet, error) {
@@ -155,5 +180,8 @@ func TestCompositeDuplicateComparisonReprojectsBoundCandidatesAndRechecks(t *tes
 	}
 	if uploads.execution != nil || current.TrackerApproval != nil {
 		t.Fatal("reviewing comparison approved upload")
+	}
+	if guidancePresentations != 1 {
+		t.Fatal("feedback reprojection repeated account guidance")
 	}
 }

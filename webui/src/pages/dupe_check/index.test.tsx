@@ -1071,6 +1071,7 @@ describe("DupeCheckPage", () => {
   it.each([
     "guidance_release_history",
     "guidance_sp_pack_consistency",
+    "guidance_api_key_expiry",
     "language_compatibility_source",
   ])("collapses language guidance and %s while keeping safety notices visible", (guidanceCode) => {
     const evidenceWarnings = [
