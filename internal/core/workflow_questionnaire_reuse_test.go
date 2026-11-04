@@ -85,7 +85,7 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 		PTPAPIKey:  "example",
 	}}}}
 	mediaInfoPath := filepath.Join(t.TempDir(), "mediainfo.txt")
-	if err := os.WriteFile(mediaInfoPath, []byte("General\nFormat : Matroska"), 0o600); err != nil {
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nFormat : Matroska\nUnique ID : 123"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	projector, err := trackers.NewWorkflowProjector(registry, cfg, api.NopLogger{})
@@ -183,6 +183,7 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 				VideoCodec:                  "H.264",
 				AudioLanguages:              []string{"French"},
 				LanguageFacts:               languageFacts.Clone(),
+				Assessments:                 api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 				TrackerQuestionnaireAnswers: input.QuestionnaireAnswers,
 			}, nil
 		},

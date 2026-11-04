@@ -97,7 +97,12 @@ func resolveFlags(meta api.UploadSubject) []string {
 	if !fullDisc(meta) && meta.LanguageFacts.HasEnglishDub() && meta.LanguageFacts.HasOriginalAudio() {
 		flags = append(flags, "EnglishDub")
 	}
-	if strings.Contains(meta.Audio, "Atmos") {
+	// The legacy Commentary marker also covers compatibility audio; its explicit
+	// role keeps those non-commentary streams eligible for feature flags.
+	if slices.ContainsFunc(meta.LanguageFacts.Tracks, func(track api.MediaTrackFacts) bool {
+		return track.Kind == api.MediaTrackAudio && track.Role != api.AudioRoleCommentary &&
+			(!track.Commentary || track.Role == api.AudioRoleCompatibility) && strings.Contains(track.AudioLabel, "Atmos")
+	}) {
 		flags = append(flags, "Atmos")
 	}
 	if meta.HasCommentary {

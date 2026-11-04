@@ -136,6 +136,7 @@ func mediaTrackStreamOrder(track map[string]any) (int, bool) {
 
 // bdInfoAudioTrackFacts keeps every reported stream distinct within its disc and
 // playlist. A hidden marker is evidence only; it never establishes commentary.
+// Each audio label retains the inspected stream's codec, channels, and Atmos marker.
 func bdInfoAudioTrackFacts(meta preparationstate.State) ([]api.MediaTrackFacts, error) {
 	if !strings.EqualFold(meta.DiscType, "BDMV") {
 		return nil, nil
@@ -167,6 +168,7 @@ func bdInfoAudioTrackFacts(meta preparationstate.State) ([]api.MediaTrackFacts, 
 			}
 			for index, audio := range info.Audio {
 				languages := languageutil.NormalizeLanguageNames([]string{audio.Language})
+				audioLabel, _, _ := audioFromMedia(preparationstate.State{}, mediaInfoDoc{}, &discparse.BDInfo{Audio: []discparse.BDAudio{audio}})
 				tracks = append(tracks, api.MediaTrackFacts{
 					ID:                   opaqueMediaTrackID(resourceID, api.MediaTrackAudio, string(manifest)+":"+strconv.Itoa(index+1)),
 					Kind:                 api.MediaTrackAudio,
@@ -176,6 +178,7 @@ func bdInfoAudioTrackFacts(meta preparationstate.State) ([]api.MediaTrackFacts, 
 					ManifestFingerprint:  string(manifest),
 					Ordinal:              index + 1,
 					Codec:                normalizeAudioFormat(map[string]any{"Format": audio.Codec}),
+					AudioLabel:           audioLabel,
 					DetectedLanguages:    append([]string(nil), languages...),
 					Languages:            languages,
 					LanguageProvenance:   api.FactProvenanceAutomatic,
