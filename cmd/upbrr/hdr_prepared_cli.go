@@ -223,6 +223,9 @@ func standalonePreparedHDR(ctx context.Context, session *hdranalysis.Session, op
 		if native != nil {
 			native.Release()
 		}
+		if failure, typed := api.AsHDRAnalysisFailure(err); typed && failure.Code == api.HDRAnalysisFailureOutput {
+			err = fmt.Errorf("prepare HDR analysis output: %w", err)
+		}
 		runErr = err
 		hdranalysis.CompletePreparedAudio(&capture, &target, ctx.Err() != nil)
 	} else {

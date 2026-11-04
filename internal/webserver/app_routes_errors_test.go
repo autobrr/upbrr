@@ -67,11 +67,12 @@ func TestWriteAppErrorHDRFailureKeepsCodeAndRecovery(t *testing.T) {
 	t.Parallel()
 	for _, code := range []api.HDRAnalysisFailureCode{api.HDRAnalysisFailureRead, api.HDRAnalysisFailureOutput} {
 		t.Run(string(code), func(t *testing.T) {
+			// Exercise JSON backslash escaping on every platform.
 			cause := &os.PathError{
-Op: "mkdir",
- Path: filepath.Join(t.TempDir(), "private-output"),
- Err: os.ErrPermission,
-}
+				Op:   "mkdir",
+				Path: filepath.Join(t.TempDir(), `private\output`),
+				Err:  os.ErrPermission,
+			}
 			failure := api.OperationFailure{
 				Code:            api.OperationFailureHDRAnalysis,
 				Operation:       api.OperationKindHDRAnalysis,
@@ -91,7 +92,9 @@ Op: "mkdir",
 			if recorder.Code != http.StatusConflict || payload.Error != failure.Message || payload.Failure != failure {
 				t.Fatalf("HDR failure response changed: status=%d payload=%#v", recorder.Code, payload)
 			}
-			if strings.Contains(recorder.Body.String(), cause.Path) {
+			body := recorder.Body.String()
+			escapedPath := strings.ReplaceAll(cause.Path, `\`, `\\`)
+			if strings.Contains(body, cause.Path) || strings.Contains(body, escapedPath) {
 				t.Fatal("HDR failure response exposed its private filesystem cause")
 			}
 		})
