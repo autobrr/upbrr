@@ -277,6 +277,8 @@ export function ReleaseSessionProvider({
     commandRevision: number;
     correlationID: string;
     cancelRequested: boolean;
+    cancellationTimeout: number | null;
+    cancellationController: AbortController | null;
     cancellation: Promise<boolean> | null;
     operation: { workflowID: string; status: WorkflowOperationStatus } | null;
   } | null>(null);
@@ -562,7 +564,9 @@ export function ReleaseSessionProvider({
       abortController("candidateCancellation");
       const controller = new AbortController();
       controllers.current.candidateCancellation = controller;
-      const timeout = window.setTimeout(() => controller.abort(), 30_000);
+      attempt.cancellationController = controller;
+      const timeout =
+        attempt.cancellationTimeout ?? window.setTimeout(() => controller.abort(), 30_000);
       let finished = false;
       try {
         const slot = activeSlotAuthority();
@@ -1743,6 +1747,8 @@ export function ReleaseSessionProvider({
       commandRevision,
       correlationID,
       cancelRequested: false,
+      cancellationTimeout: null,
+      cancellationController: null,
       cancellation: null,
       operation: null,
     };
@@ -1792,6 +1798,7 @@ export function ReleaseSessionProvider({
         update,
       );
     } finally {
+      if (attempt.cancellationTimeout !== null) window.clearTimeout(attempt.cancellationTimeout);
       if (candidateAttempt.current === attempt) candidateAttempt.current = null;
     }
   };
@@ -3259,8 +3266,26 @@ export function ReleaseSessionProvider({
             attempt.operation.workflowID,
             attempt.operation.status,
           );
-        } else {
+        } else if (!attempt.cancelRequested) {
           attempt.cancelRequested = true;
+          // Acceptance and confirmation share one cancellation deadline.
+          attempt.cancellationTimeout = window.setTimeout(() => {
+            if (attempt.cancellationController) {
+              attempt.cancellationController.abort();
+              return;
+            }
+            if (candidateAttempt.current !== attempt || attempt.controller.signal.aborted) return;
+            attempt.controller.abort();
+            dispatch({
+              type: "preparation_failed",
+              sourcePath: attempt.sourcePath,
+              commandRevision: attempt.commandRevision,
+              correlationID: attempt.correlationID,
+              error:
+                "Could not confirm cancellation; inspection may still be running. Refresh the workflow before retrying.",
+              failure: null,
+            });
+          }, 30_000);
         }
       },
       prepareSource: (sourcePath, intent) => runPreparationFor("prepare", sourcePath, intent),

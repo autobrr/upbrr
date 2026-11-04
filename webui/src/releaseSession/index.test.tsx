@@ -9338,104 +9338,195 @@ it.each([
   unmount();
 });
 
-it.each(["unmount", "deadline", "cancel request deadline"])(
-  "bounds candidate cancellation polling: %s",
-  async (end) => {
-    const workflowID = "workflow-bluray-bounded-cancel";
-    const sourcePath = "Example.Release.2026.mkv";
-    const operation: WorkflowOperationStatus = {
-      id: "candidate-operation",
-      workflowId: workflowID,
-      revision: 2,
-      sequence: 1,
-      command: "prepare_release",
-      operation: "preparation",
-      status: "running",
-      progress: 0,
-      completed: 0,
-      total: 1,
-      startedAt: "2026-07-20T00:00:00Z",
-      updatedAt: "2026-07-20T00:00:00Z",
-    };
-    const canceled = { ...operation, status: "canceled" as const };
-    const current = workflowCurrentFromPreview(
-      workflowCurrent(workflowID, 2),
-      preview(sourcePath, 1),
-    );
-    const waits: ReturnType<typeof createDeferred<WorkflowOperationStatus>>[] = [];
-    const pollSignals: AbortSignal[] = [];
-    const pendingOperation = (signal: AbortSignal) => {
-      const wait = createDeferred<WorkflowOperationStatus>();
-      waits.push(wait);
-      signal.addEventListener("abort", () => wait.reject(signal.reason), { once: true });
-      return wait.promise;
-    };
-    const poll = vi.fn(async (_workflowID: string, _operationID: string, signal: AbortSignal) => {
-      pollSignals.push(signal);
-      return pendingOperation(signal);
-    });
-    let cancellationSignal!: AbortSignal;
-    const cancel = vi.fn(async (_workflowID: string, _operationID: string, signal: AbortSignal) => {
-      cancellationSignal = signal;
-      return end === "cancel request deadline" ? pendingOperation(signal) : operation;
-    });
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(
-        portsFor({
-          resumeWorkflowID: workflowID,
-          workflow: workflowPorts({
-            current: async () => current,
-            continue: async () => ({ ...current, operation, preparationOperationId: operation.id }),
-            operation: poll,
-            cancelOperation: cancel,
-          }),
+it.each([
+  "unmount",
+  "deadline",
+  "cancel request deadline",
+  "acceptance deadline",
+  "source change deadline",
+])("bounds candidate cancellation polling: %s", async (end) => {
+  const cancelBeforeAcceptance = end === "acceptance deadline" || end === "source change deadline";
+  const workflowID = "workflow-bluray-bounded-cancel";
+  const sourcePath = "Example.Release.2026.mkv";
+  const operation: WorkflowOperationStatus = {
+    id: "candidate-operation",
+    workflowId: workflowID,
+    revision: 2,
+    sequence: 1,
+    command: "prepare_release",
+    operation: "preparation",
+    status: "running",
+    progress: 0,
+    completed: 0,
+    total: 1,
+    startedAt: "2026-07-20T00:00:00Z",
+    updatedAt: "2026-07-20T00:00:00Z",
+  };
+  const canceled = { ...operation, status: "canceled" as const };
+  const accepted = createDeferred<ReleaseWorkflowCurrent>();
+  const current = workflowCurrentFromPreview(
+    workflowCurrent(workflowID, 2),
+    preview(sourcePath, 1),
+  );
+  const waits: ReturnType<typeof createDeferred<WorkflowOperationStatus>>[] = [];
+  const pollSignals: AbortSignal[] = [];
+  const pendingOperation = (signal: AbortSignal) => {
+    const wait = createDeferred<WorkflowOperationStatus>();
+    waits.push(wait);
+    signal.addEventListener("abort", () => wait.reject(signal.reason), { once: true });
+    return wait.promise;
+  };
+  const poll = vi.fn(async (_workflowID: string, _operationID: string, signal: AbortSignal) => {
+    pollSignals.push(signal);
+    return pendingOperation(signal);
+  });
+  let cancellationSignal!: AbortSignal;
+  const cancel = vi.fn(async (_workflowID: string, _operationID: string, signal: AbortSignal) => {
+    cancellationSignal = signal;
+    return end === "cancel request deadline" || cancelBeforeAcceptance
+      ? pendingOperation(signal)
+      : operation;
+  });
+  const { result, unmount } = renderHook(useReleaseSession, {
+    wrapper: wrapperFor(
+      portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => current,
+          continue: async () =>
+            cancelBeforeAcceptance
+              ? accepted.promise
+              : { ...current, operation, preparationOperationId: operation.id },
+          operation: poll,
+          cancelOperation: cancel,
         }),
-      ),
+      }),
+    ),
+  });
+  await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  let pending!: Promise<boolean>;
+  let cancellation!: Promise<boolean>;
+  let cancellationSettled = false;
+  try {
+    act(() => {
+      pending = result.current.input.fetchCandidateDetails("101");
     });
-    await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    let pending!: Promise<boolean>;
-    let cancellation!: Promise<boolean>;
-    let cancellationSettled = false;
-    try {
-      act(() => {
-        pending = result.current.input.fetchCandidateDetails("101");
-      });
-      await act(async () => vi.advanceTimersByTimeAsync(0));
-      expect(result.current.input.view.candidateDetailsCancelable).toBe(true);
-      act(() => {
-        cancellation = result.current.input.cancelCandidateDetails();
-        void cancellation.then(() => {
-          cancellationSettled = true;
-        });
-      });
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    if (cancelBeforeAcceptance) {
+      expect(result.current.input.view.candidateDetailsCancelable).toBe(false);
+      act(() => result.current.input.cancelPreparation());
       await act(async () => vi.advanceTimersByTimeAsync(1000));
-      if (end === "cancel request deadline") expect(pollSignals).not.toContain(cancellationSignal);
-      else expect(pollSignals).toContain(cancellationSignal);
-      expect(cancellationSettled).toBe(false);
-      expect(cancellationSignal.aborted).toBe(false);
-      if (end === "unmount") unmount();
-      else await act(async () => vi.advanceTimersByTimeAsync(29_000));
-      expect(cancellationSignal.aborted).toBe(true);
-      await act(() => Promise.all([pending, cancellation]));
-      expect(cancellationSettled).toBe(true);
-      const calls = poll.mock.calls.length;
-      await act(async () => vi.advanceTimersByTimeAsync(2000));
-      expect(poll).toHaveBeenCalledTimes(calls);
-      if (end !== "unmount") {
-        expect(result.current.input.view.status).toBe("error");
-        expect(result.current.input.view.error).toMatch(/could not confirm cancellation/i);
-      }
-    } finally {
-      unmount();
-      await act(async () => {
-        waits.forEach((wait) => wait.resolve(canceled));
-        await Promise.all([pending, cancellation]);
-      });
-      vi.useRealTimers();
+      accepted.resolve({ ...current, operation, preparationOperationId: operation.id });
+      await act(async () => vi.advanceTimersByTimeAsync(0));
     }
-  },
-);
+    if (!cancelBeforeAcceptance)
+      expect(result.current.input.view.candidateDetailsCancelable).toBe(true);
+    act(() => {
+      cancellation = cancelBeforeAcceptance
+        ? pending
+        : result.current.input.cancelCandidateDetails();
+      void cancellation.then(() => {
+        cancellationSettled = true;
+      });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    if (end === "cancel request deadline" || cancelBeforeAcceptance)
+      expect(pollSignals).not.toContain(cancellationSignal);
+    else expect(pollSignals).toContain(cancellationSignal);
+    expect(cancellationSettled).toBe(false);
+    expect(cancellationSignal.aborted).toBe(false);
+    if (end === "source change deadline") {
+      act(() => result.current.input.selectSource("Another.Release.2026.mkv"));
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledWith(workflowID, operation.id, cancellationSignal);
+    }
+    if (end === "unmount") unmount();
+    else
+      await act(async () => vi.advanceTimersByTimeAsync(cancelBeforeAcceptance ? 28_000 : 29_000));
+    expect(cancellationSignal.aborted).toBe(true);
+    await act(() => Promise.all([pending, cancellation]));
+    expect(cancellationSettled).toBe(true);
+    const calls = poll.mock.calls.length;
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(poll).toHaveBeenCalledTimes(calls);
+    if (end === "source change deadline") {
+      expect(result.current.input.view.sourceDraft).toBe("Another.Release.2026.mkv");
+    } else if (end !== "unmount") {
+      expect(result.current.input.view.status).toBe("error");
+      expect(result.current.input.view.error).toMatch(/could not confirm cancellation/i);
+    }
+  } finally {
+    unmount();
+    await act(async () => {
+      waits.forEach((wait) => wait.resolve(canceled));
+      await Promise.all([pending, cancellation]);
+    });
+    vi.useRealTimers();
+  }
+});
+
+it("bounds Input Cancel while candidate acceptance stays pending", async () => {
+  const workflowID = "workflow-bluray-stalled-acceptance";
+  const sourcePath = "Example.Release.2026.mkv";
+  const current = workflowCurrentFromPreview(
+    workflowCurrent(workflowID, 2),
+    preview(sourcePath, 1),
+  );
+  const accepted = createDeferred<ReleaseWorkflowCurrent>();
+  let signal!: AbortSignal;
+  const continuation = vi.fn(
+    async (_request: ContinueReleaseWorkflowRequest, pendingSignal: AbortSignal) => {
+      signal = pendingSignal;
+      signal.addEventListener("abort", () => accepted.reject(signal.reason), { once: true });
+      return accepted.promise;
+    },
+  );
+  const cancelOperation = vi.fn();
+  const { result, unmount } = renderHook(useReleaseSession, {
+    wrapper: wrapperFor(
+      portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => current,
+          continue: continuation,
+          cancelOperation,
+        }),
+      }),
+    ),
+  });
+  await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  let pending!: Promise<boolean>;
+  let settled = false;
+  try {
+    act(() => {
+      pending = result.current.input.fetchCandidateDetails("101");
+      void pending.then(() => {
+        settled = true;
+      });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(continuation).toHaveBeenCalledOnce();
+    act(() => result.current.input.cancelPreparation());
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    act(() => result.current.input.cancelPreparation());
+    await act(async () => vi.advanceTimersByTimeAsync(14_999));
+    expect(signal.aborted).toBe(false);
+    expect(settled).toBe(false);
+    expect(result.current.input.view.status).not.toBe("cancelled");
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(signal.aborted).toBe(true);
+    await act(async () => expect(await pending).toBe(false));
+    expect(result.current.input.view.status).toBe("error");
+    expect(result.current.input.view.error).toMatch(/could not confirm cancellation/i);
+    expect(cancelOperation).not.toHaveBeenCalled();
+  } finally {
+    unmount();
+    await act(() => pending);
+    vi.useRealTimers();
+  }
+});
 
 it("reports uncertain candidate cancellation when the acceptance response is lost", async () => {
   const workflowID = "workflow-bluray-uncertain-cancel";

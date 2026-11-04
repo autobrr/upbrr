@@ -90,6 +90,44 @@ func TestE2EArtifactsUseReleaseOwner(t *testing.T) {
 	}
 }
 
+func TestE2EFailedScreenshotDeletionRetainsSeed(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := filepath.Join(root, "Example.Release.mkv")
+	fixture := filepath.Join(root, "fixture.png")
+	if err := os.WriteFile(fixture, []byte("fixture image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tmpRoot := filepath.Join(root, "tmp")
+	image, err := e2eManagedScreenshot(fixture, tmpRoot, source, "existing-description", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(image.Path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(image.Path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(image.Path, "retained"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := e2eScreenshotService{tmpRoot: tmpRoot}
+	if err := service.Delete(t.Context(), api.ScreenshotSubject{SourcePath: source}, image.Path); err == nil {
+		t.Fatal("deletion unexpectedly removed a nonempty directory")
+	}
+	if _, err := os.Stat(image.Path + ".deleted"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed deletion retained its marker: %v", err)
+	}
+	if err := os.RemoveAll(image.Path); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := e2eManagedScreenshot(fixture, tmpRoot, source, "existing-description", 0)
+	if err != nil || restored.Path != image.Path {
+		t.Fatalf("failed deletion hid the seed on reconstruction: image=%#v err=%v", restored, err)
+	}
+}
+
 func TestE2EMetadataUsesNestedManifestVideos(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
