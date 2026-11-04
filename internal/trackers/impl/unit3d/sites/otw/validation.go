@@ -97,10 +97,7 @@ func otwLanguageNamingFailures(subject api.TrackerValidationSubject, meta api.Up
 	reason := "programme languages, track roles or inspected coverage need review for audio naming"
 	if facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && count > 0 &&
 		!slices.ContainsFunc(facts.ProgrammeLanguages, func(value string) bool { return !languageutil.IsIdentifiedLanguage(value) }) {
-		if !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") || facts.OriginalLanguagesKnown && len(facts.OriginalLanguages) > 0 {
-			return nil
-		}
-		reason = "original-language evidence is required to determine the English audio naming marker"
+		return nil
 	}
 	return []api.RuleFailure{trackers.LanguageRuleFailure(subject, "naming_evidence", reason, trackers.LanguageUnresolved)}
 }

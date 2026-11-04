@@ -1425,6 +1425,7 @@ func (s UploadDryRunResult) Validate() error {
 	failed := false
 	succeeded := false
 	skipped := false
+	blocked := false
 	succeededCount := 0
 	failedCount := 0
 	skippedCount := 0
@@ -1444,6 +1445,11 @@ func (s UploadDryRunResult) Validate() error {
 		}
 		seen[id] = struct{}{}
 		switch report.Status {
+		case StageStatusBlocked:
+			blocked = true
+			if report.ClientInjection.Status == StageStatusCompleted {
+				return fmt.Errorf("blocked upload dry-run tracker %s cannot contain completed client injection", id)
+			}
 		case StageStatusCompleted:
 			succeeded = true
 			succeededCount++
@@ -1462,7 +1468,7 @@ func (s UploadDryRunResult) Validate() error {
 			if len(report.Failures) > 0 {
 				return fmt.Errorf("skipped upload dry-run tracker %s must not contain failures", id)
 			}
-		case StageStatusPending, StageStatusQueued, StageStatusReady, StageStatusBlocked, StageStatusStale, StageStatusPartial,
+		case StageStatusPending, StageStatusQueued, StageStatusReady, StageStatusStale, StageStatusPartial,
 			StageStatusRunning, StageStatusExecuted, StageStatusInterrupted, StageStatusCanceled, StageStatusUnavailable:
 			return fmt.Errorf("upload dry-run tracker %s has invalid status %q", id, report.Status)
 		default:
@@ -1493,9 +1499,13 @@ func (s UploadDryRunResult) Validate() error {
 		}
 		switch report.ClientInjection.Status {
 		case StageStatusCompleted, StageStatusSkipped, StageStatusFailed:
+		case StageStatusPending:
+			if report.Status != StageStatusBlocked {
+				return fmt.Errorf("pending upload dry-run client injection %s requires blocked preparation", id)
+			}
 		case "":
 			return fmt.Errorf("upload dry-run tracker %s requires a client-injection outcome", id)
-		case StageStatusPending, StageStatusQueued, StageStatusReady, StageStatusBlocked, StageStatusStale, StageStatusPartial,
+		case StageStatusQueued, StageStatusReady, StageStatusBlocked, StageStatusStale, StageStatusPartial,
 			StageStatusRunning, StageStatusExecuted, StageStatusInterrupted, StageStatusCanceled, StageStatusUnavailable:
 			return fmt.Errorf("upload dry-run tracker %s has invalid client-injection status %q", id, report.ClientInjection.Status)
 		default:
@@ -1506,23 +1516,27 @@ func (s UploadDryRunResult) Validate() error {
 		return errors.New("upload dry run outcome counts do not match reports")
 	}
 	switch s.Status {
+	case StageStatusBlocked:
+		if !blocked {
+			return errors.New("blocked upload dry run requires a blocked report")
+		}
 	case StageStatusSkipped:
-		if succeeded || failed || (len(s.Reports) > 0 && !skipped) {
+		if succeeded || failed || blocked || (len(s.Reports) > 0 && !skipped) {
 			return errors.New("skipped upload dry run requires only skipped reports")
 		}
 	case StageStatusCompleted:
-		if len(s.Reports) == 0 || !succeeded || failed {
+		if len(s.Reports) == 0 || !succeeded || failed || blocked {
 			return errors.New("completed upload dry run requires successful reports and no failures")
 		}
 	case StageStatusFailed:
-		if !failed || succeeded {
+		if !failed || succeeded || blocked {
 			return errors.New("failed upload dry run requires failures and no successes")
 		}
 	case StageStatusPartial:
-		if !failed || !succeeded {
+		if !failed || !succeeded || blocked {
 			return errors.New("partial upload dry run requires successful and failed reports")
 		}
-	case StageStatusPending, StageStatusQueued, StageStatusReady, StageStatusBlocked, StageStatusStale, StageStatusRunning,
+	case StageStatusPending, StageStatusQueued, StageStatusReady, StageStatusStale, StageStatusRunning,
 		StageStatusExecuted, StageStatusInterrupted, StageStatusCanceled, StageStatusUnavailable:
 		return fmt.Errorf("upload dry run has invalid status %q", s.Status)
 	default:
@@ -1567,7 +1581,7 @@ func (s UploadResult) Validate() error {
 	}
 	seen := make(map[TrackerID]struct{}, len(s.Results))
 	failedSubmission := false
-	failedClientInjection := false
+	incompleteAfterSubmission := false
 	for _, result := range s.Results {
 		id := normalizeTrackerID(result.TrackerID)
 		if id == "" {
@@ -1586,6 +1600,19 @@ func (s UploadResult) Validate() error {
 		}
 		switch submissionStatus {
 		case StageStatusCompleted:
+			if result.hasFailureCode(OperationFailureReceiptRetention) {
+				if (clientStatus != StageStatusUnavailable && clientStatus != StageStatusSkipped) ||
+					result.ClientInjected || result.CrossSeeded || result.ClientFailureCode != "" ||
+					result.SubmissionReceiptID == "" || result.SubmissionOperationID == "" ||
+					slices.ContainsFunc(result.Failures, func(failure WorkflowFailure) bool {
+						return failure.Failure.Code != OperationFailureReceiptRetention || failure.Failure.Operation != OperationKindUploadExecute ||
+							failure.Resource != result.SubmissionReceiptID
+					}) {
+					return fmt.Errorf("upload tracker %s receipt retention failure requires exact submission evidence and deferred client work", id)
+				}
+				incompleteAfterSubmission = true
+				break
+			}
 			switch clientStatus {
 			case StageStatusCompleted:
 				if !result.ClientInjected && !result.CrossSeeded {
@@ -1602,7 +1629,7 @@ func (s UploadResult) Validate() error {
 					return fmt.Errorf("upload tracker %s skipped client injection cannot contain failures", id)
 				}
 			case StageStatusFailed:
-				failedClientInjection = true
+				incompleteAfterSubmission = true
 				if result.ClientFailureCode == "" || strings.TrimSpace(result.ClientInjectionMessage) == "" {
 					return fmt.Errorf("upload tracker %s failed client injection requires code and message", id)
 				}
@@ -1640,7 +1667,7 @@ func (s UploadResult) Validate() error {
 				return fmt.Errorf("skipped upload tracker %s has invalid client injection status %q", id, clientStatus)
 			}
 			if clientStatus == StageStatusFailed {
-				failedClientInjection = true
+				incompleteAfterSubmission = true
 			}
 		case StageStatusPending, StageStatusQueued, StageStatusReady, StageStatusBlocked, StageStatusStale, StageStatusPartial,
 			StageStatusRunning, StageStatusExecuted, StageStatusInterrupted, StageStatusCanceled, "":
@@ -1651,12 +1678,12 @@ func (s UploadResult) Validate() error {
 	}
 	switch s.Status {
 	case StageStatusCompleted:
-		if failedSubmission || failedClientInjection {
+		if failedSubmission || incompleteAfterSubmission {
 			return errors.New("completed upload result cannot contain failed trackers")
 		}
 	case StageStatusPartial:
-		if failedSubmission || !failedClientInjection {
-			return errors.New("partial upload result requires only a failed client injection")
+		if failedSubmission || !incompleteAfterSubmission {
+			return errors.New("partial upload result requires accepted submissions with unfinished local work")
 		}
 	case StageStatusFailed:
 		if !failedSubmission {

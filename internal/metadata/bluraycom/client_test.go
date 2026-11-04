@@ -561,6 +561,7 @@ func TestLookupCountryAuthorityAndEditionDates(t *testing.T) {
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(body)),
 					Header:     make(http.Header),
+					Request:    r,
 				}, nil
 			})})
 			result, err := client.Lookup(t.Context(), LookupInput{

@@ -101,6 +101,22 @@ func TestLiveTestCompositeUploadRetainsNormalRulesAndNoSeedAfterFeedback(t *test
 	if got := policy.Snapshot(); got.TrackerSubmission != (api.LiveTestEffectCounts{}) || got.ClientMutation != (api.LiveTestEffectCounts{}) {
 		t.Fatalf("safe path attempted mutations: %#v", got)
 	}
+	direct := executeCommand(t, module, DryRunUploadsCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		NoSeed:           false,
+	})
+	if direct.DryRun == nil || !direct.DryRun.NoSeed || direct.DryRun.ClientInjectionRequested {
+		t.Fatalf("direct live-test dry run did not report effective no-seed policy: %#v", direct.DryRun)
+	}
+	for _, report := range direct.DryRun.Reports {
+		if report.ClientInjection.Status != api.StageStatusSkipped {
+			t.Fatalf("direct live-test injection status=%s", report.ClientInjection.Status)
+		}
+	}
+	if !uploads.options[len(uploads.options)-1].NoSeed || uploads.execution.executions != 0 || uploads.clientRetries != 0 {
+		t.Fatal("direct live-test dry run did not preserve the no-write policy")
+	}
 }
 
 func TestLiveTestCompositeUploadDurableReplayRejectsMutationRetries(t *testing.T) {

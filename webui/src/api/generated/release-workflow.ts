@@ -237,6 +237,7 @@ export type BlurayReleaseCandidate = Readonly<{
   Accepted: boolean;
   Country: string;
   CoverImages: readonly BlurayImage[];
+  DetailsIdentityVersion?: string;
   DetailsStatus: string;
   GenericDisc: boolean;
   MatchNotes: readonly string[];
@@ -1157,6 +1158,7 @@ export type MediaArtifact = Readonly<{
   selected: boolean;
   sizeBytes?: number;
   source?: string;
+  sourceUnavailable?: boolean;
   timestampSeconds?: number;
   url?: string;
   width?: number;
@@ -1314,6 +1316,7 @@ export type MediaFileFacts = Readonly<{
 }>;
 
 export type MediaPlan = Readonly<{
+  autoAdoptSavedImages?: boolean;
   createdAt: string;
   discType?: string;
   discs?: readonly MediaDiscPlan[];
@@ -2251,7 +2254,9 @@ export type RequiredAction = Readonly<{
   allowsFreeText?: boolean;
   correctionConfirmation?: CorrectionConfirmation | null;
   createdAt: string;
+  effectId?: string;
   effectKind?: WorkflowExternalEffectKind;
+  effectOperationId?: WorkflowOperationID;
   effectScopeId?: string;
   expiresAt?: string;
   id: RequiredActionID;
@@ -3154,9 +3159,11 @@ export type UploadApproval = Readonly<{
 }>;
 
 export type UploadDryRunResult = Readonly<{
+  clientInjectionRequested?: boolean;
   createdAt: string;
   descriptions: DescriptionSetRef;
   dupes: DupeAssessmentRef;
+  explicitDryRun?: boolean;
   failedCount: number;
   id: UploadDryRunResultID;
   inputFingerprint: WorkflowFingerprint;
@@ -3252,6 +3259,8 @@ export type UploadTrackerResult = Readonly<{
   remoteId?: string;
   remoteUrl?: string;
   status: StageStatus;
+  submissionOperationId?: WorkflowOperationID;
+  submissionReceiptId?: string;
   submissionStatus?: StageStatus;
   trackerId: TrackerID;
 }>;

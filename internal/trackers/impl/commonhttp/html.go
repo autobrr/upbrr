@@ -62,7 +62,7 @@ func GetHTML(ctx context.Context, client *http.Client, endpoint string, params u
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		_, preview, readErr := readHTTPErrorResponse(resp.Body, DefaultResponsePreviewBytes)
+		_, preview, _, readErr := readHTTPErrorResponse(resp.Body, DefaultResponsePreviewBytes)
 		if readErr != nil {
 			return resp.StatusCode, nil, fmt.Errorf("commonhttp: HTML GET request failed status=%d: %w", resp.StatusCode, readErr)
 		}

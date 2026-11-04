@@ -27,6 +27,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -88,7 +89,10 @@ func submitPreparedUpload(
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
-	switch response.StatusCode {
+	if response.StatusCode == nil {
+		return api.UploadSummary{}, errors.New("trackers: BHD response did not establish a submission outcome")
+	}
+	switch *response.StatusCode {
 	case 0:
 		artifactPath, artifactErr := writeFailureArtifact(req, responseBody, "upload_failure")
 		if artifactErr != nil && req.Logger != nil {
@@ -104,21 +108,20 @@ func submitPreparedUpload(
 		if message == "" {
 			message = "upload failed"
 		}
-		return api.UploadSummary{}, fmt.Errorf("trackers: BHD api error: %s", message)
+		return api.UploadSummary{}, submission.NewError(submission.Rejected, fmt.Errorf("trackers: BHD api error: %s", message))
 	case 1, 2:
 		// Draft and live uploads both authorize retention for client injection.
 	default:
-		return api.UploadSummary{}, fmt.Errorf("trackers: BHD unsupported upload status code %d", response.StatusCode)
+		return api.UploadSummary{}, fmt.Errorf("trackers: BHD unsupported upload status code %d", *response.StatusCode)
 	}
 
 	var torrentID, torrentURL, downloadURL string
-	if response.StatusCode == 2 {
+	if *response.StatusCode == 2 {
 		torrentID = extractTorrentID(response.StatusMessage)
-		if torrentID == "" {
-			return api.UploadSummary{}, errors.New("trackers: BHD upload succeeded but torrent id was not returned")
+		if torrentID != "" {
+			torrentURL = strings.TrimRight(bhdBaseURL, "/") + "/details/" + torrentID
+			downloadURL = strings.TrimRight(bhdBaseURL, "/") + "/torrent/download/" + torrentID
 		}
-		torrentURL = strings.TrimRight(bhdBaseURL, "/") + "/details/" + torrentID
-		downloadURL = strings.TrimRight(bhdBaseURL, "/") + "/torrent/download/" + torrentID
 	}
 
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
@@ -127,7 +130,7 @@ func submitPreparedUpload(
 
 	return api.UploadSummary{
 		Uploaded:           1,
-		PendingPublication: response.StatusCode == 1,
+		PendingPublication: *response.StatusCode == 1,
 		UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "BHD",
 			TorrentID:   torrentID,
@@ -259,7 +262,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 func sendPreparedUpload(ctx context.Context, endpoint string, body []byte, contentType string) (uploadResponse, []byte, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return uploadResponse{}, nil, fmt.Errorf("trackers: BHD request build: %w", err)
+		return uploadResponse{}, nil, submission.NewError(submission.NotSent, fmt.Errorf("trackers: BHD request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -274,14 +277,16 @@ func sendPreparedUpload(ctx context.Context, endpoint string, body []byte, conte
 	if err != nil {
 		return uploadResponse{}, nil, fmt.Errorf("trackers: BHD read response: %w", err)
 	}
+	decoded := uploadResponse{}
+	decodeErr := json.Unmarshal(responseBody, &decoded)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if decodeErr == nil && decoded.StatusCode != nil && *decoded.StatusCode == 0 {
+			return decoded, responseBody, nil
+		}
 		return uploadResponse{}, responseBody, commonhttp.UploadHTTPError("BHD", resp.StatusCode, responseBody)
 	}
-	decoded := uploadResponse{}
-	if len(responseBody) > 0 {
-		if err := json.Unmarshal(responseBody, &decoded); err != nil {
-			return uploadResponse{}, responseBody, fmt.Errorf("trackers: BHD decode response: %w", err)
-		}
+	if decodeErr != nil {
+		return uploadResponse{}, responseBody, fmt.Errorf("trackers: BHD decode response: %w", decodeErr)
 	}
 	return decoded, responseBody, nil
 }
@@ -298,7 +303,7 @@ func readUploadResponseBody(r io.Reader) ([]byte, error) {
 }
 
 type uploadResponse struct {
-	StatusCode    int    `json:"status_code"`
+	StatusCode    *int   `json:"status_code"`
 	StatusMessage string `json:"status_message"`
 }
 

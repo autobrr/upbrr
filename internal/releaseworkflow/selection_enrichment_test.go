@@ -58,12 +58,12 @@ func TestContinueRefreshesPreparationForChangedSelectedMetadataDemand(t *testing
 		TrackerIDs:       []api.TrackerID{"ALPHA"},
 	})
 
-	current = continueForSelectionEnrichment(t, module, current, []api.TrackerID{"ALPHA"})
+	current = continueForSelectionEnrichment(t, module, current, []api.TrackerID{"ALPHA"}, false)
 	if prepareCalls.Load() != 1 || current.InputReadiness == nil {
 		t.Fatalf("no-demand selection = prepares %d, readiness %#v", prepareCalls.Load(), current.InputReadiness)
 	}
 
-	current = continueForSelectionEnrichment(t, module, current, []api.TrackerID{"BETA"})
+	current = continueForSelectionEnrichment(t, module, current, []api.TrackerID{"BETA"}, true)
 	if prepareCalls.Load() != 2 || freshPrepareCalls.Load() != 1 || current.Release == nil || current.InputReadiness != nil {
 		t.Fatalf("demand refresh = prepares %d fresh=%d, release %#v, readiness %#v", prepareCalls.Load(), freshPrepareCalls.Load(), current.Release, current.InputReadiness)
 	}
@@ -78,20 +78,67 @@ func TestContinueRefreshesPreparationForChangedSelectedMetadataDemand(t *testing
 		t.Fatalf("selection-demand refresh requested external freshness %#v", refreshedInput.ExternalFreshness)
 	}
 
-	current = continueForSelectionEnrichment(t, module, current, []api.TrackerID{"BETA"})
+	current = continueForSelectionEnrichment(t, module, current, []api.TrackerID{"BETA"}, false)
 	if prepareCalls.Load() != 2 || current.InputReadiness == nil {
 		t.Fatalf("refreshed readiness = prepares %d, readiness %#v", prepareCalls.Load(), current.InputReadiness)
 	}
 
-	current = continueForSelectionEnrichment(t, module, current, []api.TrackerID{"GAMMA"})
+	current = continueForSelectionEnrichment(t, module, current, []api.TrackerID{"GAMMA"}, false)
 	if prepareCalls.Load() != 2 || current.InputReadiness == nil ||
 		len(current.InputReadiness.SelectedTrackerIDs) != 1 || current.InputReadiness.SelectedTrackerIDs[0] != "GAMMA" {
 		t.Fatalf("same demand union = prepares %d, readiness %#v", prepareCalls.Load(), current.InputReadiness)
 	}
-	current = continueForSelectionEnrichment(t, module, current, nil)
+	current = continueForSelectionEnrichment(t, module, current, nil, false)
 	if prepareCalls.Load() != 2 || current.InputReadiness == nil ||
 		len(current.InputReadiness.SelectedTrackerIDs) != 1 || current.InputReadiness.SelectedTrackerIDs[0] != "GAMMA" {
 		t.Fatalf("omitted accepted scope = prepares %d, readiness %#v", prepareCalls.Load(), current.InputReadiness)
+	}
+}
+
+func TestCandidateContinuationIdentifiesReadinessForChangedTrackerSelection(t *testing.T) {
+	preparer := testPreparer()
+	prepare := preparer.PrepareFunc
+	var prepares atomic.Int32
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		if !input.RequirePrepared {
+			prepares.Add(1)
+		}
+		return prepare(ctx, input)
+	}
+	module, _ := newTestModule(t, preparer, WithClock(&selectionEnrichmentClock{}), WithInputReadinessEvaluator(selectionDemandEvaluator{}))
+	input := api.PrepareInput{
+		SourcePath: "Example.Release.2026",
+		Force:      true,
+		Controls:   api.PreparationControls{BlurayDetails: &api.BlurayDetailRequest{ReleaseID: "101"}},
+	}
+	current := executeCommand(t, module, CreateWorkflowCommand{})
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            input,
+		TrackerIDs:       []api.TrackerID{"ALPHA"},
+	})
+	current = executeCommand(t, module, EvaluateInputReadinessCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA"},
+	})
+	accepted, err := module.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		Authority:      &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision},
+		IdempotencyKey: "candidate-new-trackers",
+		Goal:           api.WorkflowGoalInputReady,
+		Intent:         api.WorkflowIntent{Preparation: &input, TrackerIDs: []api.TrackerID{"DELTA"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Operation == nil || accepted.Operation.Command != "evaluate_input_readiness" || accepted.PreparationOperationID != accepted.Operation.ID {
+		t.Fatal("candidate continuation lost its accepted readiness operation")
+	}
+	waitForWorkflowOperation(t, module, accepted.Workflow.ID, accepted.Operation.ID, func(status api.WorkflowOperationStatus) bool { return isTerminalProgressStatus(status.Status) })
+	finished, err := module.Current(t.Context(), testOwnerID, accepted.Workflow.ID)
+	if err != nil || prepares.Load() != 1 || finished.InputReadiness == nil || len(finished.InputReadiness.SelectedTrackerIDs) != 1 || finished.InputReadiness.SelectedTrackerIDs[0] != "DELTA" {
+		t.Fatal("tracker selection was not evaluated against the retained preparation")
 	}
 }
 
@@ -100,6 +147,7 @@ func continueForSelectionEnrichment(
 	module *Module,
 	current CommandResult,
 	trackerIDs []api.TrackerID,
+	wantPreparation bool,
 ) CommandResult {
 	t.Helper()
 	updated, err := module.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
@@ -115,6 +163,9 @@ func continueForSelectionEnrichment(
 	})
 	if err != nil {
 		t.Fatalf("continue selected trackers %v: %v", trackerIDs, err)
+	}
+	if wantPreparation && (updated.Operation == nil || updated.PreparationOperationID == "" || updated.PreparationOperationID != updated.Operation.ID) {
+		t.Fatal("selection refresh did not identify its accepted preparation")
 	}
 	if updated.Operation != nil && !isTerminalProgressStatus(updated.Operation.Status) {
 		waitForWorkflowOperation(t, module, updated.Workflow.ID, updated.Operation.ID, func(status api.WorkflowOperationStatus) bool {

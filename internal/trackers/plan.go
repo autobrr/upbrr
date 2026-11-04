@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -357,26 +358,29 @@ func (p TrackerPlan) DryRun() api.TrackerDryRunEntry { return cloneTrackerDryRun
 // error.
 func (p TrackerPlan) Submit(ctx context.Context) (api.UploadSummary, error) {
 	if err := p.liveTest.RejectMutation(api.OperationKindUploadExecute); err != nil {
-		return api.UploadSummary{}, fmt.Errorf("live-test tracker submission: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("live-test tracker submission: %w", err))
 	}
 	if p.state == nil || p.intent != PreparationIntentUpload {
-		return api.UploadSummary{}, ErrPlanNotSubmittable
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, ErrPlanNotSubmittable)
 	}
 	p.state.mu.Lock()
 	switch {
 	case p.state.released:
 		p.state.mu.Unlock()
-		return api.UploadSummary{}, ErrPlanReleased
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, ErrPlanReleased)
 	case p.state.used:
 		p.state.mu.Unlock()
-		return api.UploadSummary{}, ErrPlanAlreadyUsed
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, ErrPlanAlreadyUsed)
 	case p.state.submit == nil:
 		p.state.mu.Unlock()
-		return api.UploadSummary{}, ErrPlanNotSubmittable
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, ErrPlanNotSubmittable)
 	}
 	p.state.used = true
 	submit := p.state.submit
 	p.state.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, err)
+	}
 	return submit(ctx)
 }
 

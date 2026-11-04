@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -389,7 +390,7 @@ func resolveTrackerTorrentPath(meta api.UploadSubject, dbPath string, tracker st
 func postForm(ctx context.Context, client *http.Client, endpoint string, data url.Values, headers map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(data.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("trackers: form post request build: %w", err)
+		return nil, submission.NewError(submission.NotSent, fmt.Errorf("trackers: form post request build: %w", err))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	for key, value := range headers {

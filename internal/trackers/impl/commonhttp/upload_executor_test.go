@@ -18,6 +18,46 @@ func (roundTrip uploadRoundTripper) RoundTrip(req *http.Request) (*http.Response
 	return roundTrip(req)
 }
 
+func TestExecuteUploadRetainsProtocolEvidence(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		status   int
+		body     io.ReadCloser
+		complete bool
+	}{
+		{"structured rejection", 400, io.NopCloser(strings.NewReader(`{"success":false,"message":"api_key=synthetic-secret"}`)), true},
+		{"accepted redirect with incomplete body", 302, &partialErrorReadCloser{payload: []byte("partial"), err: io.ErrUnexpectedEOF}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &http.Client{Transport: uploadRoundTripper(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: test.status,
+					Header:     http.Header{"Location": []string{"/details.php?id=123"}},
+					Body:       test.body,
+					Request:    req,
+				}, nil
+			})}
+			client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://tracker.invalid/upload", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := ExecuteUpload(client, req, UploadExecutionOptions{Tracker: "EXAMPLE", SuccessStatus: func(status int) bool { return status == 302 }})
+			if result.StatusCode != test.status || result.Header.Get("Location") != "/details.php?id=123" || result.BodyComplete != test.complete {
+				t.Fatalf("status=%d location=%q complete=%v error=%v", result.StatusCode, result.Header.Get("Location"), result.BodyComplete, err)
+			}
+			if test.complete {
+				if err != nil || !strings.Contains(string(result.ProtocolBody), `"success":false`) || strings.Contains(string(result.Body), "synthetic-secret") || strings.Contains(string(result.Preview), "synthetic-secret") {
+					t.Fatalf("protocol/diagnostic separation failed: error=%v", err)
+				}
+			} else if !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("read error=%v", err)
+			}
+		})
+	}
+}
+
 func TestExecuteUploadBoundsAndRedactsFailure(t *testing.T) {
 	t.Parallel()
 

@@ -2527,7 +2527,7 @@ func TestUploadBestEffortWithFailuresAndRepoReturnsError(t *testing.T) {
 	}
 	for tracker, wantStatus := range map[string]string{
 		"BLU":    "uploaded",
-		"BHD":    "failed",
+		"BHD":    "unknown_outcome",
 		"AITHER": "uploaded",
 	} {
 		if finalStatus[tracker] != wantStatus {
