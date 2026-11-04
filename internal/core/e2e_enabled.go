@@ -2108,10 +2108,14 @@ func (s e2eScreenshotService) Delete(ctx context.Context, subject api.Screenshot
 	if pathutil.SamePath(target, root) || !pathutil.IsWithinRoot(root, target) {
 		return errors.New("e2e screenshots: delete target is outside managed root")
 	}
+	// Retain deletion across restarts, but roll it back if removal fails.
 	if err := os.WriteFile(target+".deleted", nil, 0o600); err != nil {
 		return fmt.Errorf("e2e screenshots: retain fixture deletion: %w", err)
 	}
 	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if markerErr := os.Remove(target + ".deleted"); markerErr != nil && !errors.Is(markerErr, os.ErrNotExist) {
+			return fmt.Errorf("e2e screenshots: delete managed image: %w; clear fixture deletion marker: %w", err, markerErr)
+		}
 		return fmt.Errorf("e2e screenshots: delete managed image: %w", err)
 	}
 	return nil

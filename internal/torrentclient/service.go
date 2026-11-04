@@ -464,9 +464,14 @@ func (s *Service) injectQbit(
 		if err != nil {
 			return err
 		}
-		// Local staging must not consume the add/readback HTTP deadline.
+		// Local staging must not consume the add/readback HTTP deadline or session.
 		qbitCtx, cancel = context.WithTimeout(ctx, qbitInjectHTTPTimeout)
 		defer cancel()
+		if !client.UsesQuiProxy() {
+			if err := qbit.LoginCtx(qbitCtx); err != nil {
+				return fmt.Errorf("clients: %s qbit login: %w", name, err)
+			}
+		}
 	}
 
 	options := qbittorrent.TorrentAddOptions{}

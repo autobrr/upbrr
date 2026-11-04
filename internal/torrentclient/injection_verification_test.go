@@ -52,7 +52,7 @@ func TestVerifiedQbitInjectionRejectsUnverifiableArtifactBeforeClientIO(t *testi
 
 func TestVerifiedQbitInjectionStagesOnlyForAnAdd(t *testing.T) {
 	t.Parallel()
-	for _, outcome := range []string{"already installed", "fresh add", "unconfirmed add"} {
+	for _, outcome := range []string{"already installed", "fresh add", "unconfirmed add", "expired session", "refresh login failed"} {
 		t.Run(outcome, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -67,9 +67,22 @@ func TestVerifiedQbitInjectionStagesOnlyForAnAdd(t *testing.T) {
 				t.Fatal(err)
 			}
 			var adds atomic.Int32
+			var logins atomic.Int32
+			var sessionFresh atomic.Bool
+			var addSavePath atomic.Value
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v2/auth/login":
+					if logins.Add(1) > 1 && outcome == "refresh login failed" {
+						_, _ = w.Write([]byte("Fails."))
+						return
+					}
+					sessionFresh.Store(true)
+					http.SetCookie(w, &http.Cookie{
+						Name:  "SID",
+						Value: "fixture-session",
+						Path:  "/",
+					})
 					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/torrents/info":
 					switch {
@@ -78,9 +91,21 @@ func TestVerifiedQbitInjectionStagesOnlyForAnAdd(t *testing.T) {
 					case adds.Load() > 0 || outcome == "already installed":
 						_ = json.NewEncoder(w).Encode([]map[string]string{{"hash": meta.HashInfoBytes().HexString()}})
 					default:
+						sessionFresh.Store(false)
 						_, _ = w.Write([]byte("[]"))
 					}
 				case "/api/v2/torrents/add":
+					if (outcome == "expired session" || outcome == "refresh login failed") && !sessionFresh.Load() {
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					if err := r.ParseMultipartForm(1 << 20); err != nil {
+						t.Errorf("parse add form: %v", err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					defer func() { _ = r.MultipartForm.RemoveAll() }()
+					addSavePath.Store(r.FormValue("savepath"))
 					adds.Add(1)
 					_, _ = w.Write([]byte("Ok."))
 				default:
@@ -100,6 +125,8 @@ func TestVerifiedQbitInjectionStagesOnlyForAnAdd(t *testing.T) {
 				TorrentClients: map[string]config.TorrentClientConfig{"qbit": {
 					Type:         "qbit",
 					URL:          server.URL,
+					Username:     "fixture",
+					Password:     "fixture-password",
 					Linking:      "hardlink",
 					LinkedFolder: config.StringList{linkRoot},
 				}},
@@ -110,21 +137,40 @@ func TestVerifiedQbitInjectionStagesOnlyForAnAdd(t *testing.T) {
 					Tracker:         "ALPHA",
 					VerifyInjection: true,
 				})
-			if outcome == "unconfirmed add" {
+			switch {
+			case outcome == "unconfirmed add":
 				if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
 					t.Fatalf("unconfirmed injection = %v", err)
 				}
-			} else if err != nil {
+			case outcome == "refresh login failed":
+				if err == nil || errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+					t.Fatalf("refresh login failure = %v", err)
+				}
+			case err != nil:
 				t.Fatal(err)
 			}
 			linked := filepath.Join(linkRoot, "alpha", filepath.Base(source))
 			_, statErr := os.Stat(linked)
-			if outcome == "already installed" {
+			switch outcome {
+			case "already installed":
 				if adds.Load() != 0 || !errors.Is(statErr, os.ErrNotExist) {
 					t.Fatalf("installed reuse created staging or sent an add: adds=%d staging=%v", adds.Load(), statErr)
 				}
-			} else if adds.Load() != 1 || statErr != nil {
-				t.Fatalf("new add lost staging: adds=%d staging=%v", adds.Load(), statErr)
+			case "refresh login failed":
+				if adds.Load() != 0 || statErr != nil || logins.Load() != 2 {
+					t.Fatalf("failed refresh changed staging or sent an add: logins=%d adds=%d staging=%v", logins.Load(), adds.Load(), statErr)
+				}
+			default:
+				if adds.Load() != 1 || statErr != nil {
+					t.Fatalf("new add lost staging: adds=%d staging=%v", adds.Load(), statErr)
+				}
+			}
+			if outcome == "fresh add" || outcome == "expired session" {
+				gotSavePath, _ := addSavePath.Load().(string)
+				wantSavePath := filepath.ToSlash(filepath.Join(linkRoot, "alpha")) + "/"
+				if gotSavePath != wantSavePath {
+					t.Fatalf("fresh add savepath = %q, want %q", gotSavePath, wantSavePath)
+				}
 			}
 			if payload, err := os.ReadFile(retained); err != nil || string(payload) != "existing data" {
 				t.Fatalf("existing client data changed: %v", err)
