@@ -241,7 +241,10 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	meta.HDR = hdrFactsDisplay(meta.HDRFacts)
 	logger.Tracef("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
 
-	meta = s.applyBlurayMetadata(ctx, meta, bdinfo)
+	meta, err = s.applyBlurayMetadata(ctx, meta, bdinfo)
+	if err != nil {
+		return preparationstate.State{}, err
+	}
 	if err := ctx.Err(); err != nil {
 		return preparationstate.State{}, fmt.Errorf("metadata: blu-ray provider refresh canceled: %w", err)
 	}

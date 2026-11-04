@@ -34,6 +34,7 @@ type schema struct {
 	Ref                  string             `json:"$ref,omitempty"`
 	Type                 string             `json:"type,omitempty"`
 	Format               string             `json:"format,omitempty"`
+	Pattern              string             `json:"pattern,omitempty"`
 	Minimum              *int               `json:"minimum,omitempty"`
 	Maximum              *int               `json:"maximum,omitempty"`
 	Description          string             `json:"description,omitempty"`
@@ -1307,6 +1308,50 @@ func (b *schemaBuilder) ensureNamed(value reflect.Type) {
 func (b *schemaBuilder) definition(value reflect.Type) *schema {
 	if value == reflect.TypeFor[api.WorkflowPatch[string]]() {
 		return &schema{AnyOf: []*schema{{Type: "string"}, {Type: "null"}}}
+	}
+	// Use the same Unicode whitespace set as strings.TrimSpace at the runtime boundary.
+	const whitespace = "\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"
+	const blank = "^[" + whitespace + "]*$"
+	const nonblank = "[^" + whitespace + "]"
+	if value == reflect.TypeFor[api.BluraySelection]() {
+		return &schema{AnyOf: []*schema{
+			{
+				Type: "object",
+				Properties: map[string]*schema{
+					"Mode":    {Type: "string", Enum: []any{"manual"}},
+					"Release": {Type: "string", Pattern: nonblank},
+				},
+				Required: []string{"Mode", "Release"},
+			},
+			{
+				Type: "object",
+				Properties: map[string]*schema{
+					"Mode":    {Type: "string", Enum: []any{"skip", "auto"}},
+					"Release": {Type: "string", Pattern: blank},
+				},
+				Required: []string{"Mode"},
+			},
+		}}
+	}
+	if value == reflect.TypeFor[api.BlurayDetailRequest]() {
+		return &schema{AnyOf: []*schema{
+			{
+				Type: "object",
+				Properties: map[string]*schema{
+					"All":       {Type: "boolean", Enum: []any{true}},
+					"ReleaseID": {Type: "string", Pattern: blank},
+				},
+				Required: []string{"All"},
+			},
+			{
+				Type: "object",
+				Properties: map[string]*schema{
+					"All":       {Type: "boolean", Enum: []any{false}},
+					"ReleaseID": {Type: "string", Pattern: nonblank},
+				},
+				Required: []string{"ReleaseID"},
+			},
+		}}
 	}
 	if value == reflect.TypeFor[api.AudioAnalysisResourceLimits]() {
 		result := &schema{Type: "object", Properties: map[string]*schema{}}

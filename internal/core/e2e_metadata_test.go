@@ -13,6 +13,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
@@ -55,6 +56,26 @@ func TestE2EArtifactsUseReleaseOwner(t *testing.T) {
 	}
 	if _, err := os.Stat(shot.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("screenshot was not deleted: %v", err)
+	}
+	t.Setenv(e2eEnabledEnv, "1")
+	t.Setenv(e2eShotPathEnv, shotPath)
+	t.Setenv("UPBRR_E2E_SAVED_DESCRIPTION_IMAGE", "1")
+	services := api.ServiceSet{}
+	if err := maybeApplyE2EServices(t.Context(), &services,
+		config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(state, "db.sqlite")}},
+		api.RepositoryCapabilities{}, nil, api.NopLogger{}); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := services.Screenshots.Plan(t.Context(), subject, 1)
+	if err != nil || len(plan.FinalSelections) != 1 || len(plan.TrackerImageLinks) != 1 {
+		t.Fatalf("saved-image fixture plan = %#v err=%v", plan, err)
+	}
+	if err := services.Screenshots.Delete(t.Context(), subject, plan.FinalSelections[0].Path); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = services.Screenshots.Plan(t.Context(), subject, 1)
+	if err != nil || len(plan.FinalSelections) != 0 || len(plan.TrackerImageLinks) != 0 {
+		t.Fatalf("planning recreated a deleted saved image: plan=%#v err=%v", plan, err)
 	}
 }
 

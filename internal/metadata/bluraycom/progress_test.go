@@ -77,6 +77,7 @@ func TestLookupProgressDiscoveryWaitingPartialAndRetainedPages(t *testing.T) {
 			ctx, scope := evidence.WithScope(observed, store, source, "fingerprint", api.ExternalFreshnessReuse, nil)
 			ctx, finish := progress.StartStage(ctx, api.PreparationPhaseMediaFacts)
 			result, err := client.Lookup(ctx, LookupInput{
+				Details:    &api.BlurayDetailRequest{All: true},
 				IMDBID:     1234567,
 				DiscType:   "BDMV",
 				Resolution: "1080p",
@@ -85,7 +86,7 @@ func TestLookupProgressDiscoveryWaitingPartialAndRetainedPages(t *testing.T) {
 			if err != nil || scope.Err() != nil {
 				t.Fatalf("lookup: %v %v", err, scope.Err())
 			}
-			if len(result.Candidates) != 100 || len(result.Candidates[6].Warnings) == 0 {
+			if len(result.Candidates) != 100 || result.Candidates[len(result.Candidates)-1].DetailsStatus != "failed" {
 				t.Fatalf("partial candidates = %#v", result)
 			}
 			if pass == 0 {
@@ -99,18 +100,17 @@ func TestLookupProgressDiscoveryWaitingPartialAndRetainedPages(t *testing.T) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		unknown, known, waiting, reused, partial := false, false, false, false, false
+		known, waiting, reused, partial := false, false, false, false
 		for _, u := range updates {
 			if u.Substep == "Read Blu-ray.com release details" {
-				unknown = unknown || (u.CompletedItems > 0 && u.TotalItems == 0)
 				known = known || (u.CompletedItems == 100 && u.TotalItems == 100)
 				waiting = waiting || (u.CompletedItems == 5 && u.ElapsedSeconds >= 5)
 			}
 			reused = reused || strings.Contains(u.Message, "retained")
-			partial = partial || strings.Contains(u.Message, "Partial:")
+			partial = partial || strings.Contains(u.Message, "1 unavailable") || strings.Contains(u.Message, "1 editions unavailable")
 		}
-		if !unknown || !known || !waiting || !reused || !partial {
-			t.Fatalf("unknown=%v known=%v waiting=%v retained=%v partial=%v", unknown, known, waiting, reused, partial)
+		if !known || !waiting || !reused || !partial {
+			t.Fatalf("known=%v waiting=%v retained=%v partial=%v", known, waiting, reused, partial)
 		}
 	})
 }

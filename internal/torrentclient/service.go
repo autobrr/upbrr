@@ -123,6 +123,8 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 // injection. The first client error stops dispatch; prior watch-folder copies or
 // client adds are not rolled back, while staging created for the failed
 // qBittorrent add is removed when owned by that attempt.
+// VerifyInjection requires readback of the local artifact's infohash and announce
+// URLs. Uncertain adds retain staging and return ErrReleaseWorkflowEffectOutcomeUnknown.
 func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent api.TorrentResult) (err error) {
 	if err := s.liveTest.RejectMutation(api.OperationKindClientInjection); err != nil {
 		s.logger.Warnf("clients: injection state=blocked reason=live_test")
@@ -163,14 +165,8 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 		return nil
 	}
 
-	clientOverrides, trackerClientOverride := s.resolveInjectClientOverrides(meta.ClientOverrides, torrent.Tracker)
-	clients := resolveInjectClients(s.cfg, clientOverrides, trackerClientOverride)
-	// Tracker-scoped torrent_client is an effective client override; URL
-	// fallback is only for global/default selections that cannot consume URLs.
+	clientOverrides, clients := s.resolveInjectionDestinations(meta, torrent)
 	effectiveClientOverride := clientOverrides.Client != nil && strings.TrimSpace(*clientOverrides.Client) != ""
-	if torrentPath == "" && torrentURL != "" && !effectiveClientOverride {
-		clients = withURLCapableInjectFallback(clients, s.cfg.TorrentClients)
-	}
 	if len(clients) == 0 {
 		logger.Debugf("clients: no matching torrent clients selected, skipping injection")
 		return nil
@@ -184,6 +180,12 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 	sort.Strings(clientNames)
 
 	injected := false
+	defer func() {
+		if torrent.VerifyInjection && injected && err != nil {
+			// A later client failure cannot undo an earlier dispatch.
+			err = fmt.Errorf("clients: partial injection: %w: %w", api.ErrReleaseWorkflowEffectOutcomeUnknown, err)
+		}
+	}()
 	skippedURLOnlyClients := 0
 	for _, name := range clientNames {
 		client := applyClientOverrides(clients[name], clientOverrides)
@@ -227,6 +229,41 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 
 	logger.Debugf("clients: injection dispatch complete for %s", meta.SourcePath)
 	return nil
+}
+
+// InjectionDestinationFingerprint binds receipts to the same resolved clients
+// and effective configuration used by Inject, excluding disabled destinations.
+// Secret-bearing configuration is hashed in memory; only its digest is returned,
+// without client I/O.
+func (s *Service) InjectionDestinationFingerprint(meta api.ClientSubject, torrent api.TorrentResult) (api.WorkflowFingerprint, error) {
+	overrides, clients := s.resolveInjectionDestinations(meta, torrent)
+	for name, client := range clients {
+		clients[name] = applyClientOverrides(client, overrides)
+		switch strings.ToLower(strings.TrimSpace(clients[name].ClientType())) {
+		case "none", "disabled":
+			delete(clients, name)
+		}
+	}
+	if len(clients) == 0 {
+		return "", api.ErrNoClientInjectionDestination
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint(clients)
+	if err != nil {
+		return "", fmt.Errorf("clients: injection destination fingerprint: %w", err)
+	}
+	return fingerprint, nil
+}
+
+func (s *Service) resolveInjectionDestinations(meta api.ClientSubject, torrent api.TorrentResult) (api.ClientOverrides, map[string]config.TorrentClientConfig) {
+	overrides, trackerOverride := s.resolveInjectClientOverrides(meta.ClientOverrides, torrent.Tracker)
+	clients := resolveInjectClients(s.cfg, overrides, trackerOverride)
+	// Tracker-scoped torrent_client is an effective client override; URL
+	// fallback is only for global/default selections that cannot consume URLs.
+	explicit := overrides.Client != nil && strings.TrimSpace(*overrides.Client) != ""
+	if strings.TrimSpace(torrent.Path) == "" && strings.TrimSpace(torrent.URL) != "" && !explicit {
+		clients = withURLCapableInjectFallback(clients, s.cfg.TorrentClients)
+	}
+	return overrides, clients
 }
 
 func (s *Service) resolveInjectClientOverrides(overrides api.ClientOverrides, tracker string) (api.ClientOverrides, bool) {
@@ -352,6 +389,13 @@ func (s *Service) injectQbit(
 	torrent api.TorrentResult,
 ) (err error) {
 	defer func() { err = safeClientError(err, client.QbitHost()) }()
+	var verification *qbitInjectionArtifact
+	if torrent.VerifyInjection {
+		verification, err = loadQbitInjectionArtifact(torrent.Path)
+		if err != nil {
+			return err
+		}
+	}
 	logger := logging.FromContext(ctx, s.logger)
 	host := strings.TrimSpace(client.QbitHost())
 	if host == "" {
@@ -447,10 +491,21 @@ func (s *Service) injectQbit(
 	}
 
 	if torrentPath := strings.TrimSpace(torrent.Path); torrentPath != "" {
+		if verification != nil {
+			if installed, _ := verification.installed(qbitCtx, qbit); installed {
+				return nil
+			}
+		}
 		logger.Debugf("clients: adding torrent file to qbit client %s for %s", name, meta.SourcePath)
-		if _, err := qbit.AddTorrentFromFileCtx(qbitCtx, torrentPath, addOptions); err != nil {
+		_, addErr := qbit.AddTorrentFromFileCtx(qbitCtx, torrentPath, addOptions)
+		if verification != nil {
+			// Neither an HTTP success nor a duplicate-add failure proves which
+			// trackers the client retained. Never resubmit while verifying.
+			return verification.waitInstalled(qbitCtx, qbit)
+		}
+		if addErr != nil {
 			s.cleanupFailedLinkStaging(ctx, name, torrent.Tracker, staging)
-			return fmt.Errorf("clients: %s qbit add torrent file: %w", name, err)
+			return fmt.Errorf("clients: %s qbit add torrent file: %w", name, addErr)
 		}
 
 		logger.Debugf(

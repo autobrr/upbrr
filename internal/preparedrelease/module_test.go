@@ -281,30 +281,39 @@ func TestInvalidateDropsOnlyPublishedPreparedGeneration(t *testing.T) {
 	}
 }
 
-func TestExplicitHDRCheckBypassesCompatiblePreparedCacheOnce(t *testing.T) {
-	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
-	collector := &recordingCollector{}
-	module := newTestModule(t, newMemoryStore(), collector)
-	input := api.PrepareInput{SourcePath: path}
-	first, err := module.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input.Controls.CaptureHDRMetadata = true
-	checked, err := module.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if checked.Release.Generation <= first.Release.Generation || collector.callCount() != 2 {
-		t.Fatalf("explicit check reused generation: generation=%d calls=%d", checked.Release.Generation, collector.callCount())
-	}
-	input.Controls.CaptureHDRMetadata = false
-	reused, err := module.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reused.Release.Generation != checked.Release.Generation || collector.callCount() != 2 {
-		t.Fatalf("consumed check was replayed: generation=%d calls=%d", reused.Release.Generation, collector.callCount())
+func TestExplicitInspectionBypassesCompatiblePreparedCacheOnce(t *testing.T) {
+	for _, blurayDetails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bluray details %t", blurayDetails), func(t *testing.T) {
+			path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+			collector := &recordingCollector{}
+			module := newTestModule(t, newMemoryStore(), collector)
+			input := api.PrepareInput{SourcePath: path}
+			first, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if blurayDetails {
+				input.Controls.BlurayDetails = &api.BlurayDetailRequest{All: true}
+			} else {
+				input.Controls.CaptureHDRMetadata = true
+			}
+			checked, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if checked.Release.Generation <= first.Release.Generation || collector.callCount() != 2 {
+				t.Fatalf("explicit check reused generation: generation=%d calls=%d", checked.Release.Generation, collector.callCount())
+			}
+			input.Controls.CaptureHDRMetadata = false
+			input.Controls.BlurayDetails = nil
+			reused, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reused.Release.Generation != checked.Release.Generation || collector.callCount() != 2 {
+				t.Fatalf("consumed check was replayed: generation=%d calls=%d", reused.Release.Generation, collector.callCount())
+			}
+		})
 	}
 }
 
@@ -606,7 +615,8 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	store := newMemoryStore()
 	initialCollector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("initial-hash"))
 	initial := newTestModule(t, store, initialCollector)
-	prepared, err := initial.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	input := api.PrepareInput{SourcePath: path, Policy: api.PreparationPolicy{KeepImages: true}}
+	prepared, err := initial.Prepare(context.Background(), input)
 	if err != nil {
 		t.Fatalf("initial prepare: %v", err)
 	}
@@ -620,7 +630,7 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	hydrated.Result.TorrentCandidates = []api.ClientTorrentCandidate{candidate}
 	restartedCollector := newClientEvidenceTestCollector(hydrated)
 	restarted := newTestModule(t, store, restartedCollector)
-	reused, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	reused, err := restarted.Prepare(context.Background(), input)
 	if err != nil {
 		t.Fatalf("restart reuse: %v", err)
 	}
@@ -634,7 +644,7 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 			restartedCollector.hydrateCount(),
 		)
 	}
-	if _, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path}); err != nil {
+	if _, err := restarted.Prepare(context.Background(), input); err != nil {
 		t.Fatalf("second restart reuse: %v", err)
 	}
 	if restartedCollector.hydrateCount() != 1 {
@@ -668,6 +678,20 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	}
 	if screenshot.MediaInfoJSONPath != path {
 		t.Fatalf("hydrated screenshot MediaInfo path = %q, want %q", screenshot.MediaInfoJSONPath, path)
+	}
+	if !screenshot.KeepImages {
+		t.Fatal("persisted collection policy was lost from screenshot planning")
+	}
+	input.Policy.KeepImages = false
+	withoutImages, err := restarted.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutImageSubject, err := restarted.ResolveScreenshotSubject(t.Context(), api.MediaPlanInput{
+		Release: api.ReleaseRef{SourcePath: path, Generation: withoutImages.Release.Generation},
+	})
+	if err != nil || withoutImageSubject.KeepImages {
+		t.Fatalf("disabled collection policy remained enabled: keepImages=%t err=%v", withoutImageSubject.KeepImages, err)
 	}
 }
 

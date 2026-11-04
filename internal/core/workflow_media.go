@@ -102,13 +102,14 @@ func (b workflowMediaBuilder) Plan(
 		})
 	}
 	return api.MediaPlan{
-		DurationSeconds:     plan.DurationSeconds,
-		FrameRate:           plan.FrameRate,
-		DiscType:            plan.DiscType,
-		SuggestedSelections: append([]api.ScreenshotSelection(nil), plan.SuggestedSelections...),
-		Discs:               discs,
-		Requirements:        requirements,
-		SavedTrackerImages:  mediaPlanSavedImages(plan),
+		DurationSeconds:      plan.DurationSeconds,
+		FrameRate:            plan.FrameRate,
+		DiscType:             plan.DiscType,
+		SuggestedSelections:  append([]api.ScreenshotSelection(nil), plan.SuggestedSelections...),
+		Discs:                discs,
+		Requirements:         requirements,
+		AutoAdoptSavedImages: subject.KeepImages,
+		SavedTrackerImages:   mediaPlanSavedImages(plan),
 	}, nil
 }
 
@@ -241,6 +242,8 @@ func (a workflowMediaPrivateArtifacts) OpenArtifact(
 	}, nil
 }
 
+// DeleteArtifacts stages managed local cleanup and drops the deleted sources'
+// hosted references from a cloned resource. Commit finalizes local deletion.
 func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 	ctx context.Context,
 	snapshot api.MediaArtifactSet,
@@ -307,6 +310,12 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		case api.MediaArtifactDVDMenu:
 			result.DVDMenus = append(result.DVDMenus, dvdMenu)
 		case api.MediaArtifactHostedImage:
+		}
+	}
+	for hostedID, sourceID := range result.HostedSources {
+		if _, remove := deleted[sourceID]; remove {
+			delete(result.HostedImages, hostedID)
+			delete(result.HostedSources, hostedID)
 		}
 	}
 	result.commitState = &workflowMediaCommitState{pending: pending}
@@ -577,7 +586,7 @@ func (b workflowMediaBuilder) Build(
 			Label:   "Screenshots",
 			Status:  api.StageStatusRunning,
 			Total:   screenshotCount,
-			Message: "Capturing screenshots.",
+			Message: "Preparing screenshot images.",
 		})
 		if b.screenshots == nil {
 			return failedMediaSnapshot(snapshot, "Screenshot capture service is unavailable."), privateArtifacts, nil
@@ -608,17 +617,22 @@ func (b workflowMediaBuilder) Build(
 		}
 		importedScreenshots := importedTrackerScreenshots(plan)
 		if instructions.SavedImagePlanID != "" {
-			reviewedSubject, planErr := b.resolver.ResolveScreenshotSubject(ctx, api.MediaPlanInput{
-				Release: release,
-				Count:   projectedScreenshots,
-				Purpose: api.ScreenshotPurposeFinal,
-			})
-			if planErr != nil {
-				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media resolve saved image plan subject: %w", planErr)
-			}
-			reviewedPlan, planErr := b.screenshots.Plan(ctx, reviewedSubject, projectedScreenshots)
-			if planErr != nil {
-				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media saved image plan: %w", planErr)
+			// The current capture plan also validates the saved plan unless capture
+			// overrides changed its inputs. Keep review independent of those overrides.
+			reviewedPlan := plan
+			if screenshotCount != projectedScreenshots || purpose != api.ScreenshotPurposeFinal || len(instructions.ManualFrames) > 0 {
+				reviewedSubject, planErr := b.resolver.ResolveScreenshotSubject(ctx, api.MediaPlanInput{
+					Release: release,
+					Count:   projectedScreenshots,
+					Purpose: api.ScreenshotPurposeFinal,
+				})
+				if planErr != nil {
+					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media resolve saved image plan subject: %w", planErr)
+				}
+				reviewedPlan, err = b.screenshots.Plan(ctx, reviewedSubject, projectedScreenshots)
+				if err != nil {
+					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media saved image plan: %w", err)
+				}
 			}
 			currentPlanID, planErr := api.MediaPlanContentID(release, projections, reviewedPlan.SuggestedSelections, mediaPlanSavedImages(reviewedPlan))
 			if planErr != nil {
@@ -632,7 +646,9 @@ func (b workflowMediaBuilder) Build(
 		if len(importedScreenshots) > 0 {
 			snapshot.SavedImagePlanID = instructions.SavedImagePlanID
 		}
-		if len(selections) == 0 {
+		importOnly := instructions.SavedImagePlanID != "" && instructions.ScreenshotCount == 0 &&
+			len(instructions.Selections) == 0 && len(instructions.ManualFrames) == 0
+		if len(selections) == 0 && !importOnly {
 			selections = append(selections, plan.SuggestedSelections...)
 			existingScreenshots = append(existingScreenshots, plan.ExistingScreenshots...)
 			if len(importedScreenshots) > 0 && len(instructions.ManualFrames) == 0 && (len(plan.Discs) <= 1 || len(importedScreenshots) >= screenshotCount) {
@@ -641,7 +657,7 @@ func (b workflowMediaBuilder) Build(
 					selections = selections[:missing]
 				}
 			}
-		} else {
+		} else if len(selections) > 0 {
 			var mergeErr error
 			selections, existingScreenshots, mergeErr = mergeManualSelectionsWithDiscPlan(selections, plan)
 			if mergeErr != nil {
@@ -659,6 +675,15 @@ func (b workflowMediaBuilder) Build(
 		}
 		capture := api.ScreenshotResult{Purpose: purpose}
 		if len(selections) > 0 {
+			api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+				Phase:   "screenshots",
+				ItemID:  "screenshots",
+				Kind:    "media",
+				Label:   "Screenshots",
+				Status:  api.StageStatusRunning,
+				Total:   len(selections),
+				Message: "Capturing screenshots.",
+			})
 			capture, err = b.screenshots.Capture(ctx, subject, selections, purpose)
 			if err != nil {
 				if ctx.Err() != nil {
@@ -694,6 +719,9 @@ func (b workflowMediaBuilder) Build(
 		privateArtifacts.Screenshots = append(privateArtifacts.Screenshots, images...)
 		captureStatus := api.StageStatusCompleted
 		captureMessage := "Screenshot capture complete."
+		if len(selections) == 0 {
+			captureMessage = "Existing screenshot images included."
+		}
 		if len(capture.Errors) > 0 {
 			captureStatus = api.StageStatusPartial
 			captureMessage = "Screenshot capture completed with partial coverage."
@@ -1113,7 +1141,7 @@ func (b workflowMediaBuilder) BuildIncremental(
 	for _, artifact := range combined.Artifacts {
 		known[artifact.ID] = struct{}{}
 		maxOrder = max(maxOrder, artifact.Order)
-		if artifact.Kind == api.MediaArtifactScreenshot && artifact.Selected {
+		if artifact.Kind == api.MediaArtifactScreenshot && (artifact.Selected || isImportedWorkflowScreenshot(artifact, retained)) {
 			if image, ok := retained.ArtifactImages[artifact.ID]; ok {
 				knownImportedPaths[strings.ToLower(normalizedUploadImagePath(image.Path))] = artifact.ID
 				if isImportedWorkflowScreenshot(artifact, retained) {
@@ -1260,7 +1288,7 @@ func matchingRestoredImportedScreenshot(
 	var fallbackID api.PublicResourceID
 	for _, requireSameURL := range []bool{true, false} {
 		for _, artifact := range artifacts {
-			if artifact.Kind != api.MediaArtifactScreenshot || !artifact.Selected || !isImportedWorkflowScreenshot(artifact, retained) {
+			if artifact.Kind != api.MediaArtifactScreenshot || !isImportedWorkflowScreenshot(artifact, retained) {
 				continue
 			}
 			if _, used := usedSources[artifact.ID]; used {
@@ -1456,23 +1484,23 @@ func (b workflowMediaBuilder) RestoreCompatible(
 			if scopeErr != nil || accountScope != link.AccountScope || hostedImageURL(link) == "" {
 				continue
 			}
-			if localAvailable {
-				link.ImagePath = image.Path
-			}
+			// Retain the association key for removal even when the local image is unavailable.
+			link.ImagePath = image.Path
 			link.SourcePath = binding.SourcePath
 			link.PreparedMediaFingerprint = binding.PreparedMediaFingerprint
 			link.PreparedGeneration = binding.PreparedGeneration
 			hostedID := restoredHostedArtifactID(snapshot.CaptureFingerprint, sourceID, linkIndex, link)
 			hosted := api.MediaArtifact{
-				ID:        hostedID,
-				Kind:      api.MediaArtifactHostedImage,
-				Purpose:   image.Purpose,
-				Selected:  asset.Selected,
-				Order:     asset.Order,
-				Source:    string(sourceID),
-				SizeBytes: link.SizeBytes,
-				Host:      strings.ToLower(strings.TrimSpace(link.Host)),
-				URL:       hostedImageURL(link),
+				ID:                hostedID,
+				Kind:              api.MediaArtifactHostedImage,
+				Purpose:           image.Purpose,
+				Selected:          asset.Selected,
+				Order:             asset.Order,
+				Source:            string(sourceID),
+				SourceUnavailable: !localAvailable,
+				SizeBytes:         link.SizeBytes,
+				Host:              strings.ToLower(strings.TrimSpace(link.Host)),
+				URL:               hostedImageURL(link),
 			}
 			snapshot.Artifacts = append(snapshot.Artifacts, hosted)
 			retained.HostedImages[hostedID] = link

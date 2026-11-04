@@ -129,14 +129,20 @@ func downloadImageWithReference(
 	if reason := imageevidence.ResolutionMismatch(imgConfig, expectedHeight, isDVD); reason != "" {
 		return reason, ""
 	}
+	if imageevidence.VerifiedFormatBytes(payload) == "" {
+		return "image_decode_failed", acceptedReference()
+	}
 	if err := os.WriteFile(outPath, payload, 0o600); err != nil {
 		return "image_write_failed", acceptedReference()
 	}
 	return "", ""
 }
 
-// trackerImageHasResolution checks cached image headers against current geometry policy.
+// trackerImageHasResolution verifies cached content and checks current geometry policy.
 func trackerImageHasResolution(path string, expectedHeight int, isDVD bool) bool {
+	if imageevidence.VerifiedFormat(path) == "" {
+		return false
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return false

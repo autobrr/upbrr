@@ -55,7 +55,7 @@ func (m *Module) withCommandRunLogLevel(ctx context.Context, ownerID string, sta
 		}
 	case GenerateDescriptionsCommand:
 		return m.withRunLogLevel(ctx, typed.Instructions.Options.RunLogLevel)
-	case DryRunUploadsCommand, ExecuteUploadsCommand, RetryFailedUploadsCommand, RetryClientInjectionsCommand:
+	case DryRunUploadsCommand, resolveTrackerPreparationCommand, ExecuteUploadsCommand, RetryFailedUploadsCommand, RetryClientInjectionsCommand:
 		if state.Workflow.Descriptions != nil {
 			value, err := m.private.Get(ownerID, state.Workflow.ID, descriptionPrivateResourceID(state.Workflow.Descriptions.ID), m.clock.Now().UTC())
 			if err == nil {

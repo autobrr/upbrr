@@ -26,7 +26,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v70-package-inventory-3d"
+const ContractVersion = "prepared-release-v71-bluray-listing-details"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -248,7 +248,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	reuseAllowed := layout.DiscType != "BDMV" || input.Instructions.Playlist.Set
 	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
 	if hasCurrent && reuseAllowed && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
-		!input.Controls.CaptureHDRMetadata &&
+		!input.Controls.CaptureHDRMetadata && input.Controls.BlurayDetails == nil &&
 		(input.ExternalFreshness != api.ExternalFreshnessLoad || input.RequirePrepared) &&
 		current.Compatibility == compatibility {
 		// Public prepared rows omit private byte-verification evidence. Restore

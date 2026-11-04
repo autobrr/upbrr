@@ -18,6 +18,7 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  BluraySelection,
   HDRAnalysisResult,
   HDRAnalysisInstructions,
   HDRComparisonSourceRef,
@@ -100,6 +101,7 @@ export type PlaylistStatus =
 
 export type PreparationIntent = Readonly<{
   sourceLookupURL: string;
+  bluray?: BluraySelection | null;
   identity: Readonly<ExternalIDOverrides>;
   metadata: Readonly<MetadataOverrides>;
   releaseName: Readonly<ReleaseNameOverrides>;
@@ -146,6 +148,8 @@ export type InputFacet = Readonly<{
       recoveryWorkflowIDs: readonly string[];
     }>;
     sourceVerification: SourceVerificationProgress | null;
+    /** True once a durable operation is available to cancel. */
+    candidateDetailsCancelable?: boolean;
     preparationDirty: boolean;
     correctionDirty: boolean;
     intent: PreparationIntent;
@@ -207,6 +211,12 @@ export type InputFacet = Readonly<{
   reset(): Promise<boolean>;
   confirmBDMVRescan(): Promise<boolean>;
   selectCandidate(releaseID: string): Promise<boolean>;
+  /** Inspects one release; omitting its ID explicitly inspects all eligible listings. */
+  fetchCandidateDetails(releaseID?: string): Promise<boolean>;
+  /** Cancels requested detail work through its durable workflow operation. */
+  cancelCandidateDetails(): Promise<boolean>;
+  /** Restores automatic matching or explicitly clears selection without a full inspection. */
+  setCandidateSelection(mode: "auto" | "skip"): Promise<boolean>;
 }>;
 
 /** Duplicate-check commands, naming review, and exact workflow-owned tracker outcomes. */

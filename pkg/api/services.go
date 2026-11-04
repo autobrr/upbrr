@@ -44,7 +44,16 @@ type TorrentService interface {
 	Create(ctx context.Context, subject TorrentSubject) (TorrentResult, error)
 }
 
+// ErrNoClientInjectionDestination reports that selection resolved no enabled
+// clients. Explicit dry runs must not retain a successful injection receipt.
+var ErrNoClientInjectionDestination = errors.New("api: no enabled client injection destination")
+
 type ClientService interface {
+	// InjectionDestinationFingerprint identifies the effective selected clients
+	// without performing client I/O. Only the digest may enter workflow receipts;
+	// resolved client configuration can contain credentials and private endpoints.
+	// ErrNoClientInjectionDestination distinguishes an empty or disabled selection.
+	InjectionDestinationFingerprint(subject ClientSubject, torrent TorrentResult) (WorkflowFingerprint, error)
 	Inject(ctx context.Context, subject ClientSubject, torrent TorrentResult) error
 	SearchPathedTorrents(ctx context.Context, subject ClientSubject) (ClientSearchResult, error)
 }
@@ -2303,15 +2312,17 @@ type BlurayReleaseCandidate struct {
 	Publisher   string
 	Country     string
 	// Region is the release-country code, distinct from Specs.Playback.Region (A/B/C).
-	Region       string
-	Score        float64
-	Accepted     bool
-	Warnings     []string
-	MatchNotes   []string
-	Specs        BluraySpecs
-	CoverImages  []BlurayImage
-	GenericDisc  bool
-	SpecsMissing bool
+	Region string
+	// DetailsStatus is empty until requested, then complete or failed.
+	DetailsStatus string
+	Score         float64
+	Accepted      bool
+	Warnings      []string
+	MatchNotes    []string
+	Specs         BluraySpecs
+	CoverImages   []BlurayImage
+	GenericDisc   bool
+	SpecsMissing  bool
 }
 
 type BluraySpecs struct {
@@ -2821,6 +2832,11 @@ type TorrentResult struct {
 	URL       string
 	Tracker   string
 	CrossSeed bool
+	// VerifyInjection requires proof that qBittorrent has the local artifact's
+	// infohash and required announce URLs instead of trusting its add response.
+	// URL-only qBittorrent adds cannot provide that proof. Workflow callers set
+	// this explicitly; false preserves legacy qBittorrent add behavior.
+	VerifyInjection bool
 	// PendingPublication owns an unpublished generated file, never a reused artifact.
 	PendingPublication TorrentPublication `json:"-"`
 	// RehashedTrackers lists selected trackers whose preparation required the

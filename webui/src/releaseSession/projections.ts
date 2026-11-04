@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { MetadataPreview, PrepareInput } from "../types";
+import type { BlurayReleaseCandidate, MetadataPreview, PrepareInput } from "../types";
 import type {
   DescriptionInstructions,
   Operation as WorkflowOperationStatus,
@@ -110,7 +110,7 @@ export const workflowFactInstructions = (
   ReleaseName: instructions.ReleaseName,
   Metadata: instructions.Metadata ?? {},
   SourceLookup: instructions.SourceLookup,
-  BlurayReleaseID: instructions.BlurayReleaseID ?? "",
+  Bluray: instructions.Bluray ?? null,
   Playlist: instructions.Playlist,
   TrackerIDs: instructions.TrackerIDs ?? {},
 });
@@ -132,6 +132,7 @@ export const workflowPrepareInput = (input: PrepareInput): WorkflowPrepareInput 
   Controls: {
     Interaction: input.Controls?.Interaction ?? "",
     CaptureHDRMetadata: input.Controls?.CaptureHDRMetadata ?? false,
+    ...(input.Controls?.BlurayDetails ? { BlurayDetails: input.Controls.BlurayDetails } : {}),
     ConfirmBDMVRescan: input.Controls?.ConfirmBDMVRescan ?? false,
     ...(input.Controls?.ForceRecheck !== undefined
       ? { ForceRecheck: input.Controls.ForceRecheck }
@@ -173,6 +174,7 @@ export const isFailedWorkflowOperation = (operation: WorkflowOperationStatus) =>
 
 export const cloneIntent = (intent: PreparationIntent): PreparationIntent => ({
   sourceLookupURL: intent.sourceLookupURL,
+  bluray: intent.bluray ? { ...intent.bluray } : null,
   identity: { ...intent.identity },
   metadata: {
     ...intent.metadata,
@@ -266,6 +268,7 @@ export const workflowPreparationIntent = (
   const corrections = current.corrections?.corrections;
   return {
     sourceLookupURL: instructions?.SourceLookup || "",
+    bluray: instructions?.Bluray ?? null,
     identity: manualCorrections(corrections?.identity || instructions?.Identity || {}),
     metadata: manualCorrections(corrections?.metadata || instructions?.Metadata || {}),
     releaseName: manualCorrections(corrections?.releaseName || instructions?.ReleaseName || {}),
@@ -337,7 +340,7 @@ export const preparationInputForWorkflow = (
     ReleaseName: { ...intent.releaseName },
     Metadata: { ...intent.metadata },
     SourceLookup: intent.sourceLookupURL,
-    BlurayReleaseID: "",
+    Bluray: intent.bluray ?? null,
     Playlist: {
       Set: intent.playlist.Set,
       Selected: [...intent.playlist.Selected],
@@ -366,6 +369,7 @@ export const preparationInputForWorkflow = (
 
 export const preparationIntentFromInput = (input: PrepareInput): PreparationIntent => ({
   sourceLookupURL: input.Instructions.SourceLookup,
+  bluray: input.Instructions.Bluray ?? null,
   identity: { ...input.Instructions.Identity },
   metadata: { ...(input.Instructions.Metadata || {}) },
   releaseName: { ...input.Instructions.ReleaseName },
@@ -385,3 +389,46 @@ export const preparationIntentFromInput = (input: PrepareInput): PreparationInte
     client: input.Search?.Client || "",
   },
 });
+
+/** Projects requested detail results onto matching cards without publishing selection or release authority. */
+export const metadataPreviewWithBlurayDetails = (
+  preview: MetadataPreview | null,
+  current: ReleaseWorkflowCurrent | null,
+): MetadataPreview | null => {
+  const operation = current?.operation;
+  if (
+    !preview?.Bluray ||
+    !current?.release ||
+    current.release.release.Source.SourcePath !== preview.SourcePath ||
+    operation?.workflowId !== current.workflow.id ||
+    operation.operation !== "preparation"
+  )
+    return preview;
+  const details = new Map(
+    (operation.items || [])
+      .filter((item) => item.kind === "bluray_detail" && item.blurayCandidate)
+      .map((item) => [item.blurayCandidate!.ReleaseID, item.blurayCandidate!]),
+  );
+  if (!details.size) return preview;
+  const candidates = preview.Bluray.Candidates.map((candidate) => {
+    const detail = details.get(candidate.ReleaseID);
+    return detail
+      ? {
+          ...candidate,
+          ...workflowViewValue<BlurayReleaseCandidate>(detail),
+          Accepted: candidate.Accepted,
+        }
+      : candidate;
+  });
+  return {
+    ...preview,
+    Bluray: {
+      ...preview.Bluray,
+      Candidates: candidates,
+      BestScore: Math.max(
+        0,
+        ...candidates.filter((c) => c.DetailsStatus === "complete").map((c) => c.Score),
+      ),
+    },
+  };
+};
