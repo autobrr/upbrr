@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
@@ -144,11 +145,12 @@ func testContinueQuestionnaireReuse(t *testing.T, trackerID, submittedTracker ap
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 			preparations++
 			return api.PrepareResult{Release: api.PreparedRelease{
-				Generation: 1,
-				Source:     api.SourceManifest{SourcePath: input.SourcePath},
-				Naming:     api.NamingFacts{ReleaseName: releaseName, Resolution: "1080p"},
-				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
-				Media:      api.MediaFacts{Type: "ENCODE", Source: "BluRay"},
+				Compatibility: api.PreparationCompatibility{ContractVersion: preparedrelease.ContractVersion},
+				Generation:    1,
+				Source:        api.SourceManifest{SourcePath: input.SourcePath},
+				Naming:        api.NamingFacts{ReleaseName: releaseName, Resolution: "1080p"},
+				Identity:      api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Media:         api.MediaFacts{Type: "ENCODE", Source: "BluRay"},
 			}}, nil
 		},
 		DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {

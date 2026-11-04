@@ -13,13 +13,15 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/metadata"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Continue advances at most one backend-owned transition toward a desired goal.
 // Repeated calls plus Current polling are the complete adapter orchestration contract.
-// Matching preparation inputs restore the persisted generation before downstream work;
-// unavailable or incompatible prepared data returns an error instead of being rebuilt.
+// Matching preparation inputs restore the persisted generation before downstream work.
+// Incompatible retained contracts require explicit preparation before continuation;
+// continuation never rebuilds them or authorizes external effects implicitly.
 // New workflows default to post-dupe-gate tracker decisions unless the context
 // supplies an explicit tracker decision mode.
 func (m *Module) Continue(
@@ -163,7 +165,7 @@ func (m *Module) Continue(
 		return m.continueTrackerProjection(ctx, ownerID, request, current)
 	}
 	if request.Intent.Preparation != nil && request.Intent.Preparation.Force && current.Release != nil &&
-		!continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
+		(!continuationPreparationSatisfied(current.Release, request.Intent.Preparation) || requireCompatibleContinuationPreparation(current.Release) != nil) {
 		operation, startErr := m.Start(ctx, ownerID, ResetReleaseCommand{
 			WorkflowID:       current.Workflow.ID,
 			ExpectedRevision: current.Workflow.Revision,
@@ -180,6 +182,9 @@ func (m *Module) Continue(
 		accepted, currentErr := m.Current(ctx, ownerID, operation.WorkflowID)
 		accepted.PreparationOperationID = operation.ID
 		return accepted, currentErr
+	}
+	if err := requireCompatibleContinuationPreparation(current.Release); err != nil {
+		return CommandResult{}, err
 	}
 
 	if updated, handled, factsErr := m.reconcileContinuationFacts(ctx, ownerID, request, current); handled || factsErr != nil {
@@ -299,6 +304,21 @@ func (m *Module) Continue(
 		accepted.PreparationOperationID = operation.ID
 	}
 	return accepted, currentErr
+}
+
+// requireCompatibleContinuationPreparation rejects stale contracts before goal
+// completion or hydration can select them, preserving the retained workflow for
+// explicit preparation and any outstanding external-effect reconciliation.
+func requireCompatibleContinuationPreparation(current *api.ReleaseSnapshot) error {
+	if current == nil || current.Release.Compatibility.ContractVersion == preparedrelease.ContractVersion {
+		return nil
+	}
+	return api.NewOperationError(api.OperationFailure{
+		Code:      api.OperationFailureIncompatibleGeneration,
+		Operation: api.OperationKindPreparation,
+		Message:   "The retained prepared release is incompatible. Prepare the input again before continuing.",
+		Recovery:  api.OperationRecoveryReprepare,
+	}, ErrInvalidTransition)
 }
 
 // workflowTrackerScope resolves omitted IDs without reviving invalidated evidence.

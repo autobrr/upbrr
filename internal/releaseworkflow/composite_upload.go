@@ -1262,6 +1262,9 @@ func (m *Module) hydrateCompositePreparedRelease(
 	session *compositeUploadSession,
 	requirements api.MetadataRequirementSet,
 ) error {
+	if err := requireCompatibleContinuationPreparation(current.Release); err != nil {
+		return err
+	}
 	if current.Release == nil {
 		return nil
 	}

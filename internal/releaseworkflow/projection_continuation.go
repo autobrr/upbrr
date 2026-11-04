@@ -19,6 +19,9 @@ func (m *Module) continueTrackerProjection(
 	request api.ContinueReleaseWorkflowRequest,
 	current CommandResult,
 ) (CommandResult, error) {
+	if err := requireCompatibleContinuationPreparation(current.Release); err != nil {
+		return CommandResult{}, err
+	}
 	if current.Release == nil || !continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
 		return CommandResult{}, projectionPreparationRequired()
 	}

@@ -503,9 +503,13 @@ func TestPrepareRequirePreparedRejectsMissingAndReusesCompatibleGeneration(t *te
 		Intent:          api.PreparationIntentUpload,
 		RequirePrepared: true,
 	}
-	if _, err := module.Prepare(context.Background(), required); err == nil ||
-		!strings.Contains(err.Error(), "compatible prepared generation is required") {
-		t.Fatalf("missing required prepared generation error = %v", err)
+	if _, err := module.Prepare(context.Background(), required); err != nil {
+		failure, ok := api.AsOperationFailure(err)
+		if !ok || failure.Code != api.OperationFailureIncompatibleGeneration || failure.Recovery != api.OperationRecoveryReprepare {
+			t.Fatalf("missing required prepared generation error = %v", err)
+		}
+	} else {
+		t.Fatal("missing required prepared generation was accepted")
 	}
 	if collector.callCount() != 0 {
 		t.Fatalf("missing required generation invoked collector %d time(s)", collector.callCount())

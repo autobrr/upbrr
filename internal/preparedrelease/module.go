@@ -318,7 +318,12 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 				"A compatible prepared generation is required.",
 			),
 		)
-		return api.PrepareResult{}, errors.New("prepared release: compatible prepared generation is required")
+		return api.PrepareResult{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureIncompatibleGeneration,
+			Operation: api.OperationKindPreparation,
+			Message:   "A compatible prepared generation is required. Prepare the input again.",
+			Recovery:  api.OperationRecoveryReprepare,
+		}, &IncompatiblePreparationError{SourcePath: input.SourcePath, Reason: "compatible prepared generation is required"})
 	}
 	api.EmitPreparationProgress(
 		ctx,
