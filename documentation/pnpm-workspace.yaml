@@ -1,2 +1,6 @@
 allowBuilds:
   core-js: true
+
+overrides:
+  docusaurus-plugin-llms@0.5.1>minimatch: 9.0.7
+  docusaurus-plugin-llms@0.5.1>yaml: 2.8.3
