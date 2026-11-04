@@ -115,16 +115,24 @@ Reassess the override when updating these parents, and remove it once their
 declared ranges resolve a patched version. Keep frozen installs, cache-free lint,
 frontend checks and embedded E2E validation; no advisory is excluded from scans.
 
-#### Documentation plugin patch resolutions
+#### Documentation tooling resolutions
 
-The documentation overrides minimatch to 9.0.7 and yaml to 2.8.3 only for
-`docusaurus-plugin-llms@0.5.1`. That parent pins 9.0.3 and 2.8.1 exactly, so a
-normal transitive refresh cannot select the patch fixes. The overrides address
-three minimatch ReDoS advisories and yaml's deeply nested collection parsing
-advisory. Reassess them when updating the plugin, and remove them once its
-published dependency declarations resolve patched versions. Keep frozen installs,
-cache-free documentation checks and unignored scans. Remaining tooling advisories,
-including GHSA-g3hv-75wg-m249, stay visible in scans.
+The documentation workspace scopes advisory fixes to exact installed parents:
+`docusaurus-plugin-llms@0.5.1` uses minimatch 11.0.1 and yaml 2.8.3;
+`copy-webpack-plugin@11.0.0` and `css-minimizer-webpack-plugin@5.0.1` use
+serialize-javascript 7.1.3; `@docusaurus/core@3.10.2` uses tinypool 2.1.2; and
+`sockjs@0.3.24` uses uuid 11.1.1. The unused deepmerge dependency edge is removed
+only from `@svgr/plugin-svgo@8.1.0`, whose shipped entrypoint does not load it.
+
+Several resolutions cross the parents' declared major ranges. Compatibility is
+limited to their retained consumers: the plugin's glob matching, webpack cache
+keys and CSS worker serialization, Docusaurus pooled SSG, SockJS's buffer-free
+`uuid.v4()` call, and SVGR optimization. Node 24 remains the supported baseline;
+these overrides do not grant compatibility with unused or removed dependency APIs.
+Reassess the resolutions when updating their exact parents, and remove them once
+upstream declarations resolve patched versions or drop unused edges. Keep frozen
+installs, cache-free documentation checks, affected consumer validation and
+unignored scans; no advisory is excluded from scanning.
 
 #### Blu-ray collector development pin
 
