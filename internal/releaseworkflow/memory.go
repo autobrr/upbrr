@@ -551,7 +551,8 @@ func (r *MemoryRepository) BeginEffect(
 	return record, false, nil
 }
 
-// CompleteEffect retains one known terminal in-memory receipt.
+// CompleteEffect retains one known terminal in-memory receipt. Unknown legacy
+// effects may be confirmed successful, but cannot be completed as failed.
 func (r *MemoryRepository) CompleteEffect(
 	ctx context.Context,
 	status api.WorkflowEffectStatus,
@@ -564,7 +565,8 @@ func (r *MemoryRepository) CompleteEffect(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	current, ok := r.effects[key]
-	if !ok || current.Status != api.WorkflowEffectStatusStarted {
+	confirmedLegacy := current.Status == api.WorkflowEffectStatusUnknown && status == api.WorkflowEffectStatusSucceeded && current.Submission == nil
+	if !ok || current.OperationID != record.OperationID || (current.Status != api.WorkflowEffectStatusStarted && !confirmedLegacy) {
 		return api.ErrReleaseWorkflowEffectConflict
 	}
 	current.Status = status

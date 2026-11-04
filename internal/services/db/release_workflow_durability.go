@@ -327,7 +327,8 @@ func (r *SQLiteRepository) beginSubmissionFence(
 	return result, idempotent, nil
 }
 
-// CompleteReleaseWorkflowEffect persists a known terminal receipt.
+// CompleteReleaseWorkflowEffect persists a known terminal receipt. Unknown legacy
+// effects may be confirmed successful, but cannot be completed as failed.
 func (r *SQLiteRepository) CompleteReleaseWorkflowEffect(
 	ctx context.Context,
 	status api.WorkflowEffectStatus,
@@ -408,12 +409,16 @@ func completeReleaseWorkflowEffect(
 	record api.ReleaseWorkflowEffectRecord,
 	effectName string,
 ) error {
+	confirmedStatus := api.WorkflowEffectStatusStarted
+	if status == api.WorkflowEffectStatusSucceeded && record.Submission == nil {
+		confirmedStatus = api.WorkflowEffectStatusUnknown
+	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE release_workflow_effects
 		SET status = ?, updated_at = ?, completed_at = ?
-		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
+		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status IN (?, ?)
 	`, status, formatWorkflowStateTime(record.UpdatedAt), formatWorkflowStateTime(*record.CompletedAt),
-		record.OwnerID, record.WorkflowID, record.OperationID, record.EffectID, api.WorkflowEffectStatusStarted)
+		record.OwnerID, record.WorkflowID, record.OperationID, record.EffectID, api.WorkflowEffectStatusStarted, confirmedStatus)
 	if err != nil {
 		return fmt.Errorf("db complete release workflow %s: %w", effectName, err)
 	}

@@ -59,6 +59,30 @@ func TestANTUploadPreservesAPIErrorReason(t *testing.T) {
 			unknown:    true,
 		},
 		{
+			name:    "contradictory negative success and positive status",
+			body:    `{"success":false,"status":"success"}`,
+			status:  http.StatusOK,
+			unknown: true,
+		},
+		{
+			name:    "contradictory string negative success and positive status",
+			body:    `{"success":"false","status":"success"}`,
+			status:  http.StatusOK,
+			unknown: true,
+		},
+		{
+			name:    "positive status with unsupported boolean error",
+			body:    `{"status":"success","error":true}`,
+			status:  http.StatusOK,
+			unknown: true,
+		},
+		{
+			name:    "positive success with unsupported structured error",
+			body:    `{"success":true,"error":{"message":"Invalid torrent"}}`,
+			status:  http.StatusOK,
+			unknown: true,
+		},
+		{
 			name:       "non-JSON API reason with HTTP success",
 			unknown:    true,
 			body:       `Reason: {"error":"The selected category is not permitted."}`,
@@ -87,7 +111,7 @@ func TestANTUploadPreservesAPIErrorReason(t *testing.T) {
 				}, nil
 			})
 			summary, err := submitPreparedUpload(t.Context(), api.NopLogger{}, uploadState{}, nil, "application/json", "", "")
-			if err == nil || !strings.Contains(err.Error(), tc.wantReason) {
+			if err == nil || (tc.wantReason != "" && !strings.Contains(err.Error(), tc.wantReason)) {
 				t.Fatalf("upload error = %v, want reason %q", err, tc.wantReason)
 			}
 			wantOutcome := submission.Rejected

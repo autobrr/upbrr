@@ -112,15 +112,18 @@ func submitPreparedUpload(
 	// Only the final response establishes the outcome; a replacement challenge
 	// never authorizes a third request.
 	accepted := antUploadSuccess(payload)
-	errorMessage, _ := payload["error"].(string)
+	success, hasSuccess := payload["success"]
+	explicitFailure := hasSuccess && (success == false || strings.EqualFold(antString(success), "false"))
+	errorValue := payload["error"]
+	errorMessage, stringError := errorValue.(string)
 	hasError := strings.TrimSpace(errorMessage) != ""
-	if status < 200 || status >= 300 || !accepted || hasError {
+	// Unsupported error shapes cannot establish clean acceptance or prove rejection.
+	unsupportedError := errorValue != nil && !stringError
+	if status < 200 || status >= 300 || !accepted || explicitFailure || hasError || unsupportedError {
 		err := antUploadError(status, payload, bodyBytes, retryKey)
 		if retryKey != "" {
 			err = fmt.Errorf("trackers: ANT trump retry: %w", err)
 		}
-		success, hasSuccess := payload["success"]
-		explicitFailure := hasSuccess && (success == false || strings.EqualFold(antString(success), "false"))
 		if !accepted && (explicitFailure || hasError) {
 			return api.UploadSummary{}, submission.NewError(submission.Rejected, err)
 		}
@@ -459,13 +462,19 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
+// antUploadSuccess detects any positive marker, including contradictory responses
+// that must block a challenge retry rather than establish clean acceptance.
 func antUploadSuccess(payload map[string]any) bool {
 	if success, ok := payload["success"]; ok {
 		switch value := success.(type) {
 		case bool:
-			return value
+			if value {
+				return true
+			}
 		case string:
-			return strings.EqualFold(strings.TrimSpace(value), "true") || strings.EqualFold(strings.TrimSpace(value), "success")
+			if strings.EqualFold(strings.TrimSpace(value), "true") || strings.EqualFold(strings.TrimSpace(value), "success") {
+				return true
+			}
 		}
 	}
 	return strings.EqualFold(strings.TrimSpace(stringValue(payload["status"])), "success")

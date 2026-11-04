@@ -35,6 +35,16 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		firstStatus, secondStatus, wantRequests, wantUploaded            int
 	}{
 		{
+			name:         "initial negative success cannot hide positive status",
+			first:        challenge[:len(challenge)-1] + `,"success":false,"status":"success"}`,
+			second:       `{"success":false,"error":"Retry rejected"}`,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 403,
+			wantRequests: 1,
+		},
+		{
 			name:         "initial success contradicts fresh challenge",
 			first:        challenge[:len(challenge)-1] + `,"success":true}`,
 			second:       `{"success":false,"error":"Retry rejected"}`,
@@ -57,7 +67,7 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		{
 			name:         "challenge succeeds",
 			first:        challenge,
-			second:       `{"status":"success","view":"https://anthelion.me/torrents.php?torrentid=8"}`,
+			second:       `{"status":"success","error":"","view":"https://anthelion.me/torrents.php?torrentid=8"}`,
 			intended:     true,
 			firstStatus:  409,
 			secondStatus: 200,
@@ -77,7 +87,7 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		},
 		{
 			name:         "staff token accepted immediately",
-			first:        `{"status":"success"}`,
+			first:        `{"status":"success","error":null}`,
 			firstStatus:  200,
 			wantRequests: 1,
 			wantUploaded: 1,
@@ -283,6 +293,26 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			name:         "retry contradictory success and error",
 			first:        challenge,
 			second:       `{"success":true,"error":"Retry rejected"}`,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 200,
+			wantRequests: 2,
+		},
+		{
+			name:         "retry negative success cannot hide positive status",
+			first:        challenge,
+			second:       `{"success":false,"status":"success"}`,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 200,
+			wantRequests: 2,
+		},
+		{
+			name:         "retry positive status with unsupported structured error",
+			first:        challenge,
+			second:       `{"status":"success","error":{"message":"Retry rejected synthetic-key-12"}}`,
 			intended:     true,
 			unknown:      true,
 			firstStatus:  409,

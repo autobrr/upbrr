@@ -236,6 +236,10 @@ func (m *Module) publishLegacyRecoveryActions(
 			}
 		}
 		if accepted {
+			effect.UpdatedAt, effect.CompletedAt = now, &now
+			if err := m.durability.CompleteEffect(ctx, api.WorkflowEffectStatusSucceeded, effect); err != nil {
+				return fmt.Errorf("release workflow retain accepted legacy effect: %w", err)
+			}
 			if !slices.ContainsFunc(state.Workflow.Failures, func(failure api.WorkflowFailure) bool {
 				return failure.Failure.Code == api.OperationFailureReceiptRetention && failure.Resource == effect.EffectID
 			}) {
@@ -414,6 +418,9 @@ func (m *Module) settleRecoveryActions(ctx context.Context, ownerID string, work
 		}
 		settledCount++
 		switch {
+		case action.EffectKind == api.WorkflowExternalEffectTrackerSubmission && retainedSubmissionConfirmsAction(&state, action):
+			// A completed effect can precede a failed workflow save; replay keeps
+			// its accepted result and registered authority rather than invalidating them.
 		case action.EffectKind == api.WorkflowExternalEffectImageHosting:
 			finishUnavailableImageHostingReconciliation(&state.Workflow, action)
 		case action.EffectKind == api.WorkflowExternalEffectClientInjection &&
@@ -486,4 +493,26 @@ func (m *Module) settleRecoveryActions(ctx context.Context, ownerID string, work
 		m.logger.Debugf("releaseworkflow: startup recovery decision=discard_actions workflow=%s count=%d", workflowID, settledCount)
 	}
 	return true, nil
+}
+
+func retainedSubmissionConfirmsAction(state *State, action api.RequiredAction) bool {
+	for _, retained := range state.UploadResults {
+		for _, result := range retained.Results {
+			// Legacy actions may predate exact effect IDs; bound actions must match both.
+			if (action.EffectID != "" || action.EffectOperationID != "") &&
+				(action.EffectID != result.SubmissionReceiptID || action.EffectOperationID != result.SubmissionOperationID) {
+				continue
+			}
+			if retained.ConfirmsSubmission(api.ReleaseWorkflowEffectRecord{
+				WorkflowID:  state.Workflow.ID,
+				Kind:        string(action.EffectKind),
+				ScopeID:     action.EffectScopeID,
+				EffectID:    result.SubmissionReceiptID,
+				OperationID: result.SubmissionOperationID,
+			}) {
+				return true
+			}
+		}
+	}
+	return false
 }
