@@ -88,6 +88,7 @@ jobs:
 
     steps:
       - name: Create or update failure issue
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
