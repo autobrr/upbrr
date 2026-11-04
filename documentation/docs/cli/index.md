@@ -202,7 +202,7 @@ The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic 
 | `--bhd <id-or-url>`        | `-bhd`                     | Supply a BHD torrent ID or URL.     |
 | `--ulcx <id-or-url>`       | `-ulcx`                    | Supply a ULCX torrent ID or URL.    |
 
-Omitting `--trackers` uses the configured default trackers. `--site-upload` replaces the requested tracker list with its one tracker; `--trackers-remove` still excludes named trackers. Tracker ID flags supply lookup identities and do not select upload destinations.
+Omitting `--trackers` uses the retained workflow scope when available, otherwise the configured default trackers. `--site-upload` replaces the requested tracker list with its one tracker; `--trackers-remove` still excludes named trackers. Removing every selected tracker stops the upload. Tracker ID flags supply lookup identities and do not select upload destinations.
 
 ## Release overrides
 
