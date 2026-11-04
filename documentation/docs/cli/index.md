@@ -42,11 +42,13 @@ Prepare without tracker submission or client injection:
 .\upbrr.exe --debug --no-seed "D:\releases\Example.Release.2026.1080p-GRP"
 ```
 
-Run duplicate and site checks without uploading:
+Run duplicate and site checks without tracker submission:
 
 ```powershell
 .\upbrr.exe --site-check "D:\releases\Example.Release.2026.1080p-GRP"
 ```
+
+Both `--debug` and `--site-check` can prepare media, write local artifacts, upload images and inject torrents into configured clients. Add `--no-seed` (`-ns`) to prevent client injection. These modes do not provide a non-mutating dry run.
 
 Create or resume a named queue, processing at most five pending entries:
 
@@ -130,14 +132,15 @@ After you answer tracker questions, the CLI rebuilds the affected tracker stages
 
 Trackers with a confirmed upload of the same verified submitted content are excluded before duplicate checks. If every selected tracker is already uploaded, the command succeeds without another approval prompt or submission. See [the upload workflow](../workflow/index.md#4-review-duplicate-evidence).
 
-| Option                     | Behavior                                                                                                                                |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `--debug`                  | Runs end-to-end preparation and payload preview without tracker submission. Client injection remains enabled unless `--no-seed` is set. |
-| `--log-level debug`        | Changes application logging verbosity for this run. It does not enable debug/non-submitting behavior.                                   |
-| `--console-log-level info` | Changes terminal log verbosity for this run without changing file or retained application logs.                                         |
-| `--unattended`             | Never prompts. Unsafe global ambiguity returns an error; tracker-specific manual prerequisites can block only that tracker.             |
-| `--unattended_confirm`     | Uses unattended defaults but permits required confirmation or manual-input prompts.                                                     |
-| `--no-seed`                | Disables torrent-client injection.                                                                                                      |
+| Option                     | Behavior                                                                                                                                      |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--debug`                  | Runs preparation and payload preview without tracker submission. Image uploads and client injection remain enabled unless explicitly skipped. |
+| `--site-check`             | Runs site checks and preparation without tracker submission, with the same image-upload and client-injection side effects as `--debug`.       |
+| `--log-level debug`        | Changes application logging verbosity for this run. It does not enable debug/non-submitting behavior.                                         |
+| `--console-log-level info` | Changes terminal log verbosity for this run without changing file or retained application logs.                                               |
+| `--unattended`             | Never prompts. Unsafe global ambiguity returns an error; tracker-specific manual prerequisites can block only that tracker.                   |
+| `--unattended_confirm`     | Uses unattended defaults but permits required confirmation or manual-input prompts.                                                           |
+| `--no-seed`                | Disables torrent-client injection.                                                                                                            |
 
 Interactive tracker questions with exactly `yes`/`no` choices also accept `y`/`n`, regardless of letter case. Other choices still require their listed values. Strict `--unattended` remains prompt-free.
 
@@ -167,22 +170,22 @@ The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic 
 
 ## Execution
 
-| Option                        | Aliases                       | Purpose                                                                                    |
-| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------ |
-| `--queue <name>`              | `-queue`                      | Create or resume a saved queue; supply its original root as the single input path.         |
-| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit remaining eligible items; defaults to `0` (unlimited). Negative values are rejected. |
-| `--refresh-queue`             | `-refresh-queue`              | Add new members without resetting progress; requires `--queue`.                            |
-| `--retry-queue`               | `-retry-queue`                | Include failed, interrupted and skipped items; requires `--queue`.                         |
-| `--site-check`                | `-site-check`, `-sc`          | Search/check sites without uploading.                                                      |
-| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                           |
-| `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                          |
-| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.      |
-| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                  |
-| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                                 |
-| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                               |
-| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                    |
-| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                       |
-| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                              |
+| Option                        | Aliases                       | Purpose                                                                                            |
+| ----------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------- |
+| `--queue <name>`              | `-queue`                      | Create or resume a saved queue; supply its original root as the single input path.                 |
+| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit remaining eligible items; defaults to `0` (unlimited). Negative values are rejected.         |
+| `--refresh-queue`             | `-refresh-queue`              | Add new members without resetting progress; requires `--queue`.                                    |
+| `--retry-queue`               | `-retry-queue`                | Include failed, interrupted and skipped items; requires `--queue`.                                 |
+| `--site-check`                | `-site-check`, `-sc`          | Check sites and prepare upload previews without tracker submission.                                |
+| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                                   |
+| `--debug`                     | `-debug`                      | Prepare and preview without tracker submission; image uploads and client injection remain enabled. |
+| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.              |
+| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                          |
+| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                                         |
+| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                                       |
+| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                            |
+| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                               |
+| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                                      |
 
 `--live-test` and `--live-test-max-images` are development options described under [`live-test`](#live-test). There is no `--dry-run` option; use `--debug --no-seed` for preparation without tracker submission or client injection.
 
@@ -589,6 +592,8 @@ See the [API reference](../api/index.md) before granting `workflow:execute`.
 ## `live-test`
 
 These development commands create an isolated profile from existing configuration and authentication state, or clean up image uploads recorded by that profile. They do not replace normal upload commands.
+
+Run `upbrr live-test --help` to list these commands, or add `--help` after `init` or `cleanup` to see its options.
 
 ```text
 upbrr live-test init --run-dir <path> [--config <path>] [--prefer-deletable-hosts]
