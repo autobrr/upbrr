@@ -289,6 +289,7 @@ func (r *SQLiteRepository) beginSubmissionFence(
 		case err == nil && prior.Status == api.WorkflowEffectStatusSucceeded:
 			result = record
 			result.EffectID = prior.EffectID
+			result.OperationID = prior.OperationID
 			result.Status = prior.Status
 			idempotent = true
 			return nil

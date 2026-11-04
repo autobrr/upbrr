@@ -18,21 +18,24 @@ func TestUploadClassifiesResponseEvidence(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name, body, id string
+		status         int
 		outcome        submission.Outcome
 	}{
-		{"success without identity", `{"status":"success","response":{}}`, "", submission.Accepted},
-		{"ok without identity", `{"status":"ok","response":{}}`, "", submission.Accepted},
-		{"success with error", `{"status":"success","error":"Invalid torrent","response":{}}`, "", submission.Unknown},
-		{"ok with error and identity", `{"status":"ok","error":"Invalid torrent","response":{"torrent_id":"123"}}`, "", submission.Unknown},
-		{"numeric status with error", `{"status":200,"error":"Invalid torrent","response":{"torrent_id":"123"}}`, "", submission.Unknown},
-		{"numeric status with identity", `{"status":200,"response":{"torrent_id":"123"}}`, "123", submission.Accepted},
-		{"numeric status without identity", `{"status":200,"response":{}}`, "", submission.Unknown},
-		{"blank error", `{"status":"success","error":"  ","response":{}}`, "", submission.Accepted},
+		{"success without identity", `{"status":"success","response":{}}`, "", http.StatusOK, submission.Accepted},
+		{"ok without identity", `{"status":"ok","response":{}}`, "", http.StatusOK, submission.Accepted},
+		{"success with error", `{"status":"success","error":"Invalid torrent","response":{}}`, "", http.StatusOK, submission.Unknown},
+		{"ok with error and identity", `{"status":"ok","error":"Invalid torrent","response":{"torrent_id":"123"}}`, "", http.StatusOK, submission.Unknown},
+		{"numeric status with error", `{"status":200,"error":"Invalid torrent","response":{"torrent_id":"123"}}`, "", http.StatusOK, submission.Unknown},
+		{"numeric status with identity", `{"status":200,"response":{"torrent_id":"123"}}`, "123", http.StatusOK, submission.Accepted},
+		{"numeric status without identity", `{"status":200,"response":{}}`, "", http.StatusOK, submission.Unknown},
+		{"blank error", `{"status":"success","error":"  ","response":{}}`, "", http.StatusOK, submission.Accepted},
+		{"non-2xx status with success body", `{"status":"success","response":{"torrent_id":"123"}}`, "", http.StatusBadRequest, submission.Unknown},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests.Add(1)
+				w.WriteHeader(test.status)
 				_, _ = w.Write([]byte(test.body))
 			}))
 			defer server.Close()

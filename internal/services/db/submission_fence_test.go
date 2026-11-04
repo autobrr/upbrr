@@ -57,8 +57,10 @@ func TestSubmissionFencePersistsSuccessAndFencesUnknownAttempts(t *testing.T) {
 		t.Fatalf("confirmed fence = %#v, err=%v", fence, err)
 	}
 	second := submissionFenceTestEffect(workflow, "effect-duplicate", identity, completedAt.Add(time.Second))
+	second.OperationID = "duplicate-operation"
 	prior, idempotent, err := repo.BeginReleaseWorkflowEffect(ctx, second)
-	if err != nil || !idempotent || prior.Status != api.WorkflowEffectStatusSucceeded || prior.EffectID != effect.EffectID {
+	if err != nil || !idempotent || prior.Status != api.WorkflowEffectStatusSucceeded ||
+		prior.EffectID != effect.EffectID || prior.OperationID != effect.OperationID {
 		t.Fatalf("succeeded exclusion = %#v, idempotent=%v, err=%v", prior, idempotent, err)
 	}
 
