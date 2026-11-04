@@ -283,6 +283,11 @@ func TestHDRCLIRetainsCompletedImagesOnReportFailure(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			if test.prepared && !test.failSummary {
+				if _, err := hdranalysis.CurrentDecoderFingerprint(t.Context()); err != nil {
+					t.Skip("requires a working FFmpeg version probe for complete prepared audio analysis")
+				}
+			}
 			parent := t.TempDir()
 			if test.alias {
 				alias := filepath.Join(t.TempDir(), "output-alias")
