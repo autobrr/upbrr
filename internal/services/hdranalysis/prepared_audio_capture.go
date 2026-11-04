@@ -66,6 +66,7 @@ func (s *Session) MeasurePreparedAudio(ctx context.Context, input DecodedInput, 
 // AnalyzePreparedAutomatic shares the first bounded audio batch with native
 // capture and runs remaining batches as audio-only traversals. Existing DSP and
 // verified geometry correction are unchanged.
+// Temporary-directory setup failures follow [Session.AnalyzeAutomatic].
 func (s *Session) AnalyzePreparedAutomatic(ctx context.Context, primary DecodedInput, reference *DecodedInput,
 	options api.HDRDecodedOptions, formats api.HDRAnalysisFormats, directory string, otherBytes int64, capture PreparedAudioCapture,
 ) (*NativeExtraction, []*MeasurementReport, error) {

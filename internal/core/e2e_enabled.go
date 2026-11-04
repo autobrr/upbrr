@@ -2022,6 +2022,9 @@ func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject
 			}
 			saved.bySource[meta.SourcePath] = image
 		}
+		if image.Path == "" {
+			return plan, nil
+		}
 		// Deletion removes the managed fixture; planning must not recreate it.
 		if _, err := os.Stat(image.Path); err == nil {
 			plan.FinalSelections = []api.ScreenshotImage{image}
@@ -2105,7 +2108,14 @@ func (s e2eScreenshotService) Delete(ctx context.Context, subject api.Screenshot
 	if pathutil.SamePath(target, root) || !pathutil.IsWithinRoot(root, target) {
 		return errors.New("e2e screenshots: delete target is outside managed root")
 	}
+	// Retain deletion across restarts, but roll it back if removal fails.
+	if err := os.WriteFile(target+".deleted", nil, 0o600); err != nil {
+		return fmt.Errorf("e2e screenshots: retain fixture deletion: %w", err)
+	}
 	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if markerErr := os.Remove(target + ".deleted"); markerErr != nil && !errors.Is(markerErr, os.ErrNotExist) {
+			return fmt.Errorf("e2e screenshots: delete managed image: %w; clear fixture deletion marker: %w", err, markerErr)
+		}
 		return fmt.Errorf("e2e screenshots: delete managed image: %w", err)
 	}
 	return nil
@@ -2142,6 +2152,7 @@ func e2eScreenshotDiscName(meta api.ScreenshotSubject, discID string) string {
 }
 
 // e2eManagedScreenshot copies a fixture beneath the source's managed release owner.
+// A previously deleted saved-description seed returns an empty image.
 func e2eManagedScreenshot(shotPath string, tmpRoot string, sourcePath string, scope string, index int) (api.ScreenshotImage, error) {
 	path := strings.TrimSpace(shotPath)
 	if path == "" {
@@ -2176,6 +2187,14 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, sourcePath string, sc
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: create managed dir: %w", err)
 	}
 	managedPath := filepath.Join(managedDir, fmt.Sprintf("screenshot-%d.png", index))
+	if scope == "existing-description" {
+		// This seed is supplied once, including across process restarts.
+		if _, err := os.Stat(managedPath + ".deleted"); err == nil {
+			return api.ScreenshotImage{}, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: read fixture deletion: %w", err)
+		}
+	}
 	if err := os.WriteFile(managedPath, payload, 0o600); err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: write managed screenshot: %w", err)
 	}

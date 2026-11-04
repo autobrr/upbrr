@@ -8630,7 +8630,10 @@ func (m *Module) publishUploadResult(
 		return CommandResult{}, fmt.Errorf("release workflow record upload result: %w", err)
 	}
 	if len(authority.Torrents) > 0 && slices.ContainsFunc(results, func(result api.UploadTrackerResult) bool {
-		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed
+		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed ||
+			slices.ContainsFunc(result.Failures, func(failure api.WorkflowFailure) bool {
+				return failure.Failure.Code == api.OperationFailureReceiptRetention
+			})
 	}) {
 		if err := m.private.Put(
 			ownerID,
@@ -8655,6 +8658,7 @@ func (m *Module) publishUploadResult(
 			if failure.Failure.Code != api.OperationFailureUnknownOutcome {
 				continue
 			}
+			state.Workflow.Failures = append(state.Workflow.Failures, failure)
 			effectKind := api.WorkflowExternalEffectTrackerSubmission
 			effectScopeID := string(result.TrackerID)
 			prompt := "Verify that the tracker submission did not complete before preparing and reviewing a replacement exact upload plan."
@@ -8662,6 +8666,10 @@ func (m *Module) publishUploadResult(
 				effectKind = api.WorkflowExternalEffectClientInjection
 				effectScopeID = failure.Resource
 				prompt = "Verify that the client injection did not complete before retrying the retained registered tracker artifact."
+			}
+			if effectKind == api.WorkflowExternalEffectTrackerSubmission && (failure.Failure.Recovery != api.OperationRecoveryConfirm ||
+				result.SubmissionReceiptID == "" || result.SubmissionOperationID == "") {
+				continue
 			}
 			action, actionErr := m.newReconcileAction(
 				nextRevision,
@@ -8674,8 +8682,11 @@ func (m *Module) publishUploadResult(
 			if actionErr != nil {
 				return CommandResult{}, actionErr
 			}
+			if effectKind == api.WorkflowExternalEffectTrackerSubmission {
+				action.EffectID = result.SubmissionReceiptID
+				action.EffectOperationID = result.SubmissionOperationID
+			}
 			state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
-			state.Workflow.Failures = append(state.Workflow.Failures, failure)
 		}
 	}
 	if hasPendingRequiredAction(state.Workflow.RequiredActions) {
@@ -8692,7 +8703,7 @@ func derivedUploadResultStatus(results []api.UploadTrackerResult) api.StageStatu
 		return api.StageStatusFailed
 	}
 	if slices.ContainsFunc(results, func(result api.UploadTrackerResult) bool {
-		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed
+		return result.DerivedStatus() == api.StageStatusPartial
 	}) {
 		return api.StageStatusPartial
 	}
@@ -8952,8 +8963,14 @@ func (m *Module) resolveAction(
 		if action.EffectKind == "" || strings.TrimSpace(action.EffectScopeID) == "" {
 			return CommandResult{}, fmt.Errorf("%w: reconciliation effect identity is unavailable", ErrInvalidTransition)
 		}
+		var expected []api.WorkflowExternalEffectReceipt
+		if action.EffectID != "" || action.EffectOperationID != "" {
+			expected = []api.WorkflowExternalEffectReceipt{{EffectID: action.EffectID, OperationID: action.EffectOperationID}}
+		}
 		state.effectResolution = &api.ReleaseWorkflowEffectResolution{
-			Kind: action.EffectKind, ScopeID: action.EffectScopeID,
+			Kind:     action.EffectKind,
+			ScopeID:  action.EffectScopeID,
+			Expected: expected,
 		}
 		if action.EffectKind == api.WorkflowExternalEffectImageHosting {
 			result, err := m.resolveImageHostingAction(ctx, ownerID, state, nextRevision, now, action)

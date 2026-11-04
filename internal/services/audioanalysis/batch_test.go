@@ -39,7 +39,8 @@ func TestSharedBatchSelectsPrimaryAndVerifiesCorrectivePCM(t *testing.T) {
 			if changed {
 				decoder.retryPCM = bytes.Repeat([]byte{0, 0, 0, 63}, rate*10)
 			}
-			batch, err := newService(api.NopLogger{}, decoder).PrepareBatch(t.Context(), "Synthetic.Audio.mkv", t.TempDir(), "shared")
+			logger := analysisTestLogger(t)
+			batch, err := newService(logger, decoder).PrepareBatch(t.Context(), "Synthetic.Audio.mkv", t.TempDir(), "shared")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -56,6 +57,7 @@ func TestSharedBatchSelectsPrimaryAndVerifiesCorrectivePCM(t *testing.T) {
 			if !batch.CorrectiveDecode || decoder.decodes != 2 || len(results) != 1 {
 				t.Fatalf("corrective decode was not tracked: %v", err)
 			}
+			assertAnalysisLog(t, logger, "info", "reason=spectrogram_geometry", "measured duration", "track_ordinal=2")
 			if changed {
 				failure, ok := api.AsAudioAnalysisFailure(err)
 				if !ok || failure.Code != api.AudioAnalysisFailureStaleSource || len(results[0].Artifacts) != 0 {

@@ -58,7 +58,8 @@ func syncCLIQueueCheckpoint(path string) error {
 }
 
 func syncCLIQueuePath(path string, flags int) error {
-	file, err := os.OpenFile(path, flags, 0) //nolint:gosec // Queue checkpoint or its configured directory ancestors; no creation or truncation.
+	// #nosec G703 -- Queue checkpoint or its configured directory ancestors; no creation or truncation.
+	file, err := os.OpenFile(path, flags, 0)
 	if err != nil {
 		return fmt.Errorf("open queue sync target: %w", err)
 	}

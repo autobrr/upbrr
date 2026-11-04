@@ -929,14 +929,29 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 	}
 
 	for _, expected := range []string{
-		"Dupe check ALPHA: upload_name=Example.Release.2026.1080p-GRP candidates=2 decision=accepted search_complete=false pages=0 policy=none",
-		"Duplicate candidates:\n  1. Example.Release.2026.1080p.WEB-DL-GRP\n     Evidence: complete/mediainfo\n     Reason: same_tracker_slot\n     Link: https://alpha.example/torrents/123?passkey=[REDACTED]\n  2. Example.Release.2026.1080p.BluRay-GRP",
-		"Upload to ALPHA despite duplicate evidence? [y/N]: \nDupe check BETA:",
-		"Duplicate candidates:\n  1. Example.Release.2026.1080p.Encode-GRP",
+		"Tracker: ALPHA", "Tracker: BETA", "Example.Release.2026.1080p-GRP",
+		"Example.Release.2026.1080p.WEB-DL-GRP", "Example.Release.2026.1080p.BluRay-GRP", "Example.Release.2026.1080p.Encode-GRP",
+		"complete/mediainfo", "same_tracker_slot", "https://alpha.example/torrents/123?passkey=[REDACTED]",
 	} {
 		if !strings.Contains(output.String(), expected) {
-			t.Fatalf("duplicate review output missing %q: %q", expected, output.String())
+			t.Fatalf("duplicate review lost evidence %q", expected)
 		}
+	}
+	if strings.Count(output.String(), "Duplicate candidates:") != 2 || strings.Count(output.String(), "[y/N]:") != 2 {
+		t.Fatal("duplicate review repeated or omitted tracker evidence or decisions")
+	}
+	text := output.String()
+	alpha, beta := strings.Index(text, "Tracker: ALPHA"), strings.Index(text, "Tracker: BETA")
+	if alpha < 0 || beta <= alpha {
+		t.Fatal("duplicate review tracker sections are out of order")
+	}
+	for _, name := range []string{"Example.Release.2026.1080p.WEB-DL-GRP", "Example.Release.2026.1080p.BluRay-GRP"} {
+		if !strings.Contains(text[alpha:beta], name) || strings.Contains(text[beta:], name) {
+			t.Fatalf("ALPHA duplicate %q was not confined to its tracker", name)
+		}
+	}
+	if strings.Contains(text[alpha:beta], "Example.Release.2026.1080p.Encode-GRP") || !strings.Contains(text[beta:], "Example.Release.2026.1080p.Encode-GRP") {
+		t.Fatal("BETA duplicate was not confined to its tracker")
 	}
 	if strings.Contains(output.String(), "never-print-this") {
 		t.Fatalf("duplicate review output exposed passkey: %q", output.String())

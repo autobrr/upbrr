@@ -68,6 +68,7 @@ func TestLookupProgressDiscoveryWaitingPartialAndRetainedPages(t *testing.T) {
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(body.String())),
 				Header:     make(http.Header),
+				Request:    r,
 			}, nil
 		})})
 		store := pageEvidenceStore{}

@@ -610,12 +610,12 @@ func TestPlainAndTUIBuildSameExplicitTrackerApproval(t *testing.T) {
 			t.Fatalf("approval path failed: %v", err)
 		}
 		name := current.Projections.Projections[1].UploadReleaseName
-		if !strings.Contains(output.String(), fmt.Sprintf("Upload name: %q\n", name)) ||
-			!strings.Contains(writer.question.Evidence, "Upload name: "+name+"\n") ||
+		if (!terminal && !strings.Contains(output.String(), fmt.Sprintf("Upload name: %q\n", name))) ||
+			!strings.Contains(writer.question.Evidence, fmt.Sprintf("Upload name: %q\n", name)) ||
 			strings.Contains(writer.question.Evidence, "Example.Film.2024.ALPHA-GRP") {
 			t.Fatal("tracker approval lost console quoting or current tracker evidence")
 		}
-		if !strings.Contains(output.String(), "BETA edition/features: [Remastered]\n") ||
+		if (!terminal && !strings.Contains(output.String(), "BETA edition/features: [Remastered]\n")) ||
 			!strings.Contains(writer.question.Evidence, "BETA edition/features: [Remastered]\n") ||
 			strings.Contains(writer.question.Evidence, "Extended") {
 			t.Fatal("tracker approval lost selected edition evidence or included an unselected feature")
@@ -672,8 +672,12 @@ func TestPlainAndTUIPreserveDuplicatePolicyReviewEvidence(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, evidence := range []string{output.String(), writer.question.Evidence} {
-					for _, expected := range []string{"Policy review: Search results require manual review.", "Policy review: incomplete_search", "Policy review: manual_review", "Duplicate candidates:", "Synthetic.Film.2026-GRP"} {
+				evidenceTexts := []string{writer.question.Evidence}
+				if !terminal {
+					evidenceTexts = append(evidenceTexts, output.String())
+				}
+				for _, evidence := range evidenceTexts {
+					for _, expected := range []string{"Search results require manual review.", "incomplete_search", "manual_review", "Duplicate candidates:", "Synthetic.Film.2026-GRP"} {
 						if !strings.Contains(evidence, expected) {
 							t.Fatalf("review evidence missing %q: %q", expected, evidence)
 						}
@@ -843,7 +847,10 @@ func TestQuestionnairePresentationPreservesKindsHelpAndExactAnswers(t *testing.T
 		if answers["reset"] != nil || answers["empty"] == nil || *answers["empty"] != "" || *answers["boolean"] != "yes" || answers["default"] != nil || *answers["notes"] != "notes" || *answers["optional_notes"] != "" || *answers["multiple"] != "blue,red" {
 			t.Fatal("exact answer map or default intent changed")
 		}
-		if terminal && (terminalPresenter.prompts[0].Help != "Current boolean help" || terminalPresenter.prompts[1].Kind != cliPromptMultiSelect) {
+		if !terminal && strings.Count(output.String(), "Current boolean help") != 1 {
+			t.Fatal("questionnaire help was omitted or repeated")
+		}
+		if terminal && (!strings.Contains(terminalPresenter.prompts[0].Help, "Current boolean help") || terminalPresenter.prompts[1].Kind != cliPromptMultiSelect) {
 			t.Fatal("current help or questionnaire kinds lost")
 		}
 	}

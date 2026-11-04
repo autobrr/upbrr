@@ -16,13 +16,20 @@ func inputLanguageReview(binding ValidationPolicyBinding, subject api.UploadSubj
 	}
 	failures := binding.LanguageAssessment(api.NewTrackerValidationSubject(subject, string(trackerID)))
 	required := make(map[string]bool)
-	origins := make(map[string]bool)
+	origins := make(map[string]string)
 	for _, failure := range failures {
 		if failure.EvidenceStatus != api.MetadataEvidenceStatusPartial || api.NormalizeRuleDisposition(failure.Disposition) == api.RuleDispositionAdvisory {
 			continue
 		}
 		for _, id := range failure.AudioOriginCorrectionTrackIDs {
-			origins[id] = true
+			message := "Review whether this programme track is an original soundtrack or a dub in Inspected tracks; language tags alone do not establish dubbing."
+			switch failure.Rule {
+			case "language_dub_original_origin":
+				message = "A confirmed dub is present and this tracker requires an original soundtrack; review this companion's soundtrack origin in Inspected tracks. Language tags alone do not establish its origin."
+			case "language_dub_evidence":
+				message = "A confirmed dub needs an original or English soundtrack companion; review this companion's soundtrack origin in Inspected tracks or identify English programme audio. Language tags alone do not establish its origin."
+			}
+			origins[id] = message
 		}
 		for _, id := range failure.LanguageCorrectionTrackIDs {
 			required[id] = true
@@ -43,7 +50,8 @@ func inputLanguageReview(binding ValidationPolicyBinding, subject api.UploadSubj
 		})
 	}
 	for _, track := range mediafacts.UnresolvedProgrammeAudioOrigins(subject.LanguageFacts) {
-		if !origins[track.ID] {
+		message, required := origins[track.ID]
+		if !required {
 			continue
 		}
 		outcomes = append(outcomes, api.InputReadinessFieldOutcome{
@@ -52,7 +60,7 @@ func inputLanguageReview(binding ValidationPolicyBinding, subject api.UploadSubj
 			CorrectionField: new(api.CorrectionFieldMetadataTrackAudioOrigins),
 			Status:          api.InputReadinessFieldMissing,
 			Disposition:     api.RuleDispositionStrict,
-			Message:         "Review whether this programme track is an original soundtrack or a dub in Inspected tracks; language tags alone do not establish dubbing.",
+			Message:         message,
 		})
 	}
 	return outcomes

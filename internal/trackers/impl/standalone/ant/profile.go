@@ -30,7 +30,7 @@ func Profile() standalone.Profile {
 			api.IdentityProviderTMDB,
 		),
 		NewDuplicateAdapter:  newDuplicateAdapter,
-		Rules:                &trackers.RuleSet{},
+		Rules:                &trackers.RuleSet{RequireUniqueID: true},
 		ValidationPolicy:     validationPolicy(),
 		ArtifactPolicy:       &trackers.ArtifactPolicy{MaxPieceSizeMiB: 128, MaxTorrentBytes: 250 << 10},
 		BannedGroups:         bannedGroups(),

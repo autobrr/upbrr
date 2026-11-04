@@ -750,6 +750,10 @@ type UploadPlan struct {
 
 // UploadTrackerResult is one safe immutable tracker submission outcome.
 type UploadTrackerResult struct {
+	// SubmissionReceiptID and SubmissionOperationID correlate protocol evidence to one exact persisted attempt.
+	// They never authorize completion or a retry by themselves.
+	SubmissionReceiptID    string               `json:"submissionReceiptId,omitempty"`
+	SubmissionOperationID  WorkflowOperationID  `json:"submissionOperationId,omitempty"`
 	TrackerID              TrackerID            `json:"trackerId"`
 	Status                 StageStatus          `json:"status"`
 	SubmissionStatus       StageStatus          `json:"submissionStatus,omitempty"`
@@ -817,7 +821,7 @@ type ReleaseWorkflow struct {
 // ReleaseWorkflowCurrent is the complete safe current projection returned to
 // every workflow adapter. Private execution resources never appear here.
 type ReleaseWorkflowCurrent struct {
-	// PreparationOperationID identifies forced preparation accepted by this
+	// PreparationOperationID identifies preparation accepted by this
 	// continuation response. Busy responses and passive reads omit it.
 	PreparationOperationID WorkflowOperationID                   `json:"preparationOperationId,omitempty"`
 	Workflow               ReleaseWorkflow                       `json:"workflow"`

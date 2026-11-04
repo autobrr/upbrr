@@ -29,7 +29,7 @@ func Profile() standalone.Profile {
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,
 		ReleaseNamePolicy: trackers.WithTitleProvider(
-			trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy("standalone/bhd/v9", trackers.StructuredNamePolicy{
+			trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy("standalone/bhd/v10", trackers.StructuredNamePolicy{
 				Defaults: applyBHDNameDefaults,
 			}), api.IdentityProviderIMDB),
 			api.IdentityProviderIMDB,

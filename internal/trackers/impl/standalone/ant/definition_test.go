@@ -164,6 +164,7 @@ func TestFilmTypeAnswersRequireMovieEligibility(t *testing.T) {
 				Tracker: "ANT",
 				Meta: api.UploadSubject{
 					ReleaseName:       "Example.Release.2026.1080p.WEB-DL.x264-GRP",
+					Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 					Release:           api.ReleaseInfo{Title: "Example Release", Year: 2026},
 					SourcePath:        filepath.Join(tmp, "Example.mkv"),
 					TorrentPath:       torrentPath,

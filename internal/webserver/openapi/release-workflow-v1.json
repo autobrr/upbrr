@@ -988,6 +988,9 @@
               "$ref": "#/components/schemas/BlurayImage"
             }
           },
+          "DetailsIdentityVersion": {
+            "type": "string"
+          },
           "DetailsStatus": {
             "type": "string"
           },
@@ -9468,8 +9471,14 @@
           "createdAt": {
             "type": "string"
           },
+          "effectId": {
+            "type": "string"
+          },
           "effectKind": {
             "$ref": "#/components/schemas/WorkflowExternalEffectKind"
+          },
+          "effectOperationId": {
+            "$ref": "#/components/schemas/WorkflowOperationID"
           },
           "effectScopeId": {
             "type": "string"
@@ -13254,6 +13263,12 @@
           },
           "status": {
             "$ref": "#/components/schemas/StageStatus"
+          },
+          "submissionOperationId": {
+            "$ref": "#/components/schemas/WorkflowOperationID"
+          },
+          "submissionReceiptId": {
+            "type": "string"
           },
           "submissionStatus": {
             "$ref": "#/components/schemas/StageStatus"

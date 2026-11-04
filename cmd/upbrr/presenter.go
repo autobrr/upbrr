@@ -190,7 +190,26 @@ func askCLIField(reader *bufio.Reader, output io.Writer, prompt cliPrompt) (stri
 		answer, err := writer.ask(prompt)
 		return answer.Text, err
 	}
-	return promptLine(reader, output, prompt.Question)
+	return promptLine(reader, output, cliPlainPromptText(prompt))
+}
+
+func cliPlainPromptText(prompt cliPrompt) string {
+	var text strings.Builder
+	for _, context := range []string{prompt.Evidence, prompt.Help} {
+		if strings.TrimSpace(context) != "" {
+			text.WriteString(safeTerminalText(context))
+			text.WriteByte('\n')
+		}
+	}
+	for _, option := range prompt.Options {
+		if option.Label == option.Value {
+			fmt.Fprintf(&text, "  %s\n", safeTerminalText(option.Label))
+		} else {
+			fmt.Fprintf(&text, "  %s. %s\n", safeTerminalText(option.Value), safeTerminalText(option.Label))
+		}
+	}
+	text.WriteString(safeTerminalText(prompt.Question))
+	return text.String()
 }
 
 type cliPlainPresenter struct {
@@ -206,7 +225,7 @@ func (p *cliPlainPresenter) Ask(ctx context.Context, prompt cliPrompt) (cliAnswe
 		return answer, fmt.Errorf("answer plain question: %w", err)
 	}
 	// Original line protocol and EOF behavior remain owned by promptLine.
-	line, err := promptLine(p.reader, p.output, prompt.Question)
+	line, err := promptLine(p.reader, p.output, cliPlainPromptText(prompt))
 	if err != nil {
 		return answer, err
 	}

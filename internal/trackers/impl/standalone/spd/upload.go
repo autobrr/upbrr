@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -39,7 +40,7 @@ type uploadState struct {
 }
 
 type uploadResponse struct {
-	Status      bool   `json:"status"`
+	Status      *bool  `json:"status"`
 	Error       bool   `json:"error"`
 	DownloadURL string `json:"downloadUrl"`
 	Torrent     struct {
@@ -88,7 +89,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, strings.NewReader(string(body)))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: SPD build upload request: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: SPD build upload request: %w", err))
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -98,42 +99,52 @@ func submitPreparedUpload(
 		Tracker:       "SPD",
 		SuccessStatus: func(status int) bool { return status == http.StatusOK },
 	})
-	if err != nil {
+	if err != nil && !result.BodyComplete {
 		return api.UploadSummary{}, fmt.Errorf("trackers: SPD execute upload: %w", err)
 	}
 
 	var decoded uploadResponse
-	if err := json.Unmarshal(result.Body, &decoded); err != nil {
+	if err := json.Unmarshal(result.ProtocolBody, &decoded); err != nil {
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "SPD", "upload_failure", result.Preview, ".txt")
 		if !result.Success {
 			return api.UploadSummary{}, commonhttp.UploadHTTPError("SPD", result.StatusCode, result.Preview)
 		}
 		return api.UploadSummary{}, fmt.Errorf("trackers: SPD decode response: %s", commonhttp.RedactErrorDetail(err.Error()))
 	}
-	if result.Success && decoded.Status && !decoded.Error {
-		torrentID := strings.TrimSpace(fmt.Sprint(decoded.Torrent.ID))
+	if result.Success && decoded.Status != nil && *decoded.Status && !decoded.Error {
+		torrentID := commonhttp.PositiveTorrentID(decoded.Torrent.ID)
+		torrentURL, downloadURL := "", ""
+		if torrentID != "" {
+			torrentURL = baseURL + "/browse/" + torrentID
+			downloadURL = baseURL + "/api/torrent/" + torrentID + "/download"
+		}
 		if torrentID != "" && artifactPath != "" {
 			if dlErr := downloadTrackerTorrent(ctx, baseURL+"/api/torrent/"+torrentID+"/download", apiKey, artifactPath); dlErr != nil {
 				trackers.LogRegisteredTorrentUnavailable(req.Logger, "SPD")
 				artifactPath = ""
 			}
-		} else if torrentID != "" {
+		} else {
 			trackers.LogRegisteredTorrentUnavailable(req.Logger, "SPD")
+			artifactPath = ""
 		}
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
 				Tracker:     "SPD",
 				TorrentID:   torrentID,
-				TorrentURL:  baseURL + "/browse/" + torrentID,
-				DownloadURL: baseURL + "/api/torrent/" + torrentID + "/download",
+				TorrentURL:  torrentURL,
+				DownloadURL: downloadURL,
 				TorrentPath: artifactPath,
 			}},
 		}, nil
 	}
 
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "SPD", "upload_failure", result.Preview, ".json")
-	return api.UploadSummary{}, commonhttp.UploadHTTPError("SPD", result.StatusCode, result.Preview)
+	failure := commonhttp.UploadHTTPError("SPD", result.StatusCode, result.Preview)
+	if (decoded.Status != nil && !*decoded.Status) || (decoded.Error && decoded.Status == nil) {
+		return api.UploadSummary{}, submission.NewError(submission.Rejected, failure)
+	}
+	return api.UploadSummary{}, failure
 }
 
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {

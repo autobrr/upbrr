@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -90,7 +91,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.baseURL+"/upload.php", bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: HDT request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: HDT request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -100,10 +101,10 @@ func submitPreparedUpload(
 		Tracker:       "HDT",
 		SuccessStatus: func(status int) bool { return status >= 200 && status < 400 },
 	})
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: HDT execute upload: %w", err)
+	combined := result.FinalURL
+	if result.BodyComplete {
+		combined += "\n" + string(result.Body)
 	}
-	combined := result.FinalURL + "\n" + string(result.Body)
 	id := ""
 	if match := detailsPattern.FindStringSubmatch(combined); len(match) >= 2 {
 		id = match[1]
@@ -125,6 +126,9 @@ func submitPreparedUpload(
 				TorrentPath: registeredPath,
 			}},
 		}, nil
+	}
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: HDT execute upload: %w", err)
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "HDT", "upload_failure", result.Preview, ".html")
 	errorResponse := result.Preview

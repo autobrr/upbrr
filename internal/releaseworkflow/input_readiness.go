@@ -241,6 +241,9 @@ func defaultInputReadinessEvaluation(release api.PreparedRelease, trackerIDs []a
 			Status:      api.InputReadinessFieldReady,
 			Disposition: api.RuleDispositionStrict,
 		}
+		if key == "category" {
+			field.CorrectionField = new(api.CorrectionFieldReleaseNameCategory)
+		}
 		if slices.Contains(missing, key) {
 			field.Status = api.InputReadinessFieldMissing
 			field.Message = "Release " + key + " is required."

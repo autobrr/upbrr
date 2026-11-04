@@ -168,7 +168,8 @@ func TestMetadataEditsReplaceModeBeforeRepreparation(t *testing.T) {
 					if index == 1 {
 						want, text = cliPromptText, test.edit
 					}
-					if request.prompt.Kind != want {
+					if request.prompt.Kind != want || request.prompt.WorkflowID != "edited-mode-workflow" || request.prompt.Revision != 1 ||
+						!strings.Contains(request.prompt.Evidence, "Resolution: 1080p") || request.prompt.Help == "" {
 						cancel()
 						<-finished
 						t.Fatal("unexpected metadata correction prompt")

@@ -221,7 +221,9 @@ func (m *Module) Continue(
 			if startErr != nil {
 				return CommandResult{}, fmt.Errorf("release workflow refresh changed corrections: %w", startErr)
 			}
-			return m.Current(ctx, ownerID, operation.WorkflowID)
+			accepted, currentErr := m.Current(ctx, ownerID, operation.WorkflowID)
+			accepted.PreparationOperationID = operation.ID
+			return accepted, currentErr
 		}
 	}
 	if command, stage, required, enrichmentErr := m.planSelectionDemandRefresh(ctx, state, request, current); enrichmentErr != nil {
@@ -231,7 +233,9 @@ func (m *Module) Continue(
 		if startErr != nil {
 			return CommandResult{}, fmt.Errorf("release workflow continue %s: %w", stage, startErr)
 		}
-		return m.Current(ctx, ownerID, operation.WorkflowID)
+		accepted, currentErr := m.Current(ctx, ownerID, operation.WorkflowID)
+		accepted.PreparationOperationID = operation.ID
+		return accepted, currentErr
 	}
 	if request.TrackerApproval != nil {
 		result, approveErr := m.Execute(ctx, ownerID, ApproveTrackersCommand{
@@ -290,7 +294,11 @@ func (m *Module) Continue(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow continue %s: %w", stage, err)
 	}
-	return m.Current(ctx, ownerID, operation.WorkflowID)
+	accepted, currentErr := m.Current(ctx, ownerID, operation.WorkflowID)
+	if operation.Operation == api.OperationKindPreparation {
+		accepted.PreparationOperationID = operation.ID
+	}
+	return accepted, currentErr
 }
 
 // workflowTrackerScope resolves omitted IDs without reviving invalidated evidence.
