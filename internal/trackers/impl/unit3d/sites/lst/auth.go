@@ -11,6 +11,7 @@ import (
 )
 
 func apiKeyGuidance() *trackers.APIKeyGuidance {
+	legacyDeadline := time.Date(2027, time.January, 1, 0, 0, 0, 0, time.UTC)
 	return &trackers.APIKeyGuidance{
 		Header: "X-Api-Key-Expires-At",
 		Message: func(expiry trackers.APIKeyExpiry, now time.Time) string {
@@ -20,7 +21,8 @@ func apiKeyGuidance() *trackers.APIKeyGuidance {
 			if expiry.ExpiresAt.IsZero() {
 				return "LST reported an unreadable API key expiry. Review your LST API key handling and update the LST API key configured in upbrr as needed."
 			}
-			if expiry.ExpiresAt.After(now.Add(30 * 24 * time.Hour)) {
+			// Surface the fixed legacy migration deadline before the rolling warning window.
+			if !expiry.ExpiresAt.Equal(legacyDeadline) && expiry.ExpiresAt.After(now.Add(30*24*time.Hour)) {
 				return ""
 			}
 			return fmt.Sprintf(

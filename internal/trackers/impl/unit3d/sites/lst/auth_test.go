@@ -20,6 +20,17 @@ func TestAPIKeyExpiryGuidance(t *testing.T) {
 	}{
 		{name: "missing", want: "Legacy LST API keys expire on 2027-01-01"},
 		{
+			name:   "legacy deadline before warning window",
+			header: []string{"2027-01-01T00:00:00Z"},
+			want:   "2027-01-01T00:00:00Z",
+		},
+		{
+			name:   "legacy deadline with timezone offset",
+			header: []string{"2027-01-01T10:00:00+10:00"},
+			want:   "2027-01-01T00:00:00Z",
+		},
+		{name: "new key near legacy deadline", header: []string{"2027-01-01T00:00:00.000000001Z"}},
+		{
 			name:   "empty",
 			header: []string{""},
 			want:   "unreadable",
