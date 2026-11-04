@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { expect } from "@playwright/test";
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import {
   createE2EAPIToken,
   createE2EWorkspace,
@@ -277,6 +279,29 @@ test("automatic HDR and existing audio artifacts survive reload and input reopen
   const workspace = await createE2EWorkspace({ hdrAnalysis: "decoded" });
   let app: AppServer | undefined;
   try {
+    const videoHash = async (input: string) => {
+      const { stdout } = await promisify(execFile)("ffmpeg", [
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-i",
+        input,
+        "-map",
+        "0:v:0",
+        "-c:v",
+        "copy",
+        "-f",
+        "hash",
+        "pipe:1",
+      ]);
+      return stdout.trim();
+    };
+    expect(await videoHash(workspace.sourcePath)).toBe(
+      await videoHash(
+        path.join(repoRoot, "internal/services/hdranalysis/testdata/decoded-pq-cuts-25.mkv"),
+      ),
+    );
     app = await startApp(workspace, { baseURL: "/upbrr/" });
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "HDR Analysis", exact: true }).click();

@@ -155,7 +155,7 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
             "copy",
             "-c:a",
             "pcm_s16le",
-            ...(options.hdrAnalysis === "decoded" ? ["-shortest"] : []),
+            // Both inputs are finite; -shortest can truncate reordered video packets.
             sourcePath,
           ],
           (error) => (error ? reject(error) : resolve()),
