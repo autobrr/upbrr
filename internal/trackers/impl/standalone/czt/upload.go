@@ -32,6 +32,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -131,12 +132,12 @@ func submitPreparedUpload(
 	contentType string,
 ) (api.UploadSummary, error) {
 	if err := ctx.Err(); err != nil {
-		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("context canceled: %w", err))
 	}
 
 	httpReq, err := http.NewRequestWithContext(context.WithoutCancel(ctx), http.MethodPost, state.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: CZT build upload request: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: CZT build upload request: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -152,22 +153,34 @@ func submitPreparedUpload(
 		SuccessStatus: func(status int) bool { return status == http.StatusCreated },
 		SuccessBody:   commonhttp.FullSuccessBody,
 	})
-	if err != nil {
+	if err != nil && !execution.BodyComplete {
 		return api.UploadSummary{}, fmt.Errorf("trackers: CZT execute upload: %w", err)
 	}
 	responseBody, responsePreview := execution.Body, execution.Preview
-	if execution.StatusCode != http.StatusCreated {
-		if err := ctx.Err(); err != nil {
-			return api.UploadSummary{}, fmt.Errorf("context canceled: %w", err)
-		}
-	}
 
 	// Only a fresh 201 with a torrent id is a successful upload. A 409 means the
 	// release name already exists; surface it as an error (the response still
 	// carries the existing torrent for callers who want to cross-seed).
 	if execution.StatusCode != http.StatusCreated {
+		var response uploadResponse
+		knownRejection := false
+		if execution.BodyComplete && json.Unmarshal(execution.ProtocolBody, &response) == nil {
+			switch execution.StatusCode {
+			case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusUnprocessableEntity:
+				knownRejection = strings.TrimSpace(response.Error) != "" && response.ID <= 0
+			case http.StatusConflict:
+				knownRejection = response.ID > 0 || strings.TrimSpace(response.Error) != ""
+			}
+		}
+		if err := ctx.Err(); err != nil && !knownRejection {
+			return api.UploadSummary{}, fmt.Errorf("context canceled: %w", err)
+		}
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, trackerName, "upload_failure", responsePreview, ".json")
-		return api.UploadSummary{}, commonhttp.UploadHTTPError(trackerName, execution.StatusCode, responsePreview)
+		err := commonhttp.UploadHTTPError(trackerName, execution.StatusCode, responsePreview)
+		if knownRejection {
+			return api.UploadSummary{}, submission.NewError(submission.Rejected, err)
+		}
+		return api.UploadSummary{}, err
 	}
 
 	torrentIDValue, err := parseCZTUploadID(responseBody)

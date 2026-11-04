@@ -31,9 +31,14 @@ const (
 	baseURL                    = "https://www.blu-ray.com"
 	maxResponseBytes           = 16 << 20
 	maxFallbackReleaseSections = 3
+	// DetailsIdentityVersion identifies verified details or a failed inspection that accepted no page facts.
+	DetailsIdentityVersion = "final-release-url-v1"
 )
 
 var (
+	// ErrDetailReleaseNotRetained reports a request for a release absent from the retained listing.
+	ErrDetailReleaseNotRetained = errors.New("bluray.com: requested detail release is not in the retained listing")
+
 	releaseIDPattern       = regexp.MustCompile(`(?i)blu-ray\.com/(?:movies|dvd)/.*?/(\d+)/`)
 	productIDPattern       = regexp.MustCompile(`(?i)blu-ray\.com/.+?/(\d+)/?`)
 	videoCodecPattern      = regexp.MustCompile(`(?i)Codec:\s*(.+?)(?:\s+Resolution:|$)`)
@@ -85,6 +90,11 @@ type movieLink struct {
 	ProductID   string
 }
 
+// verifiedReleasePage distinguishes detail evidence collected after redirect validation.
+type verifiedReleasePage struct {
+	Body string
+}
+
 // NewClient uses a 30-second HTTP client when client is nil. Only the first
 // optional logger is used, and a nil logger becomes [api.NopLogger].
 func NewClient(client *http.Client, loggers ...api.Logger) *Client {
@@ -100,19 +110,47 @@ func NewClient(client *http.Client, loggers ...api.Logger) *Client {
 
 // Lookup discovers listings without release-page requests. Details are fetched
 // only for an explicit request, an exact release absent from retained listings,
-// or a selected release needed for cover handling. Successful pages are reused;
-// failed detail requests retain the listing and other successful candidates.
+// or a selected release needed for cover handling. Successful pages are reused.
+// Explicit inspections report catalogue failures; individual failed detail
+// requests retain the listing and other successful candidates.
 func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMetadata, error) {
 	if c == nil {
 		c = NewClient(nil)
 	}
 	var result *api.BlurayMetadata
-	if input.Retained != nil {
+	legacyDetails := HasUnverifiedDetails(input.Retained)
+	if input.Retained != nil && !legacyDetails {
 		retained := *input.Retained
 		retained.Candidates = slices.Clone(retained.Candidates)
 		result = &retained
 	}
 	requested := strings.TrimSpace(input.SelectedReleaseID)
+	legacyManualURL := ""
+	if legacyDetails && requested != "" {
+		if candidate := input.Retained.CandidateByID(requested); candidate != nil {
+			raw := candidate.URL
+			if raw == "" {
+				raw = requested
+			}
+			id, target, err := providerid.ParseBlurayRelease(raw)
+			if err == nil && id == requested {
+				if raw == requested && strings.EqualFold(strings.TrimSpace(input.DiscType), "DVD") {
+					target = baseURL + "/dvd/movies.php?id=" + id
+				}
+				legacyManualURL = target
+			}
+		}
+	}
+	if legacyDetails && input.IMDBID <= 0 && input.ExactRelease == "" {
+		switch {
+		case legacyManualURL != "":
+			input.ExactRelease = legacyManualURL
+		case input.Details != nil || requested != "":
+			return nil, ErrDetailReleaseNotRetained
+		default:
+			return nil, nil
+		}
+	}
 	var exact bool
 	if input.ExactRelease != "" {
 		raw := strings.TrimSpace(input.ExactRelease)
@@ -143,7 +181,10 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 			return result, err
 		}
 		if catalogue == nil {
-			if result == nil {
+			if result == nil && legacyManualURL == "" {
+				if input.Details != nil && !input.Details.All {
+					return nil, ErrDetailReleaseNotRetained
+				}
 				return nil, nil
 			}
 		} else {
@@ -152,19 +193,54 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 				if oldSelected != nil && listedSelected != nil && !sameReleaseNamespace(oldSelected.URL, listedSelected.URL) {
 					return result, errors.New("bluray.com: the selected release and source catalogue use different disc formats")
 				}
-				for i := range catalogue.Candidates {
-					listing := &catalogue.Candidates[i]
-					if old := result.CandidateByID(listing.ReleaseID); old != nil && sameReleaseNamespace(old.URL, listing.URL) {
-						listing.DetailsStatus, listing.Specs, listing.ReleaseDate = old.DetailsStatus, old.Specs, old.ReleaseDate
-						listing.CoverImages, listing.Warnings, listing.MatchNotes = old.CoverImages, old.Warnings, old.MatchNotes
-						listing.GenericDisc, listing.SpecsMissing = old.GenericDisc, old.SpecsMissing
-					}
-				}
 				if old := result.CandidateByID(requested); old != nil && catalogue.CandidateByID(requested) == nil {
 					catalogue.Candidates = append(catalogue.Candidates, *old)
 				}
 			}
+			priorDetails := result
+			if legacyDetails {
+				priorDetails = input.Retained
+			}
+			for i := range catalogue.Candidates {
+				listing := &catalogue.Candidates[i]
+				if old := priorDetails.CandidateByID(
+					listing.ReleaseID,
+				); old != nil && old.DetailsIdentityVersion == DetailsIdentityVersion &&
+					sameReleaseNamespace(old.URL, listing.URL) {
+					listing.DetailsStatus, listing.Specs, listing.ReleaseDate = old.DetailsStatus, old.Specs, old.ReleaseDate
+					listing.DetailsIdentityVersion = old.DetailsIdentityVersion
+					if old.DetailsStatus == "complete" {
+						if old.Country != "" && !strings.EqualFold(old.Country, "Unknown") {
+							listing.Country, listing.Region = old.Country, old.Region
+						}
+						if old.Publisher != "" {
+							listing.Publisher = old.Publisher
+						}
+					}
+					listing.CoverImages, listing.Warnings, listing.MatchNotes = old.CoverImages, old.Warnings, old.MatchNotes
+					listing.GenericDisc, listing.SpecsMissing = old.GenericDisc, old.SpecsMissing
+				}
+			}
 			result = catalogue
+		}
+	}
+	if legacyManualURL != "" && result.CandidateByID(requested) == nil {
+		if input.Details != nil && (input.Details.All || strings.TrimSpace(input.Details.ReleaseID) != requested) {
+			return result, ErrDetailReleaseNotRetained
+		}
+		if result == nil {
+			result = &api.BlurayMetadata{IMDBID: input.IMDBID, SourcePath: input.SourcePath}
+		}
+		result.Candidates = append(result.Candidates, api.BlurayReleaseCandidate{ReleaseID: requested, URL: legacyManualURL})
+		exact = true
+	}
+	if legacyManualURL != "" {
+		if listed := result.CandidateByID(requested); listed != nil && !sameReleaseNamespace(legacyManualURL, listed.URL) {
+			return &api.BlurayMetadata{
+				SelectedReleaseID: requested,
+				SelectedURL:       legacyManualURL,
+				Candidates:        []api.BlurayReleaseCandidate{{ReleaseID: requested, URL: legacyManualURL}},
+			}, errors.New("bluray.com: the selected release and source catalogue use different disc formats")
 		}
 	}
 	if details := input.Details; details != nil {
@@ -172,13 +248,23 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 			return result, errors.New("bluray.com: request one retained release or all releases")
 		}
 		if !details.All && result.CandidateByID(details.ReleaseID) == nil {
-			return result, errors.New("bluray.com: requested detail release is not in the retained listing")
+			return result, ErrDetailReleaseNotRetained
+		}
+		if exact && !details.All && strings.TrimSpace(details.ReleaseID) != requested {
+			return result, ErrDetailReleaseNotRetained
 		}
 	}
 	// Filter before fetching so explicit all respects the effective release country.
 	// An exact release obtains its country from its own page first.
 	if !exact {
 		SelectRelease(result, input)
+	} else if country := input.ReleaseCountry(); country != "" {
+		result.Candidates = slices.DeleteFunc(result.Candidates, func(candidate api.BlurayReleaseCandidate) bool {
+			return candidate.ReleaseID != requested && !strings.EqualFold(strings.TrimSpace(candidate.Country), country)
+		})
+	}
+	if input.Details != nil && !input.Details.All && result.CandidateByID(input.Details.ReleaseID) == nil {
+		return result, ErrDetailReleaseNotRetained
 	}
 	selected := input.SelectedReleaseID
 	if selected == "" {
@@ -188,9 +274,10 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 	wanted := make([]int, 0)
 	for i := range result.Candidates {
 		candidate := &result.Candidates[i]
-		want := exact && candidate.ReleaseID == requested || input.FetchSelected && candidate.ReleaseID == selected && candidate.DetailsStatus == ""
+		want := exact && candidate.ReleaseID == requested ||
+			input.Details == nil && input.FetchSelected && candidate.ReleaseID == selected && candidate.DetailsStatus == ""
 		if input.Details != nil {
-			want = want || input.Details.All || candidate.ReleaseID == input.Details.ReleaseID
+			want = want || input.Details.All || strings.EqualFold(strings.TrimSpace(candidate.ReleaseID), strings.TrimSpace(input.Details.ReleaseID))
 		}
 		if want && candidate.DetailsStatus != "complete" {
 			wanted = append(wanted, i)
@@ -218,12 +305,14 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 					err = errors.New("release page does not identify an available edition")
 				}
 				if err == nil {
+					parsed.DetailsIdentityVersion = DetailsIdentityVersion
 					*candidate = parsed
 				}
 			}
 			if err != nil {
 				failed++
 				candidate.DetailsStatus = "failed"
+				candidate.DetailsIdentityVersion = DetailsIdentityVersion
 				candidate.Warnings = []string{"Release details unavailable."}
 				if exact {
 					step.Finish("Requested release unavailable.", true)
@@ -255,6 +344,25 @@ func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMeta
 		return result, fmt.Errorf("bluray.com: requested release %s is not eligible for the release country", requested)
 	}
 	return result, nil
+}
+
+// HasUnverifiedDetails identifies legacy parsed facts that must be rebuilt from
+// catalogue evidence before they can affect selection, scoring or naming.
+func HasUnverifiedDetails(metadata *api.BlurayMetadata) bool {
+	if metadata == nil {
+		return false
+	}
+	for _, candidate := range metadata.Candidates {
+		if candidate.DetailsIdentityVersion == DetailsIdentityVersion {
+			continue
+		}
+		if candidate.DetailsStatus != "" || candidate.ReleaseDate != "" || len(candidate.MatchNotes) > 0 || len(candidate.CoverImages) > 0 ||
+			candidate.Specs.Video != (api.BlurayVideoSpec{}) || candidate.Specs.Discs != (api.BlurayDiscSpec{}) || candidate.Specs.Playback != (api.BlurayPlaybackSpec{}) ||
+			len(candidate.Specs.Audio) > 0 || len(candidate.Specs.Subtitles) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) discover(ctx context.Context, input LookupInput) (*api.BlurayMetadata, error) {
@@ -290,11 +398,17 @@ func (c *Client) discover(ctx context.Context, input LookupInput) (*api.BlurayMe
 			if ctx.Err() != nil {
 				return nil, fmt.Errorf("bluray.com lookup canceled: %w", ctx.Err())
 			}
+			if input.Details != nil {
+				return nil, fmt.Errorf("bluray.com edition catalogue: %w", fetchErr)
+			}
 			continue
 		}
 		releases, parseErr := parseReleaseInfo(releasesHTML, input, logging.FromContext(ctx, c.logger))
 		if parseErr != nil {
 			discovery.Finish("Edition catalogue could not be read.", true)
+			if input.Details != nil {
+				return nil, fmt.Errorf("bluray.com edition catalogue: %w", parseErr)
+			}
 			continue
 		}
 		discovered += len(releases)
@@ -329,6 +443,16 @@ func sameReleaseNamespace(first, second string) bool {
 }
 
 func (c *Client) fetch(ctx context.Context, targetURL string, referer string) (string, error) {
+	if _, _, err := providerid.ParseBlurayRelease(targetURL); err == nil {
+		page, fetchErr := evidence.Lookup(ctx, "bluray.page", []string{targetURL, referer}, func() (verifiedReleasePage, error) {
+			body, pageErr := c.fetchPage(ctx, targetURL, referer)
+			return verifiedReleasePage{Body: body}, pageErr
+		}, func(value verifiedReleasePage) bool { return strings.TrimSpace(value.Body) == "" })
+		if fetchErr != nil {
+			return page.Body, fmt.Errorf("metadata evidence lookup: %w", fetchErr)
+		}
+		return page.Body, nil
+	}
 	result, err := evidence.Lookup(
 		ctx,
 		"bluray.page",
@@ -366,6 +490,16 @@ func (c *Client) fetchPage(ctx context.Context, targetURL string, referer string
 		return "", fmt.Errorf("bluray.com: fetch %s: %w", targetURL, err)
 	}
 	defer resp.Body.Close()
+	if requestedID, _, parseErr := providerid.ParseBlurayRelease(targetURL); parseErr == nil {
+		if resp.Request == nil || resp.Request.URL == nil {
+			return "", errors.New("bluray.com: release response has no final URL")
+		}
+		finalURL := resp.Request.URL.String()
+		finalID, _, finalErr := providerid.ParseBlurayRelease(finalURL)
+		if finalErr != nil || finalID != requestedID || !sameReleaseNamespace(targetURL, finalURL) {
+			return "", errors.New("bluray.com: release response redirected to a different edition")
+		}
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return "", fmt.Errorf("bluray.com: read %s: %w", targetURL, err)

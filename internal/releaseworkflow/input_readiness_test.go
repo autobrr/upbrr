@@ -106,6 +106,16 @@ func TestEvaluateInputReadinessRetainsGlobalRequirements(t *testing.T) {
 			t.Fatalf("missing global %s outcome: %#v", key, current.InputReadiness.Fields)
 		}
 	}
+	for _, field := range current.InputReadiness.Fields {
+		if field.Key == "category" {
+			if field.CorrectionField == nil || *field.CorrectionField != api.CorrectionFieldReleaseNameCategory ||
+				field.Status != api.InputReadinessFieldMissing || field.Disposition != api.RuleDispositionStrict || len(field.TrackerIDs) != 0 {
+				t.Fatalf("global category must retain its required correction binding: %#v", field)
+			}
+			return
+		}
+	}
+	t.Fatal("missing global category outcome")
 }
 
 func TestEvaluateInputReadinessRejectsAnswersWithoutEvaluator(t *testing.T) {

@@ -571,6 +571,9 @@ type MediaArtifact struct {
 	SizeBytes        int64             `json:"sizeBytes,omitempty"`
 	Host             string            `json:"host,omitempty"`
 	URL              string            `json:"url,omitempty"`
+	// SourceUnavailable identifies a restored hosted link whose local image could
+	// not be verified. It remains removable without becoming an upload candidate.
+	SourceUnavailable bool `json:"sourceUnavailable,omitempty"`
 }
 
 // MediaCaptureInstructions are transport-safe capture choices. Local paths
@@ -579,7 +582,8 @@ type MediaCaptureInstructions struct {
 	ScreenshotCount int                   `json:"screenshotCount"`
 	Purpose         ScreenshotPurpose     `json:"purpose"`
 	Selections      []ScreenshotSelection `json:"selections,omitempty"`
-	// SavedImagePlanID binds an explicit saved-image import to its reviewed plan.
+	// SavedImagePlanID binds a saved-image import to its reviewed plan. With no
+	// requested count, selections or manual frames, only saved images are imported.
 	SavedImagePlanID MediaPlanID `json:"savedImagePlanId,omitempty"`
 	// ManualFrames applies the same raw frame numbers to every prepared disc.
 	ManualFrames    []int `json:"manualFrames,omitempty"`
@@ -746,6 +750,10 @@ type UploadPlan struct {
 
 // UploadTrackerResult is one safe immutable tracker submission outcome.
 type UploadTrackerResult struct {
+	// SubmissionReceiptID and SubmissionOperationID correlate protocol evidence to one exact persisted attempt.
+	// They never authorize completion or a retry by themselves.
+	SubmissionReceiptID    string               `json:"submissionReceiptId,omitempty"`
+	SubmissionOperationID  WorkflowOperationID  `json:"submissionOperationId,omitempty"`
 	TrackerID              TrackerID            `json:"trackerId"`
 	Status                 StageStatus          `json:"status"`
 	SubmissionStatus       StageStatus          `json:"submissionStatus,omitempty"`
@@ -813,7 +821,7 @@ type ReleaseWorkflow struct {
 // ReleaseWorkflowCurrent is the complete safe current projection returned to
 // every workflow adapter. Private execution resources never appear here.
 type ReleaseWorkflowCurrent struct {
-	// PreparationOperationID identifies forced preparation accepted by this
+	// PreparationOperationID identifies preparation accepted by this
 	// continuation response. Busy responses and passive reads omit it.
 	PreparationOperationID WorkflowOperationID                   `json:"preparationOperationId,omitempty"`
 	Workflow               ReleaseWorkflow                       `json:"workflow"`

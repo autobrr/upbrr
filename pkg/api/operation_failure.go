@@ -49,6 +49,7 @@ const (
 	OperationFailureHDRAnalysis              OperationFailureCode = "hdr_analysis_failed"
 	OperationFailureAudioAnalysis            OperationFailureCode = "audio_analysis_failed"
 	OperationFailureUnknownOutcome           OperationFailureCode = "unknown_submission_outcome"
+	OperationFailureReceiptRetention         OperationFailureCode = "receipt_retention"
 	OperationFailureInternal                 OperationFailureCode = "internal"
 )
 

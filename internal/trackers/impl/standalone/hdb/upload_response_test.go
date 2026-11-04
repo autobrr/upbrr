@@ -77,7 +77,7 @@ func TestSubmitPreparedUploadErrorResponse(t *testing.T) {
 		{
 			name: "oversized response",
 			body: `<div class="error">Invalid category</div><!--` + strings.Repeat("x", 1<<20),
-			want: "response exceeded 1 MiB; Invalid category",
+			want: "response exceeded 1 MiB; Invalid category\nread upload response body: upload response exceeds 1048576 bytes",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

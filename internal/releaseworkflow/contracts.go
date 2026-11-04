@@ -519,7 +519,9 @@ type RegisteredArtifactAuthority struct {
 // UploadPlanBuildOptions controls side effects and execution policy for one
 // retained upload preparation.
 type UploadPlanBuildOptions struct {
-	DryRun               bool
+	DryRun bool
+	// ReviewOnly defers client injection until a registered tracker torrent exists.
+	ReviewOnly           bool
 	NoSeed               bool
 	TrackerIDs           []api.TrackerID
 	TrackerApproval      *api.TrackerApprovalSnapshotRef
@@ -585,12 +587,14 @@ type DurabilityRepository interface {
 	SaveContinuation(context.Context, api.ReleaseWorkflowContinuationRecord) error
 	AppendEvents(context.Context, string, api.WorkflowID, []api.WorkflowEvent) ([]api.WorkflowEvent, error)
 	LoadEvents(context.Context, string, api.WorkflowID, uint64, int) ([]api.WorkflowEvent, error)
+	// BeginEffect may return the blocking local record with ErrReleaseWorkflowEffectOutcomeUnknown
+	// for reconciliation; an error never admits another external attempt.
 	BeginEffect(context.Context, api.ReleaseWorkflowEffectRecord) (api.ReleaseWorkflowEffectRecord, bool, error)
 	CompleteEffect(context.Context, api.WorkflowEffectStatus, api.ReleaseWorkflowEffectRecord) error
 	MarkOperationEffectsUnknown(context.Context, string, api.WorkflowID, api.WorkflowOperationID, time.Time) error
 	RecoverLegacyEffects(context.Context, string, api.WorkflowID, time.Time) ([]api.ReleaseWorkflowEffectRecord, error)
 	ListLegacyRecoveryWorkflowIDs(context.Context, string) ([]api.WorkflowID, error)
-	ResolveEffectUnknown(context.Context, string, api.WorkflowID, api.WorkflowExternalEffectKind, string, time.Time) error
+	ResolveEffectUnknown(context.Context, string, api.WorkflowID, api.WorkflowExternalEffectKind, string, time.Time, ...api.WorkflowExternalEffectReceipt) error
 	LoadWork(context.Context, string, api.WorkflowID, api.WorkflowOperationID) (api.ReleaseWorkflowWorkRecord, error)
 	ClaimWork(context.Context, api.ReleaseWorkflowWorkRecord) error
 	RenewWork(context.Context, api.ReleaseWorkflowWorkRecord) error
@@ -1328,6 +1332,8 @@ type descriptionsPublication struct {
 
 // DryRunUploadsCommand prepares sanitized reports without tracker submission.
 type DryRunUploadsCommand struct {
+	// ReviewOnly prepares a live-upload review without injecting the prepared torrent.
+	ReviewOnly       bool
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	NoSeed           bool
@@ -1339,11 +1345,13 @@ func (DryRunUploadsCommand) commandName() string              { return "dry_run_
 func (DryRunUploadsCommand) userIntent()                      {}
 func (DryRunUploadsCommand) operationKind() api.OperationKind { return api.OperationKindUploadDryRun }
 func (c DryRunUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	// The default payload must keep receipts written before ReviewOnly existed.
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool
 		TrackerIDs       []api.TrackerID
-	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs})
+		ReviewOnly       bool `json:",omitempty"`
+	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs, c.ReviewOnly})
 }
 
 // ExecuteUploadsCommand directly prepares and executes eligible trackers.
@@ -1467,6 +1475,15 @@ type ResolveActionCommand struct {
 func (ResolveActionCommand) commandName() string              { return "resolve_action" }
 func (ResolveActionCommand) userIntent()                      {}
 func (ResolveActionCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
+
+// resolveTrackerPreparationCommand continues a retained preparation with durable
+// client-effect reporting. Other action answers remain synchronous.
+type resolveTrackerPreparationCommand struct{ ResolveActionCommand }
+
+func (resolveTrackerPreparationCommand) commandName() string { return "resolve_tracker_preparation" }
+func (resolveTrackerPreparationCommand) operationKind() api.OperationKind {
+	return api.OperationKindUploadDryRun
+}
 
 // CommandOperationKind classifies one user intent without transport-owned type switches.
 func CommandOperationKind(command Command) (api.OperationKind, bool) {

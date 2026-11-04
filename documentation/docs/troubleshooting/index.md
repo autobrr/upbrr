@@ -48,6 +48,12 @@ Startup retains completed operation checkpoints and marks unfinished operations 
 
 For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup retains unresolved external attempts as uncertain and keeps their retry blocks; an interrupted operation is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
 
+A tracker response that explicitly rejects an upload is a failed submission, rather than an unknown outcome. Correct the reported problem before preparing and reviewing a new attempt. An accepted upload remains accepted if retrieving its torrent or injecting it into the client fails. If the local submission receipt could not be saved, the result reports that bookkeeping failure separately and keeps retries blocked. Do not confirm that an accepted submission did not complete to bypass this block.
+
+During legacy recovery, retained proof for the exact accepted attempt settles that effect so it no longer keeps the shared input slot occupied. Other uncertain attempts still require reconciliation, and the accepted upload's retry blocks remain in place.
+
+An upload blocked by an older uncertain attempt offers confirmation only when the exact receipt belongs to the current workflow. A fence owned by another workflow remains protected and cannot be confirmed from the new workflow.
+
 An unresolved tracker submission does not prevent independent CLI queue items from running when its durable submission protection remains available. Legacy attempts without that protection still require reconciliation before new inputs. The affected source remains protected until reconciliation; resuming the queue selects its other pending items. Missing or contradictory retained source information still requires manual recovery.
 
 If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Resolve the uncertainty before activating the changed configuration.
@@ -141,8 +147,9 @@ Upload preflight can validate sessions and perform tracker-supported automatic l
 ## No screenshots or image links
 
 - Confirm FFmpeg access and screenshot count.
-- For imported screenshots, enable **Settings → Metadata → Keep images**, inspect **Tracker Data**, and use **Saved tracker images → Use saved images** on **Screenshots** when offered. Only usable validated images are eligible; an imported comparison block alone does not supply ordinary screenshots.
+- For imported screenshots, enable **Settings → Metadata → Collect existing tracker images**, inspect **Tracker Data**, and open **Screenshots** to review the automatically included images. Unselect or delete unwanted images in the normal screenshot list. Only usable validated images are eligible; an imported comparison block alone does not supply ordinary screenshots.
 - Confirm the chosen image host is configured and allowed by the tracker. Images tied to their source tracker may need downloading and rehosting, even when they display correctly in the original description.
+- If a saved screenshot’s local file is missing or changed, its retained hosted URL remains listed under **Upload Images**, where you can remove the saved association. It is not a local upload candidate.
 - Review host-specific failure messages without copying credentials or raw responses.
 - Check `min_successful_image_uploads`: zero requires the whole batch to succeed; a positive value permits a partially successful batch only after that many images publish.
 - Use `--skip-imagehost-upload` only when you will supply valid hosted images another way.

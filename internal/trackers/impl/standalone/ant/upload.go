@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -95,23 +96,38 @@ func submitPreparedUpload(
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
+	retryKey := ""
 	if key := trumpChallengeKey(status, payload); state.trumpRetry && key != "" {
+		retryKey = key
 		body, contentType, err = trumpRetryPayload(body, contentType, key, state.trumpReason)
 		if err != nil {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, submission.NewError(submission.Rejected, err)
 		}
 		logger.Infof("trackers: tracker=ANT state=retrying reason=reviewed_trump_challenge")
 		status, payload, bodyBytes, err = postPreparedUpload(ctx, client, body, contentType, key)
 		if err != nil {
 			return api.UploadSummary{}, fmt.Errorf("trackers: ANT trump retry: %w", trumpRetryError{cause: err, key: key})
 		}
-		// A replacement challenge is a failed retry, never permission to submit again.
-		if status < 200 || status >= 300 || !antUploadSuccess(payload) {
-			return api.UploadSummary{}, fmt.Errorf("trackers: ANT trump retry: %w", antUploadError(status, payload, bodyBytes, key))
-		}
 	}
-	if status < 200 || status >= 300 || !antUploadSuccess(payload) {
-		return api.UploadSummary{}, antUploadError(status, payload, bodyBytes)
+	// Only the final response establishes the outcome; a replacement challenge
+	// never authorizes a third request.
+	accepted := antUploadSuccess(payload)
+	success, hasSuccess := payload["success"]
+	explicitFailure := hasSuccess && (success == false || strings.EqualFold(antString(success), "false"))
+	errorValue := payload["error"]
+	errorMessage, stringError := errorValue.(string)
+	hasError := strings.TrimSpace(errorMessage) != ""
+	// Unsupported error shapes cannot establish clean acceptance or prove rejection.
+	unsupportedError := errorValue != nil && !stringError
+	if status < 200 || status >= 300 || !accepted || explicitFailure || hasError || unsupportedError {
+		err := antUploadError(status, payload, bodyBytes, retryKey)
+		if retryKey != "" {
+			err = fmt.Errorf("trackers: ANT trump retry: %w", err)
+		}
+		if !accepted && (explicitFailure || hasError) {
+			return api.UploadSummary{}, submission.NewError(submission.Rejected, err)
+		}
+		return api.UploadSummary{}, err
 	}
 
 	viewURL := antString(payload["view"])
@@ -178,7 +194,7 @@ func (e trumpRetryError) Unwrap() error { return e.cause }
 func postPreparedUpload(ctx context.Context, client *http.Client, body []byte, contentType string, secrets ...string) (int, map[string]any, []byte, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, antUploadURL, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("trackers: ANT request build: %w", err)
+		return 0, nil, nil, submission.NewError(submission.NotSent, fmt.Errorf("trackers: ANT request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -201,9 +217,10 @@ func postPreparedUpload(ctx context.Context, client *http.Client, body []byte, c
 	return response.StatusCode, payload, bodyBytes, nil
 }
 
-// trumpChallengeKey recognizes a fresh class-based challenge, not a rejected key.
+// trumpChallengeKey recognizes a fresh class-based challenge without positive
+// acceptance evidence or a rejected key.
 func trumpChallengeKey(status int, payload map[string]any) string {
-	if status != http.StatusConflict {
+	if status != http.StatusConflict || antUploadSuccess(payload) {
 		return ""
 	}
 	if _, rejected := payload["key_error"]; rejected {
@@ -445,13 +462,19 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
+// antUploadSuccess detects any positive marker, including contradictory responses
+// that must block a challenge retry rather than establish clean acceptance.
 func antUploadSuccess(payload map[string]any) bool {
 	if success, ok := payload["success"]; ok {
 		switch value := success.(type) {
 		case bool:
-			return value
+			if value {
+				return true
+			}
 		case string:
-			return strings.EqualFold(strings.TrimSpace(value), "true") || strings.EqualFold(strings.TrimSpace(value), "success")
+			if strings.EqualFold(strings.TrimSpace(value), "true") || strings.EqualFold(strings.TrimSpace(value), "success") {
+				return true
+			}
 		}
 	}
 	return strings.EqualFold(strings.TrimSpace(stringValue(payload["status"])), "success")
