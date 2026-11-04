@@ -33,7 +33,7 @@ func TestUnknownOriginalCLIReviewDoesNotReadInput(t *testing.T) {
 				}
 				reader := bufio.NewReader(cliNoInput{t})
 				var out bytes.Buffer
-				corrections, err := collectCLIInputLanguages(reader, &out, mode, readiness.Fields, media.Tracks)
+				corrections, err := collectCLIInputLanguages(reader, &out, mode, readiness.Fields, "Example.Release.mkv", media)
 				if err != nil || len(corrections) != 0 {
 					t.Fatalf("language corrections=%#v err=%v", corrections, err)
 				}

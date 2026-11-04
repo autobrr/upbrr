@@ -237,6 +237,7 @@ export type BlurayReleaseCandidate = Readonly<{
   Accepted: boolean;
   Country: string;
   CoverImages: readonly BlurayImage[];
+  DetailsIdentityVersion?: string;
   DetailsStatus: string;
   GenericDisc: boolean;
   MatchNotes: readonly string[];

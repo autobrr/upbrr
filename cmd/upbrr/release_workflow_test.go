@@ -1227,7 +1227,12 @@ func TestCLIWorkflowLargestPlaylistUsesTypedFactReplacement(t *testing.T) {
 		coreSvc,
 		api.Request{
 			SourcePath: "Example.Release.2026.1080p-GRP",
-			Options:    api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
+			Options: api.UploadOptions{
+				InteractionMode: api.InteractionModeUnattended,
+				KeepFolder:      true,
+				SkipAutoTorrent: true,
+			},
+			ClientOverrides: api.ClientOverrides{Client: new("example-client")},
 		},
 		api.PreparationIntentUpload,
 		nil,
@@ -1237,6 +1242,9 @@ func TestCLIWorkflowLargestPlaylistUsesTypedFactReplacement(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("new workflow session: %v", err)
+	}
+	if !session.preparationPolicy.KeepFolder || !session.clientSearch.Skip || session.clientSearch.Client == nil || *session.clientSearch.Client != "example-client" {
+		t.Fatal("session lost mapped preparation and client-search options")
 	}
 	if len(coreSvc.commands) != 4 {
 		t.Fatalf("commands = %d, want create, prepare, replace, prepare", len(coreSvc.commands))

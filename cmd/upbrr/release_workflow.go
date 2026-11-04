@@ -85,6 +85,8 @@ type cliWorkflowSession struct {
 	logger                   api.Logger
 	current                  releaseworkflow.CommandResult
 	intent                   cliWorkflowIntent
+	preparationPolicy        api.PreparationPolicy
+	clientSearch             api.ClientSearchPolicy
 	uploadRequest            api.Request
 	screenshotCountIsDefault bool
 	idempotencyRun           string
@@ -429,13 +431,15 @@ func newCLIWorkflowSession(
 		return nil, fmt.Errorf("upbrr: map workflow preparation: %w", err)
 	}
 	session := &cliWorkflowSession{
-		core:           coreSvc,
-		logger:         logger,
-		intent:         mapCLIWorkflowIntent(request),
-		uploadRequest:  request,
-		idempotencyRun: strings.ToLower(rand.Text()),
-		progressWriter: streams.out,
-		streams:        streams,
+		core:              coreSvc,
+		logger:            logger,
+		intent:            mapCLIWorkflowIntent(request),
+		preparationPolicy: input.Policy,
+		clientSearch:      input.Search,
+		uploadRequest:     request,
+		idempotencyRun:    strings.ToLower(rand.Text()),
+		progressWriter:    streams.out,
+		streams:           streams,
 	}
 	ready := false
 	defer func() {
@@ -547,11 +551,6 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 	if reader == nil {
 		return nil, errors.New("upbrr: Blu-ray playlist selection requires input")
 	}
-	fmt.Fprintln(output)
-	fmt.Fprintln(output, action.Prompt)
-	for index, option := range action.Options {
-		fmt.Fprintf(output, "%d. %s\n", index+1, option.Label)
-	}
 	options := make([]cliPromptOption, len(action.Options))
 	for index, option := range action.Options {
 		options[index] = cliPromptOption{Label: option.Label, Value: strconv.Itoa(index + 1)}
@@ -560,6 +559,8 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 		Kind:     cliPromptMultiSelect,
 		Question: "Playlist number(s), comma-separated: ",
 		Evidence: action.Prompt,
+		Help: "Choose at least one playlist for every disc. The selection controls which disc content is inspected and prepared. " +
+			"Enter the listed numbers separated by commas. If this is the wrong source, stop and rerun with the intended source.",
 		Options:  options,
 		Required: true,
 	})
@@ -703,28 +704,35 @@ func runCLIWorkflowInteractive(
 			return outcome, err
 		}
 		preview := cliWorkflowMetadataPreview(session.current)
-		printMetadataPreview(streams.out, preview, session.current.Release.Release, currentOpts.Debug)
+		var metadataEvidence strings.Builder
+		printMetadataPreview(&metadataEvidence, preview, session.current.Release.Release, currentOpts.Debug)
 		missing := session.current.Release.Release.MissingRequiredUploadFacts()
 		if len(missing) > 0 {
-			fmt.Fprintln(streams.out, "Missing fields")
+			fmt.Fprintln(&metadataEvidence, "Missing fields")
 			for _, field := range missing {
-				fmt.Fprintf(streams.out, "--%s <value>\n", field)
+				fmt.Fprintf(&metadataEvidence, "--%s <value>\n", field)
 			}
 		}
 		if currentOpts.InputOnly {
+			fmt.Fprint(streams.out, safeTerminalText(metadataEvidence.String()))
 			break
 		}
 		if currentOpts.interactionMode() == api.InteractionModeUnattended {
+			fmt.Fprint(streams.out, safeTerminalText(metadataEvidence.String()))
 			if len(missing) > 0 {
 				return outcome, exitError(2, errors.New("required release facts are missing in unattended mode; apply the listed correction arguments"))
 			}
 			break
 		}
-		var metadataEvidence strings.Builder
-		printMetadataPreview(&metadataEvidence, preview, session.current.Release.Release, currentOpts.Debug)
 		bindCLIQuestion(ctx, streams.out, session.current.Workflow.ID, session.current.Workflow.Revision, "", metadataEvidence.String())
 		if len(missing) == 0 {
-			confirmed, promptErr := promptYesNo(reader, streams.out, "Metadata correct? [Y/n]: ", true)
+			confirmed, promptErr := askCLIConfirmation(reader, streams.out, cliPrompt{
+				Kind:       cliPromptConfirm,
+				Question:   "Metadata correct? [Y/n]: ",
+				DefaultYes: true,
+				Evidence:   metadataEvidence.String(),
+				Help:       "Yes keeps these facts and continues to tracker checks and any required approvals. No opens correction arguments and prepares the revised facts for review.",
+			})
 			if promptErr != nil {
 				return outcome, promptErr
 			}
@@ -736,7 +744,13 @@ func runCLIWorkflowInteractive(
 		if len(missing) > 0 {
 			prompt = "Input args to correct the missing fields: "
 		}
-		editArgs, promptErr := promptLine(reader, streams.out, prompt)
+		editArgs, promptErr := askCLIField(reader, streams.out, cliPrompt{
+			Kind:     cliPromptText,
+			Question: prompt,
+			Evidence: metadataEvidence.String(),
+			Help: "Enter correction flags, for example --alternate-title \"Example Release\" or --commentary=false. Omitted fields keep saved values. " +
+				"Use --reset-input FIELD to restore automatic detection. The revised facts will be prepared again; continue keeps the current facts only when required fields are complete.",
+		})
 		if promptErr != nil {
 			return outcome, promptErr
 		}
@@ -1172,43 +1186,10 @@ func collectCLIWorkflowQuestionnaires(
 			if instruction.Questionnaire == nil {
 				instruction.Questionnaire = make(map[string]*string)
 			}
-			label := strings.TrimSpace(field.Label)
-			if label == "" {
-				label = field.Key
-			}
-			if field.Help != "" {
-				fmt.Fprintln(output, field.Help)
-			}
 			yesNo := field.Kind == "select" && len(field.Options) == 2 && slices.Contains(field.Options, "yes") && slices.Contains(field.Options, "no")
-			switch {
-			case field.Kind == "multiselect":
-				for index, option := range field.Options {
-					fmt.Fprintf(output, "  %d. %s\n", index+1, option)
-				}
-				label += " (comma-separated numbers or labels)"
-			case yesNo:
-				label += " [y/n]"
-			case len(field.Options) > 0:
-				label += " [" + strings.Join(field.Options, "/") + "]"
-			}
-			prompt := cliPrompt{
-				Kind:     cliPromptText,
-				Question: fmt.Sprintf("%s %s: ", projection.TrackerID, label),
-				Help:     field.Help,
-				Required: field.Required,
-			}
-			if len(field.Options) > 0 {
-				prompt.Kind = cliPromptSelect
-				if field.Kind == "multiselect" {
-					prompt.Kind = cliPromptMultiSelect
-				}
-				for index, option := range field.Options {
-					value := option
-					if field.Kind == "multiselect" {
-						value = strconv.Itoa(index + 1)
-					}
-					prompt.Options = append(prompt.Options, cliPromptOption{Label: option, Value: value})
-				}
+			prompt := cliQuestionnairePrompt(projection, field, yesNo)
+			if writer, ok := output.(*cliPresentationWriter); ok && writer.question.Evidence != "" {
+				prompt.Evidence = writer.question.Evidence + "\n" + prompt.Evidence
 			}
 			answer, err := askCLIField(reader, output, prompt)
 			if err != nil {
@@ -1253,6 +1234,56 @@ func collectCLIWorkflowQuestionnaires(
 		}
 	}
 	return changed, nil
+}
+
+func cliQuestionnairePrompt(projection api.TrackerReleaseProjection, field api.TrackerQuestionnaireRequirement, yesNo bool) cliPrompt {
+	label := strings.TrimSpace(field.Label)
+	if label == "" {
+		label = strings.ReplaceAll(field.Key, "_", " ")
+	}
+	var help strings.Builder
+	if field.Help != "" {
+		fmt.Fprintln(&help, field.Help)
+	}
+	fmt.Fprintln(&help, "This answer updates only this tracker's assessment; it does not correct source metadata or approve an upload.")
+	switch {
+	case field.Required:
+		fmt.Fprintln(&help, "An answer is required. Review the displayed value, which may be a default, and submit a verified answer.")
+	case len(field.Options) == 0 || field.Kind == "multiselect":
+		fmt.Fprintln(&help, "Submit a verified answer. In plain mode or a text field, leave blank to clear this optional answer.")
+	default:
+		fmt.Fprintln(&help, "Choose a listed answer for this review; blank is not an accepted option.")
+	}
+	fmt.Fprintf(&help, "To supply this answer on a later run, use --tracker-input %q.", string(projection.TrackerID)+":"+field.Key+"=ANSWER")
+	prompt := cliPrompt{
+		Kind:     cliPromptText,
+		Question: fmt.Sprintf("%s %s: ", projection.TrackerID, label),
+		Evidence: fmt.Sprintf("Tracker: %s (%s)\nReviewed upload name: %s\nQuestion: %s\nDisplayed value (answer or default): %s",
+			cliPromptDetail(projection.DisplayName), projection.TrackerID, cliPromptDetail(projection.UploadReleaseName), label, emptyCLIValue(field.Value)),
+		Help:     help.String(),
+		Required: field.Required,
+	}
+	if len(field.Options) > 0 {
+		prompt.Kind = cliPromptSelect
+		switch {
+		case field.Kind == "multiselect":
+			prompt.Kind = cliPromptMultiSelect
+			prompt.Help += "\nChoose comma-separated numbers or option labels."
+		case yesNo:
+			prompt.Question = fmt.Sprintf("%s %s [y/n]: ", projection.TrackerID, label)
+			prompt.Help += "\nEnter yes or no (y/n accepted)."
+		default:
+			prompt.Help += "\nEnter one of the listed option labels."
+		}
+		for index, option := range field.Options {
+			value := option
+			if field.Kind == "multiselect" {
+				value = strconv.Itoa(index + 1)
+			}
+			prompt.Options = append(prompt.Options, cliPromptOption{Label: option, Value: value})
+		}
+	}
+	return prompt
 }
 
 func printCLIWorkflowProjections(

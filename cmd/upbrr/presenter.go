@@ -201,6 +201,13 @@ func cliPlainPromptText(prompt cliPrompt) string {
 			text.WriteByte('\n')
 		}
 	}
+	for _, option := range prompt.Options {
+		if option.Label == option.Value {
+			fmt.Fprintf(&text, "  %s\n", safeTerminalText(option.Label))
+		} else {
+			fmt.Fprintf(&text, "  %s. %s\n", safeTerminalText(option.Value), safeTerminalText(option.Label))
+		}
+	}
 	text.WriteString(safeTerminalText(prompt.Question))
 	return text.String()
 }

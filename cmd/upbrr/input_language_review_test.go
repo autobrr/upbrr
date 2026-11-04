@@ -57,30 +57,60 @@ func TestCollectCLIInputLanguagesBatchesCanonicalCorrections(t *testing.T) {
 		Ordinal:             2,
 		ManifestFingerprint: "current",
 	}}
+	media := api.MediaFacts{Tracks: tracks, LanguageFacts: api.LanguageFacts{OriginalLanguagesKnown: true, OriginalLanguages: []string{"German"}}}
+	media.Tracks[0].Title = "Main surround"
+	media.Tracks[0].Codec = "AC-3"
+	media.Tracks[0].DetectedLanguages = []string{"und"}
 	for _, mode := range []api.InteractionMode{api.InteractionModeInteractive, api.InteractionModeUnattendedConfirm} {
-		var output bytes.Buffer
-		corrections, err := collectCLIInputLanguages(bufio.NewReader(strings.NewReader("jpn\nJapanese, English\n")), &output, mode, fields, tracks)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(corrections) != 2 || corrections[0].ManifestFingerprint != "current" || corrections[0].Languages[0] != "Japanese" || len(corrections[1].Languages) != 2 {
-			t.Fatalf("corrections: %#v", corrections)
-		}
-		if strings.Count(output.String(), "Programme audio track") != 2 {
-			t.Fatalf("duplicate prompts: %s", output.String())
+		for _, terminal := range []bool{false, true} {
+			var output bytes.Buffer
+			reader := bufio.NewReader(strings.NewReader("jpn\nJapanese, English\n"))
+			var presenter cliPresenter = &cliPlainPresenter{reader: reader, output: &output}
+			var model *modelPresenter
+			if terminal {
+				tui := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
+				tui.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+				model = &modelPresenter{model: tui, answers: []string{"jpn", "Japanese, English"}}
+				presenter = model
+			}
+			writer := &cliPresentationWriter{
+				Writer:    &output,
+				ctx:       t.Context(),
+				presenter: presenter,
+				terminal:  terminal,
+			}
+			bindCLIQuestion(t.Context(), writer, "source-review", 8, "", "Current source generation")
+			corrections, err := collectCLIInputLanguages(reader, writer, mode, fields, "Example.Release.mkv", media)
+			if err != nil || len(corrections) != 2 || corrections[0].ManifestFingerprint != "current" || corrections[0].Languages[0] != "Japanese" || len(corrections[1].Languages) != 2 {
+				t.Fatalf("corrections: %#v, %v", corrections, err)
+			}
+			text := output.String()
+			if terminal {
+				if len(model.prompts) != 2 || model.prompts[0].WorkflowID != "source-review" || model.prompts[0].Revision != 8 || model.prompts[0].ActionID != "" {
+					t.Fatal("source review lost deduplication or current authority")
+				}
+				text = cliPlainPromptText(model.prompts[0])
+			} else if strings.Count(text, "Programme audio track") != 2 {
+				t.Fatal("source review repeated or omitted a language question")
+			}
+			for _, fact := range []string{"Example.Release.mkv", "Main surround", "AC-3", "German", "und", "ONE, TWO", "one=LANGUAGE", "--input-only"} {
+				if !strings.Contains(text, fact) {
+					t.Fatalf("language review lost prepared fact or recovery %q", fact)
+				}
+			}
 		}
 	}
 	var output bytes.Buffer
-	corrections, err := collectCLIInputLanguages(bufio.NewReader(strings.NewReader("")), &output, api.InteractionModeUnattended, fields, tracks)
+	corrections, err := collectCLIInputLanguages(bufio.NewReader(strings.NewReader("")), &output, api.InteractionModeUnattended, fields, "Example.Release.mkv", api.MediaFacts{Tracks: tracks})
 	if err != nil || len(corrections) != 0 || !strings.Contains(output.String(), "--track-languages") || strings.Contains(output.String(), "Programme audio track") {
 		t.Fatalf("unattended prompted or lost guidance: %v %s", err, output.String())
 	}
 	for _, value := range []string{"und", "mul", "unknown-language"} {
-		if _, err := collectCLIInputLanguages(bufio.NewReader(strings.NewReader(value+"\n")), &bytes.Buffer{}, api.InteractionModeInteractive, fields[:1], tracks); err == nil {
+		if _, err := collectCLIInputLanguages(bufio.NewReader(strings.NewReader(value+"\n")), &bytes.Buffer{}, api.InteractionModeInteractive, fields[:1], "Example.Release.mkv", api.MediaFacts{Tracks: tracks}); err == nil {
 			t.Fatalf("accepted unresolved answer %q", value)
 		}
 	}
-	if _, err := collectCLIInputLanguages(bufio.NewReader(strings.NewReader("Japanese\n")), &bytes.Buffer{}, api.InteractionModeInteractive, fields[:1], nil); err == nil {
+	if _, err := collectCLIInputLanguages(bufio.NewReader(strings.NewReader("Japanese\n")), &bytes.Buffer{}, api.InteractionModeInteractive, fields[:1], "Example.Release.mkv", api.MediaFacts{}); err == nil {
 		t.Fatal("accepted stale track")
 	}
 }
