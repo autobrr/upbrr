@@ -40,7 +40,7 @@ import {
   sessionReducer,
   type SessionState,
 } from "./reducer";
-import { canExecuteUpload } from "./uploadEligibility";
+import { canExecuteUpload, canRetrySubmission, canRetryClientInjection } from "./uploadEligibility";
 import { routeAccess, type TrackerWorkflowRequirements } from "./navigation";
 import {
   cloneIntent,
@@ -3073,9 +3073,7 @@ export function ReleaseSessionProvider({
         if (!mutationsAllowed) return Promise.resolve(false);
         const result = workflowView.current?.uploadResult;
         if (!result) return Promise.resolve(false);
-        const trackerIDs = result.results
-          .filter((item) => item.submissionStatus === "failed")
-          .map((item) => item.trackerId);
+        const trackerIDs = result.results.filter(canRetrySubmission).map((item) => item.trackerId);
         if (trackerIDs.length === 0) return Promise.resolve(false);
         return runBackendWorkflow((current, commandID, signal) =>
           activePorts.workflow.retryFailedUploads(
@@ -3093,12 +3091,7 @@ export function ReleaseSessionProvider({
         const result = workflowView.current?.uploadResult;
         if (!result) return Promise.resolve(false);
         const trackerIDs = result.results
-          .filter(
-            (item) =>
-              item.submissionStatus === "completed" &&
-              item.clientInjectionStatus === "failed" &&
-              item.clientFailureCode === "client_injection",
-          )
+          .filter(canRetryClientInjection)
           .map((item) => item.trackerId);
         if (trackerIDs.length === 0) return Promise.resolve(false);
         return runBackendWorkflow((current, commandID, signal) =>
@@ -3880,7 +3873,7 @@ export function ReleaseSessionProvider({
         if (!mutationsAllowed || questionnaireDirty) return false;
         const result = workflowView.current?.uploadResult;
         const trackerIDs = (result?.results || [])
-          .filter((item) => item.submissionStatus === "failed")
+          .filter(canRetrySubmission)
           .map((item) => item.trackerId);
         if (!result || trackerIDs.length === 0) return false;
         return runBackendWorkflow((current, commandID, signal) =>
@@ -3898,12 +3891,7 @@ export function ReleaseSessionProvider({
         if (!mutationsAllowed) return false;
         const result = workflowView.current?.uploadResult;
         const trackerIDs = (result?.results || [])
-          .filter(
-            (item) =>
-              item.submissionStatus === "completed" &&
-              item.clientInjectionStatus === "failed" &&
-              item.clientFailureCode === "client_injection",
-          )
+          .filter(canRetryClientInjection)
           .map((item) => item.trackerId);
         if (!result || trackerIDs.length === 0) return false;
         return runBackendWorkflow((current, commandID, signal) =>

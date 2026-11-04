@@ -587,12 +587,14 @@ type DurabilityRepository interface {
 	SaveContinuation(context.Context, api.ReleaseWorkflowContinuationRecord) error
 	AppendEvents(context.Context, string, api.WorkflowID, []api.WorkflowEvent) ([]api.WorkflowEvent, error)
 	LoadEvents(context.Context, string, api.WorkflowID, uint64, int) ([]api.WorkflowEvent, error)
+	// BeginEffect may return the blocking local record with ErrReleaseWorkflowEffectOutcomeUnknown
+	// for reconciliation; an error never admits another external attempt.
 	BeginEffect(context.Context, api.ReleaseWorkflowEffectRecord) (api.ReleaseWorkflowEffectRecord, bool, error)
 	CompleteEffect(context.Context, api.WorkflowEffectStatus, api.ReleaseWorkflowEffectRecord) error
 	MarkOperationEffectsUnknown(context.Context, string, api.WorkflowID, api.WorkflowOperationID, time.Time) error
 	RecoverLegacyEffects(context.Context, string, api.WorkflowID, time.Time) ([]api.ReleaseWorkflowEffectRecord, error)
 	ListLegacyRecoveryWorkflowIDs(context.Context, string) ([]api.WorkflowID, error)
-	ResolveEffectUnknown(context.Context, string, api.WorkflowID, api.WorkflowExternalEffectKind, string, time.Time) error
+	ResolveEffectUnknown(context.Context, string, api.WorkflowID, api.WorkflowExternalEffectKind, string, time.Time, ...api.WorkflowExternalEffectReceipt) error
 	LoadWork(context.Context, string, api.WorkflowID, api.WorkflowOperationID) (api.ReleaseWorkflowWorkRecord, error)
 	ClaimWork(context.Context, api.ReleaseWorkflowWorkRecord) error
 	RenewWork(context.Context, api.ReleaseWorkflowWorkRecord) error

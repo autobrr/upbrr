@@ -498,8 +498,8 @@ func TestReadUploadResponseBodyReportsOversizeAndPartialRead(t *testing.T) {
 
 	oversized := `<div class="error">Invalid category</div>` + strings.Repeat("x", int(maxHTTPErrorResponseBytes))
 	body, preview, err := ReadUploadResponseBody(&http.Response{Body: ioNopCloser(oversized)}, false, DefaultResponsePreviewBytes)
-	if err != nil {
-		t.Fatalf("oversized response: %v", err)
+	if err == nil {
+		t.Fatal("truncated response was reported as complete")
 	}
 	if int64(len(body)) != maxHTTPErrorResponseBytes {
 		t.Fatalf("oversized body length = %d", len(body))

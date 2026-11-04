@@ -48,6 +48,12 @@ Startup retains completed operation checkpoints and marks unfinished operations 
 
 For an interrupted upload or client injection, check the tracker and torrent client before retrying. Startup retains unresolved external attempts as uncertain and keeps their retry blocks; an interrupted operation is not proof that the remote action failed. Confirmed successful tracker submissions remain recorded and must not be submitted again.
 
+A tracker response that explicitly rejects an upload is a failed submission, rather than an unknown outcome. Correct the reported problem before preparing and reviewing a new attempt. An accepted upload remains accepted if retrieving its torrent or injecting it into the client fails. If the local submission receipt could not be saved, the result reports that bookkeeping failure separately and keeps retries blocked. Do not confirm that an accepted submission did not complete to bypass this block.
+
+During legacy recovery, retained proof for the exact accepted attempt settles that effect so it no longer keeps the shared input slot occupied. Other uncertain attempts still require reconciliation, and the accepted upload's retry blocks remain in place.
+
+An upload blocked by an older uncertain attempt offers confirmation only when the exact receipt belongs to the current workflow. A fence owned by another workflow remains protected and cannot be confirmed from the new workflow.
+
 An unresolved tracker submission does not prevent independent CLI queue items from running when its durable submission protection remains available. Legacy attempts without that protection still require reconciliation before new inputs. The affected source remains protected until reconciliation; resuming the queue selects its other pending items. Missing or contradictory retained source information still requires manual recovery.
 
 If configuration also changed while an external outcome is uncertain, startup keeps the existing activation blocked rather than clearing the outcome. Resolve the uncertainty before activating the changed configuration.

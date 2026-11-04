@@ -24,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -171,7 +172,7 @@ func prepareUploadAt(
 func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, state preparedUploadState) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.uploadURL, bytes.NewReader(state.body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: HDB request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: HDB request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", state.contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")

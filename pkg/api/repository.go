@@ -422,10 +422,14 @@ type ReleaseWorkflowStateRecord struct {
 
 // ReleaseWorkflowEffectResolution identifies the latest effect whose verified
 // non-completion accompanies a workflow save. Started or succeeded effects reject
-// the entire save, preserving their outcome and submission fence.
+// the entire save, preserving their outcome and submission fence. Tracker
+// submissions also require exact attempt identity and no retained acceptance.
 type ReleaseWorkflowEffectResolution struct {
 	Kind    WorkflowExternalEffectKind
 	ScopeID string
+	// Expected binds reconciliation to one operation/effect pair. It is required
+	// for tracker submissions and may be omitted for older non-submission actions.
+	Expected []WorkflowExternalEffectReceipt
 }
 
 // ReleaseWorkflowStateRepository persists safe public workflow state with
@@ -548,6 +552,8 @@ type ReleaseWorkflowDurabilityRepository interface {
 	SaveReleaseWorkflowContinuation(context.Context, ReleaseWorkflowContinuationRecord) error
 	AppendReleaseWorkflowEvents(context.Context, string, WorkflowID, []WorkflowEvent) ([]WorkflowEvent, error)
 	LoadReleaseWorkflowEvents(context.Context, string, WorkflowID, uint64, int) ([]WorkflowEvent, error)
+	// BeginReleaseWorkflowEffect may return the blocking local record with
+	// ErrReleaseWorkflowEffectOutcomeUnknown for reconciliation, without admitting an attempt.
 	BeginReleaseWorkflowEffect(context.Context, ReleaseWorkflowEffectRecord) (ReleaseWorkflowEffectRecord, bool, error)
 	CompleteReleaseWorkflowEffect(context.Context, WorkflowEffectStatus, ReleaseWorkflowEffectRecord) error
 	MarkReleaseWorkflowOperationEffectsUnknown(context.Context, string, WorkflowID, WorkflowOperationID, time.Time) error
@@ -556,7 +562,15 @@ type ReleaseWorkflowDurabilityRepository interface {
 	// reconciliation actions. It never creates a submission fence.
 	RecoverLegacyReleaseWorkflowEffects(context.Context, string, WorkflowID, time.Time) ([]ReleaseWorkflowEffectRecord, error)
 	ListLegacyReleaseWorkflowRecoveryWorkflowIDs(context.Context, string) ([]WorkflowID, error)
-	ResolveReleaseWorkflowEffectUnknown(context.Context, string, WorkflowID, WorkflowExternalEffectKind, string, time.Time) error
+	ResolveReleaseWorkflowEffectUnknown(
+		context.Context,
+		string,
+		WorkflowID,
+		WorkflowExternalEffectKind,
+		string,
+		time.Time,
+		...WorkflowExternalEffectReceipt,
+	) error
 	LoadReleaseWorkflowWork(context.Context, string, WorkflowID, WorkflowOperationID) (ReleaseWorkflowWorkRecord, error)
 	ClaimReleaseWorkflowWork(context.Context, ReleaseWorkflowWorkRecord) error
 	RenewReleaseWorkflowWork(context.Context, ReleaseWorkflowWorkRecord) error

@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -1344,6 +1345,7 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 		wantSubmission    api.StageStatus
 		wantRedaction     bool
 		wantPathPreserved bool
+		unbound           bool
 	}{
 		{
 			name:              "submission detail",
@@ -1384,14 +1386,28 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing.",
 			wantSubmission: api.StageStatusUnavailable,
 		},
+		{
+			name:           "unknown fence without local identity",
+			code:           "unknown_outcome",
+			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing.",
+			wantSubmission: api.StageStatusUnavailable,
+			unbound:        true,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			receiptID := "effect-example"
+			operationID := api.WorkflowOperationID("operation-example")
+			if test.unbound {
+				receiptID, operationID = "", ""
+			}
 			execution := &workflowUploadExecution{
 				plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
-					Tracker: "EXAMPLE",
-					Failure: &trackers.TrackerFailure{Code: test.code, Message: test.message},
+					Tracker:               "EXAMPLE",
+					SubmissionReceiptID:   receiptID,
+					SubmissionOperationID: operationID,
+					Failure:               &trackers.TrackerFailure{Code: test.code, Message: test.message},
 				}}},
 			}
 			results, err := execution.Execute(t.Context(), nil)
@@ -1408,6 +1424,12 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 			wantCode, wantRecovery := api.OperationFailureInternal, api.OperationRecoveryRetry
 			if test.code == "unknown_outcome" {
 				wantCode, wantRecovery = api.OperationFailureUnknownOutcome, api.OperationRecoveryConfirm
+				if test.unbound {
+					wantRecovery = api.OperationRecoveryNone
+				}
+				if results[0].SubmissionRetryable() {
+					t.Fatal("unknown outcome permitted a fresh submission")
+				}
 			}
 			if failure.Code != wantCode || failure.Recovery != wantRecovery {
 				t.Fatalf("upload failure changed recovery semantics: %#v", failure)
@@ -1616,6 +1638,99 @@ func TestWorkflowUploadExecutionKeepsSubmissionSuccessWithoutExactArtifact(t *te
 		results[0].ClientFailureCode != api.OperationFailureMissingExactTorrent ||
 		results[0].Status != api.StageStatusPartial || len(clientService.injections) != 0 {
 		t.Fatalf("artifact-less upload results=%#v injections=%#v", results, clientService.injections)
+	}
+}
+
+func TestWorkflowUploadExecutionRetainsRemoteOutcomeWhenReceiptFails(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name           string
+		outcome        submission.Outcome
+		noSeed         bool
+		wantSubmission api.StageStatus
+		wantClient     api.StageStatus
+	}{
+		{"accepted", submission.Accepted, false, api.StageStatusCompleted, api.StageStatusUnavailable},
+		{"accepted without client injection", submission.Accepted, true, api.StageStatusCompleted, api.StageStatusSkipped},
+		{"rejected", submission.Rejected, false, api.StageStatusFailed, api.StageStatusPending},
+		{"not sent", submission.NotSent, false, api.StageStatusFailed, api.StageStatusPending},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &dryRunClientService{}
+			retained := trackers.RetainedTrackerResult{
+				Tracker:               "EXAMPLE",
+				SubmissionOutcome:     test.outcome,
+				SubmissionReceiptID:   "effect-example",
+				SubmissionOperationID: "operation-example",
+				ReceiptFailure:        &trackers.TrackerFailure{Code: "receipt_retention", Message: "synthetic local write failure api_key=never-print-this"},
+			}
+			if test.outcome == submission.Accepted {
+				retained.Summary = api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
+					Tracker:     "EXAMPLE",
+					TorrentID:   "123",
+					TorrentURL:  "https://tracker.invalid/torrents/123",
+					DownloadURL: "https://tracker.invalid/download/123?passkey=synthetic-secret",
+				}}}
+			} else {
+				retained.Failure = &trackers.TrackerFailure{Code: "submit", Message: "synthetic protocol rejection"}
+			}
+			execution := &workflowUploadExecution{
+				plan:    &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{retained}},
+				clients: client,
+				noSeed:  test.noSeed,
+			}
+			results, err := execution.Execute(t.Context(), nil)
+			if err != nil || len(results) != 1 {
+				t.Fatalf("results=%v error=%v", results, err)
+			}
+			result := results[0]
+			snapshot := api.UploadResult{
+				ID:               "result",
+				WorkflowID:       "workflow",
+				Revision:         1,
+				CreatedAt:        time.Now(),
+				ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: "projections", Revision: 1},
+				Dupes:            api.DupeAssessmentRef{ID: "dupes", Revision: 1},
+				Media:            api.MediaArtifactSetRef{ID: "media", Revision: 1},
+				Descriptions:     api.DescriptionSetRef{ID: "descriptions", Revision: 1},
+				InputFingerprint: workflowTestFingerprint(t, "receipt-result"),
+				Status:           result.Status,
+				Results:          results,
+			}
+			if err := snapshot.Validate(); err != nil {
+				t.Fatalf("retained result rejected: %v", err)
+			}
+			if result.SubmissionStatus != test.wantSubmission || result.ClientInjectionStatus != test.wantClient || result.SubmissionRetryable() || result.ClientInjectionRetryable() || len(client.injections) != 0 {
+				t.Fatalf("outcome=%+v injections=%d", result, len(client.injections))
+			}
+			payload, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(payload), "never-print-this") || strings.Contains(string(payload), "synthetic-secret") {
+				t.Fatal("public result exposed private evidence")
+			}
+			foundReceipt := false
+			for _, failure := range result.Failures {
+				if failure.Failure.Code == "receipt_retention" && failure.Resource == "effect-example" {
+					foundReceipt = true
+				}
+				if failure.Failure.Code == api.OperationFailureUnknownOutcome {
+					t.Fatal("known remote outcome became uncertain")
+				}
+			}
+			if !foundReceipt {
+				t.Fatal("missing exact receipt failure authority")
+			}
+			if test.outcome == submission.Accepted {
+				if result.RemoteID != "123" || result.RemoteURL != "https://tracker.invalid/torrents/123" || result.Status != api.StageStatusPartial {
+					t.Fatalf("accepted result=%+v", result)
+				}
+				if execution.RegisteredArtifactAuthority().Torrents["EXAMPLE"].URL != retained.Summary.UploadedTorrents[0].DownloadURL {
+					t.Fatal("lost private registered artifact authority")
+				}
+			}
+		})
 	}
 }
 
