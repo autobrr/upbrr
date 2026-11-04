@@ -55,13 +55,15 @@ func (s *cliWorkflowSession) reviewInputLanguages(ctx context.Context, reader *b
 		s.streams.out,
 		s.intent.interaction,
 		s.current.InputReadiness.Fields,
-		s.current.Release.Release.Media.Tracks,
+		s.current.Release.Release.Source.SourcePath,
+		s.current.Release.Release.Media,
 	)
 	if err != nil {
 		return err
 	}
 	origins, err := collectCLIInputAudioOrigins(reader, s.streams.out, s.intent.interaction,
-		s.current.InputReadiness.Fields, s.current.Release.Release.Media.Tracks)
+		s.current.InputReadiness.Fields, s.current.Release.Release.Source.SourcePath,
+		cliPromptMediaWithTrackLanguages(s.current.Release.Release.Media, corrections))
 	if err != nil || (len(corrections) == 0 && len(origins) == 0) {
 		return err
 	}
@@ -78,6 +80,20 @@ func (s *cliWorkflowSession) reviewInputLanguages(ctx context.Context, reader *b
 	})
 }
 
+// cliPromptMediaWithTrackLanguages overlays accepted answers only for the next
+// prompt. Inspected facts and canonical correction authority remain unchanged.
+func cliPromptMediaWithTrackLanguages(media api.MediaFacts, corrections []api.TrackLanguageCorrection) api.MediaFacts {
+	media.Tracks = slices.Clone(media.Tracks)
+	for _, correction := range corrections {
+		for i := range media.Tracks {
+			if media.Tracks[i].ID == correction.TrackID {
+				media.Tracks[i].Languages = slices.Clone(correction.Languages)
+			}
+		}
+	}
+	return media
+}
+
 func languageReviewTrackerScope(selected []api.TrackerID, removed []string) []api.TrackerID {
 	excluded := normalizeCLIWorkflowTrackerIDs(removed)
 	return slices.DeleteFunc(slices.Clone(selected), func(id api.TrackerID) bool { return slices.Contains(excluded, id) })
@@ -88,8 +104,10 @@ func collectCLIInputLanguages(
 	output io.Writer,
 	interaction api.InteractionMode,
 	fields []api.InputReadinessFieldOutcome,
-	tracks []api.MediaTrackFacts,
+	sourcePath string,
+	media api.MediaFacts,
 ) ([]api.TrackLanguageCorrection, error) {
+	tracks := media.Tracks
 	var corrections []api.TrackLanguageCorrection
 	seen := make(map[string]bool)
 	for _, field := range fields {
@@ -104,21 +122,20 @@ func collectCLIInputLanguages(
 		}
 		track := tracks[index]
 		if interaction == api.InteractionModeUnattended {
-			fmt.Fprintf(
-				output,
+			fmt.Fprint(output, safeTerminalText(fmt.Sprintf(
 				"Unattended: programme track %s needs language evidence for %s. Correct with --track-languages '%s=LANGUAGE', or use --uac for source review.\n",
 				track.ID,
 				strings.Join(trackerIDStrings(field.TrackerIDs), ", "),
 				track.ID,
-			)
+			)))
 			continue
 		}
-		answer, err := askCLIField(reader, output, cliPrompt{
-			Kind:     cliPromptText,
-			Question: fmt.Sprintf("Programme audio track %d (%s) languages: ", track.Ordinal, track.ID),
-			Help:     "Enter the verified language names or codes, separated by commas. Do not guess; use ZXX only for verified non-linguistic audio.",
-			Required: true,
-		})
+		prompt := cliProgrammeTrackPrompt(sourcePath, media, field, track)
+		prompt.Question += " languages: "
+		prompt.Help = fmt.Sprintf("Enter verified language names or codes, separated by commas. Do not guess; ZXX is only for verified non-linguistic audio.\n"+
+			"This corrects this track's language evidence and rebuilds the selected trackers' assessments; it does not classify the soundtrack as original or dubbed.\n"+
+			"To correct it later, use --track-languages %q with this inspected source. Use --input-only to inspect current track IDs after source changes.", track.ID+"=LANGUAGE")
+		answer, err := askCLIField(reader, output, prompt)
 		if err != nil {
 			return nil, err
 		}

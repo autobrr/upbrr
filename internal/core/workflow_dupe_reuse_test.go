@@ -555,6 +555,7 @@ func TestANTTrumpIntentInvalidatesDuplicateReuse(t *testing.T) {
 		Tracker:       "ANT",
 		TrackerConfig: config.TrackerConfig{GuruTrump: true},
 		Meta: api.UploadSubject{
+			Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusNotApplicable},
 			SourcePath:        source,
 			ReleaseName:       "Example.Film.2026.1080p.WEB.H264-GRP",
 			Type:              "WEBDL",

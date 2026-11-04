@@ -12,8 +12,8 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -21,12 +21,11 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const nblUploadURL = "https://nebulance.io/api.php"
-
-var nblTorrentIDPattern = regexp.MustCompile(`id=(\d+)`)
 
 type uploadState struct {
 	torrentPath string
@@ -75,13 +74,13 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, nblUploadURL, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: NBL request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: NBL request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
 
 	result, err := commonhttp.ExecuteUpload(httpclient.New(httpclient.DefaultTimeout), httpReq, commonhttp.UploadExecutionOptions{Tracker: "NBL"})
-	if err != nil {
+	if err != nil && !result.BodyComplete {
 		return api.UploadSummary{}, fmt.Errorf("trackers: NBL execute upload: %w", err)
 	}
 	if !result.Success {
@@ -96,6 +95,9 @@ func submitPreparedUpload(
 	}
 
 	torrentURL, torrentID := extractUploadLinkAndID(payload)
+	if torrentURL == "" || torrentID == "" {
+		return api.UploadSummary{}, errors.New("trackers: NBL response did not identify an accepted torrent")
+	}
 
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
 		logger, "NBL", state.torrentPath, artifactPath, announceURL, "NBL",
@@ -201,31 +203,18 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func nblString(value any) string {
-	if value == nil {
-		return ""
-	}
-
-	switch typed := value.(type) {
-	case string:
-		return strings.TrimSpace(typed)
-	default:
-		return strings.TrimSpace(fmt.Sprint(value))
-	}
-}
-
 func extractUploadLinkAndID(payload map[string]any) (string, string) {
-	torrentURL := strings.TrimSpace(nblString(payload["link"]))
+	torrentURL, _ := payload["link"].(string)
+	torrentURL = strings.TrimSpace(torrentURL)
 	if torrentURL == "" {
 		if result, ok := payload["result"].(map[string]any); ok {
-			torrentURL = strings.TrimSpace(nblString(result["link"]))
+			torrentURL, _ = result["link"].(string)
+			torrentURL = strings.TrimSpace(torrentURL)
 		}
 	}
-
-	torrentID := ""
-	if matches := nblTorrentIDPattern.FindStringSubmatch(torrentURL); len(matches) > 1 {
-		torrentID = strings.TrimSpace(matches[1])
+	parsed, err := url.ParseRequestURI(torrentURL)
+	if err != nil || (parsed.IsAbs() && (parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http"))) {
+		return "", ""
 	}
-
-	return torrentURL, torrentID
+	return torrentURL, commonhttp.PositiveTorrentID(parsed.Query().Get("id"))
 }

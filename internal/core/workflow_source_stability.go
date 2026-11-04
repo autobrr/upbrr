@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/autobrr/upbrr/internal/preparedrelease"
@@ -26,6 +27,9 @@ func (r workflowSourceEffectReporter) Begin(ctx context.Context, effect api.Work
 	}
 	receipt, err := r.reporter.Begin(ctx, effect)
 	if err != nil {
+		if errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+			return receipt, fmt.Errorf("workflow source effect admission: %w", err)
+		}
 		return api.WorkflowExternalEffectReceipt{}, fmt.Errorf("workflow source effect admission: %w", err)
 	}
 	return receipt, nil

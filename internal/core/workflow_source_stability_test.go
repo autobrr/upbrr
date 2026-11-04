@@ -61,11 +61,14 @@ func TestUploadPlanRejectsSourceMutationDuringTorrentCreation(t *testing.T) {
 	}
 }
 
-type sourceStabilityReporter struct{ begins int }
+type sourceStabilityReporter struct {
+	begins int
+	err    error
+}
 
 func (r *sourceStabilityReporter) Begin(context.Context, api.WorkflowExternalEffect) (api.WorkflowExternalEffectReceipt, error) {
 	r.begins++
-	return api.WorkflowExternalEffectReceipt{EffectID: "effect"}, nil
+	return api.WorkflowExternalEffectReceipt{EffectID: "effect", OperationID: "operation"}, r.err
 }
 
 func (*sourceStabilityReporter) Complete(context.Context, api.WorkflowExternalEffectReceipt, bool) error {
@@ -75,14 +78,16 @@ func (*sourceStabilityReporter) Complete(context.Context, api.WorkflowExternalEf
 type sourceStabilityUploadPlan struct {
 	workflowRetainedUploadPlanFake
 	submits int
+	receipt api.WorkflowExternalEffectReceipt
 }
 
 func (p *sourceStabilityUploadPlan) Execute(ctx context.Context) ([]trackers.RetainedTrackerResult, error) {
-	_, err := api.BeginWorkflowExternalEffect(ctx, api.WorkflowExternalEffect{
+	receipt, err := api.BeginWorkflowExternalEffect(ctx, api.WorkflowExternalEffect{
 		Kind:                api.WorkflowExternalEffectTrackerSubmission,
 		ScopeID:             "PTP",
 		SemanticFingerprint: "exact-plan",
 	})
+	p.receipt = receipt
 	if err != nil {
 		return nil, fmt.Errorf("begin test submission: %w", err)
 	}
@@ -91,23 +96,82 @@ func (p *sourceStabilityUploadPlan) Execute(ctx context.Context) ([]trackers.Ret
 }
 
 func TestRetainedUploadRejectsSourceMutationBeforeFinalFence(t *testing.T) {
-	for _, changed := range []bool{false, true} {
-		t.Run(map[bool]string{false: "stable", true: "same-size mutation"}[changed], func(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		changed bool
+		err     error
+	}{
+		{name: "stable"},
+		{name: "same-size mutation", changed: true},
+		{name: "stable unknown attempt", err: api.ErrReleaseWorkflowEffectOutcomeUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			source, verified := sourceStabilityFixture(t)
 			plan := &sourceStabilityUploadPlan{}
 			execution := &workflowUploadExecution{sourceManifest: &verified.Manifest, plan: plan}
+			if test.changed {
+				mutateVerifiedSource(t, source)
+			}
+			reporter := &sourceStabilityReporter{err: test.err}
+			ctx := api.WithWorkflowExternalEffectReporter(t.Context(), reporter)
+			_, err := execution.Execute(ctx, nil)
+			switch {
+			case test.changed:
+				if !errors.Is(err, preparedrelease.ErrSourceChanged) || reporter.begins != 0 || plan.submits != 0 || plan.receipt.EffectID != "" {
+					t.Fatalf("changed source reached fence: err=%v begins=%d submits=%d", err, reporter.begins, plan.submits)
+				}
+			case test.err != nil:
+				if !errors.Is(err, test.err) || reporter.begins != 1 || plan.submits != 0 || plan.receipt.EffectID != "effect" ||
+					plan.receipt.OperationID != "operation" {
+					t.Fatalf("denied admission lost its diagnostic receipt: err=%v begins=%d submits=%d receipt=%#v", err, reporter.begins, plan.submits, plan.receipt)
+				}
+			default:
+				if err != nil || reporter.begins != 1 || plan.submits != 1 {
+					t.Fatalf("stable source rejected: err=%v begins=%d submits=%d", err, reporter.begins, plan.submits)
+				}
+			}
+		})
+	}
+}
+
+func TestResolvedDryRunRejectsSourceMutationBeforeClientInjection(t *testing.T) {
+	t.Parallel()
+	for _, changed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "stable", true: "same-size mutation"}[changed], func(t *testing.T) {
+			source, verified := sourceStabilityFixture(t)
+			torrentPath := filepath.Join(t.TempDir(), "prepared.torrent")
+			if err := os.WriteFile(torrentPath, []byte("prepared torrent"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			client := &dryRunClientService{}
+			execution := &workflowUploadExecution{
+				sourceManifest: &verified.Manifest,
+				plan: &workflowRetainedUploadPlanFake{preparations: []trackers.RetainedTrackerPreparation{{
+					Tracker: "ALPHA", TorrentPath: torrentPath,
+				}}},
+				clients:               client,
+				injectPreparedTorrent: true,
+				inputFingerprint:      api.WorkflowFingerprint(verified.Identity.Digest),
+				projections:           map[api.TrackerID]api.TrackerReleaseProjection{"ALPHA": {TrackerID: "ALPHA"}},
+				trackers:              []api.UploadPlanTracker{{TrackerID: "ALPHA"}},
+			}
 			if changed {
 				mutateVerifiedSource(t, source)
 			}
 			reporter := &sourceStabilityReporter{}
 			ctx := api.WithWorkflowExternalEffectReporter(t.Context(), reporter)
-			_, err := execution.Execute(ctx, nil)
+			result, err := execution.ResolveAction(ctx, "ALPHA", api.RequiredActionResolveTrackerPreparation, true)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if changed {
-				if !errors.Is(err, preparedrelease.ErrSourceChanged) || reporter.begins != 0 || plan.submits != 0 {
-					t.Fatalf("changed source reached fence: err=%v begins=%d submits=%d", err, reporter.begins, plan.submits)
+				if reporter.begins != 0 || len(client.injections) != 0 || result.ClientInjectionStatus != api.StageStatusFailed || result.Eligible ||
+					result.Status != api.StageStatusFailed || result.ClientFailureCode != api.OperationFailureStaleGeneration ||
+					len(result.Failures) != 1 || result.Failures[0].Failure.Recovery != api.OperationRecoveryReprepare {
+					t.Fatalf("changed source resolution: status=%s code=%s calls=%d begins=%d", result.ClientInjectionStatus, result.ClientFailureCode, len(client.injections), reporter.begins)
 				}
-			} else if err != nil || reporter.begins != 1 || plan.submits != 1 {
-				t.Fatalf("stable source rejected: err=%v begins=%d submits=%d", err, reporter.begins, plan.submits)
+			} else if reporter.begins != 1 || len(client.injections) != 1 || result.ClientInjectionStatus != api.StageStatusCompleted {
+				t.Fatalf("stable source resolution: status=%s calls=%d begins=%d", result.ClientInjectionStatus, len(client.injections), reporter.begins)
 			}
 		})
 	}

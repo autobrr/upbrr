@@ -155,10 +155,10 @@ func TestBTNUnresolvedProgrammeAndClearsStayBlocking(t *testing.T) {
 	media.OriginalLanguage = ""
 	media.OriginalLanguageProvenance = api.FactProvenanceManualEmpty
 	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
-	if failures := languageAssessment(subject); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+	if failures := languageAssessment(subject); slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 		return f.Rule == "language_original_evidence" && f.Disposition == api.RuleDispositionStrict
 	}) {
-		t.Fatalf("manual original clear silently accepted: %#v", failures)
+		t.Fatalf("manual original clear required comparison: %#v", failures)
 	}
 	subject.Type = "DISC"
 	if failures := languageAssessment(subject); len(failures) != 0 {

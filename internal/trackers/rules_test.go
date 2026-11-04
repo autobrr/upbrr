@@ -546,7 +546,10 @@ func TestEvaluateRulesPTPRejectsTVPacks(t *testing.T) {
 }
 
 func TestEvaluateRulesANTDoesNotBlanketRejectTV(t *testing.T) {
-	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}}
+	meta := api.RuleSubject{
+		Identity:    api.ExternalIdentity{Category: "tv"},
+		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
+	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
 	if len(failures) != 0 {
 		t.Fatalf("supported ANT content types must decide TV eligibility: %#v", failures)
@@ -554,7 +557,10 @@ func TestEvaluateRulesANTDoesNotBlanketRejectTV(t *testing.T) {
 }
 
 func TestEvaluateRulesANTAllowsMovie(t *testing.T) {
-	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "movie"}}
+	meta := api.RuleSubject{
+		Identity:    api.ExternalIdentity{Category: "movie"},
+		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
+	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures, got %#v", failures)
@@ -1439,8 +1445,9 @@ func TestEvaluateRulesMetadataPolicyReturnsEvaluatedEmpty(t *testing.T) {
 	t.Parallel()
 
 	clean := api.RuleSubject{
-		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
-		Release:    api.ReleaseInfo{Group: "GRP", Resolution: "2160p"},
+		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusNotApplicable},
+		SourcePath:  "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
+		Release:     api.ReleaseInfo{Group: "GRP", Resolution: "2160p"},
 	}
 	if got := evaluateNonMetadataRulesForTest(context.Background(), "ANT", clean); got == nil || len(nonAdvisoryFailures(got)) != 0 {
 		t.Fatalf("expected evaluated result without blocking failures, got %#v", got)

@@ -128,7 +128,7 @@ func (r *SQLiteRepository) SaveReleaseWorkflowState(
 		}
 		if resolution := record.EffectResolution; resolution != nil {
 			if err := resolveReleaseWorkflowEffectUnknown(ctx, tx, record.OwnerID, record.WorkflowID,
-				resolution.Kind, resolution.ScopeID, record.UpdatedAt); err != nil {
+				resolution.Kind, resolution.ScopeID, record.UpdatedAt, resolution.Expected...); err != nil {
 				return err
 			}
 		}

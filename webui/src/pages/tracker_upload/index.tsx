@@ -6,7 +6,11 @@ import { useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
 import type { UploadFacet } from "../../releaseSession/types";
-import { canExecuteUpload } from "../../releaseSession/uploadEligibility";
+import {
+  canExecuteUpload,
+  canRetrySubmission,
+  canRetryClientInjection,
+} from "../../releaseSession/uploadEligibility";
 import type {
   TrackerDryRunReport,
   TrackerLaneOutcome,
@@ -115,15 +119,10 @@ export default function TrackerUploadPage({ facet }: Props) {
     view.dryRunResult,
   );
   const failedTrackers = (view.result?.results || [])
-    .filter((result) => result.submissionStatus === "failed")
+    .filter(canRetrySubmission)
     .map((result) => result.trackerId);
   const clientInjectionFailures = (view.result?.results || [])
-    .filter(
-      (result) =>
-        result.submissionStatus === "completed" &&
-        result.clientInjectionStatus === "failed" &&
-        result.clientFailureCode === "client_injection",
-    )
+    .filter(canRetryClientInjection)
     .map((result) => result.trackerId);
 
   const toggleTrackerDetails = (key: string) => {

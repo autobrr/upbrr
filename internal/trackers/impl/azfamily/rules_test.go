@@ -123,10 +123,12 @@ func TestAZCZRemuxAndManualClearBoundaries(t *testing.T) {
 				cleared.EffectiveMetadata.OriginalLanguage = ""
 				cleared.EffectiveMetadata.OriginalLanguageProvenance = api.FactProvenanceManualEmpty
 			}
-			if failures := evaluateAZLanguageRules(siteFor(site), cleared); !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+			// CZ's confirmed English dub still requires an original-soundtrack witness.
+			wantPartial := !clearOriginal || site == "CZ"
+			if failures := evaluateAZLanguageRules(siteFor(site), cleared); slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 				return f.Disposition == api.RuleDispositionStrict && f.EvidenceStatus == api.MetadataEvidenceStatusPartial
-			}) {
-				t.Fatalf("%s manual clear accepted: %#v", site, failures)
+			}) != wantPartial {
+				t.Fatalf("%s comparison and independent clear gates: %#v", site, failures)
 			}
 		}
 		subject.LanguageFacts = azTestLanguageFacts("Japanese", "Japanese", "Japanese")
@@ -180,7 +182,7 @@ func TestAZCZRemuxAndManualClearBoundaries(t *testing.T) {
 	}
 }
 
-func TestAZRemuxUnknownLanguageEvidenceIsBlocking(t *testing.T) {
+func TestAZRemuxKnownOriginalRequiresProgrammeEvidence(t *testing.T) {
 	for _, facts := range []api.LanguageFacts{
 		{},
 		{
@@ -196,10 +198,10 @@ func TestAZRemuxUnknownLanguageEvidenceIsBlocking(t *testing.T) {
 			LanguageFacts: facts,
 		}
 		failures := evaluateAZLanguageRules(siteFor("AZ"), subject)
-		if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+		if slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
 			return f.Disposition == api.RuleDispositionStrict && f.EvidenceStatus == api.MetadataEvidenceStatusPartial
-		}) {
-			t.Fatalf("unknown language facts were not unresolved: %#v", failures)
+		}) != facts.OriginalLanguagesKnown {
+			t.Fatalf("comparison required unknown-original evidence or lost known-original review: %#v", failures)
 		}
 		subject.Type = "DISC"
 		if failures := evaluateAZLanguageRules(siteFor("AZ"), subject); len(failures) != 0 {

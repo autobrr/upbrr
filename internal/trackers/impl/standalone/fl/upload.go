@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -82,7 +83,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: FL request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: FL request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -90,9 +91,6 @@ func submitPreparedUpload(
 		Tracker:       "FL",
 		SuccessStatus: func(status int) bool { return status >= 200 && status < 400 },
 	})
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: FL execute upload: %w", err)
-	}
 	match := successPattern.FindStringSubmatch(result.FinalURL)
 	if len(match) >= 2 {
 		id := match[1]
@@ -117,6 +115,9 @@ func submitPreparedUpload(
 				TorrentPath: artifactPath,
 			}},
 		}, nil
+	}
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: FL execute upload: %w", err)
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "FL", "upload_failure", result.Preview, ".html")
 	errorResponse := result.Preview

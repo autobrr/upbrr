@@ -166,7 +166,7 @@ func (s *Service) persistTrackerArtifacts(
 				fileName := buildImageFilename(artifactURL, task.index)
 				outPath := filepath.Join(artifactDir, fileName)
 				if info, err := os.Stat(outPath); err == nil && info.Size() > 0 &&
-					(expectedHeight <= 0 || trackerImageHasResolution(outPath, expectedHeight, isDVD)) {
+					trackerImageHasResolution(outPath, expectedHeight, isDVD) {
 					logger.Debugf("metadata: tracker image exists tracker=%s index=%d path=%s", tracker, task.index+1, outPath)
 					successfulByIndex[task.index] = task.url
 					continue

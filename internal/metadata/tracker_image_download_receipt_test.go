@@ -57,6 +57,18 @@ func TestTrackerImageDownloadReferenceOutcomes(t *testing.T) {
 			wantReference: true,
 		},
 		{
+			name:          "valid header with incomplete image body",
+			body:          imageBytes.Bytes()[:33],
+			wantReason:    "image_decode_failed",
+			wantReference: true,
+		},
+		{
+			name:          "missing image end",
+			body:          imageBytes.Bytes()[:imageBytes.Len()-12],
+			wantReason:    "image_decode_failed",
+			wantReference: true,
+		},
+		{
 			name:          "empty body",
 			wantReason:    "empty_image",
 			wantReference: true,

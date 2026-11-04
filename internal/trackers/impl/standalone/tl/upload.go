@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -79,7 +81,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: TL build upload request: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: TL build upload request: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
@@ -91,18 +93,26 @@ func submitPreparedUpload(
 	defer resp.Body.Close()
 	successCandidate := resp.StatusCode == http.StatusFound || (req.TrackerConfig.APIUpload && resp.StatusCode >= 200 && resp.StatusCode < 300)
 	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, successCandidate, commonhttp.DefaultResponsePreviewBytes)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: TL read upload response: %w", err)
-	}
 
 	torrentID := ""
 	if req.TrackerConfig.APIUpload {
-		text := strings.TrimSpace(string(responseBody))
-		if _, err := strconv.Atoi(text); err == nil {
-			torrentID = text
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			text := strings.TrimSpace(string(responseBody))
+			if id, err := strconv.Atoi(text); err == nil && id > 0 {
+				torrentID = text
+			}
 		}
 	} else if resp.StatusCode == http.StatusFound {
-		torrentID = strings.TrimPrefix(strings.TrimSpace(resp.Header.Get("Location")), "/successfulupload?torrentID=")
+		location, parseErr := url.Parse(strings.TrimSpace(resp.Header.Get("Location")))
+		if parseErr == nil && location.Path == "/successfulupload" {
+			candidate := location.Query().Get("torrentID")
+			if id, err := strconv.Atoi(candidate); err == nil && id > 0 {
+				torrentID = candidate
+			}
+		}
+	}
+	if err != nil && torrentID == "" {
+		return api.UploadSummary{}, fmt.Errorf("trackers: TL read upload response: %w", err)
 	}
 	if torrentID == "" {
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "TL", "upload_failure", responsePreview, ".html")

@@ -451,6 +451,30 @@ func TestWorkflowContinuationDoesNotAdvertiseFinalUploadApproval(t *testing.T) {
 	}
 }
 
+func TestWorkflowContinuationWaitsForDryRunPreparation(t *testing.T) {
+	t.Parallel()
+	current := laneEligibilityTestCurrent()
+	current.Projections.Projections = current.Projections.Projections[:1]
+	current.Workflow.RequiredActions = []api.RequiredAction{{
+		ID:               "preparation-decision",
+		TrackerID:        "ALPHA",
+		Kind:             api.RequiredActionResolveTrackerPreparation,
+		Status:           api.RequiredActionStatusPending,
+		WorkflowRevision: current.Workflow.Revision,
+	}}
+	current.DryRun = &api.UploadDryRunResult{Status: api.StageStatusBlocked, Reports: []api.TrackerDryRunReport{{
+		TrackerID:       "ALPHA",
+		Status:          api.StageStatusBlocked,
+		ClientInjection: api.ClientInjectionOutcome{Status: api.StageStatusPending},
+	}}}
+	continuation := projectWorkflowContinuation(current)
+	lane := continuation.TrackerOutcomes[0]
+	if lane.Lifecycle != api.OperationLifecycleWaiting || lane.Disposition != api.WorkflowDispositionNeedsAction ||
+		lane.UploadEligibility != api.UploadEligibilitySkipped || lane.UploadSkipReason != api.UploadSkipReasonNotReady {
+		t.Fatalf("pending preparation lane = %#v", lane)
+	}
+}
+
 func continuationTestCurrent() CommandResult {
 	workflow := api.ReleaseWorkflow{
 		ID:       "workflow-continuation",
