@@ -71,13 +71,13 @@ func TestCLITrackAudioOriginReviewBatchesWithoutWaivingUnknown(t *testing.T) {
 	}}
 	for _, mode := range []api.InteractionMode{api.InteractionModeInteractive, api.InteractionModeUnattendedConfirm} {
 		var out bytes.Buffer
-		got, err := collectCLIInputAudioOrigins(bufio.NewReader(strings.NewReader(" UnReSoLvEd \n")), &out, mode, []api.InputReadinessFieldOutcome{field, field}, tracks)
+		got, err := collectCLIInputAudioOrigins(bufio.NewReader(strings.NewReader(" UnReSoLvEd \n")), &out, mode, []api.InputReadinessFieldOutcome{field, field}, "Example.Release.mkv", api.MediaFacts{Tracks: tracks})
 		if err != nil || len(got) != 1 || got[0].Origin != api.TrackAudioUnresolved || got[0].ManifestFingerprint != "current" || strings.Count(out.String(), "soundtrack origin:") != 1 {
 			t.Fatalf("got=%#v err=%v output=%s", got, err, out.String())
 		}
 	}
 	var out bytes.Buffer
-	got, err := collectCLIInputAudioOrigins(bufio.NewReader(strings.NewReader("")), &out, api.InteractionModeUnattended, []api.InputReadinessFieldOutcome{field}, tracks)
+	got, err := collectCLIInputAudioOrigins(bufio.NewReader(strings.NewReader("")), &out, api.InteractionModeUnattended, []api.InputReadinessFieldOutcome{field}, "Example.Release.mkv", api.MediaFacts{Tracks: tracks})
 	if err != nil || len(got) != 0 || !strings.Contains(out.String(), "--track-audio-origin") || strings.Contains(out.String(), "soundtrack origin:") {
 		t.Fatalf("unattended prompted: %#v %v %s", got, err, out.String())
 	}

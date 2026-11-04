@@ -7,8 +7,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"io"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 
@@ -101,12 +106,19 @@ func TestInputLanguageReviewUsesReadinessBeforeProjection(t *testing.T) {
 		name                        string
 		selected, defaults, removed []string
 		originReview                bool
+		terminal                    bool
 	}{
 		{name: "explicit", selected: []string{"AITHER"}},
 		{
 			name:         "combined source facts",
 			selected:     []string{"AITHER"},
 			originReview: true,
+		},
+		{
+			name:         "combined source facts TUI",
+			selected:     []string{"AITHER"},
+			originReview: true,
+			terminal:     true,
 		},
 		{
 			name:     "configured default",
@@ -130,6 +142,8 @@ func TestInputLanguageReviewUsesReadinessBeforeProjection(t *testing.T) {
 			if test.originReview {
 				current.Release.Release.Media.Tracks[0].Kind = api.MediaTrackAudio
 				current.Release.Release.Media.Tracks[0].Role = api.AudioRoleProgramme
+				current.Release.Release.Media.Tracks[0].Languages = []string{"und"}
+				current.Release.Release.Media.Tracks[0].DetectedLanguages = []string{"und"}
 				current.InputReadiness.Fields = append(current.InputReadiness.Fields, api.InputReadinessFieldOutcome{
 					TrackID:         "track",
 					CorrectionField: new(api.CorrectionFieldMetadataTrackAudioOrigins),
@@ -137,6 +151,12 @@ func TestInputLanguageReviewUsesReadinessBeforeProjection(t *testing.T) {
 					TrackerIDs:      []api.TrackerID{"AITHER"},
 				})
 				answers += "original\n"
+			}
+			before := current.Release.Release.Media
+			before.Tracks = slices.Clone(before.Tracks)
+			for i := range before.Tracks {
+				before.Tracks[i].Languages = slices.Clone(before.Tracks[i].Languages)
+				before.Tracks[i].DetectedLanguages = slices.Clone(before.Tracks[i].DetectedLanguages)
 			}
 			core := &cliWorkflowCoreFake{current: current}
 			core.continueFn = func(request api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
@@ -152,26 +172,71 @@ func TestInputLanguageReviewUsesReadinessBeforeProjection(t *testing.T) {
 				return current, nil
 			}
 			var output bytes.Buffer
+			reader := bufio.NewReader(strings.NewReader(answers))
+			var writer io.Writer = &output
+			mode := api.InteractionModeInteractive
+			var terminalPresenter *modelPresenter
+			if test.terminal {
+				mode = api.InteractionModeUnattendedConfirm
+				model := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
+				model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+				terminalPresenter = &modelPresenter{model: model, answers: strings.Split(strings.TrimSpace(answers), "\n")}
+				writer = &cliPresentationWriter{
+					Writer:    &output,
+					presenter: terminalPresenter,
+					ctx:       t.Context(),
+					terminal:  true,
+				}
+			}
 			session := &cliWorkflowSession{
 				core:          core,
 				current:       current,
 				logger:        api.NopLogger{},
-				intent:        cliWorkflowIntent{interaction: api.InteractionModeInteractive},
+				intent:        cliWorkflowIntent{interaction: mode},
 				uploadRequest: api.Request{Trackers: test.selected, TrackersRemove: test.removed},
-				streams:       cliIO{out: &output},
+				streams:       cliIO{out: writer},
 			}
-			if err := session.reviewInputLanguages(t.Context(), bufio.NewReader(strings.NewReader(answers)), false, test.defaults); err != nil {
+			if err := session.reviewInputLanguages(t.Context(), reader, false, test.defaults); err != nil {
 				t.Fatal(err)
 			}
 			if len(core.continuations) != 2 {
 				t.Fatalf("continuations: %d", len(core.continuations))
 			}
 			patch := core.continuations[1].Intent.CorrectionPatch
-			if patch == nil || patch.ExpectedRevision == nil || *patch.ExpectedRevision != 2 || len(patch.Values.Metadata.TrackLanguages) != 1 {
-				t.Fatalf("missing bound correction: %#v", patch)
+			want := &api.ReleaseCorrectionPatch{ExpectedRevision: new(uint64(2))}
+			want.Values.Metadata.TrackLanguages = []api.TrackLanguageCorrection{{
+				TrackID:             "track",
+				Languages:           []string{"Japanese"},
+				ManifestFingerprint: "current",
+			}}
+			if test.originReview {
+				want.Values.Metadata.TrackAudioOrigins = []api.TrackAudioOriginCorrection{{
+					TrackID:             "track",
+					Origin:              api.TrackAudioOriginal,
+					ManifestFingerprint: "current",
+				}}
+				text := output.String()
+				if terminalPresenter != nil {
+					if len(terminalPresenter.prompts) != 2 {
+						t.Fatal("language and origin review did not each ask once")
+					}
+					for i, prompt := range terminalPresenter.prompts {
+						if prompt.WorkflowID != "workflow" || prompt.Revision != 4 || prompt.ActionID != "" || prompt.ID != uint64(i+1) {
+							t.Fatal("prompt lost its workflow binding")
+						}
+					}
+					terminalPresenter.model.Update(cliPromptRequest{prompt: terminalPresenter.prompts[1], reply: make(chan cliAnswer, 1)})
+					text = terminalPresenter.model.evidence.GetContent()
+				}
+				if !strings.Contains(text, "Effective track languages: Japanese") || !strings.Contains(text, "Inspected track languages: und") {
+					t.Fatalf("origin prompt did not distinguish accepted and inspected languages: %s", text)
+				}
 			}
-			if test.originReview && (len(patch.Values.Metadata.TrackAudioOrigins) != 1 || patch.Values.Metadata.TrackAudioOrigins[0].ManifestFingerprint != "current" || patch.Values.Metadata.TrackAudioOrigins[0].Origin != api.TrackAudioOriginal) {
-				t.Fatalf("origin did not share one source-bound reprepare patch: %#v", patch)
+			if !reflect.DeepEqual(patch, want) {
+				t.Fatalf("combined correction changed: got %#v, want %#v", patch, want)
+			}
+			if !reflect.DeepEqual(current.Release.Release.Media, before) {
+				t.Fatal("prompt generation mutated the original media snapshot")
 			}
 		})
 	}
