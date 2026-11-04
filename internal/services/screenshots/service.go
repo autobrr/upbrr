@@ -118,10 +118,15 @@ func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, ru
 // multi-disc subject, ordinary per-disc planning failures leave that disc empty
 // while usable discs remain; cancellation, deadlines, and frame corruption
 // still return an error.
-func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (api.ScreenshotPlan, error) {
+func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (plan api.ScreenshotPlan, err error) {
 	view := *s
 	view.logger = logging.FromContext(ctx, s.logger)
 	s = &view
+	defer func() {
+		if err != nil {
+			s.logger.Warnf("screenshots: planning blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
 
 	if s.repo != nil && !meta.MediaBinding.Valid() {
 		return api.ScreenshotPlan{}, internalerrors.ErrInvalidInput
@@ -143,7 +148,7 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	baseCount := total / len(discs)
 	remainder := total % len(discs)
 
-	plan := api.ScreenshotPlan{
+	plan = api.ScreenshotPlan{
 		MediaBinding:      meta.MediaBinding,
 		SourcePath:        meta.SourcePath,
 		DiscType:          meta.DiscType,
@@ -225,6 +230,11 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 		plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, trackerLinks)
 	}
 	plan.FinalSelections = orderScreenshotImagesByDisc(plan.FinalSelections, discs)
+	s.logger.Tracef(
+		"screenshots: capture plan inventory suggested_frames=%d matching_disk_images=%d tracker_links=%d unlinked_tracker_images=%d planned_final_images=%d",
+		len(plan.SuggestedSelections), len(plan.ExistingScreenshots), len(plan.TrackerImageLinks),
+		len(plan.ExistingTrackerScreenshots), len(plan.FinalSelections),
+	)
 	return plan, nil
 }
 
@@ -409,42 +419,11 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 
 	plan.ExistingScreenshots = filterScreenshotsMatchingSelections(listExistingScreens(tmpDir, base), baselineSelections, plan.FrameRate)
 	stampScreenshotImages(plan.ExistingScreenshots, meta.DiscID, meta.DiscName)
-	trackerRecords := s.loadTrackerMetadata(ctx, meta.SourcePath)
-	if meta.DiscID == "" {
-		plan.TrackerImageLinks = buildTrackerImageLinks(
-			trackerRecords,
-			tmpDir,
-			s.registry,
-			imageevidence.ResolutionHeight(meta.Release.Resolution),
-			strings.EqualFold(meta.DiscType, "DVD"),
-		)
-	}
-	plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
-		listTrackerScreens(tmpDir, base),
-		plan.TrackerImageLinks,
-		trackerRecords,
-		s.registry,
-		tmpDir,
-		imageevidence.ResolutionHeight(meta.Release.Resolution),
-		strings.EqualFold(meta.DiscType, "DVD"),
-	)
-	stampScreenshotImages(plan.ExistingTrackerScreenshots, meta.DiscID, meta.DiscName)
 	plan.FinalSelections = filterScreenshotsMatchingSelections(s.loadFinalSelections(ctx, meta, tmpDir), baselineSelections, plan.FrameRate)
 
-	// Automatically include tracker images in final selections
-	plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, plan.TrackerImageLinks)
-	for _, images := range [][]api.ScreenshotImage{plan.ExistingScreenshots, plan.ExistingTrackerScreenshots, plan.FinalSelections} {
+	for _, images := range [][]api.ScreenshotImage{plan.ExistingScreenshots, plan.FinalSelections} {
 		restoreScreenshotTonemapping(images, storedScreenshots)
 	}
-	s.logger.Tracef(
-		"screenshots: capture plan inventory baseline_frames=%d suggested_frames=%d matching_disk_images=%d tracker_links=%d unlinked_tracker_images=%d planned_final_images=%d",
-		len(baselineSelections),
-		len(plan.SuggestedSelections),
-		len(plan.ExistingScreenshots),
-		len(plan.TrackerImageLinks),
-		len(plan.ExistingTrackerScreenshots),
-		len(plan.FinalSelections),
-	)
 
 	return plan, nil
 }

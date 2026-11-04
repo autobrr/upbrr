@@ -361,12 +361,21 @@ func TestServiceRetriesSpectrogramWhenDurationChangesGeometry(t *testing.T) {
 				channels:        1,
 				durationSeconds: test.estimatedSeconds,
 			}}, pcm: pcm}
-			results, err := newService(api.NopLogger{}, decoder).Analyze(
+			logger := analysisTestLogger(t)
+			results, err := newService(logger, decoder).Analyze(
 				t.Context(), subject, instructions, "attempt_"+test.name, t.TempDir(),
 			)
 			if err != nil || decoder.decodes != test.wantDecodes || len(results) != 1 ||
 				results[0].Public.Status != api.StageStatusCompleted || len(results[0].Artifacts) != 1 {
 				t.Fatalf("error = %v, decodes = %d, results = %#v", err, decoder.decodes, results)
+			}
+			if test.wantDecodes > 1 {
+				assertAnalysisLog(t, logger, "info", "reason=spectrogram_geometry", "measured duration", "track_ordinal=1")
+				for _, entry := range logger.Recent(100) {
+					if strings.Contains(entry.Message, "reason=batch_incomplete") {
+						t.Fatalf("geometry reread mislabeled as incomplete decode: %s", entry.Message)
+					}
+				}
 			}
 			imageBytes, err := os.ReadFile(results[0].Artifacts[0].Path)
 			if err != nil {
@@ -424,7 +433,8 @@ func TestServiceStreamsSelectedTracksInOneDecodePass(t *testing.T) {
 		},
 		pcm: frames,
 	}
-	service := newService(api.NopLogger{}, decoder)
+	logger := analysisTestLogger(t)
+	service := newService(logger, decoder)
 	tracks := []api.MediaTrackFacts{
 		{
 			ID:                  "track_one",
@@ -473,6 +483,7 @@ func TestServiceStreamsSelectedTracksInOneDecodePass(t *testing.T) {
 		results[1].Public.Status != api.StageStatusCompleted {
 		t.Fatalf("decode passes = %d, results = %#v", decoder.decodes, results)
 	}
+	assertAnalysisLog(t, logger, "info", "state=completed", "completed_count=2", "partial_count=0", "failed_count=0", "artifact_count=2")
 }
 
 func TestServiceStopsPublishingRemainingTracksAfterCancellation(t *testing.T) {
@@ -607,6 +618,11 @@ func TestServicePublishesCompletedTrackWhenSiblingDecodeStops(t *testing.T) {
 			cancelContext: true,
 			wantTopLevel:  true,
 		},
+		{
+			name:         "deadline",
+			cause:        context.DeadlineExceeded,
+			wantTopLevel: true,
+		},
 		{name: "malformed sibling", cause: errMalformedPCM},
 		{
 			name: "unsupported sibling",
@@ -648,7 +664,8 @@ func TestServicePublishesCompletedTrackWhenSiblingDecodeStops(t *testing.T) {
 				retryFirst:     test.retryFirst,
 				cancel:         cancel,
 			}
-			service := newService(api.NopLogger{}, decoder)
+			logger := analysisTestLogger(t)
+			service := newService(logger, decoder)
 			tracks := []api.MediaTrackFacts{
 				{
 					ID:                  "track_one",
@@ -696,6 +713,20 @@ func TestServicePublishesCompletedTrackWhenSiblingDecodeStops(t *testing.T) {
 			if len(results) != 2 || results[0].Public.Status != api.StageStatusCompleted || len(results[0].Artifacts) != 1 ||
 				results[1].Public.Status != api.StageStatusFailed {
 				t.Fatalf("results = %#v", results)
+			}
+			if test.wantTopLevel {
+				if !errors.Is(err, test.cause) {
+					t.Fatalf("lost causal error: %v", err)
+				}
+				state := "canceled"
+				if errors.Is(test.cause, context.DeadlineExceeded) {
+					state = "interrupted"
+				}
+				assertAnalysisLog(t, logger, "warn", "state="+state, "code="+state,
+					"completed_count=1", "partial_count=0", "failed_count=1", "artifact_count=1")
+			} else {
+				assertAnalysisLog(t, logger, "info", "reason=batch_incomplete", "did not confirm a complete result")
+				assertAnalysisLog(t, logger, "warn", "state=partial", "completed_count=1", "partial_count=0", "failed_count=1", "artifact_count=1")
 			}
 		})
 	}
@@ -811,45 +842,74 @@ func TestClassifyTopLevelFailureDistinguishesCancellationAndDeadline(t *testing.
 	}
 }
 
-func TestServiceValidateSelectionRejectsUnsupportedSelectedTrackBeforeDecode(t *testing.T) {
-	subject := audioSubjectForBinding([]string{"1", "2"})
-	subject.Tracks[1].Channels = 12
-	subject.Tracks[1].ChannelLayout = "12 channels"
-	decoder := &fakeDecoder{streams: []inspectedStream{
+func TestServiceValidateSelectionLogsBindingFailureWithoutDecoding(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		code     api.AudioAnalysisFailureCode
+		guidance string
+	}{
 		{
-			codec:      "flac",
-			sampleRate: 48_000,
-			layout:     "stereo",
-			channels:   2,
+			name:     "unsupported layout",
+			code:     api.AudioAnalysisFailureUnsupportedLayout,
+			guidance: "one to eight channels",
 		},
 		{
-			codec:      "flac",
-			sampleRate: 48_000,
-			layout:     "12 channels",
-			channels:   12,
+			name:     "missing track",
+			code:     api.AudioAnalysisFailureInvalidSelection,
+			guidance: "available audio track",
 		},
-	}}
-	service := newService(api.NopLogger{}, decoder)
-	published := 0
-	service.publishPNG = func(string, string, image.Image) error {
-		published++
-		return nil
-	}
-	release := api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 1}
-	err := service.ValidateSelection(t.Context(), subject, api.AudioAnalysisInstructions{
-		Release:        release,
-		ResourceID:     "resource-1",
-		Selection:      api.AudioAnalysisSelectionSelected,
-		TrackIDs:       []string{"track-1", "track-2"},
-		Variants:       []api.AudioAnalysisVariant{api.AudioAnalysisWaveform},
-		ProfileVersion: api.AudioAnalysisProfileVersion,
-	})
-	failure, typed := api.AsAudioAnalysisFailure(err)
-	if !typed || failure.Code != api.AudioAnalysisFailureUnsupportedLayout {
-		t.Fatalf("validation error = %v, failure = %#v", err, failure)
-	}
-	if decoder.decodes != 0 || published != 0 {
-		t.Fatalf("validation decoded %d times and published %d images", decoder.decodes, published)
+		{
+			name:     "changed inventory",
+			code:     api.AudioAnalysisFailureAmbiguousBinding,
+			guidance: "prepare Input again",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := audioSubjectForBinding([]string{"1", "2"})
+			streams := []inspectedStream{
+				{
+					codec:      "flac",
+					sampleRate: 48_000,
+					layout:     "stereo",
+					channels:   2,
+				},
+				{
+					codec:      "flac",
+					sampleRate: 48_000,
+					layout:     "mono",
+					channels:   1,
+				},
+			}
+			selected := []string{"track-1", "track-2"}
+			//nolint:exhaustive // These cases construct the three supported binding failures.
+			switch test.code {
+			case api.AudioAnalysisFailureUnsupportedLayout:
+				subject.Tracks[1].Channels, subject.Tracks[1].ChannelLayout = 12, "12 channels"
+				streams[1].channels, streams[1].layout = 12, "12 channels"
+			case api.AudioAnalysisFailureInvalidSelection:
+				selected[1] = "missing"
+			case api.AudioAnalysisFailureAmbiguousBinding:
+				streams = streams[:1]
+			}
+			decoder := &fakeDecoder{streams: streams}
+			logger := analysisTestLogger(t)
+			service := newService(logger, decoder)
+			published := 0
+			service.publishPNG = func(string, string, image.Image) error { published++; return nil }
+			err := service.ValidateSelection(t.Context(), subject, api.AudioAnalysisInstructions{
+				Release:        api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 1},
+				ResourceID:     "resource-1",
+				Selection:      api.AudioAnalysisSelectionSelected,
+				TrackIDs:       selected,
+				Variants:       []api.AudioAnalysisVariant{api.AudioAnalysisWaveform},
+				ProfileVersion: api.AudioAnalysisProfileVersion,
+			})
+			failure, typed := api.AsAudioAnalysisFailure(err)
+			if !typed || failure.Code != test.code || decoder.decodes != 0 || published != 0 {
+				t.Fatalf("validation error=%v failure=%+v decoded=%d published=%d", err, failure, decoder.decodes, published)
+			}
+			assertAnalysisLog(t, logger, "warn", "reason="+string(test.code), test.guidance)
+		})
 	}
 }
 
@@ -956,7 +1016,8 @@ func TestServiceRetainsSiblingAfterVariantLocalPublishFailure(t *testing.T) {
 		}},
 		pcm: encodePCM([][]float32{{0.25}, {-0.25}, {0.5}, {-0.5}}),
 	}
-	service := newService(api.NopLogger{}, decoder)
+	logger := analysisTestLogger(t)
+	service := newService(logger, decoder)
 	publishCalls := 0
 	service.publishPNG = func(root string, path string, rendered image.Image) error {
 		publishCalls++
@@ -1002,6 +1063,7 @@ func TestServiceRetainsSiblingAfterVariantLocalPublishFailure(t *testing.T) {
 		result[0].Public.Artifacts[1].Status != api.StageStatusCompleted {
 		t.Fatalf("publish calls = %d, result = %#v", publishCalls, result)
 	}
+	assertAnalysisLog(t, logger, "warn", "state=partial", "completed_count=0", "partial_count=1", "failed_count=0", "artifact_count=1")
 }
 
 func TestServiceReturnsServiceWidePublishFailure(t *testing.T) {
@@ -1022,7 +1084,8 @@ func TestServiceReturnsServiceWidePublishFailure(t *testing.T) {
 		},
 		pcm: encodePCM([][]float32{{0.25}, {-0.25}}),
 	}
-	service := newService(api.NopLogger{}, decoder)
+	logger := analysisTestLogger(t)
+	service := newService(logger, decoder)
 	publishCalls := 0
 	service.publishPNG = func(root string, path string, rendered image.Image) error {
 		publishCalls++
@@ -1078,6 +1141,7 @@ func TestServiceReturnsServiceWidePublishFailure(t *testing.T) {
 		t.Fatalf("error = %v, failure = %#v, publish calls = %d, decodes = %d, result = %#v",
 			err, failure, publishCalls, decoder.decodes, result)
 	}
+	assertAnalysisLog(t, logger, "warn", "state=failed", "code=resource_unavailable", "completed_count=0", "failed_count=1", "artifact_count=0")
 }
 
 func TestServiceHonorsCancellationBeforeDecode(t *testing.T) {

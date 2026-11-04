@@ -28,11 +28,12 @@ func ParseBlurayRelease(value string) (id, target string, err error) {
 		return "", "", errors.New("bluray.com: supply a positive release ID or a Blu-ray.com release URL")
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	query, queryErr := url.ParseQuery(u.RawQuery)
 	switch {
 	case len(parts) == 3 && (parts[0] == "movies" || parts[0] == "dvd") && validID(parts[2]) && u.RawQuery == "":
 		id = parts[2]
-	case (u.Path == "/movies/movies.php" || u.Path == "/dvd/movies.php") && len(u.Query()) == 1 && len(u.Query()["id"]) == 1 && validID(u.Query().Get("id")):
-		id = u.Query().Get("id")
+	case (u.Path == "/movies/movies.php" || u.Path == "/dvd/movies.php") && queryErr == nil && len(query) == 1 && len(query["id"]) == 1 && validID(query.Get("id")):
+		id = query.Get("id")
 	default:
 		return "", "", errors.New("bluray.com: URL does not identify one release")
 	}

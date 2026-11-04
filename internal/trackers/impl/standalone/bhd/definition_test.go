@@ -19,6 +19,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -435,6 +436,7 @@ func TestUploadClassifiesDraftAndLiveResponses(t *testing.T) {
 		wantErr            string
 		wantID             string
 		wantPendingPublish bool
+		wantRejected       bool
 	}{
 		{
 			name:               "draft",
@@ -449,7 +451,17 @@ func TestUploadClassifiesDraftAndLiveResponses(t *testing.T) {
 		{
 			name:     "live without torrent id",
 			response: `{"status_code":2,"status_message":"Upload complete"}`,
-			wantErr:  "torrent id was not returned",
+		},
+		{
+			name:         "explicit rejection",
+			response:     `{"status_code":0,"status_message":"Invalid torrent"}`,
+			wantErr:      "api error: Invalid torrent",
+			wantRejected: true,
+		},
+		{
+			name:     "missing outcome discriminator",
+			response: `{}`,
+			wantErr:  "did not establish a submission outcome",
 		},
 		{
 			name:     "unsupported status",
@@ -479,6 +491,9 @@ func TestUploadClassifiesDraftAndLiveResponses(t *testing.T) {
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 					t.Fatalf("expected error containing %q, got %v", test.wantErr, err)
+				}
+				if rejected := submission.OutcomeOf(err) == submission.Rejected; rejected != test.wantRejected {
+					t.Fatalf("rejected=%v want=%v", rejected, test.wantRejected)
 				}
 				return
 			}

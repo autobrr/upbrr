@@ -57,24 +57,20 @@ func TestLSTDefaultCountUsesKnownFlags(t *testing.T) {
 	}
 }
 
-func TestOrdinaryLanguagePreferenceMissingEvidenceIsAdvisory(t *testing.T) {
+func TestOrdinaryLanguagePreferencesSkipUnknownOriginalComparison(t *testing.T) {
 	subject := lstValidationSubject()
 	subject.LanguageFacts.OriginalLanguages = nil
 	subject.LanguageFacts.OriginalLanguagesKnown = false
 	for _, personal := range []bool{false, true} {
 		subject.PersonalRelease = personal
 		failures := languageAssessment(subject)
-		found := false
 		for _, failure := range failures {
 			if failure.Rule == "language_original_evidence" {
-				found = true
-				if failure.Disposition != api.RuleDispositionAdvisory || failure.EvidenceStatus != api.MetadataEvidenceStatusPartial {
-					t.Fatalf("wrong preference priority: %+v", failure)
-				}
+				t.Fatalf("unknown original required comparison evidence: %+v", failure)
 			}
 		}
-		if !found {
-			t.Fatal("unknown original was silently resolved")
+		if subject.LanguageFacts.OriginalLanguagesKnown || subject.LanguageFacts.HasOriginalAudio() || !subject.LanguageFacts.HasUnresolvedProgrammeAudioOrigin() {
+			t.Fatal("skipping comparison fabricated original soundtrack facts")
 		}
 	}
 }

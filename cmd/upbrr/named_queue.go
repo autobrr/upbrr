@@ -107,7 +107,8 @@ func openCLINamedQueueWithSync(
 			_ = queue.Close()
 		}
 	}()
-	payload, err := os.ReadFile(path) //nolint:gosec // Trusted database directory; the queue name is SHA-256 encoded.
+	// #nosec G703 -- Trusted database directory; the queue name is SHA-256 encoded.
+	payload, err := os.ReadFile(path)
 	created := errors.Is(err, os.ErrNotExist)
 	if err != nil && !created {
 		return nil, fmt.Errorf("read saved queue: %w", err)

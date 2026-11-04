@@ -88,6 +88,28 @@ known language differing from the title's recorded original language does not pr
 a dub. Ordinary matching-language original tracks need no special title or flag.
 Commentary is not programme audio.
 
+When soundtrack review is needed, the plain CLI and TUI show the source, resource,
+track title, codec and channels, title original language, and inspected/effective
+track languages. Missing facts are shown as unknown. The question identifies the
+affected trackers, explains `original`, `dubbed` and `unresolved`, and shows the
+separate title-language, track-language and soundtrack-origin correction options.
+An unresolved answer keeps the affected trackers waiting for evidence; it does
+not confirm a dub or waive a restriction.
+
+When the title's original language is unknown, the original-language comparison
+does not require track-language or soundtrack-origin answers and does not block
+an otherwise eligible upload. Unknown facts remain unknown. Explicit soundtrack
+evidence still supports applicable audio order and default-track rules. Confirmed dubs still
+follow the selected tracker's restrictions; a dub-specific rule may need further
+facts. Review first identifies an unknown confirmed dub, then offers companion
+soundtrack classification if an original or English soundtrack is still needed.
+Existing evidence that satisfies the rule removes that request. An uncovered
+release-name audio marker may require an explicit choice from verified track
+facts; this does not supply the title's original language.
+Independent payload and media requirements still apply. Supplying an
+original language restores the ordinary comparison; clearing it or resetting to
+an unknown automatic value removes that comparison again.
+
 Language corrections accept complete names or codes, including explicit regions and
 scripts such as `pt-BR` and `zh-Hant`. These variants remain visible; matching uses
 the base language. Filipino (`fil`), Tagalog (`tgl`) and the collective Philippine
@@ -169,7 +191,7 @@ Depending on the source and trackers, upbrr can:
 
 Automatic screenshot plans distribute the requested images across all prepared discs, with at least one planned image per disc. Manual frame numbers apply to every disc. Screenshot previews, captures, and DVD menu images remain grouped by disc; DVD menu capture can warn about partial coverage when its collection-wide safety cap or the available menus leave a disc uncovered.
 
-With **Keep images** enabled, validated tracker screenshots can supply the screenshot set and reduce the number of new captures. In the Web UI, review **Saved tracker images** on **Screenshots** and choose **Use saved images**. Missing, invalid, or insufficient saved images can require new captures. Imported comparison blocks remain in descriptions and are excluded from ordinary screenshot selection.
+With **Collect existing tracker images** enabled, validated tracker screenshots can supply the screenshot set and reduce the number of new captures. In the Web UI, eligible existing description images load automatically on **Screenshots**, with the same selection and deletion controls as new captures. Loading does not capture missing frames; use **Generate screenshots** when more images are needed. Existing images have unknown capture timestamps and provenance, so their chronological order relative to new captures is unknown. Imported comparison blocks remain in descriptions and are excluded from ordinary screenshot selection.
 
 Where a tracker permits source-description references, an existing image link may remain usable when its format cannot be inspected. upbrr retains this separately from local screenshot files and reports unknown image properties as guidance, not proof of quality or preservation. Reuse requires a current prepared-source receipt and the tracker's normal image-host policy; rejected URLs and older records without that evidence do not qualify. Explicit screenshot requests and other selected trackers' requirements still apply. Review the final description before upload.
 
@@ -195,11 +217,13 @@ Tracker preparation captures an immutable operation. Payload preview and live su
 - **Dry run** and upload review can prepare a preview but cannot submit it.
 - **Upload** consumes the approved operation once.
 
+An explicit **Dry Run** injects the prepared torrent into the configured client unless **Skip client injection** is enabled. It never submits to the tracker. Automatic review before a live upload does not inject the prepared torrent; live uploads wait for the tracker-registered torrent.
+
 Short-lived remote tokens can still be acquired at submission time when required by a tracker.
 
 ## 7. Submit and retain registered torrents
 
-After confirmed tracker success, upbrr records the tracker result and attempts to retain the tracker-registered torrent. Client injection consumes that registered artifact, not the pre-upload torrent.
+After confirmed tracker success, upbrr records the tracker result and attempts to retain the tracker-registered torrent. Client injection consumes that registered artifact, not the pre-upload torrent, even if an earlier explicit dry run already injected the prepared torrent.
 
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
 
@@ -210,6 +234,18 @@ Automatically managed reports, screenshots, descriptions, torrent exports and an
 ## 8. Inject into clients
 
 Client injection is enabled by default when configured. Disable it explicitly with CLI `--no-seed` or the corresponding Web UI upload option.
+
+Workflow client injection is skipped when no enabled client is selected. Tracker preparation remains eligible and a successful tracker submission stays completed; a skipped or empty client selection is not a completed injection.
+
+For a URL-only tracker result, a default watch-folder selection is also skipped when no URL-capable fallback is available. It does not record a successful client delivery. An explicit watch-folder override still reports that it cannot receive a URL-only result.
+
+If an explicit dry run pauses for a tracker preparation decision, answering it automatically continues client injection once preparation is ready. You do not need to choose **Run dry run** again. Further preparation decisions keep injection pending. Before injecting, upbrr rechecks the captured source manifest; a changed source blocks injection and requires re-preparation. The original **Skip client injection** choice still applies, and a live-upload review continues to defer injection until tracker registration.
+
+Completed dry-run receipts identify only enabled destinations, so editing a selected disabled client does not repeat delivery. Older receipts that included disabled destinations can permit another client action on a later explicit request after upgrading; watch-folder delivery can repeat. An unresolved attempt still blocks another injection.
+
+Workflow injection into qBittorrent verifies that the torrent's infohash and required announce URLs are present in the client. An existing torrent with the same infohash can still have different trackers; upbrr does not change tracker-merging settings or edit its trackers. Verification requires a local v1 torrent artifact. URL-only artifacts cannot be verified and report an injection failure separately from the successful tracker submission. If an add was sent but verification remains uncertain, inspect and reconcile the client outcome before retrying; upbrr keeps the attempt blocked against another add.
+
+When that exact torrent is already installed with the required trackers, verification reuses it before creating link staging for a new add. Existing client data is retained.
 
 A successful draft can be injected before publication when the tracker integration supplies registered torrent authority. It remains unpublished on the tracker. If that artifact is unavailable or injection fails, the result reports the local failure separately from the completed submission.
 

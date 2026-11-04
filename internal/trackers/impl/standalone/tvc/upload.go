@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -96,7 +97,10 @@ func submitPreparedUpload(
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: TVC build upload request: %s", commonhttp.RedactErrorDetail(err.Error()))
+		return api.UploadSummary{}, submission.NewError(
+			submission.NotSent,
+			fmt.Errorf("trackers: TVC build upload request: %s", commonhttp.RedactErrorDetail(err.Error())),
+		)
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "Mozilla/5.0")
@@ -105,7 +109,7 @@ func submitPreparedUpload(
 		Tracker:       "TVC",
 		SuccessStatus: func(status int) bool { return status == http.StatusOK },
 	})
-	if err != nil {
+	if err != nil && !result.BodyComplete {
 		return api.UploadSummary{}, fmt.Errorf("trackers: TVC execute upload: %w", err)
 	}
 	if !result.Success {
@@ -121,8 +125,16 @@ func submitPreparedUpload(
 	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: TVC decode response: %w", err)
 	}
-	dataURL := strings.TrimSpace(fmt.Sprint(decoded["data"]))
-	torrentID := path.Base(strings.TrimRight(dataURL, "/"))
+	dataURL, _ := decoded["data"].(string)
+	dataURL = strings.TrimSpace(dataURL)
+	resource, parseErr := url.ParseRequestURI(dataURL)
+	if parseErr != nil || (resource.IsAbs() && (resource.Host == "" || (resource.Scheme != "http" && resource.Scheme != "https"))) {
+		return api.UploadSummary{}, errors.New("trackers: TVC response did not identify an accepted torrent")
+	}
+	torrentID := path.Base(strings.TrimRight(resource.Path, "/"))
+	if torrentID == "." || torrentID == "/" {
+		return api.UploadSummary{}, errors.New("trackers: TVC response did not identify an accepted torrent")
+	}
 
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
 		req.Logger, "TVC", state.torrentPath, artifactPath, announceURL, sourceFlag,

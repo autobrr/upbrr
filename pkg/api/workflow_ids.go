@@ -335,6 +335,8 @@ type RequiredAction struct {
 	TrackerID              TrackerID                  `json:"trackerId,omitempty"`
 	EffectKind             WorkflowExternalEffectKind `json:"effectKind,omitempty"`
 	EffectScopeID          string                     `json:"effectScopeId,omitempty"`
+	EffectID               string                     `json:"effectId,omitempty"`
+	EffectOperationID      WorkflowOperationID        `json:"effectOperationId,omitempty"`
 	Prompt                 string                     `json:"prompt"`
 	Options                []RequiredActionOption     `json:"options,omitempty"`
 	AllowsFreeText         bool                       `json:"allowsFreeText,omitempty"`

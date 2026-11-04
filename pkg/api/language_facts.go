@@ -131,9 +131,9 @@ func (f LanguageFacts) HasUnresolvedProgrammeAudioOrigin() bool {
 
 // HasEnglishDub identifies classified or inferred English programme dubs, excluding
 // English dialogue within an original multilingual stream and aggregate corrections.
+// Explicit dub evidence does not require the title's original language.
 func (f LanguageFacts) HasEnglishDub() bool {
-	if !f.OriginalLanguagesKnown || len(f.OriginalLanguages) == 0 || !languageutil.ContainsLanguage(f.ProgrammeLanguages, "English") ||
-		languageutil.ContainsLanguage(f.OriginalLanguages, "English") || languageutil.ContainsLanguage(f.OriginalLanguages, "ZXX") ||
+	if !languageutil.ContainsLanguage(f.ProgrammeLanguages, "English") ||
 		f.ProgrammeStatus == MetadataEvidenceStatusContradictory {
 		return false
 	}
@@ -144,8 +144,9 @@ func (f LanguageFacts) HasEnglishDub() bool {
 
 // HasOriginalAudio accepts original programme tracks, including verified multilingual
 // content whose main-language tag differs from the title's recorded original language.
+// Explicit original-soundtrack evidence survives unknown title-language metadata.
 func (f LanguageFacts) HasOriginalAudio() bool {
-	return f.OriginalLanguagesKnown && len(f.ProgrammeLanguages) > 0 && f.ProgrammeStatus != MetadataEvidenceStatusContradictory &&
+	return len(f.ProgrammeLanguages) > 0 && f.ProgrammeStatus != MetadataEvidenceStatusContradictory &&
 		slices.ContainsFunc(f.Tracks, func(track MediaTrackFacts) bool {
 			return f.ProgrammeAudioOrigin(track) == TrackAudioOriginal
 		})

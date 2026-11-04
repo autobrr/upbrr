@@ -3,6 +3,25 @@
 
 package api
 
+import "strings"
+
+// ConfirmsSubmission reports whether retained protocol evidence identifies this
+// exact tracker attempt as accepted. Correlation alone never proves acceptance.
+func (r UploadResult) ConfirmsSubmission(effect ReleaseWorkflowEffectRecord) bool {
+	if effect.Kind != string(WorkflowExternalEffectTrackerSubmission) || r.WorkflowID != effect.WorkflowID ||
+		effect.OperationID == "" || effect.EffectID == "" {
+		return false
+	}
+	for _, result := range r.Results {
+		if result.SubmissionStatus == StageStatusCompleted && result.SubmissionReceiptID == effect.EffectID &&
+			result.SubmissionOperationID == effect.OperationID &&
+			strings.EqualFold(string(result.TrackerID), effect.ScopeID) {
+			return true
+		}
+	}
+	return false
+}
+
 // EffectiveSubmissionStatus returns the explicit tracker-submission outcome,
 // with compatibility inference for results retained before split outcomes.
 func (r UploadTrackerResult) EffectiveSubmissionStatus() StageStatus {
@@ -42,7 +61,7 @@ func (r UploadTrackerResult) DerivedStatus() StageStatus {
 	client := r.EffectiveClientInjectionStatus()
 	switch submission {
 	case StageStatusCompleted:
-		if client == StageStatusFailed || client == StageStatusUnavailable {
+		if client == StageStatusFailed || client == StageStatusUnavailable || r.hasFailureCode(OperationFailureReceiptRetention) {
 			return StageStatusPartial
 		}
 		return StageStatusCompleted
@@ -68,13 +87,15 @@ func (r UploadTrackerResult) DerivedStatus() StageStatus {
 // SubmissionRetryable reports whether a fresh tracker submission is safe to
 // offer for this retained result.
 func (r UploadTrackerResult) SubmissionRetryable() bool {
-	return r.EffectiveSubmissionStatus() == StageStatusFailed && !r.hasFailureCode(OperationFailureUnknownOutcome)
+	return r.EffectiveSubmissionStatus() == StageStatusFailed && !r.hasFailureCode(OperationFailureUnknownOutcome) &&
+		!r.hasFailureCode(OperationFailureReceiptRetention)
 }
 
 // ClientInjectionRetryable reports whether retained registered-artifact
 // authority can safely drive a client-only retry.
 func (r UploadTrackerResult) ClientInjectionRetryable() bool {
 	return r.EffectiveSubmissionStatus() == StageStatusCompleted &&
+		!r.hasFailureCode(OperationFailureReceiptRetention) &&
 		r.EffectiveClientInjectionStatus() == StageStatusFailed &&
 		r.ClientFailureCode == OperationFailureClientInjection
 }

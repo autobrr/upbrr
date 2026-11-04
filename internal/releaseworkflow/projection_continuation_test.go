@@ -292,6 +292,7 @@ func TestProjectionContinuationANTMissingTagsPublishesBlockedQuestion(t *testing
 	preparer := testPreparer()
 	preparer.SubjectFunc = func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
 		return api.UploadSubject{
+			Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 			SourcePath:        input.Release.SourcePath,
 			MediaInfoTextPath: filepath.Join(filepath.Dir(input.Release.SourcePath), "mediainfo.txt"),
 			ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{

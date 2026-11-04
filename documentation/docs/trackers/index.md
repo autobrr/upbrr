@@ -82,6 +82,8 @@ Do not modify another group's release to address a prohibited extra programme du
 
 ### Media analysis
 
+The release-level audio name describes a selected track. A destination may also flag features found on other inspected non-commentary tracks; changing the audio name does not establish those features. After updating, prepare saved releases again to rebuild inspected audio evidence. Some destinations require a nonempty MediaInfo Unique ID for non-disc MKV sources. If this check fails, use a source with the required metadata and prepare it again.
+
 Non-disc pack preparation uses the selected primary video’s MediaInfo report. Programme-language and permitted-dub checks use that inspected file; other uninspected pack files do not by themselves block those checks. **Inspected tracks** still reports incomplete coverage. A pack-consistency reminder is passive Guidance: it does not scan every episode, establish pack-wide consistency, or require an answer or acknowledgement. Missing or conflicting evidence in the inspected file and independent tracker requirements still need review. Check the pack against the tracker’s current rules. Cancellation is checked between input-file reads; an operating-system read already in progress may delay stopping. Inspected languages, track titles, default/forced flags and container order inform the assessment. Source-history and hypothetical subtitle concerns remain warnings rather than requests to guess missing facts.
 
 ## Tracker questions

@@ -47,6 +47,69 @@ func TestAutomaticWithoutDecoderRetainsNativeMetadata(t *testing.T) {
 	}
 }
 
+func TestAutomaticOutputFailureBeforeCapture(t *testing.T) {
+	if _, err := CurrentDecoderFingerprint(t.Context()); err != nil {
+		t.Skip("requires a working FFmpeg version probe")
+	}
+	for _, prepared := range []bool{false, true} {
+		name := "automatic"
+		if prepared {
+			name = "prepared automatic"
+		}
+		t.Run(name, func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "output-file")
+			if err := os.WriteFile(directory, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			input := DecodedInput{
+				Path:        filepath.Join(t.TempDir(), "Example.Source.2026.mkv"),
+				Fingerprint: "synthetic-output-failure",
+				Source:      api.HDRDecodedSourceEvidence{Codec: "hevc", VideoStreams: 1},
+			}
+			captured, published := false, false
+			ctx := WithProgress(t.Context(), func(progress Progress) {
+				if progress.Phase == "reading_metadata" || progress.Phase == "reading_shared_media" {
+					captured = true
+				}
+			})
+			var native *NativeExtraction
+			var reports []*MeasurementReport
+			err := New(NewAdmission(), nil).WithSession(ctx, func(session *Session) error {
+				var runErr error
+				if prepared {
+					native, reports, runErr = session.AnalyzePreparedAutomatic(ctx, input, nil,
+						api.HDRDecodedOptions{Audio: true, AllAudioTracks: true}, api.HDRAnalysisFormatsAuto, directory, 0,
+						PreparedAudioCapture{
+							Subject: api.AudioAnalysisSubject{VideoPath: input.Path, SourceFingerprint: input.Fingerprint},
+							CheckpointNative: func(*NativeExtraction, []*MeasurementReport) error {
+								captured = true
+								return nil
+							},
+							Publish: func(*MeasurementReport) error { published = true; return nil },
+						})
+				} else {
+					native, reports, runErr = session.AnalyzeAutomatic(ctx, input, nil, api.HDRDecodedOptions{Audio: true},
+						api.HDRAnalysisFormatsAuto, directory, 0, true)
+				}
+				return runErr
+			})
+			if native != nil {
+				defer native.Release()
+			}
+			failure, typed := api.AsHDRAnalysisFailure(err)
+			_, filesystemCause := errors.AsType[*os.PathError](err)
+			if !typed || failure.Code != api.HDRAnalysisFailureOutput || !filesystemCause ||
+				native != nil || len(reports) != 0 || captured || published {
+				t.Fatalf("output setup failure: typed=%t code=%s filesystem=%t native=%t reports=%d captured=%t published=%t",
+					typed, failure.Code, filesystemCause, native != nil, len(reports), captured, published)
+			}
+			if strings.Contains(failure.Message, directory) || !strings.Contains(failure.Message, "permissions") || !strings.Contains(failure.Message, "space") {
+				t.Fatal("output setup failure lacks safe output-directory guidance")
+			}
+		})
+	}
+}
+
 func TestAutomaticPictureOnlyFallbackOmitsAudio(t *testing.T) {
 	err := New(NewAdmission(), nil).WithSession(t.Context(), func(session *Session) error {
 		input := DecodedInput{Path: filepath.Join("testdata", "reordered-hybrid.mkv"), Fingerprint: "synthetic-dual"}

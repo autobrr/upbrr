@@ -163,6 +163,23 @@ func TestOpenInputScopesDetachedUncertaintyToItsSource(t *testing.T) {
 			if err != nil || next.WorkflowID == opened.WorkflowID || verifier.calls != 2 {
 				t.Fatalf("unrelated source did not open independently: slot=%+v err=%v verifications=%d", next, err, verifier.calls)
 			}
+			if test.foreign && effect.Submission != nil {
+				probe := effect
+				probe.OwnerID, probe.WorkflowID = nextOwner, next.WorkflowID
+				probe.OperationID, probe.EffectID = "upload-next", "submission-next"
+				submission := *effect.Submission
+				submission.CoordinatorID, submission.Fence = next.CoordinatorID, next.Fence
+				probe.Submission = &submission
+				nextContext := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: next.CoordinatorID, Fence: next.Fence})
+				prior, _, err := persistent.BeginEffect(nextContext, probe)
+				if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || prior.EffectID != "" || prior.OperationID != "" {
+					t.Fatalf("foreign attempt exposed reconciliation identity: record=%#v error=%v", prior, err)
+				}
+				fence, err := repo.LoadSubmissionFence(ctx, submission.ContentIdentity, submission.TrackerSite)
+				if err != nil || fence.EffectID != effect.EffectID || fence.OwnerID != effect.OwnerID || fence.Status != api.WorkflowEffectStatusUnknown {
+					t.Fatalf("foreign admission changed the original fence: fence=%#v error=%v", fence, err)
+				}
+			}
 			if _, err := module.RecoverLegacyInput(ctx, testOwnerID, opened.WorkflowID); !errors.Is(err, api.ErrActiveInputBusy) {
 				t.Fatalf("A recovery replaced active B: %v", err)
 			}

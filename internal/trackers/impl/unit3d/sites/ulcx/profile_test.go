@@ -86,7 +86,7 @@ func TestULCXStructuredName(t *testing.T) {
 }
 func TestULCXPolicy(t *testing.T) {
 	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/ulcx/v9" || p.Structured == nil {
+	if p.ID != "unit3d/ulcx/v10" || p.Structured == nil {
 		t.Fatalf("%#v", p)
 	}
 }

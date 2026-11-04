@@ -6,6 +6,7 @@ package azfamily
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,11 +21,11 @@ import (
 // policy binding.
 func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
 	version := "constructibility-v2"
-	if d.site.Name == "AZ" {
-		version = "policy-v6"
-	}
-	if d.site.Name == "CZ" {
-		version = "policy-v7"
+	switch d.site.Name {
+	case "AZ":
+		version = "policy-v9"
+	case "CZ":
+		version = "policy-v8"
 	}
 	binding := trackers.ValidationPolicyBinding{
 		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-" + version,
@@ -652,13 +653,22 @@ func evaluateAZLanguageRules(site siteDefinition, subject api.TrackerValidationS
 	facts := subject.LanguageFacts
 	programmeStatus := trackers.ProgrammeLanguageStatus(subject)
 	if site.Name == "AZ" {
-		if !facts.OriginalLanguagesKnown {
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(subject, "original_evidence", "original-language evidence needs review", trackers.LanguageUnresolved),
-			)
+		if !facts.OriginalLanguagesKnown && (programmeStatus == api.MetadataEvidenceStatusContradictory ||
+			!facts.HasOriginalAudio() && !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English")) &&
+			slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+				return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed
+			}) {
+			if programmeStatus != api.MetadataEvidenceStatusComplete || facts.HasUnresolvedProgrammeAudioOrigin() {
+				failures = append(failures, trackers.DubLanguageEvidenceFailure(
+					subject,
+					"a confirmed dub needs usable programme-language and inspected-coverage evidence; identify its language and correct or reset cleared or contradictory Audio languages before assessing the dub exception",
+				))
+			} else {
+				failures = append(failures, trackers.LanguageRuleFailure(subject, "dub_exception_evidence",
+					"a confirmed non-English dub needs original-language evidence to assess the regional-dialect exception", trackers.LanguageUnresolved))
+			}
 		}
-		if programmeStatus != api.MetadataEvidenceStatusComplete {
+		if facts.OriginalLanguagesKnown && programmeStatus != api.MetadataEvidenceStatusComplete {
 			failures = append(
 				failures,
 				trackers.LanguageRuleFailure(

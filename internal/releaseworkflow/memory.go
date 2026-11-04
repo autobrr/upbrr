@@ -165,7 +165,13 @@ func (r *MemoryRepository) Save(ctx context.Context, ownerID string, expected ap
 		return errors.New("release workflow: revision must advance by one")
 	}
 	if resolution := state.effectResolution; resolution != nil {
-		if err := r.resolveEffectUnknownLocked(ownerID, state.Workflow.ID, resolution.Kind, resolution.ScopeID, state.Workflow.UpdatedAt); err != nil {
+		if err := r.resolveEffectUnknownLocked(
+			ownerID,
+			state.Workflow.ID,
+			resolution.Kind,
+			resolution.ScopeID,
+			state.Workflow.UpdatedAt,
+			resolution.Expected...); err != nil {
 			return err
 		}
 	}
@@ -506,7 +512,8 @@ func (r *MemoryRepository) LoadEvents(
 	return result, nil
 }
 
-// BeginEffect fences one in-memory external attempt.
+// BeginEffect fences one in-memory external attempt. An unknown-outcome error
+// returns the blocking local record for reconciliation, without admitting an attempt.
 func (r *MemoryRepository) BeginEffect(
 	ctx context.Context,
 	record api.ReleaseWorkflowEffectRecord,
@@ -531,7 +538,7 @@ func (r *MemoryRepository) BeginEffect(
 	if found {
 		switch latest.Status {
 		case api.WorkflowEffectStatusStarted, api.WorkflowEffectStatusUnknown:
-			return api.ReleaseWorkflowEffectRecord{}, false, api.ErrReleaseWorkflowEffectOutcomeUnknown
+			return latest, false, api.ErrReleaseWorkflowEffectOutcomeUnknown
 		case api.WorkflowEffectStatusSucceeded:
 			if latest.SemanticFingerprint != record.SemanticFingerprint {
 				break
@@ -545,7 +552,8 @@ func (r *MemoryRepository) BeginEffect(
 	return record, false, nil
 }
 
-// CompleteEffect retains one known terminal in-memory receipt.
+// CompleteEffect retains one known terminal in-memory receipt. Unknown legacy
+// effects may be confirmed successful, but cannot be completed as failed.
 func (r *MemoryRepository) CompleteEffect(
 	ctx context.Context,
 	status api.WorkflowEffectStatus,
@@ -558,7 +566,8 @@ func (r *MemoryRepository) CompleteEffect(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	current, ok := r.effects[key]
-	if !ok || current.Status != api.WorkflowEffectStatusStarted {
+	confirmedLegacy := current.Status == api.WorkflowEffectStatusUnknown && status == api.WorkflowEffectStatusSucceeded && current.Submission == nil
+	if !ok || current.OperationID != record.OperationID || (current.Status != api.WorkflowEffectStatusStarted && !confirmedLegacy) {
 		return api.ErrReleaseWorkflowEffectConflict
 	}
 	current.Status = status
@@ -682,17 +691,19 @@ func (r *MemoryRepository) ResolveEffectUnknown(
 	kind api.WorkflowExternalEffectKind,
 	scopeID string,
 	now time.Time,
+	expected ...api.WorkflowExternalEffectReceipt,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("resolve workflow effect unknown: %w", err)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.resolveEffectUnknownLocked(ownerID, workflowID, kind, scopeID, now)
+	return r.resolveEffectUnknownLocked(ownerID, workflowID, kind, scopeID, now, expected...)
 }
 
 func (r *MemoryRepository) resolveEffectUnknownLocked(
 	ownerID string, workflowID api.WorkflowID, kind api.WorkflowExternalEffectKind, scopeID string, now time.Time,
+	expected ...api.WorkflowExternalEffectReceipt,
 ) error {
 	ownerID = strings.TrimSpace(ownerID)
 	scopeID = strings.TrimSpace(scopeID)
@@ -713,6 +724,17 @@ func (r *MemoryRepository) resolveEffectUnknownLocked(
 	}
 	if latestKey == "" {
 		return api.ErrReleaseWorkflowEffectConflict
+	}
+	if (kind == api.WorkflowExternalEffectTrackerSubmission && len(expected) != 1) || len(expected) > 1 || (len(expected) == 1 &&
+		(expected[0].EffectID != latest.EffectID || expected[0].OperationID != latest.OperationID)) {
+		return api.ErrReleaseWorkflowEffectConflict
+	}
+	if state, ok := r.states[workflowID]; ok && state.OwnerID == ownerID {
+		for _, result := range state.UploadResults {
+			if result.ConfirmsSubmission(latest) {
+				return api.ErrReleaseWorkflowEffectConflict
+			}
+		}
 	}
 	switch latest.Status {
 	case api.WorkflowEffectStatusFailed:

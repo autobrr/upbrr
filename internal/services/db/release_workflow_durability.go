@@ -195,6 +195,8 @@ func (r *SQLiteRepository) LoadReleaseWorkflowEvents(
 }
 
 // BeginReleaseWorkflowEffect persists attempt_started before an external side effect.
+// An unknown-outcome error returns a blocking record only when its exact local
+// owner, workflow, kind and scope match; it does not admit another attempt.
 func (r *SQLiteRepository) BeginReleaseWorkflowEffect(
 	ctx context.Context,
 	record api.ReleaseWorkflowEffectRecord,
@@ -224,6 +226,7 @@ func (r *SQLiteRepository) BeginReleaseWorkflowEffect(
 		)
 		switch {
 		case loadErr == nil && (prior.Status == api.WorkflowEffectStatusStarted || prior.Status == api.WorkflowEffectStatusUnknown):
+			result = prior
 			return api.ErrReleaseWorkflowEffectOutcomeUnknown
 		case loadErr == nil && prior.Status == api.WorkflowEffectStatusSucceeded &&
 			prior.SemanticFingerprint == record.SemanticFingerprint:
@@ -252,6 +255,9 @@ func (r *SQLiteRepository) BeginReleaseWorkflowEffect(
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+			return result, false, err
+		}
 		return api.ReleaseWorkflowEffectRecord{}, false, err
 	}
 	return result, idempotent, nil
@@ -283,10 +289,21 @@ func (r *SQLiteRepository) beginSubmissionFence(
 		case err == nil && prior.Status == api.WorkflowEffectStatusSucceeded:
 			result = record
 			result.EffectID = prior.EffectID
+			result.OperationID = prior.OperationID
 			result.Status = prior.Status
 			idempotent = true
 			return nil
 		case err == nil && (prior.Status == api.WorkflowEffectStatusStarted || prior.Status == api.WorkflowEffectStatusUnknown):
+			if prior.OwnerID == record.OwnerID && prior.WorkflowID == record.WorkflowID {
+				local, loadErr := loadLatestReleaseWorkflowEffect(ctx, tx, record.OwnerID, record.WorkflowID, record.Kind, record.ScopeID)
+				if loadErr != nil && !errors.Is(loadErr, api.ErrReleaseWorkflowStateNotFound) {
+					return loadErr
+				}
+				if loadErr == nil && local.EffectID == prior.EffectID && local.OperationID == prior.OperationID &&
+					(local.Status == api.WorkflowEffectStatusStarted || local.Status == api.WorkflowEffectStatusUnknown) {
+					result = local
+				}
+			}
 			return api.ErrReleaseWorkflowEffectOutcomeUnknown
 		case err == nil:
 			return api.ErrReleaseWorkflowEffectConflict
@@ -322,12 +339,16 @@ func (r *SQLiteRepository) beginSubmissionFence(
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+			return result, false, err
+		}
 		return api.ReleaseWorkflowEffectRecord{}, false, err
 	}
 	return result, idempotent, nil
 }
 
-// CompleteReleaseWorkflowEffect persists a known terminal receipt.
+// CompleteReleaseWorkflowEffect persists a known terminal receipt. Unknown legacy
+// effects may be confirmed successful, but cannot be completed as failed.
 func (r *SQLiteRepository) CompleteReleaseWorkflowEffect(
 	ctx context.Context,
 	status api.WorkflowEffectStatus,
@@ -408,12 +429,16 @@ func completeReleaseWorkflowEffect(
 	record api.ReleaseWorkflowEffectRecord,
 	effectName string,
 ) error {
+	confirmedStatus := api.WorkflowEffectStatusStarted
+	if status == api.WorkflowEffectStatusSucceeded && record.Submission == nil {
+		confirmedStatus = api.WorkflowEffectStatusUnknown
+	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE release_workflow_effects
 		SET status = ?, updated_at = ?, completed_at = ?
-		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
+		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status IN (?, ?)
 	`, status, formatWorkflowStateTime(record.UpdatedAt), formatWorkflowStateTime(*record.CompletedAt),
-		record.OwnerID, record.WorkflowID, record.OperationID, record.EffectID, api.WorkflowEffectStatusStarted)
+		record.OwnerID, record.WorkflowID, record.OperationID, record.EffectID, api.WorkflowEffectStatusStarted, confirmedStatus)
 	if err != nil {
 		return fmt.Errorf("db complete release workflow %s: %w", effectName, err)
 	}
@@ -602,15 +627,17 @@ func (r *SQLiteRepository) ResolveReleaseWorkflowEffectUnknown(
 	kind api.WorkflowExternalEffectKind,
 	scopeID string,
 	now time.Time,
+	expected ...api.WorkflowExternalEffectReceipt,
 ) error {
 	return r.withWriteTx(ctx, "resolve unknown release workflow effect", func(tx *sql.Tx) error {
-		return resolveReleaseWorkflowEffectUnknown(ctx, tx, ownerID, workflowID, kind, scopeID, now)
+		return resolveReleaseWorkflowEffectUnknown(ctx, tx, ownerID, workflowID, kind, scopeID, now, expected...)
 	})
 }
 
 func resolveReleaseWorkflowEffectUnknown(
 	ctx context.Context, tx *sql.Tx, ownerID string, workflowID api.WorkflowID,
 	kind api.WorkflowExternalEffectKind, scopeID string, now time.Time,
+	expected ...api.WorkflowExternalEffectReceipt,
 ) error {
 	ownerID = strings.TrimSpace(ownerID)
 	scopeID = strings.TrimSpace(scopeID)
@@ -623,6 +650,27 @@ func resolveReleaseWorkflowEffectUnknown(
 	latest, err := loadLatestReleaseWorkflowEffect(ctx, tx, ownerID, workflowID, string(kind), scopeID)
 	if err != nil {
 		return err
+	}
+	if (kind == api.WorkflowExternalEffectTrackerSubmission && len(expected) != 1) || len(expected) > 1 || (len(expected) == 1 &&
+		(expected[0].EffectID != latest.EffectID || expected[0].OperationID != latest.OperationID)) {
+		return api.ErrReleaseWorkflowEffectConflict
+	}
+	if kind == api.WorkflowExternalEffectTrackerSubmission {
+		state, loadErr := loadWorkflowState(ctx, tx, ownerID, workflowID)
+		if loadErr != nil {
+			return loadErr
+		}
+		var retained struct {
+			UploadResults map[api.UploadResultID]api.UploadResult
+		}
+		if err := json.Unmarshal(state.Payload, &retained); err != nil {
+			return fmt.Errorf("db read retained submission evidence: %w", err)
+		}
+		for _, result := range retained.UploadResults {
+			if result.ConfirmsSubmission(latest) {
+				return api.ErrReleaseWorkflowEffectConflict
+			}
+		}
 	}
 	switch latest.Status {
 	case api.WorkflowEffectStatusFailed:

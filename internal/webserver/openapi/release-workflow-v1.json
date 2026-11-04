@@ -988,6 +988,9 @@
               "$ref": "#/components/schemas/BlurayImage"
             }
           },
+          "DetailsIdentityVersion": {
+            "type": "string"
+          },
           "DetailsStatus": {
             "type": "string"
           },
@@ -4413,6 +4416,9 @@
           "source": {
             "type": "string"
           },
+          "sourceUnavailable": {
+            "type": "boolean"
+          },
           "timestampSeconds": {
             "type": "number"
           },
@@ -5038,6 +5044,9 @@
       "MediaPlan": {
         "type": "object",
         "properties": {
+          "autoAdoptSavedImages": {
+            "type": "boolean"
+          },
           "createdAt": {
             "type": "string"
           },
@@ -9462,8 +9471,14 @@
           "createdAt": {
             "type": "string"
           },
+          "effectId": {
+            "type": "string"
+          },
           "effectKind": {
             "$ref": "#/components/schemas/WorkflowExternalEffectKind"
+          },
+          "effectOperationId": {
+            "$ref": "#/components/schemas/WorkflowOperationID"
           },
           "effectScopeId": {
             "type": "string"
@@ -12883,6 +12898,9 @@
       "UploadDryRunResult": {
         "type": "object",
         "properties": {
+          "clientInjectionRequested": {
+            "type": "boolean"
+          },
           "createdAt": {
             "type": "string"
           },
@@ -12891,6 +12909,9 @@
           },
           "dupes": {
             "$ref": "#/components/schemas/DupeAssessmentRef"
+          },
+          "explicitDryRun": {
+            "type": "boolean"
           },
           "failedCount": {
             "type": "integer"
@@ -13242,6 +13263,12 @@
           },
           "status": {
             "$ref": "#/components/schemas/StageStatus"
+          },
+          "submissionOperationId": {
+            "$ref": "#/components/schemas/WorkflowOperationID"
+          },
+          "submissionReceiptId": {
+            "type": "string"
           },
           "submissionStatus": {
             "$ref": "#/components/schemas/StageStatus"

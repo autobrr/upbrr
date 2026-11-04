@@ -96,7 +96,7 @@ For BDMV, interactive preparation groups playlist choices by disc and requires a
 
 ### Blu-ray.com release inspection
 
-When Blu-ray.com lookup is enabled, the CLI and TUI first show the release listing. Enter a release number to select its available country, publisher and release URL; enabled cover handling inspects only that edition. Enter `a` to fetch and score all eligible editions, then choose a release or `n` to skip. Unattended runs do not prompt or implicitly fetch all details. Country filtering and automatic unique-country selection still apply.
+When Blu-ray.com lookup is enabled, the CLI and TUI first show the release listing, including each edition’s release ID. Enter a release number to select its available country, publisher and release URL; enabled cover handling inspects only that edition. Enter `a` to fetch and score all eligible editions, then choose a release or `n` to skip. Unattended runs do not prompt or implicitly fetch all details. Country filtering and automatic unique-country selection still apply.
 
 Use `--bluray-release "https://www.blu-ray.com/movies/Example-Release-Blu-ray/123/"` or `--bluray-release 123` for an exact release. Numeric IDs use the source's Blu-ray or DVD catalogue; a URL identifies its own catalogue. This fetches only that edition when its details are needed to resolve it. `--bluray-release=""` explicitly skips selection; `--bluray-release auto` restores automatic matching. Compatible listings, details and manual choices survive ordinary corrections. The separate `--blu` argument remains the torrent-site source argument.
 
@@ -123,6 +123,10 @@ After an interrupted legacy workflow, check the tracker or torrent client before
 If a configuration change blocks startup because an external outcome is unresolved, stop other processes using that database and run `upbrr recover`. Pass the same `--config` option and environment as the original command so recovery selects the existing database. Check each tracker, image host or torrent client before confirming that its action did not complete; answer No for completed or uncertain outcomes.
 
 This maintenance command does not activate configuration or start external work. It opens the retained local artifacts and saves each confirmation together with its workflow checkpoint in one database transaction. After recovery succeeds, rerun the original command to activate configuration and continue through the normal preparation and review checks. Keep the database if recovery reports an error and follow its diagnostic before retrying.
+
+Language review identifies the inspected source, resource and track, shows detected and effective languages, and gives the correction flag for that track. Playlist and metadata choices show the current candidates. Tracker questions show the reviewed upload name, current value and accepted answers; a displayed value may be a default, so review it before submitting your answer.
+
+Plain output and the TUI show the same prepared evidence and answer consequences. Duplicate review explains search completeness and any required comparison. Yes records the explicit duplicate decision; tracker approval separately selects the trackers allowed to continue. A clear, completed search defaults to Yes at tracker approval; incomplete or manual checks default to No. `--unattended` does not read answers, and `--uac` allows required prompts. Use the correction shown by the prompt and rerun when the source facts are wrong.
 
 After you answer tracker questions, the CLI rebuilds the affected tracker stages and refreshes duplicate evidence before asking for duplicate review. Follow-up questions can depend on earlier answers. Accepted answers, reviewed names, and rule acknowledgements remain valid only while their underlying inputs still match. Previous duplicate review decisions are requested again after evidence changes; explicit duplicate-policy options still apply. Answering tracker questions does not approve duplicates or authorize upload.
 
@@ -201,7 +205,7 @@ The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic 
 | `--bhd <id-or-url>`        | `-bhd`                     | Supply a BHD torrent ID or URL.     |
 | `--ulcx <id-or-url>`       | `-ulcx`                    | Supply a ULCX torrent ID or URL.    |
 
-Omitting `--trackers` uses the configured default trackers. `--site-upload` replaces the requested tracker list with its one tracker; `--trackers-remove` still excludes named trackers. Tracker ID flags supply lookup identities and do not select upload destinations.
+Omitting `--trackers` uses the retained workflow scope when available, otherwise the configured default trackers. `--site-upload` replaces the requested tracker list with its one tracker; `--trackers-remove` still excludes named trackers. Removing every selected tracker stops the upload. Tracker ID flags supply lookup identities and do not select upload destinations.
 
 ## Release overrides
 
@@ -217,7 +221,9 @@ Metadata review always prints the effective `Commentary: true` or `Commentary: f
 
 This loads release facts and evaluates selected tracker input requirements. It stops before tracker assessment, duplicate searches, screenshots, descriptions, torrent preparation, or uploads. Metadata provider requests and media inspection can still run. `--skip_auto_torrent` also disables torrent-client discovery.
 
-Exit code `0` means Input is ready. Exit code `2` means required input prevents the requested readiness. Strict `--unattended` never prompts.
+The output retains its `Input facts:` JSON, `Track` lines, and `Input <key>: <status>` lines, then explains local readiness. Missing or invalid required evidence identifies the affected trackers and inspected track when available. Advisory evidence appears separately and does not block local readiness. Supported correction flags are shown where known; otherwise review the source and metadata selection before rerunning `--input-only`.
+
+Exit code `0` means local Input is ready, including when only advisory evidence needs review. Exit code `2` means required input prevents the requested readiness. Local readiness does not establish tracker authentication, duplicate-check results, upload acceptance, or torrent-client injection. Strict `--unattended` never prompts.
 
 ### Correct descriptive fields and languages
 

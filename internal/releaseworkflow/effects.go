@@ -5,6 +5,7 @@ package releaseworkflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -68,18 +69,23 @@ func (r *durableExternalEffectReporter) Begin(
 		Submission:          effect.Submission,
 	})
 	if err != nil {
+		if errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+			return api.WorkflowExternalEffectReceipt{EffectID: record.EffectID, OperationID: record.OperationID},
+				fmt.Errorf("release workflow fence external effect: %w", err)
+		}
 		return api.WorkflowExternalEffectReceipt{}, fmt.Errorf("release workflow fence external effect: %w", err)
 	}
 	if idempotent && record.Status == api.WorkflowEffectStatusSucceeded {
 		return api.WorkflowExternalEffectReceipt{
 			EffectID:         record.EffectID,
+			OperationID:      record.OperationID,
 			AlreadySucceeded: true,
 		}, nil
 	}
 	r.mu.Lock()
 	r.attempts[record.EffectID] = record
 	r.mu.Unlock()
-	return api.WorkflowExternalEffectReceipt{EffectID: record.EffectID}, nil
+	return api.WorkflowExternalEffectReceipt{EffectID: record.EffectID, OperationID: record.OperationID}, nil
 }
 
 func (r *durableExternalEffectReporter) Complete(
