@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -100,11 +101,22 @@ func TestAcceptedReceiptSuppressesRecoveryAndRejectsDirectConfirmation(t *testin
 	t.Parallel()
 	for _, backend := range []string{"memory", "sqlite"} {
 		for _, test := range []struct {
-			name, receiptID        string
-			failSave, legacyAction bool
+			name, receiptID                      string
+			operationID                          api.WorkflowOperationID
+			failSave, legacyAction, cleanReceipt bool
 		}{
 			{name: "accepted", receiptID: "accepted-effect"},
+			{
+				name:         "accepted-clean-receipt",
+				receiptID:    "accepted-effect",
+				cleanReceipt: true,
+			},
 			{name: "different-attempt", receiptID: "different-effect"},
+			{
+				name:        "different-operation",
+				receiptID:   "accepted-effect",
+				operationID: "different-operation",
+			},
 			{
 				name:      "retry-after-save-failure",
 				receiptID: "accepted-effect",
@@ -169,19 +181,18 @@ func TestAcceptedReceiptSuppressesRecoveryAndRejectsDirectConfirmation(t *testin
 				if err != nil {
 					t.Fatal(err)
 				}
-				publication, err := module.publishUploadResult(ctx, testOwnerID, &state, state.Workflow.Revision, now, preparedUploads{
-					projections:  api.TrackerReleaseProjectionSet{ID: "projections", Revision: 1},
-					dupes:        api.DupeAssessment{ID: "dupes", Revision: 1},
-					media:        api.MediaArtifactSet{ID: "media", Revision: 1},
-					descriptions: api.DescriptionSet{ID: "descriptions", Revision: 1},
-					plan:         api.UploadPlan{InputFingerprint: fingerprint},
-				}, []api.UploadTrackerResult{{
+				operationID := test.operationID
+				if operationID == "" {
+					operationID = effect.OperationID
+				}
+				accepted := receiptID == effect.EffectID && operationID == effect.OperationID
+				result := api.UploadTrackerResult{
 					TrackerID:             "EXAMPLE",
 					Status:                api.StageStatusPartial,
 					SubmissionStatus:      api.StageStatusCompleted,
 					ClientInjectionStatus: api.StageStatusUnavailable,
 					SubmissionReceiptID:   receiptID,
-					SubmissionOperationID: effect.OperationID,
+					SubmissionOperationID: operationID,
 					Failures: []api.WorkflowFailure{{
 						TrackerID: "EXAMPLE",
 						Resource:  receiptID,
@@ -192,7 +203,18 @@ func TestAcceptedReceiptSuppressesRecoveryAndRejectsDirectConfirmation(t *testin
 							Message:   "Synthetic receipt failure.",
 						},
 					}},
-				}}, RegisteredArtifactAuthority{Torrents: map[api.TrackerID]api.TorrentResult{"EXAMPLE": {URL: "https://tracker.invalid/download/123?passkey=synthetic-secret"}}})
+				}
+				if test.cleanReceipt {
+					result.Status, result.ClientInjectionStatus = api.StageStatusCompleted, api.StageStatusSkipped
+					result.Failures = nil
+				}
+				publication, err := module.publishUploadResult(ctx, testOwnerID, &state, state.Workflow.Revision, now, preparedUploads{
+					projections:  api.TrackerReleaseProjectionSet{ID: "projections", Revision: 1},
+					dupes:        api.DupeAssessment{ID: "dupes", Revision: 1},
+					media:        api.MediaArtifactSet{ID: "media", Revision: 1},
+					descriptions: api.DescriptionSet{ID: "descriptions", Revision: 1},
+					plan:         api.UploadPlan{InputFingerprint: fingerprint},
+				}, []api.UploadTrackerResult{result}, RegisteredArtifactAuthority{Torrents: map[api.TrackerID]api.TorrentResult{"EXAMPLE": {URL: "https://tracker.invalid/download/123?passkey=synthetic-secret"}}})
 				if err != nil {
 					t.Fatalf("publish accepted receipt failure: %v", err)
 				}
@@ -205,7 +227,7 @@ func TestAcceptedReceiptSuppressesRecoveryAndRejectsDirectConfirmation(t *testin
 				state.Workflow.Dupes = &api.DupeAssessmentRef{ID: "dupes", Revision: 1}
 				state.Workflow.Media = &api.MediaArtifactSetRef{ID: "media", Revision: 1}
 				state.Workflow.Descriptions = &api.DescriptionSetRef{ID: "descriptions", Revision: 1}
-				if _, err := module.private.Get(testOwnerID, created.Workflow.ID, registeredArtifactAuthorityPrivateResourceID(resultID), now); err != nil {
+				if _, err := module.private.Get(testOwnerID, created.Workflow.ID, registeredArtifactAuthorityPrivateResourceID(resultID), now); err != nil && !test.cleanReceipt {
 					t.Fatalf("retained accepted artifact: %v", err)
 				}
 				action, err := module.newReconcileAction(state.Workflow.Revision, now, "EXAMPLE", api.WorkflowExternalEffectTrackerSubmission, effect.ScopeID, "Verify the interrupted attempt.")
@@ -229,7 +251,7 @@ func TestAcceptedReceiptSuppressesRecoveryAndRejectsDirectConfirmation(t *testin
 				if err := module.durability.CompleteEffect(ctx, api.WorkflowEffectStatusFailed, unproven); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
 					t.Fatalf("unknown effect was completed as failed: %v", err)
 				}
-				if receiptID == effect.EffectID {
+				if accepted {
 					if module.activeInputs != nil {
 						if err := module.durability.ResolveEffectUnknown(ctx, testOwnerID, created.Workflow.ID,
 							api.WorkflowExternalEffectTrackerSubmission, effect.ScopeID, now,
@@ -271,7 +293,7 @@ func TestAcceptedReceiptSuppressesRecoveryAndRejectsDirectConfirmation(t *testin
 						t.Fatal(err)
 					}
 					wantState := api.ActiveInputEmpty
-					if receiptID != effect.EffectID {
+					if !accepted {
 						wantState = api.ActiveInputRecovering
 					}
 					if slot.State != wantState {
@@ -289,7 +311,7 @@ func TestAcceptedReceiptSuppressesRecoveryAndRejectsDirectConfirmation(t *testin
 				if err != nil {
 					t.Fatal(err)
 				}
-				if receiptID != effect.EffectID {
+				if !accepted {
 					// Another attempt's acceptance cannot suppress genuine uncertainty.
 					if len(state.Workflow.RequiredActions) != 1 || state.Workflow.RequiredActions[0].EffectID != effect.EffectID ||
 						state.Workflow.RequiredActions[0].EffectOperationID != effect.OperationID {
@@ -304,14 +326,23 @@ func TestAcceptedReceiptSuppressesRecoveryAndRejectsDirectConfirmation(t *testin
 				if len(state.Workflow.RequiredActions) != 0 {
 					t.Fatalf("accepted attempt offered not-completed: %#v", state.Workflow.RequiredActions)
 				}
+				if test.cleanReceipt && len(state.Workflow.Failures) != 0 {
+					t.Fatalf("clean accepted receipt acquired a recovery failure: %#v", state.Workflow.Failures)
+				}
+				if state.Workflow.Status != api.WorkflowStatusCompleted {
+					t.Fatalf("accepted attempt left workflow status %s", state.Workflow.Status)
+				}
 				if state.Workflow.UploadResult == nil || state.Workflow.UploadResult.ID != resultID || !state.UploadResults[resultID].ConfirmsSubmission(effect) {
 					t.Fatal("legacy recovery lost retained acceptance")
 				}
 				retainedResult := state.UploadResults[resultID].Results[0]
+				if !slices.Equal(retainedResult.Failures, result.Failures) {
+					t.Fatalf("legacy recovery changed retained receipt failures: %#v", retainedResult.Failures)
+				}
 				if retainedResult.SubmissionRetryable() || retainedResult.ClientInjectionRetryable() {
 					t.Fatal("legacy recovery reopened an accepted receipt-retention attempt")
 				}
-				if _, err := module.private.Get(testOwnerID, created.Workflow.ID, registeredArtifactAuthorityPrivateResourceID(resultID), clock.Now()); err != nil {
+				if _, err := module.private.Get(testOwnerID, created.Workflow.ID, registeredArtifactAuthorityPrivateResourceID(resultID), clock.Now()); err != nil && !test.cleanReceipt {
 					t.Fatalf("legacy recovery lost registered authority: %v", err)
 				}
 				ids, err := module.durability.ListLegacyRecoveryWorkflowIDs(ctx, testOwnerID)

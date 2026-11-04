@@ -240,28 +240,12 @@ func (m *Module) publishLegacyRecoveryActions(
 			if err := m.durability.CompleteEffect(ctx, api.WorkflowEffectStatusSucceeded, effect); err != nil {
 				return fmt.Errorf("release workflow retain accepted legacy effect: %w", err)
 			}
-			if !slices.ContainsFunc(state.Workflow.Failures, func(failure api.WorkflowFailure) bool {
-				return failure.Failure.Code == api.OperationFailureReceiptRetention && failure.Resource == effect.EffectID
-			}) {
-				state.Workflow.Failures = append(state.Workflow.Failures, api.WorkflowFailure{
-					TrackerID: api.TrackerID(effect.ScopeID),
-					Resource:  effect.EffectID,
-					Failure: api.OperationFailure{
-						Code:      api.OperationFailureReceiptRetention,
-						Operation: api.OperationKindUploadExecute,
-						Message:   "Tracker submission was accepted; its local receipt remains unresolved. Retry is blocked.",
-						Recovery:  api.OperationRecoveryNone,
-					},
-				})
-				changed = true
-			}
-			before := len(state.Workflow.RequiredActions)
 			state.Workflow.RequiredActions = slices.DeleteFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
 				return action.Kind == api.RequiredActionReconcileSubmission && action.EffectKind == api.WorkflowExternalEffectKind(effect.Kind) &&
 					action.EffectScopeID == effect.ScopeID && ((action.EffectID == "" && action.EffectOperationID == "") ||
 					(action.EffectID == effect.EffectID && action.EffectOperationID == effect.OperationID))
 			})
-			changed = changed || len(state.Workflow.RequiredActions) != before
+			changed = true
 			continue
 		}
 		if index := slices.IndexFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
@@ -308,6 +292,12 @@ func (m *Module) publishLegacyRecoveryActions(
 	}
 	if hasPendingRequiredAction(state.Workflow.RequiredActions) {
 		state.Workflow.Status = api.WorkflowStatusBlocked
+	} else if state.Workflow.Status == api.WorkflowStatusBlocked {
+		if state.Workflow.UploadResult != nil {
+			state.Workflow.Status = api.WorkflowStatusCompleted
+		} else {
+			state.Workflow.Status = api.WorkflowStatusActive
+		}
 	}
 	if err := state.Workflow.Validate(); err != nil {
 		return fmt.Errorf("release workflow validate legacy recovery actions: %w", err)
