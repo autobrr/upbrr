@@ -38,7 +38,7 @@ func TestHDRCollectorRetiresRejectedHandoffs(t *testing.T) {
 			request := preparationstate.Request{Manifest: api.SourceManifest{SourcePath: filepath.Join(root, "other.mkv")}}
 			if mode == "invalid bluray choice" {
 				request.Manifest.SourcePath = path
-				request.Input.Instructions.BlurayReleaseID = "missing-candidate"
+				request.Input.Instructions.Bluray = &api.BluraySelection{Mode: "manual", Release: "missing-candidate"}
 			}
 			if mode == "hydrated source mismatch" {
 				_, err = collector.HydratePrivateResources(t.Context(), request)
@@ -131,10 +131,10 @@ func TestHDRInventoryUsesSelectedPlaylistsAndMatchingCapture(t *testing.T) {
 func TestHDRFileInventoryUsesOnlySelectedPrimaryEvidence(t *testing.T) {
 	first, second := filepath.Join(t.TempDir(), "Synthetic.HDR10+.mkv"), filepath.Join(t.TempDir(), "Synthetic.HDR10+.mkv")
 	owned := envelope{resources: preparationResources{
-videoPath: second,
- hdrFileEligibility: map[string]bool{canonicalSourceKey(first): true},
- hdrFileEvidence: map[string]api.HDRSourceEvidence{canonicalSourceKey(second): {UniqueHEVC: true}},
-}}
+		videoPath:          second,
+		hdrFileEligibility: map[string]bool{canonicalSourceKey(first): true},
+		hdrFileEvidence:    map[string]api.HDRSourceEvidence{canonicalSourceKey(second): {UniqueHEVC: true}},
+	}}
 	owned.result.Release.Source.Entries = []api.SourceManifestEntry{{Type: api.SourceEntryTypeFile, Path: first}, {Type: api.SourceEntryTypeFile, Path: second}}
 	targets := hdrTargetSubjects(owned)
 	if len(targets) != 1 || targets[0].Path != second || !targets[0].Target.Supported || targets[0].Target.Evidence.HDR10Plus {

@@ -86,6 +86,7 @@ func TestBlurayEvidenceRescoresAndPreservesManualSelectionAcrossRestart(t *testi
 		return blurayEvidenceResponse(request, http.StatusOK, body), nil
 	})}
 	input := LookupInput{
+		Details:    &api.BlurayDetailRequest{All: true},
 		SourcePath: filepath.Join(t.TempDir(), "Example.Disc"),
 		IMDBID:     1234567,
 		DiscType:   "BDMV",
@@ -195,6 +196,7 @@ func TestBlurayEvidenceEmptyPagesRetryOnlyOnFreshLoad(t *testing.T) {
 				return blurayEvidenceResponse(request, http.StatusOK, body), nil
 			})}
 			input := LookupInput{
+				Details:    &api.BlurayDetailRequest{All: true},
 				SourcePath: filepath.Join(t.TempDir(), "Example.Disc"),
 				IMDBID:     1234567,
 				DiscType:   "BDMV",
@@ -247,7 +249,11 @@ func TestBlurayEvidenceFailuresStaySuppressedUntilHistoryPurge(t *testing.T) {
 				}
 				return blurayEvidenceResponse(request, status, body), nil
 			})}
-			input := LookupInput{SourcePath: filepath.Join(t.TempDir(), "Example.Disc"), IMDBID: 1234567}
+			input := LookupInput{
+				Details:    &api.BlurayDetailRequest{All: true},
+				SourcePath: filepath.Join(t.TempDir(), "Example.Disc"),
+				IMDBID:     1234567,
+			}
 			for pass, freshness := range []api.ExternalFreshness{api.ExternalFreshnessLoad, api.ExternalFreshnessReuse, api.ExternalFreshnessLoad, api.ExternalFreshnessRefresh} {
 				ctx, scope := evidence.WithScope(t.Context(), repo, input.SourcePath, "fingerprint", freshness, nil)
 				_, err := NewClient(httpClient).Lookup(ctx, input)
@@ -282,7 +288,11 @@ func TestBlurayEvidenceCancellationDoesNotPoisonRetry(t *testing.T) {
 		}
 		return blurayEvidenceResponse(request, http.StatusOK, "<html>No matching movie</html>"), nil
 	})}
-	input := LookupInput{SourcePath: filepath.Join(t.TempDir(), "Example.Disc"), IMDBID: 1234567}
+	input := LookupInput{
+		Details:    &api.BlurayDetailRequest{All: true},
+		SourcePath: filepath.Join(t.TempDir(), "Example.Disc"),
+		IMDBID:     1234567,
+	}
 	ctx, _ := evidence.WithScope(t.Context(), repo, input.SourcePath, "fingerprint", api.ExternalFreshnessReuse, nil)
 	if _, err := NewClient(httpClient).Lookup(ctx, input); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled lookup = %v", err)

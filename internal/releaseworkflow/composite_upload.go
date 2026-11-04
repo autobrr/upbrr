@@ -277,7 +277,7 @@ func (m *Module) startUpload(
 	}
 	if current.Workflow.Status == api.WorkflowStatusCompleted || current.UploadResult != nil ||
 		(session.Goal == api.WorkflowGoalDryRun &&
-			dryRunGoalSatisfied(current.DryRun, session.Intent.NoSeed, session.Intent.UploadTrackerIDs)) {
+			dryRunGoalSatisfied(current.DryRun, session.Goal, session.Intent.NoSeed, session.Intent.UploadTrackerIDs)) {
 		return current, nil
 	}
 	if err := m.ensureCompositeUploadMediaInputs(
@@ -657,6 +657,7 @@ func compositeUploadFactInstructions(
 		},
 		TrackerIDs: trackerIDs,
 	}
+	instructions.Bluray = facts.Bluray
 	if facts.SourceLookup != nil {
 		instructions.SourceLookup = strings.TrimSpace(*facts.SourceLookup)
 	}
@@ -1272,6 +1273,7 @@ func (m *Module) hydrateCompositePreparedRelease(
 	input.Force = false
 	input.ExternalFreshness = api.ExternalFreshnessReuse
 	input.RequirePrepared = true
+	input.Controls.BlurayDetails = nil
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
 	input.Controls.CaptureHDRMetadata = false
@@ -2248,7 +2250,7 @@ func (m *Module) applyCompositeUploadFeedback(
 					ErrInvalidTransition,
 				)
 			}
-			state.Composite.Intent.Preparation.Instructions.BlurayReleaseID = command.Response.SelectedValues[0]
+			state.Composite.Intent.Preparation.Instructions.Bluray = &api.BluraySelection{Mode: "manual", Release: command.Response.SelectedValues[0]}
 			state.Composite.Intent.Preparation.Force = true
 			instructions := state.Composite.Intent.Preparation.Instructions
 			state.Composite.Intent.FactInstructions = &instructions

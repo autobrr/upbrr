@@ -51,13 +51,17 @@ Background workflow updates preserve an unsubmitted **Source path**, unsaved **D
 
 On **Input**, focus **Source path** to choose a recently used path from this browser, if available. [Input history limit](./settings/main.md) controls how many paths the browser keeps; setting it to `0` clears the list.
 
-After a source preview is prepared, open the panel below **Edit Release Details** to inspect its technical report. Blu-ray discs show **BDInfo Preview** with the selected playlist summaries; other sources show **MediaInfo Preview**, where you can expand **Raw MediaInfo** for the original text. If a report is unavailable, the panel says so. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo or BDInfo only when that tracker includes it.
+After a source preview is prepared, open the panel below **Edit Release Details** to inspect its technical report. Blu-ray discs show **BDInfo Preview** with the selected playlist summaries; other sources show **MediaInfo Preview**, where you can expand **Raw MediaInfo** for the original text. If a report is unavailable, the panel says so. Blu-ray audio languages, including PCM tracks, come from the selected BDInfo summaries when available; missing MediaInfo language tags do not discard that evidence. Manual language corrections, explicit clears and Auto still apply. This preview is separate from **Descriptions**: tracker descriptions show MediaInfo or BDInfo only when that tracker includes it.
 
 In **Edit Release Details**, Season and Episode accept plain numbers such as `5`; click **Refresh metadata** to apply them. Generated naming uses canonical forms such as `S05E05`. Padded and prefixed values remain supported. This does not change automatic filename detection; see [naming fields](../cli/index.md#naming-fields) for bounds, specials, clearing, and reset behavior.
 
 ### Reuse tracker images
 
-With **Settings → Metadata → Keep images** enabled, preparation can retain validated screenshots from tracker data. Inspect the imported description and images on **Tracker Data**, then open **Screenshots**. When **Saved tracker images** appears, choose **Use saved images** to include those images in the workflow. upbrr can capture additional frames when the retained images do not meet the requested count or tracker requirements.
+With **Settings → Metadata → Collect existing tracker images** enabled, preparation can retain validated screenshots from tracker data. Inspect the imported description and images on **Tracker Data**, then open **Screenshots**. Available existing description images are included automatically in the retained screenshot list, where you can unselect, delete or reorder them like new captures. Loading these images does not capture additional frames; use **Generate screenshots** when you want new captures.
+
+Existing description images are marked with unknown capture timestamps and provenance. Their chronological order cannot be inferred, including relative to newly captured screenshots. Review the displayed selection and order before continuing. Compatible existing URLs remain subject to the selected trackers’ image-host policies.
+
+Unselected or deleted screenshots are excluded from the links shown on **Upload Images** and from generated descriptions. You can select an unselected screenshot again to include it.
 
 Review the final screenshot selection and order before continuing. Existing URLs are reused only when the destination tracker and chosen image host allow them; other images need rehosting. Imported comparison blocks remain part of the description and do not count as ordinary screenshots. See [image-host requirements](./settings/image-hosting.md).
 
@@ -211,5 +215,9 @@ Imported application config does not change browse roots. The Web UI route accep
 Each **Run dry run** action performs one assessment after its prerequisites finish. Partial and failed results remain visible for review; correct any reported problems and choose **Run dry run** again to retry explicitly. Trackers that are ready in a partial report remain available for upload.
 
 Use **Dry Run** on the Upload page and disable client injection for the first test. Compare every tracker tab with the tracker's current upload form and rules before allowing submission.
+
+**Dry Run** never submits to a tracker, but it injects the prepared torrent into your configured client unless **Skip client injection** is enabled. Review any injection failure in the dry-run result before proceeding. The automatic review before a live upload instead waits for successful tracker registration before injecting.
+
+When a dry run requests a preparation decision, answer it to continue that same dry run automatically. Client injection remains pending until preparation is ready; no second **Run dry run** click is needed. The original skip-client-injection choice remains in effect.
 
 See [Upload workflow](../workflow/index.md) for stage ownership and review boundaries.

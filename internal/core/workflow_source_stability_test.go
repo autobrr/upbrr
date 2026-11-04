@@ -113,6 +113,49 @@ func TestRetainedUploadRejectsSourceMutationBeforeFinalFence(t *testing.T) {
 	}
 }
 
+func TestResolvedDryRunRejectsSourceMutationBeforeClientInjection(t *testing.T) {
+	t.Parallel()
+	for _, changed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "stable", true: "same-size mutation"}[changed], func(t *testing.T) {
+			source, verified := sourceStabilityFixture(t)
+			torrentPath := filepath.Join(t.TempDir(), "prepared.torrent")
+			if err := os.WriteFile(torrentPath, []byte("prepared torrent"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			client := &dryRunClientService{}
+			execution := &workflowUploadExecution{
+				sourceManifest: &verified.Manifest,
+				plan: &workflowRetainedUploadPlanFake{preparations: []trackers.RetainedTrackerPreparation{{
+					Tracker: "ALPHA", TorrentPath: torrentPath,
+				}}},
+				clients:               client,
+				injectPreparedTorrent: true,
+				inputFingerprint:      api.WorkflowFingerprint(verified.Identity.Digest),
+				projections:           map[api.TrackerID]api.TrackerReleaseProjection{"ALPHA": {TrackerID: "ALPHA"}},
+				trackers:              []api.UploadPlanTracker{{TrackerID: "ALPHA"}},
+			}
+			if changed {
+				mutateVerifiedSource(t, source)
+			}
+			reporter := &sourceStabilityReporter{}
+			ctx := api.WithWorkflowExternalEffectReporter(t.Context(), reporter)
+			result, err := execution.ResolveAction(ctx, "ALPHA", api.RequiredActionResolveTrackerPreparation, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed {
+				if reporter.begins != 0 || len(client.injections) != 0 || result.ClientInjectionStatus != api.StageStatusFailed || result.Eligible ||
+					result.Status != api.StageStatusFailed || result.ClientFailureCode != api.OperationFailureStaleGeneration ||
+					len(result.Failures) != 1 || result.Failures[0].Failure.Recovery != api.OperationRecoveryReprepare {
+					t.Fatalf("changed source resolution: status=%s code=%s calls=%d begins=%d", result.ClientInjectionStatus, result.ClientFailureCode, len(client.injections), reporter.begins)
+				}
+			} else if reporter.begins != 1 || len(client.injections) != 1 || result.ClientInjectionStatus != api.StageStatusCompleted {
+				t.Fatalf("stable source resolution: status=%s calls=%d begins=%d", result.ClientInjectionStatus, len(client.injections), reporter.begins)
+			}
+		})
+	}
+}
+
 func sourceStabilityFixture(t *testing.T) (string, api.VerifiedInputSource) {
 	t.Helper()
 	source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")

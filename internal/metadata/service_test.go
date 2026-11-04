@@ -106,20 +106,28 @@ func TestCollectSourceEvidenceCarriesExternalFreshness(t *testing.T) {
 	if err := os.WriteFile(sourcePath, []byte("video"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	request := testCollectionRequest(t, api.Request{SourcePath: sourcePath})
-	request.Input.ExternalFreshness = api.ExternalFreshnessRefresh
-	request.Input.Instructions.BlurayReleaseID = "selected-disc"
-	service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
+	for _, sourceURL := range []string{"", "https://www.blu-ray.com/movies/Example/123/", "https://tracker.example/torrents/blu-ray.com/123"} {
+		t.Run(fmt.Sprintf("source URL %q", sourceURL), func(t *testing.T) {
+			request := testCollectionRequest(t, api.Request{SourcePath: sourcePath})
+			request.Input.ExternalFreshness = api.ExternalFreshnessRefresh
+			request.Input.Instructions.Bluray = &api.BluraySelection{Mode: "manual", Release: "https://www.blu-ray.com/movies/Example/123/"}
+			request.Input.Instructions.SourceLookup = sourceURL
+			if sourceURL == request.Input.Instructions.Bluray.Release {
+				request.Input.Instructions.Bluray = nil
+			}
+			service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
 
-	meta, err := service.collectSourceEvidence(t.Context(), request)
-	if err != nil {
-		t.Fatalf("collect source evidence: %v", err)
-	}
-	if meta.ExternalFreshness != api.ExternalFreshnessRefresh {
-		t.Fatalf("external freshness = %q, want refresh", meta.ExternalFreshness)
-	}
-	if meta.BlurayReleaseID != "selected-disc" {
-		t.Fatalf("Blu-ray instruction = %q", meta.BlurayReleaseID)
+			meta, err := service.collectSourceEvidence(t.Context(), request)
+			if err != nil {
+				t.Fatalf("collect source evidence: %v", err)
+			}
+			if meta.ExternalFreshness != api.ExternalFreshnessRefresh {
+				t.Fatalf("external freshness = %q, want refresh", meta.ExternalFreshness)
+			}
+			if meta.Bluray == nil || meta.Bluray.Mode != "manual" || meta.Bluray.Release != "https://www.blu-ray.com/movies/Example/123/" {
+				t.Fatalf("Blu-ray instruction = %#v", meta.Bluray)
+			}
+		})
 	}
 }
 

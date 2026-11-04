@@ -141,8 +141,9 @@ Upload preflight can validate sessions and perform tracker-supported automatic l
 ## No screenshots or image links
 
 - Confirm FFmpeg access and screenshot count.
-- For imported screenshots, enable **Settings → Metadata → Keep images**, inspect **Tracker Data**, and use **Saved tracker images → Use saved images** on **Screenshots** when offered. Only usable validated images are eligible; an imported comparison block alone does not supply ordinary screenshots.
+- For imported screenshots, enable **Settings → Metadata → Collect existing tracker images**, inspect **Tracker Data**, and open **Screenshots** to review the automatically included images. Unselect or delete unwanted images in the normal screenshot list. Only usable validated images are eligible; an imported comparison block alone does not supply ordinary screenshots.
 - Confirm the chosen image host is configured and allowed by the tracker. Images tied to their source tracker may need downloading and rehosting, even when they display correctly in the original description.
+- If a saved screenshot’s local file is missing or changed, its retained hosted URL remains listed under **Upload Images**, where you can remove the saved association. It is not a local upload candidate.
 - Review host-specific failure messages without copying credentials or raw responses.
 - Check `min_successful_image_uploads`: zero requires the whole batch to succeed; a positive value permits a partially successful batch only after that many images publish.
 - Use `--skip-imagehost-upload` only when you will supply valid hosted images another way.

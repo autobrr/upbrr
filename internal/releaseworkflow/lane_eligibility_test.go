@@ -259,6 +259,12 @@ func TestLaneUploadEligibilityReportsDryRunOutcomes(t *testing.T) {
 		reason      api.UploadSkipReason
 	}{
 		{
+			name:        "waiting for preparation",
+			status:      api.StageStatusBlocked,
+			eligibility: api.UploadEligibilitySkipped,
+			reason:      api.UploadSkipReasonNotReady,
+		},
+		{
 			name:        "completed",
 			status:      api.StageStatusCompleted,
 			eligibility: api.UploadEligibilityEligible,
@@ -329,11 +335,11 @@ func TestLaneUploadEligibilityCarriesBlockingRuleMessage(t *testing.T) {
 			blocked.Readiness = api.ReadinessStatusBlocked
 			blocked.PolicyDecisions = []api.TrackerPolicyDecision{
 				{
-Code: "genre_not_accepted",
- Decision: "ineligible",
- Blocking: false,
- Message: "advisory only",
-},
+					Code:     "genre_not_accepted",
+					Decision: "ineligible",
+					Blocking: false,
+					Message:  "advisory only",
+				},
 				{
 					Code:        "genre_not_accepted",
 					Decision:    "ineligible",
