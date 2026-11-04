@@ -44,7 +44,7 @@ func TestPrepareRecollectsBDInfoAudioLabelsAfterRestart(t *testing.T) {
 	}
 	stale := previous.Release
 	stale.Media = media
-	stale.Compatibility.ContractVersion = "prepared-release-v71-bluray-listing-details"
+	stale.Compatibility.ContractVersion = "prepared-release-v73-bluray-retained-facts"
 	store.mu.Lock()
 	store.current[canonicalSourceKey(source)] = stale
 	store.mu.Unlock()
