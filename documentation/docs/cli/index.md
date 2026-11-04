@@ -218,7 +218,9 @@ Metadata review always prints the effective `Commentary: true` or `Commentary: f
 
 This loads release facts and evaluates selected tracker input requirements. It stops before tracker assessment, duplicate searches, screenshots, descriptions, torrent preparation, or uploads. Metadata provider requests and media inspection can still run. `--skip_auto_torrent` also disables torrent-client discovery.
 
-Exit code `0` means Input is ready. Exit code `2` means required input prevents the requested readiness. Strict `--unattended` never prompts.
+The output retains its `Input facts:` JSON, `Track` lines, and `Input <key>: <status>` lines, then explains local readiness. Missing or invalid required evidence identifies the affected trackers and inspected track when available. Advisory evidence appears separately and does not block local readiness. Supported correction flags are shown where known; otherwise review the source and metadata selection before rerunning `--input-only`.
+
+Exit code `0` means local Input is ready, including when only advisory evidence needs review. Exit code `2` means required input prevents the requested readiness. Local readiness does not establish tracker authentication, duplicate-check results, upload acceptance, or torrent-client injection. Strict `--unattended` never prompts.
 
 ### Correct descriptive fields and languages
 

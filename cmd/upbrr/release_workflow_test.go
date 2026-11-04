@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -1835,20 +1836,212 @@ func TestCLIInputOnlyReportsReadiness(t *testing.T) {
 		facts.Media.Commentary == nil || *facts.Media.Commentary {
 		t.Fatalf("effective input facts omitted corrections: %s", firstLine)
 	}
+}
 
-	current.InputReadiness = &api.InputReadinessSnapshot{Fields: []api.InputReadinessFieldOutcome{{Key: "title", Status: api.InputReadinessFieldMissing}}}
-	coreSvc.current = current
-	session.current = current
-	err := completeCLIInputOnly(t.Context(), session, io.Discard)
-	exitErr, ok := errors.AsType[*cliExitError](err)
-	if !ok || exitErr.code != 2 {
-		t.Fatalf("missing input error = %v", err)
+func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		fields   []api.InputReadinessFieldOutcome
+		blocked  bool
+		want     []string
+		unwanted []string
+	}{
+		{
+			name:     "ready",
+			fields:   []api.InputReadinessFieldOutcome{{Key: "metadata.title", Status: api.InputReadinessFieldReady}},
+			want:     []string{"Local input readiness: ready."},
+			unwanted: []string{"Required evidence to review:", "Advisory evidence"},
+		},
+		{
+			name: "global category",
+			fields: []api.InputReadinessFieldOutcome{{
+				Key:             "category",
+				Status:          api.InputReadinessFieldMissing,
+				CorrectionField: new(api.CorrectionFieldReleaseNameCategory),
+				Disposition:     api.RuleDispositionStrict,
+				Message:         "Release category is required.",
+			}},
+			blocked: true,
+			want:    []string{"category (missing", "Release category is required.", "--category CATEGORY"},
+		},
+		{
+			name: "tracker category",
+			fields: []api.InputReadinessFieldOutcome{{
+				Key:             "metadata.category",
+				Status:          api.InputReadinessFieldMissing,
+				CorrectionField: new(api.CorrectionFieldReleaseNameCategory),
+				TrackerIDs:      []api.TrackerID{"AITHER"},
+				Disposition:     api.RuleDispositionStrict,
+				Message:         "missing category required to select tracker metadata requirements",
+			}},
+			blocked: true,
+			want:    []string{"metadata.category (missing", "AITHER", "--category CATEGORY"},
+		},
+		{
+			name: "missing provider fact",
+			fields: []api.InputReadinessFieldOutcome{{
+				Key: "metadata.title",
+ Status: api.InputReadinessFieldMissing,
+				CorrectionField: new(api.CorrectionFieldMetadataTitle),
+ TrackerIDs: []api.TrackerID{"AITHER", "BHD"},
+				Message: "missing required title",
+			}},
+			blocked:  true,
+			want:     []string{"Required evidence to review:", "metadata.title (missing", "AITHER, BHD", "missing required title", "Review the source and metadata selection"},
+			unwanted: []string{"--title", "Advisory evidence"},
+		},
+		{
+			name: "invalid correction",
+			fields: []api.InputReadinessFieldOutcome{{
+				Key: "metadata.genres",
+ Status: api.InputReadinessFieldInvalid,
+				CorrectionField: new(api.CorrectionFieldMetadataGenres),
+ TrackerIDs: []api.TrackerID{"AITHER"},
+				Disposition: api.RuleDispositionWaivable,
+ Message: "genre evidence is invalid",
+			}},
+			blocked: true,
+			want:    []string{"Required evidence to review:", "metadata.genres (invalid", "genre evidence is invalid", "--genres"},
+		},
+		{
+			name: "advisory only",
+			fields: []api.InputReadinessFieldOutcome{{
+				Key: "metadata.original_language",
+ Status: api.InputReadinessFieldMissing,
+				Disposition: "warning",
+ Message: "original language unavailable",
+			}},
+			want:     []string{"Local input readiness: ready.", "Advisory evidence (does not block local readiness):", "original language unavailable"},
+			unwanted: []string{"Required evidence to review:"},
+		},
+		{
+			name: "mixed track evidence",
+			fields: []api.InputReadinessFieldOutcome{
+				{Key: "metadata.title", Status: api.InputReadinessFieldReady},
+				{
+					Key: "track.languages",
+ TrackID: "audio-1",
+ Status: api.InputReadinessFieldMissing,
+					CorrectionField: new(api.CorrectionFieldMetadataTrackLanguages),
+ TrackerIDs: []api.TrackerID{"AITHER", "BHD"},
+					Message: "identify this programme track's languages",
+				},
+				{
+					Key: "track.origin",
+ TrackID: "audio-2",
+ Status: api.InputReadinessFieldInvalid,
+					CorrectionField: new(api.CorrectionFieldMetadataTrackAudioOrigins),
+ TrackerIDs: []api.TrackerID{"BHD"},
+					Disposition: api.RuleDispositionAdvisory,
+ Message: "review soundtrack origin",
+				},
+			},
+			blocked: true,
+			want: []string{"Required evidence to review:", "track: audio-1", "AITHER, BHD", "--track-languages", `"audio-1=LANGUAGE"`,
+				"Advisory evidence (does not block local readiness):", "track: audio-2", "--track-audio-origin", `"audio-2=original"`, "dubbed", "unresolved"},
+			unwanted: []string{"metadata.title (ready"},
+		},
+		{
+			name: "unknown field with unsafe diagnostics",
+			fields: []api.InputReadinessFieldOutcome{{
+				Key: "future.evidence",
+ TrackID: "audio-1\u202e",
+ Status: api.InputReadinessFieldMissing,
+				CorrectionField: new(api.CorrectionField("metadata.future")),
+ TrackerIDs: []api.TrackerID{"AITHER\x1b[2J"},
+				Message: "inspect evidence password=SECRET_SENTINEL \x1b]52;c;CLIPBOARD\a\x1b[2J\u202e日本語",
+			}},
+			blocked:  true,
+			want:     []string{"inspect evidence", "日本語", "track: audio-1", "trackers: AITHER", "Review the source and metadata selection"},
+			unwanted: []string{"SECRET_SENTINEL", "CLIPBOARD", "\x1b", "\u202e", "--future", "--metadata.future"},
+		},
+		{
+			name: "missing message and track binding",
+			fields: []api.InputReadinessFieldOutcome{{
+				Key: "track.languages",
+ Status: api.InputReadinessFieldInvalid,
+				CorrectionField: new(api.CorrectionFieldMetadataTrackLanguages),
+				Disposition:     "unknown",
+			}},
+			blocked:  true,
+			want:     []string{"Review this input evidence.", "Review the source and metadata selection"},
+			unwanted: []string{"--track-languages"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := releaseworkflow.CommandResult{
+				Workflow:       api.ReleaseWorkflow{ID: "workflow-1", Revision: 1},
+				InputReadiness: &api.InputReadinessSnapshot{Fields: test.fields},
+			}
+			coreSvc := &cliWorkflowCoreFake{current: current}
+			coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return current, nil }
+			session := &cliWorkflowSession{core: coreSvc, current: current}
+			var plain strings.Builder
+			redirected, err := os.CreateTemp(t.TempDir(), "transcript")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = redirected.Close() })
+			bridge := newCLITUIBridge()
+			err = completeCLIInputOnly(t.Context(), session, io.MultiWriter(&plain, redirected, &cliTUILogWriter{bridge: bridge}))
+			if test.blocked {
+				exitErr, ok := errors.AsType[*cliExitError](err)
+				if !ok || exitErr.code != 2 || exitErr.Error() != "required input is missing or invalid" {
+					t.Fatalf("blocked readiness error = %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("ready input failed: %v", err)
+			}
+			legacy, summary, found := strings.Cut(plain.String(), "Local input readiness:")
+			if !found {
+				t.Fatal("local readiness explanation missing")
+			}
+			var expectedLegacy strings.Builder
+			for _, field := range test.fields {
+				fmt.Fprintf(&expectedLegacy, "Input %s: %s\n", field.Key, field.Status)
+			}
+			if legacy != expectedLegacy.String() {
+				t.Fatal("existing Input lines changed or explanation preceded them")
+			}
+			for _, want := range append(test.want, "tracker authentication", "duplicate checks", "upload acceptance", "client injection") {
+				if !strings.Contains(plain.String()[len(legacy):], want) {
+					t.Errorf("local readiness explanation missing %q", want)
+				}
+			}
+			for _, unwanted := range test.unwanted {
+				if strings.Contains(summary, unwanted) {
+					t.Errorf("local readiness explanation contains unwanted %q", unwanted)
+				}
+			}
+			contents, err := os.ReadFile(redirected.Name())
+			if err != nil || string(contents) != plain.String() {
+				t.Fatal("redirected transcript differs from plain output")
+			}
+			var tui strings.Builder
+			for _, line := range bridge.drain().logs {
+				fmt.Fprintln(&tui, line.Text)
+			}
+			if tui.String() != plain.String() {
+				t.Fatal("TUI presentation sink lost readiness evidence")
+			}
+			if len(coreSvc.continuations) != 1 || coreSvc.continuations[0].Goal != api.WorkflowGoalInputReady ||
+				len(coreSvc.commands) != 0 || len(coreSvc.uploadRequests) != 0 || len(coreSvc.uploadFeedback) != 0 {
+				t.Fatal("readiness explanation added workflow operations")
+			}
+			t.Log(plain.String())
+		})
 	}
-	current.InputReadiness.Fields[0].Disposition = api.RuleDispositionAdvisory
-	coreSvc.current = current
-	session.current = current
-	if err := completeCLIInputOnly(t.Context(), session, io.Discard); err != nil {
-		t.Fatalf("advisory input blocked readiness: %v", err)
+}
+
+func TestCLIInputOnlyRequiresReadiness(t *testing.T) {
+	coreSvc := &cliWorkflowCoreFake{}
+	coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		return coreSvc.current, nil
+	}
+	var output strings.Builder
+	err := completeCLIInputOnly(t.Context(), &cliWorkflowSession{core: coreSvc}, &output)
+	if err == nil || err.Error() != "upbrr: input readiness was not produced" || strings.Contains(output.String(), "Local input readiness:") {
+		t.Fatalf("nil readiness result = %v", err)
 	}
 }
 

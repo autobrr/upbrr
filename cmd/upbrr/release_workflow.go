@@ -898,10 +898,89 @@ func completeCLIInputOnly(ctx context.Context, session *cliWorkflowSession, outp
 			ready = false
 		}
 	}
+	printCLIInputReadiness(output, session.current.InputReadiness.Fields, ready)
 	if !ready {
 		return exitError(2, errors.New("required input is missing or invalid"))
 	}
 	return nil
+}
+
+// printCLIInputReadiness adds local evidence guidance after the stable Input output.
+// It describes the retained evaluation without advancing or waiving any checks.
+func printCLIInputReadiness(output io.Writer, fields []api.InputReadinessFieldOutcome, ready bool) {
+	if ready {
+		fmt.Fprintln(output, "Local input readiness: ready.")
+	} else {
+		fmt.Fprintln(output, "Local input readiness: required evidence is missing or invalid.")
+	}
+	fmt.Fprintln(output, "This local result does not establish tracker authentication, duplicate checks, upload acceptance, or client injection.")
+	for _, advisory := range []bool{false, true} {
+		headingPrinted := false
+		for _, field := range fields {
+			if field.Status == api.InputReadinessFieldReady || (api.NormalizeRuleDisposition(field.Disposition) == api.RuleDispositionAdvisory) != advisory {
+				continue
+			}
+			if !headingPrinted {
+				if advisory {
+					fmt.Fprintln(output, "Advisory evidence (does not block local readiness):")
+				} else {
+					fmt.Fprintln(output, "Required evidence to review:")
+				}
+				headingPrinted = true
+			}
+			scope := fmt.Sprintf("%s (%s", field.Key, field.Status)
+			if len(field.TrackerIDs) > 0 {
+				scope += "; trackers: " + strings.Join(trackerIDStrings(field.TrackerIDs), ", ")
+			}
+			if field.TrackID != "" {
+				scope += "; track: " + field.TrackID
+			}
+			message := strings.TrimSpace(field.Message)
+			if message == "" {
+				message = "Review this input evidence."
+			}
+			fmt.Fprintln(output, safeDiagnosticText(fmt.Sprintf("  - %s): %s\n    %s", scope, message, cliInputReadinessCorrection(field))))
+		}
+	}
+}
+
+func cliInputReadinessCorrection(field api.InputReadinessFieldOutcome) string {
+	flag := ""
+	if field.CorrectionField != nil {
+		//nolint:exhaustive // Only local readiness fields with verified CLI corrections receive flag guidance.
+		switch *field.CorrectionField {
+		case api.CorrectionFieldReleaseNameCategory:
+			flag = "--category CATEGORY"
+		case api.CorrectionFieldMetadataAlternateTitle:
+			flag = "--alternate-title TITLE"
+		case api.CorrectionFieldMetadataGenres:
+			flag = "--genres GENRE[,GENRE]"
+		case api.CorrectionFieldMetadataOriginalLanguage:
+			flag = "--original-language LANGUAGE"
+		case api.CorrectionFieldMetadataDistributor:
+			flag = "--distributor DISTRIBUTOR"
+		case api.CorrectionFieldMetadataAudioLanguages:
+			flag = "--audio-languages LANGUAGE[,LANGUAGE]"
+		case api.CorrectionFieldMetadataSubtitleLanguages:
+			flag = "--subtitle-languages LANGUAGE[,LANGUAGE]"
+		case api.CorrectionFieldMetadataHardcodedSubs:
+			flag = "--hardcoded-subs=true or --hardcoded-subs=false"
+		case api.CorrectionFieldMetadataHardcodedSubtitleLanguages:
+			flag = "--hardcoded-subtitle-languages LANGUAGE[,LANGUAGE]"
+		case api.CorrectionFieldMetadataTrackLanguages:
+			if field.TrackID != "" {
+				flag = fmt.Sprintf("--track-languages %q", field.TrackID+"=LANGUAGE")
+			}
+		case api.CorrectionFieldMetadataTrackAudioOrigins:
+			if field.TrackID != "" {
+				flag = fmt.Sprintf("--track-audio-origin %q (or dubbed or unresolved)", field.TrackID+"=original")
+			}
+		}
+	}
+	if flag != "" {
+		return "Correct verified facts with " + flag + ", then rerun --input-only."
+	}
+	return "Review the source and metadata selection, then rerun --input-only."
 }
 
 func cliWorkflowMetadataPreview(current releaseworkflow.CommandResult) api.MetadataPreview {
