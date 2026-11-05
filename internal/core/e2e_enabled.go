@@ -59,6 +59,7 @@ const (
 	e2eAuthCounterEnv   = "UPBRR_E2E_AUTH_COUNTER_PATH"
 	e2eClockOffsetEnv   = "UPBRR_E2E_CLOCK_OFFSET"
 	e2eMediaKindEnv     = "UPBRR_E2E_MEDIA_KIND"
+	e2eCandidatesEnv    = "UPBRR_E2E_RESOLVER_CHOICES"
 	e2eNamingModeEnv    = "UPBRR_E2E_NAMING_MODE"
 	e2eAudioAnalysisEnv = "UPBRR_E2E_AUDIO_ANALYSIS"
 	e2eHDRAnalysisEnv   = "UPBRR_E2E_HDR_ANALYSIS"
@@ -235,6 +236,10 @@ func (s e2eMetadataService) SearchProviderCandidates(ctx context.Context, reques
 		return api.ProviderSearchResult{}, errors.New("e2e metadata: category is required")
 	}
 	result := api.ProviderSearchResult{Query: request.Query, Category: category}
+	candidateCount := 9
+	if os.Getenv(e2eCandidatesEnv) == "1" {
+		candidateCount = 0
+	}
 	providers := []api.IdentityProvider{api.IdentityProviderTMDB, api.IdentityProviderIMDB}
 	if category == api.CanonicalCategoryTV {
 		providers = append(providers, api.IdentityProviderTVDB)
@@ -246,7 +251,7 @@ func (s e2eMetadataService) SearchProviderCandidates(ctx context.Context, reques
 			Category: category,
 			Status:   api.MetadataEvidenceStatusComplete,
 		}
-		for i := range 9 {
+		for i := range candidateCount {
 			out.Candidates = append(out.Candidates, api.ExternalIdentityCandidate{
 				Provider:       provider,
 				ID:             1002 + i,
@@ -492,6 +497,15 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		IMDBID:     1234567,
 		TVDBID:     tvdbID,
 		Category:   canonicalCategory,
+	}
+	if os.Getenv(e2eCandidatesEnv) == "1" {
+		meta.ExternalIdentityCandidates = []api.ExternalIdentityCandidate{{
+			Provider: api.IdentityProviderTMDB,
+			ID:       1002,
+			Title:    "Resolver Fallback",
+			Year:     2025,
+			Category: canonicalCategory,
+		}}
 	}
 	meta.ProviderMetadata = api.SourceScopedMetadata{
 		SourcePath: sourcePath,

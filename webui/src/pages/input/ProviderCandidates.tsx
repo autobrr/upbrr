@@ -38,7 +38,7 @@ function CandidatePoster({ url, title }: { url: string; title: string }) {
   );
 }
 
-/** Inspects advisory results; only radio selection stages a provider override. */
+/** Labels search results and retained resolver choices separately; only selection stages an override. */
 export function ProviderCandidates({
   facet,
   initialQuery,
@@ -77,10 +77,35 @@ export function ProviderCandidates({
   }, [categoryKnown, initialQuery, loading, needsSelection, result, status]);
 
   const provider = result?.Providers.find((item) => item.Provider === tab);
-  const candidates = (provider?.Candidates || []).filter(
-    (candidate) =>
-      candidate.Provider === tab && (tab !== "tvdb" || candidate.Category.toUpperCase() === "TV"),
-  );
+  const resolverCandidates =
+    categoryKnown && facet.view.preview?.Identity.Category.toUpperCase() === category
+      ? (facet.view.preview.Diagnostics || [])
+          .filter((diagnostic) => diagnostic.Code === "external_identity_candidates")
+          .flatMap((diagnostic) => diagnostic.Candidates || [])
+      : [];
+  const candidatesForProvider = (name: string) => {
+    const seen = new Set<number>();
+    return [
+      ...(result?.Providers.find((item) => item.Provider === name)?.Candidates || []).map(
+        (candidate) => ({ candidate, fromResolution: false }),
+      ),
+      ...resolverCandidates.map((candidate) => ({ candidate, fromResolution: true })),
+    ].filter(({ candidate }) => {
+      const candidateCategory = candidate.Category.toUpperCase();
+      if (
+        candidate.Provider !== name ||
+        !Number.isSafeInteger(candidate.ID) ||
+        candidate.ID <= 0 ||
+        (candidateCategory && candidateCategory !== "UNKNOWN" && candidateCategory !== category) ||
+        (name === "tvdb" && candidateCategory !== "TV") ||
+        seen.has(candidate.ID)
+      )
+        return false;
+      seen.add(candidate.ID);
+      return true;
+    });
+  };
+  const candidates = candidatesForProvider(tab);
   const identity = facet.view.preview?.Identity;
   const key = overrideKeys[tab as keyof typeof overrideKeys];
   const selectedID = Number(facet.view.intent.identity[key] ?? identity?.[key] ?? 0);
@@ -172,8 +197,8 @@ export function ProviderCandidates({
               }}
             >
               {providerNames[name]}
-              {result
-                ? ` (${result.Providers.find((item) => item.Provider === name)?.Candidates.length || 0})`
+              {result || resolverCandidates.length > 0
+                ? ` (${candidatesForProvider(name).length})`
                 : ""}
             </button>
           ))}
@@ -209,7 +234,7 @@ export function ProviderCandidates({
                 ) : null}
                 {provider?.Status === "unavailable" ? (
                   <p>Provider search unavailable. Retry the search.</p>
-                ) : provider && candidates.length === 0 ? (
+                ) : provider && candidates.every((choice) => choice.fromResolution) ? (
                   <p>No {providerNames[name]} matches for this search.</p>
                 ) : null}
                 {provider?.Status === "partial" ? (
@@ -217,9 +242,14 @@ export function ProviderCandidates({
                     Some details could not be loaded. Available candidates can still be selected.
                   </p>
                 ) : null}
+                {candidates.some((choice) => choice.fromResolution) ? (
+                  <p className="mb-3 text-sm text-muted-foreground">
+                    Choices from metadata resolution may come from a different title or year search.
+                  </p>
+                ) : null}
                 <fieldset className="m-0 grid min-w-0 gap-3 border-0 p-0 lg:grid-cols-2">
                   <legend className="sr-only">{providerNames[name]} candidates</legend>
-                  {candidates.map((candidate) => {
+                  {candidates.map(({ candidate, fromResolution }) => {
                     const inputID = `${id}-${name}-${candidate.ID}`;
                     const url = candidateURL(candidate);
                     return (
@@ -238,6 +268,11 @@ export function ProviderCandidates({
                               <span className="text-lg font-semibold">
                                 {candidate.Title || "(Untitled)"}
                               </span>
+                              {fromResolution ? (
+                                <span className="text-xs text-muted-foreground">
+                                  From metadata resolution
+                                </span>
+                              ) : null}
                               <span className="text-sm text-muted-foreground">
                                 {candidate.Year || "Year unavailable"} ·{" "}
                                 {candidate.Category || "Unknown category"}

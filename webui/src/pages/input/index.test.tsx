@@ -21,6 +21,200 @@ import { ProviderCandidates } from "./ProviderCandidates";
 
 afterEach(cleanup);
 
+const resolverCandidate = {
+  Provider: "tmdb",
+  ID: 808,
+  Title: "Fallback Example",
+  OriginalTitle: "",
+  Year: 2024,
+  Category: "movie",
+  MediaType: "Movie",
+  Overview: "",
+  PosterURL: "",
+  Similarity: 0,
+};
+
+it.each(["complete", "unavailable"])(
+  "retains resolver candidates when the submitted provider search is %s with no matches",
+  async (status) => {
+    const user = userEvent.setup();
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        intent: { ...base.view.intent, identity: { IMDBID: 0, TVmazeID: 404 } },
+        preview: {
+          ...base.view.preview!,
+          Identity: { ...base.view.preview!.Identity, TMDBID: 0, IMDBID: 0 },
+          Diagnostics: [
+            {
+              Code: "external_identity_candidates",
+              Severity: "info",
+              Message: "provider candidates were considered during identity resolution",
+              Candidates: [
+                resolverCandidate,
+                {
+                  ...resolverCandidate,
+                  Provider: "imdb",
+                  ID: 222,
+                  Category: "",
+                  Title: "IMDb Fallback",
+                },
+              ],
+            },
+          ],
+        },
+        providerSearch: {
+          status: "ready",
+          error: "",
+          result: {
+            Query: "Example 2025",
+            Category: "movie",
+            Providers: ["tmdb", "imdb"].map((Provider) => ({
+              Provider,
+              Query: "Example",
+              Year: 2025,
+              Category: "movie",
+              Status: status,
+              Candidates: [],
+            })),
+          },
+        },
+      },
+    };
+    render(<InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />);
+    const radio = screen.getByRole("radio", { name: "Select TMDB Fallback Example 2024, ID 808" });
+    expect(within(radio.closest("article")!).getByText("From metadata resolution")).toBeVisible();
+    expect(screen.getByText("Results for “Example 2025”")).toBeVisible();
+    expect(
+      screen.getByText(
+        status === "unavailable"
+          ? "Provider search unavailable. Retry the search."
+          : "No TMDB matches for this search.",
+      ),
+    ).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Search query" }), " unsent draft");
+    expect(facet.searchProviders).not.toHaveBeenCalled();
+    await user.click(radio);
+    expect(facet.changeIdentity).toHaveBeenCalledExactlyOnceWith({
+      IMDBID: 0,
+      TVmazeID: 404,
+      TMDBID: 808,
+    });
+    expect(facet.changeMetadata).not.toHaveBeenCalled();
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("tab", { name: "IMDb (1)" }));
+    expect(
+      screen.getByRole("radio", { name: "Select IMDb IMDb Fallback 2024, ID 222" }),
+    ).toBeVisible();
+  },
+);
+
+it("keeps resolver provenance and provider IDs distinct across repeated searches and context changes", () => {
+  const base = readyInputFacet(1);
+  const preview = {
+    ...base.view.preview!,
+    Diagnostics: [
+      {
+        Code: "external_identity_candidates",
+        Severity: "info",
+        Message: "Resolver choices",
+        Candidates: [
+          resolverCandidate,
+          { ...resolverCandidate, ID: 809, Title: "Other Resolver Choice" },
+          { ...resolverCandidate, ID: 809, Title: "Duplicate Resolver Choice" },
+          { ...resolverCandidate, Provider: "imdb", Category: "", Title: "IMDb Resolver Choice" },
+          { ...resolverCandidate, ID: 0, Title: "Invalid Choice" },
+          { ...resolverCandidate, ID: 810, Title: "TV Choice", Category: "tv" },
+        ],
+      },
+      {
+        Code: "another_diagnostic",
+        Severity: "info",
+        Message: "Not identity choices",
+        Candidates: [{ ...resolverCandidate, ID: 811, Title: "Unrelated Choice" }],
+      },
+    ],
+  };
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      preview,
+      providerSearch: {
+        status: "ready",
+        error: "",
+        result: {
+          Query: "New Example 2025",
+          Category: "movie",
+          Providers: [
+            {
+              Provider: "tmdb",
+              Query: "New Example",
+              Year: 2025,
+              Category: "movie",
+              Status: "complete",
+              Candidates: [{ ...resolverCandidate, Title: "Enriched Search Choice", Year: 2025 }],
+            },
+          ],
+        },
+      },
+    },
+  };
+  const panel = (value: InputFacet, category = "MOVIE") => (
+    <ProviderCandidates
+      facet={value}
+      initialQuery="New Example 2025"
+      category={category}
+      needsSelection
+      loading={false}
+      onRefresh={vi.fn()}
+    />
+  );
+  const { rerender } = render(panel(facet));
+  expect(screen.getAllByRole("radio")).toHaveLength(2);
+  expect(screen.getByRole("tab", { name: "TMDB (2)" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "IMDb (1)" })).toBeVisible();
+  expect(screen.queryByText("Fallback Example")).not.toBeInTheDocument();
+  const searched = screen.getByRole("radio", {
+    name: "Select TMDB Enriched Search Choice 2025, ID 808",
+  });
+  expect(
+    within(searched.closest("article")!).queryByText("From metadata resolution"),
+  ).not.toBeInTheDocument();
+  expect(screen.getAllByText("From metadata resolution")).toHaveLength(1);
+
+  rerender(
+    panel({
+      ...facet,
+      view: {
+        ...facet.view,
+        providerSearch: { status: "idle", result: null, error: "Search canceled." },
+      },
+    }),
+  );
+  expect(screen.getAllByRole("radio")).toHaveLength(2);
+  expect(screen.getByText("Search canceled.")).toBeVisible();
+  expect(screen.queryByText(/Results for/)).not.toBeInTheDocument();
+  expect(screen.getAllByText("From metadata resolution")).toHaveLength(2);
+  expect(facet.changeIdentity).not.toHaveBeenCalled();
+
+  rerender(panel(facet, "TV"));
+  expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  rerender(
+    panel({
+      ...facet,
+      view: {
+        ...facet.view,
+        preview: null,
+        providerSearch: { status: "idle", result: null, error: "" },
+      },
+    }),
+  );
+  expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+});
+
 it("keeps candidate inspection and draft search separate from pending identity corrections", async () => {
   const user = userEvent.setup();
   const base = readyInputFacet(1);

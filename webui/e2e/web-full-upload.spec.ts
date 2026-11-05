@@ -27,6 +27,84 @@ import {
 const waitForAppMethod = (page: Page, method: string) =>
   page.waitForResponse((response) => response.url().endsWith(`/api/app/${method}`));
 
+test("resolver choices survive empty and failed searches, reload, and metadata refresh", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_RESOLVER_CHOICES = "1";
+  const app = await startApp(workspace);
+  try {
+    await page.goto(app.url);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    const snapshot = async () =>
+      (await (
+        await page.request.get(new URL("api/app/GetActiveInput", app.url).toString())
+      ).json()) as ActiveInputSnapshot;
+    const before = await snapshot();
+    await page.getByText("Search provider titles", { exact: true }).click();
+    const choice = page.getByRole("radio", { name: "Select TMDB Resolver Fallback 2025, ID 1002" });
+    await expect(choice).toBeVisible();
+    await expect(page.getByText("From metadata resolution", { exact: true })).toBeVisible();
+    const query = page.getByRole("textbox", { name: "Search query" });
+    await query.fill("Example 2026");
+    await page.getByRole("button", { name: "Search providers", exact: true }).click();
+    await expect(page.getByText("Results for “Example 2026”", { exact: true })).toBeVisible();
+    await expect(page.getByText("No TMDB matches for this search.", { exact: true })).toBeVisible();
+    await expect(choice).toBeVisible();
+
+    await page.route("**/api/app/SearchProviderCandidates", (route) =>
+      route.fulfill({ status: 503, contentType: "application/json", body: "{}" }),
+    );
+    await query.fill("Unavailable 2026");
+    await page.getByRole("button", { name: "Search providers", exact: true }).click();
+    await expect(
+      page.getByText("Provider search could not complete. Retry the search.", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("Results for “Example 2026”", { exact: true })).toBeVisible();
+    await expect(choice).toBeVisible();
+    expect((await snapshot()).current?.release?.release.Identity).toEqual(
+      before.current?.release?.release.Identity,
+    );
+
+    for (const mode of ["Dark", "Light"] as const) {
+      await page.getByRole("button", { name: "Appearance", exact: true }).click();
+      await page.getByRole("radio", { name: mode, exact: true }).click();
+      await page.getByRole("button", { name: "Input", exact: true }).click();
+      const summary = page.getByText("Search provider titles", { exact: true });
+      if ((await summary.locator("..").getAttribute("open")) === null) await summary.click();
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+          width,
+        );
+        await page.screenshot({
+          path: test.info().outputPath(`resolver-choice-${mode.toLowerCase()}-${width}.png`),
+          fullPage: true,
+        });
+      }
+      await page.setViewportSize({ width: 1280, height: 900 });
+    }
+    await page.reload();
+    await page.getByText("Search provider titles", { exact: true }).click();
+    await expect(choice).toBeVisible();
+    await choice.check();
+    expect((await snapshot()).current?.release?.release.Identity).toEqual(
+      before.current?.release?.release.Identity,
+    );
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).first().click();
+    await expect
+      .poll(async () => (await snapshot()).current?.release?.release.Identity.TMDBID)
+      .toBe(1002);
+    const refreshed = await waitForMetadataReady(page, app.url);
+    expect(refreshed.current?.release?.release.Identity.IMDBID).toBe(
+      before.current?.release?.release.Identity.IMDBID,
+    );
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("provider search inspects and stages a candidate before Refresh metadata", async ({
   page,
   context,
