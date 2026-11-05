@@ -40,6 +40,61 @@ func TestPartialSeasonDuplicateCoverage(t *testing.T) {
 			Files:     []string{"Example.S01E02.mkv", "Example.S01E03.mkv"},
 			FileCount: 2,
 		}, api.DupeRelationSameSlot},
+		{"overlapping alternate video format", api.EpisodeCoverage{
+Part: "Part.1",
+ Episodes: []int{1, 2},
+ Status: api.MetadataEvidenceStatusComplete,
+}, TrackerCandidate{
+Name: "Example.Show.S01.Part.2.1080p.WEB-DL-GRP",
+ Season: 1,
+ Pack: true,
+ Files: []string{"Example.S01E09.mkv", "Example.S01E02.m4v"},
+ FileCount: 2,
+}, api.DupeRelationSameSlot},
+		{"unidentified alternate video format", api.EpisodeCoverage{
+Part: "Part.1",
+ Episodes: []int{1, 2},
+ Status: api.MetadataEvidenceStatusComplete,
+}, TrackerCandidate{
+Name: "Example.Show.S01.Part.2.1080p.WEB-DL-GRP",
+ Season: 1,
+ Pack: true,
+ Files: []string{"Example.S01E09.mkv", "unknown.m4v"},
+ FileCount: 2,
+}, api.DupeRelationInsufficientEvidence},
+		{"range with partial enumeration", api.EpisodeCoverage{
+Part: "Part.1",
+ Episodes: []int{1, 2},
+ Status: api.MetadataEvidenceStatusComplete,
+}, TrackerCandidate{
+Name: "Example.Show.S01E09-E12.1080p.WEB-DL-GRP",
+ Season: 1,
+ Pack: true,
+ Files: []string{"Example.S01E09.mkv"},
+ FileCount: 4,
+}, api.DupeRelationCoexists},
+		{"range with unidentified files", api.EpisodeCoverage{
+Part: "Part.1",
+ Episodes: []int{1, 2},
+ Status: api.MetadataEvidenceStatusComplete,
+}, TrackerCandidate{
+Name: "Example.Show.S01E09-E12.1080p.WEB-DL-GRP",
+ Season: 1,
+ Pack: true,
+ Files: []string{"unknown.mkv"},
+ FileCount: 4,
+}, api.DupeRelationCoexists},
+		{"range with contrary member", api.EpisodeCoverage{
+Part: "Part.1",
+ Episodes: []int{1, 2},
+ Status: api.MetadataEvidenceStatusComplete,
+}, TrackerCandidate{
+Name: "Example.Show.S01E09-E12.1080p.WEB-DL-GRP",
+ Season: 1,
+ Pack: true,
+ Files: []string{"Example.S01E02.mkv"},
+ FileCount: 4,
+}, api.DupeRelationManualReview},
 		{"unknown other part", api.EpisodeCoverage{
 			Part:     "Part.1",
 			Episodes: []int{1, 2},
@@ -142,22 +197,148 @@ func TestPartialSeasonDuplicateCoverage(t *testing.T) {
 	}
 }
 
-func TestSeasonlessPartialPackCannotProveCoexistence(t *testing.T) {
+func TestPartialSeasonZeroRequiresExplicitPresence(t *testing.T) {
 	t.Parallel()
-	got := Evaluate(api.TrackerDuplicateTarget{Pack: true, Coverage: api.EpisodeCoverage{
-		Part:     "Part.1",
-		Episodes: []int{1, 2},
-		Status:   api.MetadataEvidenceStatusComplete,
-	}},
-		[]TrackerCandidate{{
-			Season:    1,
-			Pack:      true,
-			Name:      "Example.Show.S01.Part.2",
-			Files:     []string{"Example.S01E01.mkv", "Example.S01E02.mkv"},
-			FileCount: 2,
-		}}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
-	if got.Candidates[0].Relation != api.DupeRelationInsufficientEvidence || !got.RequiresAction {
-		t.Fatalf("unknown season proved disjointness: %+v", got)
+	for _, known := range []bool{false, true} {
+		got := Evaluate(api.TrackerDuplicateTarget{Pack: true, Coverage: api.EpisodeCoverage{
+			SeasonKnown: known,
+			Part:        "Part.1",
+			Episodes:    []int{1, 2},
+			Status:      api.MetadataEvidenceStatusComplete,
+		}},
+			[]TrackerCandidate{{
+				Season:    1,
+				Pack:      true,
+				Name:      "Example.Show.S01.Part.2",
+				Files:     []string{"Example.S01E01.mkv", "Example.S01E02.mkv"},
+				FileCount: 2,
+			}}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+		want := api.DupeRelationInsufficientEvidence
+		if known {
+			want = api.DupeRelationCoexists
+		}
+		if got.Candidates[0].Relation != want || got.RequiresAction == known || got.Blocks {
+			t.Fatalf("unknown season proved disjointness: %+v", got)
+		}
+	}
+}
+
+func TestPartialSeasonExactMembershipIsSymmetric(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		label   string
+		members []int
+		files   []string
+	}{
+		{"S01E01", []int{1}, []string{"Example.S01E01.mkv"}},
+		{"S01E01-E02", []int{1, 2}, []string{"Example.S01E01.mkv", "Example.S01E02.mkv"}},
+	} {
+		part := api.EpisodeCoverage{
+Part: "Part.1",
+ Episodes: tc.members,
+ Status: api.MetadataEvidenceStatusComplete,
+}
+		partTarget := api.TrackerDuplicateTarget{
+Names: []string{"Example.S01.Part.1.1080p.WEB-DL-OTHER"},
+ Season: 1,
+ Pack: true,
+ Coverage: part,
+ Type: "WEB-DL",
+ Resolution: "1080p",
+}
+		partCandidate := TrackerCandidate{
+Name: "Example.S01.Part.1.1080p.WEB-DL-GRP",
+ Season: 1,
+ Pack: true,
+ Files: tc.files,
+ FileCount: len(tc.files),
+ Type: "WEB-DL",
+ Resolution: "1080p",
+}
+		episodeTarget := api.TrackerDuplicateTarget{
+Names: []string{"Example." + tc.label + ".1080p.WEB-DL-OTHER"},
+ Season: 1,
+ Episode: 1,
+ Type: "WEB-DL",
+ Resolution: "1080p",
+}
+		episodeCandidate := TrackerCandidate{
+Name: "Example." + tc.label + ".1080p.WEB-DL-GRP",
+ Season: 1,
+ Episode: 1,
+ Type: "WEB-DL",
+ Resolution: "1080p",
+}
+		for _, pair := range []struct {
+			target    api.TrackerDuplicateTarget
+			candidate TrackerCandidate
+		}{{partTarget, episodeCandidate}, {episodeTarget, partCandidate}} {
+			got := Evaluate(pair.target, []TrackerCandidate{pair.candidate}, trackerspkg.DupePolicy{ExactMatchOnly: true}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+			if got.Candidates[0].Relation != api.DupeRelationCoexists || got.RequiresAction || got.Blocks {
+				t.Fatalf("membership %s: %+v", tc.label, got)
+			}
+		}
+	}
+}
+
+func TestDatedPackCoveragePreservesDailyScope(t *testing.T) {
+	t.Parallel()
+	coverage := api.EpisodeCoverage{
+Part: "Part.1",
+ Episodes: []int{1, 2},
+ Status: api.MetadataEvidenceStatusComplete,
+}
+	dated := api.TrackerDuplicateTarget{
+Season: 1,
+ Pack: true,
+ Date: "2026-01-01",
+ Coverage: coverage,
+}
+	season := api.TrackerDuplicateTarget{
+Season: 1,
+ Pack: true,
+ Coverage: api.EpisodeCoverage{CompleteSeason: true, Status: api.MetadataEvidenceStatusComplete},
+}
+	conflicting := dated
+	conflicting.Coverage.Status = api.MetadataEvidenceStatusContradictory
+	titleConflict := dated
+	titleConflict.Names = []string{"Example.S01"}
+	for _, tc := range []struct {
+		name      string
+		target    api.TrackerDuplicateTarget
+		candidate TrackerCandidate
+		want      api.DupeRelation
+	}{
+		{"different date", dated, TrackerCandidate{Date: "2026-01-02"}, api.DupeRelationCoexists},
+		{"daily versus season", dated, TrackerCandidate{Season: 1, Pack: true}, api.DupeRelationInsufficientEvidence},
+		{"season versus daily", season, TrackerCandidate{
+Name: "Example.Part.1",
+ Season: 1,
+ Pack: true,
+ Date: "2026-01-01",
+ Files: []string{"Example.S01E01.mkv"},
+ FileCount: 1,
+}, api.DupeRelationInsufficientEvidence},
+		{"conflicting target coverage", conflicting, TrackerCandidate{Date: "2026-01-01"}, api.DupeRelationManualReview},
+		{"conflicting candidate coverage", dated, TrackerCandidate{
+Name: "Example.Part.1",
+ Season: 1,
+ Pack: true,
+ Date: "2026-01-01",
+ Files: []string{"Example.S02E01.mkv"},
+ FileCount: 1,
+}, api.DupeRelationManualReview},
+		{"date and title conflict", titleConflict, TrackerCandidate{Date: "2026-01-01"}, api.DupeRelationManualReview},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Evaluate(tc.target, []TrackerCandidate{tc.candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+			if got.Candidates[0].Relation != tc.want {
+				t.Fatalf("got=%+v want=%s", got, tc.want)
+			}
+			if tc.want == api.DupeRelationCoexists && (got.RequiresAction || got.Blocks) {
+				t.Fatalf("distinct date remains actionable: %+v", got)
+			}
+		})
 	}
 }
 
@@ -172,8 +353,14 @@ func TestCompleteSeasonProposalStillSupersedesIndividualEpisodes(t *testing.T) {
 			Status:         api.MetadataEvidenceStatusComplete,
 		},
 	},
-		[]TrackerCandidate{{Season: 1, Episode: 2}}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
-	if got.Candidates[0].Relation != api.DupeRelationCoexists || got.RequiresAction || got.Blocks {
+		[]TrackerCandidate{{Season: 1, Episode: 2}, {
+Name: "Example.S01.Part.2",
+ Season: 1,
+ Pack: true,
+ Files: []string{"Example.S01E09.mkv"},
+ FileCount: 1,
+}}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+	if got.Candidates[0].Relation != api.DupeRelationCoexists || got.Candidates[1].Relation != api.DupeRelationCoexists || got.RequiresAction || got.Blocks {
 		t.Fatalf("complete season proposal lost containment: %+v", got)
 	}
 }

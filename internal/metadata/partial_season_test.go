@@ -16,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -54,15 +55,26 @@ func TestPartialSeasonPreparationRetainsCoverageAcrossRefreshAndRestart(t *testi
 		return m
 	}
 	module := open()
-	for _, part := range []int{1, 2} {
-		source := filepath.Join(base, fmt.Sprintf("Example.Show.S01.Part.%d.1080p.WEB-DL-GRP", part))
+	for _, tc := range []struct {
+		label    string
+		part     string
+		season   int
+		first    int
+		complete bool
+	}{
+		{"S01.Part.1", "Part.1", 1, 1, false},
+		{"S01.Part.2", "Part.2", 1, 9, false},
+		{"S01.COMPLETE", "", 1, 1, true},
+		{"S00.Part.1", "Part.1", 0, 1, false},
+	} {
+		source := filepath.Join(base, fmt.Sprintf("Example.Show.%s.1080p.WEB-DL-GRP", tc.label))
 		if err := os.Mkdir(source, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		first := 1 + (part-1)*8
+		first := tc.first
 		write := func(episode int) {
 			t.Helper()
-			if err := os.WriteFile(filepath.Join(source, fmt.Sprintf("Example.Show.S01E%02d.mkv", episode)), []byte("synthetic video"), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(source, fmt.Sprintf("Example.Show.S%02dE%02d.mkv", tc.season, episode)), []byte("synthetic video"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -84,7 +96,7 @@ func TestPartialSeasonPreparationRetainsCoverageAcrossRefreshAndRestart(t *testi
 				t.Fatal(err)
 			}
 			coverage := result.Release.Episode.Coverage
-			if !result.Release.Episode.Pack || coverage.Part != fmt.Sprintf("Part.%d", part) || !slices.Equal(coverage.Episodes, want) || coverage.Status != api.MetadataEvidenceStatusComplete {
+			if !result.Release.Episode.Pack || coverage.Part != tc.part || !slices.Equal(coverage.Episodes, want) || coverage.Status != api.MetadataEvidenceStatusComplete || coverage.CompleteSeason != tc.complete || !coverage.SeasonKnown {
 				t.Fatalf("prepared episode=%+v", result.Release.Episode)
 			}
 			ref := api.ReleaseRef{SourcePath: source, Generation: result.Release.Generation}
@@ -93,11 +105,11 @@ func TestPartialSeasonPreparationRetainsCoverageAcrossRefreshAndRestart(t *testi
 				t.Fatalf("display=%+v err=%v", display, err)
 			}
 			upload, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: ref})
-			if err != nil || !slices.Equal(upload.EpisodeCoverage.Episodes, want) || upload.EpisodeCoverage.Part != coverage.Part {
+			if err != nil || !slices.Equal(upload.EpisodeCoverage.Episodes, want) || upload.EpisodeCoverage.Part != coverage.Part || upload.EpisodeCoverage.Status != coverage.Status || upload.EpisodeCoverage.CompleteSeason != coverage.CompleteSeason || upload.EpisodeCoverage.SeasonKnown != coverage.SeasonKnown {
 				t.Fatalf("upload coverage=%+v err=%v", upload.EpisodeCoverage, err)
 			}
 			duplicate, err := module.ResolveDuplicateSubject(t.Context(), api.DuplicateCheckInput{Release: ref})
-			if err != nil || !slices.Equal(duplicate.EpisodeCoverage.Episodes, want) || duplicate.EpisodeCoverage.Part != coverage.Part {
+			if err != nil || !slices.Equal(duplicate.EpisodeCoverage.Episodes, want) || duplicate.EpisodeCoverage.Part != coverage.Part || duplicate.EpisodeCoverage.Status != coverage.Status || duplicate.EpisodeCoverage.CompleteSeason != coverage.CompleteSeason || duplicate.EpisodeCoverage.SeasonKnown != coverage.SeasonKnown {
 				t.Fatalf("duplicate coverage=%+v err=%v", duplicate.EpisodeCoverage, err)
 			}
 			return result
@@ -135,19 +147,84 @@ func TestPartialSeasonPreparationRetainsCoverageAcrossRefreshAndRestart(t *testi
 		if err != nil {
 			t.Fatal(err)
 		}
-		if conflicting.Release.Episode.Coverage.Part != fmt.Sprintf("Part.%d", part) || conflicting.Release.Episode.Coverage.Status != api.MetadataEvidenceStatusContradictory {
+		if conflicting.Release.Episode.Coverage.Part != tc.part || conflicting.Release.Episode.Coverage.Status != api.MetadataEvidenceStatusContradictory {
 			t.Fatalf("season correction invented membership: %+v", conflicting.Release.Episode)
 		}
 		input.Instructions.ReleaseName.Season = nil
 		check([]int{first, first + 1, first + 2})
+		if tc.season == 0 {
+			input.Instructions.ReleaseName.NoSeason = new(true)
+			omitted := check([]int{first, first + 1, first + 2})
+			if strings.Contains(omitted.Release.Naming.ReleaseName, "S00") {
+				t.Fatal("presentation omission retained the season label")
+			}
+			input.Instructions.ReleaseName.Season = new("")
+			resolved, err := module.ResolveInput(t.Context(), input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateReplace, Values: api.ReleaseCorrectionValues{Identity: input.Instructions.Identity, ReleaseName: input.Instructions.ReleaseName}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cleared, err := module.PrepareResolved(t.Context(), resolved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cleared.Release.Episode.Coverage.SeasonKnown {
+				t.Fatal("explicit season clear regained season-zero authority")
+			}
+		}
 	}
 	for _, target := range analyzer.targets {
 		first := "Example.Show.S01E01.mkv"
 		if strings.Contains(filepath.Base(filepath.Dir(target)), "Part.2") {
 			first = "Example.Show.S01E09.mkv"
 		}
+		if strings.Contains(filepath.Base(filepath.Dir(target)), "S00") {
+			first = "Example.Show.S00E01.mkv"
+		}
 		if filepath.Base(target) != first {
 			t.Fatalf("inspected a non-primary pack member: %v", analyzer.targets)
+		}
+	}
+}
+
+func TestPartialSeasonNamingOmitsUnverifiedOrHiddenRanges(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		part   string
+		status api.MetadataEvidenceStatus
+		omit   bool
+		daily  bool
+		want   string
+	}{
+		{"E01-E04", api.MetadataEvidenceStatusComplete, false, false, "E01-E04"},
+		{"E01-E04", api.MetadataEvidenceStatusContradictory, false, false, ""},
+		{"E01-E04", api.MetadataEvidenceStatusComplete, true, false, ""},
+		{"Part.1", api.MetadataEvidenceStatusContradictory, false, false, "Part.1"},
+		{"Part.1", api.MetadataEvidenceStatusComplete, true, false, "Part.1"},
+		{"E01-E04", api.MetadataEvidenceStatusComplete, false, true, ""},
+		{"Part.1", api.MetadataEvidenceStatusComplete, false, true, "Part.1"},
+	} {
+		meta := preparationstate.State{
+Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+ Release: api.ReleaseInfo{Title: "Example Show", Resolution: "1080p"},
+ Type: "WEBDL",
+ Source: "Web",
+ SeasonStr: "S01",
+ TVPack: true,
+ EpisodeCoverage: api.EpisodeCoverage{Part: tc.part, Status: tc.status},
+}
+		request := releaseNameRequestFromMeta(meta, api.NopLogger{})
+		request.NoSeason = tc.omit
+		request.ManualDate = tc.daily
+		request.DailyDate = "2026-01-01"
+		name := BuildReleaseName(request, api.NopLogger{}).Name
+		if tc.want != "" && !strings.Contains(name, tc.want) || tc.want == "" && strings.Contains(name, tc.part) {
+			t.Fatalf("name=%q part=%s status=%s omit=%t", name, tc.part, tc.status, tc.omit)
+		}
+		if meta.EpisodeCoverage.Part != tc.part {
+			t.Fatal("naming altered canonical coverage")
+		}
+		if tc.daily && !strings.Contains(name, "2026-01-01") {
+			t.Fatalf("daily identity lost: %s", name)
 		}
 	}
 }
@@ -176,7 +253,7 @@ func TestPartialSeasonNamesRetainIdentityAcrossMediaFormats(t *testing.T) {
 				VideoCodec: "H.264",
 				DVDSize:    "DVD9",
 			}, api.NopLogger{})
-			if !strings.Contains(name.Name, "Part.2") {
+			if !strings.Contains(name.Name, "Part.2") || !strings.Contains(name.Name, "S01") {
 				t.Fatalf("part lost from generated name: %+v", name)
 			}
 		})

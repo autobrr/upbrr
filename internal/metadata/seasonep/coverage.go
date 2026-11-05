@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	completeSeasonPattern = regexp.MustCompile(`(?i)(?:^|[ ._-])(?:S\d+[ ._-]+COMPLETE|COMPLETE[ ._-]+S\d+)(?:$|[ ._-])`)
+	completeSeasonPattern = regexp.MustCompile(`(?i)(?:^|[ ._-])(?:S(\d+)[ ._-]+COMPLETE|COMPLETE[ ._-]+S(\d+))(?:$|[ ._-])`)
 	partPattern           = regexp.MustCompile(`(?i)(?:^|[ ._-])(?:part|pt)[ ._-]*(\d+)\b`)
 	coveragePattern       = regexp.MustCompile(
 		`(?i)(?:^|[ ._-])(?:S(\d+)[ ._-]*)?E(\d+)(?:v\d+)?((?:[ ._-]*E\d+(?:v\d+)?|\s*[-+&]\s*(?:S\d+[ ._-]*)?E?\d+(?:v\d+)?)*)(?:\b|_)`,
@@ -26,7 +26,14 @@ var (
 // inventoryStatus describes enumeration of files, never completeness of a season.
 // Unknown members and conflicting season/range evidence remain unverified.
 func Coverage(season int, source string, files []string, inventoryStatus api.MetadataEvidenceStatus) api.EpisodeCoverage {
-	facts := api.EpisodeCoverage{Status: api.MetadataEvidenceStatusUnavailable}
+	facts := api.EpisodeCoverage{
+		Status:      api.MetadataEvidenceStatusUnavailable,
+		Episodes:    []int{},
+		SeasonKnown: season > 0,
+	}
+	if sourceSeason, known := api.DetectedFileSeason(source); known && sourceSeason == season {
+		facts.SeasonKnown = true
+	}
 	for _, match := range partPattern.FindAllStringSubmatch(strings.ReplaceAll(filepath.Base(source), "_", "."), -1) {
 		value, err := strconv.Atoi(match[1])
 		if err != nil || value <= 0 {
@@ -39,7 +46,7 @@ func Coverage(season int, source string, files []string, inventoryStatus api.Met
 		facts.Part = part
 	}
 	sourceMembers, sourceStatus := coverageMembers(season, filepath.Base(source))
-	if facts.Part == "" && len(sourceMembers) > 1 {
+	if facts.Part == "" && len(sourceMembers) > 1 && sourceStatus != api.MetadataEvidenceStatusContradictory {
 		labels := make([]string, 0, len(sourceMembers))
 		for _, episode := range sourceMembers {
 			labels = append(labels, FormatEpisode(episode))
@@ -53,8 +60,11 @@ func Coverage(season int, source string, files []string, inventoryStatus api.Met
 	complete := inventoryStatus == api.MetadataEvidenceStatusComplete
 	count := 0
 	for _, file := range files {
-		if _, video := videoExtensions[strings.ToLower(filepath.Ext(file))]; !video {
+		if !IsVideoFile(file) {
 			continue
+		}
+		if fileSeason, known := api.DetectedFileSeason(file); known && fileSeason == season {
+			facts.SeasonKnown = true
 		}
 		count++
 		episodes, status := coverageMembers(season, filepath.Base(file))
@@ -81,12 +91,17 @@ func Coverage(season int, source string, files []string, inventoryStatus api.Met
 			facts.Status = api.MetadataEvidenceStatusContradictory
 		}
 	}
-	if count == 0 {
+	if len(members) == 0 {
 		members = sourceMembers
-		complete = sourceStatus == api.MetadataEvidenceStatusComplete
+		complete = count == 0 && sourceStatus == api.MetadataEvidenceStatusComplete
 	}
-	facts.Episodes = members
-	facts.CompleteSeason = completeSeasonPattern.MatchString(filepath.Base(source))
+	facts.Episodes = append(facts.Episodes, members...)
+	if match := completeSeasonPattern.FindStringSubmatch(filepath.Base(source)); match != nil {
+		facts.CompleteSeason = true
+		if parseInt(match[1]+match[2]) != season {
+			facts.Status = api.MetadataEvidenceStatusContradictory
+		}
+	}
 	if facts.CompleteSeason && facts.Part != "" {
 		facts.Status = api.MetadataEvidenceStatusContradictory
 	}

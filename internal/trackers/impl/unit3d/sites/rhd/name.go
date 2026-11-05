@@ -57,11 +57,12 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	if meta.DailyEpisodeDate != "" {
 		parts = append(parts, meta.DailyEpisodeDate)
 	} else if meta.SeasonStr != "" || meta.EpisodeStr != "" {
-		parts = append(parts, strings.TrimSpace(meta.SeasonStr+meta.EpisodeStr), meta.EpisodeCoverage.Part)
+		parts = append(parts, strings.TrimSpace(meta.SeasonStr+meta.EpisodeStr))
 		if rhdHasOther(meta, "Incomplete") {
 			parts = append(parts, "iNCOMPLETE")
 		}
 	}
+	parts = append(parts, meta.EpisodeCoverage.Part)
 	namingSubject := meta
 	namingSubject.EditionDisplay = nil
 	if text := api.EditionNamingText(meta.EditionDisplay); text != "" {

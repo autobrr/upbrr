@@ -88,6 +88,8 @@ The release-level audio name describes a selected track. A destination may also 
 
 Partial-season sources retain explicit part labels or source episode ranges in generated names. Known episode membership comes from included filenames; unidentified or conflicting members remain unverified. A part number never implies an episode range, and identifying every included episode does not prove a complete season. Duplicate checks distinguish verified disjoint membership from overlapping coverage. Tracker restrictions and explicit overrides still apply.
 
+Omitting season and episode text also hides episode ranges in generated names while preserving coverage for duplicate checks. Explicit part labels remain visible. Conflicting ranges stay available for review and are omitted from generated names.
+
 Non-disc pack preparation uses the selected primary video’s MediaInfo report. Programme-language and permitted-dub checks use that inspected file; other uninspected pack files do not by themselves block those checks. **Inspected tracks** still reports incomplete coverage. A pack-consistency reminder is passive Guidance: it does not scan every episode, establish pack-wide consistency, or require an answer or acknowledgement. Missing or conflicting evidence in the inspected file and independent tracker requirements still need review. Check the pack against the tracker’s current rules. Cancellation is checked between input-file reads; an operating-system read already in progress may delay stopping. Inspected languages, track titles, default/forced flags and container order inform the assessment. Source-history and hypothetical subtitle concerns remain warnings rather than requests to guess missing facts.
 
 ## Tracker questions

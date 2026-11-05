@@ -32,7 +32,7 @@ func Profile() standalone.Profile {
 			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldGenres},
 			Disposition: api.RuleDispositionStrict,
 		}}},
-		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/asc/v3", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/asc/v4", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 			uploadName := resolveUploadTitle(input.Subject)
 			if input.RequestedName != nil {
 				uploadName = strings.TrimSpace(*input.RequestedName)

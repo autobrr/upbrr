@@ -929,8 +929,10 @@ const preparedRelease = () =>
   }) as unknown as NonNullable<InputFacet["view"]["release"]>;
 
 describe("InputPage", () => {
-  it("retains part membership and shows unresolved coverage after refresh", () => {
+  it("renders supplied pack coverage without a preview and updates with the release", () => {
     const facet = readyInputFacet(1);
+    facet.view.preview!.ReleaseName = "";
+    facet.view.preview!.Identity = emptyExternalIdentity("Example.mkv");
     const release = preparedRelease();
     release.Episode.Pack = true;
     release.Episode.Coverage = { Part: "Part.1", Episodes: [1, 2, 3], Status: "complete" };

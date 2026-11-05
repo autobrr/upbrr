@@ -562,6 +562,7 @@ export type EpisodeCoverage = Readonly<{
   CompleteSeason: boolean;
   Episodes: readonly number[];
   Part: string;
+  SeasonKnown: boolean;
   Status: MetadataEvidenceStatus;
 }>;
 

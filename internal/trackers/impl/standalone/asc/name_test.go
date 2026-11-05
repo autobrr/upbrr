@@ -12,7 +12,7 @@ import (
 
 func TestReleaseNamePolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/asc/v3" {
+	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/asc/v4" {
 		t.Fatalf("ASC release-name policy = %q", got)
 	}
 }
@@ -49,6 +49,10 @@ func TestResolveUploadTitleOmitsEmptySeasonEpisodeDelimiter(t *testing.T) {
 	}
 	if got := resolveUploadTitle(meta); got != "Example Show" {
 		t.Fatalf("upload title = %q", got)
+	}
+	meta.EpisodeCoverage.Part = "Part.1"
+	if got := resolveUploadTitle(meta); got != "Example Show Part.1" {
+		t.Fatalf("seasonless part title = %q", got)
 	}
 }
 

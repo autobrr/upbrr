@@ -251,16 +251,18 @@ func contentScopesContradict(structured contentScope, title contentScope) bool {
 }
 
 func sameKnownContentScope(target contentScope, candidate contentScope) bool {
+	if target.Kind == contentScopeSeasonPart || candidate.Kind == contentScopeSeasonPart {
+		return contentSeasonKnown(target) && contentSeasonKnown(candidate) && target.Season == candidate.Season &&
+			compareContentScopes(target, candidate) == contentEqual
+	}
 	switch target.Kind {
 	case contentScopeUnknownTV:
 		return false
-	case contentScopeSeasonPart:
-		return target.Season > 0 && target.Season == candidate.Season && compareContentScopes(target, candidate) == contentEqual
 	case contentScopeEpisode, contentScopeEpisodeRange, contentScopeSeasonPack:
 		if target.Season <= 0 || candidate.Season <= 0 {
 			return false
 		}
-	case contentScopeWork, contentScopeDaily, contentScopeCompleteSeries:
+	case contentScopeWork, contentScopeDaily, contentScopeCompleteSeries, contentScopeSeasonPart:
 	}
 	return target.Kind == candidate.Kind && target.Season == candidate.Season &&
 		target.EpisodeStart == candidate.EpisodeStart && target.EpisodeEnd == candidate.EpisodeEnd && target.Date == candidate.Date

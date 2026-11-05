@@ -173,11 +173,23 @@ type NamingFacts struct {
 // contradictory evidence must be reviewed. Part retains a source part or explicit
 // episode expression; a part number never implies episode numbers.
 type EpisodeCoverage struct {
+	// SeasonKnown distinguishes explicit season zero from an unspecified season.
+	SeasonKnown bool
 	// CompleteSeason retains an explicit complete-season source assertion, never a file-count inference.
 	CompleteSeason bool
 	Part           string
 	Episodes       []int
 	Status         MetadataEvidenceStatus
+}
+
+// NamingPart retains explicit part labels while omitting episode expressions
+// that conflict with the inventory or the caller's season/episode omission.
+func (c EpisodeCoverage) NamingPart(omitSeasonEpisode bool) string {
+	part := strings.TrimSpace(c.Part)
+	if strings.HasPrefix(part, "E") && (omitSeasonEpisode || c.Status == MetadataEvidenceStatusContradictory) {
+		return ""
+	}
+	return part
 }
 
 // EpisodeFacts contains canonical reusable episodic identity and schedule

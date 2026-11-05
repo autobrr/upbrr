@@ -2191,6 +2191,9 @@
           "Part": {
             "type": "string"
           },
+          "SeasonKnown": {
+            "type": "boolean"
+          },
           "Status": {
             "$ref": "#/components/schemas/MetadataEvidenceStatus"
           }
@@ -2199,6 +2202,7 @@
           "CompleteSeason",
           "Episodes",
           "Part",
+          "SeasonKnown",
           "Status"
         ]
       },

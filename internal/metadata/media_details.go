@@ -341,6 +341,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	applyReleaseNameValueOverrides(&meta)
 	if meta.TVPack {
 		meta.EpisodeCoverage = seasonep.Coverage(meta.SeasonInt, meta.SourcePath, meta.PackageInventory.Files, meta.PackageInventory.Status)
+		meta.EpisodeCoverage.SeasonKnown = meta.SeasonInt > 0 || meta.HasExplicitSeasonZero()
 	}
 	// Scene detection can supply the service (from the NFO), which WEB release
 	// names embed, so rebuild once more to fold in scene-derived metadata and

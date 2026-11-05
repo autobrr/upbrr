@@ -78,7 +78,7 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	service := strings.TrimSpace(req.Service)
 	season := strings.TrimSpace(req.Season)
 	episode := strings.TrimSpace(req.Episode)
-	part := strings.TrimSpace(req.Part)
+	part := (api.EpisodeCoverage{Part: req.Part}).NamingPart(req.NoSeason || req.ManualDate)
 	repack := strings.TrimSpace(req.Repack)
 	threeD := api.ThreeDName(req.ThreeD, nil)
 	tag := strings.TrimSpace(req.Tag)
@@ -598,6 +598,7 @@ func generatedReleaseNameDocument(
 				space(api.NameRoleTitle, title),
 				space(api.NameRoleAlternateTitle, alternateTitle),
 				space(api.NameRoleYear, year),
+				seasonComponent,
 				space(api.NameRolePart, part),
 				space(api.NameRoleEdition, edition),
 				space(
@@ -1370,7 +1371,7 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		Service:               meta.Service,
 		Season:                strings.TrimSpace(meta.SeasonStr),
 		Episode:               strings.TrimSpace(meta.EpisodeStr),
-		Part:                  meta.EpisodeCoverage.Part,
+		Part:                  meta.EpisodeCoverage.NamingPart(false),
 		Repack:                meta.Repack,
 		ThreeD:                api.ThreeDName(meta.Is3D, meta.ReleaseFeatures),
 		Tag:                   meta.Tag,

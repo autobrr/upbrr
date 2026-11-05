@@ -260,9 +260,10 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			Episode:          meta.EpisodeInt,
 			MultipleEpisodes: meta.MultipleEpisodes,
 			Coverage: api.EpisodeCoverage{
+				SeasonKnown:    meta.EpisodeCoverage.SeasonKnown,
 				CompleteSeason: meta.EpisodeCoverage.CompleteSeason,
 				Part:           meta.EpisodeCoverage.Part,
-				Episodes:       append([]int(nil), meta.EpisodeCoverage.Episodes...),
+				Episodes:       append([]int{}, meta.EpisodeCoverage.Episodes...),
 				Status:         meta.EpisodeCoverage.Status,
 			},
 			SeasonLabel:       meta.SeasonStr,

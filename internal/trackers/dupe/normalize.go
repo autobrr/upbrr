@@ -283,7 +283,11 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 		),
 	}
 	if target.Pack && (target.Coverage.Status != "" || target.Coverage.Part != "") {
-		facts.Content = packCoverageScope(target.Season, target.Coverage, FactOriginTargetMedia)
+		if facts.Content.Kind == contentScopeDaily {
+			facts.Content.Coverage = target.Coverage
+		} else {
+			facts.Content = packCoverageScope(target.Season, target.Coverage, FactOriginTargetMedia)
+		}
 	}
 	if target.VideoEncode != "" && target.VideoCodec != "" && canonicalCodec(target.VideoEncode) != canonicalCodec(target.VideoCodec) {
 		facts.Codec.Status = FactContradictory
@@ -414,10 +418,15 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 		}
 		coverage := seasonep.Coverage(candidate.Season, candidate.Name, candidate.Files, status)
 		if coverage.Part != "" || len(coverage.Episodes) > 0 || coverage.Status == api.MetadataEvidenceStatusContradictory {
-			if facts.Content.Kind == contentScopeSeasonPack && coverage.Part == "" && coverage.Status != api.MetadataEvidenceStatusContradictory {
+			switch {
+			case facts.Content.Kind == contentScopeDaily:
+				facts.Content.Coverage = coverage
+			case facts.Content.Kind == contentScopeSeasonPack && coverage.Part == "" && coverage.Status != api.MetadataEvidenceStatusContradictory:
 				// Optional filenames do not revoke the tracker's season-pack assertion.
 				facts.Content.Coverage = coverage
-			} else {
+			case facts.Content.Kind == contentScopeSeasonPart && facts.Content.Coverage.Status == api.MetadataEvidenceStatusComplete && coverage.Status != api.MetadataEvidenceStatusContradictory:
+				// Partial file enumeration cannot narrow an explicit source range.
+			default:
 				facts.Content = packCoverageScope(candidate.Season, coverage, FactOriginTrackerAPI)
 			}
 		}
@@ -1321,7 +1330,7 @@ func contentSeasonKnown(scope contentScope) bool {
 	case contentScopeEpisode, contentScopeEpisodeRange, contentScopeSeasonPack:
 		return true
 	case contentScopeSeasonPart, contentScopeUnknownTV:
-		return scope.Season > 0
+		return scope.Season > 0 || scope.Coverage.SeasonKnown
 	case contentScopeWork, contentScopeDaily, contentScopeCompleteSeries:
 		return false
 	}

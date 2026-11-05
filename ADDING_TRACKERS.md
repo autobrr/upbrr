@@ -43,6 +43,8 @@ AvistaZ-family (`azfamily`) trackers are intentionally out of scope.
   `EpisodeCoverage` retains source part/range identity and known episode membership. Its complete
   status identifies all included members; it never establishes season completeness. Custom generated
   upload names must preserve its part/range label, and duplicate targets must retain its evidence.
+  Season presence remains explicit for `S00`. Naming omissions never discard duplicate coverage;
+  contradictory episode expressions must not be published as verified ranges.
   Complete inventory does not imply complete episode, technical, or language coverage; included
   prohibited files still produce violations. Retain the torrent scope so a collapsed single-file
   payload is not mistaken for a retained folder. Preserve inventory authority through rule adapters.

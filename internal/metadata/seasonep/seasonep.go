@@ -47,6 +47,18 @@ var videoExtensions = map[string]struct{}{
 	".m2v":  {},
 	".mpg":  {},
 	".mpeg": {},
+	".3gp":  {},
+	".flv":  {},
+	".m4v":  {},
+	".mts":  {},
+	".vob":  {},
+	".iso":  {},
+}
+
+// IsVideoFile identifies supported video members by extension without inspecting media.
+func IsVideoFile(name string) bool {
+	_, ok := videoExtensions[strings.ToLower(filepath.Ext(name))]
+	return ok
 }
 
 // Result contains normalized episodic signals. DailyDate uses YYYY-MM-DD;

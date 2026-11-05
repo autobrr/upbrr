@@ -182,6 +182,7 @@ export type NamingFacts = {
 
 /** Pack identity and included members; complete evidence does not prove a complete season. */
 export type EpisodeCoverage = {
+  SeasonKnown?: boolean;
   CompleteSeason?: boolean;
   Part: string;
   Episodes: number[];
