@@ -525,7 +525,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 
 	filename, secondary := resolveSearchTitles(meta)
 	year := resolveSearchYear(meta)
-	unattendedSearch := isUnattendedMetadataSearch(meta)
+	// Provider confidence thresholds apply in every mode; the CLI owns required selection.
 	explicitCategory := meta.ReleaseNameOverrides.Category != nil && normalizeCategory(*meta.ReleaseNameOverrides.Category) != "" ||
 		ids.Overrides.Category == api.OverrideStateValue || ids.Provenance.Category == api.IdentityProvenanceExplicit
 	imdbSearchCategory := ids.Category
@@ -537,7 +537,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			UntouchedFilename: pathutil.Base(meta.SourcePath),
 			SearchYear:        stageYear,
 			Category:          string(ids.Category),
-			Unattended:        unattendedSearch,
 			Debug:             false,
 		})
 		if err != nil {
@@ -618,7 +617,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				Year:          year,
 			},
 			RequireExternalIDAgreement: hasExplicitProviderAnchor || ids.TVDBID != 0 && shouldUseTVDBForCategory(meta, ids),
-			Unattended:                 unattendedSearch,
 			Debug:                      false,
 		})
 		if err != nil {
@@ -650,11 +648,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	if needsTMDBSearch || needsIMDBSearch {
 		searchYears := buildSearchYears(year)
 		logger.Debugf(
-			"metadata: external ids search filename=%q year=%d stages=%v unattended=%t category=%q tmdb=%t imdb=%t",
+			"metadata: external ids search filename=%q year=%d stages=%v category=%q tmdb=%t imdb=%t",
 			filename,
 			year,
 			searchYears,
-			unattendedSearch,
 			tmdbCategoryPref,
 			needsTMDBSearch,
 			needsIMDBSearch,
@@ -687,7 +684,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 					SecondaryTitle: secondary,
 					SearchYear:     stageYear,
 					Category:       tmdbCategoryPref,
-					Unattended:     unattendedSearch,
 					DontSwitch:     explicitCategory || strings.EqualFold(tmdbCategoryPref, "TV"),
 					Debug:          false,
 				})
@@ -2411,16 +2407,6 @@ func uniqueSearchYears(values []int) []int {
 		result = append(result, value)
 	}
 	return result
-}
-
-func isUnattendedMetadataSearch(meta preparationstate.State) bool {
-	//nolint:exhaustive // Interactive modes are intentionally treated as attended.
-	switch meta.Policy.InteractionMode {
-	case api.InteractionModeUnattended, api.InteractionModeUnattendedConfirm:
-		return true
-	default:
-		return false
-	}
 }
 
 func resolveCategoryPreference(meta preparationstate.State) string {

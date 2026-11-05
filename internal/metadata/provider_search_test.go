@@ -106,12 +106,17 @@ func TestProviderSearchPartialAndFailedProvidersRemainDistinctAndRetryable(t *te
 		if err != nil {
 			t.Fatal(err)
 		}
-		if result.Providers[0].Status != api.MetadataEvidenceStatusPartial || len(result.Providers[0].Candidates) != 1 || result.Providers[1].Status != api.MetadataEvidenceStatusUnavailable {
+		if result.Providers[0].Status != api.MetadataEvidenceStatusPartial || len(result.Providers[0].Candidates) != 1 ||
+			result.Providers[0].SearchFailed || result.Providers[1].Status != api.MetadataEvidenceStatusUnavailable || !result.Providers[1].SearchFailed {
 			t.Fatalf("outcomes=%+v", result)
 		}
 	}
 	if len(tmdb.requests) != 2 || len(imdb.requests) != 2 {
 		t.Fatal("partial/failing results suppressed an explicit retry")
+	}
+	result, err := service.SearchProviderCandidates(t.Context(), api.ProviderSearchRequest{Query: "Example", Category: api.CanonicalCategoryTV})
+	if err != nil || result.Providers[2].Status != api.MetadataEvidenceStatusUnavailable || result.Providers[2].SearchFailed {
+		t.Fatalf("unavailable provider misreported as a failed search: %+v, %v", result, err)
 	}
 }
 

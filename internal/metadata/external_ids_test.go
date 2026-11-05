@@ -3998,7 +3998,7 @@ func TestResolveExternalIDsEpisodeTypeForcesTVTMDBSearchCategory(t *testing.T) {
 	}
 }
 
-func TestResolveExternalIDsSearchStagesAndUnattendedInteractionMode(t *testing.T) {
+func TestResolveExternalIDsSearchStagesPreserveConfidentUnattendedMatches(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{searchFn: func(input tmdb.SearchInput) (tmdb.SearchOutcome, error) {
 		switch input.SearchYear {
@@ -4055,8 +4055,8 @@ func TestResolveExternalIDsSearchStagesAndUnattendedInteractionMode(t *testing.T
 		t.Fatalf("unexpected tmdb stage years: %#v", tmdbClient.searchInputs)
 	}
 	for _, input := range tmdbClient.searchInputs {
-		if !input.Unattended {
-			t.Fatalf("expected tmdb unattended search in CLI mode")
+		if input.Unattended {
+			t.Fatalf("unattended CLI must retain ambiguous tmdb candidates")
 		}
 	}
 
@@ -4067,8 +4067,8 @@ func TestResolveExternalIDsSearchStagesAndUnattendedInteractionMode(t *testing.T
 		t.Fatalf("unexpected imdb stage years: %#v", imdbClient.searchInputs)
 	}
 	for _, input := range imdbClient.searchInputs {
-		if !input.Unattended {
-			t.Fatalf("expected imdb unattended search in CLI mode")
+		if input.Unattended {
+			t.Fatalf("unattended CLI must retain ambiguous imdb candidates")
 		}
 	}
 }

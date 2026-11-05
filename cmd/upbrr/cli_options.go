@@ -1310,9 +1310,22 @@ func validateCLIInputFlagOccurrences(fs *pflag.FlagSet, flagArgs []string) error
 }
 
 func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
-	_, changed, _, err := parseCLIOptions(editArgs)
+	edits, changed, _, err := parseCLIOptions(editArgs)
 	if err != nil {
 		return nil, err
+	}
+	identityFlags := map[string]string{
+		string(api.CorrectionFieldIdentityTMDB):        "tmdb",
+		string(api.CorrectionFieldIdentityIMDB):        "imdb",
+		string(api.CorrectionFieldIdentityTVDB):        "tvdb",
+		string(api.CorrectionFieldIdentityTVmaze):      "tvmaze",
+		string(api.CorrectionFieldIdentityMAL):         "mal",
+		string(api.CorrectionFieldReleaseNameCategory): "category",
+	}
+	for _, field := range edits.ResetInput {
+		if flag := identityFlags[field]; flag != "" {
+			changed[flag] = true
+		}
 	}
 	var opts cliOptions
 	fs := pflag.NewFlagSet("upbrr", pflag.ContinueOnError)
@@ -1329,6 +1342,16 @@ func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
 		}
 		if canonical, exists := aliases[name]; exists {
 			name = canonical
+		}
+		// An earlier Auto request must not reset a later explicit provider choice.
+		if name == "reset-input" {
+			_, field, inline := strings.Cut(flags[start], "=")
+			if !inline {
+				field = flags[i]
+			}
+			if changed[identityFlags[field]] {
+				continue
+			}
 		}
 		if !changed[name] {
 			merged = append(merged, flags[start:i+1]...)
