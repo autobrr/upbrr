@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -93,9 +94,14 @@ func reusableWorkflowDupes(
 
 // Scoped edits change the set-wide input hash and action publication stamps.
 // Questionnaire-only transitions may also ignore answer and display-schema data.
-// All tracker-local policy, configuration, readiness and action content must match.
+// Passive account advice is unrelated to duplicate evidence. All other tracker-local
+// policy, configuration, readiness and action content must match.
 func reusableDupeProjectionFingerprint(projection api.TrackerReleaseProjection, questionnaireOnly bool) (api.WorkflowFingerprint, error) {
 	projection.InputFingerprint = ""
+	projection.PolicyDecisions = slices.DeleteFunc(slices.Clone(projection.PolicyDecisions), func(decision api.TrackerPolicyDecision) bool {
+		return decision.Code == trackers.APIKeyGuidanceCode && !decision.Blocking &&
+			decision.Decision == "advisory" && decision.Disposition == api.RuleDispositionAdvisory
+	})
 	if questionnaireOnly {
 		projection.Questionnaire = nil
 		projection.QuestionnaireAnswers = nil

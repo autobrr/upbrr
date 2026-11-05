@@ -541,6 +541,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			state.PreparationInput = &request.Input
 			if request.Composite != nil && (state.Composite == nil || state.Composite.RequestFingerprint != request.Composite.RequestFingerprint) {
 				state.Composite = request.Composite
+				state.Composite.StartedRevision = state.Workflow.Revision + 1
 			}
 			state.Workflow.Revision++
 			state.Workflow.UpdatedAt = m.clock.Now()

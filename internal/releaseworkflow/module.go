@@ -430,6 +430,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err != nil {
 		return CommandResult{}, err
 	}
+	ctx = withTrackerGuidanceHistory(ctx, state)
 	receiptKey := commandReceiptKey(command.commandName(), idempotencyKey, fingerprint)
 	if receipt, ok := state.Receipts[receiptKey]; ok {
 		if receipt.Fingerprint != fingerprint {
@@ -3656,6 +3657,7 @@ func (m *Module) create(
 	state.FactInstructions[facts.ID] = facts
 	state.Composite = command.Composite
 	if state.Composite != nil {
+		state.Composite.StartedRevision = workflow.Revision
 		state.Composite.LastCommittedRevision = workflow.Revision
 	}
 	state, idempotent, err := m.repository.Create(ctx, ownerID, command.IdempotencyKey, fingerprint, state)

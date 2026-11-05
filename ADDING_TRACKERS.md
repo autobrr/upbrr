@@ -396,6 +396,23 @@ AKA/audio-marker omissions and an independent search name. The mandatory-policy 
 
 ### Authentication contract
 
+An optional `AuthPolicy.APIKeyGuidance` observes expiry headers from existing upload POST
+responses without adding requests or auth requirements. Bind site-owned header names and
+message policy in `auth.go`; Unit3D profiles expose it through `Site.APIKeyGuidance`.
+Only upload POST responses update the observation, including rejected uploads. The latest
+POST replaces any prior expiry with its reported, missing or malformed result. GET responses
+never update it. A key has no advice before its first upload POST response.
+Shared preflight emits one advisory decision per tracker, while upload preparation and submission
+log newly learned advice once per prepared plan. Retained preflight snapshots prevent
+repeating the same message after questionnaire reprojection within an upload attempt;
+new attempts, including failed-upload retries, show it again. Attempt history excludes
+preflight snapshots at or before retained upload results and takes precedence over cached
+projection advice. Passive account advice does not invalidate otherwise compatible
+duplicate evidence. Observations remain process-local and
+credential-digest scoped; raw keys and headers are never retained in this guidance cache.
+Keep missing, malformed and reported expiry distinct. This capability cannot block uploads,
+request confirmation, or change authentication and submission outcomes.
+
 `api.TrackerAuthCapability` describes supported user actions. `trackers.AuthPolicy` resolves
 secret-free effective requirements for the current config/mode. `internal/trackers/auth.Service`
 owns status/import/validate/login/2FA/delete coordination across CLI, API, and WebUI.

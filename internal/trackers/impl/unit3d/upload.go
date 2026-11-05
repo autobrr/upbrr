@@ -33,9 +33,29 @@ type unit3dUploadResponse struct {
 	Data    string `json:"data"`
 }
 
+// uploadResponseTransport observes POST responses before redirects can replace
+// them with a GET response. Transport and redirect behavior otherwise stay unchanged.
+type uploadResponseTransport struct {
+	observers []func(http.Header, int)
+}
+
+func (transport uploadResponseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := http.DefaultTransport.RoundTrip(request)
+	if response != nil && request.Method == http.MethodPost {
+		for _, observer := range transport.observers {
+			observer(response.Header, response.StatusCode)
+		}
+	}
+	if err != nil {
+		return response, fmt.Errorf("unit3d upload transport: %w", err)
+	}
+	return response, nil
+}
+
 // submitUnit3DUpload sends an already serialized multipart payload and maps a
 // successful Unit3D response to one upload, with an artifact only when the
 // response identifies a download URL.
+// Observer callbacks receive only the upload POST response.
 func submitUnit3DUpload(
 	ctx context.Context,
 	trackerName string,
@@ -48,6 +68,7 @@ func submitUnit3DUpload(
 	meta api.UploadSubject,
 	dbPath string,
 	logger api.Logger,
+	observe ...func(http.Header, int),
 ) (api.UploadSummary, error) {
 	logger.Infof("trackers: starting upload to %s for release: %s", trackerName, releaseName)
 	logger.Debugf("trackers: %s upload URL: %s", trackerName, uploadURL)
@@ -64,7 +85,7 @@ func submitUnit3DUpload(
 	httpReq.Header.Set("Content-Type", contentType)
 
 	logger.Debugf("trackers: %s sending upload request...", trackerName)
-	client := &http.Client{Timeout: 40 * time.Second}
+	client := &http.Client{Timeout: 40 * time.Second, Transport: uploadResponseTransport{observers: observe}}
 	execution, err := commonhttp.ExecuteUpload(client, httpReq, commonhttp.UploadExecutionOptions{Tracker: trackerName})
 	if err != nil && !execution.BodyComplete {
 		logger.Errorf("trackers: %s upload request failed: %v", trackerName, err)
@@ -166,6 +187,8 @@ func prepareUnit3DUpload(
 	if !strings.EqualFold(preview.Status, "ready") {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s upload blocked: %s", preview.Tracker, preview.Message)
 	}
+	reportGuidance := apiKeyGuidanceReporter(ctx, req, firstSiteProfile(profiles).APIKeyGuidance)
+	reportGuidance(nil, 0)
 
 	logger := req.Logger
 	if logger == nil {
@@ -194,6 +217,7 @@ func prepareUnit3DUpload(
 			req.Meta,
 			req.Runtime.DBPath,
 			logger,
+			reportGuidance,
 		)
 	}, nil), nil
 }

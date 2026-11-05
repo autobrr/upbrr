@@ -4,12 +4,14 @@
 package lst
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -21,17 +23,30 @@ type editionRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f editionRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+type lstGuidanceLogger struct {
+	api.NopLogger
+	messages []string
+}
+
+func (l *lstGuidanceLogger) Infof(format string, args ...any) {
+	if message := fmt.Sprintf(format, args...); strings.Contains(message, "guidance:") {
+		l.messages = append(l.messages, message)
+	}
+}
+
 func TestLSTEditionUploadPreservesNameAndOmitsUnmappedID(t *testing.T) {
 	// Submission uses this in-process transport; no request reaches LST.
 	previous := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = previous })
 	for _, test := range []struct {
 		name, cut, edition, presentation, wantID, requestedName string
+		reportExpiry                                            bool
 	}{
 		{
-			name:   "supported cut",
-			cut:    "Director's Cut",
-			wantID: "2",
+			name:         "supported cut",
+			cut:          "Director's Cut",
+			wantID:       "2",
+			reportExpiry: true,
 		},
 		{
 			name:    "supported edition",
@@ -68,6 +83,8 @@ func TestLSTEditionUploadPreservesNameAndOmitsUnmappedID(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			logger := &lstGuidanceLogger{}
+			expiry := time.Now().Add(10 * 24 * time.Hour).UTC().Format(time.RFC3339)
 			meta := api.UploadSubject{
 				Cut:             test.cut,
 				Edition:         test.edition,
@@ -92,6 +109,7 @@ func TestLSTEditionUploadPreservesNameAndOmitsUnmappedID(t *testing.T) {
 			}
 			screens := lstDescriptionScreenshots(&meta)
 			input := trackers.PreparationInput{
+				Logger:        logger,
 				Intent:        trackers.PreparationIntentUpload,
 				Tracker:       "LST",
 				TrackerConfig: config.TrackerConfig{APIKey: "test-key"},
@@ -130,18 +148,26 @@ func TestLSTEditionUploadPreservesNameAndOmitsUnmappedID(t *testing.T) {
 				if got := req.FormValue("name"); got != wantName {
 					t.Fatalf("serialized name = %q, want %q", got, wantName)
 				}
+				header := make(http.Header)
+				if test.reportExpiry {
+					header.Set("X-Api-Key-Expires-At", expiry)
+				}
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(`{"success":true}`)),
-					Header:     make(http.Header),
+					Header:     header,
 					Request:    req,
 				}, nil
 			})
+			beforeSubmit := len(logger.messages)
 			if _, err := plan.Submit(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if !called {
 				t.Fatal("serialized upload was not submitted to the test transport")
+			}
+			if test.reportExpiry && (len(logger.messages)-beforeSubmit != 1 || !strings.Contains(logger.messages[beforeSubmit], expiry)) {
+				t.Fatal("LST Prepare-to-Submit did not report newly learned expiry exactly once")
 			}
 			if input.Meta.Cut != test.cut || input.Meta.Edition != test.edition || input.Meta.Presentation != test.presentation ||
 				len(input.Meta.ReleaseFeatures) != 1 || input.Meta.ReleaseFeatures[0] != api.ReleaseFeatureHybrid {

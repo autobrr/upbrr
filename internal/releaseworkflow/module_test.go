@@ -802,6 +802,7 @@ type uploadPlanBuilderFake struct {
 	testing           *testing.T
 	builds            int
 	options           []UploadPlanBuildOptions
+	contexts          []context.Context
 	execution         *retainedUploadExecutionFake
 	failed            map[api.TrackerID]bool
 	preparationFailed map[api.TrackerID]bool
@@ -844,6 +845,7 @@ func (f *uploadPlanBuilderFake) Build(
 ) (api.UploadPlan, RetainedUploadExecution, error) {
 	f.builds++
 	f.options = append(f.options, options)
+	f.contexts = append(f.contexts, ctx)
 	fingerprint, err := f.Fingerprint(ctx, projections, dupes, media, descriptions, options)
 	if err != nil {
 		return api.UploadPlan{}, nil, err
@@ -2210,6 +2212,27 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 		WithDescriptionBuilder(descriptions),
 		WithUploadPlanBuilder(uploadPlans),
 	)
+	const guidanceMessage = "Review the account key configuration."
+	basePreflight := module.trackerPreflight
+	module.trackerPreflight = trackerPreflightBuilderFunc(func(ctx context.Context, subject api.UploadSubject, catalog api.TrackerCatalogSnapshot,
+		runtime api.TrackerRuntimeSnapshot, initial api.TrackerReleaseProjectionSet, now time.Time,
+	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
+		assessment, finalized, err := basePreflight.Build(ctx, subject, catalog, runtime, initial, now)
+		if err != nil {
+			return assessment, finalized, fmt.Errorf("build retry guidance fixture: %w", err)
+		}
+		for index := range finalized {
+			if finalized[index].TrackerID == "ALPHA" {
+				finalized[index].PolicyDecisions = append(finalized[index].PolicyDecisions, api.TrackerPolicyDecision{
+					Code:        "guidance_api_key_expiry",
+					Decision:    "advisory",
+					Disposition: api.RuleDispositionAdvisory,
+					Message:     guidanceMessage,
+				})
+			}
+		}
+		return assessment, finalized, nil
+	})
 	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-dupes"})
 	result = executeCommand(t, module, PrepareReleaseCommand{
 		WorkflowID:       result.Workflow.ID,
@@ -2411,6 +2434,12 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	}
 	executed := executeCommand(t, module, execute)
 	failedExecution := uploadPlans.execution
+	if !api.TrackerGuidanceWasPresented(uploadPlans.contexts[0], "ALPHA", "guidance_api_key_expiry", guidanceMessage, nil) {
+		t.Fatal("first reviewed upload lost current preflight guidance history")
+	}
+	if api.TrackerGuidanceWasPresented(uploadPlans.contexts[1], "ALPHA", "guidance_api_key_expiry", guidanceMessage, &current.Projections.Projections[0]) {
+		t.Fatal("new direct upload reused guidance from before the earlier submission")
+	}
 	if executed.UploadResult == nil || executed.UploadResult.Status != api.StageStatusFailed || failedExecution.executions != 1 ||
 		uploadPlans.builds != 2 {
 		t.Fatalf("direct upload = %#v executions=%d builds=%d", executed, failedExecution.executions, uploadPlans.builds)
@@ -2436,6 +2465,9 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 		uploadPlans.builds != 3 || uploadPlans.execution.executions != 1 ||
 		len(uploadPlans.options[2].TrackerIDs) != 1 || uploadPlans.options[2].TrackerIDs[0] != "ALPHA" {
 		t.Fatalf("failed-only retry = %#v builds=%d options=%#v", retried, uploadPlans.builds, uploadPlans.options)
+	}
+	if api.TrackerGuidanceWasPresented(uploadPlans.contexts[2], "ALPHA", "guidance_api_key_expiry", guidanceMessage, &current.Projections.Projections[0]) {
+		t.Fatal("failed-upload retry reused account advice from the previous attempt")
 	}
 	repeatedRetry := executeCommand(t, module, retry)
 	if repeatedRetry.UploadResult == nil || repeatedRetry.UploadResult.ID != retried.UploadResult.ID ||

@@ -29,6 +29,7 @@ func Profile() unit3d.Profile {
 		ValidationPolicy:  trackers.WithLanguageAssessment(validationPolicy(), languageAssessment),
 		TitleSearchPolicy: titleSearchPolicy(),
 		Site: unit3d.SiteProfile{
+			APIKeyGuidance:           apiKeyGuidance(),
 			FinalizeDescription:      finalizeImportedScreenshotDescription,
 			ProjectionQuestionnaire:  languageQuestionnaire,
 			ApplyAdditionalPayload:   additionalPayload,
