@@ -18,9 +18,11 @@ import (
 
 type heldAdmissionEvents struct {
 	*PersistentRepository
-	hold    atomic.Bool
-	queued  chan struct{}
-	release chan struct{}
+	hold     atomic.Bool
+	queued   chan struct{}
+	release  chan struct{}
+	stopList atomic.Bool
+	listing  chan struct{}
 }
 
 func (r *heldAdmissionEvents) AppendEvents(ctx context.Context, owner string, workflow api.WorkflowID, events []api.WorkflowEvent) ([]api.WorkflowEvent, error) {
@@ -29,6 +31,14 @@ func (r *heldAdmissionEvents) AppendEvents(ctx context.Context, owner string, wo
 		<-r.release
 	}
 	return r.PersistentRepository.AppendEvents(ctx, owner, workflow, events)
+}
+
+func (r *heldAdmissionEvents) ListActiveOperations(ctx context.Context) ([]api.ReleaseWorkflowOperationRecord, error) {
+	if r.stopList.Swap(false) {
+		close(r.listing)
+		<-ctx.Done()
+	}
+	return r.PersistentRepository.ListActiveOperations(ctx)
 }
 
 type observedInputReservation struct {
@@ -78,8 +88,10 @@ func TestCanceledInputSwitchJoinsRunningAndQueuedWorkerBeforeRollback(t *testing
 				PersistentRepository: persistent,
 				queued:               make(chan struct{}),
 				release:              make(chan struct{}),
+				listing:              make(chan struct{}),
 			}
 			workStarted, workFinish := make(chan struct{}), make(chan struct{})
+			workCanceled := make(chan struct{})
 			var released atomic.Bool
 			var releaseWork, releaseEvents sync.Once
 			inputs := &observedInputReservation{
@@ -90,6 +102,12 @@ func TestCanceledInputSwitchJoinsRunningAndQueuedWorkerBeforeRollback(t *testing
 			preparer := testPreparer()
 			preparer.PrepareFunc = func(ctx context.Context, _ api.PrepareInput) (api.PrepareResult, error) {
 				close(workStarted)
+				select {
+				case <-ctx.Done():
+					close(workCanceled)
+				case <-workFinish:
+					return api.PrepareResult{}, ctx.Err()
+				}
 				<-workFinish
 				return api.PrepareResult{}, ctx.Err()
 			}
@@ -142,6 +160,7 @@ func TestCanceledInputSwitchJoinsRunningAndQueuedWorkerBeforeRollback(t *testing
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
+			events.stopList.Store(true)
 			opened := make(chan error, 1)
 			go func() {
 				_, openErr := module.OpenInput(ctx, testOwnerID, OpenInputRequest{
@@ -152,8 +171,16 @@ func TestCanceledInputSwitchJoinsRunningAndQueuedWorkerBeforeRollback(t *testing
 				opened <- openErr
 			}()
 			switchContext := <-inputs.switchContext
+			<-events.listing
 			cancel()
 			<-switchContext.Done()
+			if !queued {
+				select {
+				case <-workCanceled:
+				case <-time.After(10 * time.Second):
+					t.Fatal("canceled admission did not signal the prior worker")
+				}
+			}
 			select {
 			case err := <-opened:
 				t.Fatalf("input switch returned before worker cleanup: %v", err)

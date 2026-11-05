@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/logging"
@@ -378,24 +377,30 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		if committed {
 			return
 		}
-		// Start holds this lock through worker registration. Keep the pending
-		// fence and heartbeat alive until accepted work can finish its bookkeeping.
-		var admission *sync.Mutex
 		if prior.WorkflowID != "" {
-			admission = m.commandLock(strings.TrimSpace(owner) + "\x00" + string(prior.WorkflowID))
+			cancelPriorWorkers := func() []<-chan struct{} {
+				m.operationWorkersMu.Lock()
+				defer m.operationWorkersMu.Unlock()
+				var workers []<-chan struct{}
+				for _, worker := range m.operationWorkers {
+					if worker.ownerID == owner && worker.workflowID == prior.WorkflowID {
+						worker.cancel()
+						workers = append(workers, worker.done)
+					}
+				}
+				return workers
+			}
+			// A running stage holds the command lock, so signal it before the barrier.
+			// Start holds that lock through registration; snapshot again for queued work.
+			cancelPriorWorkers()
+			admission := m.commandLock(strings.TrimSpace(owner) + "\x00" + string(prior.WorkflowID))
 			admission.Lock()
-		}
-		m.operationWorkersMu.Lock()
-		var workers []<-chan struct{}
-		for _, worker := range m.operationWorkers {
-			workers = append(workers, worker.done)
-		}
-		m.operationWorkersMu.Unlock()
-		if admission != nil {
+			workers := cancelPriorWorkers()
 			admission.Unlock()
-		}
-		for _, done := range workers {
-			<-done
+			for _, done := range workers {
+				// Noninterruptible hashing retains its fence until durable cleanup.
+				<-done
+			}
 		}
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -429,7 +434,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			}
 		}
 	}()
-	if err := m.startActiveInputHeartbeat(ctx, pending.Fence); err != nil {
+	if err := m.startActiveInputHeartbeat(context.WithoutCancel(ctx), pending.Fence); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
 	if err := m.cancelPriorInputWork(ctx, owner, prior.WorkflowID); err != nil {
