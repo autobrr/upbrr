@@ -93,6 +93,7 @@ export type OperationFailure = {
 };
 
 export type SourceScopedMetadata = {
+  IdentityCandidates?: ExternalIdentityCandidate[];
   SourcePath: string;
   Generation: number;
   TMDB?: TMDBMetadata | null;

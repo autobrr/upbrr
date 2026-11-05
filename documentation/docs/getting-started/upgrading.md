@@ -15,7 +15,7 @@ The upcoming `v0.4.2` moves workflow source ownership and command receipts into 
 
 If a retained workflow reports incompatible prepared data after an update, prepare the input again before continuing. Repeating continuation does not rebuild that data. Saved corrections remain available; preparation and the normal review steps must complete again. Check and reconcile any uncertain external outcome before retrying a tracker or client operation.
 
-Development builds for v0.4.2 retain ambiguous provider-title matches for explicit CLI/TUI selection. Strict unattended runs no longer choose the top ambiguous TMDB or IMDb match. Older automatic identities and prepared snapshots require preparation again under the new confidence policy; manual IDs and explicit clears remain authoritative. Use exact provider IDs or `--uac` when a title needs selection.
+Development builds for v0.4.2 retain ambiguous provider-title matches for explicit CLI/TUI selection, including across reuse and restart through an additive SQLite migration. Strict unattended runs no longer choose the top ambiguous TMDB or IMDb match. Older automatic identities and prepared snapshots require preparation again under the new confidence policy; manual IDs and explicit clears remain authoritative. Use exact provider IDs or `--uac` when a title needs selection.
 
 ## 1. Stop upbrr
 

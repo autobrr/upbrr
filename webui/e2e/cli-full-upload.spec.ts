@@ -469,6 +469,8 @@ for (const [mediaKind, provider, matchNumber] of [
           workspace.configPath,
           "--ui=plain",
           "--uac",
+          "--trackers",
+          releaseWorkflowParityFixture.trackerID,
           "--tmdb=1001",
           "--imdb=tt7654321",
           mediaKind === "tv" ? "--tvdb=2001" : "--tvdb=0",
@@ -476,7 +478,7 @@ for (const [mediaKind, provider, matchNumber] of [
           workspace.sourcePath,
         ],
         workspace.env,
-        `n\nsearch\n${mediaKind}\nExample Title 2026\nback\nn\nsearch\n${mediaKind}\nExample Title 2026\n${matchNumber}\nn\n--input-only\n`,
+        `n\nsearch\n${mediaKind}\nExample Title 2026\nback\nn\nsearch\n${mediaKind}\nExample Title 2026\n${matchNumber}\n${provider === "TVDB" ? "y\ny\n" : "n\n--input-only\n"}`,
       );
       expect(result.code, result.output).toBe(0);
       expect(result.output).toContain("Example Candidate 9");
@@ -491,9 +493,14 @@ for (const [mediaKind, provider, matchNumber] of [
       expect(result.output.indexOf("Metadata correct?", review), result.output).toBeGreaterThan(
         review,
       );
-      const facts = result.output.match(/^Input facts: (.+)$/m);
+      const facts =
+        provider === "TVDB"
+          ? workspace.fake.trackerUploadBodies[0]
+              ?.toString("utf8")
+              .match(/name="identity"\r\n\r\n([^\r\n]+)/)
+          : result.output.match(/^Input facts: (.+)$/m);
       expect(facts, result.output).toBeTruthy();
-      const identity = JSON.parse(facts![1]).identity;
+      const identity = provider === "TVDB" ? JSON.parse(facts![1]) : JSON.parse(facts![1]).identity;
       expect(identity).toMatchObject({
         TMDBID: provider === "TMDB" ? 1010 : 1001,
         IMDBID: provider === "IMDb" ? 1010 : 7654321,
@@ -525,7 +532,7 @@ for (const [mediaKind, provider, matchNumber] of [
       } finally {
         await app.stop();
       }
-      expect(workspace.fake.counters.trackerUploads).toBe(0);
+      expect(workspace.fake.counters.trackerUploads).toBe(provider === "TVDB" ? 1 : 0);
       expect(workspace.fake.counters.clientInjections).toBe(0);
     } finally {
       await workspace.cleanup();

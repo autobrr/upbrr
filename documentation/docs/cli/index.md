@@ -358,7 +358,7 @@ During the **Metadata correct?** loop, correcting the same active input reuses p
 
 ### Select a provider title
 
-Answer **No** at **Metadata correct?**, then enter `search` at the correction prompt. Choose `movie` or `tv`, then enter a title and optional year, such as `Example Series 2026`. An empty title answer searches the title shown in brackets. TMDB and IMDb support movie and TV searches; TVDB searches TV series only.
+When the identity is resolved, answer **No** at **Metadata correct?**, then enter `search` at the correction prompt. When the identity is unresolved, the correction prompt appears first; enter `search` there. Choose `movie` or `tv`, then enter a title and optional year, such as `Example Series 2026`. An empty title answer searches the title shown in brackets. TMDB and IMDb support movie and TV searches; TVDB searches TV series only.
 
 Matches are grouped by provider and show their available title, year, ID, source link, overview, credits and runtime. Missing details do not prevent selection. The plain terminal accepts the listed match number; the TUI supports arrow-key selection and scrolling through the full list. Search uses the same bounded provider calls, caching and cancellation as the Web UI.
 
@@ -376,9 +376,9 @@ Match number, back (decline), or cancel: 1
 
 Selection applies only that provider's ID through normal metadata preparation, then shows the resulting release details and IDs before continuation. Independently supplied manual IDs and explicit clears for other providers remain authoritative. Search again to select another provider, use correction flags such as `--imdb=tt1234567` or `--tmdb=0`, or use `--reset-input identity.tmdb` to restore Auto. A later selection replaces an earlier Auto request for that provider.
 
-Enter `back` to decline matches without changing your choices, or `cancel` to stop the item. No matches, unavailable providers and failed searches have separate messages. Retry `search` with another title/year, check metadata settings, or enter an exact provider ID. Searching does not retry a retained preparation failure; the **History** recovery boundary above still applies.
+Enter `back` to decline matches without changing your choices, or `cancel` to stop the item. No matches, unavailable providers and failed searches have separate messages. Matches retained from earlier resolution have their own heading and remain selectable when a fresh search finds nothing. Retry `search` with another title/year, check metadata settings, or enter an exact provider ID. Searching does not retry a retained preparation failure; the **History** recovery boundary above still applies.
 
-When the identity remains unresolved, candidates for providers you have not cleared require an explicit choice before continuation. Strict `--unattended` never searches interactively or prompts; supply an exact ID or use `--unattended_confirm` / `--uac` to permit selection. Valid automatic resolution continues unchanged. `--input-only` remains an inspection command without this interactive review.
+When the identity remains unresolved, candidates for providers you have not cleared require an explicit choice before continuation. Prepared generations retain this match evidence across reruns and restarts. Strict `--unattended` never searches interactively or prompts; supply an exact ID or use `--unattended_confirm` / `--uac` to permit selection. Valid automatic resolution continues unchanged. `--input-only` remains an inspection command without this interactive review.
 
 ### Clear a metadata provider
 

@@ -1909,6 +1909,13 @@ func postE2ETrackerUpload(ctx context.Context, endpoint string, tracker string, 
 	writer := multipart.NewWriter(&body)
 	_ = writer.WriteField("tracker", tracker)
 	_ = writer.WriteField("name", meta.ReleaseName)
+	identity, err := json.Marshal(meta.Identity)
+	if err != nil {
+		return fmt.Errorf("e2e tracker: encode selected identity: %w", err)
+	}
+	if err := writer.WriteField("identity", string(identity)); err != nil {
+		return fmt.Errorf("e2e tracker: write selected identity: %w", err)
+	}
 	if strings.TrimSpace(meta.TorrentPath) != "" {
 		part, err := writer.CreateFormFile("torrent", filepath.Base(meta.TorrentPath))
 		if err != nil {

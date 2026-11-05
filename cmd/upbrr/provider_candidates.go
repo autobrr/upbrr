@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -153,6 +152,12 @@ func metadataCandidateEvidence(result api.ProviderSearchResult, diagnostics []ap
 	var evidence strings.Builder
 	fmt.Fprintf(&evidence, "Provider title matches: %s (%s)\n", result.Query, result.Category)
 	var candidates []api.ExternalIdentityCandidate
+	var retained []api.ExternalIdentityCandidate
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "external_identity_candidates" {
+			retained = append(retained, diagnostic.Candidates...)
+		}
+	}
 	for _, group := range result.Providers {
 		provider := group.Provider
 		fmt.Fprintf(&evidence, "\n%s — %s\n", strings.ToUpper(string(provider)), result.Category)
@@ -171,47 +176,50 @@ func metadataCandidateEvidence(result api.ProviderSearchResult, diagnostics []ap
 			}
 			fmt.Fprintln(&evidence)
 		}
-		items := slices.Clone(group.Candidates)
-		for _, diagnostic := range diagnostics {
-			if diagnostic.Code == "external_identity_candidates" {
-				items = append(items, diagnostic.Candidates...)
-			}
-		}
 		seen := make(map[int]bool)
-		count := 0
-		for _, candidate := range items {
-			category, _ := api.NormalizeCanonicalCategory(string(candidate.Category))
-			if candidate.Provider != provider || candidate.ID <= 0 || seen[candidate.ID] ||
-				category != api.CanonicalCategoryUnknown && category != result.Category {
-				continue
-			}
-			candidate.Category = result.Category
-			seen[candidate.ID] = true
-			count++
-			candidates = append(candidates, candidate)
-			fmt.Fprintf(&evidence, "%d. %s\n", len(candidates), metadataCandidateLabel(candidate))
-			if candidate.OriginalTitle != "" && candidate.OriginalTitle != candidate.Title {
-				fmt.Fprintf(&evidence, "   Original title: %s\n", candidate.OriginalTitle)
-			}
-			if overview := summarizeMetadataText(candidate.Overview, 260); overview != "" {
-				fmt.Fprintf(&evidence, "   %s\n", overview)
-			}
-			if len(candidate.Directors) > 0 {
-				fmt.Fprintf(&evidence, "   Directors: %s\n", strings.Join(candidate.Directors, ", "))
-			}
-			if len(candidate.Cast) > 0 {
-				fmt.Fprintf(&evidence, "   Cast: %s\n", strings.Join(candidate.Cast, ", "))
-			}
-			if candidate.RuntimeMinutes > 0 {
-				fmt.Fprintf(&evidence, "   Runtime: %d min", candidate.RuntimeMinutes)
-				if candidate.RuntimeKind != "" {
-					fmt.Fprintf(&evidence, " (%s)", candidate.RuntimeKind)
+		for sourceIndex, items := range [][]api.ExternalIdentityCandidate{group.Candidates, retained} {
+			count := 0
+			for _, candidate := range items {
+				category, _ := api.NormalizeCanonicalCategory(string(candidate.Category))
+				if candidate.Provider != provider || candidate.ID <= 0 || seen[candidate.ID] ||
+					category != api.CanonicalCategoryUnknown && category != result.Category {
+					continue
 				}
-				fmt.Fprintln(&evidence)
+				candidate.Category = result.Category
+				seen[candidate.ID] = true
+				if count == 0 {
+					if sourceIndex == 0 {
+						fmt.Fprintln(&evidence, "Fresh provider matches:")
+					} else {
+						fmt.Fprintln(&evidence, "Retained matches from earlier resolution:")
+					}
+				}
+				count++
+				candidates = append(candidates, candidate)
+				fmt.Fprintf(&evidence, "%d. %s\n", len(candidates), metadataCandidateLabel(candidate))
+				if candidate.OriginalTitle != "" && candidate.OriginalTitle != candidate.Title {
+					fmt.Fprintf(&evidence, "   Original title: %s\n", candidate.OriginalTitle)
+				}
+				if overview := summarizeMetadataText(candidate.Overview, 260); overview != "" {
+					fmt.Fprintf(&evidence, "   %s\n", overview)
+				}
+				if len(candidate.Directors) > 0 {
+					fmt.Fprintf(&evidence, "   Directors: %s\n", strings.Join(candidate.Directors, ", "))
+				}
+				if len(candidate.Cast) > 0 {
+					fmt.Fprintf(&evidence, "   Cast: %s\n", strings.Join(candidate.Cast, ", "))
+				}
+				if candidate.RuntimeMinutes > 0 {
+					fmt.Fprintf(&evidence, "   Runtime: %d min", candidate.RuntimeMinutes)
+					if candidate.RuntimeKind != "" {
+						fmt.Fprintf(&evidence, " (%s)", candidate.RuntimeKind)
+					}
+					fmt.Fprintln(&evidence)
+				}
 			}
-		}
-		if count == 0 && group.Status == api.MetadataEvidenceStatusComplete {
-			fmt.Fprintln(&evidence, "No matches. Try another title/year or supply an exact ID.")
+			if sourceIndex == 0 && count == 0 && group.Status == api.MetadataEvidenceStatusComplete {
+				fmt.Fprintln(&evidence, "No matches. Try another title/year or supply an exact ID.")
+			}
 		}
 	}
 	return safeTerminalText(evidence.String()), candidates

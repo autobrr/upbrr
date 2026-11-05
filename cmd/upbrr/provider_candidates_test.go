@@ -376,6 +376,62 @@ func TestCLIProviderChoiceAfterAutoPreservesSiblingResets(t *testing.T) {
 	}
 }
 
+func TestCLIProviderResetTargetsAndCategoryHints(t *testing.T) {
+	for _, field := range []string{"identity.tmdb", "release_name.category"} {
+		for _, padding := range []string{"", " "} {
+			t.Run(field+"/padding="+padding, func(t *testing.T) {
+				args, err := mergeCLIInputEditArgs([]string{"--tmdb=movie/123", "--category=TV", "example.mkv"}, []string{"--reset-input", padding + field + padding})
+				if err != nil {
+					t.Fatal(err)
+				}
+				opts, visited, paths, err := parseCLIOptions(args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request, err := buildCLIRequest(opts, visited, paths, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if field == "release_name.category" && (request.ReleaseNameOverrides.Category != nil || request.ExternalIDOverrides.TMDBID == nil || *request.ExternalIDOverrides.TMDBID != 123) {
+					t.Fatalf("category Auto was replaced by a retained TMDB hint: %+v", request)
+				}
+				choice := "--tmdb=456"
+				if field == "release_name.category" {
+					choice = "--category=TV"
+				}
+				args, err = mergeCLIInputEditArgs(args, []string{choice})
+				if err != nil {
+					t.Fatal(err)
+				}
+				opts, _, _, err = parseCLIOptions(args)
+				if err != nil || len(opts.ResetInput) != 0 {
+					t.Fatalf("explicit choice retained padded Auto request: args=%v, error=%v", args, err)
+				}
+			})
+		}
+	}
+}
+
+func TestMetadataCandidatesDistinguishEmptySearchFromRetainedMatches(t *testing.T) {
+	evidence, items := metadataCandidateEvidence(api.ProviderSearchResult{
+		Query:    "Different Title 2026",
+		Category: api.CanonicalCategoryMovie,
+		Providers: []api.ProviderCandidateResult{{
+			Provider: api.IdentityProviderTMDB,
+			Status:   api.MetadataEvidenceStatusComplete,
+			Query:    "Different Title",
+		}},
+	}, []api.PreparationDiagnostic{{Code: "external_identity_candidates", Candidates: []api.ExternalIdentityCandidate{{
+		Provider: api.IdentityProviderTMDB,
+		ID:       11,
+		Title:    "Earlier Title",
+		Category: api.CanonicalCategoryMovie,
+	}}}})
+	if len(items) != 1 || !strings.Contains(evidence, "No matches") || !strings.Contains(evidence, "Retained matches from earlier resolution") || strings.Index(evidence, "Earlier Title") < strings.Index(evidence, "Retained matches from earlier resolution") {
+		t.Fatalf("retained candidate misrepresented as fresh search result: %s, items=%+v", evidence, items)
+	}
+}
+
 func TestCLIUnattendedAmbiguousCandidatesNeverPrompt(t *testing.T) {
 	current := requiredFactsCLIResult()
 	current.Release.Diagnostics = []api.PreparationDiagnostic{{Code: "external_identity_candidates", Candidates: []api.ExternalIdentityCandidate{{

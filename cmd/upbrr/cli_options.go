@@ -1202,7 +1202,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 		if err != nil {
 			return api.Request{}, err
 		}
-		if category != "" && req.ReleaseNameOverrides.Category == nil {
+		if category != "" && req.ReleaseNameOverrides.Category == nil && !opts.resetsCategory() {
 			req.ReleaseNameOverrides.Category = stringPtr(category)
 		}
 	}
@@ -1323,7 +1323,7 @@ func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
 		string(api.CorrectionFieldReleaseNameCategory): "category",
 	}
 	for _, field := range edits.ResetInput {
-		if flag := identityFlags[field]; flag != "" {
+		if flag := identityFlags[strings.TrimSpace(field)]; flag != "" {
 			changed[flag] = true
 		}
 	}
@@ -1349,7 +1349,7 @@ func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
 			if !inline {
 				field = flags[i]
 			}
-			if changed[identityFlags[field]] {
+			if changed[identityFlags[strings.TrimSpace(field)]] {
 				continue
 			}
 		}
@@ -1528,7 +1528,7 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		if err != nil {
 			return api.ReleaseCorrectionValues{}, err
 		}
-		if category != "" && releaseName.Category == nil {
+		if category != "" && releaseName.Category == nil && !opts.resetsCategory() {
 			releaseName.Category = stringPtr(category)
 		}
 	}
@@ -1537,6 +1537,13 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		ReleaseName: releaseName,
 		Metadata:    buildMetadataOverrides(opts, visited),
 	}, nil
+}
+
+// resetsCategory keeps a provider URL hint from replacing an explicit Auto request.
+func (o cliOptions) resetsCategory() bool {
+	return slices.ContainsFunc(o.ResetInput, func(field string) bool {
+		return strings.TrimSpace(field) == string(api.CorrectionFieldReleaseNameCategory)
+	})
 }
 
 func parseCLIInputFieldRef(raw string) (api.CorrectionFieldRef, error) {
