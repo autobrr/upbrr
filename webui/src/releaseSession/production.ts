@@ -43,6 +43,7 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
   activeInput: {
     get: (signal) => activeInputClient.get(signal),
     open: (request, signal) => activeInputClient.open(request, signal),
+    cancelOpen: (request, signal) => activeInputClient.cancelOpen(request, signal),
     release: (request, signal) => activeInputClient.release(request, signal),
     recover: (request, signal) => activeInputClient.recover(request, signal),
     reconcile: (request, signal) => activeInputClient.reconcile(request, signal),

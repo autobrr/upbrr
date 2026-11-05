@@ -70,7 +70,7 @@ export type ReleaseRoute =
   | "upload";
 
 export type RouteAccess = Readonly<{ available: boolean; reason: string; reasonCode?: string }>;
-export type FacetStatus = "idle" | "running" | "ready" | "error";
+export type FacetStatus = "idle" | "running" | "ready" | "error" | "cancelled";
 
 /** Lifecycle of one correlation-scoped canonical preparation attempt. */
 export type PreparationStatus =
@@ -206,7 +206,7 @@ export type InputFacet = Readonly<{
   reviewPlaylists(): void;
   confirmPlaylists(captureHDRMetadata?: boolean): Promise<boolean>;
   cancelPlaylistSelection(): void;
-  /** Aborts local preparation/workflow requests; this does not close the durable active input. */
+  /** Requests operation cancellation and keeps the selected input while awaiting terminal confirmation. */
   cancelPreparation(): void;
   prepareSource(sourcePath: string, intent: PreparationIntent): Promise<boolean>;
   /** Reports an accepted open or refresh, including a pause for correction or playlist review. */
@@ -478,6 +478,10 @@ export type WorkflowFacet = Readonly<{
     error: string;
     failure: OperationFailure | null;
   }>;
+  /** Shared cancellation state; confirmation waits for backend terminal readback. */
+  cancellation: Readonly<{ available: boolean; pending: boolean; retry: boolean; message: string }>;
+  /** Stops this command's continuation without closing its selected input or discarding results. */
+  cancel(): Promise<boolean>;
   reload(): Promise<boolean>;
   begin(input: PrepareInput): Promise<boolean>;
   project(

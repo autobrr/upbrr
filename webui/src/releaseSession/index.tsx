@@ -201,6 +201,36 @@ const questionnaireSnapshotKey = (state: SessionState) =>
   ]);
 
 const workflowStorageKey = "upbrr.activeReleaseWorkflow";
+const cancellationStorageKey = "upbrr.cancellingReleaseOperation";
+
+const storedCancellation = () => {
+  try {
+    const value: unknown = JSON.parse(
+      window.sessionStorage.getItem(cancellationStorageKey) || "null",
+    );
+    if (
+      value &&
+      typeof value === "object" &&
+      "workflowID" in value &&
+      "operationID" in value &&
+      typeof value.workflowID === "string" &&
+      typeof value.operationID === "string"
+    )
+      return value;
+  } catch {
+    // Cancellation still works when session storage is unavailable.
+  }
+  return null;
+};
+
+const storeCancellation = (operation: { workflowID: string; operationID: string } | null) => {
+  try {
+    if (operation) window.sessionStorage.setItem(cancellationStorageKey, JSON.stringify(operation));
+    else window.sessionStorage.removeItem(cancellationStorageKey);
+  } catch {
+    // Reload recovery is advisory; the backend remains authoritative.
+  }
+};
 
 const timestampedCommandID = (prefix: string, revision?: number) =>
   `${prefix}-${Date.now().toString(36)}${revision === undefined ? "" : `-${revision.toString(36)}`}`;
@@ -272,6 +302,30 @@ export function ReleaseSessionProvider({
   );
   const questionnaireController = useRef<AbortController | null>(null);
   const controllers = useRef<Partial<Record<ControllerKey, AbortController>>>({});
+  const [cancellationView, setCancellationView] = useState({
+    pending: false,
+    retry: false,
+    message: "",
+  });
+  const observedOperations = useRef(
+    new WeakMap<
+      AbortSignal,
+      {
+        slot: ActiveSlotAuthority;
+        workflowID: string;
+        operation: WorkflowOperationStatus;
+      }
+    >(),
+  );
+  const cancellation = useRef<{
+    controller: AbortController;
+    promise: Promise<boolean>;
+    resolve: (confirmed: boolean) => void;
+    operationID: string;
+    requestFailed: boolean;
+    opening: Promise<void> | null;
+  } | null>(null);
+  const openingRequest = useRef<{ controller: AbortController; commandID: string } | null>(null);
   const candidateAttempt = useRef<{
     controller: AbortController;
     sourcePath: string;
@@ -493,8 +547,113 @@ export function ReleaseSessionProvider({
   const acceptWorkflowCurrent = (current: ReleaseWorkflowCurrent) =>
     publishWorkflowCurrent(current, "ready");
 
+  const finishCancellation = (signal: AbortSignal, confirmed: boolean, message: string) => {
+    const request = cancellation.current;
+    if (request?.controller.signal !== signal) return;
+    cancellation.current = null;
+    if (confirmed) storeCancellation(null);
+    setCancellationView({ pending: false, retry: false, message });
+    request.resolve(confirmed);
+  };
+
+  const requestCancellation = (controller: AbortController) => {
+    if (cancellation.current) return cancellation.current.promise;
+    let resolve!: (confirmed: boolean) => void;
+    const promise = new Promise<boolean>((complete) => {
+      resolve = complete;
+    });
+    cancellation.current = {
+      controller,
+      promise,
+      resolve,
+      operationID: "",
+      requestFailed: false,
+      opening: null,
+    };
+    setCancellationView({ pending: true, retry: false, message: "" });
+    const observed = observedOperations.current.get(controller.signal);
+    if (
+      observed &&
+      activeSlotMatches(observed.slot) &&
+      isActiveWorkflowOperation(observed.operation)
+    ) {
+      sendCancellation(observed.workflowID, observed.operation);
+    } else if (openingRequest.current?.controller === controller) {
+      cancelOpeningRequest();
+    }
+    return promise;
+  };
+
+  const cancelOpeningRequest = () => {
+    const request = cancellation.current;
+    const opening = openingRequest.current;
+    if (!request || !opening || request.controller !== opening.controller) return;
+    request.requestFailed = false;
+    setCancellationView({ pending: true, retry: false, message: "" });
+    request.opening = activePorts.activeInput
+      .cancelOpen({ idempotencyKey: opening.commandID }, request.controller.signal)
+      .then((snapshot) => {
+        if (cancellation.current !== request || openingRequest.current !== opening) return;
+        const preparation = stateRef.current.preparation;
+        const active = isActiveWorkflowOperation(snapshot.current?.operation);
+        applyActiveInputSnapshot(
+          snapshot,
+          active ? "running" : "ready",
+          stateRef.current.inputEditRevision,
+          true,
+        );
+        if (!active)
+          dispatch({ type: "preparation_cancelled", correlationID: preparation.correlationID });
+        finishCancellation(
+          request.controller.signal,
+          true,
+          active
+            ? "Source verification stopped. Another operation is active; review its progress before retrying."
+            : "Work canceled. Selected input and retained results are available for review or retry.",
+        );
+        request.controller.abort();
+      })
+      .catch(() => {
+        if (cancellation.current !== request || openingRequest.current !== opening) return;
+        request.requestFailed = true;
+        setCancellationView({
+          pending: true,
+          retry: true,
+          message:
+            "Cancellation request could not be confirmed. Progress remains live; retry cancellation.",
+        });
+      });
+  };
+
+  const sendCancellation = (workflowID: string, operation: WorkflowOperationStatus) => {
+    const request = cancellation.current;
+    if (!request || request.operationID === operation.id) return;
+    request.operationID = operation.id;
+    storeCancellation({ workflowID, operationID: operation.id });
+    request.requestFailed = false;
+    setCancellationView({ pending: true, retry: false, message: "" });
+    // The request is advisory; progress and terminal confirmation keep polling independently.
+    void activePorts.workflow
+      .cancelOperation(workflowID, operation.id, request.controller.signal)
+      .catch(() => {
+        if (cancellation.current !== request) return;
+        request.requestFailed = true;
+        setCancellationView({
+          pending: true,
+          retry: true,
+          message:
+            "Cancellation request could not be confirmed. Progress remains live; retry cancellation.",
+        });
+      });
+  };
+
   const releaseWorkflowController = (controller: AbortController) => {
     if (controllers.current.workflow === controller) delete controllers.current.workflow;
+    finishCancellation(
+      controller.signal,
+      false,
+      "Cancellation could not be confirmed. Work may still be running; reload to review it or retry Cancel.",
+    );
   };
 
   const awaitWorkflowCommand = async (
@@ -512,9 +671,31 @@ export function ReleaseSessionProvider({
     }
     publishWorkflowCurrent(initial, "running");
     let operation = initial.operation;
-    if (!isActiveWorkflowOperation(operation)) return initial;
+    if (operation)
+      observedOperations.current.set(signal, { slot: expectedSlot, workflowID, operation });
+    const retainedCancellation = storedCancellation();
+    if (
+      !cancellation.current &&
+      retainedCancellation?.workflowID === workflowID &&
+      retainedCancellation.operationID === operation?.id
+    ) {
+      const controller = Object.values(controllers.current).find(
+        (value) => value?.signal === signal,
+      );
+      if (controller) void requestCancellation(controller);
+    }
+    if (!isActiveWorkflowOperation(operation) && cancellation.current?.controller.signal !== signal)
+      return initial;
 
     while (operation && isActiveWorkflowOperation(operation)) {
+      const request = cancellation.current;
+      if (request?.controller.signal === signal) {
+        sendCancellation(workflowID, operation);
+
+        if (signal.aborted || !activeSlotMatches(expectedSlot)) {
+          throw new DOMException("Active input changed.", "AbortError");
+        }
+      }
       await waitForWorkflowPoll(signal);
       if (signal.aborted || !activeSlotMatches(expectedSlot)) {
         throw new DOMException("Active input changed.", "AbortError");
@@ -540,6 +721,35 @@ export function ReleaseSessionProvider({
     }
     publishWorkflowCurrent(current, "running");
     const terminalOperation = operation as WorkflowOperationStatus | undefined;
+    if (cancellation.current?.controller.signal === signal) {
+      const anotherOperationActive =
+        current.operation?.id !== terminalOperation?.id &&
+        isActiveWorkflowOperation(current.operation);
+      applyActiveInputSnapshot(
+        activeSnapshotWithCurrent(current),
+        anotherOperationActive ? "running" : "ready",
+        stateRef.current.inputEditRevision,
+        true,
+      );
+      if (terminalOperation?.status === "canceled" && !anotherOperationActive) {
+        dispatch({
+          type: "preparation_cancelled",
+          correlationID: stateRef.current.preparation.correlationID,
+        });
+      }
+      const controller = cancellation.current.controller;
+      finishCancellation(
+        signal,
+        true,
+        anotherOperationActive
+          ? "The requested operation ended. Another operation is active; review its progress before retrying."
+          : terminalOperation?.status === "canceled"
+            ? "Work canceled. Selected input and retained results are available for review or retry."
+            : "Work finished. Review retained results and any recovery actions before retrying.",
+      );
+      controller.abort();
+      throw new DOMException("Workflow continuation canceled.", "AbortError");
+    }
     if (terminalOperation && isFailedWorkflowOperation(terminalOperation)) {
       const failure = terminalOperation.failures?.[0]?.failure;
       if (failure) {
@@ -577,8 +787,11 @@ export function ReleaseSessionProvider({
     workflowID: string,
     operation: WorkflowOperationStatus,
   ): Promise<boolean> => {
+    if (cancellation.current?.controller === attempt.controller)
+      return cancellation.current.promise;
     if (attempt.cancellation) return attempt.cancellation;
     attempt.cancelRequested = true;
+    setCancellationView({ pending: true, retry: false, message: "" });
     attempt.cancellation = (async () => {
       abortController("candidateCancellation");
       const controller = new AbortController();
@@ -634,6 +847,26 @@ export function ReleaseSessionProvider({
           delete controllers.current.candidateCancellation;
       }
     })();
+    void attempt.cancellation.then((confirmed) => {
+      if (
+        (cancellation.current && cancellation.current.controller !== attempt.controller) ||
+        (candidateAttempt.current &&
+          candidateAttempt.current !== attempt &&
+          candidateAttempt.current.cancelRequested)
+      )
+        return;
+      const current = stateRef.current.workflowView.current;
+      const ownsView =
+        current?.workflow.id === workflowID && current.operation?.id === operation.id;
+      setCancellationView({
+        pending: false,
+        retry: false,
+        message:
+          confirmed && ownsView
+            ? "Work canceled. Selected input and retained results are available for review or retry."
+            : "Inspection cancellation could not be confirmed. Refresh the workflow to review its result before retrying.",
+      });
+    });
     return attempt.cancellation;
   };
 
@@ -669,6 +902,9 @@ export function ReleaseSessionProvider({
         throw new DOMException("Active input changed.", "AbortError");
       }
       const expectedSlot = activeSlotAuthority();
+      if (cancellation.current?.controller.signal === signal) {
+        await awaitWorkflowCommand(current, signal, expectedSlot);
+      }
       await onOperation?.(null);
       if (signal.aborted) throw new DOMException("Preparation canceled.", "AbortError");
       const continued = await activePorts.workflow.continue(
@@ -859,6 +1095,11 @@ export function ReleaseSessionProvider({
       return false;
     } finally {
       if (controllers.current.activeInput === controller) delete controllers.current.activeInput;
+      finishCancellation(
+        controller.signal,
+        false,
+        "Cancellation could not be confirmed. Work may still be running; reload to review it or retry Cancel.",
+      );
     }
   };
 
@@ -883,6 +1124,7 @@ export function ReleaseSessionProvider({
     dispatch({ type: "active_input_loading" });
     const commandID =
       attempt?.correlationID || timestampedCommandID("workflow", state.commandRevision);
+    openingRequest.current = { controller, commandID };
     const expectedRevision = activeAuthority.current.revision;
     lastWorkflowError.current = null;
     try {
@@ -911,6 +1153,7 @@ export function ReleaseSessionProvider({
         },
         controller.signal,
       );
+      if (openingRequest.current?.controller === controller) openingRequest.current = null;
       if (
         controller.signal.aborted ||
         !applyActiveInputSnapshot(
@@ -948,6 +1191,7 @@ export function ReleaseSessionProvider({
       if (controller.signal.aborted) return null;
       return prepared;
     } catch (error) {
+      if (cancellation.current?.controller === controller) await cancellation.current.opening;
       releaseWorkflowController(controller);
       lastWorkflowError.current = error;
       if (!controller.signal.aborted) {
@@ -958,6 +1202,7 @@ export function ReleaseSessionProvider({
       }
       return null;
     } finally {
+      if (openingRequest.current?.controller === controller) openingRequest.current = null;
       releaseWorkflowController(controller);
     }
   };
@@ -1070,41 +1315,56 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const cancelBackendWorkflow = async (reason: string): Promise<boolean> => {
-    const workflowID = workflowView.current?.workflow.id || activeAuthority.current.workflowID;
-    if (!workflowID) return false;
-    const operation = workflowView.current?.operation;
-    abortController("workflow");
-    const controller = new AbortController();
-    controllers.current.workflow = controller;
-    dispatch({ type: "active_input_loading" });
-    const commandID = timestampedCommandID("workflow-cancel");
-    try {
-      let current: ReleaseWorkflowCurrent;
-      const cancelingOperation = isActiveWorkflowOperation(operation);
-      if (cancelingOperation) {
-        await activePorts.workflow.cancelOperation(workflowID, operation.id, controller.signal);
-        current = await activePorts.workflow.current(workflowID, controller.signal);
-      } else {
-        current = await activePorts.workflow.cancel(
-          workflowID,
-          reason,
-          commandID,
-          controller.signal,
-        );
-      }
-      releaseWorkflowController(controller);
-      if (controller.signal.aborted) return false;
-      acceptWorkflowCurrent(current);
-      if (!cancelingOperation) storeWorkflowID("");
-      return true;
-    } catch (error) {
-      releaseWorkflowController(controller);
-      if (!controller.signal.aborted) failBackendWorkflow(error);
-      return false;
-    } finally {
-      releaseWorkflowController(controller);
+  const cancelBackendWorkflow = (): Promise<boolean> => {
+    const candidate = candidateAttempt.current;
+    if (candidate?.cancelRequested && candidate.controller === controllers.current.preparation) {
+      return candidate.cancellation || Promise.resolve(false);
     }
+    const pending = cancellation.current;
+    if (pending) {
+      if (pending.requestFailed) {
+        const observed = observedOperations.current.get(pending.controller.signal);
+        if (observed && activeSlotMatches(observed.slot)) {
+          pending.operationID = "";
+          sendCancellation(observed.workflowID, observed.operation);
+        } else if (openingRequest.current?.controller === pending.controller) {
+          cancelOpeningRequest();
+        }
+      }
+      return pending.promise;
+    }
+    const controller =
+      controllers.current.workflow ||
+      controllers.current.preparation ||
+      (controllers.current.activeInput &&
+      observedOperations.current.has(controllers.current.activeInput.signal)
+        ? controllers.current.activeInput
+        : undefined);
+    if (controller) return requestCancellation(controller);
+    if (
+      (["screenshots", "menuImages", "uploadedImages", "descriptions"] as const).some(
+        (facet) => controllers.current[facet],
+      )
+    ) {
+      abortWorkflowFacets("Work canceled.", "cancelled");
+      setCancellationView({
+        pending: false,
+        retry: false,
+        message: "Work canceled. Retained results are available for review or retry.",
+      });
+      return Promise.resolve(true);
+    }
+    const current = stateRef.current.workflowView.current;
+    if (!current || !isActiveWorkflowOperation(current.operation)) return Promise.resolve(false);
+    const observer = new AbortController();
+    controllers.current.workflow = observer;
+    const confirmation = requestCancellation(observer);
+    void awaitWorkflowCommand(current, observer.signal)
+      .catch((error: unknown) => {
+        if (!observer.signal.aborted) failBackendWorkflow(error);
+      })
+      .finally(() => releaseWorkflowController(observer));
+    return confirmation;
   };
 
   const checkBackendDuplicates = async (
@@ -1291,7 +1551,20 @@ export function ReleaseSessionProvider({
       return false;
     } finally {
       releaseWorkflowController(controller);
-      if (questionnaireController.current === controller) questionnaireController.current = null;
+      if (questionnaireController.current === controller) {
+        questionnaireController.current = null;
+        if (controller.signal.aborted) {
+          setQuestionnaireRefresh((refresh) =>
+            refresh?.key === questionnaireKey && refresh.status === "running"
+              ? {
+                  ...refresh,
+                  status: "error",
+                  error: "Tracker loading canceled. Retry when ready.",
+                }
+              : refresh,
+          );
+        }
+      }
     }
   };
 
@@ -1329,7 +1602,10 @@ export function ReleaseSessionProvider({
     controllers.current = {};
   };
 
-  const abortWorkflowFacets = () => {
+  const abortWorkflowFacets = (
+    reason = "Preparation required.",
+    status: "idle" | "cancelled" = "idle",
+  ) => {
     (["screenshots", "menuImages", "uploadedImages", "descriptions"] as const).forEach((facet) => {
       if (!controllers.current[facet]) return;
       controllers.current[facet]?.abort();
@@ -1339,7 +1615,8 @@ export function ReleaseSessionProvider({
         facet,
         sessionRevision: stateRef.current.sessionRevision,
         revision: stateRef.current[facet].revision,
-        reason: "Preparation required.",
+        reason,
+        status,
       });
     });
   };
@@ -1347,11 +1624,7 @@ export function ReleaseSessionProvider({
   useEffect(() => abortAll, []);
 
   const cancelPreparation = () => {
-    const preparation = stateRef.current.preparation;
-    if (preparation.status !== "running") return;
-    abortController("preparation");
-    abortController("workflow");
-    dispatch({ type: "preparation_cancelled", correlationID: preparation.correlationID });
+    if (stateRef.current.preparation.status === "running") void cancelBackendWorkflow();
   };
 
   const releaseActiveInput = async (): Promise<boolean> => {
@@ -1431,7 +1704,8 @@ export function ReleaseSessionProvider({
   };
 
   const selectSource = (value: string) => {
-    cancelPreparation();
+    abortController("preparation");
+    abortController("workflow");
     dispatch({ type: "draft_changed", value });
   };
 
@@ -1658,6 +1932,11 @@ export function ReleaseSessionProvider({
       return false;
     } finally {
       if (controllers.current.preparation === controller) delete controllers.current.preparation;
+      finishCancellation(
+        controller.signal,
+        false,
+        "Cancellation could not be confirmed. Work may still be running; reload to review it or retry Cancel.",
+      );
     }
   };
 
@@ -1818,6 +2097,18 @@ export function ReleaseSessionProvider({
       );
     } finally {
       if (attempt.cancellationTimeout !== null) window.clearTimeout(attempt.cancellationTimeout);
+      if (
+        attempt.cancelRequested &&
+        !attempt.cancellation &&
+        cancellation.current?.controller !== controller
+      ) {
+        setCancellationView({
+          pending: false,
+          retry: false,
+          message:
+            "Inspection cancellation ended. Refresh the workflow to confirm its status before retrying.",
+        });
+      }
       if (candidateAttempt.current === attempt) candidateAttempt.current = null;
     }
   };
@@ -2844,90 +3135,20 @@ export function ReleaseSessionProvider({
       },
     );
 
-  const cancelHDRAnalysis = async (): Promise<boolean> => {
-    const current = stateRef.current.workflowView.current;
-    const operation = current?.operation;
-    if (
-      !current ||
-      operation?.operation !== "analyze_hdr" ||
-      !isActiveWorkflowOperation(operation)
-    ) {
-      return false;
-    }
-    abortController("workflow");
+  const cancelHDRAnalysis = (): Promise<boolean> => {
+    const operation = stateRef.current.workflowView.current?.operation;
+    if (operation?.operation !== "analyze_hdr" || !isActiveWorkflowOperation(operation))
+      return Promise.resolve(false);
     setHDRCommandFailure(null);
-    const controller = new AbortController();
-    controllers.current.workflow = controller;
-    dispatch({ type: "active_input_loading" });
-    const commandID = `hdr-analysis-cancel-${operation.id}`;
-    try {
-      const canceled = await activePorts.workflow.cancelOperation(
-        current.workflow.id,
-        operation.id,
-        controller.signal,
-      );
-      await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
-      const latest = await activePorts.workflow.current(current.workflow.id, controller.signal);
-      if (controller.signal.aborted) return false;
-      acceptWorkflowCurrent(latest);
-      return true;
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setHDRCommandFailure({
-          ...backendCommandAuthority(commandID, current),
-          message:
-            operationFailureFromError(error)?.Message ||
-            "HDR analysis could not be canceled. Retry the request.",
-        });
-        failBackendWorkflow(error);
-      }
-      return false;
-    } finally {
-      releaseWorkflowController(controller);
-    }
+    return cancelBackendWorkflow();
   };
 
-  const cancelAudioAnalysis = async (): Promise<boolean> => {
-    const current = stateRef.current.workflowView.current;
-    const operation = current?.operation;
-    if (
-      !current ||
-      operation?.operation !== "analyze_audio" ||
-      !isActiveWorkflowOperation(operation)
-    ) {
-      return false;
-    }
-    abortController("workflow");
+  const cancelAudioAnalysis = (): Promise<boolean> => {
+    const operation = stateRef.current.workflowView.current?.operation;
+    if (operation?.operation !== "analyze_audio" || !isActiveWorkflowOperation(operation))
+      return Promise.resolve(false);
     setAudioCommandFailure(null);
-    const controller = new AbortController();
-    controllers.current.workflow = controller;
-    dispatch({ type: "active_input_loading" });
-    const commandID = `audio-analysis-cancel-${operation.id}`;
-    try {
-      const canceled = await activePorts.workflow.cancelOperation(
-        current.workflow.id,
-        operation.id,
-        controller.signal,
-      );
-      await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
-      const latest = await activePorts.workflow.current(current.workflow.id, controller.signal);
-      if (controller.signal.aborted) return false;
-      acceptWorkflowCurrent(latest);
-      return true;
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setAudioCommandFailure({
-          ...backendCommandAuthority(commandID, current),
-          message:
-            operationFailureFromError(error)?.Message ||
-            "Audio analysis could not be canceled. Retry the request.",
-        });
-        failBackendWorkflow(error);
-      }
-      return false;
-    } finally {
-      releaseWorkflowController(controller);
-    }
+    return cancelBackendWorkflow();
   };
 
   const disableAudioAnalysis = async (): Promise<boolean> => {
@@ -2991,6 +3212,17 @@ export function ReleaseSessionProvider({
   const session: ReleaseSession = {
     workflow: {
       view: workflowView,
+      cancellation: {
+        available:
+          Boolean(controllers.current.workflow || controllers.current.preparation) ||
+          state.preparation.status === "running" ||
+          [state.screenshots, state.menuImages, state.uploadedImages, state.descriptions].some(
+            (facet) => facet.status === "running",
+          ) ||
+          isActiveWorkflowOperation(workflowView.current?.operation),
+        ...cancellationView,
+      },
+      cancel: cancelBackendWorkflow,
       reload: reloadBackendWorkflow,
       begin: async (input) => Boolean(await startBackendWorkflow(input)),
       project: (trackers, instructions = {}) =>
@@ -3273,6 +3505,7 @@ export function ReleaseSessionProvider({
       },
       cancelPreparation: () => {
         const attempt = candidateAttempt.current;
+        if (attempt && cancellation.current?.controller === attempt.controller) return;
         if (!attempt || attempt.controller !== controllers.current.preparation) {
           cancelPreparation();
         } else if (attempt.operation) {
@@ -3283,6 +3516,7 @@ export function ReleaseSessionProvider({
           );
         } else if (!attempt.cancelRequested) {
           attempt.cancelRequested = true;
+          setCancellationView({ pending: true, retry: false, message: "" });
           // Acceptance and confirmation share one cancellation deadline.
           attempt.cancellationTimeout = window.setTimeout(() => {
             if (attempt.cancellationController) {
@@ -3475,7 +3709,7 @@ export function ReleaseSessionProvider({
       },
       cancel: async () => {
         if (!workflowView.current) return false;
-        return cancelBackendWorkflow("duplicate check canceled");
+        return cancelBackendWorkflow();
       },
       setIgnored: (tracker, ignored) => {
         const normalizedTracker = tracker.trim().toUpperCase();
@@ -3752,6 +3986,9 @@ export function ReleaseSessionProvider({
           const resources = [];
           for (const file of files) {
             resources.push(await activePorts.workflow.stageMedia(current, file, signal));
+            if (cancellation.current?.controller.signal === signal) {
+              await awaitWorkflowCommand(current, signal);
+            }
           }
           return activePorts.workflow.attachMedia(current, resources, commandID, signal);
         }),
@@ -3773,23 +4010,7 @@ export function ReleaseSessionProvider({
           ),
         ),
       cancelCapture: () => {
-        const controller = controllers.current.workflow;
-        if (!controller) return;
-        controller.abort();
-        delete controllers.current.workflow;
-        if (workflowView.current?.operation?.id) {
-          void activePorts.workflow.cancelOperation(
-            workflowView.current.workflow.id,
-            workflowView.current.operation.id,
-            new AbortController().signal,
-          );
-        }
-        dispatch({
-          type: "workflow_canceled",
-          facet: "menuImages",
-          sessionRevision: state.sessionRevision,
-          revision: state.menuImages.revision,
-        });
+        void cancelBackendWorkflow();
       },
       remove: (artifactID) => removeMediaArtifacts([artifactID]),
     },
@@ -3889,7 +4110,7 @@ export function ReleaseSessionProvider({
       },
       cancel: async () => {
         if (!workflowView.current) return false;
-        return cancelBackendWorkflow("upload canceled");
+        return cancelBackendWorkflow();
       },
       retry: async () => {
         if (!mutationsAllowed || questionnaireDirty) return false;

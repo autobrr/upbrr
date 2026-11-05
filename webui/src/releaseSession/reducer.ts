@@ -292,6 +292,8 @@ export type SessionAction =
       sessionRevision: number;
       revision: number;
       reason?: string;
+      /** Explicit cancellation stays settled until a deliberate retry. */
+      status?: "idle" | "cancelled";
     }>
   | Readonly<{
       type: "screenshots_loaded";
@@ -1792,7 +1794,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         [action.facet]: {
           ...state[action.facet],
           revision: state[action.facet].revision + 1,
-          status: "idle",
+          status: action.status ?? "idle",
           staleReason: action.reason || "Operation canceled.",
           error: "",
         },
