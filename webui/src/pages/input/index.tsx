@@ -1423,6 +1423,24 @@ export default function InputPage(props: Props) {
             </div>
           </div>
         ) : null}
+        {view.release?.Episode?.Pack && view.release.Episode.Coverage ? (
+          <div className="rounded-2xl border border-foreground/10 bg-card/80 p-4">
+            <p className={pageStyle.label}>Pack coverage</p>
+            <p className={pageStyle.value}>{view.release.Episode.Coverage.Part || "Season pack"}</p>
+            <p className="text-muted-foreground">
+              {view.release.Episode.Coverage.Episodes?.length
+                ? `Known episodes: ${view.release.Episode.Coverage.Episodes.join(", ")}. `
+                : "Episode membership unknown. "}
+              {view.release.Episode.Coverage.Status === "contradictory"
+                ? "Conflicting source evidence needs review."
+                : view.release.Episode.Coverage.Status === "partial"
+                  ? "Some included episodes remain unidentified."
+                  : view.release.Episode.Coverage.CompleteSeason
+                    ? "Source is marked as a complete season."
+                    : "Season completeness is unverified."}
+            </p>
+          </div>
+        ) : null}
 
         {hasPreview && showExternalIDInputUI ? (
           <ProviderCandidates

@@ -235,6 +235,7 @@ type State struct {
 	SeasonInt                            int
 	EpisodeInt                           int
 	MultipleEpisodes                     bool
+	EpisodeCoverage                      api.EpisodeCoverage
 	SeasonStr                            string
 	EpisodeStr                           string
 	TVDBAiredDate                        string

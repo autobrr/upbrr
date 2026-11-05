@@ -454,7 +454,13 @@ func applyReleaseNameElementPolicy(
 
 func applyReleaseNamePresentation(subject api.UploadSubject, requestedName *string) api.UploadSubject {
 	presentation := subject.NamePresentation
-	if requestedName != nil || presentation.Version != api.ReleaseNamePresentationVersionV1 {
+	if requestedName != nil {
+		return subject
+	}
+	subject.EpisodeCoverage.Part = subject.EpisodeCoverage.NamingPart(
+		presentation.Version == api.ReleaseNamePresentationVersionV1 && (presentation.OmitSeasonEpisode || presentation.UseDailyDate),
+	)
+	if presentation.Version != api.ReleaseNamePresentationVersionV1 {
 		return subject
 	}
 	if presentation.OmitYear {

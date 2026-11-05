@@ -558,12 +558,21 @@ export type EditionDisplayPart = Readonly<{
 
 export type EncodeSettingsStatus = string;
 
+export type EpisodeCoverage = Readonly<{
+  CompleteSeason: boolean;
+  Episodes: readonly number[];
+  Part: string;
+  SeasonKnown: boolean;
+  Status: MetadataEvidenceStatus;
+}>;
+
 export type EpisodeFacts = Readonly<{
   AirDays: readonly string[];
   AirTime: string;
   AirTimezone: string;
   AirTimezoneSource: string;
   AiredDate: string;
+  Coverage: EpisodeCoverage;
   DailyDate: string;
   DateMatched: boolean;
   Episode: number;
@@ -2836,6 +2845,7 @@ export type TrackerDuplicateTarget = Readonly<{
   category?: string;
   comparisons?: readonly DupeComparisonEvidence[];
   container?: string;
+  coverage: EpisodeCoverage;
   date?: string;
   edition?: string;
   episode?: number;

@@ -116,6 +116,7 @@ type DuplicateSubject struct {
 	VideoEncode          string
 	VideoCodec           string
 	HasEncodeSettings    bool
+	EpisodeCoverage      EpisodeCoverage
 	SeasonInt            int
 	EpisodeInt           int
 	SeasonStr            string
@@ -476,6 +477,7 @@ type UploadSubject struct {
 	SeasonInt                   int
 	EpisodeInt                  int
 	MultipleEpisodes            bool
+	EpisodeCoverage             EpisodeCoverage
 	SeasonStr                   string
 	EpisodeStr                  string
 	TVDBAiredDate               string

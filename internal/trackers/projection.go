@@ -671,6 +671,7 @@ func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 		Episode:     subject.EpisodeInt,
 		Date:        strings.TrimSpace(subject.DailyEpisodeDate),
 		Pack:        subject.TVPack,
+		Coverage:    subject.EpisodeCoverage,
 		SizeBytes:   subject.SourceSize,
 		FileNames:   append([]string(nil), subject.FileList...),
 

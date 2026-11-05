@@ -32,6 +32,9 @@ func resolveName(meta api.UploadSubject) string {
 		if meta.SeasonInt > 0 {
 			name += fmt.Sprintf(" - Series %d", meta.SeasonInt)
 		}
+		if meta.EpisodeCoverage.Part != "" {
+			name += " " + meta.EpisodeCoverage.Part
+		}
 		if year > 0 {
 			name += fmt.Sprintf(" (%d)", year)
 		}

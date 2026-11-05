@@ -491,3 +491,34 @@ func TestExplicitSpecialEpisodeZeroDoesNotUseFallbacks(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractDiscSegmentsDoNotImplyEpisodePacks(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, folder, disc string
+		files              []string
+		pack               bool
+		season, episode    int
+	}{
+		{"movie DVD", "VIDEO_TS", "DVD", []string{"VTS_01_1.VOB", "VTS_01_2.VOB"}, false, 0, 0},
+		{"explicit TV season disc", "Example.Show.S01", "DVD", []string{"VTS_01_1.VOB", "VTS_01_2.VOB"}, true, 1, 0},
+		{"explicit TV episode disc", "Example.Show.S01E03", "DVD", []string{"VTS_01_1.VOB", "VTS_01_2.VOB"}, false, 1, 3},
+		{"non-disc episodes", "Example.Show", "", []string{"Example.S01E01.mkv", "Example.S01E02.mkv"}, true, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), tc.folder)
+			if err := os.Mkdir(source, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range tc.files {
+				if err := os.WriteFile(filepath.Join(source, name), []byte("synthetic"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := Extract(source, preparationstate.State{DiscType: tc.disc})
+			if got.TVPack != tc.pack || got.Season != tc.season || got.Episode != tc.episode {
+				t.Fatalf("got=%+v", got)
+			}
+		})
+	}
+}

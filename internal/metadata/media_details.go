@@ -30,6 +30,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/progress"
+	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -338,6 +339,11 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	// clears win over derived evidence and the final name cannot diverge from
 	// the facts every downstream projection consumes.
 	applyReleaseNameValueOverrides(&meta)
+	if meta.TVPack {
+		seasonKnown := meta.SeasonInt > 0 || meta.HasExplicitSeasonZero()
+		meta.EpisodeCoverage = seasonep.Coverage(meta.SeasonInt, seasonKnown, meta.SourcePath, meta.PackageInventory.Files, meta.PackageInventory.Status)
+		meta.EpisodeCoverage.SeasonKnown = seasonKnown
+	}
 	// Scene detection can supply the service (from the NFO), which WEB release
 	// names embed, so rebuild once more to fold in scene-derived metadata and
 	// the effective instruction values.
