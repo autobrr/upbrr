@@ -10098,6 +10098,12 @@
               }
             ]
           },
+          "IdentityCandidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdentityCandidate"
+            }
+          },
           "ImportedScreenshotEvidence": {
             "anyOf": [
               {

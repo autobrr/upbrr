@@ -28,6 +28,7 @@ const cliWorkflowOwnerID = "cli"
 // cliReleaseWorkflowCore is the in-process application seam used by the CLI.
 // It deliberately excludes HTTP and every legacy operation-specific entrypoint.
 type cliReleaseWorkflowCore interface {
+	SearchProviderCandidates(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
 	GetActiveInput(context.Context, string) (api.ActiveInputSnapshot, error)
 	GetActiveInputForSource(context.Context, string, string) (api.ActiveInputSnapshot, error)
 	ReleaseActiveInput(context.Context, string, api.ReleaseActiveInputRequest) (api.ActiveInputSnapshot, error)
@@ -719,19 +720,25 @@ func runCLIWorkflowInteractive(
 		}
 		if currentOpts.interactionMode() == api.InteractionModeUnattended {
 			fmt.Fprint(streams.out, safeTerminalText(metadataEvidence.String()))
+			if metadataSelectionRequired(preview) {
+				return outcome, exitError(
+					2,
+					errors.New("unattended metadata identity is unresolved; supply a provider ID or use --unattended_confirm/--uac to review matches"),
+				)
+			}
 			if len(missing) > 0 {
 				return outcome, exitError(2, errors.New("required release facts are missing in unattended mode; apply the listed correction arguments"))
 			}
 			break
 		}
 		bindCLIQuestion(ctx, streams.out, session.current.Workflow.ID, session.current.Workflow.Revision, "", metadataEvidence.String())
-		if len(missing) == 0 {
+		if len(missing) == 0 && !metadataSelectionRequired(preview) {
 			confirmed, promptErr := askCLIConfirmation(reader, streams.out, cliPrompt{
 				Kind:       cliPromptConfirm,
 				Question:   "Metadata correct? [Y/n]: ",
 				DefaultYes: true,
 				Evidence:   metadataEvidence.String(),
-				Help:       "Yes keeps these facts and continues to tracker checks and any required approvals. No opens correction arguments and prepares the revised facts for review.",
+				Help:       "Yes keeps these facts and continues to tracker checks and any required approvals. No opens corrections, including provider title search, and prepares the revised facts for review.",
 			})
 			if promptErr != nil {
 				return outcome, promptErr
@@ -740,27 +747,40 @@ func runCLIWorkflowInteractive(
 				break
 			}
 		}
-		prompt := "Input args that need correction, or 'continue': "
+		prompt := "Input args that need correction, 'search' for provider matches, or 'continue': "
 		if len(missing) > 0 {
-			prompt = "Input args to correct the missing fields: "
+			prompt = "Input args to correct the missing fields, or 'search' for provider matches: "
 		}
 		editArgs, promptErr := askCLIField(reader, streams.out, cliPrompt{
 			Kind:     cliPromptText,
 			Question: prompt,
 			Evidence: metadataEvidence.String(),
 			Help: "Enter correction flags, for example --alternate-title \"Example Release\" or --commentary=false. Omitted fields keep saved values. " +
-				"Use --reset-input FIELD to restore automatic detection. The revised facts will be prepared again; continue keeps the current facts only when required fields are complete.",
+				"Use --reset-input FIELD to restore automatic detection, search to inspect provider titles, or cancel to stop. " +
+				"The revised facts will be prepared again; continue requires complete facts and a resolved identity when candidates need selection.",
 		})
 		if promptErr != nil {
 			return outcome, promptErr
 		}
+		if strings.EqualFold(strings.TrimSpace(editArgs), "cancel") {
+			return outcome, fmt.Errorf("metadata review: %w", context.Canceled)
+		}
 		if strings.EqualFold(strings.TrimSpace(editArgs), "continue") {
-			if len(missing) == 0 {
+			if len(missing) == 0 && !metadataSelectionRequired(preview) {
 				break
 			}
 			continue
 		}
 		editTokens, splitErr := splitInteractiveCLIArgs(editArgs)
+		if strings.EqualFold(strings.TrimSpace(editArgs), "search") {
+			editTokens, splitErr = session.searchMetadataCandidates(ctx, reader)
+			if splitErr == nil && len(editTokens) == 0 {
+				continue
+			}
+			if splitErr != nil {
+				return outcome, splitErr
+			}
+		}
 		if splitErr != nil {
 			fmt.Fprintf(streams.out, "Invalid override args: %v\n", splitErr)
 			continue

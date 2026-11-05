@@ -32,7 +32,10 @@ func printMetadataPreview(output io.Writer, preview api.MetadataPreview, release
 	}
 	printMetadataExternalIdentity(output, preview)
 	if metadataPreviewHasCandidates(preview.Diagnostics) {
-		fmt.Fprintln(output, "Candidate IDs available; use override args if needed.")
+		fmt.Fprintln(output, "Provider matches available. Enter search in metadata corrections to inspect or select a title.")
+		if metadataSelectionRequired(preview) {
+			fmt.Fprintln(output, "Metadata identity unresolved: select a provider match or supply an exact provider ID before continuing.")
+		}
 	}
 	warnings := make([]string, 0)
 	for _, diagnostic := range preview.Diagnostics {

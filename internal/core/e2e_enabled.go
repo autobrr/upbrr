@@ -542,6 +542,39 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			EpisodeAired:           "2026-01-02",
 		}
 	}
+	if os.Getenv("UPBRR_E2E_SELECTED_PROVIDER_METADATA") == "1" {
+		selectedResource := func(id int) (string, int) {
+			if id >= 1002 && id <= 1010 {
+				return fmt.Sprintf("Example Candidate %d", id-1001), 2025
+			}
+			return title, 2026
+		}
+		ids := input.Instructions.Identity
+		if id := ids.TMDBID; id != nil && *id > 0 {
+			meta.Identity.TMDBID = *id
+			meta.ProviderMetadata.TMDB.TMDBID = *id
+			meta.ProviderMetadata.TMDB.Title, meta.ProviderMetadata.TMDB.Year = selectedResource(*id)
+			meta.ProviderMetadata.TMDB.OriginalTitle = meta.ProviderMetadata.TMDB.Title
+			meta.ProviderMetadata.TMDB.ReleaseDate = fmt.Sprintf("%d-01-02", meta.ProviderMetadata.TMDB.Year)
+		}
+		if id := ids.IMDBID; id != nil && *id > 0 {
+			meta.Identity.IMDBID = *id
+			selectedTitle, selectedYear := selectedResource(*id)
+			meta.ProviderMetadata.IMDB = &api.IMDBMetadata{
+				IMDBID: *id,
+				Title:  selectedTitle,
+				Year:   selectedYear,
+				Type:   string(category),
+			}
+		}
+		if id := ids.TVDBID; id != nil && *id > 0 && meta.ProviderMetadata.TVDB != nil {
+			meta.Identity.TVDBID = *id
+			meta.ProviderMetadata.TVDB.TVDBID = *id
+			meta.ProviderMetadata.TVDB.Name, meta.ProviderMetadata.TVDB.Year = selectedResource(*id)
+			meta.ProviderMetadata.TVDB.NameEnglish = meta.ProviderMetadata.TVDB.Name
+			meta.ProviderMetadata.TVDB.FirstAired = fmt.Sprintf("%d-01-02", meta.ProviderMetadata.TVDB.Year)
+		}
+	}
 	if err := collectE2EDiscEvidence(ctx, request, &meta); err != nil {
 		return preparationstate.State{}, err
 	}
@@ -1876,6 +1909,13 @@ func postE2ETrackerUpload(ctx context.Context, endpoint string, tracker string, 
 	writer := multipart.NewWriter(&body)
 	_ = writer.WriteField("tracker", tracker)
 	_ = writer.WriteField("name", meta.ReleaseName)
+	identity, err := json.Marshal(meta.Identity)
+	if err != nil {
+		return fmt.Errorf("e2e tracker: encode selected identity: %w", err)
+	}
+	if err := writer.WriteField("identity", string(identity)); err != nil {
+		return fmt.Errorf("e2e tracker: write selected identity: %w", err)
+	}
 	if strings.TrimSpace(meta.TorrentPath) != "" {
 		part, err := writer.CreateFormFile("torrent", filepath.Base(meta.TorrentPath))
 		if err != nil {
