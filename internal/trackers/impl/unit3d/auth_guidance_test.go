@@ -45,7 +45,7 @@ func TestAPIKeyGuidanceReporterDeduplicatesWithinEachUpload(t *testing.T) {
 	for range 2 {
 		report := apiKeyGuidanceReporter(t.Context(), input, guidance)
 		for range 3 {
-			report(nil, http.StatusOK)
+			report(nil, http.StatusOK, false)
 		}
 	}
 	if len(logger.messages) != 2 {
@@ -55,14 +55,14 @@ func TestAPIKeyGuidanceReporterDeduplicatesWithinEachUpload(t *testing.T) {
 		Code: trackers.APIKeyGuidanceCode, Message: "Review the account configuration.",
 	}}}
 	report := apiKeyGuidanceReporter(t.Context(), input, guidance)
-	report(nil, 0)
+	report(nil, 0, false)
 	if len(logger.messages) != 2 {
 		t.Fatal("shared projection advice was repeated in upload logs")
 	}
 	header := make(http.Header)
 	header.Set(guidance.Header, "2026-11-20T12:00:00Z")
 	for range 3 {
-		report(header, http.StatusOK)
+		report(header, http.StatusOK, false)
 	}
 	if len(logger.messages) != 3 {
 		t.Fatal("newer response guidance was lost or duplicated")
@@ -73,7 +73,7 @@ func TestAPIKeyGuidanceReporterDeduplicatesWithinEachUpload(t *testing.T) {
 		ctx := api.WithTrackerGuidanceHistory(t.Context(), history)
 		report := apiKeyGuidanceReporter(ctx, input, guidance)
 		for range 3 {
-			report(nil, 0)
+			report(nil, 0, false)
 		}
 		want := 0
 		if len(history) == 0 {
@@ -121,5 +121,53 @@ func TestUploadResponseCapturesExpiryWithoutChangingSubmissionOutcome(t *testing
 				t.Fatal("upload response expiry was not presented")
 			}
 		})
+	}
+}
+
+func TestAPIKeyGuidanceReporterPreservesExpiryAcrossHeaderlessDownload(t *testing.T) {
+	t.Parallel()
+	guidance := &trackers.APIKeyGuidance{Header: "X-Api-Key-Expires-At", Message: func(expiry trackers.APIKeyExpiry, _ time.Time) string {
+		if !expiry.Reported {
+			return "Review the account configuration."
+		}
+		if expiry.ExpiresAt.IsZero() {
+			return "Unreadable expiry."
+		}
+		return expiry.ExpiresAt.UTC().Format(time.RFC3339)
+	}}
+	logger := &guidanceLogger{}
+	input := trackers.PreparationInput{
+		Tracker:       "EXAMPLE",
+		TrackerConfig: config.TrackerConfig{APIKey: "synthetic-key"},
+		Logger:        logger,
+	}
+	report := apiKeyGuidanceReporter(t.Context(), input, guidance)
+	header := make(http.Header)
+	header.Set(guidance.Header, "2026-11-20T12:00:00Z")
+	report(header, http.StatusOK, false)
+	report(nil, http.StatusOK, true)
+	if got := guidance.Guidance(input.TrackerConfig.APIKey, time.Now()); got != "2026-11-20T12:00:00Z" || len(logger.messages) != 1 {
+		t.Fatal("headerless registered download replaced the upload's reported expiry")
+	}
+	// Primary responses can still replace an expiry with an omitted header.
+	report(nil, http.StatusOK, false)
+	report(nil, http.StatusOK, true)
+	if got := guidance.Guidance(input.TrackerConfig.APIKey, time.Now()); got != "Review the account configuration." || len(logger.messages) != 2 {
+		t.Fatal("headerless primary response or unknown-key reminder changed")
+	}
+	report(header, http.StatusOK, true)
+	if got := guidance.Guidance(input.TrackerConfig.APIKey, time.Now()); got != "2026-11-20T12:00:00Z" || len(logger.messages) != 2 {
+		t.Fatal("download expiry was lost or repeated")
+	}
+	header.Set(guidance.Header, "")
+	report(header, http.StatusOK, true)
+	if got := guidance.Guidance(input.TrackerConfig.APIKey, time.Now()); got != "Unreadable expiry." {
+		t.Fatal("present but malformed download header was treated as absent")
+	}
+	before := len(logger.messages)
+	withoutPolicy := apiKeyGuidanceReporter(t.Context(), input, nil)
+	withoutPolicy(nil, http.StatusOK, true)
+	if len(logger.messages) != before {
+		t.Fatal("tracker without an expiry policy gained guidance")
 	}
 }

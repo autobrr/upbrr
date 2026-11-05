@@ -15,10 +15,13 @@ import (
 
 // apiKeyGuidanceReporter presents advice learned after preflight once per plan.
 // Shared attempt history takes precedence over advice in a cached projection.
-func apiKeyGuidanceReporter(ctx context.Context, input trackers.PreparationInput, guidance *trackers.APIKeyGuidance) func(http.Header, int) {
+// Auxiliary responses contribute reported headers without clearing primary facts by omission.
+func apiKeyGuidanceReporter(ctx context.Context, input trackers.PreparationInput, guidance *trackers.APIKeyGuidance) func(http.Header, int, bool) {
 	seen := make(map[string]bool)
-	return func(header http.Header, status int) {
-		guidance.Observe(input.TrackerConfig.APIKey, header, status)
+	return func(header http.Header, status int, auxiliary bool) {
+		if !auxiliary || guidance != nil && len(header.Values(guidance.Header)) > 0 {
+			guidance.Observe(input.TrackerConfig.APIKey, header, status)
+		}
 		message := guidance.Guidance(input.TrackerConfig.APIKey, time.Now())
 		if message != "" && !seen[message] {
 			seen[message] = true

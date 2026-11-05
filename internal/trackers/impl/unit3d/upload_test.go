@@ -803,6 +803,7 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 	downloadExpiryObserved := false
+	uploadResponseObserved := false
 	summary, err := submitUnit3DUpload(
 		context.Background(),
 		"EXAMPLE",
@@ -815,8 +816,11 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 		api.UploadSubject{SourcePath: sourcePath},
 		filepath.Join(tempDir, "state", "upbrr.db"),
 		api.NopLogger{},
-		func(header http.Header, status int) {
-			if header.Get("X-Api-Key-Expires-At") == "2026-11-20T12:00:00Z" && status == http.StatusOK {
+		func(header http.Header, status int, auxiliary bool) {
+			if !auxiliary && status == http.StatusOK {
+				uploadResponseObserved = true
+			}
+			if auxiliary && header.Get("X-Api-Key-Expires-At") == "2026-11-20T12:00:00Z" && status == http.StatusOK {
 				downloadExpiryObserved = true
 			}
 		},
@@ -827,8 +831,8 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 	if !uploadAuthSeen.Load() || !downloadAuthSeen.Load() {
 		t.Fatalf("Unit3D API auth missing: upload=%t download=%t", uploadAuthSeen.Load(), downloadAuthSeen.Load())
 	}
-	if !downloadExpiryObserved {
-		t.Fatal("registered download expiry response was not observed")
+	if !downloadExpiryObserved || !uploadResponseObserved {
+		t.Fatal("upload and auxiliary download responses were not distinguished")
 	}
 	if summary.Uploaded != 1 || len(summary.UploadedTorrents) != 1 ||
 		strings.TrimSpace(summary.UploadedTorrents[0].TorrentPath) == "" {

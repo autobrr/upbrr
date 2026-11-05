@@ -36,6 +36,7 @@ type unit3dUploadResponse struct {
 // submitUnit3DUpload sends an already serialized multipart payload and maps a
 // successful Unit3D response to one upload, with an artifact only when the
 // response identifies a download URL.
+// Observer callbacks distinguish auxiliary download responses from the upload POST.
 func submitUnit3DUpload(
 	ctx context.Context,
 	trackerName string,
@@ -48,7 +49,7 @@ func submitUnit3DUpload(
 	meta api.UploadSubject,
 	dbPath string,
 	logger api.Logger,
-	observe ...func(http.Header, int),
+	observe ...func(header http.Header, status int, auxiliary bool),
 ) (api.UploadSummary, error) {
 	logger.Infof("trackers: starting upload to %s for release: %s", trackerName, releaseName)
 	logger.Debugf("trackers: %s upload URL: %s", trackerName, uploadURL)
@@ -68,7 +69,7 @@ func submitUnit3DUpload(
 	client := &http.Client{Timeout: 40 * time.Second}
 	execution, err := commonhttp.ExecuteUpload(client, httpReq, commonhttp.UploadExecutionOptions{Tracker: trackerName})
 	for _, observer := range observe {
-		observer(execution.Header, execution.StatusCode)
+		observer(execution.Header, execution.StatusCode, false)
 	}
 	if err != nil && !execution.BodyComplete {
 		logger.Errorf("trackers: %s upload request failed: %v", trackerName, err)
@@ -139,7 +140,12 @@ func submitUnit3DUpload(
 	}
 	trackerdata.SetUnit3DAPIHeaders(downloadRequest, apiKey)
 	downloadClient := unit3DRegisteredTorrentClient(client, baseURL)
-	if err := trackers.DownloadRegisteredTorrent(reqCtx, downloadClient, downloadRequest, artifactPath, observe...); err != nil {
+	observeDownload := func(header http.Header, status int) {
+		for _, observer := range observe {
+			observer(header, status, true)
+		}
+	}
+	if err := trackers.DownloadRegisteredTorrent(reqCtx, downloadClient, downloadRequest, artifactPath, observeDownload); err != nil {
 		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
 		return summary, nil
 	}
@@ -171,7 +177,7 @@ func prepareUnit3DUpload(
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s upload blocked: %s", preview.Tracker, preview.Message)
 	}
 	reportGuidance := apiKeyGuidanceReporter(ctx, req, firstSiteProfile(profiles).APIKeyGuidance)
-	reportGuidance(nil, 0)
+	reportGuidance(nil, 0, false)
 
 	logger := req.Logger
 	if logger == nil {
