@@ -49,28 +49,44 @@ func TestHDBReleaseNamePolicyBuildsStructuredOriginalIMDbName(t *testing.T) {
 		Repack:      "REPACK",
 		Source:      "WEB-DL",
 		VideoEncode: "H.265",
-		Audio:       "Dual-Audio DDP",
-		Channels:    "5.1",
 		Tag:         "-GRP",
 	}
 
-	input, failure := trackers.PrepareInputWithReleaseNamePolicy(
-		trackers.PreparationInput{Tracker: "HDB", Meta: meta},
-		Profile().ReleaseNamePolicy,
-	)
-	if failure != nil {
-		t.Fatalf("resolve HDB name: %v", failure)
-	}
-	got, err := input.ReviewedUploadName()
-	if err != nil {
-		t.Fatalf("reviewed HDB name: %v", err)
-	}
-	const want = "Example Original 2026 REPACK 2160p WEB-DL DDP 5.1 H.265-GRP"
-	if got != want {
-		t.Fatalf("HDB name = %q, want %q", got, want)
-	}
-	if strings.Contains(got, "Director's Cut") || strings.Contains(got, "Dual-Audio") || strings.Contains(got, "Example.Original") {
-		t.Fatalf("HDB name retained prohibited/separator elements: %q", got)
+	for _, test := range []struct {
+		name, audio, channels, wantAudio string
+	}{
+		{"Dolby Digital", "DD", "5.1", "DD5.1"},
+		{"Dolby Digital Plus", "DD+", "5.1", "DD+5.1"},
+		{"DDP with language label", "Dual-Audio DDP", "5.1", "DDP5.1"},
+		{"FLAC", "FLAC", "2.0", "FLAC2.0"},
+		{"AAC", "AAC", "2.0", "AAC2.0"},
+		{"combined codec and channels", "DDP 5.1", "5.1", "DDP5.1"},
+		{"combined without separate channels", "DDP 5.1", "", "DDP5.1"},
+		{"combined Atmos", "DD+ 5.1 Atmos", "5.1", "DD+5.1 Atmos"},
+		{"already compact", "DDP5.1", "5.1", "DDP5.1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := meta
+			meta.Audio, meta.Channels = test.audio, test.channels
+			input, failure := trackers.PrepareInputWithReleaseNamePolicy(
+				trackers.PreparationInput{Tracker: "HDB", Meta: meta},
+				Profile().ReleaseNamePolicy,
+			)
+			if failure != nil {
+				t.Fatalf("resolve HDB name: %v", failure)
+			}
+			got, err := input.ReviewedUploadName()
+			if err != nil {
+				t.Fatalf("reviewed HDB name: %v", err)
+			}
+			want := "Example Original 2026 REPACK 2160p WEB-DL " + test.wantAudio + " H.265-GRP"
+			if got != want {
+				t.Fatalf("HDB name = %q, want %q", got, want)
+			}
+			if strings.Contains(got, "Director's Cut") || strings.Contains(got, "Dual-Audio") || strings.Contains(got, "Example.Original") {
+				t.Fatalf("HDB name retained prohibited/separator elements: %q", got)
+			}
+		})
 	}
 }
 
