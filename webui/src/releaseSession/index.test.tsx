@@ -1168,6 +1168,154 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it.each(["canceled", "completed", "rejected"] as const)(
+    "keeps acknowledged HDR cancellation visible until terminal readback (%s)",
+    async (outcome) => {
+      const workflowID = "workflow-hdr-cancellation";
+      const ready = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 8),
+        preview("Synthetic.HDR.mkv", 1),
+      );
+      const operation: WorkflowOperationStatus = {
+        id: "hdr-cancel-operation",
+        workflowId: workflowID,
+        revision: 8,
+        sequence: 1,
+        command: "analyze_hdr",
+        operation: "analyze_hdr",
+        status: "running",
+        progress: 20,
+        completed: 0,
+        total: 1,
+        message: "Inspecting HDR source.",
+        startedAt: "2026-10-10T00:00:00Z",
+        updatedAt: "2026-10-10T00:00:00Z",
+      };
+      let current = ready;
+      const acknowledgement = createDeferred<WorkflowOperationStatus>();
+      const retryAcknowledgement = createDeferred<WorkflowOperationStatus>();
+      const cancelOperation = vi
+        .fn(() => retryAcknowledgement.promise)
+        .mockImplementationOnce(() => acknowledgement.promise);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: ({ children }) => (
+          <ReleaseSessionProvider
+            ports={portsFor({
+              resumeWorkflowID: workflowID,
+              workflow: workflowPorts({
+                current: async () => current,
+                operation: async () => current.operation!,
+                analyzeHDR: async () => current,
+                cancelOperation,
+              }),
+            })}
+          >
+            {children}
+            <WorkflowCancellation />
+            <HDRSurface />
+          </ReleaseSessionProvider>
+        ),
+      });
+      await waitFor(() => expect(result.current.identity.view.release).not.toBeNull());
+      vi.useFakeTimers();
+      try {
+        current = { ...ready, operation };
+        let generation!: Promise<boolean>;
+        act(() => {
+          generation = result.current.hdrAnalysis.generate({
+            targetIDs: ["hdr-target"],
+            peakSource: "histogram",
+          });
+        });
+        await act(async () => {});
+        let cancellation!: Promise<boolean>;
+        act(() => {
+          cancellation =
+            outcome === "completed"
+              ? result.current.workflow.cancel()
+              : result.current.hdrAnalysis.cancel();
+        });
+        expect(result.current.workflow.cancellation.pending).toBe(true);
+        expect(screen.getByRole("button", { name: "Cancelling…" })).toBeDisabled();
+        expect(screen.getByText("Inspecting HDR source. (20%)")).toBeInTheDocument();
+        expect(cancelOperation).toHaveBeenCalledWith(
+          workflowID,
+          operation.id,
+          expect.any(AbortSignal),
+        );
+        if (outcome === "rejected") {
+          await act(async () => {
+            acknowledgement.reject(new Error("Cancellation unavailable."));
+          });
+          expect(result.current.hdrAnalysis.view.error).toContain("could not be canceled");
+          expect(screen.queryByText(/Cancellation requested/)).toBeNull();
+          expect(result.current.workflow.cancellation.pending).toBe(true);
+          expect(result.current.hdrAnalysis.view.status).toBe("running");
+          current = {
+            ...current,
+            operation: { ...operation, sequence: 2, progress: 30, message: "Scanning frames." },
+          };
+          await act(async () => vi.advanceTimersByTimeAsync(1000));
+          expect(result.current.hdrAnalysis.view.error).toContain("could not be canceled");
+          expect(screen.getByText("Scanning frames. (30%)")).toBeInTheDocument();
+          act(() => {
+            fireEvent.click(screen.getByRole("button", { name: "Retry cancellation" }));
+          });
+          expect(cancelOperation).toHaveBeenCalledTimes(2);
+          expect(cancelOperation.mock.calls[1]).toEqual(cancelOperation.mock.calls[0]);
+          await act(async () => retryAcknowledgement.resolve(operation));
+        } else {
+          await act(async () => acknowledgement.resolve(operation));
+        }
+        expect(result.current.hdrAnalysis.view.error).toBe("");
+        expect(
+          screen.getByText(`Cancellation requested. (${outcome === "rejected" ? 30 : 20}%)`),
+        ).toBeInTheDocument();
+        current = {
+          ...current,
+          operation: { ...operation, sequence: 3, progress: 40, message: "Scanning frames." },
+        };
+        await act(async () => vi.advanceTimersByTimeAsync(1000));
+        expect(screen.getByText("Cancellation requested. (40%)")).toBeInTheDocument();
+        current = {
+          ...current,
+          operation: {
+            ...operation,
+            status: outcome === "rejected" ? "canceled" : outcome,
+            sequence: 4,
+            message: "HDR work finished.",
+          },
+        };
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+          expect(await cancellation).toBe(true);
+        });
+        expect(result.current.hdrAnalysis.view.status).not.toBe("running");
+        expect(result.current.hdrAnalysis.view.message).toBe("HDR work finished.");
+        expect(screen.queryByText(/Cancellation requested/)).toBeNull();
+        current = { ...ready, operation: { ...operation, id: "hdr-next-operation" } };
+        let nextGeneration!: Promise<boolean>;
+        act(() => {
+          nextGeneration = result.current.hdrAnalysis.generate({
+            targetIDs: ["hdr-target"],
+            peakSource: "histogram",
+          });
+        });
+        await act(async () => {});
+        expect(screen.getByText("Inspecting HDR source. (20%)")).toBeInTheDocument();
+        current = { ...current, operation: { ...current.operation!, status: "completed" } };
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+          await nextGeneration;
+        });
+        await act(() => generation);
+      } finally {
+        unmount();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it.each(["retained", "pending"])(
     "retries a %s v1 HDR request without widening formats",
     async (source) => {

@@ -267,6 +267,11 @@ export function ReleaseSessionProvider({
     operationSequence: number;
     message: string;
   }> | null>(null);
+  const [hdrCancellation, setHDRCancellation] = useState<Readonly<{
+    workflowID: string;
+    operationID: string;
+    error: string;
+  }> | null>(null);
   const [audioCommandFailure, setAudioCommandFailure] = useState<Readonly<{
     workflowID: string;
     workflowRevision: number;
@@ -535,6 +540,13 @@ export function ReleaseSessionProvider({
     setHDRCommandFailure((failure) =>
       failure && commandFailureSuperseded(failure, current) ? null : failure,
     );
+    setHDRCancellation((feedback) =>
+      feedback?.workflowID === current.workflow.id &&
+      current.operation?.id === feedback.operationID &&
+      isActiveWorkflowOperation(current.operation)
+        ? feedback
+        : null,
+    );
     setAudioCommandFailure((failure) =>
       failure && commandFailureSuperseded(failure, current) ? null : failure,
     );
@@ -633,6 +645,12 @@ export function ReleaseSessionProvider({
   const sendCancellation = (workflowID: string, operation: WorkflowOperationStatus) => {
     const request = cancellation.current;
     if (!request || request.operationID === operation.id) return;
+    const hdrTarget =
+      operation.operation === "analyze_hdr" ? { workflowID, operationID: operation.id } : null;
+    if (hdrTarget) {
+      setHDRCommandFailure(null);
+      setHDRCancellation(null);
+    }
     request.operationID = operation.id;
     storeCancellation({ workflowID, operationID: operation.id });
     request.requestFailed = false;
@@ -640,8 +658,27 @@ export function ReleaseSessionProvider({
     // The request is advisory; progress and terminal confirmation keep polling independently.
     void activePorts.workflow
       .cancelOperation(workflowID, operation.id, request.controller.signal)
-      .catch(() => {
+      .then((acknowledgement) => {
+        if (
+          cancellation.current !== request ||
+          !hdrTarget ||
+          acknowledgement.workflowId !== workflowID ||
+          acknowledgement.id !== operation.id
+        )
+          return;
+        setHDRCancellation(
+          isActiveWorkflowOperation(acknowledgement) ? { ...hdrTarget, error: "" } : null,
+        );
+      })
+      .catch((error: unknown) => {
         if (cancellation.current !== request) return;
+        if (hdrTarget)
+          setHDRCancellation({
+            ...hdrTarget,
+            error:
+              operationFailureFromError(error)?.Message ||
+              "HDR analysis could not be canceled. Retry the request.",
+          });
         request.requestFailed = true;
         setCancellationView({
           pending: true,
@@ -3101,6 +3138,12 @@ export function ReleaseSessionProvider({
         (workflowView.current?.workflow.revision ?? 0))
       ? latestWorkflowOperation
       : null;
+  const currentHDRCancellation =
+    hdrCancellation?.workflowID === workflowView.current?.workflow.id &&
+    hdrOperation?.id === hdrCancellation?.operationID &&
+    isActiveWorkflowOperation(hdrOperation ?? undefined)
+      ? hdrCancellation
+      : null;
   const pendingHDRRequest = workflowView.current?.hdrPendingRequest || null;
   const hdrRetryRequest = pendingHDRRequest || retainedHDRAnalysis;
   const hdrCommandError =
@@ -3110,6 +3153,7 @@ export function ReleaseSessionProvider({
       ? hdrCommandFailure.message
       : "";
   const hdrError =
+    currentHDRCancellation?.error ||
     hdrCommandError ||
     (hdrOperation?.failures || []).map((failure) => failure.failure.Message).join(" ") ||
     retainedHDRAnalysis?.targets
@@ -3834,7 +3878,10 @@ export function ReleaseSessionProvider({
             []
           : [],
         phase: hdrOperation?.phase || "",
-        message: hdrOperation?.message || "",
+        message:
+          currentHDRCancellation && !currentHDRCancellation.error
+            ? "Cancellation requested."
+            : hdrOperation?.message || "",
         progress: hdrOperation?.progress || 0,
         mutationBlockedReason: hdrMutationBlockedReason,
         error: hdrError || (questionnaireRefreshCurrent ? questionnaireRefresh.error : ""),

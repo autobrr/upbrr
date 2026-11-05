@@ -1202,7 +1202,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 		if err != nil {
 			return api.Request{}, err
 		}
-		if category != "" {
+		if category != "" && req.ReleaseNameOverrides.Category == nil && !opts.resetsCategory() {
 			req.ReleaseNameOverrides.Category = stringPtr(category)
 		}
 	}
@@ -1310,9 +1310,22 @@ func validateCLIInputFlagOccurrences(fs *pflag.FlagSet, flagArgs []string) error
 }
 
 func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
-	_, changed, _, err := parseCLIOptions(editArgs)
+	edits, changed, _, err := parseCLIOptions(editArgs)
 	if err != nil {
 		return nil, err
+	}
+	identityFlags := map[string]string{
+		string(api.CorrectionFieldIdentityTMDB):        "tmdb",
+		string(api.CorrectionFieldIdentityIMDB):        "imdb",
+		string(api.CorrectionFieldIdentityTVDB):        "tvdb",
+		string(api.CorrectionFieldIdentityTVmaze):      "tvmaze",
+		string(api.CorrectionFieldIdentityMAL):         "mal",
+		string(api.CorrectionFieldReleaseNameCategory): "category",
+	}
+	for _, field := range edits.ResetInput {
+		if flag := identityFlags[strings.TrimSpace(field)]; flag != "" {
+			changed[flag] = true
+		}
 	}
 	var opts cliOptions
 	fs := pflag.NewFlagSet("upbrr", pflag.ContinueOnError)
@@ -1329,6 +1342,16 @@ func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
 		}
 		if canonical, exists := aliases[name]; exists {
 			name = canonical
+		}
+		// An earlier Auto request must not reset a later explicit provider choice.
+		if name == "reset-input" {
+			_, field, inline := strings.Cut(flags[start], "=")
+			if !inline {
+				field = flags[i]
+			}
+			if changed[identityFlags[strings.TrimSpace(field)]] {
+				continue
+			}
 		}
 		if !changed[name] {
 			merged = append(merged, flags[start:i+1]...)
@@ -1505,7 +1528,7 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		if err != nil {
 			return api.ReleaseCorrectionValues{}, err
 		}
-		if category != "" {
+		if category != "" && releaseName.Category == nil && !opts.resetsCategory() {
 			releaseName.Category = stringPtr(category)
 		}
 	}
@@ -1514,6 +1537,13 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		ReleaseName: releaseName,
 		Metadata:    buildMetadataOverrides(opts, visited),
 	}, nil
+}
+
+// resetsCategory keeps a provider URL hint from replacing an explicit Auto request.
+func (o cliOptions) resetsCategory() bool {
+	return slices.ContainsFunc(o.ResetInput, func(field string) bool {
+		return strings.TrimSpace(field) == string(api.CorrectionFieldReleaseNameCategory)
+	})
 }
 
 func parseCLIInputFieldRef(raw string) (api.CorrectionFieldRef, error) {

@@ -1008,6 +1008,32 @@ func TestBuildCLIRequestTMDBCompatibilityParsing(t *testing.T) {
 	}
 }
 
+func TestCLIExplicitCategoryOverridesTMDBHint(t *testing.T) {
+	for _, category := range []string{"TV", ""} {
+		for _, flag := range []string{"--category", "-c"} {
+			t.Run(flag+"/"+category, func(t *testing.T) {
+				opts, visited, paths, err := parseCLIOptions([]string{"--tmdb=movie/123", flag + "=" + category, "example.mkv"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				request, err := buildCLIRequest(opts, visited, paths, 4)
+				if err != nil {
+					t.Fatal(err)
+				}
+				values, err := buildCLIInputCorrectionValues(opts, visited)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, value := range []*string{request.ReleaseNameOverrides.Category, values.ReleaseName.Category} {
+					if value == nil || *value != category {
+						t.Fatalf("TMDB hint replaced explicit category %q: %v", category, value)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestCLIProviderIDOverrides(t *testing.T) {
 	t.Parallel()
 	for _, provider := range []string{"tmdb", "imdb", "tvdb", "tvmaze", "mal"} {

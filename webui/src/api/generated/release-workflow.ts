@@ -2430,6 +2430,7 @@ export type SourceScopedMetadata = Readonly<{
   Bluray?: BlurayMetadata | null;
   Generation: PreparedGeneration;
   IMDB?: IMDBMetadata | null;
+  IdentityCandidates?: readonly ExternalIdentityCandidate[];
   ImportedScreenshotEvidence?: ImportedScreenshotEvidence | null;
   ProviderAvailability: readonly ProviderAvailabilityEvidence[];
   SourcePath: string;

@@ -565,7 +565,7 @@ export type HDRAnalysisFacet = Readonly<{
   setIncludedArtifacts(artifactIDs: readonly string[]): Promise<boolean>;
   /** Resumes a pending request, otherwise reuses the retained target selection and options. */
   retry(): Promise<boolean>;
-  /** Cancels the active HDR operation while retaining checkpointed metadata. */
+  /** Requests HDR cancellation while retaining checkpoints; resolves after terminal confirmation. */
   cancel(): Promise<boolean>;
   /** Addresses an image or JSON report in the current retained analysis revision. */
   artifactURL(artifactID: string): string;
