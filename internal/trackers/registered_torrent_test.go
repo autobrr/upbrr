@@ -40,6 +40,44 @@ func TestPersistRegisteredTorrentPreservesExactBytes(t *testing.T) {
 	}
 }
 
+func TestReconstructedRegisteredTorrentUsesDestinationPageComment(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct{ name, url, comment string }{
+		{
+			name:    "destination page without private fields",
+			url:     "https://user:secret@tracker.invalid/details.php?id=42&token=private#fragment",
+			comment: "uploaded with upbrr\nhttps://tracker.invalid/details.php?id=42",
+		},
+		{
+name: "unusable relative URL",
+ url: "/details/42",
+ comment: "uploaded with upbrr",
+},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			source := filepath.Join(t.TempDir(), "prepared.torrent")
+			output := filepath.Join(t.TempDir(), "registered.torrent")
+			prepared := metainfo.MetaInfo{
+				Announce:  "https://tracker.invalid/announce",
+				Comment:   "https://source.invalid/details/123",
+				InfoBytes: testInfoBytes(t, "REGISTERED"),
+			}
+			writeTestMetaInfo(t, source, prepared)
+			if PersistReconstructedRegisteredTorrent(nil, "EXAMPLE", source, output, prepared.Announce, "REGISTERED", test.url) != output {
+				t.Fatal("registered artifact was not retained")
+			}
+			retained := readTestMetaInfo(t, output)
+			if retained.Comment != test.comment || retained.HashInfoBytes() != prepared.HashInfoBytes() || retained.Announce != prepared.Announce {
+				t.Fatal("destination comment or registered identity was not preserved")
+			}
+			if readTestMetaInfo(t, source).Comment != prepared.Comment {
+				t.Fatal("reconstruction modified the source torrent")
+			}
+		})
+	}
+}
+
 func TestPersistRegisteredTorrentRejectsInvalidPayloadWithoutReplacingDestination(t *testing.T) {
 	t.Parallel()
 

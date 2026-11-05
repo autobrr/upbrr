@@ -100,7 +100,7 @@ func submitPreparedUpload(
 	}
 
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-		logger, "NBL", state.torrentPath, artifactPath, announceURL, "NBL",
+		logger, "NBL", state.torrentPath, artifactPath, announceURL, "NBL", torrentURL,
 	)
 
 	return api.UploadSummary{
@@ -216,5 +216,6 @@ func extractUploadLinkAndID(payload map[string]any) (string, string) {
 	if err != nil || (parsed.IsAbs() && (parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http"))) {
 		return "", ""
 	}
-	return torrentURL, commonhttp.PositiveTorrentID(parsed.Query().Get("id"))
+	base, _ := url.Parse(nblUploadURL)
+	return base.ResolveReference(parsed).String(), commonhttp.PositiveTorrentID(parsed.Query().Get("id"))
 }

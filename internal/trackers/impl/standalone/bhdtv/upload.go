@@ -119,6 +119,7 @@ func submitPreparedUpload(
 				artifactPath,
 				req.TrackerConfig.MyAnnounceURL,
 				sourceFlag,
+				viewURL,
 			)
 		}
 	}

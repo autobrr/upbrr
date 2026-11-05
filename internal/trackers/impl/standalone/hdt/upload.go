@@ -110,12 +110,12 @@ func submitPreparedUpload(
 		id = match[1]
 	}
 	if result.Success && successPattern.MatchString(combined) {
-		tURL := result.FinalURL
-		if id != "" && !strings.Contains(tURL, "details.php?id=") {
+		tURL := ""
+		if id != "" {
 			tURL = state.baseURL + "/details.php?id=" + id
 		}
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "HDT", state.torrentPath, artifactPath, announceURL, "hd-torrents.org",
+			req.Logger, "HDT", state.torrentPath, artifactPath, announceURL, "hd-torrents.org", tURL,
 		)
 		return api.UploadSummary{
 			Uploaded: 1,

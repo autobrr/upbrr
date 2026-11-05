@@ -1172,7 +1172,11 @@ After confirmed remote success, return one `api.UploadedTorrent` per successful 
   private authority: never expose it in previews, public history, logs, or diagnostics.
 
 Use `trackers.PersistReconstructedRegisteredTorrent` only when the protocol makes reconstruction
-deterministic after confirmed success. A registered-artifact download or persistence failure must
+deterministic after confirmed success. Pass the available `TorrentURL` so the reconstructed comment
+includes the destination page, with private URL fields removed. Leave it empty when no usable page
+is known; never substitute an authenticated download URL. Pre-upload personalization still removes
+inherited comments, and tracker-downloaded metainfo remains byte-for-byte unchanged.
+A registered-artifact download or persistence failure must
 use `trackers.LogRegisteredTorrentUnavailable` and leave the successful remote upload successful.
 Client injection consumes this registered authority; never substitute the pre-upload prepared
 torrent as if it were tracker-registered.

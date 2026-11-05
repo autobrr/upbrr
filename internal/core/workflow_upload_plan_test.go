@@ -4,6 +4,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/torrentclient"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/internal/trackers/submission"
@@ -1446,35 +1448,91 @@ func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
 
 func TestWorkflowUploadExecutionInjectsExactRegisteredTrackerTorrent(t *testing.T) {
 	t.Parallel()
-
-	clientService := &dryRunClientService{}
-	exactPath := filepath.Join(t.TempDir(), "prepared", "Example.Release.2026.ALPHA-GRP.torrent")
-	remotePath := filepath.Join(t.TempDir(), "downloaded", "must-not-drive-injection.torrent")
-	writeWorkflowRegisteredTorrent(t, exactPath, "prepared")
-	writeWorkflowRegisteredTorrent(t, remotePath, "registered")
-	execution := &workflowUploadExecution{
-		plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
-			Tracker: "ALPHA",
-			Summary: api.UploadSummary{
-				UploadedTorrents: []api.UploadedTorrent{{
-					Tracker:     "ALPHA",
-					TorrentPath: remotePath,
-				}},
-			},
-		}}},
-		clients: clientService,
-	}
-	results, err := execution.Execute(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("execute workflow upload: %v", err)
-	}
-	if len(results) != 1 || !results[0].ClientInjected || len(clientService.injections) != 1 ||
-		clientService.injections[0].Path != remotePath || clientService.injections[0].Path == exactPath {
-		t.Fatalf("registered tracker injection results=%#v injections=%#v", results, clientService.injections)
-	}
-	authority := execution.RegisteredArtifactAuthority()
-	if authority.Torrents["ALPHA"].Path != remotePath {
-		t.Fatalf("registered artifact authority = %#v", authority)
+	for _, test := range []struct {
+		name, tracker, page string
+		pending             bool
+	}{
+		{
+			name:    "PTP",
+			tracker: "PTP",
+			page:    "https://destination.invalid/torrents.php?id=555&torrentid=666",
+		},
+		{
+			name:    "BHD published",
+			tracker: "BHD",
+			page:    "https://destination.invalid/details/123456",
+		},
+		{
+			name:    "BHD draft",
+			tracker: "BHD",
+			pending: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			preparedPath := filepath.Join(t.TempDir(), "prepared.torrent")
+			registeredPath := filepath.Join(t.TempDir(), "registered.torrent")
+			writeWorkflowRegisteredTorrent(t, preparedPath, test.tracker)
+			prepared, err := metainfo.LoadFromFile(preparedPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if trackers.PersistReconstructedRegisteredTorrent(nil, test.tracker, preparedPath, registeredPath,
+				"https://destination.invalid/announce", test.tracker, test.page) != registeredPath {
+				t.Fatal("registered artifact was not retained")
+			}
+			watch := t.TempDir()
+			clients := torrentclient.NewService(config.Config{TorrentClients: map[string]config.TorrentClientConfig{
+				"watch": {Type: "watch", WatchFolder: watch},
+			}}, nil)
+			execution := &workflowUploadExecution{
+				plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
+					Tracker: test.tracker,
+					Summary: api.UploadSummary{
+						Uploaded:           1,
+						PendingPublication: test.pending,
+						UploadedTorrents: []api.UploadedTorrent{{
+							Tracker:     test.tracker,
+							TorrentURL:  test.page,
+							TorrentPath: registeredPath,
+						}},
+					},
+				}}},
+				clients: clients,
+			}
+			results, err := execution.Execute(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != 1 || !results[0].ClientInjected {
+				t.Fatal("registered tracker torrent was not injected")
+			}
+			if execution.RegisteredArtifactAuthority().Torrents[api.TrackerID(test.tracker)].Path != registeredPath {
+				t.Fatal("registered artifact authority changed")
+			}
+			retained, err := os.ReadFile(registeredPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			injected, err := os.ReadFile(filepath.Join(watch, filepath.Base(registeredPath)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(injected, retained) {
+				t.Fatal("client injection changed the retained torrent")
+			}
+			artifact, err := metainfo.Load(bytes.NewReader(injected))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantComment := "uploaded with upbrr"
+			if test.page != "" {
+				wantComment += "\n" + test.page
+			}
+			if artifact.Comment != wantComment || artifact.HashInfoBytes() != prepared.HashInfoBytes() || artifact.Announce != "https://destination.invalid/announce" {
+				t.Fatal("client artifact lost its destination comment or registered metadata")
+			}
+		})
 	}
 }
 

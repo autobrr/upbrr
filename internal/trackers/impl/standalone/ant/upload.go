@@ -163,7 +163,7 @@ func submitPreparedUpload(
 		// registered bytes, reconstruction cannot establish the server's infohash.
 		trackers.LogRegisteredTorrentUnavailable(logger, "ANT")
 	default:
-		registeredPath = trackers.PersistReconstructedRegisteredTorrent(logger, "ANT", state.torrentPath, artifactPath, announceURL, "ANT")
+		registeredPath = trackers.PersistReconstructedRegisteredTorrent(logger, "ANT", state.torrentPath, artifactPath, announceURL, "ANT", viewURL)
 	}
 
 	return api.UploadSummary{

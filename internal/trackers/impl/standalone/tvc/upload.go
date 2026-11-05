@@ -135,9 +135,10 @@ func submitPreparedUpload(
 	if torrentID == "." || torrentID == "/" {
 		return api.UploadSummary{}, errors.New("trackers: TVC response did not identify an accepted torrent")
 	}
+	dataURL = httpReq.URL.ResolveReference(resource).String()
 
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-		req.Logger, "TVC", state.torrentPath, artifactPath, announceURL, sourceFlag,
+		req.Logger, "TVC", state.torrentPath, artifactPath, announceURL, sourceFlag, dataURL,
 	)
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 		Tracker:     "TVC",
