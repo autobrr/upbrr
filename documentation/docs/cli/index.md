@@ -344,7 +344,7 @@ Strict `--unattended` reports the missing facts and exits without prompting. Int
 
 Multiple provider flags select each provider independently, even when their returned cross-links disagree. Each successful lookup remains available for preparation. See [manual metadata authority](../workflow/index.md#2-review-canonical-metadata).
 
-TMDB also accepts `movie/<id>`, `tv/<id>`, or a URL ending in the ID; a movie/TV hint overrides the category. IMDb accepts numeric IDs or the `tt` prefix. TVDB, TVmaze, and MAL take numeric IDs, not URLs.
+TMDB also accepts `movie/<id>`, `tv/<id>`, or a URL ending in the ID; a movie/TV hint sets the category when no explicit `--category` is supplied. A category chosen during provider selection takes precedence over a retained hint. IMDb accepts numeric IDs or the `tt` prefix. TVDB, TVmaze, and MAL take numeric IDs, not URLs.
 
 Use `--keep-existing-ids` to keep existing provider matches and their data when correcting another provider. You can pass it on the command line or in the correction arguments after **Metadata correct?**. For a release you have already prepared, this updates IMDb while keeping the other matches:
 

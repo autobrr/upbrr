@@ -1202,7 +1202,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 		if err != nil {
 			return api.Request{}, err
 		}
-		if category != "" {
+		if category != "" && req.ReleaseNameOverrides.Category == nil {
 			req.ReleaseNameOverrides.Category = stringPtr(category)
 		}
 	}
@@ -1528,7 +1528,7 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		if err != nil {
 			return api.ReleaseCorrectionValues{}, err
 		}
-		if category != "" {
+		if category != "" && releaseName.Category == nil {
 			releaseName.Category = stringPtr(category)
 		}
 	}

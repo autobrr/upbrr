@@ -85,6 +85,12 @@ func TestCLIProviderSelectionPreparesBeforeContinuation(t *testing.T) {
 			for _, terminal := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/tui=%t", category, provider, terminal), func(t *testing.T) {
 					args := []string{"--uac", "--tmdb=11", "--imdb=tt2222222", "--mal=0", "example.mkv"}
+					if category == api.CanonicalCategoryTV && provider != api.IdentityProviderTMDB {
+						args[1] = "--tmdb=movie/11"
+						if terminal {
+							args[1] = "--tmdb=https://www.themoviedb.org/movie/11"
+						}
+					}
 					opts, visited, _, err := parseCLIOptions(args)
 					if err != nil {
 						t.Fatal(err)
@@ -136,6 +142,9 @@ func TestCLIProviderSelectionPreparesBeforeContinuation(t *testing.T) {
 							}
 							changed := ids.TMDBID != nil && *ids.TMDBID == 123 || ids.IMDBID != nil && *ids.IMDBID == 123 || ids.TVDBID != nil && *ids.TVDBID == 123
 							if changed {
+								if value := input.Instructions.ReleaseName.Category; value == nil || !strings.EqualFold(*value, string(category)) {
+									t.Fatalf("selection lost its category to a retained provider hint: %+v", input.Instructions.ReleaseName)
+								}
 								if searchCalls != 1 {
 									t.Fatal("provider selection did not follow display")
 								}

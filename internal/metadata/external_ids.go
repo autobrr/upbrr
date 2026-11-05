@@ -559,7 +559,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 		for _, stageYear := range buildSearchYears(year) {
 			searchIMDb(stageYear)
-			if ids.IMDBID != 0 {
+			if ids.IMDBID != 0 || len(candidates.IMDB) > 0 {
 				break
 			}
 		}
@@ -662,8 +662,9 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				break
 			}
 
-			stageNeedsTMDB := tmdbClient != nil && !overrideTMDB && !clearedTMDB && ids.TMDBID == 0
-			stageNeedsIMDB := !overrideIMDB && !clearedIMDB && ids.IMDBID == 0
+			// Unresolved candidates require selection, not a different year's match.
+			stageNeedsTMDB := tmdbClient != nil && !overrideTMDB && !clearedTMDB && ids.TMDBID == 0 && len(candidates.TMDB) == 0
+			stageNeedsIMDB := !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && len(candidates.IMDB) == 0
 			if !stageNeedsTMDB && !stageNeedsIMDB {
 				break
 			}
@@ -699,7 +700,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				candidates.TMDB = mapTMDBCandidates(tmdbOutcome.Candidates, tmdbOutcome.Category)
 			}
 			// IMDb selection must use the category of the selected TMDB resource.
-			stageNeedsIMDB = !overrideIMDB && !clearedIMDB && ids.IMDBID == 0
+			stageNeedsIMDB = !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && len(candidates.IMDB) == 0
 			if stageNeedsIMDB {
 				imdbResult = searchIMDb(stageYear)
 			}
