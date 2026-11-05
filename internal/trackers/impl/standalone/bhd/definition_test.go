@@ -1000,6 +1000,11 @@ func TestUploadRetainsPersonalizedTorrent(t *testing.T) {
 	}{
 		{name: "draft", artifact: "valid"},
 		{
+			name:     "draft with ID",
+			artifact: "valid",
+			wantID:   "123456",
+		},
+		{
 			name:     "published",
 			artifact: "valid",
 			live:     true,
@@ -1054,14 +1059,14 @@ func TestUploadRetainsPersonalizedTorrent(t *testing.T) {
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				response := `{"status_code":1,"status_message":"Torrent saved as draft"}`
+				statusCode, message := 1, "Torrent saved as draft"
 				if test.live {
-					response = `{"status_code":2,"status_message":"Upload complete"}`
-					if test.wantID != "" {
-						response = `{"status_code":2,"status_message":"https://beyond-hd.me/torrent/download/example.123456.torrent"}`
-					}
+					statusCode, message = 2, "Upload complete"
 				}
-				_, _ = fmt.Fprint(w, response)
+				if test.wantID != "" {
+					message = "https://beyond-hd.me/torrent/download/example." + test.wantID + ".torrent"
+				}
+				_, _ = fmt.Fprintf(w, `{"status_code":%d,"status_message":%q}`, statusCode, message)
 			}))
 			defer server.Close()
 			summary, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{Logger: api.NopLogger{}}, uploadState{torrentPath: source}, server.URL, nil, "application/octet-stream", "https://tracker.invalid/announce", output)

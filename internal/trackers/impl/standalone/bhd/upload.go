@@ -115,13 +115,11 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: BHD unsupported upload status code %d", *response.StatusCode)
 	}
 
-	var torrentID, torrentURL, downloadURL string
-	if *response.StatusCode == 2 {
-		torrentID = extractTorrentID(response.StatusMessage)
-		if torrentID != "" {
-			torrentURL = strings.TrimRight(bhdBaseURL, "/") + "/details/" + torrentID
-			downloadURL = strings.TrimRight(bhdBaseURL, "/") + "/torrent/download/" + torrentID
-		}
+	torrentID := extractTorrentID(response.StatusMessage)
+	var torrentURL, downloadURL string
+	if torrentID != "" {
+		torrentURL = strings.TrimRight(bhdBaseURL, "/") + "/details/" + torrentID
+		downloadURL = strings.TrimRight(bhdBaseURL, "/") + "/torrent/download/" + torrentID
 	}
 
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
