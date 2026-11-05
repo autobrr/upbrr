@@ -9,6 +9,7 @@ import type {
   PlaylistInfo,
   PrepareInput,
   PreparedRelease,
+  ProviderSearchResult,
   ReleaseNameOverrides,
   ReleaseRef,
   ScreenshotPlan,
@@ -175,7 +176,15 @@ export type InputFacet = Readonly<{
       useAll: boolean;
       error: string;
     }>;
+    providerSearch: Readonly<{
+      status: FacetStatus;
+      result: ProviderSearchResult | null;
+      error: string;
+    }>;
   }>;
+  /** Inspects candidates without applying corrections or changing release facts. */
+  searchProviders(query: string): Promise<void>;
+  cancelProviderSearch(): void;
   updateSourceDraft(value: string): void;
   selectSource(value: string): void;
   changeSourceLookupURL(value: string): void;

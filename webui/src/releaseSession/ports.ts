@@ -18,6 +18,7 @@ import type {
   WorkflowResourceRef,
 } from "../api/generated/release-workflow";
 import type { SourceVerificationProgress } from "./types";
+import type { ProviderSearchResult } from "../types";
 
 /** Authoritative singleton-input transport; failed requests reject instead of fabricating local state. */
 export type ActiveInputPorts = Readonly<{
@@ -206,6 +207,9 @@ export type DescriptionPorts = Readonly<{
 }>;
 
 export type ReleaseSessionPorts = Readonly<{
+  providerSearch: Readonly<{
+    search(query: string, category: string, signal: AbortSignal): Promise<ProviderSearchResult>;
+  }>;
   activeInput: ActiveInputPorts;
   workflow: ReleaseWorkflowPorts;
   descriptions: DescriptionPorts;

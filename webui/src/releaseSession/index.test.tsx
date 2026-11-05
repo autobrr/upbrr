@@ -71,6 +71,7 @@ type PortOverrides = Readonly<{
 const portsFor = (overrides: PortOverrides = {}): ReleaseSessionPorts => {
   const workflow = overrides.workflow ?? workflowPorts();
   return {
+    providerSearch: { search: async (Query, Category) => ({ Query, Category, Providers: [] }) },
     activeInput: {
       get: async (signal) => {
         const workflowID = overrides.resumeWorkflowID?.trim();

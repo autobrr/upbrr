@@ -34,6 +34,24 @@ func nonNilAppList[T any](values []T) []T {
 // request-shape adapters on mux.
 func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 	s.registerReleaseWorkflowAppRoutes(mux)
+	mux.HandleFunc("/api/app/SearchProviderCandidates", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		var request api.ProviderSearchRequest
+		if err := decodeJSON(r, &request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid provider search request."})
+			return
+		}
+		result, err := s.backend.SearchProviderCandidates(r.Context(), request)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Provider search could not complete. Retry the search."})
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	}))
 	mux.HandleFunc("/api/app/TestConnection", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

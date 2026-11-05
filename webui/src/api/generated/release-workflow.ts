@@ -612,13 +612,19 @@ export type ExternalIdentity = Readonly<{
 }>;
 
 export type ExternalIdentityCandidate = Readonly<{
+  Cast: readonly string[];
+  CastSource: string;
   Category: CanonicalCategory;
+  DetailsStatus: MetadataEvidenceStatus;
+  Directors: readonly string[];
   ID: number;
   MediaType: string;
   OriginalTitle: string;
   Overview: string;
   PosterURL: string;
   Provider: IdentityProvider;
+  RuntimeKind: string;
+  RuntimeMinutes: number;
   Similarity: number;
   Title: string;
   Year: number;
@@ -2575,6 +2581,7 @@ export type TVDBMetadata = Readonly<{
   Poster: string;
   PosterThumbnail: string;
   PosterThumbnailLookupAttempted: boolean;
+  RemoteLinks: TVDBRemoteLinks;
   Status: string;
   TVDBID: number;
   Type: string;
@@ -2593,6 +2600,17 @@ export type TVDBNameDisambiguation = Readonly<{
   SameNameSeries: number;
   SeriesYear: number;
   Source: string;
+  Status: MetadataEvidenceStatus;
+}>;
+
+export type TVDBRemoteLink = Readonly<{
+  ID: number;
+  Provider: IdentityProvider;
+  State: string;
+}>;
+
+export type TVDBRemoteLinks = Readonly<{
+  Links: readonly TVDBRemoteLink[];
   Status: MetadataEvidenceStatus;
 }>;
 

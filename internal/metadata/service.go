@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/logging"
@@ -47,26 +48,30 @@ import (
 // Service collects source-scoped metadata evidence for canonical preparation.
 // Optional providers and client discovery are installed through [Option] values.
 type Service struct {
-	repo     repository
-	tagsPath string
-	scene    SceneDetector
-	mi       mediainfo.Exporter
-	bdinfo   *bdinfo.Service
-	logger   api.Logger
-	cacheDir string
-	nfoDir   string
-	cfg      config.Config
-	tmdb     TMDBClient
-	anilist  AniListClient
-	imdb     IMDBClient
-	tvdb     TVDBClient
-	tvmaze   TVmazeClient
-	sonarr   ArrLookupClient
-	radarr   ArrLookupClient
-	tracker  TrackerDataLookup
-	bluray   *bluraycom.Client
-	registry *trackers.Registry
-	clients  *clientdiscovery.Module
+	repo                repository
+	tagsPath            string
+	scene               SceneDetector
+	mi                  mediainfo.Exporter
+	bdinfo              *bdinfo.Service
+	logger              api.Logger
+	cacheDir            string
+	nfoDir              string
+	cfg                 config.Config
+	tmdb                TMDBClient
+	anilist             AniListClient
+	imdb                IMDBClient
+	tvdb                TVDBClient
+	tvmaze              TVmazeClient
+	sonarr              ArrLookupClient
+	radarr              ArrLookupClient
+	tracker             TrackerDataLookup
+	bluray              *bluraycom.Client
+	registry            *trackers.Registry
+	clients             *clientdiscovery.Module
+	clientsMu           sync.Mutex
+	providerSearchInit  sync.Once
+	providerSearchGate  chan struct{}
+	providerSearchCache map[api.ProviderSearchRequest]providerSearchCacheEntry
 }
 
 type repository interface {

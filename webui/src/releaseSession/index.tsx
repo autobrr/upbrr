@@ -34,6 +34,7 @@ import type {
 } from "../api/generated/release-workflow";
 import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
+import { useProviderSearch } from "./providerSearch";
 import {
   initialSessionState,
   pendingCorrectionReview,
@@ -302,6 +303,24 @@ export function ReleaseSessionProvider({
   const workflowRevisions = useRef<Partial<Record<WorkflowFacet, number>>>({});
   const lastWorkflowError = useRef<unknown>(null);
   const activePorts = useMemo(() => ports ?? productionReleaseSessionPorts(), [ports]);
+  const providerSearchCategory = (
+    state.preparationIntent.releaseName.Category ||
+    state.preview?.Identity?.Category ||
+    "UNKNOWN"
+  ).toUpperCase();
+  const providerSearch = useProviderSearch(
+    activePorts.providerSearch,
+    JSON.stringify([
+      state.activeInput.inputID,
+      state.activeInput.sourceVersion,
+      state.selectedSource,
+      state.sourceDraft,
+      state.preview?.Release.Generation,
+      providerSearchCategory,
+      state.preparation.status === "running",
+    ]),
+    providerSearchCategory,
+  );
   const workflowView = state.workflowView;
   const questionnaireKey = questionnaireSnapshotKey(state);
 
@@ -3149,7 +3168,10 @@ export function ReleaseSessionProvider({
           discType: workflowView.current?.release?.release.Source.Classification?.DiscType || "",
         },
         playlist: state.playlist,
+        providerSearch: providerSearch.view,
       },
+      searchProviders: providerSearch.search,
+      cancelProviderSearch: providerSearch.cancel,
       updateSourceDraft: (value) => dispatch({ type: "draft_changed", value }),
       selectSource,
       changeSourceLookupURL: (value) => dispatch({ type: "source_lookup_changed", value }),

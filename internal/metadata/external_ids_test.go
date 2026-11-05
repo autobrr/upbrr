@@ -501,6 +501,10 @@ type stubTVDB struct {
 	lastEpisodeQuery         tvdb.EpisodeQuery
 }
 
+func (s *stubTVDB) GetSeriesRemoteLinks(_ context.Context, _ int) (api.TVDBRemoteLinks, error) {
+	return s.seriesMetadata.RemoteLinks, nil
+}
+
 func (s *stubTVDB) SearchSeries(_ context.Context, filename, _ string) ([]tvdb.SeriesSearchResult, int, error) {
 	s.searchTitles = append(s.searchTitles, filename)
 	return s.searchResults, s.searchID, nil
@@ -2199,7 +2203,7 @@ func TestResolveExternalIDsPrefersTMDBFromIMDbBeforeSearch(t *testing.T) {
 	if tmdbClient.searchCalls != 0 {
 		t.Fatalf("expected no tmdb filename search when imdb lookup resolves tmdb, got %d", tmdbClient.searchCalls)
 	}
-	if len(tmdbClient.findInputs) != 1 || tmdbClient.findInputs[0].CategoryPreference != "TV" || tmdbClient.findInputs[0].RequireExternalIDAgreement {
+	if len(tmdbClient.findInputs) != 1 || tmdbClient.findInputs[0].CategoryPreference != "TV" || !tmdbClient.findInputs[0].RequireExternalIDAgreement {
 		t.Fatalf("expected tmdb external lookup category preference TV, got %#v", tmdbClient.findInputs)
 	}
 }

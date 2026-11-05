@@ -2427,8 +2427,26 @@
       "ExternalIdentityCandidate": {
         "type": "object",
         "properties": {
+          "Cast": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "CastSource": {
+            "type": "string"
+          },
           "Category": {
             "$ref": "#/components/schemas/CanonicalCategory"
+          },
+          "DetailsStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
+          "Directors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "ID": {
             "type": "integer"
@@ -2448,6 +2466,12 @@
           "Provider": {
             "$ref": "#/components/schemas/IdentityProvider"
           },
+          "RuntimeKind": {
+            "type": "string"
+          },
+          "RuntimeMinutes": {
+            "type": "integer"
+          },
           "Similarity": {
             "type": "number"
           },
@@ -2459,13 +2483,19 @@
           }
         },
         "required": [
+          "Cast",
+          "CastSource",
           "Category",
+          "DetailsStatus",
+          "Directors",
           "ID",
           "MediaType",
           "OriginalTitle",
           "Overview",
           "PosterURL",
           "Provider",
+          "RuntimeKind",
+          "RuntimeMinutes",
           "Similarity",
           "Title",
           "Year"
@@ -10698,6 +10728,9 @@
           "PosterThumbnailLookupAttempted": {
             "type": "boolean"
           },
+          "RemoteLinks": {
+            "$ref": "#/components/schemas/TVDBRemoteLinks"
+          },
           "Status": {
             "type": "string"
           },
@@ -10746,6 +10779,7 @@
           "Poster",
           "PosterThumbnail",
           "PosterThumbnailLookupAttempted",
+          "RemoteLinks",
           "Status",
           "TVDBID",
           "Type",
@@ -10795,6 +10829,43 @@
           "SameNameSeries",
           "SeriesYear",
           "Source",
+          "Status"
+        ]
+      },
+      "TVDBRemoteLink": {
+        "type": "object",
+        "properties": {
+          "ID": {
+            "type": "integer"
+          },
+          "Provider": {
+            "$ref": "#/components/schemas/IdentityProvider"
+          },
+          "State": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ID",
+          "Provider",
+          "State"
+        ]
+      },
+      "TVDBRemoteLinks": {
+        "type": "object",
+        "properties": {
+          "Links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TVDBRemoteLink"
+            }
+          },
+          "Status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          }
+        },
+        "required": [
+          "Links",
           "Status"
         ]
       },

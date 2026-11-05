@@ -17,8 +17,131 @@ import type {
 import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
 import { InputCorrectionEditor } from "./InputCorrectionEditor";
 import InputPage from "./index";
+import { ProviderCandidates } from "./ProviderCandidates";
 
 afterEach(cleanup);
+
+it("keeps candidate inspection and draft search separate from pending identity corrections", async () => {
+  const user = userEvent.setup();
+  const base = readyInputFacet(1);
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      intent: { ...base.view.intent, identity: { IMDBID: 777 } },
+      providerSearch: {
+        status: "ready",
+        error: "",
+        result: {
+          Query: "Example",
+          Category: "tv",
+          Providers: [
+            {
+              Provider: "tmdb",
+              Query: "Example",
+              Year: 0,
+              Category: "tv",
+              Status: "complete",
+              Candidates: Array.from({ length: 9 }, (_, i) => ({
+                Provider: "tmdb",
+                ID: i + 1,
+                Title: `Example ${i + 1}`,
+                OriginalTitle: "",
+                Year: 2025,
+                Category: "tv",
+                MediaType: "TV",
+                Overview: "",
+                PosterURL: i === 0 ? "/broken.png" : "",
+                Similarity: 0,
+              })),
+            },
+            {
+              Provider: "imdb",
+              Query: "Example",
+              Year: 0,
+              Category: "tv",
+              Status: "unavailable",
+              Candidates: [],
+            },
+            {
+              Provider: "tvdb",
+              Query: "Example",
+              Year: 0,
+              Category: "tv",
+              Status: "complete",
+              Candidates: [
+                {
+                  Provider: "tvdb",
+                  ID: 303,
+                  Title: "Example Series",
+                  OriginalTitle: "",
+                  Year: 0,
+                  Category: "tv",
+                  MediaType: "TV",
+                  Overview: "",
+                  PosterURL: "",
+                  Similarity: 0,
+                  RuntimeMinutes: 42,
+                  RuntimeKind: "average_episode",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  };
+  const refresh = vi.fn();
+  render(
+    <ProviderCandidates
+      facet={facet}
+      initialQuery="Example"
+      category="TV"
+      needsSelection
+      loading={false}
+      onRefresh={refresh}
+    />,
+  );
+  expect(screen.getAllByRole("radio")).toHaveLength(9);
+  expect(screen.getAllByText("Runtime unavailable")).toHaveLength(9);
+  fireEvent.error(screen.getByRole("img", { name: "Example 1 poster" }));
+  expect(screen.getAllByText("No image")).toHaveLength(9);
+  const query = screen.getByRole("textbox", { name: "Search query" });
+  await user.clear(query);
+  await user.type(query, "New Example 2025");
+  expect(facet.searchProviders).not.toHaveBeenCalled();
+  expect(screen.getByText("Results for “Example”")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Search providers" }));
+  expect(facet.searchProviders).toHaveBeenCalledExactlyOnceWith("New Example 2025");
+
+  const link = screen.getByRole("link", { name: "Open TMDB Example 1 in a new tab" });
+  expect(link).toHaveAttribute("href", "https://www.themoviedb.org/tv/1");
+  expect(link).toHaveAttribute("target", "_blank");
+  link.addEventListener("click", (event) => event.preventDefault());
+  fireEvent.click(link, { ctrlKey: true });
+  fireEvent(link, new MouseEvent("auxclick", { button: 1, bubbles: true }));
+  link.focus();
+  fireEvent.keyDown(link, { key: "Enter" });
+  expect(facet.changeIdentity).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("radio", { name: "Select TMDB Example 9 2025, ID 9" }));
+  expect(facet.changeIdentity).toHaveBeenCalledExactlyOnceWith({ IMDBID: 777, TMDBID: 9 });
+  expect(facet.changeMetadata).not.toHaveBeenCalled();
+  expect(facet.changeReleaseName).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Refresh metadata" }));
+  expect(refresh).toHaveBeenCalledOnce();
+
+  const tmdbTab = screen.getByRole("tab", { name: "TMDB (9)" });
+  tmdbTab.focus();
+  await user.keyboard("{ArrowRight}");
+  expect(screen.getByRole("tab", { name: "IMDb (0)" })).toHaveFocus();
+  expect(screen.getByText("Provider search unavailable. Retry the search.")).toBeVisible();
+  await user.keyboard("{End}");
+  expect(screen.getByRole("tab", { name: "TVDB (1)" })).toHaveFocus();
+  expect(screen.getByText("42 min avg / episode")).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Open TVDB Example Series in a new tab" }),
+  ).toHaveAttribute("href", "https://thetvdb.com/dereferrer/series/303");
+});
 
 it("offers folder preservation only when the backend marks the source eligible", () => {
   const base = readyInputFacet(1);
@@ -163,6 +286,7 @@ const inputFacet = (): InputFacet => ({
       sourceVersion: "",
       recoveryWorkflowIDs: [],
     },
+    providerSearch: { status: "idle", result: null, error: "" },
     sourceVerification: null,
     preparationDirty: false,
     correctionDirty: false,
@@ -197,6 +321,8 @@ const inputFacet = (): InputFacet => ({
       error: "",
     },
   },
+  searchProviders: vi.fn(async () => undefined),
+  cancelProviderSearch: vi.fn(),
   updateSourceDraft: vi.fn(),
   selectSource: vi.fn(),
   reviewPlaylists: vi.fn(),

@@ -3,6 +3,7 @@
 
 import type {
   ApplicationInfo,
+  ProviderSearchResult,
   BrowseDirectoryRequest,
   BrowseDirectoryResponse,
   HistoryEntry,
@@ -143,6 +144,16 @@ export const hostBrowser = {
 export const applicationClient = {
   getInfo: (signal?: AbortSignal) =>
     requestApp<ApplicationInfo>("GetApplicationInfo", undefined, { signal }),
+};
+
+/** Inspects titles without selecting IDs or changing prepared facts. */
+export const providerSearchClient = {
+  search: (query: string, category: string, signal: AbortSignal) =>
+    requestApp<ProviderSearchResult>(
+      "SearchProviderCandidates",
+      { Query: query, Category: category },
+      { signal },
+    ),
 };
 
 /** Persistent public API bearer-token management for authenticated WebUI operators. */

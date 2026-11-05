@@ -2624,6 +2624,7 @@ type TVDBNameDisambiguation struct {
 // TVDBMetadata stores TVDB series metadata plus the selected episode and any
 // episode list fetched for the selected season.
 type TVDBMetadata struct {
+	RemoteLinks     TVDBRemoteLinks
 	TVDBID          int
 	Name            string
 	NameEnglish     string

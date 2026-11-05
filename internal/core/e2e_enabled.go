@@ -225,6 +225,48 @@ type e2eMetadataService struct {
 	clients *clientdiscovery.Module
 }
 
+// SearchProviderCandidates supplies advisory synthetic titles through the real browser route.
+func (s e2eMetadataService) SearchProviderCandidates(ctx context.Context, request api.ProviderSearchRequest) (api.ProviderSearchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return api.ProviderSearchResult{}, err
+	}
+	category, err := api.NormalizeCanonicalCategory(string(request.Category))
+	if err != nil {
+		return api.ProviderSearchResult{}, errors.New("e2e metadata: category is required")
+	}
+	result := api.ProviderSearchResult{Query: request.Query, Category: category}
+	providers := []api.IdentityProvider{api.IdentityProviderTMDB, api.IdentityProviderIMDB}
+	if category == api.CanonicalCategoryTV {
+		providers = append(providers, api.IdentityProviderTVDB)
+	}
+	for _, provider := range providers {
+		out := api.ProviderCandidateResult{
+			Provider: provider,
+			Query:    request.Query,
+			Category: category,
+			Status:   api.MetadataEvidenceStatusComplete,
+		}
+		for i := range 9 {
+			out.Candidates = append(out.Candidates, api.ExternalIdentityCandidate{
+				Provider:       provider,
+				ID:             1002 + i,
+				Title:          fmt.Sprintf("Example Candidate %d", i+1),
+				Year:           2025,
+				Category:       category,
+				Overview:       "Synthetic candidate overview.",
+				Directors:      []string{"Example Director"},
+				Cast:           []string{"Example Actor"},
+				CastSource:     "billing",
+				RuntimeMinutes: 42,
+				RuntimeKind:    "movie",
+				DetailsStatus:  api.MetadataEvidenceStatusComplete,
+			})
+		}
+		result.Providers = append(result.Providers, out)
+	}
+	return result, nil
+}
+
 // CollectPreparationEvidence emits deterministic progress and metadata while
 // exercising the same client-discovery boundary as production preparation.
 func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, request preparationstate.Request) (preparationstate.State, error) {
