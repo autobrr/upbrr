@@ -782,6 +782,8 @@ func TestCheckLimitsConcurrencyToFour(t *testing.T) {
 		var active atomic.Int32
 		var maximum atomic.Int32
 		release := make(chan struct{})
+		releaseAdapters := sync.OnceFunc(func() { close(release) })
+		defer releaseAdapters()
 		adapters := make(map[string]Adapter)
 		for _, name := range []string{"A", "B", "C", "D", "E", "F"} {
 			adapters[name] = AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
@@ -806,7 +808,7 @@ func TestCheckLimitsConcurrencyToFour(t *testing.T) {
 		if maximum.Load() != maxDupeWorkers {
 			t.Fatalf("started concurrency = %d, want %d", maximum.Load(), maxDupeWorkers)
 		}
-		close(release)
+		releaseAdapters()
 		<-done
 	})
 }
@@ -858,6 +860,8 @@ func TestCheckCancellationWaitsForStartedAdapterAndReturnsCompletedEvidence(t *t
 		started := make(chan struct{})
 		completed := make(chan struct{})
 		release := make(chan struct{})
+		releaseAdapters := sync.OnceFunc(func() { close(release) })
+		defer releaseAdapters()
 		service := testService(map[string]Adapter{
 			"A": AdapterFunc(func(ctx context.Context, _ api.DuplicateSubject) AdapterResult {
 				close(started)
@@ -885,13 +889,13 @@ func TestCheckCancellationWaitsForStartedAdapterAndReturnsCompletedEvidence(t *t
 		<-started
 		<-completed
 		cancel()
-		synctest.Wait()
+		synctest.Sleep(2 * service.cancelWarningThreshold)
 		select {
 		case <-done:
 			t.Fatal("cancellation detached a started adapter")
 		default:
 		}
-		close(release)
+		releaseAdapters()
 		got := <-done
 		if !errors.Is(got.err, context.Canceled) {
 			t.Fatalf("error = %v", got.err)
