@@ -441,6 +441,7 @@ type stubIMDB struct {
 	searchResult       imdb.SearchResult
 	searchFn           func(imdb.SearchInput) (imdb.SearchResult, error)
 	info               imdb.Info
+	infoErr            error
 	infoFn             func(string) imdb.Info
 	episodeLookup      imdb.EpisodeLookup
 	episodeLookupCalls int
@@ -465,7 +466,7 @@ func (s *stubIMDB) GetInfo(_ context.Context, imdbID string, manualLanguage stri
 	if s.infoFn != nil {
 		return s.infoFn(imdbID), nil
 	}
-	return s.info, nil
+	return s.info, s.infoErr
 }
 
 func (s *stubIMDB) GetEpisodeInfo(_ context.Context, _ string, _ bool) (imdb.EpisodeLookup, error) {
@@ -491,6 +492,7 @@ type stubTVDB struct {
 	episodeTranslate         tvdb.EpisodeTranslation
 	episodeTransErr          error
 	seriesMetadata           tvdb.SeriesMetadata
+	remoteLinksErr           error
 	nameDisambiguation       tvdb.NameDisambiguation
 	episodeCalls             int
 	seriesMetadataCalls      int
@@ -502,7 +504,7 @@ type stubTVDB struct {
 }
 
 func (s *stubTVDB) GetSeriesRemoteLinks(_ context.Context, _ int) (api.TVDBRemoteLinks, error) {
-	return s.seriesMetadata.RemoteLinks, nil
+	return s.seriesMetadata.RemoteLinks, s.remoteLinksErr
 }
 
 func (s *stubTVDB) SearchSeries(_ context.Context, filename, _ string) ([]tvdb.SeriesSearchResult, int, error) {

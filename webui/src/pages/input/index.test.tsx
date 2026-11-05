@@ -143,6 +143,56 @@ it("keeps candidate inspection and draft search separate from pending identity c
   ).toHaveAttribute("href", "https://thetvdb.com/dereferrer/series/303");
 });
 
+it("preserves a running provider search when its candidate panel remounts", () => {
+  const base = readyInputFacet(1);
+  const facet: InputFacet = {
+    ...base,
+    view: { ...base.view, providerSearch: { status: "running", result: null, error: "" } },
+  };
+  render(
+    <ProviderCandidates
+      facet={facet}
+      initialQuery="Default query"
+      category="TV"
+      needsSelection
+      loading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  expect(facet.searchProviders).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Cancel search" })).toBeVisible();
+});
+
+it("compares the submitted query with the normalized draft", () => {
+  const base = readyInputFacet(1);
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      providerSearch: {
+        status: "ready",
+        error: "",
+        result: { Query: "Example Series", Category: "tv", Providers: [] },
+      },
+    },
+  };
+  render(
+    <ProviderCandidates
+      facet={facet}
+      initialQuery=" Example  Series "
+      category="TV"
+      needsSelection
+      loading={false}
+      onRefresh={vi.fn()}
+    />,
+  );
+  expect(screen.queryByText(/Query edited/)).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: "Search query" }), {
+    target: { value: "Another Series" },
+  });
+  expect(screen.getByText(/Query edited/)).toBeVisible();
+});
+
 it("offers folder preservation only when the backend marks the source eligible", () => {
   const base = readyInputFacet(1);
   const facet: InputFacet = {
@@ -570,6 +620,39 @@ const preparedRelease = () =>
   }) as unknown as NonNullable<InputFacet["view"]["release"]>;
 
 describe("InputPage", () => {
+  it("honors applied primary-provider clears and keeps search available", () => {
+    for (const provider of ["TMDB", "IMDB"] as const) {
+      const facet = readyInputFacet(1);
+      facet.view.preview!.Identity[`${provider}ID`] = 0;
+      facet.view.preview!.Identity.Overrides[provider] = "clear";
+      const { rerender, unmount } = render(
+        <InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />,
+      );
+      expect(screen.queryByText("External ID candidates")).not.toBeInTheDocument();
+      expect(screen.getByText("Search provider titles", { exact: true })).toBeInTheDocument();
+      expect(facet.searchProviders).not.toHaveBeenCalled();
+      facet.view.preview!.Release.Generation += 1;
+      rerender(<InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />);
+      expect(facet.searchProviders).not.toHaveBeenCalled();
+      delete facet.view.preview!.Identity.Overrides[provider];
+      facet.view.preview!.Release.Generation += 1;
+      rerender(<InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />);
+      expect(screen.getByText("External ID candidates")).toBeVisible();
+      expect(facet.searchProviders).toHaveBeenCalledOnce();
+      unmount();
+    }
+  });
+
+  it("requires a known category before searching providers", () => {
+    const facet = readyInputFacet(1);
+    facet.view.preview!.Identity.Category = "";
+    render(<InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />);
+    fireEvent.click(screen.getByText("Search provider titles", { exact: true }));
+    expect(screen.getByRole("button", { name: "Search providers" })).toBeDisabled();
+    expect(screen.getByText(/Choose Movie or TV under Edit Release Details/)).toBeVisible();
+    expect(facet.searchProviders).not.toHaveBeenCalled();
+  });
+
   it("shows source-season evidence after metadata fetch and clears it with the next preview", () => {
     const facet = readyInputFacet(1);
     const message =

@@ -929,7 +929,9 @@ export default function InputPage(props: Props) {
   const showReleaseDetails = Boolean(
     hasPreview || (path.trim() && (view.status === "ready" || view.status === "error")),
   );
-  const hasResolvedPrimaryExternalID = identityDraft.TMDBID > 0 && identityDraft.IMDBID > 0;
+  const hasResolvedPrimaryExternalID =
+    (identityDraft.TMDBID > 0 || preview.Identity.Overrides.TMDB === "clear") &&
+    (identityDraft.IMDBID > 0 || preview.Identity.Overrides.IMDB === "clear");
   const selectedTrackerCount = useMemo(
     () =>
       trackerUploadItems.reduce(
@@ -1435,7 +1437,7 @@ export default function InputPage(props: Props) {
             category={(
               view.intent.releaseName.Category ||
               preview.Identity.Category ||
-              "MOVIE"
+              "UNKNOWN"
             ).toUpperCase()}
             needsSelection={!hasResolvedPrimaryExternalID}
             loading={loading}

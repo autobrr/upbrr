@@ -112,6 +112,9 @@ test("provider search inspects and stages a candidate before Refresh metadata", 
       before.current?.release?.release.Identity.TMDBID,
     );
     await page.getByRole("button", { name: "Refresh metadata", exact: true }).first().click();
+    await expect
+      .poll(async () => (await snapshot()).current?.release?.release.Identity.TMDBID)
+      .toBe(1002);
     const refreshed = await waitForMetadataReady(page, app.url);
     expect(refreshed.current?.release?.release.Identity.TMDBID).toBe(1002);
     expect(refreshed.current?.release?.release.Identity.IMDBID).toBe(

@@ -894,6 +894,23 @@ type ExternalIdentityCandidate struct {
 	DetailsStatus MetadataEvidenceStatus
 }
 
+// MarshalJSON keeps absent candidate credits as the arrays promised by the workflow schema.
+func (candidate ExternalIdentityCandidate) MarshalJSON() ([]byte, error) {
+	type identityCandidate ExternalIdentityCandidate
+	payload := identityCandidate(candidate)
+	if payload.Cast == nil {
+		payload.Cast = []string{}
+	}
+	if payload.Directors == nil {
+		payload.Directors = []string{}
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("api: marshal identity candidate: %w", err)
+	}
+	return data, nil
+}
+
 // MetadataEvidenceStatus describes whether provider evidence can support both
 // positive and negative metadata decisions.
 type MetadataEvidenceStatus string

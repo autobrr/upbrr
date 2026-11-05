@@ -73,18 +73,23 @@ func parseSeriesRemoteLinks(entries *[]remoteIDEntry) api.TVDBRemoteLinks {
 		}
 		result.Links = append(result.Links, link)
 	}
-	for i, link := range result.Links {
-		if link.State != "valid" {
+	firstIDs := map[api.IdentityProvider]int{}
+	conflicts := map[api.IdentityProvider]bool{}
+	for _, link := range result.Links {
+		if link.ID <= 0 {
 			continue
 		}
-		for _, other := range result.Links {
-			if other.Provider == link.Provider && other.ID > 0 && other.ID != link.ID {
-				result.Links[i].State = "conflicting"
-				result.Status = api.MetadataEvidenceStatusContradictory
-			}
+		if firstIDs[link.Provider] == 0 {
+			firstIDs[link.Provider] = link.ID
+		} else if firstIDs[link.Provider] != link.ID {
+			conflicts[link.Provider] = true
 		}
 	}
 	for i := range result.Links {
+		if result.Links[i].State == "valid" && conflicts[result.Links[i].Provider] {
+			result.Links[i].State = "conflicting"
+			result.Status = api.MetadataEvidenceStatusContradictory
+		}
 		if result.Links[i].State != "valid" {
 			result.Links[i].ID = 0
 		}

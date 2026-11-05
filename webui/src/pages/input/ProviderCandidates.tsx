@@ -73,8 +73,8 @@ export function ProviderCandidates({
     )
       return;
     initialSearchAttempted.current = true;
-    if (!result) void searchRef.current(initialQuery);
-  }, [categoryKnown, initialQuery, loading, needsSelection, result]);
+    if (!result && status !== "running") void searchRef.current(initialQuery);
+  }, [categoryKnown, initialQuery, loading, needsSelection, result, status]);
 
   const provider = result?.Providers.find((item) => item.Provider === tab);
   const candidates = (provider?.Candidates || []).filter(
@@ -85,6 +85,7 @@ export function ProviderCandidates({
   const key = overrideKeys[tab as keyof typeof overrideKeys];
   const selectedID = Number(facet.view.intent.identity[key] ?? identity?.[key] ?? 0);
   const submitted = result?.Query || "";
+  const normalizedDraft = draft.trim().split(/\s+/).join(" ");
   return (
     <details
       className="group rounded-2xl border border-border bg-card/80 p-4"
@@ -132,7 +133,7 @@ export function ProviderCandidates({
           <p id={`${id}-helper`} className="text-sm text-muted-foreground">
             Include the year to narrow results, e.g. My Example 2015
           </p>
-          {draft.trim() !== submitted && submitted ? (
+          {normalizedDraft !== submitted && submitted ? (
             <p className="text-sm text-muted-foreground">
               Query edited. Choose Search providers to run the new query.
             </p>

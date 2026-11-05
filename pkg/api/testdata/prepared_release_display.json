@@ -124,6 +124,10 @@
       },
       "Details": {
         "TVDB": {
+          "RemoteLinks": {
+            "Status": "",
+            "Links": []
+          },
           "TVDBID": 303,
           "Name": "Example TVDB",
           "Overview": "TVDB overview",

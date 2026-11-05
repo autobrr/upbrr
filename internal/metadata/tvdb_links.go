@@ -14,20 +14,42 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func rejectTVDBEpisodeLink(meta *preparationstate.State, ids *api.ExternalIdentity, metadata *api.SourceScopedMetadata) {
+// rejectTVDBEpisodeLink returns the unusable ID so other provider links cannot reintroduce it.
+func rejectTVDBEpisodeLink(meta *preparationstate.State, ids *api.ExternalIdentity, metadata *api.SourceScopedMetadata) int {
 	if ids.Dependencies.IMDB.TVDBID == 0 || metadata.IMDB == nil || !strings.EqualFold(metadata.IMDB.Type, "tvEpisode") || metadata.TVDB == nil {
-		return
+		return 0
 	}
+	if ids.Provenance.IMDB == api.IdentityProvenanceRetained || ids.Provenance.IMDB == api.IdentityProvenanceExplicit {
+		return 0
+	}
+	rejectedID := ids.IMDBID
 	for i, link := range metadata.TVDB.RemoteLinks.Links {
 		if link.Provider == api.IdentityProviderIMDB && link.ID == ids.IMDBID {
 			metadata.TVDB.RemoteLinks.Links[i].State = "unsupported"
 			metadata.TVDB.RemoteLinks.Links[i].ID = 0
 		}
 	}
-	appendIdentityCorrectionWarning(meta, "TVDB's IMDb remote link identifies an episode rather than a series. Select a series-level IMDb ID.")
+	appendIdentityCorrectionWarning(meta, "TVDB's IMDb remote link identifies an episode rather than a series and was ignored.")
 	clearInferredProviderID(&ids.IMDBID, &ids.Provenance.IMDB)
 	ids.Dependencies.IMDB = api.IdentityDependency{}
 	metadata.IMDB = nil
+	invalidateIdentityDependencies(ids, false)
+	invalidateMismatchedProviderMetadata(metadata, *ids)
+	return rejectedID
+}
+
+// markTVDBLinkConflict preserves the rejected namespace while withdrawing its ID from inference.
+func markTVDBLinkConflict(metadata *api.TVDBMetadata, provider api.IdentityProvider, id int) {
+	if metadata == nil || id <= 0 {
+		return
+	}
+	for i, link := range metadata.RemoteLinks.Links {
+		if link.Provider == provider && link.ID == id && link.State == "valid" {
+			metadata.RemoteLinks.Links[i].State = "conflicting"
+			metadata.RemoteLinks.Links[i].ID = 0
+			metadata.RemoteLinks.Status = api.MetadataEvidenceStatusContradictory
+		}
+	}
 }
 
 func safeTVDBNameMatch(results []tvdb.SeriesSearchResult, title string, year int) int {
@@ -57,7 +79,14 @@ func safeTVDBNameMatch(results []tvdb.SeriesSearchResult, title string, year int
 
 // applyTVDBSeriesLinks fills missing siblings only when series evidence agrees with current identities.
 // Independently selected IDs and explicit clears remain authoritative, including on conflicting links.
-func applyTVDBSeriesLinks(meta *preparationstate.State, ids *api.ExternalIdentity, metadata api.SourceScopedMetadata, overrides api.ExternalIDOverrides) {
+// A link that failed IMDb verification remains raw evidence without being reapplied in this collection.
+func applyTVDBSeriesLinks(
+	meta *preparationstate.State,
+	ids *api.ExternalIdentity,
+	metadata api.SourceScopedMetadata,
+	overrides api.ExternalIDOverrides,
+	unverifiedIMDBID int,
+) {
 	if metadata.TVDB == nil || metadata.TVDB.TVDBID != ids.TVDBID || ids.TVDBID == 0 || !shouldUseTVDBForCategory(*meta, *ids) {
 		return
 	}
@@ -100,6 +129,9 @@ func applyTVDBSeriesLinks(meta *preparationstate.State, ids *api.ExternalIdentit
 	for _, link := range links.Links {
 		target, ok := targets[link.Provider]
 		if !ok || link.State != "valid" || link.ID <= 0 || target.override != nil {
+			continue
+		}
+		if link.Provider == api.IdentityProviderIMDB && link.ID == unverifiedIMDBID {
 			continue
 		}
 		applyLinkedProviderID(target.id, target.provenance, target.dependency, link.ID, api.IdentityDependency{TVDBID: ids.TVDBID})

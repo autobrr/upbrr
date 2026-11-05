@@ -17,12 +17,16 @@ func TestCandidateSearchUsesExactYearAndPrincipalCreditsWithoutRuntimeDefaults(t
 		var request struct {
 			Variables struct {
 				Constraints struct {
+					TitleTextConstraint   struct{ SearchTerm string }
 					ReleaseDateConstraint struct{ ReleaseDateRange struct{ Start, End string } }
 				}
 			}
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
+		}
+		if query := request.Variables.Constraints.TitleTextConstraint.SearchTerm; query != "Example" {
+			t.Errorf("unexpected submitted title query %q", query)
 		}
 		rangeValues := request.Variables.Constraints.ReleaseDateConstraint.ReleaseDateRange
 		if rangeValues.Start != "2025-01-01" || rangeValues.End != "2025-12-31" {

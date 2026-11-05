@@ -21,13 +21,18 @@ export const useProviderSearch = (
     error: string;
   }>({ contextKey, status: "idle", result: null, error: "" });
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    setState((previous) =>
+      previous.contextKey === contextKey &&
+      (previous.status !== "running" || controller.current !== null)
+        ? previous
+        : { contextKey, status: "idle", result: null, error: "" },
+    );
+    return () => {
       controller.current?.abort();
       controller.current = null;
-    },
-    [contextKey, port],
-  );
+    };
+  }, [contextKey, port]);
 
   const view =
     state.contextKey === contextKey
