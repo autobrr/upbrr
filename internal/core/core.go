@@ -57,10 +57,11 @@ type Core struct {
 	maintenance      *RuntimeMaintenance
 	ownsMaintenance  bool
 
-	history       *historyModule
-	preparedFacts *preparedrelease.Module
-	workflow      *releaseworkflow.Module
-	media         *mediaModule
+	history                  *historyModule
+	preparedFacts            *preparedrelease.Module
+	workflow                 *releaseworkflow.Module
+	media                    *mediaModule
+	searchProviderCandidates func(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
 }
 
 func applyMetadataDefaults(input api.PrepareInput, configured config.MetadataConfig) api.PrepareInput {
@@ -581,6 +582,11 @@ func newCoreWithHooks(
 		ownsMaintenance:  hooks.maintenance == nil,
 	}
 	core.history = newHistoryModule(repositories.History(), cfg.MainSettings.DBPath, logger)
+	if searcher, ok := services.Metadata.(interface {
+		SearchProviderCandidates(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
+	}); ok {
+		core.searchProviderCandidates = searcher.SearchProviderCandidates
+	}
 	core.history.preparedFacts = core.preparedFacts
 	if activeInputs, ok := repoOwner.(api.ActiveInputRepository); ok {
 		core.history.activeInputs = activeInputs

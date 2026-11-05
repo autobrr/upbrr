@@ -17,6 +17,7 @@ type SeriesSearchResult struct {
 // SeriesMetadata contains extended series fields plus naming-safe year
 // provenance and optional English translation data.
 type SeriesMetadata struct {
+	RemoteLinks api.TVDBRemoteLinks
 	TVDBID      int
 	Name        string
 	NameEnglish string

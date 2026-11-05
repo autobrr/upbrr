@@ -47,10 +47,13 @@ func TestResolvePromotesProviderEvidenceAndKeepsCandidateListsDiagnostic(t *test
 					TMDB:       &api.TMDBMetadata{TMDBID: 1234567, Title: "Example Release"},
 				},
 				Candidates: []api.ExternalIdentityCandidate{{
-					Provider: api.IdentityProviderTMDB,
-					ID:       7654321,
-					Title:    "Example Candidate",
-					Category: api.CanonicalCategoryMovie,
+					Provider:   api.IdentityProviderTMDB,
+					ID:         7654321,
+					Title:      "Example Candidate",
+					Category:   api.CanonicalCategoryMovie,
+					Cast:       []string{"Example Actor"},
+					Directors:  []string{"Example Director"},
+					CastSource: "billing",
 				}},
 			}, nil
 		}),
@@ -77,6 +80,10 @@ func TestResolvePromotesProviderEvidenceAndKeepsCandidateListsDiagnostic(t *test
 	}
 	if result.Identity.TMDBID == result.Diagnostics[0].Candidates[0].ID {
 		t.Fatal("diagnostic candidate became canonical identity")
+	}
+	candidate := result.Diagnostics[0].Candidates[0]
+	if len(candidate.Cast) != 1 || candidate.Cast[0] != "Example Actor" || len(candidate.Directors) != 1 || candidate.Directors[0] != "Example Director" || candidate.CastSource != "billing" {
+		t.Fatalf("diagnostic projection discarded candidate credits: %+v", candidate)
 	}
 }
 

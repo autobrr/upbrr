@@ -24,6 +24,19 @@ import (
 
 const defaultBaseURL = "https://api.tvmaze.com"
 
+// GetSeriesExternalIDs returns the show's numeric IMDb and TVDB IDs, respectively.
+// It reuses show evidence without fetching artwork or replacing kept metadata.
+func (c *Client) GetSeriesExternalIDs(ctx context.Context, id int) (int, int, error) {
+	show, err := c.getShow(ctx, id)
+	if err != nil {
+		return 0, 0, fmt.Errorf("tvmaze: series links: %w", err)
+	}
+	if show.ID != id || id <= 0 {
+		return 0, 0, errors.New("tvmaze: series identity mismatch")
+	}
+	return metautil.ParseIMDbNumeric(show.Externals.IMDB), show.Externals.TVDB, nil
+}
+
 var errNotFound = errors.New("tvmaze: not found")
 
 // Client resolves TV series and episode metadata through TVmaze.

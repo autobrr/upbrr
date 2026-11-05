@@ -453,6 +453,27 @@ export type ExternalIdentityCandidate = {
   Overview: string;
   PosterURL: string;
   Similarity: number;
+  Directors?: string[];
+  Cast?: string[];
+  CastSource?: string;
+  RuntimeMinutes?: number;
+  RuntimeKind?: string;
+  DetailsStatus?: string;
+};
+
+/** Read-only provider inspection with submitted and effective request provenance. */
+export type ProviderSearchResult = {
+  Query: string;
+  Category: string;
+  Providers: {
+    Provider: string;
+    Query: string;
+    Year: number;
+    Category: string;
+    Status: string;
+    Filters?: Record<string, string>;
+    Candidates: ExternalIdentityCandidate[];
+  }[];
 };
 
 export type TMDBCompany = {

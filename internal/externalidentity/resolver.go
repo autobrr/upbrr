@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v9"
+const ContractVersion = "external-identity-v12"
 
 // CompatibleStoredIdentity preserves manual pins and clears while discarding
 // automatic IDs and dependencies produced before the current identity contract.
@@ -536,18 +536,11 @@ func candidateDiagnostics(value []api.ExternalIdentityCandidate) []api.Preparati
 			continue
 		}
 		category, _ := api.NormalizeCanonicalCategory(string(candidate.Category))
-		candidates = append(candidates, api.ExternalIdentityCandidate{
-			Provider:      provider,
-			ID:            candidate.ID,
-			Title:         candidate.Title,
-			OriginalTitle: candidate.OriginalTitle,
-			Year:          candidate.Year,
-			Category:      category,
-			MediaType:     candidate.MediaType,
-			Overview:      candidate.Overview,
-			PosterURL:     candidate.PosterURL,
-			Similarity:    candidate.Similarity,
-		})
+		candidate.Provider = provider
+		candidate.Category = category
+		candidate.Cast = append([]string{}, candidate.Cast...)
+		candidate.Directors = append([]string{}, candidate.Directors...)
+		candidates = append(candidates, candidate)
 	}
 	if len(candidates) == 0 {
 		return nil

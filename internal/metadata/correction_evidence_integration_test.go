@@ -1062,10 +1062,10 @@ func TestPreparedIndependentManualProviderIDsSurviveRefreshAndRestart(t *testing
 			fixture := newCorrectionEvidenceFixture(t)
 			fixture.tmdbExternalIDs = `{"imdb_id":"tt7654321","tvdb_id":999888}`
 			imdbProvider := &stubIMDB{info: imdb.Info{
-IMDbID: "tt1234567",
- Title: "Example Selected Series",
- Type: "tvSeries",
-}}
+				IMDbID: "tt1234567",
+				Title:  "Example Selected Series",
+				Type:   "tvSeries",
+			}}
 			fixture.imdb = imdbProvider
 			tvdbProvider := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{TVDBID: 222333, Name: "Example Selected Series"}}
 			fixture.tvdb = tvdbProvider
@@ -1074,27 +1074,27 @@ IMDbID: "tt1234567",
 				IMDBID:     8887777,
 				TVDBID:     888777,
 				Candidates: []tvmaze.Candidate{{
-ID: 55,
- Name: "Example TVmaze Series",
- Externals: tvmaze.Externals{IMDB: "tt8887777", TVDB: 888777},
-}},
+					ID:        55,
+					Name:      "Example TVmaze Series",
+					Externals: tvmaze.Externals{IMDB: "tt8887777", TVDB: 888777},
+				}},
 			}}
 			fixture.tvmaze = tvmazeProvider
 			module, repo := fixture.open(t)
 			prepareCorrectionEvidence(t, module, fixture.input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
 			input := api.PrepareInput{SourcePath: fixture.input.SourcePath, ExternalFreshness: api.ExternalFreshnessReuse}
 			patches := []api.ExternalIDOverrides{{
-TMDBID: new(555002),
- IMDBID: new(1234567),
- TVDBID: new(222333),
- TVmazeID: new(55),
-}}
+				TMDBID:   new(555002),
+				IMDBID:   new(1234567),
+				TVDBID:   new(222333),
+				TVmazeID: new(55),
+			}}
 			if sequential {
 				patches = []api.ExternalIDOverrides{{
-IMDBID: new(1234567),
- TVDBID: new(222333),
- TVmazeID: new(55),
-}, {TMDBID: new(555002)}}
+					IMDBID:   new(1234567),
+					TVDBID:   new(222333),
+					TVmazeID: new(55),
+				}, {TMDBID: new(555002)}}
 			}
 			for _, patch := range patches {
 				result := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{
@@ -1113,25 +1113,25 @@ IMDBID: new(1234567),
 				{name: "refresh"},
 				{name: "restart"},
 				{
-name: "old contract",
- preparedVersion: "prepared-release-v56",
- identityVersion: "external-identity-v3",
-},
+					name:            "old contract",
+					preparedVersion: "prepared-release-v56",
+					identityVersion: "external-identity-v3",
+				},
 				{
-name: "main before merge",
- preparedVersion: "prepared-release-v61",
- identityVersion: "external-identity-v4",
-},
+					name:            "main before merge",
+					preparedVersion: "prepared-release-v61",
+					identityVersion: "external-identity-v4",
+				},
 				{
-name: "PR before merge",
- preparedVersion: "prepared-release-v57",
- identityVersion: "external-identity-v5",
-},
+					name:            "PR before merge",
+					preparedVersion: "prepared-release-v57",
+					identityVersion: "external-identity-v5",
+				},
 				{
-name: "owner merge",
- preparedVersion: "prepared-release-v62",
- identityVersion: "external-identity-v5",
-},
+					name:            "owner merge",
+					preparedVersion: "prepared-release-v62",
+					identityVersion: "external-identity-v5",
+				},
 			} {
 				t.Run(phase.name, func(t *testing.T) {
 					input.ExternalFreshness = api.ExternalFreshnessReuse
@@ -1256,6 +1256,7 @@ type correctionEvidenceFixture struct {
 	tmdbAnime       bool
 	tvmaze          TVmazeClient
 	tvdbAliasYear   bool
+	tvdbRemoteIDs   string
 	mu              sync.Mutex
 	calls           map[string]int
 }
@@ -1330,6 +1331,9 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 				body = `{"data":{"token":"synthetic-token"}}`
 			case "/v4/series/555003/extended":
 				body = `{"data":{"id":555003,"name":"Example Series","year":"2024","firstAired":"2024-01-01","originalLanguage":"eng"}}`
+				if fixture.tvdbRemoteIDs != "" {
+					body = strings.Replace(body, `"id":555003`, `"id":555003,"remoteIds":`+fixture.tvdbRemoteIDs, 1)
+				}
 			case "/v4/series/555003/translations/eng":
 				body = `{"data":{"name":"Example Series","aliases":[]}}`
 				if fixture.tvdbAliasYear {

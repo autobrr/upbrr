@@ -441,6 +441,7 @@ type stubIMDB struct {
 	searchResult       imdb.SearchResult
 	searchFn           func(imdb.SearchInput) (imdb.SearchResult, error)
 	info               imdb.Info
+	infoErr            error
 	infoFn             func(string) imdb.Info
 	episodeLookup      imdb.EpisodeLookup
 	episodeLookupCalls int
@@ -465,7 +466,7 @@ func (s *stubIMDB) GetInfo(_ context.Context, imdbID string, manualLanguage stri
 	if s.infoFn != nil {
 		return s.infoFn(imdbID), nil
 	}
-	return s.info, nil
+	return s.info, s.infoErr
 }
 
 func (s *stubIMDB) GetEpisodeInfo(_ context.Context, _ string, _ bool) (imdb.EpisodeLookup, error) {
@@ -491,6 +492,7 @@ type stubTVDB struct {
 	episodeTranslate         tvdb.EpisodeTranslation
 	episodeTransErr          error
 	seriesMetadata           tvdb.SeriesMetadata
+	remoteLinksErr           error
 	nameDisambiguation       tvdb.NameDisambiguation
 	episodeCalls             int
 	seriesMetadataCalls      int
@@ -499,6 +501,10 @@ type stubTVDB struct {
 	episodeLangCalls         []string
 	episodeTransCalls        []int
 	lastEpisodeQuery         tvdb.EpisodeQuery
+}
+
+func (s *stubTVDB) GetSeriesRemoteLinks(_ context.Context, _ int) (api.TVDBRemoteLinks, error) {
+	return s.seriesMetadata.RemoteLinks, s.remoteLinksErr
 }
 
 func (s *stubTVDB) SearchSeries(_ context.Context, filename, _ string) ([]tvdb.SeriesSearchResult, int, error) {
@@ -1151,7 +1157,11 @@ func TestResolveExternalIDsPreservesCanonicalTrackerIdentity(t *testing.T) {
 				LogoLookupAttempted: true,
 			},
 			IMDB: &api.IMDBMetadata{IMDBID: 2, Title: "Stored IMDb"},
-			TVDB: &api.TVDBMetadata{TVDBID: 3, Name: "Stored TVDB"},
+			TVDB: &api.TVDBMetadata{
+				TVDBID:      3,
+				Name:        "Stored TVDB",
+				RemoteLinks: api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusUnavailable},
+			},
 		},
 		MediaInfoTMDBID:   999,
 		MediaInfoIMDBID:   888,
@@ -1174,6 +1184,11 @@ func TestResolveExternalIDsPreservesCanonicalTrackerIdentity(t *testing.T) {
 	}
 	if reused.ProviderMetadata.TVDB != nil {
 		t.Fatalf("expected stored tvdb metadata cleared for movie category, got %#v", reused.ProviderMetadata.TVDB)
+	}
+	for _, warning := range reused.LookupWarnings {
+		if strings.Contains(warning, "TVDB series remote links are unavailable") {
+			t.Fatal("discarded TVDB metadata left a recovery warning on a movie")
+		}
 	}
 	if reuseTMDBClient.findCalls != 0 || reuseTMDBClient.searchCalls != 0 || reuseTMDBClient.metaCalls != 0 {
 		t.Fatalf("expected tmdb calls skipped for stored metadata, got find=%d search=%d metadata=%d", reuseTMDBClient.findCalls, reuseTMDBClient.searchCalls, reuseTMDBClient.metaCalls)
@@ -2199,7 +2214,7 @@ func TestResolveExternalIDsPrefersTMDBFromIMDbBeforeSearch(t *testing.T) {
 	if tmdbClient.searchCalls != 0 {
 		t.Fatalf("expected no tmdb filename search when imdb lookup resolves tmdb, got %d", tmdbClient.searchCalls)
 	}
-	if len(tmdbClient.findInputs) != 1 || tmdbClient.findInputs[0].CategoryPreference != "TV" || tmdbClient.findInputs[0].RequireExternalIDAgreement {
+	if len(tmdbClient.findInputs) != 1 || tmdbClient.findInputs[0].CategoryPreference != "TV" || !tmdbClient.findInputs[0].RequireExternalIDAgreement {
 		t.Fatalf("expected tmdb external lookup category preference TV, got %#v", tmdbClient.findInputs)
 	}
 }
@@ -2212,9 +2227,10 @@ func TestResolveExternalIDsKeepsAnchoredFilenameMatchAsCandidate(t *testing.T) {
 			Category:       "TV",
 			FilenameSearch: true,
 			Candidates: []tmdb.Candidate{{
-				TMDBID: 253,
-				Title:  "Example Candidate",
-				Year:   2026,
+				TMDBID:     253,
+				Title:      "Example Candidate",
+				Year:       2026,
+				PosterPath: "/example-poster.jpg",
 			}},
 		},
 		searchOutcome: tmdb.SearchOutcome{TMDBID: 253, Category: "TV"},
@@ -2248,6 +2264,9 @@ func TestResolveExternalIDsKeepsAnchoredFilenameMatchAsCandidate(t *testing.T) {
 	}
 	if len(result.ExternalIdentityCandidates) != 1 || result.ExternalIdentityCandidates[0].ID != 253 {
 		t.Fatalf("filename candidates = %#v", result.ExternalIdentityCandidates)
+	}
+	if got := result.ExternalIdentityCandidates[0].PosterURL; got != "https://image.tmdb.org/t/p/w342/example-poster.jpg" {
+		t.Fatalf("candidate poster = %q, want TMDB preview image", got)
 	}
 }
 

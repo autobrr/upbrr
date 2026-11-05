@@ -884,6 +884,31 @@ type ExternalIdentityCandidate struct {
 	Overview      string
 	PosterURL     string
 	Similarity    float64
+	Directors     []string
+	Cast          []string
+	// CastSource identifies verified billing order or the provider's curated principal credits.
+	CastSource     string
+	RuntimeMinutes int
+	RuntimeKind    string
+	// DetailsStatus may be partial while the search candidate remains selectable.
+	DetailsStatus MetadataEvidenceStatus
+}
+
+// MarshalJSON keeps absent candidate credits as the arrays promised by the workflow schema.
+func (candidate ExternalIdentityCandidate) MarshalJSON() ([]byte, error) {
+	type identityCandidate ExternalIdentityCandidate
+	payload := identityCandidate(candidate)
+	if payload.Cast == nil {
+		payload.Cast = []string{}
+	}
+	if payload.Directors == nil {
+		payload.Directors = []string{}
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("api: marshal identity candidate: %w", err)
+	}
+	return data, nil
 }
 
 // MetadataEvidenceStatus describes whether provider evidence can support both

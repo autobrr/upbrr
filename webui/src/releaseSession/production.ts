@@ -1,7 +1,12 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { activeInputClient, descriptionClient, releaseWorkflowClient } from "../api/app";
+import {
+  activeInputClient,
+  descriptionClient,
+  releaseWorkflowClient,
+  providerSearchClient,
+} from "../api/app";
 import { subscribeWebEvent, subscribeWebEventConnection } from "../api/client";
 import type { ReleaseSessionPorts } from "./ports";
 import type { SourceVerificationProgress } from "./types";
@@ -34,6 +39,7 @@ const sourceVerificationProgressFromEvent = (
  * request resynchronization after reconnecting; their cleanup removes all three listeners.
  */
 export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
+  providerSearch: providerSearchClient,
   activeInput: {
     get: (signal) => activeInputClient.get(signal),
     open: (request, signal) => activeInputClient.open(request, signal),

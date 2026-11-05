@@ -1,13 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type {
-  ExternalIdentity,
-  ExternalIdentityCandidate,
-  ExternalIDInfo,
-  ExternalIdentityDraft,
-  PreparationDiagnostic,
-} from "../types";
+import type { ExternalIdentity, ExternalIDInfo, ExternalIdentityDraft } from "../types";
 
 export const emptyExternalIdentity = (sourcePath = ""): ExternalIdentity => ({
   SourcePath: sourcePath,
@@ -65,11 +59,3 @@ export const externalIDInfoFromIdentity = (identity: ExternalIdentity): External
     { Provider: "mal", ID: ids.MALID, Source: ids.SourceMAL },
   ].filter((item) => item.ID > 0);
 };
-
-export const candidatesFromDiagnostics = (
-  diagnostics: PreparationDiagnostic[],
-  provider: "tmdb" | "imdb",
-): ExternalIdentityCandidate[] =>
-  (diagnostics || [])
-    .flatMap((diagnostic) => diagnostic.Candidates || [])
-    .filter((candidate) => String(candidate.Provider).toLowerCase() === provider);

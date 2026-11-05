@@ -27,6 +27,271 @@ import {
 const waitForAppMethod = (page: Page, method: string) =>
   page.waitForResponse((response) => response.url().endsWith(`/api/app/${method}`));
 
+test("resolver choices survive empty and failed searches, reload, and metadata refresh", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_RESOLVER_CHOICES = "1";
+  const app = await startApp(workspace);
+  try {
+    await page.goto(app.url);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    const snapshot = async () =>
+      (await (
+        await page.request.get(new URL("api/app/GetActiveInput", app.url).toString())
+      ).json()) as ActiveInputSnapshot;
+    const before = await snapshot();
+    await page.getByText("Search provider titles", { exact: true }).click();
+    const choice = page.getByRole("checkbox", {
+      name: "Select TMDB Resolver Fallback 2025, ID 1002",
+    });
+    await expect(choice).toBeVisible();
+    await expect(page.getByText("From metadata resolution", { exact: true })).toBeVisible();
+    const query = page.getByRole("textbox", { name: "Search query" });
+    await query.fill("Example 2026");
+    await page.getByRole("button", { name: "Search providers", exact: true }).click();
+    await expect(page.getByText("Results for “Example 2026”", { exact: true })).toBeVisible();
+    await expect(page.getByText("No TMDB matches for this search.", { exact: true })).toBeVisible();
+    await expect(choice).toBeVisible();
+
+    await page.route("**/api/app/SearchProviderCandidates", (route) =>
+      route.fulfill({ status: 503, contentType: "application/json", body: "{}" }),
+    );
+    await query.fill("Unavailable 2026");
+    await page.getByRole("button", { name: "Search providers", exact: true }).click();
+    await expect(
+      page.getByText("Provider search could not complete. Retry the search.", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("Results for “Example 2026”", { exact: true })).toBeVisible();
+    await expect(choice).toBeVisible();
+    expect((await snapshot()).current?.release?.release.Identity).toEqual(
+      before.current?.release?.release.Identity,
+    );
+
+    for (const mode of ["Dark", "Light"] as const) {
+      await page.getByRole("button", { name: "Appearance", exact: true }).click();
+      await page.getByRole("radio", { name: mode, exact: true }).click();
+      await page.getByRole("button", { name: "Input", exact: true }).click();
+      const summary = page.getByText("Search provider titles", { exact: true });
+      if ((await summary.locator("..").getAttribute("open")) === null) await summary.click();
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+          width,
+        );
+        await page.screenshot({
+          path: test.info().outputPath(`resolver-choice-${mode.toLowerCase()}-${width}.png`),
+          fullPage: true,
+        });
+      }
+      await page.setViewportSize({ width: 1280, height: 900 });
+    }
+    await page.reload();
+    await page.getByText("Search provider titles", { exact: true }).click();
+    await expect(choice).toBeVisible();
+    await choice.check();
+    expect((await snapshot()).current?.release?.release.Identity).toEqual(
+      before.current?.release?.release.Identity,
+    );
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).first().click();
+    await expect
+      .poll(async () => (await snapshot()).current?.release?.release.Identity.TMDBID)
+      .toBe(1002);
+    const refreshed = await waitForMetadataReady(page, app.url);
+    expect(refreshed.current?.release?.release.Identity.IMDBID).toBe(
+      before.current?.release?.release.Identity.IMDBID,
+    );
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("provider search inspects and stages a candidate before Refresh metadata", async ({
+  page,
+  context,
+}) => {
+  const workspace = await createE2EWorkspace();
+  const app = await startApp(workspace);
+  try {
+    const posterURL = "https://image.tmdb.org/t/p/original/synthetic-candidate.jpg";
+    const thumbnailURL = "https://image.tmdb.org/t/p/w342/synthetic-candidate.jpg";
+    let fullPosterRequests = 0;
+    const brokenPosterURL = new URL("missing-poster.svg", app.url).toString();
+    await page.route(posterURL, (route) => {
+      fullPosterRequests++;
+      return route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800"><rect width="100%" height="100%" fill="#537da8"/><text x="80" y="240" font-size="90" fill="white">Example poster</text></svg>',
+      });
+    });
+    await page.route(thumbnailURL, (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="342" height="513"><rect width="100%" height="100%" fill="#537da8"/></svg>',
+      }),
+    );
+    await page.route(brokenPosterURL, (route) => route.fulfill({ status: 404, body: "" }));
+    await page.route("**/api/app/SearchProviderCandidates", async (route) => {
+      const response = await route.fetch();
+      const result = await response.json();
+      for (const provider of result.Providers) {
+        provider.Candidates[0].PosterURL = thumbnailURL;
+        provider.Candidates[1].PosterURL = brokenPosterURL;
+      }
+      await route.fulfill({ response, json: result });
+    });
+    await page.goto(app.url);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    const snapshot = async () =>
+      (await (
+        await page.request.get(new URL("api/app/GetActiveInput", app.url).toString())
+      ).json()) as ActiveInputSnapshot;
+    const before = await snapshot();
+    let searches = 0;
+    page.on("request", (request) => {
+      if (request.url().endsWith("/api/app/SearchProviderCandidates")) searches++;
+    });
+    await page.getByText("Search provider titles", { exact: true }).click();
+    const query = page.getByRole("textbox", { name: "Search query" });
+    await query.fill("Example 2025");
+    expect(searches).toBe(0);
+    const response = waitForAppMethod(page, "SearchProviderCandidates");
+    await page.getByRole("button", { name: "Search providers", exact: true }).click();
+    expect((await response).ok()).toBe(true);
+    await expect(page.getByRole("checkbox", { name: /^Select TMDB/ })).toHaveCount(9);
+    await query.fill("Unsubmitted draft");
+    await expect(page.getByText("Results for “Example 2025”", { exact: true })).toBeVisible();
+    expect(searches).toBe(1);
+    expect((await snapshot()).current?.release?.release.Identity).toEqual(
+      before.current?.release?.release.Identity,
+    );
+
+    const choice = page.getByRole("checkbox", {
+      name: "Select TMDB Example Candidate 1 2025, ID 1002",
+    });
+    await choice.click();
+    await expect(choice).toBeChecked();
+    await choice.click();
+    await expect(choice).not.toBeChecked();
+    await choice.focus();
+    await page.keyboard.press("Space");
+    await expect(choice).toBeChecked();
+    await page.keyboard.press("Space");
+    await expect(choice).not.toBeChecked();
+    await choice.click();
+    await expect(choice).toBeChecked();
+    const poster = page.getByRole("button", { name: "View Example Candidate 1 poster full size" });
+    await expect(
+      page.getByRole("button", { name: "View Example Candidate 2 poster full size" }),
+    ).toHaveCount(0);
+    const thumbnail = choice.locator("xpath=ancestor::article").getByRole("img");
+    await expect(thumbnail).toHaveAttribute("src", thumbnailURL);
+    await expect
+      .poll(() => thumbnail.evaluate((img: HTMLImageElement) => img.naturalWidth))
+      .toBe(342);
+    expect(fullPosterRequests).toBe(0);
+
+    for (const mode of ["Dark", "Light"] as const) {
+      await page.getByRole("button", { name: "Appearance", exact: true }).click();
+      await page.getByRole("radio", { name: mode, exact: true }).click();
+      await page.getByRole("button", { name: "Input", exact: true }).click();
+      const summary = page.getByText("Search provider titles", { exact: true });
+      if ((await summary.locator("..").getAttribute("open")) === null) await summary.click();
+      await expect(page.getByText("Results for “Example 2025”", { exact: true })).toBeVisible();
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+          width,
+        );
+        await choice.scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: test.info().outputPath(`provider-search-${mode.toLowerCase()}-${width}.png`),
+          fullPage: true,
+        });
+        await query.fill("Unsubmitted draft");
+        await poster.focus();
+        await page.keyboard.press("Enter");
+        const dialog = page.getByRole("dialog", { name: "Example Candidate 1 poster" });
+        const image = dialog.getByRole("img");
+        await expect(dialog).toBeVisible();
+        await expect
+          .poll(() =>
+            image.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight]),
+          )
+          .toEqual([1200, 1800]);
+        expect(await image.getAttribute("src")).toBe(posterURL);
+        expect(fullPosterRequests).toBeGreaterThan(0);
+        await expect.poll(async () => (await dialog.boundingBox())?.width).toBe(width - 16);
+        await page.screenshot({
+          path: test.info().outputPath(`provider-poster-${mode.toLowerCase()}-${width}.png`),
+        });
+        await page.keyboard.press("Escape");
+        await expect(dialog).not.toBeVisible();
+        await expect(poster).toBeFocused();
+        await expect(query).toHaveValue("Unsubmitted draft");
+        await expect(choice).toBeChecked();
+      }
+      await page.setViewportSize({ width: 1280, height: 900 });
+    }
+    expect(searches).toBe(1);
+
+    await context.route("https://www.themoviedb.org/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: "<!doctype html><title>Synthetic provider page</title>",
+      }),
+    );
+    const link = page.getByRole("link", { name: "Open TMDB Example Candidate 1 in a new tab" });
+    for (const action of ["keyboard", "middle"] as const) {
+      const popupPromise = context.waitForEvent("page");
+      const navigation = context.waitForEvent(
+        "request",
+        (request) =>
+          request.isNavigationRequest() &&
+          request.url() === "https://www.themoviedb.org/movie/1002",
+      );
+      if (action === "keyboard") {
+        await link.focus();
+        await page.keyboard.press("Enter");
+      } else await link.click({ button: "middle" });
+      const popup = await popupPromise;
+      expect((await navigation).url()).toBe("https://www.themoviedb.org/movie/1002");
+      await popup.close();
+      await expect(choice).toBeChecked();
+      await expect(query).toHaveValue("Unsubmitted draft");
+    }
+    await poster.click();
+    await page.getByRole("button", { name: "Close image preview" }).click();
+    await expect(poster).toBeFocused();
+    await poster.click();
+    await expect(page.getByRole("dialog", { name: "Example Candidate 1 poster" })).toBeVisible();
+    await page.goBack();
+    await expect(
+      page.getByRole("dialog", { name: "Example Candidate 1 poster" }),
+    ).not.toBeVisible();
+    await page.goForward();
+    const summary = page.getByText("Search provider titles", { exact: true });
+    if ((await summary.locator("..").getAttribute("open")) === null) await summary.click();
+    await expect(choice).toBeChecked();
+    expect((await snapshot()).current?.release?.release.Identity.TMDBID).toBe(
+      before.current?.release?.release.Identity.TMDBID,
+    );
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).first().click();
+    await expect
+      .poll(async () => (await snapshot()).current?.release?.release.Identity.TMDBID)
+      .toBe(1002);
+    const refreshed = await waitForMetadataReady(page, app.url);
+    expect(refreshed.current?.release?.release.Identity.TMDBID).toBe(1002);
+    expect(refreshed.current?.release?.release.Identity.IMDBID).toBe(
+      before.current?.release?.release.Identity.IMDBID,
+    );
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
 const activeInputFromResponse = async (response: Response): Promise<ActiveInputSnapshot> => {
   expect(response.ok()).toBe(true);
   return (await response.json()) as ActiveInputSnapshot;

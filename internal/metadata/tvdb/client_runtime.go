@@ -339,8 +339,12 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 	if err := c.getJSON(ctx, path, c.languageParamsFor(nil, language), &resp); err != nil {
 		return SeriesMetadata{}, err
 	}
+	if resp.Data.ID != seriesID {
+		return SeriesMetadata{}, errors.New("tvdb: series identity mismatch")
+	}
 
 	metadata := SeriesMetadata{
+		RemoteLinks:      parseSeriesRemoteLinks(resp.Data.RemoteIDs),
 		TVDBID:           metautil.FirstInt(resp.Data.ID, seriesID),
 		Name:             strings.TrimSpace(resp.Data.Name),
 		Overview:         strings.TrimSpace(resp.Data.Overview),
@@ -356,6 +360,13 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 		Genres:           mapGenreNames(resp.Data.Genres),
 		Poster:           extractPosterURL(resp.Data),
 		Aliases:          mapAliases(resp.Data.Aliases),
+	}
+	if resp.Data.RemoteIDs == nil {
+		links, err := c.GetSeriesRemoteLinks(ctx, seriesID)
+		metadata.RemoteLinks = links
+		if err != nil {
+			logger.Debugf("tvdb: series remote links unavailable series_id=%d", seriesID)
+		}
 	}
 	metadata.PosterThumbnail = extractPosterThumbnailURL(resp.Data.Artworks, metadata.Poster)
 	metadata.PosterThumbnailLookupAttempted = true
@@ -2126,6 +2137,9 @@ type seriesTranslationDataResponse struct {
 }
 
 type seriesExtendedDataResponse struct {
+	RemoteIDs            *[]remoteIDEntry        `json:"remoteIds"`
+	AverageRuntime       int                     `json:"averageRuntime"`
+	Characters           []characterResponse     `json:"characters"`
 	ID                   int                     `json:"id"`
 	Name                 string                  `json:"name"`
 	Overview             string                  `json:"overview"`
