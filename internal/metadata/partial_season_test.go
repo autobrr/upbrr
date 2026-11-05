@@ -204,14 +204,14 @@ func TestPartialSeasonNamingOmitsUnverifiedOrHiddenRanges(t *testing.T) {
 		{"Part.1", api.MetadataEvidenceStatusComplete, false, true, "Part.1"},
 	} {
 		meta := preparationstate.State{
-Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV},
- Release: api.ReleaseInfo{Title: "Example Show", Resolution: "1080p"},
- Type: "WEBDL",
- Source: "Web",
- SeasonStr: "S01",
- TVPack: true,
- EpisodeCoverage: api.EpisodeCoverage{Part: tc.part, Status: tc.status},
-}
+			Identity:        api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+			Release:         api.ReleaseInfo{Title: "Example Show", Resolution: "1080p"},
+			Type:            "WEBDL",
+			Source:          "Web",
+			SeasonStr:       "S01",
+			TVPack:          true,
+			EpisodeCoverage: api.EpisodeCoverage{Part: tc.part, Status: tc.status},
+		}
 		request := releaseNameRequestFromMeta(meta, api.NopLogger{})
 		request.NoSeason = tc.omit
 		request.ManualDate = tc.daily
@@ -240,7 +240,7 @@ func TestPartialSeasonNamesRetainIdentityAcrossMediaFormats(t *testing.T) {
 		{"WEBDL", "", "Web"},
 	} {
 		t.Run(tc.kind+tc.disc, func(t *testing.T) {
-			name := BuildReleaseName(api.ReleaseNameRequest{
+			request := api.ReleaseNameRequest{
 				Category:   "TV",
 				Type:       tc.kind,
 				DiscType:   tc.disc,
@@ -252,9 +252,17 @@ func TestPartialSeasonNamesRetainIdentityAcrossMediaFormats(t *testing.T) {
 				Audio:      "DD2.0",
 				VideoCodec: "H.264",
 				DVDSize:    "DVD9",
-			}, api.NopLogger{})
+			}
+			name := BuildReleaseName(request, api.NopLogger{})
 			if !strings.Contains(name.Name, "Part.2") || !strings.Contains(name.Name, "S01") {
 				t.Fatalf("part lost from generated name: %+v", name)
+			}
+			if tc.disc == "HDDVD" {
+				request.Part, request.Episode = "", "E03"
+				episode := BuildReleaseName(request, api.NopLogger{})
+				if !strings.Contains(episode.Name, "S01E03") {
+					t.Fatalf("episode lost from generated name: %+v", episode)
+				}
 			}
 		})
 	}

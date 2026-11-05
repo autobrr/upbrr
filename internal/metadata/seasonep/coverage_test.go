@@ -23,6 +23,8 @@ func TestCoveragePreservesPackIdentityWithoutInventingMembership(t *testing.T) {
 	}{
 		{"first part", "Example.Show.S01.Part.1", []string{"Example.S01E01-E03.mkv", "Example.S01E04.mkv"}, api.MetadataEvidenceStatusComplete, "Part.1", []int{1, 2, 3, 4}, api.MetadataEvidenceStatusComplete},
 		{"second part", "Example.Show.S01.Part.2", []string{"Example.S01E09.mkv", "Example.S01E10+E12.mkv"}, api.MetadataEvidenceStatusComplete, "Part.2", []int{9, 10, 12}, api.MetadataEvidenceStatusComplete},
+		{"season-only source mismatch", "Example.Show.S02.Part.1", []string{"one.mkv", "two.mkv"}, api.MetadataEvidenceStatusComplete, "Part.1", nil, api.MetadataEvidenceStatusContradictory},
+		{"season-only file mismatch", "Example.Show.S01.Part.1", []string{"Example.Show.S02.Part.1.mkv"}, api.MetadataEvidenceStatusComplete, "Part.1", nil, api.MetadataEvidenceStatusContradictory},
 		{"part has no range", "Example.Show.S01.Part.2", []string{"one.mkv", "two.mkv"}, api.MetadataEvidenceStatusComplete, "Part.2", nil, api.MetadataEvidenceStatusUnavailable},
 		{"one unknown member", "Example.Show.S01.Part.1", []string{"Example.S01E01.mkv", "unknown.mkv"}, api.MetadataEvidenceStatusComplete, "Part.1", []int{1}, api.MetadataEvidenceStatusPartial},
 		{"partial inventory", "Example.Show.S01.Part.1", []string{"Example.S01E01.mkv"}, api.MetadataEvidenceStatusPartial, "Part.1", []int{1}, api.MetadataEvidenceStatusPartial},
@@ -32,14 +34,14 @@ func TestCoveragePreservesPackIdentityWithoutInventingMembership(t *testing.T) {
 		{"descending range", "Example.Show.S01.Part.1", []string{"Example.S01E09-E01.mkv"}, api.MetadataEvidenceStatusComplete, "Part.1", []int{9}, api.MetadataEvidenceStatusContradictory},
 		{"conflicting parts", "Example.Show.S01.Part.1.Part.2", []string{"Example.S01E01.mkv"}, api.MetadataEvidenceStatusComplete, "Part.2", []int{1}, api.MetadataEvidenceStatusContradictory},
 		{"date annotation", "Example.Show.S01.Part.1", []string{"Example.S01E01-2026.09.09.mkv"}, api.MetadataEvidenceStatusComplete, "Part.1", []int{1}, api.MetadataEvidenceStatusComplete},
-		{"unsupported membership", "Example.Show.S01.Part.1", []string{"Example.S01E01,E09.mkv"}, api.MetadataEvidenceStatusComplete, "Part.1", []int{1}, api.MetadataEvidenceStatusContradictory},
+		{"unsupported membership", "Example.Show.S01.Part.1", []string{"Example.S01E01,E09.mkv"}, api.MetadataEvidenceStatusComplete, "Part.1", []int{1, 9}, api.MetadataEvidenceStatusContradictory},
 		{"other video format", "Example.Show.S01.Part.2", []string{"Example.S01E09.mkv", "Example.S01E02.m4v"}, api.MetadataEvidenceStatusComplete, "Part.2", []int{2, 9}, api.MetadataEvidenceStatusComplete},
 		{"unknown other video", "Example.Show.S01.Part.2", []string{"Example.S01E09.mkv", "unknown.m4v"}, api.MetadataEvidenceStatusComplete, "Part.2", []int{9}, api.MetadataEvidenceStatusPartial},
 		{"contradictory source range", "Example.Show.S01E01-E03+S02E09", nil, api.MetadataEvidenceStatusUnavailable, "", []int{1, 2, 3}, api.MetadataEvidenceStatusContradictory},
 		{"unidentified files retain source range", "Example.Show.S01E01-E04", []string{"one.mkv", "two.mkv"}, api.MetadataEvidenceStatusComplete, "E01-E04", []int{1, 2, 3, 4}, api.MetadataEvidenceStatusPartial},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Coverage(1, tc.source, tc.files, tc.inventory)
+			got := Coverage(1, true, tc.source, tc.files, tc.inventory)
 			if got.Part != tc.part || !slices.Equal(got.Episodes, tc.episodes) || got.Status != tc.status {
 				t.Fatalf("coverage=%+v want part=%s episodes=%v status=%s", got, tc.part, tc.episodes, tc.status)
 			}
@@ -58,11 +60,12 @@ func TestCoverageBindsCompleteAssertionsAndExplicitSeasonZero(t *testing.T) {
 	}{
 		{"Example.S01.COMPLETE", 2, false, true, api.MetadataEvidenceStatusContradictory},
 		{"Example.COMPLETE.S01", 2, false, true, api.MetadataEvidenceStatusContradictory},
+		{"Example.S02.COMPLETE", 0, false, true, api.MetadataEvidenceStatusUnavailable},
 		{"Example.S00.Part.1", 0, true, false, api.MetadataEvidenceStatusUnavailable},
 		{"Example.Part.1", 0, false, false, api.MetadataEvidenceStatusUnavailable},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
-			got := Coverage(tc.season, tc.source, []string{"one.mkv", "two.mkv"}, api.MetadataEvidenceStatusComplete)
+			got := Coverage(tc.season, tc.season > 0, tc.source, []string{"one.mkv", "two.mkv"}, api.MetadataEvidenceStatusComplete)
 			if got.SeasonKnown != (tc.known || tc.season > 0) || got.CompleteSeason != tc.complete || got.Status != tc.status || got.Episodes == nil {
 				t.Fatalf("coverage=%+v", got)
 			}
@@ -83,10 +86,45 @@ func TestCoverageRequiresAnExplicitCompleteSeasonAssertion(t *testing.T) {
 		{"Example.Show.S01.COMPLETE.Part.1", true, api.MetadataEvidenceStatusContradictory},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
-			got := Coverage(1, tc.source, files, api.MetadataEvidenceStatusComplete)
+			got := Coverage(1, true, tc.source, files, api.MetadataEvidenceStatusComplete)
 			if got.CompleteSeason != tc.complete || got.Status != tc.status {
 				t.Fatalf("coverage=%+v", got)
 			}
 		})
+	}
+}
+
+func TestCoverageReconcilesSeasonOnlyEvidenceWithSelectedPresence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		season   int
+		selected bool
+		source   string
+		files    []string
+		known    bool
+		status   api.MetadataEvidenceStatus
+	}{
+		{"unknown selection", 0, false, "Example.S02.Part.1", []string{"Example.S02.Part.1.mkv"}, false, api.MetadataEvidenceStatusUnavailable},
+		{"explicit specials mismatch", 0, true, "Example.S02.Part.1", []string{"unknown.mkv"}, true, api.MetadataEvidenceStatusContradictory},
+		{"explicit specials file mismatch", 0, true, "Example.S00.Part.1", []string{"Example.S02.Part.1.mkv"}, true, api.MetadataEvidenceStatusContradictory},
+		{"matching specials", 0, true, "Example.S00.Part.1", []string{"Example.S00.Part.1.mkv"}, true, api.MetadataEvidenceStatusUnavailable},
+		{"raw specials", 0, false, "Example.S00.Part.1", []string{"unknown.mkv"}, true, api.MetadataEvidenceStatusUnavailable},
+		{"conflicting raw labels", 0, false, "Example.S02.Part.1", []string{"Example.S03.Part.1.mkv"}, false, api.MetadataEvidenceStatusContradictory},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Coverage(tc.season, tc.selected, tc.source, tc.files, api.MetadataEvidenceStatusComplete)
+			if got.Status != tc.status || got.SeasonKnown != tc.known || got.Part != "Part.1" || len(got.Episodes) != 0 || got.CompleteSeason {
+				t.Fatalf("coverage=%+v", got)
+			}
+		})
+	}
+}
+
+func TestCoverageUnknownSelectionRetainsCoherentRawMembers(t *testing.T) {
+	t.Parallel()
+	got := Coverage(0, false, "Example.S02.Part.1", []string{"Example.S02E01.mkv", "Example.S02E02.mkv"}, api.MetadataEvidenceStatusComplete)
+	if got.Status != api.MetadataEvidenceStatusComplete || got.SeasonKnown || !slices.Equal(got.Episodes, []int{1, 2}) {
+		t.Fatalf("coverage=%+v", got)
 	}
 }

@@ -599,6 +599,7 @@ func generatedReleaseNameDocument(
 				space(api.NameRoleAlternateTitle, alternateTitle),
 				space(api.NameRoleYear, year),
 				seasonComponent,
+				episodeComponent,
 				space(api.NameRolePart, part),
 				space(api.NameRoleEdition, edition),
 				space(

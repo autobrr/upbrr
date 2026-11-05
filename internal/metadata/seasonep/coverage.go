@@ -17,23 +17,38 @@ var (
 	completeSeasonPattern = regexp.MustCompile(`(?i)(?:^|[ ._-])(?:S(\d+)[ ._-]+COMPLETE|COMPLETE[ ._-]+S(\d+))(?:$|[ ._-])`)
 	partPattern           = regexp.MustCompile(`(?i)(?:^|[ ._-])(?:part|pt)[ ._-]*(\d+)\b`)
 	coveragePattern       = regexp.MustCompile(
-		`(?i)(?:^|[ ._-])(?:S(\d+)[ ._-]*)?E(\d+)(?:v\d+)?((?:[ ._-]*E\d+(?:v\d+)?|\s*[-+&]\s*(?:S\d+[ ._-]*)?E?\d+(?:v\d+)?)*)(?:\b|_)`,
+		`(?i)(?:^|[^a-z0-9])(?:S(\d+)[ ._-]*)?E(\d+)(?:v\d+)?((?:[ ._-]*E\d+(?:v\d+)?|\s*[-+&]\s*(?:S\d+[ ._-]*)?E?\d+(?:v\d+)?)*)(?:\b|_)`,
 	)
 	coverageMemberPattern = regexp.MustCompile(`(?i)([ ._-]*E|\s*[-+&]\s*(?:S(\d+)[ ._-]*)?E?)(\d+)(?:v\d+)?`)
 )
 
 // Coverage reads explicit part and episode membership without inspecting media.
+// seasonKnown distinguishes a selected S00 from an unspecified season value.
 // inventoryStatus describes enumeration of files, never completeness of a season.
 // Unknown members and conflicting season/range evidence remain unverified.
-func Coverage(season int, source string, files []string, inventoryStatus api.MetadataEvidenceStatus) api.EpisodeCoverage {
+func Coverage(season int, seasonKnown bool, source string, files []string, inventoryStatus api.MetadataEvidenceStatus) api.EpisodeCoverage {
 	facts := api.EpisodeCoverage{
 		Status:      api.MetadataEvidenceStatusUnavailable,
 		Episodes:    []int{},
-		SeasonKnown: season > 0,
+		SeasonKnown: seasonKnown,
 	}
-	if sourceSeason, known := api.DetectedFileSeason(source); known && sourceSeason == season {
-		facts.SeasonKnown = true
+	observedSeason, observed := season, seasonKnown
+	reconcileSeason := func(name string) {
+		detected, known := api.DetectedFileSeason(name)
+		if !known {
+			return
+		}
+		if observed && detected != observedSeason {
+			facts.Status = api.MetadataEvidenceStatusContradictory
+		}
+		if !observed {
+			observedSeason, observed = detected, true
+		}
+		if detected == season {
+			facts.SeasonKnown = true
+		}
 	}
+	reconcileSeason(source)
 	for _, match := range partPattern.FindAllStringSubmatch(strings.ReplaceAll(filepath.Base(source), "_", "."), -1) {
 		value, err := strconv.Atoi(match[1])
 		if err != nil || value <= 0 {
@@ -45,7 +60,7 @@ func Coverage(season int, source string, files []string, inventoryStatus api.Met
 		}
 		facts.Part = part
 	}
-	sourceMembers, sourceStatus := coverageMembers(season, filepath.Base(source))
+	sourceMembers, sourceStatus := coverageMembers(observedSeason, filepath.Base(source))
 	if facts.Part == "" && len(sourceMembers) > 1 && sourceStatus != api.MetadataEvidenceStatusContradictory {
 		labels := make([]string, 0, len(sourceMembers))
 		for _, episode := range sourceMembers {
@@ -63,11 +78,9 @@ func Coverage(season int, source string, files []string, inventoryStatus api.Met
 		if !IsVideoFile(file) {
 			continue
 		}
-		if fileSeason, known := api.DetectedFileSeason(file); known && fileSeason == season {
-			facts.SeasonKnown = true
-		}
+		reconcileSeason(file)
 		count++
-		episodes, status := coverageMembers(season, filepath.Base(file))
+		episodes, status := coverageMembers(observedSeason, filepath.Base(file))
 		members = append(members, episodes...)
 		if status != api.MetadataEvidenceStatusComplete {
 			complete = false
@@ -98,7 +111,7 @@ func Coverage(season int, source string, files []string, inventoryStatus api.Met
 	facts.Episodes = append(facts.Episodes, members...)
 	if match := completeSeasonPattern.FindStringSubmatch(filepath.Base(source)); match != nil {
 		facts.CompleteSeason = true
-		if parseInt(match[1]+match[2]) != season {
+		if parseInt(match[1]+match[2]) != observedSeason {
 			facts.Status = api.MetadataEvidenceStatusContradictory
 		}
 	}
@@ -131,7 +144,7 @@ func coverageMembers(season int, name string) ([]int, api.MetadataEvidenceStatus
 	}
 	status := api.MetadataEvidenceStatusComplete
 	remainder := coveragePattern.ReplaceAllString(strings.ReplaceAll(name, "_", "."), " ")
-	if sourceEpisodeEvidencePattern.MatchString(remainder) {
+	if len(matches) > 1 || sourceEpisodeEvidencePattern.MatchString(remainder) {
 		status = api.MetadataEvidenceStatusContradictory
 	}
 	episodes := []int(nil)

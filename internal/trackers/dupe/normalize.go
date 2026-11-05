@@ -282,8 +282,8 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 		),
 	}
-	if target.Pack && (target.Coverage.Status != "" || target.Coverage.Part != "") {
-		if facts.Content.Kind == contentScopeDaily {
+	if target.Pack && (target.Coverage.Status != "" || target.Coverage.Part != "" || target.Coverage.CompleteSeason) {
+		if facts.Content.Kind == contentScopeDaily && len(target.Coverage.Episodes) == 0 && !target.Coverage.CompleteSeason {
 			facts.Content.Coverage = target.Coverage
 		} else {
 			facts.Content = packCoverageScope(target.Season, target.Coverage, FactOriginTargetMedia)
@@ -411,15 +411,15 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 		),
 	}
-	if candidate.Pack && len(candidate.Files) > 0 {
+	if candidate.Pack {
 		status := api.MetadataEvidenceStatusPartial
 		if candidate.FileCount == len(candidate.Files) {
 			status = api.MetadataEvidenceStatusComplete
 		}
-		coverage := seasonep.Coverage(candidate.Season, candidate.Name, candidate.Files, status)
-		if coverage.Part != "" || len(coverage.Episodes) > 0 || coverage.Status == api.MetadataEvidenceStatusContradictory {
+		coverage := seasonep.Coverage(candidate.Season, candidate.Season > 0, candidate.Name, candidate.Files, status)
+		if coverage.Part != "" || len(coverage.Episodes) > 0 || coverage.CompleteSeason || coverage.Status == api.MetadataEvidenceStatusContradictory {
 			switch {
-			case facts.Content.Kind == contentScopeDaily:
+			case facts.Content.Kind == contentScopeDaily && len(coverage.Episodes) == 0 && !coverage.CompleteSeason:
 				facts.Content.Coverage = coverage
 			case facts.Content.Kind == contentScopeSeasonPack && coverage.Part == "" && coverage.Status != api.MetadataEvidenceStatusContradictory:
 				// Optional filenames do not revoke the tracker's season-pack assertion.
@@ -745,7 +745,7 @@ func contentScopeFromTitle(name string, origin FactOrigin) contentScope {
 	}
 	if match := titleSeasonPackPattern.FindStringSubmatch(name); len(match) == 2 {
 		season, _ := strconv.Atoi(match[1])
-		coverage := seasonep.Coverage(season, name, nil, api.MetadataEvidenceStatusUnavailable)
+		coverage := seasonep.Coverage(season, true, name, nil, api.MetadataEvidenceStatusUnavailable)
 		if coverage.Part != "" {
 			return packCoverageScope(season, coverage, origin)
 		}
@@ -1596,7 +1596,7 @@ func derivedMediaFact(facts normalizedFacts, dimension trackerspkg.DupeDimension
 
 func packCoverageScope(season int, coverage api.EpisodeCoverage, origin FactOrigin) contentScope {
 	kind := contentScopeSeasonPart
-	if coverage.CompleteSeason && coverage.Status != api.MetadataEvidenceStatusContradictory {
+	if coverage.CompleteSeason && coverage.Status != api.MetadataEvidenceStatusContradictory && (season > 0 || coverage.SeasonKnown) {
 		kind = contentScopeSeasonPack
 	}
 	return contentScope{
