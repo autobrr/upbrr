@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -1456,46 +1457,55 @@ func TestSeedImportRechecksSourceFingerprint(t *testing.T) {
 
 func TestPrepareCancellationDoesNotReorderSourceFIFO(t *testing.T) {
 	t.Parallel()
-	path := writePreparedTestFile(t, "source.mkv", "source")
-	collector := newBlockingCollector()
-	module := newTestModule(t, newMemoryStore(), collector)
+	synctest.Test(t, func(t *testing.T) {
+		path := writePreparedTestFile(t, "source.mkv", "source")
+		collector := newBlockingCollector()
+		module := newTestModule(t, newMemoryStore(), collector)
 
-	firstDone := make(chan error, 1)
-	go func() {
-		_, err := module.Prepare(context.Background(), prepareInputWithLookup(path, "first"))
-		firstDone <- err
-	}()
-	waitForString(t, collector.started, "first")
+		firstDone := make(chan error, 1)
+		go func() {
+			_, err := module.Prepare(context.Background(), prepareInputWithLookup(path, "first"))
+			firstDone <- err
+		}()
+		waitForString(t, collector.started, "first")
 
-	canceledCtx, cancel := context.WithCancel(context.Background())
-	canceledDone := make(chan error, 1)
-	go func() {
-		_, err := module.Prepare(canceledCtx, prepareInputWithLookup(path, "canceled"))
-		canceledDone <- err
-	}()
-	thirdDone := make(chan error, 1)
-	go func() {
-		_, err := module.Prepare(context.Background(), prepareInputWithLookup(path, "third"))
-		thirdDone <- err
-	}()
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	if err := <-canceledDone; !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled Prepare() error = %v", err)
-	}
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		canceledDone := make(chan error, 1)
+		go func() {
+			_, err := module.Prepare(canceledCtx, prepareInputWithLookup(path, "canceled"))
+			canceledDone <- err
+		}()
+		synctest.Wait()
+		thirdDone := make(chan error, 1)
+		go func() {
+			_, err := module.Prepare(context.Background(), prepareInputWithLookup(path, "third"))
+			thirdDone <- err
+		}()
+		synctest.Wait()
+		module.gates.mu.Lock()
+		waiters := len(module.gates.sources[canonicalSourceKey(path)].waiters)
+		module.gates.mu.Unlock()
+		if waiters != 3 {
+			t.Fatalf("source queue = %d, want active preparation and two ordered waiters", waiters)
+		}
+		cancel()
+		if err := <-canceledDone; !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled Prepare() error = %v", err)
+		}
 
-	collector.release <- struct{}{}
-	if err := <-firstDone; err != nil {
-		t.Fatal(err)
-	}
-	waitForString(t, collector.started, "third")
-	collector.release <- struct{}{}
-	if err := <-thirdDone; err != nil {
-		t.Fatal(err)
-	}
-	if got := collector.order(); len(got) != 2 || got[0] != "first" || got[1] != "third" {
-		t.Fatalf("collector order = %v, want [first third]", got)
-	}
+		collector.release <- struct{}{}
+		if err := <-firstDone; err != nil {
+			t.Fatal(err)
+		}
+		waitForString(t, collector.started, "third")
+		collector.release <- struct{}{}
+		if err := <-thirdDone; err != nil {
+			t.Fatal(err)
+		}
+		if got := collector.order(); len(got) != 2 || got[0] != "first" || got[1] != "third" {
+			t.Fatalf("collector order = %v, want [first third]", got)
+		}
+	})
 }
 
 func TestPrepareDifferentSourcesRunConcurrently(t *testing.T) {

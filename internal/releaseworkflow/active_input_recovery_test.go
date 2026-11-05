@@ -501,9 +501,6 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 				leaseExpiry := started.Add(time.Minute)
 				if test.liveWork {
 					leaseExpiry = time.Now().Add(time.Second)
-					if test.maxWait > 0 {
-						leaseExpiry = time.Now().Add(5 * time.Second)
-					}
 				}
 				work := api.ReleaseWorkflowWorkRecord{
 					OwnerID:        testOwnerID,
@@ -655,18 +652,29 @@ func TestStartupDiscardsInterruptedOperations(t *testing.T) {
 					"second-coordinator", WithCoordinator(restarted.Coordinator))
 			}
 			if test.maxWait > 0 {
+				work, err := repo.LoadReleaseWorkflowWork(ctx, testOwnerID, opened.WorkflowID, operationID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Hold the foreign lease live while real caller/recovery deadlines expire.
+				waiting := newActiveInputRecoveryModule(t, recoveryRepository, recoveryInputs, verifier,
+					fixedClock{now: work.LeaseExpiresAt.Add(-time.Hour)}, "second-coordinator", WithCoordinator(restarted.Coordinator))
 				recoveryCtx := ctx
 				if test.parentWait > 0 {
 					var cancel context.CancelFunc
 					recoveryCtx, cancel = context.WithTimeout(ctx, test.parentWait)
 					defer cancel()
 				}
-				if err := restarted.recoverOperationsOnce(recoveryCtx, true, test.maxWait); !errors.Is(err, test.wantErr) {
+				if err := waiting.recoverOperationsOnce(recoveryCtx, true, test.maxWait); !errors.Is(err, test.wantErr) {
 					t.Fatalf("bounded recovery error = %v, want %v", err, test.wantErr)
 				}
 				unsettled, err := repo.LoadReleaseWorkflowOperation(ctx, testOwnerID, opened.WorkflowID, operationID)
 				if err != nil || unsettled.Status.Status != api.StageStatusRunning {
 					t.Fatalf("operation after bounded recovery = %#v, err=%v", unsettled.Status, err)
+				}
+				unchanged, err := repo.LoadReleaseWorkflowWork(ctx, testOwnerID, opened.WorkflowID, operationID)
+				if err != nil || !reflect.DeepEqual(unchanged, work) {
+					t.Fatalf("bounded recovery changed foreign work: %#v, err=%v", unchanged, err)
 				}
 				return
 			}
