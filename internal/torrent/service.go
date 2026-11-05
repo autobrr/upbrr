@@ -278,6 +278,9 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	if pieceOptions.profileURL != "" {
 		trackerURLs = []string{pieceOptions.profileURL}
 	}
+	if cancelErr := ctx.Err(); cancelErr != nil {
+		return api.TorrentResult{}, fmt.Errorf("torrent: canceled before hashing: %w", cancelErr)
+	}
 	info, err := mkbrr.Create(mkbrr.CreateOptions{
 		Path:             createSpec.path,
 		Name:             createSpec.name,
@@ -313,6 +316,9 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	if err := setUploadMetadata(info.Path); err != nil {
 		emitTorrentProgress(ctx, meta, "failed", "Torrent metadata update failed")
 		return api.TorrentResult{}, err
+	}
+	if cancelErr := ctx.Err(); cancelErr != nil {
+		return api.TorrentResult{}, fmt.Errorf("torrent: canceled before publication: %w", cancelErr)
 	}
 	resultPath := info.Path
 	var pending api.TorrentPublication
@@ -708,6 +714,9 @@ func verifyCandidateTorrentData(ctx context.Context, path string, meta api.Torre
 	}
 	if ok && inventory.Scope == api.SubmissionContentScopeSingleFile && len(inventory.Files) == 1 {
 		contentPath = inventory.Files[0].LocalPath
+	}
+	if cancelErr := ctx.Err(); cancelErr != nil {
+		return fmt.Errorf("torrent: canceled before verification: %w", cancelErr)
 	}
 	result, err := mkbrr.VerifyData(mkbrr.VerifyOptions{
 		TorrentPath: path,

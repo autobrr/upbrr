@@ -186,6 +186,7 @@ export type InputFacet = Readonly<{
   searchProviders(query: string): Promise<void>;
   cancelProviderSearch(): void;
   updateSourceDraft(value: string): void;
+  /** Selects a draft path and requests cancellation of active work before another preparation. */
   selectSource(value: string): void;
   changeSourceLookupURL(value: string): void;
   changeIdentity(value: Readonly<ExternalIDOverrides>): void;

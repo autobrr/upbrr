@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -777,129 +778,132 @@ func TestCheckReturnsResolvedOrderAndActualCompletionProgress(t *testing.T) {
 }
 
 func TestCheckLimitsConcurrencyToFour(t *testing.T) {
-	var active atomic.Int32
-	var maximum atomic.Int32
-	release := make(chan struct{})
-	adapters := make(map[string]Adapter)
-	for _, name := range []string{"A", "B", "C", "D", "E", "F"} {
-		adapters[name] = AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
-			current := active.Add(1)
-			for {
-				previous := maximum.Load()
-				if current <= previous || maximum.CompareAndSwap(previous, current) {
-					break
+	synctest.Test(t, func(t *testing.T) {
+		var active atomic.Int32
+		var maximum atomic.Int32
+		release := make(chan struct{})
+		releaseAdapters := sync.OnceFunc(func() { close(release) })
+		defer releaseAdapters()
+		adapters := make(map[string]Adapter)
+		for _, name := range []string{"A", "B", "C", "D", "E", "F"} {
+			adapters[name] = AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
+				current := active.Add(1)
+				for {
+					previous := maximum.Load()
+					if current <= previous || maximum.CompareAndSwap(previous, current) {
+						break
+					}
 				}
-			}
-			<-release
-			active.Add(-1)
-			return Resolved(nil, nil)
-		})
-	}
-	done := make(chan struct{})
-	go func() {
-		_, _ = testService(adapters).Check(context.Background(), api.DuplicateSubject{SourcePath: "C:/media/example.mkv"}, []string{"A", "B", "C", "D", "E", "F"})
-		close(done)
-	}()
-	deadline := time.After(10 * time.Second)
-	for maximum.Load() < 4 {
-		select {
-		case <-deadline:
-			t.Fatal("workers did not start")
-		default:
-			time.Sleep(time.Millisecond)
+				<-release
+				active.Add(-1)
+				return Resolved(nil, nil)
+			})
 		}
-	}
-	if maximum.Load() > maxDupeWorkers {
-		t.Fatalf("maximum concurrency = %d", maximum.Load())
-	}
-	close(release)
-	<-done
+		done := make(chan struct{})
+		go func() {
+			_, _ = testService(adapters).Check(context.Background(), api.DuplicateSubject{SourcePath: "C:/media/example.mkv"}, []string{"A", "B", "C", "D", "E", "F"})
+			close(done)
+		}()
+		synctest.Wait()
+		if maximum.Load() != maxDupeWorkers {
+			t.Fatalf("started concurrency = %d, want %d", maximum.Load(), maxDupeWorkers)
+		}
+		releaseAdapters()
+		<-done
+	})
 }
 
 func TestLiveTestChecksEverySelectedTrackerSerially(t *testing.T) {
-	var active, maximum atomic.Int32
-	names := []string{"A", "B", "C", "D", "E", "F"}
-	adapters := make(map[string]Adapter)
-	for _, name := range names {
-		adapters[name] = AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
-			current := active.Add(1)
-			for {
-				previous := maximum.Load()
-				if current <= previous || maximum.CompareAndSwap(previous, current) {
-					break
+	synctest.Test(t, func(t *testing.T) {
+		var active, maximum atomic.Int32
+		names := []string{"A", "B", "C", "D", "E", "F"}
+		adapters := make(map[string]Adapter)
+		for _, name := range names {
+			adapters[name] = AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
+				current := active.Add(1)
+				for {
+					previous := maximum.Load()
+					if current <= previous || maximum.CompareAndSwap(previous, current) {
+						break
+					}
 				}
-			}
-			time.Sleep(5 * time.Millisecond)
-			active.Add(-1)
-			return Resolved(nil, nil)
-		})
-	}
-	policy, err := api.NewLiveTestPolicy("serial-run", filepath.Join(t.TempDir(), "images.jsonl"), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg := adaptersConfig(adapters)
-	cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "upbrr.db")
-	service := NewServiceWithRegistry(cfg, api.NopLogger{}, &trackerspkg.Registry{}, policy)
-	service.adapters = adapters
-	summary, err := service.Check(t.Context(), api.DuplicateSubject{SourcePath: filepath.Join(t.TempDir(), "Synthetic.Release.2026-GRP.mkv")}, names)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if maximum.Load() != 1 || len(summary.Results) != len(names) {
-		t.Fatalf("live-test concurrency=%d results=%d", maximum.Load(), len(summary.Results))
-	}
-	for _, name := range names {
-		if !slices.ContainsFunc(summary.Results, func(result api.DupeCheckResult) bool { return result.Tracker == name }) {
-			t.Errorf("missing live-test result for tracker %q", name)
+				time.Sleep(5 * time.Millisecond)
+				active.Add(-1)
+				return Resolved(nil, nil)
+			})
 		}
-	}
+		policy, err := api.NewLiveTestPolicy("serial-run", filepath.Join(t.TempDir(), "images.jsonl"), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := adaptersConfig(adapters)
+		cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "upbrr.db")
+		service := NewServiceWithRegistry(cfg, api.NopLogger{}, &trackerspkg.Registry{}, policy)
+		service.adapters = adapters
+		summary, err := service.Check(t.Context(), api.DuplicateSubject{SourcePath: filepath.Join(t.TempDir(), "Synthetic.Release.2026-GRP.mkv")}, names)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if maximum.Load() != 1 || len(summary.Results) != len(names) {
+			t.Fatalf("live-test concurrency=%d results=%d", maximum.Load(), len(summary.Results))
+		}
+		for _, name := range names {
+			if !slices.ContainsFunc(summary.Results, func(result api.DupeCheckResult) bool { return result.Tracker == name }) {
+				t.Errorf("missing live-test result for tracker %q", name)
+			}
+		}
+	})
 }
 
 func TestCheckCancellationWaitsForStartedAdapterAndReturnsCompletedEvidence(t *testing.T) {
-	started := make(chan struct{})
-	completed := make(chan struct{})
-	release := make(chan struct{})
-	service := testService(map[string]Adapter{
-		"A": AdapterFunc(func(ctx context.Context, _ api.DuplicateSubject) AdapterResult {
-			close(started)
-			<-ctx.Done()
-			<-release
-			return Failed(FailureRequest, "canceled", ctx.Err())
-		}),
-		"B": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
-			close(completed)
-			return Resolved(nil, nil)
-		}),
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct {
-		summary api.DupeCheckSummary
-		err     error
-	}, 1)
-	go func() {
-		summary, err := service.Check(ctx, api.DuplicateSubject{SourcePath: "C:/media/example.mkv"}, []string{"B", "A"})
-		done <- struct {
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		completed := make(chan struct{})
+		release := make(chan struct{})
+		releaseAdapters := sync.OnceFunc(func() { close(release) })
+		defer releaseAdapters()
+		service := testService(map[string]Adapter{
+			"A": AdapterFunc(func(ctx context.Context, _ api.DuplicateSubject) AdapterResult {
+				close(started)
+				<-ctx.Done()
+				<-release
+				return Failed(FailureRequest, "canceled", ctx.Err())
+			}),
+			"B": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
+				close(completed)
+				return Resolved(nil, nil)
+			}),
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct {
 			summary api.DupeCheckSummary
 			err     error
-		}{summary: summary, err: err}
-	}()
-	<-started
-	<-completed
-	cancel()
-	select {
-	case <-done:
-		t.Fatal("cancellation detached a started adapter")
-	case <-time.After(25 * time.Millisecond):
-	}
-	close(release)
-	got := <-done
-	if !errors.Is(got.err, context.Canceled) {
-		t.Fatalf("error = %v", got.err)
-	}
-	if len(got.summary.Results) != 1 || got.summary.Results[0].Tracker != "B" {
-		t.Fatalf("completed evidence lost: %#v", got.summary.Results)
-	}
+		}, 1)
+		go func() {
+			summary, err := service.Check(ctx, api.DuplicateSubject{SourcePath: "C:/media/example.mkv"}, []string{"B", "A"})
+			done <- struct {
+				summary api.DupeCheckSummary
+				err     error
+			}{summary: summary, err: err}
+		}()
+		<-started
+		<-completed
+		cancel()
+		synctest.Sleep(2 * service.cancelWarningThreshold)
+		select {
+		case <-done:
+			t.Fatal("cancellation detached a started adapter")
+		default:
+		}
+		releaseAdapters()
+		got := <-done
+		if !errors.Is(got.err, context.Canceled) {
+			t.Fatalf("error = %v", got.err)
+		}
+		if len(got.summary.Results) != 1 || got.summary.Results[0].Tracker != "B" {
+			t.Fatalf("completed evidence lost: %#v", got.summary.Results)
+		}
+	})
 }
 
 func TestPublicProjectionBlanksPrivateDownloadsAndSanitizesURLQueries(t *testing.T) {

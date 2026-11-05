@@ -3748,9 +3748,10 @@ for (const stage of [
       expect(workspace.fake.counters.clientInjections).toBe(0);
       gate.release();
       await start();
-      await expect
-        .poll(async () => (await snapshot()).current?.operation?.status)
-        .toBe("completed");
+      // Re-admission may change the slot while a snapshot is being assembled.
+      await expect(async () => {
+        expect((await snapshot()).current?.operation?.status).toBe("completed");
+      }).toPass({ timeout: 10_000 });
       expect((await snapshot()).inputId).toBe(active.inputId);
     } finally {
       gate?.release();

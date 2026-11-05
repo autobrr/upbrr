@@ -59,12 +59,12 @@ func TestTrackerImageURLsFromResultKeepsPreviewPairs(t *testing.T) {
 }
 
 type stubTrackerLookup struct {
-	results     map[string]trackerdata.Result
-	calls       []string
-	searchNames []string
-	ids         map[string]string
-	delays      map[string]time.Duration
-	mu          sync.Mutex
+	results      map[string]trackerdata.Result
+	calls        []string
+	searchNames  []string
+	ids          map[string]string
+	beforeLookup func(context.Context, string) error
+	mu           sync.Mutex
 }
 
 type coolingTrackerRepo struct {
@@ -103,14 +103,11 @@ func (s *stubTrackerLookup) Lookup(
 		s.ids = make(map[string]string)
 	}
 	s.ids[tracker] = trackerID
-	delay := s.delays[tracker]
 	s.mu.Unlock()
 
-	if delay > 0 {
-		select {
-		case <-ctx.Done():
-			return trackerdata.Result{}, fmt.Errorf("context canceled: %w", ctx.Err())
-		case <-time.After(delay):
+	if s.beforeLookup != nil {
+		if err := s.beforeLookup(ctx, tracker); err != nil {
+			return trackerdata.Result{}, err
 		}
 	}
 
@@ -256,10 +253,6 @@ func TestEnrichTrackerDataStopsAfterFirstPriorityIDWinner(t *testing.T) {
 			},
 			"HDB": {TMDBID: 999, TrackerID: "202"},
 		},
-		delays: map[string]time.Duration{
-			"ANT": 60 * time.Millisecond,
-			"HDB": 5 * time.Millisecond,
-		},
 	}
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{
@@ -310,10 +303,6 @@ func TestEnrichTrackerDataPreferredTrackerOverridesStaticPriority(t *testing.T) 
 			"ANT": {TMDBID: 123, TrackerID: "101"},
 			"HDB": {TMDBID: 999, TrackerID: "202"},
 		},
-		delays: map[string]time.Duration{
-			"ANT": 40 * time.Millisecond,
-			"HDB": 5 * time.Millisecond,
-		},
 	}
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{
@@ -351,6 +340,7 @@ func TestEnrichTrackerDataPreferredTrackerOverridesStaticPriority(t *testing.T) 
 
 func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "Example.Movie.2026.BluRay.1080p.DTS.x264-GRP")
+	antStarted := make(chan struct{})
 	repo := &fakeRepo{trackerMetadata: []api.TrackerMetadata{{
 		SourcePath:  source,
 		Tracker:     "ANT",
@@ -359,6 +349,15 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 		Description: "Retained notes",
 	}}}
 	lookup := &stubTrackerLookup{
+		beforeLookup: func(ctx context.Context, tracker string) error {
+			if tracker == "ANT" {
+				close(antStarted)
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			<-antStarted
+			return nil
+		},
 		results: map[string]trackerdata.Result{
 			"ANT": {
 				TMDBID:    123,
@@ -366,10 +365,6 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 				TrackerID: "101",
 			},
 			"HDB": {TMDBID: 999, TrackerID: "202"},
-		},
-		delays: map[string]time.Duration{
-			"ANT": 60 * time.Millisecond,
-			"HDB": 5 * time.Millisecond,
 		},
 	}
 	cfg := config.Config{
@@ -431,10 +426,6 @@ func TestEnrichTrackerDataPreferredTrackerIsSourceOfTruthWithoutClientTrackerIDs
 				Images:      []bbcode.Image{{RawURL: hdbImageURL}},
 			},
 		},
-		delays: map[string]time.Duration{
-			"ANT": 40 * time.Millisecond,
-			"HDB": 5 * time.Millisecond,
-		},
 	}
 	cfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
@@ -488,11 +479,6 @@ func TestEnrichTrackerDataContinuesUntilIDsFound(t *testing.T) {
 			"ANT": {Description: "desc only", TrackerID: "101"},
 			"HDB": {IMDBID: 1554091, TrackerID: "202"},
 			"PTP": {TMDBID: 55720, TrackerID: "303"},
-		},
-		delays: map[string]time.Duration{
-			"ANT": 5 * time.Millisecond,
-			"HDB": 40 * time.Millisecond,
-			"PTP": 75 * time.Millisecond,
 		},
 	}
 	cfg := config.Config{
@@ -1665,10 +1651,6 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 			},
 			"BTN": {IMDBID: 39050141, TrackerID: "2167358"},
 		},
-		delays: map[string]time.Duration{
-			"BHD": 5 * time.Millisecond,
-			"BTN": 40 * time.Millisecond,
-		},
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
 	cfg := config.Config{
@@ -1711,10 +1693,6 @@ func TestEnrichTrackerDataKeepsBTNAsFallbackWhenKeepingImages(t *testing.T) {
 		results: map[string]trackerdata.Result{
 			"BHD": {Description: "desc only", TrackerID: "513053"},
 			"BTN": {IMDBID: 39050141, TrackerID: "2167358"},
-		},
-		delays: map[string]time.Duration{
-			"BHD": 5 * time.Millisecond,
-			"BTN": 35 * time.Millisecond,
 		},
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
@@ -1762,10 +1740,6 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 				IMDBID:      1554091,
 				TrackerID:   "202",
 			},
-		},
-		delays: map[string]time.Duration{
-			"ANT": 5 * time.Millisecond,
-			"HDB": 40 * time.Millisecond,
 		},
 	}
 	cfg := config.Config{
@@ -1897,7 +1871,6 @@ func TestEnrichTrackerDataRejectedImageURLsDoNotChooseAssetSource(t *testing.T) 
 				Description: "usable hdb description",
 			},
 		},
-		delays: map[string]time.Duration{"HDB": 10 * time.Millisecond},
 	}
 	longToken := strings.Repeat("a", minTrackerTokenLen)
 	cfg := config.Config{

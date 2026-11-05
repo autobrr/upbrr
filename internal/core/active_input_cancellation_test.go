@@ -6,17 +6,45 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+type admissionRollbackFailureRepository struct {
+	api.ActiveInputRepository
+	fail atomic.Bool
+}
+
+func (r *admissionRollbackFailureRepository) CompareAndSwapActiveInput(ctx context.Context, prior, next api.ActiveInputRecord, now time.Time) error {
+	if prior.State == api.ActiveInputOpening && next.State == api.ActiveInputEmpty && r.fail.Swap(false) {
+		return errors.New("synthetic admission rollback failure")
+	}
+	if err := r.ActiveInputRepository.CompareAndSwapActiveInput(ctx, prior, next, now); err != nil {
+		return fmt.Errorf("test admission transition: %w", err)
+	}
+	return nil
+}
+
 func TestInputOpenCancellationJoinsVerificationAndFencesAcceptedWork(t *testing.T) {
+	for _, failedRollback := range []bool{false, true} {
+		name := "rollback_complete"
+		if failedRollback {
+			name = "rollback_failure"
+		}
+		t.Run(name, func(t *testing.T) { testInputOpenCancellation(t, failedRollback) })
+	}
+}
+
+func testInputOpenCancellation(t *testing.T, failedRollback bool) {
+	t.Helper()
 	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -29,13 +57,13 @@ func TestInputOpenCancellationJoinsVerificationAndFencesAcceptedWork(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	admissions := &admissionRollbackFailureRepository{ActiveInputRepository: repo}
+	admissions.fail.Store(failedRollback)
 	entered, cancelled, finish := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var finishOnce sync.Once
-	t.Cleanup(func() { finishOnce.Do(func() { close(finish) }) })
 	var verifications, preparations atomic.Int64
 	workStarted, workFinish := make(chan struct{}), make(chan struct{})
 	var workOnce sync.Once
-	t.Cleanup(func() { workOnce.Do(func() { close(workFinish) }) })
 	workflow, err := releaseworkflow.New(persistent, releaseworkflow.NewMemoryPrivateResourceStore(), releaseworkflow.ReleasePreparerFunc{
 		PrepareFunc: func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 			preparations.Add(1)
@@ -50,7 +78,7 @@ func TestInputOpenCancellationJoinsVerificationAndFencesAcceptedWork(t *testing.
 		DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
 			return api.PreparedReleaseDisplay{}, nil
 		},
-	}, releaseworkflow.WithActiveInputs(repo, func(ctx context.Context, input api.PrepareInput) (api.InputRecord, error) {
+	}, releaseworkflow.WithActiveInputs(admissions, func(ctx context.Context, input api.PrepareInput) (api.InputRecord, error) {
 		if verifications.Add(1) == 1 {
 			close(entered)
 			<-ctx.Done()
@@ -109,10 +137,21 @@ func TestInputOpenCancellationJoinsVerificationAndFencesAcceptedWork(t *testing.
 		t.Fatalf("open cancellation: %v", err)
 	}
 	stop := <-stopped
-	if stop.err != nil || stop.snapshot.State != api.ActiveInputEmpty || stop.snapshot.Revision != 2 {
+	switch {
+	case failedRollback:
+		if !errors.Is(stop.err, api.ErrActiveInputBusy) {
+			t.Fatalf("failed rollback reported cancellation complete: %v", stop.err)
+		}
+		slot, readErr := repo.LoadActiveInput(t.Context())
+		if readErr != nil || slot.State != api.ActiveInputOpening || slot.Revision != 1 || slot.Fence != 1 || slot.LeaseExpiresAt.After(time.Now()) {
+			t.Fatalf("failed rollback did not retain a recoverable reservation: slot=%+v err=%v", slot, readErr)
+		}
+		request.ExpectedRevision = slot.Revision
+	case stop.err != nil || stop.snapshot.State != api.ActiveInputEmpty || stop.snapshot.Revision != 2:
 		t.Fatalf("cancelled admission did not finish rollback: state=%s revision=%d err=%v", stop.snapshot.State, stop.snapshot.Revision, stop.err)
+	default:
+		request.ExpectedRevision = stop.snapshot.Revision
 	}
-	request.ExpectedRevision = stop.snapshot.Revision
 	request.Request.IdempotencyKey = "explicit-retry"
 	retry, err := core.OpenActiveInput(t.Context(), "owner", request)
 	if err != nil {

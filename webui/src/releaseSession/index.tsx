@@ -335,6 +335,7 @@ export function ReleaseSessionProvider({
     cancellationTimeout: number | null;
     cancellationController: AbortController | null;
     cancellation: Promise<boolean> | null;
+    settled: Promise<void>;
     operation: { workflowID: string; status: WorkflowOperationStatus } | null;
   } | null>(null);
   const stateRef = useRef(state);
@@ -611,6 +612,10 @@ export function ReleaseSessionProvider({
             ? "Source verification stopped. Another operation is active; review its progress before retrying."
             : "Work canceled. Selected input and retained results are available for review or retry.",
         );
+        if (controllers.current.preparation === request.controller)
+          delete controllers.current.preparation;
+        if (controllers.current.workflow === request.controller)
+          delete controllers.current.workflow;
         request.controller.abort();
       })
       .catch(() => {
@@ -676,6 +681,7 @@ export function ReleaseSessionProvider({
     const retainedCancellation = storedCancellation();
     if (
       !cancellation.current &&
+      !candidateAttempt.current?.cancelRequested &&
       retainedCancellation?.workflowID === workflowID &&
       retainedCancellation.operationID === operation?.id
     ) {
@@ -721,7 +727,10 @@ export function ReleaseSessionProvider({
     }
     publishWorkflowCurrent(current, "running");
     const terminalOperation = operation as WorkflowOperationStatus | undefined;
-    if (cancellation.current?.controller.signal === signal) {
+    if (
+      cancellation.current?.controller.signal === signal ||
+      terminalOperation?.status === "canceled"
+    ) {
       const anotherOperationActive =
         current.operation?.id !== terminalOperation?.id &&
         isActiveWorkflowOperation(current.operation);
@@ -731,13 +740,34 @@ export function ReleaseSessionProvider({
         stateRef.current.inputEditRevision,
         true,
       );
-      if (terminalOperation?.status === "canceled" && !anotherOperationActive) {
+      if (
+        terminalOperation?.status === "canceled" &&
+        (controllers.current.preparation?.signal === signal || !current.release) &&
+        !anotherOperationActive &&
+        stateRef.current.preparation.status === "running"
+      ) {
         dispatch({
           type: "preparation_cancelled",
           correlationID: stateRef.current.preparation.correlationID,
         });
       }
-      const controller = cancellation.current.controller;
+      const failed =
+        terminalOperation &&
+        terminalOperation.status !== "canceled" &&
+        isFailedWorkflowOperation(terminalOperation);
+      if (failed && !anotherOperationActive) {
+        const failure = terminalOperation.failures?.[0]?.failure;
+        failBackendWorkflow(
+          failure
+            ? workflowOperationFailureError(failure)
+            : new Error(
+                terminalOperation.message || `Workflow operation ${terminalOperation.status}.`,
+              ),
+        );
+      }
+      const controller = Object.values(controllers.current).find(
+        (value) => value?.signal === signal,
+      );
       finishCancellation(
         signal,
         true,
@@ -745,9 +775,11 @@ export function ReleaseSessionProvider({
           ? "The requested operation ended. Another operation is active; review its progress before retrying."
           : terminalOperation?.status === "canceled"
             ? "Work canceled. Selected input and retained results are available for review or retry."
-            : "Work finished. Review retained results and any recovery actions before retrying.",
+            : failed
+              ? "Work ended with an error. Review its failure and recovery actions before retrying."
+              : "Work finished. Review retained results and any recovery actions before retrying.",
       );
-      controller.abort();
+      controller?.abort();
       throw new DOMException("Workflow continuation canceled.", "AbortError");
     }
     if (terminalOperation && isFailedWorkflowOperation(terminalOperation)) {
@@ -792,6 +824,7 @@ export function ReleaseSessionProvider({
     if (attempt.cancellation) return attempt.cancellation;
     attempt.cancelRequested = true;
     setCancellationView({ pending: true, retry: false, message: "" });
+    storeCancellation({ workflowID, operationID: operation.id });
     attempt.cancellation = (async () => {
       abortController("candidateCancellation");
       const controller = new AbortController();
@@ -813,6 +846,9 @@ export function ReleaseSessionProvider({
             controller.signal,
           );
         }
+        const retained = storedCancellation();
+        if (retained?.workflowID === workflowID && retained.operationID === operation.id)
+          storeCancellation(null);
         if (controller.signal.aborted) throw new Error("Inspection confirmation ended.");
         if ((terminal as WorkflowOperationStatus).status !== "canceled") {
           finished = true;
@@ -1315,11 +1351,44 @@ export function ReleaseSessionProvider({
     }
   };
 
+  const cancelCandidatePreparation = (
+    attempt: NonNullable<typeof candidateAttempt.current>,
+  ): Promise<boolean> => {
+    if (attempt.operation)
+      return cancelAcceptedCandidate(
+        attempt,
+        attempt.operation.workflowID,
+        attempt.operation.status,
+      );
+    if (!attempt.cancelRequested) {
+      attempt.cancelRequested = true;
+      setCancellationView({ pending: true, retry: false, message: "" });
+      // Acceptance and confirmation share one cancellation deadline.
+      attempt.cancellationTimeout = window.setTimeout(() => {
+        if (attempt.cancellationController) {
+          attempt.cancellationController.abort();
+          return;
+        }
+        if (candidateAttempt.current !== attempt || attempt.controller.signal.aborted) return;
+        attempt.controller.abort();
+        dispatch({
+          type: "preparation_failed",
+          sourcePath: attempt.sourcePath,
+          commandRevision: attempt.commandRevision,
+          correlationID: attempt.correlationID,
+          error:
+            "Could not confirm cancellation; inspection may still be running. Refresh the workflow before retrying.",
+          failure: null,
+        });
+      }, 30_000);
+    }
+    return attempt.settled.then(() => attempt.cancellation || false);
+  };
+
   const cancelBackendWorkflow = (): Promise<boolean> => {
     const candidate = candidateAttempt.current;
-    if (candidate?.cancelRequested && candidate.controller === controllers.current.preparation) {
-      return candidate.cancellation || Promise.resolve(false);
-    }
+    if (candidate && candidate.controller === controllers.current.preparation)
+      return cancelCandidatePreparation(candidate);
     const pending = cancellation.current;
     if (pending) {
       if (pending.requestFailed) {
@@ -1340,7 +1409,10 @@ export function ReleaseSessionProvider({
       observedOperations.current.has(controllers.current.activeInput.signal)
         ? controllers.current.activeInput
         : undefined);
-    if (controller) return requestCancellation(controller);
+    if (controller) {
+      abortWorkflowFacets("Work canceled.", "cancelled");
+      return requestCancellation(controller);
+    }
     if (
       (["screenshots", "menuImages", "uploadedImages", "descriptions"] as const).some(
         (facet) => controllers.current[facet],
@@ -1356,6 +1428,7 @@ export function ReleaseSessionProvider({
     }
     const current = stateRef.current.workflowView.current;
     if (!current || !isActiveWorkflowOperation(current.operation)) return Promise.resolve(false);
+    abortWorkflowFacets("Work canceled.", "cancelled");
     const observer = new AbortController();
     controllers.current.workflow = observer;
     const confirmation = requestCancellation(observer);
@@ -1704,8 +1777,8 @@ export function ReleaseSessionProvider({
   };
 
   const selectSource = (value: string) => {
-    abortController("preparation");
-    abortController("workflow");
+    if (controllers.current.preparation || controllers.current.workflow)
+      void cancelBackendWorkflow();
     dispatch({ type: "draft_changed", value });
   };
 
@@ -2039,6 +2112,7 @@ export function ReleaseSessionProvider({
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
+    let settle!: () => void;
     const attempt: NonNullable<typeof candidateAttempt.current> = {
       controller,
       sourcePath,
@@ -2048,6 +2122,9 @@ export function ReleaseSessionProvider({
       cancellationTimeout: null,
       cancellationController: null,
       cancellation: null,
+      settled: new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
       operation: null,
     };
     candidateAttempt.current = attempt;
@@ -2110,6 +2187,7 @@ export function ReleaseSessionProvider({
         });
       }
       if (candidateAttempt.current === attempt) candidateAttempt.current = null;
+      settle();
     }
   };
 
@@ -3503,40 +3581,7 @@ export function ReleaseSessionProvider({
         abortController("preparation");
         dispatch({ type: "playlist_dismissed" });
       },
-      cancelPreparation: () => {
-        const attempt = candidateAttempt.current;
-        if (attempt && cancellation.current?.controller === attempt.controller) return;
-        if (!attempt || attempt.controller !== controllers.current.preparation) {
-          cancelPreparation();
-        } else if (attempt.operation) {
-          void cancelAcceptedCandidate(
-            attempt,
-            attempt.operation.workflowID,
-            attempt.operation.status,
-          );
-        } else if (!attempt.cancelRequested) {
-          attempt.cancelRequested = true;
-          setCancellationView({ pending: true, retry: false, message: "" });
-          // Acceptance and confirmation share one cancellation deadline.
-          attempt.cancellationTimeout = window.setTimeout(() => {
-            if (attempt.cancellationController) {
-              attempt.cancellationController.abort();
-              return;
-            }
-            if (candidateAttempt.current !== attempt || attempt.controller.signal.aborted) return;
-            attempt.controller.abort();
-            dispatch({
-              type: "preparation_failed",
-              sourcePath: attempt.sourcePath,
-              commandRevision: attempt.commandRevision,
-              correlationID: attempt.correlationID,
-              error:
-                "Could not confirm cancellation; inspection may still be running. Refresh the workflow before retrying.",
-              failure: null,
-            });
-          }, 30_000);
-        }
-      },
+      cancelPreparation,
       prepareSource: (sourcePath, intent) => runPreparationFor("prepare", sourcePath, intent),
       openSource: (sourcePath) =>
         runPreparationFor("prepare", sourcePath, emptyPreparationIntent(), {

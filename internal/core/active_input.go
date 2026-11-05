@@ -56,6 +56,7 @@ func (c *Core) beginInputVerification(ctx context.Context, owner, command string
 // CancelActiveInputOpen cancels this owner's exact pending admission and waits
 // for verifier cleanup. It never cancels an accepted or replacement operation;
 // callers must retain the original receipt when admission is no longer pending.
+// A pending recovery slot is not confirmation that admission cleanup finished.
 func (c *Core) CancelActiveInputOpen(ctx context.Context, owner string, request api.CancelActiveInputOpenRequest) (api.ActiveInputSnapshot, error) {
 	if err := request.Validate(); err != nil {
 		return api.ActiveInputSnapshot{}, fmt.Errorf("validate input open cancellation: %w", err)
@@ -77,7 +78,14 @@ func (c *Core) CancelActiveInputOpen(ctx context.Context, owner string, request 
 			return api.ActiveInputSnapshot{}, fmt.Errorf("wait for input verification cancellation: %w", ctx.Err())
 		}
 	}
-	return c.GetActiveInput(ctx, owner)
+	snapshot, err := c.GetActiveInput(ctx, owner)
+	if err != nil {
+		return api.ActiveInputSnapshot{}, err
+	}
+	if snapshot.State != api.ActiveInputEmpty && snapshot.State != api.ActiveInputActive {
+		return api.ActiveInputSnapshot{}, fmt.Errorf("input verification cleanup is incomplete: %w", api.ErrActiveInputBusy)
+	}
+	return snapshot, nil
 }
 
 // GetActiveInput projects only the caller's current input and workflow.

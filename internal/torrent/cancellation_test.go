@@ -8,12 +8,78 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type cancellationPolicyLogger struct {
+	api.NopLogger
+	cancel context.CancelFunc
+}
+
+func (l cancellationPolicyLogger) Infof(message string, _ ...any) {
+	if strings.Contains(message, "tracker policy validation") && strings.Contains(message, "decision=accepted") {
+		l.cancel()
+	}
+}
+
+func TestCancellationStopsBeforeTorrentWorkAndPublication(t *testing.T) {
+	for _, boundary := range []string{"hashing", "verification", "publication"} {
+		t.Run(boundary, func(t *testing.T) {
+			t.Parallel()
+			source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+			writeTestFile(t, source, "synthetic media bytes")
+			root := t.TempDir()
+			destination, err := TempTorrentPath(root, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retained := []byte("retained artifact")
+			if err := os.WriteFile(destination, retained, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var hashingStarted atomic.Bool
+			ctx = api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+				if update.TotalPieces > 0 {
+					hashingStarted.Store(true)
+				}
+				if boundary == "hashing" && strings.HasPrefix(update.Message, "Hashing torrent:") {
+					cancel()
+				}
+			})
+			if boundary == "verification" {
+				candidate := source + ".torrent"
+				createTestTorrentFromExisting(t, source, candidate)
+				cancel()
+				err = verifyCandidateTorrentData(ctx, candidate, api.TorrentSubject{SourcePath: source})
+			} else {
+				meta := api.TorrentSubject{SourcePath: source}
+				var logger api.Logger = api.NopLogger{}
+				if boundary == "publication" {
+					logger = cancellationPolicyLogger{cancel: cancel}
+					meta.Trackers = []string{"PTP"}
+				}
+				_, err = NewService(logger, root).Create(ctx, meta)
+			}
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation at %s boundary was not observed: %v", boundary, err)
+			}
+			if boundary != "publication" && hashingStarted.Load() {
+				t.Fatal("piece hashing started after cancellation")
+			}
+			data, readErr := os.ReadFile(destination)
+			if readErr != nil || string(data) != string(retained) {
+				t.Fatalf("canceled work replaced retained output: %v", readErr)
+			}
+		})
+	}
+}
 
 func TestCancellationWaitsForMkbrrAndStopsAtItsReturnBoundary(t *testing.T) {
 	for _, verify := range []bool{false, true} {
