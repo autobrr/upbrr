@@ -2227,9 +2227,10 @@ func TestResolveExternalIDsKeepsAnchoredFilenameMatchAsCandidate(t *testing.T) {
 			Category:       "TV",
 			FilenameSearch: true,
 			Candidates: []tmdb.Candidate{{
-				TMDBID: 253,
-				Title:  "Example Candidate",
-				Year:   2026,
+				TMDBID:     253,
+				Title:      "Example Candidate",
+				Year:       2026,
+				PosterPath: "/example-poster.jpg",
 			}},
 		},
 		searchOutcome: tmdb.SearchOutcome{TMDBID: 253, Category: "TV"},
@@ -2263,6 +2264,9 @@ func TestResolveExternalIDsKeepsAnchoredFilenameMatchAsCandidate(t *testing.T) {
 	}
 	if len(result.ExternalIdentityCandidates) != 1 || result.ExternalIdentityCandidates[0].ID != 253 {
 		t.Fatalf("filename candidates = %#v", result.ExternalIdentityCandidates)
+	}
+	if got := result.ExternalIdentityCandidates[0].PosterURL; got != "https://image.tmdb.org/t/p/original/example-poster.jpg" {
+		t.Fatalf("candidate poster = %q, want full-size TMDB image", got)
 	}
 }
 

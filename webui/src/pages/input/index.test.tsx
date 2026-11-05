@@ -84,7 +84,9 @@ it.each(["complete", "unavailable"])(
       },
     };
     render(<InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />);
-    const radio = screen.getByRole("radio", { name: "Select TMDB Fallback Example 2024, ID 808" });
+    const radio = screen.getByRole("checkbox", {
+      name: "Select TMDB Fallback Example 2024, ID 808",
+    });
     expect(within(radio.closest("article")!).getByText("From metadata resolution")).toBeVisible();
     expect(screen.getByText("Results for “Example 2025”")).toBeVisible();
     expect(
@@ -106,7 +108,7 @@ it.each(["complete", "unavailable"])(
     expect(facet.changeReleaseName).not.toHaveBeenCalled();
     await user.click(screen.getByRole("tab", { name: "IMDb (1)" }));
     expect(
-      screen.getByRole("radio", { name: "Select IMDb IMDb Fallback 2024, ID 222" }),
+      screen.getByRole("checkbox", { name: "Select IMDb IMDb Fallback 2024, ID 222" }),
     ).toBeVisible();
   },
 );
@@ -170,14 +172,15 @@ it("keeps resolver provenance and provider IDs distinct across repeated searches
       needsSelection
       loading={false}
       onRefresh={vi.fn()}
+      onPosterOpen={vi.fn()}
     />
   );
   const { rerender } = render(panel(facet));
-  expect(screen.getAllByRole("radio")).toHaveLength(2);
+  expect(screen.getAllByRole("checkbox")).toHaveLength(2);
   expect(screen.getByRole("tab", { name: "TMDB (2)" })).toBeVisible();
   expect(screen.getByRole("tab", { name: "IMDb (1)" })).toBeVisible();
   expect(screen.queryByText("Fallback Example")).not.toBeInTheDocument();
-  const searched = screen.getByRole("radio", {
+  const searched = screen.getByRole("checkbox", {
     name: "Select TMDB Enriched Search Choice 2025, ID 808",
   });
   expect(
@@ -194,14 +197,14 @@ it("keeps resolver provenance and provider IDs distinct across repeated searches
       },
     }),
   );
-  expect(screen.getAllByRole("radio")).toHaveLength(2);
+  expect(screen.getAllByRole("checkbox")).toHaveLength(2);
   expect(screen.getByText("Search canceled.")).toBeVisible();
   expect(screen.queryByText(/Results for/)).not.toBeInTheDocument();
   expect(screen.getAllByText("From metadata resolution")).toHaveLength(2);
   expect(facet.changeIdentity).not.toHaveBeenCalled();
 
   rerender(panel(facet, "TV"));
-  expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   rerender(
     panel({
       ...facet,
@@ -212,17 +215,17 @@ it("keeps resolver provenance and provider IDs distinct across repeated searches
       },
     }),
   );
-  expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 });
 
 it("keeps candidate inspection and draft search separate from pending identity corrections", async () => {
   const user = userEvent.setup();
   const base = readyInputFacet(1);
-  const facet: InputFacet = {
+  let facet: InputFacet = {
     ...base,
     view: {
       ...base.view,
-      intent: { ...base.view.intent, identity: { IMDBID: 777 } },
+      intent: { ...base.view.intent, identity: { IMDBID: 777, TVDBID: 0 } },
       providerSearch: {
         status: "ready",
         error: "",
@@ -286,7 +289,8 @@ it("keeps candidate inspection and draft search separate from pending identity c
     },
   };
   const refresh = vi.fn();
-  render(
+  const openPoster = vi.fn();
+  const panel = () => (
     <ProviderCandidates
       facet={facet}
       initialQuery="Example"
@@ -294,11 +298,25 @@ it("keeps candidate inspection and draft search separate from pending identity c
       needsSelection
       loading={false}
       onRefresh={refresh}
-    />,
+      onPosterOpen={openPoster}
+    />
   );
-  expect(screen.getAllByRole("radio")).toHaveLength(9);
+  const { rerender } = render(panel());
+  vi.mocked(facet.changeIdentity).mockImplementation((identity) => {
+    facet = { ...facet, view: { ...facet.view, intent: { ...facet.view.intent, identity } } };
+    rerender(panel());
+  });
+  expect(screen.getAllByRole("checkbox")).toHaveLength(9);
   expect(screen.getAllByText("Runtime unavailable")).toHaveLength(9);
+  const poster = screen.getByRole("button", { name: "View Example 1 poster full size" });
+  await user.click(poster);
+  poster.focus();
+  await user.keyboard("{Enter}");
+  expect(openPoster).toHaveBeenNthCalledWith(1, "/broken.png", "Example 1 poster");
+  expect(openPoster).toHaveBeenCalledTimes(2);
+  expect(facet.changeIdentity).not.toHaveBeenCalled();
   fireEvent.error(screen.getByRole("img", { name: "Example 1 poster" }));
+  expect(screen.queryByRole("button", { name: /poster full size/ })).not.toBeInTheDocument();
   expect(screen.getAllByText("No image")).toHaveLength(9);
   const query = screen.getByRole("textbox", { name: "Search query" });
   await user.clear(query);
@@ -317,8 +335,44 @@ it("keeps candidate inspection and draft search separate from pending identity c
   link.focus();
   fireEvent.keyDown(link, { key: "Enter" });
   expect(facet.changeIdentity).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("radio", { name: "Select TMDB Example 9 2025, ID 9" }));
-  expect(facet.changeIdentity).toHaveBeenCalledExactlyOnceWith({ IMDBID: 777, TMDBID: 9 });
+  await user.click(screen.getByRole("checkbox", { name: "Select TMDB Example 9 2025, ID 9" }));
+  expect(facet.changeIdentity).toHaveBeenCalledExactlyOnceWith({
+    IMDBID: 777,
+    TVDBID: 0,
+    TMDBID: 9,
+  });
+  const selected = screen.getByRole("checkbox", { name: "Select TMDB Example 9 2025, ID 9" });
+  expect(selected).toBeChecked();
+  await user.click(screen.getByText("Example 9", { exact: true }));
+  expect(selected).not.toBeChecked();
+  expect(facet.changeIdentity).toHaveBeenLastCalledWith({ IMDBID: 777, TVDBID: 0, TMDBID: 0 });
+  selected.focus();
+  await user.keyboard(" ");
+  expect(selected).toBeChecked();
+  await user.keyboard(" ");
+  expect(selected).not.toBeChecked();
+  await user.click(selected);
+  expect(selected).toBeChecked();
+  await user.click(screen.getByRole("checkbox", { name: "Select TMDB Example 8 2025, ID 8" }));
+  expect(selected).not.toBeChecked();
+  expect(screen.getAllByRole("checkbox", { checked: true })).toHaveLength(1);
+  expect(facet.changeIdentity).toHaveBeenLastCalledWith({ IMDBID: 777, TVDBID: 0, TMDBID: 8 });
+  facet = {
+    ...facet,
+    view: {
+      ...facet.view,
+      preview: { ...facet.view.preview!, Identity: { ...facet.view.preview!.Identity, TMDBID: 8 } },
+      intent: { ...facet.view.intent, identity: { IMDBID: 777, TVDBID: 0 } },
+    },
+  };
+  rerender(panel());
+  const applied = screen.getByRole("checkbox", { name: "Select TMDB Example 8 2025, ID 8" });
+  expect(applied).toBeChecked();
+  await user.click(applied);
+  expect(applied).not.toBeChecked();
+  expect(facet.changeIdentity).toHaveBeenLastCalledWith({ IMDBID: 777, TVDBID: 0, TMDBID: 0 });
+  expect(facet.view.preview!.Identity.TMDBID).toBe(8);
+
   expect(facet.changeMetadata).not.toHaveBeenCalled();
   expect(facet.changeReleaseName).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Refresh metadata" }));
@@ -351,6 +405,7 @@ it("preserves a running provider search when its candidate panel remounts", () =
       needsSelection
       loading={false}
       onRefresh={vi.fn()}
+      onPosterOpen={vi.fn()}
     />,
   );
   expect(facet.searchProviders).not.toHaveBeenCalled();
@@ -378,6 +433,7 @@ it("compares the submitted query with the normalized draft", () => {
       needsSelection
       loading={false}
       onRefresh={vi.fn()}
+      onPosterOpen={vi.fn()}
     />,
   );
   expect(screen.queryByText(/Query edited/)).not.toBeInTheDocument();

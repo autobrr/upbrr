@@ -21,16 +21,31 @@ const candidateURL = (candidate: ExternalIdentityCandidate) => {
   return "";
 };
 
-function CandidatePoster({ url, title }: { url: string; title: string }) {
+function CandidatePoster({
+  url,
+  title,
+  onOpen,
+}: {
+  url: string;
+  title: string;
+  onOpen(url: string, alt: string): void;
+}) {
   const [failed, setFailed] = useState(false);
   return url && !failed ? (
-    <img
-      className="h-28 w-[75px] shrink-0 rounded-lg object-cover"
-      src={url}
-      alt={`${title} poster`}
-      loading="lazy"
-      onError={() => setFailed(true)}
-    />
+    <button
+      type="button"
+      className="h-28 w-[75px] shrink-0 self-start rounded-lg border-0 p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      aria-label={`View ${title} poster full size`}
+      onClick={() => onOpen(url, `${title} poster`)}
+    >
+      <img
+        className="h-full w-full rounded-lg object-cover"
+        src={url}
+        alt={`${title} poster`}
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+    </button>
   ) : (
     <span className="flex h-28 w-[75px] shrink-0 items-center justify-center rounded-lg border border-border text-center text-xs text-muted-foreground">
       No image
@@ -38,7 +53,7 @@ function CandidatePoster({ url, title }: { url: string; title: string }) {
   );
 }
 
-/** Labels search results and retained resolver choices separately; only selection stages an override. */
+/** Keeps image inspection separate from staged provider selections and explicit clears. */
 export function ProviderCandidates({
   facet,
   initialQuery,
@@ -46,6 +61,7 @@ export function ProviderCandidates({
   needsSelection,
   loading,
   onRefresh,
+  onPosterOpen,
 }: {
   facet: InputFacet;
   initialQuery: string;
@@ -53,6 +69,7 @@ export function ProviderCandidates({
   needsSelection: boolean;
   loading: boolean;
   onRefresh(): void;
+  onPosterOpen(url: string, alt: string): void;
 }) {
   const id = useId();
   const [draft, setDraft] = useState(initialQuery);
@@ -121,7 +138,8 @@ export function ProviderCandidates({
       </summary>
       <div className="mt-3 grid min-w-0 gap-3">
         <p className="text-sm text-muted-foreground">
-          Select a candidate to copy it into ID overrides, then refresh metadata.
+          Select a candidate to stage its ID override, or select it again to clear that provider.
+          Refresh metadata to apply your changes.
         </p>
         <form
           className="grid gap-2"
@@ -255,16 +273,20 @@ export function ProviderCandidates({
                     return (
                       <article
                         key={candidate.ID}
-                        className={`flex min-w-0 flex-col rounded-xl border p-3 ${selectedID === candidate.ID ? "border-ring bg-accent/60" : "border-border"}`}
+                        className={`flex min-w-0 flex-col rounded-xl border p-3 ${selectedID === candidate.ID ? "border-ring bg-accent/60" : "border-foreground/20"}`}
                       >
-                        <label htmlFor={inputID} className="flex-1 cursor-pointer">
-                          <span className="flex gap-3">
+                        <div className="flex-1">
+                          <div className="flex gap-3">
                             <CandidatePoster
                               key={candidate.PosterURL}
                               url={candidate.PosterURL}
                               title={candidate.Title || "Candidate"}
+                              onOpen={onPosterOpen}
                             />
-                            <span className="grid min-w-0 content-start gap-1 break-words">
+                            <label
+                              htmlFor={inputID}
+                              className="grid min-w-0 flex-1 cursor-pointer content-start gap-1 break-words"
+                            >
                               <span className="text-lg font-semibold">
                                 {candidate.Title || "(Untitled)"}
                               </span>
@@ -293,17 +315,20 @@ export function ProviderCandidates({
                                     : "Cast (provider order)"}
                                 : {candidate.Cast?.join(" · ") || "Unavailable"}
                               </span>
-                            </span>
-                          </span>
-                          <span className="mt-2 line-clamp-3 block break-words text-sm text-muted-foreground">
+                            </label>
+                          </div>
+                          <label
+                            htmlFor={inputID}
+                            className="mt-2 line-clamp-3 block cursor-pointer break-words text-sm text-muted-foreground"
+                          >
                             {candidate.Overview || "No overview available."}
-                          </span>
+                          </label>
                           {candidate.DetailsStatus === "partial" ? (
                             <span className="mt-1 block text-xs text-muted-foreground">
                               Some details unavailable.
                             </span>
                           ) : null}
-                        </label>
+                        </div>
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 text-sm">
                           <span>{name === "imdb" ? formatIMDbID(candidate.ID) : candidate.ID}</span>
                           {url ? (
@@ -320,14 +345,14 @@ export function ProviderCandidates({
                           <label className="flex cursor-pointer items-center gap-2">
                             <input
                               id={inputID}
-                              type="radio"
+                              type="checkbox"
                               name={`${id}-${name}-selection`}
                               checked={selectedID === candidate.ID}
                               disabled={loading}
-                              onChange={() =>
+                              onChange={(event) =>
                                 facet.changeIdentity({
                                   ...facet.view.intent.identity,
-                                  [key]: candidate.ID,
+                                  [key]: event.currentTarget.checked ? candidate.ID : 0,
                                 })
                               }
                               aria-label={`Select ${providerNames[name]} ${candidate.Title || "untitled"} ${candidate.Year || ""}, ID ${candidate.ID}`}

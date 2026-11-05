@@ -1442,6 +1442,10 @@ export default function InputPage(props: Props) {
             needsSelection={!hasResolvedPrimaryExternalID}
             loading={loading}
             onRefresh={handleRefresh}
+            onPosterOpen={(url, alt) => {
+              setLightboxImage(url);
+              setLightboxAlt(alt);
+            }}
           />
         ) : null}
 

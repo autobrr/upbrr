@@ -2176,7 +2176,7 @@ func mapTMDBCandidates(items []tmdb.Candidate, category string) []api.ExternalId
 		}
 		posterURL := strings.TrimSpace(item.PosterPath)
 		if posterURL != "" && !strings.HasPrefix(strings.ToLower(posterURL), "http://") && !strings.HasPrefix(strings.ToLower(posterURL), "https://") {
-			posterURL = "https://image.tmdb.org/t/p/w342/" + strings.TrimPrefix(posterURL, "/")
+			posterURL = "https://image.tmdb.org/t/p/original/" + strings.TrimPrefix(posterURL, "/")
 		}
 		mapped = append(mapped, api.ExternalIdentityCandidate{
 			Provider:      api.IdentityProviderTMDB,
