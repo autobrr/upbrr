@@ -114,7 +114,7 @@ func (r *nativeEffectReporter) Complete(_ context.Context, _ api.WorkflowExterna
 }
 
 func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.T) {
-	for _, scenario := range []string{"mixed", "shared failed host", "protected source", "native only", "approved", "excluded retained", "partial native", "known failure", "unknown", "explicit host", "credential change"} {
+	for _, scenario := range []string{"mixed", "shared failed host", "protected source", "native only", "saved only", "approved", "excluded retained", "partial native", "known failure", "unknown", "explicit host", "credential change"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := t.Context()
 			source := filepath.Join(t.TempDir(), "Example.Release.mkv")
@@ -161,7 +161,7 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 			}
 			cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}, Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"GPW": {APIKey: "synthetic-key"}}}}
 			cfg.MainSettings.DBPath = dbPath
-			if scenario == "native only" {
+			if scenario == "native only" || scenario == "saved only" {
 				cfg.ImageHosting = config.ImageHostingConfig{}
 			}
 			reporter := &nativeEffectReporter{}
@@ -198,7 +198,7 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 			}
 			projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "GPW", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}}, {TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}}}}
 			trackerIDs := []api.TrackerID{"GPW", "ONE"}
-			if scenario == "native only" {
+			if scenario == "native only" || scenario == "saved only" {
 				projections.Projections = projections.Projections[:1]
 				trackerIDs = trackerIDs[:1]
 			}
@@ -219,6 +219,20 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 				image.RawURL = "https://passthepopcorn.me/static/image/source.png"
 			}
 			retained.ArtifactImages[remoteID] = image
+			if scenario == "saved only" {
+				image.RawURL, image.Host = "https://pixhost.to/approved.png", "pixhost"
+				retained.ArtifactImages[remoteID] = image
+				for _, artifact := range slices.Clone(snapshot.Artifacts) {
+					selectedImage := retained.ArtifactImages[artifact.ID]
+					if err := builder.retainImportedScreenshot(&retained, &snapshot, artifact, selectedImage, api.ScreenshotLinkedImage{
+						Host:          "pixhost",
+						URL:           "https://pixhost.to/approved.png",
+						ContentSHA256: selectedImage.ContentSHA256,
+					}, time.Now()); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
 			if scenario == "approved" || scenario == "excluded retained" {
 				if scenario == "approved" {
 					image.RawURL, image.Host = "https://pixhost.to/approved.png", "pixhost"
@@ -302,7 +316,7 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 				t.Fatalf("image operation failed: %v", err)
 			}
 			wantImports := 1
-			if scenario == "explicit host" || scenario == "approved" || scenario == "protected source" {
+			if scenario == "explicit host" || scenario == "approved" || scenario == "protected source" || scenario == "saved only" {
 				wantImports = 0
 			}
 			if scenario == "partial native" || scenario == "native only" {
@@ -312,6 +326,9 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 				t.Fatalf("native calls=%d", hosting.imports)
 			}
 			assertHostedSourceCoverage(t, attempts, trackerIDs, ids)
+			if scenario == "saved only" && hosting.uploads != 0 {
+				t.Fatal("saved image coverage initiated an upload without a configured uploader")
+			}
 			if scenario == "shared failed host" && (hosting.uploads != 2 || !slices.Contains(published.FailedHosts, "pixhost")) {
 				t.Fatal("residual stage retried a failed host or failed to reuse successful fallback links")
 			}
@@ -357,7 +374,7 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if scenario == "mixed" || scenario == "excluded retained" || scenario == "partial native" || scenario == "native only" {
+			if scenario == "mixed" || scenario == "excluded retained" || scenario == "partial native" || scenario == "native only" || scenario == "saved only" {
 				meta, resolveErr := prepared.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: release, Trackers: []string{"GPW"}})
 				if resolveErr != nil {
 					t.Fatal(resolveErr)
@@ -392,7 +409,7 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 					t.Fatalf("description preparation initiated an image write: imports=%d/%d uploads=%d/%d", hosting.imports, beforeImports, hosting.uploads, beforeUploads)
 				}
 			}
-			if scenario == "approved" {
+			if scenario == "approved" || scenario == "saved only" {
 				if hosting.imports != 0 {
 					t.Fatal("approved source was imported")
 				}

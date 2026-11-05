@@ -348,9 +348,20 @@ func (m *mediaModule) uploadImagesWithURLImports(
 		if len(missing) == 0 {
 			continue
 		}
-		remaining, err := m.resolveFallbackImageUploadTargets(host, []string{tracker}, excluded, meta)
-		if err != nil {
-			return result, err
+		// Saved-host authority survives removal of its upload configuration.
+		var remaining []trackers.ImageUploadTarget
+		for _, target := range targets {
+			if target.ReuseOnly && slices.Contains(target.Trackers, tracker) && !slices.Contains(excluded, target.Host) {
+				target.Trackers = []string{tracker}
+				remaining = append(remaining, target)
+			}
+		}
+		if len(remaining) == 0 {
+			var err error
+			remaining, err = m.resolveFallbackImageUploadTargets(host, []string{tracker}, excluded, meta)
+			if err != nil {
+				return result, err
+			}
 		}
 		if len(remaining) == 0 {
 			result.Failures = append(result.Failures, api.UploadImageHostFailure{
