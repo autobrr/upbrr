@@ -396,11 +396,12 @@ AKA/audio-marker omissions and an independent search name. The mandatory-policy 
 
 ### Authentication contract
 
-An optional `AuthPolicy.APIKeyGuidance` observes expiry headers from existing authenticated
+An optional `AuthPolicy.APIKeyGuidance` observes expiry headers from existing upload POST
 responses without adding requests or auth requirements. Bind site-owned header names and
 message policy in `auth.go`; Unit3D profiles expose it through `Site.APIKeyGuidance`.
-Unit3D registered-torrent downloads also report headers before status and body validation.
-They add reported expiry information without clearing primary API observations when the header is absent.
+Only upload POST responses update the observation, including rejected uploads. The latest
+POST replaces any prior expiry with its reported, missing or malformed result. GET responses
+never update it. A key has no advice before its first upload POST response.
 Shared preflight emits one advisory decision per tracker, while upload preparation and submission
 log newly learned advice once per prepared plan. Retained preflight snapshots prevent
 repeating the same message after questionnaire reprojection within an upload attempt;

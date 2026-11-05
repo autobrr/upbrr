@@ -49,10 +49,22 @@ func TestPreflightAPIKeyGuidanceIsPassiveAndRefreshesEachUpload(t *testing.T) {
 		}}},
 	}
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	_, beforePost, err := builder.Build(t.Context(), api.UploadSubject{}, catalog, runtime, initial, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, decision := range beforePost[0].PolicyDecisions {
+		if decision.Code == trackers.APIKeyGuidanceCode {
+			t.Fatal("preflight invented guidance before an upload POST response")
+		}
+	}
+	if len(logger.messages) != 0 {
+		t.Fatal("preflight logged guidance before an upload POST response")
+	}
 	retained := initial
 	for upload := range 2 {
 		for range 3 {
-			registry.ObserveAPIResponse("ALPHA", "synthetic-key", nil, http.StatusOK)
+			guidance.Observe("synthetic-key", nil, http.StatusOK)
 		}
 		assessment, projections, err := builder.Build(t.Context(), api.UploadSubject{}, catalog, runtime, initial, now)
 		if err != nil {
@@ -101,7 +113,7 @@ func TestPreflightAPIKeyGuidanceIsPassiveAndRefreshesEachUpload(t *testing.T) {
 	}
 	header := make(http.Header)
 	header.Set(guidance.Header, "2027-06-01T00:00:00Z")
-	registry.ObserveAPIResponse("ALPHA", "synthetic-key", header, http.StatusOK)
+	guidance.Observe("synthetic-key", header, http.StatusOK)
 	_, projections, err := builder.Build(t.Context(), api.UploadSubject{}, catalog, runtime, retained, now)
 	if err != nil {
 		t.Fatal(err)

@@ -86,28 +86,32 @@ func TestAPIKeyExpiryGuidance(t *testing.T) {
 	}
 }
 
-func TestAPIKeyGuidanceReplacementAndFailedAuthentication(t *testing.T) {
+func TestAPIKeyGuidanceLatestPostAndReplacement(t *testing.T) {
 	t.Parallel()
 	guidance := apiKeyGuidance()
 	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
 	header := make(http.Header)
+	if guidance.Guidance("synthetic-old-key", now) != "" {
+		t.Fatal("unsubmitted key gained missing-expiry guidance")
+	}
 	header.Set(guidance.Header, "2026-11-20T12:00:00Z")
 	guidance.Observe("synthetic-old-key", header, http.StatusOK)
 	if !strings.Contains(guidance.Guidance("synthetic-old-key", now), "2026-11-20") {
 		t.Fatal("reported expiry was lost")
 	}
-	if !strings.Contains(guidance.Guidance("synthetic-new-key", now), "did not report") {
+	if guidance.Guidance("synthetic-new-key", now) != "" {
 		t.Fatal("replacement inherited another key's expiry")
 	}
 	header.Set(guidance.Header, "2027-06-01T00:00:00Z")
 	guidance.Observe("synthetic-new-key", header, http.StatusOK)
-	guidance.Observe("synthetic-old-key", nil, http.StatusUnauthorized)
-	guidance.Observe("synthetic-new-key", nil, http.StatusForbidden)
 	if guidance.Guidance("synthetic-new-key", now) != "" || !strings.Contains(guidance.Guidance("synthetic-old-key", now), "2026-11-20") {
-		t.Fatal("failed authentication replaced a successful observation")
+		t.Fatal("another key's upload POST replaced a successful observation")
 	}
-	guidance.Observe("synthetic-new-key", nil, http.StatusOK)
-	if !strings.Contains(guidance.Guidance("synthetic-new-key", now), "did not report") {
-		t.Fatal("a headerless non-expiring key retained an old expiry")
+	for _, status := range []int{http.StatusOK, http.StatusUnauthorized, http.StatusForbidden} {
+		guidance.Observe("synthetic-new-key", header, http.StatusOK)
+		guidance.Observe("synthetic-new-key", nil, status)
+		if !strings.Contains(guidance.Guidance("synthetic-new-key", now), "did not report") {
+			t.Fatal("latest headerless upload POST retained an old expiry")
+		}
 	}
 }

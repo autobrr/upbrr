@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/autobrr/go-torrent/bencode"
 	"github.com/autobrr/go-torrent/metainfo"
@@ -776,74 +777,84 @@ func TestParseUnit3DUploadArtifactRejectsOffOriginDownloadURL(t *testing.T) {
 
 func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 	t.Parallel()
+	for _, downloadHeader := range []string{"", "2040-01-01T00:00:00Z"} {
+		t.Run("download header "+downloadHeader, func(t *testing.T) {
+			registeredTorrent := unit3DRegisteredTorrentFixture(t)
+			var uploadAuthSeen atomic.Bool
+			var downloadAuthSeen atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				switch {
+				case request.Method == http.MethodPost && request.URL.Path == "/api/torrents/upload":
+					uploadAuthSeen.Store(request.Header.Get("Authorization") == "Bearer synthetic-api-key")
+					w.Header().Set("X-Api-Key-Expires-At", "2026-11-20T12:00:00Z")
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"success":true,"data":"/torrent/download/374352.382"}`))
+				case request.Method == http.MethodGet && request.URL.Path == "/torrent/download/374352.382":
+					downloadAuthSeen.Store(request.Header.Get("Authorization") == "Bearer synthetic-api-key")
+					if downloadHeader != "" {
+						w.Header().Set("X-Api-Key-Expires-At", downloadHeader)
+					}
+					w.Header().Set("Content-Type", "application/x-bittorrent")
+					_, _ = w.Write(registeredTorrent)
+				default:
+					http.NotFound(w, request)
+				}
+			}))
+			defer server.Close()
 
-	registeredTorrent := unit3DRegisteredTorrentFixture(t)
-	var uploadAuthSeen atomic.Bool
-	var downloadAuthSeen atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodPost && request.URL.Path == "/api/torrents/upload":
-			uploadAuthSeen.Store(request.Header.Get("Authorization") == "Bearer synthetic-api-key")
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"success":true,"data":"/torrent/download/374352.382"}`))
-		case request.Method == http.MethodGet && request.URL.Path == "/torrent/download/374352.382":
-			downloadAuthSeen.Store(request.Header.Get("Authorization") == "Bearer synthetic-api-key")
-			w.Header().Set("X-Api-Key-Expires-At", "2026-11-20T12:00:00Z")
-			w.Header().Set("Content-Type", "application/x-bittorrent")
-			_, _ = w.Write(registeredTorrent)
-		default:
-			http.NotFound(w, request)
-		}
-	}))
-	defer server.Close()
-
-	tempDir := t.TempDir()
-	sourcePath := filepath.Join(tempDir, "Example.Release.2026.mkv")
-	if err := os.WriteFile(sourcePath, []byte("synthetic media"), 0o600); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-	downloadExpiryObserved := false
-	uploadResponseObserved := false
-	summary, err := submitUnit3DUpload(
-		context.Background(),
-		"EXAMPLE",
-		"Example.Release.2026.1080p-GRP",
-		"synthetic-api-key",
-		server.URL,
-		server.URL+"/api/torrents/upload",
-		"application/json",
-		"{}",
-		api.UploadSubject{SourcePath: sourcePath},
-		filepath.Join(tempDir, "state", "upbrr.db"),
-		api.NopLogger{},
-		func(header http.Header, status int, auxiliary bool) {
-			if !auxiliary && status == http.StatusOK {
-				uploadResponseObserved = true
+			tempDir := t.TempDir()
+			sourcePath := filepath.Join(tempDir, "Example.Release.2026.mkv")
+			if err := os.WriteFile(sourcePath, []byte("synthetic media"), 0o600); err != nil {
+				t.Fatalf("write source: %v", err)
 			}
-			if auxiliary && header.Get("X-Api-Key-Expires-At") == "2026-11-20T12:00:00Z" && status == http.StatusOK {
-				downloadExpiryObserved = true
+			guidance := &trackers.APIKeyGuidance{Header: "X-Api-Key-Expires-At", Message: func(expiry trackers.APIKeyExpiry, _ time.Time) string {
+				return expiry.ExpiresAt.UTC().Format(time.RFC3339)
+			}}
+			logger := &guidanceLogger{}
+			report := apiKeyGuidanceReporter(t.Context(), trackers.PreparationInput{
+				Tracker:       "EXAMPLE",
+				TrackerConfig: config.TrackerConfig{APIKey: "synthetic-api-key"},
+				Logger:        logger,
+			}, guidance)
+			observed := 0
+			summary, err := submitUnit3DUpload(
+				context.Background(),
+				"EXAMPLE",
+				"Example.Release.2026.1080p-GRP",
+				"synthetic-api-key",
+				server.URL,
+				server.URL+"/api/torrents/upload",
+				"application/json",
+				"{}",
+				api.UploadSubject{SourcePath: sourcePath},
+				filepath.Join(tempDir, "state", "upbrr.db"),
+				api.NopLogger{},
+				func(header http.Header, status int) {
+					observed++
+					report(header, status)
+				},
+			)
+			if err != nil {
+				t.Fatalf("submit Unit3D upload: %v", err)
 			}
-		},
-	)
-	if err != nil {
-		t.Fatalf("submit Unit3D upload: %v", err)
-	}
-	if !uploadAuthSeen.Load() || !downloadAuthSeen.Load() {
-		t.Fatalf("Unit3D API auth missing: upload=%t download=%t", uploadAuthSeen.Load(), downloadAuthSeen.Load())
-	}
-	if !downloadExpiryObserved || !uploadResponseObserved {
-		t.Fatal("upload and auxiliary download responses were not distinguished")
-	}
-	if summary.Uploaded != 1 || len(summary.UploadedTorrents) != 1 ||
-		strings.TrimSpace(summary.UploadedTorrents[0].TorrentPath) == "" {
-		t.Fatalf("Unit3D upload summary = %#v", summary)
-	}
-	persisted, err := os.ReadFile(summary.UploadedTorrents[0].TorrentPath)
-	if err != nil {
-		t.Fatalf("read registered torrent: %v", err)
-	}
-	if !bytes.Equal(persisted, registeredTorrent) {
-		t.Fatal("Unit3D registered torrent bytes changed")
+			if !uploadAuthSeen.Load() || !downloadAuthSeen.Load() {
+				t.Fatalf("Unit3D API auth missing: upload=%t download=%t", uploadAuthSeen.Load(), downloadAuthSeen.Load())
+			}
+			if observed != 1 || len(logger.messages) != 1 || guidance.Guidance("synthetic-api-key", time.Now()) != "2026-11-20T12:00:00Z" {
+				t.Fatal("registered-torrent GET changed the upload POST observation or guidance")
+			}
+			if summary.Uploaded != 1 || len(summary.UploadedTorrents) != 1 ||
+				strings.TrimSpace(summary.UploadedTorrents[0].TorrentPath) == "" {
+				t.Fatalf("Unit3D upload summary = %#v", summary)
+			}
+			persisted, err := os.ReadFile(summary.UploadedTorrents[0].TorrentPath)
+			if err != nil {
+				t.Fatalf("read registered torrent: %v", err)
+			}
+			if !bytes.Equal(persisted, registeredTorrent) {
+				t.Fatal("Unit3D registered torrent bytes changed")
+			}
+		})
 	}
 }
 

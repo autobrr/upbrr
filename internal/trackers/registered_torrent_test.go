@@ -90,7 +90,6 @@ func TestDownloadRegisteredTorrentEnforcesStatusAndSize(t *testing.T) {
 			t.Parallel()
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("X-Api-Key-Expires-At", "2026-11-20T12:00:00Z")
 				w.WriteHeader(test.status)
 				_, _ = w.Write(test.body)
 			}))
@@ -100,14 +99,8 @@ func TestDownloadRegisteredTorrentEnforcesStatusAndSize(t *testing.T) {
 				t.Fatalf("build registered torrent request: %v", err)
 			}
 			outputPath := filepath.Join(t.TempDir(), "registered.torrent")
-			observed := false
-			if err := DownloadRegisteredTorrent(context.Background(), server.Client(), request, outputPath, func(header http.Header, status int) {
-				observed = header.Get("X-Api-Key-Expires-At") == "2026-11-20T12:00:00Z" && status == test.status
-			}); err == nil {
+			if err := DownloadRegisteredTorrent(context.Background(), server.Client(), request, outputPath); err == nil {
 				t.Fatal("expected registered torrent download rejection")
-			}
-			if !observed {
-				t.Fatal("rejected response headers were lost before status or payload validation")
 			}
 			if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
 				t.Fatal("rejected response left a registered torrent artifact")

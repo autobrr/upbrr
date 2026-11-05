@@ -70,7 +70,7 @@ Review the assessment displayed for each selected tracker:
 
 Check the tracker's current rules to understand what each finding means for your release. upbrr's assessment is not a substitute for those rules.
 
-Account maintenance advice can also appear in **Guidance** or the upload log when a tracker reports credential expiry. Follow the displayed renewal instructions and update the configured credential as needed. This advice does not require acknowledgement or block unattended uploads; authentication failures still follow the normal recovery process.
+Account maintenance advice can also appear in **Guidance** or the upload log after a tracker responds to an upload. Expiry advice uses that credential's latest upload response; read-only checks do not refresh it, and no missing-expiry reminder appears before the first upload response. Remembered advice is cleared when the application restarts. Follow the displayed renewal instructions and update the configured credential as needed. This advice does not require acknowledgement or block unattended uploads; authentication failures still follow the normal recovery process.
 
 Package checks use the files intended for the torrent, following its inclusion policy. A complete inventory can still contain prohibited files or a missing episode in a sequence. Inventory completeness is separate from the technical and language coverage of inspected media. ISO inputs retain their image-file identity during package validation. Older prepared generations require preparation again to collect this evidence.
 

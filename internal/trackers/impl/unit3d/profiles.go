@@ -21,7 +21,7 @@ type SubmissionRequirements struct {
 
 // SiteProfile contains site-owned Unit3D taxonomy and preparation callbacks.
 type SiteProfile struct {
-	// APIKeyGuidance provides advisory account maintenance from authenticated responses.
+	// APIKeyGuidance provides advisory account maintenance from upload POST responses.
 	APIKeyGuidance *trackers.APIKeyGuidance
 	// AllowSeasonZeroEpisodes admits explicitly identified individual specials.
 	// Packs, missing season evidence, and known multiple episodes remain blocked.

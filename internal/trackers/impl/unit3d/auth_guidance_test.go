@@ -45,7 +45,7 @@ func TestAPIKeyGuidanceReporterDeduplicatesWithinEachUpload(t *testing.T) {
 	for range 2 {
 		report := apiKeyGuidanceReporter(t.Context(), input, guidance)
 		for range 3 {
-			report(nil, http.StatusOK, false)
+			report(nil, http.StatusOK)
 		}
 	}
 	if len(logger.messages) != 2 {
@@ -55,14 +55,14 @@ func TestAPIKeyGuidanceReporterDeduplicatesWithinEachUpload(t *testing.T) {
 		Code: trackers.APIKeyGuidanceCode, Message: "Review the account configuration.",
 	}}}
 	report := apiKeyGuidanceReporter(t.Context(), input, guidance)
-	report(nil, 0, false)
+	report(nil, 0)
 	if len(logger.messages) != 2 {
 		t.Fatal("shared projection advice was repeated in upload logs")
 	}
 	header := make(http.Header)
 	header.Set(guidance.Header, "2026-11-20T12:00:00Z")
 	for range 3 {
-		report(header, http.StatusOK, false)
+		report(header, http.StatusOK)
 	}
 	if len(logger.messages) != 3 {
 		t.Fatal("newer response guidance was lost or duplicated")
@@ -73,7 +73,7 @@ func TestAPIKeyGuidanceReporterDeduplicatesWithinEachUpload(t *testing.T) {
 		ctx := api.WithTrackerGuidanceHistory(t.Context(), history)
 		report := apiKeyGuidanceReporter(ctx, input, guidance)
 		for range 3 {
-			report(nil, 0, false)
+			report(nil, 0)
 		}
 		want := 0
 		if len(history) == 0 {
@@ -88,20 +88,55 @@ func TestAPIKeyGuidanceReporterDeduplicatesWithinEachUpload(t *testing.T) {
 func TestUploadResponseCapturesExpiryWithoutChangingSubmissionOutcome(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name    string
-		status  int
-		body    string
-		outcome submission.Outcome
+		name        string
+		status      int
+		body        string
+		outcome     submission.Outcome
+		finalHeader string
 	}{
-		{"accepted", http.StatusOK, `{"success":true}`, submission.Accepted},
-		{"rejected with expiry", http.StatusBadRequest, `{"success":false,"message":"Invalid torrent"}`, submission.Rejected},
+		{
+			name:    "accepted",
+			status:  http.StatusOK,
+			body:    `{"success":true}`,
+			outcome: submission.Accepted,
+		},
+		{
+			name:    "rejected with expiry",
+			status:  http.StatusBadRequest,
+			body:    `{"success":false,"message":"Invalid torrent"}`,
+			outcome: submission.Rejected,
+		},
+		{
+			name:    "headerless redirected GET",
+			status:  http.StatusFound,
+			outcome: submission.Accepted,
+		},
+		{
+			name:        "conflicting redirected GET",
+			status:      http.StatusSeeOther,
+			outcome:     submission.Accepted,
+			finalHeader: "2040-01-01T00:00:00Z",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			guidance := &trackers.APIKeyGuidance{Header: "X-Api-Key-Expires-At", Message: func(expiry trackers.APIKeyExpiry, _ time.Time) string {
 				return expiry.ExpiresAt.UTC().Format(time.RFC3339)
 			}}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/result" {
+					if request.Method != http.MethodGet {
+						t.Error("upload redirect did not preserve the existing GET follow-up")
+					}
+					if tc.finalHeader != "" {
+						w.Header().Set(guidance.Header, tc.finalHeader)
+					}
+					_, _ = w.Write([]byte(`{"success":true}`))
+					return
+				}
 				w.Header().Set(guidance.Header, "2026-11-20T12:00:00Z")
+				if tc.status == http.StatusFound || tc.status == http.StatusSeeOther {
+					w.Header().Set("Location", "/result")
+				}
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
 			}))
@@ -124,7 +159,7 @@ func TestUploadResponseCapturesExpiryWithoutChangingSubmissionOutcome(t *testing
 	}
 }
 
-func TestAPIKeyGuidanceReporterPreservesExpiryAcrossHeaderlessDownload(t *testing.T) {
+func TestAPIKeyGuidanceReporterUsesLatestPostAcrossUploads(t *testing.T) {
 	t.Parallel()
 	guidance := &trackers.APIKeyGuidance{Header: "X-Api-Key-Expires-At", Message: func(expiry trackers.APIKeyExpiry, _ time.Time) string {
 		if !expiry.Reported {
@@ -142,32 +177,45 @@ func TestAPIKeyGuidanceReporterPreservesExpiryAcrossHeaderlessDownload(t *testin
 		Logger:        logger,
 	}
 	report := apiKeyGuidanceReporter(t.Context(), input, guidance)
-	header := make(http.Header)
-	header.Set(guidance.Header, "2026-11-20T12:00:00Z")
-	report(header, http.StatusOK, false)
-	report(nil, http.StatusOK, true)
-	if got := guidance.Guidance(input.TrackerConfig.APIKey, time.Now()); got != "2026-11-20T12:00:00Z" || len(logger.messages) != 1 {
-		t.Fatal("headerless registered download replaced the upload's reported expiry")
+	report(nil, 0)
+	if len(logger.messages) != 0 {
+		t.Fatal("preparation invented guidance before an upload POST response")
 	}
-	// Primary responses can still replace an expiry with an omitted header.
-	report(nil, http.StatusOK, false)
-	report(nil, http.StatusOK, true)
-	if got := guidance.Guidance(input.TrackerConfig.APIKey, time.Now()); got != "Review the account configuration." || len(logger.messages) != 2 {
-		t.Fatal("headerless primary response or unknown-key reminder changed")
+	for _, tc := range []struct {
+		value  []string
+		status int
+		want   string
+	}{
+		{[]string{"2026-11-20T12:00:00Z"}, http.StatusOK, "2026-11-20T12:00:00Z"},
+		{[]string{"2026-11-21T12:00:00Z"}, http.StatusBadRequest, "2026-11-21T12:00:00Z"},
+		{nil, http.StatusUnauthorized, "Review the account configuration."},
+		{[]string{""}, http.StatusOK, "Unreadable expiry."},
+		{[]string{"not-a-date"}, http.StatusBadRequest, "Unreadable expiry."},
+	} {
+		header := make(http.Header)
+		if tc.value != nil {
+			header[http.CanonicalHeaderKey(guidance.Header)] = tc.value
+		}
+		report(header, tc.status)
+		if got := guidance.Guidance(input.TrackerConfig.APIKey, time.Now()); got != tc.want {
+			t.Fatalf("latest upload POST guidance = %q, want %q", got, tc.want)
+		}
 	}
-	report(header, http.StatusOK, true)
-	if got := guidance.Guidance(input.TrackerConfig.APIKey, time.Now()); got != "2026-11-20T12:00:00Z" || len(logger.messages) != 2 {
-		t.Fatal("download expiry was lost or repeated")
+	if len(logger.messages) != 4 {
+		t.Fatal("changed POST results were lost or repeated")
 	}
-	header.Set(guidance.Header, "")
-	report(header, http.StatusOK, true)
-	if got := guidance.Guidance(input.TrackerConfig.APIKey, time.Now()); got != "Unreadable expiry." {
-		t.Fatal("present but malformed download header was treated as absent")
+	// A new upload reuses this key's observation before sending another POST.
+	nextUpload := apiKeyGuidanceReporter(t.Context(), input, guidance)
+	nextUpload(nil, 0)
+	if len(logger.messages) != 5 {
+		t.Fatal("same-key upload lost the recorded POST result")
 	}
-	before := len(logger.messages)
+	input.TrackerConfig.APIKey = "synthetic-replacement-key"
+	replacement := apiKeyGuidanceReporter(t.Context(), input, guidance)
+	replacement(nil, 0)
 	withoutPolicy := apiKeyGuidanceReporter(t.Context(), input, nil)
-	withoutPolicy(nil, http.StatusOK, true)
-	if len(logger.messages) != before {
-		t.Fatal("tracker without an expiry policy gained guidance")
+	withoutPolicy(nil, 0)
+	if len(logger.messages) != 5 {
+		t.Fatal("unsubmitted replacement or tracker without a policy gained guidance")
 	}
 }

@@ -22,7 +22,8 @@ type APIKeyExpiry struct {
 	ExpiresAt time.Time
 }
 
-// APIKeyGuidance retains process-local expiry observations by credential digest.
+// APIKeyGuidance retains the latest upload POST observation by credential digest.
+// Observations are process-local and other responses must not be passed to Observe.
 // It never changes authentication or upload eligibility. Message must return
 // secret-free advisory text and may return empty when no guidance is applicable.
 type APIKeyGuidance struct {
@@ -32,18 +33,14 @@ type APIKeyGuidance struct {
 	expiries map[[sha256.Size]byte]APIKeyExpiry
 }
 
-// Observe captures expiry headers from responses to authenticated requests,
-// including rejected uploads. Only successful responses may replace a previous
-// observation with a missing header; headerless failures preserve prior facts.
+// Observe replaces this key's observation from an upload POST response, including
+// rejected uploads. Missing and malformed headers replace any prior expiry.
 func (g *APIKeyGuidance) Observe(key string, header http.Header, status int) {
 	key = strings.TrimSpace(key)
 	if g == nil || key == "" || status <= 0 {
 		return
 	}
 	reported := len(header.Values(g.Header)) > 0
-	if !reported && (status < http.StatusOK || status >= http.StatusMultipleChoices) {
-		return
-	}
 	value := strings.TrimSpace(header.Get(g.Header))
 	expiry := APIKeyExpiry{Reported: reported}
 	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
@@ -57,22 +54,17 @@ func (g *APIKeyGuidance) Observe(key string, header http.Header, status int) {
 	g.expiries[sha256.Sum256([]byte(key))] = expiry
 }
 
-// Guidance returns current advice for exactly this key, including the policy's
-// missing-header advice when no response has been observed. No key is retained.
+// Guidance returns advice for this key's latest observed upload POST, or empty
+// before any POST response has been observed. No key is retained.
 func (g *APIKeyGuidance) Guidance(key string, now time.Time) string {
 	if g == nil || g.Message == nil {
 		return ""
 	}
 	g.mu.Lock()
-	expiry := g.expiries[sha256.Sum256([]byte(strings.TrimSpace(key)))]
+	expiry, observed := g.expiries[sha256.Sum256([]byte(strings.TrimSpace(key)))]
 	g.mu.Unlock()
-	return g.Message(expiry, now)
-}
-
-// ObserveAPIResponse dispatches optional account guidance without changing the
-// caller's HTTP result. Trackers without this policy remain unaffected.
-func (r *Registry) ObserveAPIResponse(tracker, key string, header http.Header, status int) {
-	if policy, ok := r.LookupAuthPolicy(tracker); ok {
-		policy.APIKeyGuidance.Observe(key, header, status)
+	if !observed {
+		return ""
 	}
+	return g.Message(expiry, now)
 }
