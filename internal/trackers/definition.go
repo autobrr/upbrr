@@ -16,7 +16,7 @@ import (
 )
 
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
-const GeneralDuplicatePolicyID = "general/duplicate/v10"
+const GeneralDuplicatePolicyID = "general/duplicate/v11"
 
 // DuplicateSearchContractID versions authoritative search scope and completion semantics.
 // Projection/catalog fingerprints and persisted private evidence carry this ID so older

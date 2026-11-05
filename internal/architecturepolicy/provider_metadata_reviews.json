@@ -328,12 +328,12 @@
     "sha256": "6e86c975425160b27c238e1d0feabdc0eabd87dd1a58139fefec634e8c71094f"
   },
   "internal/trackers/impl/standalone/asc/name.go:resolveUploadTitle": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "3262a761092f75ef76cb9d4761052f368b4ad6abd2e6f194b19bb61e3c74cb69"
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "dd7b95e6d0058c7733c145d92ead0da59312f511095b461a0ccbdb37246cc8d0"
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
-    "sha256": "3c24c9117bb0eb6c03b3638da044bfec835f2b444d9ba3b9612acdaa09c69605"
+    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "7ae1605e9bee721076be607c26b615254a90078fad2ebbcc2f13769ccec2b7d5"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks.",
@@ -892,8 +892,8 @@
     "sha256": "0063e9bc54c2bc4cf92a8b171291e969297a9e450b7f33c67dd329221c9e306a"
   },
   "internal/trackers/impl/standalone/hdb/name.go:buildGeneratedHDBName": {
-    "reason": "3D correction naming review: generated names delegate region/source/subtype ordering to the existing source-layout helper, preserving Country before 3D for regional formats and ordinary non-3D region placement. Complete-name/P2P exits, current original-title authority and PreferredYear manual precedence remain unchanged; caller and helper reviewed together. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged.",
-    "sha256": "63299471d31a65e9a9d5c0695f060c103d06e9151e805d9829155d7a87c0a8d8"
+    "reason": "3D correction naming review: generated names delegate region/source/subtype ordering to the existing source-layout helper, preserving Country before 3D for regional formats and ordinary non-3D region placement. Complete-name/P2P exits, current original-title authority and PreferredYear manual precedence remain unchanged; caller and helper reviewed together. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "dce7e8753e552748efbdc3fcd0d863db3f080a031609348d31aa5d3e7cd39973"
   },
   "internal/trackers/impl/standalone/hdb/name.go:hdbIMDbYear": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
@@ -1276,12 +1276,12 @@
     "sha256": "e8e37af6bbfd8428156d5cc75416de4caf836faa4f65e414e70b16ad03edf668"
   },
   "internal/trackers/impl/standalone/tvc/name.go:resolveName": {
-    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together.",
-    "sha256": "f8953a4679fa96231aaf1f3422f140462d4c16c8b5bb24c2484b5931afb7ac38"
+    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "44c9ae2594a6a71603bf2d31340c502117ad7b204b3ced5232a3a6c2bf4291de"
   },
   "internal/trackers/impl/standalone/tvc/profile.go:Profile": {
-    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
-    "sha256": "2ffcf7bd91698e368a5221f9d61edbb5faceb2f5ac48634d4c794931ed4aca46"
+    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "e978d82a37e259df1c23fb82a32efc5552c71eb26f5573a46fe99a9f30d2eb85"
   },
   "internal/trackers/impl/standalone/tvc/taxonomy.go:resolveCategory": {
     "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged.",
@@ -1452,8 +1452,8 @@
     "sha256": "1d2e6c4777073ecc7d623f65cffda22c444db8a48442dd84a1282d2e5664d3e0"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:buildName": {
-    "reason": "Preserves current TMDB identity/source/generation guards, explicit manual title/year and complete-name authority, and finalized modifier omissions. Effective generic/subtype 3D wording occupies the dedicated position before source, without changing language or technical evidence. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged.",
-    "sha256": "0c430630ee42487fc5fda6f80669559eb660afac9c1765dc9e25145f69b1fe75"
+    "reason": "Preserves current TMDB identity/source/generation guards, explicit manual title/year and complete-name authority, and finalized modifier omissions. Effective generic/subtype 3D wording occupies the dedicated position before source, without changing language or technical evidence. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "221e109a0a28497513c1d038ca7aa75e3341121ebb4cfb7bb4ec18de67e6a7a1"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:currentOTWTMDBTitleYear": {
     "reason": "OTW buildName applies PreferredTitle and PreferredYear; snapshot currentness remains an identity prerequisite.",
@@ -1464,8 +1464,8 @@
     "sha256": "31f03c020b50ac67eecc6fa7d688fb167cb03619651bb0d8b4992339e46e7450"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:releaseNamePolicy": {
-    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "57588fd197cc7b2e2dc1758657d4abe7d90317dbcdab07546b7d3f138e3a8570"
+    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "4db3fb862a94bc1890222b2eeff9b4644175591b1ac2f448b0f4e5c36a31ef16"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
     "reason": "Wires the OTW v7 release-name policy that preserves explicit upload names and finalized manual title, year and edition corrections. Existing TMDB selection, required metadata, language validation, season-zero behavior and duplicate policy remain unchanged.",
@@ -1496,12 +1496,12 @@
     "sha256": "776d1d6fcd4fc8c61202322f9b4388220565bfbb8bb64d8343df6a7b87c0db87"
   },
   "internal/trackers/impl/unit3d/sites/rhd/name.go:buildName": {
-    "reason": "3D correction naming review: stereo subtype display fragments move to the dedicated source-adjacent position without changing canonical facts. Current provider identity/source guards, localized title fallback, manual title/year precedence and independent search names remain unchanged; other edition display parts are preserved. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged.",
-    "sha256": "492ab6303e6972a0521eac7031d6ff23a419ddfa6ba977bf87142a2ae45aaab2"
+    "reason": "3D correction naming review: stereo subtype display fragments move to the dedicated source-adjacent position without changing canonical facts. Current provider identity/source guards, localized title fallback, manual title/year precedence and independent search names remain unchanged; other edition display parts are preserved. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "473079af53023a93aadb8e3ca2610093c94f5ce3caee3a5bf967a69fc57e8e99"
   },
   "internal/trackers/impl/unit3d/sites/rhd/profile.go:Profile": {
-    "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "d406a33579bdf0226ffa1c6bad510bded452b4f23ee54f17cc1e32637f8afc8d"
+    "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "5c2d03aa28bf42dfa450eb36194edd0dee76922f6a619b0bca6ce7a3523f8959"
   },
   "internal/trackers/impl/unit3d/sites/rmc/name.go:applyRMCNameDefaults": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",

@@ -929,6 +929,40 @@ const preparedRelease = () =>
   }) as unknown as NonNullable<InputFacet["view"]["release"]>;
 
 describe("InputPage", () => {
+  it("retains part membership and shows unresolved coverage after refresh", () => {
+    const facet = readyInputFacet(1);
+    const release = preparedRelease();
+    release.Episode.Pack = true;
+    release.Episode.Coverage = { Part: "Part.1", Episodes: [1, 2, 3], Status: "complete" };
+    const { rerender } = render(
+      <InputPage facet={{ ...facet, view: { ...facet.view, release } }} {...inputPageProps()} />,
+    );
+    expect(screen.getByText("Part.1")).toBeVisible();
+    expect(screen.getByText(/Known episodes: 1, 2, 3/)).toHaveTextContent(
+      "Season completeness is unverified.",
+    );
+    const refreshed = preparedRelease();
+    refreshed.Episode.Pack = true;
+    refreshed.Episode.Coverage = { Part: "Part.2", Episodes: [], Status: "unavailable" };
+    rerender(
+      <InputPage
+        facet={{ ...facet, view: { ...facet.view, release: refreshed } }}
+        {...inputPageProps()}
+      />,
+    );
+    expect(screen.queryByText("Part.1")).not.toBeInTheDocument();
+    expect(screen.getByText("Part.2")).toBeVisible();
+    expect(screen.getByText(/Episode membership unknown/)).toBeVisible();
+    refreshed.Episode.Coverage = { Part: "Part.2", Episodes: [9], Status: "contradictory" };
+    rerender(
+      <InputPage
+        facet={{ ...facet, view: { ...facet.view, release: refreshed } }}
+        {...inputPageProps()}
+      />,
+    );
+    expect(screen.getByText(/Conflicting source evidence needs review/)).toBeVisible();
+  });
+
   it("honors applied primary-provider clears and keeps search available", () => {
     for (const provider of ["TMDB", "IMDB"] as const) {
       const facet = readyInputFacet(1);

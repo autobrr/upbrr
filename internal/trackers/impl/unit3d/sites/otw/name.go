@@ -15,7 +15,7 @@ import (
 )
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.NewReleaseNamePolicy("unit3d/otw/v14", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+	return trackers.NewReleaseNamePolicy("unit3d/otw/v15", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 		if input.RequestedName != nil {
 			return trackers.ResolvedReleaseNames{Upload: *input.RequestedName}, nil
 		}
@@ -39,7 +39,7 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	if year > 0 {
 		parts = append(parts, strconv.Itoa(year))
 	}
-	parts = append(parts, otwSeasonEpisode(meta), otwEpisodeTitle(meta))
+	parts = append(parts, otwSeasonEpisode(meta), meta.EpisodeCoverage.Part, otwEpisodeTitle(meta))
 	parts = append(parts, otwNameModifiers(meta)...)
 	parts = append(parts, meta.Repack, meta.Release.Resolution)
 	if isOTWCompleteDisc(meta) {

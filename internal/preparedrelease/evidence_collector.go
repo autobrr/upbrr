@@ -256,9 +256,15 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			Personal:                 meta.PersonalRelease,
 		},
 		Episode: api.EpisodeFacts{
-			Season:            meta.SeasonInt,
-			Episode:           meta.EpisodeInt,
-			MultipleEpisodes:  meta.MultipleEpisodes,
+			Season:           meta.SeasonInt,
+			Episode:          meta.EpisodeInt,
+			MultipleEpisodes: meta.MultipleEpisodes,
+			Coverage: api.EpisodeCoverage{
+				CompleteSeason: meta.EpisodeCoverage.CompleteSeason,
+				Part:           meta.EpisodeCoverage.Part,
+				Episodes:       append([]int(nil), meta.EpisodeCoverage.Episodes...),
+				Status:         meta.EpisodeCoverage.Status,
+			},
 			SeasonLabel:       meta.SeasonStr,
 			EpisodeLabel:      meta.EpisodeStr,
 			DailyDate:         meta.DailyEpisodeDate,

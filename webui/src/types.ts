@@ -180,7 +180,16 @@ export type NamingFacts = {
   Personal: boolean;
 };
 
+/** Pack identity and included members; complete evidence does not prove a complete season. */
+export type EpisodeCoverage = {
+  CompleteSeason?: boolean;
+  Part: string;
+  Episodes: number[];
+  Status: string;
+};
+
 export type EpisodeFacts = {
+  Coverage?: EpisodeCoverage;
   MultipleEpisodes: boolean;
   Season: number;
   Episode: number;

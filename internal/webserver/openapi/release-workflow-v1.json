@@ -2176,6 +2176,32 @@
       "EncodeSettingsStatus": {
         "type": "string"
       },
+      "EpisodeCoverage": {
+        "type": "object",
+        "properties": {
+          "CompleteSeason": {
+            "type": "boolean"
+          },
+          "Episodes": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "Part": {
+            "type": "string"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          }
+        },
+        "required": [
+          "CompleteSeason",
+          "Episodes",
+          "Part",
+          "Status"
+        ]
+      },
       "EpisodeFacts": {
         "type": "object",
         "properties": {
@@ -2196,6 +2222,9 @@
           },
           "AiredDate": {
             "type": "string"
+          },
+          "Coverage": {
+            "$ref": "#/components/schemas/EpisodeCoverage"
           },
           "DailyDate": {
             "type": "string"
@@ -2237,6 +2266,7 @@
           "AirTimezone",
           "AirTimezoneSource",
           "AiredDate",
+          "Coverage",
           "DailyDate",
           "DateMatched",
           "Episode",
@@ -11726,6 +11756,9 @@
           "container": {
             "type": "string"
           },
+          "coverage": {
+            "$ref": "#/components/schemas/EpisodeCoverage"
+          },
           "date": {
             "type": "string"
           },
@@ -11806,6 +11839,7 @@
           }
         },
         "required": [
+          "coverage",
           "evidence",
           "hdr",
           "pack"

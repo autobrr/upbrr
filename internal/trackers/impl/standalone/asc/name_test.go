@@ -12,7 +12,7 @@ import (
 
 func TestReleaseNamePolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/asc/v2" {
+	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/asc/v3" {
 		t.Fatalf("ASC release-name policy = %q", got)
 	}
 }

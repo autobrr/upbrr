@@ -22,7 +22,7 @@ func resolveUploadTitle(meta api.UploadSubject) string {
 			seasonEpisodeText(meta),
 		)
 		if seasonEpisode != "" {
-			return strings.TrimSpace(base + " - " + seasonEpisode)
+			return strings.TrimSpace(base + " - " + seasonEpisode + " " + meta.EpisodeCoverage.Part)
 		}
 	}
 	return base

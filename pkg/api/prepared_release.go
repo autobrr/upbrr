@@ -167,6 +167,19 @@ type NamingFacts struct {
 	Personal      bool
 }
 
+// EpisodeCoverage retains explicit pack identity and filename membership.
+// Complete means every supplied media member is identified, not that the season
+// is complete. Partial/unavailable membership cannot prove disjoint coverage;
+// contradictory evidence must be reviewed. Part retains a source part or explicit
+// episode expression; a part number never implies episode numbers.
+type EpisodeCoverage struct {
+	// CompleteSeason retains an explicit complete-season source assertion, never a file-count inference.
+	CompleteSeason bool
+	Part           string
+	Episodes       []int
+	Status         MetadataEvidenceStatus
+}
+
 // EpisodeFacts contains canonical reusable episodic identity and schedule
 // facts, independent of tracker policy.
 type EpisodeFacts struct {
@@ -174,6 +187,7 @@ type EpisodeFacts struct {
 	Episode int
 	// MultipleEpisodes retains known combined or conflicting source episode membership.
 	MultipleEpisodes  bool
+	Coverage          EpisodeCoverage
 	SeasonLabel       string
 	EpisodeLabel      string
 	DailyDate         string
