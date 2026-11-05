@@ -719,6 +719,9 @@ func (m *mediaModule) uploadImagesToTarget(
 	}
 	compatibleLinks := func(links []api.UploadedImageLink) []api.UploadedImageLink {
 		return slices.DeleteFunc(slices.Clone(links), func(link api.UploadedImageLink) bool {
+			if !trackers.NativeImageLinkCurrent(m.cfg, m.registry, link) {
+				return true
+			}
 			return slices.ContainsFunc(images, func(image api.ScreenshotImage) bool {
 				return image.Purpose.IsAnalysis() && normalizedUploadImagePath(image.Path) == normalizedUploadImagePath(link.ImagePath) &&
 					(link.Purpose != image.Purpose || link.AccountScope != accountScopes[image.Purpose])
@@ -780,9 +783,22 @@ func (m *mediaModule) uploadImagesToTarget(
 		len(missing),
 		len(results),
 	)
-	uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, missing)
+	var uploaded []api.UploadedImageLink
+	var err error
+	if target.ImportID != "" {
+		importer, ok := m.images.(interface {
+			ImportURLs(context.Context, api.ImageHostingSubject, string, string, []api.ScreenshotImage) ([]api.UploadedImageLink, error)
+		})
+		_, capability := trackers.ImageURLImportForScope(m.registry, target.Host, target.UsageScope)
+		if !ok || capability == nil || target.ImportID != capability.ID {
+			return results, errors.New("core: image URL import capability unavailable")
+		}
+		uploaded, err = importer.ImportURLs(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, missing)
+	} else {
+		uploaded, err = m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, missing)
+	}
 	results = mergeUploadedImageLinks(images, results, uploaded)
-	if err != nil && !strictAnalysisBatch && m.partialHostUploadIsUsable(target, len(images), len(results), err) {
+	if err != nil && target.ImportID == "" && !strictAnalysisBatch && m.partialHostUploadIsUsable(target, len(images), len(results), err) {
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return results, nil
 	}

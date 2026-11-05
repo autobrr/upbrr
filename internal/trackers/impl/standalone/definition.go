@@ -285,6 +285,7 @@ func cloneImageHostPolicy(policy *trackers.ImageHostPolicy) *trackers.ImageHostP
 	if clone != nil {
 		clone.AllowedHosts = slices.Clone(policy.AllowedHosts)
 		clone.OwnedHosts = slices.Clone(policy.OwnedHosts)
+		clone.URLImport = cloneValue(policy.URLImport)
 	}
 	return clone
 }

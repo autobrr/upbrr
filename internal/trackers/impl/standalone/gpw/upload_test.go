@@ -12,12 +12,17 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func buildFields(req trackers.PreparationInput, cfg config.TrackerConfig, groupID string, answers map[string]string) map[string]string {
+	req.TrackerConfig = cfg
+	return previewFields(buildForm(req, "description", groupID, answers))
+}
+
 func TestBuildFieldsPersonalReleaseAndExclusiveFlags(t *testing.T) {
 	t.Parallel()
 
 	base := api.UploadSubject{PersonalRelease: true}
 
-	nonDisc := buildFields(trackers.PreparationInput{Meta: base}, config.TrackerConfig{Exclusive: true}, "description", "group", nil)
+	nonDisc := buildFields(trackers.PreparationInput{Meta: base}, config.TrackerConfig{Exclusive: true}, "group", nil)
 	if nonDisc["diy"] != "on" {
 		t.Fatalf("expected non-disc personal release to use diy flag, got %#v", nonDisc)
 	}
@@ -30,7 +35,7 @@ func TestBuildFieldsPersonalReleaseAndExclusiveFlags(t *testing.T) {
 
 	discMeta := base
 	discMeta.DiscType = "BDMV"
-	disc := buildFields(trackers.PreparationInput{Meta: discMeta, Runtime: trackers.PreparationRuntime{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}, config.TrackerConfig{}, "description", "group", nil)
+	disc := buildFields(trackers.PreparationInput{Meta: discMeta, Runtime: trackers.PreparationRuntime{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}, config.TrackerConfig{}, "group", nil)
 	if disc["buy"] != "on" {
 		t.Fatalf("expected disc personal release to use buy flag, got %#v", disc)
 	}
@@ -54,11 +59,13 @@ func TestBuildFieldsPreservesStructuredEditionParts(t *testing.T) {
 		{"cut only", "Extended", api.UploadSubject{Cut: "Extended"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			for _, subject := range []api.UploadSubject{{Edition: test.legacy}, test.structured} {
-				fields := buildFields(trackers.PreparationInput{Meta: subject}, config.TrackerConfig{}, "description", "group", nil)
-				if fields["movie_edition_information"] != "on" || fields["remaster_title"] != test.legacy {
-					t.Fatalf("edition flag = %q, remaster title = %q, want on and %q", fields["movie_edition_information"], fields["remaster_title"], test.legacy)
-				}
+			fields := buildFields(trackers.PreparationInput{Meta: test.structured}, config.TrackerConfig{}, "group", nil)
+			if fields["movie_edition_information"] != "on" || fields["remaster_title"] != "extended_edition" {
+				t.Fatal("canonical cut was not mapped")
+			}
+			legacy := buildFields(trackers.PreparationInput{Meta: api.UploadSubject{Edition: test.legacy}}, config.TrackerConfig{}, "group", nil)
+			if legacy["remaster_title"] != "" || legacy["remaster_custom_title"] != test.legacy {
+				t.Fatal("opaque edition was reclassified or lost")
 			}
 		})
 	}
@@ -99,14 +106,14 @@ func TestBuildFieldsNewGroupYearPreservesManualAuthority(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			fields := buildFields(trackers.PreparationInput{Meta: tc.meta}, config.TrackerConfig{}, "description", "", nil)
+			fields := buildFields(trackers.PreparationInput{Meta: tc.meta}, config.TrackerConfig{}, "", nil)
 			if got, ok := fields["year"]; !ok || got != tc.want {
 				t.Fatalf("year = %q, present = %t, want %q", got, ok, tc.want)
 			}
 		})
 	}
 
-	existingGroup := buildFields(trackers.PreparationInput{Meta: api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}}}}, config.TrackerConfig{}, "description", "group", nil)
+	existingGroup := buildFields(trackers.PreparationInput{Meta: api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}}}}, config.TrackerConfig{}, "group", nil)
 	if _, ok := existingGroup["year"]; ok {
 		t.Fatalf("existing group must omit year, got %#v", existingGroup)
 	}

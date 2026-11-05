@@ -1921,7 +1921,6 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		TrackerSite:                 subject.TrackerSiteOverrides,
 		ImageHost:                   subject.ImageHostOverrides,
 		TrackerData:                 append([]TrackerMetadata(nil), subject.TrackerData...),
-		ExactMedia:                  subject.ExactMedia.Clone(),
 	}
 	if subject.DescriptionGroupsFinal {
 		for index := range projected.DescriptionGroups {
@@ -1932,6 +1931,8 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 	if err != nil {
 		panic(fmt.Sprintf("clone description subject: %v", err))
 	}
+	// Exact media carries private account authority omitted by JSON cloning.
+	cloned.ExactMedia = subject.ExactMedia.Clone()
 	cloned.SuppressImportedScreenshotReferences = cloneTrackerValidationValue(subject.SuppressImportedScreenshotReferences)
 	return cloned
 }

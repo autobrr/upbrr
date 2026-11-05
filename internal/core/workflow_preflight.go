@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -67,6 +69,8 @@ func (b workflowPreflightBuilder) hasReusableTrackerImages(
 		return false
 	}
 	urlsByHost := make(map[string]map[string]struct{})
+	importURLs := make(map[string]struct{})
+	native := trackers.DefaultImageURLImport(b.registry, b.config, string(projection.TrackerID), subject.ImageHostOverrides)
 	for _, link := range links {
 		host := strings.ToLower(strings.TrimSpace(link.Host))
 		if host == "" || strings.TrimSpace(link.Path) == "" {
@@ -76,6 +80,13 @@ func (b workflowPreflightBuilder) hasReusableTrackerImages(
 			urlsByHost[host] = make(map[string]struct{})
 		}
 		urlsByHost[host][link.URL] = struct{}{}
+		if native != nil && projection.Artifacts.DVDMenuCount == 0 {
+			direct := imagehost.DirectImageURL(link.URL)
+			parsed, parseErr := url.Parse(direct)
+			if parseErr == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Hostname() != "" {
+				importURLs[direct] = struct{}{}
+			}
+		}
 	}
 	for host, urls := range urlsByHost {
 		if len(urls) < required {
@@ -86,6 +97,17 @@ func (b workflowPreflightBuilder) hasReusableTrackerImages(
 			b.logger.Tracef("tracker preflight: source images satisfy host policy tracker=%s host=%s count=%d", projection.TrackerID, host, len(urls))
 			return true
 		}
+	}
+	if native != nil && len(importURLs) >= required {
+		// Inventory contains verified local imports. Public-address and byte
+		// checks still run at the authorized image stage, before any POST.
+		b.logger.Tracef(
+			"tracker preflight: source images support native import tracker=%s host=%s count=%d",
+			projection.TrackerID,
+			native.Host,
+			len(importURLs),
+		)
+		return true
 	}
 	return false
 }
