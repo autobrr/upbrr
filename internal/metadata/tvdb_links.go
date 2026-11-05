@@ -77,6 +77,27 @@ func safeTVDBNameMatch(results []tvdb.SeriesSearchResult, title string, year int
 	return selected
 }
 
+type tvdbSiblingTarget struct {
+	id         *int
+	provenance *api.IdentityProvenance
+	dependency *api.IdentityDependency
+	override   *int
+}
+
+func tvdbSiblingTargets(ids *api.ExternalIdentity, overrides api.ExternalIDOverrides) map[api.IdentityProvider]tvdbSiblingTarget {
+	targets := map[api.IdentityProvider]tvdbSiblingTarget{
+		api.IdentityProviderTMDB:   {&ids.TMDBID, &ids.Provenance.TMDB, &ids.Dependencies.TMDB, overrides.TMDBID},
+		api.IdentityProviderIMDB:   {&ids.IMDBID, &ids.Provenance.IMDB, &ids.Dependencies.IMDB, overrides.IMDBID},
+		api.IdentityProviderTVmaze: {&ids.TVmazeID, &ids.Provenance.TVmaze, &ids.Dependencies.TVmaze, overrides.TVmazeID},
+		api.IdentityProviderMAL:    {&ids.MALID, &ids.Provenance.MAL, &ids.Dependencies.MAL, overrides.MALID},
+	}
+	// A manually selected TMDB resource retains its existing independent MAL authority.
+	if positiveProviderOverride(overrides.TMDBID) {
+		delete(targets, api.IdentityProviderMAL)
+	}
+	return targets
+}
+
 // applyTVDBSeriesLinks fills missing siblings only when series evidence agrees with current identities.
 // Independently selected IDs and explicit clears remain authoritative, including on conflicting links.
 // A link that failed IMDb verification remains raw evidence without being reapplied in this collection.
@@ -94,22 +115,7 @@ func applyTVDBSeriesLinks(
 	if links.Status == "" || links.Status == api.MetadataEvidenceStatusUnavailable {
 		return
 	}
-	type target struct {
-		id         *int
-		provenance *api.IdentityProvenance
-		dependency *api.IdentityDependency
-		override   *int
-	}
-	targets := map[api.IdentityProvider]target{
-		api.IdentityProviderTMDB:   {&ids.TMDBID, &ids.Provenance.TMDB, &ids.Dependencies.TMDB, overrides.TMDBID},
-		api.IdentityProviderIMDB:   {&ids.IMDBID, &ids.Provenance.IMDB, &ids.Dependencies.IMDB, overrides.IMDBID},
-		api.IdentityProviderTVmaze: {&ids.TVmazeID, &ids.Provenance.TVmaze, &ids.Dependencies.TVmaze, overrides.TVmazeID},
-		api.IdentityProviderMAL:    {&ids.MALID, &ids.Provenance.MAL, &ids.Dependencies.MAL, overrides.MALID},
-	}
-	// A manually selected TMDB resource retains its existing independent MAL authority.
-	if positiveProviderOverride(overrides.TMDBID) {
-		delete(targets, api.IdentityProviderMAL)
-	}
+	targets := tvdbSiblingTargets(ids, overrides)
 	conflict := links.Status == api.MetadataEvidenceStatusContradictory
 	for _, link := range links.Links {
 		if link.State == "malformed" {

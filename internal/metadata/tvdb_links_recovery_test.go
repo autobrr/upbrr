@@ -142,7 +142,7 @@ func TestTVDBMALAgreementDoesNotDependOnResolutionOrder(t *testing.T) {
 	}
 }
 
-func TestTVDBUnverifiedIMDbLinkStaysAdvisoryUntilExplicitRetry(t *testing.T) {
+func TestTVDBUnverifiedIMDbLinkPreservesRawEvidenceAndVerifiedAuthority(t *testing.T) {
 	for _, mode := range []string{"provider failure", "missing type", "verified snapshot", "partial verified snapshot", "manual", "kept"} {
 		t.Run(mode, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "Example.Series.S01E01.mkv")
@@ -216,16 +216,6 @@ func TestTVDBUnverifiedIMDbLinkStaysAdvisoryUntilExplicitRetry(t *testing.T) {
 			} else {
 				if result.Identity.IMDBID != 0 || result.ProviderMetadata.IMDB != nil || imdbClient.infoCalls != 1 || result.ProviderMetadata.TVDB.RemoteLinks.Links[0].State != "valid" {
 					t.Fatalf("unverified link escaped or raw evidence changed: %+v calls=%d", result.Identity, imdbClient.infoCalls)
-				}
-				imdbClient.infoErr = nil
-				imdbClient.info.Type = "tvSeries"
-				result.ExternalFreshness = api.ExternalFreshnessRefresh
-				retried, err := service.resolveExternalIdentity(t.Context(), result)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if retried.Identity.IMDBID != 202 || retried.ProviderMetadata.IMDB == nil || imdbClient.infoCalls != 2 {
-					t.Fatalf("explicit retry did not verify link: %+v calls=%d", retried.Identity, imdbClient.infoCalls)
 				}
 			}
 			if mode == "verified snapshot" || mode == "partial verified snapshot" || mode == "kept" {
