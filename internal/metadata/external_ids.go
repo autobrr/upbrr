@@ -1377,19 +1377,18 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	if refreshProviders {
 		clearUnverifiedRefreshProviderIDs(&ids, &metadata, tmdbErr, imdbErr, tvdbErr, tvmazeErr, anilistErr)
 	}
-	if metadata.TVDB != nil && metadata.TVDB.RemoteLinks.Status == api.MetadataEvidenceStatusUnavailable {
-		appendIdentityCorrectionWarning(
-			&meta,
-			"TVDB series remote links are unavailable; select missing sibling IDs manually. Saved fetch failures require removing the input from History before retrying.",
-		)
-	}
-
 	if positiveProviderOverride(effectiveOverrides.TVDBID) && !shouldUseTVDBForCategory(meta, ids) {
 		appendIdentityCorrectionWarning(&meta, "The supplied TVDB ID conflicts with the resolved movie category. Correct the TVDB ID or category.")
 	}
 	clearTVProvidersForNonTVCategory(meta, &ids, &metadata)
 	if invalidateIdentityDependencies(&ids, false) > 0 {
 		invalidateMismatchedProviderMetadata(&metadata, ids)
+	}
+	if metadata.TVDB != nil && metadata.TVDB.RemoteLinks.Status == api.MetadataEvidenceStatusUnavailable {
+		appendIdentityCorrectionWarning(
+			&meta,
+			"TVDB series remote links are unavailable; select missing sibling IDs manually. Saved fetch failures require removing the input from History before retrying.",
+		)
 	}
 	downstreamIDs := ids
 	if tmdbMetadataRejected {
