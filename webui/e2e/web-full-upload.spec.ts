@@ -114,12 +114,21 @@ test("provider search inspects and stages a candidate before Refresh metadata", 
   const workspace = await createE2EWorkspace();
   const app = await startApp(workspace);
   try {
-    const posterURL = new URL("candidate-poster.svg", app.url).toString();
+    const posterURL = "https://image.tmdb.org/t/p/original/synthetic-candidate.jpg";
+    const thumbnailURL = "https://image.tmdb.org/t/p/w342/synthetic-candidate.jpg";
+    let fullPosterRequests = 0;
     const brokenPosterURL = new URL("missing-poster.svg", app.url).toString();
-    await page.route(posterURL, (route) =>
-      route.fulfill({
+    await page.route(posterURL, (route) => {
+      fullPosterRequests++;
+      return route.fulfill({
         contentType: "image/svg+xml",
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800"><rect width="100%" height="100%" fill="#537da8"/><text x="80" y="240" font-size="90" fill="white">Example poster</text></svg>',
+      });
+    });
+    await page.route(thumbnailURL, (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="342" height="513"><rect width="100%" height="100%" fill="#537da8"/></svg>',
       }),
     );
     await page.route(brokenPosterURL, (route) => route.fulfill({ status: 404, body: "" }));
@@ -127,7 +136,7 @@ test("provider search inspects and stages a candidate before Refresh metadata", 
       const response = await route.fetch();
       const result = await response.json();
       for (const provider of result.Providers) {
-        provider.Candidates[0].PosterURL = posterURL;
+        provider.Candidates[0].PosterURL = thumbnailURL;
         provider.Candidates[1].PosterURL = brokenPosterURL;
       }
       await route.fulfill({ response, json: result });
@@ -176,7 +185,12 @@ test("provider search inspects and stages a candidate before Refresh metadata", 
     await expect(
       page.getByRole("button", { name: "View Example Candidate 2 poster full size" }),
     ).toHaveCount(0);
-    await expect(choice.locator("xpath=ancestor::article").getByRole("img")).toBeVisible();
+    const thumbnail = choice.locator("xpath=ancestor::article").getByRole("img");
+    await expect(thumbnail).toHaveAttribute("src", thumbnailURL);
+    await expect
+      .poll(() => thumbnail.evaluate((img: HTMLImageElement) => img.naturalWidth))
+      .toBe(342);
+    expect(fullPosterRequests).toBe(0);
 
     for (const mode of ["Dark", "Light"] as const) {
       await page.getByRole("button", { name: "Appearance", exact: true }).click();
@@ -207,6 +221,7 @@ test("provider search inspects and stages a candidate before Refresh metadata", 
           )
           .toEqual([1200, 1800]);
         expect(await image.getAttribute("src")).toBe(posterURL);
+        expect(fullPosterRequests).toBeGreaterThan(0);
         await expect.poll(async () => (await dialog.boundingBox())?.width).toBe(width - 16);
         await page.screenshot({
           path: test.info().outputPath(`provider-poster-${mode.toLowerCase()}-${width}.png`),

@@ -2265,8 +2265,8 @@ func TestResolveExternalIDsKeepsAnchoredFilenameMatchAsCandidate(t *testing.T) {
 	if len(result.ExternalIdentityCandidates) != 1 || result.ExternalIdentityCandidates[0].ID != 253 {
 		t.Fatalf("filename candidates = %#v", result.ExternalIdentityCandidates)
 	}
-	if got := result.ExternalIdentityCandidates[0].PosterURL; got != "https://image.tmdb.org/t/p/original/example-poster.jpg" {
-		t.Fatalf("candidate poster = %q, want full-size TMDB image", got)
+	if got := result.ExternalIdentityCandidates[0].PosterURL; got != "https://image.tmdb.org/t/p/w342/example-poster.jpg" {
+		t.Fatalf("candidate poster = %q, want TMDB preview image", got)
 	}
 }
 

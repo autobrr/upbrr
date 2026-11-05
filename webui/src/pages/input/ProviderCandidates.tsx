@@ -21,6 +21,7 @@ const candidateURL = (candidate: ExternalIdentityCandidate) => {
   return "";
 };
 
+/** Preserves TMDB preview sizes while loading originals only through the lightbox. */
 function CandidatePoster({
   url,
   title,
@@ -31,16 +32,19 @@ function CandidatePoster({
   onOpen(url: string, alt: string): void;
 }) {
   const [failed, setFailed] = useState(false);
+  const tmdbImage = /^https:\/\/image\.tmdb\.org\/t\/p\/(?:original|w342)\//;
+  const fullURL = url.replace(tmdbImage, "https://image.tmdb.org/t/p/original/");
+  const thumbnailURL = url.replace(tmdbImage, "https://image.tmdb.org/t/p/w342/");
   return url && !failed ? (
     <button
       type="button"
       className="h-28 w-[75px] shrink-0 self-start rounded-lg border-0 p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       aria-label={`View ${title} poster full size`}
-      onClick={() => onOpen(url, `${title} poster`)}
+      onClick={() => onOpen(fullURL, `${title} poster`)}
     >
       <img
         className="h-full w-full rounded-lg object-cover"
-        src={url}
+        src={thumbnailURL}
         alt={`${title} poster`}
         loading="lazy"
         onError={() => setFailed(true)}

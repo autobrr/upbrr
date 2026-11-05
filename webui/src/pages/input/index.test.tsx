@@ -391,6 +391,65 @@ it("keeps candidate inspection and draft search separate from pending identity c
   ).toHaveAttribute("href", "https://thetvdb.com/dereferrer/series/303");
 });
 
+it.each([
+  [
+    "https://image.tmdb.org/t/p/original/example.jpg",
+    "https://image.tmdb.org/t/p/w342/example.jpg",
+    "https://image.tmdb.org/t/p/original/example.jpg",
+  ],
+  [
+    "https://image.tmdb.org/t/p/w342/example.jpg",
+    "https://image.tmdb.org/t/p/w342/example.jpg",
+    "https://image.tmdb.org/t/p/original/example.jpg",
+  ],
+  [
+    "https://images.example/poster.jpg?origin=https://image.tmdb.org/t/p/original/example.jpg",
+    "https://images.example/poster.jpg?origin=https://image.tmdb.org/t/p/original/example.jpg",
+    "https://images.example/poster.jpg?origin=https://image.tmdb.org/t/p/original/example.jpg",
+  ],
+])("loads a thumbnail separately from the full poster for %s", async (source, thumbnail, full) => {
+  const base = readyInputFacet(1);
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      preview: {
+        ...base.view.preview!,
+        Diagnostics: [
+          {
+            Code: "external_identity_candidates",
+            Severity: "info",
+            Message: "Resolver choices",
+            Candidates: [{ ...resolverCandidate, PosterURL: source }],
+          },
+        ],
+      },
+    },
+  };
+  const onPosterOpen = vi.fn();
+  render(
+    <ProviderCandidates
+      facet={facet}
+      initialQuery="Example"
+      category="MOVIE"
+      needsSelection
+      loading={false}
+      onRefresh={vi.fn()}
+      onPosterOpen={onPosterOpen}
+    />,
+  );
+  expect(screen.getByRole("img", { name: "Fallback Example poster" })).toHaveAttribute(
+    "src",
+    thumbnail,
+  );
+  expect(onPosterOpen).not.toHaveBeenCalled();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "View Fallback Example poster full size" }));
+  expect(onPosterOpen).toHaveBeenCalledExactlyOnceWith(full, "Fallback Example poster");
+  expect(facet.changeIdentity).not.toHaveBeenCalled();
+});
+
 it("preserves a running provider search when its candidate panel remounts", () => {
   const base = readyInputFacet(1);
   const facet: InputFacet = {
