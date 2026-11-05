@@ -112,7 +112,7 @@ func submitPreparedUpload(
 	if (resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther) && torrentID != "" {
 		tURL := baseURL + "/details.php?id=" + url.QueryEscape(torrentID)
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "PTS", state.torrentPath, artifactPath, announceURL, sourceFlag,
+			req.Logger, "PTS", state.torrentPath, artifactPath, announceURL, sourceFlag, tURL,
 		)
 		return api.UploadSummary{
 			Uploaded: 1,

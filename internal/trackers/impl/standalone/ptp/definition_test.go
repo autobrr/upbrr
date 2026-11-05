@@ -817,8 +817,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	if registeredInfo.Source != "PTP" {
 		t.Fatalf("expected registered PTP source, got %q", registeredInfo.Source)
 	}
-	if registeredMeta.Comment != "uploaded with upbrr" {
-		t.Fatalf("expected upbrr comment, got %q", registeredMeta.Comment)
+	if registeredMeta.Comment != "uploaded with upbrr\n"+server.URL+"/torrents.php?id=555&torrentid=666" {
+		t.Fatal("registered PTP comment lost the destination detail URL")
 	}
 	expectedBase := filepath.Base(meta.SourcePath)
 	expectedName := "[ptp]." + expectedBase + ".torrent"

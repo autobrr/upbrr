@@ -139,8 +139,9 @@ func LogRegisteredTorrentUnavailable(logger api.Logger, tracker string) {
 }
 
 // PersistReconstructedRegisteredTorrent rebuilds a tracker-registered artifact
-// after known remote success. Failure is retained as missing local authority
-// instead of being reclassified as a failed tracker submission.
+// after known remote success, including an available destination page in its
+// comment. Failure is retained as missing local authority instead of being
+// reclassified as a failed tracker submission.
 func PersistReconstructedRegisteredTorrent(
 	logger api.Logger,
 	tracker string,
@@ -148,12 +149,13 @@ func PersistReconstructedRegisteredTorrent(
 	outputPath string,
 	announceURL string,
 	source string,
+	torrentURL string,
 ) string {
 	if strings.TrimSpace(announceURL) == "" || strings.TrimSpace(outputPath) == "" {
 		LogRegisteredTorrentUnavailable(logger, tracker)
 		return ""
 	}
-	if err := WritePersonalizedTorrent(sourcePath, outputPath, announceURL, source); err != nil {
+	if err := writePersonalizedTorrent(sourcePath, outputPath, announceURL, source, torrentURL); err != nil {
 		LogRegisteredTorrentUnavailable(logger, tracker)
 		return ""
 	}

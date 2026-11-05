@@ -114,7 +114,7 @@ func submitPreparedUpload(
 	if resp.StatusCode == http.StatusOK && torrentID != "" {
 		torrentURL := baseURL + "/torrents-details.php?id=" + url.QueryEscape(torrentID)
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "ASC", state.torrentPath, artifactPath, announceURL, sourceFlag,
+			req.Logger, "ASC", state.torrentPath, artifactPath, announceURL, sourceFlag, torrentURL,
 		)
 		maybeAutoApprove(ctx, client, cookies, req.TrackerConfig, torrentID, req.Logger)
 		maybeSetInternal(ctx, client, cookies, req.Runtime.Internal, torrentID, req.Logger)

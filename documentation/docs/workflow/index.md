@@ -225,6 +225,8 @@ Short-lived remote tokens can still be acquired at submission time when required
 
 After confirmed tracker success, upbrr records the tracker result and attempts to retain the tracker-registered torrent. Client injection consumes that registered artifact, not the pre-upload torrent, even if an earlier explicit dry run already injected the prepared torrent.
 
+When upbrr reconstructs a registered torrent after success, its comment includes the available destination detail link. Inherited source-tracker comments are removed before upload. A draft without a usable destination link keeps the generic upload comment; upbrr does not invent a public link.
+
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
 
 Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. While an unknown outcome is retained, it requires reconciliation and is never treated as confirmed success. Restarting does not clear its retry block; verify and reconcile the remote outcome before another attempt.
