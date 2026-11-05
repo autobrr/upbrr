@@ -27,44 +27,53 @@ type nativeWorkflowHost struct {
 	imports    int
 	importErr  error
 	failSource string
+	failHost   string
 	active     *nativeEffectReporter
 }
 
 func (h *nativeWorkflowHost) Upload(ctx context.Context, meta api.ImageHostingSubject, host, scope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.countingWorkflowImageHost.Upload(ctx, meta, host, scope, images)
+	links, err := h.countingWorkflowImageHost.Upload(ctx, meta, host, scope, images)
+	if host == h.failHost {
+		return nil, errors.New("known host rejection")
+	}
+	return links, err
 }
 
 func (h *nativeWorkflowHost) ImportURLs(_ context.Context, meta api.ImageHostingSubject, host, scope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
-	h.imports++
 	if h.active == nil || !h.active.started || h.active.completed {
 		return nil, errors.New("native import escaped image effect authority")
 	}
-	if h.importErr != nil {
-		return nil, h.importErr
+	var links []api.UploadedImageLink
+	for _, image := range images {
+		h.imports++
+		if h.importErr != nil {
+			return links, h.importErr
+		}
+		if image.RawURL == h.failSource {
+			return links, errors.New("known source rejection")
+		}
+		if !slices.Contains([]string{"https://unapproved.example/source.png", "https://unapproved.example/second.png"}, image.RawURL) {
+			return links, errors.New("original remote association lost")
+		}
+		links = append(links, api.UploadedImageLink{
+			SourcePath:               meta.MediaBinding.SourcePath,
+			PreparedMediaFingerprint: meta.MediaBinding.PreparedMediaFingerprint,
+			PreparedGeneration:       meta.MediaBinding.PreparedGeneration,
+			Host:                     host,
+			UsageScope:               scope,
+			ImagePath:                image.Path,
+			Purpose:                  image.Purpose,
+			DiscID:                   image.DiscID,
+			ImgURL:                   "https://kshare.club/" + filepath.Base(image.Path),
+			RawURL:                   "https://kshare.club/" + filepath.Base(image.Path),
+			WebURL:                   "https://kshare.club/" + filepath.Base(image.Path),
+			ContentSHA256:            image.ContentSHA256,
+			UploadedAt:               time.Now().UTC(),
+		})
 	}
-	if len(images) == 1 && images[0].RawURL == h.failSource {
-		return nil, errors.New("known source rejection")
-	}
-	if len(images) != 1 || !slices.Contains([]string{"https://unapproved.example/source.png", "https://unapproved.example/second.png"}, images[0].RawURL) {
-		return nil, errors.New("original remote association lost")
-	}
-	return []api.UploadedImageLink{{
-		SourcePath:               meta.MediaBinding.SourcePath,
-		PreparedMediaFingerprint: meta.MediaBinding.PreparedMediaFingerprint,
-		PreparedGeneration:       meta.MediaBinding.PreparedGeneration,
-		Host:                     host,
-		UsageScope:               scope,
-		ImagePath:                images[0].Path,
-		Purpose:                  images[0].Purpose,
-		DiscID:                   images[0].DiscID,
-		ImgURL:                   "https://kshare.club/" + filepath.Base(images[0].Path),
-		RawURL:                   "https://kshare.club/" + filepath.Base(images[0].Path),
-		WebURL:                   "https://kshare.club/" + filepath.Base(images[0].Path),
-		ContentSHA256:            images[0].ContentSHA256,
-		UploadedAt:               time.Now().UTC(),
-	}}, nil
+	return links, nil
 }
 
 type nativeEffectReporter struct {
@@ -105,7 +114,7 @@ func (r *nativeEffectReporter) Complete(_ context.Context, _ api.WorkflowExterna
 }
 
 func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.T) {
-	for _, scenario := range []string{"mixed", "native only", "approved", "excluded retained", "partial native", "known failure", "unknown", "explicit host", "credential change"} {
+	for _, scenario := range []string{"mixed", "shared failed host", "protected source", "native only", "approved", "excluded retained", "partial native", "known failure", "unknown", "explicit host", "credential change"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := t.Context()
 			source := filepath.Join(t.TempDir(), "Example.Release.mkv")
@@ -157,6 +166,9 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 			}
 			reporter := &nativeEffectReporter{}
 			hosting := &nativeWorkflowHost{active: reporter}
+			if scenario == "shared failed host" {
+				hosting.failHost = "pixhost"
+			}
 			if scenario == "known failure" {
 				hosting.importErr = errors.New("known rejection")
 			}
@@ -203,6 +215,9 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 			image := retained.ArtifactImages[remoteID]
 			image.RawURL = "https://unapproved.example/source.png"
 			image.Host = "unapproved"
+			if scenario == "protected source" {
+				image.RawURL = "https://passthepopcorn.me/static/image/source.png"
+			}
 			retained.ArtifactImages[remoteID] = image
 			if scenario == "approved" || scenario == "excluded retained" {
 				if scenario == "approved" {
@@ -264,6 +279,13 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 			if scenario == "explicit host" {
 				explicit = "imgbb"
 			}
+			var progress []api.ImageUploadProgressUpdate
+			var progressMu sync.Mutex
+			ctx = api.WithImageUploadProgressReporter(ctx, func(update api.ImageUploadProgressUpdate) {
+				progressMu.Lock()
+				defer progressMu.Unlock()
+				progress = append(progress, update)
+			})
 			ctx = api.WithWorkflowExternalEffectReporter(ctx, reporter)
 			published, publishedPrivate, attempts, err := builder.UploadImages(ctx, release, projections, snapshot, retained, ids, explicit, false, nil, time.Now())
 			if scenario == "unknown" {
@@ -280,7 +302,7 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 				t.Fatalf("image operation failed: %v", err)
 			}
 			wantImports := 1
-			if scenario == "explicit host" || scenario == "approved" {
+			if scenario == "explicit host" || scenario == "approved" || scenario == "protected source" {
 				wantImports = 0
 			}
 			if scenario == "partial native" || scenario == "native only" {
@@ -290,6 +312,23 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 				t.Fatalf("native calls=%d", hosting.imports)
 			}
 			assertHostedSourceCoverage(t, attempts, trackerIDs, ids)
+			if scenario == "shared failed host" && (hosting.uploads != 2 || !slices.Contains(published.FailedHosts, "pixhost")) {
+				t.Fatal("residual stage retried a failed host or failed to reuse successful fallback links")
+			}
+			if scenario == "native only" {
+				completed := 0
+				for _, update := range progress {
+					if update.Host == "kshare" {
+						if update.Total != 2 || update.Completed < completed {
+							t.Fatal("native progress reset within one host attempt")
+						}
+						completed = update.Completed
+					}
+				}
+				if completed != 2 {
+					t.Fatal("native progress omitted completed images")
+				}
+			}
 			if scenario == "native only" && hosting.uploads != 0 {
 				t.Fatal("native-only coverage initiated generic uploads")
 			}
@@ -300,7 +339,7 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 					}
 				}
 			}
-			if scenario == "known failure" || scenario == "explicit host" {
+			if scenario == "known failure" || scenario == "explicit host" || scenario == "protected source" {
 				if hosting.uploads == 0 {
 					t.Fatal("ordinary fallback was lost")
 				}

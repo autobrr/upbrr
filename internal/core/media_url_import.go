@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -234,9 +235,14 @@ func (m *mediaModule) uploadImagesWithURLImports(
 	for _, target := range native {
 		tracker := target.Trackers[0]
 		covered[tracker] = make(map[string]bool)
+		type nativeBatch struct {
+			target trackers.ImageUploadTarget
+			images []api.ScreenshotImage
+		}
+		var batches []nativeBatch
 		for _, image := range images {
 			key := normalizedUploadImagePath(image.Path)
-			if sources[key] == "" {
+			if sources[key] == "" || imagehost.IsSourceOnlyURL(imagehost.DirectImageURL(sources[key])) {
 				continue
 			}
 			// Reuse any approved current-account target before importing.
@@ -247,43 +253,72 @@ func (m *mediaModule) uploadImagesWithURLImports(
 					allowed, err := trackers.ReusableImageHostAllowedWithRegistry(m.registry, m.cfg, tracker, link.Host, reuseOverrides)
 					if err == nil && allowed {
 						resolvedTarget.Host, resolvedTarget.UsageScope = link.Host, link.UsageScope
-						resolvedTarget.ImportID, resolvedTarget.ReuseOnly = "", true
+						if resolvedTarget.Host != target.Host || resolvedTarget.UsageScope != target.UsageScope {
+							resolvedTarget.ImportID, resolvedTarget.ReuseOnly = "", true
+						}
 						break
 					}
 				}
 			}
 			image.RawURL = sources[key]
-			links, err := m.uploadImagesToTarget(ctx, meta, resolvedTarget, []api.ScreenshotImage{image}, retained, blocked, false)
+			index := slices.IndexFunc(batches, func(batch nativeBatch) bool {
+				return batch.target.Host == resolvedTarget.Host && batch.target.UsageScope == resolvedTarget.UsageScope
+			})
+			if index < 0 {
+				index = len(batches)
+				batches = append(batches, nativeBatch{target: resolvedTarget})
+			}
+			batches[index].images = append(batches[index].images, image)
+		}
+		// One call per host/scope keeps progress absolute across the complete batch.
+		for _, batch := range batches {
+			resolvedTarget := batch.target
+			links, err := m.uploadImagesToTarget(ctx, meta, resolvedTarget, batch.images, retained, blocked, false)
 			if failure, ok := api.AsOperationFailure(err); ok && failure.Code == api.OperationFailureUnknownOutcome {
 				return result, err
 			}
+			var readyPaths, missingPaths []string
+			for _, image := range batch.images {
+				if uploadedImageLinksCoverTarget(links, resolvedTarget, []api.ScreenshotImage{image}) {
+					covered[tracker][normalizedUploadImagePath(image.Path)] = true
+					readyPaths = append(readyPaths, image.Path)
+				} else {
+					missingPaths = append(missingPaths, image.Path)
+				}
+			}
 			attempt := api.UploadImageHostAttemptResult{
-				ImagePaths: []string{image.Path},
+				ImagePaths: readyPaths,
 				Host:       resolvedTarget.Host,
 				UsageScope: resolvedTarget.UsageScope,
 				Trackers:   slices.Clone(target.Trackers),
 				Links:      links,
 			}
 			if err != nil {
-				attempt.Failure = &api.UploadImageHostFailure{
+				failed := attempt
+				failed.ImagePaths, failed.Links = missingPaths, nil
+				failed.Failure = &api.UploadImageHostFailure{
 					Host:       target.Host,
 					UsageScope: target.UsageScope,
 					Trackers:   slices.Clone(target.Trackers),
 					Message:    "Native image import unavailable; using ordinary hosting.",
 				}
+				result.Attempts = append(result.Attempts, failed)
 			}
-			result.Attempts = append(result.Attempts, attempt)
+			if len(readyPaths) > 0 {
+				result.Attempts = append(result.Attempts, attempt)
+			}
 			result.Links = append(result.Links, links...)
-			if uploadedImageLinksCoverTarget(links, resolvedTarget, []api.ScreenshotImage{image}) {
-				covered[tracker][key] = true
-			}
 		}
 	}
 	appendResult := func(residual api.UploadImagesResult) {
 		result.Links = append(result.Links, residual.Links...)
+		retained = append(retained, residual.Links...)
 		result.Attempts = append(result.Attempts, residual.Attempts...)
 		result.Failures = append(result.Failures, residual.Failures...)
 		for _, failed := range residual.FailedHosts {
+			if !slices.Contains(excluded, failed) {
+				excluded = append(excluded, failed)
+			}
 			if !slices.Contains(result.FailedHosts, failed) {
 				result.FailedHosts = append(result.FailedHosts, failed)
 			}
@@ -313,12 +348,9 @@ func (m *mediaModule) uploadImagesWithURLImports(
 		if len(missing) == 0 {
 			continue
 		}
-		remaining := make([]trackers.ImageUploadTarget, 0, len(targets))
-		for _, target := range targets {
-			if slices.Contains(target.Trackers, tracker) {
-				target.Trackers = []string{tracker}
-				remaining = append(remaining, target)
-			}
+		remaining, err := m.resolveFallbackImageUploadTargets(host, []string{tracker}, excluded, meta)
+		if err != nil {
+			return result, err
 		}
 		if len(remaining) == 0 {
 			result.Failures = append(result.Failures, api.UploadImageHostFailure{

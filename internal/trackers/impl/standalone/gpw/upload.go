@@ -109,6 +109,8 @@ func submitPreparedUpload(
 	execution, readErr := commonhttp.ExecuteUpload(httpclient.New(httpclient.DefaultTimeout), httpReq, commonhttp.UploadExecutionOptions{Tracker: "GPW"})
 	diagnostic := uploadDiagnostic(execution, req.TrackerConfig.APIKey, req.TrackerConfig.Passkey, req.TrackerConfig.AnnounceURL)
 	if readErr != nil && !execution.BodyComplete {
+		detail := commonhttp.RedactErrorDetail(readErr.Error(), req.TrackerConfig.APIKey, req.TrackerConfig.Passkey, req.TrackerConfig.AnnounceURL)
+		diagnostic += "; error=" + diagnosticURL.ReplaceAllString(detail, "[redacted URL]")
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "GPW", "upload_failure", []byte(diagnostic), ".txt")
 		return api.UploadSummary{}, &diagnosticError{message: "trackers: GPW response unavailable; " + diagnostic, cause: readErr}
 	}
@@ -181,6 +183,9 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	groupID, _ := lookupGroupID(ctx, req.TrackerConfig.APIKey, req.Meta)
 	answers := standalone.QuestionnaireAnswers(req.Meta, "GPW")
 	fields := buildForm(req, description, groupID, answers)
+	if reason := validateMetadataFields(groupID, fields); reason != "" {
+		return uploadState{}, trackers.NewPreparationFailure("GPW", "missing_metadata", reason, nil)
+	}
 	if req.Logger != nil {
 		unmapped := 0
 		for _, language := range append(append([]string(nil), req.Meta.SubtitleLanguages...), req.Meta.HardcodedSubtitleLanguages...) {

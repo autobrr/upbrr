@@ -506,6 +506,16 @@ bind `SourceOnlyImageReusable`; validate the URL and any required tracker-record
 The default rejects source-only reuse. Do not treat this callback as permission to reuse
 private links on a different tracker.
 
+For a tracker-native image URL importer, declare a versioned `ImageHostPolicy.URLImport`
+capability with its destination host and tracker usage scope. The workflow image stage
+supplies original URLs only for selected imported screenshots. The image-hosting service
+verifies source and hosted bytes against the selected local image and binds reusable
+results to the current tracker account. Protected source-only URLs use ordinary hosting
+of the local image; native import does not forward another tracker's cookies. Preserve
+unknown outcomes after an ambiguous POST or a failed post-import verification, requiring
+confirmation before another mutation. Submission must consume retained results rather
+than importing images again.
+
 ## Add a Unit3D tracker
 
 ### 1. Confirm that shared Unit3D behavior fits

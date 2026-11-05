@@ -75,14 +75,15 @@ func filterNativeSlotVariants(
 	}
 }
 
-// ImageURLImportForScope resolves the exact registered destination and usage scope.
+// ImageURLImportForScope resolves a registered destination and normalized usage scope.
 func ImageURLImportForScope(registry *Registry, host, scope string) (string, *ImageURLImportCapability) {
 	if registry == nil {
 		return "", nil
 	}
 	for _, name := range registry.Names() {
 		policy, ok := registry.LookupImageHostPolicy(name)
-		if ok && policy.URLImport != nil && strings.EqualFold(host, policy.URLImport.Host) && scope == policy.URLImport.UsageScope {
+		if ok && policy.URLImport != nil && strings.EqualFold(host, policy.URLImport.Host) &&
+			normalizeUsageScope(scope) == normalizeUsageScope(policy.URLImport.UsageScope) {
 			return name, policy.URLImport
 		}
 	}

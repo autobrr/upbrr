@@ -27,10 +27,13 @@ func TestNativeImportProtocolAndNoRedirectForwarding(t *testing.T) {
 		{"success", `{"status":200,"response":{"files":[{"name":"https://kshare.club/example.png"}]}}`, 200, false, true},
 		{"API error", `{"status":200,"response":{"Error":"rejected"}}`, 200, false, false},
 		{"HTML", `<html>unavailable</html>`, 200, true, false},
-		{"wrong count", `{"status":200,"response":{"files":[]}}`, 200, false, false},
-		{"wrong host", `{"status":200,"response":{"files":[{"name":"https://kshare.club.attacker.example/example.png"}]}}`, 200, false, false},
-		{"unsafe scheme", `{"status":200,"response":{"files":[{"name":"file:///example.png"}]}}`, 200, false, false},
-		{"redirect302", ``, 302, false, false}, {"redirect307", ``, 307, false, false}, {"redirect308", ``, 308, false, false},
+		{"wrong count", `{"status":200,"response":{"files":[]}}`, 200, true, false},
+		{"wrong host", `{"status":200,"response":{"files":[{"name":"https://kshare.club.attacker.example/example.png"}]}}`, 200, true, false},
+		{"unsafe scheme", `{"status":200,"response":{"files":[{"name":"file:///example.png"}]}}`, 200, true, false},
+		{"empty JSON", `{}`, 200, true, false},
+		{"unexpected status", `{"status":500}`, 200, true, false},
+		{"redirect302", ``, 302, true, false}, {"redirect303", ``, 303, true, false},
+		{"redirect307", ``, 307, true, false}, {"redirect308", ``, 308, true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var redirected atomic.Int32

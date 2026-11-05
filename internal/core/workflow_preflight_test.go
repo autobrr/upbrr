@@ -736,7 +736,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 	})
 
 	t.Run("native image route prerequisites", func(t *testing.T) {
-		for _, scenario := range []string{"native only", "insufficient", "duplicate", "missing local image", "invalid scheme", "missing credential", "explicit host", "excluded destination", "skip upload", "menu required"} {
+		for _, scenario := range []string{"native only", "insufficient", "duplicate", "missing local image", "invalid scheme", "protected source", "missing credential", "explicit host", "excluded destination", "skip upload", "menu required"} {
 			t.Run(scenario, func(t *testing.T) {
 				calls := 0
 				policyRegistry := trackerspkg.NewRegistry()
@@ -783,6 +783,8 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 					links[1].Path = ""
 				case "invalid scheme":
 					links[1].URL = "file:///two.png"
+				case "protected source":
+					links[1].URL = "https://passthepopcorn.me/static/image/two.png"
 				case "missing credential":
 					cfg.Trackers.Trackers["ALPHA"] = config.TrackerConfig{}
 				case "explicit host":

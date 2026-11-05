@@ -11,6 +11,7 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,7 +31,7 @@ func TestURLImportBindsBothRemoteImagesBeforePersistence(t *testing.T) {
 	if err := png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"verified", "changed hosted bytes", "private source", "wrong destination", "live zero budget", "live exhausted budget"} {
+	for _, scenario := range []string{"verified", "changed hosted bytes", "private source", "protected source", "wrong destination", "live zero budget", "live exhausted budget"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			imagePath := filepath.Join(root, "source.png")
@@ -104,6 +105,9 @@ func TestURLImportBindsBothRemoteImagesBeforePersistence(t *testing.T) {
 			if scenario == "private source" {
 				source = "http://127.0.0.1/private.png"
 			}
+			if scenario == "protected source" {
+				source = "https://passthepopcorn.me/static/image/source.png"
+			}
 			links, err := service.ImportURLs(t.Context(), api.ImageHostingSubject{SourcePath: binding.SourcePath, MediaBinding: binding}, "8.8.4.4", "tracker:GPW", []api.ScreenshotImage{{
 				Path:          imagePath,
 				RawURL:        source,
@@ -118,8 +122,16 @@ func TestURLImportBindsBothRemoteImagesBeforePersistence(t *testing.T) {
 				return
 			}
 			if scenario != "verified" {
-				if err == nil || len(repo.savedImages) != 0 || scenario == "private source" && calls != 0 {
+				if err == nil || len(repo.savedImages) != 0 || (scenario == "private source" || scenario == "protected source") && calls != 0 {
 					t.Fatal("unverified native result was persisted or private source was submitted")
+				}
+				if scenario == "changed hosted bytes" || scenario == "wrong destination" {
+					failure, ok := api.AsOperationFailure(err)
+					var receipt *url.Error
+					if !ok || failure.Code != api.OperationFailureUnknownOutcome || failure.Recovery != api.OperationRecoveryConfirm ||
+						!errors.As(err, &receipt) || receipt.URL == "" || len(links) != 0 {
+						t.Fatal("accepted import lost its private receipt or authorized another mutation")
+					}
 				}
 				return
 			}

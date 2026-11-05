@@ -110,9 +110,9 @@ func resolveSubtitleType(meta api.UploadSubject) string {
 }
 
 func resolveSubtitles(meta api.UploadSubject) []string {
-	values := slices.Clone(meta.SubtitleLanguages)
+	values := meta.SubtitleLanguages
 	if meta.HardcodedSubs {
-		values = append(values, meta.HardcodedSubtitleLanguages...)
+		values = meta.HardcodedSubtitleLanguages
 	}
 	out := make([]string, 0, len(values))
 	for _, value := range values {
@@ -302,6 +302,12 @@ func editionFields(meta api.UploadSubject) (string, string) {
 	}
 	for _, part := range meta.EditionDisplay {
 		if part.Feature == "" {
+			if strings.Trim(part.Text, " /·+|\t\n") == "" ||
+				slices.ContainsFunc([]string{meta.Cut, meta.Edition, meta.Presentation, meta.EditionSet}, func(value string) bool {
+					return strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(part.Text))
+				}) {
+				continue
+			}
 			add(part.Text, "")
 		}
 	}

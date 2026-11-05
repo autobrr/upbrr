@@ -74,9 +74,21 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 			}},
 		},
 	}
+	processing := &ScreenshotProcessing{Renderer: "original", Steps: []ScreenshotRenderStep{{Reason: "original"}}}
+	source.ExactMedia.Screenshots[0].Processing = processing
+	source.ExactMedia.DVDMenus[0].Processing = processing
+	source.ExactMedia.HDRPlots = []HDRDescriptionPlot{{Image: ScreenshotImage{Processing: processing}}}
+	source.ExactMedia.AudioTracks = []AudioDescriptionTrack{{Images: []ScreenshotImage{{Processing: processing}}}}
 	projected := NewDescriptionSubject(source)
 	if projected.ExactMedia.ScreenshotUploads[0].AccountScope != "synthetic-account-scope" {
 		t.Fatal("description projection lost private hosted-image authority")
+	}
+	for _, image := range []*ScreenshotProcessing{projected.ExactMedia.Screenshots[0].Processing, projected.ExactMedia.DVDMenus[0].Processing, projected.ExactMedia.HDRPlots[0].Image.Processing, projected.ExactMedia.AudioTracks[0].Images[0].Processing} {
+		image.Renderer = "changed"
+		image.Steps[0].Reason = "changed"
+	}
+	if processing.Renderer != "original" || processing.Steps[0].Reason != "original" {
+		t.Fatal("description projection shares renderer evidence with its source")
 	}
 	encoded, err := json.Marshal(projected)
 	if err != nil {

@@ -4,6 +4,8 @@
 package gpw
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -62,6 +64,13 @@ func TestBuildFieldsPreservesStructuredEditionParts(t *testing.T) {
 			fields := buildFields(trackers.PreparationInput{Meta: test.structured}, config.TrackerConfig{}, "group", nil)
 			if fields["movie_edition_information"] != "on" || fields["remaster_title"] != "extended_edition" {
 				t.Fatal("canonical cut was not mapped")
+			}
+			wantCustom := ""
+			if test.name == "mixed" {
+				wantCustom = "Collector's / Open Matte"
+			}
+			if fields["remaster_custom_title"] != wantCustom {
+				t.Fatalf("custom edition title = %q, want %q", fields["remaster_custom_title"], wantCustom)
 			}
 			legacy := buildFields(trackers.PreparationInput{Meta: api.UploadSubject{Edition: test.legacy}}, config.TrackerConfig{}, "group", nil)
 			if legacy["remaster_title"] != "" || legacy["remaster_custom_title"] != test.legacy {
@@ -133,5 +142,33 @@ func TestResolveTagsPreservesAutomaticTMDBPresenceAndManualFacts(t *testing.T) {
 	meta.EffectiveMetadata = api.EffectiveMetadata{Genres: []string{"Manual Genre"}, GenresProvenance: api.FactProvenanceManual}
 	if got := resolveTags(meta); got != "manual genre" {
 		t.Fatalf("manual tags = %q", got)
+	}
+}
+
+func TestUnanswerableMetadataPrerequisitesDoNotRequestQuestionnaire(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		meta api.UploadSubject
+	}{
+		{"missing year", api.UploadSubject{}},
+		{"cleared year", api.UploadSubject{EffectiveMetadata: api.EffectiveMetadata{YearProvenance: api.FactProvenanceManualEmpty}, ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}}}},
+		{"unmapped subtitles", api.UploadSubject{EffectiveMetadata: api.EffectiveMetadata{Year: 2026, YearProvenance: api.FactProvenanceManual}, SubtitleLanguages: []string{"zh"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := test.meta
+			meta.TorrentPath = filepath.Join(t.TempDir(), "example.torrent")
+			if err := os.WriteFile(meta.TorrentPath, []byte("synthetic torrent"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := prepareUploadState(t.Context(), trackers.PreparationInput{
+				Meta:          meta,
+				TrackerConfig: config.TrackerConfig{APIKey: "synthetic-key"},
+				Logger:        api.NopLogger{},
+			})
+			var failure *trackers.PreparationFailure
+			if !errors.As(err, &failure) || failure.Code() != "missing_metadata" {
+				t.Fatalf("unanswerable prerequisite was routed to questionnaire: %v", err)
+			}
+		})
 	}
 }

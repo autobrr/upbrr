@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"time"
 
@@ -23,6 +24,9 @@ import (
 // ImportURLs executes a registered tracker protocol for selected remote images.
 // Only the workflow image stage supplies original source URLs; Upload remains
 // the ordinary file-upload route and cannot select this capability implicitly.
+// Protected source-only URLs require ordinary hosting of the existing local image.
+// Post-import verification failures retain the accepted URL in the private cause
+// and require confirmation before another mutation.
 func (s *Service) ImportURLs(
 	ctx context.Context,
 	meta api.ImageHostingSubject,
@@ -60,6 +64,9 @@ func (s *Service) ImportURLs(
 		if source == "" {
 			return results, errors.New("image URL import requires an original source")
 		}
+		if imagehost.IsSourceOnlyURL(source) {
+			return results, errors.New("protected image sources require ordinary hosting")
+		}
 		digest, err := imageevidence.Digest(image.Path)
 		if err != nil {
 			return results, errors.New("image URL import source content is unavailable")
@@ -73,7 +80,16 @@ func (s *Service) ImportURLs(
 			return results, fmt.Errorf("image hosting: native URL import: %w", err)
 		}
 		if imagehost.ExtractHost(hosted) != capability.Host || !s.importedImageMatches(ctx, hosted, dir, digest) {
-			return results, errors.New("image URL import hosted content could not be verified")
+			return results, api.NewOperationError(api.OperationFailure{
+				Code:      api.OperationFailureUnknownOutcome,
+				Operation: api.OperationKindImageHosting,
+				Message:   "Image import completed, but its hosted content could not be verified. Verify hosted assets before retrying.",
+				Recovery:  api.OperationRecoveryConfirm,
+			}, &url.Error{
+				Op:  "verify imported image",
+				URL: hosted,
+				Err: errors.New("hosted content could not be verified"),
+			})
 		}
 		link := api.UploadedImageLink{
 			SourcePath:               meta.MediaBinding.SourcePath,

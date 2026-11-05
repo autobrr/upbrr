@@ -92,6 +92,15 @@ func TestNativeSlotsRequireCurrentAccountRecordAndExactBinding(t *testing.T) {
 			}
 		})
 	}
+	normalized := link
+	normalized.UsageScope = "tracker:gpw"
+	if !NativeImageLinkCurrent(cfg, registry, normalized) {
+		t.Fatal("normalized native scope lost its current account")
+	}
+	normalized.AccountScope = "stale-account"
+	if NativeImageLinkCurrent(cfg, registry, normalized) {
+		t.Fatal("normalized native scope bypassed account validation")
+	}
 	// The description consumes both hosts for a mixed native/local selection.
 	other := filepath.Join(t.TempDir(), "local.png")
 	exact := &api.ExactMediaAssets{

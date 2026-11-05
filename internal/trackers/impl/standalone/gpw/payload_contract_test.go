@@ -75,7 +75,7 @@ func TestCapturedMultipartUsesGPWContract(t *testing.T) {
 				"imdb":            {"tt1234567"},
 				"tmdb":            {"7654321"},
 				"subtitle_type":   {"2"},
-				"subtitles[]":     {"english", "french", "chinese_simplified", "chinese_traditional", "brazilian_port", "portuguese", "japanese"},
+				"subtitles[]":     {"japanese"},
 			} {
 				if !reflect.DeepEqual(parsed.Value[key], want) {
 					t.Fatalf("field %s did not match the published contract", key)
@@ -100,6 +100,21 @@ func TestProviderPairAndExplicitClears(t *testing.T) {
 	if previewFields(form)["data_source"] != "tmdb" || previewFields(form)["identifier"] != "7654321" || previewFields(form)["no_imdb_link"] != "1" {
 		t.Fatal("TMDB-only identity was paired as IMDb")
 	}
+	manual := meta
+	manual.Identity = api.ExternalIdentity{}
+	manualForm := buildForm(trackers.PreparationInput{Meta: manual}, "description", "", nil)
+	if fields := previewFields(manualForm); fields["data_source"] != "manual" || fields["identifier"] != "" {
+		t.Fatal("manual source must preserve an empty provider identifier")
+	}
+	for _, complete := range []map[string][]string{form, manualForm} {
+		for _, key := range []string{"image", "artists[]", "artist_ids[]", "tags[]"} {
+			complete[key] = []string{"example"}
+		}
+		complete["year"] = []string{"2026"}
+		if reason := validateFields("", complete); reason != "" {
+			t.Fatal(reason)
+		}
+	}
 	meta.Identity.IMDBID = 1234567
 	for _, answers := range []map[string]string{{"data_source": "imdb", "identifier": "7654321"}, {"data_source": "tmdb", "identifier": "tt1234567"}, {"data_source": "unknown"}, {"data_source": "tmdb", "identifier": ""}} {
 		form := buildForm(trackers.PreparationInput{Meta: meta}, "description", "", answers)
@@ -117,5 +132,34 @@ func TestProviderPairAndExplicitClears(t *testing.T) {
 	}
 	if fields := buildForm(trackers.PreparationInput{Meta: meta}, "description", "123", nil); len(fields["imdb"]) != 0 || len(fields["artists[]"]) != 0 {
 		t.Fatal("existing group included new-group metadata")
+	}
+}
+
+func TestSubtitleLanguageContracts(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		soft, hardcoded []string
+		hard            bool
+		want            []string
+		blocked         bool
+	}{
+		{"soft", []string{"English", "fr", "zh-Hans", "zh-Hant", "pt-BR", "pt", "zh", "en"}, nil, false, []string{"english", "french", "chinese_simplified", "chinese_traditional", "brazilian_port", "portuguese"}, false},
+		{"hardcoded", []string{"English"}, []string{"Japanese"}, true, []string{"japanese"}, false},
+		{"unmapped soft", []string{"zh"}, nil, false, []string{""}, true},
+		{"unmapped hardcoded", []string{"English"}, []string{"zh"}, true, []string{""}, true},
+		{"missing hardcoded", []string{"English"}, nil, true, []string{""}, true},
+		{"none", nil, nil, false, []string{""}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := api.UploadSubject{
+				SubtitleLanguages:          test.soft,
+				HardcodedSubs:              test.hard,
+				HardcodedSubtitleLanguages: test.hardcoded,
+			}
+			form := buildForm(trackers.PreparationInput{Meta: meta}, "description", "123", nil)
+			if !reflect.DeepEqual(form["subtitles[]"], test.want) || (validateFields("123", form) != "") != test.blocked {
+				t.Fatalf("subtitle selection or constructibility changed: %v", form["subtitles[]"])
+			}
+		})
 	}
 }

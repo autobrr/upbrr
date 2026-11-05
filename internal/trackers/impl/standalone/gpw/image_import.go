@@ -34,7 +34,7 @@ func importImageURL(ctx context.Context, client *http.Client, credential, source
 		return "", unknownImageImport(err)
 	}
 	if result.StatusCode >= 300 && result.StatusCode < 400 {
-		return "", errors.New("GPW image import refused an API redirect")
+		return "", unknownImageImport(errors.New("GPW image import refused an API redirect without a terminal receipt"))
 	}
 	var response struct {
 		Status   int `json:"status"`
@@ -48,16 +48,19 @@ func importImageURL(ctx context.Context, client *http.Client, credential, source
 	if err := json.Unmarshal(result.ProtocolBody, &response); err != nil {
 		return "", unknownImageImport(err)
 	}
-	if !result.Success || response.Status != http.StatusOK || response.Response.Error != "" {
+	if response.Response.Error != "" {
 		return "", errors.New("GPW image import was rejected")
 	}
+	if !result.Success || response.Status != http.StatusOK {
+		return "", unknownImageImport(errors.New("GPW image import returned no success receipt"))
+	}
 	if len(response.Response.Files) != 1 {
-		return "", errors.New("GPW image import returned an invalid file count")
+		return "", unknownImageImport(errors.New("GPW image import returned an invalid file count"))
 	}
 	hosted := strings.TrimSpace(response.Response.Files[0].Name)
 	parsed, err := url.Parse(hosted)
 	if err != nil || parsed.User != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || imagehost.ExtractHost(hosted) != "kshare" {
-		return "", errors.New("GPW image import returned an invalid destination")
+		return "", unknownImageImport(errors.New("GPW image import returned an invalid destination"))
 	}
 	return hosted, nil
 }

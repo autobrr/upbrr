@@ -65,8 +65,11 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 // defensive assertion after the tracker lookup has completed.
 func validateFields(groupID string, form map[string][]string) string {
 	fields := previewFields(form)
+	if reason := validateMetadataFields(groupID, form); reason != "" {
+		return reason
+	}
 	if groupID == "" {
-		for _, key := range []string{"image", "artists[]", "artist_ids[]", "tags[]", "name", "year"} {
+		for _, key := range []string{"image", "artists[]", "artist_ids[]", "tags[]", "name"} {
 			if strings.TrimSpace(fields[key]) == "" {
 				return "missing required new-group data"
 			}
@@ -88,6 +91,18 @@ func validateFields(groupID string, form map[string][]string) string {
 		default:
 			return "unsupported GPW data source"
 		}
+	}
+	return ""
+}
+
+// validateMetadataFields separates prerequisites that questionnaire answers cannot repair.
+func validateMetadataFields(groupID string, form map[string][]string) string {
+	fields := previewFields(form)
+	if (fields["subtitle_type"] == "1" || fields["subtitle_type"] == "2") && strings.TrimSpace(fields["subtitles[]"]) == "" {
+		return "GPW requires a supported language for the selected subtitle type; correct subtitle metadata before continuing"
+	}
+	if groupID == "" && strings.TrimSpace(fields["year"]) == "" {
+		return "GPW requires a release year for new groups; correct release metadata before continuing"
 	}
 	return ""
 }

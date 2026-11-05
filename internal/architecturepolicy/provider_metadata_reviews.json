@@ -868,8 +868,8 @@
     "sha256": "749756ab3bf9f523ea45560dec99f22eed2f2aeb9855955f765f9bb5983e154a"
   },
   "internal/trackers/impl/standalone/gpw/upload.go:prepareUploadState": {
-    "reason": "Captures the reviewed GPW form and group-dependent questionnaire once; no provider fetch or mutable payload reconstruction during submit. Unmapped subtitle diagnostics reveal only a count.",
-    "sha256": "f35faef5c0b06000558d0cd1ee0780d5b014df02297157d261efcce23c0e877b"
+    "reason": "Captures the reviewed GPW form and group-dependent questionnaire once; no provider fetch or mutable payload reconstruction during submit. Unmapped subtitle diagnostics reveal only a count. Missing or explicitly cleared years and unmapped selected subtitle languages remain upstream metadata prerequisites, not questionnaire answers.",
+    "sha256": "3bea9c5b84921e8bc20cdcf9770e33be669906b47d0774e6a9b49f50fdfdc79a"
   },
   "internal/trackers/impl/standalone/hdb/claims.go:*claimChecker.HasClaim": {
     "reason": "Finalized WEB TV facts scope HDB claims; Scene classification no longer bypasses them. Provider aliases corroborate identity without replacing effective metadata; unambiguous same-group ownership authorizes a configured internal-group bypass even from incomplete, stale, or BTN-relayed data because one group owns each title, while conflicting owners block.",

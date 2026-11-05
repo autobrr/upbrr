@@ -40,3 +40,16 @@ func TestEditionDisplayCannotRestoreClearedFeatures(t *testing.T) {
 		t.Fatalf("canonical edition keys=%q", key)
 	}
 }
+
+func TestEditionDisplayOmitsCanonicalWordingAndSeparators(t *testing.T) {
+	subject := api.UploadSubject{
+		Edition:         "Criterion",
+		ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeatureRemaster},
+		EditionDisplay: []api.EditionDisplayPart{
+			{Text: "Criterion"}, {Text: "/"}, {Text: "Remastered", Feature: api.ReleaseFeatureRemaster}, {Text: "Archive wording"},
+		},
+	}
+	if key, custom := editionFields(subject); key != "the_criterion_collection / remaster" || custom != "Archive wording" {
+		t.Fatalf("canonical wording repeated in custom edition: key=%q custom=%q", key, custom)
+	}
+}

@@ -110,7 +110,7 @@ func TestResponseReadFailureCannotExposePartialBodyOrEraseCompleteReceipt(t *tes
 				}
 				return
 			}
-			if err == nil || submission.OutcomeOf(err) != submission.Unknown || strings.Contains(err.Error(), "SYNTHETIC") || !strings.Contains(err.Error(), "incomplete") {
+			if err == nil || submission.OutcomeOf(err) != submission.Unknown || strings.Contains(err.Error(), "SYNTHETIC") || (!strings.Contains(err.Error(), "incomplete") || !strings.Contains(err.Error(), "read failed")) {
 				t.Fatal("partial read exposed content or submission authority")
 			}
 		})
@@ -127,5 +127,17 @@ func TestIncompleteDiagnosticOmitsPartialSecretAndPrivateDestination(t *testing.
 	text := uploadDiagnostic(result, "SYNTHETIC-PRIVATE-CREDENTIAL")
 	if strings.Contains(text, "SYNTHETIC") || strings.Contains(text, "private.example") || !strings.Contains(text, "incomplete") {
 		t.Fatal("incomplete response exposed partial content")
+	}
+}
+
+func TestTransportFailureRetainsSanitizedCause(t *testing.T) {
+	const secret = "SYNTHETIC-CREDENTIAL"
+	cause := errors.New("TLS handshake failed: " + secret + " https://private.example/path?api_key=" + secret)
+	old := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = old })
+	http.DefaultTransport = importTestTransport(func(*http.Request) (*http.Response, error) { return nil, cause })
+	_, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{TrackerConfig: config.TrackerConfig{APIKey: secret}, Logger: api.NopLogger{}}, uploadState{}, nil, "application/octet-stream", baseURL+"/api.php", "", "")
+	if err == nil || !errors.Is(err, cause) || submission.OutcomeOf(err) != submission.Unknown || !strings.Contains(err.Error(), "TLS handshake failed") || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "private.example") {
+		t.Fatal("transport diagnostics lost the safe cause or exposed private context")
 	}
 }

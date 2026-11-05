@@ -83,7 +83,7 @@ func (b workflowPreflightBuilder) hasReusableTrackerImages(
 		if native != nil && projection.Artifacts.DVDMenuCount == 0 {
 			direct := imagehost.DirectImageURL(link.URL)
 			parsed, parseErr := url.Parse(direct)
-			if parseErr == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Hostname() != "" {
+			if parseErr == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Hostname() != "" && !imagehost.IsSourceOnlyURL(direct) {
 				importURLs[direct] = struct{}{}
 			}
 		}
