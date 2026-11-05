@@ -15,6 +15,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	torrentmeta "github.com/autobrr/upbrr/internal/torrent/metainfo"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -233,11 +234,18 @@ func WriteUploadTorrent(sourcePath string, outputPath string) error {
 // announce and source values plus canonical upload metadata, and atomically writes
 // outputPath with mode 0600.
 func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, source string) error {
+	return writePersonalizedTorrent(sourcePath, outputPath, announceURL, source, "")
+}
+
+func writePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, source string, torrentURL string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {
 		return fmt.Errorf("trackers: load torrent artifact: %w", err)
 	}
 	cleanTorrentMeta(torrentMeta)
+	if pageURL := redaction.TrackerPageURL(torrentURL); pageURL != "" {
+		torrentMeta.Comment += "\n" + pageURL
+	}
 
 	if err := rewriteTorrentInfoSource(torrentMeta, source, "torrent artifact"); err != nil {
 		return err

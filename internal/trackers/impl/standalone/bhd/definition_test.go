@@ -990,10 +990,31 @@ func TestDefinitionDVDRipDryRunIncludesResolution(t *testing.T) {
 	}
 }
 
-func TestDraftUploadRetainsPersonalizedTorrent(t *testing.T) {
+func TestUploadRetainsPersonalizedTorrent(t *testing.T) {
 	t.Parallel()
-	for _, artifactState := range []string{"valid", "missing source", "corrupt source", "unwritable destination"} {
-		t.Run(artifactState, func(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		artifact string
+		live     bool
+		wantID   string
+	}{
+		{name: "draft", artifact: "valid"},
+		{
+name: "published",
+ artifact: "valid",
+ live: true,
+ wantID: "123456",
+},
+		{
+name: "published without ID",
+ artifact: "valid",
+ live: true,
+},
+		{name: "missing source", artifact: "missing source"},
+		{name: "corrupt source", artifact: "corrupt source"},
+		{name: "unwritable destination", artifact: "unwritable destination"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			source := filepath.Join(dir, "prepared.torrent")
@@ -1003,45 +1024,63 @@ func TestDraftUploadRetainsPersonalizedTorrent(t *testing.T) {
 				PieceLength: 16384,
 				Pieces:      make([]byte, 20),
 				Length:      1,
+				Source:      "BHD",
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			var payload bytes.Buffer
-			if err := (&metainfo.MetaInfo{InfoBytes: infoBytes}).Write(&payload); err != nil {
+			prepared := &metainfo.MetaInfo{
+				InfoBytes: infoBytes,
+				Announce:  "https://tracker.invalid/announce",
+				Comment:   "https://source.invalid/details/42",
+			}
+			if err := prepared.Write(&payload); err != nil {
 				t.Fatal(err)
 			}
-			if artifactState == "corrupt source" {
+			if test.artifact == "corrupt source" {
 				payload.Reset()
 				payload.WriteString("invalid")
 			}
-			if artifactState != "missing source" {
+			if test.artifact != "missing source" {
 				if err := os.WriteFile(source, payload.Bytes(), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if artifactState == "unwritable destination" {
+			if test.artifact == "unwritable destination" {
 				if err := os.Mkdir(output, 0o700); err != nil {
 					t.Fatal(err)
 				}
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprint(w, `{"status_code":1,"status_message":"Torrent saved as draft"}`)
+				response := `{"status_code":1,"status_message":"Torrent saved as draft"}`
+				if test.live {
+					response = `{"status_code":2,"status_message":"Upload complete"}`
+					if test.wantID != "" {
+						response = `{"status_code":2,"status_message":"https://beyond-hd.me/torrent/download/example.123456.torrent"}`
+					}
+				}
+				_, _ = fmt.Fprint(w, response)
 			}))
 			defer server.Close()
 			summary, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{Logger: api.NopLogger{}}, uploadState{torrentPath: source}, server.URL, nil, "application/octet-stream", "https://tracker.invalid/announce", output)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if summary.Uploaded != 1 || !summary.PendingPublication || len(summary.UploadedTorrents) != 1 {
-				t.Fatal("draft lost successful pending submission authority")
+			if summary.Uploaded != 1 || summary.PendingPublication != !test.live || len(summary.UploadedTorrents) != 1 {
+				t.Fatal("upload lost successful submission or publication state")
 			}
 			uploaded := summary.UploadedTorrents[0]
-			if uploaded.Tracker != "BHD" || uploaded.TorrentID != "" || uploaded.TorrentURL != "" || uploaded.DownloadURL != "" {
-				t.Fatal("draft returned incorrect or fabricated remote identity")
+			wantURL, wantDownload := "", ""
+			if test.wantID != "" {
+				wantURL = "https://beyond-hd.me/details/" + test.wantID
+				wantDownload = "https://beyond-hd.me/torrent/download/" + test.wantID
 			}
-			if artifactState != "valid" {
+			if uploaded.Tracker != "BHD" || uploaded.TorrentID != test.wantID || uploaded.TorrentURL != wantURL || uploaded.DownloadURL != wantDownload {
+				t.Fatal("upload returned incorrect or fabricated remote identity")
+			}
+			if test.artifact != "valid" {
 				if uploaded.TorrentPath != "" {
 					t.Fatal("failed retention returned artifact authority")
 				}
@@ -1060,6 +1099,13 @@ func TestDraftUploadRetainsPersonalizedTorrent(t *testing.T) {
 			}
 			if retained.Announce != "https://tracker.invalid/announce" || info.Source != "BHD" || info.Name != "Example.Release.2026" {
 				t.Fatal("draft artifact was not correctly personalized")
+			}
+			wantComment := "uploaded with upbrr"
+			if wantURL != "" {
+				wantComment += "\n" + wantURL
+			}
+			if retained.Comment != wantComment || retained.HashInfoBytes() != prepared.HashInfoBytes() {
+				t.Fatal("retained torrent lost its destination comment or registered infohash")
 			}
 		})
 	}

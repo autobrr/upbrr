@@ -105,7 +105,7 @@ func submitPreparedUpload(
 		torrentURL := buildTorrentURL(groupID, torrentID)
 		downloadURL := buildDownloadURL(torrentID, torrentURL)
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "AR", state.torrentPath, artifactPath, announceURL, arSourceFlag,
+			req.Logger, "AR", state.torrentPath, artifactPath, announceURL, arSourceFlag, torrentURL,
 		)
 		id := metautil.FirstNonEmptyTrimmed(torrentID, groupID)
 		return api.UploadSummary{
