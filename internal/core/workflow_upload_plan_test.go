@@ -1453,20 +1453,20 @@ func TestWorkflowUploadExecutionInjectsExactRegisteredTrackerTorrent(t *testing.
 		pending             bool
 	}{
 		{
-name: "PTP",
- tracker: "PTP",
- page: "https://destination.invalid/torrents.php?id=555&torrentid=666",
-},
+			name:    "PTP",
+			tracker: "PTP",
+			page:    "https://destination.invalid/torrents.php?id=555&torrentid=666",
+		},
 		{
-name: "BHD published",
- tracker: "BHD",
- page: "https://destination.invalid/details/123456",
-},
+			name:    "BHD published",
+			tracker: "BHD",
+			page:    "https://destination.invalid/details/123456",
+		},
 		{
-name: "BHD draft",
- tracker: "BHD",
- pending: true,
-},
+			name:    "BHD draft",
+			tracker: "BHD",
+			pending: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

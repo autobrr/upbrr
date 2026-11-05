@@ -24,10 +24,10 @@ func TestUploadRetainsOnlyKnownDetailPage(t *testing.T) {
 		t.Run("ID="+id, func(t *testing.T) {
 			t.Parallel()
 			info, err := bencode.Marshal(metainfo.Info{
-				Name: "Example.Release.2026",
- Length: 1,
+				Name:        "Example.Release.2026",
+				Length:      1,
 				PieceLength: 16384,
- Pieces: make([]byte, 20),
+				Pieces:      make([]byte, 20),
 			})
 			if err != nil {
 				t.Fatal(err)
