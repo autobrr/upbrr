@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -98,14 +99,66 @@ func TestCategoryPreferencePreservesExplicitAndTrackerAuthority(t *testing.T) {
 	}
 }
 
-func TestUnknownSourceCategoryFallsBackOnlyForNaming(t *testing.T) {
+func TestUnknownSourceCategoryDefaultsAfterProviderSearch(t *testing.T) {
 	t.Parallel()
-	meta := preparationstate.State{SourcePath: "Example Release", Release: ParseReleaseInfo("Example Release")}
-	if meta.Release.Category != "" {
-		t.Fatalf("unknown parser category became strong evidence: %q", meta.Release.Category)
-	}
-	if got := releaseNameRequestFromMeta(meta, api.NopLogger{}).Category; got != "MOVIE" {
-		t.Fatalf("final category = %q, want MOVIE", got)
+	for _, tc := range []struct {
+		name   string
+		manual *string
+		tmdbTV bool
+		want   api.CanonicalCategory
+	}{
+		{name: "no selected IDs", want: api.CanonicalCategoryMovie},
+		{
+			name:   "TMDB discovers TV",
+			tmdbTV: true,
+			want:   api.CanonicalCategoryTV,
+		},
+		{
+			name:   "explicit Movie vetoes TV",
+			manual: new("MOVIE"),
+			tmdbTV: true,
+			want:   api.CanonicalCategoryMovie,
+		},
+		{
+			name:   "explicit TV without IDs",
+			manual: new("TV"),
+			want:   api.CanonicalCategoryTV,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := preparationstate.State{
+				SourcePath:           "Example Release",
+				Release:              ParseReleaseInfo("Example Release"),
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Category: tc.manual},
+			}
+			if meta.Release.Category != "" {
+				t.Fatalf("unknown parser category became strong evidence: %q", meta.Release.Category)
+			}
+			client := &stubTMDB{}
+			if tc.tmdbTV {
+				client.searchOutcome = tmdb.SearchOutcome{TMDBID: 555001, Category: "TV"}
+				client.metadata = tmdb.MetadataResult{Title: "Example Series", TMDBType: "TV"}
+			}
+			service := newTestService(t, &fakeRepo{}, WithTMDBClient(client), WithIMDBClient(&stubIMDB{}),
+				WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
+			result, err := service.resolveExternalIdentity(t.Context(), meta)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Identity.Category != tc.want || releaseNameRequestFromMeta(result, api.NopLogger{}).Category != normalizeCategory(string(tc.want)) {
+				t.Fatalf("resolved category = %q, want %q", result.Identity.Category, tc.want)
+			}
+			if len(client.searchInputs) == 0 || tc.manual == nil && (client.searchInputs[0].Category != "" || client.searchInputs[0].DontSwitch) {
+				t.Fatalf("provisional default constrained search: %+v", client.searchInputs)
+			}
+			wantID := 0
+			if tc.tmdbTV && tc.manual == nil {
+				wantID = 555001
+			}
+			if result.Identity.TMDBID != wantID || result.Identity.IMDBID != 0 || result.Identity.TVDBID != 0 || result.Identity.TVmazeID != 0 || result.Identity.MALID != 0 {
+				t.Fatalf("unexpected provider IDs: %+v", result.Identity)
+			}
+		})
 	}
 }
 

@@ -3538,7 +3538,7 @@ func TestResolveExternalIDsSQLiteFreshProvenanceOnlyAnchorClearsStoredGuess(t *t
 	}
 }
 
-func TestResolveExternalIDsSQLiteDiscardsObsoleteAutomaticTVBeforeFallbackMovieNaming(t *testing.T) {
+func TestResolveExternalIDsSQLiteDiscardsObsoleteAutomaticTVBeforeMovieDefault(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
 	sourcePath := filepath.Join(base, "unknown")
@@ -3610,8 +3610,8 @@ func TestResolveExternalIDsSQLiteDiscardsObsoleteAutomaticTVBeforeFallbackMovieN
 	if tmdbClient.searchCalls == 0 || imdbClient.searchCalls == 0 {
 		t.Fatalf("expected failed provider lookups, tmdb=%d imdb=%d", tmdbClient.searchCalls, imdbClient.searchCalls)
 	}
-	if facts.NamingCategory != api.CanonicalCategoryMovie || pipeline.state.Identity.Category != "" {
-		t.Fatalf("collected naming category = %q, candidate category = %q, want movie and unknown", facts.NamingCategory, pipeline.state.Identity.Category)
+	if facts.NamingCategory != api.CanonicalCategoryMovie || pipeline.state.Identity.Category != api.CanonicalCategoryMovie {
+		t.Fatalf("collected naming category = %q, candidate category = %q, want movie", facts.NamingCategory, pipeline.state.Identity.Category)
 	}
 
 	resolver, err := externalidentity.NewWithCandidateSource(repo, collector)
@@ -3626,8 +3626,8 @@ func TestResolveExternalIDsSQLiteDiscardsObsoleteAutomaticTVBeforeFallbackMovieN
 	if err != nil {
 		t.Fatalf("resolve stale identity: %v", err)
 	}
-	if resolved.Identity.Category != api.CanonicalCategoryUnknown {
-		t.Fatalf("resolved category = %q, candidate category = %q, want unknown", resolved.Identity.Category, pipeline.state.Identity.Category)
+	if resolved.Identity.Category != api.CanonicalCategoryMovie || resolved.Identity.TVDBID != 0 || resolved.ProviderMetadata.TVDB != nil {
+		t.Fatalf("resolved identity = %+v, want movie without obsolete TVDB evidence", resolved.Identity)
 	}
 }
 
