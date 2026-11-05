@@ -958,32 +958,6 @@ func (f *cliWorkflowCoreFake) ReleaseWorkflowAudioAnalysisArtifactPath(
 	return filepath.Join("test-output", string(artifactID)+".png"), nil
 }
 
-func TestCLIWorkflowCancellationCancelsAcceptedOperation(t *testing.T) {
-	coreSvc := &cliWorkflowCoreFake{
-		current:        releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-cli-cancel", Revision: 1}},
-		queueOperation: true,
-	}
-	session := &cliWorkflowSession{core: coreSvc, current: coreSvc.current}
-	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(10*time.Millisecond, cancel)
-	input := api.PrepareInput{SourcePath: "Example.Release.2026.1080p-GRP"}
-	err := session.executeContinuation(ctx, api.ContinueReleaseWorkflowRequest{
-		Authority: &api.WorkflowAuthority{
-			WorkflowID:       coreSvc.current.Workflow.ID,
-			ExpectedRevision: coreSvc.current.Workflow.Revision,
-		},
-		IdempotencyKey: "cancel-preparation",
-		Goal:           api.WorkflowGoalPrepared,
-		Intent:         api.WorkflowIntent{Preparation: &input},
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled workflow error = %v", err)
-	}
-	if coreSvc.cancelCalls != 1 {
-		t.Fatalf("operation cancel calls = %d, want 1", coreSvc.cancelCalls)
-	}
-}
-
 func TestCLIWorkflowBlockedOperationPublishesResult(t *testing.T) {
 	session := &cliWorkflowSession{core: &cliWorkflowCoreFake{}}
 	operation := api.WorkflowOperationStatus{

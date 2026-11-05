@@ -237,6 +237,7 @@ export function ReleaseSessionProvider({
     operationSequence: number;
     message: string;
   }> | null>(null);
+  const [hdrCancellationOperationID, setHDRCancellationOperationID] = useState<string | null>(null);
   const [audioCommandFailure, setAudioCommandFailure] = useState<Readonly<{
     workflowID: string;
     workflowRevision: number;
@@ -479,6 +480,11 @@ export function ReleaseSessionProvider({
     }
     setHDRCommandFailure((failure) =>
       failure && commandFailureSuperseded(failure, current) ? null : failure,
+    );
+    setHDRCancellationOperationID((operationID) =>
+      current.operation?.id === operationID && isActiveWorkflowOperation(current.operation)
+        ? operationID
+        : null,
     );
     setAudioCommandFailure((failure) =>
       failure && commandFailureSuperseded(failure, current) ? null : failure,
@@ -2866,7 +2872,12 @@ export function ReleaseSessionProvider({
         operation.id,
         controller.signal,
       );
+      if (controller.signal.aborted) return false;
+      setHDRCancellationOperationID(isActiveWorkflowOperation(canceled) ? operation.id : null);
       await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
+      setHDRCancellationOperationID((operationID) =>
+        operationID === operation.id ? null : operationID,
+      );
       const latest = await activePorts.workflow.current(current.workflow.id, controller.signal);
       if (controller.signal.aborted) return false;
       acceptWorkflowCurrent(latest);
@@ -3555,7 +3566,11 @@ export function ReleaseSessionProvider({
             []
           : [],
         phase: hdrOperation?.phase || "",
-        message: hdrOperation?.message || "",
+        message:
+          hdrOperation?.id === hdrCancellationOperationID &&
+          isActiveWorkflowOperation(hdrOperation ?? undefined)
+            ? "Cancellation requested."
+            : hdrOperation?.message || "",
         progress: hdrOperation?.progress || 0,
         mutationBlockedReason: hdrMutationBlockedReason,
         error: hdrError || (questionnaireRefreshCurrent ? questionnaireRefresh.error : ""),

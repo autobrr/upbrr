@@ -2089,7 +2089,11 @@ func (m *Module) convergeCompletedOperationCheckpoint(
 		return false, nil
 	}
 	lock := m.operationLock(record.OperationID)
-	lock.Lock()
+	if !lock.TryLock() {
+		// Completion already owns this checkpoint. A poll can retain its
+		// active receipt and retry without blocking behind durable writes.
+		return false, nil
+	}
 	defer lock.Unlock()
 
 	// A completed checkpoint is immutable, but polling may have loaded the
@@ -3214,8 +3218,9 @@ func (m *Module) waitForOperationCleanup(ctx context.Context, operationID api.Wo
 }
 
 // CancelOperation requests cancellation of one active owner-scoped operation.
-// If the operation finishes before the cancellation message is saved, its
-// terminal status is returned unchanged.
+// The acknowledgement is advisory; the worker persists its terminal outcome.
+// If the operation finishes while cancellation is requested, its terminal
+// status is returned unchanged.
 func (m *Module) CancelOperation(
 	ctx context.Context,
 	ownerID string,
@@ -3243,13 +3248,16 @@ func (m *Module) CancelOperation(
 	if worker.cancel != nil {
 		worker.cancel()
 	}
-	return m.mutateOperationIf(ctx, record.OwnerID, workflowID, operationID, func(status *api.WorkflowOperationStatus) bool {
-		if !workflowOperationActive(status.Status) {
-			return false
-		}
-		status.Message = "Cancellation requested."
-		return true
-	})
+	// Do not queue an advisory write behind the worker's durable completion.
+	// In particular, cancellation must not lose its caller's cleanup deadline.
+	record, err = m.operations.LoadOperation(ctx, record.OwnerID, workflowID, operationID)
+	if err != nil {
+		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow read cancellation acknowledgement: %w", err)
+	}
+	if workflowOperationActive(record.Status.Status) {
+		record.Status.Message = "Cancellation requested."
+	}
+	return cloneWorkflowOperationStatus(record.Status, "acknowledge cancellation")
 }
 
 func (m *Module) newID(prefix string) (string, error) {

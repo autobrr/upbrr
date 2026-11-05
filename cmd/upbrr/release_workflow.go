@@ -119,6 +119,7 @@ func (s *cliWorkflowSession) releaseActiveInput(ctx context.Context) {
 	}
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	stage := "inspect_input"
 	active, err := s.core.GetActiveInput(cleanup, cliWorkflowOwnerID)
 	if err == nil && active.State == api.ActiveInputActive && active.Revision == s.inputClaim.revision &&
 		active.Current != nil && active.Current.Workflow.ID == s.inputClaim.workflowID {
@@ -126,10 +127,22 @@ func (s *cliWorkflowSession) releaseActiveInput(ctx context.Context) {
 			s.logger.Debugf("workflow: state=retained_hdr decision=keep")
 			return
 		}
+		stage = "release_input"
 		_, err = s.core.ReleaseActiveInput(cleanup, cliWorkflowOwnerID, api.ReleaseActiveInputRequest{ExpectedRevision: s.inputClaim.revision})
 	}
 	if err != nil {
-		s.logger.Warnf("workflow: state=cleanup_failed decision=recovery_required")
+		reason := "cleanup_error"
+		action := "restart_then_retry"
+		switch {
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+			reason, action = "cleanup_timeout", "wait_then_retry"
+		case errors.Is(err, api.ErrActiveInputBusy):
+			reason, action = "work_active", "wait_then_retry"
+		case errors.Is(err, api.ErrActiveInputChanged):
+			reason, action = "input_changed", "inspect_active_input"
+		}
+		// Classify errors instead of exposing storage paths or private causes.
+		s.logger.Warnf("workflow: stage=%s state=cleanup_failed decision=recovery_required reason=%s action=%s", stage, reason, action)
 	}
 }
 
@@ -292,7 +305,17 @@ func isTerminalCLIWorkflowOperation(status api.StageStatus) bool {
 func (s *cliWorkflowSession) waitForOperation(
 	ctx context.Context,
 	operation api.WorkflowOperationStatus,
-) (api.WorkflowOperationStatus, error) {
+) (completed api.WorkflowOperationStatus, err error) {
+	// Cancellation may also arrive during an event or status read. Join on all
+	// interrupted exits before the caller's deferred input release can run.
+	defer func() {
+		if ctx.Err() != nil && !isTerminalCLIWorkflowOperation(operation.Status) {
+			if !errors.Is(err, ctx.Err()) {
+				err = errors.Join(err, ctx.Err())
+			}
+			err = errors.Join(err, s.cancelAndWaitForOperation(ctx, operation))
+		}
+	}()
 	var metadataProgress cliMetadataProgress
 	reportMetadata := func() {
 		if cliBridgeFromOutput(s.streams.out) == nil {
@@ -314,21 +337,6 @@ func (s *cliWorkflowSession) waitForOperation(
 	for operation.Status == api.StageStatusQueued || operation.Status == api.StageStatusRunning {
 		select {
 		case <-ctx.Done():
-			cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			_, cancelErr := s.core.CancelReleaseWorkflowOperation(
-				cancelCtx,
-				cliWorkflowOwnerID,
-				operation.WorkflowID,
-				operation.ID,
-			)
-			cancel()
-			if cancelErr != nil {
-				return api.WorkflowOperationStatus{}, fmt.Errorf(
-					"upbrr: wait for release workflow command: %w (cancel operation: %w)",
-					ctx.Err(),
-					cancelErr,
-				)
-			}
 			return api.WorkflowOperationStatus{}, fmt.Errorf("upbrr: wait for release workflow command: %w", ctx.Err())
 		case <-time.After(200 * time.Millisecond):
 		}
@@ -352,6 +360,39 @@ func (s *cliWorkflowSession) waitForOperation(
 		return api.WorkflowOperationStatus{}, err
 	}
 	return operation, nil
+}
+
+// cancelAndWaitForOperation shares one fresh budget between the cancellation
+// request and terminal readback. Terminal reads join worker bookkeeping; the
+// request receipt alone does not prove that releasing the input is safe.
+func (s *cliWorkflowSession) cancelAndWaitForOperation(ctx context.Context, operation api.WorkflowOperationStatus) error {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_, cancelErr := s.core.CancelReleaseWorkflowOperation(cleanup, cliWorkflowOwnerID, operation.WorkflowID, operation.ID)
+	var waitErr error
+	for {
+		var current api.WorkflowOperationStatus
+		current, waitErr = s.core.ReleaseWorkflowOperation(cleanup, cliWorkflowOwnerID, operation.WorkflowID, operation.ID)
+		if waitErr != nil {
+			break
+		}
+		if isTerminalCLIWorkflowOperation(current.Status) {
+			return nil
+		}
+		select {
+		case <-cleanup.Done():
+		case <-time.After(200 * time.Millisecond):
+			continue
+		}
+		waitErr = cleanup.Err()
+		break
+	}
+	return api.NewOperationError(api.OperationFailure{
+		Code:      api.OperationFailureInternal,
+		Operation: operation.Operation,
+		Message:   "Cancellation completion could not be confirmed; work may still be active. Wait for shutdown before retrying.",
+		Recovery:  api.OperationRecoveryRetry,
+	}, errors.Join(cancelErr, waitErr))
 }
 
 // cliWorkflowOperationError preserves recovery metadata for terminal failures,
