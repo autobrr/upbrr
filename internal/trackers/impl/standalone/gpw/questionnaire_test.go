@@ -37,7 +37,7 @@ func TestTrackerAnswerSchemaDefersUnknownGroupRequirements(t *testing.T) {
 func TestNewGroupPosterDefaultMatchesQuestionnaireWithoutPromotingAnswers(t *testing.T) {
 	meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Poster: "https://images.example/poster.jpg"}}}
 	schema := buildQuestionnaire(meta, "", nil)
-	fields := buildFields(trackers.PreparationInput{Meta: meta}, config.TrackerConfig{}, "description", "", nil)
+	fields := buildFields(trackers.PreparationInput{Meta: meta}, config.TrackerConfig{}, "", nil)
 	if schema.Fields[0].Value == "" || fields["image"] != schema.Fields[0].Value {
 		t.Fatalf("poster default=%q payload=%q", schema.Fields[0].Value, fields["image"])
 	}
@@ -68,6 +68,16 @@ func TestNewGroupDirectorIDMatchesSelectedName(t *testing.T) {
 			answers: map[string]string{"director_imdb": "nm0000003"},
 			want:    "nm0000003",
 		},
+		{
+			name:      "explicit empty id",
+			directors: []api.IMDBPerson{{ID: "nm0000002", Name: "Selected Director"}},
+			answers:   map[string]string{"director_imdb": ""},
+		},
+		{
+			name:      "explicit empty name",
+			directors: []api.IMDBPerson{{ID: "nm0000002", Name: "Selected Director"}},
+			answers:   map[string]string{"director_name": ""},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{
@@ -75,7 +85,7 @@ func TestNewGroupDirectorIDMatchesSelectedName(t *testing.T) {
 				IMDB: &api.IMDBMetadata{Directors: test.directors},
 			}}
 			schema := buildQuestionnaire(meta, "", test.answers)
-			fields := buildFields(trackers.PreparationInput{Meta: meta}, config.TrackerConfig{}, "description", "", test.answers)
+			fields := buildFields(trackers.PreparationInput{Meta: meta}, config.TrackerConfig{}, "", test.answers)
 			if schema.Fields[1].Value != test.want || fields["artist_ids[]"] != test.want || schema.Fields[2].Value != fields["artists[]"] {
 				t.Fatalf("director schema=%+v payload=%q/%q", schema.Fields[1:3], fields["artists[]"], fields["artist_ids[]"])
 			}

@@ -56,7 +56,9 @@ func exactMediaForTrackerHost(
 	exact := meta.ExactMedia.Clone()
 	if exact != nil {
 		failedHosts := normalizeImageHostNames(meta.ImageHostOverrides.FailedHosts)
-		exact.ScreenshotUploads = slices.DeleteFunc(exact.ScreenshotUploads, sourceOnlyUploadedImage)
+		exact.ScreenshotUploads = slices.DeleteFunc(exact.ScreenshotUploads, func(link api.UploadedImageLink) bool {
+			return sourceOnlyUploadedImage(link) || !NativeImageLinkCurrent(appCfg, registry, link)
+		})
 		exact.DVDMenuUploads = slices.DeleteFunc(exact.DVDMenuUploads, func(upload api.UploadedImageLink) bool {
 			return sourceOnlyUploadedImage(upload) || hostInList(upload.Host, failedHosts)
 		})
@@ -101,6 +103,17 @@ func exactMediaForTrackerHost(
 		return exact, nil
 	}
 	selectionPolicy := reusableImageHostSelectionPolicy(policy, preferredHosts...)
+	if trackerCfg.ImageHost == "" && (meta.ImageHostOverrides.PreferredHost == nil || *meta.ImageHostOverrides.PreferredHost == "") &&
+		slices.ContainsFunc(exact.ScreenshotUploads, func(link api.UploadedImageLink) bool {
+			_, capability := ImageURLImportForScope(registry, link.Host, link.UsageScope)
+			return capability != nil && link.UsageScope == trackerImageUsageScope(tracker)
+		}) {
+		exact.ScreenshotUploads = slices.DeleteFunc(exact.ScreenshotUploads, func(link api.UploadedImageLink) bool {
+			return !hostAllowed(link.Host, selectionPolicy.allowed) || hostInList(link.Host, selectionPolicy.failed) ||
+				!uploadEligibleForTracker(link.UsageScope, tracker)
+		})
+		return exact, nil
+	}
 	availablePaths := make(map[string]struct{}, len(exact.Screenshots))
 	for _, image := range exact.Screenshots {
 		availablePaths[strings.TrimSpace(image.Path)] = struct{}{}
@@ -243,6 +256,17 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		}
 		slots = nil
 	}
+	links, _ := uploadedImagesFromSource(ctx, meta, repo, preloaded)
+	filterNativeSlotVariants(slots, links, appCfg, registry, meta.MediaBinding)
+	nativeSelection := false
+	for _, slot := range slots {
+		for _, variant := range slot.Variants {
+			_, capability := ImageURLImportForScope(registry, variant.Host, variant.UsageScope)
+			if capability != nil && variant.UsageScope == trackerImageUsageScope(tracker) {
+				nativeSelection = true
+			}
+		}
+	}
 	records := meta.TrackerData
 	if preloaded != nil && len(preloaded.trackerRecords) > 0 {
 		records = preloaded.trackerRecords
@@ -323,7 +347,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		slots,
 		selectionPolicy,
 	); err == nil && len(screenshots) > 0 &&
-		reusableSelectionMatchesPolicy(host, selectionPolicy) {
+		(reusableSelectionMatchesPolicy(host, selectionPolicy) || nativeSelection && host == mixedSlotResolutionValue && trackerCfg.ImageHost == "" && (meta.ImageHostOverrides.PreferredHost == nil || *meta.ImageHostOverrides.PreferredHost == "")) {
 		feedback.SelectedHost = host
 		feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(selectionPolicy))
 		return descriptionImageHostResolution{

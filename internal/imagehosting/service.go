@@ -30,12 +30,14 @@ import (
 
 // Service coordinates configured image-host uploaders and image persistence.
 type Service struct {
-	cfg       config.Config
-	logger    api.Logger
-	repo      repository
-	client    *http.Client
-	uploaders map[string]uploader
-	registry  *trackers.Registry
+	cfg              config.Config
+	logger           api.Logger
+	repo             repository
+	client           *http.Client
+	uploaders        map[string]uploader
+	registry         *trackers.Registry
+	liveImageJournal *imageEffectJournal
+	liveImageLimit   int
 }
 
 type uploadAggregateError struct {
@@ -118,7 +120,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 		return nil, fmt.Errorf("image hosting: %w", err)
 	}
 	uploaded = slices.DeleteFunc(uploaded, func(upload api.UploadedImageLink) bool {
-		return upload.Purpose.IsAnalysis()
+		return upload.Purpose.IsAnalysis() || !trackers.NativeImageLinkCurrent(s.cfg, s.registry, upload)
 	})
 	selections, err := s.repo.ListFinalSelections(ctx, meta.MediaBinding)
 	if err != nil {

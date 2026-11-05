@@ -839,13 +839,25 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
     "sha256": "8bd3b09516d5a9c951334e330d4c8be7214c384e78c76e7e3dd72f565329b869"
   },
+  "internal/trackers/impl/standalone/gpw/payload.go:buildForm": {
+    "reason": "Captured GPW form derives normalized tags from explicit answers (including empty clears), then finalized manual-aware genre facts; repeated fields preserve submission cardinality without rebuilding preview text.",
+    "sha256": "305d2bf92ec2d04759b0f6e8b7dc62f38559df472f03c522651c9ef95b4feeb4"
+  },
+  "internal/trackers/impl/standalone/gpw/payload.go:buildScalarFields": {
+    "reason": "GPW provider IDs are selected independently from finalized identity. Source/identifier selection stays paired. Manual-aware year and genre helpers, explicit poster clears, reviewed director pairing and canonical edition authority are preserved.",
+    "sha256": "eaa81d96d5a3ed4454ae81478dd8bd19e2175a0d49fef45737bcc3846bf30557"
+  },
+  "internal/trackers/impl/standalone/gpw/payload.go:resolveYear": {
+    "reason": "Moved unchanged from upload.go: PreferredYear preserves manual values and manual-empty authority before existing TMDB/IMDb provider precedence.",
+    "sha256": "c8011db9b02f3ac9238c38e03c7a416a935d1852a251506a82987433b8ada3ba"
+  },
   "internal/trackers/impl/standalone/gpw/questionnaire.go:buildQuestionnaire": {
-    "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged.",
-    "sha256": "79c22141472eb9036f87b2ee9b22ab7bbf124edfe6284bbb7671185760b61c1c"
+    "reason": "Deferred new-group questions share payload poster/tag defaults and explicit clears; director name/ID are paired only with the selected unambiguous person.",
+    "sha256": "df2b327d2ab0d00019cd41d4f1a0be3fe5e308dc9ac5038d2cee8ae49667990f"
   },
   "internal/trackers/impl/standalone/gpw/questionnaire.go:resolveDirectorFields": {
-    "reason": "Director autofill review: explicit director name and ID answers retain precedence. The metadata-selected name receives an IMDb ID only from an unambiguous matching director; unrelated provider IDs are never paired. Other existing finalized/manual payload defaults remain unchanged.",
-    "sha256": "606190d4951dc5c1590f3c4181ade66a3babe91f27eda790f93c2a3329147fe1"
+    "reason": "Explicit director name and ID answers, including empty clears, remain authoritative independently; fallback requires an unambiguous IMDb person matching the selected name.",
+    "sha256": "405f6ebf822505dae47f5aa63d5e18c3c27c36672cde5c27e980f5d053a99b3c"
   },
   "internal/trackers/impl/standalone/gpw/taxonomy.go:resolveMovieType": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -855,17 +867,9 @@
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged.",
     "sha256": "749756ab3bf9f523ea45560dec99f22eed2f2aeb9855955f765f9bb5983e154a"
   },
-  "internal/trackers/impl/standalone/gpw/upload.go:buildFields": {
-    "reason": "Hybrid separation review: movie_edition_information and remaster_title use the same taxonomy helper to retain finalized Hybrid outside EditionLabel. Group identity, answer precedence, canonical title fallback and provider-backed descriptive helpers are unchanged.",
-    "sha256": "359a62e647d14f6d74e4c13cd4070f6962ff2aeef36ae0f514905bff236a1d8b"
-  },
   "internal/trackers/impl/standalone/gpw/upload.go:prepareUploadState": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "7219a10b243e5593d1b0884c6ded4f98fcd56ae6d216b49d3a897f3a82a65d64"
-  },
-  "internal/trackers/impl/standalone/gpw/upload.go:resolveYear": {
-    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
-    "sha256": "c8011db9b02f3ac9238c38e03c7a416a935d1852a251506a82987433b8ada3ba"
+    "reason": "Captures the reviewed GPW form and group-dependent questionnaire once; no provider fetch or mutable payload reconstruction during submit. Unmapped subtitle diagnostics reveal only a count. Missing or explicitly cleared years and unmapped selected subtitle languages remain upstream metadata prerequisites, not questionnaire answers.",
+    "sha256": "3bea9c5b84921e8bc20cdcf9770e33be669906b47d0774e6a9b49f50fdfdc79a"
   },
   "internal/trackers/impl/standalone/hdb/claims.go:*claimChecker.HasClaim": {
     "reason": "Finalized WEB TV facts scope HDB claims; Scene classification no longer bypasses them. Provider aliases corroborate identity without replacing effective metadata; unambiguous same-group ownership authorizes a configured internal-group bypass even from incomplete, stale, or BTN-relayed data because one group owns each title, while conflicting owners block.",

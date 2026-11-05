@@ -66,6 +66,7 @@ func NewLiveTestServiceWithRegistry(
 		return nil, err
 	}
 	service := NewServiceWithRegistry(cfg, logger, repo, registry)
+	service.liveImageJournal, service.liveImageLimit = journal, maxImages
 	client := liveImageClient(service.client)
 	service.client = client
 	service.uploaders = newUploaderRegistry(cfg, client, registry)

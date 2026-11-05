@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -744,6 +745,68 @@ func TestLiveImagesWrapsGenericProviderAndRetainsSuccess(t *testing.T) {
 	}
 	if _, ok := service.uploaders["pixhost"].(batchUploader); ok {
 		t.Fatal("live wrapper added batch support to pixhost")
+	}
+}
+
+func TestLiveImagesJournalGuardsNativeImports(t *testing.T) {
+	for _, uncertain := range []bool{false, true} {
+		t.Run(fmt.Sprintf("uncertain=%t", uncertain), func(t *testing.T) {
+			journal, paths, cfg := liveImagesFixture(t, 2)
+			registry := imageHostingTestRegistry(t)
+			service, err := NewLiveTestServiceWithRegistry(cfg, nil, nil, registry, journal.runID, journal.path, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			capability := &trackers.ImageURLImportCapability{Host: "kshare", Import: func(context.Context, *http.Client, string, string) (string, error) {
+				calls++
+				if uncertain {
+					return "", errors.New("interrupted native import")
+				}
+				return "https://kshare.club/synthetic.png", nil
+			}}
+			_, err = service.importImageURL(t.Context(), capability, "synthetic-key", "https://source.example/one.png", paths[0])
+			if uncertain {
+				failure, ok := api.AsOperationFailure(err)
+				if !ok || failure.Code != api.OperationFailureUnknownOutcome {
+					t.Fatalf("native uncertainty lost journal fence: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			state, err := journal.read()
+			if err != nil || len(state.order) != 1 {
+				t.Fatalf("native import escaped journal: %v", err)
+			}
+			attempt := state.attempts[state.order[0]]
+			if attempt.provider != "kshare" || attempt.complete == uncertain || !uncertain && attempt.uploaded != 1 {
+				t.Fatal("native import journal has incorrect accounting")
+			}
+			budget, next := 1, paths[1]
+			if uncertain {
+				budget, next = 2, paths[0]
+			}
+			resumed, err := NewLiveTestServiceWithRegistry(cfg, nil, nil, registry, journal.runID, journal.path, budget)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = resumed.importImageURL(t.Context(), capability, "synthetic-key", "https://source.example/one.png", next)
+			if err == nil || calls != 1 || !uncertain && !errors.Is(err, errLiveImageBudget) {
+				t.Fatalf("native journal allowed replay or excess upload: calls=%d err=%v", calls, err)
+			}
+			if uncertain {
+				failure, ok := api.AsOperationFailure(err)
+				if !ok || failure.Code != api.OperationFailureUnknownOutcome {
+					t.Fatal("native retry lost unknown-outcome authority")
+				}
+			}
+			if !uncertain {
+				report, cleanupErr := cleanupLiveTestImages(t.Context(), cfg, journal.runID, journal.path, &http.Client{})
+				if cleanupErr != nil || report.Retained != 1 || report.Pending+report.Unknown+report.Deleted != 0 {
+					t.Fatalf("native cleanup accounting lost retained image: %+v err=%v", report, cleanupErr)
+				}
+			}
+		})
 	}
 }
 

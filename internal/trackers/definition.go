@@ -873,6 +873,8 @@ type AudioPolicyProvider interface {
 
 // ImageHostPolicy declares tracker-owned accepted image hosts and activation gates.
 type ImageHostPolicy struct {
+	// URLImport is an internal tracker-owned import protocol, not a generic uploader.
+	URLImport *ImageURLImportCapability `json:",omitempty"`
 	// AllowedHosts lists normalized image hosts accepted in descriptions.
 	AllowedHosts []string
 	// OwnedHosts lists private upload hosts scoped to this tracker.
