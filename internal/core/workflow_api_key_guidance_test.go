@@ -89,6 +89,16 @@ func TestPreflightAPIKeyGuidanceIsPassiveAndRefreshesEachUpload(t *testing.T) {
 		}
 		retained = repeated
 	}
+	beforeRetry := len(logger.messages)
+	for _, history := range [][]api.TrackerReleaseProjection{nil, retained.Projections} {
+		ctx := api.WithTrackerGuidanceHistory(t.Context(), history)
+		if _, _, err := builder.Build(ctx, api.UploadSubject{}, catalog, runtime, retained, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(logger.messages) != beforeRetry+1 {
+		t.Fatal("preflight did not distinguish a new retry from feedback with the same cached projection")
+	}
 	header := make(http.Header)
 	header.Set(guidance.Header, "2027-06-01T00:00:00Z")
 	registry.ObserveAPIResponse("ALPHA", "synthetic-key", header, http.StatusOK)
@@ -101,7 +111,7 @@ func TestPreflightAPIKeyGuidanceIsPassiveAndRefreshesEachUpload(t *testing.T) {
 			t.Fatal("distant expiry retained a stale notice")
 		}
 	}
-	if len(logger.messages) != 2 {
+	if len(logger.messages) != beforeRetry+1 {
 		t.Fatal("distant expiry emitted stale account guidance")
 	}
 }

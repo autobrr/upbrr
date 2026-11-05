@@ -788,6 +788,7 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 			_, _ = w.Write([]byte(`{"success":true,"data":"/torrent/download/374352.382"}`))
 		case request.Method == http.MethodGet && request.URL.Path == "/torrent/download/374352.382":
 			downloadAuthSeen.Store(request.Header.Get("Authorization") == "Bearer synthetic-api-key")
+			w.Header().Set("X-Api-Key-Expires-At", "2026-11-20T12:00:00Z")
 			w.Header().Set("Content-Type", "application/x-bittorrent")
 			_, _ = w.Write(registeredTorrent)
 		default:
@@ -801,6 +802,7 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 	if err := os.WriteFile(sourcePath, []byte("synthetic media"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+	downloadExpiryObserved := false
 	summary, err := submitUnit3DUpload(
 		context.Background(),
 		"EXAMPLE",
@@ -813,12 +815,20 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 		api.UploadSubject{SourcePath: sourcePath},
 		filepath.Join(tempDir, "state", "upbrr.db"),
 		api.NopLogger{},
+		func(header http.Header, status int) {
+			if header.Get("X-Api-Key-Expires-At") == "2026-11-20T12:00:00Z" && status == http.StatusOK {
+				downloadExpiryObserved = true
+			}
+		},
 	)
 	if err != nil {
 		t.Fatalf("submit Unit3D upload: %v", err)
 	}
 	if !uploadAuthSeen.Load() || !downloadAuthSeen.Load() {
 		t.Fatalf("Unit3D API auth missing: upload=%t download=%t", uploadAuthSeen.Load(), downloadAuthSeen.Load())
+	}
+	if !downloadExpiryObserved {
+		t.Fatal("registered download expiry response was not observed")
 	}
 	if summary.Uploaded != 1 || len(summary.UploadedTorrents) != 1 ||
 		strings.TrimSpace(summary.UploadedTorrents[0].TorrentPath) == "" {

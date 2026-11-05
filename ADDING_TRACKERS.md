@@ -398,11 +398,14 @@ AKA/audio-marker omissions and an independent search name. The mandatory-policy 
 
 An optional `AuthPolicy.APIKeyGuidance` observes expiry headers from existing authenticated
 responses without adding requests or auth requirements. Bind site-owned header names and
-message policy in `auth.go`; Unit3D profiles expose it through `Site.APIKeyGuidance`. Shared
-preflight emits one advisory decision per tracker, while upload preparation and submission
+message policy in `auth.go`; Unit3D profiles expose it through `Site.APIKeyGuidance`.
+Unit3D registered-torrent downloads also report headers before status and body validation.
+Shared preflight emits one advisory decision per tracker, while upload preparation and submission
 log newly learned advice once per prepared plan. Retained preflight snapshots prevent
 repeating the same message after questionnaire reprojection within an upload attempt;
-new attempts show it again. Passive account advice does not invalidate otherwise compatible
+new attempts, including failed-upload retries, show it again. Attempt history excludes
+preflight snapshots at or before retained upload results and takes precedence over cached
+projection advice. Passive account advice does not invalidate otherwise compatible
 duplicate evidence. Observations remain process-local and
 credential-digest scoped; raw keys and headers are never retained in this guidance cache.
 Keep missing, malformed and reported expiry distinct. This capability cannot block uploads,

@@ -9,15 +9,18 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type trackerGuidanceHistoryKey struct{}
-
 // withTrackerGuidanceHistory reuses retained preflight snapshots under the
 // command lock. Composite feedback keeps history since the attempt started;
-// direct stage workflows use the current prepared snapshot.
+// prior upload results end an attempt, including direct failed-upload retries.
+// Direct stage workflows also require the current prepared snapshot.
 func withTrackerGuidanceHistory(ctx context.Context, state State) context.Context {
+	var lastUpload api.WorkflowRevision
+	for _, result := range state.UploadResults {
+		lastUpload = max(lastUpload, result.Revision)
+	}
 	var history []api.TrackerReleaseProjection
 	for _, snapshot := range state.Projections {
-		if snapshot.Preflight == nil {
+		if snapshot.Preflight == nil || snapshot.Revision <= lastUpload {
 			continue
 		}
 		if state.Composite != nil && state.Composite.StartedRevision > 0 {
@@ -29,23 +32,5 @@ func withTrackerGuidanceHistory(ctx context.Context, state State) context.Contex
 		}
 		history = append(history, snapshot.Projections...)
 	}
-	return context.WithValue(ctx, trackerGuidanceHistoryKey{}, history)
-}
-
-// TrackerGuidanceWasPresented reports whether this attempt already published
-// the same advisory. History is command-local, read-only, and absent for callers
-// outside the workflow coordinator; no credentials or new state are retained.
-func TrackerGuidanceWasPresented(ctx context.Context, tracker api.TrackerID, code, message string) bool {
-	history, _ := ctx.Value(trackerGuidanceHistoryKey{}).([]api.TrackerReleaseProjection)
-	for _, projection := range history {
-		if projection.TrackerID != tracker {
-			continue
-		}
-		for _, decision := range projection.PolicyDecisions {
-			if decision.Code == code && decision.Message == message {
-				return true
-			}
-		}
-	}
-	return false
+	return api.WithTrackerGuidanceHistory(ctx, history)
 }

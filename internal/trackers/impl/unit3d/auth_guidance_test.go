@@ -43,7 +43,7 @@ func TestAPIKeyGuidanceReporterDeduplicatesWithinEachUpload(t *testing.T) {
 		Logger:        logger,
 	}
 	for range 2 {
-		report := apiKeyGuidanceReporter(input, guidance)
+		report := apiKeyGuidanceReporter(t.Context(), input, guidance)
 		for range 3 {
 			report(nil, http.StatusOK)
 		}
@@ -51,10 +51,10 @@ func TestAPIKeyGuidanceReporterDeduplicatesWithinEachUpload(t *testing.T) {
 	if len(logger.messages) != 2 {
 		t.Fatal("repeated responses duplicated advice or later upload lost it")
 	}
-	input.Projection = &api.TrackerReleaseProjection{PolicyDecisions: []api.TrackerPolicyDecision{{
+	input.Projection = &api.TrackerReleaseProjection{TrackerID: "EXAMPLE", PolicyDecisions: []api.TrackerPolicyDecision{{
 		Code: trackers.APIKeyGuidanceCode, Message: "Review the account configuration.",
 	}}}
-	report := apiKeyGuidanceReporter(input, guidance)
+	report := apiKeyGuidanceReporter(t.Context(), input, guidance)
 	report(nil, 0)
 	if len(logger.messages) != 2 {
 		t.Fatal("shared projection advice was repeated in upload logs")
@@ -66,6 +66,22 @@ func TestAPIKeyGuidanceReporterDeduplicatesWithinEachUpload(t *testing.T) {
 	}
 	if len(logger.messages) != 3 {
 		t.Fatal("newer response guidance was lost or duplicated")
+	}
+	for _, history := range [][]api.TrackerReleaseProjection{nil, {*input.Projection}} {
+		guidance.Observe(input.TrackerConfig.APIKey, nil, http.StatusOK)
+		before := len(logger.messages)
+		ctx := api.WithTrackerGuidanceHistory(t.Context(), history)
+		report := apiKeyGuidanceReporter(ctx, input, guidance)
+		for range 3 {
+			report(nil, 0)
+		}
+		want := 0
+		if len(history) == 0 {
+			want = 1
+		}
+		if len(logger.messages)-before != want {
+			t.Fatal("reporter did not honor current-attempt history over an older projection")
+		}
 	}
 }
 
@@ -91,7 +107,7 @@ func TestUploadResponseCapturesExpiryWithoutChangingSubmissionOutcome(t *testing
 			}))
 			defer server.Close()
 			logger := &guidanceLogger{}
-			report := apiKeyGuidanceReporter(trackers.PreparationInput{
+			report := apiKeyGuidanceReporter(t.Context(), trackers.PreparationInput{
 				Tracker:       "EXAMPLE",
 				TrackerConfig: config.TrackerConfig{APIKey: "synthetic-key"},
 				Logger:        logger,

@@ -139,7 +139,7 @@ func submitUnit3DUpload(
 	}
 	trackerdata.SetUnit3DAPIHeaders(downloadRequest, apiKey)
 	downloadClient := unit3DRegisteredTorrentClient(client, baseURL)
-	if err := trackers.DownloadRegisteredTorrent(reqCtx, downloadClient, downloadRequest, artifactPath); err != nil {
+	if err := trackers.DownloadRegisteredTorrent(reqCtx, downloadClient, downloadRequest, artifactPath, observe...); err != nil {
 		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
 		return summary, nil
 	}
@@ -170,7 +170,7 @@ func prepareUnit3DUpload(
 	if !strings.EqualFold(preview.Status, "ready") {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s upload blocked: %s", preview.Tracker, preview.Message)
 	}
-	reportGuidance := apiKeyGuidanceReporter(req, firstSiteProfile(profiles).APIKeyGuidance)
+	reportGuidance := apiKeyGuidanceReporter(ctx, req, firstSiteProfile(profiles).APIKeyGuidance)
 	reportGuidance(nil, 0)
 
 	logger := req.Logger

@@ -108,7 +108,7 @@ func TestCompositeDuplicateComparisonReprojectsBoundCandidatesAndRechecks(t *tes
 			return assessment, finalized, fmt.Errorf("build account guidance preflight fixture: %w", err)
 		}
 		const message = "Review the account key configuration."
-		if !TrackerGuidanceWasPresented(ctx, "ALPHA", "guidance_api_key_expiry", message) {
+		if !api.TrackerGuidanceWasPresented(ctx, "ALPHA", "guidance_api_key_expiry", message, nil) {
 			guidancePresentations++
 		}
 		for index := range finalized {
@@ -201,16 +201,20 @@ func TestCompositeDuplicateComparisonReprojectsBoundCandidatesAndRechecks(t *tes
 func TestTrackerGuidanceHistoryRespectsAttemptAndPreparationBoundaries(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name    string
-		release api.ReleaseSnapshotRef
-		started api.WorkflowRevision
-		want    bool
+		name     string
+		release  api.ReleaseSnapshotRef
+		started  api.WorkflowRevision
+		uploaded api.WorkflowRevision
+		want     bool
 	}{
-		{"same preparation", api.ReleaseSnapshotRef{ID: "release", Revision: 1}, 0, true},
-		{"new snapshot with cached generation", api.ReleaseSnapshotRef{ID: "new-release", Revision: 2}, 0, false},
-		{"new snapshot revision", api.ReleaseSnapshotRef{ID: "release", Revision: 2}, 0, false},
-		{"feedback reprepare within attempt", api.ReleaseSnapshotRef{ID: "new-release", Revision: 2}, 1, true},
-		{"new attempt on same snapshot", api.ReleaseSnapshotRef{ID: "release", Revision: 1}, 3, false},
+		{"same preparation", api.ReleaseSnapshotRef{ID: "release", Revision: 1}, 0, 0, true},
+		{"new snapshot with cached generation", api.ReleaseSnapshotRef{ID: "new-release", Revision: 2}, 0, 0, false},
+		{"new snapshot revision", api.ReleaseSnapshotRef{ID: "release", Revision: 2}, 0, 0, false},
+		{"feedback reprepare within attempt", api.ReleaseSnapshotRef{ID: "new-release", Revision: 2}, 1, 0, true},
+		{"new attempt on same snapshot", api.ReleaseSnapshotRef{ID: "release", Revision: 1}, 3, 0, false},
+		{"direct retry after upload", api.ReleaseSnapshotRef{ID: "release", Revision: 1}, 0, 2, false},
+		{"composite retry after upload", api.ReleaseSnapshotRef{ID: "release", Revision: 1}, 1, 2, false},
+		{"new preflight after upload", api.ReleaseSnapshotRef{ID: "release", Revision: 1}, 0, 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			state := State{
@@ -230,8 +234,11 @@ func TestTrackerGuidanceHistoryRespectsAttemptAndPreparationBoundaries(t *testin
 			if tc.started > 0 {
 				state.Composite = &compositeUploadSession{StartedRevision: tc.started}
 			}
+			if tc.uploaded > 0 {
+				state.UploadResults = map[api.UploadResultID]api.UploadResult{"previous-upload": {Revision: tc.uploaded}}
+			}
 			ctx := withTrackerGuidanceHistory(t.Context(), state)
-			if TrackerGuidanceWasPresented(ctx, "ALPHA", "guidance_api_key_expiry", "Review the account key configuration.") != tc.want {
+			if api.TrackerGuidanceWasPresented(ctx, "ALPHA", "guidance_api_key_expiry", "Review the account key configuration.", nil) != tc.want {
 				t.Fatal("advisory history crossed a preparation boundary")
 			}
 		})

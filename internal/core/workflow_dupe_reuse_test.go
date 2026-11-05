@@ -301,10 +301,10 @@ func TestWorkflowDupeReusePreservesEvidenceWhenAccountGuidanceChanges(t *testing
 			} {
 				if message != "" {
 					projection.PolicyDecisions = []api.TrackerPolicyDecision{{
-						Code: trackers.APIKeyGuidanceCode,
- Decision: "advisory",
- Disposition: api.RuleDispositionAdvisory,
- Message: message,
+						Code:        trackers.APIKeyGuidanceCode,
+						Decision:    "advisory",
+						Disposition: api.RuleDispositionAdvisory,
+						Message:     message,
 					}}
 				}
 			}
@@ -313,6 +313,7 @@ func TestWorkflowDupeReusePreservesEvidenceWhenAccountGuidanceChanges(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
+			priorDecisions := slices.Clone(f.reuse.Projections.Projections[1].PolicyDecisions)
 			assessment, _ := f.build(t)
 			if f.service.calls["BETA"] != 1 {
 				t.Fatal("account advice repeated the sibling duplicate search")
@@ -325,7 +326,7 @@ func TestWorkflowDupeReusePreservesEvidenceWhenAccountGuidanceChanges(t *testing
 			if !reflect.DeepEqual(assessment.Results[1], want) {
 				t.Fatal("retained duplicate evidence lost its freshness or current full projection binding")
 			}
-			if tc.previous != "" && len(f.reuse.Projections.Projections[1].PolicyDecisions) != 1 {
+			if !reflect.DeepEqual(f.reuse.Projections.Projections[1].PolicyDecisions, priorDecisions) {
 				t.Fatal("reuse mutated the prior immutable projection")
 			}
 		})
@@ -434,19 +435,26 @@ func TestWorkflowDupeReuseRejectsChangedOrStaleEvidence(t *testing.T) {
 		{name: "policy", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicatePolicyFingerprint = "changed" }},
 		{name: "other advisory", change: func(f *workflowDupeReuseFixture) {
 			f.projections.Projections[1].PolicyDecisions = []api.TrackerPolicyDecision{{
-Code: "guidance_other",
- Decision: "advisory",
- Disposition: api.RuleDispositionAdvisory,
-}}
+				Code:        "guidance_other",
+				Decision:    "advisory",
+				Disposition: api.RuleDispositionAdvisory,
+			}}
 		}},
 		{name: "strict account decision", change: func(f *workflowDupeReuseFixture) {
 			f.projections.Projections[1].PolicyDecisions = []api.TrackerPolicyDecision{{
-Code: trackers.APIKeyGuidanceCode,
- Decision: "advisory",
- Disposition: api.RuleDispositionStrict,
-}}
+				Code:        trackers.APIKeyGuidanceCode,
+				Decision:    "advisory",
+				Disposition: api.RuleDispositionStrict,
+			}}
 		}},
 		{name: "warning fingerprint", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].WaivableRuleFingerprint = "changed" }},
+		{name: "non-advisory account decision", change: func(f *workflowDupeReuseFixture) {
+			f.projections.Projections[1].PolicyDecisions = []api.TrackerPolicyDecision{{
+				Code:        trackers.APIKeyGuidanceCode,
+				Decision:    "strict",
+				Disposition: api.RuleDispositionAdvisory,
+			}}
+		}},
 		{name: "action semantics", change: func(f *workflowDupeReuseFixture) {
 			f.projections.Projections[1].RequiredActions[0].Prompt = "Acknowledge another rule."
 		}},

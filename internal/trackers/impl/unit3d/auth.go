@@ -4,6 +4,7 @@
 package unit3d
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -13,22 +14,16 @@ import (
 )
 
 // apiKeyGuidanceReporter presents advice learned after preflight once per plan.
-// Advice already present in the shared CLI/WebUI projection is not logged again.
-func apiKeyGuidanceReporter(input trackers.PreparationInput, guidance *trackers.APIKeyGuidance) func(http.Header, int) {
+// Shared attempt history takes precedence over advice in a cached projection.
+func apiKeyGuidanceReporter(ctx context.Context, input trackers.PreparationInput, guidance *trackers.APIKeyGuidance) func(http.Header, int) {
 	seen := make(map[string]bool)
-	if input.Projection != nil {
-		for _, decision := range input.Projection.PolicyDecisions {
-			if decision.Code == trackers.APIKeyGuidanceCode {
-				seen[decision.Message] = true
-			}
-		}
-	}
 	return func(header http.Header, status int) {
 		guidance.Observe(input.TrackerConfig.APIKey, header, status)
 		message := guidance.Guidance(input.TrackerConfig.APIKey, time.Now())
 		if message != "" && !seen[message] {
 			seen[message] = true
-			if input.Logger != nil {
+			if input.Logger != nil &&
+				!api.TrackerGuidanceWasPresented(ctx, api.TrackerID(input.Tracker), trackers.APIKeyGuidanceCode, message, input.Projection) {
 				input.Logger.Infof("trackers: %s guidance: %s", input.Tracker, message)
 			}
 		}

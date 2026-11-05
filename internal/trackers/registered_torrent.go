@@ -71,12 +71,14 @@ func PersistRegisteredTorrent(outputPath string, payload []byte) error {
 }
 
 // DownloadRegisteredTorrent enforces a successful bounded response before
-// validating and atomically persisting the exact response bytes.
+// validating and atomically persisting the exact response bytes. Optional
+// observers receive response headers and status before status or body checks.
 func DownloadRegisteredTorrent(
 	ctx context.Context,
 	client *http.Client,
 	request *http.Request,
 	outputPath string,
+	observe ...func(http.Header, int),
 ) error {
 	if client == nil {
 		return errors.New("trackers: registered torrent HTTP client is required")
@@ -91,6 +93,9 @@ func DownloadRegisteredTorrent(
 		return fmt.Errorf("trackers: download registered torrent: %w", err)
 	}
 	defer response.Body.Close()
+	for _, observer := range observe {
+		observer(response.Header, response.StatusCode)
+	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("trackers: registered torrent download returned status %d", response.StatusCode)
 	}
