@@ -23,9 +23,13 @@ func Profile() standalone.Profile {
 		UploadContentMode:   trackers.UploadContentModeDescription,
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
-		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/tl/v1", resolveName, resolveSearchName),
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/tl/v2", resolveName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
-		ValidationPolicy:    validationPolicy(),
+		DupePolicy: &trackers.DupePolicy{
+			ID:          "standalone/tl/imdb-pagination/v1",
+			SearchScope: trackers.DupeSearchScope{MaxPages: 100},
+		},
+		ValidationPolicy: validationPolicy(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{

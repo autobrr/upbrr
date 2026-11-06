@@ -1240,20 +1240,28 @@
     "sha256": "6c40c69a16ef1a281261dd99b061e1fb5cda33989ef618c0983da4f65e711498"
   },
   "internal/trackers/impl/standalone/tl/dupe.go:*dupeSearcher.Search": {
-    "reason": "TRACE request logging review: the existing finalized/projected title fallback still applies EffectiveMetadata.PreferredTitle before the unchanged request. Operation-local logger binding leaves these selectors and search filters unchanged.",
-    "sha256": "074c73998561f450398adfe3eafbaccc8c0f0d7940e5810a4b6fc535e5eaf6c2"
+    "reason": "Selected canonical IMDb authority is preserved on every page without sibling cross-links or title prerequisites. Returned positive mismatches are excluded; missing identity cannot prove whole-work binding. Enumeration and cancellation preserve conservative failure boundaries.",
+    "sha256": "55d81fb8f90fa11c6db99cb98c6876d46f9a6e55df0202875e6f6b273207953f"
+  },
+  "internal/trackers/impl/standalone/tl/dupe.go:searchQueries": {
+    "reason": "Canonical IMDb, including a manual selection, wins independently of conflicting sibling provider IDs. Title fallback retains explicit manual title/year/language clears, uses finalized category and media facts, and broadens TV searches to include ranges and packs.",
+    "sha256": "d63f7b7c7eb1203d15b168f7e3283456452d09772bb251baa30cd2875aeebb3e"
+  },
+  "internal/trackers/impl/standalone/tl/taxonomy.go:animeIDURL": {
+    "reason": "Canonical MAL selection remains authoritative, including manual replacement and clearing. Only a current source/generation snapshot with the same positive MAL ID and a positive distinct AniList ID supplies the API URL; sibling cross-links cannot substitute another selection.",
+    "sha256": "8f139601e03d5f71f92d1cdb542b6c4b2103703de471ba24da87c907018684b8"
   },
   "internal/trackers/impl/standalone/tl/taxonomy.go:resolveCategory": {
-    "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged.",
-    "sha256": "f79f27d1a41d6b892ad3553524f497832020d485ba637b878e9924bf9ed2bcc2"
+    "reason": "PreferredOriginalLanguage preserves manual language selections and explicit clears, then TMDB preference and finalized automatic provider fallback. HD-DVD mappings consume finalized source/type facts and preserve anime, foreign, documentary and UHD precedence.",
+    "sha256": "2ca1da4e4d7c90689a175fe2b58d23026a7a4e2ff090644138cc61bcea361e3d"
   },
   "internal/trackers/impl/standalone/tl/upload.go:prepareUploadState": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "66734f64ec1ab193b7c17552b10663e42a6aa16f57a0c5924eb2278f840e602b"
+    "reason": "Consumes the reviewed category and canonical-identity mappers. Anime API payload uses the current MAL-bound AniList mapping; movie IMDb and TVmaze fields preserve their selected canonical IDs. Screenshot protocol selection does not rewrite final reviewed descriptions.",
+    "sha256": "e7e786662876472fb6e9bf766ea128e9125dc07b1c88f0ed0e793dda3641da15"
   },
   "internal/trackers/impl/standalone/tl/validation.go:validationPolicy": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "1fbe5be09ed1464be925c27aa6add80de46ad7c8b253c5986034c3119cc28e13"
+    "reason": "Side-effect-free API anime validation uses the reviewed current MAL-bound AniList mapper. Cookie mode retains existing canonical provider prerequisites, while manual identity replacement, clear and stale snapshots fail API constructibility before downstream work.",
+    "sha256": "d0597ffef432d86d542d2444eced20e186f1709d33fae9c3eb3b25243a2c48d5"
   },
   "internal/trackers/impl/standalone/tvc/definition.go:prepareDescription": {
     "reason": "Passes the runtime AddLogo setting into the reviewed TVC description builder; finalized upload facts and manual precedence are unchanged.",

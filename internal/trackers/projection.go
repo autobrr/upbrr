@@ -494,6 +494,7 @@ func (r *Registry) ProjectRelease(
 	}
 	if failure == nil {
 		validationSubject := api.NewTrackerValidationSubject(input.Meta, input.Tracker)
+		validationSubject.APIUpload = input.TrackerConfig.APIUpload
 		validationSubject.FinalizedUploadName = projection.UploadReleaseName
 		if provider, ok := descriptor.Definition.(TitleSearchPolicyProvider); ok {
 			policy := provider.TitleSearchPolicy()

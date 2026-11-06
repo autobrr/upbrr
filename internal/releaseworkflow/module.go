@@ -1996,6 +1996,22 @@ func (m *Module) recoverOperationAfterLease(
 	if state.Workflow.Revision != current.ExpectedRevision && !commandCommitted && !compositeValid {
 		return m.interruptRecoveredOperation(ctx, current, "The retained operation authority is stale.")
 	}
+	_, rebuildingProjections := capsule.command.(ProjectTrackersCommand)
+	if !commandCommitted && !rebuildingProjections {
+		switch capsule.command.operationKind() {
+		case api.OperationKindDuplicateCheck, api.OperationKindMedia, api.OperationKindImageHosting,
+			api.OperationKindDescription, api.OperationKindUploadDryRun, api.OperationKindUploadExecute:
+			stale, policyErr := m.staleTrackerPolicies(state)
+			if policyErr != nil {
+				return policyErr
+			}
+			if len(stale) > 0 {
+				return m.interruptRecoveredOperation(ctx, current, "Tracker policies changed; rebuild projections before retrying this stage.")
+			}
+		case api.OperationKindUnknown, api.OperationKindPreparation, api.OperationKindDryRun,
+			api.OperationKindClientInjection, api.OperationKindHDRAnalysis, api.OperationKindAudioAnalysis:
+		}
+	}
 	if hdrCommand, hdr := capsule.command.(AnalyzeHDRCommand); hdr && !commandCommitted {
 		m.private.Delete(current.OwnerID, current.WorkflowID, hdrAnalysisPrivateResourceID(string(current.OperationID)))
 		if cleaner, ok := m.hdrAnalysisBuilder.(HDRAnalysisAttemptCleaner); ok {
@@ -3275,22 +3291,30 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	if state.ProcessEpoch == m.processEpoch {
 		return nil
 	}
-	if recovered, _ := ctx.Value(recoveredOperationContextKey{}).(bool); recovered {
-		state.ProcessEpoch = m.processEpoch
-		return nil
+	inFlight, _ := ctx.Value(recoveredOperationContextKey{}).(bool)
+	if !inFlight {
+		operations, err := m.operations.ListActiveOperations(ctx)
+		if err != nil {
+			return fmt.Errorf("release workflow list active operations during restart recovery: %w", err)
+		}
+		inFlight = slices.ContainsFunc(operations, func(operation api.ReleaseWorkflowOperationRecord) bool {
+			return operation.OwnerID == ownerID && operation.WorkflowID == state.Workflow.ID && operation.ProcessEpoch == m.processEpoch
+		})
 	}
-	operations, err := m.operations.ListActiveOperations(ctx)
+	stalePolicies, err := m.staleTrackerPolicies(*state)
 	if err != nil {
-		return fmt.Errorf("release workflow list active operations during restart recovery: %w", err)
+		return err
 	}
-	if slices.ContainsFunc(operations, func(operation api.ReleaseWorkflowOperationRecord) bool {
-		return operation.OwnerID == ownerID && operation.WorkflowID == state.Workflow.ID && operation.ProcessEpoch == m.processEpoch
-	}) {
-		state.ProcessEpoch = m.processEpoch
+	if inFlight {
+		// Finish/reconcile already-started work before withdrawing dependencies,
+		// but do not certify obsolete policy state as current when it commits.
+		if len(stalePolicies) == 0 {
+			state.ProcessEpoch = m.processEpoch
+		}
 		return nil
 	}
 	authRetryRequired, obsoletePreflightActions := currentPreflightAuthRetry(*state)
-	if !workflowNeedsRestartRecovery(*state) && !authRetryRequired {
+	if !workflowNeedsRestartRecovery(*state) && !authRetryRequired && len(stalePolicies) == 0 {
 		state.ProcessEpoch = m.processEpoch
 		return nil
 	}
@@ -3354,6 +3378,9 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	reconciliationPending := slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
 	})
+	if len(stalePolicies) > 0 {
+		invalidateStaleTrackerPolicies(state, stalePolicies, nextRevision, now)
+	}
 	if err := m.invalidateUnavailablePrivateAuthority(ownerID, workflow, now); err != nil {
 		return err
 	}
