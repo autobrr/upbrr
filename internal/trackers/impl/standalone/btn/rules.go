@@ -59,7 +59,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 				break
 			}
 			for _, language := range track.Languages {
-				if !languageutil.IsIdentifiedLanguage(language) || languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
+				if !languageutil.IsIdentifiedLanguage(language) {
 					continue
 				}
 				if languageutil.ContainsLanguage(facts.OriginalLanguages, "English") {
@@ -170,8 +170,7 @@ func sourceKindKnown(subject api.TrackerValidationSubject) bool {
 }
 
 func foreignOriginal(facts api.LanguageFacts) bool {
-	return facts.OriginalLanguagesKnown && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
-		!languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX")
+	return trackers.ForeignLanguageContent(facts)
 }
 
 func needsRetailEnglishDubReview(subject api.TrackerValidationSubject) bool {

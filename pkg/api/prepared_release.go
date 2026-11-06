@@ -290,6 +290,11 @@ type MediaFacts struct {
 	MediaInfoUniqueID string
 	Anime             bool
 	AnimeKnown        bool
+
+	// TitleLanguages retains automatic TMDB spoken-language evidence. Rule consumers
+	// use LanguageFacts, which preserves OriginalLanguage corrections and clears.
+	// These values never populate inspected soundtrack languages.
+	TitleLanguages []string `json:",omitempty"`
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as

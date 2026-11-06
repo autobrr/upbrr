@@ -1282,6 +1282,7 @@ export type MediaFacts = Readonly<{
   SubtitleLanguages: readonly string[];
   SubtitleLanguagesProvenance: FactProvenance;
   ThreeD: string;
+  TitleLanguages?: readonly string[];
   TrackAudioLanguages: readonly string[];
   TrackCoverageComplete: boolean;
   TrackSubtitleLanguages: readonly string[];
@@ -2531,6 +2532,7 @@ export type TMDBMetadata = Readonly<{
   ReleaseDate: string;
   RetrievedAKA: string;
   Runtime: number;
+  SpokenLanguages?: readonly string[];
   TMDBID: number;
   TMDBLogo: string;
   TMDBPosterPath: string;

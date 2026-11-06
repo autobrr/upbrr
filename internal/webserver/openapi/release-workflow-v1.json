@@ -4867,6 +4867,12 @@
           "ThreeD": {
             "type": "string"
           },
+          "TitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "TrackAudioLanguages": {
             "type": "array",
             "items": {
@@ -10526,6 +10532,12 @@
           },
           "Runtime": {
             "type": "integer"
+          },
+          "SpokenLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "TMDBID": {
             "type": "integer"

@@ -199,6 +199,7 @@ func ptpPrimaryProgrammeLanguage(facts api.LanguageFacts) string {
 // ptpNeedsTrackPurposeReview identifies source-comparison guidance. Track counts and
 // language differences alone never prove that a mix or dub is redundant.
 func ptpNeedsTrackPurposeReview(facts api.LanguageFacts) bool {
+	confirmedOtherDub := false
 	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
 		return false
 	}
@@ -209,6 +210,11 @@ func ptpNeedsTrackPurposeReview(facts api.LanguageFacts) bool {
 			continue
 		}
 		programmeTracks++
+		confirmedOtherDub = confirmedOtherDub || facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed &&
+			slices.ContainsFunc(track.Languages, func(language string) bool {
+				return languageutil.IsIdentifiedLanguage(language) && !languageutil.SameLanguage(language, "English") &&
+					!languageutil.SameLanguage(language, "ZXX")
+			})
 		for _, language := range languageutil.LanguageMatchKeys(track.Languages) {
 			if seen[language] {
 				return true
@@ -216,8 +222,9 @@ func ptpNeedsTrackPurposeReview(facts api.LanguageFacts) bool {
 			seen[language] = true
 		}
 	}
-	return programmeTracks > 1 && facts.OriginalLanguagesKnown && slices.ContainsFunc(facts.ProgrammeLanguages, func(language string) bool {
-		return !languageutil.SameLanguage(language, "English") && !languageutil.SameLanguage(language, "ZXX") &&
-			!languageutil.ContainsLanguage(facts.OriginalLanguages, language)
-	})
+	return programmeTracks > 1 && facts.OriginalLanguagesKnown &&
+		(confirmedOtherDub || slices.ContainsFunc(facts.ProgrammeLanguages, func(language string) bool {
+			return !languageutil.SameLanguage(language, "English") && !languageutil.SameLanguage(language, "ZXX") &&
+				!languageutil.ContainsLanguage(facts.OriginalLanguages, language)
+		}))
 }

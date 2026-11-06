@@ -43,8 +43,8 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool { return track.Kind == api.MediaTrackSubtitle }) {
 		return unknown("embedded subtitle languages were cleared; review the tracker's subtitle guidance")
 	}
-	englishOriginal := languageutil.ContainsLanguage(facts.OriginalLanguages, "English")
-	if !englishOriginal && !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") {
+	predominantlyEnglish := len(facts.OriginalLanguages) == 1 && languageutil.ContainsLanguage(facts.OriginalLanguages, "English")
+	if !predominantlyEnglish && !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") {
 		failure := trackers.LanguageRuleFailure(
 			subject,
 			"retail_subtitles",
@@ -54,7 +54,6 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
 		failures = append(failures, failure)
 	}
-	predominantlyEnglish := englishOriginal && len(facts.OriginalLanguages) == 1
 	presentationDefect := false
 	for _, track := range facts.Tracks {
 		if track.Kind == api.MediaTrackSubtitle &&

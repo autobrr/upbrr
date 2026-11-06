@@ -67,6 +67,14 @@ func (f LanguageFacts) Clone() LanguageFacts {
 	return f
 }
 
+// HasNonEnglishTitleLanguage reports identified non-English title evidence.
+// It does not establish a release soundtrack, its origin, or subtitle coverage.
+func (f LanguageFacts) HasNonEnglishTitleLanguage() bool {
+	return f.OriginalLanguagesKnown && slices.ContainsFunc(f.OriginalLanguages, func(value string) bool {
+		return languageutil.IsIdentifiedLanguage(value) && !languageutil.SameLanguage(value, "English") && !languageutil.SameLanguage(value, "ZXX")
+	})
+}
+
 // ProgrammeAudioOrigin preserves explicit source evidence. Matching-language tracks
 // are original; a separate English programme track is a dub when the same resource
 // contains established non-English original audio.

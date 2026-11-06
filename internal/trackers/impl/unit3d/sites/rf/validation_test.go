@@ -167,6 +167,9 @@ func TestRFLanguageEvidenceAndForcedSubtitleException(t *testing.T) {
 	key := trackers.LanguageQuestionKey(subject, "english_subtitles_expected")
 	subject.QuestionnaireAnswers = map[string]string{key: "yes"}
 	assertRFFailure(t, languageFailures(subject), "language_retail_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	subject.LanguageFacts.OriginalLanguages = []string{"English", "Japanese"}
+	assertRFFailure(t, languageFailures(subject), "language_retail_subtitles", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+	subject.LanguageFacts.OriginalLanguages = []string{"Japanese"}
 	subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusPartial
 	assertRFFailure(t, languageFailures(subject), "language_subtitle_evidence", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 	subject.LanguageFacts.SubtitleStatus = api.MetadataEvidenceStatusComplete

@@ -43,11 +43,17 @@ func AudioRole(title string) api.AudioTrackRole {
 }
 
 // ResolveLanguages projects corrected media evidence once at canonical
-// preparation. Aggregate corrections do not rewrite inspected track roles.
+// preparation. Automatic title dialogue evidence precedes the scalar fallback;
+// explicit original-language corrections, including clears, remain authoritative.
+// Aggregate corrections do not rewrite inspected track roles.
 func ResolveLanguages(media api.MediaFacts) api.LanguageFacts {
+	originalLanguages := []string{media.OriginalLanguage}
+	if !media.OriginalLanguageProvenance.IsManual() && len(media.TitleLanguages) > 0 {
+		originalLanguages = media.TitleLanguages
+	}
 	facts := api.LanguageFacts{
 		AudioAbsent:           media.AudioAbsent && media.TrackCoverageComplete,
-		OriginalLanguages:     languageutil.NormalizeLanguageList([]string{media.OriginalLanguage}),
+		OriginalLanguages:     languageutil.NormalizeLanguageList(originalLanguages),
 		SubtitleLanguages:     subtitleBaseLanguages(append(slices.Clone(media.SubtitleLanguages), media.HardcodedSubtitleLanguages...)),
 		FullSubtitleLanguages: fullSubtitleLanguages(media),
 		Tracks:                media.Tracks,

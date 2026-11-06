@@ -72,6 +72,19 @@ Web UI refresh verifies the source and reuses provider evidence whose lookup inp
 
 Input readiness evaluates missing release facts and selected tracker metadata before tracker assessment. Correct missing source, type, genre, or languages on Input. A tracker-specific requirement affects that tracker; global missing facts prevent advancement.
 
+For automatic soundtrack comparisons, usable TMDB spoken languages take precedence
+over its original-language field. The list describes dialogue in the title as a
+set: its order does not select a primary soundtrack or require separate audio for
+every listed language. Inspected tracks still establish the release's audio;
+listed English dialogue does not supply an English track or erase a confirmed dub.
+Independent subtitle, soundtrack-origin and default-track requirements still apply.
+
+An original-language correction, including an explicit clear, overrides this
+automatic evidence. **Auto** restores the preferred provider evidence. When TMDB
+has no usable spoken-language entries, the existing original-language/provider
+fallback remains available. The scalar original-language metadata is retained for
+other uses.
+
 When a selected tracker's current rules need an unidentified programme audio
 language, **Inspected tracks** opens on Input and identifies the affected track.
 Correct its verified languages once, then prepare Input again. The canonical

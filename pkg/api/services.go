@@ -2445,6 +2445,10 @@ type TMDBMetadata struct {
 	IMDbMismatch        bool
 	MismatchedIMDbID    int
 	Localized           map[string]TMDBLocalizedData
+
+	// SpokenLanguages is the normalized automatic title-level dialogue-language set.
+	// It does not identify release tracks or override explicit corrections.
+	SpokenLanguages []string `json:",omitempty"`
 }
 
 type TMDBLocalizedData struct {

@@ -277,8 +277,7 @@ func resourceLanguageFacts(subject api.TrackerValidationSubject, resource string
 }
 
 func resourceNeedsEnglishSubtitles(facts api.LanguageFacts) bool {
-	return facts.OriginalLanguagesKnown && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
-		!languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
+	return trackers.ForeignLanguageContent(facts) &&
 		(facts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory || !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English")) &&
 		(facts.SubtitleStatus == api.MetadataEvidenceStatusContradictory || !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English"))
 }
