@@ -3863,10 +3863,44 @@ test("embedded web retains duplicate evidence when adding and removing trackers"
     expect(readded.dupes!.results.find((lane) => lane.trackerId === "AITHER")!.checkedAt).not.toBe(
       duplicate.checkedAt,
     );
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+    const reconciliations = new Set<string>();
+    page.on("request", (request) => {
+      if (!request.url().endsWith("/api/app/ContinueReleaseWorkflow")) return;
+      const body = request.postDataJSON() as { goal: string; idempotencyKey: string };
+      if (body.goal === "duplicates_decided") reconciliations.add(body.idempotencyKey);
+    });
+    const restoredResponse = waitForAppMethod(page, "GetActiveInput");
     await page.reload();
+    const restored = await activeCurrentFromResponse(await restoredResponse);
+    expect(restored.dupes?.expiresAt).toBe(readded.dupes!.expiresAt);
+    expect(
+      restored.dupes?.results.map((lane) => ({
+        tracker: lane.trackerId,
+        decision: lane.decision,
+        checkedAt: lane.checkedAt,
+        freshUntil: lane.freshUntil,
+      })),
+    ).toEqual(
+      readded.dupes!.results.map((lane) => ({
+        tracker: lane.trackerId,
+        decision: lane.decision,
+        checkedAt: lane.checkedAt,
+        freshUntil: lane.freshUntil,
+      })),
+    );
     await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await expect(page.getByRole("checkbox", { name: "AITHER", exact: true })).toBeChecked();
     await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+    await expect(page.getByText("No dupes", { exact: true })).toBeVisible();
+    const blocked = page
+      .getByRole("article")
+      .filter({ has: page.getByRole("heading", { name: "AITHER", exact: true }) });
+    await expect(blocked.getByText("Blocked", { exact: true })).toBeVisible();
+    await expect(
+      blocked.getByText(duplicate.failures![0]!.failure.Message, { exact: true }),
+    ).toBeVisible();
+    expect(reconciliations.size).toBe(0);
   } finally {
     await app?.stop();
     await workspace.cleanup();

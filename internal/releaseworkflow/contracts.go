@@ -307,6 +307,9 @@ type DuplicateAssessmentReuse struct {
 // PendingDuplicateReuse retains evidence across the projection and preflight
 // stages of edits or metadata refresh; it is not current duplicate authority.
 type PendingDuplicateReuse struct {
+	// ProjectionContext retains comparison inputs across local-answer invalidation;
+	// it never restores current workflow authority.
+	ProjectionContext    *api.TrackerReleaseProjectionSetRef
 	MetadataRefresh      bool
 	EquivalentMetadataTo *api.ReleaseRef
 	QuestionnaireOnly    bool

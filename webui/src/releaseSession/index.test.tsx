@@ -7171,6 +7171,104 @@ describe("useReleaseSession", () => {
       expect(result.current.navigation.view.access.screenshots.available).toBe(true);
     });
 
+    it("resumes a retained duplicate check after interrupted selection reconciliation", async () => {
+      const seed = workflowPorts();
+      const prepared = preparedQuestionnaireWorkflow("pending-selection");
+      const projected = await seed.project(
+        prepared,
+        ["AITHER", "BLU"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      const interrupted = {
+        ...projected,
+        inputReadiness: { ...prepared.inputReadiness!, selectedTrackerIds: ["AITHER", "BLU"] },
+        continuation: { ...projected.continuation, duplicateReusePending: true },
+        dupes: undefined,
+      };
+      const active = workflowPorts({ current: async () => interrupted });
+      const continueWorkflow = vi.fn(active.continue);
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(
+          portsFor({
+            resumeWorkflowID: prepared.workflow.id,
+            workflow: { ...active, continue: continueWorkflow },
+          }),
+          ["AITHER", "BLU"],
+        ),
+      });
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      expect(result.current.duplicates.view.assessment).toBeNull();
+      act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+      await waitFor(() =>
+        expect(
+          result.current.duplicates.view.assessment?.results.map((lane) => lane.trackerId),
+        ).toEqual(["AITHER"]),
+      );
+      expect(
+        continueWorkflow.mock.calls.some(
+          ([request]) =>
+            request.goal === "duplicates_decided" && request.intent.trackerIds?.length === 1,
+        ),
+      ).toBe(true);
+    });
+
+    it("does not reconcile duplicate results just because an uploaded tracker remains selected", async () => {
+      const seed = workflowPorts();
+      const prepared = preparedQuestionnaireWorkflow("uploaded-selection");
+      const projected = await seed.project(
+        prepared,
+        ["AITHER"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      const checked = await seed.checkDuplicates(
+        projected,
+        false,
+        "checked",
+        new AbortController().signal,
+      );
+      const current = {
+        ...checked,
+        workflow: {
+          ...checked.workflow,
+          submissionExclusions: [
+            { trackerId: "BLU", reason: "already_uploaded", confirmedAt: "2026-07-20T00:00:00Z" },
+          ],
+        },
+        inputReadiness: { ...prepared.inputReadiness!, selectedTrackerIds: ["AITHER", "BLU"] },
+      };
+      const checkDuplicates = vi.fn(seed.checkDuplicates);
+      const active = workflowPorts({
+        current: async () => current,
+        checkDuplicates,
+        project: async (latest, trackers, ...rest) =>
+          seed.project(
+            latest,
+            trackers.filter((tracker) => tracker !== "BLU"),
+            ...rest,
+          ),
+      });
+      const continueWorkflow = vi.fn(active.continue);
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(
+          portsFor({
+            resumeWorkflowID: prepared.workflow.id,
+            workflow: { ...active, continue: continueWorkflow },
+          }),
+          ["AITHER", "BLU"],
+        ),
+      });
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      expect(result.current.duplicates.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
+      expect(
+        continueWorkflow.mock.calls.every(([request]) => request.goal === "trackers_projected"),
+      ).toBe(true);
+      expect(checkDuplicates).not.toHaveBeenCalled();
+    });
+
     it("aborts a pending question projection when the source changes and suppresses its response", async () => {
       const active = workflowPorts();
       const prepared = preparedQuestionnaireWorkflow("source-questions", "C:\\media\\First");

@@ -1599,9 +1599,14 @@ export function ReleaseSessionProvider({
     try {
       const current = await continueBackendGoal(
         initial,
-        initial.dupes &&
+        (initial.dupes || initial.continuation?.duplicateReusePending) &&
           !sameNames(
-            trackers,
+            trackers.filter(
+              (tracker) =>
+                !initial.workflow.submissionExclusions?.some(
+                  (exclusion) => exclusion.trackerId === tracker,
+                ),
+            ),
             initial.projections?.projections.map((projection) => projection.trackerId) || [],
           )
           ? "duplicates_decided"

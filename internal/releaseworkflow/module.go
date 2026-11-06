@@ -3853,17 +3853,14 @@ func (m *Module) apply(
 	command mutation,
 ) (CommandResult, error) {
 	switch typed := command.(type) {
-	case ProjectTrackersCommand, PreflightTrackersCommand, CheckDuplicatesCommand, ResolveActionCommand, resolveTrackerPreparationCommand:
+	case ProjectTrackersCommand, PreflightTrackersCommand, CheckDuplicatesCommand,
+		ResolveActionCommand, resolveTrackerPreparationCommand, EvaluateInputReadinessCommand:
 	case ReplaceFactInstructionsCommand:
 		stageMetadataDuplicateReuse(state, now)
 	case PrepareReleaseCommand:
 		if ordinaryMetadataRefresh(typed.Input) {
 			stageMetadataDuplicateReuse(state, now)
 		} else {
-			state.PendingDuplicateReuse = nil
-		}
-	case EvaluateInputReadinessCommand:
-		if state.PendingDuplicateReuse != nil && !state.PendingDuplicateReuse.MetadataRefresh {
 			state.PendingDuplicateReuse = nil
 		}
 	default:
@@ -4879,6 +4876,11 @@ func (m *Module) projectTrackers(
 	var authorizations map[api.TrackerID]api.WorkflowFingerprint
 	if questionnaireOnly && state.Workflow.TrackerProjections != nil {
 		authorizations = projectionRuleAuthorizations(state.Projections[state.Workflow.TrackerProjections.ID])
+	} else if pending := state.PendingDuplicateReuse; questionnaireOnly && pending != nil && pending.ProjectionContext != nil {
+		authorizations = projectionRuleAuthorizations(state.Projections[pending.ProjectionContext.ID])
+		for _, trackerID := range pending.InvalidatedTrackers {
+			delete(authorizations, trackerID)
+		}
 	}
 	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, command, authorizations)
 }

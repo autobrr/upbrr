@@ -114,8 +114,8 @@ func (m *Module) pendingDuplicateReuse(
 }
 
 // stageQuestionnaireDuplicateReuse retains the original baseline across tracker
-// selection and answer edits. Unchanged lanes still require compatible projections;
-// other instruction and execution changes discard the baseline.
+// selection and answer edits. Unchanged lanes still require compatible projections.
+// Changed instructions invalidate only their lane; execution changes discard it.
 func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersCommand) (bool, error) {
 	pending := state.PendingDuplicateReuse
 	if pending != nil && pending.MetadataRefresh && pending.EquivalentMetadataTo != nil {
@@ -127,6 +127,15 @@ func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersComma
 	}
 	state.PendingDuplicateReuse = nil
 	workflow := state.Workflow
+	if workflow.TrackerProjections == nil && pending != nil && pending.ProjectionContext != nil {
+		context, ok := state.Projections[pending.ProjectionContext.ID]
+		if !ok || context.Revision != pending.ProjectionContext.Revision {
+			return false, nil
+		}
+		workflow.TrackerProjections = pending.ProjectionContext
+		workflow.Selection = &context.Selection
+		workflow.ProjectionInstructions = context.Instructions
+	}
 	if workflow.TrackerProjections == nil || workflow.Selection == nil || workflow.ProjectionInstructions == nil {
 		return false, nil
 	}
@@ -140,39 +149,40 @@ func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersComma
 	}
 	previous := effectiveProjectionInstructions(instructions.Instructions)
 	next := effectiveProjectionInstructions(command.Instructions)
-	stripAnswers := func(instructions map[api.TrackerID]api.TrackerProjectionInstructions) map[api.TrackerID]api.TrackerProjectionInstructions {
-		for trackerID, instruction := range instructions {
-			// Only common lanes have an instruction contract to compare.
-			// The builder validates each retained projection independently.
-			if !slices.Contains(command.TrackerIDs, trackerID) || !slices.Contains(selection.TrackerIDs, trackerID) {
-				delete(instructions, trackerID)
-				continue
-			}
-			instruction.Questionnaire = nil
-			instructions[trackerID] = instruction
+	var invalidated []api.TrackerID
+	for _, trackerID := range selection.TrackerIDs {
+		if !slices.Contains(command.TrackerIDs, trackerID) {
+			continue
 		}
-		return effectiveProjectionInstructions(instructions)
-	}
-	answerOnly, err := sameProjectionInstructions(stripAnswers(previous), stripAnswers(next))
-	if err != nil || !answerOnly {
-		return false, err
+		prior, desired := previous[trackerID], next[trackerID]
+		prior.Questionnaire, desired.Questionnaire = nil, nil
+		unchanged, err := sameProjectionInstruction(prior, desired)
+		if err != nil {
+			return false, err
+		}
+		if !unchanged {
+			invalidated = append(invalidated, trackerID)
+		}
 	}
 	if workflow.Dupes != nil {
 		state.PendingDuplicateReuse = &PendingDuplicateReuse{Assessment: *workflow.Dupes, QuestionnaireOnly: true}
 	} else if pending != nil {
 		state.PendingDuplicateReuse = pending
 	}
+	if retained := state.PendingDuplicateReuse; retained != nil {
+		retained.InvalidatedTrackers = normalizeContinuationTrackerIDs(append(retained.InvalidatedTrackers, invalidated...))
+	}
 	return true, nil
 }
 
-func sameProjectionInstructions(left, right map[api.TrackerID]api.TrackerProjectionInstructions) (bool, error) {
+func sameProjectionInstruction(left, right api.TrackerProjectionInstructions) (bool, error) {
 	a, err := api.CanonicalWorkflowFingerprint(left)
 	if err != nil {
-		return false, fmt.Errorf("release workflow fingerprint prior questionnaire instructions: %w", err)
+		return false, fmt.Errorf("release workflow fingerprint prior tracker instructions: %w", err)
 	}
 	b, err := api.CanonicalWorkflowFingerprint(right)
 	if err != nil {
-		return false, fmt.Errorf("release workflow fingerprint current questionnaire instructions: %w", err)
+		return false, fmt.Errorf("release workflow fingerprint current tracker instructions: %w", err)
 	}
 	return a == b, nil
 }
