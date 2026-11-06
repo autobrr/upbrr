@@ -242,6 +242,15 @@ func (m *Module) Continue(
 		accepted.PreparationOperationID = operation.ID
 		return accepted, currentErr
 	}
+	if command, refreshErr := m.planCatalogRefresh(request, current, m.clock.Now().UTC()); refreshErr != nil {
+		return CommandResult{}, refreshErr
+	} else if command != nil {
+		operation, startErr := m.Start(ctx, ownerID, command)
+		if startErr != nil {
+			return CommandResult{}, fmt.Errorf("release workflow refresh projection catalog: %w", startErr)
+		}
+		return m.Current(ctx, ownerID, operation.WorkflowID)
+	}
 	if request.TrackerApproval != nil {
 		result, approveErr := m.Execute(ctx, ownerID, ApproveTrackersCommand{
 			WorkflowID:       current.Workflow.ID,

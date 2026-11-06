@@ -4,6 +4,8 @@
 package bjs
 
 import (
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,15 +13,22 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestBuildFieldsAnonymousAttribution(t *testing.T) {
-	t.Parallel()
+type uploadRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f uploadRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestPreparedAnonymousAttribution(t *testing.T) {
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
 	for _, tc := range []struct {
-		name      string
-		anonymous bool
-		showGroup bool
+		name                 string
+		anonymous, showGroup bool
 	}{
 		{name: "named upload"},
 		{name: "named upload ignores group preference", showGroup: true},
@@ -31,19 +40,90 @@ func TestBuildFieldsAnonymousAttribution(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			fields := buildFields(api.UploadSubject{}, config.TrackerConfig{
-				Anon:            tc.anonymous,
-				ShowGroupIfAnon: tc.showGroup,
-			}, "description", "auth", nil)
-			for key, enabled := range map[string]bool{
-				"anonymous":          tc.anonymous,
-				"anonymousshowgroup": tc.anonymous && tc.showGroup,
-			} {
-				value, present := fields[key]
-				if present != enabled || enabled && value != "on" {
-					t.Errorf("%s = %q (present %t), want present %t with checkbox value on", key, value, present, enabled)
+			root := t.TempDir()
+			dbPath := filepath.Join(root, "state.sqlite")
+			cookiePath := commonhttp.CookiePathCandidates(dbPath, "BJS", ".json")[0]
+			if err := os.MkdirAll(filepath.Dir(cookiePath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cookiePath, []byte(`{"session":"synthetic-cookie"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			torrentPath := filepath.Join(root, "upload.torrent")
+			if err := os.WriteFile(torrentPath, []byte("synthetic torrent"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			expected := map[string]bool{"anonymous": tc.anonymous, "anonymousshowgroup": tc.anonymous && tc.showGroup}
+			submitted := false
+			http.DefaultTransport = uploadRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if request.URL.String() != uploadURL {
+					t.Fatalf("unexpected request: %s", request.URL)
 				}
+				body := `name="auth" value="synthetic-auth"`
+				if request.Method == http.MethodPost {
+					submitted = true
+					if err := request.ParseMultipartForm(1 << 20); err != nil {
+						t.Fatal(err)
+					}
+					defer func() { _ = request.MultipartForm.RemoveAll() }()
+					for key, enabled := range expected {
+						values, present := request.MultipartForm.Value[key]
+						if present != enabled || enabled && (len(values) != 1 || values[0] != "on") {
+							t.Errorf("submitted %s = %v, want enabled=%t", key, values, enabled)
+						}
+					}
+					body = "torrentid=123"
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Request:    request,
+				}, nil
+			})
+			const name = "Example.2026.1080p-GRP"
+			input := trackers.PreparationInput{
+				Intent:        trackers.PreparationIntentUpload,
+				Tracker:       "BJS",
+				Logger:        api.NopLogger{},
+				Runtime:       trackers.PreparationRuntime{DBPath: dbPath},
+				TrackerConfig: config.TrackerConfig{Anon: !tc.anonymous, ShowGroupIfAnon: tc.showGroup},
+				Projection: &api.TrackerReleaseProjection{
+					TrackerID:         "BJS",
+					UploadReleaseName: name,
+					UploadReady:       true,
+					Readiness:         api.ReadinessStatusReady,
+					DerivedFlags:      []api.TrackerDerivedFlag{{Key: "anonymous", Value: tc.anonymous}},
+				},
+				Meta: api.UploadSubject{
+					ReleaseName:                 name,
+					SourcePath:                  filepath.Join(root, "Example.mkv"),
+					TorrentPath:                 torrentPath,
+					Identity:                    api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
+					TrackerQuestionnaireAnswers: map[string]map[string]string{"BJS": {"overview": "Synthetic overview", "tags": "drama"}},
+					ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+						Title:         "Example",
+						OriginalTitle: "Example",
+						Year:          2026,
+						Directors:     []string{"Example Director"},
+					}},
+				},
+				Assets: &trackers.DescriptionAssets{Description: "Synthetic description", Final: true},
+			}
+			plan, failure := trackers.PrepareAdapter(t.Context(), input, prepareDescription, prepareUpload)
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			preview := plan.DryRun()
+			for key, enabled := range expected {
+				value, present := preview.Payload[key]
+				if present != enabled || enabled && value != "on" {
+					t.Errorf("preview %s = %v, want enabled=%t", key, value, enabled)
+				}
+			}
+			summary, err := plan.Submit(t.Context())
+			if err != nil || summary.Uploaded != 1 || !submitted {
+				t.Fatalf("submission=%+v called=%t error=%v", summary, submitted, err)
 			}
 		})
 	}
