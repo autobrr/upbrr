@@ -1525,17 +1525,32 @@ export function ReleaseSessionProvider({
           ];
         }),
       );
-      const current = await continueBackendGoal(
+      const intent = {
+        trackerIds: [...state.selectedTrackers],
+        projectionInstructions,
+        skipRemoteDuplicates: false,
+      };
+      let current = await continueBackendGoal(
         workflowView.current,
         goal,
-        {
-          trackerIds: [...state.selectedTrackers],
-          projectionInstructions,
-          skipRemoteDuplicates: false,
-        },
+        intent,
         commandID,
         controller.signal,
       );
+      if (
+        goal === "trackers_assessed" &&
+        workflowView.current.dupes &&
+        !current.dupes &&
+        !controller.signal.aborted
+      ) {
+        current = await continueBackendGoal(
+          current,
+          "duplicates_decided",
+          intent,
+          `${commandID}-duplicates`,
+          controller.signal,
+        );
+      }
       releaseWorkflowController(controller);
       if (controller.signal.aborted) return false;
       acceptWorkflowCurrent(current);
@@ -1584,7 +1599,13 @@ export function ReleaseSessionProvider({
     try {
       const current = await continueBackendGoal(
         initial,
-        "trackers_projected",
+        initial.dupes &&
+          !sameNames(
+            trackers,
+            initial.projections?.projections.map((projection) => projection.trackerId) || [],
+          )
+          ? "duplicates_decided"
+          : "trackers_projected",
         {
           trackerIds: trackers,
           // Selection discovers schemas; only explicit Apply/Run may submit local drafts.

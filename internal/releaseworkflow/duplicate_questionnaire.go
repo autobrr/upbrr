@@ -12,7 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// questionnaireDuplicateCandidates carries only fresh, exact server evidence across an answer-only edit.
+// questionnaireDuplicateCandidates carries only fresh, exact server evidence across selection and answer edits.
 // Other changes must search again before exposing candidate comparison questions.
 func questionnaireDuplicateCandidates(state *State, release api.ReleaseSnapshot, now time.Time) map[string][]api.DupeMatchProjection {
 	pending := state.PendingDuplicateReuse

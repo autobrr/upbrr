@@ -279,13 +279,13 @@ type DupeAssessmentBuilder interface {
 }
 
 // IncrementalDupeAssessmentBuilder can retain fresh, unchanged tracker evidence
-// after a rule or questionnaire edit. Reuse never grants new upload authority.
+// after a selection, rule or questionnaire edit. Reuse never grants upload approval.
 type IncrementalDupeAssessmentBuilder interface {
 	BuildWithReuse(context.Context, api.DuplicateSubject, api.TrackerReleaseProjectionSet,
 		api.TrackerPreflightAssessment, time.Time, bool, DuplicateAssessmentReuse) (api.DupeAssessment, any, error)
 }
 
-// QuestionnaireDupeAssessmentRebinder can rebind compatible questionnaire edits
+// QuestionnaireDupeAssessmentRebinder can rebind compatible selection/answer edits
 // or certified metadata refreshes without searching. An empty result requires a fresh check.
 type QuestionnaireDupeAssessmentRebinder interface {
 	RebindQuestionnaire(context.Context, api.DuplicateSubject, api.TrackerReleaseProjectionSet,

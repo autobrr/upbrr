@@ -3807,3 +3807,68 @@ test("embedded web cancels source verification before worker acceptance and conf
     await workspace.cleanup();
   }
 });
+
+test("embedded web retains duplicate evidence when adding and removing trackers", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ preparedMediaInfo: true, mediaKind: "tv" });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    const initial = await runDuplicateCheck(page);
+    const original = initial.dupes!.results.find((lane) => lane.trackerId === "BTN")!;
+    const selectedDuplicates = (trackers: string[]) =>
+      page.waitForResponse(async (response) => {
+        if (
+          !response.url().endsWith("/api/app/ContinueReleaseWorkflow") &&
+          !response.url().endsWith("/api/app/GetReleaseWorkflow")
+        )
+          return false;
+        if (!response.ok()) return false;
+        const current = (await response.json()) as ReleaseWorkflowCurrent;
+        return (
+          current.dupes?.results.length === trackers.length &&
+          trackers.every((tracker) =>
+            current.dupes?.results.some((lane) => lane.trackerId === tracker),
+          ) &&
+          current.dupes?.projectionSet.id === current.projections?.id
+        );
+      });
+    const addedResponse = selectedDuplicates(["AITHER", "BTN"]);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).check();
+    const added = (await (await addedResponse).json()) as ReleaseWorkflowCurrent;
+    const retained = added.dupes!.results.find((lane) => lane.trackerId === "BTN")!;
+    expect(retained).toEqual({ ...original, projectionFingerprint: expect.any(String) });
+    expect(added.dupes!.expiresAt).toBe(initial.dupes!.expiresAt);
+    const duplicate = added.dupes!.results.find((lane) => lane.trackerId === "AITHER")!;
+    expect(duplicate.decision).toBe("skipped");
+    expect(duplicate.failures?.length).toBeGreaterThan(0);
+    const removedResponse = selectedDuplicates(["BTN"]);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).uncheck();
+    const removed = (await (await removedResponse).json()) as ReleaseWorkflowCurrent;
+    expect(removed.dupes!.results).toEqual([
+      { ...original, projectionFingerprint: expect.any(String) },
+    ]);
+    expect(removed.dupes!.expiresAt).toBe(initial.dupes!.expiresAt);
+    expect(removed.dupes!.status).toBe("completed");
+    await expect(page.getByText("No dupes", { exact: true })).toBeVisible();
+    const readdedResponse = selectedDuplicates(["AITHER", "BTN"]);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).check();
+    const readded = (await (await readdedResponse).json()) as ReleaseWorkflowCurrent;
+    expect(readded.dupes!.results.find((lane) => lane.trackerId === "BTN")!.checkedAt).toBe(
+      original.checkedAt,
+    );
+    expect(readded.dupes!.results.find((lane) => lane.trackerId === "AITHER")!.checkedAt).not.toBe(
+      duplicate.checkedAt,
+    );
+    await page.reload();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await expect(page.getByRole("checkbox", { name: "AITHER", exact: true })).toBeChecked();
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});

@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"time"
 
@@ -114,9 +113,9 @@ func (m *Module) pendingDuplicateReuse(
 	}, nil
 }
 
-// stageQuestionnaireDuplicateReuse retains the original baseline across incomplete
-// answer edits. Confirmed submissions are excluded from selection comparison;
-// other selection, instruction, and execution changes discard the baseline.
+// stageQuestionnaireDuplicateReuse retains the original baseline across tracker
+// selection and answer edits. Unchanged lanes still require compatible projections;
+// other instruction and execution changes discard the baseline.
 func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersCommand) (bool, error) {
 	pending := state.PendingDuplicateReuse
 	if pending != nil && pending.MetadataRefresh && pending.EquivalentMetadataTo != nil {
@@ -134,26 +133,25 @@ func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersComma
 	projections := state.Projections[workflow.TrackerProjections.ID]
 	selection := state.Selections[workflow.Selection.ID]
 	instructions := state.ProjectionInstructions[workflow.ProjectionInstructions.ID]
-	desired := normalizeContinuationTrackerIDs(withoutConfirmedSubmissions(command.TrackerIDs, workflow.SubmissionExclusions))
 	if projections.Revision != workflow.TrackerProjections.Revision || selection.Revision != workflow.Selection.Revision ||
 		instructions.Revision != workflow.ProjectionInstructions.Revision ||
-		!slices.Equal(desired, normalizeContinuationTrackerIDs(selection.TrackerIDs)) ||
 		api.NormalizeWorkflowExecutionMode(command.ExecutionMode) != api.NormalizeWorkflowExecutionMode(projections.ExecutionMode) {
 		return false, nil
 	}
 	previous := effectiveProjectionInstructions(instructions.Instructions)
 	next := effectiveProjectionInstructions(command.Instructions)
-	unchanged, err := sameProjectionInstructions(previous, next)
-	if err != nil || unchanged {
-		return false, err
-	}
 	stripAnswers := func(instructions map[api.TrackerID]api.TrackerProjectionInstructions) map[api.TrackerID]api.TrackerProjectionInstructions {
-		result := maps.Clone(instructions)
-		for trackerID, instruction := range result {
+		for trackerID, instruction := range instructions {
+			// Only common lanes have an instruction contract to compare.
+			// The builder validates each retained projection independently.
+			if !slices.Contains(command.TrackerIDs, trackerID) || !slices.Contains(selection.TrackerIDs, trackerID) {
+				delete(instructions, trackerID)
+				continue
+			}
 			instruction.Questionnaire = nil
-			result[trackerID] = instruction
+			instructions[trackerID] = instruction
 		}
-		return effectiveProjectionInstructions(result)
+		return effectiveProjectionInstructions(instructions)
 	}
 	answerOnly, err := sameProjectionInstructions(stripAnswers(previous), stripAnswers(next))
 	if err != nil || !answerOnly {
@@ -161,7 +159,7 @@ func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersComma
 	}
 	if workflow.Dupes != nil {
 		state.PendingDuplicateReuse = &PendingDuplicateReuse{Assessment: *workflow.Dupes, QuestionnaireOnly: true}
-	} else if pending != nil && pending.QuestionnaireOnly {
+	} else if pending != nil {
 		state.PendingDuplicateReuse = pending
 	}
 	return true, nil
