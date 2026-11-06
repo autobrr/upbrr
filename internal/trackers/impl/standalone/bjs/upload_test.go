@@ -9,9 +9,45 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestBuildFieldsAnonymousAttribution(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		anonymous bool
+		showGroup bool
+	}{
+		{name: "named upload"},
+		{name: "named upload ignores group preference", showGroup: true},
+		{name: "anonymous upload", anonymous: true},
+		{
+			name:      "anonymous upload shows group",
+			anonymous: true,
+			showGroup: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fields := buildFields(api.UploadSubject{}, config.TrackerConfig{
+				Anon:            tc.anonymous,
+				ShowGroupIfAnon: tc.showGroup,
+			}, "description", "auth", nil)
+			for key, enabled := range map[string]bool{
+				"anonymous":          tc.anonymous,
+				"anonymousshowgroup": tc.anonymous && tc.showGroup,
+			} {
+				value, present := fields[key]
+				if present != enabled || enabled && value != "on" {
+					t.Errorf("%s = %q (present %t), want present %t with checkbox value on", key, value, present, enabled)
+				}
+			}
+		})
+	}
+}
 
 func TestResolveRuntimePrefersMediaInfoDuration(t *testing.T) {
 	root := t.TempDir()
@@ -157,7 +193,7 @@ func TestBuildFieldsLimitsDirectorCreatorAndSetsRepack(t *testing.T) {
 		},
 	}
 
-	fields := buildFields(meta, "description", "auth", nil)
+	fields := buildFields(meta, config.TrackerConfig{}, "description", "auth", nil)
 	if got := fields["diretor"]; got != "Creator One" {
 		t.Fatalf("expected first creator only, got %q", got)
 	}
@@ -189,7 +225,7 @@ func TestBuildFieldsWithNilMetadata(t *testing.T) {
 	}
 
 	// Make sure buildFields does not panic and populates fallback title from release
-	fields := buildFields(meta, "description", "auth", nil)
+	fields := buildFields(meta, config.TrackerConfig{}, "description", "auth", nil)
 	if got := fields["title"]; got != "Test TV Title" {
 		t.Fatalf("expected title to fall back to release title, got %q", got)
 	}
@@ -265,7 +301,7 @@ func TestBuildFieldsYearLabelPreservesManualAuthorityAndTVRange(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			fields := buildFields(tc.meta, "description", "auth", nil)
+			fields := buildFields(tc.meta, config.TrackerConfig{}, "description", "auth", nil)
 			if got := fields["year"]; got != tc.want {
 				t.Fatalf("year = %q, want %q", got, tc.want)
 			}
@@ -292,7 +328,7 @@ func TestBuildFieldsWithTMDBNilAndIMDBPresent(t *testing.T) {
 		},
 	}
 
-	fields := buildFields(meta, "description", "auth", nil)
+	fields := buildFields(meta, config.TrackerConfig{}, "description", "auth", nil)
 	if got := fields["avaliacao"]; got != "8.5" {
 		t.Fatalf("expected avaliacao from IMDB, got %q", got)
 	}
@@ -327,7 +363,7 @@ func TestBuildFieldsWithTMDBPresentAndIMDBNil(t *testing.T) {
 		},
 	}
 
-	fields := buildFields(meta, "description", "auth", nil)
+	fields := buildFields(meta, config.TrackerConfig{}, "description", "auth", nil)
 	if got := fields["title"]; got != "Original Title" {
 		t.Fatalf("expected title from TMDB OriginalTitle, got %q", got)
 	}
@@ -373,7 +409,7 @@ func TestBuildFieldsWithTMDBLocalizedAndIMDBNil(t *testing.T) {
 		},
 	}
 
-	fields := buildFields(meta, "description", "auth", nil)
+	fields := buildFields(meta, config.TrackerConfig{}, "description", "auth", nil)
 	if got := fields["titulobrasileiro"]; got != "Título Localizado" {
 		t.Fatalf("expected titulobrasileiro from TMDB localized title, got %q", got)
 	}
@@ -547,7 +583,7 @@ func TestBuildFieldsTagsAnswerOverridesComputedTags(t *testing.T) {
 		Release: api.ReleaseInfo{Genre: "Drama"},
 	}
 
-	fields := buildFields(meta, "description", "auth", map[string]string{"tags": "manual.tag"})
+	fields := buildFields(meta, config.TrackerConfig{}, "description", "auth", map[string]string{"tags": "manual.tag"})
 	if got := fields["tags"]; got != "manual.tag" {
 		t.Fatalf("expected manual tags answer, got %q", got)
 	}

@@ -76,3 +76,5 @@ The older per-tracker **Internal** boolean is retained only so existing configur
 **Remove** resets the entry to catalog defaults, hides its card, and removes its default and preferred-source selections. Select **Save** to persist those changes. Unsupported preserved entries appear separately because no current implementation can use them; delete them only when you no longer need their retained config.
 
 Tracker credentials are secrets. Leave `[REDACTED]` unchanged to preserve a value. After any tracker change, check [Tracker Auth](./tracker-auth.md) and run **Dry Run** before submission.
+
+**Anonymous upload** requests anonymous attribution where the adapter supports it. **Show group when anonymous**, when available, requests release-group visibility only for an anonymous upload. An unchecked preference does not guarantee that the tracker's account default is disabled. These controls do not guarantee privacy from the tracker.
