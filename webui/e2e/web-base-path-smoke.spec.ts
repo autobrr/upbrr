@@ -808,7 +808,10 @@ test.describe("Contextual help outside Settings", () => {
       await expect(provider).toHaveAccessibleDescription(/numeric content ID/);
       await checkFloatingHelp("TMDB ID", provider);
       const providerHelp = page.getByRole("button", { name: "Help for TMDB ID", exact: true });
-      await provider.focus();
+      // Complete the pointer action's scroll before testing keyboard help.
+      // Programmatic focus can leave a scroll event that dismisses the tooltip.
+      await provider.tap();
+      await expect(provider).toBeFocused();
       await provider.press("Shift+Tab");
       await expect(providerHelp).toBeFocused();
       await expect(tooltip).toBeVisible();
