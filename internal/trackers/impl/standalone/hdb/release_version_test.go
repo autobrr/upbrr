@@ -180,7 +180,7 @@ func TestHDBReleaseVersionInvalidatesRetainedCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	retained, err := (api.TrackerCatalogSnapshot{CatalogVersion: "tracker-projection-v1", Trackers: descriptors}).WithFingerprint()
+	retained, err := (api.TrackerCatalogSnapshot{CatalogVersion: "tracker-projection-v2", Trackers: descriptors}).WithFingerprint()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestHDBReleaseVersionInvalidatesRetainedCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := (api.TrackerCatalogSnapshot{CatalogVersion: "tracker-projection-v1", Trackers: descriptors}).WithFingerprint()
+	current, err := (api.TrackerCatalogSnapshot{CatalogVersion: "tracker-projection-v2", Trackers: descriptors}).WithFingerprint()
 	if err != nil {
 		t.Fatal(err)
 	}

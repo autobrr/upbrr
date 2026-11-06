@@ -412,7 +412,7 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 | `--stream`            | `-stream`, `-st`             | Mark release as stream optimized.                                       |
 | `--webdv`             | `-webdv`                     | Mark release as WEB-DV.                                                 |
 | `--anime`             | `-anime`                     | Explicitly set anime handling; `false` clears the anime classification. |
-| `--anon`              | `-anon`, `-a`                | Upload anonymously.                                                     |
+| `--anon`              | `-anon`, `-a`                | Request anonymous attribution where the tracker adapter supports it.    |
 | `--draft`             | `-draft`, `-dr`              | Send to drafts where supported.                                         |
 | `--modq`              | `-modq`, `-mq`               | Opt into mod queue where supported.                                     |
 

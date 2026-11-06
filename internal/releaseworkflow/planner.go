@@ -242,6 +242,28 @@ func (m *Module) Continue(
 		accepted.PreparationOperationID = operation.ID
 		return accepted, currentErr
 	}
+	if command, refreshErr := m.planCatalogRefresh(request, current, m.clock.Now().UTC()); refreshErr != nil {
+		return CommandResult{}, refreshErr
+	} else if command != nil {
+		// Match the original optional request before selecting saved inputs, which
+		// can contain effective facts resolved after the request was fingerprinted.
+		if continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
+			input := request.Intent.Preparation
+			if input == nil {
+				input = state.PreparationInput
+			}
+			if input != nil {
+				if err := m.hydrateContinuationPreparedRelease(ctx, ownerID, current, *input, state.PreparationDemand); err != nil {
+					return CommandResult{}, err
+				}
+			}
+		}
+		operation, startErr := m.Start(ctx, ownerID, command)
+		if startErr != nil {
+			return CommandResult{}, fmt.Errorf("release workflow refresh projection catalog: %w", startErr)
+		}
+		return m.Current(ctx, ownerID, operation.WorkflowID)
+	}
 	if request.TrackerApproval != nil {
 		result, approveErr := m.Execute(ctx, ownerID, ApproveTrackersCommand{
 			WorkflowID:       current.Workflow.ID,
@@ -916,11 +938,16 @@ func planContinuationCommandWithReadiness(
 	}
 	if current.Projections == nil || !trackerIntentMatches(request.Intent, current) ||
 		(request.Goal == api.WorkflowGoalTrackersProjected && !trackerProjectionGoalSatisfied(current)) {
+		instructions := request.Intent.ProjectionInstructions
+		// Omission retains saved choices; an explicit empty map clears them.
+		if instructions == nil && current.ProjectionInstructions != nil {
+			instructions = current.ProjectionInstructions.Instructions
+		}
 		return ProjectTrackersCommand{
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
 			TrackerIDs:       trackerIDs,
-			Instructions:     request.Intent.ProjectionInstructions,
+			Instructions:     instructions,
 			ExecutionMode:    request.Intent.ExecutionMode,
 			IdempotencyKey:   key("project-trackers"),
 		}, "project-trackers"

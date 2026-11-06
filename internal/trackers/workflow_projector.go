@@ -156,7 +156,7 @@ func (p *WorkflowProjector) catalogSnapshot() (api.TrackerCatalogSnapshot, error
 	if err != nil {
 		return api.TrackerCatalogSnapshot{}, err
 	}
-	catalog, err := (api.TrackerCatalogSnapshot{CatalogVersion: "tracker-projection-v1", Trackers: descriptors}).WithFingerprint()
+	catalog, err := (api.TrackerCatalogSnapshot{CatalogVersion: "tracker-projection-v2", Trackers: descriptors}).WithFingerprint()
 	if err != nil {
 		return api.TrackerCatalogSnapshot{}, fmt.Errorf("trackers: catalog fingerprint: %w", err)
 	}
