@@ -385,42 +385,56 @@ func TestDuplicateReuseSelectionRetainsBaselineAndWithdrawsApproval(t *testing.T
 	module, repository, builder, current := newDuplicateReuseWorkflow(t)
 	baseline := *current.Workflow.Dupes
 	initial, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	initial.TrackerDecisionMode = TrackerDecisionModePostDupeGate
 	initial.Workflow.Revision++
-	if err := repository.Save(t.Context(), testOwnerID, current.Workflow.Revision, initial); err != nil { t.Fatal(err) }
+	if err := repository.Save(t.Context(), testOwnerID, current.Workflow.Revision, initial); err != nil {
+		t.Fatal(err)
+	}
 	current.Workflow = initial.Workflow
 	approve := func(trackers []api.TrackerID) {
 		t.Helper()
 		state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		action, _, err := projectedTrackerApprovalAction(&state, module.clock.Now())
-		if err != nil || action == nil { t.Fatalf("approval action: %v", err) }
+		if err != nil || action == nil {
+			t.Fatalf("approval action: %v", err)
+		}
 		dupes := state.Dupes[state.Workflow.Dupes.ID]
 		current = executeCommand(t, module, ApproveTrackersCommand{
-			WorkflowID: current.Workflow.ID,
- ExpectedRevision: current.Workflow.Revision,
+			WorkflowID:       current.Workflow.ID,
+			ExpectedRevision: current.Workflow.Revision,
 			Approval: api.TrackerApproval{
-ActionID: action.ID,
- Dupes: *state.Workflow.Dupes,
+				ActionID:         action.ID,
+				Dupes:            *state.Workflow.Dupes,
 				InputFingerprint: dupes.InputFingerprint,
- TrackerIDs: trackers,
-},
+				TrackerIDs:       trackers,
+			},
 		})
 	}
 	approve([]api.TrackerID{"ALPHA", "BETA"})
 	current = executeCommand(t, module, ProjectTrackersCommand{
-		WorkflowID: current.Workflow.ID,
- ExpectedRevision: current.Workflow.Revision,
-		TrackerIDs: []api.TrackerID{"BETA"},
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"BETA"},
 	})
 	state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	// The persistence round trip must retain evidence, never the prior approval.
 	record, err := workflowStateRecord(testOwnerID, state)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	state, err = decodeWorkflowState(record)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if state.PendingDuplicateReuse == nil || state.PendingDuplicateReuse.Assessment != baseline ||
 		state.Workflow.TrackerApproval != nil || state.Workflow.Dupes != nil ||
 		state.Workflow.Media != nil || state.Workflow.DryRun != nil {
@@ -432,7 +446,9 @@ ActionID: action.ID,
 	}
 	reuse, err := module.pendingDuplicateReuse(testOwnerID, &state,
 		state.Projections[state.Workflow.TrackerProjections.ID], CheckDuplicatesCommand{}, module.clock.Now())
-	if err != nil || reuse == nil || reuse.PrivateEvidence == nil { t.Fatalf("persisted reuse unavailable: %v", err) }
+	if err != nil || reuse == nil || reuse.PrivateEvidence == nil {
+		t.Fatalf("persisted reuse unavailable: %v", err)
+	}
 	current = executeCommand(t, module, PreflightTrackersCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
 	current = executeCommand(t, module, CheckDuplicatesCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
 	if builder.full != 1 || len(builder.reuses) != 1 || len(current.Dupes.Results) != 1 || current.Workflow.TrackerApproval != nil {
