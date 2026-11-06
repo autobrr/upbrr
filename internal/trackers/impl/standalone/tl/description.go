@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -55,32 +56,30 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	}
 
 	// menu
-	if len(assets.MenuImages) > 0 {
+	if shots := screenshotBlock(assets.MenuImages); !nativeRehosting(req.TrackerConfig) && shots != "" {
 		// header
 		if header := strings.TrimSpace(req.Runtime.Description.DiscMenuHeader); header != "" {
 			parts = append(parts, header)
 		}
 		// images
-		if shots := screenshotBlock(assets.MenuImages); shots != "" {
-			parts = append(parts, shots)
-		}
+		parts = append(parts, shots)
 	}
 	if audioAnalysis != "" {
 		parts = append(parts, audioAnalysis)
 	}
-	// Screenshot Header
-	if header := strings.TrimSpace(req.Runtime.Description.ScreenshotHeader); header != "" {
-		parts = append(parts, header)
-	}
-
-	// Tonemapped Header
-	if tonemapHeader := descriptionunit3d.TonemappingNotice(req.Runtime.Description.TonemappedHeader, assets.Screenshots); tonemapHeader != "" {
-		parts = append(parts, tonemapHeader)
-	}
-
-	// screenshots
 	if shots := screenshotBlock(assets.Screenshots); shots != "" {
-		parts = append(parts, shots)
+		embed := !nativeRehosting(req.TrackerConfig)
+		if embed {
+			if header := strings.TrimSpace(req.Runtime.Description.ScreenshotHeader); header != "" {
+				parts = append(parts, header)
+			}
+		}
+		if notice := descriptionunit3d.TonemappingNotice(req.Runtime.Description.TonemappedHeader, assets.Screenshots); notice != "" {
+			parts = append(parts, notice)
+		}
+		if embed {
+			parts = append(parts, shots)
+		}
 	}
 
 	// custom user signature
@@ -117,11 +116,19 @@ func tvmazeURL(meta api.UploadSubject) string {
 	return fmt.Sprintf("https://www.tvmaze.com/shows/%d", meta.Identity.TVmazeID)
 }
 
-func screenshots(images []api.ScreenshotImage) []string {
-	out := make([]string, 0, len(images))
-	for _, image := range images {
-		if raw := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL)); raw != "" {
-			out = append(out, raw)
+func nativeRehosting(cfg config.TrackerConfig) bool {
+	return !cfg.APIUpload && cfg.ImgRehost
+}
+
+func screenshots(groups ...[]api.ScreenshotImage) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, images := range groups {
+		for _, image := range images {
+			if raw := metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL); raw != "" && !seen[raw] {
+				out = append(out, raw)
+				seen[raw] = true
+			}
 		}
 	}
 	return out
@@ -132,6 +139,7 @@ func screenshotBlock(images []api.ScreenshotImage) string {
 		return ""
 	}
 	parts := []string{"<center>"}
+	count := 0
 	for idx, image := range images {
 		img := metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL)
 		web := metautil.FirstNonEmptyTrimmed(image.WebURL, img)
@@ -139,9 +147,13 @@ func screenshotBlock(images []api.ScreenshotImage) string {
 			continue
 		}
 		parts = append(parts, `<a href="`+web+`"><img src="`+img+`" style="max-width: 350px;"></a>`)
+		count++
 		if (idx+1)%2 == 0 {
 			parts = append(parts, "<br><br>")
 		}
+	}
+	if count == 0 {
+		return ""
 	}
 	parts = append(parts, "</center>")
 	return strings.Join(parts, "  ")

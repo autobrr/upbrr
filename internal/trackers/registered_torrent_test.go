@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/autobrr/go-torrent/metainfo"
@@ -40,6 +41,26 @@ func TestPersistRegisteredTorrentPreservesExactBytes(t *testing.T) {
 	}
 }
 
+func TestReconstructedRegisteredTorrentAdditionalAnnounces(t *testing.T) {
+	t.Parallel()
+	for _, additional := range [][]string{nil, {"", " https://alternate.invalid/announce ", "https://primary.invalid/announce", "https://alternate.invalid/announce"}} {
+		source, output := filepath.Join(t.TempDir(), "prepared.torrent"), filepath.Join(t.TempDir(), "registered.torrent")
+		prepared := metainfo.MetaInfo{Announce: "https://inherited.invalid/announce", InfoBytes: testInfoBytes(t, "REGISTERED")}
+		writeTestMetaInfo(t, source, prepared)
+		if PersistReconstructedRegisteredTorrent(nil, "EXAMPLE", source, output, "https://primary.invalid/announce", "REGISTERED", "https://tracker.invalid/torrent/42", additional...) != output {
+			t.Fatal("artifact missing")
+		}
+		retained := readTestMetaInfo(t, output)
+		want := []string{"https://primary.invalid/announce"}
+		if additional != nil {
+			want = append(want, "https://alternate.invalid/announce")
+		}
+		if retained.Announce != want[0] || len(retained.AnnounceList) != 1 || !slices.Equal(retained.AnnounceList[0], want) || retained.HashInfoBytes() != prepared.HashInfoBytes() || retained.Comment != "uploaded with upbrr\nhttps://tracker.invalid/torrent/42" {
+			t.Fatal("registered announce tiers, identity or comment changed")
+		}
+	}
+}
+
 func TestReconstructedRegisteredTorrentUsesDestinationPageComment(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct{ name, url, comment string }{
@@ -49,10 +70,10 @@ func TestReconstructedRegisteredTorrentUsesDestinationPageComment(t *testing.T) 
 			comment: "uploaded with upbrr\nhttps://tracker.invalid/details.php?id=42",
 		},
 		{
-name: "unusable relative URL",
- url: "/details/42",
- comment: "uploaded with upbrr",
-},
+			name:    "unusable relative URL",
+			url:     "/details/42",
+			comment: "uploaded with upbrr",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -44,6 +45,8 @@ func (b workflowPreflightBuilder) assessTitleSearchRules(
 		policy := provider.TitleSearchPolicy()
 		trackerSubject := trackers.FilterImportedScreenshotEvidenceForTrackerWithRegistry(b.registry, b.config, string(projection.TrackerID), subject)
 		validation := api.NewTrackerValidationSubject(trackerSubject, string(projection.TrackerID))
+		trackerConfig, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, string(projection.TrackerID))
+		validation.APIUpload = trackerConfig.APIUpload
 		validation.FinalizedUploadName = projection.UploadReleaseName
 		if policy.ID == "" || policy.Required == nil || !policy.Required(validation) {
 			continue

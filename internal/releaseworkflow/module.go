@@ -524,7 +524,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 			m.private.Delete(ownerID, state.Workflow.ID, hdrMeasurementPrivateResourceID(id))
 		}
 	}
-	if result.Dupes != nil {
+	if result.Dupes != nil || state.effectResolution != nil {
 		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
 	}
 	if priorDuplicateReuse != nil && (state.PendingDuplicateReuse == nil ||
@@ -1996,6 +1996,22 @@ func (m *Module) recoverOperationAfterLease(
 	if state.Workflow.Revision != current.ExpectedRevision && !commandCommitted && !compositeValid {
 		return m.interruptRecoveredOperation(ctx, current, "The retained operation authority is stale.")
 	}
+	_, rebuildingProjections := capsule.command.(ProjectTrackersCommand)
+	if !commandCommitted && !rebuildingProjections {
+		switch capsule.command.operationKind() {
+		case api.OperationKindDuplicateCheck, api.OperationKindMedia, api.OperationKindImageHosting,
+			api.OperationKindDescription, api.OperationKindUploadDryRun, api.OperationKindUploadExecute:
+			stale, policyErr := m.staleTrackerPolicies(state)
+			if policyErr != nil {
+				return policyErr
+			}
+			if len(stale) > 0 {
+				return m.interruptRecoveredOperation(ctx, current, "Tracker policies changed; rebuild projections before retrying this stage.")
+			}
+		case api.OperationKindUnknown, api.OperationKindPreparation, api.OperationKindDryRun,
+			api.OperationKindClientInjection, api.OperationKindHDRAnalysis, api.OperationKindAudioAnalysis:
+		}
+	}
 	if hdrCommand, hdr := capsule.command.(AnalyzeHDRCommand); hdr && !commandCommitted {
 		m.private.Delete(current.OwnerID, current.WorkflowID, hdrAnalysisPrivateResourceID(string(current.OperationID)))
 		if cleaner, ok := m.hdrAnalysisBuilder.(HDRAnalysisAttemptCleaner); ok {
@@ -3283,22 +3299,30 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	if state.ProcessEpoch == m.processEpoch {
 		return nil
 	}
-	if recovered, _ := ctx.Value(recoveredOperationContextKey{}).(bool); recovered {
-		state.ProcessEpoch = m.processEpoch
-		return nil
+	inFlight, _ := ctx.Value(recoveredOperationContextKey{}).(bool)
+	if !inFlight {
+		operations, err := m.operations.ListActiveOperations(ctx)
+		if err != nil {
+			return fmt.Errorf("release workflow list active operations during restart recovery: %w", err)
+		}
+		inFlight = slices.ContainsFunc(operations, func(operation api.ReleaseWorkflowOperationRecord) bool {
+			return operation.OwnerID == ownerID && operation.WorkflowID == state.Workflow.ID && operation.ProcessEpoch == m.processEpoch
+		})
 	}
-	operations, err := m.operations.ListActiveOperations(ctx)
+	stalePolicies, err := m.staleTrackerPolicies(*state)
 	if err != nil {
-		return fmt.Errorf("release workflow list active operations during restart recovery: %w", err)
+		return err
 	}
-	if slices.ContainsFunc(operations, func(operation api.ReleaseWorkflowOperationRecord) bool {
-		return operation.OwnerID == ownerID && operation.WorkflowID == state.Workflow.ID && operation.ProcessEpoch == m.processEpoch
-	}) {
-		state.ProcessEpoch = m.processEpoch
+	if inFlight {
+		// Finish/reconcile already-started work before withdrawing dependencies,
+		// but do not certify obsolete policy state as current when it commits.
+		if len(stalePolicies) == 0 {
+			state.ProcessEpoch = m.processEpoch
+		}
 		return nil
 	}
 	authRetryRequired, obsoletePreflightActions := currentPreflightAuthRetry(*state)
-	if !workflowNeedsRestartRecovery(*state) && !authRetryRequired {
+	if !workflowNeedsRestartRecovery(*state) && !authRetryRequired && len(stalePolicies) == 0 {
 		state.ProcessEpoch = m.processEpoch
 		return nil
 	}
@@ -3362,6 +3386,9 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	reconciliationPending := slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
 	})
+	if len(stalePolicies) > 0 {
+		invalidateStaleTrackerPolicies(state, stalePolicies, nextRevision, now)
+	}
 	if err := m.invalidateUnavailablePrivateAuthority(ownerID, workflow, now); err != nil {
 		return err
 	}
@@ -8983,9 +9010,29 @@ func (m *Module) resolveAction(
 			Expected: expected,
 		}
 		if action.EffectKind == api.WorkflowExternalEffectImageHosting {
+			state.Workflow.RequiredActions = slices.Delete(state.Workflow.RequiredActions, index, index+1)
+			remainingActions := slices.Clone(state.Workflow.RequiredActions)
+			// Check deferred policy before publishing a revision of shared media.
+			if err := m.recheckReconciledTrackerPolicies(state, nextRevision, now); err != nil {
+				return CommandResult{}, err
+			}
 			result, err := m.resolveImageHostingAction(ctx, ownerID, state, nextRevision, now, action)
 			if err != nil {
 				return CommandResult{}, err
+			}
+			// Recovery can retain uncertain effects only on the workflow, outside
+			// the media snapshot. Publication must not discard those actions.
+			for _, pending := range remainingActions {
+				if pending.Kind != api.RequiredActionReconcileSubmission || pending.Status != api.RequiredActionStatusPending {
+					continue
+				}
+				if !slices.ContainsFunc(state.Workflow.RequiredActions, func(current api.RequiredAction) bool { return current.ID == pending.ID }) {
+					pending.WorkflowRevision = nextRevision
+					state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, pending)
+				}
+			}
+			if hasPendingRequiredAction(state.Workflow.RequiredActions) {
+				state.Workflow.Status = api.WorkflowStatusBlocked
 			}
 			if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
 				return CommandResult{}, fmt.Errorf("release workflow reconcile image-host private authority: %w", err)
@@ -9017,6 +9064,9 @@ func (m *Module) resolveAction(
 	}
 	state.Workflow.RequiredActions = slices.Delete(state.Workflow.RequiredActions, index, index+1)
 	if action.Kind == api.RequiredActionReconcileSubmission {
+		if err := m.recheckReconciledTrackerPolicies(state, nextRevision, now); err != nil {
+			return CommandResult{}, err
+		}
 		if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow reconcile private authority: %w", err)
 		}
@@ -9139,6 +9189,10 @@ func (m *Module) resolveImageHostingAction(
 	if !ok || snapshot.Revision != mediaRef.Revision {
 		finishUnavailableImageHostingReconciliation(&state.Workflow, action)
 		return CommandResult{}, nil
+	}
+	snapshot, err := snapshot.Clone()
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow clone reconciled media: %w", err)
 	}
 	value, err := m.private.Get(ownerID, state.Workflow.ID, mediaPrivateResourceID(mediaRef.ID), now)
 	if err != nil {

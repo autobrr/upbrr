@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/tl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -30,6 +31,54 @@ type workflowPreflightAuthFake struct {
 	capabilityCalls *int
 	validateCalls   *int
 	validatedIDs    *[]string
+}
+
+func TestTLPreflightResourceRevalidationRetainsAPIUploadMode(t *testing.T) {
+	t.Parallel()
+	registry := trackerspkg.NewRegistry()
+	if err := registry.Register(tl.New()); err != nil {
+		t.Fatal(err)
+	}
+	for _, apiUpload := range []bool{false, true} {
+		cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TL": {APIUpload: apiUpload}}}}
+		subject := api.UploadSubject{
+			Anime:        true,
+			ReleaseName:  "Example.Show.S01E01.1080p.WEB-DL-GRP",
+			SceneNFOPath: filepath.Join(t.TempDir(), "missing.nfo"),
+			Identity: api.ExternalIdentity{
+				Category: api.CanonicalCategoryTV,
+				MALID:    111,
+				IMDBID:   456,
+			},
+			ProviderMetadata: api.SourceScopedMetadata{AniList: &api.AniListMetadata{MALID: 111, AniListID: 222}, IMDB: &api.IMDBMetadata{IMDBID: 456, Title: "Example Show"}},
+		}
+		projection, failure := registry.ProjectRelease(t.Context(), trackerspkg.PreparationInput{
+			Tracker:       "TL",
+			Meta:          subject,
+			TrackerConfig: cfg.Trackers.Trackers["TL"],
+		}, "input", "catalog", "config")
+		if failure != nil || !projection.DupeReady {
+			t.Fatalf("initial projection=%+v failure=%v", projection, failure)
+		}
+		// A changed local resource triggers preflight's production rule-evaluation path.
+		// Its API mapping requirement must survive construction of a fresh subject.
+		subject.ProviderMetadata.AniList = nil
+		builder := workflowPreflightBuilder{
+			config:   cfg,
+			registry: registry,
+			auth: workflowPreflightAuthFake{
+				capabilities: []api.TrackerAuthCapability{{TrackerID: "TL"}},
+				statuses:     []api.TrackerAuthStatus{{TrackerID: "TL", State: trackerauth.StateConfigured}},
+			},
+		}
+		_, finalized, err := builder.Build(t.Context(), subject, api.TrackerCatalogSnapshot{Trackers: []api.TrackerCatalogDescriptor{{TrackerID: "TL"}}}, api.TrackerRuntimeSnapshot{}, api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{projection}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(finalized) != 1 || finalized[0].DupeReady == apiUpload {
+			t.Fatalf("api=%t finalized=%+v", apiUpload, finalized)
+		}
+	}
 }
 
 type workflowPreflightImagesFake struct{ links []api.ScreenshotLinkedImage }

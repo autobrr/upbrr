@@ -576,7 +576,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					}
 				case "TL":
 					if r.URL.EscapedPath() == "/torrents/browse/list/query/Example%20Release%202026" {
-						_, _ = w.Write([]byte(`{"torrentList":[]}`))
+						_, _ = w.Write([]byte(`{"numFound":0,"page":1,"perPage":100,"torrentList":[]}`))
 						return
 					}
 				}
