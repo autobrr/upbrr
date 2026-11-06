@@ -132,6 +132,8 @@ After you answer tracker questions, the CLI rebuilds the affected tracker stages
 
 Trackers with a confirmed upload of the same verified submitted content are excluded before duplicate checks. If every selected tracker is already uploaded, the command succeeds without another approval prompt or submission. See [the upload workflow](../workflow/index.md#4-review-duplicate-evidence).
 
+Final upload results report tracker submission and client injection separately, including failed and skipped submissions. An accepted upload remains accepted when client injection or local receipt retention fails. Inspect the reported failure and the torrent client before retrying; do not resubmit an accepted upload to repair client delivery. Printed debug/site-check reports also include retained preparation failures and the actual client injection outcome. The TUI includes these explanations in its tracker details and final summary; long queue summaries retain bounded excerpts.
+
 | Option                     | Behavior                                                                                                                                      |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--debug`                  | Runs preparation and payload preview without tracker submission. Image uploads and client injection remain enabled unless explicitly skipped. |
