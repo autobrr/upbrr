@@ -247,7 +247,7 @@ test("CLI debug injects into the client by default", async () => {
       "y\ny\n",
     );
     expect(debug.code, debug.output).toBe(0);
-    expect(debug.output).toContain("client injection was attempted for each ready tracker");
+    expect(debug.output).toContain("client injection: completed:");
     expect(workspace.fake.counters.trackerUploads).toBe(0);
     expect(workspace.fake.counters.clientInjections).toBe(1);
   } finally {

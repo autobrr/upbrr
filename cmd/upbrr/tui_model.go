@@ -573,6 +573,9 @@ func (m *cliTUIModel) refreshPanels() {
 			fmt.Fprintf(&trackers, " (%s)", strings.Join(strings.Fields(lane.Reason), " "))
 		}
 		trackers.WriteByte('\n')
+		if lane.ShowDetail && lane.Detail != "" {
+			fmt.Fprintf(&trackers, "  %s\n", lane.Detail)
+		}
 	}
 	m.panels[cliPanelTrackers].SetContent(trackers.String())
 	m.panels[cliPanelRelease].SetContent(strings.TrimSpace(m.view.Summary))
