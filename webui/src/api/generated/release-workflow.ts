@@ -278,6 +278,10 @@ export type BlurayVideoSpec = Readonly<{
   Resolution: string;
 }>;
 
+export type CancelActiveInputOpenRequest = Readonly<{
+  idempotencyKey: string;
+}>;
+
 export type CancelReleaseWorkflowRequest = Readonly<{
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;

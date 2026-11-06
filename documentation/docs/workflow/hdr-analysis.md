@@ -29,7 +29,7 @@ Audio and picture checks require FFmpeg. Picture checks also require supported c
 
 Information icons beside the target heading, options, actions and results explain scope, units and retained-work behavior. Help supports pointer, keyboard focus and touch, and does not select targets or start work. Required evidence and coverage limitations remain visible inline.
 
-Opening the page does not start analysis. **Cancel** requests cancellation. After the request is accepted, the status line shows “Cancellation requested.” until the operation finishes; work remains active while it stops. **Retry** reuses retained work where compatible; **Resume** appears for a retained pending request.
+Opening the page does not start analysis. **Cancel** requests cancellation. After the request is accepted, the status line shows “Cancellation requested.” until the operation finishes; work remains active while it stops. If the request cannot be confirmed, use **Retry cancellation** while progress remains visible. **Retry** reuses retained work where compatible; **Resume** appears for a retained pending request.
 
 ### Choose native formats
 

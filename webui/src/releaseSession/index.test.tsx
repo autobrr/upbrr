@@ -29,6 +29,7 @@ import type {
   WorkflowContinuation,
 } from "../api/generated/release-workflow";
 import { ReleaseSessionProvider, routeAccess, useReleaseSession } from ".";
+import { WorkflowCancellation } from "../components/WorkflowCancellation";
 import DescriptionBuilderPage from "../pages/description_builder";
 import ScreenshotsPage from "../pages/screenshots";
 import DupeCheckPage from "../pages/dupe_check";
@@ -38,6 +39,8 @@ import BlurayCandidatesPage from "../pages/bluray_candidates";
 import type { ReleaseSessionPorts } from "./ports";
 import { setAppRequestHandlerForTests } from "../api/client";
 import { productionReleaseSessionPorts } from "./production";
+
+afterEach(() => window.sessionStorage.removeItem("upbrr.cancellingReleaseOperation"));
 
 const preview = (sourcePath: string, generation: number): MetadataPreview => ({
   SourcePath: sourcePath,
@@ -73,6 +76,9 @@ const portsFor = (overrides: PortOverrides = {}): ReleaseSessionPorts => {
   return {
     providerSearch: { search: async (Query, Category) => ({ Query, Category, Providers: [] }) },
     activeInput: {
+      cancelOpen: async () => {
+        throw new Error("Synthetic open already accepted.");
+      },
       get: async (signal) => {
         const workflowID = overrides.resumeWorkflowID?.trim();
         if (!workflowID) return { state: "empty", revision: 0 };
@@ -1187,7 +1193,10 @@ describe("useReleaseSession", () => {
       };
       let current = ready;
       const acknowledgement = createDeferred<WorkflowOperationStatus>();
-      const cancelOperation = vi.fn(() => acknowledgement.promise);
+      const retryAcknowledgement = createDeferred<WorkflowOperationStatus>();
+      const cancelOperation = vi
+        .fn(() => retryAcknowledgement.promise)
+        .mockImplementationOnce(() => acknowledgement.promise);
       const { result, unmount } = renderHook(useReleaseSession, {
         wrapper: ({ children }) => (
           <ReleaseSessionProvider
@@ -1202,6 +1211,7 @@ describe("useReleaseSession", () => {
             })}
           >
             {children}
+            <WorkflowCancellation />
             <HDRSurface />
           </ReleaseSessionProvider>
         ),
@@ -1220,8 +1230,13 @@ describe("useReleaseSession", () => {
         await act(async () => {});
         let cancellation!: Promise<boolean>;
         act(() => {
-          cancellation = result.current.hdrAnalysis.cancel();
+          cancellation =
+            outcome === "completed"
+              ? result.current.workflow.cancel()
+              : result.current.hdrAnalysis.cancel();
         });
+        expect(result.current.workflow.cancellation.pending).toBe(true);
+        expect(screen.getByRole("button", { name: "Cancelling…" })).toBeDisabled();
         expect(screen.getByText("Inspecting HDR source. (20%)")).toBeInTheDocument();
         expect(cancelOperation).toHaveBeenCalledWith(
           workflowID,
@@ -1231,51 +1246,68 @@ describe("useReleaseSession", () => {
         if (outcome === "rejected") {
           await act(async () => {
             acknowledgement.reject(new Error("Cancellation unavailable."));
-            expect(await cancellation).toBe(false);
           });
           expect(result.current.hdrAnalysis.view.error).toContain("could not be canceled");
           expect(screen.queryByText(/Cancellation requested/)).toBeNull();
-        } else {
-          await act(async () => acknowledgement.resolve(operation));
-          expect(screen.getByText("Cancellation requested. (20%)")).toBeInTheDocument();
+          expect(result.current.workflow.cancellation.pending).toBe(true);
+          expect(result.current.hdrAnalysis.view.status).toBe("running");
           current = {
             ...current,
-            operation: { ...operation, sequence: 2, progress: 40, message: "Scanning frames." },
+            operation: { ...operation, sequence: 2, progress: 30, message: "Scanning frames." },
           };
           await act(async () => vi.advanceTimersByTimeAsync(1000));
-          expect(screen.getByText("Cancellation requested. (40%)")).toBeInTheDocument();
-          current = {
-            ...current,
-            operation: {
-              ...operation,
-              status: outcome,
-              sequence: 3,
-              message: "HDR work finished.",
-            },
-          };
-          await act(async () => {
-            await vi.advanceTimersByTimeAsync(1000);
-            expect(await cancellation).toBe(true);
-          });
-          expect(result.current.hdrAnalysis.view.status).not.toBe("running");
-          expect(result.current.hdrAnalysis.view.message).toBe("HDR work finished.");
-          expect(screen.queryByText(/Cancellation requested/)).toBeNull();
-          current = { ...ready, operation: { ...operation, id: "hdr-next-operation" } };
-          let nextGeneration!: Promise<boolean>;
+          expect(result.current.hdrAnalysis.view.error).toContain("could not be canceled");
+          expect(screen.getByText("Scanning frames. (30%)")).toBeInTheDocument();
           act(() => {
-            nextGeneration = result.current.hdrAnalysis.generate({
-              targetIDs: ["hdr-target"],
-              peakSource: "histogram",
-            });
+            fireEvent.click(screen.getByRole("button", { name: "Retry cancellation" }));
           });
-          await act(async () => {});
-          expect(screen.getByText("Inspecting HDR source. (20%)")).toBeInTheDocument();
-          current = { ...current, operation: { ...current.operation!, status: "completed" } };
-          await act(async () => {
-            await vi.advanceTimersByTimeAsync(1000);
-            await nextGeneration;
-          });
+          expect(cancelOperation).toHaveBeenCalledTimes(2);
+          expect(cancelOperation.mock.calls[1]).toEqual(cancelOperation.mock.calls[0]);
+          await act(async () => retryAcknowledgement.resolve(operation));
+        } else {
+          await act(async () => acknowledgement.resolve(operation));
         }
+        expect(result.current.hdrAnalysis.view.error).toBe("");
+        expect(
+          screen.getByText(`Cancellation requested. (${outcome === "rejected" ? 30 : 20}%)`),
+        ).toBeInTheDocument();
+        current = {
+          ...current,
+          operation: { ...operation, sequence: 3, progress: 40, message: "Scanning frames." },
+        };
+        await act(async () => vi.advanceTimersByTimeAsync(1000));
+        expect(screen.getByText("Cancellation requested. (40%)")).toBeInTheDocument();
+        current = {
+          ...current,
+          operation: {
+            ...operation,
+            status: outcome === "rejected" ? "canceled" : outcome,
+            sequence: 4,
+            message: "HDR work finished.",
+          },
+        };
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+          expect(await cancellation).toBe(true);
+        });
+        expect(result.current.hdrAnalysis.view.status).not.toBe("running");
+        expect(result.current.hdrAnalysis.view.message).toBe("HDR work finished.");
+        expect(screen.queryByText(/Cancellation requested/)).toBeNull();
+        current = { ...ready, operation: { ...operation, id: "hdr-next-operation" } };
+        let nextGeneration!: Promise<boolean>;
+        act(() => {
+          nextGeneration = result.current.hdrAnalysis.generate({
+            targetIDs: ["hdr-target"],
+            peakSource: "histogram",
+          });
+        });
+        await act(async () => {});
+        expect(screen.getByText("Inspecting HDR source. (20%)")).toBeInTheDocument();
+        current = { ...current, operation: { ...current.operation!, status: "completed" } };
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+          await nextGeneration;
+        });
         await act(() => generation);
       } finally {
         unmount();
@@ -2310,23 +2342,45 @@ describe("useReleaseSession", () => {
     unmount();
   });
 
-  it("correlates source-verification progress to Open and cancels its request", async () => {
+  it("correlates source verification and cancels its accepted operation before continuing", async () => {
     let onVerification: Parameters<ReleaseSessionPorts["activeInput"]["subscribe"]>[1] = () =>
       undefined;
+    const accepted = createDeferred<ActiveInputSnapshot>();
+    const verificationCancellation = createDeferred<ActiveInputSnapshot>();
+    const operation: WorkflowOperationStatus = {
+      id: "source-verification-operation",
+      workflowId: "workflow-verification",
+      revision: 1,
+      sequence: 1,
+      command: "prepare",
+      operation: "preparation",
+      status: "running",
+      completed: 0,
+      total: 1,
+      progress: 0,
+      startedAt: "2026-07-20T00:00:00Z",
+      updatedAt: "2026-07-20T00:00:00Z",
+    };
+    const canceled = { ...operation, status: "canceled" as const };
+    const current = { ...workflowCurrent(operation.workflowId, 1), operation: canceled };
+    const cancelOperation = vi.fn(async () => canceled);
     const open = vi.fn(
-      async (_request, signal: AbortSignal): Promise<never> =>
-        new Promise((_, reject) => {
-          const rejectAbort = () =>
-            reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
-          if (signal.aborted) rejectAbort();
-          else signal.addEventListener("abort", rejectAbort, { once: true });
-        }),
+      async (
+        _request: Parameters<ReleaseSessionPorts["activeInput"]["open"]>[0],
+        _signal: AbortSignal,
+      ) => accepted.promise,
     );
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
+          workflow: workflowPorts({
+            cancelOperation,
+            current: async () => current,
+            operation: async () => canceled,
+          }),
           activeInput: {
             open,
+            cancelOpen: async () => verificationCancellation.promise,
             subscribe: (_onChange, nextVerification) => {
               onVerification = nextVerification;
               return () => undefined;
@@ -2359,10 +2413,34 @@ describe("useReleaseSession", () => {
     });
 
     act(() => result.current.input.cancelPreparation());
-    await act(async () => expect(await preparation).toBe(false));
+    expect(result.current.workflow.cancellation.pending).toBe(true);
+    expect(open.mock.calls[0][1].aborted).toBe(false);
+    expect(cancelOperation).not.toHaveBeenCalled();
+    await act(async () => {
+      accepted.resolve({
+        state: "active",
+        revision: 1,
+        inputId: "owned-input",
+        sourceVersion: "owned-version",
+        current: { ...current, operation },
+      });
+      expect(await preparation).toBe(false);
+    });
+    expect(cancelOperation).toHaveBeenCalledWith(
+      operation.workflowId,
+      operation.id,
+      expect.any(AbortSignal),
+    );
     expect(open.mock.calls[0][1].aborted).toBe(true);
     expect(result.current.input.view.sourceVerification).toBeNull();
     expect(result.current.input.view.status).toBe("cancelled");
+    expect(result.current.input.view.activeInput.inputID).toBe("owned-input");
+    expect(result.current.workflow.cancellation.pending).toBe(false);
+    await act(async () => {
+      verificationCancellation.reject(new Error("Synthetic admission already accepted."));
+      await Promise.resolve();
+    });
+    expect(result.current.input.view.activeInput.inputID).toBe("owned-input");
     unmount();
   });
 
@@ -6073,29 +6151,37 @@ describe("useReleaseSession", () => {
     expect(result.current.screenshots.view.selections).toEqual(firstPlan?.SuggestedSelections);
   });
 
-  it("aborts and suppresses stale preparation completion after source replacement", async () => {
-    const first = createDeferred<ReleaseWorkflowCurrent>();
+  it("waits for cancellation and suppresses a stale open response after source replacement", async () => {
+    const first = createDeferred<ActiveInputSnapshot>();
+    const canceledOpening = createDeferred<ActiveInputSnapshot>();
     let firstSignal: AbortSignal | undefined;
-    const prepare = vi.fn(
+    const open = vi.fn(
       async (
-        current: ReleaseWorkflowCurrent,
-        input: PrepareInput,
-        _idempotencyKey: string,
+        request: Parameters<ReleaseSessionPorts["activeInput"]["open"]>[0],
         signal: AbortSignal,
-      ) => {
+      ): Promise<ActiveInputSnapshot> => {
+        const input = request.request.intent.preparation!;
         if (input.SourcePath.endsWith("First")) {
           firstSignal = signal;
           return first.promise;
         }
-        return workflowCurrentFromPreview(
-          workflowCurrent(current.workflow.id, current.workflow.revision + 1),
-          preview(input.SourcePath, 1),
-        );
+        return {
+          state: "active",
+          revision: 4,
+          inputId: "input-second",
+          sourceVersion: "source-second",
+          current: workflowCurrentFromPreview(
+            workflowCurrent("workflow-second", 2),
+            preview(input.SourcePath, 1),
+          ),
+        };
       },
     );
-    const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ prepare }) })),
+    const ports = portsFor({
+      activeInput: { open, cancelOpen: async () => canceledOpening.promise },
     });
+    const cancelOpen = vi.spyOn(ports.activeInput, "cancelOpen");
+    const { result } = renderHook(useReleaseSession, { wrapper: wrapperFor(ports) });
 
     act(() => result.current.input.selectSource("C:\\media\\First"));
     act(() => result.current.upload.chooseTrackers(["AITHER"]));
@@ -6103,19 +6189,29 @@ describe("useReleaseSession", () => {
     act(() => {
       firstCommand = result.current.input.prepare();
     });
-    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
 
     act(() => result.current.input.selectSource("C:\\media\\Second"));
-    expect(firstSignal?.aborted).toBe(true);
+    expect(result.current.workflow.cancellation.pending).toBe(true);
+    expect(firstSignal?.aborted).toBe(false);
+    await act(async () => canceledOpening.resolve({ state: "empty", revision: 2 }));
+    await waitFor(() => expect(firstSignal?.aborted).toBe(true));
+    expect(cancelOpen).toHaveBeenCalledOnce();
+    expect(result.current.input.view.status).toBe("cancelled");
+    expect(result.current.input.view.sourceDraft).toBe("C:\\media\\Second");
     act(() => result.current.upload.chooseTrackers(["AITHER"]));
     await act(() => result.current.input.prepare());
 
-    first.resolve(
-      workflowCurrentFromPreview(
-        workflowCurrent("workflow-new", 2),
+    first.resolve({
+      state: "active",
+      revision: 2,
+      inputId: "input-first",
+      sourceVersion: "source-first",
+      current: workflowCurrentFromPreview(
+        workflowCurrent("workflow-first", 2),
         preview("C:\\media\\First", 1),
       ),
-    );
+    });
     await act(() => firstCommand);
     expect(result.current.identity.view.sourcePath).toBe("C:\\media\\Second");
   });
@@ -8128,7 +8224,7 @@ describe("useReleaseSession", () => {
     unmount();
   });
 
-  it("cancels DVD menu capture as an abortable session media operation", async () => {
+  it("keeps DVD menu cancellation pending until its accepted command finishes", async () => {
     const capture = createDeferred<ReleaseWorkflowCurrent>();
     let captureSignal: AbortSignal | undefined;
     const { result } = renderHook(useReleaseSession, {
@@ -8155,13 +8251,16 @@ describe("useReleaseSession", () => {
     await waitFor(() => expect(captureSignal).toBeDefined());
     expect(result.current.upload.view.workflowBusy).toBe(true);
     act(() => result.current.menuImages.cancelCapture());
-    expect(result.current.upload.view.workflowBusy).toBe(false);
-
-    expect(captureSignal?.aborted).toBe(true);
-    expect(result.current.menuImages.view.status).toBe("idle");
-    expect(result.current.menuImages.view.staleReason).toBe("");
+    expect(result.current.upload.view.workflowBusy).toBe(true);
+    expect(result.current.workflow.cancellation.pending).toBe(true);
+    expect(captureSignal?.aborted).toBe(false);
     capture.resolve(workflowCurrent("workflow-new", 6));
     await act(() => command);
+    expect(captureSignal?.aborted).toBe(true);
+    expect(result.current.upload.view.workflowBusy).toBe(false);
+    expect(result.current.workflow.cancellation.pending).toBe(false);
+    expect(result.current.menuImages.view.status).toBe("idle");
+    expect(result.current.menuImages.view.staleReason).toBe("");
   });
 
   it("lets the backend resolve dry-run trackers from current downstream authority", async () => {
@@ -9322,6 +9421,8 @@ it("requests single/all Blu-ray details through exact preparation authority and 
 
 it.each([
   "owned preparation",
+  "owned legacy then shared",
+  "owned shared then legacy",
   "owned input cancellation",
   "owned readiness after tracker change",
   "existing preparation",
@@ -9357,6 +9458,9 @@ it.each([
     return ownsOperation ? { ...current, preparationOperationId: operation.id } : current;
   });
   const cancelOperation = vi.fn(async () => {
+    expect(
+      JSON.parse(window.sessionStorage.getItem("upbrr.cancellingReleaseOperation") || "null"),
+    ).toEqual({ workflowID, operationID: operation.id });
     current = { ...current, operation: canceled };
     terminal.resolve(canceled);
     return canceled;
@@ -9388,7 +9492,24 @@ it.each([
   await waitFor(() =>
     expect(result.current.input.view.candidateDetailsCancelable).toBe(ownsOperation),
   );
-  if (scenario === "owned input cancellation") {
+  if (scenario === "owned legacy then shared" || scenario === "owned shared then legacy") {
+    await act(async () => {
+      const first =
+        scenario === "owned legacy then shared"
+          ? result.current.input.cancelCandidateDetails()
+          : result.current.workflow.cancel();
+      const second =
+        scenario === "owned legacy then shared"
+          ? result.current.workflow.cancel()
+          : result.current.input.cancelCandidateDetails();
+      expect(await first).toBe(true);
+      expect(await second).toBe(true);
+    });
+    expect(cancelOperation).toHaveBeenCalledOnce();
+    expect(result.current.workflow.cancellation.pending).toBe(false);
+    expect(result.current.workflow.cancellation.message).toMatch(/^Work canceled/);
+    expect(result.current.input.view.error).toBe("");
+  } else if (scenario === "owned input cancellation") {
     act(() => result.current.input.cancelPreparation());
     await waitFor(() => expect(cancelOperation).toHaveBeenCalled());
   } else {
@@ -9396,7 +9517,10 @@ it.each([
   }
   if (ownsOperation) {
     expect(cancelOperation).toHaveBeenCalledWith(workflowID, operation.id, expect.any(AbortSignal));
-    await waitFor(() => expect(result.current.input.view.status).toBe("cancelled"));
+    expect(window.sessionStorage.getItem("upbrr.cancellingReleaseOperation")).toBeNull();
+    if (!scenario.includes("shared"))
+      await waitFor(() => expect(result.current.input.view.status).toBe("cancelled"));
+    else expect(result.current.workflow.view.current?.operation?.status).toBe("canceled");
   } else {
     expect(cancelOperation).not.toHaveBeenCalled();
   }
@@ -9405,6 +9529,85 @@ it.each([
   terminal.resolve(canceled);
   await act(() => pending);
 });
+
+it.each(["owned", "foreign preparation", "foreign audio"] as const)(
+  "keeps shared candidate cancellation scoped while its reply is pending: %s",
+  async (scenario) => {
+    const workflowID = "workflow-candidate-pending-cancel";
+    const sourcePath = "Example.Release.2026.mkv";
+    const ownsOperation = scenario === "owned";
+    const operation: WorkflowOperationStatus = {
+      id: ownsOperation ? "owned-candidate" : "foreign-operation",
+      workflowId: workflowID,
+      revision: 2,
+      sequence: 1,
+      command: "fixture",
+      operation: scenario === "foreign audio" ? "analyze_audio" : "preparation",
+      status: "running",
+      progress: 0,
+      completed: 0,
+      total: 1,
+      startedAt: "2026-07-20T00:00:00Z",
+      updatedAt: "2026-07-20T00:00:00Z",
+    };
+    const canceled = { ...operation, status: "canceled" as const, sequence: 2 };
+    let current = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 2),
+      preview(sourcePath, 1),
+    );
+    const reply = createDeferred<ReleaseWorkflowCurrent>();
+    const continuation = vi.fn(() => reply.promise);
+    const cancelOperation = vi.fn(async () => {
+      current = { ...current, operation: canceled };
+      return canceled;
+    });
+    const cancelWorkflow = vi.fn();
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => current,
+            continue: continuation,
+            operation: async () => operation,
+            cancelOperation,
+            cancel: cancelWorkflow,
+          }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
+    let inspection!: Promise<boolean>;
+    act(() => {
+      inspection = result.current.input.fetchCandidateDetails("101");
+    });
+    await waitFor(() => expect(continuation).toHaveBeenCalledOnce());
+    let cancellation!: Promise<boolean>;
+    act(() => {
+      cancellation = result.current.workflow.cancel();
+    });
+    expect(result.current.workflow.cancellation.pending).toBe(true);
+    expect(cancelOperation).not.toHaveBeenCalled();
+    await act(async () => {
+      current = { ...current, operation };
+      reply.resolve(ownsOperation ? { ...current, preparationOperationId: operation.id } : current);
+      expect(await cancellation).toBe(ownsOperation);
+      expect(await inspection).toBe(false);
+    });
+    if (ownsOperation)
+      expect(cancelOperation).toHaveBeenCalledWith(
+        workflowID,
+        operation.id,
+        expect.any(AbortSignal),
+      );
+    else expect(cancelOperation).not.toHaveBeenCalled();
+    expect(cancelWorkflow).not.toHaveBeenCalled();
+    expect(result.current.workflow.cancellation.pending).toBe(false);
+    expect(result.current.input.view.status).toBe("cancelled");
+    expect(result.current.input.view.selectedSource).toBe(sourcePath);
+    unmount();
+  },
+);
 
 it.each([
   "owned",
@@ -9759,3 +9962,599 @@ it("reports uncertain candidate cancellation when the acceptance response is los
   expect(result.current.input.view.error).toMatch(/could not confirm cancellation/i);
   unmount();
 });
+
+it.each([
+  "trackers_assessed",
+  "duplicates_decided",
+  "media_ready",
+  "descriptions_ready",
+  "dry_run",
+] as const)(
+  "confirms %s cancellation without continuing, releases no input, and permits explicit retry",
+  async (goal) => {
+    const workflowID = `workflow-cancel-${goal}`;
+    const base = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 2),
+      preview("C:\\media\\Example", 1),
+    );
+    const operation: WorkflowOperationStatus = {
+      id: "cancel-operation",
+      workflowId: workflowID,
+      revision: 2,
+      sequence: 1,
+      command: "continue",
+      operation: goal === "trackers_assessed" ? "preparation" : goal,
+      status: "running",
+      completed: 0,
+      total: 2,
+      progress: 0,
+      startedAt: "2026-07-20T00:00:00Z",
+      updatedAt: "2026-07-20T00:00:00Z",
+    };
+    let current = base;
+    const terminal = createDeferred<WorkflowOperationStatus>();
+    const continueWorkflow = vi.fn(async () => {
+      current = { ...base, operation };
+      return current;
+    });
+    const cancelOperation = vi.fn(async () => operation);
+    const close = vi.fn();
+    const cancelWorkflow = vi.fn();
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          activeInput: { release: close },
+          workflow: workflowPorts({
+            current: async () => current,
+            continue: continueWorkflow,
+            operation: async () => terminal.promise,
+            cancelOperation,
+            cancel: cancelWorkflow,
+          }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    const start = () => {
+      const workflow = result.current.workflow;
+      switch (goal) {
+        case "trackers_assessed":
+          return workflow.project(["AITHER"]);
+        case "duplicates_decided":
+          return workflow.checkDuplicates();
+        case "media_ready":
+          return workflow.captureMedia({
+            screenshotCount: 1,
+            purpose: "final",
+            captureDvdMenus: false,
+          });
+        case "descriptions_ready":
+          return workflow.generateDescriptions({
+            imageHost: { FailedHosts: [], SkipUpload: true },
+            options: {
+              AudioAnalysis: false,
+              AudioImages: "both",
+              AudioTracks: "primary",
+              CaptureDVDMenus: false,
+              InteractionMode: "interactive",
+              KeepFolder: false,
+              KeepImages: false,
+              NoSeed: true,
+              OnlyID: false,
+              RunLogLevel: "info",
+              Screens: 0,
+              SkipAutoTorrent: false,
+            },
+          });
+        case "dry_run":
+          return workflow.dryRunUploads();
+      }
+    };
+    let command!: Promise<boolean>;
+    let cancellation!: Promise<boolean>;
+    try {
+      act(() => {
+        command = start();
+      });
+      await waitFor(() =>
+        expect(result.current.workflow.view.current?.operation?.id).toBe(operation.id),
+      );
+      let reloading: Promise<boolean> | undefined;
+      if (goal === "trackers_assessed" || goal === "duplicates_decided") {
+        act(() => {
+          reloading = result.current.workflow.reload();
+        });
+        await waitFor(() => expect(result.current.input.view.status).toBe("running"));
+      }
+      const ownedInput = result.current.input.view.activeInput;
+      act(() => {
+        cancellation = result.current.workflow.cancel();
+      });
+      await waitFor(() => expect(cancelOperation).toHaveBeenCalledOnce());
+      expect(result.current.workflow.cancellation.pending).toBe(true);
+      expect(result.current.workflow.view.current?.operation?.status).toBe("running");
+      expect(continueWorkflow).toHaveBeenCalledOnce();
+      expect(close).not.toHaveBeenCalled();
+      expect(cancelWorkflow).not.toHaveBeenCalled();
+      current = { ...base, operation: { ...operation, status: "canceled", sequence: 3 } };
+      terminal.resolve(current.operation!);
+      await act(async () => {
+        expect(await command).toBe(false);
+        expect(await cancellation).toBe(true);
+        if (reloading) expect(await reloading).toBe(false);
+      });
+      expect(result.current.workflow.cancellation.pending).toBe(false);
+      expect(result.current.workflow.view.current?.operation?.status).toBe("canceled");
+      expect(result.current.input.view.activeInput).toEqual(ownedInput);
+      expect(result.current.workflow.view.current?.release).toEqual(base.release);
+      expect(result.current.input.view.status).toBe("ready");
+      expect(result.current.workflow.view.failure).toBeNull();
+      expect(result.current.workflow.view.error).toBe("");
+      expect(continueWorkflow).toHaveBeenCalledOnce();
+      current = { ...base, operation: { ...operation, status: "completed", sequence: 4 } };
+      continueWorkflow.mockImplementation(async () => current);
+      await act(async () => {
+        expect(await start()).toBe(true);
+      });
+      expect(continueWorkflow).toHaveBeenCalledTimes(2);
+      expect(close).not.toHaveBeenCalled();
+    } finally {
+      terminal.resolve({ ...operation, status: "canceled" });
+      unmount();
+    }
+  },
+);
+
+it.each(["matching", "different workflow", "different operation"])(
+  "restores only an exact saved cancellation after reload: %s",
+  async (scenario) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const workflowID = "workflow-cancel-reload";
+    const operation: WorkflowOperationStatus = {
+      id: "reload-operation",
+      workflowId: workflowID,
+      revision: 2,
+      sequence: 1,
+      command: "continue",
+      operation: "dry_run",
+      status: "running",
+      completed: 0,
+      total: 2,
+      progress: 0,
+      startedAt: "2026-07-20T00:00:00Z",
+      updatedAt: "2026-07-20T00:00:00Z",
+    };
+    window.sessionStorage.setItem(
+      "upbrr.cancellingReleaseOperation",
+      JSON.stringify({
+        workflowID: scenario === "different workflow" ? "old-workflow" : workflowID,
+        operationID: scenario === "different operation" ? "old-operation" : operation.id,
+      }),
+    );
+    let current = {
+      ...workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 2),
+        preview("C:\\media\\Example", 1),
+      ),
+      operation,
+    };
+    const terminal = createDeferred<WorkflowOperationStatus>();
+    const cancelOperation = vi.fn(async () => operation);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => current,
+            operation: async () => terminal.promise,
+            cancelOperation,
+          }),
+        }),
+      ),
+    });
+    try {
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      expect(result.current.workflow.view.current?.operation?.id).toBe(operation.id);
+      expect(result.current.workflow.cancellation.pending).toBe(scenario === "matching");
+      if (scenario === "matching")
+        expect(cancelOperation).toHaveBeenCalledWith(
+          workflowID,
+          operation.id,
+          expect.any(AbortSignal),
+        );
+      else expect(cancelOperation).not.toHaveBeenCalled();
+      current = {
+        ...current,
+        operation: {
+          ...operation,
+          status: scenario === "matching" ? "canceled" : "completed",
+          sequence: 2,
+        },
+      };
+      await act(async () => {
+        terminal.resolve(current.operation);
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(result.current.workflow.view.status).toBe("ready");
+      expect(result.current.workflow.view.current?.operation?.status).toBe(
+        current.operation.status,
+      );
+      expect(result.current.input.view.activeInput.inputID).toBe(`input-${workflowID}`);
+      expect(result.current.workflow.cancellation.pending).toBe(false);
+    } finally {
+      terminal.resolve({ ...operation, status: "canceled" });
+      unmount();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(["completed", "interrupted", "failed", "canceled"] as const)(
+  "retains a terminal %s outcome when the cancel request fails",
+  async (status) => {
+    const workflowID = "workflow-cancel-race";
+    const operation: WorkflowOperationStatus = {
+      id: "race-operation",
+      workflowId: workflowID,
+      revision: 2,
+      sequence: 1,
+      command: "continue",
+      operation: "upload",
+      status: "running",
+      completed: 0,
+      total: 2,
+      progress: 0,
+      startedAt: "2026-07-20T00:00:00Z",
+      updatedAt: "2026-07-20T00:00:00Z",
+    };
+    let current = {
+      ...workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 2),
+        preview("C:\\media\\Example", 1),
+      ),
+      operation,
+    };
+    const terminal = createDeferred<WorkflowOperationStatus>();
+    let cancellations = 0;
+    const cancelOperation = vi.fn(async () => {
+      if (++cancellations > 1 && status === "canceled") return operation;
+      throw new Error("Synthetic cancellation request failed.");
+    });
+    const continueWorkflow = vi.fn();
+    const Wrapper = wrapperFor(
+      portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => current,
+          operation: async () => terminal.promise,
+          cancelOperation,
+          continue: continueWorkflow,
+        }),
+      }),
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <Wrapper>
+          <WorkflowCancellation />
+          {children}
+        </Wrapper>
+      ),
+    });
+    try {
+      await waitFor(() =>
+        expect(result.current.workflow.view.current?.operation?.id).toBe(operation.id),
+      );
+      let confirmation!: Promise<boolean>;
+      act(() => {
+        confirmation = result.current.workflow.cancel();
+      });
+      expect(result.current.workflow.cancellation.pending).toBe(true);
+      await waitFor(() => expect(cancelOperation).toHaveBeenCalledOnce());
+      if (status === "canceled") {
+        await waitFor(() => expect(result.current.workflow.cancellation.retry).toBe(true));
+        act(() => {
+          fireEvent.click(screen.getByRole("button", { name: "Retry cancellation" }));
+        });
+        await waitFor(() => expect(cancelOperation).toHaveBeenCalledTimes(2));
+        expect(cancelOperation.mock.calls[1]).toEqual(cancelOperation.mock.calls[0]);
+        expect(result.current.workflow.cancellation.pending).toBe(true);
+        expect(screen.getByRole("button", { name: "Cancelling…" })).toBeDisabled();
+        expect(result.current.workflow.view.current?.operation?.status).toBe("running");
+      }
+      const failure = {
+        Code: "remote_outcome_unknown" as const,
+        Operation: "upload" as const,
+        Message: "Review the synthetic remote outcome.",
+        Recovery: "review_again" as const,
+      };
+      current = {
+        ...current,
+        operation: {
+          ...operation,
+          status,
+          sequence: 2,
+          ...(status === "failed" || status === "interrupted" ? { failures: [{ failure }] } : {}),
+        },
+      };
+      terminal.resolve(current.operation);
+      await act(async () => {
+        expect(await confirmation).toBe(true);
+      });
+      expect(result.current.workflow.view.current?.operation?.status).toBe(status);
+      if (status === "failed" || status === "interrupted") {
+        expect(result.current.workflow.view.failure).toEqual(failure);
+        expect(result.current.workflow.cancellation.message).toMatch(/error.*recovery/i);
+      } else {
+        expect(result.current.workflow.cancellation.message).toMatch(
+          status === "canceled" ? /work canceled/i : /review retained results/i,
+        );
+      }
+      expect(result.current.input.view.activeInput.inputID).toBe(`input-${workflowID}`);
+      expect(continueWorkflow).not.toHaveBeenCalled();
+      expect(result.current.workflow.cancellation.pending).toBe(false);
+    } finally {
+      terminal.resolve({ ...operation, status });
+      unmount();
+    }
+  },
+);
+
+it.each([false, true])(
+  "confirms preacceptance verification cleanup and permits retry when admission was not yet registered (%s)",
+  async (early) => {
+    const opened = createDeferred<ActiveInputSnapshot>();
+    const stopped = createDeferred<ActiveInputSnapshot>();
+    const open = vi.fn(async () => opened.promise);
+    const cancelOperation = vi.fn();
+    let attempts = 0;
+    const cancelOpen = vi.fn(async () => {
+      if (early && attempts++ === 0)
+        throw Object.assign(new Error("Synthetic admission not registered."), {
+          failure: {
+            Code: "missing_prerequisite",
+            Operation: "preparation",
+            Message: "Admission unavailable.",
+            Recovery: "refresh_release",
+          },
+        });
+      opened.reject(new Error("Synthetic verifier cancelled."));
+      return stopped.promise;
+    });
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: { open, cancelOpen },
+          workflow: workflowPorts({ cancelOperation }),
+        }),
+      ),
+    });
+    try {
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+      let preparation!: Promise<boolean>;
+      let confirmation!: Promise<boolean>;
+      act(() => {
+        preparation = result.current.input.openSource("C:\\media\\Example.Release.2026.mkv");
+      });
+      await waitFor(() => expect(open).toHaveBeenCalledOnce());
+      act(() => {
+        confirmation = result.current.workflow.cancel();
+      });
+      await waitFor(() => expect(cancelOpen).toHaveBeenCalledOnce());
+      if (early) {
+        await waitFor(() => expect(result.current.workflow.cancellation.retry).toBe(true));
+        act(() => {
+          void result.current.workflow.cancel();
+        });
+        await waitFor(() => expect(cancelOpen).toHaveBeenCalledTimes(2));
+      }
+      expect(result.current.workflow.cancellation.pending).toBe(true);
+      expect(result.current.input.view.status).toBe("running");
+      expect(cancelOperation).not.toHaveBeenCalled();
+      stopped.resolve({ state: "empty", revision: 2 });
+      await act(async () => {
+        expect(await preparation).toBe(false);
+        expect(await confirmation).toBe(true);
+      });
+      expect(result.current.input.view.status).toBe("cancelled");
+      expect(result.current.input.view.activeInput).toMatchObject({ state: "empty", revision: 2 });
+      expect(result.current.input.view.sourceDraft).toBe("C:\\media\\Example.Release.2026.mkv");
+      expect(result.current.workflow.cancellation.pending).toBe(false);
+    } finally {
+      stopped.resolve({ state: "empty", revision: 2 });
+      unmount();
+    }
+  },
+);
+
+it("keeps progress and terminal confirmation live while the cancellation response is delayed", async () => {
+  vi.useFakeTimers();
+  const workflowID = "workflow-delayed-cancel";
+  const operation: WorkflowOperationStatus = {
+    id: "delayed-operation",
+    workflowId: workflowID,
+    revision: 2,
+    sequence: 1,
+    command: "continue",
+    operation: "dry_run",
+    status: "running",
+    completed: 0,
+    total: 2,
+    progress: 0,
+    startedAt: "2026-07-20T00:00:00Z",
+    updatedAt: "2026-07-20T00:00:00Z",
+  };
+  let current = {
+    ...workflowCurrentFromPreview(workflowCurrent(workflowID, 2), preview("C:\\media\\Example", 1)),
+    operation,
+  };
+  const receipt = createDeferred<WorkflowOperationStatus>();
+  let polled = 0;
+  const cancelOperation = vi.fn(async () => receipt.promise);
+  const { result, unmount } = renderHook(useReleaseSession, {
+    wrapper: wrapperFor(
+      portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => current,
+          cancelOperation,
+          operation: async () =>
+            ++polled === 1 ? { ...operation, progress: 50, sequence: 3 } : current.operation,
+        }),
+      }),
+    ),
+  });
+  try {
+    await act(async () => Promise.resolve());
+    let confirmation!: Promise<boolean>;
+    act(() => {
+      confirmation = result.current.workflow.cancel();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(cancelOperation).toHaveBeenCalledOnce();
+    expect(result.current.workflow.cancellation.pending).toBe(true);
+    expect(result.current.workflow.view.current?.operation?.progress).toBe(50);
+    current = { ...current, operation: { ...operation, status: "canceled", sequence: 4 } };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await confirmation).toBe(true);
+    });
+    expect(result.current.workflow.view.current?.operation?.status).toBe("canceled");
+    expect(result.current.workflow.cancellation.pending).toBe(false);
+    await act(async () => {
+      receipt.resolve({ ...operation, sequence: 2 });
+      await Promise.resolve();
+    });
+    expect(result.current.workflow.view.current?.operation?.status).toBe("canceled");
+    expect(result.current.workflow.view.current?.operation?.sequence).toBe(4);
+  } finally {
+    receipt.resolve({ ...operation, status: "canceled" });
+    unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each(["questions", "screenshots", "screenshots with backend"] as const)(
+  "keeps explicitly cancelled %s loading settled on its actual page until retry",
+  async (kind) => {
+    const workflowID = `workflow-cancel-loader-${kind}`;
+    const active = workflowPorts();
+    const prepared = preparedQuestionnaireWorkflow(workflowID);
+    const base =
+      kind !== "questions"
+        ? await active.project(prepared, ["AITHER"], {}, "seed", new AbortController().signal)
+        : prepared;
+    const pending = createDeferred<ReleaseWorkflowCurrent>();
+    const pendingPlan =
+      createDeferred<
+        ReturnType<ReleaseSessionPorts["workflow"]["mediaPlan"]> extends Promise<infer T>
+          ? T
+          : never
+      >();
+    const operation: WorkflowOperationStatus = {
+      id: "loader-operation",
+      workflowId: workflowID,
+      revision: 2,
+      sequence: 1,
+      command: "continue",
+      operation: "projection",
+      status: "running",
+      completed: 0,
+      total: 2,
+      progress: 0,
+      startedAt: "2026-07-20T00:00:00Z",
+      updatedAt: "2026-07-20T00:00:00Z",
+    };
+    const project = vi.fn(active.project).mockImplementationOnce(async () => pending.promise);
+    const mediaPlan = vi
+      .fn(active.mediaPlan)
+      .mockImplementationOnce(async () => pendingPlan.promise);
+    const captureMedia = vi.fn(active.captureMedia);
+    const current = { ...base, operation: { ...operation, status: "canceled" as const } };
+    const ports = portsFor({
+      resumeWorkflowID: workflowID,
+      workflow: workflowPorts({
+        current: async () => base,
+        project,
+        mediaPlan,
+        captureMedia,
+        cancelOperation: async () => current.operation,
+        operation: async () => current.operation,
+      }),
+    });
+    const Surface = () => {
+      const session = useReleaseSession();
+      return (
+        <>
+          <WorkflowCancellation />
+          {kind === "questions" ? (
+            <QuestionnaireSurface />
+          ) : (
+            <ScreenshotsPage
+              facet={session.screenshots}
+              setLightboxImage={() => undefined}
+              setLightboxAlt={() => undefined}
+            />
+          )}
+        </>
+      );
+    };
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          <Surface />
+          {children}
+        </ReleaseSessionProvider>
+      ),
+    });
+    try {
+      await waitFor(() =>
+        expect(kind === "questions" ? project : mediaPlan).toHaveBeenCalledOnce(),
+      );
+      let backend: Promise<boolean> | undefined;
+      if (kind === "screenshots with backend") {
+        act(() => {
+          backend = result.current.workflow.project(["AITHER"]);
+        });
+        await waitFor(() => expect(project).toHaveBeenCalledOnce());
+      }
+      let confirmation!: Promise<boolean>;
+      act(() => {
+        confirmation = result.current.workflow.cancel();
+      });
+      if (kind === "questions" || kind === "screenshots with backend")
+        pending.resolve({ ...base, operation });
+      await act(async () => {
+        expect(await confirmation).toBe(true);
+      });
+      if (kind === "screenshots with backend") {
+        await act(async () => {
+          await backend;
+          pendingPlan.resolve({
+            ...(await active.mediaPlan(base.workflow.id, new AbortController().signal)),
+            autoAdoptSavedImages: true,
+            savedTrackerImages: [
+              { trackerId: "AITHER", host: "synthetic", url: "https://images.example/saved.png" },
+            ],
+          });
+        });
+        expect(captureMedia).not.toHaveBeenCalled();
+      }
+      expect(
+        kind === "questions"
+          ? result.current.duplicates.view.questionnaireStatus
+          : result.current.screenshots.view.status,
+      ).toBe(kind === "questions" ? "error" : "cancelled");
+      expect(kind === "questions" ? project : mediaPlan).toHaveBeenCalledOnce();
+      await act(async () => {
+        if (kind === "questions") await result.current.duplicates.refreshQuestionnaires();
+        else await result.current.screenshots.load();
+      });
+      expect(kind === "questions" ? project : mediaPlan).toHaveBeenCalledTimes(2);
+    } finally {
+      pending.resolve(current);
+      pendingPlan.resolve(await active.mediaPlan(base.workflow.id, new AbortController().signal));
+      unmount();
+    }
+  },
+);

@@ -208,12 +208,21 @@ func (c e2eWorkflowClock) Now() time.Time {
 	return time.Now().UTC().Add(c.offset)
 }
 
-func e2eReleaseWorkflowOptions() []releaseworkflow.Option {
+func e2eReleaseWorkflowOptions(repository api.RepositoryOwner) []releaseworkflow.Option {
+	var options []releaseworkflow.Option
 	offset, err := time.ParseDuration(strings.TrimSpace(os.Getenv(e2eClockOffsetEnv)))
-	if err != nil || offset == 0 {
-		return nil
+	if err == nil && offset != 0 {
+		options = append(options, releaseworkflow.WithClock(e2eWorkflowClock{offset: offset}))
 	}
-	return []releaseworkflow.Option{releaseworkflow.WithClock(e2eWorkflowClock{offset: offset})}
+	if inputs, ok := repository.(api.ActiveInputRepository); ok && isE2EEnabled() && os.Getenv("UPBRR_E2E_CANCELLATION_STAGE") == "verification" {
+		options = append(options, releaseworkflow.WithActiveInputs(inputs, func(ctx context.Context, input api.PrepareInput) (api.InputRecord, error) {
+			if err := e2eWaitForWorkflowStage(ctx, "verification"); err != nil {
+				return api.InputRecord{}, err
+			}
+			return verifyWorkflowInput(ctx, input)
+		}))
+	}
+	return options
 }
 
 // e2eMetadataService supplies deterministic preparation evidence under the
@@ -275,6 +284,9 @@ func (s e2eMetadataService) SearchProviderCandidates(ctx context.Context, reques
 // CollectPreparationEvidence emits deterministic progress and metadata while
 // exercising the same client-discovery boundary as production preparation.
 func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, request preparationstate.Request) (preparationstate.State, error) {
+	if err := e2eWaitForWorkflowStage(ctx, "preparation"); err != nil {
+		return preparationstate.State{}, err
+	}
 	input := request.Input
 	if strings.TrimSpace(input.SourcePath) == "" {
 		return preparationstate.State{}, errors.New("e2e metadata: path is required")
@@ -952,7 +964,10 @@ type e2eTorrentService struct {
 	dbPath string
 }
 
-func (s e2eTorrentService) Create(_ context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
+func (s e2eTorrentService) Create(ctx context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
+	if err := e2eWaitForWorkflowStage(ctx, "torrent"); err != nil {
+		return api.TorrentResult{}, err
+	}
 	root, err := db.Subdir(s.dbPath, "tmp")
 	if err != nil {
 		return api.TorrentResult{}, fmt.Errorf("e2e torrent: tmp root: %w", err)
@@ -1243,6 +1258,9 @@ func (s e2eDupeService) CheckProjectionSet(
 	projections api.TrackerReleaseProjectionSet,
 	_ api.ProjectionDupeCheckOptions,
 ) (api.DupeCheckSummary, api.DupeAssessmentEvidence, error) {
+	if err := e2eWaitForWorkflowStage(ctx, "duplicates"); err != nil {
+		return api.DupeCheckSummary{}, dupechecking.EmptyAssessment(), err
+	}
 	if err := projections.Validate(); err != nil {
 		return api.DupeCheckSummary{}, dupechecking.EmptyAssessment(), fmt.Errorf("e2e duplicate projections: %w", err)
 	}
@@ -1829,7 +1847,10 @@ func (s e2eTrackerService) Upload(ctx context.Context, meta api.UploadSubject) (
 	return summary, nil
 }
 
-func (s e2eTrackerService) BuildPreparation(_ context.Context, meta api.DescriptionSubject, trackers []string) (api.PreparationPreview, error) {
+func (s e2eTrackerService) BuildPreparation(ctx context.Context, meta api.DescriptionSubject, trackers []string) (api.PreparationPreview, error) {
+	if err := e2eWaitForWorkflowStage(ctx, "descriptions"); err != nil {
+		return api.PreparationPreview{}, err
+	}
 	if len(trackers) == 0 {
 		trackers = meta.Trackers
 	}
@@ -1978,6 +1999,9 @@ func (s e2eImageService) Upload(
 	usageScope string,
 	images []api.ScreenshotImage,
 ) ([]api.UploadedImageLink, error) {
+	if err := e2eWaitForWorkflowStage(ctx, "images"); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(s.endpoint) == "" {
 		return nil, errors.New("e2e image: endpoint is required")
 	}
@@ -2138,11 +2162,14 @@ func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject
 }
 
 func (s e2eScreenshotService) Capture(
-	_ context.Context,
+	ctx context.Context,
 	meta api.ScreenshotSubject,
 	selections []api.ScreenshotSelection,
 	purpose api.ScreenshotPurpose,
 ) (api.ScreenshotResult, error) {
+	if err := e2eWaitForWorkflowStage(ctx, "screenshots"); err != nil {
+		return api.ScreenshotResult{}, err
+	}
 	images := make([]api.ScreenshotImage, 0, len(selections))
 	for _, selection := range selections {
 		shot, err := s.imageAt(meta, selection.DiscID, selection.Index)

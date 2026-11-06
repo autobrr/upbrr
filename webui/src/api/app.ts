@@ -26,6 +26,7 @@ import type {
   InvalidateReleaseWorkflowTrackersRequest,
   MediaPlan,
   OpenActiveInputRequest,
+  CancelActiveInputOpenRequest,
   Operation,
   PreviewReleaseWorkflowFrameRequest,
   ReconcileActiveInputRequest,
@@ -296,6 +297,8 @@ export const releaseWorkflowClient = {
 
 /** Owner-scoped controller for the database's single active input. */
 export const activeInputClient = {
+  cancelOpen: (request: CancelActiveInputOpenRequest, signal?: AbortSignal) =>
+    requestApp<ActiveInputSnapshot>("CancelActiveInputOpen", request, { signal }),
   get: (signal?: AbortSignal) => requestAppGet<ActiveInputSnapshot>("GetActiveInput", { signal }),
   open: (request: OpenActiveInputRequest, signal?: AbortSignal) =>
     requestApp<ActiveInputSnapshot>("OpenActiveInput", request, { signal }),

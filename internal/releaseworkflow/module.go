@@ -277,8 +277,10 @@ type Module struct {
 }
 
 type operationWorker struct {
-	cancel context.CancelFunc
-	done   <-chan struct{}
+	ownerID    string
+	workflowID api.WorkflowID
+	cancel     context.CancelFunc
+	done       <-chan struct{}
 }
 
 // New constructs the deep release-workflow application module.
@@ -892,7 +894,12 @@ func (m *Module) dispatchOperationWorker(
 		}
 		return
 	}
-	m.operationWorkers[record.OperationID] = operationWorker{cancel: cancel, done: workerDone}
+	m.operationWorkers[record.OperationID] = operationWorker{
+		ownerID:    record.OwnerID,
+		workflowID: record.WorkflowID,
+		cancel:     cancel,
+		done:       workerDone,
+	}
 	m.operationWorkersMu.Unlock()
 	go func() {
 		defer func() {
