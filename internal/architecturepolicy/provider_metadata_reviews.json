@@ -1241,7 +1241,7 @@
   },
   "internal/trackers/impl/standalone/tl/dupe.go:*dupeSearcher.Search": {
     "reason": "Selected canonical IMDb authority is preserved on every page without sibling cross-links or title prerequisites. Returned positive mismatches are excluded; missing identity cannot prove whole-work binding. Enumeration and cancellation preserve conservative failure boundaries.",
-    "sha256": "55d81fb8f90fa11c6db99cb98c6876d46f9a6e55df0202875e6f6b273207953f"
+    "sha256": "3a5a9c7b85468afe15489d2f10eb42d23faf788e67a1f9e094533235f18aa213"
   },
   "internal/trackers/impl/standalone/tl/dupe.go:searchQueries": {
     "reason": "Canonical IMDb, including a manual selection, wins independently of conflicting sibling provider IDs. Title fallback retains explicit manual title/year/language clears, uses finalized category and media facts, and broadens TV searches to include ranges and packs.",
@@ -1261,7 +1261,7 @@
   },
   "internal/trackers/impl/standalone/tl/validation.go:validationPolicy": {
     "reason": "Side-effect-free API anime validation uses the reviewed current MAL-bound AniList mapper. Cookie mode retains existing canonical provider prerequisites, while manual identity replacement, clear and stale snapshots fail API constructibility before downstream work.",
-    "sha256": "d0597ffef432d86d542d2444eced20e186f1709d33fae9c3eb3b25243a2c48d5"
+    "sha256": "2ceff3a62908ae7b54de79196e1decdc770e2d7a61030d40dba8c17646bb252d"
   },
   "internal/trackers/impl/standalone/tvc/definition.go:prepareDescription": {
     "reason": "Passes the runtime AddLogo setting into the reviewed TVC description builder; finalized upload facts and manual precedence are unchanged.",

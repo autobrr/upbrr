@@ -29,8 +29,31 @@ func TestPersistentTLPolicyUpgradeRebuildsBeforeDownstreamWork(t *testing.T) {
 		name                                  string
 		legacy, reviewed, betaOnly, completed bool
 		closed                                api.WorkflowStatus
+		reconciliation                        api.WorkflowExternalEffectKind
 	}{
 		{name: "old pre-dupe API eligibility", legacy: true},
+		{
+			name:           "old image reconciliation",
+			legacy:         true,
+			reviewed:       true,
+			reconciliation: api.WorkflowExternalEffectImageHosting,
+		},
+		{
+			name:           "old submission reconciliation",
+			legacy:         true,
+			reviewed:       true,
+			reconciliation: api.WorkflowExternalEffectTrackerSubmission,
+		},
+		{
+			name:           "current image reconciliation",
+			reviewed:       true,
+			reconciliation: api.WorkflowExternalEffectImageHosting,
+		},
+		{
+			name:           "current submission reconciliation",
+			reviewed:       true,
+			reconciliation: api.WorkflowExternalEffectTrackerSubmission,
+		},
 		{
 			name:     "old reviewed evidence and description",
 			legacy:   true,
@@ -217,6 +240,32 @@ func TestPersistentTLPolicyUpgradeRebuildsBeforeDownstreamWork(t *testing.T) {
 					}
 				}
 			}
+			if test.reconciliation != "" {
+				action, err := moduleA.newReconcileAction(state.Workflow.Revision, now, "TL", test.reconciliation, "synthetic-scope", "Confirm the uncertain effect did not complete")
+				if err != nil {
+					t.Fatal(err)
+				}
+				effect := api.ReleaseWorkflowEffectRecord{
+					OwnerID:             testOwnerID,
+					WorkflowID:          state.Workflow.ID,
+					OperationID:         "uncertain-operation",
+					EffectID:            "uncertain-effect",
+					Kind:                string(test.reconciliation),
+					ScopeID:             action.EffectScopeID,
+					SemanticFingerprint: testFingerprint(t, "uncertain"),
+					StartedAt:           now,
+					UpdatedAt:           now,
+				}
+				if _, _, err := persistentA.BeginEffect(t.Context(), effect); err != nil {
+					t.Fatal(err)
+				}
+				if err := persistentA.MarkOperationEffectsUnknown(t.Context(), testOwnerID, state.Workflow.ID, effect.OperationID, now); err != nil {
+					t.Fatal(err)
+				}
+				action.EffectID, action.EffectOperationID = effect.EffectID, effect.OperationID
+				state.Workflow.RequiredActions = []api.RequiredAction{action}
+				state.Workflow.Status = api.WorkflowStatusBlocked
+			}
 			if test.completed {
 				state.Workflow.Status = api.WorkflowStatusCompleted
 				state.Workflow.UploadResult = &api.UploadResultRef{ID: "confirmed", Revision: 1}
@@ -251,6 +300,30 @@ func TestPersistentTLPolicyUpgradeRebuildsBeforeDownstreamWork(t *testing.T) {
 			current, err := moduleB.Current(t.Context(), testOwnerID, state.Workflow.ID)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if test.reconciliation != "" {
+				if current.Projections.Status == api.StageStatusStale || current.Workflow.Dupes == nil || len(current.Workflow.RequiredActions) != 1 {
+					t.Fatal("pending reconciliation authority was withdrawn")
+				}
+				reconciled := executeCommand(t, moduleB, ResolveActionCommand{
+					WorkflowID:       current.Workflow.ID,
+					ExpectedRevision: current.Workflow.Revision,
+					Answer: api.RequiredActionAnswer{
+						ActionID:         current.Workflow.RequiredActions[0].ID,
+						WorkflowRevision: current.Workflow.Revision,
+						SelectedValues:   []string{api.RequiredActionReconcileNotCompleted},
+					},
+				})
+				if len(reconciled.Workflow.RequiredActions) != 0 || reconciled.Workflow.Status != api.WorkflowStatusActive {
+					t.Fatalf("reconciliation did not finish: %+v", reconciled.Workflow)
+				}
+				if test.legacy && (reconciled.Workflow.Dupes != nil || reconciled.Media != nil) {
+					t.Fatal("reconciliation returned obsolete downstream authority")
+				}
+				current, err = moduleB.Current(t.Context(), testOwnerID, state.Workflow.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			wantStale := test.legacy && !test.betaOnly && !test.completed && test.closed == ""
 			if (current.Projections.Status == api.StageStatusStale) != wantStale {

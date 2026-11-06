@@ -92,7 +92,7 @@ func TestScreenshotModesSurviveFinalDescriptionHydration(t *testing.T) {
 			assets := trackers.DescriptionAssets{
 				Description: "User text <img src=\"https://images.example.invalid/user.png\">",
 				MenuImages:  []api.ScreenshotImage{{RawURL: "https://images.example.invalid/menu.png"}},
-				Screenshots: []api.ScreenshotImage{{RawURL: "https://images.example.invalid/menu.png"}, {ImgURL: "https://images.example.invalid/normal.png"}},
+				Screenshots: []api.ScreenshotImage{{RawURL: "https://images.example.invalid/menu.png"}, {ImgURL: "https://images.example.invalid/normal.png", Tonemapping: api.ScreenshotTonemapped}},
 			}
 			req := trackers.PreparationInput{
 				Tracker:       "TL",
@@ -104,7 +104,11 @@ func TestScreenshotModesSurviveFinalDescriptionHydration(t *testing.T) {
 					Readiness:         api.ReadinessStatusReady,
 					UploadReady:       true,
 				},
-				Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}, Description: config.DescriptionSettingsConfig{DiscMenuHeader: "Menu heading", ScreenshotHeader: "Shots heading"}}),
+				Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}, Description: config.DescriptionSettingsConfig{
+					DiscMenuHeader:   "Menu heading",
+					ScreenshotHeader: "Shots heading",
+					TonemappedHeader: "Colour warning",
+				}}),
 			}
 			preview, err := prepareDescription(t.Context(), req)
 			if err != nil {
@@ -112,6 +116,9 @@ func TestScreenshotModesSurviveFinalDescriptionHydration(t *testing.T) {
 			}
 			if strings.Contains(preview.Description, "menu.png") != test.embedded || strings.Contains(preview.Description, "Menu heading") != test.embedded || strings.Contains(preview.Description, "Shots heading") != test.embedded || !strings.Contains(preview.Description, "user.png") {
 				t.Fatalf("description mode: %s", preview.Description)
+			}
+			if strings.Contains(preview.Description, "normal.png") != test.embedded || !strings.Contains(preview.Description, "Screenshots: 1 tonemapped, 0 not tonemapped, 1 with unknown processing.") {
+				t.Fatalf("screenshot and processing notice: %s", preview.Description)
 			}
 			assets.Description, assets.Final = preview.Description, true
 			state, _, err := prepareUploadState(t.Context(), req)

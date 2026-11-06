@@ -56,27 +56,30 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	}
 
 	// menu
-	if !nativeRehosting(req.TrackerConfig) && screenshotBlock(assets.MenuImages) != "" {
+	if shots := screenshotBlock(assets.MenuImages); !nativeRehosting(req.TrackerConfig) && shots != "" {
 		// header
 		if header := strings.TrimSpace(req.Runtime.Description.DiscMenuHeader); header != "" {
 			parts = append(parts, header)
 		}
 		// images
-		if shots := screenshotBlock(assets.MenuImages); shots != "" {
-			parts = append(parts, shots)
-		}
+		parts = append(parts, shots)
 	}
 	if audioAnalysis != "" {
 		parts = append(parts, audioAnalysis)
 	}
-	if shots := screenshotBlock(assets.Screenshots); !nativeRehosting(req.TrackerConfig) && shots != "" {
-		if header := strings.TrimSpace(req.Runtime.Description.ScreenshotHeader); header != "" {
-			parts = append(parts, header)
+	if shots := screenshotBlock(assets.Screenshots); shots != "" {
+		embed := !nativeRehosting(req.TrackerConfig)
+		if embed {
+			if header := strings.TrimSpace(req.Runtime.Description.ScreenshotHeader); header != "" {
+				parts = append(parts, header)
+			}
 		}
 		if notice := descriptionunit3d.TonemappingNotice(req.Runtime.Description.TonemappedHeader, assets.Screenshots); notice != "" {
 			parts = append(parts, notice)
 		}
-		parts = append(parts, shots)
+		if embed {
+			parts = append(parts, shots)
+		}
 	}
 
 	// custom user signature

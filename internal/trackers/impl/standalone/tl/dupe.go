@@ -23,16 +23,18 @@ import (
 const maxSearchPages = 100
 
 type dupeSearcher struct {
-	cfg    config.Config
-	http   *http.Client
-	logger api.Logger
+	cfg      config.Config
+	http     *http.Client
+	logger   api.Logger
+	maxPages int
 }
 
 func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	return &dupeSearcher{
-		cfg:    deps.BoundConfig(),
-		http:   deps.HTTPClient(),
-		logger: deps.Logger(),
+		cfg:      deps.BoundConfig(),
+		http:     deps.HTTPClient(),
+		logger:   deps.Logger(),
+		maxPages: deps.MaxPages(maxSearchPages),
 	}
 }
 
@@ -66,6 +68,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	} else {
 		evidence.Warnings = append(evidence.Warnings, "TL title search does not prove whole-work coverage")
 	}
+	pageLimit := maxSearchPages
+	if s.maxPages > 0 {
+		pageLimit = min(pageLimit, s.maxPages)
+	}
 	var entries []api.DupeEntry
 	seen := make(map[string]bool)
 	usable := false
@@ -74,7 +80,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		queryIDs := make(map[string]bool)
 		total, perPage := -1, 0
 		exhausted := false
-		for page := 1; evidence.Pages < maxSearchPages; page++ {
+		for page := 1; evidence.Pages < pageLimit; page++ {
 			endpoint := baseURL + query
 			if page > 1 {
 				// One-based IMDb pagination is verified by saved first/final-page responses.

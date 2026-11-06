@@ -5,6 +5,7 @@ package tl
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -53,13 +54,29 @@ func TestAPIAnimeRequiresCurrentMappedAniListIdentity(t *testing.T) {
 					t.Fatalf("api=%t failures=%+v err=%v", apiUpload, failures, err)
 				}
 			}
-			// Direct preparation must reject the mapping before inspecting the absent torrent or other assets.
+			// Valid direct preparation must succeed; invalid identity fails before assets are inspected.
+			if test.valid {
+				meta.TorrentPath = filepath.Join(t.TempDir(), "prepared.torrent")
+				if err := os.WriteFile(meta.TorrentPath, []byte("synthetic torrent"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			_, err := prepareUpload(t.Context(), trackers.PreparationInput{
 				Tracker:       "TL",
 				Meta:          meta,
 				TrackerConfig: config.TrackerConfig{APIUpload: true},
+				Assets:        &trackers.DescriptionAssets{Final: true, Description: "Reviewed description"},
+				Projection: &api.TrackerReleaseProjection{
+					UploadReleaseName: "Example.Show.S01E01.1080p.WEB-DL-GRP",
+					Readiness:         api.ReadinessStatusReady,
+					UploadReady:       true,
+				},
 			})
-			if !test.valid && (err == nil || !strings.Contains(err.Error(), "refresh metadata")) {
+			guidance := "refresh metadata"
+			if meta.Identity.MALID <= 0 {
+				guidance = "require a MAL ID"
+			}
+			if test.valid && err != nil || !test.valid && (err == nil || !strings.Contains(err.Error(), guidance)) {
 				t.Fatalf("direct API preparation: %v", err)
 			}
 		})
@@ -156,11 +173,10 @@ func TestWorkflowProjectionBindsAPIConstructibility(t *testing.T) {
 	}
 }
 
-func TestReconstructedAssessmentRejectsOldTLPolicy(t *testing.T) {
+func TestReconstructedAssessmentRejectsChangedTLValidationPolicy(t *testing.T) {
 	t.Parallel()
-	// Recreate the legacy descriptor, then project with the actual current descriptor.
+	// Change only validation policy; its fingerprint must invalidate retained duplicate authority.
 	legacyProfile := Profile()
-	legacyProfile.DupePolicy = nil
 	legacyProfile.ValidationPolicy = trackers.NoExtraValidationPolicy("standalone-tl-constructibility-v1")
 	oldRegistry, currentRegistry := trackers.NewRegistry(), trackers.NewRegistry()
 	if err := oldRegistry.Register(standalone.MustNew(legacyProfile)); err != nil {

@@ -15,7 +15,9 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -62,6 +64,7 @@ func TestIMDbSearchPagination(t *testing.T) {
 		total, perPage, imdb, pages, entries int
 		change                               func(int, map[string]any)
 		failPage                             int
+		limit                                int
 		complete                             bool
 	}{
 		{
@@ -81,6 +84,34 @@ func TestIMDbSearchPagination(t *testing.T) {
 			pages:    4,
 			entries:  320,
 			complete: true,
+		},
+		{
+			name:    "registered page limit",
+			total:   320,
+			perPage: 100,
+			imdb:    456,
+			limit:   2,
+			pages:   2,
+			entries: 200,
+		},
+		{
+			name:     "complete at registered page limit",
+			total:    200,
+			perPage:  100,
+			imdb:     456,
+			limit:    2,
+			pages:    2,
+			entries:  200,
+			complete: true,
+		},
+		{
+			name:    "registered limit retains hard ceiling",
+			total:   101,
+			perPage: 1,
+			imdb:    456,
+			limit:   200,
+			pages:   100,
+			entries: 100,
 		},
 		{
 			name:     "later failure keeps first page",
@@ -222,7 +253,18 @@ func TestIMDbSearchPagination(t *testing.T) {
 				}
 				return jsonResponse(t, body), nil
 			})
-			result := searcher.Search(t.Context(), api.DuplicateSubject{
+			var adapter dupe.Adapter = searcher
+			if test.limit > 0 {
+				profile := Profile()
+				profile.DupePolicy.SearchScope.MaxPages = test.limit
+				definition := standalone.MustNew(profile)
+				registry := trackers.NewRegistry()
+				if err := registry.Register(definition); err != nil {
+					t.Fatal(err)
+				}
+				adapter = dupe.NewAdapter(definition, "TL", searcher.cfg, searcher.http, api.NopLogger{}, registry)
+			}
+			result := adapter.Search(t.Context(), api.DuplicateSubject{
 				Identity:         api.ExternalIdentity{IMDBID: test.imdb}, // No title; conflicting provider cross-links cannot change this request.
 				ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{IMDBID: 999}},
 			})

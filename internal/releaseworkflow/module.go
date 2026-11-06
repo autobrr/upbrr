@@ -462,6 +462,18 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err != nil {
 		return CommandResult{}, err
 	}
+	if state.effectResolution != nil {
+		// Reconciliation retains external authority until it commits, then
+		// withdraws obsolete policy approval before any fresh work can start.
+		stale, err := m.staleTrackerPolicies(state)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if len(stale) > 0 {
+			invalidateStaleTrackerPolicies(&state, stale, nextRevision, now)
+			result.Media = nil
+		}
+	}
 	if result.Dupes != nil || result.TrackerApproval != nil {
 		if err := m.restoreReusableMedia(ctx, ownerID, &state, priorWorkflow.Media, nextRevision, now, &result); err != nil {
 			m.cleanupUncommittedResult(ownerID, priorWorkflow, result)

@@ -31,16 +31,16 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 				))
 			}
 			switch {
-			case meta.Anime && subject.APIUpload && animeIDURL(meta) == "":
-				failures = append(failures, trackers.NewRuleFailure(
-					"required_anilist_mapping",
-					"TL API anime uploads require matching AniList metadata; refresh metadata for the selected MAL ID",
-					api.RuleDispositionStrict,
-				))
 			case meta.Anime && meta.Identity.MALID <= 0:
 				failures = append(failures, trackers.NewRuleFailure(
 					"required_provider_id",
 					"TL anime uploads require a MAL ID",
+					api.RuleDispositionStrict,
+				))
+			case meta.Anime && subject.APIUpload && animeIDURL(meta) == "":
+				failures = append(failures, trackers.NewRuleFailure(
+					"required_anilist_mapping",
+					"TL API anime uploads require matching AniList metadata; refresh metadata for the selected MAL ID",
 					api.RuleDispositionStrict,
 				))
 			case !meta.Anime && category == api.CanonicalCategoryMovie && meta.Identity.IMDBID <= 0:
