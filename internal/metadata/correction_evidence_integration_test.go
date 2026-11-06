@@ -631,6 +631,73 @@ func TestPreparedMovieYearCorrectionReusesProviderEvidence(t *testing.T) {
 	}
 }
 
+func TestPreparedUnresolvedCategoryDefaultsSurviveReuseAndRestart(t *testing.T) {
+	t.Parallel()
+	fixture := newCorrectionEvidenceFixtureForSource(t, "content.mkv")
+	fixture.noTMDBResults = true
+	dir := filepath.Join(filepath.Dir(fixture.input.SourcePath), "Example Release")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "content.mkv"), []byte("synthetic media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.input.SourcePath = dir
+	fixture.input.Instructions = api.ReleaseFactInstructions{}
+	if category := ParseReleaseInfo(dir).Category; category != "" {
+		t.Fatalf("expected unresolved source category, got %q", category)
+	}
+	module, repo := fixture.open(t)
+	input := fixture.input
+	var generation api.PreparedGeneration
+	for _, phase := range []string{"initial", "reuse", "restart", "refresh", "old contract"} {
+		switch phase {
+		case "reuse":
+			input.ExternalFreshness = api.ExternalFreshnessReuse
+		case "refresh":
+			input.ExternalFreshness = api.ExternalFreshnessRefresh
+		case "restart", "old contract":
+			if phase == "old contract" {
+				stale, err := repo.LoadPreparedRelease(t.Context(), dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				stale.Compatibility.ContractVersion = "prepared-release-v77"
+				stale.Identity.Resolution.ContractVersion = "external-identity-v12"
+				stale.Identity.Category = api.CanonicalCategoryUnknown
+				if err := repo.CommitPreparedRelease(t.Context(), stale); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := repo.Close(); err != nil {
+				t.Fatal(err)
+			}
+			module, repo = fixture.open(t)
+			input.ExternalFreshness = api.ExternalFreshnessReuse
+		}
+		result := prepareCorrectionEvidence(t, module, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+		release := result.Release
+		if release.Identity.Category != api.CanonicalCategoryMovie || release.Identity.TMDBID != 0 || release.Identity.IMDBID != 0 ||
+			release.Identity.TVDBID != 0 || release.Identity.TVmazeID != 0 || release.Identity.MALID != 0 {
+			t.Fatalf("%s: unresolved identity = %+v", phase, release.Identity)
+		}
+		if (phase == "reuse" || phase == "restart") && release.Generation != generation || phase == "old contract" && release.Generation <= generation {
+			t.Fatalf("%s: generation = %d, previous %d", phase, release.Generation, generation)
+		}
+		generation = release.Generation
+		subject, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: dir, Generation: generation}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if subject.Release.Category != "MOVIE" {
+			t.Fatalf("%s: inconsistent upload category: %q", phase, subject.Release.Category)
+		}
+		if _, err := release.Identity.RequireProviderID(api.IdentityProviderTMDB); err == nil {
+			t.Fatalf("%s: category fallback bypassed missing TMDB requirement", phase)
+		}
+	}
+}
+
 func TestPreparedTMDBCategoryFallbackAndMovieCorrectionSurviveRestart(t *testing.T) {
 	t.Parallel()
 	fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Series.2026.1080p.WEB-DL.H264-GRP.mkv")
@@ -1254,6 +1321,7 @@ type correctionEvidenceFixture struct {
 	imdb            IMDBClient
 	tmdbExternalIDs string
 	tmdbAnime       bool
+	noTMDBResults   bool
 	tvmaze          TVmazeClient
 	tvdbAliasYear   bool
 	tvdbRemoteIDs   string
@@ -1360,6 +1428,9 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 			}
 		case key == "/3/search/tv":
 			body = `{"results":[{"id":555001,"name":"Example Series","original_name":"Example Series","first_air_date":"2026-01-01","original_language":"en"}]}`
+			if fixture.noTMDBResults {
+				body = `{"results":[]}`
+			}
 		case key == "/3/search/movie":
 			body = `{"results":[]}`
 		case key == "/3/find/555003":

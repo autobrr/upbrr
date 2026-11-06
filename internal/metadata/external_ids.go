@@ -1489,6 +1489,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		appendProviderRefreshWarning(&meta, "TVmaze", tvmazeErr)
 		appendProviderRefreshWarning(&meta, "AniList", anilistErr)
 	}
+	// Keep unresolved searches free to discover TV before applying the final default.
+	if normalizeCategory(string(ids.Category)) == "" {
+		ids.Category = api.CanonicalCategoryMovie
+	}
 	ids = ids.WithProviderRetention(meta.ExternalIDOverrides)
 	logger.Tracef(
 		"metadata: external ids resolved tmdb=%d(%s) imdb=%d(%s) tvdb=%d(%s) tvmaze=%d(%s) mal=%d(%s)",
