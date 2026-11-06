@@ -7096,6 +7096,255 @@ describe("useReleaseSession", () => {
       expect(checkDuplicates).not.toHaveBeenCalled();
     });
 
+    it("reconciles selection changes after duplicate checking without submitting local drafts", async () => {
+      let checked: ReleaseWorkflowCurrent;
+      const project = workflowPorts().project;
+      const active = workflowPorts({
+        current: async () => checked,
+        project: async (...args) => {
+          const current = await project(...args);
+          return {
+            ...current,
+            projections: current.projections
+              ? {
+                  ...current.projections,
+                  projections: [...current.projections.projections].reverse(),
+                }
+              : undefined,
+          };
+        },
+      });
+      const prepared = preparedQuestionnaireWorkflow("retained-selection");
+      const projected = await active.project(
+        prepared,
+        ["AITHER"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      checked = await active.checkDuplicates(
+        projected,
+        false,
+        "checked",
+        new AbortController().signal,
+      );
+      const continueWorkflow = vi.fn(active.continue);
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(
+          portsFor({
+            resumeWorkflowID: prepared.workflow.id,
+            workflow: { ...active, continue: continueWorkflow },
+          }),
+          ["AITHER"],
+        ),
+      });
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      act(() => result.current.duplicates.answerQuestionnaire("AITHER", "choice", "local draft"));
+      act(() => result.current.duplicates.chooseTrackers(["AITHER", "BLU"]));
+      await waitFor(() =>
+        expect(
+          result.current.duplicates.view.assessment?.results.map((lane) => lane.trackerId).sort(),
+        ).toEqual(["AITHER", "BLU"]),
+      );
+      const requests = continueWorkflow.mock.calls.map(([request]) => request);
+      expect(
+        requests.some(
+          (request) =>
+            request.goal === "duplicates_decided" && request.intent.trackerIds?.includes("BLU"),
+        ),
+      ).toBe(true);
+      expect(
+        requests.every(
+          (request) => !request.intent.projectionInstructions?.AITHER?.questionnaire?.choice,
+        ),
+      ).toBe(true);
+      expect(result.current.duplicates.view.questionnaireAnswers.AITHER?.choice).toBe(
+        "local draft",
+      );
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireError).toBe(""));
+      act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+      await waitFor(() =>
+        expect(
+          result.current.duplicates.view.assessment?.results.map((lane) => lane.trackerId).sort(),
+        ).toEqual(["AITHER"]),
+      );
+      expect(result.current.navigation.view.access.screenshots.available).toBe(true);
+    });
+
+    it("resumes a retained duplicate check after interrupted selection reconciliation", async () => {
+      const seed = workflowPorts();
+      const prepared = preparedQuestionnaireWorkflow("pending-selection");
+      const projected = await seed.project(
+        prepared,
+        ["AITHER", "BLU"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      const interrupted = {
+        ...projected,
+        inputReadiness: { ...prepared.inputReadiness!, selectedTrackerIds: ["AITHER", "BLU"] },
+        continuation: { ...projected.continuation, duplicateReusePending: true },
+        dupes: undefined,
+      };
+      const active = workflowPorts({ current: async () => interrupted });
+      const continueWorkflow = vi.fn(active.continue);
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(
+          portsFor({
+            resumeWorkflowID: prepared.workflow.id,
+            workflow: { ...active, continue: continueWorkflow },
+          }),
+          ["AITHER", "BLU"],
+        ),
+      });
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      expect(result.current.duplicates.view.assessment).toBeNull();
+      act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+      await waitFor(() =>
+        expect(
+          result.current.duplicates.view.assessment?.results.map((lane) => lane.trackerId),
+        ).toEqual(["AITHER"]),
+      );
+      expect(
+        continueWorkflow.mock.calls.some(
+          ([request]) =>
+            request.goal === "duplicates_decided" && request.intent.trackerIds?.length === 1,
+        ),
+      ).toBe(true);
+    });
+
+    it("replaces a sole tracker with unanswered questions before reconciling retained evidence", async () => {
+      const seed = workflowPorts();
+      const prepared = preparedQuestionnaireWorkflow("blocked-selection");
+      const projected = await seed.project(
+        prepared,
+        ["BLU"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      const question = {
+        id: "blu-question",
+        kind: "answer_questionnaire" as const,
+        trackerId: "BLU",
+        prompt: "Answer BLU",
+        status: "pending" as const,
+        workflowRevision: projected.workflow.revision,
+        createdAt: "2026-07-20T00:00:00Z",
+      };
+      let backend: ReleaseWorkflowCurrent = {
+        ...projected,
+        inputReadiness: { ...prepared.inputReadiness!, selectedTrackerIds: ["BLU"] },
+        workflow: { ...projected.workflow, requiredActions: [question] },
+        continuation: { ...projected.continuation, duplicateReusePending: true },
+        dupes: undefined,
+      };
+      const active = workflowPorts({
+        current: async () => backend,
+        project: async (current, trackers, ...rest) => {
+          const next = await seed.project(current, trackers, ...rest);
+          return {
+            ...next,
+            workflow: {
+              ...next.workflow,
+              requiredActions: trackers.includes("BLU") ? [question] : [],
+            },
+          };
+        },
+      });
+      const continueWorkflow = vi.fn(
+        async (request: ContinueReleaseWorkflowRequest, signal: AbortSignal) => {
+          // Production duplicate continuation enforces current questions before it
+          // can project a replacement selection; projection goals bypass that gate.
+          if (
+            request.goal === "duplicates_decided" &&
+            backend.workflow.requiredActions?.some((action) => action.id === question.id)
+          )
+            return backend;
+          backend = await active.continue(request, signal);
+          return backend;
+        },
+      );
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(
+          portsFor({
+            resumeWorkflowID: prepared.workflow.id,
+            workflow: { ...active, continue: continueWorkflow },
+          }),
+          ["BLU"],
+        ),
+      });
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      const before = continueWorkflow.mock.calls.length;
+      act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+      await waitFor(() =>
+        expect(
+          result.current.duplicates.view.assessment?.results.map((lane) => lane.trackerId),
+        ).toEqual(["AITHER"]),
+      );
+      const goals = continueWorkflow.mock.calls.slice(before).map(([request]) => request.goal);
+      expect(goals[0]).toBe("trackers_projected");
+      expect(goals).toContain("duplicates_decided");
+      expect(backend.workflow.requiredActions).toEqual([]);
+      expect(result.current.duplicates.view.questionnaireError).toBe("");
+    });
+
+    it("does not reconcile duplicate results just because an uploaded tracker remains selected", async () => {
+      const seed = workflowPorts();
+      const prepared = preparedQuestionnaireWorkflow("uploaded-selection");
+      const projected = await seed.project(
+        prepared,
+        ["AITHER"],
+        {},
+        "seed",
+        new AbortController().signal,
+      );
+      const checked = await seed.checkDuplicates(
+        projected,
+        false,
+        "checked",
+        new AbortController().signal,
+      );
+      const current = {
+        ...checked,
+        workflow: {
+          ...checked.workflow,
+          submissionExclusions: [
+            { trackerId: "BLU", reason: "already_uploaded", confirmedAt: "2026-07-20T00:00:00Z" },
+          ],
+        },
+        inputReadiness: { ...prepared.inputReadiness!, selectedTrackerIds: ["AITHER", "BLU"] },
+      };
+      const checkDuplicates = vi.fn(seed.checkDuplicates);
+      const active = workflowPorts({
+        current: async () => current,
+        checkDuplicates,
+        project: async (latest, trackers, ...rest) =>
+          seed.project(
+            latest,
+            trackers.filter((tracker) => tracker !== "BLU"),
+            ...rest,
+          ),
+      });
+      const continueWorkflow = vi.fn(active.continue);
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: questionnaireWrapper(
+          portsFor({
+            resumeWorkflowID: prepared.workflow.id,
+            workflow: { ...active, continue: continueWorkflow },
+          }),
+          ["AITHER", "BLU"],
+        ),
+      });
+      await waitFor(() => expect(result.current.duplicates.view.questionnaireStatus).toBe("ready"));
+      expect(result.current.duplicates.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
+      expect(
+        continueWorkflow.mock.calls.every(([request]) => request.goal === "trackers_projected"),
+      ).toBe(true);
+      expect(checkDuplicates).not.toHaveBeenCalled();
+    });
+
     it("aborts a pending question projection when the source changes and suppresses its response", async () => {
       const active = workflowPorts();
       const prepared = preparedQuestionnaireWorkflow("source-questions", "C:\\media\\First");

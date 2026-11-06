@@ -13420,6 +13420,9 @@
           "disposition": {
             "$ref": "#/components/schemas/WorkflowDisposition"
           },
+          "duplicateReusePending": {
+            "type": "boolean"
+          },
           "events": {
             "type": "array",
             "items": {

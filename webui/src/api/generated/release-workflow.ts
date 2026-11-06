@@ -3305,6 +3305,7 @@ export type WorkflowAuthority = Readonly<{
 export type WorkflowContinuation = Readonly<{
   availableGoals: readonly GoalAvailability[];
   disposition: WorkflowDisposition;
+  duplicateReusePending?: boolean;
   events?: readonly WorkflowEvent[];
   lifecycle: OperationLifecycle;
   refs: WorkflowExactRefs;

@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"time"
 
@@ -114,9 +113,9 @@ func (m *Module) pendingDuplicateReuse(
 	}, nil
 }
 
-// stageQuestionnaireDuplicateReuse retains the original baseline across incomplete
-// answer edits. Confirmed submissions are excluded from selection comparison;
-// other selection, instruction, and execution changes discard the baseline.
+// stageQuestionnaireDuplicateReuse retains the original baseline across tracker
+// selection and answer edits. Unchanged lanes still require compatible projections.
+// Changed instructions invalidate only their lane; execution changes discard it.
 func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersCommand) (bool, error) {
 	pending := state.PendingDuplicateReuse
 	if pending != nil && pending.MetadataRefresh && pending.EquivalentMetadataTo != nil {
@@ -128,53 +127,62 @@ func stageQuestionnaireDuplicateReuse(state *State, command ProjectTrackersComma
 	}
 	state.PendingDuplicateReuse = nil
 	workflow := state.Workflow
+	if workflow.TrackerProjections == nil && pending != nil && pending.ProjectionContext != nil {
+		context, ok := state.Projections[pending.ProjectionContext.ID]
+		if !ok || context.Revision != pending.ProjectionContext.Revision {
+			return false, nil
+		}
+		workflow.TrackerProjections = pending.ProjectionContext
+		workflow.Selection = &context.Selection
+		workflow.ProjectionInstructions = context.Instructions
+	}
 	if workflow.TrackerProjections == nil || workflow.Selection == nil || workflow.ProjectionInstructions == nil {
 		return false, nil
 	}
 	projections := state.Projections[workflow.TrackerProjections.ID]
 	selection := state.Selections[workflow.Selection.ID]
 	instructions := state.ProjectionInstructions[workflow.ProjectionInstructions.ID]
-	desired := normalizeContinuationTrackerIDs(withoutConfirmedSubmissions(command.TrackerIDs, workflow.SubmissionExclusions))
 	if projections.Revision != workflow.TrackerProjections.Revision || selection.Revision != workflow.Selection.Revision ||
 		instructions.Revision != workflow.ProjectionInstructions.Revision ||
-		!slices.Equal(desired, normalizeContinuationTrackerIDs(selection.TrackerIDs)) ||
 		api.NormalizeWorkflowExecutionMode(command.ExecutionMode) != api.NormalizeWorkflowExecutionMode(projections.ExecutionMode) {
 		return false, nil
 	}
 	previous := effectiveProjectionInstructions(instructions.Instructions)
 	next := effectiveProjectionInstructions(command.Instructions)
-	unchanged, err := sameProjectionInstructions(previous, next)
-	if err != nil || unchanged {
-		return false, err
-	}
-	stripAnswers := func(instructions map[api.TrackerID]api.TrackerProjectionInstructions) map[api.TrackerID]api.TrackerProjectionInstructions {
-		result := maps.Clone(instructions)
-		for trackerID, instruction := range result {
-			instruction.Questionnaire = nil
-			result[trackerID] = instruction
+	var invalidated []api.TrackerID
+	for _, trackerID := range selection.TrackerIDs {
+		if !slices.Contains(command.TrackerIDs, trackerID) {
+			continue
 		}
-		return effectiveProjectionInstructions(result)
-	}
-	answerOnly, err := sameProjectionInstructions(stripAnswers(previous), stripAnswers(next))
-	if err != nil || !answerOnly {
-		return false, err
+		prior, desired := previous[trackerID], next[trackerID]
+		prior.Questionnaire, desired.Questionnaire = nil, nil
+		unchanged, err := sameProjectionInstruction(prior, desired)
+		if err != nil {
+			return false, err
+		}
+		if !unchanged {
+			invalidated = append(invalidated, trackerID)
+		}
 	}
 	if workflow.Dupes != nil {
 		state.PendingDuplicateReuse = &PendingDuplicateReuse{Assessment: *workflow.Dupes, QuestionnaireOnly: true}
-	} else if pending != nil && pending.QuestionnaireOnly {
+	} else if pending != nil {
 		state.PendingDuplicateReuse = pending
+	}
+	if retained := state.PendingDuplicateReuse; retained != nil {
+		retained.InvalidatedTrackers = normalizeContinuationTrackerIDs(append(retained.InvalidatedTrackers, invalidated...))
 	}
 	return true, nil
 }
 
-func sameProjectionInstructions(left, right map[api.TrackerID]api.TrackerProjectionInstructions) (bool, error) {
+func sameProjectionInstruction(left, right api.TrackerProjectionInstructions) (bool, error) {
 	a, err := api.CanonicalWorkflowFingerprint(left)
 	if err != nil {
-		return false, fmt.Errorf("release workflow fingerprint prior questionnaire instructions: %w", err)
+		return false, fmt.Errorf("release workflow fingerprint prior tracker instructions: %w", err)
 	}
 	b, err := api.CanonicalWorkflowFingerprint(right)
 	if err != nil {
-		return false, fmt.Errorf("release workflow fingerprint current questionnaire instructions: %w", err)
+		return false, fmt.Errorf("release workflow fingerprint current tracker instructions: %w", err)
 	}
 	return a == b, nil
 }
