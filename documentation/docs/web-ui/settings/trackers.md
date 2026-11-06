@@ -77,6 +77,6 @@ The older per-tracker **Internal** boolean is retained only so existing configur
 
 Tracker credentials are secrets. Leave `[REDACTED]` unchanged to preserve a value. After any tracker change, check [Tracker Auth](./tracker-auth.md) and run **Dry Run** before submission.
 
-**Anonymous upload** requests anonymous attribution where the adapter supports it. **Show group when anonymous**, when available, requests release-group visibility only for an anonymous upload. An unchecked preference does not guarantee that the tracker's account default is disabled. These controls do not guarantee privacy from the tracker.
+**Anonymous upload** requests anonymous attribution where the adapter supports it. **Show group when anonymous**, when shown for a tracker, requests release-group visibility only for an anonymous upload. An unchecked preference does not guarantee that the tracker's account default is disabled. These controls do not guarantee privacy from the tracker.
 
-Per-upload anonymity choices take precedence over stored settings. When an upgrade changes the tracker review contract, unfinished reviews are rebuilt before their upload authority is reused. Compatible prepared source facts remain available, confirmed uploads are not repeated, and uncertain outcomes remain available for reconciliation.
+A per-upload anonymity choice overrides the stored **Anonymous upload** setting. **Show group when anonymous** continues to use its stored setting. When an upgrade changes the tracker review contract, unfinished reviews are rebuilt before their upload authority is reused. Compatible prepared source facts remain available, confirmed uploads are not repeated, and uncertain outcomes remain available for reconciliation.
