@@ -160,7 +160,7 @@ export const sameNames = (left: readonly string[], right: readonly string[]) => 
   const normalizedRight = normalizedNames(right);
   return (
     normalizedLeft.length === normalizedRight.length &&
-    normalizedLeft.every((value, index) => value === normalizedRight[index])
+    normalizedLeft.every((value) => normalizedRight.includes(value))
   );
 };
 
