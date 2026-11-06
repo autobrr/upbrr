@@ -462,18 +462,6 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if state.effectResolution != nil {
-		// Reconciliation retains external authority until it commits, then
-		// withdraws obsolete policy approval before any fresh work can start.
-		stale, err := m.staleTrackerPolicies(state)
-		if err != nil {
-			return CommandResult{}, err
-		}
-		if len(stale) > 0 {
-			invalidateStaleTrackerPolicies(&state, stale, nextRevision, now)
-			result.Media = nil
-		}
-	}
 	if result.Dupes != nil || result.TrackerApproval != nil {
 		if err := m.restoreReusableMedia(ctx, ownerID, &state, priorWorkflow.Media, nextRevision, now, &result); err != nil {
 			m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
@@ -536,7 +524,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 			m.private.Delete(ownerID, state.Workflow.ID, hdrMeasurementPrivateResourceID(id))
 		}
 	}
-	if result.Dupes != nil {
+	if result.Dupes != nil || state.effectResolution != nil {
 		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
 	}
 	if priorDuplicateReuse != nil && (state.PendingDuplicateReuse == nil ||
@@ -9014,9 +9002,29 @@ func (m *Module) resolveAction(
 			Expected: expected,
 		}
 		if action.EffectKind == api.WorkflowExternalEffectImageHosting {
+			state.Workflow.RequiredActions = slices.Delete(state.Workflow.RequiredActions, index, index+1)
+			remainingActions := slices.Clone(state.Workflow.RequiredActions)
+			// Check deferred policy before publishing a revision of shared media.
+			if err := m.recheckReconciledTrackerPolicies(state, nextRevision, now); err != nil {
+				return CommandResult{}, err
+			}
 			result, err := m.resolveImageHostingAction(ctx, ownerID, state, nextRevision, now, action)
 			if err != nil {
 				return CommandResult{}, err
+			}
+			// Recovery can retain uncertain effects only on the workflow, outside
+			// the media snapshot. Publication must not discard those actions.
+			for _, pending := range remainingActions {
+				if pending.Kind != api.RequiredActionReconcileSubmission || pending.Status != api.RequiredActionStatusPending {
+					continue
+				}
+				if !slices.ContainsFunc(state.Workflow.RequiredActions, func(current api.RequiredAction) bool { return current.ID == pending.ID }) {
+					pending.WorkflowRevision = nextRevision
+					state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, pending)
+				}
+			}
+			if hasPendingRequiredAction(state.Workflow.RequiredActions) {
+				state.Workflow.Status = api.WorkflowStatusBlocked
 			}
 			if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
 				return CommandResult{}, fmt.Errorf("release workflow reconcile image-host private authority: %w", err)
@@ -9048,6 +9056,9 @@ func (m *Module) resolveAction(
 	}
 	state.Workflow.RequiredActions = slices.Delete(state.Workflow.RequiredActions, index, index+1)
 	if action.Kind == api.RequiredActionReconcileSubmission {
+		if err := m.recheckReconciledTrackerPolicies(state, nextRevision, now); err != nil {
+			return CommandResult{}, err
+		}
 		if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow reconcile private authority: %w", err)
 		}
@@ -9170,6 +9181,10 @@ func (m *Module) resolveImageHostingAction(
 	if !ok || snapshot.Revision != mediaRef.Revision {
 		finishUnavailableImageHostingReconciliation(&state.Workflow, action)
 		return CommandResult{}, nil
+	}
+	snapshot, err := snapshot.Clone()
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow clone reconciled media: %w", err)
 	}
 	value, err := m.private.Get(ownerID, state.Workflow.ID, mediaPrivateResourceID(mediaRef.ID), now)
 	if err != nil {

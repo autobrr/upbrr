@@ -46,6 +46,17 @@ func (m *Module) staleTrackerPolicies(state State) ([]api.TrackerID, error) {
 	return stale, nil
 }
 
+func (m *Module) recheckReconciledTrackerPolicies(state *State, revision api.WorkflowRevision, now time.Time) error {
+	stale, err := m.staleTrackerPolicies(*state)
+	if err != nil {
+		return err
+	}
+	if len(stale) > 0 {
+		invalidateStaleTrackerPolicies(state, stale, revision, now)
+	}
+	return nil
+}
+
 func invalidateStaleTrackerPolicies(state *State, stale []api.TrackerID, revision api.WorkflowRevision, now time.Time) {
 	previous := state.Projections[state.Workflow.TrackerProjections.ID]
 	next := previous

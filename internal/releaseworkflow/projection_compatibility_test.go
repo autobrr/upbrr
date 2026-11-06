@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -30,8 +31,31 @@ func TestPersistentTLPolicyUpgradeRebuildsBeforeDownstreamWork(t *testing.T) {
 		legacy, reviewed, betaOnly, completed bool
 		closed                                api.WorkflowStatus
 		reconciliation                        api.WorkflowExternalEffectKind
+		workflowOnlyPair                      bool
+		policyError, saveFailure              bool
 	}{
 		{name: "old pre-dupe API eligibility", legacy: true},
+		{
+			name:             "two recovered image effects",
+			legacy:           true,
+			reviewed:         true,
+			reconciliation:   api.WorkflowExternalEffectImageHosting,
+			workflowOnlyPair: true,
+		},
+		{
+			name:           "image policy check failure",
+			legacy:         true,
+			reviewed:       true,
+			reconciliation: api.WorkflowExternalEffectImageHosting,
+			policyError:    true,
+		},
+		{
+			name:           "image reconciliation save failure",
+			legacy:         true,
+			reviewed:       true,
+			reconciliation: api.WorkflowExternalEffectImageHosting,
+			saveFailure:    true,
+		},
 		{
 			name:           "old image reconciliation",
 			legacy:         true,
@@ -126,7 +150,11 @@ func TestPersistentTLPolicyUpgradeRebuildsBeforeDownstreamWork(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			created := executeCommand(t, moduleA, CreateWorkflowCommand{})
+			create := CreateWorkflowCommand{}
+			if test.reconciliation == api.WorkflowExternalEffectImageHosting {
+				create.TrackerDecisionMode = TrackerDecisionModeWebUIControls
+			}
+			created := executeCommand(t, moduleA, create)
 			prepared := executeCommand(t, moduleA, PrepareReleaseCommand{
 				WorkflowID:       created.Workflow.ID,
 				ExpectedRevision: created.Workflow.Revision,
@@ -240,30 +268,52 @@ func TestPersistentTLPolicyUpgradeRebuildsBeforeDownstreamWork(t *testing.T) {
 					}
 				}
 			}
+			mediaRelease := &privateVaultReleaseProbe{}
+			if test.reconciliation == api.WorkflowExternalEffectImageHosting {
+				resource := struct {
+					RetainedMediaResource
+					*privateVaultReleaseProbe
+				}{&retainedMediaResourceFake{stats: &retainedMediaResourceStats{}}, mediaRelease}
+				if err := private.Put(testOwnerID, state.Workflow.ID, mediaPrivateResourceID("old-media"), resource, now.Add(time.Hour)); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if test.reconciliation != "" {
-				action, err := moduleA.newReconcileAction(state.Workflow.Revision, now, "TL", test.reconciliation, "synthetic-scope", "Confirm the uncertain effect did not complete")
-				if err != nil {
-					t.Fatal(err)
+				count := 1
+				if test.workflowOnlyPair {
+					count = 2
 				}
-				effect := api.ReleaseWorkflowEffectRecord{
-					OwnerID:             testOwnerID,
-					WorkflowID:          state.Workflow.ID,
-					OperationID:         "uncertain-operation",
-					EffectID:            "uncertain-effect",
-					Kind:                string(test.reconciliation),
-					ScopeID:             action.EffectScopeID,
-					SemanticFingerprint: testFingerprint(t, "uncertain"),
-					StartedAt:           now,
-					UpdatedAt:           now,
+				state.Workflow.RequiredActions = nil
+				for index := range count {
+					action, err := moduleA.newReconcileAction(state.Workflow.Revision, now, "TL", test.reconciliation, fmt.Sprintf("synthetic-scope-%d", index), "Confirm the uncertain effect did not complete")
+					if err != nil {
+						t.Fatal(err)
+					}
+					effect := api.ReleaseWorkflowEffectRecord{
+						OwnerID:             testOwnerID,
+						WorkflowID:          state.Workflow.ID,
+						OperationID:         "uncertain-operation",
+						EffectID:            fmt.Sprintf("uncertain-effect-%d", index),
+						Kind:                string(test.reconciliation),
+						ScopeID:             action.EffectScopeID,
+						SemanticFingerprint: testFingerprint(t, "uncertain"),
+						StartedAt:           now,
+						UpdatedAt:           now,
+					}
+					if _, _, err := persistentA.BeginEffect(t.Context(), effect); err != nil {
+						t.Fatal(err)
+					}
+					if err := persistentA.MarkOperationEffectsUnknown(t.Context(), testOwnerID, state.Workflow.ID, effect.OperationID, now); err != nil {
+						t.Fatal(err)
+					}
+					action.EffectID, action.EffectOperationID = effect.EffectID, effect.OperationID
+					state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
+					if test.reconciliation == api.WorkflowExternalEffectImageHosting && !test.workflowOnlyPair {
+						media := state.Media["old-media"]
+						media.RequiredActions = append(media.RequiredActions, action)
+						state.Media[media.ID] = media
+					}
 				}
-				if _, _, err := persistentA.BeginEffect(t.Context(), effect); err != nil {
-					t.Fatal(err)
-				}
-				if err := persistentA.MarkOperationEffectsUnknown(t.Context(), testOwnerID, state.Workflow.ID, effect.OperationID, now); err != nil {
-					t.Fatal(err)
-				}
-				action.EffectID, action.EffectOperationID = effect.EffectID, effect.OperationID
-				state.Workflow.RequiredActions = []api.RequiredAction{action}
 				state.Workflow.Status = api.WorkflowStatusBlocked
 			}
 			if test.completed {
@@ -302,10 +352,41 @@ func TestPersistentTLPolicyUpgradeRebuildsBeforeDownstreamWork(t *testing.T) {
 				t.Fatal(err)
 			}
 			if test.reconciliation != "" {
-				if current.Projections.Status == api.StageStatusStale || current.Workflow.Dupes == nil || len(current.Workflow.RequiredActions) != 1 {
+				wantActions := 1
+				if test.workflowOnlyPair {
+					wantActions = 2
+				}
+				if current.Projections.Status == api.StageStatusStale || current.Workflow.Dupes == nil || len(current.Workflow.RequiredActions) != wantActions {
 					t.Fatal("pending reconciliation authority was withdrawn")
 				}
-				reconciled := executeCommand(t, moduleB, ResolveActionCommand{
+				if test.workflowOnlyPair {
+					first := executeCommand(t, moduleB, ResolveActionCommand{
+						WorkflowID:       current.Workflow.ID,
+						ExpectedRevision: current.Workflow.Revision,
+						Answer: api.RequiredActionAnswer{
+							ActionID:         current.Workflow.RequiredActions[0].ID,
+							WorkflowRevision: current.Workflow.Revision,
+							SelectedValues:   []string{api.RequiredActionReconcileNotCompleted},
+						},
+					})
+					if first.Workflow.Status != api.WorkflowStatusBlocked || len(first.Workflow.RequiredActions) != 1 || first.Workflow.Dupes == nil || first.Workflow.Media == nil {
+						t.Fatalf("remaining uncertain effect lost: %+v", first.Workflow)
+					}
+					current, err = moduleB.Current(t.Context(), testOwnerID, state.Workflow.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				private.mu.Lock()
+				resourcesBefore := len(private.entries)
+				private.mu.Unlock()
+				if test.policyError {
+					moduleB.trackerProjector = policyUpgradeFailingProjector{WorkflowProjector: policyUpgradeProjector(t, cfg, false)}
+				}
+				if test.saveFailure {
+					moduleB.repository = &failOnceSaveRepository{Repository: moduleB.repository}
+				}
+				reconciled, resolveErr := moduleB.Execute(t.Context(), testOwnerID, ResolveActionCommand{
 					WorkflowID:       current.Workflow.ID,
 					ExpectedRevision: current.Workflow.Revision,
 					Answer: api.RequiredActionAnswer{
@@ -314,6 +395,47 @@ func TestPersistentTLPolicyUpgradeRebuildsBeforeDownstreamWork(t *testing.T) {
 						SelectedValues:   []string{api.RequiredActionReconcileNotCompleted},
 					},
 				})
+				if test.policyError || test.saveFailure {
+					want := "synthetic repository save failure"
+					if test.policyError {
+						want = "synthetic tracker policy failure"
+					}
+					if resolveErr == nil || !strings.Contains(resolveErr.Error(), want) {
+						t.Fatalf("reconciliation error = %v, want %s", resolveErr, want)
+					}
+					private.mu.Lock()
+					resourcesAfter := len(private.entries)
+					private.mu.Unlock()
+					if resourcesAfter != resourcesBefore || mediaRelease.released {
+						t.Fatal("failed reconciliation leaked or released shared media authority")
+					}
+					if _, err := private.Get(testOwnerID, state.Workflow.ID, mediaPrivateResourceID("old-media"), now.Add(time.Minute)); err != nil {
+						t.Fatal(err)
+					}
+					retained, err := persistentB.Load(t.Context(), testOwnerID, state.Workflow.ID)
+					if err != nil || retained.Workflow.Revision != current.Workflow.Revision || retained.Workflow.Dupes == nil || retained.Workflow.Media == nil || len(retained.Workflow.RequiredActions) != 1 {
+						t.Fatalf("failed reconciliation changed durable authority: %+v err=%v", retained.Workflow, err)
+					}
+					return
+				}
+				if resolveErr != nil {
+					t.Fatal(resolveErr)
+				}
+				if test.legacy {
+					for _, id := range []string{dupePrivateResourceID("old-dupes"), mediaPrivateResourceID("old-media"), descriptionPrivateResourceID("old-description")} {
+						if _, err := private.Get(testOwnerID, state.Workflow.ID, id, now.Add(time.Minute)); !errors.Is(err, ErrPrivateResourceUnavailable) {
+							t.Fatalf("obsolete private authority %s retained: %v", id, err)
+						}
+					}
+					private.mu.Lock()
+					remaining := len(private.entries)
+					private.mu.Unlock()
+					if remaining != 0 {
+						t.Fatalf("stale reconciliation retained %d private resources", remaining)
+					}
+				} else if test.reconciliation == api.WorkflowExternalEffectImageHosting && (reconciled.Media == nil || reconciled.Workflow.Dupes == nil) {
+					t.Fatal("current policy lost reusable media or duplicate authority")
+				}
 				if len(reconciled.Workflow.RequiredActions) != 0 || reconciled.Workflow.Status != api.WorkflowStatusActive {
 					t.Fatalf("reconciliation did not finish: %+v", reconciled.Workflow)
 				}
@@ -367,6 +489,9 @@ func TestPersistentTLPolicyUpgradeRebuildsBeforeDownstreamWork(t *testing.T) {
 			loaded, err := persistentB.Load(t.Context(), testOwnerID, state.Workflow.ID)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if test.reconciliation == api.WorkflowExternalEffectImageHosting && !reflect.DeepEqual(loaded.Media["old-media"], state.Media["old-media"]) {
+				t.Fatal("historical media audit was modified")
 			}
 			if !slices.EqualFunc(loaded.Projections[oldProjection.ID].Projections, state.Projections[oldProjection.ID].Projections, func(a, b api.TrackerReleaseProjection) bool {
 				return a.Readiness == b.Readiness && a.DupeReady == b.DupeReady
@@ -732,4 +857,11 @@ type policyUpgradeDescriptionBuilder struct {
 
 func (b policyUpgradeDescriptionBuilder) Build(context.Context, api.ReleaseRef, api.TrackerReleaseProjectionSet, api.MediaArtifactSet, any, api.DescriptionInstructions, time.Time) (api.DescriptionSet, error) {
 	return api.DescriptionSet{}, b.build()
+}
+
+// policyUpgradeFailingProjector exercises a failed deferred policy check before private media publication.
+type policyUpgradeFailingProjector struct{ *trackers.WorkflowProjector }
+
+func (policyUpgradeFailingProjector) StaleTrackerPolicies(api.TrackerCatalogSnapshot, []api.TrackerID) ([]api.TrackerID, error) {
+	return nil, errors.New("synthetic tracker policy failure")
 }
