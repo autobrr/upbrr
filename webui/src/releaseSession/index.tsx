@@ -1597,41 +1597,53 @@ export function ReleaseSessionProvider({
       state.inputEditRevision - state.trackerSelectionEditRevision;
     const trackers = [...state.selectedTrackers];
     try {
-      const current = await continueBackendGoal(
-        initial,
+      const reconcileDuplicates =
         (initial.dupes || initial.continuation?.duplicateReusePending) &&
-          !sameNames(
-            trackers.filter(
-              (tracker) =>
-                !initial.workflow.submissionExclusions?.some(
-                  (exclusion) => exclusion.trackerId === tracker,
-                ),
-            ),
-            initial.projections?.projections.map((projection) => projection.trackerId) || [],
-          )
-          ? "duplicates_decided"
-          : "trackers_projected",
-        {
-          trackerIds: trackers,
-          // Selection discovers schemas; only explicit Apply/Run may submit local drafts.
-          projectionInstructions: Object.fromEntries(
-            trackers.map((tracker) => [
-              tracker,
-              {
-                ...initial.projectionInstructions?.instructions[tracker],
-                questionnaire: {
-                  ...initial.projectionInstructions?.instructions[tracker]?.questionnaire,
-                  ...initial.projections?.projections.find(
-                    (projection) => projection.trackerId === tracker,
-                  )?.questionnaireAnswers,
-                },
-              },
-            ]),
+        !sameNames(
+          trackers.filter(
+            (tracker) =>
+              !initial.workflow.submissionExclusions?.some(
+                (exclusion) => exclusion.trackerId === tracker,
+              ),
           ),
-        },
-        timestampedCommandID("workflow-questions", initial.workflow.revision),
+          initial.projections?.projections.map((projection) => projection.trackerId) || [],
+        );
+      const intent: WorkflowIntent = {
+        trackerIds: trackers,
+        // Selection discovers schemas; only explicit Apply/Run may submit local drafts.
+        projectionInstructions: Object.fromEntries(
+          trackers.map((tracker) => [
+            tracker,
+            {
+              ...initial.projectionInstructions?.instructions[tracker],
+              questionnaire: {
+                ...initial.projectionInstructions?.instructions[tracker]?.questionnaire,
+                ...initial.projections?.projections.find(
+                  (projection) => projection.trackerId === tracker,
+                )?.questionnaireAnswers,
+              },
+            },
+          ]),
+        ),
+      };
+      const commandID = timestampedCommandID("workflow-questions", initial.workflow.revision);
+      // Replace the selection before enforcing questions owned by removed trackers.
+      let current = await continueBackendGoal(
+        initial,
+        "trackers_projected",
+        intent,
+        commandID,
         controller.signal,
       );
+      if (reconcileDuplicates) {
+        current = await continueBackendGoal(
+          current,
+          "duplicates_decided",
+          intent,
+          `${commandID}-duplicates`,
+          controller.signal,
+        );
+      }
       if (controller.signal.aborted) return false;
       releaseWorkflowController(controller);
       acceptWorkflowCurrent(current);

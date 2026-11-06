@@ -3808,6 +3808,82 @@ test("embedded web cancels source verification before worker acceptance and conf
   }
 });
 
+test("embedded web replaces an unanswered tracker and reconciles retained duplicate evidence", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ preparedMediaInfo: true });
+  let app: AppServer | undefined;
+  try {
+    const config = await readFile(workspace.configPath, "utf8");
+    await writeFile(
+      workspace.configPath,
+      config.replace('default_trackers: ["BTN"]', 'default_trackers: ["AITHER"]'),
+    );
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    const initial = await runDuplicateCheck(page);
+    const original = initial.dupes!.results[0]!;
+    const selectedCurrent = (tracker: string, checked: boolean) =>
+      page.waitForResponse(async (response) => {
+        if (
+          !response.ok() ||
+          (!response.url().endsWith("/api/app/ContinueReleaseWorkflow") &&
+            !response.url().endsWith("/api/app/GetReleaseWorkflow"))
+        )
+          return false;
+        const current = (await response.json()) as ReleaseWorkflowCurrent;
+        return (
+          current.projections?.projections.length === 1 &&
+          current.projections.projections[0]?.trackerId === tracker &&
+          (checked
+            ? current.dupes?.results[0]?.trackerId === tracker
+            : !current.dupes && current.continuation?.duplicateReusePending === true)
+        );
+      });
+    const blockedResponse = selectedCurrent("ANT", false);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).uncheck();
+    await page.getByRole("checkbox", { name: "ANT", exact: true }).check();
+    const blocked = (await (await blockedResponse).json()) as ReleaseWorkflowCurrent;
+    expect(
+      blocked.workflow.requiredActions.some(
+        (action) =>
+          action.kind === "answer_questionnaire" &&
+          action.trackerId === "ANT" &&
+          action.status === "pending",
+      ),
+    ).toBe(true);
+    await expect(antQuestionPanel(page).locator("summary")).toContainText("Required");
+    const goals = new Map<string, string>();
+    page.on("request", (request) => {
+      if (!request.url().endsWith("/api/app/ContinueReleaseWorkflow")) return;
+      const body = request.postDataJSON() as {
+        goal: string;
+        idempotencyKey: string;
+        intent: { trackerIds?: string[] };
+      };
+      if (body.intent.trackerIds?.length === 1 && body.intent.trackerIds[0] === "AITHER")
+        goals.set(body.idempotencyKey, body.goal);
+    });
+    const restoredResponse = selectedCurrent("AITHER", true);
+    await page.getByRole("checkbox", { name: "ANT", exact: true }).uncheck();
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).check();
+    const restored = (await (await restoredResponse).json()) as ReleaseWorkflowCurrent;
+    expect(restored.dupes!.results[0]).toEqual({
+      ...original,
+      projectionFingerprint: expect.any(String),
+    });
+    expect(restored.dupes!.expiresAt).toBe(initial.dupes!.expiresAt);
+    await expect(page.getByText("No dupes", { exact: true })).toBeVisible();
+    await expect(antQuestionPanel(page)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+    expect([...goals.values()]).toEqual(["trackers_projected", "duplicates_decided"]);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded web retains duplicate evidence when adding and removing trackers", async ({
   page,
 }) => {
