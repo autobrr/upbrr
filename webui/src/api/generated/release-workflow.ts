@@ -278,6 +278,10 @@ export type BlurayVideoSpec = Readonly<{
   Resolution: string;
 }>;
 
+export type CancelActiveInputOpenRequest = Readonly<{
+  idempotencyKey: string;
+}>;
+
 export type CancelReleaseWorkflowRequest = Readonly<{
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
@@ -2426,6 +2430,7 @@ export type SourceScopedMetadata = Readonly<{
   Bluray?: BlurayMetadata | null;
   Generation: PreparedGeneration;
   IMDB?: IMDBMetadata | null;
+  IdentityCandidates?: readonly ExternalIdentityCandidate[];
   ImportedScreenshotEvidence?: ImportedScreenshotEvidence | null;
   ProviderAvailability: readonly ProviderAvailabilityEvidence[];
   SourcePath: string;

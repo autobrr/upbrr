@@ -29,6 +29,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
     if (
       view.status !== "running" &&
       view.status !== "error" &&
+      view.status !== "cancelled" &&
       !view.mutationBlockedReason &&
       !view.plan &&
       (view.workflowMode || Boolean(view.staleReason))

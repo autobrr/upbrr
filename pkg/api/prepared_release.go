@@ -784,6 +784,9 @@ func (i ExternalIdentity) RequireCategory() (CanonicalCategory, error) {
 // SourceScopedMetadata stores optional provider enrichment for one source and
 // prepared generation.
 type SourceScopedMetadata struct {
+	// IdentityCandidates retain advisory provider matches for this generation.
+	// They never select or replace a canonical provider ID.
+	IdentityCandidates []ExternalIdentityCandidate `json:",omitempty"`
 	// ImportedScreenshotEvidence is a receipt snapshot, not a local image asset.
 	ImportedScreenshotEvidence *ImportedScreenshotEvidence `json:",omitempty"`
 	SourcePath                 string

@@ -3623,3 +3623,187 @@ for (const size of [
     }
   });
 }
+
+for (const stage of [
+  "preparation",
+  "duplicates",
+  "screenshots",
+  "images",
+  "descriptions",
+  "torrent",
+] as const) {
+  test(`embedded web confirms cancellation at the ${stage} boundary and retains explicit retry`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace(
+      stage === "torrent" ? { mediaKind: "tv", preparedMediaInfo: true } : {},
+    );
+    workspace.env.UPBRR_E2E_CANCELLATION_STAGE = stage;
+    let app: AppServer | undefined;
+    let gate: ReturnType<typeof workspace.fake.holdWorkflowStage> | undefined;
+    try {
+      app = await startApp(workspace);
+      if (stage === "preparation") {
+        await page.goto(app.url);
+        await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+        await page.getByLabel("Source path", { exact: true }).press("Escape");
+      } else {
+        await fetchMetadata(
+          page,
+          app.url,
+          workspace.sourcePath,
+          stage === "torrent"
+            ? "E2E.Show.2026.S01E01.1080p.WEB-DL"
+            : releaseWorkflowParityFixture.releaseDisplayName,
+        );
+      }
+      const snapshot = async (): Promise<ActiveInputSnapshot> => {
+        const response = await page.request.get(
+          new URL("api/app/GetActiveInput", app!.url).toString(),
+        );
+        expect(response.ok()).toBe(true);
+        return response.json() as Promise<ActiveInputSnapshot>;
+      };
+      let start: () => Promise<void>;
+      if (stage === "preparation") {
+        start = () =>
+          page.getByRole("button", { name: /^(Fetch|Refresh) metadata$/, exact: true }).click();
+      } else {
+        await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+        if (stage !== "torrent") {
+          await page
+            .getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID })
+            .uncheck();
+          await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+        }
+        if (stage === "duplicates") {
+          start = () => page.getByRole("button", { name: "Run dupe check", exact: true }).click();
+        } else {
+          await runDuplicateCheck(page);
+          if (stage === "torrent") {
+            await page.getByRole("button", { name: "Upload", exact: true }).click();
+            await page.getByLabel("Skip client injection").setChecked(true);
+            start = () => page.getByRole("button", { name: "Run dry run", exact: true }).click();
+          } else {
+            await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+            await expect(
+              page.getByRole("button", { name: "Generate screenshots", exact: true }),
+            ).toBeEnabled();
+            if (stage === "screenshots") {
+              start = () =>
+                page.getByRole("button", { name: "Generate screenshots", exact: true }).click();
+            } else {
+              await page.getByRole("button", { name: "Generate screenshots", exact: true }).click();
+              await expect(page.getByAltText("Screenshot 1")).toBeVisible();
+              if (stage === "images") {
+                await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+                start = () => page.getByRole("button", { name: /^Prepare required hosts/ }).click();
+              } else {
+                await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+                start = () =>
+                  page.getByRole("button", { name: "Refresh descriptions", exact: true }).click();
+              }
+            }
+          }
+        }
+      }
+      const before = await snapshot();
+      const visits = workspace.fake.workflowStageVisits.length;
+      gate = workspace.fake.holdWorkflowStage(stage);
+      await start();
+      await gate.entered;
+      const active = await snapshot();
+      expect(active.current?.operation?.status).toBe("running");
+      if (stage !== "preparation") expect(active.inputId).toBe(before.inputId);
+      const cancellationRequest = waitForAppMethod(page, "CancelReleaseWorkflowOperation");
+      await page.getByRole("button", { name: "Cancel active work", exact: true }).click();
+      expect((await cancellationRequest).ok()).toBe(true);
+      if (stage === "torrent") {
+        await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toBeDisabled();
+        await expect(
+          page.getByText(/torrent hashing or verification must finish first/),
+        ).toBeVisible();
+        expect((await snapshot()).current?.operation?.status).toBe("running");
+        await page.reload();
+        await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toBeDisabled();
+        await expect(
+          page
+            .getByRole("status")
+            .filter({ hasText: "Release workflow" })
+            .locator("span")
+            .filter({ hasText: /^Synthetic torrent work active\.$/ }),
+        ).toBeVisible();
+        gate.release();
+      }
+      await expect.poll(async () => (await snapshot()).current?.operation?.status).toBe("canceled");
+      await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toHaveCount(0);
+      await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
+      const canceled = await snapshot();
+      expect(canceled.state).toBe("active");
+      expect(canceled.inputId).toBe(active.inputId);
+      expect(canceled.sourceVersion).toBe(active.sourceVersion);
+      expect(canceled.current?.operation?.id).toBe(active.current?.operation?.id);
+      expect(workspace.fake.workflowStageVisits.slice(visits)).toEqual([stage]);
+      expect(workspace.fake.counters.trackerUploads).toBe(0);
+      expect(workspace.fake.counters.clientInjections).toBe(0);
+      gate.release();
+      await start();
+      // Re-admission may change the slot while a snapshot is being assembled.
+      await expect(async () => {
+        expect((await snapshot()).current?.operation?.status).toBe("completed");
+      }).toPass({ timeout: 10_000 });
+      expect((await snapshot()).inputId).toBe(active.inputId);
+    } finally {
+      gate?.release();
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}
+
+test("embedded web cancels source verification before worker acceptance and confirms rollback", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_CANCELLATION_STAGE = "verification";
+  const gate = workspace.fake.holdWorkflowStage("verification");
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(app.url);
+    await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+    await page.getByLabel("Source path", { exact: true }).press("Escape");
+    await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+    await gate.entered;
+    const confirmed = waitForAppMethod(page, "CancelActiveInputOpen");
+    const cancel = page.getByRole("button", { name: "Cancel active work", exact: true });
+    await cancel.focus();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.keyboard.press("Enter");
+    const response = await confirmed;
+    expect(response.ok()).toBe(true);
+    const cancelled = (await response.json()) as ActiveInputSnapshot;
+    expect(cancelled.state).toBe("empty");
+    expect(cancelled.revision).toBe(2);
+    expect(cancelled.current).toBeUndefined();
+    await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Source path", { exact: true })).toHaveValue(workspace.sourcePath);
+    expect(workspace.fake.workflowStageVisits).toEqual(["verification"]);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+    gate.release();
+    await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+    const retried = await waitForMetadataReady(page, app.url);
+    expect(retried.state).toBe("active");
+    expect(retried.current?.operation?.status).toBe("completed");
+  } finally {
+    gate.release();
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});

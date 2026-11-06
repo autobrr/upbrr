@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -77,6 +78,9 @@ func TestResolvePromotesProviderEvidenceAndKeepsCandidateListsDiagnostic(t *test
 	}
 	if len(result.Diagnostics) != 1 || len(result.Diagnostics[0].Candidates) != 1 || result.Diagnostics[0].Candidates[0].ID != 7654321 {
 		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	if len(result.ProviderMetadata.IdentityCandidates) != 1 || result.ProviderMetadata.IdentityCandidates[0].ID != 7654321 {
+		t.Fatalf("provider candidate evidence was not retained for generation persistence: %+v", result.ProviderMetadata)
 	}
 	if result.Identity.TMDBID == result.Diagnostics[0].Candidates[0].ID {
 		t.Fatal("diagnostic candidate became canonical identity")
@@ -1006,75 +1010,77 @@ func TestResolveReturnsPartialIdentityAndTypedMissingRequirements(t *testing.T) 
 }
 
 func TestResolveCancellationDoesNotReorderSourceWaiters(t *testing.T) {
-	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.BluRay-GRP")
-	normalized, err := normalizeSourcePath(sourcePath)
-	if err != nil {
-		t.Fatalf("normalize source: %v", err)
-	}
-	firstEntered := make(chan struct{})
-	releaseFirst := make(chan struct{})
-	var mu sync.Mutex
-	calls := make([]string, 0, 2)
-	resolver := &Resolver{
-		evidence: evidenceLoaderFunc(func(_ context.Context, path string) (legacyEvidence, error) {
-			mu.Lock()
-			calls = append(calls, path)
-			call := len(calls)
-			mu.Unlock()
-			if call == 1 {
-				close(firstEntered)
-				<-releaseFirst
-			}
-			return legacyEvidence{}, nil
-		}),
-		now: time.Now,
-	}
-	request := Request{
-		SourcePath:        sourcePath,
-		SourceFingerprint: "source-fingerprint",
-		Generation:        1,
-	}
-	errs := make(chan error, 3)
-	go func() {
-		_, err := resolver.Resolve(context.Background(), request)
-		errs <- err
-	}()
-	<-firstEntered
-
-	canceledCtx, cancel := context.WithCancel(context.Background())
-	go func() {
-		_, err := resolver.Resolve(canceledCtx, request)
-		errs <- err
-	}()
-	waitForSourceWaiters(t, &resolver.gates, normalized, 1)
-	go func() {
-		_, err := resolver.Resolve(context.Background(), request)
-		errs <- err
-	}()
-	waitForSourceWaiters(t, &resolver.gates, normalized, 2)
-	cancel()
-	waitForSourceWaiters(t, &resolver.gates, normalized, 1)
-	close(releaseFirst)
-
-	var canceled bool
-	for range 3 {
-		err := <-errs
-		if errors.Is(err, context.Canceled) {
-			canceled = true
-			continue
-		}
+	synctest.Test(t, func(t *testing.T) {
+		sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.BluRay-GRP")
+		normalized, err := normalizeSourcePath(sourcePath)
 		if err != nil {
-			t.Fatalf("resolve: %v", err)
+			t.Fatalf("normalize source: %v", err)
 		}
-	}
-	if !canceled {
-		t.Fatal("canceled waiter returned no cancellation error")
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(calls) != 2 || calls[0] != normalized || calls[1] != normalized {
-		t.Fatalf("evidence calls = %v", calls)
-	}
+		firstEntered := make(chan struct{})
+		releaseFirst := make(chan struct{})
+		var mu sync.Mutex
+		calls := make([]string, 0, 2)
+		resolver := &Resolver{
+			evidence: evidenceLoaderFunc(func(_ context.Context, path string) (legacyEvidence, error) {
+				mu.Lock()
+				calls = append(calls, path)
+				call := len(calls)
+				mu.Unlock()
+				if call == 1 {
+					close(firstEntered)
+					<-releaseFirst
+				}
+				return legacyEvidence{}, nil
+			}),
+			now: time.Now,
+		}
+		request := Request{
+			SourcePath:        sourcePath,
+			SourceFingerprint: "source-fingerprint",
+			Generation:        1,
+		}
+		errs := make(chan error, 3)
+		go func() {
+			_, err := resolver.Resolve(context.Background(), request)
+			errs <- err
+		}()
+		<-firstEntered
+
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		go func() {
+			_, err := resolver.Resolve(canceledCtx, request)
+			errs <- err
+		}()
+		waitForSourceWaiters(t, &resolver.gates, normalized, 1)
+		go func() {
+			_, err := resolver.Resolve(context.Background(), request)
+			errs <- err
+		}()
+		waitForSourceWaiters(t, &resolver.gates, normalized, 2)
+		cancel()
+		waitForSourceWaiters(t, &resolver.gates, normalized, 1)
+		close(releaseFirst)
+
+		var canceled bool
+		for range 3 {
+			err := <-errs
+			if errors.Is(err, context.Canceled) {
+				canceled = true
+				continue
+			}
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+		}
+		if !canceled {
+			t.Fatal("canceled waiter returned no cancellation error")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(calls) != 2 || calls[0] != normalized || calls[1] != normalized {
+			t.Fatalf("evidence calls = %v", calls)
+		}
+	})
 }
 
 func TestResolveKeepsDifferentSourcesConcurrent(t *testing.T) {
@@ -1124,19 +1130,15 @@ func TestResolveKeepsDifferentSourcesConcurrent(t *testing.T) {
 
 func waitForSourceWaiters(t *testing.T, gates *sourceGates, sourcePath string, want int) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		gates.mu.Lock()
-		gate := gates.gates[sourcePath]
-		got := 0
-		if gate != nil {
-			got = len(gate.waiters)
-		}
-		gates.mu.Unlock()
-		if got == want {
-			return
-		}
-		time.Sleep(time.Millisecond)
+	synctest.Wait()
+	gates.mu.Lock()
+	defer gates.mu.Unlock()
+	gate := gates.gates[sourcePath]
+	got := 0
+	if gate != nil {
+		got = len(gate.waiters)
 	}
-	t.Fatalf("source waiters did not reach %d", want)
+	if got != want {
+		t.Fatalf("source waiters = %d, want %d", got, want)
+	}
 }

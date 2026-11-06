@@ -1162,6 +1162,17 @@
           "Resolution"
         ]
       },
+      "CancelActiveInputOpenRequest": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotencyKey"
+        ]
+      },
       "CancelReleaseWorkflowRequest": {
         "type": "object",
         "properties": {
@@ -10097,6 +10108,12 @@
                 "type": "null"
               }
             ]
+          },
+          "IdentityCandidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalIdentityCandidate"
+            }
           },
           "ImportedScreenshotEvidence": {
             "anyOf": [

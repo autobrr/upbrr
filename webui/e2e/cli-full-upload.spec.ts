@@ -453,3 +453,89 @@ test("CLI permits a TV year fallback when TVDB is disabled", async () => {
     await workspace.cleanup();
   }
 });
+
+for (const [mediaKind, provider, matchNumber] of [
+  ["movie", "TMDB", 9],
+  ["tv", "IMDb", 18],
+  ["tv", "TVDB", 27],
+] as const) {
+  test(`CLI selects a ${mediaKind} ${provider} title and reviews prepared identity`, async () => {
+    const workspace = await createE2EWorkspace({ mediaKind });
+    workspace.env.UPBRR_E2E_SELECTED_PROVIDER_METADATA = "1";
+    try {
+      const result = await runCLI(
+        [
+          "--config",
+          workspace.configPath,
+          "--ui=plain",
+          "--uac",
+          "--trackers",
+          releaseWorkflowParityFixture.trackerID,
+          "--tmdb=1001",
+          "--imdb=tt7654321",
+          mediaKind === "tv" ? "--tvdb=2001" : "--tvdb=0",
+          "--no-seed",
+          workspace.sourcePath,
+        ],
+        workspace.env,
+        `n\nsearch\n${mediaKind}\nExample Title 2026\nback\nn\nsearch\n${mediaKind}\nExample Title 2026\n${matchNumber}\n${provider === "TVDB" ? "y\ny\n" : "n\n--input-only\n"}`,
+      );
+      expect(result.code, result.output).toBe(0);
+      expect(result.output).toContain("Example Candidate 9");
+      expect(result.output).toContain("Example Director");
+      expect(result.output).toContain("https://www.themoviedb.org/");
+      const selectedID = provider === "IMDb" ? "tt0001010" : "1010";
+      const review = result.output.indexOf(
+        `\n${provider}: ${selectedID}\n`,
+        result.output.lastIndexOf("Match number"),
+      );
+      expect(review, result.output).toBeGreaterThan(result.output.lastIndexOf("Match number"));
+      expect(result.output.indexOf("Metadata correct?", review), result.output).toBeGreaterThan(
+        review,
+      );
+      const facts =
+        provider === "TVDB"
+          ? workspace.fake.trackerUploadBodies[0]
+              ?.toString("utf8")
+              .match(/name="identity"\r\n\r\n([^\r\n]+)/)
+          : result.output.match(/^Input facts: (.+)$/m);
+      expect(facts, result.output).toBeTruthy();
+      const identity = provider === "TVDB" ? JSON.parse(facts![1]) : JSON.parse(facts![1]).identity;
+      expect(identity).toMatchObject({
+        TMDBID: provider === "TMDB" ? 1010 : 1001,
+        IMDBID: provider === "IMDb" ? 1010 : 7654321,
+        TVDBID: provider === "TVDB" ? 1010 : mediaKind === "tv" ? 2001 : 0,
+      });
+      const app = await startApp(workspace, { seed: false });
+      try {
+        const auth = (await (await fetch(new URL("api/auth/status", app.url))).json()) as {
+          csrfToken: string;
+        };
+        const response = await fetch(new URL("api/app/GetHistoryOverview", app.url), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Csrf-Token": auth.csrfToken,
+            Origin: new URL(app.url).origin,
+          },
+          body: JSON.stringify({ SourcePath: workspace.sourcePath }),
+        });
+        expect(response.status, await response.clone().text()).toBe(200);
+        const history = (await response.json()) as HistoryOverview;
+        expect(
+          history.Display.Providers.find((item) => item.Provider === provider.toLowerCase()),
+        ).toMatchObject({
+          ID: 1010,
+          SummaryAvailable: true,
+          Summary: { Title: "Example Candidate 9", Year: 2025 },
+        });
+      } finally {
+        await app.stop();
+      }
+      expect(workspace.fake.counters.trackerUploads).toBe(provider === "TVDB" ? 1 : 0);
+      expect(workspace.fake.counters.clientInjections).toBe(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+}

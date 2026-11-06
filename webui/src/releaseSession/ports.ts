@@ -9,6 +9,7 @@ import type {
   FramePreview,
   MediaPlan,
   OpenActiveInputRequest,
+  CancelActiveInputOpenRequest,
   Operation,
   ReconcileActiveInputRequest,
   RecoverLegacyActiveInputRequest,
@@ -24,6 +25,11 @@ import type { ProviderSearchResult } from "../types";
 export type ActiveInputPorts = Readonly<{
   get(signal: AbortSignal): Promise<ActiveInputSnapshot>;
   open(request: OpenActiveInputRequest, signal: AbortSignal): Promise<ActiveInputSnapshot>;
+  /** Cancels and joins only verification still owned by this exact open request. */
+  cancelOpen(
+    request: CancelActiveInputOpenRequest,
+    signal: AbortSignal,
+  ): Promise<ActiveInputSnapshot>;
   release(request: ReleaseActiveInputRequest, signal: AbortSignal): Promise<ActiveInputSnapshot>;
   recover(
     request: RecoverLegacyActiveInputRequest,
