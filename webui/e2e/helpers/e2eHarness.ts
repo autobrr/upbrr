@@ -57,8 +57,11 @@ type FakeServer = {
   url: string;
   counters: FakeCounters;
   trackerUploadBodies: Buffer[];
-  /** Holds one named synthetic backend stage until explicitly released. */
-  holdWorkflowStage: (stage: string) => { entered: Promise<void>; release: () => void };
+  /** Holds one synthetic backend stage; release may return an HTTP failure. */
+  holdWorkflowStage: (stage: string) => {
+    entered: Promise<void>;
+    release: (status?: number) => void;
+  };
   workflowStageVisits: string[];
   delayTrackerUploads: (delayMs: number) => void;
   delayClientInjections: (delayMs: number) => void;
@@ -691,7 +694,7 @@ async function startFakeServer(): Promise<FakeServer> {
   const workflowStageVisits: string[] = [];
   const gates = new Map<
     string,
-    { entered: () => void; waiting: Promise<void>; release: () => void }
+    { entered: () => void; waiting: Promise<void>; release: () => void; status: number }
   >();
   let trackerUploadDelayMs = 0;
   let clientInjectionDelayMs = 0;
@@ -702,7 +705,7 @@ async function startFakeServer(): Promise<FakeServer> {
       const gate = gates.get(stage);
       gate?.entered();
       await gate?.waiting;
-      writeJSON(res, 200, { ok: true });
+      writeJSON(res, gate?.status ?? 200, { ok: true });
       return;
     }
     if (req.method === "POST" && req.url === "/client-search") {
@@ -754,8 +757,15 @@ async function startFakeServer(): Promise<FakeServer> {
       const waiting = new Promise<void>((resolve) => {
         release = resolve;
       });
-      gates.set(stage, { entered, waiting, release });
-      return { entered: started, release };
+      const gate = { entered, waiting, release, status: 200 };
+      gates.set(stage, gate);
+      return {
+        entered: started,
+        release: (status = 200) => {
+          gate.status = status;
+          release();
+        },
+      };
     },
     delayTrackerUploads: (delayMs) => {
       trackerUploadDelayMs = Math.max(0, delayMs);

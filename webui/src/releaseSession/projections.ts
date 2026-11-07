@@ -300,7 +300,9 @@ export const preparationWithEffectiveCorrections = (
 });
 
 export const workflowSelectedInputTrackers = (current: ReleaseWorkflowCurrent) =>
-  current.inputReadiness?.selectedTrackerIds ?? current.selection?.trackerIds;
+  current.inputReadiness?.selectedTrackerIds ??
+  current.selection?.trackerIds ??
+  current.inputReview?.selectedTrackerIds;
 
 export const metadataPreviewFromWorkflow = (
   current: ReleaseWorkflowCurrent,

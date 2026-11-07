@@ -459,8 +459,11 @@ test("embedded web blocks Dupe Check until missing saved facts are corrected", a
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    await page.getByText("Edit Release Details", { exact: true }).click();
+    const reviewSource = warning.getByRole("button", { name: "Review Source", exact: true });
+    await reviewSource.focus();
+    await page.keyboard.press("Enter");
     const source = page.getByRole("combobox", { name: "Source", exact: true });
+    await expect(source).toBeFocused();
     await expect(source).toHaveAttribute("aria-invalid", "true");
     await source.selectOption("Web");
     await expect(dupeCheck).toBeDisabled();
@@ -1683,6 +1686,209 @@ test("embedded web recovers saved corrections before a release snapshot and pres
   } finally {
     await app?.stop();
     await workspace.cleanup();
+  }
+});
+
+test("embedded web retains warnings after accepted preparation fails and reloads without authority", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  workspace.env.UPBRR_E2E_CANCELLATION_STAGE = "preparation";
+  let app: AppServer | undefined;
+  let gate: ReturnType<typeof workspace.fake.holdWorkflowStage> | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await page.getByRole("button", { name: "Remove IMDb ID", exact: true }).click();
+    await page.getByRole("button", { name: "Remove TVDB ID", exact: true }).click();
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await waitForMetadataReady(page, app.url);
+    const warning = page.getByRole("alert");
+    await expect(
+      warning.getByRole("button", { name: "Review IMDb ID", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("textbox", { name: "Genres", exact: true }).fill("Comedy");
+    gate = workspace.fake.holdWorkflowStage("preparation");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await gate.entered;
+    gate.release(503);
+    let snapshot: ActiveInputSnapshot | undefined;
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(
+          new URL("api/app/GetActiveInput", app!.url).toString(),
+        );
+        snapshot = await response.json();
+        return snapshot?.current?.operation?.status;
+      })
+      .toBe("failed");
+    expect(snapshot?.current?.release).toBeUndefined();
+    expect(snapshot?.current?.inputReadiness).toBeUndefined();
+    expect(
+      snapshot?.current?.inputReview?.fields?.some((field) => field.status === "missing"),
+    ).toBe(true);
+    await expect(warning).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry metadata", exact: true })).toBeEnabled();
+    await page.reload();
+    await expect(page.getByLabel("Source path", { exact: true })).toHaveValue(workspace.sourcePath);
+    await expect(warning).toBeVisible();
+    await expect(page.getByRole("button", { name: "Dupe Check", exact: true })).toBeDisabled();
+    await warning.getByRole("button", { name: "Review IMDb ID", exact: true }).click();
+    await page.getByRole("textbox", { name: "IMDb ID", exact: true }).fill("tt1234567");
+    await page.getByRole("textbox", { name: "TVDB ID", exact: true }).fill("2001");
+    gate = workspace.fake.holdWorkflowStage("preparation");
+    gate.release();
+    await page.getByRole("button", { name: "Retry metadata", exact: true }).click();
+    snapshot = await waitForMetadataReady(page, app.url);
+    expect(snapshot.current?.inputReview).toBeUndefined();
+    await expect(warning).toBeHidden();
+    await page.reload();
+    await expect(warning).toBeHidden();
+  } finally {
+    gate?.release();
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web correction warnings navigate and follow saved preparation state", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  let failRefresh = false;
+  try {
+    app = await startApp(workspace);
+    // Exercise the production UI with synthetic readiness requirements. Corrections still
+    // pass through the real preparation and persisted-input boundaries.
+    await page.route(
+      /\/api\/app\/(OpenActiveInput|ContinueReleaseWorkflow|GetActiveInput)$/,
+      async (route) => {
+        if (failRefresh && route.request().url().endsWith("/OpenActiveInput")) {
+          failRefresh = false;
+          await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+          return;
+        }
+        const response = await route.fetch();
+        const body = await response.json();
+        const current = body.current ?? body;
+        const release = current.release?.release;
+        const metadata = current.corrections?.corrections.metadata;
+        const track = release?.Media.Tracks.find(
+          (track: { Kind: string }) => track.Kind === "audio",
+        );
+        if (track && current.inputReadiness) {
+          current.inputReadiness.fields.push(
+            {
+              key: "synthetic-origin",
+              trackId: track.ID,
+              correctionField: "metadata.track_audio_origins",
+              status: metadata?.TrackAudioOrigins?.some(
+                (value: { trackId: string; origin: string }) =>
+                  value.trackId === track.ID && value.origin === "original",
+              )
+                ? "ready"
+                : "missing",
+              disposition: "strict",
+              trackerIds: ["EXAMPLE"],
+              message: "Review this inspected track's soundtrack origin.",
+            },
+            {
+              key: "synthetic-genres",
+              correctionField: "metadata.genres",
+              status: metadata?.Genres?.includes("Comedy") ? "ready" : "invalid",
+              disposition: "strict",
+              message: "Review this release's genres.",
+            },
+          );
+        }
+        await route.fulfill({ response, json: body });
+      },
+    );
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    const editor = page.getByText("Edit Release Details", { exact: true }).locator("..");
+    const warning = page.getByRole("alert");
+    const genresAction = warning.getByRole("button", { name: "Review Genres", exact: true });
+    const originAction = warning.getByRole("button", {
+      name: "Review Audio track 1 soundtrack origin",
+      exact: true,
+    });
+    await expect(editor).not.toHaveAttribute("open");
+    await expect(genresAction).toBeVisible();
+    await expect(originAction).toBeVisible();
+    await expect(warning).toContainText("Refresh metadata");
+    for (const mode of ["Dark", "Light"] as const) {
+      await page.getByRole("button", { name: "Appearance", exact: true }).click();
+      await page.getByRole("radio", { name: mode, exact: true }).click();
+      await page.getByRole("button", { name: "Input", exact: true }).click();
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        await warning.scrollIntoViewIfNeeded();
+        await expect(warning).toBeInViewport();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+          width,
+        );
+        await page.screenshot({
+          path: test.info().outputPath(`correction-warning-${mode.toLowerCase()}-${width}.png`),
+        });
+      }
+    }
+    await genresAction.focus();
+    await page.keyboard.press("Enter");
+    const genres = page.getByRole("textbox", { name: "Genres", exact: true });
+    await expect(genres).toBeFocused();
+    await genres.fill("Comedy");
+    await expect(genresAction).toBeVisible();
+    failRefresh = true;
+    const failed = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await failed).status()).toBe(503);
+    await expect(genresAction).toBeVisible();
+    await expect(originAction).toBeVisible();
+    await page.reload();
+    await expect(editor).not.toHaveAttribute("open");
+    await expect(genresAction).toBeVisible();
+    await genresAction.click();
+    await genres.fill("Comedy");
+    let saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await saved).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(genresAction).toBeHidden();
+    await expect(originAction).toBeVisible();
+    await page.getByTestId("input-track-coverage").locator("summary").click();
+    await expect(page.getByTestId("input-track-coverage")).not.toHaveAttribute("open");
+    await originAction.focus();
+    await page.keyboard.press("Space");
+    const origin = page.getByRole("combobox", {
+      name: "Audio track 1 soundtrack origin",
+      exact: true,
+    });
+    await expect(origin).toBeFocused();
+    await expect(origin).toBeInViewport();
+    await origin.selectOption("original");
+    await expect(originAction).toBeVisible();
+    saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await saved).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(warning).toBeHidden();
+    await page.reload();
+    await expect(
+      page.getByText("Review release facts, source options, and selected tracker input."),
+    ).toBeVisible();
+    await expect(warning).toBeHidden();
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "wait" });
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
   }
 });
 

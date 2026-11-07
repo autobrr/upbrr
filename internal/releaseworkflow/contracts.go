@@ -667,6 +667,8 @@ type State struct {
 	// TrackerScope retains selected IDs while evidence snapshots are invalidated.
 	// It grants no tracker-rule or upload authority.
 	TrackerScope []api.TrackerID
+	// InputReview retains display evidence across invalidation, never current authority.
+	InputReview *inputReviewReferences `json:",omitempty"`
 	// PreparationDemand retains normalized metadata requirements separately because
 	// PrepareInput omits its internal-only requirements from persisted JSON used for hydration.
 	PreparationDemand            api.MetadataRequirementSet

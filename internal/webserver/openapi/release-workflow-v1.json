@@ -4305,6 +4305,29 @@
           "revision"
         ]
       },
+      "InputReviewContext": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputReadinessFieldOutcome"
+            }
+          },
+          "release": {
+            "$ref": "#/components/schemas/PreparedRelease"
+          },
+          "selectedTrackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          }
+        },
+        "required": [
+          "release"
+        ]
+      },
       "InteractionMode": {
         "type": "string"
       },
@@ -7725,6 +7748,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/InputReadinessSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputReview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputReviewContext"
               },
               {
                 "type": "null"

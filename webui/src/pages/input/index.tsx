@@ -12,9 +12,12 @@ import RenderedDescription from "../../components/RenderedDescription";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { InputFacet } from "../../releaseSession/types";
-import { InputCorrectionEditor, SavedCorrectionReview } from "./InputCorrectionEditor";
+import {
+  InputCorrectionEditor,
+  InputCorrectionWarnings,
+  SavedCorrectionReview,
+} from "./InputCorrectionEditor";
 import { ProviderCandidates } from "./ProviderCandidates";
-import { missingRequiredFacts } from "../../releaseSession/requiredFacts";
 import type {
   DetailBlock,
   DetailItem,
@@ -828,7 +831,6 @@ export default function InputPage(props: Props) {
   } = props;
 
   const { view } = facet;
-  const requiredFactsMissing = missingRequiredFacts(view.release).length > 0;
   const path = view.sourceDraft;
   const sourceLookupURL = view.intent.sourceLookupURL;
   const loading = view.status === "running";
@@ -927,7 +929,9 @@ export default function InputPage(props: Props) {
   const providerDisplays = preview.Display.Providers;
   const hasPreview = preview.ReleaseName || externalIDInfo.length > 0;
   const showReleaseDetails = Boolean(
-    hasPreview || (path.trim() && (view.status === "ready" || view.status === "error")),
+    view.retainedReview ||
+    hasPreview ||
+    (path.trim() && (view.status === "ready" || view.status === "error")),
   );
   const hasResolvedPrimaryExternalID =
     (identityDraft.TMDBID > 0 || preview.Identity.Overrides.TMDB === "clear") &&
@@ -1516,24 +1520,10 @@ export default function InputPage(props: Props) {
             </details>
           ) : null}
           {showReleaseDetails ? (
-            requiredFactsMissing ? (
-              <div
-                className="grid gap-2 rounded-md border border-destructive bg-destructive/10 p-4 text-destructive-text"
-                role="alert"
-              >
-                <p className="font-semibold">
-                  Required facts missing, please edit release details.
-                </p>
-                <p>
-                  Correct the highlighted fields under Edit Release Details, then Refresh metadata
-                  to enable Dupe Check.
-                </p>
-              </div>
-            ) : (
-              <p className="helper max-w-[720px]" role="status">
-                Review release facts, source options, and selected tracker input.
-              </p>
-            )
+            <InputCorrectionWarnings
+              view={view}
+              refreshLabel={hasPreview ? "Refresh metadata" : "Retry metadata"}
+            />
           ) : null}
           {showReleaseDetails && view.correctionDirty ? (
             <p className="text-sm font-medium text-primary" role="status">

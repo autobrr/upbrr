@@ -1080,7 +1080,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         };
       }
       const correctionReview = pendingCorrectionReview(current);
-      if ((!action.preview && !correctionReview) || !action.intent) {
+      if ((!action.preview && !correctionReview && !current.inputReview) || !action.intent) {
         const requestedSourcePath = action.requestedSourcePath?.trim() || "";
         if (requestedSourcePath && action.intent && !sameDraftKey) {
           const reset = initialSessionState();
@@ -1138,11 +1138,20 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         action.requestedSourcePath?.trim() ||
         (sameDraftKey ? state.selectedSource : "");
       const release = action.preview?.Release;
-      if (!correctionReview && (!sourcePath || !release?.Generation)) return state;
+      if (!correctionReview && !current.inputReview && (!sourcePath || !release?.Generation))
+        return state;
       const retainDraft =
         sameDraftKey &&
         (action.preserveInputDraft || state.inputEditRevision > action.capturedInputEditRevision);
       const base = sameDraftKey ? state : initialSessionState();
+      const retainPreparation =
+        sameDraftKey &&
+        Boolean(current.inputReview) &&
+        !correctionReview &&
+        !action.preview &&
+        Boolean(state.preparation.correlationID) &&
+        state.preparation.status === "running" &&
+        state.preparation.sourcePath === sourcePath;
       // Commands may publish a generation before the next active-input poll.
       const releaseChanged =
         !sameDraftKey ||
@@ -1168,7 +1177,9 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           failure: null,
         },
         sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
-        commandRevision: Math.max(base.commandRevision, current.workflow.revision),
+        commandRevision: retainPreparation
+          ? state.commandRevision
+          : Math.max(base.commandRevision, current.workflow.revision),
         sourceVerification: null,
         sourceDraft:
           retainDraft ||
@@ -1179,16 +1190,22 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
             ? state.sourceDraft
             : sourcePath,
         selectedSource: sourcePath,
-        preparation: {
-          correlationID: "",
-          sourcePath,
-          commandRevision: current.workflow.revision,
-          inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
-          status:
-            action.status === "running" ? "running" : correctionReview ? "awaiting_input" : "ready",
-          error: "",
-          failure: null,
-        },
+        preparation: retainPreparation
+          ? state.preparation
+          : {
+              correlationID: "",
+              sourcePath,
+              commandRevision: current.workflow.revision,
+              inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
+              status:
+                action.status === "running"
+                  ? "running"
+                  : correctionReview
+                    ? "awaiting_input"
+                    : "ready",
+              error: "",
+              failure: null,
+            },
         preparationDirty: retainDraft,
         correctionDirty: retainDraft ? state.correctionDirty : false,
         inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
