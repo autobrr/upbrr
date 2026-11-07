@@ -704,8 +704,8 @@
     "sha256": "6f80742a60fe8778f459f73ae2da195e77e7268bb6c330cdb6669a93d29baa04"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
-    "reason": "Issue 905 preserves expected title-dialogue evidence for soundtrack comparisons and country derivation. Owner-confirmed English-original staff applicability now prefers affirmative original-soundtrack language over conflicting production-language metadata; incidental English or an English dub does not establish an English original. Manual reference corrections and unknown-source handling remain explicit; no provider-genre selector or primary-country precedence is changed.",
-    "sha256": "0171a792766ba91964b8d3db9a89efdf868f37f5802400e4ec03c545db675caf"
+    "reason": "Issue 905 preserves known title-dialogue evidence for soundtrack review and country derivation independently of original-show uncertainty. Owner-confirmed staff applicability uses verified title corrections, otherwise affirmative source language before Auto; missing/cleared title evidence keeps the unknown-comparison exemption. Mixed-reference unclassified tracks still require source-bound review even after the country answer. No provider genre selection or primary-country precedence changed.",
+    "sha256": "7bee9da73e8d0ab616eaab10f83a1b98a63545fec663ae42ccabce894e5007bc"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageValidationPolicy": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
@@ -780,8 +780,8 @@
     "sha256": "66b2caee30f282136c2528aaac181412fc0a1bde9c9010652478205df686780e"
   },
   "internal/trackers/impl/standalone/btn/validation.go:validationPolicy": {
-    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
-    "sha256": "563303aa549e4333ebfff571a9273bbaf57ad83b4b08defd00e9ce0fa65d1c97"
+    "reason": "Reviewed declarative BTN validation binding: only the version advances to v7 so source-review readiness cannot reuse the previous permissive guard. The Check callback and metadata precedence remain unchanged.",
+    "sha256": "0ca4e2d5e7aadf84d38e74eb41d34d7e60602162351546a00d6df3c84e526295"
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
     "reason": "TRACE request logging review: cztSearchQuery continues to apply manual title authority before the unchanged text request.",

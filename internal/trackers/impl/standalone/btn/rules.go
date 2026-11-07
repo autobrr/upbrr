@@ -27,7 +27,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		policy.OriginalAudio = trackers.LanguageProhibited
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
-	if !remux && originalShowKnown &&
+	if !remux && (originalShowKnown || facts.OriginalLanguagesKnown) &&
 		(englishOriginal || (!subject.Anime && !facts.HasOriginalAudio())) {
 		failures = append(failures, trackers.ProgrammeAudioOriginFailures(subject)...)
 	}
