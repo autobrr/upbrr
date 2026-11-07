@@ -89,7 +89,7 @@ func TestHDBEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestHDBValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "standalone-hdb-constructibility-v9/languages-v4" {
+	if got := Profile().ValidationPolicy.ID; got != "standalone-hdb-constructibility-v9/languages-v5" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }

@@ -83,7 +83,11 @@ An original-language correction, including an explicit clear, overrides this
 automatic evidence. **Auto** restores the preferred provider evidence. When TMDB
 has no usable spoken-language entries, the existing original-language/provider
 fallback remains available. The scalar original-language metadata is retained for
-other uses.
+other uses. A production-language value does not override an established original
+soundtrack's language. Title-level corrections do not rewrite independently
+confirmed track origins. Mixed dialogue evidence does not establish which language
+predominates; an applicable exception can remain uncertain without making the
+release prohibited.
 
 When a selected tracker's current rules need an unidentified programme audio
 language, **Inspected tracks** opens on Input and identifies the affected track.
@@ -106,6 +110,11 @@ the track's language correction. A `mul` tag does not identify the languages, an
 known language differing from the title's recorded original language does not prove
 a dub. Ordinary matching-language original tracks need no special title or flag.
 Commentary is not programme audio.
+Automatic title-language matches can fill a soundtrack evidence gap. They do not
+override an established original soundtrack; changing that classification needs
+verified original-source evidence or a correction based on that knowledge.
+A verified title-level original-language correction governs title-level
+restrictions without changing the inspected track's soundtrack-origin flag.
 
 When soundtrack review is needed, the plain CLI and TUI show the source, resource,
 track title, codec and channels, title original language, and inspected/effective

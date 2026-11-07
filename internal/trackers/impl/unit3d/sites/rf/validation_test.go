@@ -5,6 +5,7 @@ package rf
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/mediafacts"
@@ -217,24 +218,37 @@ func TestRFManualSubtitleClearDoesNotReuseForcedException(t *testing.T) {
 
 func TestRFMixedOriginalSubtitlesRemainGuidanceWithoutAnswers(t *testing.T) {
 	t.Parallel()
-	subject := rfPassingSubject()
-	subject.LanguageFacts.OriginalLanguages = []string{"English", "Japanese"}
-	subject.LanguageFacts.SubtitleLanguages = []string{"English"}
-	subject.LanguageFacts.Tracks = []api.MediaTrackFacts{{
-		Kind:      api.MediaTrackSubtitle,
-		Languages: []string{"English"},
-		Forced:    true,
-	}}
-	key := trackers.LanguageQuestionKey(subject, "predominantly_english")
-	for _, answer := range []string{"", "yes", "no"} {
-		subject.QuestionnaireAnswers = map[string]string{key: answer}
-		failures := languageFailures(subject)
-		assertRFFailure(t, failures, "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
-		for _, failure := range failures {
-			if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
-				t.Fatalf("subtitle guidance blocked on an answer: %+v", failures)
+	for _, hardcoded := range []bool{false, true} {
+		subject := rfPassingSubject()
+		subject.LanguageFacts.OriginalLanguages = []string{"English", "Japanese"}
+		subject.LanguageFacts.SubtitleLanguages = []string{"English"}
+		subject.LanguageFacts.Tracks = []api.MediaTrackFacts{{
+			Kind:      api.MediaTrackSubtitle,
+			Languages: []string{"English"},
+			Forced:    true,
+		}}
+		if hardcoded {
+			subject.LanguageFacts.Tracks = nil
+			subject.HardcodedSubs = true
+			subject.HardcodedSubtitleCoverage = []api.SubtitleLanguageCoverage{{Language: "English", Coverage: api.SubtitleCoverageForced}}
+		}
+		key := trackers.LanguageQuestionKey(subject, "predominantly_english")
+		for _, answer := range []string{"", "yes", "no"} {
+			subject.QuestionnaireAnswers = map[string]string{key: answer}
+			failures := languageFailures(subject)
+			assertRFFailure(t, failures, "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
+			for _, failure := range failures {
+				if failure.Rule == "language_subtitle_presentation" && (!strings.Contains(failure.Reason, "English predominance is unconfirmed") || !strings.Contains(failure.Reason, "may make the release trumpable")) {
+					t.Fatalf("uncertainty was presented as a defect: %#v", failure)
+				}
+				if trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) {
+					t.Fatalf("subtitle guidance blocked on an answer: %+v", failures)
+				}
 			}
 		}
+		// An independently non-qualifying subtitle remains established guidance.
+		subject.LanguageFacts.Tracks = append(subject.LanguageFacts.Tracks, api.MediaTrackFacts{Kind: api.MediaTrackSubtitle, Languages: []string{"French"}})
+		assertRFFailure(t, languageFailures(subject), "language_subtitle_presentation", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusComplete)
 	}
 	if Profile().Site.ProjectionQuestionnaire != nil {
 		t.Fatal("guidance-only subtitle exception still has a questionnaire")

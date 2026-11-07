@@ -150,6 +150,16 @@ func (f LanguageFacts) HasEnglishDub() bool {
 	})
 }
 
+// HasEnglishOriginalAudio reports an original programme track identified only as
+// English. English dialogue in multilingual track facts and confirmed dubs do not
+// establish this evidence.
+func (f LanguageFacts) HasEnglishOriginalAudio() bool {
+	return f.HasOriginalAudio() && slices.ContainsFunc(f.Tracks, func(track MediaTrackFacts) bool {
+		return f.ProgrammeAudioOrigin(track) == TrackAudioOriginal && len(track.Languages) > 0 &&
+			!slices.ContainsFunc(track.Languages, func(language string) bool { return !languageutil.SameLanguage(language, "English") })
+	})
+}
+
 // HasOriginalAudio accepts original programme tracks, including verified multilingual
 // content whose main-language tag differs from the title's recorded original language.
 // Explicit original-soundtrack evidence survives unknown title-language metadata.

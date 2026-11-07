@@ -63,7 +63,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	if animated && trackers.ForeignLanguageContent(facts) &&
 		facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
 		facts.HasOriginalAudio() &&
-		!facts.HasEnglishDub() {
+		!facts.HasEnglishDub() && !facts.HasEnglishOriginalAudio() {
 		failures = append(failures, trackers.LanguageRuleFailure(
 			subject,
 			"animated_dual_audio",

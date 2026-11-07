@@ -67,7 +67,7 @@ func TestAZFamilyValidationPolicyVersions(t *testing.T) {
 	tests := map[string]string{
 		"AZ":  "azfamily-az-policy-v10",
 		"CZ":  "azfamily-cz-policy-v9",
-		"PHD": "azfamily-phd-constructibility-v2/languages-v4/english-fallback-v1",
+		"PHD": "azfamily-phd-constructibility-v2/languages-v5/english-fallback-v1",
 	}
 	for site, expected := range tests {
 		if got := New(site).ValidationPolicy().ID; got != expected {

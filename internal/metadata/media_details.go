@@ -669,13 +669,20 @@ func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []s
 			media.OriginalLanguageProvenance = factProvenanceForString(media.OriginalLanguage)
 		}
 		facts := mediafacts.ResolveLanguages(media)
-		if !facts.HasEnglishDub() {
+		if facts.HasOriginalAudio() {
+			separateDub := languageutil.LanguageIdentityCount(facts.ProgrammeLanguages) > 1 &&
+				slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+					return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed
+				})
+			if facts.HasEnglishDub() || separateDub {
+				return "Dual-Audio"
+			}
 			return ""
 		}
-		if facts.HasOriginalAudio() {
-			return "Dual-Audio"
+		if facts.HasEnglishDub() && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !facts.HasUnresolvedProgrammeAudioOrigin() {
+			return "Dubbed"
 		}
-		return "Dubbed"
+		return ""
 	}
 
 	originalValue := originalAudioLanguage(meta)

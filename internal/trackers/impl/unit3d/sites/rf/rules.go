@@ -54,20 +54,28 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
 		failures = append(failures, failure)
 	}
-	presentationDefect := false
+	presentationDefect, presentationUnresolved := false, false
+	mixedEnglish := len(facts.OriginalLanguages) > 1 && languageutil.ContainsLanguage(facts.OriginalLanguages, "English")
+	assessPresentation := func(forcedEnglish bool) {
+		if forcedEnglish && predominantlyEnglish {
+			return
+		}
+		if forcedEnglish && mixedEnglish {
+			presentationUnresolved = true
+			return
+		}
+		presentationDefect = true
+	}
 	for _, track := range facts.Tracks {
-		if track.Kind == api.MediaTrackSubtitle &&
-			(!predominantlyEnglish || !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") || !rfForcedEnglishTrack(track)) {
-			presentationDefect = true
+		if track.Kind == api.MediaTrackSubtitle {
+			assessPresentation(languageutil.ContainsLanguage(facts.SubtitleLanguages, "English") && rfForcedEnglishTrack(track))
 		}
 	}
 	if subject.HardcodedSubs {
-		forcedEnglish := predominantlyEnglish && len(subject.HardcodedSubtitleCoverage) == 1 &&
+		forcedEnglish := len(subject.HardcodedSubtitleCoverage) == 1 &&
 			languageutil.SameLanguage(subject.HardcodedSubtitleCoverage[0].Language, "English") &&
 			subject.HardcodedSubtitleCoverage[0].Coverage == api.SubtitleCoverageForced
-		if !forcedEnglish {
-			presentationDefect = true
-		}
+		assessPresentation(forcedEnglish)
 	}
 	if presentationDefect {
 		failures = append(
@@ -79,6 +87,11 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 				trackers.LanguageAdvisory,
 			),
 		)
+	} else if presentationUnresolved {
+		failure := trackers.LanguageRuleFailure(subject, "subtitle_presentation",
+			"English predominance is unconfirmed. These forced English subtitles may make the release trumpable under RF's rules.", trackers.LanguageAdvisory)
+		failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+		failures = append(failures, failure)
 	}
 	return failures
 }

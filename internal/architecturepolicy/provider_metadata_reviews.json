@@ -388,8 +388,8 @@
     "sha256": "a4ec6882cc85f867aea4171272169f2323a46bdb5b5d4e1a8f4b94d6aa1e3641"
   },
   "internal/trackers/impl/standalone/bhd/rules.go:languageAssessment": {
-    "reason": "Issue 905 uses finalized non-English title evidence for the existing animated-audio guidance. Explicit corrections and clears remain authoritative through LanguageFacts; provider genre selection, manual metadata precedence and source guards are unchanged.",
-    "sha256": "ed557cb8ab98206d7b8515b00a251827fb3d0195316562617dfa310732fd7e3b"
+    "reason": "Issue 905 uses canonical title-dialogue evidence and preserves manual genre selection. Owner confirmation of BHD sections 2.5.5 and 5.3.4 exempts an established English-only original soundtrack from extra English-dub guidance while retaining foreign-dialogue subtitle guidance and multilingual-original handling. Provider genre selectors and manual corrections are unchanged.",
+    "sha256": "6acbdab67fb4cfa7d81d6f4a0a26bde6d9ab52a971fe9e9893f72a5426cc4f99"
   },
   "internal/trackers/impl/standalone/bhd/validation.go:validationPolicy": {
     "reason": "Advances the validation policy for advisory foreign-dialogue guidance across release types. Existing finalized/manual metadata precedence, provider selectors and independent eligibility checks remain unchanged.",
@@ -699,9 +699,13 @@
     "reason": "Reviewed with primary-country resolution: current agreeing origin evidence suppresses only an unanswered original-audio country question; explicit answers, including invalid or empty values, retain review precedence.",
     "sha256": "4f28f2bb7db460b918bdc55682b0a9d289800e06d51d3d811459844220a708e8"
   },
+  "internal/trackers/impl/standalone/btn/rules.go:englishOriginalShow": {
+    "reason": "Issue 905 owner-confirmed original-show review: a verified title-level original-language correction governs staff applicability without rewriting inspected track origins. Otherwise, identified confirmed original-source language takes priority over Auto title-language matches and conflicting production-language metadata; Auto fills evidence gaps. Multilingual originals retain uncertainty. The helper reads finalized LanguageFacts and manual provenance without reloading provider scalars. Staff-approval regressions cover conflicting manual corrections, source-proof, unidentified-language gaps, Auto/reset, clear and track-order controls.",
+    "sha256": "6f80742a60fe8778f459f73ae2da195e77e7268bb6c330cdb6669a93d29baa04"
+  },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
-    "reason": "Issue 905 retains confirmed-dub staff outcomes even when the dub language belongs to the preferred title set. Canonical corrections/clears remain authoritative; source-bound provider genre/country selection and existing policy outcomes are unchanged.",
-    "sha256": "09be42aff8c954b3d198a5ac32aede8ec3707e254f299ad2fa2585c662fabe52"
+    "reason": "Issue 905 preserves expected title-dialogue evidence for soundtrack comparisons and country derivation. Owner-confirmed English-original staff applicability now prefers affirmative original-soundtrack language over conflicting production-language metadata; incidental English or an English dub does not establish an English original. Manual reference corrections and unknown-source handling remain explicit; no provider-genre selector or primary-country precedence is changed.",
+    "sha256": "0171a792766ba91964b8d3db9a89efdf868f37f5802400e4ec03c545db675caf"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageValidationPolicy": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",

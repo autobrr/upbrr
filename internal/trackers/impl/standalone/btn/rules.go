@@ -19,6 +19,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		return nil
 	}
 	facts := subject.LanguageFacts
+	englishOriginal, originalShowKnown := englishOriginalShow(subject)
 	programmeStatus := trackers.ProgrammeLanguageStatus(subject)
 	remux := strings.EqualFold(subject.Type, "REMUX")
 	policy := trackers.LanguagePolicy{}
@@ -26,8 +27,8 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		policy.OriginalAudio = trackers.LanguageProhibited
 	}
 	failures := trackers.EvaluateLanguagePolicy(subject, policy)
-	if !remux && facts.OriginalLanguagesKnown &&
-		(languageutil.ContainsLanguage(facts.OriginalLanguages, "English") || (!subject.Anime && !facts.HasOriginalAudio())) {
+	if !remux && originalShowKnown &&
+		(englishOriginal || (!subject.Anime && !facts.HasOriginalAudio())) {
 		failures = append(failures, trackers.ProgrammeAudioOriginFailures(subject)...)
 	}
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
@@ -50,10 +51,10 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			if facts.ProgrammeAudioOrigin(track) != api.TrackAudioDubbed {
 				continue
 			}
-			if !facts.OriginalLanguagesKnown {
+			if !originalShowKnown {
 				add(
 					"staff_dub_evidence",
-					"a confirmed dub needs the title's original language to assess staff approval for an English-original show",
+					"a confirmed dub needs established original-soundtrack language to assess staff approval for an English-original show; correct Original language only from verified source knowledge",
 					trackers.LanguageUnresolved,
 				)
 				break
@@ -62,7 +63,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 				if !languageutil.IsIdentifiedLanguage(language) {
 					continue
 				}
-				if languageutil.ContainsLanguage(facts.OriginalLanguages, "English") {
+				if englishOriginal {
 					add("staff_dub", "dubs of English-original shows require staff approval", trackers.LanguageStaffException)
 				} else if !languageutil.SameLanguage(language, "English") {
 					add("optional_dub", "other non-English dubs should be omitted", trackers.LanguageAdvisory)
@@ -83,6 +84,47 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		add("original_pack", "a foreign non-anime release lacking original audio can be replaced by an original-audio pack", trackers.LanguageTrumpable)
 	}
 	return append(failures, sourceLanguageFailures(subject)...)
+}
+
+// englishOriginalShow applies verified title corrections before soundtrack evidence.
+// Confirmed original-source language outranks Auto title-language matches;
+// multilingual originals do not select a primary language or rewrite inspected tracks.
+func englishOriginalShow(subject api.TrackerValidationSubject) (english, known bool) {
+	facts := subject.LanguageFacts
+	if subject.EffectiveMetadata.OriginalLanguageProvenance.IsManual() &&
+		facts.OriginalLanguagesKnown && languageutil.LanguageIdentityCount(facts.OriginalLanguages) == 1 {
+		return languageutil.ContainsLanguage(facts.OriginalLanguages, "English"), true
+	}
+	confirmedOriginal := slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+		if track.AudioOrigin != api.TrackAudioOriginal || facts.ProgrammeAudioOrigin(track) != api.TrackAudioOriginal || len(track.Languages) == 0 {
+			return false
+		}
+		return !slices.ContainsFunc(track.Languages, func(language string) bool { return !languageutil.IsIdentifiedLanguage(language) })
+	})
+	originalObserved := false
+	nonEnglishOriginal := false
+	for _, track := range facts.Tracks {
+		if facts.ProgrammeAudioOrigin(track) != api.TrackAudioOriginal || (confirmedOriginal && track.AudioOrigin != api.TrackAudioOriginal) {
+			continue
+		}
+		originalObserved = true
+		if facts.HasOriginalAudio() && len(track.Languages) > 0 &&
+			!slices.ContainsFunc(track.Languages, func(language string) bool { return !languageutil.SameLanguage(language, "English") }) {
+			return true, true
+		}
+		if len(track.Languages) > 0 &&
+			!slices.ContainsFunc(track.Languages, func(language string) bool { return !languageutil.IsIdentifiedLanguage(language) }) &&
+			!languageutil.ContainsLanguage(track.Languages, "English") {
+			nonEnglishOriginal = true
+		}
+	}
+	if nonEnglishOriginal {
+		return false, true
+	}
+	if !originalObserved && facts.OriginalLanguagesKnown && languageutil.LanguageIdentityCount(facts.OriginalLanguages) == 1 {
+		return languageutil.ContainsLanguage(facts.OriginalLanguages, "English"), true
+	}
+	return false, false
 }
 
 // sourceLanguageFailures reports source comparisons as partial-evidence guidance,
