@@ -452,6 +452,114 @@ func TestCompositeUploadStrictUnattendedInheritsDefaultTrackers(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadAdoptsReadyTrackerScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                   string
+		retained               []api.TrackerID
+		include, remove        []api.TrackerID
+		want                   []api.TrackerID
+		wantNoTrackers         bool
+		wantSingleReevaluation bool
+	}{
+		{
+			name:                   "retained defaults",
+			retained:               []api.TrackerID{"ALPHA", "BETA"},
+			want:                   []api.TrackerID{"ALPHA", "BETA"},
+			wantSingleReevaluation: true,
+		},
+		{
+			name:                   "retained scope differs from defaults",
+			retained:               []api.TrackerID{"BETA"},
+			want:                   []api.TrackerID{"BETA"},
+			wantSingleReevaluation: true,
+		},
+		{
+			name:                   "explicit selection overrides retained scope",
+			retained:               []api.TrackerID{"ALPHA", "BETA"},
+			include:                []api.TrackerID{"BETA"},
+			want:                   []api.TrackerID{"BETA"},
+			wantSingleReevaluation: true,
+		},
+		{
+			name:     "remove one retained tracker",
+			retained: []api.TrackerID{"ALPHA", "BETA"},
+			remove:   []api.TrackerID{"ALPHA"},
+			want:     []api.TrackerID{"BETA"},
+		},
+		{
+			name:                   "remove every retained tracker",
+			retained:               []api.TrackerID{"ALPHA", "BETA"},
+			remove:                 []api.TrackerID{"ALPHA", "BETA"},
+			wantNoTrackers:         true,
+			wantSingleReevaluation: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			module, repository, uploads := newCompositeUploadTestModule(t)
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "adopt-ready-scope")
+			request.Trackers.Include, request.Trackers.Remove = tc.include, tc.remove
+			current := executeCommand(t, module, CreateWorkflowCommand{TrackerDecisionMode: TrackerDecisionModePostDupeGate})
+			current = executeCommand(t, module, PrepareReleaseCommand{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+				Input:            api.PrepareInput{SourcePath: request.Source.Path},
+			})
+			current = executeCommand(t, module, EvaluateInputReadinessCommand{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+				TrackerIDs:       tc.retained,
+			})
+			if current.Selection != nil || current.InputReadiness == nil || inputReadinessBlocked(current.InputReadiness) {
+				t.Fatalf("prepared handoff selection/readiness = %#v/%#v", current.Selection, current.InputReadiness)
+			}
+			request.Authority = &api.WorkflowAuthority{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+			}
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current = waitCompositeUploadTestOperation(t, module, started)
+			if tc.wantNoTrackers {
+				if current.Operation.Status != api.StageStatusFailed || len(current.Operation.Failures) != 1 ||
+					current.Operation.Failures[0].Failure.Code != api.OperationFailureNoEligibleTrackers || current.Dupes != nil {
+					t.Fatalf("all-removed handoff operation=%#v dupes=%#v", current.Operation, current.Dupes)
+				}
+			} else {
+				if current.Operation.Status != api.StageStatusBlocked || current.Projections == nil ||
+					current.Selection == nil || !slices.Equal(current.Selection.TrackerIDs, tc.want) {
+					t.Fatalf("adopted handoff status=%s selection=%#v projections=%t failures=%#v",
+						current.Operation.Status, current.Selection, current.Projections != nil, current.Operation.Failures)
+				}
+				projected := make([]api.TrackerID, len(current.Projections.Projections))
+				for index, projection := range current.Projections.Projections {
+					projected[index] = projection.TrackerID
+				}
+				if !slices.Equal(projected, tc.want) {
+					t.Fatalf("projected trackers = %v, want %v", projected, tc.want)
+				}
+				if current.InputReadiness == nil || !slices.Equal(current.InputReadiness.SelectedTrackerIDs, tc.want) {
+					t.Fatalf("adopted handoff readiness does not match trackers %v: %#v", tc.want, current.InputReadiness)
+				}
+			}
+			state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Adoption invalidates the prior snapshot; unchanged scope needs one new evaluation.
+			if tc.wantSingleReevaluation && len(state.InputReadiness) != 2 {
+				t.Fatalf("readiness snapshots = %d, want the original plus one adoption evaluation", len(state.InputReadiness))
+			}
+			if uploads.execution != nil {
+				t.Fatal("adopted workflow bypassed tracker approval or removal")
+			}
+		})
+	}
+}
+
 func TestCompositeUploadStrictDebugContinuesWithEligibleTrackers(t *testing.T) {
 	t.Parallel()
 

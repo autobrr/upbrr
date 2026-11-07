@@ -13,6 +13,7 @@ import (
 // Profile returns BJS identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:         trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
 		Name:                    "BJS",
 		BaseURL:                 baseURL,
 		DescriptionGroup:        "bjs",

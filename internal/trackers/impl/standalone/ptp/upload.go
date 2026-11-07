@@ -31,6 +31,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -102,7 +103,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, state.uploadURL, bytes.NewReader(body))
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: PTP request build: %w", err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: PTP request build: %w", err))
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", ptpUserAgent)
@@ -122,7 +123,7 @@ func submitPreparedUpload(
 		torrentID := strings.TrimSpace(matches[2])
 		torrentURL := strings.TrimRight(state.baseURL, "/") + "/torrents.php?id=" + url.QueryEscape(groupID) + "&torrentid=" + url.QueryEscape(torrentID)
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "PTP", state.torrentPath, trackerTorrentPath, state.announceURL, "PTP",
+			req.Logger, "PTP", state.torrentPath, trackerTorrentPath, state.announceURL, "PTP", torrentURL,
 		)
 		return api.UploadSummary{
 			Uploaded: 1,

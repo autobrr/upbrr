@@ -230,7 +230,8 @@ func (r *PersistentRepository) LoadEvents(
 	return events, mapPersistentRepositoryError(err)
 }
 
-// BeginEffect durably fences one exact external attempt.
+// BeginEffect durably fences one exact external attempt. An unknown-outcome error
+// may carry the blocking local record for reconciliation without admitting a new attempt.
 func (r *PersistentRepository) BeginEffect(
 	ctx context.Context,
 	record api.ReleaseWorkflowEffectRecord,
@@ -307,12 +308,13 @@ func (r *PersistentRepository) ResolveEffectUnknown(
 	kind api.WorkflowExternalEffectKind,
 	scopeID string,
 	now time.Time,
+	expected ...api.WorkflowExternalEffectReceipt,
 ) error {
 	if r.durability == nil {
 		return errors.New("release workflow: durable effect repository is unavailable")
 	}
 	return mapPersistentRepositoryError(
-		r.durability.ResolveReleaseWorkflowEffectUnknown(ctx, ownerID, workflowID, kind, scopeID, now),
+		r.durability.ResolveReleaseWorkflowEffectUnknown(ctx, ownerID, workflowID, kind, scopeID, now, expected...),
 	)
 }
 
@@ -373,6 +375,7 @@ func workflowStateRecord(ownerID string, state State) (api.ReleaseWorkflowStateR
 	var resolution *api.ReleaseWorkflowEffectResolution
 	if state.effectResolution != nil {
 		cloned := *state.effectResolution
+		cloned.Expected = slices.Clone(cloned.Expected)
 		resolution = &cloned
 	}
 	return api.ReleaseWorkflowStateRecord{

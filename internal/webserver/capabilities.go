@@ -91,6 +91,7 @@ type DiagnosticProbeCapability interface {
 // Fields are independently optional so consumers and tests can supply only the
 // workflows they invoke. Production bindings populate every field.
 type CoreCapabilities struct {
+	ProviderSearch  ProviderSearchCapability
 	ReleaseWorkflow ReleaseWorkflowCapability
 	Description     DescriptionCapability
 	Playlists       PlaylistCapability
@@ -101,8 +102,10 @@ type CoreCapabilities struct {
 // Available reports whether at least one capability is installed.
 // It does not validate that a bundle contains every capability a caller needs.
 func (c CoreCapabilities) Available() bool {
-	return CapabilityAvailable(c.ReleaseWorkflow) || CapabilityAvailable(c.Description) || CapabilityAvailable(c.Playlists) ||
-		CapabilityAvailable(c.History) || CapabilityAvailable(c.DiagnosticProbe)
+	return CapabilityAvailable(c.ProviderSearch) || CapabilityAvailable(c.ReleaseWorkflow) ||
+		CapabilityAvailable(c.Description) || CapabilityAvailable(c.Playlists) ||
+		CapabilityAvailable(c.History) ||
+		CapabilityAvailable(c.DiagnosticProbe)
 }
 
 // CapabilityAvailable reports whether capability contains a callable value,
@@ -119,12 +122,18 @@ func BindCoreCapabilities(svc *core.Core) (CoreCapabilities, LifecycleOwner) {
 		return CoreCapabilities{}, nil
 	}
 	return CoreCapabilities{
+		ProviderSearch:  svc,
 		ReleaseWorkflow: svc,
 		Description:     svc,
 		Playlists:       svc,
 		History:         svc,
 		DiagnosticProbe: svc,
 	}, svc
+}
+
+// ProviderSearchCapability inspects provider candidates without changing the active release.
+type ProviderSearchCapability interface {
+	SearchProviderCandidates(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
 }
 
 var (

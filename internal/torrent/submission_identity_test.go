@@ -141,6 +141,21 @@ func verifySubmissionSource(t *testing.T, source string) api.SourceContentIdenti
 	return verified.Identity
 }
 
+func TestPackageInventoryRejectsUnresolvedIncludedFile(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "Example.mkv")
+	writeSubmissionIdentityFile(t, file, "synthetic media")
+	if _, err := ResolvePackageInventory(api.TorrentSubject{SourcePath: root, FileList: []string{file, filepath.Join(root, "missing.mkv")}}); err == nil {
+		t.Fatal("missing selected file produced a complete inventory")
+	}
+	if err := os.Symlink(filepath.Join(root, "missing.mkv"), filepath.Join(root, "unresolved.mkv")); err != nil {
+		t.Skip("symlink creation is unavailable")
+	}
+	if _, err := ResolvePackageInventory(api.TorrentSubject{SourcePath: root, DiscType: "BDMV"}); err == nil {
+		t.Fatal("unresolved included disc entry produced a complete inventory")
+	}
+}
+
 func writeSubmissionIdentityFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

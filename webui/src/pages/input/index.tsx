@@ -13,12 +13,11 @@ import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { InputFacet } from "../../releaseSession/types";
 import { InputCorrectionEditor, SavedCorrectionReview } from "./InputCorrectionEditor";
-import { settingsStyle } from "../../settings/style";
+import { ProviderCandidates } from "./ProviderCandidates";
 import { missingRequiredFacts } from "../../releaseSession/requiredFacts";
 import type {
   DetailBlock,
   DetailItem,
-  ExternalIdentityCandidate,
   ExternalIDInfo,
   ProviderDisplay,
   IMDBAKA,
@@ -35,7 +34,6 @@ import type {
 } from "../../types";
 import type { SourcePathHistoryEntry } from "../../utils/inputHistory";
 import {
-  candidatesFromDiagnostics,
   externalIDInfoFromIdentity,
   externalIdentityDraftFromIdentity,
 } from "../../utils/canonicalIdentity";
@@ -124,11 +122,6 @@ const formatPlaylistBytes = (bytes: number) => {
 };
 
 const formatNumber = (value: number) => (value ? value.toString() : "");
-
-const formatSimilarity = (value: number) => {
-  if (!value) return "";
-  return `${Math.round(value * 100)}%`;
-};
 
 const formatBoolean = (value: boolean) => (value ? "Yes" : "No");
 
@@ -936,7 +929,9 @@ export default function InputPage(props: Props) {
   const showReleaseDetails = Boolean(
     hasPreview || (path.trim() && (view.status === "ready" || view.status === "error")),
   );
-  const hasResolvedPrimaryExternalID = identityDraft.TMDBID > 0 || identityDraft.IMDBID > 0;
+  const hasResolvedPrimaryExternalID =
+    (identityDraft.TMDBID > 0 || preview.Identity.Overrides.TMDB === "clear") &&
+    (identityDraft.IMDBID > 0 || preview.Identity.Overrides.IMDB === "clear");
   const selectedTrackerCount = useMemo(
     () =>
       trackerUploadItems.reduce(
@@ -1001,60 +996,6 @@ export default function InputPage(props: Props) {
       provider,
     });
   };
-
-  const tmdbCandidates = useMemo(
-    () => candidatesFromDiagnostics(preview.Diagnostics, "tmdb"),
-    [preview.Diagnostics],
-  );
-  const imdbCandidates = useMemo(
-    () => candidatesFromDiagnostics(preview.Diagnostics, "imdb"),
-    [preview.Diagnostics],
-  );
-  const [candidatePreview, setCandidatePreview] = useState<{
-    provider: "tmdb" | "imdb";
-    candidate: ExternalIdentityCandidate;
-  } | null>(null);
-
-  const selectedCandidateID = (provider: "tmdb" | "imdb") => {
-    const key = provider === "tmdb" ? "TMDBID" : "IMDBID";
-    return Number(view.intent.identity[key] ?? identityDraft[key] ?? 0);
-  };
-
-  const applyCandidateID = (provider: "tmdb" | "imdb", candidate: ExternalIdentityCandidate) => {
-    if (!candidate?.ID) return;
-    const currentSelectedID = selectedCandidateID(provider);
-    const key = provider === "tmdb" ? "TMDBID" : "IMDBID";
-    if (currentSelectedID === candidate.ID) {
-      facet.changeIdentity({ ...view.intent.identity, [key]: 0 });
-      if (
-        candidatePreview?.provider === provider &&
-        candidatePreview.candidate.ID === candidate.ID
-      ) {
-        setCandidatePreview(null);
-      }
-      return;
-    }
-    setCandidatePreview({ provider, candidate });
-    facet.changeIdentity({ ...view.intent.identity, [key]: candidate.ID });
-  };
-
-  useEffect(() => {
-    if (!showExternalIDInputUI) {
-      setCandidatePreview(null);
-    }
-  }, [showExternalIDInputUI]);
-
-  useEffect(() => {
-    if (!candidatePreview) return;
-    const providerCandidates =
-      candidatePreview.provider === "tmdb" ? tmdbCandidates : imdbCandidates;
-    const stillExists = providerCandidates.some(
-      (candidate) => candidate.ID === candidatePreview.candidate.ID,
-    );
-    if (!stillExists) {
-      setCandidatePreview(null);
-    }
-  }, [candidatePreview, tmdbCandidates, imdbCandidates]);
 
   const selectedPreview = useMemo(() => {
     if (!selectedProvider) return null;
@@ -1302,10 +1243,10 @@ export default function InputPage(props: Props) {
                   className={compactInputClass}
                   value={sourceLookupURL}
                   onChange={(event) => setSourceLookupURL(event.target.value)}
-                  placeholder="Paste tracker or media URL for ID lookup"
+                  placeholder="Paste tracker, metadata, or Blu-ray.com release URL"
                 />
                 <span className="text-xs leading-tight text-muted-foreground">
-                  Metadata ID and tracker description/image lookup.
+                  Metadata IDs, tracker description/images, or an exact Blu-ray.com release.
                 </span>
               </label>
 
@@ -1483,166 +1424,29 @@ export default function InputPage(props: Props) {
           </div>
         ) : null}
 
-        {hasPreview && showExternalIDInputUI && !hasResolvedPrimaryExternalID ? (
-          <div className={pageStyle.panel}>
-            <div className={settingsStyle.subgroup}>
-              <div className={settingsStyle.title}>External ID candidates</div>
-              <p className="text-muted-foreground path-helper">
-                Select a candidate to copy it into ID overrides, then refresh metadata.
-              </p>
-              {tmdbCandidates.length === 0 && imdbCandidates.length === 0 ? (
-                <p className="text-muted-foreground">
-                  No TMDB/IMDB candidates available for this search.
-                </p>
-              ) : (
-                <div className={settingsStyle.grid}>
-                  <div>
-                    <p className={pageStyle.label}>TMDB</p>
-                    {tmdbCandidates.length === 0 ? (
-                      <p className="text-muted-foreground">No TMDB candidates</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {tmdbCandidates.slice(0, 5).map((candidate) => (
-                          <button
-                            key={`tmdb-${candidate.ID}`}
-                            type="button"
-                            className={`ghost ${selectedCandidateID("tmdb") === candidate.ID ? "border-ring bg-accent ring-2 ring-ring/20" : ""}`}
-                            onClick={() => applyCandidateID("tmdb", candidate)}
-                          >
-                            {candidate.Title || "(Untitled)"}
-                            {candidate.Year ? ` (${candidate.Year})` : ""}
-                            {formatSimilarity(candidate.Similarity)
-                              ? ` • ${formatSimilarity(candidate.Similarity)}`
-                              : ""}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {candidatePreview?.provider === "tmdb" ? (
-                      <div className={settingsStyle.subgroup}>
-                        <p className={pageStyle.label}>Selected TMDB candidate</p>
-                        <div className="flex items-start justify-between gap-3 max-[960px]:items-center">
-                          <div className="min-w-0 flex-1">
-                            <p className={pageStyle.value}>
-                              {candidatePreview.candidate.Title || "(Untitled)"}
-                              {candidatePreview.candidate.Year
-                                ? ` (${candidatePreview.candidate.Year})`
-                                : ""}
-                            </p>
-                            <p className="text-muted-foreground">
-                              {candidatePreview.candidate.Category || "Unknown category"}
-                              {formatSimilarity(candidatePreview.candidate.Similarity)
-                                ? ` • ${formatSimilarity(candidatePreview.candidate.Similarity)}`
-                                : ""}
-                            </p>
-                          </div>
-                          {candidatePreview.candidate.PosterURL ? (
-                            <button
-                              className="cursor-pointer rounded-[10px] border-0 bg-transparent p-0 leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-chart-2"
-                              type="button"
-                              onClick={() => {
-                                setLightboxImage(
-                                  tmdbImageURL(candidatePreview.candidate.PosterURL, "original"),
-                                );
-                                setLightboxAlt("TMDB candidate poster");
-                              }}
-                            >
-                              <img
-                                className="h-[84px] w-14 min-w-14 rounded-lg border border-foreground/10 object-cover"
-                                src={tmdbImageURL(
-                                  candidatePreview.candidate.PosterURL,
-                                  "w220_and_h330_face",
-                                )}
-                                alt="TMDB candidate poster"
-                                loading="lazy"
-                              />
-                            </button>
-                          ) : null}
-                        </div>
-                        <p className="text-muted-foreground">
-                          {candidatePreview.candidate.Overview || "No overview available."}
-                        </p>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div>
-                    <p className={pageStyle.label}>IMDB</p>
-                    {imdbCandidates.length === 0 ? (
-                      <p className="text-muted-foreground">No IMDB candidates</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {imdbCandidates.slice(0, 5).map((candidate) => (
-                          <button
-                            key={`imdb-${candidate.ID}`}
-                            type="button"
-                            className={`ghost ${selectedCandidateID("imdb") === candidate.ID ? "border-ring bg-accent ring-2 ring-ring/20" : ""}`}
-                            onClick={() => applyCandidateID("imdb", candidate)}
-                          >
-                            {candidate.Title || "(Untitled)"}
-                            {candidate.Year ? ` (${candidate.Year})` : ""}
-                            {formatSimilarity(candidate.Similarity)
-                              ? ` • ${formatSimilarity(candidate.Similarity)}`
-                              : ""}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {candidatePreview?.provider === "imdb" ? (
-                      <div className={settingsStyle.subgroup}>
-                        <p className={pageStyle.label}>Selected IMDB candidate</p>
-                        <div className="flex items-start justify-between gap-3 max-[960px]:items-center">
-                          <div className="min-w-0 flex-1">
-                            <p className={pageStyle.value}>
-                              {candidatePreview.candidate.Title || "(Untitled)"}
-                              {candidatePreview.candidate.Year
-                                ? ` (${candidatePreview.candidate.Year})`
-                                : ""}
-                            </p>
-                            <p className="text-muted-foreground">
-                              {candidatePreview.candidate.Category || "Unknown category"}
-                              {formatSimilarity(candidatePreview.candidate.Similarity)
-                                ? ` • ${formatSimilarity(candidatePreview.candidate.Similarity)}`
-                                : ""}
-                            </p>
-                          </div>
-                          {candidatePreview.candidate.PosterURL ? (
-                            <button
-                              className="cursor-pointer rounded-[10px] border-0 bg-transparent p-0 leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-chart-2"
-                              type="button"
-                              onClick={() => {
-                                setLightboxImage(candidatePreview.candidate.PosterURL);
-                                setLightboxAlt("IMDB candidate poster");
-                              }}
-                            >
-                              <img
-                                className="h-[84px] w-14 min-w-14 rounded-lg border border-foreground/10 object-cover"
-                                src={imdbPosterURL(candidatePreview.candidate.PosterURL, 190)}
-                                alt="IMDB candidate poster"
-                                loading="lazy"
-                              />
-                            </button>
-                          ) : null}
-                        </div>
-                        <p className="text-muted-foreground">
-                          {candidatePreview.candidate.Overview || "No overview available."}
-                        </p>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              )}
-              <div className="flex justify-end">
-                <button
-                  className="primary"
-                  type="button"
-                  onClick={handleRefresh}
-                  disabled={refreshDisabled}
-                >
-                  {loading ? "Refreshing..." : "Refresh metadata"}
-                </button>
-              </div>
-            </div>
-          </div>
+        {hasPreview && showExternalIDInputUI ? (
+          <ProviderCandidates
+            key={`${preview.SourcePath}-${preview.Release.Generation}-${view.intent.releaseName.Category || preview.Identity.Category}`}
+            facet={facet}
+            initialQuery={[
+              view.release?.Naming.Title || preview.ReleaseName,
+              view.release?.Naming.Year || "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            category={(
+              view.intent.releaseName.Category ||
+              preview.Identity.Category ||
+              "UNKNOWN"
+            ).toUpperCase()}
+            needsSelection={!hasResolvedPrimaryExternalID}
+            loading={loading}
+            onRefresh={handleRefresh}
+            onPosterOpen={(url, alt) => {
+              setLightboxImage(url);
+              setLightboxAlt(alt);
+            }}
+          />
         ) : null}
 
         <div className="grid gap-[9px]">

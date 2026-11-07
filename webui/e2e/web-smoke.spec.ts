@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -747,4 +748,86 @@ test.describe("Settings help", () => {
       await workspace.cleanup();
     }
   });
+});
+
+test("embedded connection tests use unsaved instance values without saving or uploading", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  const requests: string[] = [];
+  const provider = createServer((request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    expect(request.method).toBe("GET");
+    expect(request.url).toBe("/draft/api/v3/system/status");
+    response.setHeader("Content-Type", "application/json");
+    if (request.headers["x-api-key"] === "synthetic-draft-key") {
+      response.end(JSON.stringify({ appName: "Sonarr", version: "4.0.0" }));
+    } else {
+      response.statusCode = 401;
+      response.end(JSON.stringify({ error: "synthetic-private-error-must-not-display" }));
+    }
+  });
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const address = provider.address();
+  if (!address || typeof address === "string") throw new Error("Missing local provider address");
+  try {
+    app = await startApp(workspace);
+    await page.goto(new URL("settings", app.url).toString());
+    const before = JSON.parse(
+      await (await page.request.get(new URL("api/app/GetConfig", app.url).toString())).json(),
+    );
+    await page.getByRole("button", { name: "Sonarr and Radarr", exact: true }).click();
+    await page
+      .getByLabel("Sonarr primary instance URL", { exact: true })
+      .fill(`http://127.0.0.1:${address.port}/draft`);
+    const key = page.getByLabel("Sonarr primary instance API key", { exact: true });
+    await key.fill("synthetic-draft-key");
+    const action = page.getByRole("button", {
+      name: "Test connection to Sonarr primary instance",
+      exact: true,
+    });
+    await action.click();
+    const result = page
+      .getByRole("status")
+      .filter({ hasText: "authenticated API v3 status response" });
+    await expect(result).toBeVisible();
+    await key.fill("synthetic-rejected-key");
+    await expect(result).toHaveCount(0);
+    await action.click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "HTTP 401 (Unauthorized)" }),
+    ).toBeVisible();
+    await expect(page.getByText("synthetic-private-error-must-not-display")).toHaveCount(0);
+    await page.getByRole("button", { name: "Image Hosting", exact: true }).click();
+    const lostimg = page.getByRole("region", { name: "Lostimg", exact: true });
+    await expect(
+      lostimg.getByText(/Connection test unavailable:.*not yet been verified/),
+    ).toBeVisible();
+    await expect(lostimg.getByRole("button", { name: /Test connection/ })).toHaveCount(0);
+    const imgbb = page.getByRole("region", { name: "imgbb connection", exact: true });
+    await expect(
+      imgbb.getByText(/Connection test unavailable:.*only uploads images/),
+    ).toBeVisible();
+    await expect(imgbb.getByRole("button", { name: /Test connection/ })).toHaveCount(0);
+    await page.getByLabel("Image host priority 1", { exact: true }).selectOption("pixhost");
+    await expect(
+      page.getByRole("button", { name: "Test connection to pixhost image hosting", exact: true }),
+    ).toBeVisible();
+    const after = JSON.parse(
+      await (await page.request.get(new URL("api/app/GetConfig", app.url).toString())).json(),
+    );
+    expect(after.ArrIntegration.SonarrURL).toBe(before.ArrIntegration.SonarrURL);
+    expect(after.ArrIntegration.SonarrAPIKey).toBe(before.ArrIntegration.SonarrAPIKey);
+    expect(requests).toHaveLength(2);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app?.stop();
+    await new Promise<void>((resolve, reject) =>
+      provider.close((error) => (error ? reject(error) : resolve())),
+    );
+    await workspace.cleanup();
+  }
 });

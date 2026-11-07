@@ -302,3 +302,59 @@ func bdInfoAudioState(summary string) preparationstate.State {
 func bdAudioSummary(language, bitrate string) string {
 	return fmt.Sprintf("Audio: %s / Dolby Digital Audio / 2.0 / 48 kHz / %s / 16-bit", language, bitrate)
 }
+
+func TestDeriveBDInfoPCMLanguagesWithoutMediaInfoLanguageTags(t *testing.T) {
+	t.Parallel()
+	report := "QUICK SUMMARY:\nDisc Title: Example Release 2026\nPlaylist: 00001.MPLS\nLength: 01:30:00.000\n" +
+		"Audio: English / LPCM Audio / 2.0 / 48 kHz / 2304 kbps / 24-bit\n" +
+		"Audio: French / LPCM Audio / 2.0 / 48 kHz / 1536 kbps / 16-bit\n" +
+		"Subtitle: English / 21.741 kbps\nSubtitle: French / 20.154 kbps\nSubtitle: French / 2.050 kbps"
+	summary, _, _ := discparse.SplitBDInfoReport(report)
+	for _, test := range []struct {
+		name                string
+		audio, subs         *[]string
+		wantAudio, wantSubs []string
+	}{
+		{"automatic", nil, nil, []string{"English", "French"}, []string{"English", "French"}},
+		{"manual", new([]string{"Japanese"}), new([]string{"Spanish"}), []string{"Japanese"}, []string{"Spanish"}},
+		{"clear", new([]string{}), new([]string{}), nil, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := bdInfoAudioState(summary)
+			meta.MediaInfoJSONPath = filepath.Join(t.TempDir(), "MediaInfo.json")
+			raw := []byte(`{"media":{"track":[{"@type":"Audio","Format":"PCM"},{"@type":"Text","Format":"PGS"}]}}`)
+			if err := os.WriteFile(meta.MediaInfoJSONPath, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			meta.MetadataOverrides.AudioLanguages, meta.MetadataOverrides.SubtitleLanguages = test.audio, test.subs
+			service := newTestService(t, &fakeRepo{}, WithConfig(config.Config{}))
+			for generation := range 2 {
+				var err error
+				meta, err = service.deriveMediaFacts(t.Context(), meta)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Equal(meta.AudioLanguages, test.wantAudio) || !slices.Equal(meta.SubtitleLanguages, test.wantSubs) {
+					t.Fatalf("generation %d audio=%v subtitles=%v", generation, meta.AudioLanguages, meta.SubtitleLanguages)
+				}
+				if len(meta.MediaTracks) != 3 || meta.MediaTracks[0].Codec != "LPCM" ||
+					!slices.Equal(meta.MediaTracks[0].DetectedLanguages, []string{"English"}) ||
+					!slices.Equal(meta.MediaTracks[1].DetectedLanguages, []string{"French"}) || meta.MediaTracks[0].PlaylistID != "playlist_1" {
+					t.Fatalf("BDInfo PCM evidence was lost or duplicated: %#v", meta.MediaTracks)
+				}
+			}
+			meta.MetadataOverrides.AudioLanguages, meta.MetadataOverrides.SubtitleLanguages = nil, nil
+			restored, err := service.deriveMediaFacts(t.Context(), meta)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(restored.AudioLanguages, []string{"English", "French"}) || !slices.Equal(restored.SubtitleLanguages, []string{"English", "French"}) {
+				t.Fatalf("Auto did not restore BDInfo: audio=%v subtitles=%v", restored.AudioLanguages, restored.SubtitleLanguages)
+			}
+			unchanged, err := os.ReadFile(meta.MediaInfoJSONPath)
+			if err != nil || string(unchanged) != string(raw) {
+				t.Fatalf("raw MediaInfo report changed: %v", err)
+			}
+		})
+	}
+}

@@ -242,7 +242,7 @@ func TestBTNHandlerPrefersBroadTitleSearch(t *testing.T) {
 func TestBTNHandlerNormalizesEntries(t *testing.T) {
 	t.Parallel()
 
-	payloads := captureBTNPayloads(t, `{"result":{"results":"1","torrents":{"777":{"TorrentID":"777","GroupID":"333","TvdbID":"1234567","ImdbID":"1234567","ReleaseName":"Example.Show.S01.1080p.WEB-DL.HDR.DV-NTb","Size":12345,"Category":"Season","Resolution":"1080p","Source":"WEB-DL","Codec":"H.264","Container":"MKV","Origin":"P2P","GroupName":"NTb","Tags":["Dolby Vision","HDR10 Compatible","Subtitles"]}}}}`)
+	payloads := captureBTNPayloads(t, `{"result":{"results":"1","torrents":{"777":{"TorrentID":"777","GroupID":"333","TvdbID":"1234567","ImdbID":"1234567","ReleaseName":"Example.Show.S01.1080p.WEB-DL.HDR.DV-NTb","Size":12345,"Category":"Season","Resolution":"1080p","Source":"WEB-DL","Codec":"H.264","Container":"MKV","Origin":"P2P","GroupName":"NTb","Tags":["Dolby Vision","HDR10 Compatible","Subtitles","3D"]}}}}`)
 	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
 
 	entries, notes, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
@@ -288,7 +288,7 @@ func TestBTNHandlerNormalizesEntries(t *testing.T) {
 		entry.ProviderIDs[2].Provider != "imdb" || entry.ProviderIDs[2].Value != "1234567" {
 		t.Fatalf("unexpected provider IDs: %#v", entry.ProviderIDs)
 	}
-	if len(entry.Flags) != 2 || entry.Flags[0] != "DOLBY VISION" || entry.Flags[1] != "HDR10" {
+	if len(entry.Flags) != 3 || entry.Flags[0] != "DOLBY VISION" || entry.Flags[1] != "HDR10" || entry.Flags[2] != "3D" {
 		t.Fatalf("unexpected flags: %#v", entry.Flags)
 	}
 	if !entry.FlagsPresent || !entry.FlagsComplete {

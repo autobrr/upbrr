@@ -193,6 +193,14 @@ export type AudioAnalysisVariant = string;
 
 export type AudioTrackRole = string;
 
+export type BlurayDetailRequest = Readonly<{
+  All: true;
+  ReleaseID?: string;
+}> | Readonly<{
+  All?: false;
+  ReleaseID: string;
+}>;
+
 export type BlurayDiscSpec = Readonly<{
   Count: number;
   Format: string;
@@ -209,6 +217,7 @@ export type BlurayMetadata = Readonly<{
   AutoSelected: boolean;
   BestScore: number;
   Candidates: readonly BlurayReleaseCandidate[];
+  Country: string;
   IMDBID: number;
   SearchURL: string;
   SelectedReleaseID: string;
@@ -228,6 +237,8 @@ export type BlurayReleaseCandidate = Readonly<{
   Accepted: boolean;
   Country: string;
   CoverImages: readonly BlurayImage[];
+  DetailsIdentityVersion?: string;
+  DetailsStatus: string;
   GenericDisc: boolean;
   MatchNotes: readonly string[];
   MovieTitle: string;
@@ -236,6 +247,7 @@ export type BlurayReleaseCandidate = Readonly<{
   ProductID: string;
   Publisher: string;
   Region: string;
+  ReleaseDate: string;
   ReleaseID: string;
   Score: number;
   Specs: BluraySpecs;
@@ -243,6 +255,14 @@ export type BlurayReleaseCandidate = Readonly<{
   Title: string;
   URL: string;
   Warnings: readonly string[];
+}>;
+
+export type BluraySelection = Readonly<{
+  Mode: "manual";
+  Release: string;
+}> | Readonly<{
+  Mode: "skip" | "auto";
+  Release?: string;
 }>;
 
 export type BluraySpecs = Readonly<{
@@ -256,6 +276,10 @@ export type BluraySpecs = Readonly<{
 export type BlurayVideoSpec = Readonly<{
   Codec: string;
   Resolution: string;
+}>;
+
+export type CancelActiveInputOpenRequest = Readonly<{
+  idempotencyKey: string;
 }>;
 
 export type CancelReleaseWorkflowRequest = Readonly<{
@@ -569,6 +593,11 @@ export type ExternalFreshness = string;
 
 export type ExternalIDOverrides = Readonly<{
   IMDBID?: number | null;
+  KeepIMDB?: boolean | null;
+  KeepMAL?: boolean | null;
+  KeepTMDB?: boolean | null;
+  KeepTVDB?: boolean | null;
+  KeepTVmaze?: boolean | null;
   MALID?: number | null;
   TMDBID?: number | null;
   TVDBID?: number | null;
@@ -593,13 +622,19 @@ export type ExternalIdentity = Readonly<{
 }>;
 
 export type ExternalIdentityCandidate = Readonly<{
+  Cast: readonly string[];
+  CastSource: string;
   Category: CanonicalCategory;
+  DetailsStatus: MetadataEvidenceStatus;
+  Directors: readonly string[];
   ID: number;
   MediaType: string;
   OriginalTitle: string;
   Overview: string;
   PosterURL: string;
   Provider: IdentityProvider;
+  RuntimeKind: string;
+  RuntimeMinutes: number;
   Similarity: number;
   Title: string;
   Year: number;
@@ -618,6 +653,7 @@ export type FramePreview = Readonly<{
   discName?: string;
   expiresAt: string;
   id: PublicResourceID;
+  processing?: ScreenshotProcessing | null;
   release: ReleaseSnapshotRef;
   timestampSeconds: number;
   workflowId: WorkflowID;
@@ -1133,10 +1169,12 @@ export type MediaArtifact = Readonly<{
   index?: number;
   kind: MediaArtifactKind;
   order?: number;
+  processing?: ScreenshotProcessing | null;
   purpose: ScreenshotPurpose;
   selected: boolean;
   sizeBytes?: number;
   source?: string;
+  sourceUnavailable?: boolean;
   timestampSeconds?: number;
   url?: string;
   width?: number;
@@ -1153,6 +1191,7 @@ export type MediaArtifactSet = Readonly<{
   failures?: readonly WorkflowFailure[];
   hostAttempts?: readonly HostedImageAttempt[];
   id: MediaArtifactSetID;
+  imageHostPreference?: string | null;
   imageHostUploadSkipped?: boolean;
   imageRequirementsPrepared: boolean;
   projectionSet: TrackerReleaseProjectionSetRef;
@@ -1293,6 +1332,7 @@ export type MediaFileFacts = Readonly<{
 }>;
 
 export type MediaPlan = Readonly<{
+  autoAdoptSavedImages?: boolean;
   createdAt: string;
   discType?: string;
   discs?: readonly MediaDiscPlan[];
@@ -1482,6 +1522,12 @@ export type OperationRecovery = string;
 
 export type OverrideState = string;
 
+export type PackageInventory = Readonly<{
+  Files?: readonly string[];
+  Scope: SubmissionContentScope;
+  Status: MetadataEvidenceStatus;
+}>;
+
 export type PlaylistInfo = Readonly<{
   discId: string;
   discName: string;
@@ -1512,6 +1558,7 @@ export type PreparationCompatibility = Readonly<{
 }>;
 
 export type PreparationControls = Readonly<{
+  BlurayDetails?: BlurayDetailRequest | null;
   CaptureHDRMetadata?: boolean;
   ConfirmBDMVRescan: boolean;
   ForceRecheck?: boolean | null;
@@ -1567,6 +1614,7 @@ export type PreparedReleaseDisplay = Readonly<{
   MediaInfoHTML?: string;
   Providers: readonly ProviderDisplay[];
   ReleaseName: string;
+  TVDBNamingAvailable?: boolean;
   TrackerData: readonly TrackerPreview[];
   hdrTargets?: readonly HDRAnalysisTarget[];
 }>;
@@ -1697,7 +1745,7 @@ export type ReleaseFactInstructionSnapshotRef = Readonly<{
 }>;
 
 export type ReleaseFactInstructions = Readonly<{
-  BlurayReleaseID: string;
+  Bluray?: BluraySelection | null;
   Category?: CanonicalCategory | null;
   Identity: ExternalIDOverrides;
   Metadata: MetadataOverrides;
@@ -1883,6 +1931,7 @@ export type ReleaseWorkflowCurrent = Readonly<{
   media?: MediaArtifactSet | null;
   operation?: Operation | null;
   preflight?: TrackerPreflightAssessment | null;
+  preparationOperationId?: WorkflowOperationID;
   projectionInstructions?: TrackerProjectionInstructionSnapshot | null;
   projections?: TrackerReleaseProjectionSet | null;
   release?: ReleaseSnapshot | null;
@@ -1977,6 +2026,7 @@ export type ReleaseWorkflowUploadExternalIDs = Readonly<{
 }>;
 
 export type ReleaseWorkflowUploadFacts = Readonly<{
+  bluray?: BluraySelection | null;
   category?: CanonicalCategory | null;
   externalIds?: ReleaseWorkflowUploadExternalIDs;
   metadata?: ReleaseWorkflowUploadMetadata;
@@ -2220,7 +2270,9 @@ export type RequiredAction = Readonly<{
   allowsFreeText?: boolean;
   correctionConfirmation?: CorrectionConfirmation | null;
   createdAt: string;
+  effectId?: string;
   effectKind?: WorkflowExternalEffectKind;
+  effectOperationId?: WorkflowOperationID;
   effectScopeId?: string;
   expiresAt?: string;
   id: RequiredActionID;
@@ -2294,7 +2346,22 @@ export type SaveReleaseWorkflowDescriptionOverrideRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type ScreenshotProcessing = Readonly<{
+  degraded: boolean;
+  renderer: string;
+  requestedRenderer: string;
+  steps?: readonly ScreenshotRenderStep[];
+  tonemapped: boolean;
+  warning?: string;
+}>;
+
 export type ScreenshotPurpose = string;
+
+export type ScreenshotRenderStep = Readonly<{
+  reason: string;
+  renderer: string;
+  stage: string;
+}>;
 
 export type ScreenshotSelection = Readonly<{
   DiscID: string;
@@ -2348,6 +2415,7 @@ export type SourceEntryType = string;
 export type SourceManifest = Readonly<{
   Classification: SourceClassification;
   Entries: readonly SourceManifestEntry[];
+  PackageInventory: PackageInventory;
   SelectedPlaylists: readonly PlaylistInfo[];
   Size: number;
   SourcePath: string;
@@ -2368,6 +2436,7 @@ export type SourceScopedMetadata = Readonly<{
   Bluray?: BlurayMetadata | null;
   Generation: PreparedGeneration;
   IMDB?: IMDBMetadata | null;
+  IdentityCandidates?: readonly ExternalIdentityCandidate[];
   ImportedScreenshotEvidence?: ImportedScreenshotEvidence | null;
   ProviderAvailability: readonly ProviderAvailabilityEvidence[];
   SourcePath: string;
@@ -2389,6 +2458,8 @@ export type StoredReleaseCorrectionsV1 = Readonly<{
   staleContentFields?: readonly CorrectionField[];
   version: number;
 }>;
+
+export type SubmissionContentScope = string;
 
 export type SubmissionExclusion = Readonly<{
   confirmedAt: string;
@@ -2521,6 +2592,7 @@ export type TVDBMetadata = Readonly<{
   Poster: string;
   PosterThumbnail: string;
   PosterThumbnailLookupAttempted: boolean;
+  RemoteLinks: TVDBRemoteLinks;
   Status: string;
   TVDBID: number;
   Type: string;
@@ -2539,6 +2611,17 @@ export type TVDBNameDisambiguation = Readonly<{
   SameNameSeries: number;
   SeriesYear: number;
   Source: string;
+  Status: MetadataEvidenceStatus;
+}>;
+
+export type TVDBRemoteLink = Readonly<{
+  ID: number;
+  Provider: IdentityProvider;
+  State: string;
+}>;
+
+export type TVDBRemoteLinks = Readonly<{
+  Links: readonly TVDBRemoteLink[];
   Status: MetadataEvidenceStatus;
 }>;
 
@@ -3106,9 +3189,11 @@ export type UploadApproval = Readonly<{
 }>;
 
 export type UploadDryRunResult = Readonly<{
+  clientInjectionRequested?: boolean;
   createdAt: string;
   descriptions: DescriptionSetRef;
   dupes: DupeAssessmentRef;
+  explicitDryRun?: boolean;
   failedCount: number;
   id: UploadDryRunResultID;
   inputFingerprint: WorkflowFingerprint;
@@ -3204,6 +3289,8 @@ export type UploadTrackerResult = Readonly<{
   remoteId?: string;
   remoteUrl?: string;
   status: StageStatus;
+  submissionOperationId?: WorkflowOperationID;
+  submissionReceiptId?: string;
   submissionStatus?: StageStatus;
   trackerId: TrackerID;
 }>;
@@ -3225,6 +3312,7 @@ export type WorkflowAuthority = Readonly<{
 export type WorkflowContinuation = Readonly<{
   availableGoals: readonly GoalAvailability[];
   disposition: WorkflowDisposition;
+  duplicateReusePending?: boolean;
   events?: readonly WorkflowEvent[];
   lifecycle: OperationLifecycle;
   refs: WorkflowExactRefs;
@@ -3315,6 +3403,7 @@ export type WorkflowMediaSelection = Readonly<{
 export type WorkflowOperationID = string;
 
 export type WorkflowOperationItem = Readonly<{
+  blurayCandidate?: BlurayReleaseCandidate | null;
   completed?: number;
   id: string;
   kind: string;

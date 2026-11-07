@@ -4,6 +4,7 @@
 package db
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -51,12 +52,12 @@ func TestReusableDescriptionRejectsInvalidInputAndReportsMissing(t *testing.T) {
 	ctx := t.Context()
 	state := createReusableDescriptionWorkflowState(t, repo, "invalid")
 	valid := reusableDescriptionForTest("a", "rendered")
-	updated := reusableDescriptionWorkflowStateRecord(state, "", valid)
+	updated := reusableDescriptionWorkflowStateRecord(t, state, "", valid)
 	if err := repo.SaveReleaseWorkflowState(ctx, state.Revision, updated); err == nil {
 		t.Fatal("save empty source succeeded")
 	}
 	valid.CompatibilityFingerprint = ""
-	updated = reusableDescriptionWorkflowStateRecord(state, filepath.Join(t.TempDir(), "invalid.mkv"), valid)
+	updated = reusableDescriptionWorkflowStateRecord(t, state, filepath.Join(t.TempDir(), "invalid.mkv"), valid)
 	if err := repo.SaveReleaseWorkflowState(ctx, state.Revision, updated); err == nil {
 		t.Fatal("save invalid record succeeded")
 	}
@@ -120,7 +121,7 @@ func saveReusableDescriptionWithWorkflowState(
 	description api.ReusableDescription,
 ) api.ReleaseWorkflowStateRecord {
 	t.Helper()
-	updated := reusableDescriptionWorkflowStateRecord(state, sourcePath, description)
+	updated := reusableDescriptionWorkflowStateRecord(t, state, sourcePath, description)
 	if err := repo.SaveReleaseWorkflowState(t.Context(), state.Revision, updated); err != nil {
 		t.Fatalf("save reusable description workflow state: %v", err)
 	}
@@ -128,11 +129,18 @@ func saveReusableDescriptionWithWorkflowState(
 }
 
 func reusableDescriptionWorkflowStateRecord(
+	t *testing.T,
 	state api.ReleaseWorkflowStateRecord,
 	sourcePath string,
 	description api.ReusableDescription,
 ) api.ReleaseWorkflowStateRecord {
+	t.Helper()
+	payload, err := json.Marshal(struct{ SourcePath string }{sourcePath})
+	if err != nil {
+		t.Fatal(err)
+	}
 	updated := state
+	updated.Payload = payload
 	updated.Revision++
 	updated.UpdatedAt = state.UpdatedAt.Add(time.Minute)
 	updated.DescriptionReuse = &api.ReusableDescriptionRecord{SourcePath: sourcePath, Description: description}

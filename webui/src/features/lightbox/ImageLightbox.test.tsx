@@ -41,4 +41,31 @@ describe("ImageLightbox", () => {
     rerender(<ImageLightbox image="/second.png" alt="Second image" onClose={onClose} />);
     expect(screen.getByRole("img", { name: "Second image" })).toHaveAttribute("src", "/second.png");
   });
+
+  it("reports an image failure and retries when reopened", () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <ImageLightbox image="/poster.png" alt="Poster" onClose={onClose} />,
+    );
+    fireEvent.error(screen.getByRole("img"));
+    expect(screen.getByRole("status")).toHaveTextContent("Image could not be loaded.");
+    fireEvent.click(screen.getByRole("button", { name: "Close image preview" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    rerender(<ImageLightbox image="" alt="" onClose={onClose} />);
+    rerender(<ImageLightbox image="/poster.png" alt="Poster" onClose={onClose} />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("img")).toHaveAttribute("src", "/poster.png");
+  });
+
+  it("closes on browser history navigation and removes its listener when closed", () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <ImageLightbox image="/poster.png" alt="Poster" onClose={onClose} />,
+    );
+    fireEvent.popState(window);
+    expect(onClose).toHaveBeenCalledOnce();
+    rerender(<ImageLightbox image="" alt="" onClose={onClose} />);
+    fireEvent.popState(window);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
 });

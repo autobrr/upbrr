@@ -257,19 +257,13 @@ func (s *Service) Analyze(
 
 	normalized, err := instructions.Normalize()
 	if err != nil {
-		s.logger.Warnf("audioanalysis: state=blocked reason=invalid_instructions")
+		s.logger.Warnf("Audio analysis could not start because its options are invalid. audioanalysis: state=blocked reason=invalid_instructions")
 		return nil, fmt.Errorf("audio analysis: normalize instructions: %w", err)
 	}
-	if len(normalized.TrackIDs) == 0 {
-		s.logger.Warnf("audioanalysis: state=blocked reason=invalid_track_count")
-		return nil, audioAnalysisError(
-			api.AudioAnalysisFailureInvalidSelection,
-			"audio analysis requires at least one scheduled track",
-			errors.New("audio analysis: service requires at least one track"),
-		)
-	}
 	if strings.TrimSpace(attemptRoot) == "" {
-		s.logger.Warnf("audioanalysis: state=blocked reason=storage_unavailable")
+		s.logger.Warnf(
+			"Audio analysis could not access its output storage; check write access and free space. audioanalysis: state=blocked reason=storage_unavailable",
+		)
 		return nil, audioAnalysisError(
 			api.AudioAnalysisFailureResourceUnavailable,
 			"audio analysis storage is unavailable",
@@ -281,7 +275,7 @@ func (s *Service) Analyze(
 		return nil, err
 	}
 	if err := acquireAnalysisSlot(ctx); err != nil {
-		s.logger.Debugf("audioanalysis: state=stopped phase=admission")
+		s.logger.Debugf("Audio analysis stopped while waiting for capacity. audioanalysis: state=stopped phase=admission")
 		return nil, err
 	}
 	defer releaseAnalysisSlot()
@@ -290,37 +284,102 @@ func (s *Service) Analyze(
 		return nil, err
 	}
 	if err := os.MkdirAll(attemptRoot, 0o700); err != nil {
-		s.logger.Warnf("audioanalysis: state=blocked reason=storage_unavailable")
+		s.logger.Warnf(
+			"Audio analysis could not create its output directory; check write access and free space. audioanalysis: state=blocked reason=storage_unavailable",
+		)
 		return nil, audioAnalysisError(
 			api.AudioAnalysisFailureResourceUnavailable,
 			"the managed audio-analysis output root could not be created",
 			fmt.Errorf("audio analysis: create output root: %w", err),
 		)
 	}
-	s.logger.Infof(
-		"audioanalysis: state=started track_count=%d variant_count=%d decoder_threads=%d "+
+	outputs := make([]string, 0, len(normalized.Variants))
+	for _, variant := range normalized.Variants {
+		label := string(variant)
+		if variant == api.AudioAnalysisStats {
+			label = "amplitude statistics"
+		}
+		outputs = append(outputs, label)
+	}
+	s.logger.Infof("Analyzing audio tracks (%d) for %s. audioanalysis: state=started track_count=%d variant_count=%d",
+		len(bindings), strings.Join(outputs, ", "), len(bindings), len(normalized.Variants))
+	s.logger.Debugf(
+		"Audio analysis settings. audioanalysis: state=started track_count=%d variant_count=%d decoder_threads=%d "+
 			"spectrogram_fft_size=%d spectrogram_window=kaiser spectrogram_columns=%d",
 		len(bindings), len(normalized.Variants), normalized.ResourceLimits.DecoderThreads,
 		spectrogramFFTSize, spectrogramPlotWidth,
 	)
 	if err := ctx.Err(); err != nil {
-		return nil, classifyTopLevelFailure(fmt.Errorf("audio analysis: track scheduling stopped: %w", err))
+		stoppedErr := classifyTopLevelFailure(fmt.Errorf("audio analysis: track scheduling stopped: %w", err))
+		s.logOutcome(nil, stoppedErr)
+		return nil, stoppedErr
 	}
 	tracks, analyzeErr := s.analyzeTracks(
 		ctx, selectedDecoder, attemptRoot, subject.VideoPath, bindings, normalized.Variants, normalized.ResourceLimits, attemptID,
 	)
 	if analyzeErr != nil {
+		s.logOutcome(tracks, analyzeErr)
 		return tracks, analyzeErr
 	}
 	if err := ctx.Err(); err != nil {
-		return tracks, classifyTopLevelFailure(fmt.Errorf("audio analysis: track stopped: %w", err))
+		stoppedErr := classifyTopLevelFailure(fmt.Errorf("audio analysis: track stopped: %w", err))
+		s.logOutcome(tracks, stoppedErr)
+		return tracks, stoppedErr
 	}
-	artifactCount := 0
+	s.logOutcome(tracks, nil)
+	return tracks, nil
+}
+
+// logOutcome counts only returned track results, including results retained
+// after an attempt stops; it does not assign outcomes to unreturned tracks.
+func (s *Service) logOutcome(tracks []TrackResult, outcomeErr error) {
+	artifactCount, completedCount, partialCount, failedCount := 0, 0, 0, 0
 	for _, track := range tracks {
 		artifactCount += len(track.Artifacts)
+		//nolint:exhaustive // Analyze returns only terminal track statuses here.
+		switch track.Public.Status {
+		case api.StageStatusCompleted:
+			completedCount++
+		case api.StageStatusPartial:
+			partialCount++
+		case api.StageStatusFailed:
+			failedCount++
+		}
 	}
-	s.logger.Infof("audioanalysis: state=completed track_count=%d artifact_count=%d", len(tracks), artifactCount)
-	return tracks, nil
+	if outcomeErr != nil {
+		failure := failureForError(outcomeErr)
+		state := api.StageStatusFailed
+		message := "stopped with an error; counts cover retained track results and saved files."
+		//nolint:exhaustive // Other failures keep the ordinary failed-attempt message.
+		switch failure.Code {
+		case api.AudioAnalysisFailureCanceled:
+			state = api.StageStatusCanceled
+			message = "was canceled; counts cover retained track results and saved files."
+		case api.AudioAnalysisFailureInterrupted:
+			state = api.StageStatusInterrupted
+			message = "was interrupted; counts cover retained track results and saved files."
+		}
+		s.logger.Warnf("Audio analysis %s audioanalysis: state=%s code=%s track_count=%d completed_count=%d partial_count=%d failed_count=%d artifact_count=%d",
+			message, state, failure.Code, len(tracks), completedCount, partialCount, failedCount, artifactCount)
+		return
+	}
+	state := api.StageStatusCompleted
+	message := "finished; all requested tracks and outputs are complete."
+	if partialCount > 0 || failedCount > 0 {
+		state = api.StageStatusPartial
+		message = "finished with incomplete results; review the affected tracks and outputs before retrying."
+		if completedCount == 0 && partialCount == 0 {
+			state = api.StageStatusFailed
+			message = "failed; no track produced the requested outputs."
+		}
+	}
+	if partialCount > 0 || failedCount > 0 {
+		s.logger.Warnf("Audio analysis %s audioanalysis: state=%s track_count=%d completed_count=%d partial_count=%d failed_count=%d artifact_count=%d",
+			message, state, len(tracks), completedCount, partialCount, failedCount, artifactCount)
+	} else {
+		s.logger.Infof("Audio analysis %s audioanalysis: state=%s track_count=%d completed_count=%d partial_count=%d failed_count=%d artifact_count=%d",
+			message, state, len(tracks), completedCount, partialCount, failedCount, artifactCount)
+	}
 }
 
 func (s *Service) analysisDecoder() (decoder, error) {
@@ -329,7 +388,7 @@ func (s *Service) analysisDecoder() (decoder, error) {
 	}
 	selectedDecoder, err := newFFmpegDecoder(s.logger)
 	if err != nil {
-		s.logger.Warnf("audioanalysis: state=blocked reason=ffmpeg_unavailable")
+		s.logger.Warnf("Audio analysis needs FFmpeg; check that it is installed and available to upbrr. audioanalysis: state=blocked reason=ffmpeg_unavailable")
 		return nil, err
 	}
 	return selectedDecoder, nil
@@ -354,12 +413,23 @@ func (s *Service) inspectBindings(
 ) ([]trackBinding, error) {
 	streams, err := selectedDecoder.Inspect(ctx, subject.VideoPath)
 	if err != nil {
-		s.logger.Warnf("audioanalysis: state=blocked reason=source_inspection_failed")
+		s.logger.Warnf(
+			"Audio analysis could not inspect the source; check that it is readable and contains supported audio. audioanalysis: state=blocked reason=source_inspection_failed",
+		)
 		return nil, classifyTopLevelFailure(err)
 	}
 	bindings, err := bindTracks(subject, selectedTrackIDs, streams)
 	if err != nil {
-		s.logger.Warnf("audioanalysis: state=blocked reason=ambiguous_binding")
+		failure := failureForError(err)
+		guidance := "The prepared audio tracks no longer match the source; prepare Input again."
+		//nolint:exhaustive // Other binding failures keep the prepared-inventory guidance.
+		switch failure.Code {
+		case api.AudioAnalysisFailureInvalidSelection:
+			guidance = "The selected track is not in the prepared inventory; choose an available audio track."
+		case api.AudioAnalysisFailureUnsupportedLayout:
+			guidance = "The selected track has an unsupported channel layout; choose a track with one to eight channels."
+		}
+		s.logger.Warnf("Audio analysis blocked. %s audioanalysis: state=blocked reason=%s", guidance, failure.Code)
 		return nil, err
 	}
 	return bindings, nil
@@ -608,13 +678,13 @@ func (a *trackAnalysis) consume(ctx context.Context, logger api.Logger, reader i
 			})
 			if a.lastPercent%25 == 0 {
 				logger.Infof(
-					"audioanalysis: state=running phase=decode track_ordinal=%d progress=%d sample_frames=%d",
-					a.binding.track.Ordinal, a.lastPercent, frame+1,
+					"Decoding audio track %d. audioanalysis: state=running phase=decode track_ordinal=%d progress=%d sample_frames=%d",
+					a.binding.track.Ordinal, a.binding.track.Ordinal, a.lastPercent, frame+1,
 				)
 			} else if a.lastPercent%10 == 0 {
 				logger.Debugf(
-					"audioanalysis: state=running phase=decode track_ordinal=%d progress=%d sample_frames=%d",
-					a.binding.track.Ordinal, a.lastPercent, frame+1,
+					"Decoding audio track %d. audioanalysis: state=running phase=decode track_ordinal=%d progress=%d sample_frames=%d",
+					a.binding.track.Ordinal, a.binding.track.Ordinal, a.lastPercent, frame+1,
 				)
 			}
 		}
@@ -690,7 +760,6 @@ func (s *Service) analyzeTracks(
 				if trusted[index] {
 					continue
 				}
-				s.logger.Infof("audioanalysis: state=retrying phase=decode track_ordinal=%d reason=batch_incomplete", analysis.binding.track.Ordinal)
 				retry := newTrackAnalysis(analysis.binding, variants)
 				retryRequest := decodeRequest{
 					path: sourcePath,
@@ -704,6 +773,8 @@ func (s *Service) analyzeTracks(
 				if analysis.needsGeometryRetry {
 					retry, retryErr = s.retryGeometry(ctx, selectedDecoder, sourcePath, analysis, variants, limits)
 				} else {
+					s.logger.Infof("Retrying audio track %d because the shared decode did not confirm a complete result. "+
+						"audioanalysis: state=retrying phase=decode track_ordinal=%d reason=batch_incomplete", analysis.binding.track.Ordinal, analysis.binding.track.Ordinal)
 					retryErr = selectedDecoder.Decode(ctx, retryRequest, []func(io.Reader) error{
 						func(reader io.Reader) error { return retry.consume(ctx, s.logger, reader) },
 					})

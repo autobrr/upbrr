@@ -363,16 +363,19 @@ function TriStateField({
   );
 }
 
+type ProviderIDKey = "TMDBID" | "IMDBID" | "TVDBID" | "TVmazeID" | "MALID";
+
 const identityFields: ReadonlyArray<{
   field: string;
   label: string;
-  key: keyof ExternalIDOverrides;
+  key: ProviderIDKey;
+  keepKey: "KeepTMDB" | "KeepIMDB" | "KeepTVDB" | "KeepTVmaze" | "KeepMAL";
 }> = [
-  { field: "identity.tmdb", label: "TMDB ID", key: "TMDBID" },
-  { field: "identity.imdb", label: "IMDb ID", key: "IMDBID" },
-  { field: "identity.tvdb", label: "TVDB ID", key: "TVDBID" },
-  { field: "identity.tvmaze", label: "TVmaze ID", key: "TVmazeID" },
-  { field: "identity.mal", label: "MyAnimeList ID", key: "MALID" },
+  { field: "identity.tmdb", label: "TMDB ID", key: "TMDBID", keepKey: "KeepTMDB" },
+  { field: "identity.imdb", label: "IMDb ID", key: "IMDBID", keepKey: "KeepIMDB" },
+  { field: "identity.tvdb", label: "TVDB ID", key: "TVDBID", keepKey: "KeepTVDB" },
+  { field: "identity.tvmaze", label: "TVmaze ID", key: "TVmazeID", keepKey: "KeepTVmaze" },
+  { field: "identity.mal", label: "MyAnimeList ID", key: "MALID", keepKey: "KeepMAL" },
 ];
 
 const releaseStringFields: ReadonlyArray<{
@@ -483,7 +486,7 @@ const releaseStringFields: ReadonlyArray<{
   },
   {
     field: "release_name.region",
-    label: "Region",
+    label: "Release country",
     key: "Region",
     choices: correctionChoices.Region,
     searchable: true,
@@ -746,6 +749,7 @@ export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>
     view.intent.releaseName.Category ?? review.currentBinding.category
   ).toLowerCase();
   const isTV = ["tv", "television", "series", "episode"].includes(category);
+  const tvdbOwnsYear = isTV && view.preview?.Display.TVDBNamingAvailable === true;
   const statusFor = (field: string) => {
     if (view.resetFields.some((ref) => ref.field === field)) return "Use automatic value pending";
     if (view.valueFields.some((ref) => ref.field === field)) return "Edited value pending";
@@ -792,7 +796,7 @@ export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>
           const readOnly =
             metadataField?.key === "Title" ||
             metadataField?.key === "OriginalTitle" ||
-            (releaseField?.key === "ManualYear" && isTV);
+            (tvdbOwnsYear && ["release_name.manual_year", "release_name.no_year"].includes(field));
           const valueText =
             savedValue === undefined || savedValue === null
               ? "Unavailable"
@@ -869,7 +873,14 @@ export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>
                 </div>
               ) : null}
               <div className="flex flex-wrap gap-2">
-                <Button type="button" onClick={() => facet.confirmCorrection(refFor(field))}>
+                <Button
+                  type="button"
+                  disabled={
+                    tvdbOwnsYear &&
+                    ["release_name.manual_year", "release_name.no_year"].includes(field)
+                  }
+                  onClick={() => facet.confirmCorrection(refFor(field))}
+                >
                   Keep saved value
                 </Button>
                 <Button type="button" onClick={() => facet.resetCorrection(refFor(field))}>
@@ -908,7 +919,8 @@ export function SavedCorrectionReview({ facet }: Readonly<{ facet: InputFacet }>
 /**
  * Shows pending edits and applied overrides while the release session owns transport.
  * Auto resets local text drafts; automatic facts are rederived on metadata refresh.
- * Title, original title, and TV year are disabled. Source IDs default to resolved
+ * Title and original title are provider-owned. TV year controls are disabled
+ * only when usable TVDB naming data is available. Source IDs default to resolved
  * tracker data unless the draft supplies an override or an explicit empty value.
  */
 export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>) {
@@ -919,6 +931,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
   const isTV =
     ["tv", "television", "series", "episode"].includes(category) ||
     (!["movie", "film"].includes(category) && release?.Identity.Category === "tv");
+  const tvdbOwnsYear = isTV && view.preview?.Display.TVDBNamingAvailable === true;
   const staleFields = new Set(view.corrections?.corrections.staleContentFields || []);
 
   const [draftResets, setDraftResets] = useState<Record<string, number>>({});
@@ -939,8 +952,8 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
   };
   const confirm = (field: string, trackId = "") => facet.confirmCorrection(refFor(field, trackId));
 
-  const identityAutomatic = (key: keyof ExternalIDOverrides) => Number(release?.Identity[key] || 0);
-  const setIdentity = (key: keyof ExternalIDOverrides, value: number) =>
+  const identityAutomatic = (key: ProviderIDKey) => Number(release?.Identity[key] || 0);
+  const setIdentity = (key: keyof ExternalIDOverrides, value: number | boolean) =>
     facet.changeIdentity({ ...view.intent.identity, [key]: value });
   const setReleaseName = (
     key: keyof ReleaseNameOverrides,
@@ -967,11 +980,18 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
           Removing or clearing a provider ID disables that provider for this source after refresh.
           Trackers requiring it can remain blocked.
         </p>
+        <p className="text-sm text-muted-foreground">
+          Keep existing data preserves that provider when another ID is corrected. This choice is
+          saved for this release. Reset data + refresh fetches fresh data for kept IDs. Changing
+          Movie/TV can still clear incompatible automatic matches. Manual IDs and removals always
+          take precedence.
+        </p>
         <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-x-6 gap-y-5">
-          {identityFields.map(({ field, label, key }) => {
+          {identityFields.map(({ field, label, key, keepKey }) => {
             const manual = hasOwn(view.intent.identity, key);
             const manualValue = view.intent.identity[key];
             const value = manual ? Number(manualValue || 0) : identityAutomatic(key);
+            const keep = view.intent.identity[keepKey] === true;
             return (
               <CorrectionRow
                 key={field}
@@ -1002,6 +1022,16 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                     {manual && value === 0 ? "Removed" : "Remove"}
                   </Button>
                 </div>
+                <label className="flex items-center gap-2 font-normal" htmlFor={`keep-${field}`}>
+                  <Checkbox
+                    id={`keep-${field}`}
+                    aria-label={`Keep existing ${label.replace(" ID", "")} data`}
+                    checked={keep}
+                    disabled={value === 0 && !keep}
+                    onCheckedChange={(checked) => setIdentity(keepKey, checked)}
+                  />
+                  Keep existing data
+                </label>
               </CorrectionRow>
             );
           })}
@@ -1010,10 +1040,17 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
 
       <div className={inputSectionClass}>
         <div className={settingsStyle.title}>Release name</div>
+        {isTV ? (
+          <p className="text-sm text-muted-foreground">
+            {tvdbOwnsYear
+              ? "TVDB controls the TV naming year, including when no year belongs in the name. Destination rules may adjust it."
+              : "TVDB naming data is unavailable. Manual year and Omit year can correct the name until TVDB data becomes available."}
+          </p>
+        ) : null}
         <div className={inputGridClass}>
           {releaseStringFields.map(({ field, label, key, automatic, choices, searchable }) => {
             const missing = missingFacts.includes(field);
-            const readOnly = key === "ManualYear" && isTV;
+            const readOnly = key === "ManualYear" && tvdbOwnsYear;
             const manual = !readOnly && view.intent.releaseName[key] != null;
             const rawValue = manual ? view.intent.releaseName[key] : automatic(release);
             const numeric = key === "ManualYear";
@@ -1096,23 +1133,25 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
             );
           })}
           <div className="col-span-full border-t border-foreground/10" />
-          {releaseBooleanFields.map(({ field, label, key }) => (
-            <TriStateField
-              key={field}
-              field={field}
-              label={label}
-              value={
-                hasOwn(view.intent.releaseName, key)
-                  ? (view.intent.releaseName[key] as boolean | null | undefined)
-                  : undefined
-              }
-              status={statusFor(field, hasOwn(view.intent.releaseName, key))}
-              stale={staleFields.has(field)}
-              onChange={(value) => setReleaseName(key, value)}
-              onAuto={() => reset(field)}
-              onConfirm={() => confirm(field)}
-            />
-          ))}
+          {releaseBooleanFields
+            .filter(({ key }) => key !== "NoYear" || !tvdbOwnsYear)
+            .map(({ field, label, key }) => (
+              <TriStateField
+                key={field}
+                field={field}
+                label={label}
+                value={
+                  hasOwn(view.intent.releaseName, key)
+                    ? (view.intent.releaseName[key] as boolean | null | undefined)
+                    : undefined
+                }
+                status={statusFor(field, hasOwn(view.intent.releaseName, key))}
+                stale={staleFields.has(field)}
+                onChange={(value) => setReleaseName(key, value)}
+                onAuto={() => reset(field)}
+                onConfirm={() => confirm(field)}
+              />
+            ))}
         </div>
       </div>
 

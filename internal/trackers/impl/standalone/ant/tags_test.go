@@ -168,6 +168,7 @@ func TestGenreTagResolutionAndQuestionnaire(t *testing.T) {
 				test.tmdb.Year = 2026
 			}
 			meta := api.UploadSubject{
+				Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 				ReleaseName: "Example.Movie.2026.1080p.BluRay.x264-GRP",
 				Source:      "BluRay",
 				Type:        "ENCODE",

@@ -26,6 +26,14 @@ func formatPathLabel(value string) string {
 	return "[local path]"
 }
 
+func askCLIConfirmation(reader *bufio.Reader, output io.Writer, prompt cliPrompt) (bool, error) {
+	if writer, ok := output.(*cliPresentationWriter); ok {
+		answer, err := writer.ask(prompt)
+		return answer.Confirmed, err
+	}
+	return promptYesNo(reader, output, cliPlainPromptText(prompt), prompt.DefaultYes)
+}
+
 func promptYesNo(reader *bufio.Reader, output io.Writer, prompt string, defaultYes bool) (bool, error) {
 	if writer, ok := output.(*cliPresentationWriter); ok {
 		answer, err := writer.ask(cliPrompt{

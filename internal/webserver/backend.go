@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/imagehosting"
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -54,9 +55,14 @@ type Backend struct {
 	streams  map[string]*backendLogStream
 	streamWG sync.WaitGroup
 
+	connectionTestMu       sync.Mutex
+	connectionTests        map[connectionTestKey]bool
+	connectionStorageReads chan struct{}
+
 	activationInitMu    sync.Mutex
 	activator           *RuntimeActivator
 	workflowCoordinator *releaseworkflow.Coordinator
+	runtimeMaintenance  *core.RuntimeMaintenance
 }
 
 type backendLogStream struct {
@@ -123,6 +129,7 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 		_ = logger.Close()
 		return nil, fmt.Errorf("web: initialize workflow coordinator: %w", err)
 	}
+	runtimeMaintenance := &core.RuntimeMaintenance{}
 	var capabilities CoreCapabilities
 	var coreOwner LifecycleOwner
 	var coreInitErr error
@@ -149,12 +156,13 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 			EnforceConfigActivationGeneration: true,
 			ConfigActivationGeneration:        activation.ActiveGeneration,
 			ConfigActivationFingerprint:       activation.Fingerprint,
-		}, workflowCoordinator)
+		}, workflowCoordinator, runtimeMaintenance)
 		if coreErr != nil {
 			_ = repo.Close()
 			_ = logger.Close()
 			return nil, fmt.Errorf("web: %w", coreErr)
 		}
+		coreSvc.ActivateMaintenance()
 		capabilities, coreOwner = BindCoreCapabilities(coreSvc)
 		initialBundle.setResources(coreOwner, logger)
 		coreSvc.SetOperationLifetime(initialBundle.borrow)
@@ -173,8 +181,10 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 		hub:                 hub,
 		streams:             make(map[string]*backendLogStream),
 		workflowCoordinator: workflowCoordinator,
+		runtimeMaintenance:  runtimeMaintenance,
 	}
 	if _, err := backend.runtimeActivator(); err != nil {
+		runtimeMaintenance.Close()
 		if coreOwner != nil {
 			_ = coreOwner.Close()
 		}
@@ -204,6 +214,7 @@ func (b *Backend) CloseContext(ctx context.Context) error {
 	} else if b.workflowCoordinator != nil {
 		_ = b.workflowCoordinator.Shutdown(shutdownCtx)
 	}
+	b.runtimeMaintenance.Close()
 	if runtime.bundle != nil {
 		runtime.bundle.retire()
 	} else if runtime.coreOwner != nil {
@@ -794,9 +805,15 @@ func (b *Backend) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error)
 		return imagehostpolicy.Metadata{}, fmt.Errorf("webserver: tracker registry: %w", err)
 	}
 	metadata := imagehostpolicy.Metadata{
-		UploadHosts:        imagehostpolicy.KnownUploadHosts(),
-		TrackerUploadHosts: make(map[string][]string),
-		OwnedHosts:         make(map[string]string),
+		UploadHosts:                imagehostpolicy.KnownUploadHosts(),
+		TrackerUploadHosts:         make(map[string][]string),
+		OwnedHosts:                 make(map[string]string),
+		UnavailableConnectionTests: make(map[string]string),
+	}
+	for _, host := range metadata.UploadHosts {
+		if limitation := imagehosting.ConnectionTestLimitation(host); limitation.Code != "" {
+			metadata.UnavailableConnectionTests[host] = limitation.Message
+		}
 	}
 	for _, tracker := range registry.Names() {
 		policy, ok := registry.LookupImageHostPolicy(tracker)

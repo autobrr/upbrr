@@ -29,7 +29,7 @@ Audio and picture checks require FFmpeg. Picture checks also require supported c
 
 Information icons beside the target heading, options, actions and results explain scope, units and retained-work behavior. Help supports pointer, keyboard focus and touch, and does not select targets or start work. Required evidence and coverage limitations remain visible inline.
 
-Opening the page does not start analysis. **Cancel** stops active work. **Retry** reuses retained work where compatible; **Resume** appears for a retained pending request.
+Opening the page does not start analysis. **Cancel** requests cancellation. After the request is accepted, the status line shows “Cancellation requested.” until the operation finishes; work remains active while it stops. If the request cannot be confirmed, use **Retry cancellation** while progress remains visible. **Retry** reuses retained work where compatible; **Resume** appears for a retained pending request.
 
 ### Choose native formats
 
@@ -108,6 +108,8 @@ For native plots from a Blu-ray content root:
 ```
 
 Omit `--hdr-playlist` only when metadata identifies exactly one supported, non-looping primary HEVC candidate. upbrr does not choose the largest stream file. Each standalone run creates a fresh child directory under the output parent for its artifacts and JSON summary. The output parent must be outside a disc source, including through directory aliases.
+
+Standalone errors identify source inspection, output setup, or analysis failures. Automatic analysis reports temporary-output creation failures as `output_failed`; check the output directory, its write permissions, and available space. When output is retained after an incomplete or canceled run, stdout still reports `HDR analysis output: <directory>` and the error directs you to inspect it. Completed plots can remain available even if saving `summary.json` fails; inspect the files before starting a new analysis.
 
 One eligible prepared upload target is selected automatically. For multiple targets, supply their opaque IDs in source order with `--hdr-targets <id,id>`. Every selected target needs usable native metadata or, when audio was requested, usable audio output. A partial result can satisfy this requirement; canceled and interrupted attempts cannot. Standalone and upload analysis modes are mutually exclusive; standalone accepts exactly one source and its HDR/unattended options. See the [CLI reference](../cli/index.md#hdr-analysis-options) for all flags and retained-workflow controls.
 

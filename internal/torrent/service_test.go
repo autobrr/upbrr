@@ -635,7 +635,7 @@ func TestCreateNoHashRejectsCaseOnlyMultiFileClientTorrent(t *testing.T) {
 	}
 }
 
-func TestCreateNoHashRequiresVerifiedClientDataToSkipBytes(t *testing.T) {
+func TestCreateNoHashReusesCompatibleClientDataWithoutVerification(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
@@ -681,20 +681,11 @@ func TestCreateNoHashRequiresVerifiedClientDataToSkipBytes(t *testing.T) {
 					NoHash: &reuseOnly,
 				},
 			})
-			if test.verified && !test.missingHash {
-				if err != nil {
-					t.Fatalf("expected no error, got %v", err)
-				}
-				if result.Path != clientTorrentPath {
-					t.Fatalf("expected verified client torrent %s to be reused, got %s", clientTorrentPath, result.Path)
-				}
-				if result.InfoHash != clientInfoHash {
-					t.Fatalf("reused torrent infohash = %q, want %q", result.InfoHash, clientInfoHash)
-				}
-				return
+			if err != nil || result.Path != clientTorrentPath {
+				t.Fatalf("expected compatible client torrent to be reused, result=%+v err=%v", result, err)
 			}
-			if !errors.Is(err, internalerrors.ErrNotFound) {
-				t.Fatalf("expected unverified client torrent piece mismatch, got %v", err)
+			if clientInfoHash != "" && result.InfoHash != clientInfoHash {
+				t.Fatalf("reused torrent infohash = %q, want %q", result.InfoHash, clientInfoHash)
 			}
 		})
 	}
@@ -1046,7 +1037,7 @@ func TestCreateRejectsSameNameDifferentSizeClientTorrent(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsSameNameSameSizeDifferentContentAdjacentTorrent(t *testing.T) {
+func TestCreateReusesSameLayoutAdjacentTorrentWithoutContentCheck(t *testing.T) {
 	t.Parallel()
 
 	sourceDir := t.TempDir()
@@ -1061,18 +1052,14 @@ func TestCreateRejectsSameNameSameSizeDifferentContentAdjacentTorrent(t *testing
 
 	tmpRoot := t.TempDir()
 	service := NewService(api.NopLogger{}, tmpRoot)
-	expectedPath, err := TempTorrentPath(tmpRoot, source)
-	if err != nil {
-		t.Fatalf("temp torrent path: %v", err)
-	}
 	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: source,
 	})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.Path != expectedPath {
-		t.Fatalf("expected untrusted adjacent torrent to be regenerated at %s, got %s", expectedPath, result.Path)
+	if result.Path != adjacentTorrentPath {
+		t.Fatalf("expected compatible adjacent torrent to be reused at %s, got %s", adjacentTorrentPath, result.Path)
 	}
 }
 

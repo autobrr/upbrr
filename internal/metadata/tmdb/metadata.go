@@ -25,6 +25,19 @@ const imageBaseURL = "https://image.tmdb.org/t/p/original"
 
 var yearPattern = regexp.MustCompile(`(18|19|20)\d{2}`)
 
+// GetSeriesExternalIDs returns the series' numeric IMDb and TVDB IDs, respectively.
+// It reuses endpoint evidence without collecting or replacing kept naming metadata.
+func (c *Client) GetSeriesExternalIDs(ctx context.Context, id int) (int, int, error) {
+	if id <= 0 {
+		return 0, 0, errNotFound
+	}
+	var external externalIDsResponse
+	if err := c.getJSON(ctx, fmt.Sprintf("/tv/%d/external_ids", id), map[string]string{"api_key": c.apiKey}, &external); err != nil {
+		return 0, 0, fmt.Errorf("tmdb: series links: %w", err)
+	}
+	return ExtractIMDbID(external.IMDbID), external.TVDBID, nil
+}
+
 // FetchMetadata loads the primary TMDB record plus best-effort external IDs,
 // translations, media assets, credits, and keywords, then applies best-effort
 // AniList identity/title enrichment when the record resolves as anime. A

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -47,10 +48,13 @@ func TestResolvePromotesProviderEvidenceAndKeepsCandidateListsDiagnostic(t *test
 					TMDB:       &api.TMDBMetadata{TMDBID: 1234567, Title: "Example Release"},
 				},
 				Candidates: []api.ExternalIdentityCandidate{{
-					Provider: api.IdentityProviderTMDB,
-					ID:       7654321,
-					Title:    "Example Candidate",
-					Category: api.CanonicalCategoryMovie,
+					Provider:   api.IdentityProviderTMDB,
+					ID:         7654321,
+					Title:      "Example Candidate",
+					Category:   api.CanonicalCategoryMovie,
+					Cast:       []string{"Example Actor"},
+					Directors:  []string{"Example Director"},
+					CastSource: "billing",
 				}},
 			}, nil
 		}),
@@ -75,8 +79,15 @@ func TestResolvePromotesProviderEvidenceAndKeepsCandidateListsDiagnostic(t *test
 	if len(result.Diagnostics) != 1 || len(result.Diagnostics[0].Candidates) != 1 || result.Diagnostics[0].Candidates[0].ID != 7654321 {
 		t.Fatalf("diagnostics = %#v", result.Diagnostics)
 	}
+	if len(result.ProviderMetadata.IdentityCandidates) != 1 || result.ProviderMetadata.IdentityCandidates[0].ID != 7654321 {
+		t.Fatalf("provider candidate evidence was not retained for generation persistence: %+v", result.ProviderMetadata)
+	}
 	if result.Identity.TMDBID == result.Diagnostics[0].Candidates[0].ID {
 		t.Fatal("diagnostic candidate became canonical identity")
+	}
+	candidate := result.Diagnostics[0].Candidates[0]
+	if len(candidate.Cast) != 1 || candidate.Cast[0] != "Example Actor" || len(candidate.Directors) != 1 || candidate.Directors[0] != "Example Director" || candidate.CastSource != "billing" {
+		t.Fatalf("diagnostic projection discarded candidate credits: %+v", candidate)
 	}
 }
 
@@ -138,6 +149,7 @@ func TestResolveCrossReferenceMetadataHonorsStoredProvenancePins(t *testing.T) {
 		name               string
 		provider           api.IdentityProvider
 		provenance         api.IdentityProvenance
+		explicitProviders  bool
 		wantTMDBMetadata   bool
 		wantTVmazeMetadata bool
 	}{
@@ -150,6 +162,22 @@ func TestResolveCrossReferenceMetadataHonorsStoredProvenancePins(t *testing.T) {
 			name:       "explicit TVDB provenance with unset override drops conflicting metadata",
 			provider:   api.IdentityProviderTVDB,
 			provenance: api.IdentityProvenanceExplicit,
+		},
+		{
+			name:               "explicit provider provenance retains conflicting IMDb links",
+			provider:           api.IdentityProviderIMDB,
+			provenance:         api.IdentityProvenanceExplicit,
+			explicitProviders:  true,
+			wantTMDBMetadata:   true,
+			wantTVmazeMetadata: true,
+		},
+		{
+			name:               "explicit provider provenance retains conflicting TVDB links",
+			provider:           api.IdentityProviderTVDB,
+			provenance:         api.IdentityProvenanceExplicit,
+			explicitProviders:  true,
+			wantTMDBMetadata:   true,
+			wantTVmazeMetadata: true,
 		},
 		{
 			name:               "provider IMDb provenance retains conflicting metadata",
@@ -181,6 +209,10 @@ func TestResolveCrossReferenceMetadataHonorsStoredProvenancePins(t *testing.T) {
 				identity.TVDBID = storedID
 				identity.Provenance.TVDB = tc.provenance
 				metadataTVDBID = 8888888
+			}
+			if tc.explicitProviders {
+				identity.TMDBID, identity.TVmazeID = 111222, 333444
+				identity.Provenance.TMDB, identity.Provenance.TVmaze = api.IdentityProvenanceExplicit, api.IdentityProvenanceExplicit
 			}
 			resolver := &Resolver{
 				evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
@@ -282,6 +314,54 @@ func TestResolveClearsStoredProviderGuessesFromAuthoritativeCandidate(t *testing
 	}
 	if result.Identity.IMDBID != imdbID || result.Identity.TMDBID != 0 || result.ProviderMetadata.TMDB != nil {
 		t.Fatalf("stored provider guess restored: identity=%#v metadata=%#v", result.Identity, result.ProviderMetadata)
+	}
+}
+
+func TestResolveCategoryChangeRemovesClearedAutomaticEvidence(t *testing.T) {
+	t.Parallel()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv")
+	resolver := &Resolver{
+		evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
+			return legacyEvidence{
+				identity: api.ExternalIdentity{
+					SourcePath: sourcePath,
+					Category:   api.CanonicalCategoryTV,
+					TMDBID:     555001,
+					IMDBID:     555002,
+					TVDBID:     555003,
+					TVmazeID:   555004,
+					Resolution: api.IdentityResolutionKey{ContractVersion: ContractVersion},
+				},
+				metadata: api.SourceScopedMetadata{
+					SourcePath: sourcePath,
+					TMDB:       &api.TMDBMetadata{TMDBID: 555001},
+					IMDB:       &api.IMDBMetadata{IMDBID: 555002},
+					TVDB:       &api.TVDBMetadata{TVDBID: 555003},
+					TVmaze:     &api.TVmazeMetadata{TVmazeID: 555004},
+				},
+				hasIDs:  true,
+				hasMeta: true,
+			}, nil
+		}),
+		candidate: candidateSourceFunc(func(context.Context, Request) (CandidateEvidence, error) {
+			return CandidateEvidence{
+				Identity: api.ExternalIdentity{SourcePath: sourcePath, Category: api.CanonicalCategoryMovie},
+				Metadata: api.SourceScopedMetadata{SourcePath: sourcePath},
+			}, nil
+		}),
+		now: time.Now,
+	}
+	result, err := resolver.Resolve(t.Context(), Request{
+		SourcePath:        sourcePath,
+		SourceFingerprint: "source-fingerprint",
+		Generation:        1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Identity.Category != api.CanonicalCategoryMovie || result.Identity.TMDBID != 0 || result.Identity.IMDBID != 0 || result.Identity.TVDBID != 0 || result.Identity.TVmazeID != 0 ||
+		result.ProviderMetadata.TMDB != nil || result.ProviderMetadata.IMDB != nil || result.ProviderMetadata.TVDB != nil || result.ProviderMetadata.TVmaze != nil {
+		t.Fatalf("category change restored discarded automatic evidence: identity=%+v metadata=%+v", result.Identity, result.ProviderMetadata)
 	}
 }
 
@@ -562,10 +642,9 @@ func TestResolveAuthoritativeCandidatePreservesOrReplacesStoredExplicitSibling(t
 		candidateState   api.OverrideState
 		wantIMDBID       int
 		wantState        api.OverrideState
-		wantTMDBMetadata bool
 	}{
 		{
-			name:             "omitted sibling preserves stored pin and rejects conflicting metadata",
+			name:             "omitted sibling preserves stored pin and independent metadata",
 			candidateIMDBID:  7654321,
 			candidateIMDBRef: 7654321,
 			wantIMDBID:       1234567,
@@ -577,7 +656,6 @@ func TestResolveAuthoritativeCandidatePreservesOrReplacesStoredExplicitSibling(t
 			candidateIMDBRef: 7654321,
 			candidateState:   api.OverrideStateClear,
 			wantState:        api.OverrideStateClear,
-			wantTMDBMetadata: true,
 		},
 		{
 			name:             "explicit replacement replaces stored pin",
@@ -587,7 +665,6 @@ func TestResolveAuthoritativeCandidatePreservesOrReplacesStoredExplicitSibling(t
 			candidateState:   api.OverrideStateValue,
 			wantIMDBID:       7777777,
 			wantState:        api.OverrideStateValue,
-			wantTMDBMetadata: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -643,7 +720,7 @@ func TestResolveAuthoritativeCandidatePreservesOrReplacesStoredExplicitSibling(t
 			if result.Identity.TMDBID != tmdbID || result.Identity.IMDBID != tc.wantIMDBID || result.Identity.Overrides.IMDB != tc.wantState {
 				t.Fatalf("identity = %#v", result.Identity)
 			}
-			if got := result.ProviderMetadata.TMDB != nil; got != tc.wantTMDBMetadata {
+			if result.ProviderMetadata.TMDB == nil {
 				t.Fatalf("TMDB metadata = %#v", result.ProviderMetadata.TMDB)
 			}
 		})
@@ -933,75 +1010,77 @@ func TestResolveReturnsPartialIdentityAndTypedMissingRequirements(t *testing.T) 
 }
 
 func TestResolveCancellationDoesNotReorderSourceWaiters(t *testing.T) {
-	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.BluRay-GRP")
-	normalized, err := normalizeSourcePath(sourcePath)
-	if err != nil {
-		t.Fatalf("normalize source: %v", err)
-	}
-	firstEntered := make(chan struct{})
-	releaseFirst := make(chan struct{})
-	var mu sync.Mutex
-	calls := make([]string, 0, 2)
-	resolver := &Resolver{
-		evidence: evidenceLoaderFunc(func(_ context.Context, path string) (legacyEvidence, error) {
-			mu.Lock()
-			calls = append(calls, path)
-			call := len(calls)
-			mu.Unlock()
-			if call == 1 {
-				close(firstEntered)
-				<-releaseFirst
-			}
-			return legacyEvidence{}, nil
-		}),
-		now: time.Now,
-	}
-	request := Request{
-		SourcePath:        sourcePath,
-		SourceFingerprint: "source-fingerprint",
-		Generation:        1,
-	}
-	errs := make(chan error, 3)
-	go func() {
-		_, err := resolver.Resolve(context.Background(), request)
-		errs <- err
-	}()
-	<-firstEntered
-
-	canceledCtx, cancel := context.WithCancel(context.Background())
-	go func() {
-		_, err := resolver.Resolve(canceledCtx, request)
-		errs <- err
-	}()
-	waitForSourceWaiters(t, &resolver.gates, normalized, 1)
-	go func() {
-		_, err := resolver.Resolve(context.Background(), request)
-		errs <- err
-	}()
-	waitForSourceWaiters(t, &resolver.gates, normalized, 2)
-	cancel()
-	waitForSourceWaiters(t, &resolver.gates, normalized, 1)
-	close(releaseFirst)
-
-	var canceled bool
-	for range 3 {
-		err := <-errs
-		if errors.Is(err, context.Canceled) {
-			canceled = true
-			continue
-		}
+	synctest.Test(t, func(t *testing.T) {
+		sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.BluRay-GRP")
+		normalized, err := normalizeSourcePath(sourcePath)
 		if err != nil {
-			t.Fatalf("resolve: %v", err)
+			t.Fatalf("normalize source: %v", err)
 		}
-	}
-	if !canceled {
-		t.Fatal("canceled waiter returned no cancellation error")
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(calls) != 2 || calls[0] != normalized || calls[1] != normalized {
-		t.Fatalf("evidence calls = %v", calls)
-	}
+		firstEntered := make(chan struct{})
+		releaseFirst := make(chan struct{})
+		var mu sync.Mutex
+		calls := make([]string, 0, 2)
+		resolver := &Resolver{
+			evidence: evidenceLoaderFunc(func(_ context.Context, path string) (legacyEvidence, error) {
+				mu.Lock()
+				calls = append(calls, path)
+				call := len(calls)
+				mu.Unlock()
+				if call == 1 {
+					close(firstEntered)
+					<-releaseFirst
+				}
+				return legacyEvidence{}, nil
+			}),
+			now: time.Now,
+		}
+		request := Request{
+			SourcePath:        sourcePath,
+			SourceFingerprint: "source-fingerprint",
+			Generation:        1,
+		}
+		errs := make(chan error, 3)
+		go func() {
+			_, err := resolver.Resolve(context.Background(), request)
+			errs <- err
+		}()
+		<-firstEntered
+
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		go func() {
+			_, err := resolver.Resolve(canceledCtx, request)
+			errs <- err
+		}()
+		waitForSourceWaiters(t, &resolver.gates, normalized, 1)
+		go func() {
+			_, err := resolver.Resolve(context.Background(), request)
+			errs <- err
+		}()
+		waitForSourceWaiters(t, &resolver.gates, normalized, 2)
+		cancel()
+		waitForSourceWaiters(t, &resolver.gates, normalized, 1)
+		close(releaseFirst)
+
+		var canceled bool
+		for range 3 {
+			err := <-errs
+			if errors.Is(err, context.Canceled) {
+				canceled = true
+				continue
+			}
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+		}
+		if !canceled {
+			t.Fatal("canceled waiter returned no cancellation error")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(calls) != 2 || calls[0] != normalized || calls[1] != normalized {
+			t.Fatalf("evidence calls = %v", calls)
+		}
+	})
 }
 
 func TestResolveKeepsDifferentSourcesConcurrent(t *testing.T) {
@@ -1051,19 +1130,15 @@ func TestResolveKeepsDifferentSourcesConcurrent(t *testing.T) {
 
 func waitForSourceWaiters(t *testing.T, gates *sourceGates, sourcePath string, want int) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		gates.mu.Lock()
-		gate := gates.gates[sourcePath]
-		got := 0
-		if gate != nil {
-			got = len(gate.waiters)
-		}
-		gates.mu.Unlock()
-		if got == want {
-			return
-		}
-		time.Sleep(time.Millisecond)
+	synctest.Wait()
+	gates.mu.Lock()
+	defer gates.mu.Unlock()
+	gate := gates.gates[sourcePath]
+	got := 0
+	if gate != nil {
+		got = len(gate.waiters)
 	}
-	t.Fatalf("source waiters did not reach %d", want)
+	if got != want {
+		t.Fatalf("source waiters = %d, want %d", got, want)
+	}
 }

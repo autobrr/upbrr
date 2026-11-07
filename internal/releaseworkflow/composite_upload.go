@@ -28,9 +28,11 @@ const (
 )
 
 type compositeUploadSession struct {
-	ComparisonSelection               *api.HDRComparisonSelection                 `json:"comparisonSelection,omitempty"`
-	Version                           int                                         `json:"version"`
-	RequestFingerprint                api.WorkflowFingerprint                     `json:"requestFingerprint"`
+	ComparisonSelection *api.HDRComparisonSelection `json:"comparisonSelection,omitempty"`
+	Version             int                         `json:"version"`
+	RequestFingerprint  api.WorkflowFingerprint     `json:"requestFingerprint"`
+	// StartedRevision separates a new upload attempt from retained preflight history.
+	StartedRevision                   api.WorkflowRevision                        `json:"startedRevision,omitempty"`
 	Intent                            api.WorkflowIntent                          `json:"intent"`
 	Goal                              api.WorkflowGoal                            `json:"goal"`
 	Confirm                           bool                                        `json:"confirm"`
@@ -277,7 +279,7 @@ func (m *Module) startUpload(
 	}
 	if current.Workflow.Status == api.WorkflowStatusCompleted || current.UploadResult != nil ||
 		(session.Goal == api.WorkflowGoalDryRun &&
-			dryRunGoalSatisfied(current.DryRun, session.Intent.NoSeed, session.Intent.UploadTrackerIDs)) {
+			dryRunGoalSatisfied(current.DryRun, session.Goal, session.Intent.NoSeed, session.Intent.UploadTrackerIDs)) {
 		return current, nil
 	}
 	if err := m.ensureCompositeUploadMediaInputs(
@@ -353,6 +355,7 @@ func (m *Module) adoptCompositeInput(
 	}
 	state.Composite = session
 	state.Workflow.Revision++
+	state.Composite.StartedRevision = state.Workflow.Revision
 	state.Workflow.UpdatedAt = m.clock.Now()
 	state.Workflow.Status = api.WorkflowStatusActive
 	state.Workflow.RequiredActions, state.Workflow.Failures, state.Workflow.SubmissionExclusions = nil, nil, nil
@@ -657,6 +660,7 @@ func compositeUploadFactInstructions(
 		},
 		TrackerIDs: trackerIDs,
 	}
+	instructions.Bluray = facts.Bluray
 	if facts.SourceLookup != nil {
 		instructions.SourceLookup = strings.TrimSpace(*facts.SourceLookup)
 	}
@@ -983,18 +987,18 @@ func (m *Module) runCompositeUpload(
 	command CompositeUploadCommand,
 ) (CommandResult, error) {
 	operationID, _ := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID)
-	initial, session, requirements, err := m.currentCompositeUpload(ctx, ownerID, command, operationID)
+	initial, session, state, err := m.currentCompositeUpload(ctx, ownerID, command, operationID)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if err := m.hydrateCompositePreparedRelease(ctx, ownerID, initial, session, requirements); err != nil {
+	if err := m.hydrateCompositePreparedRelease(ctx, ownerID, initial, session, state.PreparationDemand); err != nil {
 		return CommandResult{}, err
 	}
 	for range compositeUploadTransitionLimit {
 		if err := ctx.Err(); err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow composite upload: %w", err)
 		}
-		current, session, _, err := m.currentCompositeUpload(ctx, ownerID, command, operationID)
+		current, session, state, err := m.currentCompositeUpload(ctx, ownerID, command, operationID)
 		if err != nil {
 			return CommandResult{}, err
 		}
@@ -1030,6 +1034,7 @@ func (m *Module) runCompositeUpload(
 		}
 
 		intent := compositeContinuationIntent(initial, session)
+		intent.TrackerIDs = workflowTrackerScope(state, intent.TrackerIDs)
 		request := api.ContinueReleaseWorkflowRequest{
 			Authority: &api.WorkflowAuthority{
 				WorkflowID:       current.Workflow.ID,
@@ -1260,6 +1265,9 @@ func (m *Module) hydrateCompositePreparedRelease(
 	session *compositeUploadSession,
 	requirements api.MetadataRequirementSet,
 ) error {
+	if err := requireCompatibleContinuationPreparation(current.Release); err != nil {
+		return err
+	}
 	if current.Release == nil {
 		return nil
 	}
@@ -1272,6 +1280,7 @@ func (m *Module) hydrateCompositePreparedRelease(
 	input.Force = false
 	input.ExternalFreshness = api.ExternalFreshnessReuse
 	input.RequirePrepared = true
+	input.Controls.BlurayDetails = nil
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
 	input.Controls.CaptureHDRMetadata = false
@@ -1294,21 +1303,21 @@ func (m *Module) currentCompositeUpload(
 	ownerID string,
 	command CompositeUploadCommand,
 	operationID api.WorkflowOperationID,
-) (CommandResult, *compositeUploadSession, api.MetadataRequirementSet, error) {
+) (CommandResult, *compositeUploadSession, *State, error) {
 	current, err := m.Current(ctx, ownerID, command.WorkflowID)
 	if err != nil {
-		return CommandResult{}, nil, api.MetadataRequirementSet{}, err
+		return CommandResult{}, nil, nil, err
 	}
 	state, err := m.repository.Load(ctx, ownerID, command.WorkflowID)
 	if err != nil {
-		return CommandResult{}, nil, api.MetadataRequirementSet{}, fmt.Errorf("release workflow load composite session: %w", err)
+		return CommandResult{}, nil, nil, fmt.Errorf("release workflow load composite session: %w", err)
 	}
 	if state.Composite == nil || state.Composite.Version != compositeUploadSessionVersion ||
 		state.Composite.RequestFingerprint != command.SessionFingerprint ||
 		state.Composite.ActiveOperationID != operationID {
-		return CommandResult{}, nil, api.MetadataRequirementSet{}, fmt.Errorf("%w: composite upload session failed integrity validation", ErrInvalidTransition)
+		return CommandResult{}, nil, nil, fmt.Errorf("%w: composite upload session failed integrity validation", ErrInvalidTransition)
 	}
-	return current, state.Composite, state.PreparationDemand, nil
+	return current, state.Composite, &state, nil
 }
 
 func compositeUploadGoalReached(current CommandResult, session *compositeUploadSession, startedAt api.WorkflowRevision) bool {
@@ -2248,7 +2257,7 @@ func (m *Module) applyCompositeUploadFeedback(
 					ErrInvalidTransition,
 				)
 			}
-			state.Composite.Intent.Preparation.Instructions.BlurayReleaseID = command.Response.SelectedValues[0]
+			state.Composite.Intent.Preparation.Instructions.Bluray = &api.BluraySelection{Mode: "manual", Release: command.Response.SelectedValues[0]}
 			state.Composite.Intent.Preparation.Force = true
 			instructions := state.Composite.Intent.Preparation.Instructions
 			state.Composite.Intent.FactInstructions = &instructions

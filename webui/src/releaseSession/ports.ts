@@ -9,6 +9,7 @@ import type {
   FramePreview,
   MediaPlan,
   OpenActiveInputRequest,
+  CancelActiveInputOpenRequest,
   Operation,
   ReconcileActiveInputRequest,
   RecoverLegacyActiveInputRequest,
@@ -18,11 +19,17 @@ import type {
   WorkflowResourceRef,
 } from "../api/generated/release-workflow";
 import type { SourceVerificationProgress } from "./types";
+import type { ProviderSearchResult } from "../types";
 
 /** Authoritative singleton-input transport; failed requests reject instead of fabricating local state. */
 export type ActiveInputPorts = Readonly<{
   get(signal: AbortSignal): Promise<ActiveInputSnapshot>;
   open(request: OpenActiveInputRequest, signal: AbortSignal): Promise<ActiveInputSnapshot>;
+  /** Cancels and joins only verification still owned by this exact open request. */
+  cancelOpen(
+    request: CancelActiveInputOpenRequest,
+    signal: AbortSignal,
+  ): Promise<ActiveInputSnapshot>;
   release(request: ReleaseActiveInputRequest, signal: AbortSignal): Promise<ActiveInputSnapshot>;
   recover(
     request: RecoverLegacyActiveInputRequest,
@@ -206,6 +213,9 @@ export type DescriptionPorts = Readonly<{
 }>;
 
 export type ReleaseSessionPorts = Readonly<{
+  providerSearch: Readonly<{
+    search(query: string, category: string, signal: AbortSignal): Promise<ProviderSearchResult>;
+  }>;
   activeInput: ActiveInputPorts;
   workflow: ReleaseWorkflowPorts;
   descriptions: DescriptionPorts;

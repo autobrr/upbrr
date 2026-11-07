@@ -40,6 +40,21 @@ func (m *Module) evaluateInputReadiness(
 	var descriptionSubject api.UploadSubject
 	applyDescriptionHDRQuestionnaireEvidence(&descriptionSubject, state)
 	if trackerInputAnswersChanged(state.TrackerInputAnswers, command.TrackerInputAnswers) {
+		if state.Workflow.Dupes != nil {
+			state.PendingDuplicateReuse = &PendingDuplicateReuse{Assessment: *state.Workflow.Dupes, QuestionnaireOnly: true}
+		}
+		if pending := state.PendingDuplicateReuse; pending != nil {
+			if state.Workflow.TrackerProjections != nil {
+				context := *state.Workflow.TrackerProjections
+				pending.ProjectionContext = &context
+			}
+			for trackerID, fields := range command.TrackerInputAnswers {
+				if trackerInputAnswersChanged(state.TrackerInputAnswers, map[api.TrackerID]map[string]*string{trackerID: fields}) {
+					pending.InvalidatedTrackers = append(pending.InvalidatedTrackers, trackerID)
+				}
+			}
+			pending.InvalidatedTrackers = normalizeContinuationTrackerIDs(pending.InvalidatedTrackers)
+		}
 		applyTrackerInputAnswers(state, command.TrackerInputAnswers)
 		invalidateTrackerAndDownstream(&state.Workflow)
 	}
@@ -240,6 +255,9 @@ func defaultInputReadinessEvaluation(release api.PreparedRelease, trackerIDs []a
 			Key:         key,
 			Status:      api.InputReadinessFieldReady,
 			Disposition: api.RuleDispositionStrict,
+		}
+		if key == "category" {
+			field.CorrectionField = new(api.CorrectionFieldReleaseNameCategory)
 		}
 		if slices.Contains(missing, key) {
 			field.Status = api.InputReadinessFieldMissing

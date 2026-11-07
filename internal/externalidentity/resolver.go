@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v4"
+const ContractVersion = "external-identity-v15-category-default"
 
 // CompatibleStoredIdentity preserves manual pins and clears while discarding
 // automatic IDs and dependencies produced before the current identity contract.
@@ -323,10 +323,14 @@ func applyCandidateEvidence(
 	if result == nil {
 		return nil
 	}
-	authoritativeProviders := hasExplicitProviderCorrection(candidate.Identity)
+	storedCategory, _ := api.NormalizeCanonicalCategory(string(result.Identity.Category))
+	candidateCategory, _ := api.NormalizeCanonicalCategory(string(candidate.Identity.Category))
+	categoryChanged := storedCategory != api.CanonicalCategoryUnknown && candidateCategory != api.CanonicalCategoryUnknown &&
+		storedCategory != candidateCategory
+	authoritativeProviders := hasExplicitProviderCorrection(candidate.Identity) || categoryChanged
 	candidateIdentityApplies := hasCandidateIdentity(candidate.Identity) && sourceEvidenceMatches(candidate.Identity.SourcePath, sourcePath)
 	if candidateIdentityApplies {
-		if authoritativeProviders {
+		if authoritativeProviders || hasExplicitProviderCorrection(result.Identity) {
 			applyAuthoritativeCandidateProviders(&result.Identity, candidate.Identity)
 			applyCandidateCategory(&result.Identity, candidate.Identity)
 		} else {
@@ -343,7 +347,9 @@ func applyCandidateEvidence(
 			return err
 		}
 	}
-	if diagnostics := candidateDiagnostics(candidate.Candidates); len(diagnostics) > 0 {
+	result.ProviderMetadata.IdentityCandidates = nil
+	if diagnostics := CandidateDiagnostics(candidate.Candidates); len(diagnostics) > 0 {
+		result.ProviderMetadata.IdentityCandidates = diagnostics[0].Candidates
 		result.Diagnostics = append(result.Diagnostics, diagnostics...)
 	}
 	return nil
@@ -524,7 +530,9 @@ func applyCandidateProvider(
 	}
 }
 
-func candidateDiagnostics(value []api.ExternalIdentityCandidate) []api.PreparationDiagnostic {
+// CandidateDiagnostics projects detached advisory matches without selecting an ID.
+// Prepared-generation reuse uses the same projection as fresh identity resolution.
+func CandidateDiagnostics(value []api.ExternalIdentityCandidate) []api.PreparationDiagnostic {
 	candidates := make([]api.ExternalIdentityCandidate, 0, len(value))
 	for _, candidate := range value {
 		provider := api.IdentityProvider(strings.ToLower(strings.TrimSpace(string(candidate.Provider))))
@@ -532,18 +540,11 @@ func candidateDiagnostics(value []api.ExternalIdentityCandidate) []api.Preparati
 			continue
 		}
 		category, _ := api.NormalizeCanonicalCategory(string(candidate.Category))
-		candidates = append(candidates, api.ExternalIdentityCandidate{
-			Provider:      provider,
-			ID:            candidate.ID,
-			Title:         candidate.Title,
-			OriginalTitle: candidate.OriginalTitle,
-			Year:          candidate.Year,
-			Category:      category,
-			MediaType:     candidate.MediaType,
-			Overview:      candidate.Overview,
-			PosterURL:     candidate.PosterURL,
-			Similarity:    candidate.Similarity,
-		})
+		candidate.Provider = provider
+		candidate.Category = category
+		candidate.Cast = append([]string{}, candidate.Cast...)
+		candidate.Directors = append([]string{}, candidate.Directors...)
+		candidates = append(candidates, candidate)
 	}
 	if len(candidates) == 0 {
 		return nil
@@ -601,6 +602,7 @@ func applyResolutionIntent(identity *api.ExternalIdentity, intent ResolutionInte
 		intent.ProviderOverrides.TVmazeID,
 	)
 	applyProviderOverride(&identity.MALID, &identity.Dependencies.MAL, &identity.Provenance.MAL, &identity.Overrides.MAL, intent.ProviderOverrides.MALID)
+	*identity = identity.WithProviderRetention(intent.ProviderOverrides)
 	if intent.CategoryOverride != nil {
 		category := *intent.CategoryOverride
 		switch category {
@@ -716,8 +718,9 @@ func invalidateMismatchedMetadata(metadata *api.SourceScopedMetadata, identity a
 		return
 	}
 	if metadata.TMDB != nil && (metadata.TMDB.TMDBID != identity.TMDBID ||
-		lockedProviderIDMismatch(identity.Overrides.IMDB, identity.Provenance.IMDB, identity.IMDBID, metadata.TMDB.IMDBID) ||
-		lockedProviderIDMismatch(identity.Overrides.TVDB, identity.Provenance.TVDB, identity.TVDBID, metadata.TMDB.TVDBID)) {
+		identity.Provenance.TMDB != api.IdentityProvenanceRetained && !providerIdentityLocked(identity.Overrides.TMDB, identity.Provenance.TMDB) &&
+			(lockedProviderIDMismatch(identity.Overrides.IMDB, identity.Provenance.IMDB, identity.IMDBID, metadata.TMDB.IMDBID) ||
+				lockedProviderIDMismatch(identity.Overrides.TVDB, identity.Provenance.TVDB, identity.TVDBID, metadata.TMDB.TVDBID))) {
 		metadata.TMDB = nil
 	}
 	if metadata.IMDB != nil && metadata.IMDB.IMDBID != identity.IMDBID {
@@ -727,8 +730,9 @@ func invalidateMismatchedMetadata(metadata *api.SourceScopedMetadata, identity a
 		metadata.TVDB = nil
 	}
 	if metadata.TVmaze != nil && (metadata.TVmaze.TVmazeID != identity.TVmazeID ||
-		lockedProviderIDMismatch(identity.Overrides.IMDB, identity.Provenance.IMDB, identity.IMDBID, metadata.TVmaze.IMDBID) ||
-		lockedProviderIDMismatch(identity.Overrides.TVDB, identity.Provenance.TVDB, identity.TVDBID, metadata.TVmaze.TVDBID)) {
+		identity.Provenance.TVmaze != api.IdentityProvenanceRetained && !providerIdentityLocked(identity.Overrides.TVmaze, identity.Provenance.TVmaze) &&
+			(lockedProviderIDMismatch(identity.Overrides.IMDB, identity.Provenance.IMDB, identity.IMDBID, metadata.TVmaze.IMDBID) ||
+				lockedProviderIDMismatch(identity.Overrides.TVDB, identity.Provenance.TVDB, identity.TVDBID, metadata.TVmaze.TVDBID))) {
 		metadata.TVmaze = nil
 	}
 	if metadata.AniList != nil && metadata.AniList.MALID != identity.MALID {

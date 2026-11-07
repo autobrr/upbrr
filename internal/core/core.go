@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
@@ -46,20 +47,23 @@ const workflowPrivateVaultCleanupInterval = time.Hour
 // Core composes the upload, prepared-release, duplicate-check, media,
 // description, and history capabilities over one dependency snapshot. It owns
 // the repository only when construction opened that repository internally.
-// Operation contexts are per call and are not retained by Core.
+// Input verification cancellation is retained only until admission completes.
 type Core struct {
 	liveTest         *api.LiveTestPolicy
 	logger           api.Logger
 	metadataDefaults config.MetadataConfig
 	repoOwner        api.RepositoryOwner
 	ownsRepo         bool
-	vaultCleanupStop context.CancelFunc
-	vaultCleanupDone <-chan struct{}
+	maintenance      *RuntimeMaintenance
+	ownsMaintenance  bool
 
-	history       *historyModule
-	preparedFacts *preparedrelease.Module
-	workflow      *releaseworkflow.Module
-	media         *mediaModule
+	history                  *historyModule
+	preparedFacts            *preparedrelease.Module
+	workflow                 *releaseworkflow.Module
+	media                    *mediaModule
+	searchProviderCandidates func(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
+	inputOpenMu              sync.Mutex
+	inputOpens               map[inputOpenKey]map[*pendingInputOpen]struct{}
 }
 
 func applyMetadataDefaults(input api.PrepareInput, configured config.MetadataConfig) api.PrepareInput {
@@ -91,23 +95,90 @@ func NewWithContext(ctx context.Context, deps api.CoreDependencies) (*Core, erro
 // NewWithContextAndCoordinator constructs a config-scoped Core that shares the
 // supplied process-lifetime workflow coordinator. A nil coordinator creates a
 // standalone coordinator for callers that do not replace runtime config.
+// Optional shared maintenance keeps startup cleanup and expiry work outside
+// config generations; its caller must close it after the last Core retires.
 func NewWithContextAndCoordinator(
 	ctx context.Context,
 	deps api.CoreDependencies,
 	coordinator *releaseworkflow.Coordinator,
+	maintenance ...*RuntimeMaintenance,
 ) (*Core, error) {
 	if ctx == nil {
 		return nil, errors.New("core: context is required")
 	}
-	return newCore(ctx, deps, coordinator)
-}
-
-func newCore(ctx context.Context, deps api.CoreDependencies, coordinator *releaseworkflow.Coordinator) (*Core, error) {
-	return newCoreWithHooks(ctx, deps, coordinator, coreConstructionHooks{})
+	if len(maintenance) > 1 {
+		return nil, errors.New("core: at most one runtime maintenance owner is allowed")
+	}
+	var shared *RuntimeMaintenance
+	if len(maintenance) == 1 {
+		shared = maintenance[0]
+	}
+	return newCoreWithHooks(ctx, deps, coordinator, coreConstructionHooks{maintenance: shared})
 }
 
 type coreConstructionHooks struct {
 	closeRepository func(api.RepositoryOwner) error
+	maintenance     *RuntimeMaintenance
+}
+
+// RuntimeMaintenance owns startup cleanup and one expiry worker across config
+// generations. Its zero value is ready for use. The caller closes shared
+// maintenance before closing its repository and logger; Core closes an owner it
+// creates itself. Failed construction leaves startup maintenance retryable.
+type RuntimeMaintenance struct {
+	mu              sync.Mutex
+	startupComplete bool
+	stop            context.CancelFunc
+	done            <-chan struct{}
+	resourcesMu     sync.Mutex
+	logger          api.Logger
+	vault           *releaseworkflow.PrivateArtifactVault
+}
+
+// ActivateMaintenance binds expiry cleanup to this installed generation's vault
+// and logger without another startup scan or worker. Runtime replacement calls
+// this before retiring the prior generation; failed candidates never call it.
+func (c *Core) ActivateMaintenance() {
+	c.maintenance.resourcesMu.Lock()
+	defer c.maintenance.resourcesMu.Unlock()
+	c.maintenance.logger = c.logger
+	c.maintenance.vault = c.history.privateVault
+}
+
+func (m *RuntimeMaintenance) warnf(format string, args ...any) {
+	m.resourcesMu.Lock()
+	defer m.resourcesMu.Unlock()
+	if m.logger != nil {
+		m.logger.Warnf(format, args...)
+	}
+}
+
+func (m *RuntimeMaintenance) cleanupExpired(now time.Time) error {
+	m.resourcesMu.Lock()
+	defer m.resourcesMu.Unlock()
+	if m.vault == nil {
+		// The first candidate may still be awaiting installation, or may have
+		// failed activation. No config-scoped resources belong to the worker yet.
+		return nil
+	}
+	if err := m.vault.CleanupExpired(now); err != nil {
+		return fmt.Errorf("clean expired runtime resources: %w", err)
+	}
+	return nil
+}
+
+// Close stops the expiry worker and waits for its current cleanup to finish.
+func (m *RuntimeMaintenance) Close() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stop != nil {
+		m.stop()
+		<-m.done
+		m.stop, m.done = nil, nil
+	}
 }
 
 type metadataRepositoryView struct {
@@ -140,6 +211,13 @@ func newCoreWithHooks(
 	if ctx == nil {
 		return nil, errors.New("core: context is required")
 	}
+	maintenance := hooks.maintenance
+	if maintenance == nil {
+		maintenance = &RuntimeMaintenance{}
+	}
+	maintenance.mu.Lock()
+	defer maintenance.mu.Unlock()
+	startup := !maintenance.startupComplete
 	logger := deps.Logger
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -222,12 +300,14 @@ func newCoreWithHooks(
 	hdrService := hdranalysis.New(hdranalysis.ProcessAdmission(), logger)
 	clientDiscovery := clientdiscovery.New(services.Clients, logger)
 	if services.Metadata == nil {
-		count, err := metadata.CleanupProvisionalHDR(ctx, cfg.MainSettings.DBPath)
-		if err != nil {
-			return nil, fmt.Errorf("core: clean provisional HDR metadata: %w", err)
-		}
-		if count > 0 {
-			logger.Infof("metadata: provisional HDR cleanup state=complete count=%d", count)
+		if startup {
+			count, err := metadata.CleanupProvisionalHDR(ctx, cfg.MainSettings.DBPath)
+			if err != nil {
+				return nil, fmt.Errorf("core: clean provisional HDR metadata: %w", err)
+			}
+			if count > 0 {
+				logger.Infof("metadata: provisional HDR cleanup state=complete count=%d", count)
+			}
 		}
 		if _, err := metadata.EnsureDefaultTagOverrides(cfg.MainSettings.DBPath); err != nil {
 			return nil, fmt.Errorf("core: default tag overrides: %w", err)
@@ -414,7 +494,7 @@ func newCoreWithHooks(
 		workflowPrivateResources = vault
 		workflowPrivateVault = vault
 	}
-	e2eOptions := e2eReleaseWorkflowOptions()
+	e2eOptions := e2eReleaseWorkflowOptions(repoOwner)
 	var reusableImageInventory workflowReusableTrackerImageInventory
 	if inventory, ok := services.Screenshots.(workflowReusableTrackerImageInventory); ok {
 		reusableImageInventory = inventory
@@ -500,44 +580,60 @@ func newCoreWithHooks(
 		ownsRepo:         ownsRepo,
 		preparedFacts:    preparedFacts,
 		workflow:         workflow,
+		maintenance:      maintenance,
+		ownsMaintenance:  hooks.maintenance == nil,
 	}
 	core.history = newHistoryModule(repositories.History(), cfg.MainSettings.DBPath, logger)
+	if searcher, ok := services.Metadata.(interface {
+		SearchProviderCandidates(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
+	}); ok {
+		core.searchProviderCandidates = searcher.SearchProviderCandidates
+	}
 	core.history.preparedFacts = core.preparedFacts
 	if activeInputs, ok := repoOwner.(api.ActiveInputRepository); ok {
 		core.history.activeInputs = activeInputs
 	}
 	core.history.privateVault = workflowPrivateVault
-	if err := workflow.ResetIdleInputOnStartup(ctx); err != nil {
-		return nil, fmt.Errorf("core: clear previous idle input: %w", err)
-	}
-	if sqliteRepo, ok := repoOwner.(*db.SQLiteRepository); ok {
-		if err := core.history.cleanupOrphanedHistory(ctx, sqliteRepo); err != nil {
-			return nil, fmt.Errorf("core: clean orphaned history: %w", err)
+	if startup {
+		if err := workflow.ResetIdleInputOnStartup(ctx); err != nil {
+			return nil, fmt.Errorf("core: clear previous idle input: %w", err)
+		}
+		if sqliteRepo, ok := repoOwner.(*db.SQLiteRepository); ok {
+			if err := core.history.cleanupOrphanedHistory(ctx, sqliteRepo); err != nil {
+				return nil, fmt.Errorf("core: clean orphaned history: %w", err)
+			}
 		}
 	}
-	if workflowPrivateVault != nil {
-		cleanupStop, cleanupDone, cleanupErr := startWorkflowPrivateVaultCleanup(
+	if startup && workflowPrivateVault != nil {
+		if err := workflowPrivateVault.CleanupExpired(time.Now().UTC()); err != nil {
+			return nil, fmt.Errorf("core: clean expired workflow private artifacts: %w", err)
+		}
+		cleanupStop, cleanupDone, cleanupErr := startWorkflowPrivateVaultCleanupLoop(
 			ctx,
-			workflowPrivateVault,
+			maintenance.cleanupExpired,
 			workflowPrivateVaultCleanupInterval,
-			logger,
+			maintenance.warnf,
 		)
 		if cleanupErr != nil {
 			return nil, fmt.Errorf("core: clean expired workflow private artifacts: %w", cleanupErr)
 		}
-		core.vaultCleanupStop = cleanupStop
-		core.vaultCleanupDone = cleanupDone
+		maintenance.stop = cleanupStop
+		maintenance.done = cleanupDone
 	}
+	maintenance.startupComplete = true
 	core.media = workflowMedia
+	if core.ownsMaintenance {
+		core.ActivateMaintenance()
+	}
 	constructionSucceeded = true
 	return core, nil
 }
 
-func startWorkflowPrivateVaultCleanup(
+func startWorkflowPrivateVaultCleanupLoop(
 	ctx context.Context,
-	vault *releaseworkflow.PrivateArtifactVault,
+	cleanup func(time.Time) error,
 	interval time.Duration,
-	logger api.Logger,
+	warnf func(string, ...any),
 ) (context.CancelFunc, <-chan struct{}, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("private artifact cleanup context is required")
@@ -545,13 +641,10 @@ func startWorkflowPrivateVaultCleanup(
 	if err := ctx.Err(); err != nil {
 		return nil, nil, fmt.Errorf("private artifact cleanup context: %w", err)
 	}
-	if vault == nil {
-		return nil, nil, errors.New("private artifact vault is required")
-	}
 	if interval <= 0 {
 		return nil, nil, errors.New("private artifact cleanup interval must be positive")
 	}
-	if err := vault.CleanupExpired(time.Now().UTC()); err != nil {
+	if err := cleanup(time.Now().UTC()); err != nil {
 		return nil, nil, fmt.Errorf("clean expired private artifacts at startup: %w", err)
 	}
 	cleanupCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -565,8 +658,8 @@ func startWorkflowPrivateVaultCleanup(
 			case <-cleanupCtx.Done():
 				return
 			case now := <-ticker.C:
-				if err := vault.CleanupExpired(now.UTC()); err != nil {
-					logger.Warnf("core: expired workflow private artifact cleanup failed: %v", err)
+				if err := cleanup(now.UTC()); err != nil {
+					warnf("core: expired workflow private artifact cleanup failed: %v", err)
 				}
 			}
 		}
@@ -997,11 +1090,8 @@ func (c *Core) Close() error {
 	if c == nil {
 		return nil
 	}
-	if c.vaultCleanupStop != nil {
-		c.vaultCleanupStop()
-	}
-	if c.vaultCleanupDone != nil {
-		<-c.vaultCleanupDone
+	if c.ownsMaintenance {
+		c.maintenance.Close()
 	}
 	if c.repoOwner == nil || !c.ownsRepo {
 		return nil

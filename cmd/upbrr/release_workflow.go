@@ -28,7 +28,9 @@ const cliWorkflowOwnerID = "cli"
 // cliReleaseWorkflowCore is the in-process application seam used by the CLI.
 // It deliberately excludes HTTP and every legacy operation-specific entrypoint.
 type cliReleaseWorkflowCore interface {
+	SearchProviderCandidates(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
 	GetActiveInput(context.Context, string) (api.ActiveInputSnapshot, error)
+	GetActiveInputForSource(context.Context, string, string) (api.ActiveInputSnapshot, error)
 	ReleaseActiveInput(context.Context, string, api.ReleaseActiveInputRequest) (api.ActiveInputSnapshot, error)
 	RecoverLegacyActiveInput(context.Context, string, api.RecoverLegacyActiveInputRequest) (api.ActiveInputSnapshot, error)
 	ReconcileActiveInput(context.Context, string, api.ReconcileActiveInputRequest) (api.ActiveInputSnapshot, error)
@@ -84,6 +86,8 @@ type cliWorkflowSession struct {
 	logger                   api.Logger
 	current                  releaseworkflow.CommandResult
 	intent                   cliWorkflowIntent
+	preparationPolicy        api.PreparationPolicy
+	clientSearch             api.ClientSearchPolicy
 	uploadRequest            api.Request
 	screenshotCountIsDefault bool
 	idempotencyRun           string
@@ -115,6 +119,7 @@ func (s *cliWorkflowSession) releaseActiveInput(ctx context.Context) {
 	}
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	stage := "inspect_input"
 	active, err := s.core.GetActiveInput(cleanup, cliWorkflowOwnerID)
 	if err == nil && active.State == api.ActiveInputActive && active.Revision == s.inputClaim.revision &&
 		active.Current != nil && active.Current.Workflow.ID == s.inputClaim.workflowID {
@@ -122,10 +127,22 @@ func (s *cliWorkflowSession) releaseActiveInput(ctx context.Context) {
 			s.logger.Debugf("workflow: state=retained_hdr decision=keep")
 			return
 		}
+		stage = "release_input"
 		_, err = s.core.ReleaseActiveInput(cleanup, cliWorkflowOwnerID, api.ReleaseActiveInputRequest{ExpectedRevision: s.inputClaim.revision})
 	}
 	if err != nil {
-		s.logger.Warnf("workflow: state=cleanup_failed decision=recovery_required")
+		reason := "cleanup_error"
+		action := "restart_then_retry"
+		switch {
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+			reason, action = "cleanup_timeout", "wait_then_retry"
+		case errors.Is(err, api.ErrActiveInputBusy):
+			reason, action = "work_active", "wait_then_retry"
+		case errors.Is(err, api.ErrActiveInputChanged):
+			reason, action = "input_changed", "inspect_active_input"
+		}
+		// Classify errors instead of exposing storage paths or private causes.
+		s.logger.Warnf("workflow: stage=%s state=cleanup_failed decision=recovery_required reason=%s action=%s", stage, reason, action)
 	}
 }
 
@@ -288,7 +305,24 @@ func isTerminalCLIWorkflowOperation(status api.StageStatus) bool {
 func (s *cliWorkflowSession) waitForOperation(
 	ctx context.Context,
 	operation api.WorkflowOperationStatus,
-) (api.WorkflowOperationStatus, error) {
+) (completed api.WorkflowOperationStatus, err error) {
+	// Cancellation may also arrive during an event or status read. Join on all
+	// interrupted exits before the caller's deferred input release can run.
+	defer func() {
+		if ctx.Err() != nil && !isTerminalCLIWorkflowOperation(operation.Status) {
+			if !errors.Is(err, ctx.Err()) {
+				err = errors.Join(err, ctx.Err())
+			}
+			err = errors.Join(err, s.cancelAndWaitForOperation(ctx, operation))
+		}
+	}()
+	var metadataProgress cliMetadataProgress
+	reportMetadata := func() {
+		if cliBridgeFromOutput(s.streams.out) == nil {
+			metadataProgress.Print(s.progressWriter, operation, time.Now())
+		}
+	}
+	reportMetadata()
 	s.publishOperationPresentation(ctx, operation)
 	if _, printed := s.printedProgress[operation.Operation]; !printed {
 		if s.printedProgress == nil {
@@ -303,21 +337,6 @@ func (s *cliWorkflowSession) waitForOperation(
 	for operation.Status == api.StageStatusQueued || operation.Status == api.StageStatusRunning {
 		select {
 		case <-ctx.Done():
-			cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			_, cancelErr := s.core.CancelReleaseWorkflowOperation(
-				cancelCtx,
-				cliWorkflowOwnerID,
-				operation.WorkflowID,
-				operation.ID,
-			)
-			cancel()
-			if cancelErr != nil {
-				return api.WorkflowOperationStatus{}, fmt.Errorf(
-					"upbrr: wait for release workflow command: %w (cancel operation: %w)",
-					ctx.Err(),
-					cancelErr,
-				)
-			}
 			return api.WorkflowOperationStatus{}, fmt.Errorf("upbrr: wait for release workflow command: %w", ctx.Err())
 		case <-time.After(200 * time.Millisecond):
 		}
@@ -331,6 +350,7 @@ func (s *cliWorkflowSession) waitForOperation(
 			return api.WorkflowOperationStatus{}, fmt.Errorf("upbrr: poll release workflow command: %w", err)
 		}
 		operation = current
+		reportMetadata()
 		s.publishOperationPresentation(ctx, operation)
 		if err := s.logNewOperationEvents(ctx, operation, &s.eventLogState); err != nil {
 			return api.WorkflowOperationStatus{}, err
@@ -340,6 +360,39 @@ func (s *cliWorkflowSession) waitForOperation(
 		return api.WorkflowOperationStatus{}, err
 	}
 	return operation, nil
+}
+
+// cancelAndWaitForOperation shares one fresh budget between the cancellation
+// request and terminal readback. Terminal reads join worker bookkeeping; the
+// request receipt alone does not prove that releasing the input is safe.
+func (s *cliWorkflowSession) cancelAndWaitForOperation(ctx context.Context, operation api.WorkflowOperationStatus) error {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_, cancelErr := s.core.CancelReleaseWorkflowOperation(cleanup, cliWorkflowOwnerID, operation.WorkflowID, operation.ID)
+	var waitErr error
+	for {
+		var current api.WorkflowOperationStatus
+		current, waitErr = s.core.ReleaseWorkflowOperation(cleanup, cliWorkflowOwnerID, operation.WorkflowID, operation.ID)
+		if waitErr != nil {
+			break
+		}
+		if isTerminalCLIWorkflowOperation(current.Status) {
+			return nil
+		}
+		select {
+		case <-cleanup.Done():
+		case <-time.After(200 * time.Millisecond):
+			continue
+		}
+		waitErr = cleanup.Err()
+		break
+	}
+	return api.NewOperationError(api.OperationFailure{
+		Code:      api.OperationFailureInternal,
+		Operation: operation.Operation,
+		Message:   "Cancellation completion could not be confirmed; work may still be active. Wait for shutdown before retrying.",
+		Recovery:  api.OperationRecoveryRetry,
+	}, errors.Join(cancelErr, waitErr))
 }
 
 // cliWorkflowOperationError preserves recovery metadata for terminal failures,
@@ -420,13 +473,15 @@ func newCLIWorkflowSession(
 		return nil, fmt.Errorf("upbrr: map workflow preparation: %w", err)
 	}
 	session := &cliWorkflowSession{
-		core:           coreSvc,
-		logger:         logger,
-		intent:         mapCLIWorkflowIntent(request),
-		uploadRequest:  request,
-		idempotencyRun: strings.ToLower(rand.Text()),
-		progressWriter: streams.out,
-		streams:        streams,
+		core:              coreSvc,
+		logger:            logger,
+		intent:            mapCLIWorkflowIntent(request),
+		preparationPolicy: input.Policy,
+		clientSearch:      input.Search,
+		uploadRequest:     request,
+		idempotencyRun:    strings.ToLower(rand.Text()),
+		progressWriter:    streams.out,
+		streams:           streams,
 	}
 	ready := false
 	defer func() {
@@ -538,11 +593,6 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 	if reader == nil {
 		return nil, errors.New("upbrr: Blu-ray playlist selection requires input")
 	}
-	fmt.Fprintln(output)
-	fmt.Fprintln(output, action.Prompt)
-	for index, option := range action.Options {
-		fmt.Fprintf(output, "%d. %s\n", index+1, option.Label)
-	}
 	options := make([]cliPromptOption, len(action.Options))
 	for index, option := range action.Options {
 		options[index] = cliPromptOption{Label: option.Label, Value: strconv.Itoa(index + 1)}
@@ -551,6 +601,8 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 		Kind:     cliPromptMultiSelect,
 		Question: "Playlist number(s), comma-separated: ",
 		Evidence: action.Prompt,
+		Help: "Choose at least one playlist for every disc. The selection controls which disc content is inspected and prepared. " +
+			"Enter the listed numbers separated by commas. If this is the wrong source, stop and rerun with the intended source.",
 		Options:  options,
 		Required: true,
 	})
@@ -676,32 +728,59 @@ func runCLIWorkflowInteractive(
 			}
 			return outcome, exitError(2, errors.New("saved input corrections require confirmation"))
 		}
+		if err := session.reviewBlurayReleases(ctx, reader); err != nil {
+			return outcome, err
+		}
+		if selection := session.uploadRequest.Bluray; selection != nil {
+			value := selection.Release
+			if selection.Mode == "auto" {
+				value = "auto"
+			}
+			currentArgs, err = mergeCLIInputEditArgs(currentArgs, []string{"--bluray-release=" + value})
+			if err != nil {
+				return outcome, err
+			}
+			currentOpts.BlurayRelease, currentVisited["bluray-release"] = value, true
+		}
 		if err := session.reviewInputLanguages(ctx, reader, currentOpts.Debug || coreSvc.LiveTestEnabled(), cfg.Trackers.DefaultTrackers); err != nil {
 			return outcome, err
 		}
 		preview := cliWorkflowMetadataPreview(session.current)
-		printMetadataPreview(streams.out, preview, session.current.Release.Release, currentOpts.Debug)
+		var metadataEvidence strings.Builder
+		printMetadataPreview(&metadataEvidence, preview, session.current.Release.Release, currentOpts.Debug)
 		missing := session.current.Release.Release.MissingRequiredUploadFacts()
 		if len(missing) > 0 {
-			fmt.Fprintln(streams.out, "Missing fields")
+			fmt.Fprintln(&metadataEvidence, "Missing fields")
 			for _, field := range missing {
-				fmt.Fprintf(streams.out, "--%s <value>\n", field)
+				fmt.Fprintf(&metadataEvidence, "--%s <value>\n", field)
 			}
 		}
 		if currentOpts.InputOnly {
+			fmt.Fprint(streams.out, safeTerminalText(metadataEvidence.String()))
 			break
 		}
 		if currentOpts.interactionMode() == api.InteractionModeUnattended {
+			fmt.Fprint(streams.out, safeTerminalText(metadataEvidence.String()))
+			if metadataSelectionRequired(preview) {
+				return outcome, exitError(
+					2,
+					errors.New("unattended metadata identity is unresolved; supply a provider ID or use --unattended_confirm/--uac to review matches"),
+				)
+			}
 			if len(missing) > 0 {
 				return outcome, exitError(2, errors.New("required release facts are missing in unattended mode; apply the listed correction arguments"))
 			}
 			break
 		}
-		var metadataEvidence strings.Builder
-		printMetadataPreview(&metadataEvidence, preview, session.current.Release.Release, currentOpts.Debug)
 		bindCLIQuestion(ctx, streams.out, session.current.Workflow.ID, session.current.Workflow.Revision, "", metadataEvidence.String())
-		if len(missing) == 0 {
-			confirmed, promptErr := promptYesNo(reader, streams.out, "Metadata correct? [Y/n]: ", true)
+		if len(missing) == 0 && !metadataSelectionRequired(preview) {
+			confirmed, promptErr := askCLIConfirmation(reader, streams.out, cliPrompt{
+				Kind:       cliPromptConfirm,
+				Question:   "Metadata correct? [Y/n]: ",
+				DefaultYes: true,
+				Evidence:   metadataEvidence.String(),
+				Help:       "Yes keeps these facts and continues to tracker checks and any required approvals. No opens corrections, including provider title search, and prepares the revised facts for review.",
+			})
 			if promptErr != nil {
 				return outcome, promptErr
 			}
@@ -709,21 +788,40 @@ func runCLIWorkflowInteractive(
 				break
 			}
 		}
-		prompt := "Input args that need correction, or 'continue': "
+		prompt := "Input args that need correction, 'search' for provider matches, or 'continue': "
 		if len(missing) > 0 {
-			prompt = "Input args to correct the missing fields: "
+			prompt = "Input args to correct the missing fields, or 'search' for provider matches: "
 		}
-		editArgs, promptErr := promptLine(reader, streams.out, prompt)
+		editArgs, promptErr := askCLIField(reader, streams.out, cliPrompt{
+			Kind:     cliPromptText,
+			Question: prompt,
+			Evidence: metadataEvidence.String(),
+			Help: "Enter correction flags, for example --alternate-title \"Example Release\" or --commentary=false. Omitted fields keep saved values. " +
+				"Use --reset-input FIELD to restore automatic detection, search to inspect provider titles, or cancel to stop. " +
+				"The revised facts will be prepared again; continue requires complete facts and a resolved identity when candidates need selection.",
+		})
 		if promptErr != nil {
 			return outcome, promptErr
 		}
+		if strings.EqualFold(strings.TrimSpace(editArgs), "cancel") {
+			return outcome, fmt.Errorf("metadata review: %w", context.Canceled)
+		}
 		if strings.EqualFold(strings.TrimSpace(editArgs), "continue") {
-			if len(missing) == 0 {
+			if len(missing) == 0 && !metadataSelectionRequired(preview) {
 				break
 			}
 			continue
 		}
 		editTokens, splitErr := splitInteractiveCLIArgs(editArgs)
+		if strings.EqualFold(strings.TrimSpace(editArgs), "search") {
+			editTokens, splitErr = session.searchMetadataCandidates(ctx, reader)
+			if splitErr == nil && len(editTokens) == 0 {
+				continue
+			}
+			if splitErr != nil {
+				return outcome, splitErr
+			}
+		}
 		if splitErr != nil {
 			fmt.Fprintf(streams.out, "Invalid override args: %v\n", splitErr)
 			continue
@@ -861,10 +959,89 @@ func completeCLIInputOnly(ctx context.Context, session *cliWorkflowSession, outp
 			ready = false
 		}
 	}
+	printCLIInputReadiness(output, session.current.InputReadiness.Fields, ready)
 	if !ready {
 		return exitError(2, errors.New("required input is missing or invalid"))
 	}
 	return nil
+}
+
+// printCLIInputReadiness adds local evidence guidance after the stable Input output.
+// It describes the retained evaluation without advancing or waiving any checks.
+func printCLIInputReadiness(output io.Writer, fields []api.InputReadinessFieldOutcome, ready bool) {
+	if ready {
+		fmt.Fprintln(output, "Local input readiness: ready.")
+	} else {
+		fmt.Fprintln(output, "Local input readiness: required evidence is missing or invalid.")
+	}
+	fmt.Fprintln(output, "This local result does not establish tracker authentication, duplicate checks, upload acceptance, or client injection.")
+	for _, advisory := range []bool{false, true} {
+		headingPrinted := false
+		for _, field := range fields {
+			if field.Status == api.InputReadinessFieldReady || (api.NormalizeRuleDisposition(field.Disposition) == api.RuleDispositionAdvisory) != advisory {
+				continue
+			}
+			if !headingPrinted {
+				if advisory {
+					fmt.Fprintln(output, "Advisory evidence (does not block local readiness):")
+				} else {
+					fmt.Fprintln(output, "Required evidence to review:")
+				}
+				headingPrinted = true
+			}
+			scope := fmt.Sprintf("%s (%s", field.Key, field.Status)
+			if len(field.TrackerIDs) > 0 {
+				scope += "; trackers: " + strings.Join(trackerIDStrings(field.TrackerIDs), ", ")
+			}
+			if field.TrackID != "" {
+				scope += "; track: " + field.TrackID
+			}
+			message := strings.TrimSpace(field.Message)
+			if message == "" {
+				message = "Review this input evidence."
+			}
+			fmt.Fprintln(output, safeDiagnosticText(fmt.Sprintf("  - %s): %s\n    %s", scope, message, cliInputReadinessCorrection(field))))
+		}
+	}
+}
+
+func cliInputReadinessCorrection(field api.InputReadinessFieldOutcome) string {
+	flag := ""
+	if field.CorrectionField != nil {
+		//nolint:exhaustive // Only local readiness fields with verified CLI corrections receive flag guidance.
+		switch *field.CorrectionField {
+		case api.CorrectionFieldReleaseNameCategory:
+			flag = "--category CATEGORY"
+		case api.CorrectionFieldMetadataAlternateTitle:
+			flag = "--alternate-title TITLE"
+		case api.CorrectionFieldMetadataGenres:
+			flag = "--genres GENRE[,GENRE]"
+		case api.CorrectionFieldMetadataOriginalLanguage:
+			flag = "--original-language LANGUAGE"
+		case api.CorrectionFieldMetadataDistributor:
+			flag = "--distributor DISTRIBUTOR"
+		case api.CorrectionFieldMetadataAudioLanguages:
+			flag = "--audio-languages LANGUAGE[,LANGUAGE]"
+		case api.CorrectionFieldMetadataSubtitleLanguages:
+			flag = "--subtitle-languages LANGUAGE[,LANGUAGE]"
+		case api.CorrectionFieldMetadataHardcodedSubs:
+			flag = "--hardcoded-subs=true or --hardcoded-subs=false"
+		case api.CorrectionFieldMetadataHardcodedSubtitleLanguages:
+			flag = "--hardcoded-subtitle-languages LANGUAGE[,LANGUAGE]"
+		case api.CorrectionFieldMetadataTrackLanguages:
+			if field.TrackID != "" {
+				flag = fmt.Sprintf("--track-languages %q", field.TrackID+"=LANGUAGE")
+			}
+		case api.CorrectionFieldMetadataTrackAudioOrigins:
+			if field.TrackID != "" {
+				flag = fmt.Sprintf("--track-audio-origin %q (or dubbed or unresolved)", field.TrackID+"=original")
+			}
+		}
+	}
+	if flag != "" {
+		return "Correct verified facts with " + flag + ", then rerun --input-only."
+	}
+	return "Review the source and metadata selection, then rerun --input-only."
 }
 
 func cliWorkflowMetadataPreview(current releaseworkflow.CommandResult) api.MetadataPreview {
@@ -1149,43 +1326,10 @@ func collectCLIWorkflowQuestionnaires(
 			if instruction.Questionnaire == nil {
 				instruction.Questionnaire = make(map[string]*string)
 			}
-			label := strings.TrimSpace(field.Label)
-			if label == "" {
-				label = field.Key
-			}
-			if field.Help != "" {
-				fmt.Fprintln(output, field.Help)
-			}
 			yesNo := field.Kind == "select" && len(field.Options) == 2 && slices.Contains(field.Options, "yes") && slices.Contains(field.Options, "no")
-			switch {
-			case field.Kind == "multiselect":
-				for index, option := range field.Options {
-					fmt.Fprintf(output, "  %d. %s\n", index+1, option)
-				}
-				label += " (comma-separated numbers or labels)"
-			case yesNo:
-				label += " [y/n]"
-			case len(field.Options) > 0:
-				label += " [" + strings.Join(field.Options, "/") + "]"
-			}
-			prompt := cliPrompt{
-				Kind:     cliPromptText,
-				Question: fmt.Sprintf("%s %s: ", projection.TrackerID, label),
-				Help:     field.Help,
-				Required: field.Required,
-			}
-			if len(field.Options) > 0 {
-				prompt.Kind = cliPromptSelect
-				if field.Kind == "multiselect" {
-					prompt.Kind = cliPromptMultiSelect
-				}
-				for index, option := range field.Options {
-					value := option
-					if field.Kind == "multiselect" {
-						value = strconv.Itoa(index + 1)
-					}
-					prompt.Options = append(prompt.Options, cliPromptOption{Label: option, Value: value})
-				}
+			prompt := cliQuestionnairePrompt(projection, field, yesNo)
+			if writer, ok := output.(*cliPresentationWriter); ok && writer.question.Evidence != "" {
+				prompt.Evidence = writer.question.Evidence + "\n" + prompt.Evidence
 			}
 			answer, err := askCLIField(reader, output, prompt)
 			if err != nil {
@@ -1230,6 +1374,56 @@ func collectCLIWorkflowQuestionnaires(
 		}
 	}
 	return changed, nil
+}
+
+func cliQuestionnairePrompt(projection api.TrackerReleaseProjection, field api.TrackerQuestionnaireRequirement, yesNo bool) cliPrompt {
+	label := strings.TrimSpace(field.Label)
+	if label == "" {
+		label = strings.ReplaceAll(field.Key, "_", " ")
+	}
+	var help strings.Builder
+	if field.Help != "" {
+		fmt.Fprintln(&help, field.Help)
+	}
+	fmt.Fprintln(&help, "This answer updates only this tracker's assessment; it does not correct source metadata or approve an upload.")
+	switch {
+	case field.Required:
+		fmt.Fprintln(&help, "An answer is required. Review the displayed value, which may be a default, and submit a verified answer.")
+	case len(field.Options) == 0 || field.Kind == "multiselect":
+		fmt.Fprintln(&help, "Submit a verified answer. In plain mode or a text field, leave blank to clear this optional answer.")
+	default:
+		fmt.Fprintln(&help, "Choose a listed answer for this review; blank is not an accepted option.")
+	}
+	fmt.Fprintf(&help, "To supply this answer on a later run, use --tracker-input %q.", string(projection.TrackerID)+":"+field.Key+"=ANSWER")
+	prompt := cliPrompt{
+		Kind:     cliPromptText,
+		Question: fmt.Sprintf("%s %s: ", projection.TrackerID, label),
+		Evidence: fmt.Sprintf("Tracker: %s (%s)\nReviewed upload name: %s\nQuestion: %s\nDisplayed value (answer or default): %s",
+			cliPromptDetail(projection.DisplayName), projection.TrackerID, cliPromptDetail(projection.UploadReleaseName), label, emptyCLIValue(field.Value)),
+		Help:     help.String(),
+		Required: field.Required,
+	}
+	if len(field.Options) > 0 {
+		prompt.Kind = cliPromptSelect
+		switch {
+		case field.Kind == "multiselect":
+			prompt.Kind = cliPromptMultiSelect
+			prompt.Help += "\nChoose comma-separated numbers or option labels."
+		case yesNo:
+			prompt.Question = fmt.Sprintf("%s %s [y/n]: ", projection.TrackerID, label)
+			prompt.Help += "\nEnter yes or no (y/n accepted)."
+		default:
+			prompt.Help += "\nEnter one of the listed option labels."
+		}
+		for index, option := range field.Options {
+			value := option
+			if field.Kind == "multiselect" {
+				value = strconv.Itoa(index + 1)
+			}
+			prompt.Options = append(prompt.Options, cliPromptOption{Label: option, Value: value})
+		}
+	}
+	return prompt
 }
 
 func printCLIWorkflowProjections(
@@ -1513,7 +1707,7 @@ func printCLIWorkflowDryRun(
 	case noSeed:
 		fmt.Fprintln(output, "Debug mode: tracker uploads and client injection are disabled.")
 	default:
-		fmt.Fprintln(output, "Debug mode: tracker uploads are disabled; client injection was attempted for each ready tracker.")
+		fmt.Fprintln(output, "Debug mode: tracker uploads are disabled; see each tracker's client injection outcome below.")
 	}
 	for index, report := range result.Reports {
 		if index > 0 {
@@ -1527,13 +1721,19 @@ func printCLIWorkflowDryRun(
 		} else {
 			fmt.Fprintf(output, "- %s: %s status=%s\n", report.DisplayName, report.UploadReleaseName, report.Status)
 		}
+		clientMessage := strings.TrimSpace(safeDiagnosticText(report.ClientInjection.Message))
 		if report.ClientInjection.Status != "" {
 			fmt.Fprintf(
 				output,
 				"  client injection: %s: %s\n",
 				report.ClientInjection.Status,
-				logging.SanitizeMessage(report.ClientInjection.Message),
+				clientMessage,
 			)
+		}
+		for _, failure := range slices.Concat(report.Failures, report.ClientInjection.Failures) {
+			if message := cliWorkflowFailureMessage(failure.Failure); message != "" && message != clientMessage {
+				fmt.Fprintf(output, "  failure: %s\n", message)
+			}
 		}
 		for _, warning := range report.Warnings {
 			fmt.Fprintf(output, "  warning: %s\n", logging.SanitizeMessage(warning))
@@ -1549,23 +1749,31 @@ func printCLIWorkflowDryRun(
 	)
 }
 
+func cliWorkflowFailureMessage(failure api.OperationFailure) string {
+	if message := strings.TrimSpace(safeDiagnosticText(failure.Message)); message != "" {
+		return message
+	}
+	return safeTerminalText(string(failure.Code))
+}
+
 func printCLIWorkflowUploadResult(output io.Writer, result *api.UploadResult) (int, error) {
 	if result == nil {
 		return 0, errors.New("upbrr: upload workflow produced no result")
 	}
 	uploaded := 0
 	failed := 0
+	skipped := 0
 	clientFailed := 0
 	for _, tracker := range result.Results {
 		submissionStatus := tracker.EffectiveSubmissionStatus()
 		clientStatus := tracker.EffectiveClientInjectionStatus()
 		fmt.Fprintf(output, "Upload %s: submission=%s client-injection=%s\n", tracker.TrackerID, submissionStatus, clientStatus)
-		clientMessage := strings.TrimSpace(logging.SanitizeMessage(tracker.ClientInjectionMessage))
+		clientMessage := strings.TrimSpace(safeDiagnosticText(tracker.ClientInjectionMessage))
 		if clientMessage != "" {
 			fmt.Fprintf(output, "  client injection: %s\n", clientMessage)
 		}
 		for _, failure := range tracker.Failures {
-			message := strings.TrimSpace(logging.SanitizeMessage(failure.Failure.Message))
+			message := cliWorkflowFailureMessage(failure.Failure)
 			if message != "" && message != clientMessage {
 				fmt.Fprintf(output, "  failure: %s\n", message)
 			}
@@ -1575,25 +1783,30 @@ func printCLIWorkflowUploadResult(output io.Writer, result *api.UploadResult) (i
 			uploaded++
 		case api.StageStatusFailed, api.StageStatusUnavailable:
 			failed++
+		case api.StageStatusSkipped:
+			skipped++
 		case api.StageStatusPending,
 			api.StageStatusQueued,
 			api.StageStatusReady,
 			api.StageStatusBlocked,
 			api.StageStatusStale,
 			api.StageStatusPartial,
-			api.StageStatusSkipped,
 			api.StageStatusRunning,
 			api.StageStatusExecuted,
 			api.StageStatusInterrupted,
 			api.StageStatusCanceled:
 		}
-		if clientStatus == api.StageStatusFailed {
+		if clientStatus == api.StageStatusFailed || clientStatus == api.StageStatusUnavailable {
 			clientFailed++
 		}
 	}
-	fmt.Fprintf(output, "Upload complete: %d tracker upload(s).\n", uploaded)
+	fmt.Fprintf(output, "Upload complete: %d tracker upload(s), %d failed, %d skipped.\n", uploaded, failed, skipped)
 	if clientFailed > 0 {
-		fmt.Fprintf(output, "Client injection incomplete: %d tracker artifact(s); retry client injection without resubmitting.\n", clientFailed)
+		fmt.Fprintf(
+			output,
+			"Client injection incomplete: %d tracker artifact(s). Inspect the torrent client before retrying; do not resubmit accepted uploads.\n",
+			clientFailed,
+		)
 	}
 	if failed > 0 {
 		return uploaded, fmt.Errorf("upbrr: %d tracker upload(s) failed", failed)

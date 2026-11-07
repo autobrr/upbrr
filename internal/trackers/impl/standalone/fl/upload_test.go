@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,41 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestUploadRetainsAcceptanceAfterResponseReadFailure(t *testing.T) {
+	t.Parallel()
+	posts := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost {
+			return nil, errors.New("synthetic registered artifact unavailable")
+		}
+		posts++
+		finalRequest := request.Clone(request.Context())
+		finalRequest.URL = &url.URL{
+			Scheme:   "https",
+			Host:     "tracker.invalid",
+			Path:     "/details.php",
+			RawQuery: "id=123&uploaded=1",
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Request:    finalRequest,
+			Body:       &failingReadCloser{data: "partial response"},
+		}, nil
+	})}
+	summary, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{
+		Logger:  api.NopLogger{},
+		Runtime: trackers.PreparationRuntime{DBPath: filepath.Join(t.TempDir(), "app.sqlite")},
+		Meta:    api.UploadSubject{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.mkv")},
+	}, client, nil, "application/octet-stream")
+	if err != nil || summary.Uploaded != 1 || posts != 1 || len(summary.UploadedTorrents) != 1 || summary.UploadedTorrents[0].TorrentID != "123" {
+		t.Fatalf("uploaded=%d posts=%d error=%v", summary.Uploaded, posts, err)
+	}
+	if summary.UploadedTorrents[0].TorrentPath != "" {
+		t.Fatal("failed retrieval manufactured registered artifact authority")
+	}
+}
 
 func TestPrepareUploadStatePadsIMDbID(t *testing.T) {
 	t.Parallel()

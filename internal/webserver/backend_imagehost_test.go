@@ -4,10 +4,35 @@
 package webserver
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
 )
+
+func TestImageHostSettingsExposeSafeProbeLimitations(t *testing.T) {
+	t.Parallel()
+	var backend Backend
+	metadata, err := backend.GetImageHostPolicyMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"pixhost", "imgbox", "zipline", "samaritano"} {
+		if metadata.UnavailableConnectionTests[host] != "" {
+			t.Errorf("supported %s lost its connection action", host)
+		}
+	}
+	for _, host := range []string{"imgbb", "lensdump", "onlyimage", "ptscreens", "passtheimage", "utppm", "sharex"} {
+		if !strings.Contains(metadata.UnavailableConnectionTests[host], "upload") {
+			t.Errorf("%s has no explanation of its upload-only contract", host)
+		}
+	}
+	for _, host := range []string{"dalexni", "seedpool_cdn", "lostimg", "reelflix", "hdb"} {
+		if !strings.Contains(metadata.UnavailableConnectionTests[host], "not yet been verified") {
+			t.Errorf("%s lost its unverified safe-probe explanation", host)
+		}
+	}
+}
 
 func TestReleaseWorkflowConditionalImageHostsRequireAPIKeys(t *testing.T) {
 	t.Parallel()

@@ -555,7 +555,8 @@ const (
 
 // MediaArtifact is a safe opaque projection of one retained private artifact.
 type MediaArtifact struct {
-	ID PublicResourceID `json:"id"`
+	Processing *ScreenshotProcessing `json:"processing,omitempty"`
+	ID         PublicResourceID      `json:"id"`
 	// DiscID identifies the prepared disc that produced this artifact.
 	DiscID string `json:"discId,omitempty"`
 	// DiscName is the safe page-facing label derived from prepared facts.
@@ -572,6 +573,9 @@ type MediaArtifact struct {
 	SizeBytes        int64             `json:"sizeBytes,omitempty"`
 	Host             string            `json:"host,omitempty"`
 	URL              string            `json:"url,omitempty"`
+	// SourceUnavailable identifies a restored hosted link whose local image could
+	// not be verified. It remains removable without becoming an upload candidate.
+	SourceUnavailable bool `json:"sourceUnavailable,omitempty"`
 }
 
 // MediaCaptureInstructions are transport-safe capture choices. Local paths
@@ -580,7 +584,8 @@ type MediaCaptureInstructions struct {
 	ScreenshotCount int                   `json:"screenshotCount"`
 	Purpose         ScreenshotPurpose     `json:"purpose"`
 	Selections      []ScreenshotSelection `json:"selections,omitempty"`
-	// SavedImagePlanID binds an explicit saved-image import to its reviewed plan.
+	// SavedImagePlanID binds a saved-image import to its reviewed plan. With no
+	// requested count, selections or manual frames, only saved images are imported.
 	SavedImagePlanID MediaPlanID `json:"savedImagePlanId,omitempty"`
 	// ManualFrames applies the same raw frame numbers to every prepared disc.
 	ManualFrames    []int `json:"manualFrames,omitempty"`
@@ -611,6 +616,8 @@ type MediaArtifactSet struct {
 	// ImageRequirementsPrepared records that required image preparation is satisfied
 	// through hosting or explicit skip. Status still determines overall media readiness.
 	ImageRequirementsPrepared bool `json:"imageRequirementsPrepared"`
+	// ImageHostPreference records the automatic hosting policy used for the completed barrier.
+	ImageHostPreference *string `json:"imageHostPreference,omitempty"`
 	// ImageHostUploadSkipped records preparation without new host uploads. Cached
 	// links remain reusable, and unknown external outcomes still require reconciliation.
 	ImageHostUploadSkipped bool              `json:"imageHostUploadSkipped,omitempty"`
@@ -745,6 +752,10 @@ type UploadPlan struct {
 
 // UploadTrackerResult is one safe immutable tracker submission outcome.
 type UploadTrackerResult struct {
+	// SubmissionReceiptID and SubmissionOperationID correlate protocol evidence to one exact persisted attempt.
+	// They never authorize completion or a retry by themselves.
+	SubmissionReceiptID    string               `json:"submissionReceiptId,omitempty"`
+	SubmissionOperationID  WorkflowOperationID  `json:"submissionOperationId,omitempty"`
 	TrackerID              TrackerID            `json:"trackerId"`
 	Status                 StageStatus          `json:"status"`
 	SubmissionStatus       StageStatus          `json:"submissionStatus,omitempty"`
@@ -812,6 +823,9 @@ type ReleaseWorkflow struct {
 // ReleaseWorkflowCurrent is the complete safe current projection returned to
 // every workflow adapter. Private execution resources never appear here.
 type ReleaseWorkflowCurrent struct {
+	// PreparationOperationID identifies preparation accepted by this
+	// continuation response. Busy responses and passive reads omit it.
+	PreparationOperationID WorkflowOperationID                   `json:"preparationOperationId,omitempty"`
 	Workflow               ReleaseWorkflow                       `json:"workflow"`
 	FactInstructions       *ReleaseFactInstructionSnapshot       `json:"factInstructions,omitempty"`
 	Release                *ReleaseSnapshot                      `json:"release,omitempty"`

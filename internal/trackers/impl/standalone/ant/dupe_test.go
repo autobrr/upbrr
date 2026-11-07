@@ -357,15 +357,19 @@ func TestANTCandidatePreservesDiscFields(t *testing.T) {
 		"fileName":     "generated.123.torrent",
 		"container":    "m2ts",
 		"releaseGroup": "GRP",
-		"flags":        []any{"HDR10"},
+		"flags":        []any{"HDR10", "3D"},
 		"files": []any{
 			map[string]any{"name": "BDMV/BACKUP/BDJO/00000.bdjo"},
 			map[string]any{"name": "BDMV/index.bdmv"},
 		},
 	}}})
 	if len(entries) != 1 || entries[0].Name != "generated.123.torrent" || entries[0].CanonicalType != "DISC" ||
-		entries[0].Container != "m2ts" || entries[0].Group != "GRP" || len(entries[0].Flags) != 1 {
+		entries[0].Container != "m2ts" || entries[0].Group != "GRP" || len(entries[0].Flags) != 2 {
 		t.Fatalf("ANT disc entry = %#v", entries)
+	}
+	result := dupe.Evaluate(api.TrackerDuplicateTarget{}, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entries[0], "ANT")}, *duplicatePolicy(), dupe.SearchEvidence{})
+	if got := result.Candidates[0].Facts.ThreeD; got.Value != "3d" || got.Origin != dupe.FactOriginTrackerAPI {
+		t.Fatalf("ANT structured 3D evidence = %#v", got)
 	}
 }
 

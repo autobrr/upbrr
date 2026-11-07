@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -30,13 +31,43 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 	)
 	for _, tc := range []struct {
 		name, first, second, wantReason, returnedKey, encodedReturnedKey string
-		intended, networkFailure, emptyReason                            bool
+		intended, networkFailure, emptyReason, unknown                   bool
 		firstStatus, secondStatus, wantRequests, wantUploaded            int
 	}{
 		{
+			name:         "initial negative success cannot hide positive status",
+			first:        challenge[:len(challenge)-1] + `,"success":false,"status":"success"}`,
+			second:       `{"success":false,"error":"Retry rejected"}`,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 403,
+			wantRequests: 1,
+		},
+		{
+			name:         "initial success contradicts fresh challenge",
+			first:        challenge[:len(challenge)-1] + `,"success":true}`,
+			second:       `{"success":false,"error":"Retry rejected"}`,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 403,
+			wantRequests: 1,
+		},
+		{
+			name:         "initial positive status contradicts fresh challenge",
+			first:        challenge[:len(challenge)-1] + `,"status":"success"}`,
+			second:       `{"success":false,"error":"Retry rejected"}`,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 403,
+			wantRequests: 1,
+		},
+		{
 			name:         "challenge succeeds",
 			first:        challenge,
-			second:       `{"status":"success","view":"https://anthelion.me/torrents.php?torrentid=8"}`,
+			second:       `{"status":"success","error":"","view":"https://anthelion.me/torrents.php?torrentid=8"}`,
 			intended:     true,
 			firstStatus:  409,
 			secondStatus: 200,
@@ -56,7 +87,7 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		},
 		{
 			name:         "staff token accepted immediately",
-			first:        `{"status":"success"}`,
+			first:        `{"status":"success","error":null}`,
 			firstStatus:  200,
 			wantRequests: 1,
 			wantUploaded: 1,
@@ -172,6 +203,7 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 		},
 		{
 			name:         "retry rejected with HTML body",
+			unknown:      true,
 			first:        challenge,
 			second:       `<div class="error">Rejected key synthetic&#45;key&#45;12; retain unknown-token</div>`,
 			intended:     true,
@@ -249,10 +281,69 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			wantReason:   "Retry rejected (https://example.invalid/failure?[REDACTED])",
 		},
 		{
+			name:         "retry explicitly rejected with HTTP success",
+			first:        challenge,
+			second:       `{"success":false,"error":"Retry rejected"}`,
+			intended:     true,
+			firstStatus:  409,
+			secondStatus: 200,
+			wantRequests: 2,
+		},
+		{
+			name:         "retry contradictory success and error",
+			first:        challenge,
+			second:       `{"success":true,"error":"Retry rejected"}`,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 200,
+			wantRequests: 2,
+		},
+		{
+			name:         "retry negative success cannot hide positive status",
+			first:        challenge,
+			second:       `{"success":false,"status":"success"}`,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 200,
+			wantRequests: 2,
+		},
+		{
+			name:         "retry positive status with unsupported structured error",
+			first:        challenge,
+			second:       `{"status":"success","error":{"message":"Retry rejected synthetic-key-12"}}`,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 200,
+			wantRequests: 2,
+		},
+		{
+			name:         "retry status alone remains unknown",
+			first:        challenge,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 503,
+			wantRequests: 2,
+		},
+		{
+			name:         "retry malformed rejection remains unknown",
+			first:        challenge,
+			second:       `{"error":"Retry rejected",`,
+			intended:     true,
+			unknown:      true,
+			firstStatus:  409,
+			secondStatus: 403,
+			wantRequests: 2,
+		},
+		{
 			name:           "uncertain retry",
 			first:          challenge,
 			intended:       true,
 			networkFailure: true,
+			unknown:        true,
 			firstStatus:    409,
 			wantRequests:   2,
 		},
@@ -328,6 +419,15 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			summary, err := submitPreparedUpload(t.Context(), api.NopLogger{}, uploadState{trumpRetry: tc.intended, trumpReason: reason}, body, contentType, "", "")
 			if requests != tc.wantRequests || summary.Uploaded != tc.wantUploaded || (err == nil) != (tc.wantUploaded == 1) {
 				t.Fatalf("requests=%d summary=%+v err=%v", requests, summary, err)
+			}
+			if err != nil {
+				wantOutcome := submission.Rejected
+				if tc.unknown {
+					wantOutcome = submission.Unknown
+				}
+				if got := submission.OutcomeOf(err); got != wantOutcome {
+					t.Fatalf("outcome=%v want=%v", got, wantOutcome)
+				}
 			}
 			if err != nil && strings.Contains(err.Error(), key) {
 				t.Fatal("challenge key exposed")

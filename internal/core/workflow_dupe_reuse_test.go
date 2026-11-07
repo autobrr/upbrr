@@ -284,6 +284,55 @@ func TestWorkflowDupeReusePreservesSiblingsAndCurrentPrivateAuthority(t *testing
 	}
 }
 
+func TestWorkflowDupeReusePreservesEvidenceWhenAccountGuidanceChanges(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, previous, current string }{
+		{"added", "", "Review the account key configuration."},
+		{"updated", "Review the account key configuration.", "Renew the expiring account key."},
+		{"removed", "Review the account key configuration.", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowDupeReuseFixture(t)
+			f.reuse.QuestionnaireOnly = true
+			for projection, message := range map[*api.TrackerReleaseProjection]string{
+				&f.reuse.Projections.Projections[1]: tc.previous,
+				&f.projections.Projections[1]:       tc.current,
+			} {
+				if message != "" {
+					projection.PolicyDecisions = []api.TrackerPolicyDecision{{
+						Code:        trackers.APIKeyGuidanceCode,
+						Decision:    "advisory",
+						Disposition: api.RuleDispositionAdvisory,
+						Message:     message,
+					}}
+				}
+			}
+			var err error
+			f.reuse.Assessment.Results[1].ProjectionFingerprint, err = api.CanonicalWorkflowFingerprint(f.reuse.Projections.Projections[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			priorDecisions := slices.Clone(f.reuse.Projections.Projections[1].PolicyDecisions)
+			assessment, _ := f.build(t)
+			if f.service.calls["BETA"] != 1 {
+				t.Fatal("account advice repeated the sibling duplicate search")
+			}
+			want := f.reuse.Assessment.Results[1]
+			want.ProjectionFingerprint, err = api.CanonicalWorkflowFingerprint(f.projections.Projections[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(assessment.Results[1], want) {
+				t.Fatal("retained duplicate evidence lost its freshness or current full projection binding")
+			}
+			if !reflect.DeepEqual(f.reuse.Projections.Projections[1].PolicyDecisions, priorDecisions) {
+				t.Fatal("reuse mutated the prior immutable projection")
+			}
+		})
+	}
+}
+
 func TestWorkflowDupeReuseRequiresFreshStaffConfirmationForSibling(t *testing.T) {
 	f := newWorkflowDupeReuseFixture(t)
 	prior := &f.reuse.Assessment.Results[2]
@@ -384,7 +433,28 @@ func TestWorkflowDupeReuseRejectsChangedOrStaleEvidence(t *testing.T) {
 		{name: "target identity", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicateTargetFingerprint = "changed" }},
 		{name: "criteria", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicateCriteria.Name += ".changed" }},
 		{name: "policy", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].DuplicatePolicyFingerprint = "changed" }},
+		{name: "other advisory", change: func(f *workflowDupeReuseFixture) {
+			f.projections.Projections[1].PolicyDecisions = []api.TrackerPolicyDecision{{
+				Code:        "guidance_other",
+				Decision:    "advisory",
+				Disposition: api.RuleDispositionAdvisory,
+			}}
+		}},
+		{name: "strict account decision", change: func(f *workflowDupeReuseFixture) {
+			f.projections.Projections[1].PolicyDecisions = []api.TrackerPolicyDecision{{
+				Code:        trackers.APIKeyGuidanceCode,
+				Decision:    "advisory",
+				Disposition: api.RuleDispositionStrict,
+			}}
+		}},
 		{name: "warning fingerprint", change: func(f *workflowDupeReuseFixture) { f.projections.Projections[1].WaivableRuleFingerprint = "changed" }},
+		{name: "non-advisory account decision", change: func(f *workflowDupeReuseFixture) {
+			f.projections.Projections[1].PolicyDecisions = []api.TrackerPolicyDecision{{
+				Code:        trackers.APIKeyGuidanceCode,
+				Decision:    "strict",
+				Disposition: api.RuleDispositionAdvisory,
+			}}
+		}},
 		{name: "action semantics", change: func(f *workflowDupeReuseFixture) {
 			f.projections.Projections[1].RequiredActions[0].Prompt = "Acknowledge another rule."
 		}},
@@ -555,6 +625,7 @@ func TestANTTrumpIntentInvalidatesDuplicateReuse(t *testing.T) {
 		Tracker:       "ANT",
 		TrackerConfig: config.TrackerConfig{GuruTrump: true},
 		Meta: api.UploadSubject{
+			Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusNotApplicable},
 			SourcePath:        source,
 			ReleaseName:       "Example.Film.2026.1080p.WEB.H264-GRP",
 			Type:              "WEBDL",
@@ -803,6 +874,64 @@ func TestEquivalentMetadataRebindPreservesOnlyCurrentCertifiedAuthority(t *testi
 			} else if releaseworkflow.ProjectionEligibleForDownstream(f.projections.Projections[2], assessment.Results[2], true) ||
 				(name == "staff renewal" && (assessment.Results[2].StaffTokenConfirmed || assessment.Results[2].Decision != api.DupeDecisionPending)) {
 				t.Fatal("metadata rebind bypassed strict or staff authority")
+			}
+		})
+	}
+}
+
+func TestWorkflowDupeReuseSelectionChanges(t *testing.T) {
+	t.Parallel()
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expired), func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowDupeReuseFixture(t)
+			f.reuse.QuestionnaireOnly = true
+			f.reuse.InvalidatedTrackers = nil
+			// Remove a duplicate lane and a failed lane; add one unsearched tracker.
+			f.reuse.Assessment.Results[3].Status = api.StageStatusFailed
+			f.reuse.Assessment.Results[3].Decision = api.DupeDecisionPending
+			f.projections.Projections = slices.Clone(f.projections.Projections[1:3])
+			added := f.projections.Projections[0]
+			added.TrackerID = "EPSILON"
+			f.projections.Projections = append(f.projections.Projections, added)
+			preflight := f.preflight.Results[0]
+			preflight.TrackerID = "EPSILON"
+			f.preflight.Results = append(f.preflight.Results, preflight)
+			if expired {
+				f.now = f.reuse.Assessment.ExpiresAt
+			}
+			assessment, evidence := f.build(t)
+			wantCalls := 1
+			if expired {
+				wantCalls = 2
+			}
+			if f.service.calls["ALPHA"] != 1 || f.service.calls["DELTA"] != 1 ||
+				f.service.calls["BETA"] != wantCalls || f.service.calls["GAMMA"] != wantCalls || f.service.calls["EPSILON"] != 1 {
+				t.Fatalf("selection searched unrelated lanes: %v", f.service.calls)
+			}
+			if !expired && (!assessment.ExpiresAt.Equal(f.reuse.Assessment.ExpiresAt) ||
+				!assessment.Results[0].CheckedAt.Equal(f.reuse.Assessment.Results[1].CheckedAt) ||
+				!assessment.Results[0].FreshUntil.Equal(f.reuse.Assessment.Results[1].FreshUntil)) {
+				t.Fatal("selection renewed retained evidence")
+			}
+			bound, ok := evidence.Assessment.(dupechecking.Assessment)
+			if !ok {
+				t.Fatal("missing private evidence")
+			}
+			for _, removed := range []string{"ALPHA", "DELTA"} {
+				if _, exists := bound.Decision(removed); exists {
+					t.Fatalf("removed %s retained private authority", removed)
+				}
+			}
+			// Once removal is committed, re-adding that tracker needs its own check.
+			assessment.ReleaseRef = f.projections.ReleaseRef
+			f.reuse.Assessment, f.reuse.Projections, f.reuse.PrivateEvidence = assessment, f.projections, evidence
+			readded := added
+			readded.TrackerID = "ALPHA"
+			f.projections.Projections = append(slices.Clone(f.projections.Projections), readded)
+			f.build(t)
+			if f.service.calls["ALPHA"] != 2 || f.service.calls["BETA"] != wantCalls || f.service.calls["EPSILON"] != 1 {
+				t.Fatalf("re-add searched unchanged lanes: %v", f.service.calls)
 			}
 		})
 	}

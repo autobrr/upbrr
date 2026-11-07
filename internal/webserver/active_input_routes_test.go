@@ -21,14 +21,22 @@ import (
 
 type activeInputRouteFake struct {
 	ReleaseWorkflowCapability
-	get        api.ActiveInputSnapshot
-	openErr    error
-	recovered  api.RecoverLegacyActiveInputRequest
-	reconciled api.ReconcileActiveInputRequest
-	calls      int
+	get           api.ActiveInputSnapshot
+	openErr       error
+	recovered     api.RecoverLegacyActiveInputRequest
+	reconciled    api.ReconcileActiveInputRequest
+	calls         int
+	cancelledOpen api.CancelActiveInputOpenRequest
+	cancelOwner   string
 }
 
 func (f *activeInputRouteFake) GetActiveInput(context.Context, string) (api.ActiveInputSnapshot, error) {
+	return f.get, nil
+}
+
+func (f *activeInputRouteFake) CancelActiveInputOpen(_ context.Context, owner string, request api.CancelActiveInputOpenRequest) (api.ActiveInputSnapshot, error) {
+	f.calls++
+	f.cancelledOpen, f.cancelOwner = request, owner
 	return f.get, nil
 }
 
@@ -90,6 +98,10 @@ func TestActiveInputLegacyRecoveryRoutes(t *testing.T) {
 	}
 	if len(discovered.RecoveryWorkflowIDs) != 1 || discovered.RecoveryWorkflowIDs[0] != "legacy-workflow" {
 		t.Fatalf("legacy discovery = %#v", discovered)
+	}
+	cancelResponse := serveLegacyRecoveryRequest(t.Context(), t, mux, current, "/api/app/CancelActiveInputOpen", `{"idempotencyKey":"owned-open"}`)
+	if cancelResponse.Code != http.StatusOK || capability.cancelOwner != current.ID || capability.cancelledOpen.IdempotencyKey != "owned-open" {
+		t.Fatalf("open cancellation did not preserve session/request authority: status=%d", cancelResponse.Code)
 	}
 
 	recoverResponse := serveLegacyRecoveryRequest(t.Context(), t, mux, current, "/api/app/RecoverLegacyActiveInput", `{"workflowId":"legacy-workflow"}`)
@@ -199,6 +211,17 @@ func TestActiveInputRoutesValidateBeforeDispatch(t *testing.T) {
 		body  string
 		valid bool
 	}{
+		{
+name: "cancel open missing key",
+ route: "CancelActiveInputOpen",
+ body: `{}`,
+},
+		{
+name: "cancel open valid",
+ route: "CancelActiveInputOpen",
+ body: `{"idempotencyKey":"owned-open"}`,
+ valid: true,
+},
 		{
 			name:  "open missing preparation",
 			route: "OpenActiveInput",

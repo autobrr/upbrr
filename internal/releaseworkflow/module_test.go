@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -801,6 +802,7 @@ type uploadPlanBuilderFake struct {
 	testing           *testing.T
 	builds            int
 	options           []UploadPlanBuildOptions
+	contexts          []context.Context
 	execution         *retainedUploadExecutionFake
 	failed            map[api.TrackerID]bool
 	preparationFailed map[api.TrackerID]bool
@@ -843,6 +845,7 @@ func (f *uploadPlanBuilderFake) Build(
 ) (api.UploadPlan, RetainedUploadExecution, error) {
 	f.builds++
 	f.options = append(f.options, options)
+	f.contexts = append(f.contexts, ctx)
 	fingerprint, err := f.Fingerprint(ctx, projections, dupes, media, descriptions, options)
 	if err != nil {
 		return api.UploadPlan{}, nil, err
@@ -859,7 +862,7 @@ func (f *uploadPlanBuilderFake) Build(
 		if options.DryRun {
 			clientStatus = api.StageStatusCompleted
 			clientMessage = "Client injection completed."
-			if options.NoSeed {
+			if options.NoSeed || options.ReviewOnly {
 				clientStatus = api.StageStatusSkipped
 				clientMessage = "Client injection disabled by the skip option."
 			}
@@ -1095,7 +1098,12 @@ func TestModuleResetAndBlurayCandidateSelectionUseExactRetainedAuthority(t *test
 				Source:     api.SourceManifest{SourcePath: input.SourcePath},
 				Naming:     api.NamingFacts{ReleaseName: "Example.Release.2026.1080p-GRP"},
 				ProviderMetadata: api.SourceScopedMetadata{Bluray: &api.BlurayMetadata{
-					SelectedReleaseID: input.Instructions.BlurayReleaseID,
+					SelectedReleaseID: func() string {
+						if input.Instructions.Bluray != nil {
+							return input.Instructions.Bluray.Release
+						}
+						return ""
+					}(),
 					Candidates: []api.BlurayReleaseCandidate{
 						{ReleaseID: "candidate-retained", MovieTitle: "Example Release"},
 					},
@@ -1140,10 +1148,10 @@ func TestModuleResetAndBlurayCandidateSelectionUseExactRetainedAuthority(t *test
 		ReleaseID:        "candidate-retained",
 		IdempotencyKey:   "select-candidate",
 	})
-	if result.FactInstructions == nil || result.FactInstructions.Instructions.BlurayReleaseID != "candidate-retained" {
+	if result.FactInstructions == nil || result.FactInstructions.Instructions.Bluray.Release != "candidate-retained" {
 		t.Fatalf("candidate fact instructions = %#v", result.FactInstructions)
 	}
-	if !inputs[len(inputs)-1].Force || inputs[len(inputs)-1].Instructions.BlurayReleaseID != "candidate-retained" {
+	if !inputs[len(inputs)-1].Force || inputs[len(inputs)-1].Instructions.Bluray.Release != "candidate-retained" {
 		t.Fatalf("candidate prepare input = %#v", inputs[len(inputs)-1])
 	}
 
@@ -2204,6 +2212,27 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 		WithDescriptionBuilder(descriptions),
 		WithUploadPlanBuilder(uploadPlans),
 	)
+	const guidanceMessage = "Review the account key configuration."
+	basePreflight := module.trackerPreflight
+	module.trackerPreflight = trackerPreflightBuilderFunc(func(ctx context.Context, subject api.UploadSubject, catalog api.TrackerCatalogSnapshot,
+		runtime api.TrackerRuntimeSnapshot, initial api.TrackerReleaseProjectionSet, now time.Time,
+	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
+		assessment, finalized, err := basePreflight.Build(ctx, subject, catalog, runtime, initial, now)
+		if err != nil {
+			return assessment, finalized, fmt.Errorf("build retry guidance fixture: %w", err)
+		}
+		for index := range finalized {
+			if finalized[index].TrackerID == "ALPHA" {
+				finalized[index].PolicyDecisions = append(finalized[index].PolicyDecisions, api.TrackerPolicyDecision{
+					Code:        "guidance_api_key_expiry",
+					Decision:    "advisory",
+					Disposition: api.RuleDispositionAdvisory,
+					Message:     guidanceMessage,
+				})
+			}
+		}
+		return assessment, finalized, nil
+	})
 	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-dupes"})
 	result = executeCommand(t, module, PrepareReleaseCommand{
 		WorkflowID:       result.Workflow.ID,
@@ -2342,7 +2371,7 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	}
 	dryRun := executeCommand(t, module, dryRunCommand)
 	if dryRun.DryRun == nil || dryRun.DryRun.Status != api.StageStatusCompleted || len(dryRun.DryRun.Reports) != 1 ||
-		dryRun.DryRun.Reports[0].ClientInjection.Status != api.StageStatusSkipped || uploadPlans.builds != 1 {
+		dryRun.DryRun.Reports[0].ClientInjection.Status != api.StageStatusSkipped || dryRun.DryRun.ClientInjectionRequested || uploadPlans.builds != 1 {
 		t.Fatalf("direct dry run = %#v builds=%d", dryRun.DryRun, uploadPlans.builds)
 	}
 	repeatedDryRun := executeCommand(t, module, dryRunCommand)
@@ -2405,6 +2434,12 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	}
 	executed := executeCommand(t, module, execute)
 	failedExecution := uploadPlans.execution
+	if !api.TrackerGuidanceWasPresented(uploadPlans.contexts[0], "ALPHA", "guidance_api_key_expiry", guidanceMessage, nil) {
+		t.Fatal("first reviewed upload lost current preflight guidance history")
+	}
+	if api.TrackerGuidanceWasPresented(uploadPlans.contexts[1], "ALPHA", "guidance_api_key_expiry", guidanceMessage, &current.Projections.Projections[0]) {
+		t.Fatal("new direct upload reused guidance from before the earlier submission")
+	}
 	if executed.UploadResult == nil || executed.UploadResult.Status != api.StageStatusFailed || failedExecution.executions != 1 ||
 		uploadPlans.builds != 2 {
 		t.Fatalf("direct upload = %#v executions=%d builds=%d", executed, failedExecution.executions, uploadPlans.builds)
@@ -2430,6 +2465,9 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 		uploadPlans.builds != 3 || uploadPlans.execution.executions != 1 ||
 		len(uploadPlans.options[2].TrackerIDs) != 1 || uploadPlans.options[2].TrackerIDs[0] != "ALPHA" {
 		t.Fatalf("failed-only retry = %#v builds=%d options=%#v", retried, uploadPlans.builds, uploadPlans.options)
+	}
+	if api.TrackerGuidanceWasPresented(uploadPlans.contexts[2], "ALPHA", "guidance_api_key_expiry", guidanceMessage, &current.Projections.Projections[0]) {
+		t.Fatal("failed-upload retry reused account advice from the previous attempt")
 	}
 	repeatedRetry := executeCommand(t, module, retry)
 	if repeatedRetry.UploadResult == nil || repeatedRetry.UploadResult.ID != retried.UploadResult.ID ||
@@ -2728,6 +2766,20 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 				api.PreparationProgressCompleted,
 				"External identity ready.",
 			))
+			substep := api.NewPreparationProgressUpdate(api.PreparationPhaseMediaFacts, api.PreparationProgressRunning, "Waiting for the current edition.")
+			substep.Substep = "Read Blu-ray.com release details"
+			substep.CompletedItems, substep.TotalItems = 7, 100
+			substep.ElapsedSeconds = 10
+			api.EmitPreparationProgress(ctx, substep)
+			detail := api.NewPreparationProgressUpdate(api.PreparationPhaseMediaFacts, api.PreparationProgressRunning, "Release inspection complete.")
+			detail.BlurayCandidate = &api.BlurayReleaseCandidate{
+				ReleaseID:     "101",
+				Title:         "Example edition",
+				DetailsStatus: "complete",
+				ReleaseDate:   "2026-01-02",
+			}
+			api.EmitPreparationProgress(ctx, detail)
+
 			close(started)
 			select {
 			case <-ctx.Done():
@@ -2761,8 +2813,21 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 		t.Fatal("operation did not start")
 	}
 	progress := waitForWorkflowOperation(t, module, created.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool {
-		return status.Status == api.StageStatusRunning && status.Sequence >= 4 && len(status.Items) > 1
+		return status.Status == api.StageStatusRunning && status.Sequence >= 5 && len(status.Items) > 3
 	})
+	if progress.Completed != 800 || progress.Total != 1200 {
+		t.Fatalf("substep replaced aggregate stage order: %#v", progress)
+	}
+	if !slices.ContainsFunc(progress.Items, func(item api.WorkflowOperationItem) bool {
+		return item.Kind == "preparation_substep" && item.Phase == "media_facts" && item.Completed == 7 && item.Total == 100 && strings.Contains(item.Message, "10s elapsed")
+	}) {
+		t.Fatalf("substep lost in durable operation: %#v", progress.Items)
+	}
+	if !slices.ContainsFunc(progress.Items, func(item api.WorkflowOperationItem) bool {
+		return item.Kind == "bluray_detail" && item.BlurayCandidate != nil && item.BlurayCandidate.ReleaseID == "101" && item.BlurayCandidate.ReleaseDate == "2026-01-02"
+	}) {
+		t.Fatal("progressive candidate details were not retained with the operation")
+	}
 	if progress.Revision != created.Workflow.Revision || progress.Progress == 0 {
 		t.Fatalf("running operation progress = %#v", progress)
 	}
@@ -2770,7 +2835,7 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 		t.Fatalf("operation progress was not sanitized: %q", progress.Message)
 	}
 	if !slices.ContainsFunc(progress.Events, func(event api.WorkflowEvent) bool {
-		return event.ScopeID == string(api.PreparationPhaseExternalIdentity) && event.State == api.StageStatusCompleted
+		return event.ScopeID == string(api.PreparationPhaseMediaFacts) && event.State == api.StageStatusRunning
 	}) {
 		t.Fatalf("running operation omitted changed child event: %#v", progress.Events)
 	}
@@ -3738,6 +3803,14 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 				Kind:     api.MediaArtifactScreenshot,
 				Purpose:  api.ScreenshotPurposeFinal,
 				Selected: false,
+			}, {
+				ID:       "hosted-1",
+				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+				Source:   "artifact-1",
+				Host:     "example",
+				URL:      "https://images.example.invalid/retained.png",
 			}},
 			Status: api.StageStatusCompleted,
 		}, privateMedia, nil
@@ -3918,7 +3991,7 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 			t.Fatalf("durable workflow advanced past failed delete: %#v", state.Workflow)
 		}
 		media, ok := state.Media[state.Workflow.Media.ID]
-		if !ok || len(media.Artifacts) != 1 || media.Artifacts[0].ID != "artifact-1" {
+		if !ok || len(media.Artifacts) != 2 || media.Artifacts[0].ID != "artifact-1" || media.Artifacts[1].ID != "hosted-1" {
 			t.Fatalf("durable media lost the artifact after failed delete: %#v", media.Artifacts)
 		}
 	}
@@ -3943,6 +4016,13 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 	deleted := executeCommand(t, module, retry)
 	if deleted.Media == nil || len(deleted.Media.Artifacts) != 0 || privateMedia.stats.deletions != 2 {
 		t.Fatalf("deleted media = %#v deletions=%d", deleted.Media, privateMedia.stats.deletions)
+	}
+	stored, err := module.private.Get(testOwnerID, deleted.Workflow.ID, mediaPrivateResourceID(deleted.Media.ID), module.clock.Now().UTC())
+	if err != nil {
+		t.Fatalf("read stored media resource: %v", err)
+	}
+	if resource, ok := stored.(*retainedMediaResourceFake); !ok || resource == privateMedia || resource.pending {
+		t.Fatalf("stored media resource did not retain the committed deletion result: %#v", stored)
 	}
 	if privateMedia.stats.staged != 3 {
 		t.Fatalf("staged deletion attempts = %d, want 3", privateMedia.stats.staged)
@@ -3993,6 +4073,7 @@ func (m *hostSpecificMediaMutator) UploadImages(
 	artifactIDs []api.PublicResourceID,
 	host string,
 	_ bool,
+	_ *string,
 	_ time.Time,
 ) (api.MediaArtifactSet, RetainedMediaResource, []api.HostedImageAttempt, error) {
 	if host == "" {
@@ -4775,15 +4856,29 @@ func TestResolveReconciliationRequiresExactAnswerAndForcesFreshReview(t *testing
 	if err := repository.MarkOperationEffectsUnknown(ctx, testOwnerID, workflowID, operationID, now.Add(time.Second)); err != nil {
 		t.Fatalf("mark effect unknown: %v", err)
 	}
+	reporter := newDurableExternalEffectReporter(module, testOwnerID, workflowID, "replacement-operation")
+	receipt, err := api.BeginWorkflowExternalEffect(api.WithWorkflowExternalEffectReporter(ctx, reporter), api.WorkflowExternalEffect{
+		Kind:                api.WorkflowExternalEffectTrackerSubmission,
+		ScopeID:             started.ScopeID,
+		SemanticFingerprint: "replacement-semantic",
+	})
+	if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || receipt.EffectID != started.EffectID || receipt.OperationID != operationID {
+		t.Fatalf("denied begin lost the original recovery binding: receipt=%#v error=%v", receipt, err)
+	}
+	if err := reporter.Complete(ctx, receipt, false); !errors.Is(err, api.ErrReleaseWorkflowEffectConflict) {
+		t.Fatalf("denied begin acquired completion authority: %v", err)
+	}
 	action := api.RequiredAction{
-		ID:               "action-reconcile",
-		Kind:             api.RequiredActionReconcileSubmission,
-		Status:           api.RequiredActionStatusPending,
-		WorkflowRevision: 2,
-		TrackerID:        "ALPHA",
-		EffectKind:       api.WorkflowExternalEffectTrackerSubmission,
-		EffectScopeID:    "ALPHA",
-		Prompt:           "Verify the external effect.",
+		ID:                "action-reconcile",
+		Kind:              api.RequiredActionReconcileSubmission,
+		Status:            api.RequiredActionStatusPending,
+		WorkflowRevision:  2,
+		TrackerID:         "ALPHA",
+		EffectKind:        api.WorkflowExternalEffectTrackerSubmission,
+		EffectScopeID:     "ALPHA",
+		EffectID:          receipt.EffectID,
+		EffectOperationID: receipt.OperationID,
+		Prompt:            "Verify the external effect.",
 		Options: []api.RequiredActionOption{{
 			Value: api.RequiredActionReconcileNotCompleted,
 			Label: "Confirmed not completed",
@@ -4859,6 +4954,64 @@ func TestResolveReconciliationRequiresExactAnswerAndForcesFreshReview(t *testing
 	retry.UpdatedAt = retry.StartedAt
 	if _, idempotent, err := repository.BeginEffect(ctx, retry); err != nil || idempotent {
 		t.Fatalf("begin reconciled retry idempotent=%v err=%v", idempotent, err)
+	}
+}
+
+func TestPublishUploadResultRequiresBoundTrackerRecovery(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, receiptID string
+		operationID     api.WorkflowOperationID
+		recovery        api.OperationRecovery
+		wantActions     int
+	}{
+		{"bound", "effect", "operation", api.OperationRecoveryConfirm, 1},
+		{"unbound", "", "", api.OperationRecoveryNone, 0},
+		{"unbound confirmation", "", "", api.OperationRecoveryConfirm, 0},
+		{"partial binding", "effect", "", api.OperationRecoveryConfirm, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			module, repository := newTestModule(t, testPreparer())
+			created, err := module.Execute(t.Context(), testOwnerID, CreateWorkflowCommand{IdempotencyKey: "unbound-recovery"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state, err := repository.Load(t.Context(), testOwnerID, created.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failure := api.WorkflowFailure{TrackerID: "EXAMPLE", Failure: api.OperationFailure{
+				Code:      api.OperationFailureUnknownOutcome,
+				Operation: api.OperationKindUploadExecute,
+				Message:   "An existing attempt is uncertain.",
+				Recovery:  test.recovery,
+			}}
+			_, err = module.publishUploadResult(t.Context(), testOwnerID, &state, state.Workflow.Revision+1, module.clock.Now(), preparedUploads{
+				projections:  api.TrackerReleaseProjectionSet{ID: "projections", Revision: 1},
+				dupes:        api.DupeAssessment{ID: "dupes", Revision: 1},
+				media:        api.MediaArtifactSet{ID: "media", Revision: 1},
+				descriptions: api.DescriptionSet{ID: "descriptions", Revision: 1},
+				plan:         api.UploadPlan{InputFingerprint: testFingerprint(t, "unknown-result")},
+			}, []api.UploadTrackerResult{{
+				TrackerID:             "EXAMPLE",
+				Status:                api.StageStatusFailed,
+				SubmissionStatus:      api.StageStatusUnavailable,
+				ClientInjectionStatus: api.StageStatusPending,
+				SubmissionReceiptID:   test.receiptID,
+				SubmissionOperationID: test.operationID,
+				Failures:              []api.WorkflowFailure{failure},
+			}}, RegisteredArtifactAuthority{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(state.Workflow.RequiredActions) != test.wantActions || len(state.Workflow.Failures) != 1 || state.Workflow.Failures[0] != failure {
+				t.Fatalf("actions=%#v failures=%#v", state.Workflow.RequiredActions, state.Workflow.Failures)
+			}
+			if test.wantActions != 0 && (state.Workflow.RequiredActions[0].EffectID != test.receiptID ||
+				state.Workflow.RequiredActions[0].EffectOperationID != test.operationID) {
+				t.Fatalf("published a different binding: %#v", state.Workflow.RequiredActions)
+			}
+		})
 	}
 }
 
@@ -5198,6 +5351,7 @@ func TestResolveTrackerPreparationReplacesRetainedDryRun(t *testing.T) {
 	}
 	prior := api.UploadDryRunResult{
 		ID:               "dry-run-btn-initial",
+		ExplicitDryRun:   true,
 		WorkflowID:       "workflow-btn-autofill",
 		Revision:         2,
 		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: "projections-btn", Revision: 1},
@@ -5208,8 +5362,7 @@ func TestResolveTrackerPreparationReplacesRetainedDryRun(t *testing.T) {
 		NoSeed:           true,
 		TrackerIDs:       []api.TrackerID{"BTN"},
 		Reports:          uploadDryRunReports([]api.UploadPlanTracker{initialTracker}),
-		SucceededCount:   1,
-		Status:           api.StageStatusCompleted,
+		Status:           api.StageStatusBlocked,
 		CreatedAt:        now,
 	}
 	state := State{
@@ -5230,6 +5383,23 @@ func TestResolveTrackerPreparationReplacesRetainedDryRun(t *testing.T) {
 		prepared.plan.ExpiresAt,
 	); err != nil {
 		t.Fatalf("retain upload plan: %v", err)
+	}
+	unsafePrior := prior
+	unsafePrior.NoSeed, unsafePrior.ClientInjectionRequested = false, true
+	unsafeState := state
+	unsafeState.DryRuns = map[api.UploadDryRunResultID]api.UploadDryRunResult{prior.ID: unsafePrior}
+	unsafeConfirmed := true
+	_, unsafeErr := module.resolveAction(t.Context(), testOwnerID, &unsafeState, 3, now, ResolveActionCommand{
+		WorkflowID:       state.Workflow.ID,
+		ExpectedRevision: 2,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: 2,
+			Confirmed:        &unsafeConfirmed,
+		},
+	})
+	if !errors.Is(unsafeErr, ErrInvalidTransition) || len(execution.resolutionConfirmed) != 0 {
+		t.Fatalf("preparation continued without a durable client fence: %v", unsafeErr)
 	}
 	confirmed := false
 	execution.resolutionErr = errors.New("synthetic tracker preparation failure")
@@ -5267,6 +5437,8 @@ func TestResolveTrackerPreparationReplacesRetainedDryRun(t *testing.T) {
 		t.Fatalf("resolve tracker preparation: %v", err)
 	}
 	if result.DryRun == nil || state.Workflow.DryRun == nil || result.DryRun.ID == prior.ID || state.Workflow.DryRun.ID != result.DryRun.ID ||
+		!result.DryRun.ExplicitDryRun || !result.DryRun.NoSeed || result.DryRun.ClientInjectionRequested ||
+		result.DryRun.Status != api.StageStatusBlocked || result.DryRun.Reports[0].ClientInjection.Status != api.StageStatusSkipped ||
 		state.Workflow.Status != api.WorkflowStatusBlocked || len(state.Workflow.RequiredActions) != 1 ||
 		state.Workflow.RequiredActions[0].Prompt != fallbackTracker.RequiredActions[0].Prompt ||
 		state.Workflow.RequiredActions[0].WorkflowRevision != 3 {
@@ -5274,6 +5446,18 @@ func TestResolveTrackerPreparationReplacesRetainedDryRun(t *testing.T) {
 	}
 	if len(execution.resolutionConfirmed) != 2 || execution.resolutionConfirmed[0] || execution.resolutionConfirmed[1] {
 		t.Fatalf("resolution decisions = %#v", execution.resolutionConfirmed)
+	}
+	result.Workflow = state.Workflow
+	result.Workflow.Revision = result.DryRun.Revision
+	descriptor, descriptorErr := operationResultForCommand(resolveTrackerPreparationCommand{}, result)
+	if descriptorErr != nil || descriptor == nil || descriptor.Kind != api.WorkflowOperationResultDryRun ||
+		descriptor.RefID != string(result.DryRun.ID) || descriptor.RefRevision != result.DryRun.Revision ||
+		terminalOperationStatus(resolveTrackerPreparationCommand{}, result) != api.StageStatusBlocked {
+		t.Fatalf("resolved preparation operation result=%#v error=%v", descriptor, descriptorErr)
+	}
+	if old := state.DryRuns[prior.ID]; old.Status != prior.Status ||
+		old.Reports[0].SemanticFingerprint != prior.Reports[0].SemanticFingerprint || old.Reports[0].ClientInjection.Status != api.StageStatusSkipped {
+		t.Fatal("resolving preparation mutated the retained prior assessment")
 	}
 	if _, err := module.private.Get(
 		testOwnerID,
@@ -5294,16 +5478,16 @@ func TestResolveImageHostingReconciliationInvalidatesMissingPrivateMedia(t *test
 		{name: "unavailable dupes"},
 		{name: "current dupes", available: true},
 		{
-name: "stale media dependencies",
- available: true,
- privateMedia: true,
-},
+			name:         "stale media dependencies",
+			available:    true,
+			privateMedia: true,
+		},
 		{
-name: "ledger precedes snapshot",
- available: true,
- privateMedia: true,
- unpublishedAction: true,
-},
+			name:              "ledger precedes snapshot",
+			available:         true,
+			privateMedia:      true,
+			unpublishedAction: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			module, repository := newTestModule(t, testPreparer())
@@ -5468,7 +5652,8 @@ func testPreparer() ReleasePreparerFunc {
 	return ReleasePreparerFunc{
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 			return api.PrepareResult{Release: api.PreparedRelease{
-				Generation: 1,
+				Compatibility: api.PreparationCompatibility{ContractVersion: preparedrelease.ContractVersion},
+				Generation:    1,
 				Source: api.SourceManifest{
 					SourcePath: input.SourcePath,
 				},
@@ -5774,5 +5959,27 @@ func TestUploadDryRunReportsPreserveEditionFeatures(t *testing.T) {
 	reports[0].EditionFeatures[0].Selected = false
 	if !features[0].Selected {
 		t.Fatal("dry-run report aliases retained review catalogue")
+	}
+}
+
+func TestPreparationSubstepCountersDoNotMixWithStageOrder(t *testing.T) {
+	status := api.WorkflowOperationStatus{}
+	applyWorkflowProgress(&status, api.WorkflowProgressUpdate{
+		ItemID:    "media_facts",
+		Kind:      "preparation_substep",
+		Status:    api.StageStatusRunning,
+		Completed: 1400,
+		Total:     2000,
+		ItemOnly:  true,
+	})
+	applyWorkflowProgress(&status, api.WorkflowProgressUpdate{
+		ItemID:    "media_facts",
+		Kind:      "preparation_phase",
+		Status:    api.StageStatusCompleted,
+		Completed: 900,
+		Total:     1200,
+	})
+	if status.Completed != 900 || status.Total != 1200 || status.Items[0].Completed != 900 || status.Items[0].Total != 1200 {
+		t.Fatalf("mixed counter units: %#v", status)
 	}
 }

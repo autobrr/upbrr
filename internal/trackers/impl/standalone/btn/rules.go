@@ -37,7 +37,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	}
 	if programmeStatus != api.MetadataEvidenceStatusComplete {
 		if !remux {
-			add("evidence", "programme language, track role or inspected coverage needs review", trackers.LanguageUnresolved)
+			add("evidence", "programme language, track role or inspected coverage is required to derive the Foreign flag", trackers.LanguageUnresolved)
 		}
 	} else if language := btnPrimaryProgrammeLanguage(facts); language == "" {
 		add("primary_evidence", "one identified primary programme language is required for the Foreign flag", trackers.LanguageUnresolved)
@@ -45,14 +45,18 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		add("primary_country", "select the BTN country matching the primary "+language+" programme audio", trackers.LanguageUnresolved)
 	}
 	english := languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English")
-	if !facts.OriginalLanguagesKnown {
-		if !remux {
-			add("original_evidence", "original language is unresolved for the programme dub assessment", trackers.LanguageUnresolved)
-		}
-	} else if programmeStatus != api.MetadataEvidenceStatusContradictory {
+	if programmeStatus != api.MetadataEvidenceStatusContradictory {
 		for _, track := range facts.Tracks {
 			if facts.ProgrammeAudioOrigin(track) != api.TrackAudioDubbed {
 				continue
+			}
+			if !facts.OriginalLanguagesKnown {
+				add(
+					"staff_dub_evidence",
+					"a confirmed dub needs the title's original language to assess staff approval for an English-original show",
+					trackers.LanguageUnresolved,
+				)
+				break
 			}
 			for _, language := range track.Languages {
 				if !languageutil.IsIdentifiedLanguage(language) || languageutil.ContainsLanguage(facts.OriginalLanguages, language) {

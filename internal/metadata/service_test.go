@@ -48,6 +48,11 @@ func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
 		t.Fatalf("write video failed: %v", err)
 	}
+	for _, name := range []string{"sample.mkv", "release.nfo", "excluded.rar"} {
+		if err := os.WriteFile(filepath.Join(path, name), []byte("excluded"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	repo := &stubRepo{existing: db.FileMetadata{Path: videoPath, InfoHash: "hash"}}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
@@ -68,6 +73,9 @@ func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 	}
 	if meta.SourcePath != path {
 		t.Fatalf("unexpected source path: %s", meta.SourcePath)
+	}
+	if meta.PackageInventory.Status != api.MetadataEvidenceStatusComplete || !slices.Equal(meta.PackageInventory.Files, []string{videoPath}) {
+		t.Fatalf("intended torrent inventory = %+v", meta.PackageInventory)
 	}
 	if len(meta.Paths) != 1 {
 		t.Fatalf("unexpected paths length: %d", len(meta.Paths))
@@ -98,20 +106,28 @@ func TestCollectSourceEvidenceCarriesExternalFreshness(t *testing.T) {
 	if err := os.WriteFile(sourcePath, []byte("video"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	request := testCollectionRequest(t, api.Request{SourcePath: sourcePath})
-	request.Input.ExternalFreshness = api.ExternalFreshnessRefresh
-	request.Input.Instructions.BlurayReleaseID = "selected-disc"
-	service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
+	for _, sourceURL := range []string{"", "https://www.blu-ray.com/movies/Example/123/", "https://tracker.example/torrents/blu-ray.com/123"} {
+		t.Run(fmt.Sprintf("source URL %q", sourceURL), func(t *testing.T) {
+			request := testCollectionRequest(t, api.Request{SourcePath: sourcePath})
+			request.Input.ExternalFreshness = api.ExternalFreshnessRefresh
+			request.Input.Instructions.Bluray = &api.BluraySelection{Mode: "manual", Release: "https://www.blu-ray.com/movies/Example/123/"}
+			request.Input.Instructions.SourceLookup = sourceURL
+			if sourceURL == request.Input.Instructions.Bluray.Release {
+				request.Input.Instructions.Bluray = nil
+			}
+			service := newTestService(t, &stubRepo{}, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
 
-	meta, err := service.collectSourceEvidence(t.Context(), request)
-	if err != nil {
-		t.Fatalf("collect source evidence: %v", err)
-	}
-	if meta.ExternalFreshness != api.ExternalFreshnessRefresh {
-		t.Fatalf("external freshness = %q, want refresh", meta.ExternalFreshness)
-	}
-	if meta.BlurayReleaseID != "selected-disc" {
-		t.Fatalf("Blu-ray instruction = %q", meta.BlurayReleaseID)
+			meta, err := service.collectSourceEvidence(t.Context(), request)
+			if err != nil {
+				t.Fatalf("collect source evidence: %v", err)
+			}
+			if meta.ExternalFreshness != api.ExternalFreshnessRefresh {
+				t.Fatalf("external freshness = %q, want refresh", meta.ExternalFreshness)
+			}
+			if meta.Bluray == nil || meta.Bluray.Mode != "manual" || meta.Bluray.Release != "https://www.blu-ray.com/movies/Example/123/" {
+				t.Fatalf("Blu-ray instruction = %#v", meta.Bluray)
+			}
+		})
 	}
 }
 
@@ -648,6 +664,10 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 	}
 	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
 		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(bdmvPath, "index.bdmv"), []byte("synthetic disc marker"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	repo := &stubRepo{
@@ -1346,6 +1366,10 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 		t.Fatalf("mkdir stream failed: %v", err)
 	}
 
+	if err := os.WriteFile(filepath.Join(bdmvPath, "index.bdmv"), []byte("synthetic disc marker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	repo := &stubRepo{
 		playlistSelection: db.PlaylistSelection{
 			SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
@@ -1459,6 +1483,10 @@ func TestPrepareBDMVDirectPlaylistInvokesBDInfoForParentAndRoot(t *testing.T) {
 	}
 	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
 		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(bdmvPath, "index.bdmv"), []byte("synthetic disc marker"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	repo := &stubRepo{}
@@ -1657,6 +1685,10 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 	}
 	if err := os.MkdirAll(filepath.Join(bdmvPath, "STREAM"), 0o755); err != nil {
 		t.Fatalf("mkdir stream failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(bdmvPath, "index.bdmv"), []byte("synthetic disc marker"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	repo := &stubRepo{

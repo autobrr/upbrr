@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -180,28 +181,30 @@ func (r *SQLiteRepository) ListOrphanedHistoryPaths(ctx context.Context) ([]stri
 
 func (r *SQLiteRepository) listOrphanHistoryWorkflows(ctx context.Context) ([]orphanHistoryWorkflow, error) {
 	rows, err := r.historyQuery(ctx).QueryContext(ctx, `
-		SELECT owner_id, workflow_id, status, state_json
-		FROM release_workflow_states
-		ORDER BY owner_id ASC, workflow_id ASC
+		SELECT state.owner_id, state.workflow_id,
+			ownership.revision IS NULL OR ownership.revision <> state.revision OR COALESCE(ownership.ambiguous, 1),
+			COALESCE(ownership.empty, 0), sources.source_path
+		FROM release_workflow_states AS state
+		LEFT JOIN release_workflow_ownership AS ownership USING (owner_id, workflow_id)
+		LEFT JOIN release_workflow_sources AS sources USING (owner_id, workflow_id)
+		ORDER BY state.owner_id, state.workflow_id, sources.source_path
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("db list orphaned history workflows: %w", err)
 	}
 	defer rows.Close()
-
-	workflows := make([]orphanHistoryWorkflow, 0)
+	var workflows []orphanHistoryWorkflow
 	for rows.Next() {
 		var workflow orphanHistoryWorkflow
-		var status api.WorkflowStatus
-		var payload []byte
-		if err := rows.Scan(&workflow.scope.OwnerID, &workflow.scope.WorkflowID, &status, &payload); err != nil {
+		var path sql.NullString
+		if err := rows.Scan(&workflow.scope.OwnerID, &workflow.scope.WorkflowID, &workflow.ambiguous, &workflow.empty, &path); err != nil {
 			return nil, fmt.Errorf("db scan orphaned history workflow: %w", err)
 		}
-		workflow.paths, workflow.ambiguous, workflow.empty = classifyOrphanHistoryWorkflow(payload)
-		if workflow.empty && status != api.WorkflowStatusDraft && status != api.WorkflowStatusBlocked {
-			workflow.ambiguous = true
+		if len(workflows) == 0 || workflows[len(workflows)-1].scope != workflow.scope {
+			workflows = append(workflows, workflow)
 		}
-		workflows = append(workflows, workflow)
+		current := &workflows[len(workflows)-1]
+		current.paths = addOrphanHistoryPath(current.paths, path.String)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("db iterate orphaned history workflows: %w", err)
@@ -210,15 +213,10 @@ func (r *SQLiteRepository) listOrphanHistoryWorkflows(ctx context.Context) ([]or
 }
 
 func classifyOrphanHistoryWorkflow(payload []byte) ([]string, bool, bool) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &raw); err != nil || raw == nil {
+	state, paths, err := decodeWorkflowOwnership(payload)
+	if err != nil {
 		return nil, true, false
 	}
-	var state storedReleaseWorkflowSource
-	if err := json.Unmarshal(payload, &state); err != nil {
-		return nil, true, false
-	}
-	paths := storedReleaseWorkflowSourcePaths(payload)
 	if len(state.Releases) == 0 {
 		if len(paths) > 0 {
 			return paths, false, false
@@ -228,10 +226,8 @@ func classifyOrphanHistoryWorkflow(payload []byte) ([]string, bool, bool) {
 		}
 		return nil, false, true
 	}
-
 	for _, release := range state.Releases {
-		sourcePath := strings.TrimSpace(release.Release.Source.SourcePath)
-		if sourcePath == "" {
+		if strings.TrimSpace(release.Release.Source.SourcePath) == "" {
 			return paths, true, false
 		}
 	}
@@ -330,6 +326,9 @@ func addOrphanHistoryPath(paths []string, path string) []string {
 }
 
 func orphanHistoryPathRelated(path string, candidates []string) bool {
+	if strings.TrimSpace(path) != "" && slices.Contains(candidates, path) {
+		return true
+	}
 	for _, candidate := range candidates {
 		if pathutil.SamePath(path, candidate) || pathutil.IsWithinRoot(path, candidate) || pathutil.IsWithinRoot(candidate, path) {
 			return true

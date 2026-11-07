@@ -9,6 +9,7 @@ import type {
   PlaylistInfo,
   PrepareInput,
   PreparedRelease,
+  ProviderSearchResult,
   ReleaseNameOverrides,
   ReleaseRef,
   ScreenshotPlan,
@@ -18,6 +19,7 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  BluraySelection,
   HDRAnalysisResult,
   HDRAnalysisInstructions,
   HDRComparisonSourceRef,
@@ -43,6 +45,7 @@ import type {
   ReleaseCorrectionsSnapshot,
   RequiredAction,
   ReleaseWorkflowCurrent,
+  ScreenshotProcessing,
   TrackerLaneOutcome,
   SubmissionExclusion,
   TrackerPreflightAssessment,
@@ -67,7 +70,7 @@ export type ReleaseRoute =
   | "upload";
 
 export type RouteAccess = Readonly<{ available: boolean; reason: string; reasonCode?: string }>;
-export type FacetStatus = "idle" | "running" | "ready" | "error";
+export type FacetStatus = "idle" | "running" | "ready" | "error" | "cancelled";
 
 /** Lifecycle of one correlation-scoped canonical preparation attempt. */
 export type PreparationStatus =
@@ -99,6 +102,7 @@ export type PlaylistStatus =
 
 export type PreparationIntent = Readonly<{
   sourceLookupURL: string;
+  bluray?: BluraySelection | null;
   identity: Readonly<ExternalIDOverrides>;
   metadata: Readonly<MetadataOverrides>;
   releaseName: Readonly<ReleaseNameOverrides>;
@@ -145,6 +149,8 @@ export type InputFacet = Readonly<{
       recoveryWorkflowIDs: readonly string[];
     }>;
     sourceVerification: SourceVerificationProgress | null;
+    /** True once a durable operation is available to cancel. */
+    candidateDetailsCancelable?: boolean;
     preparationDirty: boolean;
     correctionDirty: boolean;
     intent: PreparationIntent;
@@ -170,8 +176,17 @@ export type InputFacet = Readonly<{
       useAll: boolean;
       error: string;
     }>;
+    providerSearch: Readonly<{
+      status: FacetStatus;
+      result: ProviderSearchResult | null;
+      error: string;
+    }>;
   }>;
+  /** Inspects candidates without applying corrections or changing release facts. */
+  searchProviders(query: string): Promise<void>;
+  cancelProviderSearch(): void;
   updateSourceDraft(value: string): void;
+  /** Selects a draft path and requests cancellation of active work before another preparation. */
   selectSource(value: string): void;
   changeSourceLookupURL(value: string): void;
   changeIdentity(value: Readonly<ExternalIDOverrides>): void;
@@ -192,7 +207,7 @@ export type InputFacet = Readonly<{
   reviewPlaylists(): void;
   confirmPlaylists(captureHDRMetadata?: boolean): Promise<boolean>;
   cancelPlaylistSelection(): void;
-  /** Aborts local preparation/workflow requests; this does not close the durable active input. */
+  /** Requests operation cancellation and keeps the selected input while awaiting terminal confirmation. */
   cancelPreparation(): void;
   prepareSource(sourcePath: string, intent: PreparationIntent): Promise<boolean>;
   /** Reports an accepted open or refresh, including a pause for correction or playlist review. */
@@ -206,6 +221,12 @@ export type InputFacet = Readonly<{
   reset(): Promise<boolean>;
   confirmBDMVRescan(): Promise<boolean>;
   selectCandidate(releaseID: string): Promise<boolean>;
+  /** Inspects one release; omitting its ID explicitly inspects all eligible listings. */
+  fetchCandidateDetails(releaseID?: string): Promise<boolean>;
+  /** Cancels requested detail work through its durable workflow operation. */
+  cancelCandidateDetails(): Promise<boolean>;
+  /** Restores automatic matching or explicitly clears selection without a full inspection. */
+  setCandidateSelection(mode: "auto" | "skip"): Promise<boolean>;
 }>;
 
 /** Duplicate-check commands, naming review, and exact workflow-owned tracker outcomes. */
@@ -266,6 +287,8 @@ export type ScreenshotsFacet = Readonly<{
     selections: readonly ScreenshotSelection[];
     finalSelectionArtifactIDs: readonly string[];
     previewImage: string;
+    previewProcessing?: ScreenshotProcessing;
+    previewTimestampSeconds?: number;
     staleReason: string;
     mutationBlockedReason: string;
     error: string;
@@ -456,6 +479,10 @@ export type WorkflowFacet = Readonly<{
     error: string;
     failure: OperationFailure | null;
   }>;
+  /** Shared cancellation state; confirmation waits for backend terminal readback. */
+  cancellation: Readonly<{ available: boolean; pending: boolean; retry: boolean; message: string }>;
+  /** Stops this command's continuation without closing its selected input or discarding results. */
+  cancel(): Promise<boolean>;
   reload(): Promise<boolean>;
   begin(input: PrepareInput): Promise<boolean>;
   project(
@@ -538,7 +565,7 @@ export type HDRAnalysisFacet = Readonly<{
   setIncludedArtifacts(artifactIDs: readonly string[]): Promise<boolean>;
   /** Resumes a pending request, otherwise reuses the retained target selection and options. */
   retry(): Promise<boolean>;
-  /** Cancels the active HDR operation while retaining checkpointed metadata. */
+  /** Requests HDR cancellation while retaining checkpoints; resolves after terminal confirmation. */
   cancel(): Promise<boolean>;
   /** Addresses an image or JSON report in the current retained analysis revision. */
   artifactURL(artifactID: string): string;

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -77,6 +78,71 @@ func (m *Module) LegacyRecoveryWorkflowIDs(ctx context.Context, ownerID string) 
 		return nil, fmt.Errorf("release workflow list recovery workflows: %w", err)
 	}
 	return workflowIDs, nil
+}
+
+// LegacyRecoveryWorkflowIDsForSource selects unresolved owner workflows for one
+// source. Missing or contradictory retained source authority remains blocking.
+// This query never claims an input, reconciles an effect, or resumes work.
+func (m *Module) LegacyRecoveryWorkflowIDsForSource(ctx context.Context, ownerID, source string) ([]api.WorkflowID, error) {
+	if strings.TrimSpace(ownerID) == "" || strings.TrimSpace(source) == "" {
+		return nil, errors.New("release workflow: recovery owner and source are required")
+	}
+	ids, err := m.durability.ListLegacyRecoveryWorkflowIDs(ctx, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("release workflow list source recovery workflows: %w", err)
+	}
+	selected := make([]api.WorkflowID, 0, len(ids))
+	for _, id := range ids {
+		state, err := m.repository.Load(ctx, ownerID, id)
+		if err != nil && !errors.Is(err, ErrWorkflowNotFound) {
+			return nil, fmt.Errorf("release workflow read recovery source: %w", err)
+		}
+		if err != nil {
+			selected = append(selected, id)
+			continue
+		}
+		bound, known := workflowRecoverySourcePath(&state)
+		if !known || pathing.SamePath(bound, source) {
+			selected = append(selected, id)
+		}
+	}
+	return selected, nil
+}
+
+func workflowRecoverySourcePath(state *State) (string, bool) {
+	paths := []string{state.SourcePath}
+	if state.PreparationInput != nil {
+		paths = append(paths, state.PreparationInput.SourcePath)
+	}
+	if ref := state.Workflow.Release; ref != nil {
+		release, ok := state.Releases[ref.ID]
+		if !ok || release.Revision != ref.Revision {
+			return "", false
+		}
+		paths = append(paths, release.Release.Source.SourcePath)
+	}
+	var source string
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		if source != "" && !pathing.SamePath(source, path) {
+			return "", false
+		}
+		source = path
+	}
+	return source, source != ""
+}
+
+func (m *Module) requireInputSourceReconciled(ctx context.Context, owner, source string) error {
+	ids, err := m.LegacyRecoveryWorkflowIDsForSource(ctx, owner, source)
+	if err != nil {
+		return err
+	}
+	if len(ids) != 0 {
+		return api.ErrReleaseWorkflowEffectOutcomeUnknown
+	}
+	return nil
 }
 
 func (m *Module) claimLegacyRecoverySlot(
@@ -162,10 +228,36 @@ func (m *Module) publishLegacyRecoveryActions(
 	now := m.clock.Now().UTC()
 	changed := false
 	for _, effect := range effects {
-		if slices.ContainsFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+		accepted := false
+		for _, result := range state.UploadResults {
+			if result.ConfirmsSubmission(effect) {
+				accepted = true
+				break
+			}
+		}
+		if accepted {
+			effect.UpdatedAt, effect.CompletedAt = now, &now
+			if err := m.durability.CompleteEffect(ctx, api.WorkflowEffectStatusSucceeded, effect); err != nil {
+				return fmt.Errorf("release workflow retain accepted legacy effect: %w", err)
+			}
+			state.Workflow.RequiredActions = slices.DeleteFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+				return action.Kind == api.RequiredActionReconcileSubmission && action.EffectKind == api.WorkflowExternalEffectKind(effect.Kind) &&
+					action.EffectScopeID == effect.ScopeID && ((action.EffectID == "" && action.EffectOperationID == "") ||
+					(action.EffectID == effect.EffectID && action.EffectOperationID == effect.OperationID))
+			})
+			changed = true
+			continue
+		}
+		if index := slices.IndexFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
 			return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending &&
 				action.EffectKind == api.WorkflowExternalEffectKind(effect.Kind) && action.EffectScopeID == effect.ScopeID
-		}) {
+		}); index >= 0 {
+			if state.Workflow.RequiredActions[index].EffectID != effect.EffectID ||
+				state.Workflow.RequiredActions[index].EffectOperationID != effect.OperationID {
+				state.Workflow.RequiredActions[index].EffectID = effect.EffectID
+				state.Workflow.RequiredActions[index].EffectOperationID = effect.OperationID
+				changed = true
+			}
 			continue
 		}
 		trackerID := api.TrackerID("")
@@ -185,6 +277,7 @@ func (m *Module) publishLegacyRecoveryActions(
 		if actionErr != nil {
 			return fmt.Errorf("release workflow create legacy recovery action: %w", actionErr)
 		}
+		action.EffectID, action.EffectOperationID = effect.EffectID, effect.OperationID
 		state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
 		changed = true
 	}
@@ -199,6 +292,12 @@ func (m *Module) publishLegacyRecoveryActions(
 	}
 	if hasPendingRequiredAction(state.Workflow.RequiredActions) {
 		state.Workflow.Status = api.WorkflowStatusBlocked
+	} else if state.Workflow.Status == api.WorkflowStatusBlocked {
+		if state.Workflow.UploadResult != nil {
+			state.Workflow.Status = api.WorkflowStatusCompleted
+		} else {
+			state.Workflow.Status = api.WorkflowStatusActive
+		}
 	}
 	if err := state.Workflow.Validate(); err != nil {
 		return fmt.Errorf("release workflow validate legacy recovery actions: %w", err)
@@ -309,6 +408,9 @@ func (m *Module) settleRecoveryActions(ctx context.Context, ownerID string, work
 		}
 		settledCount++
 		switch {
+		case action.EffectKind == api.WorkflowExternalEffectTrackerSubmission && retainedSubmissionConfirmsAction(&state, action):
+			// A completed effect can precede a failed workflow save; replay keeps
+			// its accepted result and registered authority rather than invalidating them.
 		case action.EffectKind == api.WorkflowExternalEffectImageHosting:
 			finishUnavailableImageHostingReconciliation(&state.Workflow, action)
 		case action.EffectKind == api.WorkflowExternalEffectClientInjection &&
@@ -381,4 +483,26 @@ func (m *Module) settleRecoveryActions(ctx context.Context, ownerID string, work
 		m.logger.Debugf("releaseworkflow: startup recovery decision=discard_actions workflow=%s count=%d", workflowID, settledCount)
 	}
 	return true, nil
+}
+
+func retainedSubmissionConfirmsAction(state *State, action api.RequiredAction) bool {
+	for _, retained := range state.UploadResults {
+		for _, result := range retained.Results {
+			// Legacy actions may predate exact effect IDs; bound actions must match both.
+			if (action.EffectID != "" || action.EffectOperationID != "") &&
+				(action.EffectID != result.SubmissionReceiptID || action.EffectOperationID != result.SubmissionOperationID) {
+				continue
+			}
+			if retained.ConfirmsSubmission(api.ReleaseWorkflowEffectRecord{
+				WorkflowID:  state.Workflow.ID,
+				Kind:        string(action.EffectKind),
+				ScopeID:     action.EffectScopeID,
+				EffectID:    result.SubmissionReceiptID,
+				OperationID: result.SubmissionOperationID,
+			}) {
+				return true
+			}
+		}
+	}
+	return false
 }

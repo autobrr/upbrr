@@ -15,6 +15,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -79,7 +80,8 @@ func TestContinueAitherAcknowledgementReusesPreparedSelectionFacts(t *testing.T)
 				}
 				media.LanguageFacts = mediafacts.ResolveLanguages(media)
 				release := api.PreparedRelease{
-					Generation: generation,
+					Compatibility: api.PreparationCompatibility{ContractVersion: preparedrelease.ContractVersion},
+					Generation:    generation,
 					Source: api.SourceManifest{SourcePath: sourcePath, Entries: []api.SourceManifestEntry{{
 						Path: sourcePath, Type: api.SourceEntryTypeFile,
 					}}},

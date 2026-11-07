@@ -21,7 +21,7 @@ const GeneralDuplicatePolicyID = "general/duplicate/v10"
 // DuplicateSearchContractID versions authoritative search scope and completion semantics.
 // Projection/catalog fingerprints and persisted private evidence carry this ID so older
 // search results cannot authorize fresh tracker submissions.
-const DuplicateSearchContractID = "duplicate-search/work-scope/v3"
+const DuplicateSearchContractID = "duplicate-search/work-scope/v4"
 
 // ErrSubmitted2FARejected marks tracker auth failure after a supplied manual 2FA code was rejected.
 var ErrSubmitted2FARejected = errors.New("trackers: submitted 2FA rejected")
@@ -314,6 +314,8 @@ type AuthRequirementsResolver func(config.Config, config.TrackerConfig) Effectiv
 // AuthPolicy declares coordinator behavior that cannot be inferred from the
 // user-facing auth capability alone.
 type AuthPolicy struct {
+	// APIKeyGuidance observes account expiry without contributing auth requirements.
+	APIKeyGuidance *APIKeyGuidance
 	// ResolveRequirements returns the secret-free auth facts for the effective
 	// tracker mode.
 	ResolveRequirements AuthRequirementsResolver
@@ -1022,6 +1024,8 @@ type Descriptor struct {
 	ClaimFactory ClaimCheckerFactory
 	// ClaimPolicy contains optional generic claim orchestration settings.
 	ClaimPolicy *ClaimPolicy
+	// ConnectionProbe tests draft credentials without activating or persisting them.
+	ConnectionProbe ConnectionProbe
 	// AuthResolver performs optional tracker-owned auth resolution.
 	AuthResolver AuthSessionResolver
 	// AuthCapability describes optional interactive auth support.

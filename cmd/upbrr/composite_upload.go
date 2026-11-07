@@ -448,11 +448,10 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			return feedback, false, fmt.Errorf("upbrr: tracker approval candidate %s has no current duplicate assessment", trackerID)
 		}
 		var evidence strings.Builder
-		// Capture evidence before console output, which may fail independently.
-		output := io.MultiWriter(&evidence, s.streams.out)
+		// Build one detached context for the active presenter.
+		output := &evidence
 		fmt.Fprintf(output, "Tracker: %s (%s)\n", tracker, trackerID)
-		fmt.Fprintf(s.streams.out, "Upload name: %q\n", projection.UploadReleaseName)
-		fmt.Fprintf(&evidence, "Upload name: %s\n", projection.UploadReleaseName)
+		fmt.Fprintf(output, "Upload name: %q\n", projection.UploadReleaseName)
 		if len(projection.EditionFeatures) > 0 {
 			selected := make([]string, 0, len(projection.EditionFeatures))
 			for _, feature := range projection.EditionFeatures {
@@ -462,24 +461,14 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			}
 			fmt.Fprintf(output, "%s edition/features: %s\n", trackerID, emptyCLIValue(strings.Join(selected, " ")))
 		}
-		fmt.Fprintf(
-			output,
-			"Duplicate check: decision=%s candidates=%d search_complete=%t policy=%s\n",
-			dupe.Decision,
-			len(dupe.Matches),
-			dupe.Search.Complete,
-			emptyCLIValue(dupe.PolicyID),
-		)
-		fmt.Fprintf(
-			output,
-			"Requirements: screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t\n",
-			projection.Artifacts.ScreenshotCount,
-			projection.Artifacts.DVDMenuCount,
-			projection.Artifacts.ImageHosting,
-			projection.Artifacts.Description,
-		)
-		printCLICompositeDupeReviewReasons(output, dupe.ReviewReasons)
-		printCLICompositeDupeMatches(output, dupe.Matches)
+		printCLICompositeDupeEvidence(output, dupe)
+		fmt.Fprintf(output, "Preparation: %d screenshots; %d DVD menu images.\n", projection.Artifacts.ScreenshotCount, projection.Artifacts.DVDMenuCount)
+		if projection.Artifacts.ImageHosting {
+			fmt.Fprintln(output, "Images will be uploaded to an image host.")
+		}
+		if projection.Artifacts.Description {
+			fmt.Fprintln(output, "A tracker description will be prepared.")
+		}
 		if writer, ok := s.streams.out.(*cliPresentationWriter); ok {
 			writer.question.Evidence = safeTerminalText(evidence.String())
 		}
@@ -506,10 +495,20 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			}
 			prompt := fmt.Sprintf("Use %s as %q? %s: ", tracker, projection.UploadReleaseName, choice)
 			var err error
-			confirmed, err = promptYesNo(reader, s.streams.out, prompt, defaultYes)
+			confirmed, err = askCLIConfirmation(reader, s.streams.out, cliPrompt{
+				Kind:       cliPromptConfirm,
+				Question:   prompt,
+				DefaultYes: defaultYes,
+				Evidence:   evidence.String(),
+				Help: "Yes includes only this tracker in the approved set for subsequent preparation and submission in this run. No leaves it out; other selected trackers can continue. " +
+					"Debug and site-check still suppress tracker submission; client injection follows the run options. To change source facts, stop and rerun with correction flags before approving.",
+			})
 			if err != nil {
 				return feedback, false, err
 			}
+		}
+		if s.intent.interaction == api.InteractionModeUnattended {
+			fmt.Fprint(s.streams.out, safeTerminalText(evidence.String()))
 		}
 		if confirmed {
 			approved = append(approved, trackerID)
@@ -545,11 +544,6 @@ func selectCLICompositeOption(
 	if len(action.Options) == 0 {
 		return "", fmt.Errorf("upbrr: action %s has no options", action.Kind)
 	}
-	fmt.Fprintln(output)
-	fmt.Fprintln(output, action.Prompt)
-	for index, option := range action.Options {
-		fmt.Fprintf(output, "%d. %s\n", index+1, option.Label)
-	}
 	options := make([]cliPromptOption, len(action.Options))
 	for index, option := range action.Options {
 		options[index] = cliPromptOption{Label: option.Label, Value: strconv.Itoa(index + 1)}
@@ -558,6 +552,8 @@ func selectCLICompositeOption(
 		Kind:     cliPromptSelect,
 		Question: label + " number: ",
 		Evidence: action.Prompt,
+		Help: "Choose the candidate that matches the source. Enter its listed number; the choice is returned to this workflow for preparation. " +
+			"If none matches, stop and correct the source or provider selection before retrying.",
 		Options:  options,
 		Required: true,
 	})
@@ -716,32 +712,9 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		return feedback, false, fmt.Errorf("upbrr: duplicate assessment for %s is unavailable", action.TrackerID)
 	}
 	result := s.current.Dupes.Results[resultIndex]
-	fmt.Fprintf(
-		s.streams.out,
-		"Dupe check %s: upload_name=%s candidates=%d decision=%s search_complete=%t pages=%d policy=%s\n",
-		result.TrackerID,
-		result.UploadReleaseName,
-		len(result.Matches),
-		result.Decision,
-		result.Search.Complete,
-		result.Search.Pages,
-		emptyCLIValue(result.PolicyID),
-	)
-	printCLICompositeDupeReviewReasons(s.streams.out, result.ReviewReasons)
-	printCLICompositeDupeMatches(s.streams.out, result.Matches)
 	var evidence strings.Builder
-	fmt.Fprintf(
-		&evidence,
-		"Tracker: %s\nUpload name: %s\nDecision: %s\nCandidates: %d\nSearch complete: %t\nPolicy: %s\n",
-		result.TrackerID,
-		result.UploadReleaseName,
-		result.Decision,
-		len(result.Matches),
-		result.Search.Complete,
-		emptyCLIValue(result.PolicyID),
-	)
-	printCLICompositeDupeReviewReasons(&evidence, result.ReviewReasons)
-	printCLICompositeDupeMatches(&evidence, result.Matches)
+	fmt.Fprintf(&evidence, "Tracker: %s\nUpload name: %q\n", result.TrackerID, result.UploadReleaseName)
+	printCLICompositeDupeEvidence(&evidence, result)
 	if cliDupeRequiresRiskAcknowledgement(result) {
 		evidence.WriteString("Risk acknowledgement required: incomplete or manual evidence.\n")
 	}
@@ -754,7 +727,12 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		})
 		if !review {
 			var reviewErr error
-			review, reviewErr = promptYesNo(reader, s.streams.out, "Review comparison evidence before deciding? [y/N]: ", false)
+			review, reviewErr = askCLIConfirmation(reader, s.streams.out, cliPrompt{
+				Kind:     cliPromptConfirm,
+				Question: "Review comparison evidence before deciding? [y/N]: ",
+				Evidence: evidence.String(),
+				Help:     "Yes opens the current comparison questions and refreshes the assessment from your answers. No keeps the existing answers and continues to duplicate review. Neither answer approves upload.",
+			})
 			if reviewErr != nil {
 				return feedback, false, reviewErr
 			}
@@ -793,7 +771,17 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	if result.RequiresStaffToken {
 		prompt = fmt.Sprintf("Confirm you have the appropriate staff-issued %s token for this upload? [y/N]: ", result.TrackerID)
 	}
-	allow, err := promptYesNo(reader, s.streams.out, prompt, false)
+	help := "Yes records an explicit duplicate override for this tracker and continues to any remaining tracker approval. No keeps the duplicate block for this tracker. " +
+		"It does not establish missing evidence or waive other tracker rules. If source facts are wrong, stop and rerun with corrections before reviewing again."
+	if result.RequiresStaffToken {
+		help += "\nYes attests that you already have the required staff-issued token; do not enter the token here. No leaves this tracker blocked."
+	}
+	allow, err := askCLIConfirmation(reader, s.streams.out, cliPrompt{
+		Kind:     cliPromptConfirm,
+		Question: prompt,
+		Evidence: evidence.String(),
+		Help:     help,
+	})
 	if err != nil {
 		return feedback, false, err
 	}
@@ -813,11 +801,49 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	return feedback, false, nil
 }
 
+// printCLICompositeDupeEvidence explains retained assessments without making or
+// overriding a duplicate decision. The workflow remains the authority.
+func printCLICompositeDupeEvidence(output io.Writer, result api.TrackerDupeAssessment) {
+	decision := "Review the retained duplicate assessment"
+	switch result.Decision {
+	case api.DupeDecisionPending:
+		decision = "The duplicate assessment is awaiting a decision"
+	case api.DupeDecisionNoMatch:
+		decision = "No blocking duplicate was identified in the available evidence"
+	case api.DupeDecisionAccepted:
+		decision = "Duplicate evidence blocks this tracker unless an allowed override is explicitly confirmed"
+	case api.DupeDecisionIgnored:
+		decision = "An explicit duplicate override is retained for this assessment"
+	case api.DupeDecisionBypassed:
+		decision = "The run's debug authority bypasses this duplicate gate"
+	case api.DupeDecisionSkipped:
+		decision = "The duplicate search was skipped by workflow policy"
+	}
+	fmt.Fprintf(output, "Duplicate check: %s (%s).\n", decision, result.Decision)
+	if result.Search.Complete {
+		fmt.Fprintln(output, "Search: complete for the assessed work and scope.")
+	} else {
+		fmt.Fprintln(output, "Search: incomplete or unavailable; missing results do not prove that no duplicate exists.")
+	}
+	fmt.Fprintf(
+		output,
+		"Candidates requiring review: %d; search pages: %d; policy: %s.\n",
+		len(result.Matches),
+		result.Search.Pages,
+		emptyCLIValue(result.PolicyID),
+	)
+	for _, warning := range result.Search.Warnings {
+		fmt.Fprintf(output, "Search warning: %s\n", safeDiagnosticText(warning))
+	}
+	printCLICompositeDupeReviewReasons(output, result.ReviewReasons)
+	printCLICompositeDupeMatches(output, result.Matches)
+}
+
 func printCLICompositeDupeReviewReasons(output io.Writer, reasons []api.DupeReason) {
 	for _, reason := range reasons {
 		message := strings.TrimSpace(reason.Message)
 		if message == "" {
-			message = reason.Code
+			message = "This policy check needs review (" + reason.Code + ")."
 		}
 		fmt.Fprintf(output, "Policy review: %s\n", logging.SanitizeMessage(message))
 	}
@@ -840,7 +866,7 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 			fmt.Fprintf(output, "     Candidate ID: %s\n", logging.SanitizeMessage(match.ID))
 		}
 		if match.Relation == api.DupeRelationManualReview {
-			fmt.Fprintf(output, "     Policy review: %s\n", match.Relation)
+			fmt.Fprintln(output, "     Policy review: manual comparison is required (manual_review).")
 		}
 		if len(match.Reasons) > 0 {
 			reasons := make([]string, 0, len(match.Reasons))
@@ -1113,6 +1139,7 @@ func compositeCLIFacts(instructions api.ReleaseFactInstructions) api.ReleaseWork
 		},
 		Category: cloneCLICategoryPointer(instructions.Category),
 	}
+	facts.Bluray = instructions.Bluray
 	if instructions.SourceLookup != "" {
 		facts.SourceLookup = cloneCLIStringPointer(&instructions.SourceLookup)
 	}

@@ -9,13 +9,101 @@ import (
 	"encoding/hex"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+type inputOpenKey struct{ owner, command string }
+type pendingInputOpen struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// beginInputVerification registers only the synchronous admission lifetime.
+// Removing it and testing cancellation under the same lock fences worker acceptance.
+func (c *Core) beginInputVerification(ctx context.Context, owner, command string) (context.Context, func() error) {
+	ctx, cancel := context.WithCancel(ctx)
+	key := inputOpenKey{owner, command}
+	opening := &pendingInputOpen{cancel: cancel, done: make(chan struct{})}
+	c.inputOpenMu.Lock()
+	if c.inputOpens == nil {
+		c.inputOpens = make(map[inputOpenKey]map[*pendingInputOpen]struct{})
+	}
+	if c.inputOpens[key] == nil {
+		c.inputOpens[key] = make(map[*pendingInputOpen]struct{})
+	}
+	c.inputOpens[key][opening] = struct{}{}
+	c.inputOpenMu.Unlock()
+	return ctx, func() error {
+		c.inputOpenMu.Lock()
+		err := ctx.Err()
+		delete(c.inputOpens[key], opening)
+		if len(c.inputOpens[key]) == 0 {
+			delete(c.inputOpens, key)
+		}
+		close(opening.done)
+		c.inputOpenMu.Unlock()
+		cancel()
+		if err != nil {
+			return fmt.Errorf("input verification admission: %w", err)
+		}
+		return nil
+	}
+}
+
+// CancelActiveInputOpen cancels this owner's exact pending admission and waits
+// for verifier cleanup. It never cancels an accepted or replacement operation;
+// callers must retain the original receipt when admission is no longer pending.
+// A pending recovery slot is not confirmation that admission cleanup finished.
+func (c *Core) CancelActiveInputOpen(ctx context.Context, owner string, request api.CancelActiveInputOpenRequest) (api.ActiveInputSnapshot, error) {
+	if err := request.Validate(); err != nil {
+		return api.ActiveInputSnapshot{}, fmt.Errorf("validate input open cancellation: %w", err)
+	}
+	c.inputOpenMu.Lock()
+	var done []<-chan struct{}
+	for opening := range c.inputOpens[inputOpenKey{owner, request.IdempotencyKey}] {
+		opening.cancel()
+		done = append(done, opening.done)
+	}
+	c.inputOpenMu.Unlock()
+	if len(done) == 0 {
+		return api.ActiveInputSnapshot{}, releaseworkflow.ErrWorkflowNotFound
+	}
+	for _, stopped := range done {
+		select {
+		case <-stopped:
+		case <-ctx.Done():
+			return api.ActiveInputSnapshot{}, fmt.Errorf("wait for input verification cancellation: %w", ctx.Err())
+		}
+	}
+	snapshot, err := c.GetActiveInput(ctx, owner)
+	if err != nil {
+		return api.ActiveInputSnapshot{}, err
+	}
+	if snapshot.State != api.ActiveInputEmpty && snapshot.State != api.ActiveInputActive {
+		return api.ActiveInputSnapshot{}, fmt.Errorf("input verification cleanup is incomplete: %w", api.ErrActiveInputBusy)
+	}
+	return snapshot, nil
+}
+
 // GetActiveInput projects only the caller's current input and workflow.
 func (c *Core) GetActiveInput(ctx context.Context, owner string) (api.ActiveInputSnapshot, error) {
+	return c.getActiveInput(ctx, owner, "")
+}
+
+// GetActiveInputForSource narrows empty-slot recovery discovery to the requested
+// source without claiming or resolving unrelated workflows. Missing retained
+// source authority remains visible as a recovery requirement.
+func (c *Core) GetActiveInputForSource(ctx context.Context, owner, source string) (api.ActiveInputSnapshot, error) {
+	if strings.TrimSpace(source) == "" {
+		return api.ActiveInputSnapshot{}, api.ErrPreparationSourceRequired
+	}
+	return c.getActiveInput(ctx, owner, source)
+}
+
+func (c *Core) getActiveInput(ctx context.Context, owner, source string) (api.ActiveInputSnapshot, error) {
 	slot, err := c.workflow.ActiveInput(ctx, owner)
 	if err != nil {
 		return api.ActiveInputSnapshot{}, classifyOperationError(api.OperationKindPreparation, err)
@@ -52,7 +140,13 @@ func (c *Core) GetActiveInput(ctx context.Context, owner string) (api.ActiveInpu
 		view.Current = &current
 	}
 	if slot.State == api.ActiveInputEmpty {
-		workflowIDs, recoveryErr := c.workflow.LegacyRecoveryWorkflowIDs(ctx, owner)
+		var workflowIDs []api.WorkflowID
+		var recoveryErr error
+		if source == "" {
+			workflowIDs, recoveryErr = c.workflow.LegacyRecoveryWorkflowIDs(ctx, owner)
+		} else {
+			workflowIDs, recoveryErr = c.workflow.LegacyRecoveryWorkflowIDsForSource(ctx, owner, source)
+		}
 		if recoveryErr != nil {
 			return api.ActiveInputSnapshot{}, fmt.Errorf("list active input recovery workflows: %w", recoveryErr)
 		}
@@ -130,14 +224,22 @@ func (c *Core) OpenActiveInput(ctx context.Context, owner string, request api.Op
 		return api.ActiveInputSnapshot{}, classifyOperationError(api.OperationKindPreparation, err)
 	}
 	request.Request.Intent.Preparation = &input
-	slot, err := c.workflow.OpenInput(ctx, owner, releaseworkflow.OpenInputRequest{
-		ExpectedRevision: request.ExpectedRevision,
-		Input:            *request.Request.Intent.Preparation,
-		CorrectionPatch:  request.Request.Intent.CorrectionPatch,
-		IdempotencyKey:   request.Request.IdempotencyKey,
-	})
+	verificationCtx, finishVerification := c.beginInputVerification(ctx, owner, request.Request.IdempotencyKey)
+	var verificationErr error
+	slot, err := func() (api.ActiveInputRecord, error) {
+		defer func() { verificationErr = finishVerification() }()
+		return c.workflow.OpenInput(verificationCtx, owner, releaseworkflow.OpenInputRequest{
+			ExpectedRevision: request.ExpectedRevision,
+			Input:            *request.Request.Intent.Preparation,
+			CorrectionPatch:  request.Request.Intent.CorrectionPatch,
+			IdempotencyKey:   request.Request.IdempotencyKey,
+		})
+	}()
 	if err != nil {
 		return api.ActiveInputSnapshot{}, classifyOperationError(api.OperationKindPreparation, err)
+	}
+	if verificationErr != nil {
+		return api.ActiveInputSnapshot{}, classifyOperationError(api.OperationKindPreparation, verificationErr)
 	}
 	current, err := c.workflow.Current(ctx, owner, slot.WorkflowID)
 	if err != nil {

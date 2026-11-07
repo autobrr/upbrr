@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -281,30 +282,39 @@ func TestInvalidateDropsOnlyPublishedPreparedGeneration(t *testing.T) {
 	}
 }
 
-func TestExplicitHDRCheckBypassesCompatiblePreparedCacheOnce(t *testing.T) {
-	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
-	collector := &recordingCollector{}
-	module := newTestModule(t, newMemoryStore(), collector)
-	input := api.PrepareInput{SourcePath: path}
-	first, err := module.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input.Controls.CaptureHDRMetadata = true
-	checked, err := module.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if checked.Release.Generation <= first.Release.Generation || collector.callCount() != 2 {
-		t.Fatalf("explicit check reused generation: generation=%d calls=%d", checked.Release.Generation, collector.callCount())
-	}
-	input.Controls.CaptureHDRMetadata = false
-	reused, err := module.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reused.Release.Generation != checked.Release.Generation || collector.callCount() != 2 {
-		t.Fatalf("consumed check was replayed: generation=%d calls=%d", reused.Release.Generation, collector.callCount())
+func TestExplicitInspectionBypassesCompatiblePreparedCacheOnce(t *testing.T) {
+	for _, blurayDetails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bluray details %t", blurayDetails), func(t *testing.T) {
+			path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+			collector := &recordingCollector{}
+			module := newTestModule(t, newMemoryStore(), collector)
+			input := api.PrepareInput{SourcePath: path}
+			first, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if blurayDetails {
+				input.Controls.BlurayDetails = &api.BlurayDetailRequest{All: true}
+			} else {
+				input.Controls.CaptureHDRMetadata = true
+			}
+			checked, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if checked.Release.Generation <= first.Release.Generation || collector.callCount() != 2 {
+				t.Fatalf("explicit check reused generation: generation=%d calls=%d", checked.Release.Generation, collector.callCount())
+			}
+			input.Controls.CaptureHDRMetadata = false
+			input.Controls.BlurayDetails = nil
+			reused, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reused.Release.Generation != checked.Release.Generation || collector.callCount() != 2 {
+				t.Fatalf("consumed check was replayed: generation=%d calls=%d", reused.Release.Generation, collector.callCount())
+			}
+		})
 	}
 }
 
@@ -494,9 +504,13 @@ func TestPrepareRequirePreparedRejectsMissingAndReusesCompatibleGeneration(t *te
 		Intent:          api.PreparationIntentUpload,
 		RequirePrepared: true,
 	}
-	if _, err := module.Prepare(context.Background(), required); err == nil ||
-		!strings.Contains(err.Error(), "compatible prepared generation is required") {
-		t.Fatalf("missing required prepared generation error = %v", err)
+	if _, err := module.Prepare(context.Background(), required); err != nil {
+		failure, ok := api.AsOperationFailure(err)
+		if !ok || failure.Code != api.OperationFailureIncompatibleGeneration || failure.Recovery != api.OperationRecoveryReprepare {
+			t.Fatalf("missing required prepared generation error = %v", err)
+		}
+	} else {
+		t.Fatal("missing required prepared generation was accepted")
 	}
 	if collector.callCount() != 0 {
 		t.Fatalf("missing required generation invoked collector %d time(s)", collector.callCount())
@@ -569,6 +583,36 @@ func TestPrepareReportsCanonicalOwnerStagesAndReuse(t *testing.T) {
 	}
 }
 
+func TestResolveUploadSubjectRetainsPrivateClientSearchEvidence(t *testing.T) {
+	t.Parallel()
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	client := "qbit"
+	snapshot := clientEvidenceTestSnapshot("primary-hash")
+	snapshot.Policy.Client = &client
+	snapshot.Result.TorrentCandidates = []api.ClientTorrentCandidate{{Path: "alternate.torrent", InfoHash: "alternate-hash"}}
+	module := newTestModule(t, newMemoryStore(), newClientEvidenceTestCollector(snapshot))
+	prepared, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: path, Search: api.ClientSearchPolicy{Client: &client}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}}
+	subject, err := module.ResolveUploadSubject(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !subject.ClientSearchPerformed || subject.ClientSearchPolicy.Client == nil || *subject.ClientSearchPolicy.Client != client ||
+		len(subject.ClientTorrentCandidates) != 1 || subject.ClientTorrentCandidates[0].InfoHash != "alternate-hash" {
+		t.Fatalf("missing client search evidence: %+v", subject)
+	}
+	*subject.ClientSearchPolicy.Client = "modified"
+	subject.ClientTorrentCandidates[0].InfoHash = "modified"
+	again, err := module.ResolveUploadSubject(t.Context(), input)
+	if err != nil || again.ClientSearchPolicy.Client == nil || *again.ClientSearchPolicy.Client != client ||
+		len(again.ClientTorrentCandidates) != 1 || again.ClientTorrentCandidates[0].InfoHash != "alternate-hash" {
+		t.Fatalf("client search evidence was not detached: subject=%+v err=%v", again, err)
+	}
+}
+
 func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) {
 	t.Parallel()
 
@@ -576,14 +620,22 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	store := newMemoryStore()
 	initialCollector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("initial-hash"))
 	initial := newTestModule(t, store, initialCollector)
-	prepared, err := initial.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	input := api.PrepareInput{SourcePath: path, Policy: api.PreparationPolicy{KeepImages: true}}
+	prepared, err := initial.Prepare(context.Background(), input)
 	if err != nil {
 		t.Fatalf("initial prepare: %v", err)
 	}
 
-	restartedCollector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("hydrated-hash"))
+	hydrated := clientEvidenceTestSnapshot("hydrated-hash")
+	candidate := api.ClientTorrentCandidate{
+		Path:          "hydrated.torrent",
+		InfoHash:      "hydrated-candidate-hash",
+		ContentSHA256: strings.Repeat("a", 64),
+	}
+	hydrated.Result.TorrentCandidates = []api.ClientTorrentCandidate{candidate}
+	restartedCollector := newClientEvidenceTestCollector(hydrated)
 	restarted := newTestModule(t, store, restartedCollector)
-	reused, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	reused, err := restarted.Prepare(context.Background(), input)
 	if err != nil {
 		t.Fatalf("restart reuse: %v", err)
 	}
@@ -597,7 +649,7 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 			restartedCollector.hydrateCount(),
 		)
 	}
-	if _, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path}); err != nil {
+	if _, err := restarted.Prepare(context.Background(), input); err != nil {
 		t.Fatalf("second restart reuse: %v", err)
 	}
 	if restartedCollector.hydrateCount() != 1 {
@@ -612,6 +664,9 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	if upload.InfoHash != "hydrated-hash" || !upload.ClientTorrentDataVerified || upload.TrackerIDs["ant"] != "hydrated-id" ||
 		len(upload.MatchedTrackers) != 1 || upload.MatchedTrackers[0] != "ANT" {
 		t.Fatalf("hydrated upload evidence = %#v", upload)
+	}
+	if len(upload.ClientTorrentCandidates) != 1 || upload.ClientTorrentCandidates[0] != candidate {
+		t.Fatalf("hydrated client candidates = %#v", upload.ClientTorrentCandidates)
 	}
 	upload.TrackerIDs["ant"] = "mutated"
 	upload.MatchedTrackers[0] = "MUTATED"
@@ -628,6 +683,20 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	}
 	if screenshot.MediaInfoJSONPath != path {
 		t.Fatalf("hydrated screenshot MediaInfo path = %q, want %q", screenshot.MediaInfoJSONPath, path)
+	}
+	if !screenshot.KeepImages {
+		t.Fatal("persisted collection policy was lost from screenshot planning")
+	}
+	input.Policy.KeepImages = false
+	withoutImages, err := restarted.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutImageSubject, err := restarted.ResolveScreenshotSubject(t.Context(), api.MediaPlanInput{
+		Release: api.ReleaseRef{SourcePath: path, Generation: withoutImages.Release.Generation},
+	})
+	if err != nil || withoutImageSubject.KeepImages {
+		t.Fatalf("disabled collection policy remained enabled: keepImages=%t err=%v", withoutImageSubject.KeepImages, err)
 	}
 }
 
@@ -1388,46 +1457,55 @@ func TestSeedImportRechecksSourceFingerprint(t *testing.T) {
 
 func TestPrepareCancellationDoesNotReorderSourceFIFO(t *testing.T) {
 	t.Parallel()
-	path := writePreparedTestFile(t, "source.mkv", "source")
-	collector := newBlockingCollector()
-	module := newTestModule(t, newMemoryStore(), collector)
+	synctest.Test(t, func(t *testing.T) {
+		path := writePreparedTestFile(t, "source.mkv", "source")
+		collector := newBlockingCollector()
+		module := newTestModule(t, newMemoryStore(), collector)
 
-	firstDone := make(chan error, 1)
-	go func() {
-		_, err := module.Prepare(context.Background(), prepareInputWithLookup(path, "first"))
-		firstDone <- err
-	}()
-	waitForString(t, collector.started, "first")
+		firstDone := make(chan error, 1)
+		go func() {
+			_, err := module.Prepare(context.Background(), prepareInputWithLookup(path, "first"))
+			firstDone <- err
+		}()
+		waitForString(t, collector.started, "first")
 
-	canceledCtx, cancel := context.WithCancel(context.Background())
-	canceledDone := make(chan error, 1)
-	go func() {
-		_, err := module.Prepare(canceledCtx, prepareInputWithLookup(path, "canceled"))
-		canceledDone <- err
-	}()
-	thirdDone := make(chan error, 1)
-	go func() {
-		_, err := module.Prepare(context.Background(), prepareInputWithLookup(path, "third"))
-		thirdDone <- err
-	}()
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	if err := <-canceledDone; !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled Prepare() error = %v", err)
-	}
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		canceledDone := make(chan error, 1)
+		go func() {
+			_, err := module.Prepare(canceledCtx, prepareInputWithLookup(path, "canceled"))
+			canceledDone <- err
+		}()
+		synctest.Wait()
+		thirdDone := make(chan error, 1)
+		go func() {
+			_, err := module.Prepare(context.Background(), prepareInputWithLookup(path, "third"))
+			thirdDone <- err
+		}()
+		synctest.Wait()
+		module.gates.mu.Lock()
+		waiters := len(module.gates.sources[canonicalSourceKey(path)].waiters)
+		module.gates.mu.Unlock()
+		if waiters != 3 {
+			t.Fatalf("source queue = %d, want active preparation and two ordered waiters", waiters)
+		}
+		cancel()
+		if err := <-canceledDone; !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled Prepare() error = %v", err)
+		}
 
-	collector.release <- struct{}{}
-	if err := <-firstDone; err != nil {
-		t.Fatal(err)
-	}
-	waitForString(t, collector.started, "third")
-	collector.release <- struct{}{}
-	if err := <-thirdDone; err != nil {
-		t.Fatal(err)
-	}
-	if got := collector.order(); len(got) != 2 || got[0] != "first" || got[1] != "third" {
-		t.Fatalf("collector order = %v, want [first third]", got)
-	}
+		collector.release <- struct{}{}
+		if err := <-firstDone; err != nil {
+			t.Fatal(err)
+		}
+		waitForString(t, collector.started, "third")
+		collector.release <- struct{}{}
+		if err := <-thirdDone; err != nil {
+			t.Fatal(err)
+		}
+		if got := collector.order(); len(got) != 2 || got[0] != "first" || got[1] != "third" {
+			t.Fatalf("collector order = %v, want [first third]", got)
+		}
+	})
 }
 
 func TestPrepareDifferentSourcesRunConcurrently(t *testing.T) {

@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { isBluraySiteURL } from "../utils/providerId";
+
 import type {
   ExternalIDOverrides,
   ImageUploadProgressUpdate,
@@ -19,6 +21,7 @@ import type {
   CorrectionFieldRef,
   ReleaseCorrectionValues,
   ReleaseWorkflowCurrent,
+  ScreenshotProcessing,
 } from "../api/generated/release-workflow";
 import type {
   FacetStatus,
@@ -45,6 +48,8 @@ type ScreenshotState = WorkflowState<ScreenshotPlan> &
     /** Preserve existing frame drafts when replacing an expired plan. */
     planStale: boolean;
     previewImage: string;
+    previewProcessing?: ScreenshotProcessing;
+    previewTimestampSeconds?: number;
     selections: readonly ScreenshotSelection[];
     finalSelectionArtifactIDs: readonly string[];
   }>;
@@ -287,6 +292,8 @@ export type SessionAction =
       sessionRevision: number;
       revision: number;
       reason?: string;
+      /** Explicit cancellation stays settled until a deliberate retry. */
+      status?: "idle" | "cancelled";
     }>
   | Readonly<{
       type: "screenshots_loaded";
@@ -299,6 +306,8 @@ export type SessionAction =
     }>
   | Readonly<{
       type: "screenshot_previewed";
+      processing?: ScreenshotProcessing;
+      timestampSeconds?: number;
       sessionRevision: number;
       revision: number;
       image: string;
@@ -362,6 +371,7 @@ const emptyIntent = (): PreparationIntent => ({
 
 const clonePreparationIntent = (intent: PreparationIntent): PreparationIntent => ({
   sourceLookupURL: intent.sourceLookupURL,
+  bluray: intent.bluray ? { ...intent.bluray } : null,
   identity: { ...intent.identity },
   metadata: { ...intent.metadata },
   releaseName: { ...intent.releaseName },
@@ -440,6 +450,8 @@ export const initialSessionState = (): SessionState => ({
     ...emptyWorkflow<ScreenshotPlan>(),
     planStale: false,
     previewImage: "",
+    previewProcessing: undefined,
+    previewTimestampSeconds: undefined,
     selections: [],
     finalSelectionArtifactIDs: [],
   },
@@ -552,6 +564,8 @@ const invalidateReleaseWork = (state: SessionState, reason: string) => ({
     ...invalidate(state.screenshots, reason, true),
     planStale: false,
     previewImage: "",
+    previewProcessing: undefined,
+    previewTimestampSeconds: undefined,
     selections: [],
     finalSelectionArtifactIDs: [],
   },
@@ -627,6 +641,11 @@ const identityFieldKeys = {
   "identity.tvdb": "TVDBID",
   "identity.tvmaze": "TVmazeID",
   "identity.mal": "MALID",
+  "identity.keep_tmdb": "KeepTMDB",
+  "identity.keep_imdb": "KeepIMDB",
+  "identity.keep_tvdb": "KeepTVDB",
+  "identity.keep_tvmaze": "KeepTVmaze",
+  "identity.keep_mal": "KeepMAL",
 } as const;
 
 const releaseNameFieldKeys = {
@@ -1271,6 +1290,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         {
           ...state.preparationIntent,
           sourceLookupURL: action.value,
+          bluray: isBluraySiteURL(action.value)
+            ? null
+            : !action.value.trim() && isBluraySiteURL(state.preparationIntent.sourceLookupURL)
+              ? { Mode: "auto", Release: "" }
+              : state.preparationIntent.bluray,
         },
         false,
       );
@@ -1770,7 +1794,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         [action.facet]: {
           ...state[action.facet],
           revision: state[action.facet].revision + 1,
-          status: "idle",
+          status: action.status ?? "idle",
           staleReason: action.reason || "Operation canceled.",
           error: "",
         },
@@ -1800,7 +1824,12 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         return state;
       return {
         ...state,
-        screenshots: { ...readyWorkflow(state.screenshots), previewImage: action.image },
+        screenshots: {
+          ...readyWorkflow(state.screenshots),
+          previewImage: action.image,
+          previewProcessing: action.processing,
+          previewTimestampSeconds: action.timestampSeconds,
+        },
       };
     case "menu_images_loaded":
       if (!workflowMatches(state, "menuImages", action.sessionRevision, action.revision))

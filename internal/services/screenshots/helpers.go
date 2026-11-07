@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -26,6 +27,7 @@ import (
 )
 
 type videoInfo struct {
+	HDRFacts        api.HDRFacts
 	Playlist        string
 	SourcePath      string
 	DurationSeconds float64
@@ -72,7 +74,9 @@ func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot s
 	logger = screenshotLogger(logger)
 	info := videoInfo{}
 	if meta.BluRayISO {
-		return resolveISOVideoInfo(meta, tmpRoot)
+		info, err := resolveISOVideoInfo(meta, tmpRoot)
+		info.HDRFacts = meta.HDRFacts
+		return info, err
 	}
 
 	basePath := strings.TrimSpace(meta.VideoPath)
@@ -100,6 +104,10 @@ func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot s
 	info.DurationSeconds = mediaInfoDurationSeconds(doc)
 	info.FrameRate = mediaInfoFrameRate(doc)
 	info.Width, info.Height, info.WidthScale, info.HeightScale = mediaInfoVideoGeometry(doc)
+	info.HDRFacts = mediafacts.HDRFromMediaInfoDocument(mediafacts.MediaInfoDocument(doc))
+	if info.HDRFacts.Status != api.HDREvidenceComplete {
+		info.HDRFacts = meta.HDRFacts
+	}
 	if info.FrameRate <= 0 {
 		info.FrameRate = 24.0
 	}
@@ -265,6 +273,13 @@ func resolveSegmentCandidates(info videoInfo, timestamp float64) []segmentCandid
 		}}
 	}
 	return candidates
+}
+
+func resolvedSegmentOffset(info videoInfo, candidate segmentCandidate) float64 {
+	if candidate.SegmentIndex >= 0 {
+		return info.Segments[candidate.SegmentIndex].StartSeconds
+	}
+	return 0
 }
 
 func segmentFallbackTimestamp(segment videoSegment) float64 {
@@ -1031,17 +1046,8 @@ func shouldTonemap(meta api.ScreenshotSubject, cfg config.Config) bool {
 	if !cfg.ScreenshotHandling.ToneMap {
 		return false
 	}
-	return strings.Contains(strings.ToUpper(meta.HDR), "HDR") || strings.Contains(strings.ToUpper(meta.HDR), "DV")
-}
-
-func shouldUseLibplacebo(meta api.ScreenshotSubject, cfg config.Config) bool {
-	if !cfg.ScreenshotHandling.UseLibplacebo {
-		return false
-	}
-	if strings.TrimSpace(meta.DiscType) != "" {
-		return false
-	}
-	return true
+	hdr := strings.ToUpper(meta.HDR)
+	return strings.Contains(hdr, "HDR") || strings.Contains(hdr, "DV") || strings.Contains(hdr, "HLG") || strings.Contains(hdr, "PQ10")
 }
 
 func screenshotLogger(logger api.Logger) api.Logger {

@@ -23,18 +23,39 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type unit3dUploadResponse struct {
-	Success bool   `json:"success"`
+	Success *bool  `json:"success"`
 	Message string `json:"message"`
 	Data    string `json:"data"`
+}
+
+// uploadResponseTransport observes POST responses before redirects can replace
+// them with a GET response. Transport and redirect behavior otherwise stay unchanged.
+type uploadResponseTransport struct {
+	observers []func(http.Header, int)
+}
+
+func (transport uploadResponseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := http.DefaultTransport.RoundTrip(request)
+	if response != nil && request.Method == http.MethodPost {
+		for _, observer := range transport.observers {
+			observer(response.Header, response.StatusCode)
+		}
+	}
+	if err != nil {
+		return response, fmt.Errorf("unit3d upload transport: %w", err)
+	}
+	return response, nil
 }
 
 // submitUnit3DUpload sends an already serialized multipart payload and maps a
 // successful Unit3D response to one upload, with an artifact only when the
 // response identifies a download URL.
+// Observer callbacks receive only the upload POST response.
 func submitUnit3DUpload(
 	ctx context.Context,
 	trackerName string,
@@ -47,6 +68,7 @@ func submitUnit3DUpload(
 	meta api.UploadSubject,
 	dbPath string,
 	logger api.Logger,
+	observe ...func(http.Header, int),
 ) (api.UploadSummary, error) {
 	logger.Infof("trackers: starting upload to %s for release: %s", trackerName, releaseName)
 	logger.Debugf("trackers: %s upload URL: %s", trackerName, uploadURL)
@@ -57,47 +79,43 @@ func submitUnit3DUpload(
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, uploadURL, strings.NewReader(payload))
 	if err != nil {
 		logger.Errorf("trackers: %s failed to create HTTP request: %v", trackerName, err)
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s build upload request: %w", trackerName, err)
+		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("trackers: %s build upload request: %w", trackerName, err))
 	}
 	trackerdata.SetUnit3DAPIHeaders(httpReq, apiKey)
 	httpReq.Header.Set("Content-Type", contentType)
 
 	logger.Debugf("trackers: %s sending upload request...", trackerName)
-	client := &http.Client{Timeout: 40 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		logger.Errorf("trackers: %s HTTP request failed: %v", trackerName, err)
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s upload request: %w", trackerName, err)
-	}
-	defer resp.Body.Close()
-
-	logger.Debugf("trackers: %s received HTTP %d response", trackerName, resp.StatusCode)
-
-	body, bodyPreview, err := commonhttp.ReadUploadResponseBody(
-		resp,
-		resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices,
-		commonhttp.DefaultResponsePreviewBytes,
-	)
-	if err != nil {
-		logger.Errorf("trackers: %s failed to read response body: %v", trackerName, err)
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s read response body: %w", trackerName, err)
-	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		err := commonhttp.UploadHTTPError(trackerName, resp.StatusCode, bodyPreview)
+	client := &http.Client{Timeout: 40 * time.Second, Transport: uploadResponseTransport{observers: observe}}
+	execution, err := commonhttp.ExecuteUpload(client, httpReq, commonhttp.UploadExecutionOptions{Tracker: trackerName})
+	if err != nil && !execution.BodyComplete {
 		logger.Errorf("trackers: %s upload request failed: %v", trackerName, err)
+		return api.UploadSummary{}, fmt.Errorf("trackers: %s execute upload: %w", trackerName, err)
+	}
+	logger.Debugf("trackers: %s received HTTP %d response", trackerName, execution.StatusCode)
+	body, bodyPreview := execution.ProtocolBody, execution.Preview
+	var result unit3dUploadResponse
+	decodeErr := json.Unmarshal(body, &result)
+	if !execution.Success {
+		failure := commonhttp.UploadHTTPError(trackerName, execution.StatusCode, bodyPreview)
+		logger.Errorf("trackers: %s upload request failed: %v", trackerName, failure)
 		if len(bodyPreview) > 0 {
 			logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(bodyPreview), nil))
 		}
-		return api.UploadSummary{}, err
+		if decodeErr == nil && result.Success != nil && !*result.Success {
+			return api.UploadSummary{}, submission.NewError(submission.Rejected, failure)
+		}
+		return api.UploadSummary{}, failure
 	}
 
-	var result unit3dUploadResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		logger.Errorf("trackers: %s failed to parse response JSON: %v", trackerName, err)
+	if decodeErr != nil {
+		logger.Errorf("trackers: %s failed to parse response JSON: %v", trackerName, decodeErr)
 		logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(bodyPreview), nil))
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s response json: %w", trackerName, err)
+		return api.UploadSummary{}, fmt.Errorf("trackers: %s response json: %w", trackerName, decodeErr)
 	}
-	if !result.Success {
+	if result.Success == nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: %s response did not establish a submission outcome", trackerName)
+	}
+	if !*result.Success {
 		message := commonhttp.ExtractHTTPErrorDetail(bodyPreview)
 		if message == "" {
 			message = commonhttp.RedactErrorDetail(result.Message)
@@ -107,7 +125,7 @@ func submitUnit3DUpload(
 		}
 		err := fmt.Errorf("trackers: %s api error: %s", trackerName, message)
 		logger.Errorf("trackers: %s upload rejected: %v", trackerName, err)
-		return api.UploadSummary{}, err
+		return api.UploadSummary{}, submission.NewError(submission.Rejected, err)
 	}
 
 	artifact, artifactErr := parseUnit3DUploadArtifact(baseURL, result.Data)
@@ -169,6 +187,8 @@ func prepareUnit3DUpload(
 	if !strings.EqualFold(preview.Status, "ready") {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s upload blocked: %s", preview.Tracker, preview.Message)
 	}
+	reportGuidance := apiKeyGuidanceReporter(ctx, req, firstSiteProfile(profiles).APIKeyGuidance)
+	reportGuidance(nil, 0)
 
 	logger := req.Logger
 	if logger == nil {
@@ -197,6 +217,7 @@ func prepareUnit3DUpload(
 			req.Meta,
 			req.Runtime.DBPath,
 			logger,
+			reportGuidance,
 		)
 	}, nil), nil
 }

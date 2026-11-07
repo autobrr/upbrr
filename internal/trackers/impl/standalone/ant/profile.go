@@ -21,6 +21,7 @@ const (
 // Profile returns ANT identity, preparation, dupe, rules, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe:   trackers.ConnectionProbe{Test: testConnection, DraftConfig: trackers.APIKeyProbeConfig},
 		UsesMenuImages:    true,
 		Name:              "ANT",
 		BaseURL:           antBaseURL,
@@ -48,7 +49,7 @@ func Profile() standalone.Profile {
 			api.IdentityProviderTMDB,
 		),
 		NewDuplicateAdapter:  newDuplicateAdapter,
-		Rules:                &trackers.RuleSet{},
+		Rules:                &trackers.RuleSet{RequireUniqueID: true},
 		ValidationPolicy:     validationPolicy(),
 		ArtifactPolicy:       &trackers.ArtifactPolicy{MaxPieceSizeMiB: 128, MaxTorrentBytes: 250 << 10},
 		BannedGroups:         bannedGroups(),

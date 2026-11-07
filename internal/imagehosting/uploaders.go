@@ -172,7 +172,7 @@ func (u *imgboxUploader) UploadBatch(ctx context.Context, imagePaths []string) (
 	if len(imagePaths) == 0 {
 		return nil, errors.New("imgbox upload requires at least one image")
 	}
-	csrfToken, cookie, err := imgboxGetCsrfAndCookie(ctx, u.client)
+	csrfToken, cookie, err := imgboxGetCsrfAndCookie(ctx, u.client, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +397,8 @@ func parseHDBUploadResults(body []byte) ([]uploadResult, error) {
 	return results, nil
 }
 
-func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client) (string, string, error) {
+// maxReadBytes bounds parsing and deferred cleanup; zero retains upload cleanup.
+func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client, maxReadBytes int64) (string, string, error) {
 	client = httpclient.CloneWithTimeout(client, httpclient.UploadTimeout)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://imgbox.com/", nil)
 	if err != nil {
@@ -407,6 +408,12 @@ func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client) (string, s
 		req.Header.Set(key, value)
 	}
 	resp, err := client.Do(req)
+	if maxReadBytes > 0 && resp != nil && resp.Body != nil {
+		resp.Body = struct {
+			io.Reader
+			io.Closer
+		}{Reader: io.LimitReader(resp.Body, maxReadBytes), Closer: resp.Body}
+	}
 	if err != nil {
 		closeResponseBody(resp)
 		return "", "", fmt.Errorf("imgbox send csrf request: %w", err)

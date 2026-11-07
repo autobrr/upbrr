@@ -30,7 +30,7 @@ func sourceHasTVCategory(source string) bool {
 }
 
 // detectedSourceCategory prefers TV source hints, then a supported parser category.
-// Unknown remains empty so a final naming fallback cannot override identity evidence.
+// Unknown remains empty until provider resolution applies the final Movie default.
 // Explicit and tracker categories are resolved later.
 func detectedSourceCategory(source string, parsedCategory string) string {
 	if sourceHasTVCategory(source) {

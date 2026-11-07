@@ -33,6 +33,7 @@ const (
 			anilist_json TEXT NOT NULL DEFAULT "",
 			bluray_json TEXT NOT NULL DEFAULT "",
 			imported_screenshot_evidence_json TEXT NOT NULL DEFAULT "",
+			identity_candidates_json TEXT NOT NULL DEFAULT "",
 			updated_at TEXT NOT NULL
 		)
 	`
@@ -60,6 +61,25 @@ type migrationExecutor interface {
 //     update legacyVersionToMigrationIDs only if the old integer user_version
 //     bridge mapping also changed historically.
 var migrationRegistry = []migrationStep{
+	{
+		id:        "2026_11_identity_candidates",
+		dependsOn: []string{"2026_07_add_canonical_release_generations"},
+		apply:     migrateIdentityCandidates,
+	},
+	{
+		id: "2026_11_structured_workflow_storage",
+		dependsOn: []string{
+			"2026_10_add_hdr_analysis_association",
+			"2026_09_mark_uploaded_audio_analysis",
+			"2026_07_add_release_workflow_work_leases",
+		},
+		apply: migrateStructuredWorkflowStorage,
+	},
+	{
+		id:        "2026_11_screenshot_renderer_outcomes",
+		dependsOn: []string{"2026_09_add_media_reuse_associations"},
+		apply:     migrateScreenshotRendererOutcomes,
+	},
 	{
 		id:        "2026_10_imported_screenshot_evidence",
 		dependsOn: []string{"2026_07_add_canonical_release_generations"},
@@ -1452,7 +1472,11 @@ func migrateContextWithRegistry(ctx context.Context, db *sql.DB, registry []migr
 	committed := false
 	defer func() {
 		if !committed {
-			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+			// A canceled migration must release its manual transaction before
+			// this connection returns to the pool.
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			_, _ = conn.ExecContext(rollbackCtx, `ROLLBACK`)
 		}
 	}()
 
@@ -2043,6 +2067,30 @@ func migrateHDRAnalysisAssociation(ctx context.Context, exec migrationExecutor) 
 	_, err = exec.ExecContext(ctx, `ALTER TABLE input_workflow_associations ADD COLUMN hdr_analysis_id TEXT`)
 	if err != nil {
 		return fmt.Errorf("db migrate HDR association: %w", err)
+	}
+	return nil
+}
+
+// migrateScreenshotRendererOutcomes leaves historical renderers unknown.
+func migrateScreenshotRendererOutcomes(ctx context.Context, exec migrationExecutor) error {
+	for _, table := range []string{"screenshots", "media_reusable_assets"} {
+		present, err := tableExists(ctx, exec, table)
+		if err != nil {
+			return err
+		}
+		if !present {
+			continue
+		}
+		exists, err := tableColumnExists(ctx, exec, table, "processing_json")
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := exec.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN processing_json TEXT NOT NULL DEFAULT ''`, table)); err != nil {
+			return fmt.Errorf("db add screenshot renderer outcome: %w", err)
+		}
 	}
 	return nil
 }

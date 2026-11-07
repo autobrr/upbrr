@@ -130,6 +130,33 @@ func TestCommandHelpGoldens(t *testing.T) {
 	}
 }
 
+func TestLiveTestCommandHelp(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want []string
+	}{
+		{args: []string{"live-test"}, want: []string{"upbrr live-test [command]", "init", "cleanup"}},
+		{args: []string{"live-test", "--help"}, want: []string{"upbrr live-test [command]", "init", "cleanup"}},
+		{args: []string{"live-test", "init", "--help"}, want: []string{"upbrr live-test init --run-dir <path>", "--config", "--prefer-deletable-hosts"}},
+		{args: []string{"live-test", "cleanup", "--help"}, want: []string{"upbrr live-test cleanup --run-dir <path>", "--run-dir"}},
+	} {
+		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
+			result := executeCLIForTest(t.Context(), t, test.args)
+			if result.code != 0 || result.err != nil || result.stderr != "" {
+				t.Fatalf("help result: code=%d err=%v stderr=%q", result.code, result.err, result.stderr)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(result.stdout, want) {
+					t.Errorf("help omits %q: %q", want, result.stdout)
+				}
+			}
+			if strings.Contains(result.stdout, "upbrr [options] <input path>") {
+				t.Errorf("live-test help shows upload usage: %q", result.stdout)
+			}
+		})
+	}
+}
+
 func TestRootHelpSpellingsAndShortCircuitOrder(t *testing.T) {
 	want := readHelpGolden(t, "root.txt")
 	for _, args := range [][]string{

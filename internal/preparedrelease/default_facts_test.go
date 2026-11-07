@@ -18,6 +18,7 @@ func TestPreparedDefaultFactsSurvivePersistenceAndExactProjection(t *testing.T) 
 		{
 			ID:           "audio-yes",
 			Kind:         api.MediaTrackAudio,
+			AudioLabel:   "TrueHD 7.1 Atmos",
 			Default:      true,
 			DefaultKnown: true,
 		},

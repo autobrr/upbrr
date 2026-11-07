@@ -104,6 +104,36 @@ Production documentation is built from the exact release tag and published only 
 
 ### Temporary dependency exceptions
 
+#### WebUI glob matcher resolution
+
+The WebUI pins minimatch 11.0.3 for the exact ESLint 10.4.0,
+`@eslint/config-array` 0.23.5 and TypeScript-ESLint estree 8.60.0 consumers to
+address GHSA-g3hv-75wg-m249. Published parent upgrades still require affected
+minimatch 10 releases. The override is limited to their retained matching APIs;
+minimatch 11 removes APIs such as `makeRe` and changes some glob semantics.
+Reassess the override when updating these parents, and remove it once their
+declared ranges resolve a patched version. Keep frozen installs, cache-free lint,
+frontend checks and embedded E2E validation; no advisory is excluded from scans.
+
+#### Documentation tooling resolutions
+
+The documentation workspace scopes advisory fixes to exact installed parents:
+`docusaurus-plugin-llms@0.5.1` uses minimatch 11.0.1 and yaml 2.8.3;
+`copy-webpack-plugin@11.0.0` and `css-minimizer-webpack-plugin@5.0.1` use
+serialize-javascript 7.1.3; `@docusaurus/core@3.10.2` uses tinypool 2.1.2; and
+`sockjs@0.3.24` uses uuid 11.1.1. The unused deepmerge dependency edge is removed
+only from `@svgr/plugin-svgo@8.1.0`, whose shipped entrypoint does not load it.
+
+Several resolutions cross the parents' declared major ranges. Compatibility is
+limited to their retained consumers: the plugin's glob matching, webpack cache
+keys and CSS worker serialization, Docusaurus pooled SSG, SockJS's buffer-free
+`uuid.v4()` call, and SVGR optimization. Node 24 remains the supported baseline;
+these overrides do not grant compatibility with unused or removed dependency APIs.
+Reassess the resolutions when updating their exact parents, and remove them once
+upstream declarations resolve patched versions or drop unused edges. Keep frozen
+installs, cache-free documentation checks, affected consumer validation and
+unignored scans; no advisory is excluded from scanning.
+
 #### Blu-ray collector development pin
 
 The go-bdinfo collector API baseline follows the reviewed head of
@@ -126,7 +156,13 @@ advancing it. Eventual merged upstream adoption remains separate in
 
 #### Vulnerability workflow history
 
-The scheduled vulnerability workflow retains Stylelint and all CSS checks. The former
+The scheduled vulnerability workflow scans `go.mod`, `webui/pnpm-lock.yaml` and
+`documentation/pnpm-lock.yaml` explicitly. Documentation dependency matches include
+build/SSG and local development/preview tooling; a package match does not establish
+exposure in the deployed static site. Scan and lookup failures remain failures and
+reach the existing failure-reporting job, without advisory suppressions.
+
+The workflow retains Stylelint and all CSS checks. The former
 WebUI-only exception for GHSA-vfj7-8cjw-p6xm was removed after the advisory was withdrawn
 and a full WebUI scan without exceptions passed. The earlier
 [temporary risk acceptance](https://github.com/autobrr/upbrr/issues/585) was not remediation;

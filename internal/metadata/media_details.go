@@ -29,6 +29,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/metadata/progress"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -125,7 +126,13 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 			fingerprint = meta.SourceFingerprint
 		}
 		var reports mediainfo.Result
+		step := progress.Begin(ctx, "Inspect primary MediaInfo reports")
 		miDoc, reports, err = inspectReleaseMediaInfoReports(ctx, s.mi, meta, meta.VideoPath, fingerprint, root)
+		message := "MediaInfo reports ready (retained or inspected)."
+		if err != nil {
+			message = "MediaInfo inspection failed."
+		}
+		step.Finish(message, err != nil)
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("primary inspection: %w", err)
 		}
@@ -234,7 +241,10 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	meta.HDR = hdrFactsDisplay(meta.HDRFacts)
 	logger.Tracef("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
 
-	meta = s.applyBlurayMetadata(ctx, meta, bdinfo)
+	meta, err = s.applyBlurayMetadata(ctx, meta, bdinfo)
+	if err != nil {
+		return preparationstate.State{}, err
+	}
 	if err := ctx.Err(); err != nil {
 		return preparationstate.State{}, fmt.Errorf("metadata: blu-ray provider refresh canceled: %w", err)
 	}
@@ -863,6 +873,9 @@ func ensureManualGeneratedNameComponents(document *api.ReleaseNameDocument, meta
 // exact presentation choices. Tracker defaults may format their source/type
 // labels and known resolution; explicit resolution clears remain protected.
 func generatedNameRoleIsManual(role api.ReleaseNameRole, meta *preparationstate.State, request api.ReleaseNameRequest) bool {
+	if role == api.NameRoleYear && request.TVDBNamingAvailable {
+		return false
+	}
 	if strings.EqualFold(strings.TrimSpace(request.Type), "ENCODE") && sourceIn(request.Source, "DVD", "PAL DVD", "NTSC DVD") {
 		if role == api.NameRoleSource || role == api.NameRoleVideoFormat {
 			return false

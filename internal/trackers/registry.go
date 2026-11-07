@@ -171,6 +171,9 @@ func (r *Registry) Register(def Definition) error {
 				DetailIDPattern:    `(?i)/torrents/(\d+)`,
 			}
 		}
+		if provider, ok := def.(ConnectionProbeProvider); ok {
+			descriptor.ConnectionProbe = provider.ConnectionProbe()
+		}
 		if provider, ok := def.(AuthSessionProvider); ok {
 			descriptor.AuthResolver = provider.AuthSessionResolver()
 		}

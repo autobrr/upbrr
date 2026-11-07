@@ -667,6 +667,22 @@ func TestQueueWorkflowOutcomeRequiresConfirmedSubmission(t *testing.T) {
 			session: &cliWorkflowSession{current: releaseworkflow.CommandResult{UploadResult: &api.UploadResult{Results: []api.UploadTrackerResult{{TrackerID: "ALPHA", SubmissionStatus: api.StageStatusInterrupted}}}}},
 			status:  "interrupted",
 		},
+		{
+			name: "unavailable submission with typed uncertainty",
+			session: &cliWorkflowSession{current: releaseworkflow.CommandResult{UploadResult: &api.UploadResult{Results: []api.UploadTrackerResult{{
+				TrackerID:        "ALPHA",
+				SubmissionStatus: api.StageStatusUnavailable,
+				Failures: []api.WorkflowFailure{{Failure: api.OperationFailure{
+					Code: api.OperationFailureUnknownOutcome, Operation: api.OperationKindUploadExecute,
+				}}},
+			}}}}},
+			status: "interrupted",
+		},
+		{
+			name:    "ordinary unavailable submission",
+			session: &cliWorkflowSession{current: releaseworkflow.CommandResult{UploadResult: &api.UploadResult{Results: []api.UploadTrackerResult{{TrackerID: "ALPHA", SubmissionStatus: api.StageStatusUnavailable}}}}},
+			status:  "failed",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := cliQueueWorkflowOutcome(test.session, test.prepared)
@@ -674,6 +690,48 @@ func TestQueueWorkflowOutcomeRequiresConfirmedSubmission(t *testing.T) {
 				t.Fatalf("outcome=%+v", got)
 			}
 		})
+	}
+}
+
+func TestNamedQueueUnknownOutcomeSurvivesFailureAndRestart(t *testing.T) {
+	dbPath, root, paths := queueFixture(t)
+	queue, err := openCLINamedQueue(t.Context(), dbPath, "unknown-progress", root, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := newCLIPreparationBatch(api.Request{}, paths)
+	batch.queue = queue
+	err = processCLIPreparationItems(t.Context(), batch, true, time.Minute, cliIO{}, api.NopLogger{}, func(_ context.Context, item cliPreparationItem) (cliQueueOutcome, error) {
+		switch item.originalPath {
+		case paths[0]:
+			return cliQueueOutcome{Status: "interrupted", WorkflowID: "workflow-A"}, errors.New("synthetic upload summary failure")
+		case paths[2]:
+			return cliQueueOutcome{Status: "failed", WorkflowID: "workflow-C"}, errors.New("synthetic known failure")
+		default:
+			return cliQueueOutcome{Status: "completed", ConfirmedUploads: []api.TrackerID{"ALPHA"}}, nil
+		}
+	})
+	if err == nil || !strings.Contains(err.Error(), "2 of 4") {
+		t.Fatalf("wrong queue failure summary: %v", err)
+	}
+	if err := queue.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := openCLINamedQueue(t.Context(), dbPath, "unknown-progress", root, false, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	for i, want := range []string{"interrupted", "completed", "failed", "completed"} {
+		if got := reopened.inventory.Items[i].Status; got != want {
+			t.Fatalf("item %d persisted status=%s, want %s", i, got, want)
+		}
+	}
+	if item := reopened.inventory.Items[0]; item.WorkflowID != "workflow-A" || len(item.ConfirmedUploads) != 0 {
+		t.Fatalf("unknown submission lost its authority or invented confirmation: %+v", item)
+	}
+	if len(reopened.paths(false, 0)) != 0 || !reflect.DeepEqual(reopened.paths(true, 0), []string{paths[0], paths[2]}) {
+		t.Fatal("restart automatically selected unresolved/completed work or lost explicit retry eligibility")
 	}
 }
 
@@ -708,6 +766,69 @@ func TestNamedQueueRetryRetainsWorkflowAuthorityChecks(t *testing.T) {
 			}
 			if errors.Is(barrier, api.ErrReleaseWorkflowEffectOutcomeUnknown) && item.Status != "interrupted" {
 				t.Fatalf("unknown effect lost interruption: %+v", item)
+			}
+		})
+	}
+}
+
+func TestNamedQueueUnresolvedRecoveryRetryRemainsInterrupted(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		mode  api.InteractionMode
+		input string
+	}{
+		{name: "strict unattended", mode: api.InteractionModeUnattended},
+		{
+			name:  "declined",
+			mode:  api.InteractionModeUnattendedConfirm,
+			input: "no\n",
+		},
+		{name: "EOF", mode: api.InteractionModeUnattendedConfirm},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath, root, paths := queueFixture(t)
+			queue, err := openCLINamedQueue(t.Context(), dbPath, "recovery-retry", root, false, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			queue.inventory.Items[0].Status, queue.inventory.Items[0].WorkflowID = "interrupted", "workflow-A"
+			for i := 1; i < len(queue.inventory.Items); i++ {
+				queue.inventory.Items[i].Status = "completed"
+			}
+			core := &cliWorkflowCoreFake{
+				activeInput: api.ActiveInputSnapshot{State: api.ActiveInputEmpty, RecoveryWorkflowIDs: []api.WorkflowID{"workflow-A"}},
+				recoveryInput: api.ActiveInputSnapshot{
+					State:    api.ActiveInputRecovering,
+					Revision: 11,
+					Current: &api.ReleaseWorkflowCurrent{Workflow: api.ReleaseWorkflow{
+						ID:       "workflow-A",
+						Revision: 3,
+						RequiredActions: []api.RequiredAction{{
+							ID:               "exact-A-action",
+							WorkflowRevision: 3,
+							Kind:             api.RequiredActionReconcileSubmission,
+							Status:           api.RequiredActionStatusPending,
+						}},
+					}},
+				},
+			}
+			batch := newCLIPreparationBatch(api.Request{Options: api.UploadOptions{InteractionMode: test.mode}}, queue.paths(true, 0))
+			batch.queue = queue
+			err = runCLIWorkflowUploadOnly(t.Context(), core, batch, false, true, true, config.Config{}, cliIO{in: strings.NewReader(test.input), out: io.Discard}, api.NopLogger{})
+			if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || len(core.uploadRequests) != 0 || len(core.reconcileRequests) != 0 {
+				t.Fatalf("unresolved retry lost typed uncertainty or executed work: err=%v uploads=%d reconciles=%d", err, len(core.uploadRequests), len(core.reconcileRequests))
+			}
+			if err := queue.Close(); err != nil {
+				t.Fatal(err)
+			}
+			queue, err = openCLINamedQueue(t.Context(), dbPath, "recovery-retry", root, false, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer queue.Close()
+			item := queue.inventory.Items[0]
+			if item.Status != "interrupted" || item.WorkflowID != "workflow-A" || item.Path != paths[0] || len(item.ConfirmedUploads) != 0 || len(queue.paths(false, 0)) != 0 {
+				t.Fatalf("unresolved retry changed durable progress: %+v", item)
 			}
 		})
 	}
@@ -880,47 +1001,81 @@ func TestNamedQueueRejectsEquivalentSavedMembers(t *testing.T) {
 	}
 }
 
-func TestNamedQueueRetainsConfirmedUploadsWhenCompositeFails(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		dbPath, root, _ := queueFixture(t)
-		queue, err := openCLINamedQueue(t.Context(), dbPath, "partial", root, false, io.Discard)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer queue.Close()
-		prepared := requiredFactsCLIResult()
-		coreSvc := &cliWorkflowCoreFake{current: prepared}
-		coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return prepared, nil }
-		coreSvc.startUploadFn = func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
-			operation := api.WorkflowOperationStatus{
-				ID:         "partial-upload",
-				WorkflowID: prepared.Workflow.ID,
-				Command:    "composite_upload",
-				Operation:  api.OperationKindUploadExecute,
-				Status:     api.StageStatusFailed,
-			}
-			latest := prepared
-			latest.Operation = &operation
-			latest.UploadResult = &api.UploadResult{Results: []api.UploadTrackerResult{
-				{TrackerID: "ALPHA", SubmissionStatus: api.StageStatusCompleted},
-				{TrackerID: "BETA", SubmissionStatus: api.StageStatusFailed},
-			}}
-			coreSvc.current, coreSvc.operation = latest, operation
-			initial := prepared
-			queued := operation
-			queued.Status = api.StageStatusQueued
-			initial.Operation = &queued
-			return initial, nil
-		}
-		batch := newCLIPreparationBatch(api.Request{}, queue.paths(false, 1))
-		batch.queue = queue
-		err = runCLIWorkflowUploadOnly(t.Context(), coreSvc, batch, false, true, true, config.Config{}, cliIO{}, api.NopLogger{})
-		if err == nil {
-			t.Fatal("partial failure was hidden")
-		}
-		item := queue.inventory.Items[0]
-		if item.Status != "failed" || !reflect.DeepEqual(item.ConfirmedUploads, []api.TrackerID{"ALPHA"}) {
-			t.Fatalf("partial failure lost confirmed submission: %+v", item)
-		}
-	})
+func TestNamedQueueRetainsUploadOutcomesWhenCompositeFails(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		status   api.StageStatus
+		failures []api.WorkflowFailure
+		want     string
+	}{
+		{
+			name:   "known failure",
+			status: api.StageStatusFailed,
+			want:   "failed",
+		},
+		{
+			name:     "unknown outcome",
+			status:   api.StageStatusUnavailable,
+			failures: []api.WorkflowFailure{{Failure: api.OperationFailure{Code: api.OperationFailureUnknownOutcome, Operation: api.OperationKindUploadExecute}}},
+			want:     "interrupted",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				dbPath, root, _ := queueFixture(t)
+				queue, err := openCLINamedQueue(t.Context(), dbPath, "partial", root, false, io.Discard)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer queue.Close()
+				prepared := requiredFactsCLIResult()
+				coreSvc := &cliWorkflowCoreFake{current: prepared}
+				coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return prepared, nil }
+				coreSvc.startUploadFn = func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
+					operation := api.WorkflowOperationStatus{
+						ID:         "partial-upload",
+						WorkflowID: prepared.Workflow.ID,
+						Command:    "composite_upload",
+						Operation:  api.OperationKindUploadExecute,
+						Status:     api.StageStatusFailed,
+					}
+					latest := prepared
+					latest.Operation = &operation
+					latest.UploadResult = &api.UploadResult{Results: []api.UploadTrackerResult{
+						{TrackerID: "ALPHA", SubmissionStatus: api.StageStatusCompleted},
+						{
+							TrackerID:        "BETA",
+							SubmissionStatus: test.status,
+							Failures:         test.failures,
+						},
+					}}
+					coreSvc.current, coreSvc.operation = latest, operation
+					initial := prepared
+					queued := operation
+					queued.Status = api.StageStatusQueued
+					initial.Operation = &queued
+					return initial, nil
+				}
+				batch := newCLIPreparationBatch(api.Request{}, queue.paths(false, 1))
+				batch.queue = queue
+				err = runCLIWorkflowUploadOnly(t.Context(), coreSvc, batch, false, true, true, config.Config{}, cliIO{}, api.NopLogger{})
+				if err == nil {
+					t.Fatal("partial failure was hidden")
+				}
+				if err := queue.Close(); err != nil {
+					t.Fatal(err)
+				}
+				saved, err := openCLINamedQueue(t.Context(), dbPath, "partial", root, false, io.Discard)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer saved.Close()
+				item := saved.inventory.Items[0]
+				if item.Status != test.want || item.WorkflowID != prepared.Workflow.ID ||
+					!reflect.DeepEqual(item.ConfirmedUploads, []api.TrackerID{"ALPHA"}) {
+					t.Fatalf("partial failure lost confirmed submission: %+v", item)
+				}
+			})
+		})
+	}
 }

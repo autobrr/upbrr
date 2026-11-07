@@ -6,6 +6,8 @@ package bhd
 import (
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -15,6 +17,9 @@ import (
 // Profile returns BHD identity, preparation, dupe, rules, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe: trackers.ConnectionProbe{Test: testConnection, DraftConfig: func(cfg config.TrackerConfig) config.TrackerConfig {
+			return config.TrackerConfig{APIKey: cfg.APIKey, BhdRSSKey: cfg.BhdRSSKey}
+		}},
 		Name:               "BHD",
 		BaseURL:            bhdBaseURL,
 		DescriptionGroup:   "bhd",
@@ -24,7 +29,7 @@ func Profile() standalone.Profile {
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,
 		ReleaseNamePolicy: trackers.WithTitleProvider(
-			trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy("standalone/bhd/v9", trackers.StructuredNamePolicy{
+			trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy("standalone/bhd/v10", trackers.StructuredNamePolicy{
 				Defaults: applyBHDNameDefaults,
 			}), api.IdentityProviderIMDB),
 			api.IdentityProviderIMDB,

@@ -29,6 +29,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
     if (
       view.status !== "running" &&
       view.status !== "error" &&
+      view.status !== "cancelled" &&
       !view.mutationBlockedReason &&
       !view.plan &&
       (view.workflowMode || Boolean(view.staleReason))
@@ -51,14 +52,6 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
   const selectedWorkflowImages = useMemo(
     () => workflowImages.filter((artifact) => artifact.selected),
     [workflowImages],
-  );
-  const retainedImageURLs = new Set(
-    (view.artifacts?.artifacts || [])
-      .filter((artifact) => artifact.kind === "hosted_image")
-      .map((artifact) => artifact.url),
-  );
-  const savedTrackerImages = (plan?.SavedTrackerImages || []).filter(
-    (image) => !retainedImageURLs.has(image.URL),
   );
 
   const discPlans = useMemo(() => {
@@ -166,7 +159,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
           </div>
           <p className="text-muted-foreground">
             {view.artifacts.artifacts.filter((artifact) => artifact.kind === "screenshot").length}{" "}
-            captured screenshot(s)
+            retained screenshot(s)
           </p>
         </section>
       ) : null}
@@ -208,57 +201,10 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
             onClick={() => void facet.generate("final")}
             disabled={mutationsBlocked || selections.length === 0}
           >
-            {busy ? "Capturing..." : "Generate screenshots"}
+            {busy ? "Working..." : "Generate screenshots"}
           </button>
         </div>
       </section>
-
-      {savedTrackerImages.length ? (
-        <section className={`${pageStyle.panel} grid gap-3`} aria-busy={busy}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2>Saved tracker images</h2>
-            <p className="text-muted-foreground">
-              {savedTrackerImages.length} saved image(s) can be used as screenshots with their
-              existing upload URLs.
-            </p>
-            <button
-              className="primary"
-              type="button"
-              disabled={mutationsBlocked}
-              onClick={() => void facet.generate("final", [])}
-            >
-              Use saved images
-            </button>
-          </div>
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-[9px]">
-            {savedTrackerImages.map((image, index) => {
-              const label = `Saved screenshot ${index + 1} from ${image.TrackerID}`;
-              return (
-                <div className="grid gap-1.5" key={`${image.TrackerID}-${image.URL}`}>
-                  <button
-                    className="overflow-hidden rounded-[14px] border border-foreground/10 bg-card/60 p-0 text-left cursor-pointer [&>img]:block [&>img]:w-full"
-                    type="button"
-                    onClick={() => {
-                      setLightboxImage(image.URL);
-                      setLightboxAlt(label);
-                    }}
-                  >
-                    <img
-                      src={image.PreviewURL || image.URL}
-                      alt={label}
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
-                    />
-                  </button>
-                  <p className="text-muted-foreground">
-                    {image.TrackerID} · {image.Host}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
 
       <section className={`${pageStyle.panel} grid gap-[9px]`}>
         <details>
@@ -363,6 +309,13 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
               Delete all
             </button>
           </div>
+          {workflowImages.some((artifact) => artifact.source === "tracker") ? (
+            <p className="text-muted-foreground" role="note">
+              Existing description images are included by default. Their original capture timestamps
+              and provenance are unknown, so chronological order cannot be determined, including
+              alongside new captures. Review, reorder, unselect or delete them as needed.
+            </p>
+          ) : null}
           <div className="grid gap-4">
             {workflowImageGroups
               .filter((group) => group.images.length > 0)
@@ -412,6 +365,21 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                               </span>
                             )}
                           </button>
+                          {artifact.processing && (
+                            <p className="text-sm text-muted-foreground">
+                              {artifact.processing.warning ||
+                                `Renderer: ${artifact.processing.renderer}; tonemapping applied: ${artifact.processing.tonemapped ? "yes" : "no"}.`}
+                            </p>
+                          )}
+                          {artifact.source === "tracker" ? (
+                            <p className="text-muted-foreground">
+                              Existing description image · capture timestamp and provenance unknown
+                            </p>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">
+                              Captured at {(artifact.timestampSeconds || 0).toFixed(3)} seconds
+                            </p>
+                          )}
                           <button
                             className="ghost"
                             type="button"
@@ -442,9 +410,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
         </section>
       ) : view.workflowMode && view.artifacts ? (
         <section className={pageStyle.panel}>
-          <p className="text-muted-foreground">
-            No generated screenshots retained for this workflow.
-          </p>
+          <p className="text-muted-foreground">No screenshots retained for this workflow.</p>
         </section>
       ) : null}
 
@@ -460,8 +426,8 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
       ) : null}
       {plan?.RequiresManualFrames ? (
         <p className="text-muted-foreground">
-          Duration or frame rate is missing. Use saved images or enter manual frame times to capture
-          new screenshots.
+          Duration or frame rate is missing. Keep existing images or enter manual frame times to
+          capture new screenshots.
         </p>
       ) : null}
 
@@ -578,6 +544,17 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
               </div>
             </div>
             <div className="grid gap-[9px]">
+              {view.previewImage && view.previewProcessing && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {view.previewProcessing.warning ||
+                    `Renderer: ${view.previewProcessing.renderer}; tonemapping applied: ${view.previewProcessing.tonemapped ? "yes" : "no"}.`}
+                </p>
+              )}
+              {view.previewImage && view.previewTimestampSeconds !== undefined && (
+                <p className="text-sm text-muted-foreground">
+                  Preview at {view.previewTimestampSeconds.toFixed(3)} seconds
+                </p>
+              )}
               {view.previewImage ? (
                 <button
                   className="overflow-hidden rounded-[14px] border border-foreground/10 bg-card/60 p-0 text-left cursor-pointer [&>img]:block [&>img]:w-full max-w-md"

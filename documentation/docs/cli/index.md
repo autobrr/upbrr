@@ -42,11 +42,13 @@ Prepare without tracker submission or client injection:
 .\upbrr.exe --debug --no-seed "D:\releases\Example.Release.2026.1080p-GRP"
 ```
 
-Run duplicate and site checks without uploading:
+Run duplicate and site checks without tracker submission:
 
 ```powershell
 .\upbrr.exe --site-check "D:\releases\Example.Release.2026.1080p-GRP"
 ```
+
+Both `--debug` and `--site-check` can prepare media, write local artifacts, upload images and inject torrents into configured clients. Add `--no-seed` (`-ns`) to prevent client injection. These modes do not provide a non-mutating dry run.
 
 Create or resume a named queue, processing at most five pending entries:
 
@@ -70,6 +72,8 @@ States are `pending`, `running`, `completed`, `failed`, `interrupted` and `skipp
 
 Retry selection does not bypass input ownership, confirmed-upload exclusions or uncertain-submission reconciliation. A tracker submission with an unknown outcome still requires the existing recovery process; no remote submission is retried automatically. Confirmed tracker uploads are recorded separately from item progress, including partial failures. `completed` means the requested processing finished: Input-only and debug/site-check runs can complete without uploading. Skips and declined actions do not prove an upload. Use a different queue name when starting a different task, such as switching a completed Input-only queue to uploads.
 
+An unknown tracker outcome leaves the affected queue item interrupted while independent pending items continue. Legacy attempts without durable submission protection still block new inputs until reconciled. The affected item's original workflow and submission protection remain available after restart. Reopen that source interactively or with `--unattended_confirm` only after checking the remote outcome; declining reconciliation leaves its outcome unresolved. If a retained workflow's source cannot be identified reliably, manual recovery is still required.
+
 Membership stays unchanged until explicitly refreshed:
 
 ```powershell
@@ -89,6 +93,12 @@ Pass the collection parent, not each disc separately:
 For BDMV, interactive preparation groups playlist choices by disc and requires at least one selection from every disc. `--unattended` stops if no complete stored or configured selection can be resolved; `--unattended_confirm` can show the required prompt.
 
 `--manual_frames 240,480` requests both frames from every prepared disc. The selected parent remains one collection-root torrent containing all disc folders.
+
+### Blu-ray.com release inspection
+
+When Blu-ray.com lookup is enabled, the CLI and TUI first show the release listing, including each edition’s release ID. Enter a release number to select its available country, publisher and release URL; enabled cover handling inspects only that edition. Enter `a` to fetch and score all eligible editions, then choose a release or `n` to skip. Unattended runs do not prompt or implicitly fetch all details. Country filtering and automatic unique-country selection still apply.
+
+Use `--bluray-release "https://www.blu-ray.com/movies/Example-Release-Blu-ray/123/"` or `--bluray-release 123` for an exact release. Numeric IDs use the source's Blu-ray or DVD catalogue; a URL identifies its own catalogue. This fetches only that edition when its details are needed to resolve it. `--bluray-release=""` explicitly skips selection; `--bluray-release auto` restores automatic matching. Compatible listings, details and manual choices survive ordinary corrections. The separate `--blu` argument remains the torrent-site source argument.
 
 ### Decrypted 3D Blu-ray ISO input
 
@@ -114,22 +124,31 @@ If a configuration change blocks startup because an external outcome is unresolv
 
 This maintenance command does not activate configuration or start external work. It opens the retained local artifacts and saves each confirmation together with its workflow checkpoint in one database transaction. After recovery succeeds, rerun the original command to activate configuration and continue through the normal preparation and review checks. Keep the database if recovery reports an error and follow its diagnostic before retrying.
 
+Language review identifies the inspected source, resource and track, shows detected and effective languages, and gives the correction flag for that track. Playlist and metadata choices show the current candidates. Tracker questions show the reviewed upload name, current value and accepted answers; a displayed value may be a default, so review it before submitting your answer.
+
+Plain output and the TUI show the same prepared evidence and answer consequences. Duplicate review explains search completeness and any required comparison. Yes records the explicit duplicate decision; tracker approval separately selects the trackers allowed to continue. A clear, completed search defaults to Yes at tracker approval; incomplete or manual checks default to No. `--unattended` does not read answers, and `--uac` allows required prompts. Use the correction shown by the prompt and rerun when the source facts are wrong.
+
 After you answer tracker questions, the CLI rebuilds the affected tracker stages and refreshes duplicate evidence before asking for duplicate review. Follow-up questions can depend on earlier answers. Accepted answers, reviewed names, and rule acknowledgements remain valid only while their underlying inputs still match. Previous duplicate review decisions are requested again after evidence changes; explicit duplicate-policy options still apply. Answering tracker questions does not approve duplicates or authorize upload.
 
 Trackers with a confirmed upload of the same verified submitted content are excluded before duplicate checks. If every selected tracker is already uploaded, the command succeeds without another approval prompt or submission. See [the upload workflow](../workflow/index.md#4-review-duplicate-evidence).
 
-| Option                     | Behavior                                                                                                                                |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `--debug`                  | Runs end-to-end preparation and payload preview without tracker submission. Client injection remains enabled unless `--no-seed` is set. |
-| `--log-level debug`        | Changes application logging verbosity for this run. It does not enable debug/non-submitting behavior.                                   |
-| `--console-log-level info` | Changes terminal log verbosity for this run without changing file or retained application logs.                                         |
-| `--unattended`             | Never prompts. Unsafe global ambiguity returns an error; tracker-specific manual prerequisites can block only that tracker.             |
-| `--unattended_confirm`     | Uses unattended defaults but permits required confirmation or manual-input prompts.                                                     |
-| `--no-seed`                | Disables torrent-client injection.                                                                                                      |
+Final upload results report tracker submission and client injection separately, including failed and skipped submissions. An accepted upload remains accepted when client injection or local receipt retention fails. Inspect the reported failure and the torrent client before retrying; do not resubmit an accepted upload to repair client delivery. Printed debug/site-check reports also include retained preparation failures and the actual client injection outcome. The TUI includes these explanations in its tracker details and final summary; long queue summaries retain bounded excerpts.
+
+| Option                     | Behavior                                                                                                                                      |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--debug`                  | Runs preparation and payload preview without tracker submission. Image uploads and client injection remain enabled unless explicitly skipped. |
+| `--site-check`             | Runs site checks and preparation without tracker submission, with the same image-upload and client-injection side effects as `--debug`.       |
+| `--log-level debug`        | Changes application logging verbosity for this run. It does not enable debug/non-submitting behavior.                                         |
+| `--console-log-level info` | Changes terminal log verbosity for this run without changing file or retained application logs.                                               |
+| `--unattended`             | Never prompts. Unsafe global ambiguity returns an error; tracker-specific manual prerequisites can block only that tracker.                   |
+| `--unattended_confirm`     | Uses unattended defaults but permits required confirmation or manual-input prompts.                                                           |
+| `--no-seed`                | Disables torrent-client injection.                                                                                                            |
 
 Interactive tracker questions with exactly `yes`/`no` choices also accept `y`/`n`, regardless of letter case. Other choices still require their listed values. Strict `--unattended` remains prompt-free.
 
 With `--ui=auto`, a terminal-dashboard failure before work starts falls back to plain output. Explicit `--ui=tui` startup failures stop the command. User cancellation or interruption never starts a fallback run.
+
+When Ctrl+C interrupts an accepted background workflow operation, the CLI requests cancellation and allows up to five seconds for the worker to stop and finish its bookkeeping before attempting input cleanup. Cancellation acknowledgement alone does not mean hashing or an OS read has stopped. Busy input stays protected; a `cleanup_failed` warning identifies the cleanup stage, a safe reason and a recovery action. Wait for shutdown before retrying. Retained HDR analysis remains available for resumption, and unresolved external outcomes still require reconciliation. An interrupt message alone does not establish that a tracker submission happened.
 
 The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic lines are replaced with `[oversized diagnostic omitted]` rather than showing a partial structured value that cannot be safely redacted. Already-sanitized application log messages retain a bounded prefix with `[truncated]`. File and retained application logs are not shortened by this display limit. Inspect logs and remove any remaining credentials, cookies, tokens, private URLs and unrelated personal information before sharing them.
 
@@ -155,22 +174,22 @@ The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic 
 
 ## Execution
 
-| Option                        | Aliases                       | Purpose                                                                                    |
-| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------ |
-| `--queue <name>`              | `-queue`                      | Create or resume a saved queue; supply its original root as the single input path.         |
-| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit remaining eligible items; defaults to `0` (unlimited). Negative values are rejected. |
-| `--refresh-queue`             | `-refresh-queue`              | Add new members without resetting progress; requires `--queue`.                            |
-| `--retry-queue`               | `-retry-queue`                | Include failed, interrupted and skipped items; requires `--queue`.                         |
-| `--site-check`                | `-site-check`, `-sc`          | Search/check sites without uploading.                                                      |
-| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                           |
-| `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                          |
-| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.      |
-| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                  |
-| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                                 |
-| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                               |
-| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                    |
-| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                       |
-| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                              |
+| Option                        | Aliases                       | Purpose                                                                                            |
+| ----------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------- |
+| `--queue <name>`              | `-queue`                      | Create or resume a saved queue; supply its original root as the single input path.                 |
+| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit remaining eligible items; defaults to `0` (unlimited). Negative values are rejected.         |
+| `--refresh-queue`             | `-refresh-queue`              | Add new members without resetting progress; requires `--queue`.                                    |
+| `--retry-queue`               | `-retry-queue`                | Include failed, interrupted and skipped items; requires `--queue`.                                 |
+| `--site-check`                | `-site-check`, `-sc`          | Check sites and prepare upload previews without tracker submission.                                |
+| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                                   |
+| `--debug`                     | `-debug`                      | Prepare and preview without tracker submission; image uploads and client injection remain enabled. |
+| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.              |
+| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                          |
+| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                                         |
+| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                                       |
+| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                            |
+| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                               |
+| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                                      |
 
 `--live-test` and `--live-test-max-images` are development options described under [`live-test`](#live-test). There is no `--dry-run` option; use `--debug --no-seed` for preparation without tracker submission or client injection.
 
@@ -190,7 +209,7 @@ The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic 
 | `--bhd <id-or-url>`        | `-bhd`                     | Supply a BHD torrent ID or URL.     |
 | `--ulcx <id-or-url>`       | `-ulcx`                    | Supply a ULCX torrent ID or URL.    |
 
-Omitting `--trackers` uses the configured default trackers. `--site-upload` replaces the requested tracker list with its one tracker; `--trackers-remove` still excludes named trackers. Tracker ID flags supply lookup identities and do not select upload destinations.
+Omitting `--trackers` uses the retained workflow scope when available, otherwise the configured default trackers. `--site-upload` replaces the requested tracker list with its one tracker; `--trackers-remove` still excludes named trackers. Removing every selected tracker stops the upload. Tracker ID flags supply lookup identities and do not select upload destinations.
 
 ## Release overrides
 
@@ -206,25 +225,28 @@ Metadata review always prints the effective `Commentary: true` or `Commentary: f
 
 This loads release facts and evaluates selected tracker input requirements. It stops before tracker assessment, duplicate searches, screenshots, descriptions, torrent preparation, or uploads. Metadata provider requests and media inspection can still run. `--skip_auto_torrent` also disables torrent-client discovery.
 
-Exit code `0` means Input is ready. Exit code `2` means required input prevents the requested readiness. Strict `--unattended` never prompts.
+The output retains its `Input facts:` JSON, `Track` lines, and `Input <key>: <status>` lines, then explains local readiness. Missing or invalid required evidence identifies the affected trackers and inspected track when available. Advisory evidence appears separately and does not block local readiness. Supported correction flags are shown where known; otherwise review the source and metadata selection before rerunning `--input-only`.
+
+Exit code `0` means local Input is ready, including when only advisory evidence needs review. Exit code `2` means required input prevents the requested readiness. Local readiness does not establish tracker authentication, duplicate-check results, upload acceptance, or torrent-client injection. Strict `--unattended` never prompts.
 
 ### Correct descriptive fields and languages
 
 Title and original title are read-only provider values. Use `--alternate-title` to correct the alternate title.
 
-| Option                                            | Purpose                                                                                                |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `--alternate-title <text>`                        | Override the alternate title.                                                                          |
-| `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                                             |
-| `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                                         |
-| `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                            |
-| `--hardcoded-subs` / `-hc`                        | Enable hardcoded subtitles; `-hc Spanish` supplies a language; `--hardcoded-subs=false` disables them. |
-| `--hardcoded-subtitle-languages "English"`        | Set hardcoded languages and enable them; an empty list disables them.                                  |
-| `--track-languages "<track-id>=English, Spanish"` | Correct one previously inspected track. Repeat for distinct track IDs.                                 |
-| `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                                           |
-| `--reset-input <field>`                           | Remove one saved correction. Repeat for distinct fields.                                               |
-| `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.                              |
-| `--tracker-input "<tracker-id>:<field>=<answer>"` | Answer a field shown by the current tracker questionnaire.                                             |
+| Option                                            | Purpose                                                                                                                             |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `--alternate-title <text>`                        | Override the alternate title.                                                                                                       |
+| `--genres "Drama, Comedy"`                        | Supply one or more genres.                                                                                                          |
+| `--audio-languages "English, Spanish"`            | Replace the release-level audio language list.                                                                                      |
+| `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                                                         |
+| `--hardcoded-subs` / `-hc`                        | Enable hardcoded subtitles; `-hc Spanish` supplies a language; `--hardcoded-subs=false` disables them.                              |
+| `--hardcoded-subtitle-languages "English"`        | Set hardcoded languages and enable them; an empty list disables them.                                                               |
+| `--track-languages "<track-id>=English, Spanish"` | Correct one previously inspected track. Repeat for distinct track IDs.                                                              |
+| `--bluray-release "<release-url-or-id>"`          | Select one Blu-ray.com edition without scanning unrelated release pages. Empty skips selection; `auto` restores automatic matching. |
+| `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                                                                        |
+| `--reset-input <field>`                           | Remove one saved correction. Repeat for distinct fields.                                                                            |
+| `--confirm-input <field>`                         | Confirm one stale content correction against the current required action.                                                           |
+| `--tracker-input "<tracker-id>:<field>=<answer>"` | Answer a field shown by the current tracker questionnaire.                                                                          |
 
 Language entries accept one or more comma-separated values. Blank segments are ignored, duplicate languages are removed, and multiword names remain intact. Use `--audio-languages=` for an explicit empty list. Original production language remains separate from track languages. Regional/script tags and Full/Forced coverage are retained; collectives and unknown values do not establish a specific language. See [language corrections](../workflow/index.md#2-review-canonical-metadata) for identity and clear/Auto behavior.
 
@@ -279,12 +301,12 @@ Existing prepared releases are rebuilt after this update. Older binaries do not 
 | `--season <value>`            | `-season`                                         | Override one season number, such as `5`, `05`, or `S05`.                                              |
 | `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`.                                                     |
 | `--episode-title <value>`     | `-episode-title`, `-manual-episode-title`, `-met` | Override episode title.                                                                               |
-| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override release year; `0` explicitly clears it.                                                      |
+| `--manual-year <year>`        | `-manual-year`, `-year`                           | Override movie year or TV year without usable TVDB data; `0` clears it.                               |
 | `--daily <YYYY-MM-DD>`        | `-daily`                                          | Set daily episode air date.                                                                           |
 | `--use-season-episode`        | `-use-season-episode`                             | Prefer explicit or TMDB-matched season/episode naming over a daily date.                              |
-| `--region <value>`            | `-region`, `-reg`                                 | Override disc region.                                                                                 |
+| `--region <value>`            | `-region`, `-reg`                                 | Override release country code, such as USA or GER.                                                    |
 | `--no-season`                 | `-no-season`                                      | Remove season and episode from name.                                                                  |
-| `--no-year`                   | `-no-year`                                        | Remove year from name.                                                                                |
+| `--no-year`                   | `-no-year`                                        | Omit movie year or TV year without usable TVDB data.                                                  |
 | `--no-aka`                    | `-no-aka`                                         | Remove AKA from name.                                                                                 |
 | `--no-tag`                    | `-no-tag`                                         | Remove group tag from name.                                                                           |
 | `--no-episode-title`          | `-no-episode-title`, `-net`                       | Remove episode title from name.                                                                       |
@@ -324,9 +346,43 @@ Strict `--unattended` reports the missing facts and exits without prompting. Int
 | `--tvdb <id>`   | `-tvdb`   | Override TVDB ID.   |
 | `--tvmaze <id>` | `-tvmaze` | Override TVmaze ID. |
 
-TMDB also accepts `movie/<id>`, `tv/<id>`, or a URL ending in the ID; a movie/TV hint overrides the category. IMDb accepts numeric IDs or the `tt` prefix. TVDB, TVmaze, and MAL take numeric IDs, not URLs.
+Multiple provider flags select each provider independently, even when their returned cross-links disagree. Each successful lookup remains available for preparation. See [manual metadata authority](../workflow/index.md#2-review-canonical-metadata).
+
+TMDB also accepts `movie/<id>`, `tv/<id>`, or a URL ending in the ID; a movie/TV hint sets the category when no explicit `--category` is supplied. A category chosen during provider selection takes precedence over a retained hint. IMDb accepts numeric IDs or the `tt` prefix. TVDB, TVmaze, and MAL take numeric IDs, not URLs.
+
+Use `--keep-existing-ids` to keep existing provider matches and their data when correcting another provider. You can pass it on the command line or in the correction arguments after **Metadata correct?**. For a release you have already prepared, this updates IMDb while keeping the other matches:
+
+```powershell
+.\upbrr.exe --keep-existing-ids --imdb tt1234567 --input-only "E:\Media\Example.Series.S01E01.1080p-GRP.mkv"
+```
+
+The Keep choices are saved for this release and also appear in the Web UI. A provider's explicit ID change or clear takes precedence. Use `--keep-existing-ids=false` to turn off these choices without removing manual ID corrections. Omitting the flag preserves saved choices. Changing Movie/TV can still clear incompatible automatic matches; a forced fresh preparation reloads data for kept IDs.
 
 During the **Metadata correct?** loop, correcting the same active input reuses provider lookups for unchanged inputs, including lookups that returned no result. A later run can retry those empty results. Completed fetch failures remain retained until the input is removed from **History**. Changing the source, provider ID, or lookup query requests its own result.
+
+### Select a provider title
+
+When the identity is resolved, answer **No** at **Metadata correct?**, then enter `search` at the correction prompt. When the identity is unresolved, the correction prompt appears first; enter `search` there. Choose `movie` or `tv`, then enter a title and optional year, such as `Example Series 2026`. An empty title answer searches the title shown in brackets. TMDB and IMDb support movie and TV searches; TVDB searches TV series only.
+
+Matches are grouped by provider and show their available title, year, ID, source link, overview, credits and runtime. Missing details do not prevent selection. The plain terminal accepts the listed match number; the TUI supports arrow-key selection and scrolling through the full list. Search uses the same bounded provider calls, caching and cancellation as the Web UI.
+
+For example, with a synthetic TV source:
+
+```text
+Metadata correct? [Y/n]: n
+Input args that need correction, 'search' for provider matches, or 'continue': search
+Search category (movie/tv), back, or cancel: tv
+Search title and optional year [Example Series 2026], back, or cancel:
+...
+1. Example Series (2026) | TMDB 123456 | tv | https://www.themoviedb.org/tv/123456
+Match number, back (decline), or cancel: 1
+```
+
+Selection applies only that provider's ID through normal metadata preparation, then shows the resulting release details and IDs before continuation. Independently supplied manual IDs and explicit clears for other providers remain authoritative. Search again to select another provider, use correction flags such as `--imdb=tt1234567` or `--tmdb=0`, or use `--reset-input identity.tmdb` to restore Auto. A later selection replaces an earlier Auto request for that provider.
+
+Enter `back` to decline matches without changing your choices, or `cancel` to stop the item. No matches, unavailable providers and failed searches have separate messages. Matches retained from earlier resolution have their own heading and remain selectable when a fresh search finds nothing. Retry `search` with another title/year, check metadata settings, or enter an exact provider ID. Searching does not retry a retained preparation failure; the **History** recovery boundary above still applies.
+
+When the identity remains unresolved, candidates for providers you have not cleared require an explicit choice before continuation. Prepared generations retain this match evidence across reruns and restarts. Strict `--unattended` never searches interactively or prompts; supply an exact ID or use `--unattended_confirm` / `--uac` to permit selection. Valid automatic resolution continues unchanged. `--input-only` remains an inspection command without this interactive review.
 
 ### Clear a metadata provider
 
@@ -474,7 +530,7 @@ During upload, the CLI prints the path of every successfully retained PNG and st
 | `--client <name>`        | `-client`                          | Override torrent client.                                                                 |
 | `--qbit-tag <value>`     | `-qbit-tag`, `-qbt`                | Override qBittorrent tag.                                                                |
 | `--qbit-cat <value>`     | `-qbit-cat`, `-qbc`                | Override qBittorrent category.                                                           |
-| `--force-recheck`        | `-force-recheck`, `-frc`           | Force recheck of matched qBittorrent torrents before validation.                         |
+| `--force-recheck`        | `-force-recheck`, `-frc`           | Recheck matched qBittorrent torrents and verify reusable torrent data.                   |
 | `--no-seed`              | `-no-seed`, `-ns`                  | Do not inject into torrent clients.                                                      |
 | `--skip_auto_torrent`    | `-skip_auto_torrent`, `-sat`       | Skip automated torrent-client searching.                                                 |
 | `--keep-folder`          | `-keep-folder`, `-kf`              | Keep the supplied folder around one movie or episode video.                              |
@@ -487,6 +543,10 @@ During upload, the CLI prints the path of every successfully retained PNG and st
 `--keep-folder` applies only when a supplied folder contains one selected movie or episode video. The torrent retains that folder as its root and includes only the selected video; samples, NFOs, text files, and other sidecars are excluded. The default remains a single-file torrent. Season packs, multi-video folders, disc sources, and direct file inputs are unchanged. Reused torrents must match the requested layout.
 
 `--nohash` and `--rehash` cannot be combined, even with explicit false values.
+
+Ordinary torrent reuse checks the metainfo, requested file layout and applicable limits without reading every media byte. This does not prove that same-sized media bytes match the piece hashes. Use `--force-recheck` to request a piece check, or `--rehash` to create a fresh torrent. A reusable artifact may need a metadata-only layout change; `--nohash` permits that but fails if new pieces are required.
+
+Reuse currently supports v1 torrents; v2 and hybrid v1/v2 torrents require a new torrent, so `--nohash` cannot use them.
 
 ## `serve`
 
@@ -560,6 +620,8 @@ See the [API reference](../api/index.md) before granting `workflow:execute`.
 ## `live-test`
 
 These development commands create an isolated profile from existing configuration and authentication state, or clean up image uploads recorded by that profile. They do not replace normal upload commands.
+
+Run `upbrr live-test --help` to list these commands, or add `--help` after `init` or `cleanup` to see its options.
 
 ```text
 upbrr live-test init --run-dir <path> [--config <path>] [--prefer-deletable-hosts]

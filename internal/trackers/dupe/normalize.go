@@ -180,7 +180,7 @@ type parsedTitleFacts struct {
 	Metadata   string
 	Region     string
 	Repack     string
-	ThreeD     string
+	ThreeD     Fact
 	Content    contentScope
 	HDR        api.HDRFacts
 }
@@ -260,12 +260,9 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 			FactOriginContentName,
 		),
-		ThreeD: mergeStructuredAndTitleFact(
-			target.ThreeD,
-			"threeD",
+		ThreeD: mergeThreeDTitleFact(
+			completeFact(canonicalThreeD(target.ThreeD), FactOriginTargetMedia, "threeD"),
 			title.ThreeD,
-			FactOriginTargetMedia,
-			FactOriginContentName,
 		),
 		Repack: mergeStructuredAndTitleFact(
 			target.Repack,
@@ -391,13 +388,7 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
-		ThreeD: mergeStructuredAndTitleFact(
-			candidate.ThreeD,
-			"threeD",
-			title.ThreeD,
-			FactOriginTrackerAPI,
-			FactOriginTrackerTitle,
-		),
+		ThreeD: candidateThreeDFact(candidate, title.ThreeD),
 		Repack: mergeStructuredAndTitleFact(
 			candidate.Repack,
 			"repack",
@@ -514,7 +505,7 @@ func editionFromNamingContract(fact Fact, names []string, resolution Fact, defau
 func parseBestTitle(names []string) parsedTitleFacts {
 	for _, name := range names {
 		if parsed := parseReleaseTitle(name, FactOriginContentName); parsed.hasEvidence() ||
-			parsed.Content.Kind != contentScopeWork || parsed.Repack != "" || parsed.ThreeD != "" ||
+			parsed.Content.Kind != contentScopeWork || parsed.Repack != "" || parsed.ThreeD.Value != "" || parsed.ThreeD.Status == FactContradictory ||
 			parsed.HDR.Status != api.HDREvidenceMissing {
 			return parsed
 		}
@@ -661,8 +652,8 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 			}
 		}
 	}
-	if tokenPresent(upper, "3D") {
-		parsed.ThreeD = "3d"
+	if bounded {
+		parsed.ThreeD = threeDFromTitle(metadata, origin)
 	}
 	return parsed
 }
@@ -1417,6 +1408,10 @@ func compareFacts(target Fact, candidate Fact) DimensionComparison {
 }
 
 func compareDimensionFacts(dimension trackerspkg.DupeDimension, target Fact, candidate Fact) DimensionComparison {
+	// Title-only presentation markers cannot establish distinct release slots.
+	if dimension == trackerspkg.DupeDimensionThreeD && (target.Status == FactPartial || candidate.Status == FactPartial) {
+		return DimensionUnknown
+	}
 	if dimension != trackerspkg.DupeDimensionResolution {
 		return compareFacts(target, candidate)
 	}

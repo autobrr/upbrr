@@ -51,6 +51,7 @@ type Profile struct {
 	ImageHostPolicy         *trackers.ImageHostPolicy
 	TorrentIdentityPolicy   *trackers.TorrentIdentityPolicy
 	AuthCapability          *api.TrackerAuthCapability
+	ConnectionProbe         trackers.ConnectionProbe
 	AuthResolver            trackers.AuthSessionResolver
 	AuthPolicy              *trackers.AuthPolicy
 	AuthStateManager        trackers.AuthStateManager

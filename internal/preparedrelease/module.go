@@ -26,7 +26,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v61"
+const ContractVersion = "prepared-release-v81-category-default"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -57,6 +57,7 @@ type Collector interface {
 // metadata are supplied by IdentityResolver; source-tracker image receipts
 // remain separate until the owner stamps their exact prepared generation.
 type CollectedFacts struct {
+	PackageInventory           api.PackageInventory
 	ImportedScreenshotEvidence *api.ImportedScreenshotEvidence
 	// NamingCategory records the category used to derive the collected names.
 	// A concrete movie/TV mismatch with the resolved identity prevents generation commit.
@@ -247,7 +248,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	reuseAllowed := layout.DiscType != "BDMV" || input.Instructions.Playlist.Set
 	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
 	if hasCurrent && reuseAllowed && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
-		!input.Controls.CaptureHDRMetadata &&
+		!input.Controls.CaptureHDRMetadata && input.Controls.BlurayDetails == nil &&
 		(input.ExternalFreshness != api.ExternalFreshnessLoad || input.RequirePrepared) &&
 		current.Compatibility == compatibility {
 		// Public prepared rows omit private byte-verification evidence. Restore
@@ -282,6 +283,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 			}
 			owned := envelopeFromPersisted(current, input)
 			owned.resources = mergePreparationResources(owned.resources, resourcesFromCollected(resources))
+			owned.result.Diagnostics = append(owned.result.Diagnostics, sourceSeasonDiagnostics(owned)...)
 			m.publish(owned)
 		}
 		api.EmitPreparationProgress(
@@ -302,7 +304,9 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		}
 		m.logPreparedFacts(ctx, current, cache, resolved.Corrections.Revision)
 		return cloneResult(api.PrepareResult{
-			Diagnostics:           sourceSeasonDiagnostics(owned),
+			Diagnostics: append(
+				externalidentity.CandidateDiagnostics(current.ProviderMetadata.IdentityCandidates),
+				sourceSeasonDiagnostics(owned)...),
 			Release:               current,
 			EffectiveInstructions: input.Instructions,
 			Corrections:           resolved.Corrections,
@@ -317,7 +321,12 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 				"A compatible prepared generation is required.",
 			),
 		)
-		return api.PrepareResult{}, errors.New("prepared release: compatible prepared generation is required")
+		return api.PrepareResult{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureIncompatibleGeneration,
+			Operation: api.OperationKindPreparation,
+			Message:   "A compatible prepared generation is required. Prepare the input again.",
+			Recovery:  api.OperationRecoveryReprepare,
+		}, &IncompatiblePreparationError{SourcePath: input.SourcePath, Reason: "compatible prepared generation is required"})
 	}
 	api.EmitPreparationProgress(
 		ctx,
@@ -384,13 +393,15 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		return api.PrepareResult{}, fmt.Errorf("prepared release: resolve identity: %w", err)
 	}
 	identityFinish(nil)
+	tvdbOwnsYear := identityResult.Identity.Category == api.CanonicalCategoryTV &&
+		identityResult.ProviderMetadata.TVDBNamingAvailable(input.SourcePath, identityResult.Identity)
 	if collected.NamingCategory == api.CanonicalCategoryMovie && identityResult.Identity.Category == api.CanonicalCategoryTV ||
 		collected.NamingCategory == api.CanonicalCategoryTV && identityResult.Identity.Category == api.CanonicalCategoryMovie {
 		cleaned, err := api.ApplyReleaseCorrectionUpdate(resolved.Corrections, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
 		if err != nil {
 			return api.PrepareResult{}, fmt.Errorf("prepared release: sanitize mismatched corrections: %w", err)
 		}
-		discardProviderOwnedCorrections(&cleaned, identityResult.Identity.Category)
+		discardProviderOwnedCorrections(&cleaned, tvdbOwnsYear)
 		if !reflect.DeepEqual(cleaned, resolved.Corrections.Corrections) {
 			if _, err := m.store.CompareAndSwapReleaseCorrections(ctx, input.SourcePath, resolved.Corrections.Revision, cleaned); err != nil {
 				return api.PrepareResult{}, fmt.Errorf("prepared release: persist sanitized corrections: %w", err)
@@ -401,7 +412,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 			Reason: "resolved category differs from collected names; select Category and refresh metadata",
 		}
 	}
-	finalCorrections, err := m.finalizeCorrectionBindings(ctx, resolved, identityResult.Identity)
+	finalCorrections, err := m.finalizeCorrectionBindings(ctx, resolved, identityResult.Identity, tvdbOwnsYear)
 	if err != nil {
 		return api.PrepareResult{}, err
 	}
@@ -422,6 +433,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	// Only current collection receipts enter the generation; prior provider
 	// snapshots cannot restore missing or superseded image acceptance.
 	identityResult.ProviderMetadata.ImportedScreenshotEvidence = collected.ImportedScreenshotEvidence.Clone()
+	manifest.PackageInventory = collected.PackageInventory.Clone()
 	release := api.PreparedRelease{
 		Generation:       generation,
 		Compatibility:    compatibility,
@@ -980,12 +992,24 @@ func cloneResult(result api.PrepareResult) (api.PrepareResult, error) {
 
 func cloneExternalIDOverrides(value api.ExternalIDOverrides) api.ExternalIDOverrides {
 	return api.ExternalIDOverrides{
-		TMDBID:   cloneInt(value.TMDBID),
-		IMDBID:   cloneInt(value.IMDBID),
-		TVDBID:   cloneInt(value.TVDBID),
-		TVmazeID: cloneInt(value.TVmazeID),
-		MALID:    cloneInt(value.MALID),
+		TMDBID:     cloneInt(value.TMDBID),
+		IMDBID:     cloneInt(value.IMDBID),
+		TVDBID:     cloneInt(value.TVDBID),
+		TVmazeID:   cloneInt(value.TVmazeID),
+		MALID:      cloneInt(value.MALID),
+		KeepTMDB:   cloneBool(value.KeepTMDB),
+		KeepIMDB:   cloneBool(value.KeepIMDB),
+		KeepTVDB:   cloneBool(value.KeepTVDB),
+		KeepTVmaze: cloneBool(value.KeepTVmaze),
+		KeepMAL:    cloneBool(value.KeepMAL),
 	}
+}
+
+func cloneBool(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	return new(*value)
 }
 
 func cloneInt(value *int) *int {
@@ -1041,6 +1065,7 @@ func envelopeFromPersisted(release api.PreparedRelease, input api.PrepareInput) 
 	return envelope{
 		result: api.PrepareResult{
 			Release:               release,
+			Diagnostics:           externalidentity.CandidateDiagnostics(release.ProviderMetadata.IdentityCandidates),
 			EffectiveInstructions: input.Instructions,
 		},
 		resources: resourcesFromManifest(release.Source, input),

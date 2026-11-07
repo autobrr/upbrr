@@ -119,6 +119,8 @@ See [Audio analysis](../workflow/audio-analysis.md) for user-facing behavior. Us
 
 One active input is shared by all processes using the same database. Reads do not acquire its lease or recover interrupted work. Startup waits for prior-process leases to expire, preserves completed work, and marks unfinished operations interrupted without replaying external work. It abandons unresolved prior-process effects without verifying their remote outcome; check the tracker or torrent client before explicitly retrying an interrupted stage. Unknown external outcomes during the running process still require reconciliation before another submission. If a continuation or workflow command returns a revision conflict, fetch the current workflow and review its required actions before sending a new command; do not replay a write with the old revision.
 
+A forced-preparation continuation returns `preparationOperationId` when it accepts that preparation operation. Passive reads and responses returning an already active operation omit it. To associate cancellation with that request, require this ID to match the returned operation; a newly observed operation can belong to another tab or process.
+
 ## Base-path example
 
 ```powershell
@@ -133,6 +135,10 @@ Keep the token in an environment variable or secret store. Do not paste it direc
 Set `execution.runLogLevel` on `POST /api/v1/uploads` to `error`, `warn`, `info`, `debug`, or `trace` to control that run's application logs. Omit it or send an empty value to inherit the application setting. Invalid levels are rejected before the workflow is accepted.
 
 The level follows asynchronous work and feedback-driven continuation. Stage-based workflows use `descriptions.options.RunLogLevel` in their continuation intent; upload execution and retries inherit the retained description options when no new run override is supplied. Global settings and the server console threshold are unchanged. See [Logging](../web-ui/logging.md) for application outputs and viewer filters.
+
+## Provider ID selections
+
+Explicit provider IDs select each provider independently, even if returned cross-links disagree. The shared preparation boundary retains successful metadata and the saved selections across refresh and restart. Explicit clears and Auto/reset remain distinct. Inferred IDs still require agreement, except that MAL can follow the selected TMDB resource despite conflicting IMDb or TVDB links; a manual MAL ID or explicit MAL clear takes precedence. See [canonical metadata](../workflow/index.md#2-review-canonical-metadata).
 
 ## Browser session API
 

@@ -37,6 +37,12 @@ AvistaZ-family (`azfamily`) trackers are intentionally out of scope.
 - Pre-duplicate validation is side-effect-free. It consumes detached canonical facts, projected
   questionnaire/config overrides, and prepared-resource readiness only—never network, filesystem
   reads, runtime secrets, mutable services, or payload submission.
+- Package completeness comes from the prepared source's `PackageInventory`, collected through
+  the torrent inclusion policy. Validation receives those intended files, including full-disc
+  structure and deliberate exclusions. A bare media-selection `FileList` remains partial.
+  Complete inventory does not imply complete episode, technical, or language coverage; included
+  prohibited files still produce violations. Retain the torrent scope so a collapsed single-file
+  payload is not mistaken for a retained folder. Preserve inventory authority through rule adapters.
 - Upload and dry-run must share payload preparation. Dry-run must not submit the upload or repeat
   workflow-level discovery and duplicate checking.
 
@@ -283,7 +289,7 @@ naming fingerprints include the selected provider, so changing it requires renew
 
 Use `CurrentTVDBNameDisambiguation` for identity-bound TV qualifiers when the primary title
 comes from another provider. It rejects stale or mismatched evidence and manual titles;
-tracker-local callbacks still own qualifier placement and manual-year preservation. Do not
+tracker-local callbacks still own qualifier placement and evidenced destination-specific year rules. Usable TVDB naming data controls TV year value and omission, even when the selected qualifier year is zero. Manual year and omission controls apply only when that data is absent; do not infer absence from a zero year or a negative collision decision. Do not
 require rendered title text to equal TVDB's spelling.
 
 `StructuredNamePolicy.Defaults` applies optional presentation preferences. Its editor leaves
@@ -390,6 +396,23 @@ AKA/audio-marker omissions and an independent search name. The mandatory-policy 
 
 ### Authentication contract
 
+An optional `AuthPolicy.APIKeyGuidance` observes expiry headers from existing upload POST
+responses without adding requests or auth requirements. Bind site-owned header names and
+message policy in `auth.go`; Unit3D profiles expose it through `Site.APIKeyGuidance`.
+Only upload POST responses update the observation, including rejected uploads. The latest
+POST replaces any prior expiry with its reported, missing or malformed result. GET responses
+never update it. A key has no advice before its first upload POST response.
+Shared preflight emits one advisory decision per tracker, while upload preparation and submission
+log newly learned advice once per prepared plan. Retained preflight snapshots prevent
+repeating the same message after questionnaire reprojection within an upload attempt;
+new attempts, including failed-upload retries, show it again. Attempt history excludes
+preflight snapshots at or before retained upload results and takes precedence over cached
+projection advice. Passive account advice does not invalidate otherwise compatible
+duplicate evidence. Observations remain process-local and
+credential-digest scoped; raw keys and headers are never retained in this guidance cache.
+Keep missing, malformed and reported expiry distinct. This capability cannot block uploads,
+request confirmation, or change authentication and submission outcomes.
+
 `api.TrackerAuthCapability` describes supported user actions. `trackers.AuthPolicy` resolves
 secret-free effective requirements for the current config/mode. `internal/trackers/auth.Service`
 owns status/import/validate/login/2FA/delete coordination across CLI, API, and WebUI.
@@ -407,6 +430,14 @@ owns status/import/validate/login/2FA/delete coordination across CLI, API, and W
   lane without prompting; `--unattended_confirm` may let the CLI present required manual actions.
 - Hybrid modes must be explicit. For example, API-upload and cookie-form upload can resolve to
   different requirement alternatives without tracker-name branches in generic code.
+
+### Settings connection probes
+
+Definitions may expose `ConnectionProbeProvider`; standalone profiles bind `ConnectionProbe` in `profile.go` with protocol logic in `auth_connection.go`. The registry carries this capability separately from `AuthSessionResolver`. Declare `DraftConfig` to copy only the credential fields consumed by the probe before decryption; nil selects no draft fields for cookie-only checks. A probe receives that selected decrypted config, an optional read-only cookie snapshot scoped to the registered host, and a bounded HTTP client that rejects redirects. It has no database or persistence handle.
+
+For credential-login probes, `CredentialsOverrideCookies` selects a fresh ephemeral login when either username or password is entered. Require both fields, discard the temporary session and never fall back to stored cookies after a failed draft login.
+
+Use a verified authenticated read operation and validate its service-specific response. Return fixed, secret-free `api.ConnectionTestResult` messages. Do not reuse an auth resolver that logs in, refreshes credentials, initializes storage, or persists session state. Never probe by uploading content, adding torrents, or sending an empty upload request. Document genuinely unavailable safe operations without treating an unverified endpoint as unsupported. Tests must use local fakes and synthetic credentials.
 
 ### Torrent-identity contract
 
@@ -1102,6 +1133,32 @@ preview but cannot submit. Upload submits the captured state once. A submit clos
 short-lived CSRF token, but must not rebuild canonical fields, rerun image uploads, or reread
 mutable prepared-release inputs. `Release` owns temporary resources and is exact-once.
 
+#### Report submission evidence
+
+Return success only after the tracker protocol establishes acceptance. A successful HTTP status,
+missing error field or nonempty response alone is insufficient. Keep missing, contradictory,
+malformed and incomplete evidence uncertain unless an independent response marker proves the
+outcome, such as a recognized acceptance redirect.
+
+Use `submission.NewError(submission.NotSent, cause)` when this attempt provably could not send
+the submission, or `submission.NewError(submission.Rejected, cause)` for an explicit protocol
+rejection. The package is `internal/trackers/submission`; sanitize the diagnostic cause using the
+existing tracker helpers. Unclassified transport and response errors retain uncertainty and
+must not authorize another submission. Never infer these dispositions from diagnostic strings
+or classify every response with a particular HTTP status alike.
+
+`commonhttp.ExecuteUpload` retains private protocol bytes separately from its redacted
+diagnostics. Check `BodyComplete` before relying on a response body; available headers or the
+final URL can still establish acceptance after a body-read failure. Do not publish protocol
+bytes or treat its HTTP `Success` candidate as the final upload outcome. Shared orchestration
+owns durable receipt completion and exact-attempt fencing.
+
+Keep remote acceptance separate from local receipt-retention failure. Retained results carry
+the exact operation/effect binding even when the terminal write fails. Tracker reconciliation
+requires that binding and rejects stale attempts or attempts with retained acceptance evidence;
+the reconciliation and workflow checkpoint commit together. An effect ID in a diagnostic
+resource is correlation, never permission to complete or retry it.
+
 #### Preserve registered torrent authority
 
 After confirmed remote success, return one `api.UploadedTorrent` per successful tracker upload in
@@ -1115,7 +1172,11 @@ After confirmed remote success, return one `api.UploadedTorrent` per successful 
   private authority: never expose it in previews, public history, logs, or diagnostics.
 
 Use `trackers.PersistReconstructedRegisteredTorrent` only when the protocol makes reconstruction
-deterministic after confirmed success. A registered-artifact download or persistence failure must
+deterministic after confirmed success. Pass the available `TorrentURL` so the reconstructed comment
+includes the destination page, with private URL fields removed. Leave it empty when no usable page
+is known; never substitute an authenticated download URL. Pre-upload personalization still removes
+inherited comments, and tracker-downloaded metainfo remains byte-for-byte unchanged.
+A registered-artifact download or persistence failure must
 use `trackers.LogRegisteredTorrentUnavailable` and leave the successful remote upload successful.
 Client injection consumes this registered authority; never substitute the pre-upload prepared
 torrent as if it were tracker-registered.
@@ -1171,6 +1232,14 @@ presentation evidence. Structured API and prepared provider values remain author
 including custom provider codes, and genuine title conflicts remain contradictory. Known service
 aliases normalize to the same identity in both sources; punctuation in service names remains
 significant (for example, Disney and Disney+).
+
+Carry positive structured 3D labels through `DupeEntry.ThreeD`, raw type/source labels, or
+structured flags. Use `dupe.ThreeDFromLabels` for tag arrays that otherwise discard non-HDR
+labels. Name fallback uses explicit stereoscopic tokens in bounded release metadata, excluding
+title text and ambiguous group suffixes, and remains partial. Empty tags or a missing marker
+never prove 2D; only explicit 2D evidence may establish that presentation.
+Mixed 2D/3D labels do not establish either presentation. Conflicting title markers require
+review, and title-only presentation facts cannot establish automatic coexistence.
 
 Use `DupePolicy.Slots` for conditional ordinary-slot matrices, with complete normalized
 predicates and shared IDs only for presentations that compete in the same slot. Unlisted or
@@ -1441,6 +1510,7 @@ Declare static capabilities directly in `standalone.Profile`:
 | Profile field             | Typical supporting file      | Purpose                                           |
 | ------------------------- | ---------------------------- | ------------------------------------------------- |
 | `AuthCapability`          | `auth.go`                    | Declares API-key, passkey, cookie, login/2FA      |
+| `ConnectionProbe`         | `auth_connection.go`         | Read-only draft Settings connection check         |
 | `AuthResolver`            | `auth.go`                    | Validates or refreshes remote auth                |
 | `AuthPolicy`              | `profile.go`                 | Auth coordinator semantics                        |
 | `AuthStateManager`        | `auth.go`                    | Cleans tracker-owned persisted auth state         |

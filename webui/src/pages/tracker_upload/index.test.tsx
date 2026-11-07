@@ -74,7 +74,7 @@ describe("TrackerUploadPage", () => {
             trackerId: "OTHER",
             submissionStatus: "completed",
             clientInjectionStatus: "failed",
-            clientFailureCode: "client_injection",
+            clientFailureCode: "client_injection_failed",
           },
         ],
       } as unknown as NonNullable<UploadFacet["view"]["result"]>,
@@ -129,7 +129,7 @@ describe("TrackerUploadPage", () => {
             trackerId: "OTHER",
             submissionStatus: "completed",
             clientInjectionStatus: "failed",
-            clientFailureCode: "client_injection",
+            clientFailureCode: "client_injection_failed",
           },
         ],
       } as unknown as NonNullable<UploadFacet["view"]["result"]>,
@@ -573,6 +573,12 @@ describe("TrackerUploadPage", () => {
             },
           ],
         },
+        {
+          trackerId: "OTHER",
+          status: "failed",
+          submissionStatus: "failed",
+          failures: [{ failure: { Code: "receipt_retention", Operation: "upload_execute" } }],
+        },
       ],
     } as unknown as NonNullable<UploadFacet["view"]["result"]>;
     renderPage(uploadFacet({ dryRunStatus: "ready", dryRunResult, result }, { retry }));
@@ -595,7 +601,7 @@ describe("TrackerUploadPage", () => {
           status: "partial",
           submissionStatus: "completed",
           clientInjectionStatus: "failed",
-          clientFailureCode: "client_injection",
+          clientFailureCode: "client_injection_failed",
           clientInjectionMessage: "Exact-torrent client injection failed.",
           failures: [
             {
@@ -624,6 +630,41 @@ describe("TrackerUploadPage", () => {
       1,
     );
   });
+
+  it.each(["failed", "completed"])(
+    "does not offer a retry with a pending receipt after submission=%s",
+    (submissionStatus) => {
+      const result = {
+        status: submissionStatus === "completed" ? "partial" : "failed",
+        results: [
+          {
+            trackerId: "EXAMPLE",
+            status: "failed",
+            submissionStatus,
+            clientInjectionStatus: "failed",
+            clientFailureCode: "client_injection_failed",
+            failures: [
+              {
+                failure: {
+                  Code: "receipt_retention",
+                  Operation: "upload_execute",
+                  Message: "Local receipt is pending.",
+                  Recovery: "none",
+                },
+              },
+            ],
+          },
+        ],
+      } as unknown as NonNullable<UploadFacet["view"]["result"]>;
+      renderPage(uploadFacet({ result }));
+      expect(
+        screen.queryByRole("button", { name: "Retry failed uploads" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Retry client injection" }),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("marks each tracker with the backend upload decision before any dry run", () => {
     const projections = {

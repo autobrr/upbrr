@@ -118,10 +118,15 @@ func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, ru
 // multi-disc subject, ordinary per-disc planning failures leave that disc empty
 // while usable discs remain; cancellation, deadlines, and frame corruption
 // still return an error.
-func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (api.ScreenshotPlan, error) {
+func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (plan api.ScreenshotPlan, err error) {
 	view := *s
 	view.logger = logging.FromContext(ctx, s.logger)
 	s = &view
+	defer func() {
+		if err != nil {
+			s.logger.Warnf("screenshots: planning blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
 
 	if s.repo != nil && !meta.MediaBinding.Valid() {
 		return api.ScreenshotPlan{}, internalerrors.ErrInvalidInput
@@ -143,7 +148,7 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	baseCount := total / len(discs)
 	remainder := total % len(discs)
 
-	plan := api.ScreenshotPlan{
+	plan = api.ScreenshotPlan{
 		MediaBinding:      meta.MediaBinding,
 		SourcePath:        meta.SourcePath,
 		DiscType:          meta.DiscType,
@@ -225,6 +230,11 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 		plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, trackerLinks)
 	}
 	plan.FinalSelections = orderScreenshotImagesByDisc(plan.FinalSelections, discs)
+	s.logger.Tracef(
+		"screenshots: capture plan inventory suggested_frames=%d matching_disk_images=%d tracker_links=%d unlinked_tracker_images=%d planned_final_images=%d",
+		len(plan.SuggestedSelections), len(plan.ExistingScreenshots), len(plan.TrackerImageLinks),
+		len(plan.ExistingTrackerScreenshots), len(plan.FinalSelections),
+	)
 	return plan, nil
 }
 
@@ -345,6 +355,10 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 					continue
 				}
 				timestamp := shot.Timestamp
+				// The filename retains the requested slot; the record retains the actual recovered frame.
+				if shot.Processing != nil {
+					timestamp = parseScreenshotTimestamp(pathValue, base)
+				}
 				if timestamp <= 0 {
 					timestamp = parseScreenshotTimestamp(pathValue, base)
 				}
@@ -405,42 +419,11 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 
 	plan.ExistingScreenshots = filterScreenshotsMatchingSelections(listExistingScreens(tmpDir, base), baselineSelections, plan.FrameRate)
 	stampScreenshotImages(plan.ExistingScreenshots, meta.DiscID, meta.DiscName)
-	trackerRecords := s.loadTrackerMetadata(ctx, meta.SourcePath)
-	if meta.DiscID == "" {
-		plan.TrackerImageLinks = buildTrackerImageLinks(
-			trackerRecords,
-			tmpDir,
-			s.registry,
-			imageevidence.ResolutionHeight(meta.Release.Resolution),
-			strings.EqualFold(meta.DiscType, "DVD"),
-		)
-	}
-	plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
-		listTrackerScreens(tmpDir, base),
-		plan.TrackerImageLinks,
-		trackerRecords,
-		s.registry,
-		tmpDir,
-		imageevidence.ResolutionHeight(meta.Release.Resolution),
-		strings.EqualFold(meta.DiscType, "DVD"),
-	)
-	stampScreenshotImages(plan.ExistingTrackerScreenshots, meta.DiscID, meta.DiscName)
 	plan.FinalSelections = filterScreenshotsMatchingSelections(s.loadFinalSelections(ctx, meta, tmpDir), baselineSelections, plan.FrameRate)
 
-	// Automatically include tracker images in final selections
-	plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, plan.TrackerImageLinks)
-	for _, images := range [][]api.ScreenshotImage{plan.ExistingScreenshots, plan.ExistingTrackerScreenshots, plan.FinalSelections} {
+	for _, images := range [][]api.ScreenshotImage{plan.ExistingScreenshots, plan.FinalSelections} {
 		restoreScreenshotTonemapping(images, storedScreenshots)
 	}
-	s.logger.Tracef(
-		"screenshots: capture plan inventory baseline_frames=%d suggested_frames=%d matching_disk_images=%d tracker_links=%d unlinked_tracker_images=%d planned_final_images=%d",
-		len(baselineSelections),
-		len(plan.SuggestedSelections),
-		len(plan.ExistingScreenshots),
-		len(plan.TrackerImageLinks),
-		len(plan.ExistingTrackerScreenshots),
-		len(plan.FinalSelections),
-	)
 
 	return plan, nil
 }
@@ -498,8 +481,12 @@ func (s *Service) Capture(
 		}
 		result.Images = append(result.Images, discResult.Images...)
 		result.Errors = append(result.Errors, discResult.Errors...)
-		result.Tonemapped = result.Tonemapped || discResult.Tonemapped
+
 		result.UsedLibplacebo = result.UsedLibplacebo || discResult.UsedLibplacebo
+	}
+	result.Tonemapped = len(result.Images) > 0
+	for _, image := range result.Images {
+		result.Tonemapped = result.Tonemapped && image.Tonemapping == api.ScreenshotTonemapped
 	}
 	return result, nil
 }
@@ -554,27 +541,6 @@ func (s *Service) captureDisc(
 
 	base := screenshotBaseName(meta)
 	tonemap := shouldTonemap(meta, s.cfg)
-	result.Tonemapped = tonemap
-
-	frameInfo := map[float64]frameInfoResult{}
-	if s.cfg.ScreenshotHandling.FrameOverlay {
-		for _, selection := range selections {
-			ts := selectionTimestamp(selection, info.FrameRate)
-			if ts <= 0 {
-				continue
-			}
-			if _, exists := frameInfo[ts]; exists {
-				continue
-			}
-			frameSourcePath, frameTimestamp := resolveSegmentTimestamp(info, ts)
-			infoResult, infoErr := getFrameInfo(ctx, s.runner, cmd, frameSourcePath, frameTimestamp, info.Playlist)
-			if infoErr != nil {
-				s.logger.Debugf("screenshots: frame info failed: %v", infoErr)
-				continue
-			}
-			frameInfo[ts] = infoResult
-		}
-	}
 
 	type captureJob struct {
 		selection api.ScreenshotSelection
@@ -628,7 +594,7 @@ func (s *Service) captureDisc(
 		limit,
 		s.cfg.ScreenshotHandling.FrameOverlay,
 		tonemap,
-		shouldUseLibplacebo(meta, s.cfg),
+		s.cfg.ScreenshotHandling.UseLibplacebo,
 		cmd,
 	)
 
@@ -650,7 +616,8 @@ func (s *Service) captureDisc(
 			ts := job.timestamp
 			outputName := buildScreenshotFilename(base, selection.Index, ts, purpose)
 			output := filepath.Join(tmpDir, outputName)
-			var usedLib bool
+			var rendered renderedFrame
+			var resolvedTS float64
 			var captureErr error
 			for _, candidate := range resolveSegmentCandidates(info, ts) {
 				s.logger.Tracef(
@@ -664,31 +631,48 @@ func (s *Service) captureDisc(
 					output,
 				)
 				capture := captureRequest{
+					HDRFacts:      info.HDRFacts,
 					Playlist:      info.Playlist,
 					InputPath:     candidate.SourcePath,
 					OutputPath:    output,
 					Timestamp:     candidate.Timestamp,
 					FrameRate:     info.FrameRate,
 					Resolution:    meta.Release.Resolution,
-					UseLibplacebo: shouldUseLibplacebo(meta, s.cfg),
+					UseLibplacebo: s.cfg.ScreenshotHandling.UseLibplacebo,
 					ToneMap:       tonemap,
 					Algorithm:     s.cfg.ScreenshotHandling.TonemapAlgorithm,
 					Desat:         s.cfg.ScreenshotHandling.Desat,
 					Compression:   s.cfg.ScreenshotHandling.FFmpegCompression,
 					FrameOverlay:  s.cfg.ScreenshotHandling.FrameOverlay,
 					OverlaySize:   s.cfg.ScreenshotHandling.OverlayTextSize,
-					FrameInfo:     frameInfo[ts],
-					SourceWidth:   info.Width,
-					SourceHeight:  info.Height,
-					WidthScale:    info.WidthScale,
-					HeightScale:   info.HeightScale,
+
+					SourceWidth:  info.Width,
+					SourceHeight: info.Height,
+					WidthScale:   info.WidthScale,
+					HeightScale:  info.HeightScale,
 				}
 
-				usedLib, captureErr = captureFrame(captureCtx, s.runner, cmd, capture, s.logger)
+				if candidate.SegmentIndex >= 0 {
+					capture.TimelineOffset = info.Segments[candidate.SegmentIndex].StartSeconds
+				}
+				rendered, captureErr = captureFrame(captureCtx, s.runner, cmd, capture, s.logger)
 				if captureErr == nil {
+					resolvedTS = rendered.Timestamp
+					if candidate.SegmentIndex >= 0 {
+						resolvedTS += info.Segments[candidate.SegmentIndex].StartSeconds
+					}
+					if resolvedTS != ts {
+						s.logger.Warnf(
+							"screenshots: frame recovery index=%d requested_timestamp_seconds=%.3f resolved_timestamp_seconds=%.3f",
+							selection.Index,
+							ts,
+							resolvedTS,
+						)
+					}
 					break
 				}
-				if errors.Is(captureErr, internalerrors.ErrFrameCorruption) {
+				if captureCtx.Err() != nil || errors.Is(captureErr, context.Canceled) || errors.Is(captureErr, context.DeadlineExceeded) ||
+					errors.Is(captureErr, internalerrors.ErrFrameCorruption) {
 					mu.Lock()
 					if corruptionErr == nil {
 						corruptionErr = captureErr
@@ -720,7 +704,7 @@ func (s *Service) captureDisc(
 				continue
 			}
 
-			if usedLib {
+			if rendered.Processing.Renderer == "libplacebo" {
 				usedLibplacebo.Store(true)
 			}
 
@@ -728,14 +712,15 @@ func (s *Service) captureDisc(
 				DiscID:           meta.DiscID,
 				DiscName:         meta.DiscName,
 				Index:            selection.Index,
-				TimestampSeconds: ts,
+				TimestampSeconds: resolvedTS,
+				Processing:       &rendered.Processing,
 				Path:             output,
 				Purpose:          purpose,
 			}
 			if digest, err := imageevidence.Digest(output); err == nil {
 				img.ContentSHA256 = digest
 				img.Tonemapping = api.ScreenshotNotTonemapped
-				if tonemap {
+				if rendered.Processing.Tonemapped {
 					img.Tonemapping = api.ScreenshotTonemapped
 				}
 			}
@@ -761,7 +746,7 @@ func (s *Service) captureDisc(
 				img.SizeBytes,
 				img.Width,
 				img.Height,
-				usedLib,
+				rendered.Processing.Renderer == "libplacebo",
 			)
 		}
 	}
@@ -797,11 +782,16 @@ func (s *Service) captureDisc(
 	result.Images = images
 	result.Errors = captureErrors
 	result.UsedLibplacebo = usedLibplacebo.Load()
+	result.Tonemapped = len(images) > 0
+	for _, img := range images {
+		result.Tonemapped = result.Tonemapped && img.Tonemapping == api.ScreenshotTonemapped
+	}
 	s.logger.Debugf("screenshots: capture result images=%d errors=%d libplacebo_used=%t", len(result.Images), len(result.Errors), result.UsedLibplacebo)
 
 	if s.repo != nil && len(images) > 0 && purpose != api.ScreenshotPurposePreview {
 		for _, img := range images {
 			screenshot := api.Screenshot{
+				Processing:    img.Processing,
 				Tonemapping:   img.Tonemapping,
 				ContentSHA256: img.ContentSHA256,
 				DiscID:        meta.DiscID,
@@ -824,7 +814,7 @@ func (s *Service) captureDisc(
 // PreviewFrame captures one decodable, non-black PNG into memory without
 // persisting it. DVD inputs try the selected VOB segment followed by later
 // segments when a candidate yields no usable frame. When enabled for HDR/DV
-// inputs, it applies configured software tone mapping before returning.
+// inputs, it shares the configured renderer and bounded recovery policy with capture.
 func (s *Service) PreviewFrame(
 	ctx context.Context,
 	meta api.ScreenshotSubject,
@@ -886,6 +876,8 @@ func (s *Service) previewDisc(
 		cmd,
 	)
 	var payload []byte
+	var processing api.ScreenshotProcessing
+	resolvedTS := timestampSeconds
 	for _, candidate := range candidates {
 		s.logger.Tracef(
 			"screenshots: preview queued timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s",
@@ -895,18 +887,41 @@ func (s *Service) previewDisc(
 			candidate.FallbackIndex,
 			candidate.SourcePath,
 		)
-		payload, err = captureFrameBytes(ctx, s.runner, cmd, previewRequest{
-			Playlist:  info.Playlist,
-			InputPath: candidate.SourcePath,
-			Timestamp: candidate.Timestamp,
-			ToneMap:   shouldTonemap(meta, s.cfg),
-			Algorithm: s.cfg.ScreenshotHandling.TonemapAlgorithm,
-			Desat:     s.cfg.ScreenshotHandling.Desat,
+		payload, processing, err = captureFrameBytes(ctx, s.runner, cmd, captureRequest{
+			FrameOverlay:   s.cfg.ScreenshotHandling.FrameOverlay,
+			OverlaySize:    s.cfg.ScreenshotHandling.OverlayTextSize,
+			Resolution:     meta.Release.Resolution,
+			FrameRate:      info.FrameRate,
+			TimelineOffset: resolvedSegmentOffset(info, candidate),
+			HDRFacts:       info.HDRFacts,
+			UseLibplacebo:  s.cfg.ScreenshotHandling.UseLibplacebo,
+			SourceWidth:    info.Width,
+			SourceHeight:   info.Height,
+			WidthScale:     info.WidthScale,
+			HeightScale:    info.HeightScale,
+			Playlist:       info.Playlist,
+			InputPath:      candidate.SourcePath,
+			Timestamp:      candidate.Timestamp,
+			ToneMap:        shouldTonemap(meta, s.cfg),
+			Algorithm:      s.cfg.ScreenshotHandling.TonemapAlgorithm,
+			Desat:          s.cfg.ScreenshotHandling.Desat,
 		}, s.logger)
 		if err == nil {
+			resolvedTS = candidate.Timestamp
+			if candidate.SegmentIndex >= 0 {
+				resolvedTS += info.Segments[candidate.SegmentIndex].StartSeconds
+			}
+			if resolvedTS != timestampSeconds {
+				s.logger.Warnf(
+					"screenshots: preview frame recovery requested_timestamp_seconds=%.3f resolved_timestamp_seconds=%.3f",
+					timestampSeconds,
+					resolvedTS,
+				)
+			}
 			break
 		}
-		if errors.Is(err, internalerrors.ErrFrameCorruption) {
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+			errors.Is(err, internalerrors.ErrFrameCorruption) {
 			break
 		}
 		s.logger.Debugf(
@@ -923,7 +938,8 @@ func (s *Service) previewDisc(
 	preview = api.ScreenshotPreview{
 		DiscID:           meta.DiscID,
 		DiscName:         meta.DiscName,
-		TimestampSeconds: timestampSeconds,
+		TimestampSeconds: resolvedTS,
+		Processing:       processing,
 		ImageBytes:       payload,
 		SizeBytes:        int64(len(payload)),
 	}
@@ -2060,6 +2076,7 @@ func restoreScreenshotTonemapping(images []api.ScreenshotImage, stored []api.Scr
 	}
 	for index := range images {
 		images[index].Tonemapping, images[index].ContentSHA256 = "", ""
+		images[index].Processing = nil
 		shot, ok := byPath[images[index].Path]
 		if !ok {
 			continue
@@ -2067,6 +2084,8 @@ func restoreScreenshotTonemapping(images []api.ScreenshotImage, stored []api.Scr
 		images[index].Tonemapping = imageevidence.Tonemapping(images[index].Path, shot.ContentSHA256, shot.Tonemapping)
 		if images[index].Tonemapping != "" {
 			images[index].ContentSHA256 = shot.ContentSHA256
+			images[index].Processing = shot.Processing
+			images[index].TimestampSeconds = shot.Timestamp
 		}
 	}
 }

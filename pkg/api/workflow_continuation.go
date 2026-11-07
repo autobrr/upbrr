@@ -437,11 +437,14 @@ type WorkflowEvent struct {
 
 // WorkflowContinuation is the backend-owned current transition and outcome projection.
 type WorkflowContinuation struct {
-	Lifecycle       OperationLifecycle   `json:"lifecycle"`
-	Disposition     WorkflowDisposition  `json:"disposition"`
-	Refs            WorkflowExactRefs    `json:"refs"`
-	TrackerOutcomes []TrackerLaneOutcome `json:"trackerOutcomes,omitempty"`
-	RequiredActions []RequiredAction     `json:"requiredActions,omitempty"`
-	AvailableGoals  []GoalAvailability   `json:"availableGoals"`
-	Events          []WorkflowEvent      `json:"events,omitempty"`
+	// DuplicateReusePending reports retained historical evidence awaiting revalidation.
+	// It grants no current duplicate or upload authority, including after restart.
+	DuplicateReusePending bool                 `json:"duplicateReusePending,omitempty"`
+	Lifecycle             OperationLifecycle   `json:"lifecycle"`
+	Disposition           WorkflowDisposition  `json:"disposition"`
+	Refs                  WorkflowExactRefs    `json:"refs"`
+	TrackerOutcomes       []TrackerLaneOutcome `json:"trackerOutcomes,omitempty"`
+	RequiredActions       []RequiredAction     `json:"requiredActions,omitempty"`
+	AvailableGoals        []GoalAvailability   `json:"availableGoals"`
+	Events                []WorkflowEvent      `json:"events,omitempty"`
 }

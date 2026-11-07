@@ -81,6 +81,7 @@ const (
 // SourceManifest is the finalized source inventory and measurement set for one
 // prepared release.
 type SourceManifest struct {
+	PackageInventory  PackageInventory
 	SourcePath        string
 	Size              int64
 	Entries           []SourceManifestEntry
@@ -560,6 +561,8 @@ const (
 	IdentityProvenanceUnknown IdentityProvenance = "unknown"
 	// IdentityProvenanceExplicit identifies a caller-locked fact.
 	IdentityProvenanceExplicit IdentityProvenance = "explicit"
+	// IdentityProvenanceRetained identifies an automatic match the caller chose to keep.
+	IdentityProvenanceRetained IdentityProvenance = "retained"
 	// IdentityProvenancePersisted identifies reusable source-scoped state.
 	IdentityProvenancePersisted IdentityProvenance = "persisted"
 	// IdentityProvenanceMediaInfo identifies embedded MediaInfo evidence.
@@ -692,6 +695,40 @@ func (i ExternalIdentity) ProviderID(provider IdentityProvider) (int, bool) {
 	return id, id > 0
 }
 
+// WithProviderRetention applies saved Keep choices without converting automatic
+// matches into manual ID overrides. Dependencies survive so turning Keep off
+// restores automatic invalidation; manual pins remain intact.
+func (i ExternalIdentity) WithProviderRetention(overrides ExternalIDOverrides) ExternalIdentity {
+	for _, provider := range []struct {
+		keep       *bool
+		id         int
+		provenance *IdentityProvenance
+		override   OverrideState
+	}{
+		{overrides.KeepTMDB, i.TMDBID, &i.Provenance.TMDB, i.Overrides.TMDB},
+		{overrides.KeepIMDB, i.IMDBID, &i.Provenance.IMDB, i.Overrides.IMDB},
+		{overrides.KeepTVDB, i.TVDBID, &i.Provenance.TVDB, i.Overrides.TVDB},
+		{overrides.KeepTVmaze, i.TVmazeID, &i.Provenance.TVmaze, i.Overrides.TVmaze},
+		{overrides.KeepMAL, i.MALID, &i.Provenance.MAL, i.Overrides.MAL},
+	} {
+		if *provider.provenance == IdentityProvenanceExplicit || provider.override == OverrideStateValue || provider.override == OverrideStateClear {
+			continue
+		}
+		if provider.keep != nil && *provider.keep && provider.id > 0 {
+			*provider.provenance = IdentityProvenanceRetained
+		} else if *provider.provenance == IdentityProvenanceRetained {
+			*provider.provenance = IdentityProvenancePersisted
+		}
+	}
+	return i
+}
+
+// HasRetainedProvider reports whether a saved Keep choice protects a provider match.
+func (i ExternalIdentity) HasRetainedProvider() bool {
+	return i.Provenance.TMDB == IdentityProvenanceRetained || i.Provenance.IMDB == IdentityProvenanceRetained ||
+		i.Provenance.TVDB == IdentityProvenanceRetained || i.Provenance.TVmaze == IdentityProvenanceRetained || i.Provenance.MAL == IdentityProvenanceRetained
+}
+
 // RequirementKind identifies a canonical prerequisite required by an operation.
 type RequirementKind string
 
@@ -747,6 +784,9 @@ func (i ExternalIdentity) RequireCategory() (CanonicalCategory, error) {
 // SourceScopedMetadata stores optional provider enrichment for one source and
 // prepared generation.
 type SourceScopedMetadata struct {
+	// IdentityCandidates retain advisory provider matches for this generation.
+	// They never select or replace a canonical provider ID.
+	IdentityCandidates []ExternalIdentityCandidate `json:",omitempty"`
 	// ImportedScreenshotEvidence is a receipt snapshot, not a local image asset.
 	ImportedScreenshotEvidence *ImportedScreenshotEvidence `json:",omitempty"`
 	SourcePath                 string
@@ -768,6 +808,15 @@ func (m SourceScopedMetadata) IsCurrentFor(sourcePath string, identity ExternalI
 	return sourceScopedPathMatches(identity.SourcePath, sourcePath) &&
 		sourceScopedPathMatches(m.SourcePath, sourcePath) &&
 		preparedGenerationMatches(m.Generation, identity.Generation)
+}
+
+// TVDBNamingAvailable reports whether a source- and identity-matched TVDB
+// snapshot supplies a series name. A zero year or no-qualifier decision is still
+// available TVDB data; an ID without usable metadata is not.
+func (m SourceScopedMetadata) TVDBNamingAvailable(source string, identity ExternalIdentity) bool {
+	return sourceScopedPathMatches(identity.SourcePath, source) && sourceScopedPathMatches(m.SourcePath, source) &&
+		m.TVDB != nil && identity.TVDBID > 0 && m.TVDB.TVDBID == identity.TVDBID &&
+		(strings.TrimSpace(m.TVDB.NameEnglish) != "" || strings.TrimSpace(m.TVDB.Name) != "")
 }
 
 func sourceScopedPathMatches(scopedPath string, currentPath string) bool {
@@ -838,6 +887,31 @@ type ExternalIdentityCandidate struct {
 	Overview      string
 	PosterURL     string
 	Similarity    float64
+	Directors     []string
+	Cast          []string
+	// CastSource identifies verified billing order or the provider's curated principal credits.
+	CastSource     string
+	RuntimeMinutes int
+	RuntimeKind    string
+	// DetailsStatus may be partial while the search candidate remains selectable.
+	DetailsStatus MetadataEvidenceStatus
+}
+
+// MarshalJSON keeps absent candidate credits as the arrays promised by the workflow schema.
+func (candidate ExternalIdentityCandidate) MarshalJSON() ([]byte, error) {
+	type identityCandidate ExternalIdentityCandidate
+	payload := identityCandidate(candidate)
+	if payload.Cast == nil {
+		payload.Cast = []string{}
+	}
+	if payload.Directors == nil {
+		payload.Directors = []string{}
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("api: marshal identity candidate: %w", err)
+	}
+	return data, nil
 }
 
 // MetadataEvidenceStatus describes whether provider evidence can support both

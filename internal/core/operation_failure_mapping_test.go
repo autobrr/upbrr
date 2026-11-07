@@ -6,6 +6,8 @@ package core
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -130,6 +132,38 @@ func TestClassifyOperationErrorCanonicalMappings(t *testing.T) {
 			}
 			if failure != want {
 				t.Fatalf("failure = %#v, want %#v", failure, want)
+			}
+		})
+	}
+}
+
+func TestHDROutputFailureKeepsRetryAndFailedState(t *testing.T) {
+	t.Parallel()
+	for _, code := range []api.HDRAnalysisFailureCode{api.HDRAnalysisFailureRead, api.HDRAnalysisFailureOutput} {
+		t.Run(string(code), func(t *testing.T) {
+			cause := &os.PathError{
+Op: "mkdir",
+ Path: filepath.Join(t.TempDir(), "private-output"),
+ Err: os.ErrPermission,
+}
+			hdrFailure := api.HDRAnalysisFailure{Code: code, Message: "Synthetic HDR operation failed."}
+			hdrErr := api.NewHDRAnalysisError(hdrFailure, cause)
+			classified := classifyOperationError(api.OperationKindHDRAnalysis, hdrErr)
+			failure, typed := api.AsOperationFailure(classified)
+			_, filesystemCause := errors.AsType[*os.PathError](classified)
+			if !typed || failure.Code != api.OperationFailureHDRAnalysis || failure.HDRAnalysisCode != code ||
+				failure.Operation != api.OperationKindHDRAnalysis || failure.Recovery != api.OperationRecoveryRetry ||
+				failure.Message != hdrFailure.Message || !errors.Is(classified, os.ErrPermission) || !filesystemCause || !errors.Is(classified, cause) {
+				t.Fatalf("HDR failure mapping changed: %#v", failure)
+			}
+			formats := nativeFailedFormats(hdrErr, api.HDRAnalysisFormatsBoth)
+			for _, format := range formats {
+				if format.State != api.HDRExtractionFailed || format.Failure == nil || *format.Failure != hdrFailure {
+					t.Fatalf("native HDR failure projection changed: %#v", format)
+				}
+			}
+			if status := (api.HDRAnalysisTargetResult{Formats: formats}).AnalysisStatus(); status != api.StageStatusFailed {
+				t.Fatalf("native HDR aggregate status = %s", status)
 			}
 		})
 	}

@@ -42,6 +42,7 @@ func CloneClientEvidenceSnapshot(value ClientEvidenceSnapshot) ClientEvidenceSna
 	value.Result.TrackerIDs = cloneClientEvidenceStringMap(value.Result.TrackerIDs)
 	value.Result.MatchedTrackers = append([]string(nil), value.Result.MatchedTrackers...)
 	value.Result.TorrentComments = cloneClientEvidenceTorrentMatches(value.Result.TorrentComments)
+	value.Result.TorrentCandidates = append([]api.ClientTorrentCandidate(nil), value.Result.TorrentCandidates...)
 	return value
 }
 
@@ -71,6 +72,7 @@ func cloneClientEvidenceTorrentMatches(value []api.TorrentMatch) []api.TorrentMa
 		cloned[index] = match
 		cloned[index].TrackerURLsRaw = append([]string(nil), match.TrackerURLsRaw...)
 		cloned[index].TrackerURLs = append([]api.TrackerMatch(nil), match.TrackerURLs...)
+		cloned[index].MatchedTrackers = append([]string(nil), match.MatchedTrackers...)
 	}
 	return cloned
 }

@@ -60,6 +60,7 @@ func TestProjectionOptionalRequestIDCorrection(t *testing.T) {
 			projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
 				Tracker: "ANT",
 				Meta: api.UploadSubject{
+					Assessments:                 api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 					ReleaseName:                 "Example.Short.2026.1080p.WEB-DL.x264-GRP",
 					MediaInfoTextPath:           filepath.Join(t.TempDir(), "mediainfo.txt"),
 					Identity:                    api.ExternalIdentity{Category: test.category, TMDBID: 123},

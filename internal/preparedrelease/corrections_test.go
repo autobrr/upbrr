@@ -241,15 +241,19 @@ func TestManualDateCorrectionPersistsNormalizedValue(t *testing.T) {
 	}
 }
 
-func TestProviderOwnedCorrectionsAreRetiredOnRestart(t *testing.T) {
+func TestProviderOwnedTitlesAreRetiredBeforeCollection(t *testing.T) {
 	for _, category := range []api.CanonicalCategory{api.CanonicalCategoryMovie, api.CanonicalCategoryTV} {
 		t.Run(string(category), func(t *testing.T) {
 			t.Parallel()
 			source := writePreparedTestFile(t, "Example.2026.mkv", "media")
 			store := newMemoryStore()
 			_, err := store.CompareAndSwapReleaseCorrections(t.Context(), source, 0, api.StoredReleaseCorrectionsV1{
-				Version:     1,
-				ReleaseName: api.ReleaseNameOverrides{Category: new(string(category)), ManualYear: new(2001)},
+				Version: 1,
+				ReleaseName: api.ReleaseNameOverrides{
+					Category:   new(string(category)),
+					ManualYear: new(2001),
+					NoYear:     new(true),
+				},
 				Metadata: api.MetadataOverrides{
 					Title:          new("Old title"),
 					OriginalTitle:  new("Old original"),
@@ -279,11 +283,8 @@ func TestProviderOwnedCorrectionsAreRetiredOnRestart(t *testing.T) {
 					instructions.Metadata.AlternateTitle == nil || *instructions.Metadata.AlternateTitle != "Retained AKA" {
 					t.Fatal("provider-owned titles replayed or alternate title was lost")
 				}
-				if category == api.CanonicalCategoryTV && instructions.ReleaseName.ManualYear != nil {
-					t.Fatal("TV year override survived restart")
-				}
-				if category == api.CanonicalCategoryMovie && (instructions.ReleaseName.ManualYear == nil || *instructions.ReleaseName.ManualYear != 2001) {
-					t.Fatal("movie year override was lost")
+				if instructions.ReleaseName.ManualYear == nil || *instructions.ReleaseName.ManualYear != 2001 || instructions.ReleaseName.NoYear == nil || !*instructions.ReleaseName.NoYear {
+					t.Fatal("year fallback was discarded before TVDB availability was known")
 				}
 				if len(resolved.Corrections.Corrections.StaleContentFields) != 0 || len(resolved.Corrections.Corrections.ContentBindings) != 0 {
 					t.Fatal("retired title overrides still require confirmation")
@@ -325,6 +326,8 @@ type tvCorrectionIdentityResolver struct{}
 func (tvCorrectionIdentityResolver) Resolve(ctx context.Context, request externalidentity.Request) (externalidentity.Result, error) {
 	result, err := (staticIdentityResolver{}).Resolve(ctx, request)
 	result.Identity.Category = api.CanonicalCategoryTV
+	result.Identity.TVDBID = 123
+	result.ProviderMetadata.TVDB = &api.TVDBMetadata{TVDBID: 123, NameEnglish: "Example Series"}
 	return result, err
 }
 
@@ -358,7 +361,7 @@ func TestStaleTVCorrectionResponsePersistsSanitizedFields(t *testing.T) {
 			Input:             api.PrepareInput{SourcePath: source},
 			Corrections:       stored,
 			SourceFingerprint: "current",
-		}, api.ExternalIdentity{Category: api.CanonicalCategoryTV})
+		}, api.ExternalIdentity{Category: api.CanonicalCategoryTV}, true)
 		stale, ok := errors.AsType[*api.StaleContentCorrectionsError](err)
 		if !ok {
 			t.Fatalf("expected alternate-title confirmation, got %v", err)

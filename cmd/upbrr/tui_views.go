@@ -11,6 +11,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func cliLogLevelStyle(level string, noColor bool) string {
@@ -149,7 +151,27 @@ func (m *cliTUIModel) flow(width, height int) string {
 				m.progress.ViewAs(float64(item.Completed)/float64(item.Total))
 			separateProgress = true
 		}
-		if m.view.Total > 0 {
+		metadataIndex := slices.IndexFunc(m.telemetry, func(item cliTelemetry) bool {
+			return item.Kind == "preparation_substep" && item.Status == api.StageStatusRunning
+		})
+		if metadataIndex < 0 {
+			metadataIndex = slices.IndexFunc(m.telemetry, func(item cliTelemetry) bool {
+				return item.Kind == "preparation_phase" && item.Status == api.StageStatusRunning
+			})
+		}
+		if metadataIndex >= 0 {
+			status += "\n" + m.telemetry[metadataIndex].Phase
+		}
+		var partial []string
+		for _, item := range m.telemetry {
+			if item.Kind == "preparation_phase" && item.Status == api.StageStatusPartial {
+				partial = append(partial, item.Phase)
+			}
+		}
+		if len(partial) > 0 {
+			status += "\n" + strings.Join(partial, "\n")
+		}
+		if m.view.Total > 0 && metadataIndex < 0 {
 			if separateProgress {
 				status += "\nOverall workflow progress"
 			}

@@ -335,6 +335,8 @@ type RequiredAction struct {
 	TrackerID              TrackerID                  `json:"trackerId,omitempty"`
 	EffectKind             WorkflowExternalEffectKind `json:"effectKind,omitempty"`
 	EffectScopeID          string                     `json:"effectScopeId,omitempty"`
+	EffectID               string                     `json:"effectId,omitempty"`
+	EffectOperationID      WorkflowOperationID        `json:"effectOperationId,omitempty"`
 	Prompt                 string                     `json:"prompt"`
 	Options                []RequiredActionOption     `json:"options,omitempty"`
 	AllowsFreeText         bool                       `json:"allowsFreeText,omitempty"`
@@ -365,14 +367,16 @@ type WorkflowFailure struct {
 
 // WorkflowOperationItem is one ordered safe progress row.
 type WorkflowOperationItem struct {
-	ID        string      `json:"id"`
-	Kind      string      `json:"kind"`
-	Label     string      `json:"label"`
-	Phase     string      `json:"phase,omitempty"`
-	Status    StageStatus `json:"status"`
-	Completed int         `json:"completed,omitempty"`
-	Total     int         `json:"total,omitempty"`
-	Message   string      `json:"message,omitempty"`
+	// BlurayCandidate is advisory detail output for the matching retained release ID.
+	BlurayCandidate *BlurayReleaseCandidate `json:"blurayCandidate,omitempty"`
+	ID              string                  `json:"id"`
+	Kind            string                  `json:"kind"`
+	Label           string                  `json:"label"`
+	Phase           string                  `json:"phase,omitempty"`
+	Status          StageStatus             `json:"status"`
+	Completed       int                     `json:"completed,omitempty"`
+	Total           int                     `json:"total,omitempty"`
+	Message         string                  `json:"message,omitempty"`
 }
 
 // WorkflowOperationResultKind identifies the exact public result promised by

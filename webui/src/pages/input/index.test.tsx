@@ -17,8 +17,490 @@ import type {
 import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
 import { InputCorrectionEditor } from "./InputCorrectionEditor";
 import InputPage from "./index";
+import { ProviderCandidates } from "./ProviderCandidates";
 
 afterEach(cleanup);
+
+const resolverCandidate = {
+  Provider: "tmdb",
+  ID: 808,
+  Title: "Fallback Example",
+  OriginalTitle: "",
+  Year: 2024,
+  Category: "movie",
+  MediaType: "Movie",
+  Overview: "",
+  PosterURL: "",
+  Similarity: 0,
+};
+
+it.each(["complete", "unavailable"])(
+  "retains resolver candidates when the submitted provider search is %s with no matches",
+  async (status) => {
+    const user = userEvent.setup();
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        intent: { ...base.view.intent, identity: { IMDBID: 0, TVmazeID: 404 } },
+        preview: {
+          ...base.view.preview!,
+          Identity: { ...base.view.preview!.Identity, TMDBID: 0, IMDBID: 0 },
+          Diagnostics: [
+            {
+              Code: "external_identity_candidates",
+              Severity: "info",
+              Message: "provider candidates were considered during identity resolution",
+              Candidates: [
+                resolverCandidate,
+                {
+                  ...resolverCandidate,
+                  Provider: "imdb",
+                  ID: 222,
+                  Category: "",
+                  Title: "IMDb Fallback",
+                },
+              ],
+            },
+          ],
+        },
+        providerSearch: {
+          status: "ready",
+          error: "",
+          result: {
+            Query: "Example 2025",
+            Category: "movie",
+            Providers: ["tmdb", "imdb"].map((Provider) => ({
+              Provider,
+              Query: "Example",
+              Year: 2025,
+              Category: "movie",
+              Status: status,
+              Candidates: [],
+            })),
+          },
+        },
+      },
+    };
+    render(<InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />);
+    const radio = screen.getByRole("checkbox", {
+      name: "Select TMDB Fallback Example 2024, ID 808",
+    });
+    expect(within(radio.closest("article")!).getByText("From metadata resolution")).toBeVisible();
+    expect(screen.getByText("Results for “Example 2025”")).toBeVisible();
+    expect(
+      screen.getByText(
+        status === "unavailable"
+          ? "Provider search unavailable. Retry the search."
+          : "No TMDB matches for this search.",
+      ),
+    ).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Search query" }), " unsent draft");
+    expect(facet.searchProviders).not.toHaveBeenCalled();
+    await user.click(radio);
+    expect(facet.changeIdentity).toHaveBeenCalledExactlyOnceWith({
+      IMDBID: 0,
+      TVmazeID: 404,
+      TMDBID: 808,
+    });
+    expect(facet.changeMetadata).not.toHaveBeenCalled();
+    expect(facet.changeReleaseName).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("tab", { name: "IMDb (1)" }));
+    expect(
+      screen.getByRole("checkbox", { name: "Select IMDb IMDb Fallback 2024, ID 222" }),
+    ).toBeVisible();
+  },
+);
+
+it("keeps resolver provenance and provider IDs distinct across repeated searches and context changes", () => {
+  const base = readyInputFacet(1);
+  const preview = {
+    ...base.view.preview!,
+    Diagnostics: [
+      {
+        Code: "external_identity_candidates",
+        Severity: "info",
+        Message: "Resolver choices",
+        Candidates: [
+          resolverCandidate,
+          { ...resolverCandidate, ID: 809, Title: "Other Resolver Choice" },
+          { ...resolverCandidate, ID: 809, Title: "Duplicate Resolver Choice" },
+          { ...resolverCandidate, Provider: "imdb", Category: "", Title: "IMDb Resolver Choice" },
+          { ...resolverCandidate, ID: 0, Title: "Invalid Choice" },
+          { ...resolverCandidate, ID: 810, Title: "TV Choice", Category: "tv" },
+        ],
+      },
+      {
+        Code: "another_diagnostic",
+        Severity: "info",
+        Message: "Not identity choices",
+        Candidates: [{ ...resolverCandidate, ID: 811, Title: "Unrelated Choice" }],
+      },
+    ],
+  };
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      preview,
+      providerSearch: {
+        status: "ready",
+        error: "",
+        result: {
+          Query: "New Example 2025",
+          Category: "movie",
+          Providers: [
+            {
+              Provider: "tmdb",
+              Query: "New Example",
+              Year: 2025,
+              Category: "movie",
+              Status: "complete",
+              Candidates: [{ ...resolverCandidate, Title: "Enriched Search Choice", Year: 2025 }],
+            },
+          ],
+        },
+      },
+    },
+  };
+  const panel = (value: InputFacet, category = "MOVIE") => (
+    <ProviderCandidates
+      facet={value}
+      initialQuery="New Example 2025"
+      category={category}
+      needsSelection
+      loading={false}
+      onRefresh={vi.fn()}
+      onPosterOpen={vi.fn()}
+    />
+  );
+  const { rerender } = render(panel(facet));
+  expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+  expect(screen.getByRole("tab", { name: "TMDB (2)" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "IMDb (1)" })).toBeVisible();
+  expect(screen.queryByText("Fallback Example")).not.toBeInTheDocument();
+  const searched = screen.getByRole("checkbox", {
+    name: "Select TMDB Enriched Search Choice 2025, ID 808",
+  });
+  expect(
+    within(searched.closest("article")!).queryByText("From metadata resolution"),
+  ).not.toBeInTheDocument();
+  expect(screen.getAllByText("From metadata resolution")).toHaveLength(1);
+
+  rerender(
+    panel({
+      ...facet,
+      view: {
+        ...facet.view,
+        providerSearch: { status: "idle", result: null, error: "Search canceled." },
+      },
+    }),
+  );
+  expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+  expect(screen.getByText("Search canceled.")).toBeVisible();
+  expect(screen.queryByText(/Results for/)).not.toBeInTheDocument();
+  expect(screen.getAllByText("From metadata resolution")).toHaveLength(2);
+  expect(facet.changeIdentity).not.toHaveBeenCalled();
+
+  rerender(panel(facet, "TV"));
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  rerender(
+    panel({
+      ...facet,
+      view: {
+        ...facet.view,
+        preview: null,
+        providerSearch: { status: "idle", result: null, error: "" },
+      },
+    }),
+  );
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+});
+
+it("keeps candidate inspection and draft search separate from pending identity corrections", async () => {
+  const user = userEvent.setup();
+  const base = readyInputFacet(1);
+  let facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      intent: { ...base.view.intent, identity: { IMDBID: 777, TVDBID: 0 } },
+      providerSearch: {
+        status: "ready",
+        error: "",
+        result: {
+          Query: "Example",
+          Category: "tv",
+          Providers: [
+            {
+              Provider: "tmdb",
+              Query: "Example",
+              Year: 0,
+              Category: "tv",
+              Status: "complete",
+              Candidates: Array.from({ length: 9 }, (_, i) => ({
+                Provider: "tmdb",
+                ID: i + 1,
+                Title: `Example ${i + 1}`,
+                OriginalTitle: "",
+                Year: 2025,
+                Category: "tv",
+                MediaType: "TV",
+                Overview: "",
+                PosterURL: i === 0 ? "/broken.png" : "",
+                Similarity: 0,
+              })),
+            },
+            {
+              Provider: "imdb",
+              Query: "Example",
+              Year: 0,
+              Category: "tv",
+              Status: "unavailable",
+              Candidates: [],
+            },
+            {
+              Provider: "tvdb",
+              Query: "Example",
+              Year: 0,
+              Category: "tv",
+              Status: "complete",
+              Candidates: [
+                {
+                  Provider: "tvdb",
+                  ID: 303,
+                  Title: "Example Series",
+                  OriginalTitle: "",
+                  Year: 0,
+                  Category: "tv",
+                  MediaType: "TV",
+                  Overview: "",
+                  PosterURL: "",
+                  Similarity: 0,
+                  RuntimeMinutes: 42,
+                  RuntimeKind: "average_episode",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  };
+  const refresh = vi.fn();
+  const openPoster = vi.fn();
+  const panel = () => (
+    <ProviderCandidates
+      facet={facet}
+      initialQuery="Example"
+      category="TV"
+      needsSelection
+      loading={false}
+      onRefresh={refresh}
+      onPosterOpen={openPoster}
+    />
+  );
+  const { rerender } = render(panel());
+  vi.mocked(facet.changeIdentity).mockImplementation((identity) => {
+    facet = { ...facet, view: { ...facet.view, intent: { ...facet.view.intent, identity } } };
+    rerender(panel());
+  });
+  expect(screen.getAllByRole("checkbox")).toHaveLength(9);
+  expect(screen.getAllByText("Runtime unavailable")).toHaveLength(9);
+  const poster = screen.getByRole("button", { name: "View Example 1 poster full size" });
+  await user.click(poster);
+  poster.focus();
+  await user.keyboard("{Enter}");
+  expect(openPoster).toHaveBeenNthCalledWith(1, "/broken.png", "Example 1 poster");
+  expect(openPoster).toHaveBeenCalledTimes(2);
+  expect(facet.changeIdentity).not.toHaveBeenCalled();
+  fireEvent.error(screen.getByRole("img", { name: "Example 1 poster" }));
+  expect(screen.queryByRole("button", { name: /poster full size/ })).not.toBeInTheDocument();
+  expect(screen.getAllByText("No image")).toHaveLength(9);
+  const query = screen.getByRole("textbox", { name: "Search query" });
+  await user.clear(query);
+  await user.type(query, "New Example 2025");
+  expect(facet.searchProviders).not.toHaveBeenCalled();
+  expect(screen.getByText("Results for “Example”")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Search providers" }));
+  expect(facet.searchProviders).toHaveBeenCalledExactlyOnceWith("New Example 2025");
+
+  const link = screen.getByRole("link", { name: "Open TMDB Example 1 in a new tab" });
+  expect(link).toHaveAttribute("href", "https://www.themoviedb.org/tv/1");
+  expect(link).toHaveAttribute("target", "_blank");
+  link.addEventListener("click", (event) => event.preventDefault());
+  fireEvent.click(link, { ctrlKey: true });
+  fireEvent(link, new MouseEvent("auxclick", { button: 1, bubbles: true }));
+  link.focus();
+  fireEvent.keyDown(link, { key: "Enter" });
+  expect(facet.changeIdentity).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("checkbox", { name: "Select TMDB Example 9 2025, ID 9" }));
+  expect(facet.changeIdentity).toHaveBeenCalledExactlyOnceWith({
+    IMDBID: 777,
+    TVDBID: 0,
+    TMDBID: 9,
+  });
+  const selected = screen.getByRole("checkbox", { name: "Select TMDB Example 9 2025, ID 9" });
+  expect(selected).toBeChecked();
+  await user.click(screen.getByText("Example 9", { exact: true }));
+  expect(selected).not.toBeChecked();
+  expect(facet.changeIdentity).toHaveBeenLastCalledWith({ IMDBID: 777, TVDBID: 0, TMDBID: 0 });
+  selected.focus();
+  await user.keyboard(" ");
+  expect(selected).toBeChecked();
+  await user.keyboard(" ");
+  expect(selected).not.toBeChecked();
+  await user.click(selected);
+  expect(selected).toBeChecked();
+  await user.click(screen.getByRole("checkbox", { name: "Select TMDB Example 8 2025, ID 8" }));
+  expect(selected).not.toBeChecked();
+  expect(screen.getAllByRole("checkbox", { checked: true })).toHaveLength(1);
+  expect(facet.changeIdentity).toHaveBeenLastCalledWith({ IMDBID: 777, TVDBID: 0, TMDBID: 8 });
+  facet = {
+    ...facet,
+    view: {
+      ...facet.view,
+      preview: { ...facet.view.preview!, Identity: { ...facet.view.preview!.Identity, TMDBID: 8 } },
+      intent: { ...facet.view.intent, identity: { IMDBID: 777, TVDBID: 0 } },
+    },
+  };
+  rerender(panel());
+  const applied = screen.getByRole("checkbox", { name: "Select TMDB Example 8 2025, ID 8" });
+  expect(applied).toBeChecked();
+  await user.click(applied);
+  expect(applied).not.toBeChecked();
+  expect(facet.changeIdentity).toHaveBeenLastCalledWith({ IMDBID: 777, TVDBID: 0, TMDBID: 0 });
+  expect(facet.view.preview!.Identity.TMDBID).toBe(8);
+
+  expect(facet.changeMetadata).not.toHaveBeenCalled();
+  expect(facet.changeReleaseName).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Refresh metadata" }));
+  expect(refresh).toHaveBeenCalledOnce();
+
+  const tmdbTab = screen.getByRole("tab", { name: "TMDB (9)" });
+  tmdbTab.focus();
+  await user.keyboard("{ArrowRight}");
+  expect(screen.getByRole("tab", { name: "IMDb (0)" })).toHaveFocus();
+  expect(screen.getByText("Provider search unavailable. Retry the search.")).toBeVisible();
+  await user.keyboard("{End}");
+  expect(screen.getByRole("tab", { name: "TVDB (1)" })).toHaveFocus();
+  expect(screen.getByText("42 min avg / episode")).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Open TVDB Example Series in a new tab" }),
+  ).toHaveAttribute("href", "https://thetvdb.com/dereferrer/series/303");
+});
+
+it.each([
+  [
+    "https://image.tmdb.org/t/p/original/example.jpg",
+    "https://image.tmdb.org/t/p/w342/example.jpg",
+    "https://image.tmdb.org/t/p/original/example.jpg",
+  ],
+  [
+    "https://image.tmdb.org/t/p/w342/example.jpg",
+    "https://image.tmdb.org/t/p/w342/example.jpg",
+    "https://image.tmdb.org/t/p/original/example.jpg",
+  ],
+  [
+    "https://images.example/poster.jpg?origin=https://image.tmdb.org/t/p/original/example.jpg",
+    "https://images.example/poster.jpg?origin=https://image.tmdb.org/t/p/original/example.jpg",
+    "https://images.example/poster.jpg?origin=https://image.tmdb.org/t/p/original/example.jpg",
+  ],
+])("loads a thumbnail separately from the full poster for %s", async (source, thumbnail, full) => {
+  const base = readyInputFacet(1);
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      preview: {
+        ...base.view.preview!,
+        Diagnostics: [
+          {
+            Code: "external_identity_candidates",
+            Severity: "info",
+            Message: "Resolver choices",
+            Candidates: [{ ...resolverCandidate, PosterURL: source }],
+          },
+        ],
+      },
+    },
+  };
+  const onPosterOpen = vi.fn();
+  render(
+    <ProviderCandidates
+      facet={facet}
+      initialQuery="Example"
+      category="MOVIE"
+      needsSelection
+      loading={false}
+      onRefresh={vi.fn()}
+      onPosterOpen={onPosterOpen}
+    />,
+  );
+  expect(screen.getByRole("img", { name: "Fallback Example poster" })).toHaveAttribute(
+    "src",
+    thumbnail,
+  );
+  expect(onPosterOpen).not.toHaveBeenCalled();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "View Fallback Example poster full size" }));
+  expect(onPosterOpen).toHaveBeenCalledExactlyOnceWith(full, "Fallback Example poster");
+  expect(facet.changeIdentity).not.toHaveBeenCalled();
+});
+
+it("preserves a running provider search when its candidate panel remounts", () => {
+  const base = readyInputFacet(1);
+  const facet: InputFacet = {
+    ...base,
+    view: { ...base.view, providerSearch: { status: "running", result: null, error: "" } },
+  };
+  render(
+    <ProviderCandidates
+      facet={facet}
+      initialQuery="Default query"
+      category="TV"
+      needsSelection
+      loading={false}
+      onRefresh={vi.fn()}
+      onPosterOpen={vi.fn()}
+    />,
+  );
+  expect(facet.searchProviders).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Cancel search" })).toBeVisible();
+});
+
+it("compares the submitted query with the normalized draft", () => {
+  const base = readyInputFacet(1);
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      providerSearch: {
+        status: "ready",
+        error: "",
+        result: { Query: "Example Series", Category: "tv", Providers: [] },
+      },
+    },
+  };
+  render(
+    <ProviderCandidates
+      facet={facet}
+      initialQuery=" Example  Series "
+      category="TV"
+      needsSelection
+      loading={false}
+      onRefresh={vi.fn()}
+      onPosterOpen={vi.fn()}
+    />,
+  );
+  expect(screen.queryByText(/Query edited/)).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole("textbox", { name: "Search query" }), {
+    target: { value: "Another Series" },
+  });
+  expect(screen.getByText(/Query edited/)).toBeVisible();
+});
 
 it("offers folder preservation only when the backend marks the source eligible", () => {
   const base = readyInputFacet(1);
@@ -163,6 +645,7 @@ const inputFacet = (): InputFacet => ({
       sourceVersion: "",
       recoveryWorkflowIDs: [],
     },
+    providerSearch: { status: "idle", result: null, error: "" },
     sourceVerification: null,
     preparationDirty: false,
     correctionDirty: false,
@@ -197,6 +680,8 @@ const inputFacet = (): InputFacet => ({
       error: "",
     },
   },
+  searchProviders: vi.fn(async () => undefined),
+  cancelProviderSearch: vi.fn(),
   updateSourceDraft: vi.fn(),
   selectSource: vi.fn(),
   reviewPlaylists: vi.fn(),
@@ -224,6 +709,9 @@ const inputFacet = (): InputFacet => ({
   reset: vi.fn(async () => true),
   confirmBDMVRescan: vi.fn(async () => true),
   selectCandidate: vi.fn(async () => true),
+  fetchCandidateDetails: vi.fn(async () => true),
+  cancelCandidateDetails: vi.fn(async () => true),
+  setCandidateSelection: vi.fn(async () => true),
 });
 
 it("shows an unanswered required tracker choice and preserves a saved unknown answer", () => {
@@ -441,6 +929,39 @@ const preparedRelease = () =>
   }) as unknown as NonNullable<InputFacet["view"]["release"]>;
 
 describe("InputPage", () => {
+  it("honors applied primary-provider clears and keeps search available", () => {
+    for (const provider of ["TMDB", "IMDB"] as const) {
+      const facet = readyInputFacet(1);
+      facet.view.preview!.Identity[`${provider}ID`] = 0;
+      facet.view.preview!.Identity.Overrides[provider] = "clear";
+      const { rerender, unmount } = render(
+        <InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />,
+      );
+      expect(screen.queryByText("External ID candidates")).not.toBeInTheDocument();
+      expect(screen.getByText("Search provider titles", { exact: true })).toBeInTheDocument();
+      expect(facet.searchProviders).not.toHaveBeenCalled();
+      facet.view.preview!.Release.Generation += 1;
+      rerender(<InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />);
+      expect(facet.searchProviders).not.toHaveBeenCalled();
+      delete facet.view.preview!.Identity.Overrides[provider];
+      facet.view.preview!.Release.Generation += 1;
+      rerender(<InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />);
+      expect(screen.getByText("External ID candidates")).toBeVisible();
+      expect(facet.searchProviders).toHaveBeenCalledOnce();
+      unmount();
+    }
+  });
+
+  it("requires a known category before searching providers", () => {
+    const facet = readyInputFacet(1);
+    facet.view.preview!.Identity.Category = "";
+    render(<InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />);
+    fireEvent.click(screen.getByText("Search provider titles", { exact: true }));
+    expect(screen.getByRole("button", { name: "Search providers" })).toBeDisabled();
+    expect(screen.getByText(/Choose Movie or TV under Edit Release Details/)).toBeVisible();
+    expect(facet.searchProviders).not.toHaveBeenCalled();
+  });
+
   it("shows source-season evidence after metadata fetch and clears it with the next preview", () => {
     const facet = readyInputFacet(1);
     const message =
@@ -1220,6 +1741,53 @@ describe("InputPage", () => {
     expect(facet.changeReleaseName).toHaveBeenNthCalledWith(4, { NoEdition: false });
   });
 
+  it("keeps providers independently without changing a manual ID", () => {
+    const base = readyInputFacet(1);
+    const release = preparedRelease();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: {
+          ...release,
+          Identity: { ...release.Identity, TVDBID: 303, TVmazeID: 404 },
+        },
+        intent: { ...base.view.intent, identity: { TMDBID: 901, KeepTMDB: true } },
+      },
+    };
+    const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+    const tmdbKeep = screen.getByRole("checkbox", { name: "Keep existing TMDB data" });
+    expect(tmdbKeep).toBeChecked();
+    fireEvent.click(tmdbKeep);
+    expect(facet.changeIdentity).toHaveBeenLastCalledWith({ TMDBID: 901, KeepTMDB: false });
+    for (const [provider, key] of [
+      ["IMDb", "KeepIMDB"],
+      ["TVDB", "KeepTVDB"],
+      ["TVmaze", "KeepTVmaze"],
+      ["MyAnimeList", "KeepMAL"],
+    ] as const) {
+      fireEvent.click(screen.getByRole("checkbox", { name: `Keep existing ${provider} data` }));
+      expect(facet.changeIdentity).toHaveBeenLastCalledWith({
+        TMDBID: 901,
+        KeepTMDB: true,
+        [key]: true,
+      });
+    }
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            intent: { ...facet.view.intent, identity: { TMDBID: 901, KeepTMDB: false } },
+          },
+        }}
+      />,
+    );
+    expect(tmdbKeep).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: "TMDB ID" })).toHaveValue("901");
+  });
+
   it("removes each metadata provider without overriding untouched IDs", () => {
     const facet = readyInputFacet(1);
     render(
@@ -1623,15 +2191,23 @@ describe("InputPage", () => {
     expect(facet.changeMetadata).toHaveBeenCalledWith({ SubtitleLanguages: [] });
   });
 
-  it.each(["movie", "tv"] as const)(
-    "locks provider titles and preserves the %s year policy",
-    (category) => {
+  it.each([
+    ["movie", false],
+    ["tv", true],
+    ["tv", false],
+  ] as const)(
+    "locks provider titles and preserves the %s year policy with TVDB availability %s",
+    (category, tvdbAvailable) => {
       const base = readyInputFacet(1);
       const release = preparedRelease();
       const facet: InputFacet = {
         ...base,
         view: {
           ...base.view,
+          preview: {
+            ...base.view.preview!,
+            Display: { ...base.view.preview!.Display, TVDBNamingAvailable: tvdbAvailable },
+          },
           release: { ...release, Identity: { ...release.Identity, Category: category } },
           intent: {
             ...base.view.intent,
@@ -1654,19 +2230,27 @@ describe("InputPage", () => {
       }
       expect(facet.changeMetadata).not.toHaveBeenCalled();
       const year = screen.getByLabelText("Manual year");
-      if (category === "tv") {
+      if (category === "tv" && tvdbAvailable) {
         expect(year).toHaveAttribute("readonly");
         expect(year).toBeDisabled();
         expect(year).toHaveValue(2026);
         expect(screen.queryByRole("button", { name: "Auto Manual year" })).not.toBeInTheDocument();
         fireEvent.change(year, { target: { value: "2002" } });
         expect(facet.changeReleaseName).not.toHaveBeenCalled();
+        expect(screen.queryByRole("combobox", { name: "Omit year" })).not.toBeInTheDocument();
       } else {
         expect(year).not.toHaveAttribute("readonly");
         expect(year).toBeEnabled();
         expect(year).toHaveValue(2001);
         fireEvent.change(year, { target: { value: "2002" } });
         expect(facet.changeReleaseName).toHaveBeenCalledWith({ ManualYear: 2002 });
+        fireEvent.change(screen.getByRole("combobox", { name: "Omit year" }), {
+          target: { value: "yes" },
+        });
+        expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+          ManualYear: 2001,
+          NoYear: true,
+        });
       }
       expect(screen.getByLabelText("Alternate title")).not.toHaveAttribute("readonly");
     },
@@ -1692,7 +2276,15 @@ describe("InputPage", () => {
         ...base,
         view: {
           ...base.view,
-          release: { ...release, Identity: { ...release.Identity, Category: preparedCategory } },
+          preview: {
+            ...base.view.preview!,
+            Display: { ...base.view.preview!.Display, TVDBNamingAvailable: true },
+          },
+          release: {
+            ...release,
+            Naming: { ...release.Naming, Year: 0 },
+            Identity: { ...release.Identity, Category: preparedCategory },
+          },
         },
       };
       const { rerender } = render(<InputCorrectionEditor facet={facet} />);
@@ -2698,6 +3290,10 @@ describe("saved correction review", () => {
       ...base,
       view: {
         ...base.view,
+        preview: {
+          ...metadataPreview(1),
+          Display: { ...metadataPreview(1).Display, TVDBNamingAvailable: true },
+        },
         correctionDirty: true,
         confirmFields: [{ field: "metadata.alternate_title" }],
         correctionReview: {
@@ -2717,6 +3313,11 @@ describe("saved correction review", () => {
     render(<InputPage facet={facet} {...inputPageProps()} />);
     expect(screen.getByLabelText("Edit Title")).toBeDisabled();
     expect(screen.getByLabelText("Edit Manual year")).toBeDisabled();
+    expect(
+      within(screen.getByRole("group", { name: "Manual year" })).getByRole("button", {
+        name: "Keep saved value",
+      }),
+    ).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Apply and continue" }));
     expect(facet.prepareSource).toHaveBeenCalledWith(facet.view.selectedSource, facet.view.intent);
   });
@@ -2808,12 +3409,12 @@ it("shows automatic choices and confirms retained values without changing correc
   fireEvent.click(screen.getByRole("button", { name: "Confirm saved Service" }));
   expect(facet.confirmCorrection).toHaveBeenCalledWith({ field: "release_name.service" });
   expect(facet.changeReleaseName).not.toHaveBeenCalled();
-  const region = screen.getByRole("combobox", { name: "Region" });
+  const region = screen.getByRole("combobox", { name: "Release country" });
   expect(region).toHaveValue("A");
   fireEvent.focus(region);
-  const count = within(screen.getByRole("listbox", { name: "Region suggestions" })).getAllByRole(
-    "option",
-  ).length;
+  const count = within(
+    screen.getByRole("listbox", { name: "Release country suggestions" }),
+  ).getAllByRole("option").length;
   expect(count).toBeGreaterThan(20);
   fireEvent.change(region, { target: { value: "kIngdom" } });
   expect(screen.getByRole("option", { name: "United Kingdom (GBR)" })).toBeInTheDocument();

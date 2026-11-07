@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
+	"github.com/autobrr/go-torrent/bencode"
 	"github.com/autobrr/go-torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 )
@@ -62,7 +63,7 @@ func TestSearchPathedTorrentsProxyPrefersPieceSize(t *testing.T) {
 	testSearchPathedTorrentsProxyPieceSelection(t, true, "16MiB", "16MiB")
 }
 
-func TestSearchPathedTorrentsProxySelectsSmallestReusableWithoutPiecePreference(t *testing.T) {
+func TestSearchPathedTorrentsProxyReusesFirstWithoutPiecePreference(t *testing.T) {
 	t.Parallel()
 	testSearchPathedTorrentsProxyPieceSelection(t, false, "no_constraints", "")
 }
@@ -74,6 +75,9 @@ func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool,
 	sourcePath := filepath.Join(dir, "Movie.Title.2024.mkv")
 	hashLarge, dataLarge := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 25)
 	hashSmall, dataSmall := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
+	if err := os.Remove(sourcePath + ".torrent"); err != nil {
+		t.Fatal(err)
+	}
 	dataByHash := map[string][]byte{
 		hashLarge: dataLarge,
 		hashSmall: dataSmall,
@@ -173,8 +177,12 @@ func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool,
 	if err != nil {
 		t.Fatalf("search pathed torrents: %v", err)
 	}
-	if result.InfoHash != hashSmall {
-		t.Fatalf("expected preferred hash-small, got %q", result.InfoHash)
+	wantHash := hashLarge
+	if preferMax16 {
+		wantHash = hashSmall
+	}
+	if result.InfoHash != wantHash {
+		t.Fatalf("expected reusable hash %q, got %q", wantHash, result.InfoHash)
 	}
 	if result.FoundPreferredPiece != expectedFound {
 		t.Fatalf("expected preferred piece result %q, got %q", expectedFound, result.FoundPreferredPiece)
@@ -268,11 +276,11 @@ func TestSearchPathedTorrentsProxyStripsSymbolsFromSearch(t *testing.T) {
 	if strings.Contains(searchQueries[0], "\u2122") {
 		t.Fatalf("expected proxy search term without trademark symbol, got %q", searchQueries[0])
 	}
-	if len(result.TrackerIDs) != 0 {
-		t.Fatalf("expected unvalidated tracker ids to be ignored, got %#v", result.TrackerIDs)
+	if result.TrackerIDs["bhd"] != "10001" || result.TrackerIDs["ptp"] != "10002" {
+		t.Fatalf("expected metadata despite unavailable exports, got %#v", result.TrackerIDs)
 	}
-	if len(result.MatchedTrackers) != 0 {
-		t.Fatalf("expected unvalidated tracker matches to be ignored, got %v", result.MatchedTrackers)
+	if result.TorrentPath != "" {
+		t.Fatalf("unavailable exports must not produce a reusable artifact: %s", result.TorrentPath)
 	}
 }
 
@@ -363,6 +371,9 @@ func TestSearchPathedTorrentsProxyRejectsIDsFromInvalidExtensionlessMatch(t *tes
 	dir := t.TempDir()
 	validHash, validData := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
 	wrongHash, wrongData := createTestTorrent(t, dir, "Different.Title.2024.mkv", 22)
+	if err := os.Remove(filepath.Join(dir, "Movie.Title.2024.mkv.torrent")); err != nil {
+		t.Fatal(err)
+	}
 	dataByHash := map[string][]byte{
 		validHash: validData,
 		wrongHash: wrongData,
@@ -461,9 +472,31 @@ func TestSearchPathedTorrentsProxyUsesFolderWrappedSingleFileAsTrackerSource(t *
 	dir := t.TempDir()
 	exactHash, exactData := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
 	folderHash, folderData := createTestFolderTorrent(t, dir, "Movie.Title.2024.Release", "Movie.Title.2024.mkv", 22)
+	if err := os.Remove(filepath.Join(dir, "Movie.Title.2024.mkv.torrent")); err != nil {
+		t.Fatal(err)
+	}
+	wrongMeta, err := metainfo.Load(bytes.NewReader(exactData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongInfo, err := wrongMeta.UnmarshalInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongInfo.Length++
+	wrongMeta.InfoBytes, err = bencode.Marshal(wrongInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongHash := wrongMeta.HashInfoBytes().String()
+	var wrongData bytes.Buffer
+	if err := wrongMeta.Write(&wrongData); err != nil {
+		t.Fatal(err)
+	}
 	dataByHash := map[string][]byte{
 		exactHash:  exactData,
 		folderHash: folderData,
+		wrongHash:  wrongData.Bytes(),
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -481,6 +514,10 @@ func TestSearchPathedTorrentsProxyUsesFolderWrappedSingleFileAsTrackerSource(t *
 					Comment:     "https://beyond-hd.me/details/3333",
 					Trackers:    []qbittorrent.TorrentTracker{{Url: "https://tracker.beyond-hd.me/announce/redacted", Status: qbittorrent.TrackerStatusOK}},
 					NumComplete: 8,
+				},
+				{
+					Hash: wrongHash,
+					Name: "Movie.Title.2024",
 				},
 				{
 					Hash:        exactHash,
@@ -557,12 +594,25 @@ func TestSearchPathedTorrentsProxyUsesFolderWrappedSingleFileAsTrackerSource(t *
 	if !containsString(result.MatchedTrackers, "BHD") || !containsString(result.MatchedTrackers, "BLU") {
 		t.Fatalf("expected both folder-wrapped and exact matches reported in client, got %v", result.MatchedTrackers)
 	}
-	if len(result.TorrentComments) != 2 {
-		t.Fatalf("expected both client matches in torrent comments, got %d", len(result.TorrentComments))
+	if len(result.TorrentComments) != 3 {
+		t.Fatalf("expected all client matches in torrent comments, got %d", len(result.TorrentComments))
+	}
+	if len(result.TorrentCandidates) != 2 {
+		t.Fatalf("expected both captured alternatives, got %d", len(result.TorrentCandidates))
+	}
+	prepared, err := torrentservice.NewService(api.NopLogger{}, t.TempDir()).Create(context.Background(), api.TorrentSubject{
+		SourcePath:              filepath.Join(dir, "Movie.Title.2024.mkv"),
+		ClientTorrentPath:       result.TorrentPath,
+		ClientTorrentInfoHash:   result.InfoHash,
+		ClientTorrentCandidates: result.TorrentCandidates,
+		TorrentOverrides:        api.TorrentOverrides{NoHash: new(true)},
+	})
+	if err != nil || prepared.InfoHash != exactHash {
+		t.Fatalf("expected existing single-file alternative: result=%+v err=%v", prepared, err)
 	}
 }
 
-func TestSearchPathedTorrentsProxyKeepsPieceConstrainedTrackerData(t *testing.T) {
+func TestSearchPathedTorrentsProxyKeepsArtifactWithoutBlanketPieceRestrictions(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -628,11 +678,11 @@ func TestSearchPathedTorrentsProxyKeepsPieceConstrainedTrackerData(t *testing.T)
 	if err != nil {
 		t.Fatalf("search pathed torrents: %v", err)
 	}
-	if result.InfoHash != "" {
-		t.Fatalf("expected piece-constrained torrent not to be selected as reusable infohash, got %q", result.InfoHash)
+	if result.InfoHash != hash {
+		t.Fatalf("expected artifact without an active hard policy to be selected, got %q", result.InfoHash)
 	}
-	if result.TorrentPath != "" {
-		t.Fatalf("expected piece-constrained torrent not to be saved as reusable torrent path, got %q", result.TorrentPath)
+	if result.TorrentPath == "" {
+		t.Fatal("expected reusable torrent path")
 	}
 	if result.TrackerIDs["blu"] != "5555" {
 		t.Fatalf("expected piece-constrained BLU tracker id, got %q", result.TrackerIDs["blu"])
@@ -1196,7 +1246,7 @@ func TestClientContentPathsEqualUsesClientPathSemantics(t *testing.T) {
 	}
 }
 
-func TestDiscoveryToCreateDoesNotTrustDifferentQbitContentPath(t *testing.T) {
+func TestDiscoveryToCreateReusesCompatibleTorrentFromDifferentQbitContentPath(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1269,12 +1319,8 @@ func TestDiscoveryToCreateDoesNotTrustDifferentQbitContentPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create torrent: %v", err)
 	}
-	expectedPath, err := torrentservice.TempTorrentPath(tmpRoot, source)
-	if err != nil {
-		t.Fatalf("expected torrent path: %v", err)
-	}
-	if result.Path != expectedPath {
-		t.Fatalf("expected mismatched client data to be rehashed at %s, got %s", expectedPath, result.Path)
+	if result.Path != evidence.TorrentPath || result.InfoHash != hash {
+		t.Fatalf("expected compatible client artifact to be reused: result=%+v", result)
 	}
 }
 

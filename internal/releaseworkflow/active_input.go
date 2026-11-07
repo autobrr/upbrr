@@ -287,6 +287,7 @@ func (m *Module) ResetIdleInputOnStartup(ctx context.Context) (resetErr error) {
 
 // OpenInput verifies each explicit new open request under a renewable reservation.
 // A repeated idempotency key returns the already committed result without repeating work.
+// Canceled admission retains the prior worker's authority until its cleanup finishes.
 func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputRequest) (api.ActiveInputRecord, error) {
 	if err := m.requireActiveConfig(ctx); err != nil {
 		return api.ActiveInputRecord{}, err
@@ -348,6 +349,9 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	if prior.State != api.ActiveInputActive && prior.State != api.ActiveInputEmpty {
 		return api.ActiveInputRecord{}, api.ErrActiveInputBusy
 	}
+	if err := m.requireInputSourceReconciled(ctx, owner, request.Input.SourcePath); err != nil {
+		return api.ActiveInputRecord{}, err
+	}
 	reservation, err := m.newID("input_open")
 	if err != nil {
 		return api.ActiveInputRecord{}, err
@@ -373,6 +377,31 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		if committed {
 			return
 		}
+		if prior.WorkflowID != "" {
+			cancelPriorWorkers := func() []<-chan struct{} {
+				m.operationWorkersMu.Lock()
+				defer m.operationWorkersMu.Unlock()
+				var workers []<-chan struct{}
+				for _, worker := range m.operationWorkers {
+					if worker.ownerID == owner && worker.workflowID == prior.WorkflowID {
+						worker.cancel()
+						workers = append(workers, worker.done)
+					}
+				}
+				return workers
+			}
+			// A running stage holds the command lock, so signal it before the barrier.
+			// Start holds that lock through registration; snapshot again for queued work.
+			cancelPriorWorkers()
+			admission := m.commandLock(strings.TrimSpace(owner) + "\x00" + string(prior.WorkflowID))
+			admission.Lock()
+			workers := cancelPriorWorkers()
+			admission.Unlock()
+			for _, done := range workers {
+				// Noninterruptible hashing retains its fence until durable cleanup.
+				<-done
+			}
+		}
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		rollback := prior
@@ -380,10 +409,32 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		rollback.OwnerID, rollback.CoordinatorID = owner, m.processEpoch
 		rollback.LeaseExpiresAt = m.clock.Now().Add(workflowWorkLeaseTTL)
 		if cleanupErr := m.activeInputs.CompareAndSwapActiveInput(cleanup, pending, rollback, m.clock.Now()); cleanupErr != nil {
-			logging.FromContext(ctx, m.logger).Warnf("active input: rollback failed state=recovery_required")
+			logging.FromContext(ctx, m.logger).Warnf("active input: rollback failed state=recovery_required action=reload")
+			if m.activeCancel != nil {
+				m.activeCancel()
+			}
+			if m.activeDone != nil {
+				select {
+				case <-m.activeDone:
+					m.activeCancel, m.activeDone = nil, nil
+				case <-cleanup.Done():
+					return
+				}
+			}
+			current, readErr := m.activeInputs.LoadActiveInput(cleanup)
+			if readErr != nil {
+				return
+			}
+			current.LeaseExpiresAt = pending.LeaseExpiresAt
+			if current != pending {
+				return
+			}
+			if releaseErr := m.activeInputs.RelinquishActiveInput(cleanup, m.processEpoch, pending.Fence, m.clock.Now()); releaseErr != nil {
+				logging.FromContext(ctx, m.logger).Warnf("active input: rollback lease release failed state=recovery_required action=reload")
+			}
 		}
 	}()
-	if err := m.startActiveInputHeartbeat(ctx, pending.Fence); err != nil {
+	if err := m.startActiveInputHeartbeat(context.WithoutCancel(ctx), pending.Fence); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
 	if err := m.cancelPriorInputWork(ctx, owner, prior.WorkflowID); err != nil {
@@ -395,6 +446,10 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	record, err := m.inputVerifier(ctx, request.Input)
 	if err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow verify input: %w", err)
+	}
+	// Verification may resolve a different canonical path than the requested alias.
+	if err := m.requireInputSourceReconciled(ctx, owner, record.CanonicalPath); err != nil {
+		return api.ActiveInputRecord{}, err
 	}
 	record.ID, err = m.newID("input")
 	if err != nil {
@@ -534,6 +589,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			state.PreparationInput = &request.Input
 			if request.Composite != nil && (state.Composite == nil || state.Composite.RequestFingerprint != request.Composite.RequestFingerprint) {
 				state.Composite = request.Composite
+				state.Composite.StartedRevision = state.Workflow.Revision + 1
 			}
 			state.Workflow.Revision++
 			state.Workflow.UpdatedAt = m.clock.Now()

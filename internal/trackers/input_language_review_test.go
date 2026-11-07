@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/mediafacts"
@@ -69,6 +70,19 @@ func TestInputLanguageReviewDeduplicatesSelectedTrackers(t *testing.T) {
 	media.Tracks[1].AudioOrigin = api.TrackAudioOriginal
 	if result := evaluate(); len(result.Fields) != 0 {
 		t.Fatalf("resolved tracks asked again: %#v", result.Fields)
+	}
+	media.OriginalLanguage = ""
+	media.Tracks[0].Languages = []string{"und"}
+	media.Tracks[1].AudioOrigin = ""
+	if result := evaluate(); len(result.Fields) != 0 {
+		t.Fatalf("unknown original interrogated programme tracks: %#v", result.Fields)
+	}
+	media.Tracks[0].Languages = []string{"English"}
+	media.Tracks[0].AudioOrigin = api.TrackAudioDubbed
+	media.Tracks[1].Languages = []string{"und"}
+	if result := evaluate(); len(result.Fields) != 1 || result.Fields[0].TrackID != "second" ||
+		*result.Fields[0].CorrectionField != api.CorrectionFieldMetadataTrackAudioOrigins || !strings.Contains(result.Fields[0].Message, "confirmed dub") {
+		t.Fatalf("confirmed dub did not target only its potential original companion: %#v", result.Fields)
 	}
 }
 

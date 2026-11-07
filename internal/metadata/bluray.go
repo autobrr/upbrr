@@ -5,7 +5,8 @@ package metadata
 
 import (
 	"context"
-	"slices"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -19,59 +20,88 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate.State, bdinfo *discparse.BDInfo) preparationstate.State {
+func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate.State, bdinfo *discparse.BDInfo) (preparationstate.State, error) {
 	logger := logging.FromContext(ctx, s.logger)
 
 	if meta.ExternalFreshness.RequiresRefresh() && !evidence.Enabled(ctx) {
 		meta.ProviderMetadata.Bluray = nil
 	}
-	if reason := s.blurayLookupSkipReason(meta); reason != "" {
-		logger.Debugf("metadata: blu-ray.com lookup skipped: %s", reason)
-		meta = applySelectedBlurayCandidate(meta)
-		return meta
-	}
-
 	imdbID := meta.Identity.IMDBID
 	if imdbID == 0 && meta.ProviderMetadata.IMDB != nil {
 		imdbID = meta.ProviderMetadata.IMDB.IMDBID
 	}
-	if imdbID == 0 {
-		return meta
+	input := bluraycom.LookupInput{
+		SourcePath:      meta.SourcePath,
+		CountryOverride: meta.ReleaseNameOverrides.Region,
+		IMDBID:          imdbID,
+		DiscType:        meta.DiscType,
+		Resolution:      meta.Release.Resolution,
+		Is3D:            meta.Is3D,
+		BDInfo:          bdinfo,
+		ScoreThreshold:  s.cfg.Metadata.BlurayScore,
+		SingleThreshold: s.cfg.Metadata.BluraySingleScore,
 	}
-
-	selectedID := strings.TrimSpace(meta.BlurayReleaseID)
-	if selectedID == "" && meta.ProviderMetadata.Bluray != nil && !meta.ProviderMetadata.Bluray.AutoSelected && meta.ProviderMetadata.Bluray.IMDBID == imdbID {
-		selectedID = strings.TrimSpace(meta.ProviderMetadata.Bluray.SelectedReleaseID)
-	}
-	if cached := s.reusableBlurayMetadata(meta, imdbID, bdinfo); cached != nil && !evidence.Enabled(ctx) {
-		if selectedID != "" {
-			cached.SelectCandidate(selectedID, false, "manual")
+	country := input.ReleaseCountry()
+	selectedID := ""
+	if selection := meta.Bluray; selection != nil {
+		switch selection.Mode {
+		case "manual":
+			selectedID = strings.TrimSpace(selection.Release)
+			input.ExactRelease = selectedID
+		case "skip":
+			input.SkipSelection = true
+		case "auto":
+		default:
+			return meta, fmt.Errorf("metadata: invalid Blu-ray selection mode %q", selection.Mode)
 		}
-		meta.ProviderMetadata.Bluray = cached
-		meta = applySelectedBlurayCandidate(meta)
-		return meta
+	} else if saved := meta.ProviderMetadata.Bluray; saved != nil && !saved.AutoSelected && saved.IMDBID == imdbID {
+		candidate := saved.SelectedCandidate()
+		if bluraycom.HasUnverifiedDetails(saved) || country == "" || candidate != nil && strings.EqualFold(strings.TrimSpace(candidate.Country), country) {
+			selectedID = saved.SelectedReleaseID
+		}
+	}
+	input.SelectedReleaseID = selectedID
+	input.Retained = s.reusableBlurayMetadata(meta, input)
+	input.Details = meta.BlurayDetails
+	input.FetchSelected = s.cfg.Description.UseBlurayImages && !input.SkipSelection
+	if input.Retained != nil && !bluraycom.HasUnverifiedDetails(input.Retained) {
+		bluraycom.SelectRelease(input.Retained, input)
+	}
+	meta.ProviderMetadata.Bluray = input.Retained
+	if bluraycom.HasUnverifiedDetails(input.Retained) {
+		meta.ProviderMetadata.Bluray = nil
+	}
+	lookupMeta := meta
+	if selectedID != "" {
+		lookupMeta.Bluray = &api.BluraySelection{Mode: "manual", Release: selectedID}
+	}
+	if reason := s.blurayLookupSkipReason(lookupMeta); reason != "" {
+		logger.Debugf("metadata: blu-ray.com lookup skipped: %s", reason)
+		if meta.BlurayDetails != nil {
+			return meta, fmt.Errorf("metadata: Blu-ray inspection unavailable: %s", reason)
+		}
+		if meta.Bluray != nil && meta.Bluray.Mode == "manual" {
+			return meta, fmt.Errorf("metadata: explicit Blu-ray release unavailable: %s", reason)
+		}
+		return applySelectedBlurayCandidate(meta), nil
 	}
 
-	lookup, err := s.bluray.Lookup(ctx, bluraycom.LookupInput{
-		SourcePath:        meta.SourcePath,
-		IMDBID:            imdbID,
-		DiscType:          meta.DiscType,
-		Resolution:        meta.Release.Resolution,
-		Is3D:              meta.Is3D,
-		BDInfo:            bdinfo,
-		SelectedReleaseID: selectedID,
-		ScoreThreshold:    s.cfg.Metadata.BlurayScore,
-		SingleThreshold:   s.cfg.Metadata.BluraySingleScore,
-	})
+	lookup, err := s.bluray.Lookup(ctx, input)
 	if err != nil {
 		logger.Warnf("metadata: blu-ray.com lookup failed: %v", err)
 		if meta.ExternalFreshness.RequiresRefresh() {
 			appendProviderRefreshWarning(&meta, "Blu-ray.com", err)
 		}
-		return meta
+		if errors.Is(err, bluraycom.ErrDetailReleaseNotRetained) || meta.BlurayDetails != nil {
+			return meta, fmt.Errorf("metadata: Blu-ray inspection: %w", err)
+		}
+		if meta.Bluray != nil && meta.Bluray.Mode == "manual" {
+			return meta, fmt.Errorf("metadata: explicit Blu-ray release: %w", err)
+		}
+		return applySelectedBlurayCandidate(meta), nil
 	}
 	if lookup == nil {
-		return meta
+		return meta, nil
 	}
 	if strings.TrimSpace(lookup.SourcePath) == "" {
 		lookup.SourcePath = meta.SourcePath
@@ -85,7 +115,7 @@ func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate
 	merged.UpdatedAt = lookup.UpdatedAt
 	meta.ProviderMetadata = merged
 	meta = applySelectedBlurayCandidate(meta)
-	return meta
+	return meta, nil
 }
 
 func (s *Service) shouldLookupBluray(meta preparationstate.State) bool {
@@ -93,7 +123,7 @@ func (s *Service) shouldLookupBluray(meta preparationstate.State) bool {
 }
 
 func (s *Service) blurayLookupSkipReason(meta preparationstate.State) string {
-	if !s.blurayLookupEnabled() {
+	if !s.blurayLookupEnabled() && meta.BlurayDetails == nil && (meta.Bluray == nil || meta.Bluray.Mode != "manual") {
 		return "metadata.get_bluray_info and description blu-ray options disabled"
 	}
 	if s.bluray == nil {
@@ -103,7 +133,8 @@ func (s *Service) blurayLookupSkipReason(meta preparationstate.State) string {
 	if discType != "BDMV" && discType != "DVD" {
 		return "source is not BDMV/DVD"
 	}
-	if meta.Identity.IMDBID == 0 && (meta.ProviderMetadata.IMDB == nil || meta.ProviderMetadata.IMDB.IMDBID == 0) {
+	if (meta.Bluray == nil || meta.Bluray.Mode != "manual") && meta.Identity.IMDBID == 0 &&
+		(meta.ProviderMetadata.IMDB == nil || meta.ProviderMetadata.IMDB.IMDBID == 0) {
 		return "IMDb ID missing"
 	}
 	if meta.ProviderMetadata.Bluray != nil && len(meta.ProviderMetadata.Bluray.Candidates) > 0 {
@@ -116,22 +147,19 @@ func (s *Service) blurayLookupEnabled() bool {
 	return s.cfg.Metadata.GetBlurayInfo || s.cfg.Description.AddBlurayLink || s.cfg.Description.UseBlurayImages
 }
 
-func (s *Service) reusableBlurayMetadata(meta preparationstate.State, imdbID int, bdinfo *discparse.BDInfo) *api.BlurayMetadata {
+func (s *Service) reusableBlurayMetadata(meta preparationstate.State, input bluraycom.LookupInput) *api.BlurayMetadata {
 	if meta.ProviderMetadata.Bluray == nil {
 		return nil
 	}
 	bluray := *meta.ProviderMetadata.Bluray
-	if bluray.IMDBID != imdbID || len(bluray.Candidates) == 0 {
+	if bluray.IMDBID != input.IMDBID || len(bluray.Candidates) == 0 {
 		return nil
 	}
-	if bdinfo != nil {
-		for _, candidate := range bluray.Candidates {
-			if slices.Contains(candidate.MatchNotes, "local BDInfo unavailable (-15)") {
-				return nil
-			}
-		}
+	if !bluraycom.HasUnverifiedDetails(&bluray) && bluray.Country != "" && !strings.EqualFold(bluray.Country, input.ReleaseCountry()) {
+		return nil
 	}
 	bluray.Candidates = append([]api.BlurayReleaseCandidate(nil), bluray.Candidates...)
+
 	return &bluray
 }
 

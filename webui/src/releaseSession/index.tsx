@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { isBluraySiteURL } from "../utils/providerId";
+
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
@@ -15,6 +17,8 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  BlurayDetailRequest,
+  BluraySelection,
   HDRAnalysisInstructions,
   AudioAnalysisInstructions,
   DescriptionInstructions,
@@ -30,13 +34,14 @@ import type {
 } from "../api/generated/release-workflow";
 import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
+import { useProviderSearch } from "./providerSearch";
 import {
   initialSessionState,
   pendingCorrectionReview,
   sessionReducer,
   type SessionState,
 } from "./reducer";
-import { canExecuteUpload } from "./uploadEligibility";
+import { canExecuteUpload, canRetrySubmission, canRetryClientInjection } from "./uploadEligibility";
 import { routeAccess, type TrackerWorkflowRequirements } from "./navigation";
 import {
   cloneIntent,
@@ -45,6 +50,7 @@ import {
   isActiveWorkflowOperation,
   isFailedWorkflowOperation,
   metadataPreviewFromWorkflow,
+  metadataPreviewWithBlurayDetails,
   normalizedNames,
   playlistSelectionComplete,
   preparationInputForWorkflow,
@@ -75,7 +81,12 @@ import type {
 const SessionContext = createContext<ReleaseSession | null>(null);
 
 type WorkflowFacet = "screenshots" | "menuImages" | "uploadedImages" | "descriptions";
-type ControllerKey = WorkflowFacet | "activeInput" | "preparation" | "workflow";
+type ControllerKey =
+  | WorkflowFacet
+  | "activeInput"
+  | "preparation"
+  | "workflow"
+  | "candidateCancellation";
 type WorkflowCommand = Readonly<{
   controller: AbortController;
   release: ReleaseRef;
@@ -190,6 +201,36 @@ const questionnaireSnapshotKey = (state: SessionState) =>
   ]);
 
 const workflowStorageKey = "upbrr.activeReleaseWorkflow";
+const cancellationStorageKey = "upbrr.cancellingReleaseOperation";
+
+const storedCancellation = () => {
+  try {
+    const value: unknown = JSON.parse(
+      window.sessionStorage.getItem(cancellationStorageKey) || "null",
+    );
+    if (
+      value &&
+      typeof value === "object" &&
+      "workflowID" in value &&
+      "operationID" in value &&
+      typeof value.workflowID === "string" &&
+      typeof value.operationID === "string"
+    )
+      return value;
+  } catch {
+    // Cancellation still works when session storage is unavailable.
+  }
+  return null;
+};
+
+const storeCancellation = (operation: { workflowID: string; operationID: string } | null) => {
+  try {
+    if (operation) window.sessionStorage.setItem(cancellationStorageKey, JSON.stringify(operation));
+    else window.sessionStorage.removeItem(cancellationStorageKey);
+  } catch {
+    // Reload recovery is advisory; the backend remains authoritative.
+  }
+};
 
 const timestampedCommandID = (prefix: string, revision?: number) =>
   `${prefix}-${Date.now().toString(36)}${revision === undefined ? "" : `-${revision.toString(36)}`}`;
@@ -226,6 +267,11 @@ export function ReleaseSessionProvider({
     operationSequence: number;
     message: string;
   }> | null>(null);
+  const [hdrCancellation, setHDRCancellation] = useState<Readonly<{
+    workflowID: string;
+    operationID: string;
+    error: string;
+  }> | null>(null);
   const [audioCommandFailure, setAudioCommandFailure] = useState<Readonly<{
     workflowID: string;
     workflowRevision: number;
@@ -243,6 +289,10 @@ export function ReleaseSessionProvider({
     status: "running" | "error";
     message: string;
   }> | null>(null);
+  const [candidateOperation, setCandidateOperation] = useState<Readonly<{
+    workflowID: string;
+    operationID: string;
+  }> | null>(null);
   const [questionnaireRefresh, setQuestionnaireRefresh] = useState<Readonly<{
     key: string;
     status: "running" | "ready" | "error";
@@ -257,6 +307,42 @@ export function ReleaseSessionProvider({
   );
   const questionnaireController = useRef<AbortController | null>(null);
   const controllers = useRef<Partial<Record<ControllerKey, AbortController>>>({});
+  const [cancellationView, setCancellationView] = useState({
+    pending: false,
+    retry: false,
+    message: "",
+  });
+  const observedOperations = useRef(
+    new WeakMap<
+      AbortSignal,
+      {
+        slot: ActiveSlotAuthority;
+        workflowID: string;
+        operation: WorkflowOperationStatus;
+      }
+    >(),
+  );
+  const cancellation = useRef<{
+    controller: AbortController;
+    promise: Promise<boolean>;
+    resolve: (confirmed: boolean) => void;
+    operationID: string;
+    requestFailed: boolean;
+    opening: Promise<void> | null;
+  } | null>(null);
+  const openingRequest = useRef<{ controller: AbortController; commandID: string } | null>(null);
+  const candidateAttempt = useRef<{
+    controller: AbortController;
+    sourcePath: string;
+    commandRevision: number;
+    correlationID: string;
+    cancelRequested: boolean;
+    cancellationTimeout: number | null;
+    cancellationController: AbortController | null;
+    cancellation: Promise<boolean> | null;
+    settled: Promise<void>;
+    operation: { workflowID: string; status: WorkflowOperationStatus } | null;
+  } | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const activeAuthority = useRef({
@@ -277,6 +363,24 @@ export function ReleaseSessionProvider({
   const workflowRevisions = useRef<Partial<Record<WorkflowFacet, number>>>({});
   const lastWorkflowError = useRef<unknown>(null);
   const activePorts = useMemo(() => ports ?? productionReleaseSessionPorts(), [ports]);
+  const providerSearchCategory = (
+    state.preparationIntent.releaseName.Category ||
+    state.preview?.Identity?.Category ||
+    "UNKNOWN"
+  ).toUpperCase();
+  const providerSearch = useProviderSearch(
+    activePorts.providerSearch,
+    JSON.stringify([
+      state.activeInput.inputID,
+      state.activeInput.sourceVersion,
+      state.selectedSource,
+      state.sourceDraft,
+      state.preview?.Release.Generation,
+      providerSearchCategory,
+      state.preparation.status === "running",
+    ]),
+    providerSearchCategory,
+  );
   const workflowView = state.workflowView;
   const questionnaireKey = questionnaireSnapshotKey(state);
 
@@ -436,6 +540,13 @@ export function ReleaseSessionProvider({
     setHDRCommandFailure((failure) =>
       failure && commandFailureSuperseded(failure, current) ? null : failure,
     );
+    setHDRCancellation((feedback) =>
+      feedback?.workflowID === current.workflow.id &&
+      current.operation?.id === feedback.operationID &&
+      isActiveWorkflowOperation(current.operation)
+        ? feedback
+        : null,
+    );
     setAudioCommandFailure((failure) =>
       failure && commandFailureSuperseded(failure, current) ? null : failure,
     );
@@ -449,8 +560,142 @@ export function ReleaseSessionProvider({
   const acceptWorkflowCurrent = (current: ReleaseWorkflowCurrent) =>
     publishWorkflowCurrent(current, "ready");
 
+  const finishCancellation = (signal: AbortSignal, confirmed: boolean, message: string) => {
+    const request = cancellation.current;
+    if (request?.controller.signal !== signal) return;
+    cancellation.current = null;
+    if (confirmed) storeCancellation(null);
+    setCancellationView({ pending: false, retry: false, message });
+    request.resolve(confirmed);
+  };
+
+  const requestCancellation = (controller: AbortController) => {
+    if (cancellation.current) return cancellation.current.promise;
+    let resolve!: (confirmed: boolean) => void;
+    const promise = new Promise<boolean>((complete) => {
+      resolve = complete;
+    });
+    cancellation.current = {
+      controller,
+      promise,
+      resolve,
+      operationID: "",
+      requestFailed: false,
+      opening: null,
+    };
+    setCancellationView({ pending: true, retry: false, message: "" });
+    const observed = observedOperations.current.get(controller.signal);
+    if (
+      observed &&
+      activeSlotMatches(observed.slot) &&
+      isActiveWorkflowOperation(observed.operation)
+    ) {
+      sendCancellation(observed.workflowID, observed.operation);
+    } else if (openingRequest.current?.controller === controller) {
+      cancelOpeningRequest();
+    }
+    return promise;
+  };
+
+  const cancelOpeningRequest = () => {
+    const request = cancellation.current;
+    const opening = openingRequest.current;
+    if (!request || !opening || request.controller !== opening.controller) return;
+    request.requestFailed = false;
+    setCancellationView({ pending: true, retry: false, message: "" });
+    request.opening = activePorts.activeInput
+      .cancelOpen({ idempotencyKey: opening.commandID }, request.controller.signal)
+      .then((snapshot) => {
+        if (cancellation.current !== request || openingRequest.current !== opening) return;
+        const preparation = stateRef.current.preparation;
+        const active = isActiveWorkflowOperation(snapshot.current?.operation);
+        applyActiveInputSnapshot(
+          snapshot,
+          active ? "running" : "ready",
+          stateRef.current.inputEditRevision,
+          true,
+        );
+        if (!active)
+          dispatch({ type: "preparation_cancelled", correlationID: preparation.correlationID });
+        finishCancellation(
+          request.controller.signal,
+          true,
+          active
+            ? "Source verification stopped. Another operation is active; review its progress before retrying."
+            : "Work canceled. Selected input and retained results are available for review or retry.",
+        );
+        if (controllers.current.preparation === request.controller)
+          delete controllers.current.preparation;
+        if (controllers.current.workflow === request.controller)
+          delete controllers.current.workflow;
+        request.controller.abort();
+      })
+      .catch(() => {
+        if (cancellation.current !== request || openingRequest.current !== opening) return;
+        request.requestFailed = true;
+        setCancellationView({
+          pending: true,
+          retry: true,
+          message:
+            "Cancellation request could not be confirmed. Progress remains live; retry cancellation.",
+        });
+      });
+  };
+
+  const sendCancellation = (workflowID: string, operation: WorkflowOperationStatus) => {
+    const request = cancellation.current;
+    if (!request || request.operationID === operation.id) return;
+    const hdrTarget =
+      operation.operation === "analyze_hdr" ? { workflowID, operationID: operation.id } : null;
+    if (hdrTarget) {
+      setHDRCommandFailure(null);
+      setHDRCancellation(null);
+    }
+    request.operationID = operation.id;
+    storeCancellation({ workflowID, operationID: operation.id });
+    request.requestFailed = false;
+    setCancellationView({ pending: true, retry: false, message: "" });
+    // The request is advisory; progress and terminal confirmation keep polling independently.
+    void activePorts.workflow
+      .cancelOperation(workflowID, operation.id, request.controller.signal)
+      .then((acknowledgement) => {
+        if (
+          cancellation.current !== request ||
+          !hdrTarget ||
+          acknowledgement.workflowId !== workflowID ||
+          acknowledgement.id !== operation.id
+        )
+          return;
+        setHDRCancellation(
+          isActiveWorkflowOperation(acknowledgement) ? { ...hdrTarget, error: "" } : null,
+        );
+      })
+      .catch((error: unknown) => {
+        if (cancellation.current !== request) return;
+        if (hdrTarget)
+          setHDRCancellation({
+            ...hdrTarget,
+            error:
+              operationFailureFromError(error)?.Message ||
+              "HDR analysis could not be canceled. Retry the request.",
+          });
+        request.requestFailed = true;
+        setCancellationView({
+          pending: true,
+          retry: true,
+          message:
+            "Cancellation request could not be confirmed. Progress remains live; retry cancellation.",
+        });
+      });
+  };
+
   const releaseWorkflowController = (controller: AbortController) => {
     if (controllers.current.workflow === controller) delete controllers.current.workflow;
+    finishCancellation(
+      controller.signal,
+      false,
+      "Cancellation could not be confirmed. Work may still be running; reload to review it or retry Cancel.",
+    );
   };
 
   const awaitWorkflowCommand = async (
@@ -468,9 +713,32 @@ export function ReleaseSessionProvider({
     }
     publishWorkflowCurrent(initial, "running");
     let operation = initial.operation;
-    if (!isActiveWorkflowOperation(operation)) return initial;
+    if (operation)
+      observedOperations.current.set(signal, { slot: expectedSlot, workflowID, operation });
+    const retainedCancellation = storedCancellation();
+    if (
+      !cancellation.current &&
+      !candidateAttempt.current?.cancelRequested &&
+      retainedCancellation?.workflowID === workflowID &&
+      retainedCancellation.operationID === operation?.id
+    ) {
+      const controller = Object.values(controllers.current).find(
+        (value) => value?.signal === signal,
+      );
+      if (controller) void requestCancellation(controller);
+    }
+    if (!isActiveWorkflowOperation(operation) && cancellation.current?.controller.signal !== signal)
+      return initial;
 
     while (operation && isActiveWorkflowOperation(operation)) {
+      const request = cancellation.current;
+      if (request?.controller.signal === signal) {
+        sendCancellation(workflowID, operation);
+
+        if (signal.aborted || !activeSlotMatches(expectedSlot)) {
+          throw new DOMException("Active input changed.", "AbortError");
+        }
+      }
       await waitForWorkflowPoll(signal);
       if (signal.aborted || !activeSlotMatches(expectedSlot)) {
         throw new DOMException("Active input changed.", "AbortError");
@@ -496,6 +764,61 @@ export function ReleaseSessionProvider({
     }
     publishWorkflowCurrent(current, "running");
     const terminalOperation = operation as WorkflowOperationStatus | undefined;
+    if (
+      cancellation.current?.controller.signal === signal ||
+      terminalOperation?.status === "canceled"
+    ) {
+      const anotherOperationActive =
+        current.operation?.id !== terminalOperation?.id &&
+        isActiveWorkflowOperation(current.operation);
+      applyActiveInputSnapshot(
+        activeSnapshotWithCurrent(current),
+        anotherOperationActive ? "running" : "ready",
+        stateRef.current.inputEditRevision,
+        true,
+      );
+      if (
+        terminalOperation?.status === "canceled" &&
+        (controllers.current.preparation?.signal === signal || !current.release) &&
+        !anotherOperationActive &&
+        stateRef.current.preparation.status === "running"
+      ) {
+        dispatch({
+          type: "preparation_cancelled",
+          correlationID: stateRef.current.preparation.correlationID,
+        });
+      }
+      const failed =
+        terminalOperation &&
+        terminalOperation.status !== "canceled" &&
+        isFailedWorkflowOperation(terminalOperation);
+      if (failed && !anotherOperationActive) {
+        const failure = terminalOperation.failures?.[0]?.failure;
+        failBackendWorkflow(
+          failure
+            ? workflowOperationFailureError(failure)
+            : new Error(
+                terminalOperation.message || `Workflow operation ${terminalOperation.status}.`,
+              ),
+        );
+      }
+      const controller = Object.values(controllers.current).find(
+        (value) => value?.signal === signal,
+      );
+      finishCancellation(
+        signal,
+        true,
+        anotherOperationActive
+          ? "The requested operation ended. Another operation is active; review its progress before retrying."
+          : terminalOperation?.status === "canceled"
+            ? "Work canceled. Selected input and retained results are available for review or retry."
+            : failed
+              ? "Work ended with an error. Review its failure and recovery actions before retrying."
+              : "Work finished. Review retained results and any recovery actions before retrying.",
+      );
+      controller?.abort();
+      throw new DOMException("Workflow continuation canceled.", "AbortError");
+    }
     if (terminalOperation && isFailedWorkflowOperation(terminalOperation)) {
       const failure = terminalOperation.failures?.[0]?.failure;
       if (failure) {
@@ -528,6 +851,98 @@ export function ReleaseSessionProvider({
     return operation;
   };
 
+  const cancelAcceptedCandidate = (
+    attempt: NonNullable<typeof candidateAttempt.current>,
+    workflowID: string,
+    operation: WorkflowOperationStatus,
+  ): Promise<boolean> => {
+    if (cancellation.current?.controller === attempt.controller)
+      return cancellation.current.promise;
+    if (attempt.cancellation) return attempt.cancellation;
+    attempt.cancelRequested = true;
+    setCancellationView({ pending: true, retry: false, message: "" });
+    storeCancellation({ workflowID, operationID: operation.id });
+    attempt.cancellation = (async () => {
+      abortController("candidateCancellation");
+      const controller = new AbortController();
+      controllers.current.candidateCancellation = controller;
+      attempt.cancellationController = controller;
+      const timeout =
+        attempt.cancellationTimeout ?? window.setTimeout(() => controller.abort(), 30_000);
+      let finished = false;
+      try {
+        const slot = activeSlotAuthority();
+        let terminal = isActiveWorkflowOperation(operation)
+          ? await activePorts.workflow.cancelOperation(workflowID, operation.id, controller.signal)
+          : operation;
+        while (isActiveWorkflowOperation(terminal)) {
+          await waitForWorkflowPoll(controller.signal);
+          terminal = await activePorts.workflow.operation(
+            workflowID,
+            operation.id,
+            controller.signal,
+          );
+        }
+        const retained = storedCancellation();
+        if (retained?.workflowID === workflowID && retained.operationID === operation.id)
+          storeCancellation(null);
+        if (controller.signal.aborted) throw new Error("Inspection confirmation ended.");
+        if ((terminal as WorkflowOperationStatus).status !== "canceled") {
+          finished = true;
+          throw new Error("Inspection did not cancel.");
+        }
+        attempt.controller.abort();
+        if (
+          activeSlotMatches(slot) &&
+          stateRef.current.workflowView.current?.operation?.id === operation.id
+        ) {
+          dispatch({ type: "workflow_operation_updated", workflowID, operation: terminal });
+        }
+        dispatch({ type: "preparation_cancelled", correlationID: attempt.correlationID });
+        return true;
+      } catch {
+        attempt.controller.abort();
+        if (controllers.current.candidateCancellation !== controller) return false;
+        dispatch({
+          type: "preparation_failed",
+          sourcePath: attempt.sourcePath,
+          commandRevision: attempt.commandRevision,
+          correlationID: attempt.correlationID,
+          error: finished
+            ? "Inspection finished before cancellation. Refresh the workflow to review its result."
+            : "Could not confirm cancellation; inspection may still be running. Refresh the workflow before retrying.",
+          failure: null,
+        });
+        return false;
+      } finally {
+        window.clearTimeout(timeout);
+        if (controllers.current.candidateCancellation === controller)
+          delete controllers.current.candidateCancellation;
+      }
+    })();
+    void attempt.cancellation.then((confirmed) => {
+      if (
+        (cancellation.current && cancellation.current.controller !== attempt.controller) ||
+        (candidateAttempt.current &&
+          candidateAttempt.current !== attempt &&
+          candidateAttempt.current.cancelRequested)
+      )
+        return;
+      const current = stateRef.current.workflowView.current;
+      const ownsView =
+        current?.workflow.id === workflowID && current.operation?.id === operation.id;
+      setCancellationView({
+        pending: false,
+        retry: false,
+        message:
+          confirmed && ownsView
+            ? "Work canceled. Selected input and retained results are available for review or retry."
+            : "Inspection cancellation could not be confirmed. Refresh the workflow to review its result before retrying.",
+      });
+    });
+    return attempt.cancellation;
+  };
+
   const failBackendWorkflow = (error: unknown) => {
     const failure = operationFailureFromError(error);
     if (failure?.Code === "missing_prerequisite" && failure.Recovery === "refresh_release") {
@@ -548,6 +963,7 @@ export function ReleaseSessionProvider({
     idempotencyKey: string,
     signal: AbortSignal,
     extra: Pick<ContinueReleaseWorkflowRequest, "answers" | "approval"> = {},
+    onOperation?: (current: ReleaseWorkflowCurrent | null) => void | Promise<void>,
   ): Promise<ReleaseWorkflowCurrent> => {
     if (goal === "uploaded" && !mutationsAllowed) {
       throw new Error("Tracker submission is unavailable in this runtime.");
@@ -559,6 +975,11 @@ export function ReleaseSessionProvider({
         throw new DOMException("Active input changed.", "AbortError");
       }
       const expectedSlot = activeSlotAuthority();
+      if (cancellation.current?.controller.signal === signal) {
+        await awaitWorkflowCommand(current, signal, expectedSlot);
+      }
+      await onOperation?.(null);
+      if (signal.aborted) throw new DOMException("Preparation canceled.", "AbortError");
       const continued = await activePorts.workflow.continue(
         {
           authority: {
@@ -575,10 +996,11 @@ export function ReleaseSessionProvider({
       if (signal.aborted || !activeSlotMatches(expectedSlot)) {
         throw new DOMException("Active input changed.", "AbortError");
       }
+      await onOperation?.(continued);
       const next = await awaitWorkflowCommand(continued, signal, expectedSlot);
-      // A dry-run action owns one assessment; partial results need an explicit retry.
+      // Each dry run or live-upload review owns one assessment; retries are explicit.
       if (
-        goal === "dry_run" &&
+        (goal === "dry_run" || goal === "upload_reviewed") &&
         next.dryRun &&
         (next.dryRun.id !== current.dryRun?.id || next.dryRun.revision !== current.dryRun?.revision)
       ) {
@@ -746,6 +1168,11 @@ export function ReleaseSessionProvider({
       return false;
     } finally {
       if (controllers.current.activeInput === controller) delete controllers.current.activeInput;
+      finishCancellation(
+        controller.signal,
+        false,
+        "Cancellation could not be confirmed. Work may still be running; reload to review it or retry Cancel.",
+      );
     }
   };
 
@@ -770,6 +1197,7 @@ export function ReleaseSessionProvider({
     dispatch({ type: "active_input_loading" });
     const commandID =
       attempt?.correlationID || timestampedCommandID("workflow", state.commandRevision);
+    openingRequest.current = { controller, commandID };
     const expectedRevision = activeAuthority.current.revision;
     lastWorkflowError.current = null;
     try {
@@ -798,6 +1226,7 @@ export function ReleaseSessionProvider({
         },
         controller.signal,
       );
+      if (openingRequest.current?.controller === controller) openingRequest.current = null;
       if (
         controller.signal.aborted ||
         !applyActiveInputSnapshot(
@@ -835,6 +1264,7 @@ export function ReleaseSessionProvider({
       if (controller.signal.aborted) return null;
       return prepared;
     } catch (error) {
+      if (cancellation.current?.controller === controller) await cancellation.current.opening;
       releaseWorkflowController(controller);
       lastWorkflowError.current = error;
       if (!controller.signal.aborted) {
@@ -845,6 +1275,7 @@ export function ReleaseSessionProvider({
       }
       return null;
     } finally {
+      if (openingRequest.current?.controller === controller) openingRequest.current = null;
       releaseWorkflowController(controller);
     }
   };
@@ -957,41 +1388,93 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const cancelBackendWorkflow = async (reason: string): Promise<boolean> => {
-    const workflowID = workflowView.current?.workflow.id || activeAuthority.current.workflowID;
-    if (!workflowID) return false;
-    const operation = workflowView.current?.operation;
-    abortController("workflow");
-    const controller = new AbortController();
-    controllers.current.workflow = controller;
-    dispatch({ type: "active_input_loading" });
-    const commandID = timestampedCommandID("workflow-cancel");
-    try {
-      let current: ReleaseWorkflowCurrent;
-      const cancelingOperation = isActiveWorkflowOperation(operation);
-      if (cancelingOperation) {
-        await activePorts.workflow.cancelOperation(workflowID, operation.id, controller.signal);
-        current = await activePorts.workflow.current(workflowID, controller.signal);
-      } else {
-        current = await activePorts.workflow.cancel(
-          workflowID,
-          reason,
-          commandID,
-          controller.signal,
-        );
-      }
-      releaseWorkflowController(controller);
-      if (controller.signal.aborted) return false;
-      acceptWorkflowCurrent(current);
-      if (!cancelingOperation) storeWorkflowID("");
-      return true;
-    } catch (error) {
-      releaseWorkflowController(controller);
-      if (!controller.signal.aborted) failBackendWorkflow(error);
-      return false;
-    } finally {
-      releaseWorkflowController(controller);
+  const cancelCandidatePreparation = (
+    attempt: NonNullable<typeof candidateAttempt.current>,
+  ): Promise<boolean> => {
+    if (attempt.operation)
+      return cancelAcceptedCandidate(
+        attempt,
+        attempt.operation.workflowID,
+        attempt.operation.status,
+      );
+    if (!attempt.cancelRequested) {
+      attempt.cancelRequested = true;
+      setCancellationView({ pending: true, retry: false, message: "" });
+      // Acceptance and confirmation share one cancellation deadline.
+      attempt.cancellationTimeout = window.setTimeout(() => {
+        if (attempt.cancellationController) {
+          attempt.cancellationController.abort();
+          return;
+        }
+        if (candidateAttempt.current !== attempt || attempt.controller.signal.aborted) return;
+        attempt.controller.abort();
+        dispatch({
+          type: "preparation_failed",
+          sourcePath: attempt.sourcePath,
+          commandRevision: attempt.commandRevision,
+          correlationID: attempt.correlationID,
+          error:
+            "Could not confirm cancellation; inspection may still be running. Refresh the workflow before retrying.",
+          failure: null,
+        });
+      }, 30_000);
     }
+    return attempt.settled.then(() => attempt.cancellation || false);
+  };
+
+  const cancelBackendWorkflow = (): Promise<boolean> => {
+    const candidate = candidateAttempt.current;
+    if (candidate && candidate.controller === controllers.current.preparation)
+      return cancelCandidatePreparation(candidate);
+    const pending = cancellation.current;
+    if (pending) {
+      if (pending.requestFailed) {
+        const observed = observedOperations.current.get(pending.controller.signal);
+        if (observed && activeSlotMatches(observed.slot)) {
+          pending.operationID = "";
+          sendCancellation(observed.workflowID, observed.operation);
+        } else if (openingRequest.current?.controller === pending.controller) {
+          cancelOpeningRequest();
+        }
+      }
+      return pending.promise;
+    }
+    const controller =
+      controllers.current.workflow ||
+      controllers.current.preparation ||
+      (controllers.current.activeInput &&
+      observedOperations.current.has(controllers.current.activeInput.signal)
+        ? controllers.current.activeInput
+        : undefined);
+    if (controller) {
+      abortWorkflowFacets("Work canceled.", "cancelled");
+      return requestCancellation(controller);
+    }
+    if (
+      (["screenshots", "menuImages", "uploadedImages", "descriptions"] as const).some(
+        (facet) => controllers.current[facet],
+      )
+    ) {
+      abortWorkflowFacets("Work canceled.", "cancelled");
+      setCancellationView({
+        pending: false,
+        retry: false,
+        message: "Work canceled. Retained results are available for review or retry.",
+      });
+      return Promise.resolve(true);
+    }
+    const current = stateRef.current.workflowView.current;
+    if (!current || !isActiveWorkflowOperation(current.operation)) return Promise.resolve(false);
+    abortWorkflowFacets("Work canceled.", "cancelled");
+    const observer = new AbortController();
+    controllers.current.workflow = observer;
+    const confirmation = requestCancellation(observer);
+    void awaitWorkflowCommand(current, observer.signal)
+      .catch((error: unknown) => {
+        if (!observer.signal.aborted) failBackendWorkflow(error);
+      })
+      .finally(() => releaseWorkflowController(observer));
+    return confirmation;
   };
 
   const checkBackendDuplicates = async (
@@ -1042,17 +1525,32 @@ export function ReleaseSessionProvider({
           ];
         }),
       );
-      const current = await continueBackendGoal(
+      const intent = {
+        trackerIds: [...state.selectedTrackers],
+        projectionInstructions,
+        skipRemoteDuplicates: false,
+      };
+      let current = await continueBackendGoal(
         workflowView.current,
         goal,
-        {
-          trackerIds: [...state.selectedTrackers],
-          projectionInstructions,
-          skipRemoteDuplicates: false,
-        },
+        intent,
         commandID,
         controller.signal,
       );
+      if (
+        goal === "trackers_assessed" &&
+        workflowView.current.dupes &&
+        !current.dupes &&
+        !controller.signal.aborted
+      ) {
+        current = await continueBackendGoal(
+          current,
+          "duplicates_decided",
+          intent,
+          `${commandID}-duplicates`,
+          controller.signal,
+        );
+      }
       releaseWorkflowController(controller);
       if (controller.signal.aborted) return false;
       acceptWorkflowCurrent(current);
@@ -1099,30 +1597,53 @@ export function ReleaseSessionProvider({
       state.inputEditRevision - state.trackerSelectionEditRevision;
     const trackers = [...state.selectedTrackers];
     try {
-      const current = await continueBackendGoal(
+      const reconcileDuplicates =
+        (initial.dupes || initial.continuation?.duplicateReusePending) &&
+        !sameNames(
+          trackers.filter(
+            (tracker) =>
+              !initial.workflow.submissionExclusions?.some(
+                (exclusion) => exclusion.trackerId === tracker,
+              ),
+          ),
+          initial.projections?.projections.map((projection) => projection.trackerId) || [],
+        );
+      const intent: WorkflowIntent = {
+        trackerIds: trackers,
+        // Selection discovers schemas; only explicit Apply/Run may submit local drafts.
+        projectionInstructions: Object.fromEntries(
+          trackers.map((tracker) => [
+            tracker,
+            {
+              ...initial.projectionInstructions?.instructions[tracker],
+              questionnaire: {
+                ...initial.projectionInstructions?.instructions[tracker]?.questionnaire,
+                ...initial.projections?.projections.find(
+                  (projection) => projection.trackerId === tracker,
+                )?.questionnaireAnswers,
+              },
+            },
+          ]),
+        ),
+      };
+      const commandID = timestampedCommandID("workflow-questions", initial.workflow.revision);
+      // Replace the selection before enforcing questions owned by removed trackers.
+      let current = await continueBackendGoal(
         initial,
         "trackers_projected",
-        {
-          trackerIds: trackers,
-          // Selection discovers schemas; only explicit Apply/Run may submit local drafts.
-          projectionInstructions: Object.fromEntries(
-            trackers.map((tracker) => [
-              tracker,
-              {
-                ...initial.projectionInstructions?.instructions[tracker],
-                questionnaire: {
-                  ...initial.projectionInstructions?.instructions[tracker]?.questionnaire,
-                  ...initial.projections?.projections.find(
-                    (projection) => projection.trackerId === tracker,
-                  )?.questionnaireAnswers,
-                },
-              },
-            ]),
-          ),
-        },
-        timestampedCommandID("workflow-questions", initial.workflow.revision),
+        intent,
+        commandID,
         controller.signal,
       );
+      if (reconcileDuplicates) {
+        current = await continueBackendGoal(
+          current,
+          "duplicates_decided",
+          intent,
+          `${commandID}-duplicates`,
+          controller.signal,
+        );
+      }
       if (controller.signal.aborted) return false;
       releaseWorkflowController(controller);
       acceptWorkflowCurrent(current);
@@ -1178,7 +1699,20 @@ export function ReleaseSessionProvider({
       return false;
     } finally {
       releaseWorkflowController(controller);
-      if (questionnaireController.current === controller) questionnaireController.current = null;
+      if (questionnaireController.current === controller) {
+        questionnaireController.current = null;
+        if (controller.signal.aborted) {
+          setQuestionnaireRefresh((refresh) =>
+            refresh?.key === questionnaireKey && refresh.status === "running"
+              ? {
+                  ...refresh,
+                  status: "error",
+                  error: "Tracker loading canceled. Retry when ready.",
+                }
+              : refresh,
+          );
+        }
+      }
     }
   };
 
@@ -1216,7 +1750,10 @@ export function ReleaseSessionProvider({
     controllers.current = {};
   };
 
-  const abortWorkflowFacets = () => {
+  const abortWorkflowFacets = (
+    reason = "Preparation required.",
+    status: "idle" | "cancelled" = "idle",
+  ) => {
     (["screenshots", "menuImages", "uploadedImages", "descriptions"] as const).forEach((facet) => {
       if (!controllers.current[facet]) return;
       controllers.current[facet]?.abort();
@@ -1226,7 +1763,8 @@ export function ReleaseSessionProvider({
         facet,
         sessionRevision: stateRef.current.sessionRevision,
         revision: stateRef.current[facet].revision,
-        reason: "Preparation required.",
+        reason,
+        status,
       });
     });
   };
@@ -1234,11 +1772,7 @@ export function ReleaseSessionProvider({
   useEffect(() => abortAll, []);
 
   const cancelPreparation = () => {
-    const preparation = stateRef.current.preparation;
-    if (preparation.status !== "running") return;
-    abortController("preparation");
-    abortController("workflow");
-    dispatch({ type: "preparation_cancelled", correlationID: preparation.correlationID });
+    if (stateRef.current.preparation.status === "running") void cancelBackendWorkflow();
   };
 
   const releaseActiveInput = async (): Promise<boolean> => {
@@ -1318,7 +1852,8 @@ export function ReleaseSessionProvider({
   };
 
   const selectSource = (value: string) => {
-    cancelPreparation();
+    if (controllers.current.preparation || controllers.current.workflow)
+      void cancelBackendWorkflow();
     dispatch({ type: "draft_changed", value });
   };
 
@@ -1330,12 +1865,12 @@ export function ReleaseSessionProvider({
       confirmBDMVRescan: boolean;
       captureHDRMetadata?: boolean;
       acceptPendingInput?: boolean;
+      blurayDetails?: BlurayDetailRequest;
     }>,
     commandRevision: number,
     correlationID: string,
     controller: AbortController,
     update: PendingInputUpdate,
-    releaseID = "",
   ): Promise<boolean> => {
     try {
       const input = preparationInputForWorkflow(
@@ -1354,10 +1889,16 @@ export function ReleaseSessionProvider({
           throw new Error("Blu-ray candidate selection requires the current prepared workflow.");
         }
         dispatch({ type: "active_input_loading" });
-        const commandID = `workflow-candidate-${Date.now().toString(36)}-${previous.workflow.revision.toString(36)}`;
+        const nonce = Array.from(crypto.getRandomValues(new Uint32Array(4)), (value) =>
+          value.toString(36),
+        ).join("-");
+        const commandID = `workflow-candidate-${nonce}-${previous.workflow.revision.toString(36)}`;
         const candidateInput = workflowPrepareInput({
           ...input,
-          Instructions: { ...input.Instructions, BlurayReleaseID: releaseID },
+          Controls: {
+            ...input.Controls!,
+            ...(controls.blurayDetails ? { BlurayDetails: controls.blurayDetails } : {}),
+          },
           Force: true,
         });
         current = await continueBackendGoal(
@@ -1372,6 +1913,51 @@ export function ReleaseSessionProvider({
           },
           commandID,
           controller.signal,
+          {},
+          async (continued) => {
+            const attempt = candidateAttempt.current;
+            if (!attempt || attempt.controller !== controller) return;
+            if (!continued) {
+              attempt.operation = null;
+              if (attempt.cancelRequested) {
+                controller.abort();
+                dispatch({ type: "preparation_cancelled", correlationID });
+              }
+              return;
+            }
+            const acceptedID = continued.preparationOperationId;
+            const started =
+              acceptedID && continued.operation?.id !== acceptedID
+                ? await activePorts.workflow.operation(
+                    continued.workflow.id,
+                    acceptedID,
+                    controller.signal,
+                  )
+                : continued.operation;
+            if (candidateAttempt.current !== attempt || controller.signal.aborted) return;
+            if (acceptedID && (started?.id !== acceptedID || started.operation !== "preparation")) {
+              throw new Error("Could not identify the accepted inspection operation.");
+            }
+            if (
+              started?.operation === "preparation" &&
+              continued.preparationOperationId === started.id
+            ) {
+              attempt.operation = { workflowID: continued.workflow.id, status: started };
+              setCandidateOperation({ workflowID: continued.workflow.id, operationID: started.id });
+            }
+            if (attempt.cancelRequested) {
+              if (attempt.operation) {
+                await cancelAcceptedCandidate(
+                  attempt,
+                  attempt.operation.workflowID,
+                  attempt.operation.status,
+                );
+              } else {
+                controller.abort();
+                dispatch({ type: "preparation_cancelled", correlationID });
+              }
+            }
+          },
         );
       } else if (operation === "reset") {
         const previous = workflowView.current;
@@ -1468,19 +2054,37 @@ export function ReleaseSessionProvider({
       }
       return !controller.signal.aborted;
     } catch (error) {
+      const cancellation =
+        candidateAttempt.current?.controller === controller
+          ? candidateAttempt.current.cancellation
+          : null;
+      if (cancellation) {
+        await cancellation;
+        return false;
+      }
       if (!controller.signal.aborted) {
+        const pendingCancel =
+          candidateAttempt.current?.controller === controller &&
+          candidateAttempt.current.cancelRequested;
         dispatch({
           type: "preparation_failed",
           sourcePath,
           commandRevision,
           correlationID,
-          error: errorText(error),
+          error: pendingCancel
+            ? "Could not confirm cancellation; inspection may still be running. Refresh the workflow before retrying."
+            : errorText(error),
           failure: operationFailureFromError(error),
         });
       }
       return false;
     } finally {
       if (controllers.current.preparation === controller) delete controllers.current.preparation;
+      finishCancellation(
+        controller.signal,
+        false,
+        "Cancellation could not be confirmed. Work may still be running; reload to review it or retry Cancel.",
+      );
     }
   };
 
@@ -1570,10 +2174,12 @@ export function ReleaseSessionProvider({
     return runPreparationFor(operation, sourcePath, intent);
   };
 
-  const selectCandidate = async (releaseID: string): Promise<boolean> => {
+  const runCandidateAction = async (
+    selection?: BluraySelection,
+    details?: BlurayDetailRequest,
+  ): Promise<boolean> => {
     const sourcePath = state.selectedSource.trim();
-    const candidateID = releaseID.trim();
-    if (!sourcePath || !candidateID) return false;
+    if (!sourcePath) return false;
     abortController("preparation");
     abortWorkflowFacets();
     const controller = new AbortController();
@@ -1581,7 +2187,33 @@ export function ReleaseSessionProvider({
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
-    const intent = cloneIntent(state.preparationIntent);
+    let settle!: () => void;
+    const attempt: NonNullable<typeof candidateAttempt.current> = {
+      controller,
+      sourcePath,
+      commandRevision,
+      correlationID,
+      cancelRequested: false,
+      cancellationTimeout: null,
+      cancellationController: null,
+      cancellation: null,
+      settled: new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+      operation: null,
+    };
+    candidateAttempt.current = attempt;
+    const intent = {
+      ...cloneIntent(state.preparationIntent),
+      ...(selection
+        ? {
+            bluray: selection,
+            sourceLookupURL: isBluraySiteURL(state.preparationIntent.sourceLookupURL)
+              ? ""
+              : state.preparationIntent.sourceLookupURL,
+          }
+        : {}),
+    };
     const update: PendingInputUpdate = {
       inputEditRevision: state.inputEditRevision,
       correctionDirty: state.correctionDirty,
@@ -1604,17 +2236,34 @@ export function ReleaseSessionProvider({
       correlationID,
       intent,
     });
-    return executePreparation(
-      "candidate",
-      sourcePath,
-      intent,
-      { confirmBDMVRescan: false },
-      commandRevision,
-      correlationID,
-      controller,
-      update,
-      candidateID,
-    );
+    try {
+      return await executePreparation(
+        "candidate",
+        sourcePath,
+        intent,
+        { confirmBDMVRescan: false, blurayDetails: details },
+        commandRevision,
+        correlationID,
+        controller,
+        update,
+      );
+    } finally {
+      if (attempt.cancellationTimeout !== null) window.clearTimeout(attempt.cancellationTimeout);
+      if (
+        attempt.cancelRequested &&
+        !attempt.cancellation &&
+        cancellation.current?.controller !== controller
+      ) {
+        setCancellationView({
+          pending: false,
+          retry: false,
+          message:
+            "Inspection cancellation ended. Refresh the workflow to confirm its status before retrying.",
+        });
+      }
+      if (candidateAttempt.current === attempt) candidateAttempt.current = null;
+      settle();
+    }
   };
 
   const beginWorkflow = (facet: WorkflowFacet, unavailableReason = ""): WorkflowCommand | null => {
@@ -1765,6 +2414,46 @@ export function ReleaseSessionProvider({
         reseedDrafts: !state.screenshots.planStale,
         finalSelectionArtifactIDs: selectedArtifactIDs,
       });
+      // The backend projects the effective prepared collection policy, including overrides.
+      // Import through the workflow so selection, deletion and URL reuse keep one owner.
+      if (
+        workflowPlan.autoAdoptSavedImages &&
+        workflowPlan.savedTrackerImages?.length &&
+        workflowView.current.media?.savedImagePlanId !== workflowPlan.id
+      ) {
+        // Another facet can acquire the workflow while the plan request is pending.
+        if (controllers.current.workflow) {
+          dispatch({
+            type: "workflow_failed",
+            facet: "screenshots",
+            sessionRevision: command.sessionRevision,
+            revision: command.revision,
+            error:
+              "Existing images were not included. Finish the current action, then load suggestions to retry.",
+          });
+          return false;
+        }
+        return await runBackendWorkflow(
+          (current, commandID, signal) =>
+            continueBackendGoal(
+              current,
+              "media_ready",
+              {
+                media: {
+                  screenshotCount: 0,
+                  purpose: "final",
+                  selections: [],
+                  savedImagePlanId: workflowPlan.id,
+                  captureDvdMenus: false,
+                  maxDvdMenuItems: 0,
+                },
+              },
+              commandID,
+              signal,
+            ),
+          screenshotCommandCallbacks(true),
+        );
+      }
       return !command.controller.signal.aborted;
     } catch (error) {
       failWorkflow("screenshots", command, error);
@@ -1867,6 +2556,8 @@ export function ReleaseSessionProvider({
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         image: preview.contentUrl,
+        processing: preview.processing ?? undefined,
+        timestampSeconds: preview.timestampSeconds,
       });
       return !command.controller.signal.aborted;
     } catch (error) {
@@ -1942,15 +2633,6 @@ export function ReleaseSessionProvider({
           },
           contentURL: activePorts.workflow.mediaURL(workflowView.current!, artifact.id),
         }));
-      const uploaded = (media?.artifacts || [])
-        .filter((artifact) => artifact.kind === "hosted_image")
-        .map((artifact) => ({
-          artifactID: artifact.id,
-          host: artifact.host || "",
-          url: artifact.url || "",
-          sizeBytes: artifact.sizeBytes || 0,
-          uploadedAt: media?.createdAt || "",
-        }));
       const failures: UploadImageHostFailure[] = (media?.hostAttempts || []).flatMap((attempt) =>
         (attempt.failures || []).map((failure) => ({
           Host: attempt.host,
@@ -1964,7 +2646,7 @@ export function ReleaseSessionProvider({
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         candidates,
-        uploaded,
+        uploaded: workflowUploadedImages,
         failures,
         failedHosts: media?.failedHosts || [],
       });
@@ -2146,7 +2828,7 @@ export function ReleaseSessionProvider({
       if (!current.dryRun) {
         current = await continueBackendGoal(
           current,
-          "dry_run",
+          "upload_reviewed",
           backendResolvedUploadIntent(current),
           `${commandID}-review`,
           controller.signal,
@@ -2319,8 +3001,16 @@ export function ReleaseSessionProvider({
       candidates: workflowUploadCandidates,
     });
   }, [workflowUploadCandidates]);
+  const selectedImageSourceIDs = new Set(
+    workflowUploadCandidates.map((candidate) => candidate.image.artifactID),
+  );
   const workflowUploadedImages = (workflowMedia?.artifacts || [])
-    .filter((artifact) => artifact.kind === "hosted_image")
+    .filter(
+      (artifact) =>
+        artifact.kind === "hosted_image" &&
+        artifact.selected &&
+        (artifact.sourceUnavailable || selectedImageSourceIDs.has(artifact.source || "")),
+    )
     .map((artifact) => ({
       artifactID: artifact.id,
       host: artifact.host || "",
@@ -2486,6 +3176,12 @@ export function ReleaseSessionProvider({
         (workflowView.current?.workflow.revision ?? 0))
       ? latestWorkflowOperation
       : null;
+  const currentHDRCancellation =
+    hdrCancellation?.workflowID === workflowView.current?.workflow.id &&
+    hdrOperation?.id === hdrCancellation?.operationID &&
+    isActiveWorkflowOperation(hdrOperation ?? undefined)
+      ? hdrCancellation
+      : null;
   const pendingHDRRequest = workflowView.current?.hdrPendingRequest || null;
   const hdrRetryRequest = pendingHDRRequest || retainedHDRAnalysis;
   const hdrCommandError =
@@ -2495,6 +3191,7 @@ export function ReleaseSessionProvider({
       ? hdrCommandFailure.message
       : "";
   const hdrError =
+    currentHDRCancellation?.error ||
     hdrCommandError ||
     (hdrOperation?.failures || []).map((failure) => failure.failure.Message).join(" ") ||
     retainedHDRAnalysis?.targets
@@ -2598,90 +3295,20 @@ export function ReleaseSessionProvider({
       },
     );
 
-  const cancelHDRAnalysis = async (): Promise<boolean> => {
-    const current = stateRef.current.workflowView.current;
-    const operation = current?.operation;
-    if (
-      !current ||
-      operation?.operation !== "analyze_hdr" ||
-      !isActiveWorkflowOperation(operation)
-    ) {
-      return false;
-    }
-    abortController("workflow");
+  const cancelHDRAnalysis = (): Promise<boolean> => {
+    const operation = stateRef.current.workflowView.current?.operation;
+    if (operation?.operation !== "analyze_hdr" || !isActiveWorkflowOperation(operation))
+      return Promise.resolve(false);
     setHDRCommandFailure(null);
-    const controller = new AbortController();
-    controllers.current.workflow = controller;
-    dispatch({ type: "active_input_loading" });
-    const commandID = `hdr-analysis-cancel-${operation.id}`;
-    try {
-      const canceled = await activePorts.workflow.cancelOperation(
-        current.workflow.id,
-        operation.id,
-        controller.signal,
-      );
-      await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
-      const latest = await activePorts.workflow.current(current.workflow.id, controller.signal);
-      if (controller.signal.aborted) return false;
-      acceptWorkflowCurrent(latest);
-      return true;
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setHDRCommandFailure({
-          ...backendCommandAuthority(commandID, current),
-          message:
-            operationFailureFromError(error)?.Message ||
-            "HDR analysis could not be canceled. Retry the request.",
-        });
-        failBackendWorkflow(error);
-      }
-      return false;
-    } finally {
-      releaseWorkflowController(controller);
-    }
+    return cancelBackendWorkflow();
   };
 
-  const cancelAudioAnalysis = async (): Promise<boolean> => {
-    const current = stateRef.current.workflowView.current;
-    const operation = current?.operation;
-    if (
-      !current ||
-      operation?.operation !== "analyze_audio" ||
-      !isActiveWorkflowOperation(operation)
-    ) {
-      return false;
-    }
-    abortController("workflow");
+  const cancelAudioAnalysis = (): Promise<boolean> => {
+    const operation = stateRef.current.workflowView.current?.operation;
+    if (operation?.operation !== "analyze_audio" || !isActiveWorkflowOperation(operation))
+      return Promise.resolve(false);
     setAudioCommandFailure(null);
-    const controller = new AbortController();
-    controllers.current.workflow = controller;
-    dispatch({ type: "active_input_loading" });
-    const commandID = `audio-analysis-cancel-${operation.id}`;
-    try {
-      const canceled = await activePorts.workflow.cancelOperation(
-        current.workflow.id,
-        operation.id,
-        controller.signal,
-      );
-      await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
-      const latest = await activePorts.workflow.current(current.workflow.id, controller.signal);
-      if (controller.signal.aborted) return false;
-      acceptWorkflowCurrent(latest);
-      return true;
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setAudioCommandFailure({
-          ...backendCommandAuthority(commandID, current),
-          message:
-            operationFailureFromError(error)?.Message ||
-            "Audio analysis could not be canceled. Retry the request.",
-        });
-        failBackendWorkflow(error);
-      }
-      return false;
-    } finally {
-      releaseWorkflowController(controller);
-    }
+    return cancelBackendWorkflow();
   };
 
   const disableAudioAnalysis = async (): Promise<boolean> => {
@@ -2730,9 +3357,32 @@ export function ReleaseSessionProvider({
     }
   };
 
+  const candidateDetailsCancelable = Boolean(
+    candidateOperation &&
+    candidateOperation.workflowID === workflowView.current?.workflow.id &&
+    candidateOperation.operationID === workflowView.current?.operation?.id &&
+    isActiveWorkflowOperation(workflowView.current?.operation),
+  );
+  const cancelCandidateDetails = () => {
+    const attempt = candidateAttempt.current;
+    if (!attempt?.operation || !candidateDetailsCancelable) return Promise.resolve(false);
+    return cancelAcceptedCandidate(attempt, attempt.operation.workflowID, attempt.operation.status);
+  };
+
   const session: ReleaseSession = {
     workflow: {
       view: workflowView,
+      cancellation: {
+        available:
+          Boolean(controllers.current.workflow || controllers.current.preparation) ||
+          state.preparation.status === "running" ||
+          [state.screenshots, state.menuImages, state.uploadedImages, state.descriptions].some(
+            (facet) => facet.status === "running",
+          ) ||
+          isActiveWorkflowOperation(workflowView.current?.operation),
+        ...cancellationView,
+      },
+      cancel: cancelBackendWorkflow,
       reload: reloadBackendWorkflow,
       begin: async (input) => Boolean(await startBackendWorkflow(input)),
       project: (trackers, instructions = {}) =>
@@ -2810,7 +3460,11 @@ export function ReleaseSessionProvider({
         return runBackendWorkflow((current, commandID, signal) =>
           continueBackendGoal(
             current,
-            liveTest ? "dry_run" : "uploaded",
+            liveTest ||
+              (action.kind === "resolve_tracker_preparation" &&
+                (current.dryRun?.explicitDryRun || current.dryRun?.clientInjectionRequested))
+              ? "dry_run"
+              : "uploaded",
             backendResolvedUploadIntent(current),
             commandID,
             signal,
@@ -2830,9 +3484,7 @@ export function ReleaseSessionProvider({
         if (!mutationsAllowed) return Promise.resolve(false);
         const result = workflowView.current?.uploadResult;
         if (!result) return Promise.resolve(false);
-        const trackerIDs = result.results
-          .filter((item) => item.submissionStatus === "failed")
-          .map((item) => item.trackerId);
+        const trackerIDs = result.results.filter(canRetrySubmission).map((item) => item.trackerId);
         if (trackerIDs.length === 0) return Promise.resolve(false);
         return runBackendWorkflow((current, commandID, signal) =>
           activePorts.workflow.retryFailedUploads(
@@ -2850,12 +3502,7 @@ export function ReleaseSessionProvider({
         const result = workflowView.current?.uploadResult;
         if (!result) return Promise.resolve(false);
         const trackerIDs = result.results
-          .filter(
-            (item) =>
-              item.submissionStatus === "completed" &&
-              item.clientInjectionStatus === "failed" &&
-              item.clientFailureCode === "client_injection",
-          )
+          .filter(canRetryClientInjection)
           .map((item) => item.trackerId);
         if (trackerIDs.length === 0) return Promise.resolve(false);
         return runBackendWorkflow((current, commandID, signal) =>
@@ -2891,6 +3538,7 @@ export function ReleaseSessionProvider({
         failure: state.preparation.failure,
         activeInput: state.activeInput,
         sourceVerification: state.sourceVerification,
+        candidateDetailsCancelable,
         preparationDirty: state.preparationDirty,
         correctionDirty: state.correctionDirty,
         intent: state.preparationIntent,
@@ -2901,7 +3549,7 @@ export function ReleaseSessionProvider({
         confirmFields: state.correctionConfirmFields,
         trackerInputAnswers,
         selectedTrackers: state.selectedTrackers,
-        preview: state.preview,
+        preview: metadataPreviewWithBlurayDetails(state.preview, workflowView.current),
         release: workflowView.current?.release
           ? workflowViewValue(workflowView.current.release.release)
           : null,
@@ -2912,7 +3560,10 @@ export function ReleaseSessionProvider({
           discType: workflowView.current?.release?.release.Source.Classification?.DiscType || "",
         },
         playlist: state.playlist,
+        providerSearch: providerSearch.view,
       },
+      searchProviders: providerSearch.search,
+      cancelProviderSearch: providerSearch.cancel,
       updateSourceDraft: (value) => dispatch({ type: "draft_changed", value }),
       selectSource,
       changeSourceLookupURL: (value) => dispatch({ type: "source_lookup_changed", value }),
@@ -3033,7 +3684,14 @@ export function ReleaseSessionProvider({
           captureHDRMetadata: retry.captureHDRMetadata,
         });
       },
-      selectCandidate,
+      selectCandidate: (releaseID) => runCandidateAction({ Mode: "manual", Release: releaseID }),
+      cancelCandidateDetails,
+      fetchCandidateDetails: (releaseID) =>
+        runCandidateAction(
+          undefined,
+          releaseID ? { ReleaseID: releaseID, All: false } : { ReleaseID: "", All: true },
+        ),
+      setCandidateSelection: (mode) => runCandidateAction({ Mode: mode, Release: "" }),
     },
     duplicates: {
       view: {
@@ -3178,7 +3836,7 @@ export function ReleaseSessionProvider({
       },
       cancel: async () => {
         if (!workflowView.current) return false;
-        return cancelBackendWorkflow("duplicate check canceled");
+        return cancelBackendWorkflow();
       },
       setIgnored: (tracker, ignored) => {
         const normalizedTracker = tracker.trim().toUpperCase();
@@ -3258,7 +3916,10 @@ export function ReleaseSessionProvider({
             []
           : [],
         phase: hdrOperation?.phase || "",
-        message: hdrOperation?.message || "",
+        message:
+          currentHDRCancellation && !currentHDRCancellation.error
+            ? "Cancellation requested."
+            : hdrOperation?.message || "",
         progress: hdrOperation?.progress || 0,
         mutationBlockedReason: hdrMutationBlockedReason,
         error: hdrError || (questionnaireRefreshCurrent ? questionnaireRefresh.error : ""),
@@ -3373,6 +4034,8 @@ export function ReleaseSessionProvider({
         selections: state.screenshots.selections,
         finalSelectionArtifactIDs: selectedScreenshotIDs,
         previewImage: state.screenshots.previewImage,
+        previewProcessing: state.screenshots.previewProcessing,
+        previewTimestampSeconds: state.screenshots.previewTimestampSeconds,
         staleReason: state.screenshots.staleReason,
         mutationBlockedReason: screenshotMutationBlockedReason,
         error: screenshotError,
@@ -3453,6 +4116,9 @@ export function ReleaseSessionProvider({
           const resources = [];
           for (const file of files) {
             resources.push(await activePorts.workflow.stageMedia(current, file, signal));
+            if (cancellation.current?.controller.signal === signal) {
+              await awaitWorkflowCommand(current, signal);
+            }
           }
           return activePorts.workflow.attachMedia(current, resources, commandID, signal);
         }),
@@ -3474,30 +4140,14 @@ export function ReleaseSessionProvider({
           ),
         ),
       cancelCapture: () => {
-        const controller = controllers.current.workflow;
-        if (!controller) return;
-        controller.abort();
-        delete controllers.current.workflow;
-        if (workflowView.current?.operation?.id) {
-          void activePorts.workflow.cancelOperation(
-            workflowView.current.workflow.id,
-            workflowView.current.operation.id,
-            new AbortController().signal,
-          );
-        }
-        dispatch({
-          type: "workflow_canceled",
-          facet: "menuImages",
-          sessionRevision: state.sessionRevision,
-          revision: state.menuImages.revision,
-        });
+        void cancelBackendWorkflow();
       },
       remove: (artifactID) => removeMediaArtifacts([artifactID]),
     },
     uploadedImages: {
       view: {
         revision: state.uploadedImages.revision,
-        status: state.uploadedImages.status,
+        status: workflowView.status === "running" ? "running" : state.uploadedImages.status,
         candidates: workflowUploadCandidates,
         uploaded: workflowUploadedImages,
         selectedArtifactIDs: state.uploadedImages.selectedArtifactIDs,
@@ -3590,13 +4240,13 @@ export function ReleaseSessionProvider({
       },
       cancel: async () => {
         if (!workflowView.current) return false;
-        return cancelBackendWorkflow("upload canceled");
+        return cancelBackendWorkflow();
       },
       retry: async () => {
         if (!mutationsAllowed || questionnaireDirty) return false;
         const result = workflowView.current?.uploadResult;
         const trackerIDs = (result?.results || [])
-          .filter((item) => item.submissionStatus === "failed")
+          .filter(canRetrySubmission)
           .map((item) => item.trackerId);
         if (!result || trackerIDs.length === 0) return false;
         return runBackendWorkflow((current, commandID, signal) =>
@@ -3614,12 +4264,7 @@ export function ReleaseSessionProvider({
         if (!mutationsAllowed) return false;
         const result = workflowView.current?.uploadResult;
         const trackerIDs = (result?.results || [])
-          .filter(
-            (item) =>
-              item.submissionStatus === "completed" &&
-              item.clientInjectionStatus === "failed" &&
-              item.clientFailureCode === "client_injection",
-          )
+          .filter(canRetryClientInjection)
           .map((item) => item.trackerId);
         if (!result || trackerIDs.length === 0) return false;
         return runBackendWorkflow((current, commandID, signal) =>

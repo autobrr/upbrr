@@ -86,6 +86,8 @@ func InspectFileSource(ctx context.Context, path string) (api.HDRSourceEvidence,
 // The caller owns returned native metadata and checkpoints it before reports.
 // captureAudio selects fresh primary audio work independently of picture work.
 // New v3 options require AnalyzePreparedAutomatic and prepared audio authority.
+// Failure to create the automatic pass's temporary directory uses
+// [api.HDRAnalysisFailureOutput] and retains its filesystem cause.
 func (s *Session) AnalyzeAutomatic(ctx context.Context, primary DecodedInput, reference *DecodedInput,
 	options api.HDRDecodedOptions, formats api.HDRAnalysisFormats, directory string, otherBytes int64, captureAudio bool,
 ) (*NativeExtraction, []*MeasurementReport, error) {
@@ -221,7 +223,10 @@ func (s *Session) analyzeAutomatic(ctx context.Context, primary DecodedInput, re
 	}()
 	audioRoot, err := os.MkdirTemp(directory, ".hdr-audio-")
 	if err != nil {
-		return nil, nil, fmt.Errorf("create automatic audio scratch: %w", err)
+		return nil, nil, fmt.Errorf("create automatic HDR output: %w", api.NewHDRAnalysisError(api.HDRAnalysisFailure{
+			Code:    api.HDRAnalysisFailureOutput,
+			Message: "Temporary HDR analysis output could not be created. Check the output directory, its write permissions, and available space.",
+		}, err))
 	}
 	defer func() { _ = os.RemoveAll(audioRoot) }()
 	audioService := audioanalysis.NewService(s.service.logger)

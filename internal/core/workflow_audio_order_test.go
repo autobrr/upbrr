@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -150,11 +151,12 @@ func TestContinueReleaseWorkflowAudioOrderPreservesRequiredGates(t *testing.T) {
 							category = api.CanonicalCategoryTV
 						}
 						return api.PrepareResult{Release: api.PreparedRelease{
-							Generation: 1,
-							Source:     api.SourceManifest{SourcePath: input.SourcePath},
-							Naming:     api.NamingFacts{ReleaseName: releaseName, Resolution: "1080p"},
-							Identity:   api.ExternalIdentity{Category: category},
-							Media:      api.MediaFacts{Type: "WEBDL", Source: "Web"},
+							Compatibility: api.PreparationCompatibility{ContractVersion: preparedrelease.ContractVersion},
+							Generation:    1,
+							Source:        api.SourceManifest{SourcePath: input.SourcePath},
+							Naming:        api.NamingFacts{ReleaseName: releaseName, Resolution: "1080p"},
+							Identity:      api.ExternalIdentity{Category: category},
+							Media:         api.MediaFacts{Type: "WEBDL", Source: "Web"},
 						}}, nil
 					},
 					DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {

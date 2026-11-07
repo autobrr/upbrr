@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -27,7 +28,7 @@ func persistActiveInputTestRelease(ctx context.Context, repo *db.SQLiteRepositor
 		SourceFingerprint:          "test-source",
 		FactInstructionFingerprint: "test-facts",
 		PolicyFingerprint:          "test-policy",
-		ContractVersion:            "test-contract",
+		ContractVersion:            preparedrelease.ContractVersion,
 	}
 	release.Identity.SourcePath, release.Identity.Generation = release.Source.SourcePath, release.Generation
 	release.Identity.Category, release.Identity.Conflict = api.CanonicalCategoryMovie, api.IdentityConflictNone

@@ -3,6 +3,7 @@
 
 import type {
   ApplicationInfo,
+  ProviderSearchResult,
   BrowseDirectoryRequest,
   BrowseDirectoryResponse,
   HistoryEntry,
@@ -25,6 +26,7 @@ import type {
   InvalidateReleaseWorkflowTrackersRequest,
   MediaPlan,
   OpenActiveInputRequest,
+  CancelActiveInputOpenRequest,
   Operation,
   PreviewReleaseWorkflowFrameRequest,
   ReconcileActiveInputRequest,
@@ -55,6 +57,12 @@ type LogEntry = {
 };
 
 type ConfigImportResult = { message: string; warnings: string[] };
+
+/** Selects one integration in the editable Settings configuration. */
+export type ConnectionTestTarget = Readonly<{ kind: string; instance?: string }>;
+
+/** Fixed server guidance; remote response bodies and credentials are never returned. */
+export type ConnectionTestResult = Readonly<{ code: string; message: string }>;
 
 /** Workflow projection families affected by the effective configuration change. */
 export type ConfigImpact =
@@ -137,6 +145,16 @@ export const hostBrowser = {
 export const applicationClient = {
   getInfo: (signal?: AbortSignal) =>
     requestApp<ApplicationInfo>("GetApplicationInfo", undefined, { signal }),
+};
+
+/** Inspects titles without selecting IDs or changing prepared facts. */
+export const providerSearchClient = {
+  search: (query: string, category: string, signal: AbortSignal) =>
+    requestApp<ProviderSearchResult>(
+      "SearchProviderCandidates",
+      { Query: query, Category: category },
+      { signal },
+    ),
 };
 
 /** Persistent public API bearer-token management for authenticated WebUI operators. */
@@ -279,6 +297,8 @@ export const releaseWorkflowClient = {
 
 /** Owner-scoped controller for the database's single active input. */
 export const activeInputClient = {
+  cancelOpen: (request: CancelActiveInputOpenRequest, signal?: AbortSignal) =>
+    requestApp<ActiveInputSnapshot>("CancelActiveInputOpen", request, { signal }),
   get: (signal?: AbortSignal) => requestAppGet<ActiveInputSnapshot>("GetActiveInput", { signal }),
   open: (request: OpenActiveInputRequest, signal?: AbortSignal) =>
     requestApp<ActiveInputSnapshot>("OpenActiveInput", request, { signal }),
@@ -298,6 +318,9 @@ export const descriptionClient = {
 
 /** Config persistence plus browser-native import and download behavior. */
 export const configClient = {
+  /** Tests an encrypted draft without saving or activating it. */
+  testConnection: (payload: string, target: ConnectionTestTarget, signal?: AbortSignal) =>
+    requestApp<ConnectionTestResult>("TestConnection", { payload, target }, { signal }),
   get: (signal?: AbortSignal) => requestApp<string>("GetConfig", undefined, { signal }),
   getDefault: () => requestApp<string>("GetDefaultConfig"),
   /** Reads activation status without exposing the pending configuration. */

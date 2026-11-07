@@ -19,6 +19,7 @@ import (
 
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -51,6 +52,7 @@ type cliOptions struct {
 	Type                       string
 	Source                     string
 	SourceLookup               string
+	BlurayRelease              string
 	Resolution                 string
 	Tag                        string
 	Service                    string
@@ -109,6 +111,7 @@ type cliOptions struct {
 	TrackLanguages             []string
 	TrackAudioOrigins          []string
 	ResetInput                 []string
+	KeepExistingIDs            bool
 	ConfirmInput               []string
 	TrackerInput               []string
 	Anon                       bool
@@ -208,15 +211,18 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.IntVar(&opts.LimitQueue, "lq", 0, "Limit remaining eligible queue items (zero means unlimited)")
 	fs.BoolVar(&opts.RefreshQueue, "refresh-queue", false, "Add newly discovered queue members while retaining progress (requires --queue)")
 	fs.BoolVar(&opts.RetryQueue, "retry-queue", false, "Include failed, interrupted and skipped items (requires --queue; workflow safety checks still apply)")
-	fs.BoolVar(&opts.SiteCheck, "site-check", false, "Search/check sites without uploading")
-	fs.BoolVar(&opts.SiteCheck, "sc", false, "Search/check sites without uploading")
+	fs.BoolVar(&opts.SiteCheck, "site-check", false,
+		"Check sites and preview without tracker submission; may upload images and inject torrents into clients (use --no-seed to skip injection)")
+	fs.BoolVar(&opts.SiteCheck, "sc", false,
+		"Check sites and preview without tracker submission; may upload images and inject torrents into clients (use --no-seed to skip injection)")
 	fs.StringVar(&opts.SiteUpload, "site-upload", "", "Process a single tracker upload flow")
 	fs.StringVar(&opts.SiteUpload, "su", "", "Process a single tracker upload flow")
 	fs.StringVar(&opts.Trackers, "trackers", "", "Upload to these trackers (comma-separated)")
 	fs.StringVar(&opts.Trackers, "tk", "", "Upload to these trackers (comma-separated)")
 	fs.StringVar(&opts.TrackersRemove, "trackers-remove", "", "Remove these trackers (comma-separated)")
 	fs.StringVar(&opts.TrackersRemove, "rtk", "", "Remove these trackers (comma-separated)")
-	fs.BoolVar(&opts.Debug, "debug", false, "Enable debug mode")
+	fs.BoolVar(&opts.Debug, "debug", false,
+		"Prepare and preview without tracker submission; may upload images and inject torrents into clients (use --no-seed to skip injection)")
 	fs.StringVar(&opts.LogLevel, "log-level", "", "Set application log level for this run (error, warn, info, debug, trace)")
 	fs.StringVar(
 		&opts.ConsoleLogLevel,
@@ -260,11 +266,11 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.EpisodeTitle, "episode-title", "", "Override episode title")
 	fs.StringVar(&opts.EpisodeTitle, "manual-episode-title", "", "Override episode title")
 	fs.StringVar(&opts.EpisodeTitle, "met", "", "Override episode title")
-	fs.IntVar(&opts.ManualYear, "manual-year", 0, "Override release year")
-	fs.IntVar(&opts.ManualYear, "year", 0, "Override release year")
+	fs.IntVar(&opts.ManualYear, "manual-year", 0, "Override movie year or TV year without TVDB data")
+	fs.IntVar(&opts.ManualYear, "year", 0, "Override movie year or TV year without TVDB data")
 	fs.StringVar(&opts.ManualDate, "daily", "", "Set daily episode air date (YYYY-MM-DD)")
 	fs.BoolVar(&opts.NoSeason, "no-season", false, "Remove season and episode from name")
-	fs.BoolVar(&opts.NoYear, "no-year", false, "Remove year from name")
+	fs.BoolVar(&opts.NoYear, "no-year", false, "Omit movie year or TV year without TVDB data")
 	fs.BoolVar(&opts.NoAKA, "no-aka", false, "Remove AKA from name")
 	fs.BoolVar(&opts.NoTag, "no-tag", false, "Remove group tag from name")
 	fs.BoolVar(&opts.NoEpisodeTitle, "no-episode-title", false, "Remove episode title from name")
@@ -283,8 +289,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.DeleteTmp, "dtmp", false, "Delete stored database content for each input path before upload")
 	fs.BoolVar(&opts.DeleteTmp, "delete-tmp", false, "Delete stored database content for each input path before upload")
 	fs.BoolVar(&opts.Cleanup, "cleanup", false, "Delete all stored database content for all releases and exit")
-	fs.StringVar(&opts.Region, "region", "", "Override disc region")
-	fs.StringVar(&opts.Region, "reg", "", "Override disc region")
+	fs.StringVar(&opts.Region, "region", "", "Override release country code (for example USA)")
+	fs.StringVar(&opts.Region, "reg", "", "Override release country code (for example USA)")
 	fs.StringVar(&opts.TMDB, "tmdb", "", "Override TMDB id; empty or 0 clears and skips this provider")
 	fs.StringVar(&opts.IMDb, "imdb", "", "Override IMDb id; empty or 0 clears and skips this provider")
 	fs.StringVar(&opts.MAL, "mal", "", "Override MAL id; empty or 0 clears and skips this provider")
@@ -308,8 +314,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.QbitTag, "qbt", "", "Override qBittorrent tag")
 	fs.StringVar(&opts.QbitCategory, "qbit-cat", "", "Override qBittorrent category")
 	fs.StringVar(&opts.QbitCategory, "qbc", "", "Override qBittorrent category")
-	fs.BoolVar(&opts.ForceRecheck, "force-recheck", false, "Force recheck matched qBittorrent torrents before validation")
-	fs.BoolVar(&opts.ForceRecheck, "frc", false, "Force recheck matched qBittorrent torrents before validation")
+	fs.BoolVar(&opts.ForceRecheck, "force-recheck", false, "Recheck matched qBittorrent torrents and verify reusable torrent data")
+	fs.BoolVar(&opts.ForceRecheck, "frc", false, "Recheck matched qBittorrent torrents and verify reusable torrent data")
 	fs.BoolVar(&opts.Foreign, "foreign", false, "Mark TIK release as foreign")
 	fs.BoolVar(&opts.Opera, "opera", false, "Mark TIK release as opera or musical")
 	fs.BoolVar(&opts.Asian, "asian", false, "Mark TIK release as asian")
@@ -386,6 +392,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.Anime, "anime", false, "Force release to be treated as anime")
 	fs.BoolVar(&opts.UseSeasonEpisode, "use-season-episode", false, "Use the explicit season and episode values")
 	fs.BoolVar(&opts.InputOnly, "input-only", false, "Prepare and evaluate local tracker input without remote tracker work")
+	fs.StringVar(&opts.BlurayRelease, "bluray-release", "", "Select a Blu-ray.com release URL or ID (empty skips; auto resets)")
 	fs.StringVar(&opts.SourceLookup, "source-lookup", "", "Use a tracker source URL for metadata lookup")
 	fs.StringVar(&opts.AlternateTitle, "alternate-title", "", "Override alternate title")
 	fs.StringVar(&opts.Genres, "genres", "", "Override genres (comma-separated)")
@@ -397,6 +404,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringArrayVar(&opts.TrackAudioOrigins, "track-audio-origin", nil, "Classify programme soundtrack as track-id=original|dubbed|unresolved")
 	fs.StringArrayVar(&opts.TrackLanguages, "track-languages", nil, "Override track languages as track-id=language[,language]")
 	fs.StringArrayVar(&opts.ResetInput, "reset-input", nil, "Reset a saved correction field or field:track-id")
+	fs.BoolVar(&opts.KeepExistingIDs, "keep-existing-ids", false, "Keep other providers' existing IDs and data when correcting metadata for this release")
 	fs.StringArrayVar(&opts.ConfirmInput, "confirm-input", nil, "Confirm a saved content correction field or field:track-id")
 	fs.StringArrayVar(&opts.TrackerInput, "tracker-input", nil, "Set tracker input as TRACKER:field=value (auto resets the field)")
 	fs.BoolVar(&opts.Anon, "a", false, "Upload anonymously")
@@ -957,9 +965,9 @@ func cliHelpSections(name string) []helpSection {
 		}},
 		{
 			title: "Input Corrections",
-			names: []string{"source-lookup", "track-languages", "track-audio-origin", "reset-input", "confirm-input", "tracker-input"},
+			names: []string{"bluray-release", "source-lookup", "track-languages", "track-audio-origin", "reset-input", "confirm-input", "tracker-input"},
 		},
-		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
+		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze", "keep-existing-ids"}},
 		{title: "Tracker Overrides", names: []string{
 			"skip-dupe-check", "skip-dupe-asking", "double-dupe-check", "foreign", "opera", "asian", "disctype",
 			"commentary", "personalrelease", "stream", "webdv", "anime", "anon", "draft", "modq", "channel",
@@ -1155,6 +1163,18 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 		TorrentOverrides:            buildTorrentOverrides(opts, visited),
 		ConfirmBDMVRescan:           opts.ConfirmBDMVRescan,
 	}
+	if visited["bluray-release"] {
+		release := strings.TrimSpace(opts.BlurayRelease)
+		selection := &api.BluraySelection{Mode: "manual", Release: release}
+		if release == "" {
+			selection.Mode = "skip"
+		} else if strings.EqualFold(release, "auto") {
+			selection.Mode, selection.Release = "auto", ""
+		} else if _, _, err := providerid.ParseBlurayRelease(release); err != nil {
+			return api.Request{}, fmt.Errorf("upbrr: parse Blu-ray release: %w", err)
+		}
+		req.Bluray = selection
+	}
 	if req.Execution.SiteUploadTracker != "" {
 		req.Trackers = []string{req.Execution.SiteUploadTracker}
 	}
@@ -1182,7 +1202,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 		if err != nil {
 			return api.Request{}, err
 		}
-		if category != "" {
+		if category != "" && req.ReleaseNameOverrides.Category == nil && !opts.resetsCategory() {
 			req.ReleaseNameOverrides.Category = stringPtr(category)
 		}
 	}
@@ -1260,7 +1280,7 @@ func isCLIInputCorrectionFlag(name string) bool {
 		"no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio", "region", "distributor",
 		"original-language", "commentary", "personalrelease", "stream", "webdv", "anime", "alternate-title",
 		"genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
-		"track-languages", "track-audio-origin", "reset-input", "confirm-input",
+		"track-languages", "track-audio-origin", "reset-input", "confirm-input", "keep-existing-ids",
 	}, name)
 }
 
@@ -1290,9 +1310,22 @@ func validateCLIInputFlagOccurrences(fs *pflag.FlagSet, flagArgs []string) error
 }
 
 func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
-	_, changed, _, err := parseCLIOptions(editArgs)
+	edits, changed, _, err := parseCLIOptions(editArgs)
 	if err != nil {
 		return nil, err
+	}
+	identityFlags := map[string]string{
+		string(api.CorrectionFieldIdentityTMDB):        "tmdb",
+		string(api.CorrectionFieldIdentityIMDB):        "imdb",
+		string(api.CorrectionFieldIdentityTVDB):        "tvdb",
+		string(api.CorrectionFieldIdentityTVmaze):      "tvmaze",
+		string(api.CorrectionFieldIdentityMAL):         "mal",
+		string(api.CorrectionFieldReleaseNameCategory): "category",
+	}
+	for _, field := range edits.ResetInput {
+		if flag := identityFlags[strings.TrimSpace(field)]; flag != "" {
+			changed[flag] = true
+		}
 	}
 	var opts cliOptions
 	fs := pflag.NewFlagSet("upbrr", pflag.ContinueOnError)
@@ -1309,6 +1342,16 @@ func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
 		}
 		if canonical, exists := aliases[name]; exists {
 			name = canonical
+		}
+		// An earlier Auto request must not reset a later explicit provider choice.
+		if name == "reset-input" {
+			_, field, inline := strings.Cut(flags[start], "=")
+			if !inline {
+				field = flags[i]
+			}
+			if changed[identityFlags[strings.TrimSpace(field)]] {
+				continue
+			}
 		}
 		if !changed[name] {
 			merged = append(merged, flags[start:i+1]...)
@@ -1485,7 +1528,7 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		if err != nil {
 			return api.ReleaseCorrectionValues{}, err
 		}
-		if category != "" {
+		if category != "" && releaseName.Category == nil && !opts.resetsCategory() {
 			releaseName.Category = stringPtr(category)
 		}
 	}
@@ -1494,6 +1537,13 @@ func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (ap
 		ReleaseName: releaseName,
 		Metadata:    buildMetadataOverrides(opts, visited),
 	}, nil
+}
+
+// resetsCategory keeps a provider URL hint from replacing an explicit Auto request.
+func (o cliOptions) resetsCategory() bool {
+	return slices.ContainsFunc(o.ResetInput, func(field string) bool {
+		return strings.TrimSpace(field) == string(api.CorrectionFieldReleaseNameCategory)
+	})
 }
 
 func parseCLIInputFieldRef(raw string) (api.CorrectionFieldRef, error) {
@@ -1737,6 +1787,13 @@ func buildTrackerIDOverrides(opts cliOptions, visited map[string]bool) (map[stri
 // Invalid input returns an empty override set and an error.
 func buildExternalIDOverrides(opts cliOptions, visited map[string]bool) (api.ExternalIDOverrides, error) {
 	overrides := api.ExternalIDOverrides{}
+	if visited["keep-existing-ids"] {
+		overrides.KeepTMDB = new(opts.KeepExistingIDs)
+		overrides.KeepIMDB = new(opts.KeepExistingIDs)
+		overrides.KeepTVDB = new(opts.KeepExistingIDs)
+		overrides.KeepTVmaze = new(opts.KeepExistingIDs)
+		overrides.KeepMAL = new(opts.KeepExistingIDs)
+	}
 	if visited["tmdb"] {
 		id, _, err := parseTMDBID(opts.TMDB)
 		if err != nil {

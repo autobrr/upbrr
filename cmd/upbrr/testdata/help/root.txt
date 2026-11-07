@@ -43,11 +43,11 @@ Execution:
   -retry-queue, --retry-queue
       Include failed, interrupted and skipped items (requires --queue; workflow safety checks still apply)
   -site-check, --site-check, -sc
-      Search/check sites without uploading
+      Check sites and preview without tracker submission; may upload images and inject torrents into clients (use --no-seed to skip injection)
   -site-upload, --site-upload, -su string
       Process a single tracker upload flow
   -debug, --debug
-      Enable debug mode
+      Prepare and preview without tracker submission; may upload images and inject torrents into clients (use --no-seed to skip injection)
   -live-test, --live-test
       Use an isolated live-test profile with tracker and client writes disabled
   -live-test-max-images, --live-test-max-images int
@@ -123,17 +123,17 @@ Release Overrides:
   -episode-title, --episode-title, -manual-episode-title, -met string
       Override episode title
   -manual-year, --manual-year, -year int
-      Override release year
+      Override movie year or TV year without TVDB data
   -daily, --daily string
       Set daily episode air date (YYYY-MM-DD)
   -region, --region, -reg string
-      Override disc region
+      Override release country code (for example USA)
   -use-season-episode, --use-season-episode
       Use the explicit season and episode values
   -no-season, --no-season
       Remove season and episode from name
   -no-year, --no-year
-      Remove year from name
+      Omit movie year or TV year without TVDB data
   -no-aka, --no-aka
       Remove AKA from name
   -no-tag, --no-tag
@@ -164,6 +164,8 @@ Release Overrides:
       Override hardcoded subtitle languages (comma-separated)
 
 Input Corrections:
+  -bluray-release, --bluray-release string
+      Select a Blu-ray.com release URL or ID (empty skips; auto resets)
   -source-lookup, --source-lookup string
       Use a tracker source URL for metadata lookup
   -track-languages, --track-languages stringArray
@@ -188,6 +190,8 @@ Metadata IDs:
       Override TVDB id; empty or 0 clears and skips this provider
   -tvmaze, --tvmaze string
       Override TVmaze id; empty or 0 clears and skips this provider
+  -keep-existing-ids, --keep-existing-ids
+      Keep other providers' existing IDs and data when correcting metadata for this release
 
 Tracker Overrides:
   -skip-dupe-check, --skip-dupe-check, -sdc
@@ -279,7 +283,7 @@ Client and Torrent:
   -qbit-cat, --qbit-cat, -qbc string
       Override qBittorrent category
   -force-recheck, --force-recheck, -frc
-      Force recheck matched qBittorrent torrents before validation
+      Recheck matched qBittorrent torrents and verify reusable torrent data
   -no-seed, --no-seed, -ns
       Do not inject torrent into clients
   -skip_auto_torrent, --skip_auto_torrent, -sat

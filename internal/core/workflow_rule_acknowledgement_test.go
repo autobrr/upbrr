@@ -15,6 +15,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/oe"
@@ -74,11 +75,12 @@ func testContinueRuleAcknowledgementDuplicateScope(t *testing.T, tracker api.Tra
 				generation.Add(1)
 			}
 			return api.PrepareResult{Release: api.PreparedRelease{
-				Generation: api.PreparedGeneration(generation.Load()),
-				Source:     api.SourceManifest{SourcePath: input.SourcePath},
-				Naming:     api.NamingFacts{ReleaseName: releaseName, Resolution: "1080p"},
-				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
-				Media:      api.MediaFacts{Type: "WEBDL", Source: "Web"},
+				Compatibility: api.PreparationCompatibility{ContractVersion: preparedrelease.ContractVersion},
+				Generation:    api.PreparedGeneration(generation.Load()),
+				Source:        api.SourceManifest{SourcePath: input.SourcePath},
+				Naming:        api.NamingFacts{ReleaseName: releaseName, Resolution: "1080p"},
+				Identity:      api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Media:         api.MediaFacts{Type: "WEBDL", Source: "Web"},
 			}}, nil
 		},
 		DisplayFunc: func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error) {

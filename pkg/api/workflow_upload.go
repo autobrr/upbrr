@@ -75,7 +75,8 @@ type ReleaseWorkflowUploadExecution struct {
 }
 
 // ReleaseWorkflowUploadTrackers contains normalized tracker selection and projection intent.
-// An empty Include list selects the server's configured default trackers.
+// An empty Include list reuses retained workflow scope when available;
+// otherwise it selects the server's configured default trackers.
 type ReleaseWorkflowUploadTrackers struct {
 	Include           []TrackerID                                          `json:"include,omitempty"`
 	Remove            []TrackerID                                          `json:"remove,omitempty"`
@@ -129,6 +130,7 @@ type ReleaseWorkflowUploadFacts struct {
 	ReleaseName  ReleaseWorkflowUploadReleaseName `json:"releaseName,omitempty"`
 	Metadata     ReleaseWorkflowUploadMetadata    `json:"metadata,omitempty"`
 	Category     *CanonicalCategory               `json:"category,omitempty"`
+	Bluray       *BluraySelection                 `json:"bluray,omitempty"`
 	SourceLookup *string                          `json:"sourceLookup,omitempty"`
 	Playlist     *ReleaseWorkflowUploadPlaylist   `json:"playlist,omitempty"`
 }

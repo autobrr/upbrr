@@ -6,7 +6,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,25 +36,32 @@ func TestSelectionPresentationPreservesNumericValues(t *testing.T) {
 						answer = want
 					}
 					reader := bufio.NewReader(strings.NewReader(answer + "\n"))
-					var presenter cliPresenter = &cliPlainPresenter{reader: reader, output: io.Discard}
+					var transcript strings.Builder
+					var presenter cliPresenter = &cliPlainPresenter{reader: reader, output: &transcript}
+					var terminalPresenter *selectionIndexPresenter
 					if terminal {
 						model := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
 						model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-						presenter = &selectionIndexPresenter{
+						terminalPresenter = &selectionIndexPresenter{
 							model: model,
 							index: index,
 						}
+						presenter = terminalPresenter
 					}
 					writer := &cliPresentationWriter{
-						Writer:    io.Discard,
+						Writer:    &transcript,
 						presenter: presenter,
 						ctx:       t.Context(),
 						terminal:  terminal,
 					}
 					action := api.RequiredAction{
+						ID: "candidate",
+ WorkflowRevision: 7,
+ Prompt: "Choose Example Release from prepared candidates",
 						Kind:    api.RequiredActionSelectMetadata,
 						Options: []api.RequiredActionOption{{Label: "First", Value: "2"}, {Label: "Second", Value: "1"}},
 					}
+					bindCLIQuestion(t.Context(), writer, "workflow", action.WorkflowRevision, action.ID, action.Prompt)
 					switch kind {
 					case "metadata":
 						got, err := selectCLICompositeOption(reader, writer, action, "Metadata")
@@ -85,6 +91,20 @@ func TestSelectionPresentationPreservesNumericValues(t *testing.T) {
 						got := instructions["ALPHA"].Questionnaire["choice"]
 						if got == nil || *got != want {
 							t.Fatalf("questionnaire did not preserve selected value %q", want)
+						}
+					}
+					if terminal {
+						p := terminalPresenter.prompts[0]
+						if p.ActionID != action.ID || p.WorkflowID != "workflow" || p.Revision != 7 || !strings.Contains(p.Evidence, action.Prompt) || p.Help == "" {
+							t.Fatal("selection lost current context or action binding")
+						}
+					} else {
+						for _, label := range []string{"First", "Second"} {
+							if kind == "metadata" || kind == "playlist" {
+								if strings.Count(transcript.String(), label) != 1 {
+									t.Fatal("plain selection omitted or repeated a candidate")
+								}
+							}
 						}
 					}
 				})

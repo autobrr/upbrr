@@ -398,6 +398,23 @@ func (b workflowPreflightBuilder) Build(
 			}
 		}
 		finalProjection := projection
+		if policy, ok := b.registry.LookupAuthPolicy(trackerName); ok {
+			trackerConfig, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, trackerName)
+			finalProjection.PolicyDecisions = slices.DeleteFunc(slices.Clone(finalProjection.PolicyDecisions), func(decision api.TrackerPolicyDecision) bool {
+				return decision.Code == trackers.APIKeyGuidanceCode
+			})
+			if message := policy.APIKeyGuidance.Guidance(trackerConfig.APIKey, assessedAt); message != "" {
+				if !api.TrackerGuidanceWasPresented(ctx, projection.TrackerID, trackers.APIKeyGuidanceCode, message, &projection) {
+					b.logger.Infof("tracker preflight: guidance tracker=%s message=%s", trackerName, message)
+				}
+				finalProjection.PolicyDecisions = append(finalProjection.PolicyDecisions, api.TrackerPolicyDecision{
+					Code:        trackers.APIKeyGuidanceCode,
+					Decision:    "advisory",
+					Disposition: api.RuleDispositionAdvisory,
+					Message:     message,
+				})
+			}
+		}
 		if debugMode && result.State == api.TrackerPreflightStateReady {
 			if descriptor.Capabilities.StaticBannedGroups || descriptor.Capabilities.DynamicBannedGroups {
 				appendBypassedRuntimeDecision(

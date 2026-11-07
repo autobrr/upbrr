@@ -70,12 +70,11 @@ func TestOTWLanguageNamingEvidence(t *testing.T) {
 		{
 			name:       "English without original",
 			languages:  []string{"English"},
-			unresolved: true,
+			marker:     "Dubbed ",
 		},
 		{
 			name:       "English and other without original",
 			languages:  []string{"English", "Japanese"},
-			unresolved: true,
 		},
 		{
 			name:       "incomplete programme coverage",
@@ -131,7 +130,7 @@ func TestOTWLanguageNamingEvidence(t *testing.T) {
 			name:       "cleared original correction",
 			original:   "Japanese",
 			languages:  []string{"English"},
-			unresolved: true,
+			marker:     "Dubbed ",
 			mutate:     func(media *api.MediaFacts) { media.OriginalLanguage = "" },
 		},
 		{
@@ -270,14 +269,8 @@ func TestOTWLanguageNamingPresentationAndDebug(t *testing.T) {
 				subject.ReleaseName = name
 			}
 			failures := otwLanguageValidation(t, subject)
-			if len(failures) != 1 || failures[0].Rule != "language_naming_evidence" {
-				t.Fatalf("presentation cleared naming facts or changed accessibility: %#v", failures)
-			}
-			for _, authorized := range []bool{false, true} {
-				if !trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeNormal, authorized) ||
-					trackers.RuleFailureBlocksExecution(failures[0], api.WorkflowExecutionModeDebug, authorized) {
-					t.Fatalf("naming outcome changed normal/debug execution: %#v", failures[0])
-				}
+			if len(failures) != 0 {
+				t.Fatalf("unknown original blocked naming or accessibility: %#v", failures)
 			}
 			if !reflect.DeepEqual(subject.LanguageFacts, before) {
 				t.Fatal("presentation or validation mutated language facts")

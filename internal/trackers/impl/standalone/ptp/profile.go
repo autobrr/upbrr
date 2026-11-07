@@ -19,6 +19,9 @@ import (
 // Its missing-IMDb metadata result is advisory and does not block upload.
 func Profile() standalone.Profile {
 	return standalone.Profile{
+		ConnectionProbe: trackers.ConnectionProbe{Test: testConnection, DraftConfig: func(cfg config.TrackerConfig) config.TrackerConfig {
+			return config.TrackerConfig{PTPAPIUser: cfg.PTPAPIUser, PTPAPIKey: cfg.PTPAPIKey}
+		}},
 		ProjectionQuestionnaire: projectionQuestionnaire,
 		Name:                    "PTP",
 		BaseURL:                 ptpBaseURL,

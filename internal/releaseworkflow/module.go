@@ -277,8 +277,10 @@ type Module struct {
 }
 
 type operationWorker struct {
-	cancel context.CancelFunc
-	done   <-chan struct{}
+	ownerID    string
+	workflowID api.WorkflowID
+	cancel     context.CancelFunc
+	done       <-chan struct{}
 }
 
 // New constructs the deep release-workflow application module.
@@ -430,6 +432,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err != nil {
 		return CommandResult{}, err
 	}
+	ctx = withTrackerGuidanceHistory(ctx, state)
 	receiptKey := commandReceiptKey(command.commandName(), idempotencyKey, fingerprint)
 	if receipt, ok := state.Receipts[receiptKey]; ok {
 		if receipt.Fingerprint != fingerprint {
@@ -891,7 +894,12 @@ func (m *Module) dispatchOperationWorker(
 		}
 		return
 	}
-	m.operationWorkers[record.OperationID] = operationWorker{cancel: cancel, done: workerDone}
+	m.operationWorkers[record.OperationID] = operationWorker{
+		ownerID:    record.OwnerID,
+		workflowID: record.WorkflowID,
+		cancel:     cancel,
+		done:       workerDone,
+	}
 	m.operationWorkersMu.Unlock()
 	go func() {
 		defer func() {
@@ -1065,7 +1073,10 @@ func (m *Module) markOperationResultStale(
 	ctx context.Context,
 	record api.ReleaseWorkflowOperationRecord,
 ) (api.WorkflowOperationStatus, error) {
-	status, err := m.mutateOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID, func(status *api.WorkflowOperationStatus) {
+	status, err := m.mutateOperationIf(ctx, record.OwnerID, record.WorkflowID, record.OperationID, func(status *api.WorkflowOperationStatus) bool {
+		if status.Status == api.StageStatusStale {
+			return false
+		}
 		now := m.clock.Now().UTC()
 		status.Status = api.StageStatusStale
 		status.Message = "The operation result is no longer current. Reprepare the workflow."
@@ -1080,6 +1091,7 @@ func (m *Module) markOperationResultStale(
 				Recovery:  api.OperationRecoveryReprepare,
 			},
 		}}
+		return true
 	})
 	if err != nil {
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow mark stale operation result: %w", err)
@@ -1545,7 +1557,7 @@ func operationResultForCommand(command Command, result CommandResult) (*api.Work
 		if result.Descriptions != nil {
 			refID, revision = string(result.Descriptions.ID), result.Descriptions.Revision
 		}
-	case DryRunUploadsCommand:
+	case DryRunUploadsCommand, resolveTrackerPreparationCommand:
 		kind = api.WorkflowOperationResultDryRun
 		if result.DryRun != nil {
 			refID, revision = string(result.DryRun.ID), result.DryRun.Revision
@@ -1630,7 +1642,7 @@ func terminalOperationStatus(command Command, result CommandResult) api.StageSta
 		if result.Descriptions != nil {
 			stageStatus = result.Descriptions.Status
 		}
-	case DryRunUploadsCommand:
+	case DryRunUploadsCommand, resolveTrackerPreparationCommand:
 		if result.DryRun != nil {
 			stageStatus = result.DryRun.Status
 		}
@@ -2084,7 +2096,11 @@ func (m *Module) convergeCompletedOperationCheckpoint(
 		return false, nil
 	}
 	lock := m.operationLock(record.OperationID)
-	lock.Lock()
+	if !lock.TryLock() {
+		// Completion already owns this checkpoint. A poll can retain its
+		// active receipt and retry without blocking behind durable writes.
+		return false, nil
+	}
 	defer lock.Unlock()
 
 	// A completed checkpoint is immutable, but polling may have loaded the
@@ -2352,6 +2368,25 @@ func (m *Module) withOperationReporters(
 		newDurableExternalEffectReporter(m, ownerID, workflowID, operationID),
 	)
 	ctx = api.WithPreparationProgressReporter(ctx, func(update api.PreparationProgressUpdate) {
+		if candidate := update.BlurayCandidate; candidate != nil {
+			status := api.StageStatusCompleted
+			if candidate.DetailsStatus == "failed" {
+				status = api.StageStatusFailed
+			}
+			report(api.WorkflowProgressUpdate{
+				Phase:           string(update.Phase),
+				ItemID:          "bluray:" + candidate.ReleaseID,
+				Kind:            "bluray_detail",
+				Label:           candidate.Title,
+				Status:          status,
+				Completed:       1,
+				Total:           1,
+				Message:         update.Message,
+				ItemOnly:        true,
+				BlurayCandidate: candidate,
+			})
+			return
+		}
 		itemStatus := api.StageStatusRunning
 		switch update.Status {
 		case api.PreparationProgressCompleted:
@@ -2360,21 +2395,31 @@ func (m *Module) withOperationReporters(
 			itemStatus = api.StageStatusSkipped
 		case api.PreparationProgressFailed:
 			itemStatus = api.StageStatusFailed
+		case api.PreparationProgressPartial:
+			itemStatus = api.StageStatusPartial
+		case api.PreparationProgressCanceled:
+			itemStatus = api.StageStatusCanceled
 		case api.PreparationProgressRunning:
 		}
 		completed := 0
 		if itemStatus != api.StageStatusRunning {
 			completed = min(update.Order, 1200)
 		}
+		kind, total := "preparation_phase", 1200
+		if update.Substep != "" {
+			kind = "preparation_substep"
+			completed, total = update.CompletedItems, update.TotalItems
+		}
 		report(api.WorkflowProgressUpdate{
 			Phase:     string(update.Phase),
 			ItemID:    string(update.Phase),
-			Kind:      "preparation_phase",
+			Kind:      kind,
 			Label:     update.Label,
 			Status:    itemStatus,
 			Completed: completed,
-			Total:     1200,
-			Message:   update.Message,
+			Total:     total,
+			Message:   update.Detail(),
+			ItemOnly:  update.Substep != "",
 		})
 	})
 	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
@@ -2459,18 +2504,23 @@ func applyWorkflowProgress(status *api.WorkflowOperationStatus, update api.Workf
 		return
 	}
 	item := api.WorkflowOperationItem{
-		ID:        itemID,
-		Kind:      strings.TrimSpace(update.Kind),
-		Label:     strings.TrimSpace(update.Label),
-		Phase:     strings.TrimSpace(update.Phase),
-		Status:    update.Status,
-		Completed: max(0, update.Completed),
-		Total:     max(0, update.Total),
-		Message:   strings.TrimSpace(update.Message),
+		BlurayCandidate: update.BlurayCandidate,
+		ID:              itemID,
+		Kind:            strings.TrimSpace(update.Kind),
+		Label:           strings.TrimSpace(update.Label),
+		Phase:           strings.TrimSpace(update.Phase),
+		Status:          update.Status,
+		Completed:       max(0, update.Completed),
+		Total:           max(0, update.Total),
+		Message:         strings.TrimSpace(update.Message),
 	}
 	if itemIndex >= 0 {
-		item.Completed = max(status.Items[itemIndex].Completed, item.Completed)
-		item.Total = max(status.Items[itemIndex].Total, item.Total)
+		// A preparation substep can start a new work set or discover its total.
+		// These local counts never advance aggregate stage-order progress.
+		if update.Kind != "preparation_substep" && status.Items[itemIndex].Kind != "preparation_substep" {
+			item.Completed = max(status.Items[itemIndex].Completed, item.Completed)
+			item.Total = max(status.Items[itemIndex].Total, item.Total)
+		}
 		if progressStatusRank(status.Items[itemIndex].Status) > progressStatusRank(item.Status) {
 			item.Status = status.Items[itemIndex].Status
 			item.Message = status.Items[itemIndex].Message
@@ -2816,13 +2866,14 @@ func (m *Module) PreviewFrame(
 		return api.FramePreview{}, fmt.Errorf("release workflow retain frame preview: %w", err)
 	}
 	return api.FramePreview{
+		Processing:       &content.Processing,
 		ID:               previewID,
 		WorkflowID:       workflowID,
 		WorkflowRevision: expectedRevision,
 		Release:          *state.Workflow.Release,
 		DiscID:           content.DiscID,
 		DiscName:         content.DiscName,
-		TimestampSeconds: timestampSeconds,
+		TimestampSeconds: content.TimestampSeconds,
 		ExpiresAt:        expiresAt,
 	}, nil
 }
@@ -3174,8 +3225,9 @@ func (m *Module) waitForOperationCleanup(ctx context.Context, operationID api.Wo
 }
 
 // CancelOperation requests cancellation of one active owner-scoped operation.
-// If the operation finishes before the cancellation message is saved, its
-// terminal status is returned unchanged.
+// The acknowledgement is advisory; the worker persists its terminal outcome.
+// If the operation finishes while cancellation is requested, its terminal
+// status is returned unchanged.
 func (m *Module) CancelOperation(
 	ctx context.Context,
 	ownerID string,
@@ -3203,13 +3255,16 @@ func (m *Module) CancelOperation(
 	if worker.cancel != nil {
 		worker.cancel()
 	}
-	return m.mutateOperationIf(ctx, record.OwnerID, workflowID, operationID, func(status *api.WorkflowOperationStatus) bool {
-		if !workflowOperationActive(status.Status) {
-			return false
-		}
-		status.Message = "Cancellation requested."
-		return true
-	})
+	// Do not queue an advisory write behind the worker's durable completion.
+	// In particular, cancellation must not lose its caller's cleanup deadline.
+	record, err = m.operations.LoadOperation(ctx, record.OwnerID, workflowID, operationID)
+	if err != nil {
+		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow read cancellation acknowledgement: %w", err)
+	}
+	if workflowOperationActive(record.Status.Status) {
+		record.Status.Message = "Cancellation requested."
+	}
+	return cloneWorkflowOperationStatus(record.Status, "acknowledge cancellation")
 }
 
 func (m *Module) newID(prefix string) (string, error) {
@@ -3617,6 +3672,7 @@ func (m *Module) create(
 	state.FactInstructions[facts.ID] = facts
 	state.Composite = command.Composite
 	if state.Composite != nil {
+		state.Composite.StartedRevision = workflow.Revision
 		state.Composite.LastCommittedRevision = workflow.Revision
 	}
 	state, idempotent, err := m.repository.Create(ctx, ownerID, command.IdempotencyKey, fingerprint, state)
@@ -3776,6 +3832,8 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case ResolveActionCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case resolveTrackerPreparationCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case CompositeUploadCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case applyCompositeUploadFeedbackCommand:
@@ -3795,17 +3853,14 @@ func (m *Module) apply(
 	command mutation,
 ) (CommandResult, error) {
 	switch typed := command.(type) {
-	case ProjectTrackersCommand, PreflightTrackersCommand, CheckDuplicatesCommand, ResolveActionCommand:
+	case ProjectTrackersCommand, PreflightTrackersCommand, CheckDuplicatesCommand,
+		ResolveActionCommand, resolveTrackerPreparationCommand, EvaluateInputReadinessCommand:
 	case ReplaceFactInstructionsCommand:
 		stageMetadataDuplicateReuse(state, now)
 	case PrepareReleaseCommand:
 		if ordinaryMetadataRefresh(typed.Input) {
 			stageMetadataDuplicateReuse(state, now)
 		} else {
-			state.PendingDuplicateReuse = nil
-		}
-	case EvaluateInputReadinessCommand:
-		if state.PendingDuplicateReuse != nil && !state.PendingDuplicateReuse.MetadataRefresh {
 			state.PendingDuplicateReuse = nil
 		}
 	default:
@@ -3879,6 +3934,8 @@ func (m *Module) apply(
 		return m.invalidateTrackers(ctx, ownerID, state, nextRevision, now, typed)
 	case ResolveActionCommand:
 		return m.resolveAction(ctx, ownerID, state, nextRevision, now, typed)
+	case resolveTrackerPreparationCommand:
+		return m.resolveAction(ctx, ownerID, state, nextRevision, now, typed.ResolveActionCommand)
 	case applyCompositeUploadFeedbackCommand:
 		return m.applyCompositeUploadFeedback(ctx, ownerID, state, nextRevision, now, typed)
 	case CompositeUploadCommand:
@@ -4680,7 +4737,7 @@ func (m *Module) selectBlurayCandidate(
 		return CommandResult{}, fmt.Errorf("%w: fact instructions unavailable", ErrInvalidTransition)
 	}
 	instructions := facts.Instructions
-	instructions.BlurayReleaseID = releaseID
+	instructions.Bluray = &api.BluraySelection{Mode: "manual", Release: releaseID}
 	return m.replaceFactsAndPrepare(ctx, ownerID, state, nextRevision, now, api.PrepareInput{
 		SourcePath:   current.Release.Source.SourcePath,
 		Intent:       api.PreparationIntentPreview,
@@ -4819,6 +4876,11 @@ func (m *Module) projectTrackers(
 	var authorizations map[api.TrackerID]api.WorkflowFingerprint
 	if questionnaireOnly && state.Workflow.TrackerProjections != nil {
 		authorizations = projectionRuleAuthorizations(state.Projections[state.Workflow.TrackerProjections.ID])
+	} else if pending := state.PendingDuplicateReuse; questionnaireOnly && pending != nil && pending.ProjectionContext != nil {
+		authorizations = projectionRuleAuthorizations(state.Projections[pending.ProjectionContext.ID])
+		for _, trackerID := range pending.InvalidatedTrackers {
+			delete(authorizations, trackerID)
+		}
 	}
 	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, command, authorizations)
 }
@@ -6382,6 +6444,7 @@ func (m *Module) uploadMediaImages(
 		artifactIDs,
 		command.Host,
 		command.Retry,
+		command.PreferredHost,
 		now,
 	)
 	if err != nil {
@@ -6415,6 +6478,7 @@ func (m *Module) uploadMediaImages(
 	switch {
 	case strings.TrimSpace(command.Host) == "":
 		updated.ImageRequirementsPrepared = true
+		updated.ImageHostPreference = cloneStringPointer(command.PreferredHost)
 	case leavingSkipMode:
 		// Host-specific upload after skip must not retain full preparation, or
 		// partial host coverage can block other trackers before required hosting runs.
@@ -6587,8 +6651,8 @@ func validateMediaRequirementsFingerprint(snapshot api.MediaArtifactSet, project
 	return nil
 }
 
-// deleteMediaArtifacts removes requested artifacts from retained media and clears
-// preparation and skip mode before publishing the remaining selection's readiness.
+// deleteMediaArtifacts removes local artifacts and their hosted URL associations,
+// then clears preparation and skip mode before publishing the remaining readiness.
 func (m *Module) deleteMediaArtifacts(
 	ctx context.Context,
 	ownerID string,
@@ -6612,9 +6676,15 @@ func (m *Module) deleteMediaArtifacts(
 	}
 	artifacts := make([]api.MediaArtifact, 0, len(snapshot.Artifacts)-len(deleted))
 	for _, artifact := range snapshot.Artifacts {
-		if _, ok := deleted[artifact.ID]; !ok {
-			artifacts = append(artifacts, artifact)
+		if _, remove := deleted[artifact.ID]; remove {
+			continue
 		}
+		if artifact.Kind == api.MediaArtifactHostedImage {
+			if _, remove := deleted[api.PublicResourceID(artifact.Source)]; remove {
+				continue
+			}
+		}
+		artifacts = append(artifacts, artifact)
 	}
 	snapshot.Artifacts = artifacts
 	snapshot.ImageRequirementsPrepared = false
@@ -6705,6 +6775,7 @@ func (m *Module) publishMediaMutation(
 		ImageRequirementsPrepared    bool
 		ImageHostUploadSkipped       bool
 		AutomaticScreenshotSelection bool
+		ImageHostPreference          *string `json:",omitempty"`
 	}{
 		snapshot.CaptureFingerprint,
 		snapshot.Artifacts,
@@ -6713,6 +6784,7 @@ func (m *Module) publishMediaMutation(
 		snapshot.ImageRequirementsPrepared,
 		snapshot.ImageHostUploadSkipped,
 		snapshot.AutomaticScreenshotSelection,
+		snapshot.ImageHostPreference,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint media mutation: %w", err)
@@ -7706,12 +7778,16 @@ func (m *Module) dryRunUploads(
 	now time.Time,
 	command DryRunUploadsCommand,
 ) (CommandResult, error) {
+	if m.liveTest != nil {
+		command.NoSeed = true
+	}
 	prepared, err := m.prepareUploads(
 		ctx,
 		ownerID,
 		state,
 		UploadPlanBuildOptions{
 			DryRun:     true,
+			ReviewOnly: command.ReviewOnly,
 			NoSeed:     command.NoSeed,
 			TrackerIDs: command.TrackerIDs,
 		},
@@ -7737,23 +7813,25 @@ func (m *Module) dryRunUploads(
 		return CommandResult{}, err
 	}
 	snapshot := api.UploadDryRunResult{
-		ID:               api.UploadDryRunResultID(id),
-		WorkflowID:       state.Workflow.ID,
-		Revision:         nextRevision,
-		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: prepared.projections.ID, Revision: prepared.projections.Revision},
-		Dupes:            api.DupeAssessmentRef{ID: prepared.dupes.ID, Revision: prepared.dupes.Revision},
-		TrackerApproval:  prepared.plan.TrackerApproval,
-		Media:            api.MediaArtifactSetRef{ID: prepared.media.ID, Revision: prepared.media.Revision},
-		Descriptions:     api.DescriptionSetRef{ID: prepared.descriptions.ID, Revision: prepared.descriptions.Revision},
-		InputFingerprint: prepared.plan.InputFingerprint,
-		NoSeed:           command.NoSeed,
-		TrackerIDs:       append([]api.TrackerID(nil), prepared.trackerIDs...),
-		Reports:          reports,
-		SucceededCount:   succeededCount,
-		FailedCount:      failedCount,
-		SkippedCount:     skippedCount,
-		Status:           status,
-		CreatedAt:        now,
+		ExplicitDryRun:           !command.ReviewOnly,
+		ID:                       api.UploadDryRunResultID(id),
+		WorkflowID:               state.Workflow.ID,
+		Revision:                 nextRevision,
+		ProjectionSet:            api.TrackerReleaseProjectionSetRef{ID: prepared.projections.ID, Revision: prepared.projections.Revision},
+		Dupes:                    api.DupeAssessmentRef{ID: prepared.dupes.ID, Revision: prepared.dupes.Revision},
+		TrackerApproval:          prepared.plan.TrackerApproval,
+		Media:                    api.MediaArtifactSetRef{ID: prepared.media.ID, Revision: prepared.media.Revision},
+		Descriptions:             api.DescriptionSetRef{ID: prepared.descriptions.ID, Revision: prepared.descriptions.Revision},
+		InputFingerprint:         prepared.plan.InputFingerprint,
+		NoSeed:                   command.NoSeed,
+		ClientInjectionRequested: !command.ReviewOnly && !command.NoSeed,
+		TrackerIDs:               append([]api.TrackerID(nil), prepared.trackerIDs...),
+		Reports:                  reports,
+		SucceededCount:           succeededCount,
+		FailedCount:              failedCount,
+		SkippedCount:             skippedCount,
+		Status:                   status,
+		CreatedAt:                now,
 	}
 	if err := snapshot.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow publish upload dry run: %w", err)
@@ -7806,6 +7884,11 @@ func (m *Module) resolveTrackerPreparationAction(
 	prior, ok := state.DryRuns[ref.ID]
 	if !ok || prior.Revision != ref.Revision {
 		return CommandResult{}, fmt.Errorf("%w: retained upload dry run is stale", ErrInvalidTransition)
+	}
+	if prior.ClientInjectionRequested {
+		if _, ok := api.WorkflowExternalEffectReporterFromContext(ctx); !ok {
+			return CommandResult{}, fmt.Errorf("%w: preparation client injection requires a durable workflow operation", ErrInvalidTransition)
+		}
 	}
 	resourceID := uploadPlanPrivateResourceID(ref.ID)
 	value, err := m.private.Consume(ownerID, state.Workflow.ID, resourceID, now)
@@ -7964,9 +8047,14 @@ func uploadDryRunReports(trackers []api.UploadPlanTracker) []api.TrackerDryRunRe
 	for _, tracker := range trackers {
 		status := api.StageStatusCompleted
 		failures := append([]api.WorkflowFailure(nil), tracker.Failures...)
-		if tracker.Status == api.StageStatusSkipped {
+		switch {
+		case slices.ContainsFunc(tracker.RequiredActions, func(action api.RequiredAction) bool {
+			return action.Kind == api.RequiredActionResolveTrackerPreparation
+		}):
+			status = api.StageStatusBlocked
+		case tracker.Status == api.StageStatusSkipped:
 			status = api.StageStatusSkipped
-		} else if tracker.Status != api.StageStatusReady || tracker.ClientInjectionStatus == api.StageStatusFailed {
+		case tracker.Status != api.StageStatusReady || tracker.ClientInjectionStatus == api.StageStatusFailed:
 			status = api.StageStatusFailed
 			if len(failures) == 0 {
 				message := uploadDryRunFailureMessage(tracker)
@@ -8025,6 +8113,7 @@ func uploadDryRunReports(trackers []api.UploadPlanTracker) []api.TrackerDryRunRe
 
 func reduceUploadDryRunReports(reports []api.TrackerDryRunReport) (int, int, int, api.StageStatus) {
 	var succeeded, failed, skipped int
+	blocked := false
 	for _, report := range reports {
 		switch report.Status {
 		case api.StageStatusCompleted:
@@ -8033,12 +8122,16 @@ func reduceUploadDryRunReports(reports []api.TrackerDryRunReport) (int, int, int
 			failed++
 		case api.StageStatusSkipped:
 			skipped++
-		case api.StageStatusPending, api.StageStatusQueued, api.StageStatusReady, api.StageStatusBlocked, api.StageStatusStale,
+		case api.StageStatusBlocked:
+			blocked = true
+		case api.StageStatusPending, api.StageStatusQueued, api.StageStatusReady, api.StageStatusStale,
 			api.StageStatusPartial, api.StageStatusRunning, api.StageStatusExecuted, api.StageStatusInterrupted, api.StageStatusCanceled,
 			api.StageStatusUnavailable, "":
 		}
 	}
 	switch {
+	case blocked:
+		return succeeded, failed, skipped, api.StageStatusBlocked
 	case succeeded > 0 && failed > 0:
 		return succeeded, failed, skipped, api.StageStatusPartial
 	case failed > 0:
@@ -8556,7 +8649,10 @@ func (m *Module) publishUploadResult(
 		return CommandResult{}, fmt.Errorf("release workflow record upload result: %w", err)
 	}
 	if len(authority.Torrents) > 0 && slices.ContainsFunc(results, func(result api.UploadTrackerResult) bool {
-		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed
+		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed ||
+			slices.ContainsFunc(result.Failures, func(failure api.WorkflowFailure) bool {
+				return failure.Failure.Code == api.OperationFailureReceiptRetention
+			})
 	}) {
 		if err := m.private.Put(
 			ownerID,
@@ -8581,6 +8677,7 @@ func (m *Module) publishUploadResult(
 			if failure.Failure.Code != api.OperationFailureUnknownOutcome {
 				continue
 			}
+			state.Workflow.Failures = append(state.Workflow.Failures, failure)
 			effectKind := api.WorkflowExternalEffectTrackerSubmission
 			effectScopeID := string(result.TrackerID)
 			prompt := "Verify that the tracker submission did not complete before preparing and reviewing a replacement exact upload plan."
@@ -8588,6 +8685,10 @@ func (m *Module) publishUploadResult(
 				effectKind = api.WorkflowExternalEffectClientInjection
 				effectScopeID = failure.Resource
 				prompt = "Verify that the client injection did not complete before retrying the retained registered tracker artifact."
+			}
+			if effectKind == api.WorkflowExternalEffectTrackerSubmission && (failure.Failure.Recovery != api.OperationRecoveryConfirm ||
+				result.SubmissionReceiptID == "" || result.SubmissionOperationID == "") {
+				continue
 			}
 			action, actionErr := m.newReconcileAction(
 				nextRevision,
@@ -8600,8 +8701,11 @@ func (m *Module) publishUploadResult(
 			if actionErr != nil {
 				return CommandResult{}, actionErr
 			}
+			if effectKind == api.WorkflowExternalEffectTrackerSubmission {
+				action.EffectID = result.SubmissionReceiptID
+				action.EffectOperationID = result.SubmissionOperationID
+			}
 			state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
-			state.Workflow.Failures = append(state.Workflow.Failures, failure)
 		}
 	}
 	if hasPendingRequiredAction(state.Workflow.RequiredActions) {
@@ -8618,7 +8722,7 @@ func derivedUploadResultStatus(results []api.UploadTrackerResult) api.StageStatu
 		return api.StageStatusFailed
 	}
 	if slices.ContainsFunc(results, func(result api.UploadTrackerResult) bool {
-		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed
+		return result.DerivedStatus() == api.StageStatusPartial
 	}) {
 		return api.StageStatusPartial
 	}
@@ -8878,8 +8982,14 @@ func (m *Module) resolveAction(
 		if action.EffectKind == "" || strings.TrimSpace(action.EffectScopeID) == "" {
 			return CommandResult{}, fmt.Errorf("%w: reconciliation effect identity is unavailable", ErrInvalidTransition)
 		}
+		var expected []api.WorkflowExternalEffectReceipt
+		if action.EffectID != "" || action.EffectOperationID != "" {
+			expected = []api.WorkflowExternalEffectReceipt{{EffectID: action.EffectID, OperationID: action.EffectOperationID}}
+		}
 		state.effectResolution = &api.ReleaseWorkflowEffectResolution{
-			Kind: action.EffectKind, ScopeID: action.EffectScopeID,
+			Kind:     action.EffectKind,
+			ScopeID:  action.EffectScopeID,
+			Expected: expected,
 		}
 		if action.EffectKind == api.WorkflowExternalEffectImageHosting {
 			result, err := m.resolveImageHostingAction(ctx, ownerID, state, nextRevision, now, action)

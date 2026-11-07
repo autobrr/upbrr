@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
@@ -55,6 +56,10 @@ const (
 	PreparationProgressCompleted PreparationProgressStatus = "completed"
 	// PreparationProgressSkipped marks an intentional cache or policy bypass.
 	PreparationProgressSkipped PreparationProgressStatus = "skipped"
+	// PreparationProgressPartial marks a successful stage with unavailable optional metadata.
+	PreparationProgressPartial PreparationProgressStatus = "partial"
+	// PreparationProgressCanceled marks a collection stopped by cancellation or its deadline.
+	PreparationProgressCanceled PreparationProgressStatus = "canceled"
 	// PreparationProgressFailed marks a stage whose owning operation failed.
 	PreparationProgressFailed PreparationProgressStatus = "failed"
 )
@@ -62,6 +67,8 @@ const (
 // PreparationProgressUpdate is one frontend-safe advisory preparation event.
 // CorrelationID and Timestamp are injected by the WebUI transport boundary.
 type PreparationProgressUpdate struct {
+	// BlurayCandidate is advisory inspection output for one existing listing, never selection authority.
+	BlurayCandidate *BlurayReleaseCandidate `json:"blurayCandidate,omitempty"`
 	// CorrelationID binds the update to one frontend preparation command.
 	CorrelationID string `json:"correlationID"`
 	// Phase identifies the stable preparation stage.
@@ -74,6 +81,14 @@ type PreparationProgressUpdate struct {
 	Message string `json:"message"`
 	// Status is the latest advisory state for Phase.
 	Status PreparationProgressStatus `json:"status"`
+	// Substep names the active work within Phase, without replacing the parent stage.
+	Substep string `json:"substep,omitempty"`
+	// CompletedItems counts finished substep work, not stage order or successful results.
+	CompletedItems int `json:"completedItems,omitempty"`
+	// TotalItems is zero until the substep's complete work set is known.
+	TotalItems int `json:"totalItems,omitempty"`
+	// ElapsedSeconds measures time in the active substep without implying completed work.
+	ElapsedSeconds int64 `json:"elapsedSeconds,omitempty"`
 	// CompletedBytes is the verified local source content so far when known.
 	// It is advisory progress only and never identifies a local path.
 	CompletedBytes int64 `json:"completedBytes,omitempty"`
@@ -188,4 +203,25 @@ func preparationProgressPresentation(phase PreparationProgressPhase) (int, strin
 		label = "Preparation"
 	}
 	return 10000, label
+}
+
+// Detail renders structured substep work without interpreting stage order as
+// a percentage. It contains no wall-clock or timezone conversion.
+func (u PreparationProgressUpdate) Detail() string {
+	detail := u.Substep
+	if u.TotalItems > 0 {
+		detail += fmt.Sprintf(" — %d/%d processed", u.CompletedItems, u.TotalItems)
+	} else if u.CompletedItems > 0 {
+		detail += fmt.Sprintf(" — %d processed; total not yet known", u.CompletedItems)
+	}
+	if u.ElapsedSeconds > 0 {
+		detail += fmt.Sprintf(" (%ds elapsed)", u.ElapsedSeconds)
+	}
+	if u.Message != "" {
+		if detail != "" {
+			detail += ": "
+		}
+		detail += u.Message
+	}
+	return detail
 }

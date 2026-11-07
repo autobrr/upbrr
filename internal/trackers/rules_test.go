@@ -507,7 +507,11 @@ func TestEvaluateRulesPTPRejectsTVPacks(t *testing.T) {
 }
 
 func TestEvaluateRulesANTDoesNotBlanketRejectTV(t *testing.T) {
-	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}, LanguageFacts: api.LanguageFacts{ProgrammeLanguages: []string{"English"}, ProgrammeStatus: api.MetadataEvidenceStatusComplete}}
+	meta := api.RuleSubject{
+		Identity:    api.ExternalIdentity{Category: "tv"},
+		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
+		LanguageFacts: api.LanguageFacts{ProgrammeLanguages: []string{"English"}, ProgrammeStatus: api.MetadataEvidenceStatusComplete},
+	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
 	if len(nonAdvisoryFailures(failures)) != 0 {
 		t.Fatalf("supported ANT content types must decide TV eligibility: %#v", failures)
@@ -515,7 +519,10 @@ func TestEvaluateRulesANTDoesNotBlanketRejectTV(t *testing.T) {
 }
 
 func TestEvaluateRulesANTAllowsMovie(t *testing.T) {
-	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "movie"}}
+	meta := api.RuleSubject{
+		Identity:    api.ExternalIdentity{Category: "movie"},
+		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
+	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures, got %#v", failures)
@@ -909,7 +916,10 @@ func TestEvaluateRulesBLUContainerRules(t *testing.T) {
 }
 
 func TestEvaluateRulesANTTVMissingLanguageIsUnresolved(t *testing.T) {
-	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}}
+	meta := api.RuleSubject{
+		Identity:    api.ExternalIdentity{Category: "tv"},
+		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
+	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
 	blocking := nonAdvisoryFailures(failures)
 	if len(blocking) != 2 || !hasRuleFailure(blocking, "language_evidence") || !hasRuleFailure(blocking, "language_subtitles") {
@@ -925,6 +935,7 @@ func TestEvaluateRulesANTTVMissingLanguageIsUnresolved(t *testing.T) {
 func TestEvaluateRulesANTTVAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
 	meta := withFinalizedLanguageFactsForTest(api.RuleSubject{
 		Identity:          api.ExternalIdentity{Category: "tv"},
+		Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 		AudioLanguages:    []string{"Japanese"},
 		SubtitleLanguages: []string{"English"},
 		ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"}},
@@ -1032,6 +1043,7 @@ func TestEvaluateRulesANTTVPreservesFullDiscLanguages(t *testing.T) {
 			t.Parallel()
 			meta := api.RuleSubject{
 				Identity:          api.ExternalIdentity{Category: "tv"},
+				Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 				DiscType:          test.disc,
 				Type:              "DISC",
 				AudioLanguages:    test.audio,
@@ -1059,6 +1071,7 @@ func TestEvaluateRulesANTTVIncludesDiscSourcedRemuxes(t *testing.T) {
 	for _, disc := range []string{"BDMV", "DVD", "HDDVD"} {
 		meta := api.RuleSubject{
 			Identity:       api.ExternalIdentity{Category: "tv"},
+			Assessments:    api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 			DiscType:       disc,
 			Type:           "REMUX",
 			AudioLanguages: []string{"English"},
@@ -1079,9 +1092,10 @@ func TestEvaluateRulesANTTVIncludesDiscSourcedRemuxes(t *testing.T) {
 func TestANTTVFullDiscLanguagePreservesWaiverAndDebug(t *testing.T) {
 	t.Parallel()
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", api.RuleSubject{
-		Identity: api.ExternalIdentity{Category: "tv"},
-		DiscType: "DVD",
-		Type:     "DISC",
+		Identity:    api.ExternalIdentity{Category: "tv"},
+		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
+		DiscType:    "DVD",
+		Type:        "DISC",
 	})
 	fingerprint, err := trackers.WaivableRuleFailureFingerprint("ANT", failures)
 	if err != nil || fingerprint == "" {
@@ -1391,8 +1405,9 @@ func TestEvaluateRulesMetadataPolicyReturnsEvaluatedEmpty(t *testing.T) {
 	t.Parallel()
 
 	clean := api.RuleSubject{
-		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
-		Release:    api.ReleaseInfo{Group: "GRP", Resolution: "2160p"},
+		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusNotApplicable},
+		SourcePath:  "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
+		Release:     api.ReleaseInfo{Group: "GRP", Resolution: "2160p"},
 	}
 	if got := evaluateNonMetadataRulesForTest(context.Background(), "ANT", clean); got == nil || len(nonAdvisoryFailures(got)) != 0 {
 		t.Fatalf("expected evaluated result without blocking failures, got %#v", got)

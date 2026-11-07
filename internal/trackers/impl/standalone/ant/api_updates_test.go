@@ -168,6 +168,7 @@ func TestANTReviewedUploadNameReachesNativeComparison(t *testing.T) {
 				TrackerConfig:       config.TrackerConfig{APIKey: "test-key"},
 				Meta: api.UploadSubject{
 					ReleaseName:       original,
+					Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 					Type:              "ENCODE",
 					Source:            "BluRay",
 					VideoCodec:        "H264",
