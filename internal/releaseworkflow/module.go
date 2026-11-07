@@ -473,6 +473,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	state.Workflow.Revision = nextRevision
 	state.Workflow.UpdatedAt = now
 	result.Workflow = state.Workflow
+	result.InputReview = inputReviewContext(&state)
 	if operationID, _ := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID); operationID != "" {
 		m.checkpointCompositeStage(&state, operationID, command, nextRevision)
 	}
@@ -2630,6 +2631,7 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 		return CommandResult{}, fmt.Errorf("release workflow current operation query: %w", operationErr)
 	}
 	result := CommandResult{Workflow: state.Workflow}
+	result.InputReview = inputReviewContext(&state)
 	if operationErr == nil {
 		result.Operation = &operation.Status
 	}
@@ -4136,6 +4138,7 @@ func (m *Module) replaceFactInstructions(
 	}
 	state.FactInstructions[snapshot.ID] = snapshot
 	state.Workflow.FactInstructions = api.ReleaseFactInstructionSnapshotRef{ID: snapshot.ID, Revision: snapshot.Revision}
+	retainInputReview(state)
 	invalidatePreparedAndDownstream(&state.Workflow)
 	state.Workflow.Status = api.WorkflowStatusDraft
 	state.Workflow.RequiredActions = nil

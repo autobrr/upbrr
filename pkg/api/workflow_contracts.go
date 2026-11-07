@@ -821,6 +821,8 @@ type ReleaseWorkflow struct {
 // ReleaseWorkflowCurrent is the complete safe current projection returned to
 // every workflow adapter. Private execution resources never appear here.
 type ReleaseWorkflowCurrent struct {
+	// InputReview is display-only evidence for retrying incomplete Input preparation.
+	InputReview *InputReviewContext `json:"inputReview,omitempty"`
 	// PreparationOperationID identifies preparation accepted by this
 	// continuation response. Busy responses and passive reads omit it.
 	PreparationOperationID WorkflowOperationID                   `json:"preparationOperationId,omitempty"`

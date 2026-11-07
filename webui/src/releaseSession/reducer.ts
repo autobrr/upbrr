@@ -1080,7 +1080,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         };
       }
       const correctionReview = pendingCorrectionReview(current);
-      if ((!action.preview && !correctionReview) || !action.intent) {
+      if ((!action.preview && !correctionReview && !current.inputReview) || !action.intent) {
         const requestedSourcePath = action.requestedSourcePath?.trim() || "";
         if (requestedSourcePath && action.intent && !sameDraftKey) {
           const reset = initialSessionState();
@@ -1138,7 +1138,8 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         action.requestedSourcePath?.trim() ||
         (sameDraftKey ? state.selectedSource : "");
       const release = action.preview?.Release;
-      if (!correctionReview && (!sourcePath || !release?.Generation)) return state;
+      if (!correctionReview && !current.inputReview && (!sourcePath || !release?.Generation))
+        return state;
       const retainDraft =
         sameDraftKey &&
         (action.preserveInputDraft || state.inputEditRevision > action.capturedInputEditRevision);

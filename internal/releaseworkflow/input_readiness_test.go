@@ -14,6 +14,79 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestInputReviewSurvivesFailedPreparationUntilReadinessIsReevaluated(t *testing.T) {
+	t.Parallel()
+	preparer := testPreparer()
+	prepare := preparer.PrepareFunc
+	fail, corrected := false, false
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		if fail {
+			return api.PrepareResult{}, errors.New("synthetic preparation failure")
+		}
+		result, err := prepare(ctx, input)
+		if !corrected {
+			result.Release.Media.Source = ""
+		}
+		return result, err
+	}
+	module, repository := newTestModule(t, preparer)
+	current := executeCommand(t, module, CreateWorkflowCommand{})
+	input := api.PrepareInput{SourcePath: "Example.Release.2026.mkv"}
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            input,
+	})
+	current = executeCommand(t, module, EvaluateInputReadinessCommand{
+		WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision,
+	})
+	for attempt := range 2 {
+		current = executeCommand(t, module, ReplaceFactInstructionsCommand{
+			WorkflowID:       current.Workflow.ID,
+			ExpectedRevision: current.Workflow.Revision,
+			Instructions:     api.ReleaseFactInstructions{Metadata: api.MetadataOverrides{Genres: new([]string{"Drama"})}},
+		})
+		fail = true
+		_, err := module.execute(t.Context(), testOwnerID, PrepareReleaseCommand{
+			WorkflowID:       current.Workflow.ID,
+			ExpectedRevision: current.Workflow.Revision,
+			Input:            input,
+		})
+		if err == nil {
+			t.Fatal("expected preparation failure")
+		}
+		// A new module must recover display evidence from persisted state, without restoring authority.
+		reloaded, err := New(repository, NewMemoryPrivateResourceStore(), preparer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, err = reloaded.Current(t.Context(), testOwnerID, current.Workflow.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.Release != nil || current.InputReadiness != nil || current.InputReview == nil ||
+			current.InputReview.Release.Media.Source != "" {
+			t.Fatalf("attempt %d lost unresolved review or restored authority: %+v", attempt, current)
+		}
+	}
+	fail, corrected = false, true
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            input,
+	})
+	// Publishing facts alone must not discard requirements awaiting reevaluation.
+	if current.InputReview == nil {
+		t.Fatal("preparation discarded review before readiness completed")
+	}
+	current = executeCommand(t, module, EvaluateInputReadinessCommand{
+		WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision,
+	})
+	if current.InputReview != nil || inputReadinessBlocked(current.InputReadiness) {
+		t.Fatal("successful readiness did not replace retained warning evidence")
+	}
+}
+
 func TestEvaluateInputReadinessPassesAndRemovesTrackerAnswers(t *testing.T) {
 	t.Parallel()
 

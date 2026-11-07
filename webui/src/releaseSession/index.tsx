@@ -3554,6 +3554,9 @@ export function ReleaseSessionProvider({
           ? workflowViewValue(workflowView.current.release.release)
           : null,
         readiness: workflowView.current?.inputReadiness || null,
+        retainedReview: workflowView.current?.inputReview
+          ? workflowViewValue(workflowView.current.inputReview)
+          : null,
         trackerData: state.preview?.TrackerData || [],
         source: {
           discCount: workflowView.current?.release?.release.Source.Classification?.DiscCount || 0,

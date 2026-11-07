@@ -28,6 +28,42 @@ const current = (workflowID: string, revision: number): ReleaseWorkflowCurrent =
   }) as unknown as ReleaseWorkflowCurrent;
 
 describe("sessionReducer upload intent", () => {
+  it("rehydrates retained Input review without granting prepared or downstream authority", () => {
+    const initial = initialSessionState();
+    const sourcePath = "C:\\media\\Example.Release.2026.mkv";
+    const retained = {
+      ...current("workflow-one", 9),
+      inputReview: {
+        release: { Source: { SourcePath: sourcePath } },
+        fields: [],
+        selectedTrackerIds: ["ONE"],
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const state = sessionReducer(initial, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 3,
+        inputId: "input-one",
+        sourceVersion: "same-source",
+        sourcePath,
+        current: retained,
+      },
+      status: "ready",
+      preview: null,
+      intent: { ...initial.preparationIntent, metadata: { Genres: ["Drama"] } },
+      capturedInputEditRevision: 0,
+      selectedTrackers: ["ONE"],
+    });
+    expect(state.sourceDraft).toBe(sourcePath);
+    expect(state.selectedSource).toBe(sourcePath);
+    expect(state.preparationIntent.metadata.Genres).toEqual(["Drama"]);
+    expect(state.selectedTrackers).toEqual(["ONE"]);
+    expect(state.release).toBeNull();
+    expect(state.preview).toBeNull();
+    expect(state.workflowView.current?.inputReadiness).toBeUndefined();
+  });
+
   it("retains full successful preview processing and clears it for a new source", () => {
     const initial = initialSessionState();
     const processing = {
