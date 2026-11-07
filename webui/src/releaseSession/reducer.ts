@@ -1147,6 +1147,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       const retainPreparation =
         sameDraftKey &&
         Boolean(current.inputReview) &&
+        !correctionReview &&
         !action.preview &&
         Boolean(state.preparation.correlationID) &&
         state.preparation.status === "running" &&
