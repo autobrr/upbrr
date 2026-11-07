@@ -2716,6 +2716,7 @@ func mapIMDBMetadata(info imdb.Info) *api.IMDBMetadata {
 		SoundMixes:       append([]string{}, info.SoundMixes...),
 		TVYear:           info.TVYear,
 		OriginalLanguage: info.OriginalLanguage,
+		SpokenLanguages:  slices.Clone(info.SpokenLanguages),
 	}
 }
 

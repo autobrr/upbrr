@@ -3835,6 +3835,12 @@
               "type": "string"
             }
           },
+          "SpokenLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "Stars": {
             "type": "array",
             "items": {

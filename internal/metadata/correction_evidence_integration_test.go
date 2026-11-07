@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1129,9 +1130,10 @@ func TestPreparedIndependentManualProviderIDsSurviveRefreshAndRestart(t *testing
 			fixture := newCorrectionEvidenceFixture(t)
 			fixture.tmdbExternalIDs = `{"imdb_id":"tt7654321","tvdb_id":999888}`
 			imdbProvider := &stubIMDB{info: imdb.Info{
-				IMDbID: "tt1234567",
-				Title:  "Example Selected Series",
-				Type:   "tvSeries",
+				IMDbID:          "tt1234567",
+				Title:           "Example Selected Series",
+				Type:            "tvSeries",
+				SpokenLanguages: []string{"French", "German"},
 			}}
 			fixture.imdb = imdbProvider
 			tvdbProvider := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{TVDBID: 222333, Name: "Example Selected Series"}}
@@ -1249,6 +1251,11 @@ func TestPreparedIndependentManualProviderIDsSurviveRefreshAndRestart(t *testing
 					}
 					if len(display.Providers) != 4 {
 						t.Fatalf("provider display count = %d", len(display.Providers))
+					}
+					for _, provider := range display.Providers {
+						if provider.Provider == api.IdentityProviderIMDB && !slices.Equal(provider.Details.IMDB.SpokenLanguages, []string{"French", "German"}) {
+							t.Fatal("IMDb spoken languages lost during preparation, refresh or restart")
+						}
 					}
 					ref := api.ReleaseRef{SourcePath: input.SourcePath, Generation: result.Release.Generation}
 					upload, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: ref})

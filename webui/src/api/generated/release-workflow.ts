@@ -1002,6 +1002,7 @@ export type IMDBMetadata = Readonly<{
   RuntimeText: string;
   SeasonsSummary: readonly IMDBSeasonSummary[];
   SoundMixes: readonly string[];
+  SpokenLanguages?: readonly string[];
   Stars: readonly IMDBPerson[];
   TVYear: number;
   Title: string;

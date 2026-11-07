@@ -2538,6 +2538,8 @@ type IMDBMetadata struct {
 	SoundMixes       []string
 	TVYear           int
 	OriginalLanguage string
+	// SpokenLanguages contains IMDb's title-level language names for provider display.
+	SpokenLanguages []string `json:",omitempty"`
 }
 
 type IMDBPerson struct {
