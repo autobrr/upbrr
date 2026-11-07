@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1129,9 +1130,10 @@ func TestPreparedIndependentManualProviderIDsSurviveRefreshAndRestart(t *testing
 			fixture := newCorrectionEvidenceFixture(t)
 			fixture.tmdbExternalIDs = `{"imdb_id":"tt7654321","tvdb_id":999888}`
 			imdbProvider := &stubIMDB{info: imdb.Info{
-				IMDbID: "tt1234567",
-				Title:  "Example Selected Series",
-				Type:   "tvSeries",
+				IMDbID:          "tt1234567",
+				Title:           "Example Selected Series",
+				Type:            "tvSeries",
+				SpokenLanguages: []string{"French", "German"},
 			}}
 			fixture.imdb = imdbProvider
 			tvdbProvider := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{TVDBID: 222333, Name: "Example Selected Series"}}
@@ -1250,6 +1252,11 @@ func TestPreparedIndependentManualProviderIDsSurviveRefreshAndRestart(t *testing
 					if len(display.Providers) != 4 {
 						t.Fatalf("provider display count = %d", len(display.Providers))
 					}
+					for _, provider := range display.Providers {
+						if provider.Provider == api.IdentityProviderIMDB && !slices.Equal(provider.Details.IMDB.SpokenLanguages, []string{"French", "German"}) {
+							t.Fatal("IMDb spoken languages lost during preparation, refresh or restart")
+						}
+					}
 					ref := api.ReleaseRef{SourcePath: input.SourcePath, Generation: result.Release.Generation}
 					upload, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: ref})
 					if err != nil {
@@ -1313,20 +1320,21 @@ func preserveCorrectionGeneration(t *testing.T, release *api.PreparedRelease) {
 }
 
 type correctionEvidenceFixture struct {
-	dbPath          string
-	mediaInfo       mediainfo.Exporter
-	input           api.PrepareInput
-	http            *http.Client
-	tvdb            TVDBClient
-	imdb            IMDBClient
-	tmdbExternalIDs string
-	tmdbAnime       bool
-	noTMDBResults   bool
-	tvmaze          TVmazeClient
-	tvdbAliasYear   bool
-	tvdbRemoteIDs   string
-	mu              sync.Mutex
-	calls           map[string]int
+	dbPath              string
+	mediaInfo           mediainfo.Exporter
+	input               api.PrepareInput
+	http                *http.Client
+	tvdb                TVDBClient
+	imdb                IMDBClient
+	tmdbExternalIDs     string
+	tmdbSpokenLanguages []string
+	tmdbAnime           bool
+	noTMDBResults       bool
+	tvmaze              TVmazeClient
+	tvdbAliasYear       bool
+	tvdbRemoteIDs       string
+	mu                  sync.Mutex
+	calls               map[string]int
 }
 
 func newCorrectionEvidenceFixture(t *testing.T) *correctionEvidenceFixture {
@@ -1477,6 +1485,17 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 					body = `{"logos":[]}`
 				}
 			}
+		}
+		if (key == "/3/movie/555001" || key == "/3/tv/555001") && fixture.tmdbSpokenLanguages != nil {
+			spoken := make([]map[string]string, 0, len(fixture.tmdbSpokenLanguages))
+			for _, language := range fixture.tmdbSpokenLanguages {
+				spoken = append(spoken, map[string]string{"iso_639_1": language})
+			}
+			encoded, err := json.Marshal(spoken)
+			if err != nil {
+				return nil, fmt.Errorf("encode spoken-language fixture: %w", err)
+			}
+			body = strings.TrimSuffix(body, "}") + `,"spoken_languages":` + string(encoded) + "}"
 		}
 		if body == "" {
 			t.Errorf("unexpected HTTP query: %s", request.URL.Path)

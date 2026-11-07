@@ -1419,7 +1419,28 @@ with `python3 scripts/languages/update-registry.py <downloaded-registry-file> > 
 regenerate correction choices when changing it.
 
 Use `WithLanguagePolicy` or `WithLanguageAssessment` to expose the same pure language predicate
-through `ValidationPolicyBinding.LanguageAssessment` for source-level readiness. A custom binding
+through `ValidationPolicyBinding.LanguageAssessment` for source-level readiness.
+Canonical `LanguageFacts.OriginalLanguages` prefers TMDB's normalized spoken-language
+set when available. Explicit original-language corrections and clears remain
+authoritative; the scalar provider original language remains available for other
+owned metadata policies. Treat the preferred reference as a set, never as an ordered
+primary-language choice or a requirement for one stream per title language.
+Classify actual soundtracks through `ProgrammeAudioOrigin`: matching title evidence
+cannot override a confirmed dub. English title dialogue alone does not establish
+English programme audio or subtitle coverage. `HasEnglishOriginalAudio` requires
+an original programme track identified only as English; English dialogue in a
+multilingual original or an English dub does not satisfy it. Original-soundtrack
+policy evidence takes precedence over a conflicting provider production-language
+value. For original-show classification, a verified title-language correction
+governs even when track-origin facts disagree. Auto title-language matches can
+fill an evidence gap but cannot override an established original soundtrack.
+A language set alone does not establish dialogue predominance; preserve
+site-specific uncertainty and do not turn possible trumpability into prohibition.
+A country derivation for one original
+primary soundtrack needs that soundtrack's origin evidence and an unambiguous
+reference, rather than the first title-language entry.
+
+A custom binding
 wrapper must preserve that callback when composing validation. Missing programme-language findings
 carry `LanguageCorrectionTrackIDs`; source review requests only the addressable tracks needed by
 non-advisory current policy, once across selected trackers. Save answers through canonical,

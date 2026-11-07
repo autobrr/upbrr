@@ -3213,3 +3213,32 @@ func TestDeriveMediaFactsResolutionHeightFloor(t *testing.T) {
 		})
 	}
 }
+
+func TestSpokenLanguageAudioMarkersRespectSoundtrackOrigins(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		tracks     []api.MediaTrackFacts
+		want       string
+		incomplete bool
+	}{
+		{"English original despite scalar Japanese", []api.MediaTrackFacts{{Languages: []string{"English"}, AudioOrigin: api.TrackAudioOriginal}}, "DD 5.1", false},
+		{"listed English remains a confirmed dub", []api.MediaTrackFacts{{Languages: []string{"French"}, AudioOrigin: api.TrackAudioOriginal}, {Languages: []string{"English"}, AudioOrigin: api.TrackAudioDubbed}}, "Dual-Audio DD 5.1", false},
+		{"listed English dub alone", []api.MediaTrackFacts{{Languages: []string{"English"}, AudioOrigin: api.TrackAudioDubbed}}, "Dubbed DD 5.1", false},
+		{"non-English original and confirmed dub", []api.MediaTrackFacts{{Languages: []string{"French"}, AudioOrigin: api.TrackAudioOriginal}, {Languages: []string{"German"}, AudioOrigin: api.TrackAudioDubbed}}, "Dual-Audio DD 5.1", false},
+		{"English dub with unresolved companion", []api.MediaTrackFacts{{Languages: []string{"French"}, AudioOrigin: api.TrackAudioUnresolved}, {Languages: []string{"English"}, AudioOrigin: api.TrackAudioDubbed}}, "DD 5.1", false},
+		{"English dub with incomplete coverage", []api.MediaTrackFacts{{Languages: []string{"English"}, AudioOrigin: api.TrackAudioDubbed}}, "DD 5.1", true},
+		{"positive original survives incomplete coverage", []api.MediaTrackFacts{{Languages: []string{"French"}, AudioOrigin: api.TrackAudioOriginal}, {Languages: []string{"English"}, AudioOrigin: api.TrackAudioDubbed}}, "Dual-Audio DD 5.1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := preparationstate.State{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "ja", SpokenLanguages: []string{"en", "fr"}}}, TrackCoverageComplete: !tc.incomplete}
+			for _, track := range tc.tracks {
+				track.Kind, track.Role = api.MediaTrackAudio, api.AudioRoleProgramme
+				meta.MediaTracks = append(meta.MediaTracks, track)
+				meta.AudioLanguages = append(meta.AudioLanguages, track.Languages...)
+			}
+			if got := applyAudioLanguagePrefix("Dual-Audio DD 5.1", meta); got != tc.want {
+				t.Fatalf("audio marker = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

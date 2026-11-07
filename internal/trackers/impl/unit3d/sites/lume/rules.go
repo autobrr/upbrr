@@ -109,8 +109,7 @@ func trackOrderingFailures(subject api.TrackerValidationSubject) []api.RuleFailu
 	dubTracks := 0
 	multilingualDub := false
 	for _, track := range audioTracks {
-		original := (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) &&
-			slices.ContainsFunc(track.Languages, func(language string) bool { return languageutil.ContainsLanguage(facts.OriginalLanguages, language) })
+		original := facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal
 		if original && otherAudioSeen {
 			failures = append(
 				failures,

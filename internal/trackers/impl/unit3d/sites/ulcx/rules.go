@@ -63,7 +63,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 
 	facts := subject.LanguageFacts
 	if facts.OriginalLanguagesKnown {
-		foreign := !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX")
+		foreign := trackers.ForeignLanguageContent(facts)
 		for _, track := range facts.Tracks {
 			if track.Kind != api.MediaTrackSubtitle {
 				continue

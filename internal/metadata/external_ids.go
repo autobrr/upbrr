@@ -2542,6 +2542,7 @@ func mapTMDBMetadata(ids api.ExternalIdentity, result tmdb.MetadataResult) *api.
 		LastAirDate:         result.LastAirDate,
 		OriginCountry:       append([]string{}, result.OriginCountry...),
 		OriginalLanguage:    result.OriginalLanguage,
+		SpokenLanguages:     append([]string(nil), result.SpokenLanguages...),
 		Overview:            result.Overview,
 		Poster:              result.Poster,
 		TMDBPosterPath:      result.TMDBPosterPath,
@@ -2715,6 +2716,7 @@ func mapIMDBMetadata(info imdb.Info) *api.IMDBMetadata {
 		SoundMixes:       append([]string{}, info.SoundMixes...),
 		TVYear:           info.TVYear,
 		OriginalLanguage: info.OriginalLanguage,
+		SpokenLanguages:  slices.Clone(info.SpokenLanguages),
 	}
 }
 

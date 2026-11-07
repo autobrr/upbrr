@@ -5,6 +5,7 @@ package btn
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
@@ -46,7 +47,10 @@ func btnOriginalAudioCountryID(subject api.TrackerValidationSubject) string {
 	language := btnPrimaryProgrammeLanguage(facts)
 	metadata := subject.ProviderMetadata
 	if language == "" || !facts.OriginalLanguagesKnown || len(facts.OriginalLanguages) != 1 ||
-		!languageutil.SameLanguage(language, facts.OriginalLanguages[0]) || !metadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
+		!languageutil.SameLanguage(language, facts.OriginalLanguages[0]) ||
+		!slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+			return track.ID == facts.PrimaryAudioTrackID && facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal
+		}) || !metadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
 		return ""
 	}
 	var countries []string

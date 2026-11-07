@@ -81,7 +81,7 @@ func IsFullDiscUpload(discType, releaseType string) bool {
 // existing constructibility checks without another upload-authority path.
 func WithLanguageAssessment(binding ValidationPolicyBinding, assess func(api.TrackerValidationSubject) []api.RuleFailure) ValidationPolicyBinding {
 	return ValidationPolicyBinding{
-		ID:                 binding.ID + "/languages-v3",
+		ID:                 binding.ID + "/languages-v5",
 		LanguageAssessment: assess,
 		Check: func(ctx context.Context, subject api.TrackerValidationSubject, logger api.Logger) ([]api.RuleFailure, error) {
 			failures, err := binding.Check(ctx, subject, logger)
@@ -98,6 +98,13 @@ func WithLanguagePolicy(binding ValidationPolicyBinding, policy LanguagePolicy) 
 	return WithLanguageAssessment(binding, func(subject api.TrackerValidationSubject) []api.RuleFailure {
 		return EvaluateLanguagePolicy(subject, policy)
 	})
+}
+
+// ForeignLanguageContent reports non-English title evidence for tracker policies.
+// English dialogue does not erase that evidence; individual policies retain their
+// English-dub, English-only-title and non-linguistic-title exemptions.
+func ForeignLanguageContent(facts api.LanguageFacts) bool {
+	return facts.HasNonEnglishTitleLanguage() && !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX")
 }
 
 // EvaluateLanguagePolicy consumes exact-generation facts and requires only
@@ -170,8 +177,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 			policy.ExtraDubs,
 		)
 	}
-	foreign := originalKnown && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
-		!languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX")
+	foreign := ForeignLanguageContent(facts)
 	originalDefault := slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
 		return facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal && track.DefaultKnown && track.Default
 	})
@@ -203,7 +209,8 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 				outcomes = append(outcomes, policy.OriginalDefault)
 			}
 			if len(track.Languages) == 0 || slices.ContainsFunc(track.Languages, func(language string) bool {
-				return !languageutil.SameLanguage(language, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, language)
+				return !languageutil.SameLanguage(language, "English") &&
+					(track.AudioOrigin == api.TrackAudioUnresolved || !languageutil.ContainsLanguage(facts.OriginalLanguages, language))
 			}) {
 				outcomes = append(outcomes, policy.ExtraDubs)
 			}
@@ -237,8 +244,7 @@ func EvaluateLanguagePolicy(subject api.TrackerValidationSubject, policy Languag
 			}
 		}
 		for _, language := range track.Languages {
-			if languageutil.SameLanguage(language, "English") || originalKnown && languageutil.ContainsLanguage(facts.OriginalLanguages, language) ||
-				!languageutil.IsIdentifiedLanguage(language) {
+			if languageutil.SameLanguage(language, "English") || !languageutil.IsIdentifiedLanguage(language) {
 				continue
 			}
 			add("extra_dub", "non-original, non-English programme dub: "+language, policy.ExtraDubs)
@@ -488,7 +494,7 @@ func programmeDubRemediation(facts api.LanguageFacts, language string, personalR
 			return programme(candidate) && candidate.ResourceID == track.ResourceID &&
 				facts.ProgrammeAudioOrigin(candidate) == api.TrackAudioOriginal
 		})
-		if slices.ContainsFunc(track.Languages, permitted) || !retainsOriginal {
+		if len(track.Languages) > 1 && slices.ContainsFunc(track.Languages, permitted) || !retainsOriginal {
 			return " Use a compliant source with the required programme audio; do not remove original or sole programme audio. " +
 				"Then prepare the new source again for fresh metadata and tracker checks."
 		}
