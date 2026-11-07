@@ -1144,6 +1144,13 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         sameDraftKey &&
         (action.preserveInputDraft || state.inputEditRevision > action.capturedInputEditRevision);
       const base = sameDraftKey ? state : initialSessionState();
+      const retainPreparation =
+        sameDraftKey &&
+        Boolean(current.inputReview) &&
+        !action.preview &&
+        Boolean(state.preparation.correlationID) &&
+        state.preparation.status === "running" &&
+        state.preparation.sourcePath === sourcePath;
       // Commands may publish a generation before the next active-input poll.
       const releaseChanged =
         !sameDraftKey ||
@@ -1169,7 +1176,9 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           failure: null,
         },
         sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
-        commandRevision: Math.max(base.commandRevision, current.workflow.revision),
+        commandRevision: retainPreparation
+          ? state.commandRevision
+          : Math.max(base.commandRevision, current.workflow.revision),
         sourceVerification: null,
         sourceDraft:
           retainDraft ||
@@ -1180,16 +1189,22 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
             ? state.sourceDraft
             : sourcePath,
         selectedSource: sourcePath,
-        preparation: {
-          correlationID: "",
-          sourcePath,
-          commandRevision: current.workflow.revision,
-          inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
-          status:
-            action.status === "running" ? "running" : correctionReview ? "awaiting_input" : "ready",
-          error: "",
-          failure: null,
-        },
+        preparation: retainPreparation
+          ? state.preparation
+          : {
+              correlationID: "",
+              sourcePath,
+              commandRevision: current.workflow.revision,
+              inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
+              status:
+                action.status === "running"
+                  ? "running"
+                  : correctionReview
+                    ? "awaiting_input"
+                    : "ready",
+              error: "",
+              failure: null,
+            },
         preparationDirty: retainDraft,
         correctionDirty: retainDraft ? state.correctionDirty : false,
         inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,

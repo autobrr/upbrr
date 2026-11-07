@@ -89,7 +89,7 @@ The option is not shown for direct file inputs, season packs, multi-video folder
 
 ### Correct Input facts
 
-When saved release fields need review or correction, a warning remains visible above **Edit Release Details**, even while the editor is collapsed. Use each **Review** action to open the relevant sections and focus its control, including individual inspected tracks. Detailed guidance stays beside the fields. Apply **Refresh metadata** (or **Retry metadata** before the first successful preparation) to reevaluate the requirements. Opening the editor or changing a draft does not resolve the warning. A failed preparation keeps unresolved requests visible; successful preparation removes each resolved field independently. Reloading reflects the saved Input state.
+When saved release fields need review or correction, a warning remains visible above **Edit Release Details**, even while the editor is collapsed. Use each **Review** action to open the relevant sections and focus its control, including individual inspected tracks. Detailed guidance stays beside the fields. Apply **Refresh metadata** or **Retry metadata** to reevaluate the requirements. Opening the editor or changing a draft does not resolve the warning. A failed preparation keeps unresolved requests visible; successful preparation removes each resolved field independently. Reloading reflects the saved Input state.
 
 In **Edit Release Details**, the information icons explain each field and grouped actions. Open help by hovering over its icon, focusing it with the keyboard, or tapping it. Escape or an outside interaction closes it; moving into the floating text keeps it readable without moving the form. Opening help does not apply edits.
 

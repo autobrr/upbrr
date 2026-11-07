@@ -1729,6 +1729,7 @@ test("embedded web retains warnings after accepted preparation fails and reloads
       snapshot?.current?.inputReview?.fields?.some((field) => field.status === "missing"),
     ).toBe(true);
     await expect(warning).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry metadata", exact: true })).toBeEnabled();
     await page.reload();
     await expect(page.getByLabel("Source path", { exact: true })).toHaveValue(workspace.sourcePath);
     await expect(warning).toBeVisible();

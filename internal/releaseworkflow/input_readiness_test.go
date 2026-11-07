@@ -18,7 +18,14 @@ func TestInputReviewSurvivesFailedPreparationUntilReadinessIsReevaluated(t *test
 	t.Parallel()
 	preparer := testPreparer()
 	prepare := preparer.PrepareFunc
-	fail, corrected := false, false
+	subject := preparer.SubjectFunc
+	fail, corrected, failReadiness := false, false, false
+	preparer.SubjectFunc = func(ctx context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
+		if failReadiness {
+			return api.UploadSubject{}, errors.New("synthetic readiness failure")
+		}
+		return subject(ctx, input)
+	}
 	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 		if fail {
 			return api.PrepareResult{}, errors.New("synthetic preparation failure")
@@ -40,6 +47,24 @@ func TestInputReviewSurvivesFailedPreparationUntilReadinessIsReevaluated(t *test
 	current = executeCommand(t, module, EvaluateInputReadinessCommand{
 		WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision,
 	})
+	// Direct preparation can replace readiness without a fact-instruction edit.
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            input,
+	})
+	failReadiness = true
+	_, err := module.execute(t.Context(), testOwnerID, EvaluateInputReadinessCommand{
+		WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision,
+	})
+	failReadiness = false
+	if err == nil {
+		t.Fatal("expected readiness failure")
+	}
+	current, err = module.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil || current.InputReview == nil {
+		t.Fatalf("direct preparation lost unevaluated review: %+v, %v", current, err)
+	}
 	for attempt := range 2 {
 		current = executeCommand(t, module, ReplaceFactInstructionsCommand{
 			WorkflowID:       current.Workflow.ID,
@@ -69,6 +94,28 @@ func TestInputReviewSurvivesFailedPreparationUntilReadinessIsReevaluated(t *test
 			t.Fatalf("attempt %d lost unresolved review or restored authority: %+v", attempt, current)
 		}
 	}
+	state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := workflowStateRecord(testOwnerID, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, impact := range []api.ConfigImpactDetail{
+		{Kind: api.ConfigImpactProvider},
+		{Kind: api.ConfigImpactTrackers},
+		{Kind: api.ConfigImpactTrackers, TrackerIDs: []api.TrackerID{"UNRELATED"}},
+	} {
+		updated, err := ApplyConfigImpact(record, impact)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reloaded, err := decodeWorkflowState(updated)
+		if err != nil || inputReviewContext(&reloaded) == nil || reloaded.Workflow.InputReadiness != nil {
+			t.Fatalf("config impact %s discarded unresolved display evidence: %v", impact.Kind, err)
+		}
+	}
 	fail, corrected = false, true
 	current = executeCommand(t, module, PrepareReleaseCommand{
 		WorkflowID:       current.Workflow.ID,
@@ -84,6 +131,24 @@ func TestInputReviewSurvivesFailedPreparationUntilReadinessIsReevaluated(t *test
 	})
 	if current.InputReview != nil || inputReadinessBlocked(current.InputReadiness) {
 		t.Fatal("successful readiness did not replace retained warning evidence")
+	}
+	corrected = false
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            input,
+	})
+	current = executeCommand(t, module, EvaluateInputReadinessCommand{
+		WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision,
+	})
+	input.SourcePath = "Different.Release.2026.mkv"
+	current = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            input,
+	})
+	if current.InputReview != nil {
+		t.Fatal("direct preparation retained another source's review")
 	}
 }
 

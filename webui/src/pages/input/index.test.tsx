@@ -3544,11 +3544,14 @@ describe("release correction warning summary", () => {
   };
 
   it.each([
-    ["metadata.tvdb_id_only", "TVDB ID"],
-    ["metadata.tvmaze", "TVmaze ID"],
+    ["metadata.tvdb_id_only", ["TVDB ID"]],
+    ["metadata.tvmaze", ["TVmaze ID"]],
+    ["metadata.tmdb_origin_countries", ["TMDB ID"]],
+    ["metadata.tvdb_year", ["TVDB ID"]],
+    ["metadata.tmdb_title.or.tvdb_title", ["TMDB ID", "TVDB ID"]],
   ])(
     "reaches provider controls for saved %s requirements without a correction reference",
-    async (key, label) => {
+    async (key, labels) => {
       const user = userEvent.setup();
       const base = reviewFacet();
       const facet: InputFacet = {
@@ -3557,22 +3560,116 @@ describe("release correction warning summary", () => {
           ...base.view,
           readiness: {
             ...base.view.readiness!,
-            fields: [
-              { key, status: "missing", disposition: "strict", message: `Missing ${label}.` },
-            ],
+            fields: [{ key, status: "missing", disposition: "strict" }],
           },
         },
       };
       render(<InputPage facet={facet} {...inputPageProps()} showExternalIDInputUI />);
-      const action = within(screen.getByRole("alert")).getByRole("button", {
-        name: `Review ${label}`,
-      });
-      expect(action).toBeVisible();
-      action.focus();
-      await user.keyboard("{Enter}");
-      expect(screen.getByLabelText(label)).toHaveFocus();
+      for (const label of labels) {
+        const action = within(screen.getByRole("alert")).getByRole("button", {
+          name: `Review ${label}`,
+        });
+        expect(action).toBeVisible();
+        action.focus();
+        await user.keyboard("{Enter}");
+        expect(screen.getByLabelText(label)).toHaveFocus();
+      }
     },
   );
+
+  it.each([false, true])(
+    "keeps unmapped saved requests visible independently with retained review %s",
+    (retained) => {
+      const base = reviewFacet();
+      const poster = {
+        key: "metadata.poster",
+        status: "missing",
+        disposition: "strict",
+        message: "Missing required poster artwork.",
+      };
+      const view = {
+        ...base.view,
+        ...(retained
+          ? {
+              release: null,
+              readiness: null,
+              retainedReview: { release: base.view.release!, fields: [poster] },
+            }
+          : { readiness: { ...base.view.readiness!, fields: [poster] } }),
+      };
+      const { rerender } = render(<InputPage facet={{ ...base, view }} {...inputPageProps()} />);
+      expect(screen.getByRole("alert")).toHaveTextContent(poster.message);
+      expect(within(screen.getByRole("alert")).queryByRole("button")).not.toBeInTheDocument();
+      rerender(
+        <InputPage
+          facet={{
+            ...base,
+            view: {
+              ...base.view,
+              readiness: { ...base.view.readiness!, fields: [{ ...poster, status: "ready" }] },
+            },
+          }}
+          {...inputPageProps()}
+        />,
+      );
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
+  it("reaches the hardcoded language control for a hardcoded-subtitle request", async () => {
+    const user = userEvent.setup();
+    const base = reviewFacet();
+    render(
+      <InputPage
+        facet={{
+          ...base,
+          view: {
+            ...base.view,
+            readiness: {
+              ...base.view.readiness!,
+              fields: [
+                {
+                  key: "metadata.hardcoded_subs",
+                  correctionField: "metadata.hardcoded_subs",
+                  status: "missing",
+                  disposition: "strict",
+                },
+              ],
+            },
+          },
+        }}
+        {...inputPageProps()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Review Hardcoded subtitle languages" }));
+    expect(screen.getByRole("button", { name: "Hardcoded subtitle languages" })).toHaveFocus();
+  });
+
+  it("keeps unmatched retained track requests pending without linking a nonexistent control", () => {
+    const base = reviewFacet();
+    const release = { ...base.view.release!, Media: { ...base.view.release!.Media, Tracks: [] } };
+    render(
+      <InputPage
+        facet={{
+          ...base,
+          view: {
+            ...base.view,
+            release,
+            readiness: null,
+            retainedReview: {
+              release: base.view.release!,
+              fields: [base.view.readiness!.fields![0]],
+            },
+          },
+        }}
+        {...inputPageProps()}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /track requirements.*awaiting reevaluation/i,
+    );
+    expect(within(screen.getByRole("alert")).queryByRole("button")).not.toBeInTheDocument();
+  });
 
   it("identifies multiple affected fields outside collapsed details and reaches their controls by keyboard", async () => {
     const user = userEvent.setup();

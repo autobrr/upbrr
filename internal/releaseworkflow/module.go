@@ -4285,6 +4285,10 @@ func (m *Module) prepareRelease(
 		state.PendingHDRAnalysisWorkflowID = state.Workflow.ID
 	}
 	prior := state.Workflow.Release
+	retainInputReview(state)
+	if review := state.InputReview; review != nil && state.Releases[review.Release.ID].Release.Source.SourcePath != ref.SourcePath {
+		state.InputReview = nil
+	}
 	state.Workflow.Release = &api.ReleaseSnapshotRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	if prior == nil || prior.ID != snapshot.ID || prior.Revision != snapshot.Revision {
 		invalidateTrackerAndDownstream(&state.Workflow)

@@ -39,22 +39,23 @@ describe("sessionReducer upload intent", () => {
         selectedTrackerIds: ["ONE"],
       },
     } as unknown as ReleaseWorkflowCurrent;
-    const state = sessionReducer(initial, {
-      type: "active_input_applied",
+    const hydration = {
+      type: "active_input_applied" as const,
       snapshot: {
-        state: "active",
+        state: "active" as const,
         revision: 3,
         inputId: "input-one",
         sourceVersion: "same-source",
         sourcePath,
         current: retained,
       },
-      status: "ready",
+      status: "running" as const,
       preview: null,
       intent: { ...initial.preparationIntent, metadata: { Genres: ["Drama"] } },
       capturedInputEditRevision: 0,
       selectedTrackers: ["ONE"],
-    });
+    };
+    let state = sessionReducer(initial, hydration);
     expect(state.sourceDraft).toBe(sourcePath);
     expect(state.selectedSource).toBe(sourcePath);
     expect(state.preparationIntent.metadata.Genres).toEqual(["Drama"]);
@@ -62,6 +63,43 @@ describe("sessionReducer upload intent", () => {
     expect(state.release).toBeNull();
     expect(state.preview).toBeNull();
     expect(state.workflowView.current?.inputReadiness).toBeUndefined();
+    state = sessionReducer(state, { ...hydration, status: "ready" });
+    expect(state.preparation.status).toBe("ready");
+    const commandRevision = state.commandRevision + 1;
+    state = sessionReducer(state, {
+      type: "preparation_started",
+      sourcePath,
+      commandRevision,
+      inputEditRevision: state.inputEditRevision,
+      correlationID: "refresh-retained",
+      intent: state.preparationIntent,
+    });
+    state = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 4,
+        inputId: "input-one",
+        sourceVersion: "same-source",
+        sourcePath,
+        current: { ...retained, workflow: { ...retained.workflow, revision: commandRevision + 2 } },
+      },
+      status: "running",
+      preview: null,
+      intent: state.preparationIntent,
+      capturedInputEditRevision: state.inputEditRevision,
+      selectedTrackers: ["ONE"],
+    });
+    state = sessionReducer(state, {
+      type: "preparation_failed",
+      sourcePath,
+      commandRevision,
+      correlationID: "refresh-retained",
+      error: "Synthetic refresh failure",
+      failure: null,
+    });
+    expect(state.preparation.status).toBe("error");
+    expect(state.preparation.error).toBe("Synthetic refresh failure");
   });
 
   it("retains full successful preview processing and clears it for a new source", () => {

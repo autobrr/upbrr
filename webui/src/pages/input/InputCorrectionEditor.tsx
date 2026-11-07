@@ -659,16 +659,18 @@ export function InputCorrectionWarnings({
     ...missingFacts,
     ...outcomes.filter((field) => !field.trackId).map((field) => field.correctionField),
   ]);
+  if (requested.has("metadata.hardcoded_subs"))
+    requested.add("metadata.hardcoded_subtitle_languages");
   // Canonical provider requirements can lack a correction reference, including alternatives.
   const providerRequirements = new Set(
     outcomes
       .filter((field) => !field.correctionField)
-      .flatMap((field) => field.key.replace(/^metadata\./, "").split(".or.")),
+      .flatMap((field) => field.key.replace(/^metadata\./, "").split(".or."))
+      .map((requirement) => requirement.split("_")[0]),
   );
   for (const { field } of identityFields) {
     const provider = field.slice("identity.".length);
-    if (providerRequirements.has(provider) || providerRequirements.has(`${provider}_id_only`))
-      requested.add(field);
+    if (providerRequirements.has(provider)) requested.add(field);
   }
   const controls = [
     ...identityFields,
@@ -715,7 +717,15 @@ export function InputCorrectionWarnings({
     control.scrollIntoView({ block: "center", behavior: "instant" });
   };
 
-  return controls.length > 0 ? (
+  const messages = [
+    ...new Set(
+      outcomes.map(
+        (field) => field.message || field.key.replace(/^metadata\./, "").replace(/[_.]+/g, " "),
+      ),
+    ),
+  ];
+
+  return controls.length > 0 || outcomes.length > 0 ? (
     <div
       className="grid min-w-0 gap-2 rounded-md border border-destructive bg-destructive/10 p-4 text-destructive-text"
       role="alert"
@@ -729,20 +739,37 @@ export function InputCorrectionWarnings({
         Review the affected fields, then use {refreshLabel} to prepare Input again. Warnings remain
         until the saved requirements are resolved; unsaved edits do not clear them.
       </p>
-      <ul className="flex min-w-0 flex-wrap gap-2">
-        {controls.map(({ id, label }) => (
-          <li key={id} className="min-w-0 max-w-full">
-            <Button
-              type="button"
-              className="max-w-full whitespace-normal text-left"
-              aria-controls={id}
-              onClick={() => reveal(id)}
-            >
-              Review {label}
-            </Button>
-          </li>
-        ))}
-      </ul>
+      {messages.length > 0 ? (
+        <ul className="list-inside list-disc text-sm">
+          {messages.map((message) => (
+            <li key={message}>{message}</li>
+          ))}
+        </ul>
+      ) : null}
+      {outcomes.some(
+        (field) => field.trackId && !tracks.some((track) => track.ID === field.trackId),
+      ) ? (
+        <p>
+          Previously reported track requirements are awaiting reevaluation. Prepare Input again to
+          refresh inspected tracks.
+        </p>
+      ) : null}
+      {controls.length > 0 ? (
+        <ul className="flex min-w-0 flex-wrap gap-2">
+          {controls.map(({ id, label }) => (
+            <li key={id} className="min-w-0 max-w-full">
+              <Button
+                type="button"
+                className="max-w-full whitespace-normal text-left"
+                aria-controls={id}
+                onClick={() => reveal(id)}
+              >
+                Review {label}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   ) : (
     <p className="helper max-w-[720px]" role="status">
