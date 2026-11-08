@@ -103,6 +103,12 @@ func TestConfigImpactsIgnoreCompatibilitySettingsAndRetainActiveTrackerScope(t *
 	if next.TorrentClients["watch"].StorageDir != "legacy" || !next.Trackers.Trackers["FF"].CheckRequests {
 		t.Fatal("impact comparison changed saved compatibility values")
 	}
+	beforeMixed := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"AZ": {}}}}
+	afterMixed := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"AZ": {Anon: true, CheckForRules: true}}}}
+	mixed := ConfigImpactDetails(beforeMixed, afterMixed)
+	if len(mixed) != 1 || mixed[0].Kind != api.ConfigImpactTrackers || !slices.Equal(mixed[0].TrackerIDs, []api.TrackerID{"AZ"}) {
+		t.Fatalf("same-tracker active/compatibility impacts = %v", mixed)
+	}
 }
 
 func TestConfigImpactsIgnoresHostDatabasePath(t *testing.T) {
