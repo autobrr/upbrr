@@ -311,6 +311,7 @@ export type ClientOverrides = Readonly<{
 
 export type ClientSearchPolicy = Readonly<{
   Client?: string | null;
+  InfoHash?: string;
   Skip: boolean;
 }>;
 

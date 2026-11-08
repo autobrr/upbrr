@@ -2004,6 +2004,7 @@ type ImageHostOverrides struct {
 }
 
 type TorrentOverrides struct {
+	// InfoHash is a preparation-time client lookup hint, not a required output hash.
 	InfoHash        *string
 	MaxPieceSizeMiB *int
 	NoHash          *bool
@@ -2046,6 +2047,8 @@ type TorrentSubject struct {
 // for torrent-client search, linking, and injection. [TorrentResult] paths and
 // URLs identify torrent artifacts and do not replace these source facts.
 type ClientSubject struct {
+	// InfoHash optionally selects one client torrent; exports still require source validation.
+	InfoHash        string
 	SourcePath      string
 	FileList        []string
 	DiscType        string

@@ -113,12 +113,15 @@ type torrentDataValidation struct {
 // SearchPathedTorrents searches selected qBittorrent or Qui clients in
 // configured order, retaining tracker metadata independently of artifact
 // selection and preferring compatible torrents by the active piece-size policy.
+// An explicit InfoHash first selects matching, source-bound evidence across
+// available clients. A miss is reported and falls back to ordinary discovery.
 //
 // A reusable export is stripped of announce, comment, and web-seed metadata and
 // retained as a content-addressed mode-0600 snapshot below the configured DB
 // temporary directory, alongside the generic export cache. A requested
 // force recheck also mutates direct qBittorrent state and waits for checking to
-// finish. Client-level failures abort the search; property or tracker lookup
+// finish. Client-level failures abort ordinary search; exact-hash lookup tries
+// other clients first. Property or tracker lookup
 // failures degrade individual records, while export failures retain available
 // client metadata.
 func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubject) (result api.ClientSearchResult, err error) {
@@ -141,6 +144,18 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return api.ClientSearchResult{}, internalerrors.ErrInvalidInput
 	}
+	meta.InfoHash = normalizeQbitHash(meta.InfoHash)
+	if meta.InfoHash != "" && !meta.FindAllCandidates {
+		if selected, found, lookupErr := s.searchRequestedTorrent(ctx, meta); lookupErr != nil {
+			return api.ClientSearchResult{}, lookupErr
+		} else if found {
+			return selected, nil
+		}
+		s.logger.Errorf("clients: requested infohash was not found in available clients; ignoring it and continuing ordinary discovery")
+	}
+	// Policy-driven retries retain the selected metadata but search ordinary
+	// alternatives when the preferred artifact cannot satisfy tracker limits.
+	meta.InfoHash = ""
 
 	constraints := resolvePieceConstraints(s.cfg)
 	result = api.ClientSearchResult{PieceSizeConstraint: constraints.label}
@@ -241,6 +256,52 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 	logPathedSearchMatches(s.logger, allMatches)
 
 	return result, nil
+}
+
+// searchRequestedTorrent tries the default client before other available clients.
+// An explicit client selection (including none) remains authoritative. Source and
+// export validation are shared with ordinary discovery; transport failures do not
+// prevent trying another client, while cancellation stops the lookup.
+func (s *Service) searchRequestedTorrent(ctx context.Context, meta api.ClientSubject) (api.ClientSearchResult, bool, error) {
+	clients, _ := resolveSearchClients(s.cfg, meta.ClientOverrides)
+	disabled := hasSearchDisableSelector(s.cfg.ClientSetup.SearchClients) ||
+		(!hasNonBlankSearchSelector(s.cfg.ClientSetup.SearchClients) && strings.EqualFold(strings.TrimSpace(s.cfg.ClientSetup.DefaultClient), "none"))
+	if meta.ClientOverrides.Client == nil && !disabled {
+		preferred := selectSearchClientNames(s.cfg.TorrentClients, []string{s.cfg.ClientSetup.DefaultClient})
+		all := make([]string, 0, len(s.cfg.TorrentClients))
+		for name := range s.cfg.TorrentClients {
+			all = append(all, name)
+		}
+		sort.Strings(all)
+		clients = dedupeStrings(append(append(preferred, clients...), all...))
+	}
+	var metadata api.ClientSearchResult
+	foundMetadata := false
+	for _, name := range clients {
+		clientCfg := s.cfg.TorrentClients[name]
+		clientType := strings.ToLower(strings.TrimSpace(clientCfg.ClientType()))
+		if clientType != "qbit" && clientType != "qbittorrent" && clientType != "qui" {
+			continue
+		}
+		selected, matches, err := s.searchQbitClient(ctx, name, clientCfg, meta, resolvePieceConstraints(s.cfg))
+		if ctx.Err() != nil {
+			return api.ClientSearchResult{}, false, fmt.Errorf("clients: requested infohash lookup canceled: %w", ctx.Err())
+		}
+		if err != nil {
+			s.logger.Debugf("clients: requested infohash lookup unavailable client=%s", name)
+			continue
+		}
+		if len(matches) == 0 {
+			continue
+		}
+		if selected.TorrentPath != "" || len(selected.TorrentCandidates) > 0 {
+			return selected, true, nil
+		}
+		if !foundMetadata {
+			metadata, foundMetadata = selected, true
+		}
+	}
+	return metadata, foundMetadata, nil
 }
 
 func logPathedSearchMatches(logger api.Logger, matches []api.TorrentMatch) {
@@ -453,17 +514,36 @@ func (s *Service) searchQbitClient(
 
 	var torrents []qbittorrent.Torrent
 	if useProxy {
-		items, err := searchProxyTorrentTerms(ctx, httpClient, proxyBaseURL, searchTerms)
+		var items []qbittorrent.Torrent
+		var err error
+		if meta.InfoHash != "" {
+			parsed, buildErr := buildProxySearchURL(proxyBaseURL, "")
+			if buildErr != nil {
+				return api.ClientSearchResult{}, nil, buildErr
+			}
+			query := parsed.Query()
+			query.Del("filter")
+			query.Del("search")
+			query.Set("hashes", meta.InfoHash)
+			parsed.RawQuery = query.Encode()
+			items, err = fetchProxyTorrents(ctx, httpClient, parsed.String())
+		} else {
+			items, err = searchProxyTorrentTerms(ctx, httpClient, proxyBaseURL, searchTerms)
+		}
 		if err != nil {
 			return api.ClientSearchResult{}, nil, err
 		}
 		torrents = items
 	} else {
-		items, err := qbitClient.GetTorrentsCtx(ctx, qbittorrent.TorrentFilterOptions{
+		options := qbittorrent.TorrentFilterOptions{
 			Sort:    "added_on",
 			Reverse: true,
 			Limit:   100,
-		})
+		}
+		if meta.InfoHash != "" {
+			options.Hashes = []string{meta.InfoHash}
+		}
+		items, err := qbitClient.GetTorrentsCtx(ctx, options)
 		if err != nil {
 			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s qbit list: %w", name, err)
 		}
@@ -487,7 +567,11 @@ func (s *Service) searchQbitClient(
 		default:
 		}
 
-		if !torrentMatchesMeta(torrent, meta) {
+		if meta.InfoHash != "" {
+			if normalizeQbitHash(torrent.Hash) != meta.InfoHash || !qbitTorrentSourceMatches(torrent, meta, clientCfg) {
+				continue
+			}
+		} else if !torrentMatchesMeta(torrent, meta) {
 			continue
 		}
 		nameMatched++
@@ -693,6 +777,10 @@ func qbitTorrentDataVerified(torrent qbittorrent.Torrent, meta api.ClientSubject
 		!qbitTorrentUploadComplete(torrent.State) {
 		return false
 	}
+	return qbitTorrentSourceMatches(torrent, meta, clientCfg)
+}
+
+func qbitTorrentSourceMatches(torrent qbittorrent.Torrent, meta api.ClientSubject, clientCfg config.TorrentClientConfig) bool {
 	expectedPath, err := sourcePathForQbitSavePath(meta)
 	if err != nil {
 		return false
@@ -823,7 +911,10 @@ func searchProxyTorrents(ctx context.Context, client *http.Client, proxyBase, se
 	if err != nil {
 		return nil, err
 	}
+	return fetchProxyTorrents(ctx, client, proxyURL.String())
+}
 
+func fetchProxyTorrents(ctx context.Context, client *http.Client, proxyURL string) ([]qbittorrent.Torrent, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxyURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("clients: proxy request: %w", err)
@@ -860,10 +951,10 @@ func searchProxyTorrents(ctx context.Context, client *http.Client, proxyBase, se
 	return wrapper.Torrents, nil
 }
 
-func buildProxySearchURL(proxyBase, searchTerm string) (string, error) {
+func buildProxySearchURL(proxyBase, searchTerm string) (*url.URL, error) {
 	parsed, err := url.Parse(proxyBase)
 	if err != nil {
-		return "", fmt.Errorf("clients: proxy url parse: %w", err)
+		return nil, fmt.Errorf("clients: proxy url parse: %w", err)
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/api/v2/torrents/search"
 	query := parsed.Query()
@@ -873,7 +964,7 @@ func buildProxySearchURL(proxyBase, searchTerm string) (string, error) {
 	query.Set("limit", "100")
 	query.Set("filter", "unregistered,tracker_down")
 	parsed.RawQuery = query.Encode()
-	return parsed.String(), nil
+	return parsed, nil
 }
 
 func fetchTorrentProperties(
@@ -1356,6 +1447,9 @@ func (s *Service) selectValidTorrent(
 				continue
 			}
 			localHash := local.HashInfoBytes().String()
+			if meta.InfoHash != "" && !strings.EqualFold(localHash, meta.InfoHash) {
+				continue
+			}
 			matched := slices.IndexFunc(matches, func(match api.TorrentMatch) bool { return strings.EqualFold(match.Hash, localHash) })
 			// The generic cache can alias another source with the same basename.
 			// Only a matching client record binds that cache to this discovery.

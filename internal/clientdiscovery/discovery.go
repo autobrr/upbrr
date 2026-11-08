@@ -108,16 +108,23 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 	}
 	logger := logging.FromContext(ctx, m.logger)
 	if input.Policy.Skip {
+		if input.Policy.InfoHash != "" {
+			logger.Errorf("client discovery: requested infohash ignored because client search is disabled")
+		}
 		logger.Debugf("client discovery: decision=skip reason=requested")
 		return Evidence{Disposition: DispositionSkipped}, nil
 	}
 	if m.clients == nil {
+		if input.Policy.InfoHash != "" {
+			logger.Errorf("client discovery: requested infohash ignored because no client is available; continuing ordinary discovery")
+		}
 		logger.Debugf("client discovery: decision=skip reason=client_unavailable")
 		return Evidence{Disposition: DispositionUnavailable}, nil
 	}
 
 	logger.Debugf("client discovery: decision=start files=%d disc=%t", len(input.FileList), strings.TrimSpace(input.DiscType) != "")
 	result, err := m.clients.SearchPathedTorrents(ctx, api.ClientSubject{
+		InfoHash:          input.Policy.InfoHash,
 		SourcePath:        strings.TrimSpace(input.SourcePath),
 		FileList:          append([]string(nil), input.FileList...),
 		DiscType:          strings.TrimSpace(input.DiscType),

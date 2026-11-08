@@ -31,8 +31,9 @@ import (
 )
 
 type captureLogger struct {
-	trace []string
-	debug []string
+	trace  []string
+	debug  []string
+	errors []string
 }
 
 func trackerPatternRegistry(t *testing.T) *trackers.Registry {
@@ -56,7 +57,9 @@ func (l *captureLogger) Infof(string, ...any) {}
 
 func (l *captureLogger) Warnf(string, ...any) {}
 
-func (l *captureLogger) Errorf(string, ...any) {}
+func (l *captureLogger) Errorf(format string, args ...any) {
+	l.errors = append(l.errors, fmt.Sprintf(format, args...))
+}
 
 func TestSearchPathedTorrentsProxyPrefersPieceSize(t *testing.T) {
 	t.Parallel()

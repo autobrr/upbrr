@@ -63,6 +63,7 @@ func TestCompositeUploadHydrationRestoresDurableDemandForPreparedRelease(t *test
 	}
 	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "durable-composite-hydration")
 	request.Source.Path = sourcePath
+	request.Torrent.InfoHash = new("abcdef0123456789abcdef0123456789abcdef01")
 	request.Duplicates.AllowUpload = []api.TrackerID{"beta"}
 	session, instructions, err := normalizeCompositeUploadRequest(request)
 	if err != nil {
@@ -122,6 +123,7 @@ func TestCompositeUploadHydrationRestoresDurableDemandForPreparedRelease(t *test
 	}
 	current := CommandResult{Release: &release}
 	if state.Composite == nil || state.Composite.Intent.Preparation == nil ||
+		state.Composite.Intent.Preparation.Search.InfoHash != *request.Torrent.InfoHash ||
 		!reflect.DeepEqual(state.PreparationDemand, requirements) || !reflect.DeepEqual(state.Composite.Intent.Preparation.MetadataRequirements, api.MetadataRequirementSet{}) {
 		t.Fatalf("restarted composite preparation state = %#v", state)
 	}

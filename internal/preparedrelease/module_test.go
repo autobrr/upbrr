@@ -884,6 +884,7 @@ func TestPreparationCompatibilityIncludesEvidencePolicyAndExcludesOneShotControl
 		{name: "only id", mutate: func(input *api.PrepareInput) { input.Policy.OnlyID = true }},
 		{name: "skip client", mutate: func(input *api.PrepareInput) { input.Search.Skip = true }},
 		{name: "client selector", mutate: func(input *api.PrepareInput) { input.Search.Client = stringPtr("qbit") }},
+		{name: "requested infohash", mutate: func(input *api.PrepareInput) { input.Search.InfoHash = "abcdef0123456789abcdef0123456789abcdef01" }},
 	}
 	for _, test := range included {
 		t.Run(test.name, func(t *testing.T) {

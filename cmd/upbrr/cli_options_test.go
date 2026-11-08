@@ -1461,7 +1461,7 @@ func TestParseCLIOptionsRejectsInvalidImageHost(t *testing.T) {
 
 func TestBuildCLIRequestInfoHashOverrides(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{
-		"--torrenthash", "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+		"--infohash", "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
 		"movie.mkv",
 	})
 	if err != nil {
@@ -1473,6 +1473,14 @@ func TestBuildCLIRequestInfoHashOverrides(t *testing.T) {
 	}
 	if req.TorrentOverrides.InfoHash == nil || *req.TorrentOverrides.InfoHash != "abcdef0123456789abcdef0123456789abcdef01" {
 		t.Fatalf("expected normalized infohash override, got %#v", req.TorrentOverrides.InfoHash)
+	}
+}
+
+func TestInfoHashHasOneCLIFlag(t *testing.T) {
+	for _, alias := range []string{"--torrenthash", "-th"} {
+		if _, _, _, err := parseCLIOptions([]string{alias, strings.Repeat("a", 40), "Example.Release.2026.mkv"}); err == nil {
+			t.Errorf("obsolete alias %s remains accepted", alias)
+		}
 	}
 }
 

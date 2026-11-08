@@ -774,6 +774,7 @@ func (m *Module) retainedClientEvidence(
 	}
 	evidence := current.resources.clientEvidence
 	if evidence.Disposition != preparationstate.ClientEvidenceDispositionSearched || evidence.Policy.Skip != input.Search.Skip ||
+		evidence.Policy.InfoHash != input.Search.InfoHash ||
 		(evidence.Policy.Client == nil) != (input.Search.Client == nil) ||
 		evidence.Policy.Client != nil && *evidence.Policy.Client != *input.Search.Client {
 		return nil

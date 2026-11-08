@@ -1,0 +1,255 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package torrentclient
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+
+	qbittorrent "github.com/autobrr/go-qbittorrent"
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+func TestInfoHashSelectsExactClientTorrentBeforeOrdinaryDiscovery(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "Example.Release.2026.mkv")
+	hash, data := createTestTorrent(t, dir, filepath.Base(source), 22)
+	if err := os.Remove(source + ".torrent"); err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	var orderMu sync.Mutex
+	newClient := func(name string, found bool) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v2/auth/login":
+				_, _ = w.Write([]byte("Ok."))
+			case "/api/v2/torrents/search", "/api/v2/torrents/info":
+				orderMu.Lock()
+				order = append(order, name)
+				orderMu.Unlock()
+				if r.URL.Query().Get("hashes") != hash || r.URL.Query().Get("filter") != "" || r.URL.Query().Get("search") != "" {
+					t.Error("lookup did not request the exact hash without name/status filters")
+				}
+				items := []qbittorrent.Torrent{}
+				if found {
+					items = append(items, qbittorrent.Torrent{
+						Hash:        hash,
+						Name:        "Client display label",
+						ContentPath: source,
+						Progress:    1,
+						State:       qbittorrent.TorrentStateStalledUp,
+						Size:        123,
+						TotalSize:   123,
+						Comment:     "https://blutopia.cc/torrents/2222",
+					})
+				}
+				_ = json.NewEncoder(w).Encode(items)
+			case "/api/v2/torrents/properties":
+				_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{})
+			case "/api/v2/torrents/export":
+				_, _ = w.Write(data)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+	}
+	first, second, unused := newClient("default", false), newClient("other", true), newClient("unused", true)
+	defer first.Close()
+	defer second.Close()
+	defer unused.Close()
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup:  config.ClientSetupConfig{DefaultClient: "z-default"},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"z-default": {Type: "qbit", URL: first.URL},
+			"a-other":   {Type: "qui", QuiProxyURL: second.URL},
+			"b-unused":  {Type: "qui", QuiProxyURL: unused.URL},
+		},
+	}
+	result, err := NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t)).SearchPathedTorrents(t.Context(), api.ClientSubject{
+		InfoHash:   strings.ToUpper(hash),
+		SourcePath: source,
+		FileList:   []string{source},
+	})
+	if err != nil || result.InfoHash != hash || result.TorrentPath == "" || result.TrackerIDs["blu"] != "2222" {
+		t.Fatalf("exact selection failed: hash=%s path=%t metadata=%s err=%v", result.InfoHash, result.TorrentPath != "", result.TrackerIDs["blu"], err)
+	}
+	orderMu.Lock()
+	if strings.Join(order, ",") != "default,other" {
+		t.Fatalf("client order=%v", order)
+	}
+	order = nil
+	orderMu.Unlock()
+	for _, selection := range []string{"b-unused", "none"} {
+		selected, err := NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t)).SearchPathedTorrents(t.Context(), api.ClientSubject{
+			InfoHash:        hash,
+			SourcePath:      source,
+			FileList:        []string{source},
+			ClientOverrides: api.ClientOverrides{Client: new(selection)},
+		})
+		if err != nil || (selection == "none" && selected.TorrentPath != "") || (selection != "none" && selected.InfoHash != hash) {
+			t.Fatalf("explicit client selection %s failed: artifact=%t err=%v", selection, selected.TorrentPath != "", err)
+		}
+		orderMu.Lock()
+		want := "unused"
+		if selection == "none" {
+			want = ""
+		}
+		if strings.Join(order, ",") != want {
+			t.Errorf("explicit selection searched other clients: %v", order)
+		}
+		order = nil
+		orderMu.Unlock()
+	}
+}
+
+func TestInfoHashMissAndUnsafeExportsFallBackWithDiagnostic(t *testing.T) {
+	for _, scenario := range []string{"missing", "wrong hash", "wrong path", "wrong export"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "Example.Release.2026.mkv")
+			hash, data := createTestTorrent(t, dir, filepath.Base(source), 22)
+			if err := os.Remove(source + ".torrent"); err != nil {
+				t.Fatal(err)
+			}
+			requested := strings.Repeat("a", 40)
+			if scenario == "wrong path" {
+				requested = hash
+			}
+			var lookup, ordinary atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v2/torrents/search":
+					items := []qbittorrent.Torrent{}
+					if r.URL.Query().Get("hashes") != "" {
+						lookup.Add(1)
+						candidate := qbittorrent.Torrent{
+							Hash:        requested,
+							Name:        filepath.Base(source),
+							ContentPath: source,
+							Comment:     "https://blutopia.cc/torrents/9999",
+						}
+
+						switch scenario {
+						case "wrong hash":
+							candidate.Hash = hash
+						case "wrong path":
+							candidate.ContentPath = filepath.Join(dir, "other", filepath.Base(source))
+						}
+						if scenario != "missing" {
+							items = append(items, candidate)
+						}
+					} else {
+						ordinary.Add(1)
+						items = append(items, qbittorrent.Torrent{
+							Hash:        hash,
+							Name:        filepath.Base(source),
+							ContentPath: source,
+							Comment:     "https://blutopia.cc/torrents/2222",
+						})
+					}
+					_ = json.NewEncoder(w).Encode(items)
+				case "/api/v2/torrents/properties":
+					_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{})
+				case "/api/v2/torrents/export":
+					_, _ = w.Write(data)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			logger := &captureLogger{}
+			cfg := config.Config{
+				MainSettings:   config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
+				ClientSetup:    config.ClientSetupConfig{DefaultClient: "qbit"},
+				TorrentClients: map[string]config.TorrentClientConfig{"qbit": {Type: "qui", QuiProxyURL: server.URL}},
+			}
+			result, err := NewServiceWithRegistry(cfg, logger, trackerPatternRegistry(t)).SearchPathedTorrents(t.Context(), api.ClientSubject{
+				InfoHash:   requested,
+				SourcePath: source,
+				FileList:   []string{source},
+			})
+			if err != nil || result.InfoHash != hash || result.TorrentPath == "" || result.TrackerIDs["blu"] != "2222" {
+				t.Fatalf("ordinary fallback failed: hash=%s artifact=%t metadata=%s err=%v", result.InfoHash, result.TorrentPath != "", result.TrackerIDs["blu"], err)
+			}
+			if lookup.Load() != 1 || ordinary.Load() == 0 || len(logger.errors) != 1 || !strings.Contains(logger.errors[0], "continuing ordinary discovery") {
+				t.Fatalf("missing bounded fallback diagnostic: lookup=%d ordinary=%d errors=%v", lookup.Load(), ordinary.Load(), logger.errors)
+			}
+		})
+	}
+}
+
+func TestInfoHashPolicyRetryFindsOrdinaryAlternatives(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "Example.Release.2026.mkv")
+	requested, firstData := createTestTorrent(t, dir, filepath.Base(source), 25)
+	alternative, secondData := createTestTorrent(t, dir, filepath.Base(source), 22)
+	if err := os.Remove(source + ".torrent"); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/search":
+			if r.URL.Query().Get("hashes") != "" {
+				t.Error("policy retry was restricted to the supplied hash")
+			}
+			_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{
+				{
+					Hash:        requested,
+					Name:        filepath.Base(source),
+					ContentPath: source,
+				},
+				{
+					Hash:        alternative,
+					Name:        filepath.Base(source),
+					ContentPath: source,
+				},
+			})
+		case "/api/v2/torrents/properties":
+			_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{})
+		case "/api/v2/torrents/export":
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
+			}
+			if r.Form.Get("hash") == requested {
+				_, _ = w.Write(firstData)
+			} else {
+				_, _ = w.Write(secondData)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	cfg := config.Config{
+		MainSettings:   config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup:    config.ClientSetupConfig{DefaultClient: "qbit"},
+		TorrentClients: map[string]config.TorrentClientConfig{"qbit": {Type: "qui", QuiProxyURL: server.URL}},
+	}
+	result, err := NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t)).SearchPathedTorrents(t.Context(), api.ClientSubject{
+		InfoHash:          requested,
+		SourcePath:        source,
+		FileList:          []string{source},
+		FindAllCandidates: true,
+	})
+	if err != nil || len(result.TorrentCandidates) != 2 {
+		t.Fatalf("policy retry did not capture alternatives: candidates=%d err=%v", len(result.TorrentCandidates), err)
+	}
+	found := false
+	for _, candidate := range result.TorrentCandidates {
+		found = found || candidate.InfoHash == alternative
+	}
+	if !found {
+		t.Fatal("compatible ordinary candidate was lost")
+	}
+}

@@ -607,6 +607,9 @@ func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 			input.ClientTorrentCandidates = append(input.ClientTorrentCandidates, found.TorrentCandidates...)
 		}
 	}
+	if input.TorrentOverrides.NoHash != nil && *input.TorrentOverrides.NoHash && !forcedRehash {
+		input.SkipIfRehashTrackers = append([]string(nil), input.Trackers...)
+	}
 	result, err := b.torrents.Create(ctx, input)
 	if err != nil {
 		return api.TorrentResult{}, fmt.Errorf("prepare torrent: %w", err)

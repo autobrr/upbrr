@@ -121,6 +121,8 @@ type PreparationPolicy struct {
 // ClientSearchPolicy contains fact-producing torrent-client search choices.
 // These values participate in preparation compatibility.
 type ClientSearchPolicy struct {
+	// InfoHash requests a matching client torrent before ordinary source discovery.
+	InfoHash string `json:",omitempty"`
 	// Skip disables torrent-client discovery for this preparation.
 	Skip bool
 	// Client optionally selects one configured client; nil uses normal client selection.
