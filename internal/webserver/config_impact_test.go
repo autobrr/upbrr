@@ -44,7 +44,17 @@ func TestConfigImpactsClassifiesEffectiveRoots(t *testing.T) {
 }
 
 func TestConfigImpactsIgnoreCompatibilitySettingsAndRetainActiveTrackerScope(t *testing.T) {
-	base := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BJS": {}, "FF": {}}}, TorrentClients: map[string]config.TorrentClientConfig{"qbit": {}}}
+	base := config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+"BJS": {},
+ "FF": {},
+ "AZ": {},
+ "DC": {},
+ "EMUW": {},
+ "SHRI": {},
+}},
+		TorrentClients: map[string]config.TorrentClientConfig{"watch": {Type:"watch"}},
+	}
 	next := config.Config{
 		MainSettings: config.MainSettingsConfig{
 			UpdateNotification:  true,
@@ -61,8 +71,15 @@ func TestConfigImpactsIgnoreCompatibilitySettingsAndRetainActiveTrackerScope(t *
 		ArrIntegration:     config.ArrIntegrationConfig{EmbyDir: "legacy"},
 		TorrentCreation:    config.TorrentCreationConfig{MkbrrThreads: 2},
 		PostUpload:         config.PostUploadConfig{CrossSeeding: true, ShowUploadDuration: true},
-		Trackers:           config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BJS": {}, "FF": {CheckRequests: true}}},
-		TorrentClients:     map[string]config.TorrentClientConfig{"qbit": {StorageDir: "legacy"}},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BJS": {},
+ "FF": {CheckRequests: true, FullMediainfo: true},
+ "AZ": {CheckForRules: true},
+ "DC": {UseMetadataName: true},
+			"EMUW": {UseSpanishTitle: true},
+ "SHRI": {UseItalianTitle: true},
+		}},
+		TorrentClients: map[string]config.TorrentClientConfig{"watch": {Type:"watch", StorageDir: "legacy"}},
 	}
 	if got := ConfigImpactDetails(base, next); len(got) != 0 {
 		t.Fatalf("compatibility-only impacts = %v", got)
@@ -79,7 +96,7 @@ func TestConfigImpactsIgnoreCompatibilitySettingsAndRetainActiveTrackerScope(t *
 			t.Fatalf("mixed active/compatibility impacts = %v", got)
 		}
 	}
-	if next.TorrentClients["qbit"].StorageDir != "legacy" || !next.Trackers.Trackers["FF"].CheckRequests {
+	if next.TorrentClients["watch"].StorageDir != "legacy" || !next.Trackers.Trackers["FF"].CheckRequests {
 		t.Fatal("impact comparison changed saved compatibility values")
 	}
 }

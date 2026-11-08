@@ -30,8 +30,15 @@ func TestEffectiveConfigFingerprintIgnoresDatabasePath(t *testing.T) {
 
 func TestEffectiveConfigFingerprintIgnoresCompatibilitySettingsWithoutMutatingStorage(t *testing.T) {
 	base := Config{
-		Trackers:       TrackersConfig{Trackers: map[string]TrackerConfig{"BJS": {Anon: true, ShowGroupIfAnon: true}, "FF": {}}},
-		TorrentClients: map[string]TorrentClientConfig{"qbit": {Type: "qbit", URL: "https://client.invalid"}},
+		Trackers: TrackersConfig{Trackers: map[string]TrackerConfig{
+			"BJS": {Anon: true, ShowGroupIfAnon: true},
+ "FF": {},
+ "AZ": {},
+ "DC": {},
+ "EMUW": {},
+ "SHRI": {},
+		}},
+		TorrentClients: map[string]TorrentClientConfig{"watch": {Type: "watch"}},
 	}
 	next := base
 	next.Trackers.Trackers = maps.Clone(base.Trackers.Trackers)
@@ -62,15 +69,14 @@ func TestEffectiveConfigFingerprintIgnoresCompatibilitySettingsWithoutMutatingSt
 		CrossSeeding:             true,
 		CrossSeedCheckEverything: true,
 	}
-	client := next.TorrentClients["qbit"]
+	client := next.TorrentClients["watch"]
 	client.StorageDir = "legacy torrent storage"
-	next.TorrentClients["qbit"] = client
-	tracker := next.Trackers.Trackers["FF"]
-	tracker.CheckForRules, tracker.CheckRequests, tracker.FullMediainfo = true, true, true
-	tracker.UseSpanishTitle, tracker.UseItalianTitle, tracker.UseMetadataName = true, true, true
-	tracker.PTGenAPI, tracker.LoginQuestion, tracker.LoginAnswer, tracker.UserID = "legacy endpoint", "legacy question", "synthetic answer", "legacy user"
-	tracker.Internal = true
-	next.Trackers.Trackers["FF"] = tracker
+	next.TorrentClients["watch"] = client
+	next.Trackers.Trackers["FF"] = TrackerConfig{CheckRequests: true, FullMediainfo: true}
+	next.Trackers.Trackers["AZ"] = TrackerConfig{CheckForRules: true}
+	next.Trackers.Trackers["DC"] = TrackerConfig{UseMetadataName: true}
+	next.Trackers.Trackers["EMUW"] = TrackerConfig{UseSpanishTitle: true}
+	next.Trackers.Trackers["SHRI"] = TrackerConfig{UseItalianTitle: true}
 	before, err := yaml.Marshal(next)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +96,7 @@ func TestEffectiveConfigFingerprintIgnoresCompatibilitySettingsWithoutMutatingSt
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(before, after) || next.TorrentClients["qbit"].StorageDir != "legacy torrent storage" || !next.Trackers.Trackers["FF"].CheckRequests {
+	if !bytes.Equal(before, after) || next.TorrentClients["watch"].StorageDir != "legacy torrent storage" || !next.Trackers.Trackers["FF"].CheckRequests {
 		t.Fatal("fingerprinting changed retained configuration values")
 	}
 	next.Metadata.KeepImages = true
