@@ -31,6 +31,12 @@ func TestCLIPreparationFailureRetainsReasonsBeforeFinalReport(t *testing.T) {
 						WorkflowID: "workflow-preparation",
 						Operation:  api.OperationKindPreparation,
 						Status:     api.StageStatusFailed,
+						Message:    failure.Message + "\x1b[2J",
+						Items: []api.WorkflowOperationItem{{
+							Kind:   "preparation_phase",
+							Label:  "Derive media facts\x1b[2J",
+							Status: api.StageStatusPartial,
+						}},
 						Failures: []api.WorkflowFailure{
 							{Failure: failure},
 							{Failure: api.OperationFailure{Message: "Metadata unavailable. token=synthetic-secret\x1b[2J"}},
@@ -92,13 +98,16 @@ func TestCLIPreparationFailureRetainsReasonsBeforeFinalReport(t *testing.T) {
 							t.Error("queue rollover lost the failure explanation")
 						}
 					}
-					for _, want := range []string{"will not proceed to tracker upload", failure.Message, "Metadata unavailable."} {
+					for _, want := range []string{"will not proceed to tracker upload", failure.Message, "Metadata unavailable.", "Partial metadata: Derive media facts"} {
 						if !strings.Contains(text, want) {
 							t.Errorf("preparation outcome missing %q", want)
 						}
 					}
 					if strings.ContainsAny(text, "\x1b\r") || strings.Contains(text, "synthetic-secret") {
 						t.Error("preparation outcome was not sanitized")
+					}
+					if strings.Count(text, failure.Message) != 1 {
+						t.Error("preparation outcome repeated the same sanitized failure")
 					}
 				})
 			})
