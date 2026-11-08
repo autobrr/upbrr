@@ -143,6 +143,28 @@ func TestBTNCountryAutofillUsesProviderMajority(t *testing.T) {
 			country: "17",
 		},
 		{
+			name: "one clear country cannot discard TMDB co-production evidence",
+			tvdb: &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb: &api.TMDBMetadata{OriginCountry: []string{"JP", "US"}},
+		},
+		{
+			name: "one clear country cannot discard IMDb co-production evidence",
+			tvdb: &api.TVDBMetadata{OriginalCountry: "usa"},
+			imdb: &api.IMDBMetadata{CountryList: "Japan, United States", Country: "United States"},
+		},
+		{
+			name: "partly supported country evidence retains ambiguity",
+			tvdb: &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb: &api.TMDBMetadata{OriginCountry: []string{"unknown-country", "JP"}},
+		},
+		{
+			name:    "two clear countries still outvote a co-production",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"JP", "US"}},
+			imdb:    &api.IMDBMetadata{CountryList: "United States"},
+			country: "2",
+		},
+		{
 			name: "multiple countries cannot break a tie",
 			tvdb: &api.TVDBMetadata{OriginalCountry: "usa"},
 			tmdb: &api.TMDBMetadata{OriginCountry: []string{"JP", "US"}},

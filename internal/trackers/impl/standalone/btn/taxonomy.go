@@ -89,9 +89,13 @@ func btnOriginalAudioCountryID(subject api.TrackerValidationSubject) string {
 	votes := make(map[string]int)
 	total := 0
 	for _, countries := range providerCountries {
-		if countryID := btnProviderCountryID(countries); countryID != "" {
+		countryID, known := btnProviderCountryID(countries)
+		if !known {
+			continue
+		}
+		total++
+		if countryID != "" {
 			votes[countryID]++
-			total++
 		}
 	}
 	for countryID, count := range votes {
@@ -102,21 +106,32 @@ func btnOriginalAudioCountryID(subject api.TrackerValidationSubject) string {
 	return ""
 }
 
-// btnProviderCountryID gives each provider one vote, abstaining when its origin
-// is missing, unsupported, or spans multiple countries.
-func btnProviderCountryID(countries []string) string {
+// btnProviderCountryID reports whether the provider has any supported origin.
+// Only fully supported, single-country origins cast a vote; co-productions and
+// partly supported origins remain in the majority total without voting.
+func btnProviderCountryID(countries []string) (string, bool) {
 	countryID := ""
+	known := false
+	ambiguous := false
 	for _, country := range countries {
 		if strings.TrimSpace(country) == "" {
 			continue
 		}
 		id := btnCountryMap[normalizeBTNCountryAlias(country)]
-		if id == "" || countryID != "" && id != countryID {
-			return ""
+		if id == "" {
+			ambiguous = true
+			continue
+		}
+		known = true
+		if countryID != "" && id != countryID {
+			ambiguous = true
 		}
 		countryID = id
 	}
-	return countryID
+	if ambiguous {
+		return "", known
+	}
+	return countryID, known
 }
 
 // btnLanguagePayload preserves full-disc behavior and uses reviewed primary
