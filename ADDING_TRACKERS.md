@@ -985,6 +985,11 @@ needed. If the tracker requires a genuinely new config field, also update:
 
 Prefer an existing semantically correct field over adding an alias for the same credential.
 
+Retained compatibility controls without feature consumers are excluded from workflow comparisons
+in `internal/config/effective_fingerprint.go`. When wiring one of these controls, remove its
+comparison exclusion and cover active-setting invalidation. Persist and export the original
+configuration, never the comparison-only view.
+
 ### 9. Unit3D tests
 
 At minimum, cover:

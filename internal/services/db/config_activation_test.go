@@ -520,10 +520,31 @@ func TestReconcileConfigActivationExpiredOperation(t *testing.T) {
 		workLease      time.Duration
 		legacyRecovery bool
 		unknownEffect  bool
+		comparisonOnly bool
 		wantErr        error
 		wantReason     string
 	}{
 		{name: "expired work", workLease: -time.Minute},
+		{
+			name:           "comparison-only expired work",
+			workLease:      -time.Minute,
+			comparisonOnly: true,
+		},
+		{
+			name:           "comparison-only live work",
+			workLease:      time.Minute,
+			comparisonOnly: true,
+			wantErr:        api.ErrActiveInputBusy,
+			wantReason:     "reason=operation_work_lease_live",
+		},
+		{
+			name:           "comparison-only unknown effect",
+			workLease:      -time.Minute,
+			comparisonOnly: true,
+			unknownEffect:  true,
+			wantErr:        api.ErrReleaseWorkflowEffectOutcomeUnknown,
+			wantReason:     "reason=unresolved_workflow_effect",
+		},
 		{
 			name:           "expired legacy recovery work",
 			workLease:      -time.Minute,
@@ -607,7 +628,11 @@ func TestReconcileConfigActivationExpiredOperation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			activation, err := repo.ReconcileConfigActivation(ctx, snapshot, expected, "current",
+			impacts := []api.ConfigImpactDetail{{Kind: api.ConfigImpactProvider}}
+			if test.comparisonOnly {
+				impacts = nil
+			}
+			activation, err := repo.ReconcileConfigActivationWithImpacts(ctx, snapshot, expected, "current", impacts,
 				func(record api.ReleaseWorkflowStateRecord, _ api.ConfigImpactDetail) (api.ReleaseWorkflowStateRecord, error) {
 					record.Revision++
 					record.UpdatedAt = record.UpdatedAt.Add(time.Nanosecond)
@@ -622,6 +647,20 @@ func TestReconcileConfigActivationExpiredOperation(t *testing.T) {
 			}
 			if test.wantErr == nil && (activation.ActiveGeneration != 1 || activation.Fingerprint != "current") {
 				t.Fatalf("reconciled activation = %#v", activation)
+			}
+			if test.comparisonOnly && test.wantErr == nil {
+				var revision int
+				var payload []byte
+				if err := repo.RawDB().QueryRowContext(ctx, `SELECT revision, state_json FROM release_workflow_states WHERE workflow_id = ?`, "workflow").Scan(&revision, &payload); err != nil {
+					t.Fatal(err)
+				}
+				if revision != 1 || string(payload) != `{"safe":"state"}` {
+					t.Fatal("comparison-only activation changed retained workflow evidence")
+				}
+				input, err := repo.LoadActiveInput(ctx)
+				if err != nil || input != prior {
+					t.Fatalf("comparison-only activation changed active input: %+v err=%v", input, err)
+				}
 			}
 			var status string
 			if err := repo.RawDB().QueryRowContext(ctx, `SELECT status FROM release_workflow_operations WHERE operation_id = ?`,

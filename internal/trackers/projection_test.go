@@ -19,6 +19,37 @@ type projectionStubDefinition struct {
 	prepareCalls *int
 }
 
+func TestSafeTrackerConfigFingerprintIgnoresCompatibilityButKeepsAttribution(t *testing.T) {
+	compat := config.TrackerConfig{
+		CheckForRules:   true,
+		CheckRequests:   true,
+		FullMediainfo:   true,
+		UseSpanishTitle: true,
+		UseItalianTitle: true,
+		UseMetadataName: true,
+	}
+	base, err := safeTrackerConfigFingerprint(config.TrackerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := safeTrackerConfigFingerprint(compat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != base {
+		t.Fatal("compatibility controls changed tracker identity")
+	}
+	for _, active := range []config.TrackerConfig{{Anon: true}, {ShowGroupIfAnon: true}} {
+		fingerprint, err := safeTrackerConfigFingerprint(active)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fingerprint == base {
+			t.Fatal("active attribution setting did not change tracker identity")
+		}
+	}
+}
+
 func TestSafeTrackerConfigFingerprintTracksGroupPolicies(t *testing.T) {
 	t.Parallel()
 
