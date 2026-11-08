@@ -242,6 +242,10 @@ func (s *cliWorkflowSession) executeContinuation(
 	s.current = current
 	s.publishPresentation(ctx)
 	if current.Operation != nil && isTerminalCLIWorkflowOperation(current.Operation.Status) {
+		if cliBridgeFromOutput(s.streams.out) == nil {
+			var progress cliMetadataProgress
+			progress.Print(s.progressWriter, *current.Operation, time.Now())
+		}
 		return cliWorkflowOperationError(*current.Operation)
 	}
 	if current.Operation != nil {

@@ -134,6 +134,8 @@ Trackers with a confirmed upload of the same verified submitted content are excl
 
 Final upload results report tracker submission and client injection separately, including failed and skipped submissions. An accepted upload remains accepted when client injection or local receipt retention fails. Inspect the reported failure and the torrent client before retrying; do not resubmit an accepted upload to repair client delivery. Printed debug/site-check reports also include retained preparation failures and the actual client injection outcome. The TUI includes these explanations in its tracker details and final summary; long queue summaries retain bounded excerpts.
 
+If release preparation stops before an upload report is available, plain output and the TUI release panel show the retained failure details. That input does not advance to tracker upload. The TUI queue summary also keeps the safe error explanation when the next input starts. Correct the reported problem before retrying; unattended mode does not ask for additional answers.
+
 | Option                     | Behavior                                                                                                                                      |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--debug`                  | Runs preparation and payload preview without tracker submission. Image uploads and client injection remain enabled unless explicitly skipped. |
@@ -486,6 +488,8 @@ Individual picture flags select manual work rather than the default audio operat
 | `--hdr-image-ids <id,id>`    | Select exact current HDR artifact IDs for descriptions on continuation.                                          |
 
 Retry and image-selection flags require `--hdr-resume-workflow`; do not combine resume with either new-analysis flag. Retry measurements before selecting their new artifact IDs, in separate invocations. Resume accepts configuration, logging, and unattended options but cannot change the retained analysis request. Use IDs from the retained workflow; they are opaque. A decoded retry does not authorize a native metadata rescan.
+
+The retained HDR report identifies each target and reports native-format and decoded-analysis outcomes, including saved failure and cancellation reasons. Successful artifact IDs remain listed even when other requested outputs are incomplete. Review those outcomes before choosing retry modes; printing the report does not retry analysis or select images.
 
 ### Audio analysis
 

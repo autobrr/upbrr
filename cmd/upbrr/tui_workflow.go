@@ -63,7 +63,7 @@ func publishCLIItemResult(streams cliIO, err error, status string) {
 	}
 	view.ItemFailed = err != nil
 	if err != nil {
-		view.Result = "Item failed or interrupted. Verify retained state before retrying."
+		view.Result = "Item failed or interrupted. Verify retained state before retrying.\n" + safeDiagnosticText(formatCLIError(err))
 	}
 	bridge.Publish(view)
 }
@@ -391,6 +391,9 @@ func (s *cliWorkflowSession) publishPresentation(ctx context.Context) {
 		view.OperationID = op.ID
 		view.Stage = op.Phase + " / " + string(op.Status)
 		view.Completed, view.Total = op.Completed, op.Total
+		if summary := cliPreparationFailureSummary(*op); summary != "" {
+			view.Summary = strings.TrimSpace(view.Summary + "\n" + summary)
+		}
 	}
 	if bridge := cliBridgeFromOutput(s.streams.out); bridge != nil {
 		bridge.mu.Lock()
