@@ -1504,9 +1504,13 @@ Advice about primary programme audio must use an unambiguous inspected primary t
 and exclude secondary roles. Missing facts produce no speculative recommendation.
 
 Origin-country defaults must use current, source-bound provider evidence and the inspected primary
-original-language audio. Normalize supported country codes and names, retain all co-production
-countries when checking agreement, and never use the work’s origin to infer a dub’s country.
-Explicit answers and finalized language corrections retain precedence.
+original-language audio. Normalize supported country codes and names. For BTN non-disc country autofill,
+each provider with at least one supported origin counts once toward the majority total. Only fully
+supported origins identifying one country cast a vote; co-productions and partly supported origins
+remain in the total without voting. Missing or entirely unsupported origins do not count. Autofill
+requires a strict majority of that total; otherwise, leave the country unresolved for the existing
+country question. Never use the work’s origin to infer a dub’s country. Explicit answers and finalized
+language corrections retain precedence.
 
 Compatibility-audio inference stays tracker-local and uses the shared measured-relationship
 helpers. A distinct same-resource stream with fully known matching languages may accompany one
