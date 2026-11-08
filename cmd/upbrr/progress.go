@@ -300,6 +300,13 @@ func (p *cliMetadataProgress) Print(output io.Writer, operation api.WorkflowOper
 	if output == nil || operation.Operation != api.OperationKindPreparation {
 		return
 	}
+	if summary := cliPreparationFailureSummary(operation); summary != "" {
+		if summary != p.message {
+			_, _ = fmt.Fprintln(output, summary)
+			p.lastPrinted, p.message, p.printed = now, summary, true
+		}
+		return
+	}
 	if p.lastPrinted.IsZero() {
 		p.lastPrinted = now
 	}
@@ -327,4 +334,24 @@ func (p *cliMetadataProgress) Print(output io.Writer, operation api.WorkflowOper
 	}
 	_, _ = fmt.Fprintln(output, "Metadata: "+safeDiagnosticText(message))
 	p.lastPrinted, p.message, p.printed = now, message, true
+}
+
+// cliPreparationFailureSummary explains retained preparation failures without
+// changing their error authority or starting recovery work.
+func cliPreparationFailureSummary(operation api.WorkflowOperationStatus) string {
+	if operation.Operation != api.OperationKindPreparation || !isTerminalCLIWorkflowOperation(operation.Status) || cliWorkflowOperationError(operation) == nil {
+		return ""
+	}
+	var summary strings.Builder
+	fmt.Fprintln(&summary, "Preparation stopped; this input will not proceed to tracker upload.")
+	message := strings.TrimSpace(operation.Message)
+	if message != "" {
+		fmt.Fprintln(&summary, message)
+	}
+	for _, failure := range operation.Failures {
+		if detail := cliWorkflowFailureMessage(failure.Failure); detail != message {
+			fmt.Fprintln(&summary, detail)
+		}
+	}
+	return strings.TrimSpace(safeDiagnosticText(summary.String()))
 }
