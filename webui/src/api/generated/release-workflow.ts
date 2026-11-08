@@ -1144,6 +1144,7 @@ export type LanguageFacts = Readonly<{
   AudioAbsent: boolean;
   AudioStatus: MetadataEvidenceStatus;
   FullSubtitleLanguages: readonly string[];
+  OriginalLanguageDefinitive: boolean;
   OriginalLanguages: readonly string[];
   OriginalLanguagesKnown: boolean;
   PrimaryAudioTrackID: string;

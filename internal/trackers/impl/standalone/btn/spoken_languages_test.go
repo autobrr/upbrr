@@ -11,17 +11,23 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestSpokenLanguageSetNeverSelectsFirstCountryLanguage(t *testing.T) {
+func TestSpokenLanguageAgreementSelectsCountryIndependentlyOfListOrder(t *testing.T) {
 	for _, languages := range [][]string{{"ja", "en"}, {"en", "ja"}} {
-		meta := btnCountryAutofillSubject()
-		meta.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
-			OriginalLanguage:      "Japanese",
-			TitleLanguages:        languages,
-			PrimaryAudioTrackID:   "audio-0",
-			TrackCoverageComplete: true,
-			Tracks:                meta.LanguageFacts.Tracks,
-		})
-		requireBTNCountryResolution(t, meta, "", true)
+		for _, original := range []string{"Japanese", "French"} {
+			meta := btnCountryAutofillSubject()
+			meta.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+				OriginalLanguage:      original,
+				TitleLanguages:        languages,
+				PrimaryAudioTrackID:   "audio-0",
+				TrackCoverageComplete: true,
+				Tracks:                meta.LanguageFacts.Tracks,
+			})
+			if original == "Japanese" {
+				requireBTNCountryResolution(t, meta, "17", false)
+			} else {
+				requireBTNCountryResolution(t, meta, "", true)
+			}
+		}
 	}
 }
 
@@ -77,7 +83,8 @@ func TestStaffApprovalUsesOriginalSoundtrackEvidence(t *testing.T) {
 		{"English original outweighs Italian production language", "it", "German", []string{"en"}, []string{"English"}, "", true, false},
 		{"English dub does not change Japanese original", "ja", "English", []string{"ja", "en"}, []string{"Japanese"}, "", false, false},
 		{"incidental English does not restrict a Japanese show's other dub", "ja", "German", []string{"ja", "en"}, []string{"Japanese"}, "", false, false},
-		{"multilingual original does not establish a primary language", "ja", "German", []string{"ja", "en"}, []string{"Japanese", "English"}, "", false, true},
+		{"unranked multilingual original does not establish a primary language", "fr", "German", []string{"ja", "en"}, []string{"Japanese", "English"}, "", false, true},
+		{"definitive Japanese resolves multilingual original", "ja", "German", []string{"ja", "en"}, []string{"Japanese", "English"}, "", false, false},
 		{"explicit original-language correction resolves a mixed reference", "ja", "German", []string{"ja", "en"}, []string{"Japanese", "English"}, api.FactProvenanceManual, false, false},
 		{"verified title correction overrides a conflicting Japanese original flag", "en", "German", []string{"ja", "en"}, []string{"Japanese"}, api.FactProvenanceManual, true, false},
 		{"verified non-English title correction governs an English original flag", "ja", "German", []string{"ja", "en"}, []string{"English"}, api.FactProvenanceManual, false, false},
@@ -133,9 +140,9 @@ func TestStaffApprovalAutoOriginPreservesConfirmedOriginal(t *testing.T) {
 		{"English Auto cannot override confirmed Japanese original", api.TrackAudioOriginal, "", "Japanese", false, false, false},
 		{"verified English original can establish English-original status", api.TrackAudioOriginal, api.TrackAudioOriginal, "Japanese", false, true, false},
 		{"cleared English origin does not establish English-original status", api.TrackAudioOriginal, api.TrackAudioUnresolved, "Japanese", false, false, false},
-		{"Auto can fill an original-source evidence gap", "", "", "Japanese", false, true, false},
-		{"und original language does not suppress the Auto fallback", api.TrackAudioOriginal, "", "und", false, true, false},
-		{"missing original language does not suppress the Auto fallback", api.TrackAudioOriginal, "", "", false, true, false},
+		{"agreement establishes Japanese original without source correction", "", "", "Japanese", false, false, false},
+		{"und original track does not override definitive Japanese title", api.TrackAudioOriginal, "", "und", false, false, false},
+		{"missing original track language does not override definitive Japanese title", api.TrackAudioOriginal, "", "", false, false, false},
 		{"title clear preserves confirmed Japanese original", api.TrackAudioOriginal, "", "Japanese", true, false, false},
 		{"title clear leaves Auto originals unresolved", "", "", "Japanese", true, false, true},
 	} {

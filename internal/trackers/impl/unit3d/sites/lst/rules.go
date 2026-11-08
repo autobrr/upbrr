@@ -246,6 +246,7 @@ func resourceLanguageFacts(subject api.TrackerValidationSubject, resource string
 	}
 	facts.OriginalLanguages = slices.Clone(canonical.OriginalLanguages)
 	facts.OriginalLanguagesKnown = canonical.OriginalLanguagesKnown
+	facts.OriginalLanguageDefinitive = canonical.OriginalLanguageDefinitive
 	if canonical.ProgrammeStatus == api.MetadataEvidenceStatusContradictory {
 		facts.ProgrammeStatus = api.MetadataEvidenceStatusContradictory
 	} else if len(canonical.ProgrammeLanguages) == 0 && canonical.ProgrammeStatus == api.MetadataEvidenceStatusPartial && !facts.AudioAbsent {

@@ -121,7 +121,8 @@ func englishOriginalShow(subject api.TrackerValidationSubject) (english, known b
 	if nonEnglishOriginal {
 		return false, true
 	}
-	if !originalObserved && facts.OriginalLanguagesKnown && languageutil.LanguageIdentityCount(facts.OriginalLanguages) == 1 {
+	if (!originalObserved || facts.OriginalLanguageDefinitive) && facts.OriginalLanguagesKnown &&
+		languageutil.LanguageIdentityCount(facts.OriginalLanguages) == 1 {
 		return languageutil.ContainsLanguage(facts.OriginalLanguages, "English"), true
 	}
 	return false, false

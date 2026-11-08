@@ -43,17 +43,28 @@ func AudioRole(title string) api.AudioTrackRole {
 }
 
 // ResolveLanguages projects corrected media evidence once at canonical
-// preparation. Automatic title dialogue evidence precedes the scalar fallback;
-// explicit original-language corrections, including clears, remain authoritative.
+// preparation. A single spoken language takes precedence; otherwise agreement
+// with the scalar original language establishes the original. Explicit corrections,
+// including clears, remain authoritative.
 // Aggregate corrections do not rewrite inspected track roles.
 func ResolveLanguages(media api.MediaFacts) api.LanguageFacts {
-	originalLanguages := []string{media.OriginalLanguage}
+	originalLanguages := languageutil.NormalizeLanguageList([]string{media.OriginalLanguage})
+	definitiveOriginal := media.OriginalLanguageProvenance.IsManual()
 	if !media.OriginalLanguageProvenance.IsManual() && len(media.TitleLanguages) > 0 {
-		originalLanguages = media.TitleLanguages
+		spokenLanguages := languageutil.NormalizeLanguageList(media.TitleLanguages)
+		switch {
+		case knownLanguages(spokenLanguages) && languageutil.LanguageIdentityCount(spokenLanguages) == 1:
+			originalLanguages = spokenLanguages
+			definitiveOriginal = true
+		case len(originalLanguages) == 1 && knownLanguages(originalLanguages) && languageutil.ContainsLanguage(spokenLanguages, originalLanguages[0]):
+			definitiveOriginal = true
+		default:
+			originalLanguages = spokenLanguages
+		}
 	}
 	facts := api.LanguageFacts{
 		AudioAbsent:           media.AudioAbsent && media.TrackCoverageComplete,
-		OriginalLanguages:     languageutil.NormalizeLanguageList(originalLanguages),
+		OriginalLanguages:     originalLanguages,
 		SubtitleLanguages:     subtitleBaseLanguages(append(slices.Clone(media.SubtitleLanguages), media.HardcodedSubtitleLanguages...)),
 		FullSubtitleLanguages: fullSubtitleLanguages(media),
 		Tracks:                media.Tracks,
@@ -107,6 +118,7 @@ func ResolveLanguages(media api.MediaFacts) api.LanguageFacts {
 		facts.ProgrammeStatus = api.MetadataEvidenceStatusComplete
 	}
 	facts.OriginalLanguagesKnown = knownLanguages(facts.OriginalLanguages)
+	facts.OriginalLanguageDefinitive = definitiveOriginal && facts.OriginalLanguagesKnown && languageutil.LanguageIdentityCount(facts.OriginalLanguages) == 1
 	facts.AudioStatus = facts.ProgrammeStatus
 	if (len(facts.OriginalLanguages) == 0 || !knownLanguages(facts.OriginalLanguages)) && facts.AudioStatus != api.MetadataEvidenceStatusContradictory {
 		facts.AudioStatus = api.MetadataEvidenceStatusPartial

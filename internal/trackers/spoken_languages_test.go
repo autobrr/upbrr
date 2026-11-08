@@ -42,7 +42,7 @@ func TestSpokenLanguageMatchDoesNotWaiveConfirmedDubRules(t *testing.T) {
 func TestEnglishDialogueDoesNotHideMultipleEnglishDubs(t *testing.T) {
 	subject := languageSubject("French", "French", "English", "English")
 	subject.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
-		OriginalLanguage:      "en",
+		OriginalLanguage:      "fr",
 		TitleLanguages:        []string{"en", "fr"},
 		TrackCoverageComplete: true,
 		Tracks:                subject.LanguageFacts.Tracks,

@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -30,12 +31,13 @@ func TestSpokenLanguagesSurviveCorrectionsRefreshAndRestart(t *testing.T) {
 	registry := impl.MustNewRegistry()
 	var generation api.PreparedGeneration
 	for _, step := range []struct {
-		name    string
-		want    []string
-		patch   *api.ReleaseCorrectionPatch
-		refresh bool
-		spoken  []string
-		legacy  bool
+		name                 string
+		want                 []string
+		patch                *api.ReleaseCorrectionPatch
+		refresh              bool
+		spoken               []string
+		legacy               bool
+		legacyClassification bool
 	}{
 		{name: "automatic set", want: []string{"de", "fr"}},
 		{
@@ -66,10 +68,15 @@ func TestSpokenLanguagesSurviveCorrectionsRefreshAndRestart(t *testing.T) {
 			patch: &api.ReleaseCorrectionPatch{ResetFields: []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataOriginalLanguage}}},
 		},
 		{
-			name:    "refreshed multilingual set",
-			want:    []string{"en", "fr"},
+			name:    "refreshed agreement selects original",
+			want:    []string{"en"},
 			refresh: true,
 			spoken:  []string{"en", "fr"},
+		},
+		{
+			name:                 "legacy original-language classification",
+			want:                 []string{"en"},
+			legacyClassification: true,
 		},
 		{
 			name:    "unusable set falls back",
@@ -86,26 +93,32 @@ func TestSpokenLanguagesSurviveCorrectionsRefreshAndRestart(t *testing.T) {
 		t.Run(step.name, func(t *testing.T) {
 			input := fixture.input
 			update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}
-			if step.legacy {
-				stale, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
-				if err != nil {
-					t.Fatal(err)
-				}
-				stale.Compatibility.ContractVersion = "prepared-release-v81-category-default"
-				stale.Identity.Resolution.ContractVersion = "external-identity-v15-category-default"
-				stale.ProviderMetadata.TMDB.SpokenLanguages = nil
-				stale.Media.TitleLanguages = nil
-				stale.Media.LanguageFacts = mediafacts.ResolveLanguages(stale.Media)
-				if err := repo.CommitPreparedRelease(t.Context(), stale); err != nil {
-					t.Fatal(err)
-				}
-			}
 			if generation != 0 {
 				if err := repo.Close(); err != nil {
 					t.Fatal(err)
 				}
 				module, repo = fixture.open(t)
 				input = api.PrepareInput{SourcePath: input.SourcePath, ExternalFreshness: api.ExternalFreshnessReuse}
+			}
+			if step.legacy || step.legacyClassification {
+				stale, err := repo.LoadPreparedRelease(t.Context(), input.SourcePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if step.legacy {
+					stale.Compatibility.ContractVersion = "prepared-release-v81-category-default"
+					stale.Identity.Resolution.ContractVersion = "external-identity-v15-category-default"
+					stale.ProviderMetadata.TMDB.SpokenLanguages = nil
+					stale.Media.TitleLanguages = nil
+					stale.Media.LanguageFacts = mediafacts.ResolveLanguages(stale.Media)
+				} else {
+					stale.Compatibility.ContractVersion = "prepared-release-v83-tmdb-spoken-languages"
+					stale.Media.LanguageFacts.OriginalLanguages = languageutil.NormalizeLanguageList(stale.Media.TitleLanguages)
+					stale.Media.LanguageFacts.OriginalLanguageDefinitive = false
+				}
+				if err := repo.CommitPreparedRelease(t.Context(), stale); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if step.patch != nil {
 				update = api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdatePatch, Patch: step.patch}
@@ -115,7 +128,7 @@ func TestSpokenLanguagesSurviveCorrectionsRefreshAndRestart(t *testing.T) {
 				input.ExternalFreshness = api.ExternalFreshnessRefresh
 			}
 			result := prepareCorrectionEvidence(t, module, input, update)
-			if step.legacy && result.Release.Generation <= generation {
+			if (step.legacy || step.legacyClassification) && result.Release.Generation <= generation {
 				t.Fatal("legacy language semantics reused the old generation")
 			}
 			if generation == 0 {
@@ -157,7 +170,7 @@ func TestSpokenLanguagesSurviveCorrectionsRefreshAndRestart(t *testing.T) {
 	}
 }
 
-func TestSpokenLanguagesKeepMultilingualOriginalName(t *testing.T) {
+func TestSpokenLanguagesDoNotInventMultilingualTrackOrigin(t *testing.T) {
 	fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Movie.2026.1080p.WEB-DL.H264-GRP.mkv")
 	fixture.input.Instructions.Category = new(api.CanonicalCategoryMovie)
 	fixture.tmdbSpokenLanguages = []string{"en", "fr"}
@@ -172,8 +185,8 @@ func TestSpokenLanguagesKeepMultilingualOriginalName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !subject.LanguageFacts.HasOriginalAudio() || subject.LanguageFacts.HasEnglishDub() {
-		t.Fatalf("multilingual original classification: %#v", subject.LanguageFacts)
+	if subject.LanguageFacts.HasOriginalAudio() || subject.LanguageFacts.HasEnglishDub() {
+		t.Fatalf("mixed track origin needs source evidence: %#v", subject.LanguageFacts)
 	}
 	prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "PTP", Meta: subject}, ptp.Profile().ReleaseNamePolicy)
 	if failure != nil {
@@ -183,5 +196,59 @@ func TestSpokenLanguagesKeepMultilingualOriginalName(t *testing.T) {
 		if strings.Contains(name, "Dual-Audio") || strings.Contains(name, "Dubbed") {
 			t.Fatalf("multilingual original acquired a dub marker: %q", name)
 		}
+	}
+}
+
+func TestDefinitiveOriginalLanguageControlsPreparedAudio(t *testing.T) {
+	for _, tc := range []struct {
+		name, audio, marker string
+		spoken              []string
+		original            bool
+	}{
+		{"English-only dub", "en", "Dubbed", []string{"ja", "en"}, false},
+		{"Japanese and English dual audio", "ja", "Dual-Audio", []string{"ja", "en"}, true},
+		{"single English spoken language wins", "en", "", []string{"en"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newCorrectionEvidenceFixtureForSource(t, "Example.Movie.2026.1080p.WEB-DL.H264-GRP.mkv")
+			fixture.input.Instructions.Category = new(api.CanonicalCategoryMovie)
+			fixture.tmdbOriginalLanguage = "ja"
+			fixture.tmdbSpokenLanguages = tc.spoken
+			audio := fmt.Sprintf(`{"@type":"Audio","ID":"1","StreamOrder":"1","Language":%q,"Format":"AAC","Channels":"2","Default":"Yes"}`, tc.audio)
+			if tc.marker == "Dual-Audio" {
+				audio += `,{"@type":"Audio","ID":"2","StreamOrder":"2","Language":"en","Format":"AAC","Channels":"2","Default":"No"}`
+			}
+			fixture.mediaInfo = mediainfo.NewService(nil, &programmeReportAnalyzer{report: `{"media":{"track":[
+				{"@type":"General","UniqueID":"1234567890","Format":"Matroska"},
+				{"@type":"Video","Format":"AVC","Width":"1920","Height":"1080","FrameRate":"24","ScanType":"Progressive","BitDepth":"8"},` + audio + `]}}`})
+			module, _ := fixture.open(t)
+			result := prepareCorrectionEvidence(t, module, fixture.input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+			subject, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: fixture.input.SourcePath, Generation: result.Release.Generation}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if subject.LanguageFacts.HasOriginalAudio() != tc.original || subject.LanguageFacts.HasEnglishDub() != (tc.marker != "") {
+				t.Fatalf("prepared audio origin: %#v", subject.LanguageFacts)
+			}
+			prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "PTP", Meta: subject}, ptp.Profile().ReleaseNamePolicy)
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			for _, name := range []string{subject.ReleaseName, prepared.Projection.UploadReleaseName} {
+				for _, marker := range []string{"Dubbed", "Dual-Audio"} {
+					if strings.Contains(name, marker) != (marker == tc.marker) {
+						t.Fatalf("release name %q, want marker %q", name, tc.marker)
+					}
+				}
+			}
+			failures, err := trackers.EvaluateTrackerValidationWithRegistry(t.Context(), impl.MustNewRegistry(), "BHD", api.NewTrackerValidationSubject(subject, "BHD"), api.NopLogger{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			missingOriginal := slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "language_original" && api.IsStrictRuleFailure(f) })
+			if missingOriginal == tc.original {
+				t.Fatalf("missing original=%t, original present=%t: %#v", missingOriginal, tc.original, failures)
+			}
+		})
 	}
 }

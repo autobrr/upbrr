@@ -1320,21 +1320,22 @@ func preserveCorrectionGeneration(t *testing.T, release *api.PreparedRelease) {
 }
 
 type correctionEvidenceFixture struct {
-	dbPath              string
-	mediaInfo           mediainfo.Exporter
-	input               api.PrepareInput
-	http                *http.Client
-	tvdb                TVDBClient
-	imdb                IMDBClient
-	tmdbExternalIDs     string
-	tmdbSpokenLanguages []string
-	tmdbAnime           bool
-	noTMDBResults       bool
-	tvmaze              TVmazeClient
-	tvdbAliasYear       bool
-	tvdbRemoteIDs       string
-	mu                  sync.Mutex
-	calls               map[string]int
+	dbPath               string
+	mediaInfo            mediainfo.Exporter
+	input                api.PrepareInput
+	http                 *http.Client
+	tvdb                 TVDBClient
+	imdb                 IMDBClient
+	tmdbExternalIDs      string
+	tmdbSpokenLanguages  []string
+	tmdbOriginalLanguage string
+	tmdbAnime            bool
+	noTMDBResults        bool
+	tvmaze               TVmazeClient
+	tvdbAliasYear        bool
+	tvdbRemoteIDs        string
+	mu                   sync.Mutex
+	calls                map[string]int
 }
 
 func newCorrectionEvidenceFixture(t *testing.T) *correctionEvidenceFixture {
@@ -1485,6 +1486,9 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 					body = `{"logos":[]}`
 				}
 			}
+		}
+		if (key == "/3/movie/555001" || key == "/3/tv/555001") && fixture.tmdbOriginalLanguage != "" {
+			body = strings.Replace(body, `"original_language":"en"`, `"original_language":"`+fixture.tmdbOriginalLanguage+`"`, 1)
 		}
 		if (key == "/3/movie/555001" || key == "/3/tv/555001") && fixture.tmdbSpokenLanguages != nil {
 			spoken := make([]map[string]string, 0, len(fixture.tmdbSpokenLanguages))

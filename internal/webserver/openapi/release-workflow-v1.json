@@ -4359,6 +4359,9 @@
               "type": "string"
             }
           },
+          "OriginalLanguageDefinitive": {
+            "type": "boolean"
+          },
           "OriginalLanguages": {
             "type": "array",
             "items": {
@@ -4403,6 +4406,7 @@
           "AudioAbsent",
           "AudioStatus",
           "FullSubtitleLanguages",
+          "OriginalLanguageDefinitive",
           "OriginalLanguages",
           "OriginalLanguagesKnown",
           "PrimaryAudioTrackID",
