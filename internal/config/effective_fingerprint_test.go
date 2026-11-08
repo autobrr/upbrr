@@ -31,12 +31,12 @@ func TestEffectiveConfigFingerprintIgnoresDatabasePath(t *testing.T) {
 func TestEffectiveConfigFingerprintIgnoresCompatibilitySettingsWithoutMutatingStorage(t *testing.T) {
 	base := Config{
 		Trackers: TrackersConfig{Trackers: map[string]TrackerConfig{
-			"BJS": {Anon: true, ShowGroupIfAnon: true},
- "FF": {},
- "AZ": {},
- "DC": {},
- "EMUW": {},
- "SHRI": {},
+			"BJS":  {Anon: true, ShowGroupIfAnon: true},
+			"FF":   {},
+			"AZ":   {},
+			"DC":   {},
+			"EMUW": {},
+			"SHRI": {},
 		}},
 		TorrentClients: map[string]TorrentClientConfig{"watch": {Type: "watch"}},
 	}
@@ -72,7 +72,11 @@ func TestEffectiveConfigFingerprintIgnoresCompatibilitySettingsWithoutMutatingSt
 	client := next.TorrentClients["watch"]
 	client.StorageDir = "legacy torrent storage"
 	next.TorrentClients["watch"] = client
-	next.Trackers.Trackers["FF"] = TrackerConfig{CheckRequests: true, FullMediainfo: true}
+	next.Trackers.Trackers["FF"] = TrackerConfig{
+		CheckRequests: true,
+		FullMediainfo: true,
+		Internal:      true,
+	}
 	next.Trackers.Trackers["AZ"] = TrackerConfig{CheckForRules: true}
 	next.Trackers.Trackers["DC"] = TrackerConfig{UseMetadataName: true}
 	next.Trackers.Trackers["EMUW"] = TrackerConfig{UseSpanishTitle: true}

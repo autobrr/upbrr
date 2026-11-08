@@ -46,14 +46,14 @@ func TestConfigImpactsClassifiesEffectiveRoots(t *testing.T) {
 func TestConfigImpactsIgnoreCompatibilitySettingsAndRetainActiveTrackerScope(t *testing.T) {
 	base := config.Config{
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-"BJS": {},
- "FF": {},
- "AZ": {},
- "DC": {},
- "EMUW": {},
- "SHRI": {},
-}},
-		TorrentClients: map[string]config.TorrentClientConfig{"watch": {Type:"watch"}},
+			"BJS":  {},
+			"FF":   {},
+			"AZ":   {},
+			"DC":   {},
+			"EMUW": {},
+			"SHRI": {},
+		}},
+		TorrentClients: map[string]config.TorrentClientConfig{"watch": {Type: "watch"}},
 	}
 	next := config.Config{
 		MainSettings: config.MainSettingsConfig{
@@ -73,13 +73,17 @@ func TestConfigImpactsIgnoreCompatibilitySettingsAndRetainActiveTrackerScope(t *
 		PostUpload:         config.PostUploadConfig{CrossSeeding: true, ShowUploadDuration: true},
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 			"BJS": {},
- "FF": {CheckRequests: true, FullMediainfo: true},
- "AZ": {CheckForRules: true},
- "DC": {UseMetadataName: true},
+			"FF": {
+				CheckRequests: true,
+				FullMediainfo: true,
+				Internal:      true,
+			},
+			"AZ":   {CheckForRules: true},
+			"DC":   {UseMetadataName: true},
 			"EMUW": {UseSpanishTitle: true},
- "SHRI": {UseItalianTitle: true},
+			"SHRI": {UseItalianTitle: true},
 		}},
-		TorrentClients: map[string]config.TorrentClientConfig{"watch": {Type:"watch", StorageDir: "legacy"}},
+		TorrentClients: map[string]config.TorrentClientConfig{"watch": {Type: "watch", StorageDir: "legacy"}},
 	}
 	if got := ConfigImpactDetails(base, next); len(got) != 0 {
 		t.Fatalf("compatibility-only impacts = %v", got)
