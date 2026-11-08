@@ -116,6 +116,7 @@ func (m *Module) evaluateInputReadiness(
 	state.InputReadiness[snapshot.ID] = snapshot
 	state.TrackerScope = slices.Clone(trackerIDs)
 	state.Workflow.InputReadiness = &api.InputReadinessSnapshotRef{ID: snapshot.ID, Revision: snapshot.Revision}
+	state.InputReview = nil
 	setWorkflowStageStatus(&state.Workflow, snapshot.Status, snapshot.RequiredActions, nil)
 	return CommandResult{InputReadiness: &snapshot}, nil
 }

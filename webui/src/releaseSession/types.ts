@@ -39,6 +39,7 @@ import type {
   DescriptionInstructions,
   DescriptionSet,
   InputReadinessSnapshot,
+  InputReviewContext,
   MediaArtifactSet,
   MediaCaptureInstructions,
   MetadataOverrides,
@@ -166,6 +167,8 @@ export type InputFacet = Readonly<{
     preview: MetadataPreview | null;
     release: PreparedRelease | null;
     readiness: InputReadinessSnapshot | null;
+    /** Display evidence only; never a substitute for current preparation or readiness. */
+    retainedReview?: (Omit<InputReviewContext, "release"> & { release: PreparedRelease }) | null;
     trackerData: readonly TrackerPreview[];
     source: Readonly<{ discCount: number; discType: string }>;
     playlist: Readonly<{

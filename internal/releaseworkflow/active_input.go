@@ -635,6 +635,11 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			} else {
 				state.PendingDuplicateReuse = nil
 			}
+			if prior.SourceVersion == record.SourceVersion {
+				retainInputReview(&state)
+			} else {
+				state.InputReview = nil
+			}
 			invalidatePreparedAndDownstream(&state.Workflow)
 			if state.Composite != nil {
 				state.Composite.LastCommittedRevision = state.Workflow.Revision

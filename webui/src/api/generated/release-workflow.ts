@@ -1129,6 +1129,12 @@ export type InputReadinessSnapshotRef = Readonly<{
   revision: WorkflowRevision;
 }>;
 
+export type InputReviewContext = Readonly<{
+  fields?: readonly InputReadinessFieldOutcome[];
+  release: PreparedRelease;
+  selectedTrackerIds?: readonly TrackerID[];
+}>;
+
 export type InteractionMode = string;
 
 export type InvalidateReleaseWorkflowTrackersRequest = Readonly<{
@@ -1922,6 +1928,7 @@ export type ReleaseWorkflowCurrent = Readonly<{
   hdrComparison?: HDRComparisonSourceRef | null;
   hdrPendingRequest?: HDRAnalysisInstructions | null;
   inputReadiness?: InputReadinessSnapshot | null;
+  inputReview?: InputReviewContext | null;
   media?: MediaArtifactSet | null;
   operation?: Operation | null;
   preflight?: TrackerPreflightAssessment | null;
