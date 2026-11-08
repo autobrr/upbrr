@@ -5,6 +5,7 @@ package torrentclient
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -34,10 +36,13 @@ func TestInfoHashSelectsExactClientTorrentBeforeOrdinaryDiscovery(t *testing.T) 
 			case "/api/v2/auth/login":
 				_, _ = w.Write([]byte("Ok."))
 			case "/api/v2/torrents/search", "/api/v2/torrents/info":
+				if r.URL.Path != "/api/v2/torrents/info" {
+					t.Error("exact lookup did not use the hash-capable info endpoint")
+				}
 				orderMu.Lock()
 				order = append(order, name)
 				orderMu.Unlock()
-				if r.URL.Query().Get("hashes") != hash || r.URL.Query().Get("filter") != "" || r.URL.Query().Get("search") != "" {
+				if (r.URL.Query().Get("hashes") != hash && name != "recheck") || r.URL.Query().Get("filter") != "" || r.URL.Query().Get("search") != "" {
 					t.Error("lookup did not request the exact hash without name/status filters")
 				}
 				items := []qbittorrent.Torrent{}
@@ -58,6 +63,8 @@ func TestInfoHashSelectsExactClientTorrentBeforeOrdinaryDiscovery(t *testing.T) 
 				_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{})
 			case "/api/v2/torrents/export":
 				_, _ = w.Write(data)
+			case "/api/v2/torrents/recheck":
+				w.WriteHeader(http.StatusServiceUnavailable)
 			default:
 				w.WriteHeader(http.StatusNotFound)
 			}
@@ -111,6 +118,24 @@ func TestInfoHashSelectsExactClientTorrentBeforeOrdinaryDiscovery(t *testing.T) 
 		order = nil
 		orderMu.Unlock()
 	}
+	recheckClient := newClient("recheck", true)
+	defer recheckClient.Close()
+	cfg.TorrentClients["z-default"] = config.TorrentClientConfig{Type: "qbit", URL: recheckClient.URL}
+	for _, alternatives := range []bool{false, true} {
+		_, err = NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t)).SearchPathedTorrents(t.Context(), api.ClientSubject{
+			InfoHash:          hash,
+			SourcePath:        source,
+			FileList:          []string{source},
+			FindAllCandidates: alternatives,
+			ClientOverrides:   api.ClientOverrides{ForceRecheck: new(true)},
+		})
+		orderMu.Lock()
+		if !errors.Is(err, internalerrors.ErrClientRecheckFailed) || strings.Join(order, ",") != "recheck" {
+			t.Errorf("failed explicit recheck was ignored: alternatives=%t order=%v err=%v", alternatives, order, err)
+		}
+		order = nil
+		orderMu.Unlock()
+	}
 }
 
 func TestInfoHashMissAndUnsafeExportsFallBackWithDiagnostic(t *testing.T) {
@@ -129,7 +154,7 @@ func TestInfoHashMissAndUnsafeExportsFallBackWithDiagnostic(t *testing.T) {
 			var lookup, ordinary atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/torrents/search":
+				case "/api/v2/torrents/search", "/api/v2/torrents/info":
 					items := []qbittorrent.Torrent{}
 					if r.URL.Query().Get("hashes") != "" {
 						lookup.Add(1)
@@ -231,17 +256,40 @@ func TestInfoHashPolicyRetryFindsOrdinaryAlternatives(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	var defaultUnavailable atomic.Bool
+	defaultClient := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if defaultUnavailable.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if r.URL.Path != "/api/v2/torrents/search" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{})
+	}))
+	defer defaultClient.Close()
+	unavailableClient := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer unavailableClient.Close()
 	cfg := config.Config{
-		MainSettings:   config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
-		ClientSetup:    config.ClientSetupConfig{DefaultClient: "qbit"},
-		TorrentClients: map[string]config.TorrentClientConfig{"qbit": {Type: "qui", QuiProxyURL: server.URL}},
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup:  config.ClientSetupConfig{DefaultClient: "default"},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"default":       {Type: "qui", QuiProxyURL: defaultClient.URL},
+			"other":         {Type: "qui", QuiProxyURL: server.URL},
+			"z-unavailable": {Type: "qui", QuiProxyURL: unavailableClient.URL},
+		},
 	}
-	result, err := NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t)).SearchPathedTorrents(t.Context(), api.ClientSubject{
+	subject := api.ClientSubject{
 		InfoHash:          requested,
 		SourcePath:        source,
 		FileList:          []string{source},
 		FindAllCandidates: true,
-	})
+	}
+	clients := NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t))
+	result, err := clients.SearchPathedTorrents(t.Context(), subject)
 	if err != nil || len(result.TorrentCandidates) != 2 {
 		t.Fatalf("policy retry did not capture alternatives: candidates=%d err=%v", len(result.TorrentCandidates), err)
 	}
@@ -251,5 +299,22 @@ func TestInfoHashPolicyRetryFindsOrdinaryAlternatives(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("compatible ordinary candidate was lost")
+	}
+	defaultUnavailable.Store(true)
+	selected, err := clients.SearchPathedTorrents(t.Context(), subject)
+	if err != nil || len(selected.TorrentCandidates) != 2 {
+		t.Fatalf("unavailable default blocked compatible alternatives: candidates=%d err=%v", len(selected.TorrentCandidates), err)
+	}
+	for _, selection := range []string{"default", "none"} {
+		subject.ClientOverrides.Client = new(selection)
+		selected, err := clients.SearchPathedTorrents(t.Context(), subject)
+		if err != nil || len(selected.TorrentCandidates) != 0 {
+			t.Fatalf("policy retry ignored client selection %s: candidates=%d err=%v", selection, len(selected.TorrentCandidates), err)
+		}
+	}
+	subject.InfoHash = ""
+	subject.ClientOverrides.Client = new("default")
+	if _, err := clients.SearchPathedTorrents(t.Context(), subject); err == nil {
+		t.Fatal("ordinary discovery ignored the selected client's failure")
 	}
 }

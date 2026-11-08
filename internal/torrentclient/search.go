@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -120,8 +121,8 @@ type torrentDataValidation struct {
 // retained as a content-addressed mode-0600 snapshot below the configured DB
 // temporary directory, alongside the generic export cache. A requested
 // force recheck also mutates direct qBittorrent state and waits for checking to
-// finish. Client-level failures abort ordinary search; exact-hash lookup tries
-// other clients first. Property or tracker lookup
+// finish. Client-level failures abort ordinary search; exact-hash lookup and its
+// policy retries try other clients first. Property or tracker lookup
 // failures degrade individual records, while export failures retain available
 // client metadata.
 func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubject) (result api.ClientSearchResult, err error) {
@@ -153,15 +154,19 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 		}
 		s.logger.Errorf("clients: requested infohash was not found in available clients; ignoring it and continuing ordinary discovery")
 	}
-	// Policy-driven retries retain the selected metadata but search ordinary
-	// alternatives when the preferred artifact cannot satisfy tracker limits.
+	clients, usedFallback := resolveSearchClients(s.cfg, meta.ClientOverrides)
+	infoHashRetry := meta.InfoHash != "" && meta.FindAllCandidates
+	if infoHashRetry {
+		clients = resolveInfoHashSearchClients(s.cfg, meta.ClientOverrides)
+	}
+	// Policy-driven retries keep the lookup's client scope but remove its hash
+	// filter when the preferred artifact cannot satisfy tracker limits.
 	meta.InfoHash = ""
 
 	constraints := resolvePieceConstraints(s.cfg)
 	result = api.ClientSearchResult{PieceSizeConstraint: constraints.label}
 	s.logger.Tracef("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
 
-	clients, usedFallback := resolveSearchClients(s.cfg, meta.ClientOverrides)
 	if len(clients) == 0 {
 		s.logger.Debugf("clients: no search clients configured (default_torrent_client/searching_client_list), skipping pathed search")
 		return result, nil
@@ -198,6 +203,10 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 
 		clientResult, matches, err := s.searchQbitClient(ctx, name, clientCfg, meta, constraints)
 		if err != nil {
+			if infoHashRetry && ctx.Err() == nil && !errors.Is(err, internalerrors.ErrClientRecheckFailed) {
+				s.logger.Debugf("clients: requested infohash retry unavailable client=%s", name)
+				continue
+			}
 			return api.ClientSearchResult{}, err
 		}
 		s.logger.Tracef(
@@ -263,21 +272,9 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 // export validation are shared with ordinary discovery; transport failures do not
 // prevent trying another client, while cancellation stops the lookup.
 func (s *Service) searchRequestedTorrent(ctx context.Context, meta api.ClientSubject) (api.ClientSearchResult, bool, error) {
-	clients, _ := resolveSearchClients(s.cfg, meta.ClientOverrides)
-	disabled := hasSearchDisableSelector(s.cfg.ClientSetup.SearchClients) ||
-		(!hasNonBlankSearchSelector(s.cfg.ClientSetup.SearchClients) && strings.EqualFold(strings.TrimSpace(s.cfg.ClientSetup.DefaultClient), "none"))
-	if meta.ClientOverrides.Client == nil && !disabled {
-		preferred := selectSearchClientNames(s.cfg.TorrentClients, []string{s.cfg.ClientSetup.DefaultClient})
-		all := make([]string, 0, len(s.cfg.TorrentClients))
-		for name := range s.cfg.TorrentClients {
-			all = append(all, name)
-		}
-		sort.Strings(all)
-		clients = dedupeStrings(append(append(preferred, clients...), all...))
-	}
 	var metadata api.ClientSearchResult
 	foundMetadata := false
-	for _, name := range clients {
+	for _, name := range resolveInfoHashSearchClients(s.cfg, meta.ClientOverrides) {
 		clientCfg := s.cfg.TorrentClients[name]
 		clientType := strings.ToLower(strings.TrimSpace(clientCfg.ClientType()))
 		if clientType != "qbit" && clientType != "qbittorrent" && clientType != "qui" {
@@ -288,6 +285,9 @@ func (s *Service) searchRequestedTorrent(ctx context.Context, meta api.ClientSub
 			return api.ClientSearchResult{}, false, fmt.Errorf("clients: requested infohash lookup canceled: %w", ctx.Err())
 		}
 		if err != nil {
+			if errors.Is(err, internalerrors.ErrClientRecheckFailed) {
+				return api.ClientSearchResult{}, false, err
+			}
 			s.logger.Debugf("clients: requested infohash lookup unavailable client=%s", name)
 			continue
 		}
@@ -302,6 +302,20 @@ func (s *Service) searchRequestedTorrent(ctx context.Context, meta api.ClientSub
 		}
 	}
 	return metadata, foundMetadata, nil
+}
+
+// resolveInfoHashSearchClients keeps exact lookup and policy retries in the same
+// client scope, with explicit client and disabled-search selectors authoritative.
+func resolveInfoHashSearchClients(cfg config.Config, overrides api.ClientOverrides) []string {
+	clients, _ := resolveSearchClients(cfg, overrides)
+	disabled := hasSearchDisableSelector(cfg.ClientSetup.SearchClients) ||
+		(!hasNonBlankSearchSelector(cfg.ClientSetup.SearchClients) && strings.EqualFold(strings.TrimSpace(cfg.ClientSetup.DefaultClient), "none"))
+	if overrides.Client == nil && !disabled {
+		preferred := selectSearchClientNames(cfg.TorrentClients, []string{cfg.ClientSetup.DefaultClient})
+		all := slices.Sorted(maps.Keys(cfg.TorrentClients))
+		clients = dedupeStrings(append(append(preferred, clients...), all...))
+	}
+	return clients
 }
 
 func logPathedSearchMatches(logger api.Logger, matches []api.TorrentMatch) {
@@ -521,6 +535,7 @@ func (s *Service) searchQbitClient(
 			if buildErr != nil {
 				return api.ClientSearchResult{}, nil, buildErr
 			}
+			parsed.Path = strings.TrimSuffix(parsed.Path, "/search") + "/info"
 			query := parsed.Query()
 			query.Del("filter")
 			query.Del("search")
@@ -1534,7 +1549,7 @@ func (s *Service) selectValidTorrent(
 			return nil
 		}
 		if err := forceRecheckTorrent(ctx, qbitClient, hash, s.logger); err != nil {
-			return err
+			return fmt.Errorf("%w: %w", internalerrors.ErrClientRecheckFailed, err)
 		}
 		rechecked[hash] = struct{}{}
 		return nil

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"testing"
 
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -121,6 +122,12 @@ func TestDiscoverDegradesSearchErrorsAndPreservesCancellation(t *testing.T) {
 	)
 	if err != nil || evidence.Disposition != DispositionUnavailable {
 		t.Fatalf("search evidence=%#v err=%v", evidence, err)
+	}
+	_, err = New(&recordingClient{err: errors.Join(internalerrors.ErrClientRecheckFailed, searchErr)}, api.NopLogger{}).Discover(
+		context.Background(), SearchInput{SourcePath: "Example.Release.2026.mkv", ForceRecheck: new(true)},
+	)
+	if !errors.Is(err, internalerrors.ErrClientRecheckFailed) || !errors.Is(err, searchErr) {
+		t.Fatalf("explicit recheck failure lost its cause: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	client := &recordingClient{err: searchErr, cancel: cancel}

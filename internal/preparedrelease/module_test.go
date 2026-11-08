@@ -1933,6 +1933,33 @@ func (s *memoryStore) commitCount() int {
 	return s.commits
 }
 
+func TestPreparationChangedInfoHashReplacesClientEvidence(t *testing.T) {
+	t.Parallel()
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	firstHash, secondHash := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	snapshot := clientEvidenceTestSnapshot(firstHash)
+	snapshot.Policy.InfoHash = firstHash
+	collector := newClientEvidenceTestCollector(snapshot)
+	module := newTestModule(t, newMemoryStore(), collector)
+	input := api.PrepareInput{SourcePath: path, Search: api.ClientSearchPolicy{InfoHash: firstHash}}
+	if _, err := module.Prepare(t.Context(), input); err != nil {
+		t.Fatal(err)
+	}
+	collector.snapshot = clientEvidenceTestSnapshot(secondHash)
+	collector.snapshot.Policy.InfoHash = secondHash
+	input.Search.InfoHash = secondHash
+	prepared, err := module.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{
+		Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation},
+	})
+	if err != nil || subject.InfoHash != secondHash || len(collector.retained) != 2 || collector.retained[1] {
+		t.Fatalf("requested hash reused stale evidence: hash=%s retained=%v err=%v", subject.InfoHash, collector.retained, err)
+	}
+}
+
 func TestPreparationEnrichmentReusesOnlyCompatibleClientEvidence(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []struct {

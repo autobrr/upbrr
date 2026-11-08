@@ -546,9 +546,11 @@ During upload, the CLI prints the path of every successfully retained PNG and st
 
 `--keep-folder` applies only when a supplied folder contains one selected movie or episode video. The torrent retains that folder as its root and includes only the selected video; samples, NFOs, text files, and other sidecars are excluded. The default remains a single-file torrent. Season packs, multi-video folders, disc sources, and direct file inputs are unchanged. Reused torrents must match the requested layout.
 
-`--infohash` searches the default client first, then other available clients until a matching torrent is found. An explicit client selection restricts that search, and `--skip_auto_torrent` disables it. A miss prints an error and continues ordinary source discovery and generation. A match supplies the existing torrent and its metadata; source and layout checks still govern reuse. `--rehash` retains metadata discovery but generates a fresh torrent. With `--nohash`, trackers whose torrent restrictions cannot be satisfied by available artifacts are skipped. The former `--torrenthash` and `-th` aliases are removed.
+`--infohash` searches the default client first, then other available clients until a matching torrent is found. An explicit client selection restricts that search, and `--skip_auto_torrent` disables it. A miss prints an error and continues ordinary source discovery; another torrent may be reused, and `--nohash` never generates one. A match supplies metadata and, when the client can export it, a torrent artifact; source and layout checks still govern reuse. Policy retries search the same clients for compatible alternatives without the hash filter. `--rehash` retains metadata discovery but generates a fresh torrent. With `--nohash`, trackers whose torrent restrictions cannot be satisfied by available artifacts are skipped. The former `--torrenthash` and `-th` aliases are removed.
 
 `--nohash` and `--rehash` cannot be combined, even with explicit false values.
+
+Preparation still needs one shared base torrent for all retained tracker policies; it cannot select a different base artifact per tracker.
 
 Ordinary torrent reuse checks the metainfo, requested file layout and applicable limits without reading every media byte. This does not prove that same-sized media bytes match the piece hashes. Use `--force-recheck` to request a piece check, or `--rehash` to create a fresh torrent. A reusable artifact may need a metadata-only layout change; `--nohash` permits that but fails if new pieces are required.
 

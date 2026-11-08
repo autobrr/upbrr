@@ -92,7 +92,7 @@ func New(clients api.ClientService, logger api.Logger) *Module {
 
 // Discover obtains one current client snapshot and always reports why a search
 // did or did not execute. Client failures produce unavailable evidence, while
-// request validation and cancellation remain fatal.
+// request validation, cancellation and failed explicit rechecks remain fatal.
 func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, error) {
 	if m == nil {
 		return Evidence{}, errors.New("client discovery: module is not initialized")
@@ -139,6 +139,9 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 		return Evidence{}, fmt.Errorf("client discovery: search canceled: %w", ctxErr)
 	}
 	if err != nil {
+		if errors.Is(err, internalerrors.ErrClientRecheckFailed) {
+			return Evidence{}, fmt.Errorf("client discovery: %w", err)
+		}
 		logger.Debugf("client discovery: decision=degrade reason=search_failed")
 		return Evidence{Disposition: DispositionUnavailable}, nil
 	}

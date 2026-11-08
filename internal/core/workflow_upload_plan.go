@@ -603,6 +603,9 @@ func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 		if ctx.Err() != nil {
 			return api.TorrentResult{}, fmt.Errorf("workflow torrent search canceled: %w", ctx.Err())
 		}
+		if errors.Is(searchErr, internalerrors.ErrClientRecheckFailed) {
+			return api.TorrentResult{}, fmt.Errorf("workflow torrent search: %w", searchErr)
+		}
 		if searchErr == nil {
 			input.ClientTorrentCandidates = append(input.ClientTorrentCandidates, found.TorrentCandidates...)
 		}
