@@ -40,8 +40,8 @@ func btnPrimaryCountryID(subject api.TrackerValidationSubject) string {
 	return btnOriginalAudioCountryID(subject)
 }
 
-// btnOriginalAudioCountryID uses current work-origin evidence only for an
-// identified original-language primary track, never to locate a dub.
+// btnOriginalAudioCountryID uses a majority of current provider origins only for
+// an identified original-language primary track, never to locate a dub.
 func btnOriginalAudioCountryID(subject api.TrackerValidationSubject) string {
 	facts := subject.LanguageFacts
 	language := btnPrimaryProgrammeLanguage(facts)
@@ -53,18 +53,18 @@ func btnOriginalAudioCountryID(subject api.TrackerValidationSubject) string {
 		}) || !metadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
 		return ""
 	}
-	var countries []string
+	var providerCountries [][]string
 	if metadata.TVDB != nil {
 		if subject.Identity.TVDBID > 0 && metadata.TVDB.TVDBID != subject.Identity.TVDBID {
 			return ""
 		}
-		countries = append(countries, metadata.TVDB.OriginalCountry)
+		providerCountries = append(providerCountries, []string{metadata.TVDB.OriginalCountry})
 	}
 	if metadata.TMDB != nil {
 		if subject.Identity.TMDBID > 0 && metadata.TMDB.TMDBID != subject.Identity.TMDBID {
 			return ""
 		}
-		countries = append(countries, metadata.TMDB.OriginCountry...)
+		providerCountries = append(providerCountries, metadata.TMDB.OriginCountry)
 	}
 	if metadata.IMDB != nil {
 		if subject.Identity.IMDBID > 0 && metadata.IMDB.IMDBID != subject.Identity.IMDBID {
@@ -74,12 +74,37 @@ func btnOriginalAudioCountryID(subject api.TrackerValidationSubject) string {
 		if value == "" {
 			value = metadata.IMDB.Country
 		}
-		if btnCountryMap[normalizeBTNCountryAlias(value)] != "" {
-			countries = append(countries, value)
-		} else {
-			countries = append(countries, strings.Split(value, ",")...)
+		countries := []string{value}
+		if btnCountryMap[normalizeBTNCountryAlias(value)] == "" {
+			countries = strings.Split(value, ",")
+		}
+		providerCountries = append(providerCountries, countries)
+	}
+	if subject.Anime && subject.Identity.MALID > 0 && metadata.AniList != nil {
+		if metadata.AniList.MALID != subject.Identity.MALID {
+			return ""
+		}
+		providerCountries = append(providerCountries, []string{metadata.AniList.CountryOfOrigin})
+	}
+	votes := make(map[string]int)
+	total := 0
+	for _, countries := range providerCountries {
+		if countryID := btnProviderCountryID(countries); countryID != "" {
+			votes[countryID]++
+			total++
 		}
 	}
+	for countryID, count := range votes {
+		if count > total/2 {
+			return countryID
+		}
+	}
+	return ""
+}
+
+// btnProviderCountryID gives each provider one vote, abstaining when its origin
+// is missing, unsupported, or spans multiple countries.
+func btnProviderCountryID(countries []string) string {
 	countryID := ""
 	for _, country := range countries {
 		if strings.TrimSpace(country) == "" {

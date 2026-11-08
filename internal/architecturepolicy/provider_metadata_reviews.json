@@ -724,8 +724,8 @@
     "sha256": "c167e166843a683aa3c0717c800e0950df4e6552f013a0af1a551debe13f8463"
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnOriginalAudioCountryID": {
-    "reason": "Issue 905 requires a resolved original origin for the actual primary track as well as the singleton canonical title-language match. Existing current-source, generation, provider-ID and country agreement guards remain unchanged. Canonical corrections/clears and evidence-bound explicit country answers retain precedence.",
-    "sha256": "4e71183ba10f86e0c78e41118723592c0cd4d033958117741cf48b410eb1a178"
+    "reason": "BTN country majority review: canonical original-language corrections/clears, original-primary-audio evidence, source/generation and provider-ID guards remain authoritative. The automatic fallback gives each unambiguous provider origin one vote and requires a strict majority, including MAL-ID-matched AniList origin only for finalized anime. btnPrimaryCountryID still applies explicit country answers/clears first; full-disc behavior is unchanged. Country regression cases cover majority, ties, abstentions, MAL identity/clear and manual precedence.",
+    "sha256": "648cda4d7b210da7da98e28abb2bce0164f0994ea50511512ad5334242980500"
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnPrimaryCountryID": {
     "reason": "Explicit evidence-bound country answers take precedence over the reviewed original-audio provider fallback; blank or invalid answers are not silently replaced.",
@@ -780,8 +780,8 @@
     "sha256": "66b2caee30f282136c2528aaac181412fc0a1bde9c9010652478205df686780e"
   },
   "internal/trackers/impl/standalone/btn/validation.go:validationPolicy": {
-    "reason": "Reviewed declarative BTN validation binding: only the version advances to v7 so source-review readiness cannot reuse the previous permissive guard. The Check callback and metadata precedence remain unchanged.",
-    "sha256": "0ca4e2d5e7aadf84d38e74eb41d34d7e60602162351546a00d6df3c84e526295"
+    "reason": "Reviewed declarative BTN validation binding: only the version advances to v8 for majority-based original-audio country selection. The Check callback and metadata precedence remain unchanged.",
+    "sha256": "3a89355a71ea725df72250dd4f7421e8a34225d33ca5be2caffc4a6ea08d6f07"
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
     "reason": "TRACE request logging review: cztSearchQuery continues to apply manual title authority before the unchanged text request.",
