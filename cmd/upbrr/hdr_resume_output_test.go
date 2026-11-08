@@ -23,7 +23,22 @@ func TestCLIHDRResumeReportsMixedRetainedOutcomes(t *testing.T) {
 					Label:    "Primary video",
 					Status:   api.StageStatusPartial,
 					Formats: []api.HDRFormatResult{
-						{Format: api.HDRNativeHDR10Plus, State: api.HDRExtractionComplete},
+						{
+							Format: api.HDRNativeHDR10Plus,
+							State:  api.HDRExtractionComplete,
+							Checks: []api.HDRCheckResult{
+								{
+									Code:    "native_ready",
+									State:   api.HDRCheckPass,
+									Message: "Native metadata verified.",
+								},
+								{
+									Code:    "plot_unavailable",
+									State:   api.HDRCheckUnsupported,
+									Message: "The plot could not be rendered; retained metadata remains available for retry. token=synthetic-secret\x1b[2J",
+								},
+							},
+						},
 						{
 							Format:  api.HDRNativeDolbyVision,
 							State:   api.HDRExtractionFailed,
@@ -72,6 +87,7 @@ func TestCLIHDRResumeReportsMixedRetainedOutcomes(t *testing.T) {
 			}
 			for _, want := range []string{
 				"Primary video", "Secondary video", "hdr10plus", "dolby_vision", "Native metadata could not be read.",
+				"The plot could not be rendered; retained metadata remains available for retry.",
 				"Audio track 2", "Audio decoder could not read the source; restore access before retrying.", "Source unavailable; restore access before retrying.",
 				"HDR artifact: artifact-retained · picture_brightness_plot",
 			} {
@@ -81,6 +97,9 @@ func TestCLIHDRResumeReportsMixedRetainedOutcomes(t *testing.T) {
 			}
 			if strings.ContainsAny(text, "\x1b\r") || strings.Contains(text, "synthetic-secret") {
 				t.Error("retained HDR report was not sanitized")
+			}
+			if strings.Contains(text, "Native metadata verified.") {
+				t.Error("retained HDR report repeated a passing native check")
 			}
 		})
 	}

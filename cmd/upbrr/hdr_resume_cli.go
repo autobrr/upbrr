@@ -108,6 +108,11 @@ func printCLIHDRResult(out io.Writer, current releaseworkflow.CommandResult) {
 			if format.Failure != nil {
 				fmt.Fprintf(&report, "    Failure: %s\n", format.Failure.Message)
 			}
+			for _, check := range format.Checks {
+				if check.State != api.HDRCheckPass && strings.TrimSpace(check.Message) != "" {
+					fmt.Fprintf(&report, "    Check %s: %s\n", check.State, check.Message)
+				}
+			}
 		}
 		for _, decoded := range target.Decoded {
 			fmt.Fprintf(&report, "  HDR analysis: %s · %s\n", decoded.Mode, decoded.State)
