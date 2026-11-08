@@ -250,3 +250,29 @@ func TestOriginalFirstWitnessSurvivesUnknownAdditionalOriginalOrder(t *testing.T
 		}
 	}
 }
+
+func TestExplicitUnresolvedTitleMatchNeedsDubReview(t *testing.T) {
+	for _, origin := range []api.TrackAudioOrigin{"", api.TrackAudioUnresolved, api.TrackAudioOriginal, api.TrackAudioDubbed} {
+		facts := mediafacts.ResolveLanguages(api.MediaFacts{
+			OriginalLanguage:      "en",
+			TitleLanguages:        []string{"fr"},
+			TrackCoverageComplete: true,
+			Tracks: []api.MediaTrackFacts{{
+				ID:                  "audio",
+				ManifestFingerprint: "scan",
+				Kind:                api.MediaTrackAudio,
+				Role:                api.AudioRoleProgramme,
+				Languages:           []string{"French"},
+				AudioOrigin:         origin,
+			}},
+		})
+		failures := EvaluateLanguagePolicy(api.TrackerValidationSubject{LanguageFacts: facts}, LanguagePolicy{ExtraDubs: LanguageProhibited})
+		review := slices.IndexFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "language_origin" })
+		if (review >= 0) != (origin == api.TrackAudioUnresolved) {
+			t.Fatalf("origin=%q, review=%#v", origin, failures)
+		}
+		if review >= 0 && !slices.Equal(failures[review].AudioOriginCorrectionTrackIDs, []string{"audio"}) {
+			t.Fatalf("origin review has no correction target: %#v", failures)
+		}
+	}
+}

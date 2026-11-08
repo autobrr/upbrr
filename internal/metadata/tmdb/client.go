@@ -623,9 +623,13 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		return c.uncachedJSON(ctx, path, params, target)
 	}
 	domain := "tmdb.response.v1"
-	if _, episode := target.(*episodeDetailsResponse); episode {
+	switch target.(type) {
+	case *episodeDetailsResponse:
 		// Older typed evidence erased absent seasons into zero.
 		domain = "tmdb.episode-response.v2"
+	case *mediaResponse:
+		// Older typed evidence discarded the spoken-language collection.
+		domain = "tmdb.media-response.v2"
 	}
 	err := evidence.JSON(
 		ctx,

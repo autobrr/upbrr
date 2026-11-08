@@ -798,7 +798,7 @@ const providerDisplays = (generation: number): ProviderDisplay[] => [
     Provenance: "resolver",
     SummaryAvailable: true,
     Summary: providerSummary(`IMDB generation ${generation}`),
-    Details: { IMDB: {} as IMDBMetadata },
+    Details: { IMDB: { SpokenLanguages: ["French", "German"] } as IMDBMetadata },
   },
   {
     Provider: "tmdb",
@@ -808,7 +808,7 @@ const providerDisplays = (generation: number): ProviderDisplay[] => [
     Provenance: "resolver",
     SummaryAvailable: true,
     Summary: providerSummary(`TMDB generation ${generation}`),
-    Details: { TMDB: {} as TMDBMetadata },
+    Details: { TMDB: { SpokenLanguages: ["en", "ja"] } as TMDBMetadata },
   },
 ];
 
@@ -1443,10 +1443,15 @@ describe("InputPage", () => {
 
     expect(screen.getByRole("button", { name: /^TMDB/ })).toHaveClass("active");
     expect(screen.getByText("TMDB generation 1")).toBeVisible();
+    expect(screen.getByText("Spoken languages")).toBeVisible();
+    expect(screen.getByText("en, ja")).toBeVisible();
+    expect(screen.queryByText("French, German")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^IMDB/ }));
     expect(screen.getByRole("button", { name: /^IMDB/ })).toHaveClass("active");
     expect(screen.getByText("IMDB generation 1")).toBeVisible();
+    expect(screen.getByText("French, German")).toBeVisible();
+    expect(screen.queryByText("en, ja")).not.toBeInTheDocument();
 
     rerender(<InputPage facet={readyInputFacet(2)} {...pageProps} />);
     expect(screen.getByRole("button", { name: /^TMDB/ })).toHaveClass("active");

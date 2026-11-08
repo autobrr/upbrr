@@ -21,12 +21,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	failures := trackers.EvaluateLanguagePolicy(subject, languagePolicy())
 	associationReview := additionalMainAudioAssociationReview(subject)
 	for _, track := range additionalMainAudio(subject) {
-		original := slices.ContainsFunc(
-			track.Languages,
-			func(language string) bool {
-				return languageutil.ContainsLanguage(subject.LanguageFacts.OriginalLanguages, language)
-			},
-		)
+		original := subject.LanguageFacts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal
 		outcome := trackers.LanguageStaffException
 		reason := "additional main audio " + track.ID + " is outside the ordinary original-plus-English programme set"
 		if original {
@@ -55,9 +50,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 func additionalMainAudioAssociationReview(subject api.TrackerValidationSubject) map[string]bool {
 	hasStrictExtra := func(candidate api.TrackerValidationSubject) bool {
 		return slices.ContainsFunc(additionalMainAudio(candidate), func(track api.MediaTrackFacts) bool {
-			return !slices.ContainsFunc(track.Languages, func(language string) bool {
-				return languageutil.ContainsLanguage(candidate.LanguageFacts.OriginalLanguages, language)
-			})
+			return candidate.LanguageFacts.ProgrammeAudioOrigin(track) != api.TrackAudioOriginal
 		})
 	}
 	if !hasStrictExtra(subject) {
@@ -106,7 +99,7 @@ func additionalMainAudio(subject api.TrackerValidationSubject) []api.MediaTrackF
 		}
 		duplicate := false
 		for _, language := range languageutil.LanguageMatchKeys(track.Languages) {
-			if languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
+			if facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal {
 				language = "original"
 			}
 			if seen[track.ResourceID][language] {
@@ -114,7 +107,7 @@ func additionalMainAudio(subject api.TrackerValidationSubject) []api.MediaTrackF
 			}
 		}
 		for _, language := range languageutil.LanguageMatchKeys(track.Languages) {
-			if languageutil.ContainsLanguage(facts.OriginalLanguages, language) {
+			if facts.ProgrammeAudioOrigin(track) == api.TrackAudioOriginal {
 				language = "original"
 			}
 			seen[track.ResourceID][language] = true

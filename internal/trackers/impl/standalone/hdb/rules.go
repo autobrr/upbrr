@@ -35,8 +35,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			trackers.LanguageUnresolved,
 		))
 	}
-	if !animated && (!remux || facts.HasOriginalAudio()) && facts.OriginalLanguagesKnown &&
-		!languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
+	if !animated && (!remux || facts.HasOriginalAudio()) && trackers.ForeignLanguageContent(facts) &&
 		languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") {
 		englishSubject := subject
 		englishSubject.LanguageFacts.Tracks = nil

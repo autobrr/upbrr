@@ -15,7 +15,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "standalone-btn-constructibility-v6",
+		ID:    "standalone-btn-constructibility-v9",
 		Check: checkRequirements,
 	}
 }

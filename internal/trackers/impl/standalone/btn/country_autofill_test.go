@@ -68,12 +68,15 @@ func requireBTNCountryResolution(t *testing.T, meta api.UploadSubject, wantCount
 	return question
 }
 
-func TestBTNCountryAutofillUsesConsistentProviderEvidence(t *testing.T) {
+func TestBTNCountryAutofillUsesProviderMajority(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		tvdb    *api.TVDBMetadata
 		tmdb    *api.TMDBMetadata
 		imdb    *api.IMDBMetadata
+		anilist *api.AniListMetadata
+		anime   bool
+		malID   int
 		country string
 	}{
 		{
@@ -104,6 +107,20 @@ func TestBTNCountryAutofillUsesConsistentProviderEvidence(t *testing.T) {
 			country: "17",
 		},
 		{
+			name:    "two providers outweigh TVDB",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"JP"}},
+			imdb:    &api.IMDBMetadata{CountryList: "Japan"},
+			country: "17",
+		},
+		{
+			name:    "duplicate country aliases remain one provider vote",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"JP", "jp", "Japan"}},
+			imdb:    &api.IMDBMetadata{CountryList: "United States"},
+			country: "2",
+		},
+		{
 			name:    "blank provider values fall through",
 			tvdb:    &api.TVDBMetadata{OriginalCountry: " "},
 			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"", "JP"}},
@@ -112,7 +129,7 @@ func TestBTNCountryAutofillUsesConsistentProviderEvidence(t *testing.T) {
 		},
 		{name: "no country", tvdb: &api.TVDBMetadata{}},
 		{
-			name: "conflicting providers",
+			name: "tied providers",
 			tvdb: &api.TVDBMetadata{OriginalCountry: "jpn"},
 			tmdb: &api.TMDBMetadata{OriginCountry: []string{"US"}},
 		},
@@ -120,16 +137,104 @@ func TestBTNCountryAutofillUsesConsistentProviderEvidence(t *testing.T) {
 		{name: "IMDb list cannot be replaced by first country", imdb: &api.IMDBMetadata{CountryList: "Japan, United States", Country: "Japan"}},
 		{name: "multiple fallback countries", imdb: &api.IMDBMetadata{Country: "Japan, United States"}},
 		{
-			name: "unsupported country cannot be ignored",
-			tvdb: &api.TVDBMetadata{OriginalCountry: "unknown-country"},
-			tmdb: &api.TMDBMetadata{OriginCountry: []string{"JP"}},
+			name:    "unsupported country abstains",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "unknown-country"},
+			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"JP"}},
+			country: "17",
+		},
+		{
+			name: "one clear country cannot discard TMDB co-production evidence",
+			tvdb: &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb: &api.TMDBMetadata{OriginCountry: []string{"JP", "US"}},
+		},
+		{
+			name: "one clear country cannot discard IMDb co-production evidence",
+			tvdb: &api.TVDBMetadata{OriginalCountry: "usa"},
+			imdb: &api.IMDBMetadata{CountryList: "Japan, United States", Country: "United States"},
+		},
+		{
+			name: "partly supported country evidence retains ambiguity",
+			tvdb: &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb: &api.TMDBMetadata{OriginCountry: []string{"unknown-country", "JP"}},
+		},
+		{
+			name:    "two clear countries still outvote a co-production",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"JP", "US"}},
+			imdb:    &api.IMDBMetadata{CountryList: "United States"},
+			country: "2",
+		},
+		{
+			name: "multiple countries cannot break a tie",
+			tvdb: &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb: &api.TMDBMetadata{OriginCountry: []string{"JP", "US"}},
+			imdb: &api.IMDBMetadata{CountryList: "Japan"},
+		},
+		{
+			name:    "MAL-linked anime origin breaks a tie",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"JP"}},
+			anilist: &api.AniListMetadata{MALID: 100004, CountryOfOrigin: "JP"},
+			anime:   true,
+			malID:   100004,
+			country: "17",
+		},
+		{
+			name:    "anime origin alone need not be Japan",
+			anilist: &api.AniListMetadata{MALID: 100004, CountryOfOrigin: "US"},
+			anime:   true,
+			malID:   100004,
+			country: "2",
+		},
+		{
+			name:    "missing anime origin does not assume Japan",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"JP"}},
+			anilist: &api.AniListMetadata{MALID: 100004},
+			anime:   true,
+			malID:   100004,
+		},
+		{
+			name:    "non-anime ignores MAL-linked origin",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "jpn"},
+			anilist: &api.AniListMetadata{MALID: 100004, CountryOfOrigin: "US"},
+			malID:   100004,
+			country: "17",
+		},
+		{
+			name:    "cleared MAL ID cannot supply an anime vote",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "usa"},
+			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"JP"}},
+			anilist: &api.AniListMetadata{MALID: 100004, CountryOfOrigin: "JP"},
+			anime:   true,
+		},
+		{
+			name:    "anime origin can leave a two-way tie",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "jpn"},
+			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"JP"}},
+			imdb:    &api.IMDBMetadata{CountryList: "United States"},
+			anilist: &api.AniListMetadata{MALID: 100004, CountryOfOrigin: "US"},
+			anime:   true,
+			malID:   100004,
+		},
+		{
+			name:    "plurality without a majority remains unresolved",
+			tvdb:    &api.TVDBMetadata{OriginalCountry: "jpn"},
+			tmdb:    &api.TMDBMetadata{OriginCountry: []string{"JP"}},
+			imdb:    &api.IMDBMetadata{CountryList: "United States"},
+			anilist: &api.AniListMetadata{MALID: 100004, CountryOfOrigin: "CA"},
+			anime:   true,
+			malID:   100004,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			meta := btnCountryAutofillSubject()
+			meta.Anime = test.anime
+			meta.Identity.MALID = test.malID
 			meta.ProviderMetadata.TVDB = test.tvdb
 			meta.ProviderMetadata.TMDB = test.tmdb
 			meta.ProviderMetadata.IMDB = test.imdb
+			meta.ProviderMetadata.AniList = test.anilist
 			if test.tvdb != nil {
 				test.tvdb.TVDBID = meta.Identity.TVDBID
 			}
@@ -160,6 +265,11 @@ func TestBTNCountryAutofillRequiresCurrentProviderEvidence(t *testing.T) {
 		}},
 		{"different IMDb identity", func(meta *api.UploadSubject) {
 			meta.ProviderMetadata.IMDB = &api.IMDBMetadata{IMDBID: 100005, CountryList: "Japan"}
+		}},
+		{"different anime MAL identity", func(meta *api.UploadSubject) {
+			meta.Anime = true
+			meta.Identity.MALID = 100004
+			meta.ProviderMetadata.AniList = &api.AniListMetadata{MALID: 100005, CountryOfOrigin: "JP"}
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

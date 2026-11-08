@@ -455,6 +455,7 @@ const buildPreviewDetails = (
       { label: "End year", value: formatNumber(imdb?.EndYear ?? 0) },
       { label: "TV year", value: formatNumber(imdb?.TVYear ?? 0) },
       { label: "Original language", value: imdb?.OriginalLanguage ?? "" },
+      { label: "Spoken languages", value: formatCommaList(imdb.SpokenLanguages) },
       { label: "Country", value: imdb.Country || preview.Summary.Country },
       { label: "Country list", value: imdb?.CountryList ?? "" },
       {
@@ -532,6 +533,7 @@ const buildPreviewDetails = (
         label: "Original language",
         value: tmdb.OriginalLanguage || preview.Summary.OriginalLanguage,
       },
+      { label: "Spoken languages", value: formatCommaList(tmdb.SpokenLanguages) },
       { label: "Anime", value: tmdb ? formatBoolean(tmdb.Anime) : "" },
       { label: "MAL ID", value: formatNumber(tmdb?.MALID ?? 0), mono: true },
       { label: "Demographic", value: tmdb?.Demographic ?? "" },
