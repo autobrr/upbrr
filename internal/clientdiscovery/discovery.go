@@ -107,10 +107,7 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 		return Evidence{}, fmt.Errorf("client discovery: canceled before search: %w", err)
 	}
 	logger := logging.FromContext(ctx, m.logger)
-	if input.Policy.Skip {
-		if input.Policy.InfoHash != "" {
-			logger.Errorf("client discovery: requested infohash ignored because client search is disabled")
-		}
+	if input.Policy.Skip && strings.TrimSpace(input.Policy.InfoHash) == "" {
 		logger.Debugf("client discovery: decision=skip reason=requested")
 		return Evidence{Disposition: DispositionSkipped}, nil
 	}

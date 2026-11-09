@@ -623,8 +623,12 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	initial := newTestModule(t, store, initialCollector)
 	input := api.PrepareInput{
 		SourcePath: path,
-		Policy:     api.PreparationPolicy{KeepImages: true},
-		Search:     api.ClientSearchPolicy{InfoHash: requestedHash},
+		Policy:     api.PreparationPolicy{KeepImages: true, OnlyID: true},
+		Search: api.ClientSearchPolicy{
+			Skip:     true,
+			InfoHash: requestedHash,
+			Client:   new("none"),
+		},
 	}
 	prepared, err := initial.Prepare(context.Background(), input)
 	if err != nil {
@@ -632,7 +636,7 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	}
 
 	hydrated := clientEvidenceTestSnapshot(requestedHash)
-	hydrated.Policy.InfoHash = requestedHash
+	hydrated.Policy = input.Search
 	candidate := api.ClientTorrentCandidate{
 		Path:          "hydrated.torrent",
 		InfoHash:      "hydrated-candidate-hash",
@@ -657,6 +661,9 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	}
 	if restartedCollector.hydratedInfoHash != requestedHash {
 		t.Fatalf("restart hydration received infohash %q, want %q", restartedCollector.hydratedInfoHash, requestedHash)
+	}
+	if restartedCollector.hydratedPolicy != input.Policy {
+		t.Fatalf("infohash changed hydrated metadata policy: got=%+v want=%+v", restartedCollector.hydratedPolicy, input.Policy)
 	}
 	if _, err := restarted.Prepare(context.Background(), input); err != nil {
 		t.Fatalf("second restart reuse: %v", err)
@@ -1773,6 +1780,7 @@ type clientEvidenceTestCollector struct {
 	mu               sync.Mutex
 	hydrates         int
 	hydratedInfoHash string
+	hydratedPolicy   api.PreparationPolicy
 	snapshot         preparationstate.ClientEvidenceSnapshot
 	retained         []bool
 }
@@ -1803,6 +1811,7 @@ func (c *clientEvidenceTestCollector) HydratePrivateResources(
 	c.mu.Lock()
 	c.hydrates++
 	c.hydratedInfoHash = request.Input.Search.InfoHash
+	c.hydratedPolicy = request.Input.Policy
 	c.mu.Unlock()
 	return CollectedResources{
 		SourcePath:        request.Manifest.SourcePath,
@@ -1968,6 +1977,63 @@ func TestPreparationChangedInfoHashReplacesClientEvidence(t *testing.T) {
 	})
 	if err != nil || subject.InfoHash != secondHash || len(collector.retained) != 2 || collector.retained[1] {
 		t.Fatalf("requested hash reused stale evidence: hash=%s retained=%v err=%v", subject.InfoHash, collector.retained, err)
+	}
+}
+
+func TestPreparationRefreshesPreviousInfoHashSearchPolicy(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct{ name, hash string }{
+		{name: "ordinary source"},
+		{name: "supplied hash", hash: strings.Repeat("a", 40)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requestedHash := test.hash
+			path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+			store := newMemoryStore()
+			input := api.PrepareInput{SourcePath: path, Search: api.ClientSearchPolicy{InfoHash: requestedHash}}
+			initial := newTestModule(t, store, newClientEvidenceTestCollector(clientEvidenceTestSnapshot(requestedHash)))
+			prepared, err := initial.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			normalized, err := normalizePrepareInput(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Persist the policy payload used before infohash overrode search settings.
+			previousPolicy, err := fingerprintJSON(struct {
+				Policy               api.PreparationPolicy
+				Search               api.ClientSearchPolicy
+				MetadataRequirements api.MetadataRequirementSet
+			}{
+				Policy:               normalized.input.Policy,
+				Search:               normalized.input.Search,
+				MetadataRequirements: normalized.input.MetadataRequirements,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			previous := prepared.Release
+			previous.Compatibility.PolicyFingerprint = previousPolicy
+			store.current[canonicalSourceKey(path)] = previous
+			collector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot(requestedHash))
+			restarted := newTestModule(t, store, collector)
+			current, err := restarted.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCollections := 0
+			if requestedHash != "" {
+				wantCollections = 1
+			}
+			if current.Release.Generation != prepared.Release.Generation+api.PreparedGeneration(wantCollections) || collector.collectCount() != wantCollections {
+				t.Fatalf("previous policy reuse: generation=%d collections=%d, want generation=%d collections=%d",
+					current.Release.Generation, collector.collectCount(), prepared.Release.Generation+api.PreparedGeneration(wantCollections), wantCollections)
+			}
+			if _, err := restarted.Prepare(t.Context(), input); err != nil || collector.collectCount() != wantCollections {
+				t.Fatalf("current policy did not reuse compatible generation: collections=%d err=%v", collector.collectCount(), err)
+			}
+		})
 	}
 }
 

@@ -73,30 +73,57 @@ func TestRequestedInfoHashHydrationPreservesAnnounceOnlyTrackerMatch(t *testing.
 	defer server.Close()
 	cfg := config.Config{
 		MainSettings:   config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
-		ClientSetup:    config.ClientSetupConfig{DefaultClient: "qbit"},
+		ClientSetup:    config.ClientSetupConfig{DefaultClient: "none", SearchClients: config.CSVList{"none"}},
 		TorrentClients: map[string]config.TorrentClientConfig{"qbit": {Type: "qui", QuiProxyURL: server.URL}},
 	}
 	clients := torrentclient.NewServiceWithRegistry(cfg, api.NopLogger{}, trackerDataTestRegistry(t))
-	service := newTestService(t, &stubRepo{},
-		WithConfig(cfg),
-		WithMediaInfoExporter(stubMediaInfo{}),
-		WithSceneDetector(stubSceneDetector{}),
-		WithClientDiscovery(clientdiscovery.New(clients, api.NopLogger{})),
-		WithTrackerDataLookup(&stubTrackerLookup{}),
-	)
-	state, err := service.HydratePrivateResources(t.Context(), testCollectionRequest(t, api.Request{
-		SourcePath: source, TorrentOverrides: api.TorrentOverrides{InfoHash: new(hash)},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.InfoHash != hash || state.DiscoveredTorrentPath == "" || state.ClientEvidence.Policy.InfoHash != hash ||
-		len(state.TrackerIDs) != 0 || !slices.Contains(state.MatchedEvidenceTrackers, "BLU") {
-		t.Fatalf("requested torrent evidence changed during hydration: %+v", state.ClientEvidence)
-	}
-	record, _, _, err := service.lookupTrackerData(t.Context(), state, "BLU", time.Now())
-	if err != nil || !record.Matched || record.InfoHash != hash {
-		t.Fatalf("announce-only tracker lost its metadata match: record=%+v err=%v", record, err)
+	for _, policy := range []struct {
+		name       string
+		onlyID     bool
+		keepImages bool
+	}{
+		{name: "IDs only", onlyID: true},
+		{name: "keep images", keepImages: true},
+		{
+			name:       "both policies",
+			onlyID:     true,
+			keepImages: true,
+		},
+	} {
+		t.Run(policy.name, func(t *testing.T) {
+			lookup := &stubTrackerLookup{}
+			service := newTestService(t, &stubRepo{},
+				WithConfig(cfg),
+				WithMediaInfoExporter(stubMediaInfo{}),
+				WithSceneDetector(stubSceneDetector{}),
+				WithClientDiscovery(clientdiscovery.New(clients, api.NopLogger{})),
+				WithTrackerDataLookup(lookup),
+			)
+			state, err := service.HydratePrivateResources(t.Context(), testCollectionRequest(t, api.Request{
+				SourcePath: source,
+				Options: api.UploadOptions{
+					SkipAutoTorrent: true,
+					OnlyID:          policy.onlyID,
+					KeepImages:      policy.keepImages,
+				},
+				TorrentOverrides: api.TorrentOverrides{InfoHash: new(hash)},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.InfoHash != hash || state.DiscoveredTorrentPath == "" || state.ClientEvidence.Policy.InfoHash != hash ||
+				len(state.TrackerIDs) != 0 || !slices.Contains(state.MatchedEvidenceTrackers, "BLU") {
+				t.Fatalf("requested torrent evidence changed during hydration: %+v", state.ClientEvidence)
+			}
+			record, _, _, err := service.lookupTrackerData(t.Context(), state, "BLU", time.Now())
+			if err != nil || !record.Matched || record.InfoHash != hash {
+				t.Fatalf("announce-only tracker lost its metadata match: record=%+v err=%v", record, err)
+			}
+			if state.Policy.OnlyID != policy.onlyID || state.Policy.KeepImages != policy.keepImages || len(lookup.policies) != 1 ||
+				lookup.policies[0].OnlyID != policy.onlyID || lookup.policies[0].KeepImages != policy.keepImages {
+				t.Fatalf("infohash changed metadata policy: state=%+v lookups=%+v", state.Policy, lookup.policies)
+			}
+		})
 	}
 }
 

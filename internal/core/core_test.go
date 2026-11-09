@@ -181,7 +181,7 @@ func TestBuildTrackerPreviewKeepsRawAndSanitizesDescriptionVariants(t *testing.T
 func TestApplyMetadataDefaults(t *testing.T) {
 	t.Parallel()
 
-	configured := applyMetadataDefaults(api.PrepareInput{}, config.MetadataConfig{
+	configured := applyMetadataDefaults(api.PrepareInput{Search: api.ClientSearchPolicy{InfoHash: strings.Repeat("a", 40)}}, config.MetadataConfig{
 		SkipAutoTorrent: true,
 		KeepImages:      true,
 		OnlyID:          true,
@@ -191,7 +191,7 @@ func TestApplyMetadataDefaults(t *testing.T) {
 	}
 
 	requested := applyMetadataDefaults(api.PrepareInput{
-		Search: api.ClientSearchPolicy{Skip: true},
+		Search: api.ClientSearchPolicy{Skip: true, InfoHash: strings.Repeat("a", 40)},
 		Policy: api.PreparationPolicy{KeepImages: true, OnlyID: true},
 	}, config.MetadataConfig{})
 	if !requested.Search.Skip || !requested.Policy.KeepImages || !requested.Policy.OnlyID {

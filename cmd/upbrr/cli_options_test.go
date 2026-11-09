@@ -1462,6 +1462,7 @@ func TestParseCLIOptionsRejectsInvalidImageHost(t *testing.T) {
 func TestBuildCLIRequestInfoHashOverrides(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{
 		"--infohash", "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+		"--skip_auto_torrent", "--client", "none", "--onlyID",
 		"movie.mkv",
 	})
 	if err != nil {
@@ -1473,6 +1474,11 @@ func TestBuildCLIRequestInfoHashOverrides(t *testing.T) {
 	}
 	if req.TorrentOverrides.InfoHash == nil || *req.TorrentOverrides.InfoHash != "abcdef0123456789abcdef0123456789abcdef01" {
 		t.Fatalf("expected normalized infohash override, got %#v", req.TorrentOverrides.InfoHash)
+	}
+	input, err := api.MapPreparationRequest(req, api.PreparationIntentUpload)
+	if err != nil || !input.Policy.OnlyID || input.Policy.KeepImages || !input.Search.Skip || input.Search.InfoHash != *req.TorrentOverrides.InfoHash ||
+		req.ClientOverrides.Client == nil || *req.ClientOverrides.Client != "none" {
+		t.Fatalf("infohash changed independent request choices: input=%+v client=%+v err=%v", input, req.ClientOverrides, err)
 	}
 }
 

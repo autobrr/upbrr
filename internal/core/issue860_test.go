@@ -37,6 +37,7 @@ func (c issue860Collector) Collect(ctx context.Context, request preparationstate
 	facts, err := (workflowMediaCollector{}).Collect(ctx, request)
 	facts.Resources.ClientEvidence = preparationstate.ClientEvidenceSnapshot{
 		Disposition: preparationstate.ClientEvidenceDispositionSearched,
+		Policy:      request.Input.Search,
 		Result: api.ClientSearchResult{
 			InfoHash:          c.candidate.InfoHash,
 			TorrentPath:       c.candidate.Path,
@@ -61,7 +62,10 @@ func TestPreparedWorkflowSearchesCompatibleAlternative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	facts, err := prepared.Prepare(t.Context(), api.PrepareInput{SourcePath: source})
+	facts, err := prepared.Prepare(t.Context(), api.PrepareInput{
+		SourcePath: source,
+		Search:     api.ClientSearchPolicy{InfoHash: candidates[0].InfoHash, Skip: true},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +98,10 @@ func TestPreparedWorkflowSearchesCompatibleAlternative(t *testing.T) {
 			Status:    api.StageStatusCompleted,
 		}}},
 		workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{},
-		api.DescriptionInstructions{Torrent: api.TorrentOverrides{NoHash: new(true)}},
+		api.DescriptionInstructions{
+			Options: api.UploadOptions{SkipAutoTorrent: true},
+			Torrent: api.TorrentOverrides{NoHash: new(true)},
+		},
 		releaseworkflow.UploadPlanBuildOptions{DryRun: true, NoSeed: true}, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +203,7 @@ func TestWorkflowAlternativeSearchForwardsExplicitRecheck(t *testing.T) {
 	clients := &issue860Client{result: api.ClientSearchResult{TorrentCandidates: []api.ClientTorrentCandidate{candidates[1]}}}
 	builder := workflowUploadPlanBuilder{torrents: torrent.NewService(api.NopLogger{}, t.TempDir()), clients: clients}
 	subject := api.UploadSubject{
-		ClientSearchPerformed: true, ClientSearchPolicy: api.ClientSearchPolicy{InfoHash: candidates[0].InfoHash},
+		ClientSearchPerformed: true, ClientSearchPolicy: api.ClientSearchPolicy{Skip: true, InfoHash: candidates[0].InfoHash},
 	}
 	input := api.TorrentSubject{
 		SourcePath:            source,
@@ -218,6 +225,12 @@ func TestWorkflowAlternativeSearchForwardsExplicitRecheck(t *testing.T) {
 	_, err = builder.prepareWorkflowTorrent(t.Context(), subject, input)
 	if !errors.Is(err, internalerrors.ErrClientRecheckFailed) {
 		t.Fatalf("alternative search hid explicit recheck failure: %v", err)
+	}
+	clients.searches = 0
+	subject.ClientSearchPolicy.InfoHash = ""
+	result, err := builder.prepareWorkflowTorrent(t.Context(), subject, input)
+	if err != nil || clients.searches != 0 || len(result.SkippedTrackers) != 1 || result.SkippedTrackers[0] != "PTP" {
+		t.Fatalf("ordinary skip changed: result=%+v searches=%d err=%v", result, clients.searches, err)
 	}
 }
 

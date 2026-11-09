@@ -61,10 +61,14 @@ func TestDiscoverNormalizesAndDetachesCurrentEvidence(t *testing.T) {
 	}}
 	files := []string{"Example.Release.2026.mkv"}
 	evidence, err := New(client, api.NopLogger{}).Discover(context.Background(), SearchInput{
-		SourcePath:   " Example.Release.2026 ",
-		FileList:     files,
-		DiscType:     " BDMV ",
-		Policy:       api.ClientSearchPolicy{Client: &clientName, InfoHash: "requested-hash"},
+		SourcePath: " Example.Release.2026 ",
+		FileList:   files,
+		DiscType:   " BDMV ",
+		Policy: api.ClientSearchPolicy{
+			Skip:     true,
+			Client:   &clientName,
+			InfoHash: "requested-hash",
+		},
 		ForceRecheck: &force,
 	})
 	if err != nil {

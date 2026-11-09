@@ -97,6 +97,50 @@ func TestInfoHashSelectsExactClientTorrentBeforeOrdinaryDiscovery(t *testing.T) 
 	}
 	order = nil
 	orderMu.Unlock()
+	for _, test := range []struct {
+		name          string
+		defaultClient string
+		searchClients config.CSVList
+		wantOrder     string
+	}{
+		{
+			name:          "disabled search list",
+			defaultClient: "z-default",
+			searchClients: config.CSVList{"none"},
+			wantOrder:     "default,other",
+		},
+		{
+			name:          "restricted search list",
+			defaultClient: "z-default",
+			searchClients: config.CSVList{"b-unused"},
+			wantOrder:     "default,other",
+		},
+		{
+			name:          "disabled default",
+			defaultClient: "none",
+			searchClients: config.CSVList{"none"},
+			wantOrder:     "other",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			configured := cfg
+			configured.ClientSetup = config.ClientSetupConfig{DefaultClient: test.defaultClient, SearchClients: test.searchClients}
+			selected, err := NewServiceWithRegistry(configured, api.NopLogger{}, trackerPatternRegistry(t)).SearchPathedTorrents(t.Context(), api.ClientSubject{
+				InfoHash:   hash,
+				SourcePath: source,
+				FileList:   []string{source},
+			})
+			if err != nil || selected.InfoHash != hash || selected.TorrentPath == "" || selected.TrackerIDs["blu"] != "2222" {
+				t.Fatalf("search settings blocked exact selection: result=%+v err=%v", selected, err)
+			}
+			orderMu.Lock()
+			defer orderMu.Unlock()
+			if strings.Join(order, ",") != test.wantOrder {
+				t.Errorf("client order=%v, want %s", order, test.wantOrder)
+			}
+			order = nil
+		})
+	}
 	for _, selection := range []string{"b-unused", "none"} {
 		selected, err := NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t)).SearchPathedTorrents(t.Context(), api.ClientSubject{
 			InfoHash:        hash,
@@ -104,13 +148,13 @@ func TestInfoHashSelectsExactClientTorrentBeforeOrdinaryDiscovery(t *testing.T) 
 			FileList:        []string{source},
 			ClientOverrides: api.ClientOverrides{Client: new(selection)},
 		})
-		if err != nil || (selection == "none" && selected.TorrentPath != "") || (selection != "none" && selected.InfoHash != hash) {
+		if err != nil || selected.TorrentPath == "" || selected.InfoHash != hash {
 			t.Fatalf("explicit client selection %s failed: artifact=%t err=%v", selection, selected.TorrentPath != "", err)
 		}
 		orderMu.Lock()
 		want := "unused"
 		if selection == "none" {
-			want = ""
+			want = "default,other"
 		}
 		if strings.Join(order, ",") != want {
 			t.Errorf("explicit selection searched other clients: %v", order)
@@ -195,19 +239,24 @@ func TestInfoHashMissAndUnsafeExportsFallBackWithDiagnostic(t *testing.T) {
 			defer server.Close()
 			logger := &captureLogger{}
 			cfg := config.Config{
-				MainSettings:   config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
-				ClientSetup:    config.ClientSetupConfig{DefaultClient: "qbit"},
-				TorrentClients: map[string]config.TorrentClientConfig{"qbit": {Type: "qui", QuiProxyURL: server.URL}},
+				MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
+				ClientSetup:  config.ClientSetupConfig{DefaultClient: "qbit"},
+				TorrentClients: map[string]config.TorrentClientConfig{
+					"qbit":  {Type: "qui", QuiProxyURL: server.URL},
+					"other": {Type: "qui", QuiProxyURL: server.URL},
+				},
 			}
 			result, err := NewServiceWithRegistry(cfg, logger, trackerPatternRegistry(t)).SearchPathedTorrents(t.Context(), api.ClientSubject{
-				InfoHash:   requested,
-				SourcePath: source,
-				FileList:   []string{source},
+				InfoHash:        requested,
+				SourcePath:      source,
+				FileList:        []string{source},
+				ClientOverrides: api.ClientOverrides{Client: new("qbit")},
 			})
 			if err != nil || result.InfoHash != hash || result.TorrentPath == "" || result.TrackerIDs["blu"] != "2222" {
 				t.Fatalf("ordinary fallback failed: hash=%s artifact=%t metadata=%s err=%v", result.InfoHash, result.TorrentPath != "", result.TrackerIDs["blu"], err)
 			}
-			if lookup.Load() != 1 || ordinary.Load() == 0 || len(logger.errors) != 1 || !strings.Contains(logger.errors[0], "continuing ordinary discovery") {
+			if lookup.Load() != 1 || ordinary.Load() == 0 || len(logger.errors) != 1 || !strings.Contains(logger.errors[0], "continuing ordinary discovery") ||
+				!strings.Contains(logger.errors[0], `selected client "qbit"`) || strings.Contains(logger.errors[0], server.URL) {
 				t.Fatalf("missing bounded fallback diagnostic: lookup=%d ordinary=%d errors=%v", lookup.Load(), ordinary.Load(), logger.errors)
 			}
 		})
@@ -275,7 +324,7 @@ func TestInfoHashPolicyRetryFindsOrdinaryAlternatives(t *testing.T) {
 	defer unavailableClient.Close()
 	cfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
-		ClientSetup:  config.ClientSetupConfig{DefaultClient: "default"},
+		ClientSetup:  config.ClientSetupConfig{DefaultClient: "default", SearchClients: config.CSVList{"none"}},
 		TorrentClients: map[string]config.TorrentClientConfig{
 			"default":       {Type: "qui", QuiProxyURL: defaultClient.URL},
 			"other":         {Type: "qui", QuiProxyURL: server.URL},
@@ -308,7 +357,11 @@ func TestInfoHashPolicyRetryFindsOrdinaryAlternatives(t *testing.T) {
 	for _, selection := range []string{"default", "none"} {
 		subject.ClientOverrides.Client = new(selection)
 		selected, err := clients.SearchPathedTorrents(t.Context(), subject)
-		if err != nil || len(selected.TorrentCandidates) != 0 {
+		want := 0
+		if selection == "none" {
+			want = 2
+		}
+		if err != nil || len(selected.TorrentCandidates) != want {
 			t.Fatalf("policy retry ignored client selection %s: candidates=%d err=%v", selection, len(selected.TorrentCandidates), err)
 		}
 	}

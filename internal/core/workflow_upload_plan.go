@@ -339,7 +339,8 @@ func (b workflowUploadPlanBuilder) Build(
 		subject.SubmissionContentIdentity = identity
 	}
 	var pendingTorrent api.TorrentPublication
-	if len(eligible) > 0 && b.torrents != nil && !descriptionInstructions.Options.SkipAutoTorrent {
+	if len(eligible) > 0 && b.torrents != nil &&
+		(!descriptionInstructions.Options.SkipAutoTorrent || strings.TrimSpace(subject.ClientSearchPolicy.InfoHash) != "") {
 		torrent, err := b.prepareWorkflowTorrent(ctx, subject, torrentSubject)
 		if err != nil {
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare torrent: %w", err)
@@ -579,7 +580,9 @@ func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 	input api.TorrentSubject,
 ) (api.TorrentResult, error) {
 	forcedRehash := input.TorrentOverrides.Rehash != nil && *input.TorrentOverrides.Rehash
-	if b.clients != nil && subject.ClientSearchPerformed && !subject.ClientSearchPolicy.Skip && !forcedRehash {
+	if b.clients != nil && subject.ClientSearchPerformed &&
+		(!subject.ClientSearchPolicy.Skip || strings.TrimSpace(subject.ClientSearchPolicy.InfoHash) != "") &&
+		!forcedRehash {
 		probe := input
 		probe.TorrentOverrides.NoHash = new(true)
 		probe.SkipIfRehashTrackers = nil
