@@ -10241,12 +10241,14 @@ it.each([
       updatedAt: "2026-07-20T00:00:00Z",
     };
     let current = base;
-    const terminal = createDeferred<WorkflowOperationStatus>();
+    let terminal = createDeferred<WorkflowOperationStatus>();
     const continueWorkflow = vi.fn(async () => {
       current = { ...base, operation };
       return current;
     });
-    const cancelOperation = vi.fn(async () => operation);
+    const cancelOperation = vi.fn(
+      async (_workflowID: string, _operationID: string) => current.operation!,
+    );
     const close = vi.fn();
     const cancelWorkflow = vi.fn();
     const { result, unmount } = renderHook(useReleaseSession, {
@@ -10341,12 +10343,45 @@ it.each([
       expect(result.current.workflow.view.failure).toBeNull();
       expect(result.current.workflow.view.error).toBe("");
       expect(continueWorkflow).toHaveBeenCalledOnce();
-      current = { ...base, operation: { ...operation, status: "completed", sequence: 4 } };
-      continueWorkflow.mockImplementation(async () => current);
-      await act(async () => {
-        expect(await start()).toBe(true);
-      });
-      expect(continueWorkflow).toHaveBeenCalledTimes(2);
+      for (let retry = 1; retry <= 2; retry += 1) {
+        terminal = createDeferred<WorkflowOperationStatus>();
+        const accepted = createDeferred<ReleaseWorkflowCurrent>();
+        const nextOperation = { ...operation, id: `retry-operation-${retry}` };
+        continueWorkflow.mockImplementationOnce(async () => accepted.promise);
+        act(() => {
+          command = start();
+        });
+        expect(result.current.workflow.cancellation.message).toBe("");
+        expect(result.current.workflow.view.current?.operation?.status).not.toBe("canceled");
+        expect(result.current.workflow.cancellation.available).toBe(true);
+        await act(async () => {
+          await result.current.workflow.reload();
+        });
+        expect(result.current.workflow.view.current?.operation?.status).not.toBe("canceled");
+        current = { ...base, operation: nextOperation };
+        accepted.resolve(current);
+        await waitFor(() =>
+          expect(result.current.workflow.view.current?.operation?.id).toBe(nextOperation.id),
+        );
+        act(() => {
+          cancellation = result.current.workflow.cancel();
+        });
+        await waitFor(() => expect(cancelOperation).toHaveBeenCalledTimes(retry + 1));
+        expect(cancelOperation.mock.calls[retry]?.slice(0, 2)).toEqual([
+          workflowID,
+          nextOperation.id,
+        ]);
+        expect(result.current.workflow.cancellation.pending).toBe(true);
+        current = { ...base, operation: { ...nextOperation, status: "canceled", sequence: 3 } };
+        terminal.resolve(current.operation!);
+        await act(async () => {
+          expect(await command).toBe(false);
+          expect(await cancellation).toBe(true);
+        });
+        expect(result.current.workflow.cancellation.pending).toBe(false);
+        expect(result.current.workflow.view.current?.operation?.status).toBe("canceled");
+      }
+      expect(continueWorkflow).toHaveBeenCalledTimes(3);
       expect(close).not.toHaveBeenCalled();
     } finally {
       terminal.resolve({ ...operation, status: "canceled" });

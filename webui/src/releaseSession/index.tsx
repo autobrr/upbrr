@@ -553,6 +553,12 @@ export function ReleaseSessionProvider({
     setScreenshotCommand((command) =>
       command?.status === "error" && commandFailureSuperseded(command, current) ? null : command,
     );
+    if (
+      isActiveWorkflowOperation(current.operation) &&
+      current.operation.id !== stateRef.current.workflowView.current?.operation?.id
+    ) {
+      resetCancellationFeedback();
+    }
     dispatch({ type: "workflow_current_published", status, current });
     return current;
   };
@@ -567,6 +573,13 @@ export function ReleaseSessionProvider({
     if (confirmed) storeCancellation(null);
     setCancellationView({ pending: false, retry: false, message });
     request.resolve(confirmed);
+  };
+
+  const resetCancellationFeedback = () => {
+    // An unconfirmed cancellation still belongs to its active operation.
+    if (cancellation.current) return;
+    setCancellationView({ pending: false, retry: false, message: "" });
+    dispatch({ type: "workflow_attempt_started" });
   };
 
   const requestCancellation = (controller: AbortController) => {
@@ -1194,6 +1207,7 @@ export function ReleaseSessionProvider({
     abortController("activeInput");
     const controller = attempt?.controller ?? new AbortController();
     controllers.current.workflow = controller;
+    resetCancellationFeedback();
     dispatch({ type: "active_input_loading" });
     const commandID =
       attempt?.correlationID || timestampedCommandID("workflow", state.commandRevision);
@@ -1292,6 +1306,7 @@ export function ReleaseSessionProvider({
     if (!workflowView.current || controllers.current.workflow) return false;
     const controller = new AbortController();
     controllers.current.workflow = controller;
+    resetCancellationFeedback();
     dispatch({ type: "active_input_loading" });
     const commandID = `workflow-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     let commandAuthority = {
@@ -1489,6 +1504,7 @@ export function ReleaseSessionProvider({
     }
     const controller = new AbortController();
     controllers.current.workflow = controller;
+    resetCancellationFeedback();
     dispatch({ type: "active_input_loading" });
     const commandID = `workflow-dupes-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     try {
@@ -1592,6 +1608,7 @@ export function ReleaseSessionProvider({
     const controller = new AbortController();
     controllers.current.workflow = controller;
     questionnaireController.current = controller;
+    resetCancellationFeedback();
     setQuestionnaireRefresh({ key: questionnaireKey, status: "running", error: "" });
     const expectedInputContentRevision =
       state.inputEditRevision - state.trackerSelectionEditRevision;
@@ -2111,6 +2128,7 @@ export function ReleaseSessionProvider({
     abortWorkflowFacets();
     const controller = new AbortController();
     controllers.current.preparation = controller;
+    resetCancellationFeedback();
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
@@ -2184,6 +2202,7 @@ export function ReleaseSessionProvider({
     abortWorkflowFacets();
     const controller = new AbortController();
     controllers.current.preparation = controller;
+    resetCancellationFeedback();
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
@@ -2286,6 +2305,7 @@ export function ReleaseSessionProvider({
     }
     const controller = new AbortController();
     controllers.current[facet] = controller;
+    resetCancellationFeedback();
     return {
       controller,
       release: { ...state.release },
@@ -2821,6 +2841,7 @@ export function ReleaseSessionProvider({
     }
     const controller = new AbortController();
     controllers.current.workflow = controller;
+    resetCancellationFeedback();
     dispatch({ type: "active_input_loading" });
     const commandID = `workflow-upload-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     try {
@@ -3626,6 +3647,7 @@ export function ReleaseSessionProvider({
         abortController("preparation");
         const controller = new AbortController();
         controllers.current.preparation = controller;
+        resetCancellationFeedback();
         const sourcePath = state.preparation.sourcePath;
         const commandRevision = state.commandRevision;
         const correlationID = state.preparation.correlationID;

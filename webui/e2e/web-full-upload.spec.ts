@@ -3953,7 +3953,20 @@ for (const stage of [
       expect(workspace.fake.counters.trackerUploads).toBe(0);
       expect(workspace.fake.counters.clientInjections).toBe(0);
       gate.release();
+      gate = workspace.fake.holdWorkflowStage(stage);
       await start();
+      await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
+      await gate.entered;
+      const rerun = await snapshot();
+      expect(rerun.current?.operation?.id).not.toBe(canceled.current?.operation?.id);
+      const repeatCancellation = waitForAppMethod(page, "CancelReleaseWorkflowOperation");
+      await page.getByRole("button", { name: "Cancel active work", exact: true }).click();
+      expect((await repeatCancellation).ok()).toBe(true);
+      gate.release();
+      await expect.poll(async () => (await snapshot()).current?.operation?.status).toBe("canceled");
+      await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
+      await start();
+      await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
       // Re-admission may change the slot while a snapshot is being assembled.
       await expect(async () => {
         expect((await snapshot()).current?.operation?.status).toBe("completed");
