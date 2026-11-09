@@ -115,8 +115,8 @@ type torrentDataValidation struct {
 // configured order, retaining tracker metadata independently of artifact
 // selection and preferring compatible torrents by the active piece-size policy.
 // An explicit InfoHash first selects evidence whose exported file layout matches
-// the local source, independently of client save paths and without hashing media
-// bytes. A miss is reported and falls back to ordinary discovery.
+// the local source or can safely shed a single-file folder wrapper, independently
+// of client save paths and without hashing media bytes. A miss is reported and falls back to ordinary discovery.
 //
 // A reusable export is stripped of announce, comment, and web-seed metadata and
 // retained as a content-addressed mode-0600 snapshot below the configured DB
@@ -303,7 +303,7 @@ func (s *Service) searchRequestedTorrent(ctx context.Context, meta api.ClientSub
 		if len(matches) == 0 {
 			continue
 		}
-		if selected.TorrentPath != "" {
+		if selected.TorrentPath != "" || (selected.InfoHash == meta.InfoHash && len(selected.TorrentCandidates) > 0) {
 			return selected, true, nil
 		}
 	}
@@ -1534,6 +1534,10 @@ func (s *Service) selectValidTorrent(
 			InfoHash:      hash,
 			ContentSHA256: strings.TrimSuffix(filepath.Base(snapshotPath), ".torrent"),
 		})
+		if meta.InfoHash != "" {
+			selection.infoHash = hash
+		}
+
 		return nil
 	}
 
@@ -1590,7 +1594,7 @@ func (s *Service) selectValidTorrent(
 						return validatedTorrentSelection{}, err
 					}
 					considerClientMatch(match)
-					if validation.reason == "single_file_alternative" {
+					if validation.reason == "single_file_alternative" || validation.reason == "single_file_wrapper" {
 						if err := retainCandidate(normalizedHash, outputPath, data); err != nil {
 							return validatedTorrentSelection{}, err
 						}
@@ -1647,7 +1651,7 @@ func (s *Service) selectValidTorrent(
 
 		if !validation.reusable {
 			s.logger.Tracef("clients: validated exported torrent as client match only for %s (reason=%s)", normalizedHash, validation.reason)
-			if validation.reason == "path_mismatch" || validation.reason == "single_file_alternative" {
+			if validation.reason == "path_mismatch" || validation.reason == "single_file_alternative" || validation.reason == "single_file_wrapper" {
 				if err := retainCandidate(normalizedHash, outputPath, data); err != nil {
 					return validatedTorrentSelection{}, err
 				}
@@ -1906,6 +1910,19 @@ func validateTorrentData(meta api.ClientSubject, hash string, data []byte) torre
 			pieceSize:   pieceSize,
 			infoHash:    infoHash,
 		}
+	}
+	if converted, err := torrent.ConvertSingleFileWrapperInfo(metaInfo.InfoBytes, subject); err == nil && len(converted) > 0 {
+		return torrentDataValidation{
+			clientMatch: true,
+			pieceSize:   pieceSize,
+			infoHash:    infoHash,
+			reason:      "single_file_wrapper",
+		}
+	}
+	// Requested hashes require a source-valid artifact, including safe wrapper
+	// conversion. Ordinary discovery may retain weaker tracker provenance below.
+	if meta.InfoHash != "" {
+		return torrentDataValidation{infoHash: infoHash, reason: "content_layout"}
 	}
 	if meta.KeepFolder {
 		subject.KeepFolder = false

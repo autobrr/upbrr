@@ -36,53 +36,22 @@ type metadataClientRecorder struct {
 func TestRequestedInfoHashHydrationPreservesAnnounceOnlyTrackerMatch(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	source := filepath.Join(dir, "Example.Release.2026.mkv")
+	root := filepath.Join(dir, "Example.Release.2026")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "Example.Release.2026.mkv")
 	if err := os.WriteFile(source, []byte("synthetic media"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	artifact := filepath.Join(dir, "fixture.torrent")
-	created, err := mkbrr.Create(mkbrr.CreateOptions{Path: source, OutputPath: artifact})
-	if err != nil {
-		t.Fatal(err)
-	}
-	hash := created.InfoHash
-	data, err := os.ReadFile(artifact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v2/torrents/info":
-			if r.URL.Query().Get("hashes") != hash {
-				t.Error("hydration did not forward the requested infohash")
-			}
-			_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{{
-				Hash:        hash,
-				Name:        filepath.Base(source),
-				ContentPath: source,
-				Tracker:     "https://blutopia.cc/announce/redacted",
-			}})
-		case "/api/v2/torrents/properties":
-			_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{})
-		case "/api/v2/torrents/export":
-			_, _ = w.Write(data)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-	cfg := config.Config{
-		MainSettings:   config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
-		ClientSetup:    config.ClientSetupConfig{DefaultClient: "none", SearchClients: config.CSVList{"none"}},
-		TorrentClients: map[string]config.TorrentClientConfig{"qbit": {Type: "qui", QuiProxyURL: server.URL}},
-	}
-	clients := torrentclient.NewServiceWithRegistry(cfg, api.NopLogger{}, trackerDataTestRegistry(t))
 	for _, policy := range []struct {
 		name       string
 		onlyID     bool
 		keepImages bool
+		wrapped    bool
 	}{
 		{name: "IDs only", onlyID: true},
+		{name: "wrapper with ordinary search disabled", wrapped: true},
 		{name: "keep images", keepImages: true},
 		{
 			name:       "both policies",
@@ -91,6 +60,47 @@ func TestRequestedInfoHashHydrationPreservesAnnounceOnlyTrackerMatch(t *testing.
 		},
 	} {
 		t.Run(policy.name, func(t *testing.T) {
+			artifact := filepath.Join(t.TempDir(), "fixture.torrent")
+			artifactSource := source
+			if policy.wrapped {
+				artifactSource = root
+			}
+			created, err := mkbrr.Create(mkbrr.CreateOptions{Path: artifactSource, OutputPath: artifact})
+			if err != nil {
+				t.Fatal(err)
+			}
+			hash := created.InfoHash
+			data, err := os.ReadFile(artifact)
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v2/torrents/info":
+					if r.URL.Query().Get("hashes") != hash {
+						t.Error("hydration did not forward the requested infohash")
+					}
+					_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{{
+						Hash:        hash,
+						Name:        filepath.Base(source),
+						ContentPath: source,
+						Tracker:     "https://blutopia.cc/announce/redacted",
+					}})
+				case "/api/v2/torrents/properties":
+					_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{})
+				case "/api/v2/torrents/export":
+					_, _ = w.Write(data)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			cfg := config.Config{
+				MainSettings:   config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")},
+				ClientSetup:    config.ClientSetupConfig{DefaultClient: "none", SearchClients: config.CSVList{"none"}},
+				TorrentClients: map[string]config.TorrentClientConfig{"qbit": {Type: "qui", QuiProxyURL: server.URL}},
+			}
+			clients := torrentclient.NewServiceWithRegistry(cfg, api.NopLogger{}, trackerDataTestRegistry(t))
 			lookup := &stubTrackerLookup{}
 			service := newTestService(t, &stubRepo{},
 				WithConfig(cfg),
@@ -111,9 +121,12 @@ func TestRequestedInfoHashHydrationPreservesAnnounceOnlyTrackerMatch(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if state.InfoHash != hash || state.DiscoveredTorrentPath == "" || state.ClientEvidence.Policy.InfoHash != hash ||
+			if state.InfoHash != hash || (!policy.wrapped && state.DiscoveredTorrentPath == "") || state.ClientEvidence.Policy.InfoHash != hash ||
 				len(state.TrackerIDs) != 0 || !slices.Contains(state.MatchedEvidenceTrackers, "BLU") {
 				t.Fatalf("requested torrent evidence changed during hydration: %+v", state.ClientEvidence)
+			}
+			if policy.wrapped && (state.DiscoveredTorrentPath != "" || len(state.ClientEvidence.Result.TorrentCandidates) != 1 || state.ClientEvidence.Result.TorrentCandidates[0].InfoHash != hash) {
+				t.Fatalf("validated wrapper evidence missing: %+v", state.ClientEvidence)
 			}
 			record, _, _, err := service.lookupTrackerData(t.Context(), state, "BLU", time.Now())
 			if err != nil || !record.Matched || record.InfoHash != hash {

@@ -1982,9 +1982,17 @@ func TestPreparationChangedInfoHashReplacesClientEvidence(t *testing.T) {
 
 func TestPreparationRefreshesPreviousInfoHashSearchPolicy(t *testing.T) {
 	t.Parallel()
-	for _, test := range []struct{ name, hash string }{
+	for _, test := range []struct {
+		name, hash      string
+		overridesSearch bool
+	}{
 		{name: "ordinary source"},
 		{name: "supplied hash", hash: strings.Repeat("a", 40)},
+		{
+			name:            "source validation and wrapper lookup",
+			hash:            strings.Repeat("a", 40),
+			overridesSearch: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			requestedHash := test.hash
@@ -2000,15 +2008,17 @@ func TestPreparationRefreshesPreviousInfoHashSearchPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Persist the policy payload used before infohash overrode search settings.
+			// Persist either prior requested-hash policy without changing ordinary cache identity.
 			previousPolicy, err := fingerprintJSON(struct {
-				Policy               api.PreparationPolicy
-				Search               api.ClientSearchPolicy
-				MetadataRequirements api.MetadataRequirementSet
+				Policy                  api.PreparationPolicy
+				Search                  api.ClientSearchPolicy
+				MetadataRequirements    api.MetadataRequirementSet
+				InfoHashOverridesSearch bool `json:",omitempty"`
 			}{
-				Policy:               normalized.input.Policy,
-				Search:               normalized.input.Search,
-				MetadataRequirements: normalized.input.MetadataRequirements,
+				Policy:                  normalized.input.Policy,
+				Search:                  normalized.input.Search,
+				MetadataRequirements:    normalized.input.MetadataRequirements,
+				InfoHashOverridesSearch: test.overridesSearch,
 			})
 			if err != nil {
 				t.Fatal(err)

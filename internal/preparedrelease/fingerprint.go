@@ -305,17 +305,21 @@ func preparationCompatibility(input api.PrepareInput, sourceFingerprint string, 
 	if err != nil {
 		return api.PreparationCompatibility{}, fmt.Errorf("prepared release: fingerprint fact instructions: %w", err)
 	}
+	infoHashPolicyVersion := 0
+	if input.Search.InfoHash != "" {
+		infoHashPolicyVersion = 2
+	}
 	policy, err := fingerprintJSON(struct {
 		Policy               api.PreparationPolicy
 		Search               api.ClientSearchPolicy
 		MetadataRequirements api.MetadataRequirementSet
-		// Invalidate older hash lookups without discarding ordinary prepared facts.
-		InfoHashOverridesSearch bool `json:",omitempty"`
+		// Refresh old requested-hash metadata for source validation and wrapper lookup.
+		InfoHashPolicyVersion int `json:",omitempty"`
 	}{
-		Policy:                  input.Policy,
-		Search:                  input.Search,
-		MetadataRequirements:    input.MetadataRequirements,
-		InfoHashOverridesSearch: input.Search.InfoHash != "",
+		Policy:                input.Policy,
+		Search:                input.Search,
+		MetadataRequirements:  input.MetadataRequirements,
+		InfoHashPolicyVersion: infoHashPolicyVersion,
 	})
 	if err != nil {
 		return api.PreparationCompatibility{}, fmt.Errorf("prepared release: fingerprint policy: %w", err)

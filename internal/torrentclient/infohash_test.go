@@ -193,9 +193,21 @@ func TestInfoHashMatchesContentIndependentlyOfClientLocation(t *testing.T) {
 		mismatch     string
 		exportStatus int
 		emptyExport  bool
+		wrapped      bool
 	}{
 		{name: "direct client different location", clientType: "qbit"},
 		{name: "proxy client different location", clientType: "qui"},
+		{
+			name:       "convertible wrapper",
+			clientType: "qui",
+			wrapped:    true,
+		},
+		{
+			name:       "wrapper wrong size",
+			clientType: "qui",
+			wrapped:    true,
+			mismatch:   "size",
+		},
 		{
 			name:       "single file selected from directory",
 			clientType: "qui",
@@ -274,6 +286,9 @@ func TestInfoHashMatchesContentIndependentlyOfClientLocation(t *testing.T) {
 			fixtureSource := sourcePath
 			if test.inputKind == "selected file" {
 				fixtureSource = source
+			}
+			if test.wrapped {
+				fixtureSource = root
 			}
 			writeQbitTestTorrentForSource(t, fixture, fixtureSource)
 			metaInfo, err := metainfo.LoadFromFile(fixture)
@@ -372,6 +387,14 @@ func TestInfoHashMatchesContentIndependentlyOfClientLocation(t *testing.T) {
 			if test.mismatch != "" || test.exportStatus != 0 || test.emptyExport {
 				if result.TorrentPath != "" || len(result.TorrentCandidates) != 0 || len(result.TrackerIDs) != 0 || ordinary.Load() == 0 || len(logger.errors) != 1 {
 					t.Fatalf("unmatched content was selected: result=%+v ordinary=%d errors=%v", result, ordinary.Load(), logger.errors)
+				}
+				return
+			}
+			if test.wrapped {
+				if result.InfoHash != hash || result.TorrentPath != "" || len(result.TorrentCandidates) != 1 ||
+					result.TorrentCandidates[0].InfoHash != hash || result.TorrentCandidates[0].ContentSHA256 == "" ||
+					result.TrackerIDs["blu"] != "2222" || ordinary.Load() != 0 || len(logger.errors) != 0 {
+					t.Fatalf("convertible requested torrent was lost: result=%+v ordinary=%d errors=%v", result, ordinary.Load(), logger.errors)
 				}
 				return
 			}
