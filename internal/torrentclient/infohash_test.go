@@ -4,6 +4,7 @@
 package torrentclient
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"testing"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
+	"github.com/autobrr/go-torrent/bencode"
+	"github.com/autobrr/go-torrent/metainfo"
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -182,8 +185,205 @@ func TestInfoHashSelectsExactClientTorrentBeforeOrdinaryDiscovery(t *testing.T) 
 	}
 }
 
+func TestInfoHashMatchesContentIndependentlyOfClientLocation(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		clientType   string
+		inputKind    string
+		mismatch     string
+		exportStatus int
+		emptyExport  bool
+	}{
+		{name: "direct client different location", clientType: "qbit"},
+		{name: "proxy client different location", clientType: "qui"},
+		{
+			name:       "single file selected from directory",
+			clientType: "qui",
+			inputKind:  "selected file",
+		},
+		{
+			name:       "folder with nested files",
+			clientType: "qui",
+			inputKind:  "folder",
+		},
+		{
+			name:       "single file wrong size",
+			clientType: "qui",
+			mismatch:   "size",
+		},
+		{
+			name:       "single file wrong name",
+			clientType: "qui",
+			mismatch:   "name",
+		},
+		{
+			name:       "folder wrong root",
+			clientType: "qui",
+			inputKind:  "folder",
+			mismatch:   "root",
+		},
+		{
+			name:       "folder wrong file set",
+			clientType: "qui",
+			inputKind:  "folder",
+			mismatch:   "files",
+		},
+		{
+			name:       "folder wrong file size",
+			clientType: "qui",
+			inputKind:  "folder",
+			mismatch:   "size",
+		},
+		{
+			name:         "unavailable export",
+			clientType:   "qui",
+			exportStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name:        "empty export",
+			clientType:  "qui",
+			emptyExport: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			root := filepath.Join(dir, "Example.Release.2026")
+			if err := os.MkdirAll(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			source := filepath.Join(root, "Example.Release.2026.mkv")
+			if err := os.WriteFile(source, []byte("synthetic media bytes"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			sourcePath := source
+			files := []string{source}
+			if test.inputKind != "" {
+				sourcePath = root
+			}
+			if test.inputKind == "folder" {
+				if err := os.MkdirAll(filepath.Join(root, "Extras"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				extra := filepath.Join(root, "Extras", "Example.Extra.mkv")
+				if err := os.WriteFile(extra, []byte("synthetic extra bytes"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				files = append(files, extra)
+			}
+			fixture := filepath.Join(dir, "fixture.torrent")
+			fixtureSource := sourcePath
+			if test.inputKind == "selected file" {
+				fixtureSource = source
+			}
+			writeQbitTestTorrentForSource(t, fixture, fixtureSource)
+			metaInfo, err := metainfo.LoadFromFile(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := metaInfo.UnmarshalInfo()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A structurally valid piece table deliberately differs from the media
+			// bytes, so successful selection also protects against full hashing.
+			info.Pieces = make([]byte, metainfo.HashSize)
+			metaInfo.InfoBytes, err = bencode.Marshal(info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var encoded bytes.Buffer
+			if err := metaInfo.Write(&encoded); err != nil {
+				t.Fatal(err)
+			}
+			data := encoded.Bytes()
+			hash := metaInfo.HashInfoBytes().String()
+			switch test.mismatch {
+			case "size":
+				if err := os.Truncate(source, 1); err != nil {
+					t.Fatal(err)
+				}
+			case "name":
+				renamed := filepath.Join(root, "Different.Release.2026.mkv")
+				if err := os.Rename(source, renamed); err != nil {
+					t.Fatal(err)
+				}
+				sourcePath, files = renamed, []string{renamed}
+			case "root":
+				renamed := filepath.Join(dir, "Different.Release.2026")
+				if err := os.Rename(root, renamed); err != nil {
+					t.Fatal(err)
+				}
+				sourcePath = renamed
+				files = []string{filepath.Join(renamed, filepath.Base(source)), filepath.Join(renamed, "Extras", "Example.Extra.mkv")}
+			case "files":
+				files = files[:1]
+			}
+			var ordinary atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v2/auth/login":
+					_, _ = w.Write([]byte("Ok."))
+				case "/api/v2/torrents/search", "/api/v2/torrents/info":
+					if r.URL.Query().Get("hashes") == "" {
+						ordinary.Add(1)
+						_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{})
+						return
+					}
+					_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{{
+						Hash:        hash,
+						Name:        "Client display label",
+						ContentPath: filepath.Join(dir, "client", "Unrelated.Location"),
+						Comment:     "https://blutopia.cc/torrents/2222",
+					}})
+				case "/api/v2/torrents/properties":
+					_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{})
+				case "/api/v2/torrents/export":
+					if test.exportStatus != 0 {
+						w.WriteHeader(test.exportStatus)
+					} else if !test.emptyExport {
+						_, _ = w.Write(data)
+					}
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			logger := &captureLogger{}
+			cfg := config.Config{
+				MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
+				ClientSetup:  config.ClientSetupConfig{DefaultClient: "client"},
+				TorrentClients: map[string]config.TorrentClientConfig{
+					"client": {
+						Type:        test.clientType,
+						URL:         server.URL,
+						QuiProxyURL: server.URL,
+					},
+				},
+			}
+			result, err := NewServiceWithRegistry(cfg, logger, trackerPatternRegistry(t)).SearchPathedTorrents(t.Context(), api.ClientSubject{
+				InfoHash:   hash,
+				SourcePath: sourcePath,
+				FileList:   files,
+				KeepFolder: test.inputKind == "folder",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.mismatch != "" || test.exportStatus != 0 || test.emptyExport {
+				if result.TorrentPath != "" || len(result.TorrentCandidates) != 0 || len(result.TrackerIDs) != 0 || ordinary.Load() == 0 || len(logger.errors) != 1 {
+					t.Fatalf("unmatched content was selected: result=%+v ordinary=%d errors=%v", result, ordinary.Load(), logger.errors)
+				}
+				return
+			}
+			if result.InfoHash != hash || result.TorrentPath == "" || result.TrackerIDs["blu"] != "2222" || ordinary.Load() != 0 || len(logger.errors) != 0 {
+				t.Fatalf("matching content was not selected: result=%+v ordinary=%d errors=%v", result, ordinary.Load(), logger.errors)
+			}
+		})
+	}
+}
+
 func TestInfoHashMissAndUnsafeExportsFallBackWithDiagnostic(t *testing.T) {
-	for _, scenario := range []string{"missing", "wrong hash", "wrong path", "wrong export"} {
+	for _, scenario := range []string{"missing", "wrong hash", "wrong export"} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			source := filepath.Join(dir, "Example.Release.2026.mkv")
@@ -192,9 +392,6 @@ func TestInfoHashMissAndUnsafeExportsFallBackWithDiagnostic(t *testing.T) {
 				t.Fatal(err)
 			}
 			requested := strings.Repeat("a", 40)
-			if scenario == "wrong path" {
-				requested = hash
-			}
 			var lookup, ordinary atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -209,11 +406,8 @@ func TestInfoHashMissAndUnsafeExportsFallBackWithDiagnostic(t *testing.T) {
 							Comment:     "https://blutopia.cc/torrents/9999",
 						}
 
-						switch scenario {
-						case "wrong hash":
+						if scenario == "wrong hash" {
 							candidate.Hash = hash
-						case "wrong path":
-							candidate.ContentPath = filepath.Join(dir, "other", filepath.Base(source))
 						}
 						if scenario != "missing" {
 							items = append(items, candidate)

@@ -114,8 +114,9 @@ type torrentDataValidation struct {
 // SearchPathedTorrents searches selected qBittorrent or Qui clients in
 // configured order, retaining tracker metadata independently of artifact
 // selection and preferring compatible torrents by the active piece-size policy.
-// An explicit InfoHash first selects matching, source-bound evidence across
-// available clients. A miss is reported and falls back to ordinary discovery.
+// An explicit InfoHash first selects evidence whose exported file layout matches
+// the local source, independently of client save paths and without hashing media
+// bytes. A miss is reported and falls back to ordinary discovery.
 //
 // A reusable export is stripped of announce, comment, and web-seed metadata and
 // retained as a content-addressed mode-0600 snapshot below the configured DB
@@ -154,11 +155,13 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 		}
 		if name := namedSearchClient(meta.ClientOverrides); name != "" {
 			s.logger.Errorf(
-				"clients: requested infohash was not found in selected client %q; ignoring it and continuing ordinary discovery",
+				"clients: requested infohash could not be matched to source content in selected client %q; ignoring it and continuing ordinary discovery",
 				redaction.RedactValue(name, nil),
 			)
 		} else {
-			s.logger.Errorf("clients: requested infohash was not found in available clients; ignoring it and continuing ordinary discovery")
+			s.logger.Errorf(
+				"clients: requested infohash could not be matched to source content in available clients; ignoring it and continuing ordinary discovery",
+			)
 		}
 	}
 	clients, usedFallback := resolveSearchClients(s.cfg, meta.ClientOverrides)
@@ -275,12 +278,11 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 }
 
 // searchRequestedTorrent tries the default client before other available clients.
-// An explicitly named client remains authoritative. Source and
-// export validation are shared with ordinary discovery; transport failures do not
-// prevent trying another client, while cancellation stops the lookup.
+// An explicitly named client remains authoritative. Export validation is shared
+// with ordinary discovery and checks source file names, sizes and layout without
+// hashing media bytes. Transport failures do not prevent trying another client,
+// while cancellation stops the lookup.
 func (s *Service) searchRequestedTorrent(ctx context.Context, meta api.ClientSubject) (api.ClientSearchResult, bool, error) {
-	var metadata api.ClientSearchResult
-	foundMetadata := false
 	for _, name := range resolveInfoHashSearchClients(s.cfg, meta.ClientOverrides) {
 		clientCfg := s.cfg.TorrentClients[name]
 		clientType := strings.ToLower(strings.TrimSpace(clientCfg.ClientType()))
@@ -301,14 +303,11 @@ func (s *Service) searchRequestedTorrent(ctx context.Context, meta api.ClientSub
 		if len(matches) == 0 {
 			continue
 		}
-		if selected.TorrentPath != "" || len(selected.TorrentCandidates) > 0 {
+		if selected.TorrentPath != "" {
 			return selected, true, nil
 		}
-		if !foundMetadata {
-			metadata, foundMetadata = selected, true
-		}
 	}
-	return metadata, foundMetadata, nil
+	return api.ClientSearchResult{}, false, nil
 }
 
 // resolveInfoHashSearchClients keeps exact lookup and policy retries in the same
@@ -598,7 +597,7 @@ func (s *Service) searchQbitClient(
 		}
 
 		if meta.InfoHash != "" {
-			if normalizeQbitHash(torrent.Hash) != meta.InfoHash || !qbitTorrentSourceMatches(torrent, meta, clientCfg) {
+			if normalizeQbitHash(torrent.Hash) != meta.InfoHash {
 				continue
 			}
 		} else if !torrentMatchesMeta(torrent, meta) {
