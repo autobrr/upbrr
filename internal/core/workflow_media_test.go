@@ -4611,6 +4611,111 @@ func TestWorkflowMediaReusesDifferentSavedHostsForSelectedTrackers(t *testing.T)
 	}
 }
 
+// regression: #961
+func TestWorkflowImageCancellationLeavesEffectUnresolved(t *testing.T) {
+	t.Parallel()
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+			if err := os.WriteFile(source, []byte("source"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			repository, err := db.Open(filepath.Join(t.TempDir(), "workflow.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repository.Close() })
+			if err := repository.Migrate(); err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			verified, err := preparedrelease.VerifyInputSource(ctx, api.PrepareInput{SourcePath: source})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := prepared.Prepare(ctx, api.PrepareInput{SourcePath: source, VerifiedSource: &verified})
+			if err != nil {
+				t.Fatal(err)
+			}
+			image := filepath.Join(t.TempDir(), "image.png")
+			if err := os.WriteFile(image, []byte("synthetic image"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			release := make(chan struct{})
+			uploader := &barrierImageHostingService{
+				entered:   make(chan imageHostCall, 1),
+				behaviors: map[string]imageHostBehavior{"pixhost": {release: release}},
+			}
+			cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}}
+			builder := workflowMediaBuilder{config: cfg, media: &mediaModule{
+				cfg:           cfg,
+				images:        uploader,
+				preparedFacts: prepared,
+				registry:      mediaImageHostRegistry(t),
+				logger:        api.NopLogger{},
+			}}
+			reporter := &imageCancellationEffectReporter{}
+			ctx = api.WithWorkflowExternalEffectReporter(ctx, reporter)
+			done := make(chan error, 1)
+			go func() {
+				_, _, _, err := builder.UploadImages(ctx,
+					api.ReleaseRef{SourcePath: source, Generation: result.Release.Generation},
+					api.TrackerReleaseProjectionSet{
+						ID:          "projections",
+						Revision:    1,
+						Projections: []api.TrackerReleaseProjection{{TrackerID: "ONE"}},
+					},
+					api.MediaArtifactSet{
+						ID:       "media",
+						Revision: 1,
+						Artifacts: []api.MediaArtifact{{
+							ID:       "local",
+							Kind:     api.MediaArtifactScreenshot,
+							Selected: true,
+						}},
+					},
+					workflowMediaPrivateArtifacts{ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{"local": {Path: image}}},
+					[]api.PublicResourceID{"local"}, "pixhost", false, nil, time.Now())
+				done <- err
+			}()
+			select {
+			case <-uploader.entered:
+			case err := <-done:
+				t.Fatalf("image upload never started: %v", err)
+			}
+			if canceled {
+				cancel()
+			} else {
+				close(release)
+			}
+			err = <-done
+			if canceled {
+				if !errors.Is(err, context.Canceled) || reporter.completions != 0 {
+					t.Fatalf("canceled image upload error=%v completed_effects=%d", err, reporter.completions)
+				}
+			} else if err != nil || reporter.completions != 1 {
+				t.Fatalf("completed image upload error=%v completed_effects=%d", err, reporter.completions)
+			}
+		})
+	}
+}
+
+type imageCancellationEffectReporter struct {
+	sourceStabilityReporter
+	completions int
+}
+
+func (r *imageCancellationEffectReporter) Complete(context.Context, api.WorkflowExternalEffectReceipt, bool) error {
+	r.completions++
+	return nil
+}
+
 func TestWorkflowMediaBuilderHonorsCancellation(t *testing.T) {
 	t.Parallel()
 

@@ -2388,6 +2388,11 @@ func (b workflowMediaBuilder) UploadImages(
 		retainedLinks,
 		blockedRetainedLinks,
 	)
+	// A canceled batch may return per-host failures without an aggregate error.
+	// Leave its effect unresolved so completion fences it for explicit reconciliation.
+	if err := ctx.Err(); err != nil {
+		return api.MediaArtifactSet{}, nil, nil, fmt.Errorf("workflow image hosting canceled: %w", err)
+	}
 	receiptErr := api.CompleteWorkflowExternalEffect(ctx, effectReceipt, err == nil)
 	if receiptErr != nil {
 		return api.MediaArtifactSet{}, nil, nil, api.NewOperationError(api.OperationFailure{
