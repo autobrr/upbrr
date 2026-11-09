@@ -8072,7 +8072,7 @@ describe("useReleaseSession", () => {
     },
   );
 
-  it.each(["questions", "plan", "preview"])(
+  it.each(["questions", "plan", "preview", "replacement plan"])(
     "restores cancellation details after a rejected %s request",
     async (request) => {
       const workflowID = "workflow-rejected-facet";
@@ -8083,10 +8083,9 @@ describe("useReleaseSession", () => {
         "rejection-fixture",
         new AbortController().signal,
       );
-      const current = { ...base, operation: questionnaireOperation(base, "canceled") };
-      const reject = vi.fn(async () => {
-        throw new Error("Request rejected before acceptance.");
-      });
+      let current = { ...base, operation: questionnaireOperation(base, "canceled") };
+      const rejection = createDeferred<never>();
+      const reject = vi.fn(() => rejection.promise);
       const { result, unmount } = renderHook(useReleaseSession, {
         wrapper: wrapperFor(
           portsFor({
@@ -8103,16 +8102,43 @@ describe("useReleaseSession", () => {
       try {
         await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
         expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
-        await act(async () => {
-          const pending =
+        let pending!: Promise<boolean>;
+        act(() => {
+          pending =
             request === "questions"
               ? result.current.duplicates.refreshQuestionnaires()
-              : request === "plan"
-                ? result.current.screenshots.load()
-                : result.current.screenshots.previewFrame("", 10);
-          expect(await pending).toBe(false);
+              : request === "preview"
+                ? result.current.screenshots.previewFrame("", 10)
+                : result.current.screenshots.load();
         });
-        expect(reject).toHaveBeenCalledOnce();
+        expect(result.current.workflow.view.current?.operation).toBeUndefined();
+        let replaced: Promise<boolean> | undefined;
+        if (request === "replacement plan") {
+          // Another tab can review a release name without starting a new operation.
+          const revision = current.workflow.revision + 1;
+          current = {
+            ...current,
+            workflow: {
+              ...current.workflow,
+              revision,
+              trackerProjections: { ...current.workflow.trackerProjections!, revision },
+            },
+            projections: { ...current.projections!, revision },
+          };
+          await act(() => result.current.workflow.reload());
+          expect(result.current.screenshots.view.status).toBe("idle");
+          replaced = pending;
+          act(() => {
+            pending = result.current.screenshots.load();
+          });
+          expect(result.current.workflow.view.current?.operation).toBeUndefined();
+        }
+        rejection.reject(new Error("Request rejected before acceptance."));
+        await act(async () => {
+          expect(await pending).toBe(false);
+          if (replaced) expect(await replaced).toBe(false);
+        });
+        expect(reject).toHaveBeenCalledTimes(replaced ? 2 : 1);
         expect(
           request === "questions"
             ? result.current.duplicates.view.questionnaireError

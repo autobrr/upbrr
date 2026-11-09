@@ -2315,7 +2315,11 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const beginWorkflow = (facet: WorkflowFacet, unavailableReason = ""): WorkflowCommand | null => {
+  const beginWorkflow = (
+    facet: WorkflowFacet,
+    unavailableReason = "",
+    previousController?: AbortController,
+  ): WorkflowCommand | null => {
     if (controllers.current[facet]) return null;
     const revision = Math.max(
       (workflowRevisions.current[facet] || 0) + 1,
@@ -2335,7 +2339,7 @@ export function ReleaseSessionProvider({
     }
     const controller = new AbortController();
     controllers.current[facet] = controller;
-    resetCancellationFeedback(controller);
+    resetCancellationFeedback(controller, previousController);
     return {
       controller,
       release: { ...state.release },
@@ -2414,10 +2418,11 @@ export function ReleaseSessionProvider({
   });
 
   const loadScreenshotPlan = async (): Promise<boolean> => {
-    // Authority invalidation can leave an older plan request pending.
+    // Authority invalidation can replace a plan request without accepting a new operation.
+    const previousController = controllers.current.screenshots;
     if (state.screenshots.status !== "running") abortController("screenshots");
     setScreenshotCommand(null);
-    const command = beginWorkflow("screenshots", access.screenshots.reason);
+    const command = beginWorkflow("screenshots", access.screenshots.reason, previousController);
     if (!command || !workflowView.current) return false;
     try {
       const workflowPlan = await activePorts.workflow.mediaPlan(
