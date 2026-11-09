@@ -91,6 +91,13 @@ describe("sessionReducer upload intent", () => {
       selectedTrackers: ["ONE"],
     });
     state = sessionReducer(state, {
+      type: "workflow_current_published",
+      current: state.workflowView.current!,
+      status: "ready",
+    });
+    expect(state.preparation.status).toBe("running");
+    expect(state.preparation.correlationID).toBe("refresh-retained");
+    state = sessionReducer(state, {
       type: "preparation_failed",
       sourcePath,
       commandRevision,
@@ -1148,7 +1155,7 @@ describe("sessionReducer active input snapshots", () => {
       let state = sessionReducer(initial, {
         type: "active_input_applied",
         snapshot,
-        status: "ready",
+        status: resync === "workflow publication" ? "running" : "ready",
         preview: preview(sourcePath, 1),
         intent: initial.preparationIntent,
         capturedInputEditRevision: 0,
@@ -1185,7 +1192,7 @@ describe("sessionReducer active input snapshots", () => {
         );
       };
       resynchronize(structuredClone(reviewed));
-      if (resync === "retained preparation pause")
+      if (resync === "retained preparation pause" || resync === "workflow publication")
         expect(state.preparation.status).toBe("awaiting_input");
       expect(state.correctionConfirmFields).toEqual([{ field: "metadata.title" }]);
       const changedIdentity: ReleaseWorkflowCurrent = {

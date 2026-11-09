@@ -1801,8 +1801,10 @@ export function ReleaseSessionProvider({
     status: "idle" | "cancelled" = "idle",
   ) => {
     (["screenshots", "menuImages", "uploadedImages", "descriptions"] as const).forEach((facet) => {
-      if (!controllers.current[facet]) return;
-      controllers.current[facet]?.abort();
+      const controller = controllers.current[facet];
+      if (!controller) return;
+      restoreRejectedCancellation(controller);
+      controller.abort();
       delete controllers.current[facet];
       dispatch({
         type: "workflow_canceled",

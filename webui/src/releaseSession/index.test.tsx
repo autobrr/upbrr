@@ -8072,7 +8072,7 @@ describe("useReleaseSession", () => {
     },
   );
 
-  it.each(["questions", "plan", "preview", "replacement plan"])(
+  it.each(["questions", "plan", "preview", "replacement plan", "canceled preview"])(
     "restores cancellation details after a rejected %s request",
     async (request) => {
       const workflowID = "workflow-rejected-facet";
@@ -8107,7 +8107,7 @@ describe("useReleaseSession", () => {
           pending =
             request === "questions"
               ? result.current.duplicates.refreshQuestionnaires()
-              : request === "preview"
+              : request.endsWith("preview")
                 ? result.current.screenshots.previewFrame("", 10)
                 : result.current.screenshots.load();
         });
@@ -8130,6 +8130,14 @@ describe("useReleaseSession", () => {
           replaced = pending;
           act(() => {
             pending = result.current.screenshots.load();
+          });
+          expect(result.current.workflow.view.current?.operation).toBeUndefined();
+        }
+        if (request === "canceled preview") {
+          await act(() => result.current.workflow.cancel());
+          replaced = pending;
+          act(() => {
+            pending = result.current.screenshots.previewFrame("", 11);
           });
           expect(result.current.workflow.view.current?.operation).toBeUndefined();
         }
@@ -10665,6 +10673,53 @@ it.each([
     }
   },
 );
+
+it("settles hydrated Input state when a command finishes after its background read", async () => {
+  const workflowID = "workflow-background-completion";
+  const base = workflowCurrentFromPreview(
+    workflowCurrent(workflowID, 2),
+    preview("Example.Release.2026.mkv", 1),
+  );
+  const terminal = createDeferred<WorkflowOperationStatus>();
+  let current = base;
+  const operation = questionnaireOperation(base, "running");
+  const continuation = vi.fn(async () => {
+    current = { ...base, operation };
+    return current;
+  });
+  const { result, unmount } = renderHook(useReleaseSession, {
+    wrapper: wrapperFor(
+      portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({
+          current: async () => current,
+          continue: continuation,
+          operation: async () => terminal.promise,
+        }),
+      }),
+    ),
+  });
+  try {
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    let command!: Promise<boolean>;
+    act(() => {
+      command = result.current.workflow.project(["AITHER"]);
+    });
+    await waitFor(() => expect(continuation).toHaveBeenCalledOnce());
+    current = { ...base, operation: { ...operation, status: "completed", sequence: 3 } };
+    await act(() => result.current.workflow.reload());
+    expect(result.current.input.view.status).toBe("running");
+    expect(result.current.workflow.cancellation.available).toBe(true);
+    terminal.resolve(current.operation!);
+    await act(async () => expect(await command).toBe(true));
+    expect(result.current.workflow.view.status).toBe("ready");
+    expect(result.current.input.view.status).toBe("ready");
+    expect(result.current.workflow.cancellation.available).toBe(false);
+  } finally {
+    terminal.resolve({ ...operation, status: "completed" });
+    unmount();
+  }
+});
 
 it.each(["matching", "different workflow", "different operation"])(
   "restores only an exact saved cancellation after reload: %s",

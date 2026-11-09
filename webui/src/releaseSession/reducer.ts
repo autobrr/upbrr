@@ -996,6 +996,16 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return {
         ...state,
         sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
+        // Background hydration borrows the command's running state without owning a preparation.
+        preparation:
+          action.status === "ready" &&
+          state.preparation.status === "running" &&
+          !state.preparation.correlationID
+            ? {
+                ...state.preparation,
+                status: pendingCorrectionReview(current) ? "awaiting_input" : "ready",
+              }
+            : state.preparation,
         screenshots: invalidateStaleScreenshotPlan(state, current),
         // Confirmation is specific to the reviewed revision and identity; ordinary edits can survive resync.
         correctionConfirmFields: sameCorrectionValue(
