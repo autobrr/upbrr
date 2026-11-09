@@ -667,7 +667,7 @@ func (s *Service) searchQbitClient(
 	result := api.ClientSearchResult{
 		InfoHash:            selection.infoHash,
 		TrackerIDs:          trackerIDs,
-		FoundTrackerMatch:   hasTrackerIDMatch(selection.matches),
+		FoundTrackerMatch:   hasTrackerIDMatch(selection.matches) || len(matchedTrackers) > 0,
 		TorrentComments:     selection.matches,
 		PieceSizeConstraint: constraints.label,
 		FoundPreferredPiece: selection.foundPreferred,

@@ -618,15 +618,21 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 
 	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
 	store := newMemoryStore()
+	requestedHash := strings.Repeat("a", 40)
 	initialCollector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("initial-hash"))
 	initial := newTestModule(t, store, initialCollector)
-	input := api.PrepareInput{SourcePath: path, Policy: api.PreparationPolicy{KeepImages: true}}
+	input := api.PrepareInput{
+		SourcePath: path,
+		Policy:     api.PreparationPolicy{KeepImages: true},
+		Search:     api.ClientSearchPolicy{InfoHash: requestedHash},
+	}
 	prepared, err := initial.Prepare(context.Background(), input)
 	if err != nil {
 		t.Fatalf("initial prepare: %v", err)
 	}
 
-	hydrated := clientEvidenceTestSnapshot("hydrated-hash")
+	hydrated := clientEvidenceTestSnapshot(requestedHash)
+	hydrated.Policy.InfoHash = requestedHash
 	candidate := api.ClientTorrentCandidate{
 		Path:          "hydrated.torrent",
 		InfoHash:      "hydrated-candidate-hash",
@@ -649,6 +655,9 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 			restartedCollector.hydrateCount(),
 		)
 	}
+	if restartedCollector.hydratedInfoHash != requestedHash {
+		t.Fatalf("restart hydration received infohash %q, want %q", restartedCollector.hydratedInfoHash, requestedHash)
+	}
 	if _, err := restarted.Prepare(context.Background(), input); err != nil {
 		t.Fatalf("second restart reuse: %v", err)
 	}
@@ -661,7 +670,7 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	if err != nil {
 		t.Fatalf("resolve hydrated upload subject: %v", err)
 	}
-	if upload.InfoHash != "hydrated-hash" || !upload.ClientTorrentDataVerified || upload.TrackerIDs["ant"] != "hydrated-id" ||
+	if upload.InfoHash != requestedHash || upload.ClientSearchPolicy.InfoHash != requestedHash || !upload.ClientTorrentDataVerified || upload.TrackerIDs["ant"] != "hydrated-id" ||
 		len(upload.MatchedTrackers) != 1 || upload.MatchedTrackers[0] != "ANT" {
 		t.Fatalf("hydrated upload evidence = %#v", upload)
 	}
@@ -1760,11 +1769,12 @@ func (c *recordingCollector) externalFreshnessAt(index int) api.ExternalFreshnes
 }
 
 type clientEvidenceTestCollector struct {
-	base     recordingCollector
-	mu       sync.Mutex
-	hydrates int
-	snapshot preparationstate.ClientEvidenceSnapshot
-	retained []bool
+	base             recordingCollector
+	mu               sync.Mutex
+	hydrates         int
+	hydratedInfoHash string
+	snapshot         preparationstate.ClientEvidenceSnapshot
+	retained         []bool
 }
 
 func newClientEvidenceTestCollector(snapshot preparationstate.ClientEvidenceSnapshot) *clientEvidenceTestCollector {
@@ -1792,6 +1802,7 @@ func (c *clientEvidenceTestCollector) HydratePrivateResources(
 ) (CollectedResources, error) {
 	c.mu.Lock()
 	c.hydrates++
+	c.hydratedInfoHash = request.Input.Search.InfoHash
 	c.mu.Unlock()
 	return CollectedResources{
 		SourcePath:        request.Manifest.SourcePath,

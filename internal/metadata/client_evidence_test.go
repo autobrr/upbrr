@@ -5,17 +5,24 @@ package metadata
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
+	qbittorrent "github.com/autobrr/go-qbittorrent"
+	mkbrr "github.com/autobrr/mkbrr/torrent"
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/sourcelayout"
+	"github.com/autobrr/upbrr/internal/torrentclient"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -24,6 +31,73 @@ type metadataClientRecorder struct {
 	calls int
 	input api.ClientSubject
 	err   error
+}
+
+func TestRequestedInfoHashHydrationPreservesAnnounceOnlyTrackerMatch(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "Example.Release.2026.mkv")
+	if err := os.WriteFile(source, []byte("synthetic media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(dir, "fixture.torrent")
+	created, err := mkbrr.Create(mkbrr.CreateOptions{Path: source, OutputPath: artifact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := created.InfoHash
+	data, err := os.ReadFile(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/info":
+			if r.URL.Query().Get("hashes") != hash {
+				t.Error("hydration did not forward the requested infohash")
+			}
+			_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{{
+				Hash:        hash,
+				Name:        filepath.Base(source),
+				ContentPath: source,
+				Tracker:     "https://blutopia.cc/announce/redacted",
+			}})
+		case "/api/v2/torrents/properties":
+			_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{})
+		case "/api/v2/torrents/export":
+			_, _ = w.Write(data)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	cfg := config.Config{
+		MainSettings:   config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup:    config.ClientSetupConfig{DefaultClient: "qbit"},
+		TorrentClients: map[string]config.TorrentClientConfig{"qbit": {Type: "qui", QuiProxyURL: server.URL}},
+	}
+	clients := torrentclient.NewServiceWithRegistry(cfg, api.NopLogger{}, trackerDataTestRegistry(t))
+	service := newTestService(t, &stubRepo{},
+		WithConfig(cfg),
+		WithMediaInfoExporter(stubMediaInfo{}),
+		WithSceneDetector(stubSceneDetector{}),
+		WithClientDiscovery(clientdiscovery.New(clients, api.NopLogger{})),
+		WithTrackerDataLookup(&stubTrackerLookup{}),
+	)
+	state, err := service.HydratePrivateResources(t.Context(), testCollectionRequest(t, api.Request{
+		SourcePath: source, TorrentOverrides: api.TorrentOverrides{InfoHash: new(hash)},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.InfoHash != hash || state.DiscoveredTorrentPath == "" || state.ClientEvidence.Policy.InfoHash != hash ||
+		len(state.TrackerIDs) != 0 || !slices.Contains(state.MatchedEvidenceTrackers, "BLU") {
+		t.Fatalf("requested torrent evidence changed during hydration: %+v", state.ClientEvidence)
+	}
+	record, _, _, err := service.lookupTrackerData(t.Context(), state, "BLU", time.Now())
+	if err != nil || !record.Matched || record.InfoHash != hash {
+		t.Fatalf("announce-only tracker lost its metadata match: record=%+v err=%v", record, err)
+	}
 }
 
 func (*metadataClientRecorder) Inject(context.Context, api.ClientSubject, api.TorrentResult) error {
