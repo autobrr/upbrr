@@ -312,6 +312,7 @@ export function ReleaseSessionProvider({
     retry: false,
     message: "",
   });
+  const acceptedWorkflowRequests = useRef(new WeakSet<AbortSignal>());
   const observedOperations = useRef(
     new WeakMap<
       AbortSignal,
@@ -724,6 +725,7 @@ export function ReleaseSessionProvider({
     ) {
       throw new DOMException("Active input changed.", "AbortError");
     }
+    acceptedWorkflowRequests.current.add(signal);
     publishWorkflowCurrent(initial, "running");
     let operation = initial.operation;
     if (operation)
@@ -956,7 +958,14 @@ export function ReleaseSessionProvider({
     return attempt.cancellation;
   };
 
-  const failBackendWorkflow = (error: unknown) => {
+  const restoreRejectedCancellation = (controller: AbortController) => {
+    if (!acceptedWorkflowRequests.current.has(controller.signal)) {
+      dispatch({ type: "workflow_attempt_rejected", operation: workflowView.current?.operation });
+    }
+  };
+
+  const failBackendWorkflow = (error: unknown, rejectedController?: AbortController) => {
+    if (rejectedController) restoreRejectedCancellation(rejectedController);
     const failure = operationFailureFromError(error);
     if (failure?.Code === "missing_prerequisite" && failure.Recovery === "refresh_release") {
       storeWorkflowID("");
@@ -1009,6 +1018,7 @@ export function ReleaseSessionProvider({
       if (signal.aborted || !activeSlotMatches(expectedSlot)) {
         throw new DOMException("Active input changed.", "AbortError");
       }
+      acceptedWorkflowRequests.current.add(signal);
       await onOperation?.(continued);
       const next = await awaitWorkflowCommand(continued, signal, expectedSlot);
       // Each dry run or live-upload review owns one assessment; retries are explicit.
@@ -1282,7 +1292,7 @@ export function ReleaseSessionProvider({
       releaseWorkflowController(controller);
       lastWorkflowError.current = error;
       if (!controller.signal.aborted) {
-        failBackendWorkflow(error);
+        failBackendWorkflow(error, controller);
         if (operationFailureFromError(error)?.Recovery === "review_again") {
           await reloadBackendWorkflow(true, controller);
         }
@@ -1338,7 +1348,7 @@ export function ReleaseSessionProvider({
           };
         }
         callbacks.onError?.(error, commandAuthority);
-        failBackendWorkflow(error);
+        failBackendWorkflow(error, controller);
       }
       return false;
     } finally {
@@ -1580,7 +1590,7 @@ export function ReleaseSessionProvider({
       return true;
     } catch (error) {
       releaseWorkflowController(controller);
-      if (!controller.signal.aborted) failBackendWorkflow(error);
+      if (!controller.signal.aborted) failBackendWorkflow(error, controller);
       return false;
     } finally {
       releaseWorkflowController(controller);
@@ -2080,6 +2090,7 @@ export function ReleaseSessionProvider({
         return false;
       }
       if (!controller.signal.aborted) {
+        restoreRejectedCancellation(controller);
         const pendingCancel =
           candidateAttempt.current?.controller === controller &&
           candidateAttempt.current.cancelRequested;
@@ -2875,7 +2886,7 @@ export function ReleaseSessionProvider({
       return true;
     } catch (error) {
       releaseWorkflowController(controller);
-      if (!controller.signal.aborted) failBackendWorkflow(error);
+      if (!controller.signal.aborted) failBackendWorkflow(error, controller);
       return false;
     } finally {
       releaseWorkflowController(controller);

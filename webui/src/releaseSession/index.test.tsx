@@ -10212,6 +10212,71 @@ it("reports uncertain candidate cancellation when the acceptance response is los
   unmount();
 });
 
+it.each(["rejected", "accepted lookup failed"])(
+  "restores a previous candidate cancellation only before acceptance: %s",
+  async (outcome) => {
+    const workflowID = "workflow-candidate-rejected-rerun";
+    const sourcePath = "Example.Release.2026.mkv";
+    const current: ReleaseWorkflowCurrent = {
+      ...workflowCurrentFromPreview(workflowCurrent(workflowID, 2), preview(sourcePath, 1)),
+      operation: {
+        id: "canceled-preparation",
+        workflowId: workflowID,
+        revision: 2,
+        sequence: 2,
+        command: "prepare_release",
+        operation: "preparation",
+        status: "canceled",
+        completed: 0,
+        total: 1,
+        progress: 0,
+        startedAt: "2026-07-20T00:00:00Z",
+        updatedAt: "2026-07-20T00:00:00Z",
+      },
+    };
+    const accepted = createDeferred<ReleaseWorkflowCurrent>();
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => current,
+            continue: () => accepted.promise,
+            operation: async () => {
+              throw new Error("Accepted operation lookup failed.");
+            },
+          }),
+        }),
+      ),
+    });
+    try {
+      await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
+      let pending!: Promise<boolean>;
+      act(() => {
+        pending = result.current.input.fetchCandidateDetails("101");
+      });
+      expect(result.current.workflow.view.current?.operation).toBeUndefined();
+      if (outcome === "rejected") accepted.reject(new Error("Candidate request rejected."));
+      else
+        accepted.resolve({
+          ...current,
+          operation: undefined,
+          preparationOperationId: "accepted-operation",
+        });
+      await act(async () => expect(await pending).toBe(false));
+      expect(result.current.input.view.error).not.toBe("");
+      await act(async () => {
+        await result.current.workflow.reload();
+      });
+      expect(result.current.workflow.view.current?.operation).toEqual(
+        outcome === "rejected" ? current.operation : undefined,
+      );
+    } finally {
+      unmount();
+    }
+  },
+);
+
 it.each([
   "trackers_assessed",
   "duplicates_decided",
@@ -10249,6 +10314,7 @@ it.each([
     const cancelOperation = vi.fn(
       async (_workflowID: string, _operationID: string) => current.operation!,
     );
+    const readCurrent = vi.fn(async () => current);
     const close = vi.fn();
     const cancelWorkflow = vi.fn();
     const { result, unmount } = renderHook(useReleaseSession, {
@@ -10257,7 +10323,7 @@ it.each([
           resumeWorkflowID: workflowID,
           activeInput: { release: close },
           workflow: workflowPorts({
-            current: async () => current,
+            current: readCurrent,
             continue: continueWorkflow,
             operation: async () => terminal.promise,
             cancelOperation,
@@ -10343,6 +10409,29 @@ it.each([
       expect(result.current.workflow.view.failure).toBeNull();
       expect(result.current.workflow.view.error).toBe("");
       expect(continueWorkflow).toHaveBeenCalledOnce();
+      const rejected = createDeferred<ReleaseWorkflowCurrent>();
+      continueWorkflow.mockImplementationOnce(async () => rejected.promise);
+      act(() => {
+        command = start();
+      });
+      readCurrent.mockRejectedValueOnce(new Error("Background read failed."));
+      await act(async () => {
+        expect(await result.current.workflow.reload()).toBe(false);
+      });
+      await act(async () => {
+        await result.current.workflow.reload();
+      });
+      expect(result.current.workflow.view.current?.operation).toBeUndefined();
+      rejected.reject(new Error("Request rejected before acceptance."));
+      await act(async () => {
+        expect(await command).toBe(false);
+      });
+      expect(result.current.workflow.view.error).not.toBe("");
+      expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
+      await act(async () => {
+        await result.current.workflow.reload();
+      });
+      expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
       for (let retry = 1; retry <= 2; retry += 1) {
         terminal = createDeferred<WorkflowOperationStatus>();
         const accepted = createDeferred<ReleaseWorkflowCurrent>();
@@ -10381,7 +10470,7 @@ it.each([
         expect(result.current.workflow.cancellation.pending).toBe(false);
         expect(result.current.workflow.view.current?.operation?.status).toBe("canceled");
       }
-      expect(continueWorkflow).toHaveBeenCalledTimes(3);
+      expect(continueWorkflow).toHaveBeenCalledTimes(4);
       expect(close).not.toHaveBeenCalled();
     } finally {
       terminal.resolve({ ...operation, status: "canceled" });

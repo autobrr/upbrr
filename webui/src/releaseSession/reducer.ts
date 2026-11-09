@@ -189,6 +189,11 @@ export type SessionAction =
   | Readonly<{ type: "active_input_loading" }>
   | Readonly<{ type: "workflow_attempt_started" }>
   | Readonly<{
+      type: "workflow_attempt_rejected";
+      /** Previous operation when a new command was rejected before accepting any work. */
+      operation: ReleaseWorkflowCurrent["operation"];
+    }>
+  | Readonly<{
       type: "workflow_operation_updated";
       workflowID: string;
       operation: ReleaseWorkflowCurrent["operation"];
@@ -926,6 +931,24 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         ...state,
         workflowView: { ...state.workflowView, status: "running", error: "", failure: null },
       };
+    case "workflow_attempt_rejected": {
+      const current = state.workflowView.current;
+      const operation = action.operation;
+      if (
+        !current ||
+        current.operation ||
+        operation?.status !== "canceled" ||
+        operation.workflowId !== current.workflow.id ||
+        operation.workflowId !== state.dismissedCancellation?.workflowID ||
+        operation.id !== state.dismissedCancellation.operationID
+      )
+        return state;
+      return {
+        ...state,
+        dismissedCancellation: null,
+        workflowView: { ...state.workflowView, current: { ...current, operation } },
+      };
+    }
     case "workflow_view_failed":
       return {
         ...state,

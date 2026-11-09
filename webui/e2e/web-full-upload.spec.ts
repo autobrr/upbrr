@@ -3913,6 +3913,22 @@ for (const stage of [
           }
         }
       }
+      const retry = async () => {
+        await start();
+        if (stage === "images") {
+          // Canceling an image-host submission requires explicit reconciliation before replay.
+          const reconcile = page.getByRole("button", {
+            name: "Confirmed not completed; allow a fresh exact attempt",
+            exact: true,
+          });
+          await expect(reconcile).toBeVisible();
+          const reconciled = waitForAppMethod(page, "ReconcileActiveInput");
+          await reconcile.click();
+          expect((await reconciled).ok()).toBe(true);
+          await expect(reconcile).toHaveCount(0);
+          await start();
+        }
+      };
       const before = await snapshot();
       const visits = workspace.fake.workflowStageVisits.length;
       gate = workspace.fake.holdWorkflowStage(stage);
@@ -3954,7 +3970,7 @@ for (const stage of [
       expect(workspace.fake.counters.clientInjections).toBe(0);
       gate.release();
       gate = workspace.fake.holdWorkflowStage(stage);
-      await start();
+      await retry();
       await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
       await gate.entered;
       const rerun = await snapshot();
@@ -3965,13 +3981,34 @@ for (const stage of [
       gate.release();
       await expect.poll(async () => (await snapshot()).current?.operation?.status).toBe("canceled");
       await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
-      await start();
+      const canceledAgain = await snapshot();
+      await retry();
       await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
       // Re-admission may change the slot while a snapshot is being assembled.
       await expect(async () => {
         expect((await snapshot()).current?.operation?.status).toBe("completed");
       }).toPass({ timeout: 10_000 });
       expect((await snapshot()).inputId).toBe(active.inputId);
+      await expect(
+        page.getByRole("button", { name: "Cancel active work", exact: true }),
+      ).toBeDisabled();
+      await page.route(
+        "**/api/app/GetActiveInput",
+        (route) => route.fulfill({ json: canceledAgain }),
+        {
+          times: 1,
+        },
+      );
+      const staleResponse = waitForAppMethod(page, "GetActiveInput");
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      expect((await staleResponse).ok()).toBe(true);
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+      await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
     } finally {
       gate?.release();
       await app?.stop();
