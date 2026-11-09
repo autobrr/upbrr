@@ -7986,7 +7986,7 @@ describe("useReleaseSession", () => {
     expect(result.current.screenshots.view.error).toBe("");
   });
 
-  it.each(["initial", "externally observed"])(
+  it.each(["initial", "externally observed", "newer cancellation"])(
     "restores %s cancellation after delayed image adoption is rejected",
     async (timing) => {
       const workflowID = "workflow-delayed-adoption";
@@ -8017,7 +8017,7 @@ describe("useReleaseSession", () => {
           updatedAt: "2026-07-20T00:00:00Z",
         },
       };
-      let current = timing === "initial" ? canceled : base;
+      let current = timing === "externally observed" ? base : canceled;
       const plan = {
         ...(await workflowPorts().mediaPlan(workflowID, new AbortController().signal)),
         autoAdoptSavedImages: true,
@@ -8047,8 +8047,11 @@ describe("useReleaseSession", () => {
         act(() => {
           pending = result.current.screenshots.load();
         });
-        if (timing === "externally observed") {
-          current = canceled;
+        if (timing !== "initial") {
+          current = {
+            ...canceled,
+            operation: { ...canceled.operation!, id: "newer-canceled-operation" },
+          };
           await act(async () => {
             await result.current.workflow.reload();
           });
@@ -8064,6 +8067,63 @@ describe("useReleaseSession", () => {
         expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
       } finally {
         screenshot.resolve(plan);
+        unmount();
+      }
+    },
+  );
+
+  it.each(["questions", "plan", "preview"])(
+    "restores cancellation details after a rejected %s request",
+    async (request) => {
+      const workflowID = "workflow-rejected-facet";
+      const base = await workflowPorts().project(
+        preparedQuestionnaireWorkflow(workflowID),
+        ["AITHER"],
+        {},
+        "rejection-fixture",
+        new AbortController().signal,
+      );
+      const current = { ...base, operation: questionnaireOperation(base, "canceled") };
+      const reject = vi.fn(async () => {
+        throw new Error("Request rejected before acceptance.");
+      });
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({
+              current: async () => current,
+              continue: reject,
+              mediaPlan: reject,
+              previewFrame: reject,
+            }),
+          }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+        expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
+        await act(async () => {
+          const pending =
+            request === "questions"
+              ? result.current.duplicates.refreshQuestionnaires()
+              : request === "plan"
+                ? result.current.screenshots.load()
+                : result.current.screenshots.previewFrame("", 10);
+          expect(await pending).toBe(false);
+        });
+        expect(reject).toHaveBeenCalledOnce();
+        expect(
+          request === "questions"
+            ? result.current.duplicates.view.questionnaireError
+            : result.current.screenshots.view.error,
+        ).not.toBe("");
+        expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
+        await act(async () => {
+          await result.current.workflow.reload();
+        });
+        expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
+      } finally {
         unmount();
       }
     },

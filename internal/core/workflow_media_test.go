@@ -4614,7 +4614,7 @@ func TestWorkflowMediaReusesDifferentSavedHostsForSelectedTrackers(t *testing.T)
 // regression: #961
 func TestWorkflowImageCancellationPreservesKnownEffects(t *testing.T) {
 	t.Parallel()
-	for _, outcome := range []string{"completed", "interrupted", "completed before cancellation", "partial before cancellation"} {
+	for _, outcome := range []string{"completed", "interrupted", "completed before cancellation", "partial before cancellation", "fallback before cancellation", "unknown outcome"} {
 		t.Run(outcome, func(t *testing.T) {
 			t.Parallel()
 			ctx, cancel := context.WithCancel(t.Context())
@@ -4663,6 +4663,25 @@ func TestWorkflowImageCancellationPreservesKnownEffects(t *testing.T) {
 				uploader.partial = outcome == "partial before cancellation"
 			}
 			cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}}
+			host := "pixhost"
+			if outcome == "partial before cancellation" {
+				cfg.ScreenshotHandling.MinSuccessfulUploads = 1
+			}
+			if outcome == "fallback before cancellation" {
+				host = ""
+				cfg.ImageHosting.Host2 = "imgbb"
+				uploader.behaviors["pixhost"] = imageHostBehavior{release: release, err: errors.New("known host failure")}
+				uploader.behaviors["imgbb"] = imageHostBehavior{release: release}
+				uploader.cancel = cancel
+			}
+			if outcome == "unknown outcome" {
+				uploader.behaviors["pixhost"] = imageHostBehavior{release: release, err: api.NewOperationError(api.OperationFailure{
+					Code:      api.OperationFailureUnknownOutcome,
+					Operation: api.OperationKindImageHosting,
+					Message:   "Synthetic uncertain image upload.",
+					Recovery:  api.OperationRecoveryConfirm,
+				}, errors.New("synthetic uncertain upload"))}
+			}
 			builder := workflowMediaBuilder{config: cfg, media: &mediaModule{
 				cfg:           cfg,
 				images:        uploader,
@@ -4698,7 +4717,7 @@ func TestWorkflowImageCancellationPreservesKnownEffects(t *testing.T) {
 						},
 					},
 					workflowMediaPrivateArtifacts{ArtifactImages: images},
-					[]api.PublicResourceID{"local", "second"}, "pixhost", false, nil, time.Now())
+					[]api.PublicResourceID{"local", "second"}, host, false, nil, time.Now())
 				done <- err
 			}()
 			select {
@@ -4712,12 +4731,20 @@ func TestWorkflowImageCancellationPreservesKnownEffects(t *testing.T) {
 				close(release)
 			}
 			err = <-done
-			if outcome == "interrupted" || outcome == "partial before cancellation" {
+			switch outcome {
+			case "interrupted", "partial before cancellation":
 				if !errors.Is(err, context.Canceled) || reporter.completions != 0 {
 					t.Fatalf("canceled image upload error=%v completed_effects=%d", err, reporter.completions)
 				}
-			} else if err != nil || reporter.completions != 1 || !reporter.succeeded {
-				t.Fatalf("completed image upload error=%v completed_effects=%d", err, reporter.completions)
+			case "unknown outcome":
+				failure, ok := api.AsOperationFailure(err)
+				if !ok || failure.Code != api.OperationFailureUnknownOutcome || reporter.completions != 0 {
+					t.Fatalf("unknown image upload error=%v completed_effects=%d", err, reporter.completions)
+				}
+			default:
+				if err != nil || reporter.completions != 1 || !reporter.succeeded {
+					t.Fatalf("completed image upload error=%v completed_effects=%d", err, reporter.completions)
+				}
 			}
 		})
 	}
@@ -4746,6 +4773,7 @@ func (h *cancelAfterImageUpload) Upload(ctx context.Context, subject api.ImageHo
 	if err == nil && h.cancel != nil {
 		if h.partial {
 			links = links[:1]
+			err = context.Canceled
 		}
 		h.cancel()
 	}

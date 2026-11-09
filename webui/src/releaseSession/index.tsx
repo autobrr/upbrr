@@ -1740,6 +1740,7 @@ export function ReleaseSessionProvider({
             stateRef.current.workflowView.current ||
             initial,
         });
+        restoreRejectedCancellation(controller);
       }
       return false;
     } finally {
@@ -2358,6 +2359,7 @@ export function ReleaseSessionProvider({
         revision: command.revision,
         error: operationFailureFromError(error)?.Message || fallbackMessage[facet],
       });
+      restoreRejectedCancellation(command.controller);
     }
   };
 

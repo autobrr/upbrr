@@ -2388,14 +2388,9 @@ func (b workflowMediaBuilder) UploadImages(
 		retainedLinks,
 		blockedRetainedLinks,
 	)
-	// Canceled batches may hide interruption behind partial-host success. Keep them
-	// unresolved unless every host returned a complete, successful result.
-	if canceled := ctx.Err(); canceled != nil && (err != nil || slices.ContainsFunc(result.Attempts, func(attempt api.UploadImageHostAttemptResult) bool {
-		return attempt.Failure != nil || !uploadedImageLinksCoverTarget(
-			attempt.Links, trackers.ImageUploadTarget{Host: attempt.Host, UsageScope: attempt.UsageScope}, images,
-		)
-	})) {
-		return api.MediaArtifactSet{}, nil, nil, fmt.Errorf("workflow image hosting canceled: %w", canceled)
+	// Leave interrupted or uncertain uploads unresolved for explicit reconciliation.
+	if imageUploadOutcomeUnresolved(ctx, err) {
+		return api.MediaArtifactSet{}, nil, nil, err
 	}
 	receiptErr := api.CompleteWorkflowExternalEffect(ctx, effectReceipt, err == nil)
 	if receiptErr != nil {
