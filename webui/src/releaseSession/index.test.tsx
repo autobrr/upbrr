@@ -7986,6 +7986,89 @@ describe("useReleaseSession", () => {
     expect(result.current.screenshots.view.error).toBe("");
   });
 
+  it.each(["initial", "externally observed"])(
+    "restores %s cancellation after delayed image adoption is rejected",
+    async (timing) => {
+      const workflowID = "workflow-delayed-adoption";
+      const base = await workflowPorts().project(
+        workflowCurrentFromPreview(
+          workflowCurrent(workflowID, 2),
+          preview("Example.Release.2026.mkv", 1),
+        ),
+        ["AITHER"],
+        {},
+        "adoption-fixture",
+        new AbortController().signal,
+      );
+      const canceled: ReleaseWorkflowCurrent = {
+        ...base,
+        operation: {
+          id: "externally-canceled-operation",
+          workflowId: workflowID,
+          revision: 2,
+          sequence: 2,
+          command: "continue",
+          operation: "media",
+          status: "canceled",
+          completed: 0,
+          total: 1,
+          progress: 0,
+          startedAt: "2026-07-20T00:00:00Z",
+          updatedAt: "2026-07-20T00:00:00Z",
+        },
+      };
+      let current = timing === "initial" ? canceled : base;
+      const plan = {
+        ...(await workflowPorts().mediaPlan(workflowID, new AbortController().signal)),
+        autoAdoptSavedImages: true,
+        savedTrackerImages: [
+          { trackerId: "AITHER", host: "imgbb", url: "https://images.example.invalid/saved.png" },
+        ],
+      };
+      const screenshot = createDeferred<typeof plan>();
+      const captureMedia = vi.fn(async () => {
+        throw new Error("Stale adoption request rejected.");
+      });
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({
+              current: async () => current,
+              mediaPlan: () => screenshot.promise,
+              captureMedia,
+            }),
+          }),
+        ),
+      });
+      try {
+        await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+        let pending!: Promise<boolean>;
+        act(() => {
+          pending = result.current.screenshots.load();
+        });
+        if (timing === "externally observed") {
+          current = canceled;
+          await act(async () => {
+            await result.current.workflow.reload();
+          });
+          expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
+        }
+        screenshot.resolve(plan);
+        await act(async () => expect(await pending).toBe(false));
+        expect(captureMedia).toHaveBeenCalledOnce();
+        expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
+        await act(async () => {
+          await result.current.workflow.reload();
+        });
+        expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
+      } finally {
+        screenshot.resolve(plan);
+        unmount();
+      }
+    },
+  );
+
   it("keeps untyped screenshot command failures local and safe", async () => {
     const captureMedia = vi.fn(async () => {
       throw new Error("private screenshot transport details");
@@ -10422,11 +10505,29 @@ it.each([
         await result.current.workflow.reload();
       });
       expect(result.current.workflow.view.current?.operation).toBeUndefined();
+      let staleRead: Promise<boolean> | undefined;
+      if (goal === "media_ready") {
+        terminal = createDeferred<WorkflowOperationStatus>();
+        readCurrent.mockResolvedValueOnce({ ...base, operation });
+        act(() => {
+          staleRead = result.current.workflow.reload();
+        });
+        await waitFor(() =>
+          expect(result.current.workflow.view.current?.operation?.status).toBe("running"),
+        );
+      }
       rejected.reject(new Error("Request rejected before acceptance."));
       await act(async () => {
         expect(await command).toBe(false);
       });
       expect(result.current.workflow.view.error).not.toBe("");
+      if (staleRead) {
+        expect(result.current.workflow.view.current?.operation).toEqual(operation);
+        terminal.resolve(current.operation!);
+        await act(async () => {
+          await staleRead;
+        });
+      }
       expect(result.current.workflow.view.current?.operation).toEqual(current.operation);
       await act(async () => {
         await result.current.workflow.reload();

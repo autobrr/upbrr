@@ -936,7 +936,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       const operation = action.operation;
       if (
         !current ||
-        current.operation ||
         operation?.status !== "canceled" ||
         operation.workflowId !== current.workflow.id ||
         operation.workflowId !== state.dismissedCancellation?.workflowID ||
@@ -946,7 +945,10 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return {
         ...state,
         dismissedCancellation: null,
-        workflowView: { ...state.workflowView, current: { ...current, operation } },
+        workflowView: {
+          ...state.workflowView,
+          current: { ...current, operation: current.operation ?? operation },
+        },
       };
     }
     case "workflow_view_failed":
