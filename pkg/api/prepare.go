@@ -127,7 +127,7 @@ type ClientSearchPolicy struct {
 	// Skip disables torrent-client discovery unless InfoHash is supplied.
 	Skip bool
 	// Client optionally selects one named client, including for InfoHash lookup.
-	// A none or blank selector disables search only when InfoHash is absent.
+	// Blank selectors behave as unset; none disables search only without InfoHash.
 	Client *string
 }
 

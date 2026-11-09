@@ -1460,25 +1460,41 @@ func TestParseCLIOptionsRejectsInvalidImageHost(t *testing.T) {
 }
 
 func TestBuildCLIRequestInfoHashOverrides(t *testing.T) {
-	opts, visited, paths, err := parseCLIOptions([]string{
-		"--infohash", "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
-		"--skip_auto_torrent", "--client", "none", "--onlyID",
-		"movie.mkv",
-	})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	req, err := buildCLIRequest(opts, visited, paths, 4)
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
-	if req.TorrentOverrides.InfoHash == nil || *req.TorrentOverrides.InfoHash != "abcdef0123456789abcdef0123456789abcdef01" {
-		t.Fatalf("expected normalized infohash override, got %#v", req.TorrentOverrides.InfoHash)
-	}
-	input, err := api.MapPreparationRequest(req, api.PreparationIntentUpload)
-	if err != nil || !input.Policy.OnlyID || input.Policy.KeepImages || !input.Search.Skip || input.Search.InfoHash != *req.TorrentOverrides.InfoHash ||
-		req.ClientOverrides.Client == nil || *req.ClientOverrides.Client != "none" {
-		t.Fatalf("infohash changed independent request choices: input=%+v client=%+v err=%v", input, req.ClientOverrides, err)
+	for _, test := range []struct {
+		name   string
+		flags  []string
+		onlyID bool
+		skip   bool
+		client *string
+	}{
+		{name: "infohash only"},
+		{
+			name:   "explicit independent choices",
+			flags:  []string{"--skip_auto_torrent", "--client", "none", "--onlyID"},
+			onlyID: true,
+			skip:   true,
+			client: new("none"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := append([]string{"--infohash", "ABCDEF0123456789ABCDEF0123456789ABCDEF01"}, test.flags...)
+			opts, visited, paths, err := parseCLIOptions(append(args, "movie.mkv"))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			req, err := buildCLIRequest(opts, visited, paths, 4)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			if req.TorrentOverrides.InfoHash == nil || *req.TorrentOverrides.InfoHash != "abcdef0123456789abcdef0123456789abcdef01" {
+				t.Fatalf("expected normalized infohash override, got %#v", req.TorrentOverrides.InfoHash)
+			}
+			input, err := api.MapPreparationRequest(req, api.PreparationIntentUpload)
+			if err != nil || input.Policy.OnlyID != test.onlyID || input.Policy.KeepImages || input.Search.Skip != test.skip ||
+				input.Search.InfoHash != *req.TorrentOverrides.InfoHash || !reflect.DeepEqual(req.ClientOverrides.Client, test.client) {
+				t.Fatalf("infohash changed independent request choices: input=%+v client=%+v err=%v", input, req.ClientOverrides, err)
+			}
+		})
 	}
 }
 

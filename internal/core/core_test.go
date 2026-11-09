@@ -181,21 +181,26 @@ func TestBuildTrackerPreviewKeepsRawAndSanitizesDescriptionVariants(t *testing.T
 func TestApplyMetadataDefaults(t *testing.T) {
 	t.Parallel()
 
-	configured := applyMetadataDefaults(api.PrepareInput{Search: api.ClientSearchPolicy{InfoHash: strings.Repeat("a", 40)}}, config.MetadataConfig{
+	requestedHash := strings.Repeat("a", 40)
+	configured := applyMetadataDefaults(api.PrepareInput{Search: api.ClientSearchPolicy{InfoHash: requestedHash}}, config.MetadataConfig{
 		SkipAutoTorrent: true,
 		KeepImages:      true,
 		OnlyID:          true,
 	})
-	if !configured.Search.Skip || !configured.Policy.KeepImages || !configured.Policy.OnlyID {
+	if !configured.Search.Skip || !configured.Policy.KeepImages || !configured.Policy.OnlyID || configured.Search.InfoHash != requestedHash {
 		t.Fatalf("configured metadata defaults were not applied: %#v", configured)
 	}
 
 	requested := applyMetadataDefaults(api.PrepareInput{
-		Search: api.ClientSearchPolicy{Skip: true, InfoHash: strings.Repeat("a", 40)},
+		Search: api.ClientSearchPolicy{Skip: true, InfoHash: requestedHash},
 		Policy: api.PreparationPolicy{KeepImages: true, OnlyID: true},
 	}, config.MetadataConfig{})
-	if !requested.Search.Skip || !requested.Policy.KeepImages || !requested.Policy.OnlyID {
+	if !requested.Search.Skip || !requested.Policy.KeepImages || !requested.Policy.OnlyID || requested.Search.InfoHash != requestedHash {
 		t.Fatalf("request metadata options were not preserved: %#v", requested)
+	}
+	absent := applyMetadataDefaults(api.PrepareInput{Search: api.ClientSearchPolicy{InfoHash: requestedHash}}, config.MetadataConfig{})
+	if absent.Search.Skip || absent.Policy.KeepImages || absent.Policy.OnlyID || absent.Search.InfoHash != requestedHash {
+		t.Fatalf("infohash changed absent metadata options: %#v", absent)
 	}
 }
 
