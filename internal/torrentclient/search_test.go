@@ -1732,3 +1732,20 @@ func TestCollectTrackerURLsStableDeduplicates(t *testing.T) {
 		t.Fatalf("tracker URLs = %#v, want %#v", got, want)
 	}
 }
+
+func TestEMUWIdentityRecognizesCurrentAndLegacyDomains(t *testing.T) {
+	t.Parallel()
+	patterns := buildTrackerIDPatterns(trackerPatternRegistry(t))
+	for _, host := range []string{"emu-warez.com", "emuwarez.com"} {
+		t.Run(host, func(t *testing.T) {
+			announce := "https://" + host + "/announce/redacted"
+			if !containsString(matchTrackerURLs([]string{announce}, patterns), "EMUW") {
+				t.Fatal("EMUW announce was not recognized")
+			}
+			matches, found := extractTrackerMatchesWithPatterns("https://"+host+"/torrents/1234567", []string{announce}, true, []string{"emuw"}, patterns)
+			if !found || len(matches) != 1 || matches[0].ID != "emuw" || matches[0].TrackerID != "1234567" {
+				t.Fatal("EMUW comment did not retain torrent identity")
+			}
+		})
+	}
+}
