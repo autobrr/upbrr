@@ -387,12 +387,15 @@ func reusableTorrentCandidates(tmpRoot string, meta api.TorrentSubject) ([]strin
 			return nil, err
 		}
 		candidates = appendUniqueTorrentCandidate(candidates, tmpTorrentPath)
-		retained, err := filepath.Glob(filepath.Join(filepath.Dir(tmpTorrentPath), "base-torrents", "*.torrent"))
-		if err != nil {
+		retainedDir := filepath.Join(filepath.Dir(tmpTorrentPath), "base-torrents")
+		retained, err := os.ReadDir(retainedDir)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("torrent: list retained bases: %w", err)
 		}
 		for _, candidate := range retained {
-			candidates = appendUniqueTorrentCandidate(candidates, candidate)
+			if !candidate.IsDir() && strings.HasSuffix(candidate.Name(), ".torrent") {
+				candidates = appendUniqueTorrentCandidate(candidates, filepath.Join(retainedDir, candidate.Name()))
+			}
 		}
 	}
 	candidates = appendUniqueTorrentCandidate(candidates, meta.SourcePath+".torrent")

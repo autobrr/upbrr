@@ -1632,3 +1632,47 @@ func TestCreateISOFullDiscKeepsOnlyOriginalPayload(t *testing.T) {
 		t.Fatalf("ISO reuse changed content: %+v err=%v", reused, err)
 	}
 }
+
+func TestReusableTorrentCandidatesUseLiteralRetainedDirectory(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"[", "[Group]"} {
+		t.Run(name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "synthetic.mkv")
+			root := filepath.Join(t.TempDir(), name)
+			meta := api.TorrentSubject{SourcePath: source}
+			base, err := TempTorrentPath(root, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retained := filepath.Join(filepath.Dir(base), "base-torrents")
+			want := []string{base, source + ".torrent"}
+			if got, err := reusableTorrentCandidates(root, meta); err != nil || !slices.Equal(got, want) {
+				t.Fatalf("absent retained directory: got %v, err %v, want %v", got, err, want)
+			}
+			if err := os.Mkdir(retained, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, filename := range []string{"b.torrent", "a.torrent", "other.TORRENT", "note.txt"} {
+				if err := os.WriteFile(filepath.Join(retained, filename), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Mkdir(filepath.Join(retained, "directory.torrent"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			want = []string{base, filepath.Join(retained, "a.torrent"), filepath.Join(retained, "b.torrent"), source + ".torrent"}
+			if got, err := reusableTorrentCandidates(root, meta); err != nil || !slices.Equal(got, want) {
+				t.Fatalf("retained candidate filtering/order: got %v, err %v, want %v", got, err, want)
+			}
+			if err := os.RemoveAll(retained); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(retained, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := reusableTorrentCandidates(root, meta); err == nil {
+				t.Fatal("non-directory retained path error suppressed")
+			}
+		})
+	}
+}
