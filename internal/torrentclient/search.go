@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -113,12 +114,16 @@ type torrentDataValidation struct {
 // SearchPathedTorrents searches selected qBittorrent or Qui clients in
 // configured order, retaining tracker metadata independently of artifact
 // selection and preferring compatible torrents by the active piece-size policy.
+// An explicit InfoHash first selects evidence whose exported file layout matches
+// the local source or can safely shed a single-file folder wrapper, independently
+// of client save paths and without hashing media bytes. A miss is reported and falls back to ordinary discovery.
 //
 // A reusable export is stripped of announce, comment, and web-seed metadata and
 // retained as a content-addressed mode-0600 snapshot below the configured DB
 // temporary directory, alongside the generic export cache. A requested
 // force recheck also mutates direct qBittorrent state and waits for checking to
-// finish. Client-level failures abort the search; property or tracker lookup
+// finish. Client-level failures abort ordinary search; exact-hash lookup and its
+// policy retries try other clients first. Property or tracker lookup
 // failures degrade individual records, while export failures retain available
 // client metadata.
 func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubject) (result api.ClientSearchResult, err error) {
@@ -141,12 +146,37 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return api.ClientSearchResult{}, internalerrors.ErrInvalidInput
 	}
+	meta.InfoHash = normalizeQbitHash(meta.InfoHash)
+	if meta.InfoHash != "" && !meta.FindAllCandidates {
+		if selected, found, lookupErr := s.searchRequestedTorrent(ctx, meta); lookupErr != nil {
+			return api.ClientSearchResult{}, lookupErr
+		} else if found {
+			return selected, nil
+		}
+		if name := namedSearchClient(meta.ClientOverrides); name != "" {
+			s.logger.Errorf(
+				"clients: requested infohash could not be matched to source content in selected client %q; ignoring it and continuing ordinary discovery",
+				redaction.RedactValue(name, nil),
+			)
+		} else {
+			s.logger.Errorf(
+				"clients: requested infohash could not be matched to source content in available clients; ignoring it and continuing ordinary discovery",
+			)
+		}
+	}
+	clients, usedFallback := resolveSearchClients(s.cfg, meta.ClientOverrides)
+	infoHashRetry := meta.InfoHash != "" && meta.FindAllCandidates
+	if infoHashRetry {
+		clients = resolveInfoHashSearchClients(s.cfg, meta.ClientOverrides)
+	}
+	// Policy-driven retries keep the lookup's client scope but remove its hash
+	// filter when the preferred artifact cannot satisfy tracker limits.
+	meta.InfoHash = ""
 
 	constraints := resolvePieceConstraints(s.cfg)
 	result = api.ClientSearchResult{PieceSizeConstraint: constraints.label}
 	s.logger.Tracef("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
 
-	clients, usedFallback := resolveSearchClients(s.cfg, meta.ClientOverrides)
 	if len(clients) == 0 {
 		s.logger.Debugf("clients: no search clients configured (default_torrent_client/searching_client_list), skipping pathed search")
 		return result, nil
@@ -183,6 +213,10 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 
 		clientResult, matches, err := s.searchQbitClient(ctx, name, clientCfg, meta, constraints)
 		if err != nil {
+			if infoHashRetry && ctx.Err() == nil && !errors.Is(err, internalerrors.ErrClientRecheckFailed) {
+				s.logger.Debugf("clients: requested infohash retry unavailable client=%s", name)
+				continue
+			}
 			return api.ClientSearchResult{}, err
 		}
 		s.logger.Tracef(
@@ -241,6 +275,61 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 	logPathedSearchMatches(s.logger, allMatches)
 
 	return result, nil
+}
+
+// searchRequestedTorrent tries the default client before other available clients.
+// An explicitly named client remains authoritative. Export validation is shared
+// with ordinary discovery and checks source file names, sizes and layout without
+// hashing media bytes. Transport failures do not prevent trying another client,
+// while cancellation stops the lookup.
+func (s *Service) searchRequestedTorrent(ctx context.Context, meta api.ClientSubject) (api.ClientSearchResult, bool, error) {
+	for _, name := range resolveInfoHashSearchClients(s.cfg, meta.ClientOverrides) {
+		clientCfg := s.cfg.TorrentClients[name]
+		clientType := strings.ToLower(strings.TrimSpace(clientCfg.ClientType()))
+		if clientType != "qbit" && clientType != "qbittorrent" && clientType != "qui" {
+			continue
+		}
+		selected, matches, err := s.searchQbitClient(ctx, name, clientCfg, meta, resolvePieceConstraints(s.cfg))
+		if ctx.Err() != nil {
+			return api.ClientSearchResult{}, false, fmt.Errorf("clients: requested infohash lookup canceled: %w", ctx.Err())
+		}
+		if err != nil {
+			if errors.Is(err, internalerrors.ErrClientRecheckFailed) {
+				return api.ClientSearchResult{}, false, err
+			}
+			s.logger.Debugf("clients: requested infohash lookup unavailable client=%s", name)
+			continue
+		}
+		if len(matches) == 0 {
+			continue
+		}
+		if selected.TorrentPath != "" || (selected.InfoHash == meta.InfoHash && len(selected.TorrentCandidates) > 0) {
+			return selected, true, nil
+		}
+	}
+	return api.ClientSearchResult{}, false, nil
+}
+
+// resolveInfoHashSearchClients keeps exact lookup and policy retries in the same
+// client scope, overriding configured search lists and disabled selectors.
+func resolveInfoHashSearchClients(cfg config.Config, overrides api.ClientOverrides) []string {
+	if namedSearchClient(overrides) != "" {
+		clients, _ := resolveSearchClients(cfg, overrides)
+		return clients
+	}
+	preferred := selectSearchClientNames(cfg.TorrentClients, []string{cfg.ClientSetup.DefaultClient})
+	return dedupeStrings(append(preferred, slices.Sorted(maps.Keys(cfg.TorrentClients))...))
+}
+
+func namedSearchClient(overrides api.ClientOverrides) string {
+	if overrides.Client == nil {
+		return ""
+	}
+	name := strings.TrimSpace(*overrides.Client)
+	if strings.EqualFold(name, "none") {
+		return ""
+	}
+	return name
 }
 
 func logPathedSearchMatches(logger api.Logger, matches []api.TorrentMatch) {
@@ -453,17 +542,37 @@ func (s *Service) searchQbitClient(
 
 	var torrents []qbittorrent.Torrent
 	if useProxy {
-		items, err := searchProxyTorrentTerms(ctx, httpClient, proxyBaseURL, searchTerms)
+		var items []qbittorrent.Torrent
+		var err error
+		if meta.InfoHash != "" {
+			parsed, buildErr := buildProxySearchURL(proxyBaseURL, "")
+			if buildErr != nil {
+				return api.ClientSearchResult{}, nil, buildErr
+			}
+			parsed.Path = strings.TrimSuffix(parsed.Path, "/search") + "/info"
+			query := parsed.Query()
+			query.Del("filter")
+			query.Del("search")
+			query.Set("hashes", meta.InfoHash)
+			parsed.RawQuery = query.Encode()
+			items, err = fetchProxyTorrents(ctx, httpClient, parsed.String())
+		} else {
+			items, err = searchProxyTorrentTerms(ctx, httpClient, proxyBaseURL, searchTerms)
+		}
 		if err != nil {
 			return api.ClientSearchResult{}, nil, err
 		}
 		torrents = items
 	} else {
-		items, err := qbitClient.GetTorrentsCtx(ctx, qbittorrent.TorrentFilterOptions{
+		options := qbittorrent.TorrentFilterOptions{
 			Sort:    "added_on",
 			Reverse: true,
 			Limit:   100,
-		})
+		}
+		if meta.InfoHash != "" {
+			options.Hashes = []string{meta.InfoHash}
+		}
+		items, err := qbitClient.GetTorrentsCtx(ctx, options)
 		if err != nil {
 			return api.ClientSearchResult{}, nil, fmt.Errorf("clients: %s qbit list: %w", name, err)
 		}
@@ -487,7 +596,11 @@ func (s *Service) searchQbitClient(
 		default:
 		}
 
-		if !torrentMatchesMeta(torrent, meta) {
+		if meta.InfoHash != "" {
+			if normalizeQbitHash(torrent.Hash) != meta.InfoHash {
+				continue
+			}
+		} else if !torrentMatchesMeta(torrent, meta) {
 			continue
 		}
 		nameMatched++
@@ -568,7 +681,7 @@ func (s *Service) searchQbitClient(
 	result := api.ClientSearchResult{
 		InfoHash:            selection.infoHash,
 		TrackerIDs:          trackerIDs,
-		FoundTrackerMatch:   hasTrackerIDMatch(selection.matches),
+		FoundTrackerMatch:   hasTrackerIDMatch(selection.matches) || len(matchedTrackers) > 0,
 		TorrentComments:     selection.matches,
 		PieceSizeConstraint: constraints.label,
 		FoundPreferredPiece: selection.foundPreferred,
@@ -693,6 +806,10 @@ func qbitTorrentDataVerified(torrent qbittorrent.Torrent, meta api.ClientSubject
 		!qbitTorrentUploadComplete(torrent.State) {
 		return false
 	}
+	return qbitTorrentSourceMatches(torrent, meta, clientCfg)
+}
+
+func qbitTorrentSourceMatches(torrent qbittorrent.Torrent, meta api.ClientSubject, clientCfg config.TorrentClientConfig) bool {
 	expectedPath, err := sourcePathForQbitSavePath(meta)
 	if err != nil {
 		return false
@@ -823,7 +940,10 @@ func searchProxyTorrents(ctx context.Context, client *http.Client, proxyBase, se
 	if err != nil {
 		return nil, err
 	}
+	return fetchProxyTorrents(ctx, client, proxyURL.String())
+}
 
+func fetchProxyTorrents(ctx context.Context, client *http.Client, proxyURL string) ([]qbittorrent.Torrent, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxyURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("clients: proxy request: %w", err)
@@ -860,10 +980,10 @@ func searchProxyTorrents(ctx context.Context, client *http.Client, proxyBase, se
 	return wrapper.Torrents, nil
 }
 
-func buildProxySearchURL(proxyBase, searchTerm string) (string, error) {
+func buildProxySearchURL(proxyBase, searchTerm string) (*url.URL, error) {
 	parsed, err := url.Parse(proxyBase)
 	if err != nil {
-		return "", fmt.Errorf("clients: proxy url parse: %w", err)
+		return nil, fmt.Errorf("clients: proxy url parse: %w", err)
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/api/v2/torrents/search"
 	query := parsed.Query()
@@ -873,7 +993,7 @@ func buildProxySearchURL(proxyBase, searchTerm string) (string, error) {
 	query.Set("limit", "100")
 	query.Set("filter", "unregistered,tracker_down")
 	parsed.RawQuery = query.Encode()
-	return parsed.String(), nil
+	return parsed, nil
 }
 
 func fetchTorrentProperties(
@@ -1356,6 +1476,9 @@ func (s *Service) selectValidTorrent(
 				continue
 			}
 			localHash := local.HashInfoBytes().String()
+			if meta.InfoHash != "" && !strings.EqualFold(localHash, meta.InfoHash) {
+				continue
+			}
 			matched := slices.IndexFunc(matches, func(match api.TorrentMatch) bool { return strings.EqualFold(match.Hash, localHash) })
 			// The generic cache can alias another source with the same basename.
 			// Only a matching client record binds that cache to this discovery.
@@ -1411,6 +1534,10 @@ func (s *Service) selectValidTorrent(
 			InfoHash:      hash,
 			ContentSHA256: strings.TrimSuffix(filepath.Base(snapshotPath), ".torrent"),
 		})
+		if meta.InfoHash != "" {
+			selection.infoHash = hash
+		}
+
 		return nil
 	}
 
@@ -1440,7 +1567,7 @@ func (s *Service) selectValidTorrent(
 			return nil
 		}
 		if err := forceRecheckTorrent(ctx, qbitClient, hash, s.logger); err != nil {
-			return err
+			return fmt.Errorf("%w: %w", internalerrors.ErrClientRecheckFailed, err)
 		}
 		rechecked[hash] = struct{}{}
 		return nil
@@ -1467,7 +1594,7 @@ func (s *Service) selectValidTorrent(
 						return validatedTorrentSelection{}, err
 					}
 					considerClientMatch(match)
-					if validation.reason == "single_file_alternative" {
+					if validation.reason == "single_file_alternative" || validation.reason == "single_file_wrapper" {
 						if err := retainCandidate(normalizedHash, outputPath, data); err != nil {
 							return validatedTorrentSelection{}, err
 						}
@@ -1524,7 +1651,7 @@ func (s *Service) selectValidTorrent(
 
 		if !validation.reusable {
 			s.logger.Tracef("clients: validated exported torrent as client match only for %s (reason=%s)", normalizedHash, validation.reason)
-			if validation.reason == "path_mismatch" || validation.reason == "single_file_alternative" {
+			if validation.reason == "path_mismatch" || validation.reason == "single_file_alternative" || validation.reason == "single_file_wrapper" {
 				if err := retainCandidate(normalizedHash, outputPath, data); err != nil {
 					return validatedTorrentSelection{}, err
 				}
@@ -1783,6 +1910,19 @@ func validateTorrentData(meta api.ClientSubject, hash string, data []byte) torre
 			pieceSize:   pieceSize,
 			infoHash:    infoHash,
 		}
+	}
+	if converted, err := torrent.ConvertSingleFileWrapperInfo(metaInfo.InfoBytes, subject); err == nil && len(converted) > 0 {
+		return torrentDataValidation{
+			clientMatch: true,
+			pieceSize:   pieceSize,
+			infoHash:    infoHash,
+			reason:      "single_file_wrapper",
+		}
+	}
+	// Requested hashes require a source-valid artifact, including safe wrapper
+	// conversion. Ordinary discovery may retain weaker tracker provenance below.
+	if meta.InfoHash != "" {
+		return torrentDataValidation{infoHash: infoHash, reason: "content_layout"}
 	}
 	if meta.KeepFolder {
 		subject.KeepFolder = false

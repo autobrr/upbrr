@@ -22,6 +22,54 @@ import (
 // artifacts while another operation is reading them.
 var convertedTorrentPublicationMu sync.Mutex
 
+// ConvertSingleFileWrapperInfo returns single-file info bytes when only a one-file
+// folder wrapper differs from the source. A nil result means conversion is unsafe
+// or unnecessary. It preserves pieces without reading media bytes or writing files.
+func ConvertSingleFileWrapperInfo(infoBytes []byte, subject api.TorrentSubject) ([]byte, error) {
+	inventory, ok, err := ResolveSubmissionContentInventory(subject)
+	if err != nil || !ok || inventory.Scope != api.SubmissionContentScopeSingleFile || len(inventory.Files) != 1 {
+		return nil, err
+	}
+	mi := metainfo.MetaInfo{InfoBytes: infoBytes}
+	info, err := mi.UnmarshalInfo()
+	if err != nil || len(info.Files) != 1 || ValidatePieceMetadata(info) != nil {
+		return nil, nil
+	}
+	file := info.Files[0]
+	parts := file.BestPath()
+	if len(parts) == 0 || parts[len(parts)-1] != inventory.Files[0].TorrentPath || file.Length != inventory.Files[0].Size {
+		return nil, nil
+	}
+	var dictionary map[string]any
+	if err := bencode.Unmarshal(mi.InfoBytes, &dictionary); err != nil {
+		return nil, nil
+	}
+	files, ok := dictionary["files"].([]any)
+	if !ok || len(files) != 1 {
+		return nil, nil
+	}
+	fileFields, ok := files[0].(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+	for key := range fileFields {
+		if key != "length" && key != "path" && key != "path.utf-8" {
+			return nil, nil
+		}
+	}
+	delete(dictionary, "files")
+	dictionary["length"] = file.Length
+	dictionary["name"] = inventory.Files[0].TorrentPath
+	if _, ok := dictionary["name.utf-8"]; ok {
+		dictionary["name.utf-8"] = inventory.Files[0].TorrentPath
+	}
+	converted, err := bencode.Marshal(dictionary)
+	if err != nil {
+		return nil, fmt.Errorf("torrent: encode single-file wrapper: %w", err)
+	}
+	return converted, nil
+}
+
 // convertSingleFileWrapper preserves a complete one-file piece sequence when
 // only its folder wrapper differs from the requested single-file layout.
 func convertSingleFileWrapper(tmpRoot, path string, subject api.TorrentSubject) (string, error) {
@@ -32,50 +80,15 @@ func convertSingleFileWrapper(tmpRoot, path string, subject api.TorrentSubject) 
 	if err != nil || validateClientCandidateBytes(path, data, subject) != nil {
 		return "", nil
 	}
-	inventory, ok, err := ResolveSubmissionContentInventory(subject)
-	if err != nil || !ok || inventory.Scope != api.SubmissionContentScopeSingleFile || len(inventory.Files) != 1 {
-		return "", err
-	}
 	mi, err := metainfo.Load(bytes.NewReader(data))
 	if err != nil {
 		return "", nil
 	}
-	info, err := mi.UnmarshalInfo()
-	if err != nil || len(info.Files) != 1 || ValidatePieceMetadata(info) != nil {
-		return "", nil
+	converted, err := ConvertSingleFileWrapperInfo(mi.InfoBytes, subject)
+	if err != nil || len(converted) == 0 {
+		return "", err
 	}
-	file := info.Files[0]
-	parts := file.BestPath()
-	if len(parts) == 0 || parts[len(parts)-1] != inventory.Files[0].TorrentPath || file.Length != inventory.Files[0].Size {
-		return "", nil
-	}
-	var dictionary map[string]any
-	if err := bencode.Unmarshal(mi.InfoBytes, &dictionary); err != nil {
-		return "", nil
-	}
-	files, ok := dictionary["files"].([]any)
-	if !ok || len(files) != 1 {
-		return "", nil
-	}
-	fileFields, ok := files[0].(map[string]any)
-	if !ok {
-		return "", nil
-	}
-	for key := range fileFields {
-		if key != "length" && key != "path" && key != "path.utf-8" {
-			return "", nil
-		}
-	}
-	delete(dictionary, "files")
-	dictionary["length"] = file.Length
-	dictionary["name"] = inventory.Files[0].TorrentPath
-	if _, ok := dictionary["name.utf-8"]; ok {
-		dictionary["name.utf-8"] = inventory.Files[0].TorrentPath
-	}
-	mi.InfoBytes, err = bencode.Marshal(dictionary)
-	if err != nil {
-		return "", fmt.Errorf("torrent: encode single-file wrapper: %w", err)
-	}
+	mi.InfoBytes = converted
 	var output bytes.Buffer
 	if err := mi.Write(&output); err != nil {
 		return "", fmt.Errorf("torrent: encode converted metainfo: %w", err)

@@ -92,7 +92,7 @@ func New(clients api.ClientService, logger api.Logger) *Module {
 
 // Discover obtains one current client snapshot and always reports why a search
 // did or did not execute. Client failures produce unavailable evidence, while
-// request validation and cancellation remain fatal.
+// request validation, cancellation and failed explicit rechecks remain fatal.
 func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, error) {
 	if m == nil {
 		return Evidence{}, errors.New("client discovery: module is not initialized")
@@ -107,17 +107,21 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 		return Evidence{}, fmt.Errorf("client discovery: canceled before search: %w", err)
 	}
 	logger := logging.FromContext(ctx, m.logger)
-	if input.Policy.Skip {
+	if input.Policy.Skip && strings.TrimSpace(input.Policy.InfoHash) == "" {
 		logger.Debugf("client discovery: decision=skip reason=requested")
 		return Evidence{Disposition: DispositionSkipped}, nil
 	}
 	if m.clients == nil {
+		if input.Policy.InfoHash != "" {
+			logger.Errorf("client discovery: requested infohash ignored because no client is available; continuing ordinary discovery")
+		}
 		logger.Debugf("client discovery: decision=skip reason=client_unavailable")
 		return Evidence{Disposition: DispositionUnavailable}, nil
 	}
 
 	logger.Debugf("client discovery: decision=start files=%d disc=%t", len(input.FileList), strings.TrimSpace(input.DiscType) != "")
 	result, err := m.clients.SearchPathedTorrents(ctx, api.ClientSubject{
+		InfoHash:          input.Policy.InfoHash,
 		SourcePath:        strings.TrimSpace(input.SourcePath),
 		FileList:          append([]string(nil), input.FileList...),
 		DiscType:          strings.TrimSpace(input.DiscType),
@@ -132,6 +136,9 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 		return Evidence{}, fmt.Errorf("client discovery: search canceled: %w", ctxErr)
 	}
 	if err != nil {
+		if errors.Is(err, internalerrors.ErrClientRecheckFailed) {
+			return Evidence{}, fmt.Errorf("client discovery: %w", err)
+		}
 		logger.Debugf("client discovery: decision=degrade reason=search_failed")
 		return Evidence{Disposition: DispositionUnavailable}, nil
 	}

@@ -191,6 +191,9 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 			rehashedTrackers = normalizedTrackerNames(meta.Trackers)
 		}
 	}
+	if reuseOnly {
+		return api.TorrentResult{}, fmt.Errorf("torrent: no reusable torrent found with nohash enabled: %w", internalerrors.ErrNotFound)
+	}
 	for _, tracker := range skippedTrackers {
 		logger.Infof("torrent: skipping tracker=%s decision=skip_if_rehash", tracker)
 	}
@@ -198,10 +201,6 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		return api.TorrentResult{SkippedTrackers: skippedTrackers}, nil
 	}
 	policy = resolveTrackerPolicy(meta, s.registry)
-
-	if reuseOnly {
-		return api.TorrentResult{}, fmt.Errorf("torrent: no reusable torrent found with nohash enabled: %w", internalerrors.ErrNotFound)
-	}
 
 	logger.Debugf("torrent: resolving create spec for %s", source)
 	createSpec, err := resolveCreateSpec(meta, source, s.tmpRoot)

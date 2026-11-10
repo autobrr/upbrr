@@ -62,6 +62,8 @@ The current API registers these top-level resources:
 
 Methods, request bodies, response schemas, status codes, idempotency rules, and nested workflow routes can change as the alpha API evolves. Generate clients from the OpenAPI document shipped with the binary you run.
 
+Upload requests can supply `torrent.infoHash` to select an existing client torrent for metadata discovery and validated reuse. Lookup tries the default client before other available clients, overriding configured search lists, `none` selectors and `preparation.clientSearch.skip`. A named `preparation.clientSearch.client` still restricts lookup to that client; a miss identifies that client in the error and falls back to ordinary discovery. The only-ID, keep-images and client-injection policies remain unchanged. See [Client and torrent](../cli/index.md#client-and-torrent) for rehash, reuse-only and source-validation behavior.
+
 ### Tracker questionnaires
 
 The `trackers_projected` workflow goal prepares selected tracker names and questionnaire requirements before duplicate assessment. Read each tracker's returned questionnaire schema and current answers rather than hard-coding field names or assuming all trackers ask the same questions. Requirements can depend on the prepared release, saved answers, or later tracker lookup results.

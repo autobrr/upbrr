@@ -1294,6 +1294,9 @@
               }
             ]
           },
+          "InfoHash": {
+            "type": "string"
+          },
           "Skip": {
             "type": "boolean"
           }

@@ -416,6 +416,9 @@ func normalizeCompositeUploadRequest(
 	if request.Execution.PreparedRelease == api.ReleaseWorkflowPreparedReleaseRequire {
 		prepareInput.RequirePrepared = true
 	}
+	if request.Torrent.InfoHash != nil {
+		prepareInput.Search.InfoHash = *request.Torrent.InfoHash
+	}
 	projections := compositeUploadProjectionInstructions(request.Trackers.Projection)
 	trackerIDs := normalizeCompositeTrackerIDs(request.Trackers.Include)
 	if len(trackerIDs) > 0 {

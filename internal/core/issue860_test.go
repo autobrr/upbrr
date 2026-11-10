@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/autobrr/go-torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -26,6 +28,7 @@ type issue860Client struct {
 	searches int
 	result   api.ClientSearchResult
 	subject  api.ClientSubject
+	err      error
 }
 
 type issue860Collector struct{ candidate api.ClientTorrentCandidate }
@@ -34,6 +37,7 @@ func (c issue860Collector) Collect(ctx context.Context, request preparationstate
 	facts, err := (workflowMediaCollector{}).Collect(ctx, request)
 	facts.Resources.ClientEvidence = preparationstate.ClientEvidenceSnapshot{
 		Disposition: preparationstate.ClientEvidenceDispositionSearched,
+		Policy:      request.Input.Search,
 		Result: api.ClientSearchResult{
 			InfoHash:          c.candidate.InfoHash,
 			TorrentPath:       c.candidate.Path,
@@ -58,7 +62,10 @@ func TestPreparedWorkflowSearchesCompatibleAlternative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	facts, err := prepared.Prepare(t.Context(), api.PrepareInput{SourcePath: source})
+	facts, err := prepared.Prepare(t.Context(), api.PrepareInput{
+		SourcePath: source,
+		Search:     api.ClientSearchPolicy{InfoHash: candidates[0].InfoHash, Skip: true},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +98,10 @@ func TestPreparedWorkflowSearchesCompatibleAlternative(t *testing.T) {
 			Status:    api.StageStatusCompleted,
 		}}},
 		workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{},
-		api.DescriptionInstructions{Torrent: api.TorrentOverrides{NoHash: new(true)}},
+		api.DescriptionInstructions{
+			Options: api.UploadOptions{SkipAutoTorrent: true},
+			Torrent: api.TorrentOverrides{NoHash: new(true)},
+		},
 		releaseworkflow.UploadPlanBuildOptions{DryRun: true, NoSeed: true}, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +194,7 @@ func (c *issue860Client) SearchPathedTorrents(_ context.Context, subject api.Cli
 	if !subject.FindAllCandidates {
 		panic("policy-driven search must request alternatives")
 	}
-	return c.result, nil
+	return c.result, c.err
 }
 
 func TestWorkflowAlternativeSearchForwardsExplicitRecheck(t *testing.T) {
@@ -192,7 +202,10 @@ func TestWorkflowAlternativeSearchForwardsExplicitRecheck(t *testing.T) {
 	source, candidates := issue860CandidateFixture(t)
 	clients := &issue860Client{result: api.ClientSearchResult{TorrentCandidates: []api.ClientTorrentCandidate{candidates[1]}}}
 	builder := workflowUploadPlanBuilder{torrents: torrent.NewService(api.NopLogger{}, t.TempDir()), clients: clients}
-	_, err := builder.prepareWorkflowTorrent(t.Context(), api.UploadSubject{ClientSearchPerformed: true}, api.TorrentSubject{
+	subject := api.UploadSubject{
+		ClientSearchPerformed: true, ClientSearchPolicy: api.ClientSearchPolicy{Skip: true, InfoHash: candidates[0].InfoHash},
+	}
+	input := api.TorrentSubject{
 		SourcePath:            source,
 		SourceSize:            11,
 		Trackers:              []string{"PTP"},
@@ -200,12 +213,24 @@ func TestWorkflowAlternativeSearchForwardsExplicitRecheck(t *testing.T) {
 		ClientTorrentInfoHash: candidates[0].InfoHash,
 		ForceRecheck:          true,
 		TorrentOverrides:      api.TorrentOverrides{NoHash: new(true)},
-	})
+	}
+	_, err := builder.prepareWorkflowTorrent(t.Context(), subject, input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if clients.searches != 1 || clients.subject.ClientOverrides.ForceRecheck == nil || !*clients.subject.ClientOverrides.ForceRecheck {
+	if clients.searches != 1 || clients.subject.ClientOverrides.ForceRecheck == nil || !*clients.subject.ClientOverrides.ForceRecheck || clients.subject.InfoHash != candidates[0].InfoHash {
 		t.Fatalf("alternative search did not receive recheck: searches=%d overrides=%+v", clients.searches, clients.subject.ClientOverrides)
+	}
+	clients.err = internalerrors.ErrClientRecheckFailed
+	_, err = builder.prepareWorkflowTorrent(t.Context(), subject, input)
+	if !errors.Is(err, internalerrors.ErrClientRecheckFailed) {
+		t.Fatalf("alternative search hid explicit recheck failure: %v", err)
+	}
+	clients.searches = 0
+	subject.ClientSearchPolicy.InfoHash = ""
+	result, err := builder.prepareWorkflowTorrent(t.Context(), subject, input)
+	if err != nil || clients.searches != 0 || len(result.SkippedTrackers) != 1 || result.SkippedTrackers[0] != "PTP" {
+		t.Fatalf("ordinary skip changed: result=%+v searches=%d err=%v", result, clients.searches, err)
 	}
 }
 
@@ -263,6 +288,36 @@ func TestWorkflowSearchesFurtherOnlyWhenPolicyRequiresIt(t *testing.T) {
 				t.Fatalf("result=%+v searches=%d err=%v", result, clients.searches, err)
 			}
 		})
+	}
+}
+
+func TestWorkflowNoHashSkipsOnlyIncompatibleTrackerPolicies(t *testing.T) {
+	t.Parallel()
+	source, candidates := issue860CandidateFixture(t)
+	builder := workflowUploadPlanBuilder{torrents: torrent.NewService(api.NopLogger{}, t.TempDir())}
+	input := api.TorrentSubject{
+		SourcePath:            source,
+		SourceSize:            11,
+		Trackers:              []string{"PTP", "ANT"},
+		ClientTorrentPath:     candidates[0].Path,
+		ClientTorrentInfoHash: candidates[0].InfoHash,
+		TorrentOverrides:      api.TorrentOverrides{NoHash: new(true)},
+	}
+	result, err := builder.prepareWorkflowTorrent(t.Context(), api.UploadSubject{}, input)
+	if err != nil || result.InfoHash != candidates[0].InfoHash || len(result.SkippedTrackers) != 1 || result.SkippedTrackers[0] != "PTP" || len(result.RehashedTrackers) != 0 {
+		t.Fatalf("nohash did not preserve compatible lanes: hash=%s skipped=%v rehashed=%v err=%v", result.InfoHash, result.SkippedTrackers, result.RehashedTrackers, err)
+	}
+	input.Trackers = []string{"PTP"}
+	result, err = builder.prepareWorkflowTorrent(t.Context(), api.UploadSubject{}, input)
+	if err != nil || result.Path != candidates[0].Path || result.InfoHash != candidates[0].InfoHash || len(result.SkippedTrackers) != 1 || result.SkippedTrackers[0] != "PTP" || len(result.RehashedTrackers) != 0 {
+		t.Fatalf("source-valid policy skip failed: artifact=%t skipped=%v err=%v", result.Path != "", result.SkippedTrackers, err)
+	}
+	if err := os.WriteFile(source, []byte("source-fail"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input.ForceRecheck = true
+	if _, err := builder.prepareWorkflowTorrent(t.Context(), api.UploadSubject{}, input); err == nil {
+		t.Fatal("all-policy skip ignored mismatched media during explicit recheck")
 	}
 }
 
