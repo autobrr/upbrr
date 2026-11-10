@@ -662,12 +662,12 @@ func writeAZCookieFile(t *testing.T, tmp string, domain string) {
 func testTorrentBytes(t *testing.T, source string) []byte {
 	t.Helper()
 	info, err := bencode.Marshal(metainfo.Info{
-Name: "Example.Release.mkv",
- Length: 1,
- PieceLength: 16384,
- Pieces: bytes.Repeat([]byte{1}, 20),
- Source: source,
-})
+		Name:        "Example.Release.mkv",
+		Length:      1,
+		PieceLength: 16384,
+		Pieces:      bytes.Repeat([]byte{1}, 20),
+		Source:      source,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -716,14 +716,14 @@ func TestUploadRejectsInvalidArtifactBeforeRemoteEffects(t *testing.T) {
 			_, failure := testDefinitionAt(server.URL).Prepare(t.Context(), trackers.PreparationInput{
 				Intent:  trackers.PreparationIntentUpload,
 				Tracker: "AZ",
-				Meta:    api.UploadSubject{
-TorrentPath: torrentPath,
- MediaInfoTextPath: mediaInfoPath,
- Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
- ReleaseName: "Example.Release.2026",
- Release: api.ReleaseInfo{Resolution: "1080p"},
- Type: "WEBDL",
-},
+				Meta: api.UploadSubject{
+					TorrentPath:       torrentPath,
+					MediaInfoTextPath: mediaInfoPath,
+					Identity:          api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
+					ReleaseName:       "Example.Release.2026",
+					Release:           api.ReleaseInfo{Resolution: "1080p"},
+					Type:              "WEBDL",
+				},
 				Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 			})
 			if failure == nil || !strings.Contains(failure.Message(), "torrent") {
