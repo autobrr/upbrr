@@ -112,6 +112,16 @@ func TestHDBForcedSubtitleDefaultUsesInspectedTracks(t *testing.T) {
 			if blocking, err := trackers.FirstBlockingRuleFailure("HDB", failures, api.WorkflowExecutionModeNormal, projection); err != nil || blocking != nil {
 				t.Fatalf("approved subtitle warning blocked: blocking=%+v err=%v", blocking, err)
 			}
+			changedSource := subject
+			changedSource.SourcePath = "changed-hdb-language"
+			if blocking, err := trackers.FirstBlockingRuleFailure("HDB", languageAssessment(changedSource), api.WorkflowExecutionModeNormal, projection); err != nil || blocking == nil {
+				t.Fatalf("changed source retained approval: blocking=%+v err=%v", blocking, err)
+			}
+			changedGeneration := subject
+			changedGeneration.Identity.Generation++
+			if blocking, err := trackers.FirstBlockingRuleFailure("HDB", languageAssessment(changedGeneration), api.WorkflowExecutionModeNormal, projection); err != nil || blocking == nil {
+				t.Fatalf("changed generation retained approval: blocking=%+v err=%v", blocking, err)
+			}
 			subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].ID = "changed-subtitle"
 			if blocking, err := trackers.FirstBlockingRuleFailure("HDB", languageAssessment(subject), api.WorkflowExecutionModeNormal, projection); err != nil || blocking == nil {
 				t.Fatalf("changed subtitle evidence retained approval: blocking=%+v err=%v", blocking, err)
