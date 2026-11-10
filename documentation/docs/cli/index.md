@@ -136,6 +136,10 @@ Final upload results report tracker submission and client injection separately, 
 
 If release preparation stops before an upload report is available, plain output and the TUI release panel show the retained failure details. That input does not advance to tracker upload. The TUI queue summary also keeps the safe error explanation when the next input starts. Correct the reported problem before retrying; unattended mode does not ask for additional answers.
 
+Terminal errors explain the next recovery step in plain language. A confirmation for an uncertain external outcome requires checking the remote service first; opting into prompts does not authorize a retry. Client-delivery recovery does not repeat an accepted tracker upload.
+
+During image hosting, the TUI shows each host's latest message and separate uploaded, reused and failed image counts. Fallback hosts are identified. These image counts do not replace overall workflow progress; a processed image may have failed.
+
 | Option                     | Behavior                                                                                                                                      |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--debug`                  | Runs preparation and payload preview without tracker submission. Image uploads and client injection remain enabled unless explicitly skipped. |

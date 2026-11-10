@@ -162,14 +162,18 @@ func (m *cliTUIModel) flow(width, height int) string {
 		if metadataIndex >= 0 {
 			status += "\n" + m.telemetry[metadataIndex].Phase
 		}
-		var partial []string
+		var outcomes []string
 		for _, item := range m.telemetry {
+			if item.Kind == "image_host" {
+				outcomes = append(outcomes, item.Phase)
+				separateProgress = true
+			}
 			if item.Kind == "preparation_phase" && item.Status == api.StageStatusPartial {
-				partial = append(partial, item.Phase)
+				outcomes = append(outcomes, item.Phase)
 			}
 		}
-		if len(partial) > 0 {
-			status += "\n" + strings.Join(partial, "\n")
+		if len(outcomes) > 0 {
+			status += "\n" + strings.Join(outcomes, "\n")
 		}
 		if m.view.Total > 0 && metadataIndex < 0 {
 			if separateProgress {
