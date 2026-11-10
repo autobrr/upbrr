@@ -467,7 +467,10 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		printCLICompositeDupeEvidence(output, dupe)
 		fmt.Fprintf(output, "Preparation: %d screenshots; %d DVD menu images.\n", projection.Artifacts.ScreenshotCount, projection.Artifacts.DVDMenuCount)
 		if projection.Artifacts.ImageHosting {
-			fmt.Fprintln(output, "Image-host requirements will be checked; compatible existing uploads may be reused.")
+			fmt.Fprintln(
+				output,
+				"Image-host requirements will be checked; compatible existing uploads may be reused. Missing images may be uploaded when uploads are enabled.",
+			)
 		}
 		if projection.Artifacts.Description {
 			fmt.Fprintln(output, "A tracker description will be prepared.")
