@@ -530,11 +530,11 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		if completed.err == nil {
 			markCovered(attempt.target)
 		}
-		if completed.err == nil || schedulerErr != nil {
+		if imageUploadOutcomeUnresolved(ctx, completed.err) {
+			schedulerErr = completed.err
 			continue
 		}
-		if failure, ok := api.AsOperationFailure(completed.err); ok && failure.Code == api.OperationFailureUnknownOutcome {
-			schedulerErr = completed.err
+		if completed.err == nil || schedulerErr != nil {
 			continue
 		}
 		failedHost := strings.ToLower(strings.TrimSpace(attempt.target.Host))
@@ -782,7 +782,7 @@ func (m *mediaModule) uploadImagesToTarget(
 	)
 	uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, missing)
 	results = mergeUploadedImageLinks(images, results, uploaded)
-	if err != nil && !strictAnalysisBatch && m.partialHostUploadIsUsable(target, len(images), len(results), err) {
+	if err != nil && !strictAnalysisBatch && m.partialHostUploadIsUsable(ctx, target, len(images), len(results), err) {
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return results, nil
 	}
@@ -940,18 +940,30 @@ func (m *mediaModule) retainedFallbackImageUploadTargets(
 	return covered
 }
 
+// imageUploadOutcomeUnresolved preserves interruption and uncertain remote outcomes
+// across partial-success acceptance, fallback, and workflow receipt completion.
+func imageUploadOutcomeUnresolved(ctx context.Context, err error) bool {
+	// An independent client timeout can wrap DeadlineExceeded while the command is still live.
+	if errors.Is(err, context.Canceled) || (ctx.Err() != nil && errors.Is(err, ctx.Err())) {
+		return true
+	}
+	failure, ok := api.AsOperationFailure(err)
+	return ok && failure.Code == api.OperationFailureUnknownOutcome
+}
+
 // partialHostUploadIsUsable reports whether a partially failed host batch still
 // published enough images for the target's trackers to upload with. The
 // allowance is the configured min_successful_image_uploads floor, which is
 // disabled at zero so every failed image keeps failing the batch. Requested
 // counts below the floor cannot clear it, so those batches stay strict.
 func (m *mediaModule) partialHostUploadIsUsable(
+	ctx context.Context,
 	target trackers.ImageUploadTarget,
 	requested int,
 	published int,
 	err error,
 ) bool {
-	if failure, ok := api.AsOperationFailure(err); ok && failure.Code == api.OperationFailureUnknownOutcome {
+	if imageUploadOutcomeUnresolved(ctx, err) {
 		return false
 	}
 	minimum := m.cfg.ScreenshotHandling.ResolvedMinSuccessfulUploads()

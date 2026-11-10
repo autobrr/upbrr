@@ -113,6 +113,8 @@ type WorkflowViewState = Readonly<{
 export type SessionState = Readonly<{
   activeInput: ActiveInputState;
   workflowView: WorkflowViewState;
+  /** A retried cancellation must not reappear through an older poll or snapshot. */
+  dismissedCancellation: Readonly<{ workflowID: string; operationID: string }> | null;
   sessionRevision: number;
   commandRevision: number;
   sourceDraft: string;
@@ -185,6 +187,12 @@ export type SessionAction =
       preserveInputDraft?: boolean;
     }>
   | Readonly<{ type: "active_input_loading" }>
+  | Readonly<{ type: "workflow_attempt_started" }>
+  | Readonly<{
+      type: "workflow_attempt_rejected";
+      /** Previous operation when a new command was rejected before accepting any work. */
+      operation: ReleaseWorkflowCurrent["operation"];
+    }>
   | Readonly<{
       type: "workflow_operation_updated";
       workflowID: string;
@@ -405,6 +413,7 @@ export const initialSessionState = (): SessionState => ({
     recoveryWorkflowIDs: [],
   },
   workflowView: { status: "idle", current: null, error: "", failure: null },
+  dismissedCancellation: null,
   sessionRevision: 0,
   commandRevision: 0,
   sourceDraft: "",
@@ -888,14 +897,60 @@ const trackerSelectionChanged = (
   };
 };
 
+const visibleWorkflowOperation = (
+  state: SessionState,
+  operation: ReleaseWorkflowCurrent["operation"],
+) =>
+  operation?.status === "canceled" &&
+  operation.workflowId === state.dismissedCancellation?.workflowID &&
+  operation.id === state.dismissedCancellation.operationID
+    ? undefined
+    : operation;
+
 /** Applies one transition, ignoring stale revision- or correlation-scoped completions. */
 export const sessionReducer = (state: SessionState, action: SessionAction): SessionState => {
   switch (action.type) {
+    case "workflow_attempt_started": {
+      const current = state.workflowView.current;
+      return current?.operation?.status === "canceled"
+        ? {
+            ...state,
+            dismissedCancellation: {
+              workflowID: current.workflow.id,
+              operationID: current.operation.id,
+            },
+            workflowView: {
+              ...state.workflowView,
+              current: { ...current, operation: undefined },
+            },
+          }
+        : state;
+    }
     case "active_input_loading":
       return {
         ...state,
         workflowView: { ...state.workflowView, status: "running", error: "", failure: null },
       };
+    case "workflow_attempt_rejected": {
+      const current = state.workflowView.current;
+      const operation = action.operation;
+      if (
+        !current ||
+        operation?.status !== "canceled" ||
+        operation.workflowId !== current.workflow.id ||
+        operation.workflowId !== state.dismissedCancellation?.workflowID ||
+        operation.id !== state.dismissedCancellation.operationID
+      )
+        return state;
+      return {
+        ...state,
+        dismissedCancellation: null,
+        workflowView: {
+          ...state.workflowView,
+          current: { ...current, operation: current.operation ?? operation },
+        },
+      };
+    }
     case "workflow_view_failed":
       return {
         ...state,
@@ -916,29 +971,46 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
             action.operation?.status === "queued" || action.operation?.status === "running"
               ? "running"
               : state.workflowView.status,
-          current: { ...state.workflowView.current, operation: action.operation },
+          current: {
+            ...state.workflowView.current,
+            operation: visibleWorkflowOperation(state, action.operation),
+          },
         },
       };
     case "workflow_current_published": {
+      const current = {
+        ...action.current,
+        operation: visibleWorkflowOperation(state, action.current.operation),
+      };
       const previous = state.workflowView.current;
       if (
         previous &&
-        (previous.workflow.id !== action.current.workflow.id ||
-          previous.workflow.revision > action.current.workflow.revision)
+        (previous.workflow.id !== current.workflow.id ||
+          previous.workflow.revision > current.workflow.revision)
       ) {
         return state;
       }
-      const release = workflowReleaseRef(action.current);
+      const release = workflowReleaseRef(current);
       const previousRelease = workflowReleaseRef(previous) ?? state.release;
       const releaseChanged = release && releaseRefChanged(previousRelease, release);
       return {
         ...state,
         sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
-        screenshots: invalidateStaleScreenshotPlan(state, action.current),
+        // Background hydration borrows the command's running state without owning a preparation.
+        preparation:
+          action.status === "ready" &&
+          state.preparation.status === "running" &&
+          !state.preparation.correlationID
+            ? {
+                ...state.preparation,
+                status: pendingCorrectionReview(current) ? "awaiting_input" : "ready",
+              }
+            : state.preparation,
+        screenshots: invalidateStaleScreenshotPlan(state, current),
         // Confirmation is specific to the reviewed revision and identity; ordinary edits can survive resync.
         correctionConfirmFields: sameCorrectionValue(
           pendingCorrectionReview(previous),
-          pendingCorrectionReview(action.current),
+          pendingCorrectionReview(current),
         )
           ? state.correctionConfirmFields
           : [],
@@ -947,7 +1019,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           : state.descriptions,
         workflowView: {
           status: action.status,
-          current: action.current,
+          current: current,
           error: "",
           failure: null,
         },
@@ -978,7 +1050,12 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         sourceVersion: snapshot.sourceVersion || "",
         recoveryWorkflowIDs: [...(snapshot.recoveryWorkflowIds || [])],
       };
-      const current = snapshot.current || null;
+      const current = snapshot.current
+        ? {
+            ...snapshot.current,
+            operation: visibleWorkflowOperation(state, snapshot.current.operation),
+          }
+        : null;
       if (!current) {
         if (snapshot.state === "empty") {
           if (
