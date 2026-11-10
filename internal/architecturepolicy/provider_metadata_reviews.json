@@ -916,8 +916,8 @@
     "sha256": "157993f3722ac5dec52aaae574dd3ad9a0a647c541ec29e6d62354c1d297014e"
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
-    "reason": "Issue 905 uses finalized non-English dialogue evidence without treating a listed English language as proof of an English soundtrack. Actual original/dub evidence remains authoritative. Provider genre priority, manual metadata/clear precedence and source guards are unchanged.",
-    "sha256": "d8d37e80fd5d73835ad44f7beb8f8c515ab301e07fe3df25cb0e345b62ea9963"
+    "reason": "Preserves issue 905 finalized non-English dialogue evidence without treating a listed English language as proof of an English soundtrack; actual original/dub evidence remains authoritative. Forced-subtitle default findings become waivable, with acknowledgement bound to the source, prepared generation and finalized language evidence. Inspected-track matching and explicit subtitle clears remain authoritative; provider selectors, manual metadata precedence and independent audio restrictions are unchanged.",
+    "sha256": "689379a6c0e2199d45e9c554a5c8ee4361a39bd3979d7f6f72e25fb6a40b34da"
   },
   "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -956,8 +956,8 @@
     "sha256": "81567f861b320e76b0817ee0f08fbce8ae0e0cdb1a5515305d9ab43f9e58ffb7"
   },
   "internal/trackers/impl/standalone/hdb/validation.go:validationPolicy": {
-    "reason": "Advances the validation fingerprint for inferred English dub handling without changing provider selectors, callback wiring, finalized metadata authority, manual precedence or independent eligibility checks.",
-    "sha256": "f4c3432feacd6dbc8b1abb935a990f8fd9bbb20552233207c4f89042d3f93534"
+    "reason": "Advances the validation fingerprint for waivable forced-subtitle default findings without changing provider selectors, callback wiring, finalized metadata authority, manual precedence or independent eligibility checks.",
+    "sha256": "ebd180e1f84731eb81c40fe5a7cd94d985113af8b8bfab22fe370788fd743551"
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged.",
