@@ -503,8 +503,22 @@ func (s *cliWorkflowSession) presentationProgressContext(ctx context.Context) co
 	})
 	ctx = api.WithImageUploadProgressReporter(ctx, func(update api.ImageUploadProgressUpdate) {
 		progress := base
-		progress.Phase, progress.Lane, progress.Attempt = "Image hosting: "+update.Host+" / "+string(update.Status), update.UsageScope, update.AttemptID
+		host := update.Host
+		if update.Fallback {
+			host += " (fallback)"
+		}
+		if len(update.Trackers) > 0 {
+			host += " for " + strings.Join(update.Trackers, ", ")
+		}
+		message := strings.TrimSpace(update.Message)
+		if message == "" {
+			message = string(update.Status)
+		}
+		progress.Phase = fmt.Sprintf("Images on %s [%s]: %s (%d/%d processed; %d uploaded, %d reused, %d failed)",
+			host, update.Status, message, update.Completed, update.Total, update.Succeeded, update.Reused, update.Failed)
+		progress.Lane, progress.Attempt, progress.Kind = update.UsageScope, update.AttemptID, "image_host"
 		progress.Completed, progress.Total = update.Completed, update.Total
+		progress.ItemOnly = true
 		bridge.Progress(progress)
 	})
 	return ctx

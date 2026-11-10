@@ -84,7 +84,7 @@ func TestCLICompositeFailurePreservesInvalidInputRecovery(t *testing.T) {
 			if uploaded != 0 || !ok || got != failure {
 				t.Fatalf("composite failure = uploaded:%d failure:%#v err:%v", uploaded, got, err)
 			}
-			if got, want := formatCLIError(err), failure.Message+" (recovery: edit_input)"; got != want {
+			if got, want := formatCLIError(err), failure.Message+" Next step: correct the input options or source path before running this command again."; got != want {
 				t.Fatalf("CLI failure = %q, want %q", got, want)
 			}
 			if strings.Contains(output.String(), "No trackers configured") {
@@ -205,7 +205,7 @@ func TestCLICompositeBlockedMediaStopsWithoutTrackerFeedback(t *testing.T) {
 				}
 				if withFailure {
 					got, ok := api.AsOperationFailure(err)
-					if !ok || got != failure || formatCLIError(err) != failure.Message+" (recovery: retry)" {
+					if !ok || got != failure || formatCLIError(err) != failure.Message+" Next step: resolve the reported problem before retrying the failed operation." {
 						t.Fatalf("media recovery was lost: failure:%#v err:%v", got, err)
 					}
 				} else if !strings.Contains(err.Error(), prompt) || !strings.Contains(err.Error(), "media blocked") {
