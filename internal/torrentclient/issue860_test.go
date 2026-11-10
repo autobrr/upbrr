@@ -292,9 +292,8 @@ func TestMetadataAccumulatesAcrossClientsWithoutRebindingArtifact(t *testing.T) 
 	second := server(hash, "https://beyond-hd.me/details/1111", "https://tracker.beyond-hd.me/announce/redacted", nil)
 	defer second.Close()
 	cfg := config.Config{
-		MainSettings:    config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
-		ClientSetup:     config.ClientSetupConfig{SearchClients: config.CSVList{"first", "second"}},
-		TorrentCreation: config.TorrentCreationConfig{PreferMax16: true},
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup:  config.ClientSetupConfig{SearchClients: config.CSVList{"first", "second"}},
 		TorrentClients: map[string]config.TorrentClientConfig{
 			"first": {Type: "qui", QuiProxyURL: first.URL}, "second": {Type: "qui", QuiProxyURL: second.URL},
 		},
@@ -306,7 +305,6 @@ func TestMetadataAccumulatesAcrossClientsWithoutRebindingArtifact(t *testing.T) 
 		t.Fatalf("metadata or artifact identity lost across clients: result=%+v err=%v", result, err)
 	}
 	cfg.MainSettings.DBPath = filepath.Join(dir, "preferred", "db.sqlite")
-	cfg.TorrentCreation.PreferMax16 = false
 	cfg.Trackers.PreferredTracker = "BHD"
 	result, err = NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t)).SearchPathedTorrents(
 		context.Background(), api.ClientSubject{SourcePath: source, FileList: []string{source}},
@@ -318,7 +316,6 @@ func TestMetadataAccumulatesAcrossClientsWithoutRebindingArtifact(t *testing.T) 
 	larger := server(largerHash, "https://beyond-hd.me/details/1111", "https://tracker.beyond-hd.me/announce/redacted", largerData)
 	defer larger.Close()
 	cfg.MainSettings.DBPath = filepath.Join(dir, "larger", "db.sqlite")
-	cfg.TorrentCreation.PreferMax16 = true
 	cfg.Trackers.PreferredTracker = ""
 	cfg.TorrentClients["second"] = config.TorrentClientConfig{Type: "qui", QuiProxyURL: larger.URL}
 	result, err = NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t)).SearchPathedTorrents(

@@ -133,10 +133,10 @@ func TestWorkflowPublishesGeneratedTorrentOnlyAfterStableSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retained.subject.TorrentPath != expected {
-		t.Fatalf("expected published path %s, got %s", expected, retained.subject.TorrentPath)
+	if filepath.Dir(retained.subject.TorrentPath) != filepath.Join(filepath.Dir(expected), "base-torrents") {
+		t.Fatalf("expected immutable base beneath release owner, got %s", retained.subject.TorrentPath)
 	}
-	if _, err := os.Stat(expected); err != nil {
+	if _, err := os.Stat(retained.subject.TorrentPath); err != nil {
 		t.Fatalf("published artifact unavailable: %v", err)
 	}
 	staged, err := filepath.Glob(filepath.Join(filepath.Dir(expected), ".generating-*.torrent"))

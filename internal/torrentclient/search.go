@@ -81,12 +81,6 @@ type proxySearchResponse struct {
 	Torrents []qbittorrent.Torrent `json:"torrents"`
 }
 
-// pieceConstraints describes global preferences used when selecting a reusable torrent.
-type pieceConstraints struct {
-	label       string
-	preferMax16 bool
-}
-
 // validatedTorrentSelection records validated client matches and the single
 // torrent file, if any, that is safe to reuse for the searched source.
 type validatedTorrentSelection struct {
@@ -173,9 +167,8 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 	// filter when the preferred artifact cannot satisfy tracker limits.
 	meta.InfoHash = ""
 
-	constraints := resolvePieceConstraints(s.cfg)
-	result = api.ClientSearchResult{PieceSizeConstraint: constraints.label}
-	s.logger.Tracef("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
+	result = api.ClientSearchResult{PieceSizeConstraint: "16MiB"}
+	s.logger.Tracef("clients: pathed search start source=%s constraints=%q", meta.SourcePath, "16MiB")
 
 	if len(clients) == 0 {
 		s.logger.Debugf("clients: no search clients configured (default_torrent_client/searching_client_list), skipping pathed search")
@@ -185,7 +178,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 		s.logger.Debugf("clients: no default search client set; searching all qBittorrent clients (%d)", len(clients))
 	}
 	s.logger.Tracef("clients: pathed search clients=%s", strings.Join(clients, ","))
-	s.logger.Debugf("clients: pathed search for %s (clients=%d constraints=%q)", meta.SourcePath, len(clients), constraints.label)
+	s.logger.Debugf("clients: pathed search for %s (clients=%d constraints=%q)", meta.SourcePath, len(clients), "16MiB")
 
 	allMatches := make([]api.TorrentMatch, 0)
 	var bestPiece int64
@@ -211,7 +204,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 			continue
 		}
 
-		clientResult, matches, err := s.searchQbitClient(ctx, name, clientCfg, meta, constraints)
+		clientResult, matches, err := s.searchQbitClient(ctx, name, clientCfg, meta)
 		if err != nil {
 			if infoHashRetry && ctx.Err() == nil && !errors.Is(err, internalerrors.ErrClientRecheckFailed) {
 				s.logger.Debugf("clients: requested infohash retry unavailable client=%s", name)
@@ -234,7 +227,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 		if clientResult.TorrentPath != "" {
 			if candidate, err := metainfo.LoadFromFile(clientResult.TorrentPath); err == nil {
 				if info, err := candidate.UnmarshalInfo(); err == nil &&
-					(result.TorrentPath == "" || shouldReplaceBest(info.PieceLength, bestPiece, constraints)) {
+					(result.TorrentPath == "" || shouldReplaceBest(info.PieceLength, bestPiece)) {
 					bestPiece = info.PieceLength
 					result.InfoHash = clientResult.InfoHash
 					result.TorrentPath = clientResult.TorrentPath
@@ -254,7 +247,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 		metadataSatisfied := preferred == "" || !knownPreferred ||
 			collectTrackerIDs(allMatches, []string{preferred})[preferred] != "" ||
 			hasMatchedTracker(collectMatchedTrackers(allMatches, s.trackerPatterns), preferred)
-		if !meta.FindAllCandidates && metadataSatisfied && shouldStopSearch(constraints.label, clientResult.FoundPreferredPiece) {
+		if !meta.FindAllCandidates && metadataSatisfied && shouldStopSearch(clientResult.FoundPreferredPiece) {
 			s.logger.Tracef("clients: stopping pathed search after %s (preferred=%q)", name, clientResult.FoundPreferredPiece)
 			break
 		}
@@ -289,7 +282,7 @@ func (s *Service) searchRequestedTorrent(ctx context.Context, meta api.ClientSub
 		if clientType != "qbit" && clientType != "qbittorrent" && clientType != "qui" {
 			continue
 		}
-		selected, matches, err := s.searchQbitClient(ctx, name, clientCfg, meta, resolvePieceConstraints(s.cfg))
+		selected, matches, err := s.searchQbitClient(ctx, name, clientCfg, meta)
 		if ctx.Err() != nil {
 			return api.ClientSearchResult{}, false, fmt.Errorf("clients: requested infohash lookup canceled: %w", ctx.Err())
 		}
@@ -372,13 +365,6 @@ func formatTrackerMatches(matches []api.TrackerMatch) string {
 	}
 	sort.Strings(formatted)
 	return strings.Join(formatted, ",")
-}
-
-func resolvePieceConstraints(cfg config.Config) pieceConstraints {
-	if cfg.TorrentCreation.PreferMax16 {
-		return pieceConstraints{label: "16MiB", preferMax16: true}
-	}
-	return pieceConstraints{}
 }
 
 // resolveSearchClients returns configured qbit/qui client names for pathed
@@ -494,7 +480,6 @@ func (s *Service) searchQbitClient(
 	name string,
 	clientCfg config.TorrentClientConfig,
 	meta api.ClientSubject,
-	constraints pieceConstraints,
 ) (searchResult api.ClientSearchResult, matchesResult []api.TorrentMatch, err error) {
 	defer func() { err = safeClientError(err, clientCfg.QbitHost()) }()
 	searchTerms := buildSearchTerms(meta)
@@ -667,7 +652,7 @@ func (s *Service) searchQbitClient(
 	if !useProxy {
 		clientEndpoint = clientCfg.QbitHost()
 	}
-	selection, err := s.selectValidTorrent(ctx, meta, matches, dataVerifiedByHash, constraints, qbitClient, httpClient, clientEndpoint, useProxy)
+	selection, err := s.selectValidTorrent(ctx, meta, matches, dataVerifiedByHash, qbitClient, httpClient, clientEndpoint, useProxy)
 	if err != nil {
 		return api.ClientSearchResult{}, nil, err
 	}
@@ -683,7 +668,7 @@ func (s *Service) searchQbitClient(
 		TrackerIDs:          trackerIDs,
 		FoundTrackerMatch:   hasTrackerIDMatch(selection.matches) || len(matchedTrackers) > 0,
 		TorrentComments:     selection.matches,
-		PieceSizeConstraint: constraints.label,
+		PieceSizeConstraint: "16MiB",
 		FoundPreferredPiece: selection.foundPreferred,
 		MatchedTrackers:     matchedTrackers,
 		TorrentPath:         selection.torrentPath,
@@ -1394,20 +1379,8 @@ func applyPreferredTrackerPriority(priority []string, preferred string) []string
 	return ordered
 }
 
-func shouldStopSearch(constraints string, foundPreferred string) bool {
-	if constraints == "" {
-		return foundPreferred == "no_constraints"
-	}
-	if foundPreferred == "no_constraints" {
-		return true
-	}
-	if constraints != "" && foundPreferred == constraints {
-		return true
-	}
-	if foundPreferred == "16MiB" && constraints == "16MiB" {
-		return true
-	}
-	return false
+func shouldStopSearch(foundPreferred string) bool {
+	return foundPreferred == "16MiB"
 }
 
 func dedupeStrings(values []string) []string {
@@ -1434,7 +1407,6 @@ func (s *Service) selectValidTorrent(
 	meta api.ClientSubject,
 	matches []api.TorrentMatch,
 	dataVerifiedByHash map[string]bool,
-	constraints pieceConstraints,
 	qbitClient *qbittorrent.Client,
 	httpClient *http.Client,
 	clientEndpoint string,
@@ -1471,8 +1443,8 @@ func (s *Service) selectValidTorrent(
 			}) != nil {
 				continue
 			}
-			label := preferredPieceLabel(info.PieceLength, constraints)
-			if !shouldStopSearch(constraints.label, label) {
+			label := preferredPieceLabel(info.PieceLength)
+			if !shouldStopSearch(label) {
 				continue
 			}
 			localHash := local.HashInfoBytes().String()
@@ -1545,7 +1517,7 @@ func (s *Service) selectValidTorrent(
 		if err := retainCandidate(hash, path, data); err != nil {
 			return err
 		}
-		if bestHash == "" || shouldReplaceBest(pieceSize, bestPiece, constraints) {
+		if bestHash == "" || shouldReplaceBest(pieceSize, bestPiece) {
 			bestHash = hash
 			bestPath = path
 			bestData = data
@@ -1607,7 +1579,7 @@ func (s *Service) selectValidTorrent(
 						return validatedTorrentSelection{}, err
 					}
 					if !meta.FindAllCandidates && !shouldForceRecheck(meta.ClientOverrides) &&
-						shouldStopSearch(constraints.label, preferredPieceLabel(bestPiece, constraints)) {
+						shouldStopSearch(preferredPieceLabel(bestPiece)) {
 						selection.matches = append(selection.matches, matches[matchIndex+1:]...)
 						break
 					}
@@ -1664,7 +1636,7 @@ func (s *Service) selectValidTorrent(
 			return validatedTorrentSelection{}, err
 		}
 		if !meta.FindAllCandidates && !shouldForceRecheck(meta.ClientOverrides) &&
-			shouldStopSearch(constraints.label, preferredPieceLabel(bestPiece, constraints)) {
+			shouldStopSearch(preferredPieceLabel(bestPiece)) {
 			selection.matches = append(selection.matches, matches[matchIndex+1:]...)
 			break
 		}
@@ -1680,7 +1652,7 @@ func (s *Service) selectValidTorrent(
 	selection.infoHash = bestHash
 	selection.torrentPath = bestPath
 	selection.torrentDataVerified = bestDataVerified
-	selection.foundPreferred = preferredPieceLabel(bestPiece, constraints)
+	selection.foundPreferred = preferredPieceLabel(bestPiece)
 	return selection, nil
 }
 
@@ -2071,37 +2043,16 @@ func splitPath(value string) []string {
 	return strings.Split(trimmed, "/")
 }
 
-// preferredPieceLabel returns the constraint label satisfied by a selected
-// reusable torrent, or "no_constraints" when no constraint was configured.
-func preferredPieceLabel(pieceSize int64, constraints pieceConstraints) string {
-	if pieceSize <= 0 {
-		return ""
-	}
-	if !constraints.preferMax16 {
-		return "no_constraints"
-	}
-	if constraints.preferMax16 && pieceSize <= max16PieceSize {
+// preferredPieceLabel identifies reusable torrents meeting the automatic 16 MiB preference.
+func preferredPieceLabel(pieceSize int64) string {
+	if pieceSize > 0 && pieceSize <= max16PieceSize {
 		return "16MiB"
 	}
 	return ""
 }
 
-func shouldReplaceBest(pieceSize int64, bestPiece int64, constraints pieceConstraints) bool {
-	if bestPiece == 0 {
-		return true
-	}
-	if constraints.preferMax16 {
-		bestFits := bestPiece <= max16PieceSize
-		candidateFits := pieceSize <= max16PieceSize
-		if candidateFits && (!bestFits || pieceSize < bestPiece) {
-			return true
-		}
-		if !bestFits && !candidateFits && pieceSize < bestPiece {
-			return true
-		}
-		return false
-	}
-	return pieceSize < bestPiece
+func shouldReplaceBest(pieceSize int64, bestPiece int64) bool {
+	return bestPiece == 0 || pieceSize < bestPiece
 }
 
 func mapKeys(values map[string]struct{}) []string {

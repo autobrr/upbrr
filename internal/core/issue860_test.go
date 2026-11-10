@@ -221,12 +221,14 @@ func TestWorkflowAlternativeSearchForwardsExplicitRecheck(t *testing.T) {
 	if clients.searches != 1 || clients.subject.ClientOverrides.ForceRecheck == nil || !*clients.subject.ClientOverrides.ForceRecheck || clients.subject.InfoHash != candidates[0].InfoHash {
 		t.Fatalf("alternative search did not receive recheck: searches=%d overrides=%+v", clients.searches, clients.subject.ClientOverrides)
 	}
+	builder.torrents = torrent.NewService(api.NopLogger{}, t.TempDir()) // force a fresh alternative search, rather than a retained compatible base.
 	clients.err = internalerrors.ErrClientRecheckFailed
 	_, err = builder.prepareWorkflowTorrent(t.Context(), subject, input)
 	if !errors.Is(err, internalerrors.ErrClientRecheckFailed) {
 		t.Fatalf("alternative search hid explicit recheck failure: %v", err)
 	}
 	clients.searches = 0
+	builder.torrents = torrent.NewService(api.NopLogger{}, t.TempDir()) // no previously retained alternative in this independent skip case.
 	subject.ClientSearchPolicy.InfoHash = ""
 	result, err := builder.prepareWorkflowTorrent(t.Context(), subject, input)
 	if err != nil || clients.searches != 0 || len(result.SkippedTrackers) != 1 || result.SkippedTrackers[0] != "PTP" {

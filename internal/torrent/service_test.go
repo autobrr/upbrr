@@ -759,8 +759,8 @@ func TestCreateRehashBypassesReusableTempTorrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.Path != tmpTorrentPath {
-		t.Fatalf("expected recreated torrent at temp path %s, got %s", tmpTorrentPath, result.Path)
+	if filepath.Dir(result.Path) != filepath.Join(filepath.Dir(tmpTorrentPath), "base-torrents") {
+		t.Fatalf("expected immutable base beneath release owner, got %s", result.Path)
 	}
 	if got := mustStat(t, result.Path).ModTime(); !got.After(past) {
 		t.Fatalf("expected rehash to recreate torrent, modtime %v was not after %v", got, past)
@@ -830,8 +830,8 @@ func TestCreateRehashOverridesNoHashReusableTorrents(t *testing.T) {
 			if err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
-			if result.Path != tmpTorrentPath {
-				t.Fatalf("expected rehash to create temp torrent %s, got %s", tmpTorrentPath, result.Path)
+			if filepath.Dir(result.Path) != filepath.Join(filepath.Dir(tmpTorrentPath), "base-torrents") {
+				t.Fatalf("expected immutable generated base beneath release owner, got %s", result.Path)
 			}
 			if reusablePath != tmpTorrentPath && result.Path == reusablePath {
 				t.Fatalf("expected rehash to ignore reusable torrent %s", reusablePath)

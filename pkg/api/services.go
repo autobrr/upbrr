@@ -467,9 +467,12 @@ type UploadSubject struct {
 	// from a complete client record bound to the prepared source path.
 	ClientTorrentDataVerified bool
 	TorrentPath               string
-	ArrReleaseGroup           string
-	ReleaseNameOverrides      ReleaseNameOverrides
-	NamePresentation          ReleaseNamePresentation
+	// TrackerTorrentArtifacts binds each selected tracker to its validated base.
+	// These private paths never replace registered post-upload artifacts.
+	TrackerTorrentArtifacts map[string]TorrentArtifact `json:"-"`
+	ArrReleaseGroup         string
+	ReleaseNameOverrides    ReleaseNameOverrides
+	NamePresentation        ReleaseNamePresentation
 	// GeneratedName is the exact prepared generation's structured automatic name.
 	GeneratedName               *ReleaseNameDocument
 	TrackerQuestionnaireAnswers map[string]map[string]string
@@ -2836,14 +2839,25 @@ type TrackerQuestionnaireField struct {
 	Required    bool
 }
 
-// TorrentResult carries a torrent artifact reference and tracker context
+// TorrentArtifact is an exact reusable base metainfo reference.
+type TorrentArtifact struct {
+	Path          string
+	InfoHash      string
+	ContentSHA256 string
+}
+
+// TorrentResult carries base-artifact selections or one registered torrent
 // between creation, upload, and client-injection services.
 type TorrentResult struct {
-	Path      string
-	InfoHash  string
-	URL       string
-	Tracker   string
-	CrossSeed bool
+	// TrackerArtifacts contains an immutable compatible base for each retained tracker.
+	TrackerArtifacts map[string]TorrentArtifact
+	// BaseArtifacts retains unique compatible and general-purpose variants for later reuse.
+	BaseArtifacts []TorrentArtifact
+	Path          string
+	InfoHash      string
+	URL           string
+	Tracker       string
+	CrossSeed     bool
 	// VerifyInjection requires proof that qBittorrent has the local artifact's
 	// infohash and required announce URLs instead of trusting its add response.
 	// URL-only qBittorrent adds cannot provide that proof. Workflow callers set

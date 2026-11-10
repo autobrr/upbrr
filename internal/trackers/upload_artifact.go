@@ -4,6 +4,8 @@
 package trackers
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -37,7 +39,30 @@ func prepareTrackerUploadTorrentWithRegistry(
 		return api.UploadSubject{}, err
 	}
 
-	basePath, err := resolveUploadTorrentBasePath(meta, dbPath)
+	var basePath string
+	if meta.TrackerTorrentArtifacts != nil {
+		artifact, ok := meta.TrackerTorrentArtifacts[normalizeTrackerName(tracker)]
+		if !ok {
+			return api.UploadSubject{}, errors.New("trackers: selected tracker has no assigned base torrent")
+		}
+		data, readErr := os.ReadFile(artifact.Path)
+		if readErr != nil {
+			return api.UploadSubject{}, fmt.Errorf("trackers: read assigned base: %w", readErr)
+		}
+		if artifact.ContentSHA256 == "" || fmt.Sprintf("%x", sha256.Sum256(data)) != artifact.ContentSHA256 {
+			return api.UploadSubject{}, errors.New("trackers: assigned base torrent bytes changed")
+		}
+		captured, readErr := metainfo.Load(bytes.NewReader(data))
+		if readErr != nil {
+			return api.UploadSubject{}, fmt.Errorf("trackers: load assigned base: %w", readErr)
+		}
+		if captured.HashInfoBytes().String() != artifact.InfoHash {
+			return api.UploadSubject{}, errors.New("trackers: assigned base torrent identity changed")
+		}
+		basePath = artifact.Path
+	} else {
+		basePath, err = resolveUploadTorrentBasePath(meta, dbPath)
+	}
 	if err != nil {
 		// Policyless definitions are used by lightweight orchestration adapters and
 		// tests that do not consume torrent files. Real upload adapters still reject

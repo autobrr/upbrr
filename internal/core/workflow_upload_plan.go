@@ -346,6 +346,7 @@ func (b workflowUploadPlanBuilder) Build(
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare torrent: %w", err)
 		}
 		subject.TorrentPath = torrent.Path
+		subject.TrackerTorrentArtifacts = torrent.TrackerArtifacts
 		pendingTorrent = torrent.PendingPublication
 		if pendingTorrent != nil {
 			defer func() {

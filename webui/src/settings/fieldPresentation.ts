@@ -282,10 +282,6 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
       "Torrent hashing threads (compatibility)",
       "Retained for configuration compatibility. This value does not currently control mkbrr hashing concurrency.",
     ),
-    PreferMax16: field(
-      "Prefer reusable torrents with pieces up to 16 MiB",
-      "Prefer a validated reusable client torrent with piece size at most 16 MiB. Does not impose that piece size on newly generated torrents.",
-    ),
     RehashCooldown: field(
       "Rehash-dependent upload delay (seconds)",
       "Wait after reusable-torrent submissions finish before starting rehash-dependent tracker uploads. Default: 0; negative values behave as zero.",
