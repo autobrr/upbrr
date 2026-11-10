@@ -389,7 +389,13 @@ func reusableTorrentCandidates(tmpRoot string, meta api.TorrentSubject) ([]strin
 		candidates = appendUniqueTorrentCandidate(candidates, tmpTorrentPath)
 		retainedDir := filepath.Join(filepath.Dir(tmpTorrentPath), "base-torrents")
 		retained, err := os.ReadDir(retainedDir)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) {
+			// Windows can report a regular file as missing during directory reads.
+			if _, statErr := os.Stat(retainedDir); errors.Is(statErr, os.ErrNotExist) {
+				err = nil
+			}
+		}
+		if err != nil {
 			return nil, fmt.Errorf("torrent: list retained bases: %w", err)
 		}
 		for _, candidate := range retained {
