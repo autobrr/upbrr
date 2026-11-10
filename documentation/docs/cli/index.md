@@ -138,7 +138,7 @@ If release preparation stops before an upload report is available, plain output 
 
 Terminal errors explain the next recovery step in plain language. A confirmation for an uncertain external outcome requires checking the remote service first; opting into prompts does not authorize a retry. Client-delivery recovery does not repeat an accepted tracker upload.
 
-During image hosting, the TUI shows each host's latest message and separate uploaded, reused and failed image counts. Fallback hosts are identified. These image counts do not replace overall workflow progress; a processed image may have failed.
+During image hosting, the TUI shows each host's latest message and separate uploaded, reused and failed image counts. Fallback hosts are identified. These image counts do not replace overall workflow progress; a processed image may have failed. Overall progress stays above the host details. Focus **Application flow** and use Page Up/Page Down to inspect earlier hosts; new attempts start with the latest details visible.
 
 | Option                     | Behavior                                                                                                                                      |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
