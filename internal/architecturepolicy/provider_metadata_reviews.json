@@ -109,15 +109,15 @@
   },
   "internal/trackers/impl/azfamily/upload.go:prepareMissingMediaOperation": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "e77d9d27f25d0eccef83469642ce6c27c47470c9e23241188ae52c7322761035"
+    "sha256": "b02f925325ff34ca61b15b10b94963ed596a011804ed3c403e72b5c9da0744ce"
   },
   "internal/trackers/impl/azfamily/upload.go:prepareResolvedUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "8b67058b9b85f829c94cdf7593d362b65a09d542f6f9db767bfd13e8b4dc0084"
+    "sha256": "fc3b691d83405f8bec1dda3f05b42725056643220dec87e4f0ee2fd473b46626"
   },
   "internal/trackers/impl/azfamily/upload.go:prepareUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "e6b54f4724bf9a470ed6956ef426001dee841da77798ae2142b04d9118bb1ecf"
+    "sha256": "af22719ba00cd8c19001bfcc6eacfb4868f66443d122063d0d8c05f1f796c7b3"
   },
   "internal/trackers/impl/azfamily/validation.go:azUploadSubject": {
     "reason": "Annotation-display review: copies canonical ReleaseFeatures and the ordered display-only projection into detached slices. Existing provider snapshot, identity, manual provenance and validation mappings remain unchanged; display text is not semantic evidence.",
