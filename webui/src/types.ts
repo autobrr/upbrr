@@ -509,6 +509,7 @@ export type TMDBMetadata = {
   LastAirDate: string;
   OriginCountry: string[];
   OriginalLanguage: string;
+  SpokenLanguages?: string[];
   Overview: string;
   Poster: string;
   TMDBPosterPath: string;
@@ -612,6 +613,7 @@ export type IMDBMetadata = {
   SoundMixes: string[];
   TVYear: number;
   OriginalLanguage: string;
+  SpokenLanguages?: string[];
 };
 
 export type TVDBMetadata = {

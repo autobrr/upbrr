@@ -2004,6 +2004,7 @@ type ImageHostOverrides struct {
 }
 
 type TorrentOverrides struct {
+	// InfoHash is a preparation-time client lookup hint, not a required output hash.
 	InfoHash        *string
 	MaxPieceSizeMiB *int
 	NoHash          *bool
@@ -2046,6 +2047,8 @@ type TorrentSubject struct {
 // for torrent-client search, linking, and injection. [TorrentResult] paths and
 // URLs identify torrent artifacts and do not replace these source facts.
 type ClientSubject struct {
+	// InfoHash optionally selects one client torrent; exports still require source validation.
+	InfoHash        string
 	SourcePath      string
 	FileList        []string
 	DiscType        string
@@ -2445,6 +2448,10 @@ type TMDBMetadata struct {
 	IMDbMismatch        bool
 	MismatchedIMDbID    int
 	Localized           map[string]TMDBLocalizedData
+
+	// SpokenLanguages is the normalized automatic title-level dialogue-language set.
+	// It does not identify release tracks or override explicit corrections.
+	SpokenLanguages []string `json:",omitempty"`
 }
 
 type TMDBLocalizedData struct {
@@ -2534,6 +2541,8 @@ type IMDBMetadata struct {
 	SoundMixes       []string
 	TVYear           int
 	OriginalLanguage string
+	// SpokenLanguages contains IMDb's title-level language names for provider display.
+	SpokenLanguages []string `json:",omitempty"`
 }
 
 type IMDBPerson struct {

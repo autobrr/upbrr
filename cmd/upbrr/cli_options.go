@@ -363,9 +363,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.AudioOutput, "audio-output", "", "Output directory for --audio-analysis-only artifacts")
 	fs.StringVar(&opts.AudioTracks, "audio-tracks", "primary", "Audio tracks: primary (default), all, or comma-separated one-based audio ordinals")
 	fs.StringVar(&opts.AudioImages, "audio-images", "both", "Audio images: both (default), waveform, or spectrogram")
-	fs.StringVar(&opts.InfoHash, "torrenthash", "", "Reuse an existing torrent info hash")
-	fs.StringVar(&opts.InfoHash, "th", "", "Reuse an existing torrent info hash")
-	fs.StringVar(&opts.InfoHash, "infohash", "", "Override v1 info hash")
+	fs.StringVar(&opts.InfoHash, "infohash", "", "Find an existing client torrent by v1 info hash before ordinary discovery")
 	fs.IntVar(&opts.MaxPieceSize, "max-piece-size", 0, "Set maximum torrent piece size in MiB")
 	fs.IntVar(&opts.MaxPieceSize, "mps", 0, "Set maximum torrent piece size in MiB")
 	fs.BoolVar(&opts.NoHash, "nohash", false, "Reuse existing torrents only without generating a new one")
@@ -774,8 +772,6 @@ func cliFlagAliases() map[string]string {
 		"mf":                   "manual_frames",
 		"comps":                "comparison",
 		"comps_index":          "comparison_index",
-		"th":                   "infohash",
-		"torrenthash":          "infohash",
 		"mps":                  "max-piece-size",
 		"nh":                   "nohash",
 		"rh":                   "rehash",

@@ -23,9 +23,9 @@ func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
 	version := "constructibility-v2"
 	switch d.site.Name {
 	case "AZ":
-		version = "policy-v9"
+		version = "policy-v10"
 	case "CZ":
-		version = "policy-v8"
+		version = "policy-v9"
 	}
 	binding := trackers.ValidationPolicyBinding{
 		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-" + version,

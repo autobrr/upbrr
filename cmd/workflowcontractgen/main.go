@@ -211,6 +211,7 @@ func contractRoots() []reflect.Type {
 	values := []any{
 		api.ActiveInputSnapshot{},
 		api.OpenActiveInputRequest{},
+		api.CancelActiveInputOpenRequest{},
 		api.ReleaseActiveInputRequest{},
 		api.RecoverLegacyActiveInputRequest{},
 		api.ReconcileActiveInputRequest{},

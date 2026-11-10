@@ -132,6 +132,10 @@ After you answer tracker questions, the CLI rebuilds the affected tracker stages
 
 Trackers with a confirmed upload of the same verified submitted content are excluded before duplicate checks. If every selected tracker is already uploaded, the command succeeds without another approval prompt or submission. See [the upload workflow](../workflow/index.md#4-review-duplicate-evidence).
 
+Final upload results report tracker submission and client injection separately, including failed and skipped submissions. An accepted upload remains accepted when client injection or local receipt retention fails. Inspect the reported failure and the torrent client before retrying; do not resubmit an accepted upload to repair client delivery. Printed debug/site-check reports also include retained preparation failures and the actual client injection outcome. The TUI includes these explanations in its tracker details and final summary; long queue summaries retain bounded excerpts.
+
+If release preparation stops before an upload report is available, plain output and the TUI release panel show the retained failure details. That input does not advance to tracker upload. The TUI queue summary also keeps the safe error explanation when the next input starts. Correct the reported problem before retrying; unattended mode does not ask for additional answers.
+
 | Option                     | Behavior                                                                                                                                      |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--debug`                  | Runs preparation and payload preview without tracker submission. Image uploads and client injection remain enabled unless explicitly skipped. |
@@ -485,6 +489,8 @@ Individual picture flags select manual work rather than the default audio operat
 
 Retry and image-selection flags require `--hdr-resume-workflow`; do not combine resume with either new-analysis flag. Retry measurements before selecting their new artifact IDs, in separate invocations. Resume accepts configuration, logging, and unattended options but cannot change the retained analysis request. Use IDs from the retained workflow; they are opaque. A decoded retry does not authorize a native metadata rescan.
 
+The retained HDR report identifies each target and reports native-format and decoded-analysis outcomes, including saved failure and cancellation reasons. Successful artifact IDs remain listed even when other requested outputs are incomplete. Review those outcomes before choosing retry modes; printing the report does not retry analysis or select images.
+
 ### Audio analysis
 
 Use `--audio-analysis` to analyze prepared audio tracks during the upload workflow, or `--audio-analysis-only` to analyze one file without configuration or upload.
@@ -523,24 +529,30 @@ During upload, the CLI prints the path of every successfully retained PNG and st
 
 ## Client and torrent
 
-| Option                   | Aliases                            | Purpose                                                                                  |
-| ------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------- |
-| `--client <name>`        | `-client`                          | Override torrent client.                                                                 |
-| `--qbit-tag <value>`     | `-qbit-tag`, `-qbt`                | Override qBittorrent tag.                                                                |
-| `--qbit-cat <value>`     | `-qbit-cat`, `-qbc`                | Override qBittorrent category.                                                           |
-| `--force-recheck`        | `-force-recheck`, `-frc`           | Recheck matched qBittorrent torrents and verify reusable torrent data.                   |
-| `--no-seed`              | `-no-seed`, `-ns`                  | Do not inject into torrent clients.                                                      |
-| `--skip_auto_torrent`    | `-skip_auto_torrent`, `-sat`       | Skip automated torrent-client searching.                                                 |
-| `--keep-folder`          | `-keep-folder`, `-kf`              | Keep the supplied folder around one movie or episode video.                              |
-| `--onlyID`               | `-onlyID`                          | Limit tracker metadata lookup to IDs where supported; does not stop the upload workflow. |
-| `--infohash <hash>`      | `-infohash`, `-th`, `-torrenthash` | Supply a 40-character hexadecimal v1 info hash.                                          |
-| `--max-piece-size <MiB>` | `-max-piece-size`, `-mps`          | Override the configured maximum: `1`, `2`, `4`, `8`, `16`, `32`, `64`, or `128` MiB.     |
-| `--nohash`               | `-nohash`, `-nh`                   | Reuse existing torrents only; do not generate a new torrent.                             |
-| `--rehash`               | `-rehash`, `-rh`                   | Force generation of a fresh torrent.                                                     |
+| Option                   | Aliases                      | Purpose                                                                                  |
+| ------------------------ | ---------------------------- | ---------------------------------------------------------------------------------------- |
+| `--client <name>`        | `-client`                    | Override torrent client.                                                                 |
+| `--qbit-tag <value>`     | `-qbit-tag`, `-qbt`          | Override qBittorrent tag.                                                                |
+| `--qbit-cat <value>`     | `-qbit-cat`, `-qbc`          | Override qBittorrent category.                                                           |
+| `--force-recheck`        | `-force-recheck`, `-frc`     | Recheck matched qBittorrent torrents and verify reusable torrent data.                   |
+| `--no-seed`              | `-no-seed`, `-ns`            | Do not inject into torrent clients.                                                      |
+| `--skip_auto_torrent`    | `-skip_auto_torrent`, `-sat` | Skip automated torrent-client searching.                                                 |
+| `--keep-folder`          | `-keep-folder`, `-kf`        | Keep the supplied folder around one movie or episode video.                              |
+| `--onlyID`               | `-onlyID`                    | Limit tracker metadata lookup to IDs where supported; does not stop the upload workflow. |
+| `--infohash <hash>`      | `-infohash`                  | Find a client torrent using its 40-character hexadecimal v1 info hash.                   |
+| `--max-piece-size <MiB>` | `-max-piece-size`, `-mps`    | Override the configured maximum: `1`, `2`, `4`, `8`, `16`, `32`, `64`, or `128` MiB.     |
+| `--nohash`               | `-nohash`, `-nh`             | Reuse existing torrents only; do not generate a new torrent.                             |
+| `--rehash`               | `-rehash`, `-rh`             | Force generation of a fresh torrent.                                                     |
 
 `--keep-folder` applies only when a supplied folder contains one selected movie or episode video. The torrent retains that folder as its root and includes only the selected video; samples, NFOs, text files, and other sidecars are excluded. The default remains a single-file torrent. Season packs, multi-video folders, disc sources, and direct file inputs are unchanged. Reused torrents must match the requested layout.
 
+`--infohash` searches the default client first, then other available clients, overriding the configured search-client list, `none` selectors and `--skip_auto_torrent`. A named `--client <name>` still restricts lookup to that client. A miss prints an error identifying the selected client, or the available-client search, and continues ordinary source discovery; another torrent may be reused, and `--nohash` never generates one.
+
+A match requires an exported torrent with source-matching file names, sizes and layout, independently of client save paths. Ordinary matching does not hash media bytes. A one-file folder wrapper is also eligible when it can be removed while preserving the pieces; its metadata and validated candidate remain available until torrent preparation performs that conversion. Missing, empty or invalid exports fall back to ordinary discovery. Tracker policy and source-layout checks still govern reuse. Policy retries search the same clients for compatible alternatives without the hash filter. `--infohash` leaves `--onlyID`, the **Keep images** metadata setting and client-injection choices unchanged. `--rehash` retains metadata discovery but generates a fresh torrent. With `--nohash`, trackers whose torrent restrictions cannot be satisfied by available artifacts are skipped. The former `--torrenthash` and `-th` aliases are removed.
+
 `--nohash` and `--rehash` cannot be combined, even with explicit false values.
+
+Preparation still needs one shared base torrent for all retained tracker policies; it cannot select a different base artifact per tracker.
 
 Ordinary torrent reuse checks the metainfo, requested file layout and applicable limits without reading every media byte. This does not prove that same-sized media bytes match the piece hashes. Use `--force-recheck` to request a piece check, or `--rehash` to create a fresh torrent. A reusable artifact may need a metadata-only layout change; `--nohash` permits that but fails if new pieces are required.
 

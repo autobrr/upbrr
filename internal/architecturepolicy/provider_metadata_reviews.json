@@ -72,8 +72,8 @@
     "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. PHD explicitly opts into the maintainer-selected English-language fallback over finalized LanguageFacts; this is not a verified PHD policy. The existing evaluator, provider consumers, manual metadata precedence, country and age routing, constructibility, and AZ/CZ language policies are unchanged. The shared callback exposes canonical source corrections and the versioned binding invalidates prior projections. Confirmed-dub review fix advances the owned validation binding version; provider selection, manual precedence and existing payload/category checks remain unchanged. Staged companion-origin correction advances the owned validation version; the callback and all provider/manual selectors remain unchanged.",
-    "sha256": "20884c0ddb0d424c52f9ff73fec0d2ced9d4c4eb4064ef558c2fda11faf45c97"
+    "reason": "Issue 905 advances the AZ/CZ bindings for canonical title dialogue evidence and confirmed-dub handling. Provider selectors, manual-finalized authority, source/country/age checks and callback ownership are unchanged. PHD retains its maintainer-selected English fallback; this is not a verified PHD policy.",
+    "sha256": "16752048e2eec911a1cd01bbae248ea20d9cfeb7ad4635fd5589247a74807684"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
     "reason": "Appends the AZ/CZ language assessment using finalized LanguageFacts without a provider fallback. Existing TMDB origin-country routing, manual-aware age checks and constructibility remain unchanged; conflicting-provider corrections and explicit clears remain authoritative.",
@@ -388,8 +388,8 @@
     "sha256": "a4ec6882cc85f867aea4171272169f2323a46bdb5b5d4e1a8f4b94d6aa1e3641"
   },
   "internal/trackers/impl/standalone/bhd/rules.go:languageAssessment": {
-    "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "6dce8d687412fb4fadce05a692d63756505be8db1604ba9d700ea6e9cd83d889"
+    "reason": "Issue 905 uses canonical title-dialogue evidence and preserves manual genre selection. Owner confirmation of BHD sections 2.5.5 and 5.3.4 exempts an established English-only original soundtrack from extra English-dub guidance while retaining foreign-dialogue subtitle guidance and multilingual-original handling. Provider genre selectors and manual corrections are unchanged.",
+    "sha256": "6acbdab67fb4cfa7d81d6f4a0a26bde6d9ab52a971fe9e9893f72a5426cc4f99"
   },
   "internal/trackers/impl/standalone/bhd/validation.go:validationPolicy": {
     "reason": "Advances the validation policy for advisory foreign-dialogue guidance across release types. Existing finalized/manual metadata precedence, provider selectors and independent eligibility checks remain unchanged.",
@@ -699,9 +699,13 @@
     "reason": "Reviewed with primary-country resolution: current agreeing origin evidence suppresses only an unanswered original-audio country question; explicit answers, including invalid or empty values, retain review precedence.",
     "sha256": "4f28f2bb7db460b918bdc55682b0a9d289800e06d51d3d811459844220a708e8"
   },
+  "internal/trackers/impl/standalone/btn/rules.go:englishOriginalShow": {
+    "reason": "Owner-confirmed definitive-language precedence: verified title corrections govern staff applicability before soundtrack evidence, without rewriting track origins. Identified confirmed original-source language still outranks automatic title inference. When source evidence cannot identify the original-show language, a single spoken language or original/spoken agreement resolves the title; listed English alone cannot make an agreed Japanese title English-original. Unranked multilingual evidence remains unresolved. Regression coverage retains conflicting manual corrections, explicit source origins, unidentified-language gaps, Auto/reset, clears and track-order independence.",
+    "sha256": "aafd2e19b3a2d4c1755483c567baaf9713174ab75160e61749740a62368e6f2d"
+  },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
-    "reason": "Issue 904: unknown original metadata skips only original-language comparison. Confirmed dubs retain a concrete staff-assessment evidence need; Foreign/country, anime, source and manual-finalized facts remain authoritative. Known-original and manual-clear controls plus synthetic correction/repreparation coverage verify the boundary.",
-    "sha256": "fc2d7abc01498963a881be38041264f1bd93ccd352844f78afbadd43b8c8dd9d"
+    "reason": "Issue 905 preserves known title-dialogue evidence for soundtrack review and country derivation independently of original-show uncertainty. Owner-confirmed staff applicability uses verified title corrections, otherwise affirmative source language before Auto; missing/cleared title evidence keeps the unknown-comparison exemption. Mixed-reference unclassified tracks still require source-bound review even after the country answer. No provider genre selection or primary-country precedence changed.",
+    "sha256": "7bee9da73e8d0ab616eaab10f83a1b98a63545fec663ae42ccabce894e5007bc"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageValidationPolicy": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
@@ -720,8 +724,8 @@
     "sha256": "c167e166843a683aa3c0717c800e0950df4e6552f013a0af1a551debe13f8463"
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnOriginalAudioCountryID": {
-    "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "3aa21e18bf39227103b70fb294fa49cd4115d72a03650317e18e6a0beb36a936"
+    "reason": "BTN co-production majority review: canonical original-language corrections/clears, original-primary-audio evidence, source/generation and provider-ID guards remain authoritative. Every provider with supported origin evidence counts toward the majority total, including co-productions and partly supported lists, while only unambiguous origins cast one country vote. MAL-ID-matched AniList origin participates only for finalized anime. btnPrimaryCountryID still applies explicit answers/clears first; full-disc behavior is unchanged. Regression cases cover both multi-country providers, partial evidence and preserved two-of-three majorities.",
+    "sha256": "f0fa65fc7c35d2e7546a946c74160b841407e23bd73ed75d21f3a5789ba816b6"
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnPrimaryCountryID": {
     "reason": "Explicit evidence-bound country answers take precedence over the reviewed original-audio provider fallback; blank or invalid answers are not silently replaced.",
@@ -776,8 +780,8 @@
     "sha256": "66b2caee30f282136c2528aaac181412fc0a1bde9c9010652478205df686780e"
   },
   "internal/trackers/impl/standalone/btn/validation.go:validationPolicy": {
-    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
-    "sha256": "563303aa549e4333ebfff571a9273bbaf57ad83b4b08defd00e9ce0fa65d1c97"
+    "reason": "Reviewed declarative BTN validation binding: only the version advances to v9 so country majorities retain co-production evidence in their denominator. The Check callback and metadata precedence remain unchanged.",
+    "sha256": "6f35f9ff588fbc7ade614886687899c51f4bf5d3fb947832b2989a7766f768b3"
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
     "reason": "TRACE request logging review: cztSearchQuery continues to apply manual title authority before the unchanged text request.",
@@ -912,8 +916,8 @@
     "sha256": "157993f3722ac5dec52aaae574dd3ad9a0a647c541ec29e6d62354c1d297014e"
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
-    "reason": "Forced-subtitle default findings become waivable, with acknowledgement bound to the source, prepared generation and finalized language evidence. Inspected-track matching and explicit subtitle clears remain authoritative; provider selectors, manual metadata precedence and independent audio restrictions are unchanged.",
-    "sha256": "69a0bfa3104db6f1109bb928b7ea36a16630d4af4e3b32f0519915c69adcb743"
+    "reason": "Preserves issue 905 finalized non-English dialogue evidence without treating a listed English language as proof of an English soundtrack; actual original/dub evidence remains authoritative. Forced-subtitle default findings become waivable, with acknowledgement bound to the source, prepared generation and finalized language evidence. Inspected-track matching and explicit subtitle clears remain authoritative; provider selectors, manual metadata precedence and independent audio restrictions are unchanged.",
+    "sha256": "689379a6c0e2199d45e9c554a5c8ee4361a39bd3979d7f6f72e25fb6a40b34da"
   },
   "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1140,8 +1144,8 @@
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "reason": "Full-DVD eligibility review: the strict check consumes finalized DiscType and release Type through the existing full-disc predicate; an absent disc label uses the finalized DVD/PAL/NTSC source family. HD DVD and DVD-derived remuxes/encodes remain distinct. Current-source provider selectors, explicit manual metadata precedence, language assessment and taxonomy are unchanged. The policy version invalidates retained approvals. Confirmed-dub review fix advances the owned validation binding version; provider selection, manual precedence and existing payload/category checks remain unchanged. Staged companion-origin correction advances the owned validation version; the callback and all provider/manual selectors remain unchanged.",
-    "sha256": "75bdd6a4763d131cb2b95219429b429a5b58101e48d001ce6a3523a2fd76afdf"
+    "reason": "Issue 905 advances the owned validation version for confirmed-dub source guidance. Provider/manual metadata selectors, full-DVD constructibility, callback ownership and taxonomy remain unchanged.",
+    "sha256": "8288d0d440863064d923fc1d2e0dd5067d50815648aaa61c4e68d1931075fd71"
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

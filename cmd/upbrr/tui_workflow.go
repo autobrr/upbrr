@@ -63,7 +63,7 @@ func publishCLIItemResult(streams cliIO, err error, status string) {
 	}
 	view.ItemFailed = err != nil
 	if err != nil {
-		view.Result = "Item failed or interrupted. Verify retained state before retrying."
+		view.Result = "Item failed or interrupted. Verify retained state before retrying.\n" + safeDiagnosticText(formatCLIError(err))
 	}
 	bridge.Publish(view)
 }
@@ -327,6 +327,7 @@ func (s *cliWorkflowSession) publishPresentation(ctx context.Context) {
 		if result := s.current.DryRun; view.Debug && result != nil {
 			for _, report := range result.Reports {
 				if report.TrackerID == id {
+					lane.ShowDetail = true
 					lane.State = "Debug: " + string(report.Status)
 					lane.Reason = "submission_suppressed"
 					lane.Status = cliLanePending
@@ -342,6 +343,15 @@ func (s *cliWorkflowSession) publishPresentation(ctx context.Context) {
 					if report.ClientInjection.Status != "" {
 						lane.Detail += "\nClient injection: " + string(report.ClientInjection.Status)
 					}
+					if message := strings.TrimSpace(report.ClientInjection.Message); message != "" {
+						lane.Detail += "\n" + message
+					}
+					for _, failure := range slices.Concat(report.Failures, report.ClientInjection.Failures) {
+						lane.Detail += "\nFailure: " + cliWorkflowFailureMessage(failure.Failure)
+					}
+					for _, warning := range report.Warnings {
+						lane.Detail += "\nWarning: " + warning
+					}
 				}
 			}
 		}
@@ -350,6 +360,7 @@ func (s *cliWorkflowSession) publishPresentation(ctx context.Context) {
 				if tracker.TrackerID != id {
 					continue
 				}
+				lane.ShowDetail = true
 				lane.State = "Submission: " + string(tracker.EffectiveSubmissionStatus()) + " / Client: " + string(tracker.EffectiveClientInjectionStatus())
 				lane.Reason = ""
 				lane.Status = cliLanePending
@@ -361,6 +372,10 @@ func (s *cliWorkflowSession) publishPresentation(ctx context.Context) {
 				}
 				for _, failure := range tracker.Failures {
 					lane.Reason += string(failure.Failure.Code) + " "
+					lane.Detail += "\nFailure: " + cliWorkflowFailureMessage(failure.Failure)
+				}
+				if message := strings.TrimSpace(tracker.ClientInjectionMessage); message != "" {
+					lane.Detail += "\nClient injection: " + message
 				}
 			}
 		}
@@ -376,6 +391,9 @@ func (s *cliWorkflowSession) publishPresentation(ctx context.Context) {
 		view.OperationID = op.ID
 		view.Stage = op.Phase + " / " + string(op.Status)
 		view.Completed, view.Total = op.Completed, op.Total
+		if summary := cliPreparationFailureSummary(*op); summary != "" {
+			view.Summary = strings.TrimSpace(view.Summary + "\n" + summary)
+		}
 	}
 	if bridge := cliBridgeFromOutput(s.streams.out); bridge != nil {
 		bridge.mu.Lock()

@@ -98,6 +98,75 @@ func TestInputSourcePathPreservesVerifiedCasingAndRejectsDetachedAuthority(t *te
 	}
 }
 
+func TestActiveInputReviewRemainsBoundToVerifiedSourceVersion(t *testing.T) {
+	t.Parallel()
+	repo, err := db.Open(filepath.Join(t.TempDir(), "review.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	persistent, err := NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparer := testPreparer()
+	prepare := preparer.PrepareFunc
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		result, prepareErr := prepare(ctx, input)
+		if prepareErr != nil {
+			return result, prepareErr
+		}
+		result.Release.Media.Source = ""
+		return persistActiveInputTestRelease(ctx, repo, result)
+	}
+	version := "source-one"
+	module, err := New(persistent, NewMemoryPrivateResourceStore(), preparer, WithActiveInputs(repo,
+		func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
+			return api.InputRecord{
+				CanonicalPath: input.SourcePath,
+				SourceVersion: version,
+				Manifest:      []byte(`{"Identity":{"Digest":"` + version + `"}}`),
+			}, nil
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = module.Shutdown(context.Background()) })
+	input := api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.mkv")}
+	slot, err := module.OpenInput(t.Context(), testOwnerID, OpenInputRequest{Input: input, IdempotencyKey: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       slot.WorkflowID,
+		ExpectedRevision: 1,
+		Input:            input,
+	})
+	executeCommand(t, module, EvaluateInputReadinessCommand{WorkflowID: slot.WorkflowID, ExpectedRevision: current.Workflow.Revision})
+	input.Force = true
+	for index, sourceVersion := range []string{"source-one", "source-two"} {
+		version = sourceVersion
+		slot, err = module.OpenInput(t.Context(), testOwnerID, OpenInputRequest{
+			Input:            input,
+			ExpectedRevision: slot.Revision,
+			IdempotencyKey:   sourceVersion,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, err = module.Current(t.Context(), testOwnerID, slot.WorkflowID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (current.InputReview != nil) != (index == 0) || current.Release != nil || current.InputReadiness != nil {
+			t.Fatalf("review/authority did not follow verified source %s: %+v", sourceVersion, current)
+		}
+	}
+}
+
 func TestActiveInputOpenRefreshRollbackAndOwnerIsolation(t *testing.T) {
 	t.Parallel()
 	repo, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))

@@ -807,6 +807,13 @@ func TestNewRegistryIncludesUnit3DRuleCapabilities(t *testing.T) {
 	if groups, ok := registry.LookupBannedGroups("MNS"); !ok || !slices.Contains(groups, "4K4U") || !slices.Contains(groups, "ZMNT") {
 		t.Fatalf("MNS banned groups = %#v, %t", groups, ok)
 	}
+	if policy, ok := registry.LookupBannedGroupPolicy("ULCX"); !ok || policy.EndpointPath != "/api/blocked-groups" ||
+		!policy.RequireAPIKey || policy.RawAPIKeyFallback {
+		t.Fatalf("ULCX banned-group policy = %#v, %t", policy, ok)
+	}
+	if groups, _ := registry.LookupBannedGroups("ULCX"); len(groups) != 0 {
+		t.Fatalf("ULCX static bans would override API removals: %v", groups)
+	}
 }
 
 func TestNewRegistryIncludesBHDPolicies(t *testing.T) {

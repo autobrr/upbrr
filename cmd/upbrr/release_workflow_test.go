@@ -528,7 +528,7 @@ func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
 		}}, false, nil)
 	})
 	if !strings.Contains(output, "status=completed") ||
-		!strings.Contains(output, "client injection was attempted for each ready tracker") ||
+		!strings.Contains(output, "see each tracker's client injection outcome below") ||
 		!strings.Contains(output, "client injection: completed: Client injection completed with passkey=[REDACTED]") ||
 		!strings.Contains(output, "warning: Synthetic warning api_token=[REDACTED]") ||
 		strings.Contains(output, "never-print-this") {

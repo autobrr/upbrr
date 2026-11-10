@@ -459,8 +459,11 @@ test("embedded web blocks Dupe Check until missing saved facts are corrected", a
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    await page.getByText("Edit Release Details", { exact: true }).click();
+    const reviewSource = warning.getByRole("button", { name: "Review Source", exact: true });
+    await reviewSource.focus();
+    await page.keyboard.press("Enter");
     const source = page.getByRole("combobox", { name: "Source", exact: true });
+    await expect(source).toBeFocused();
     await expect(source).toHaveAttribute("aria-invalid", "true");
     await source.selectOption("Web");
     await expect(dupeCheck).toBeDisabled();
@@ -1683,6 +1686,209 @@ test("embedded web recovers saved corrections before a release snapshot and pres
   } finally {
     await app?.stop();
     await workspace.cleanup();
+  }
+});
+
+test("embedded web retains warnings after accepted preparation fails and reloads without authority", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
+  workspace.env.UPBRR_E2E_CANCELLATION_STAGE = "preparation";
+  let app: AppServer | undefined;
+  let gate: ReturnType<typeof workspace.fake.holdWorkflowStage> | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await page.getByRole("button", { name: "Remove IMDb ID", exact: true }).click();
+    await page.getByRole("button", { name: "Remove TVDB ID", exact: true }).click();
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await waitForMetadataReady(page, app.url);
+    const warning = page.getByRole("alert");
+    await expect(
+      warning.getByRole("button", { name: "Review IMDb ID", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("textbox", { name: "Genres", exact: true }).fill("Comedy");
+    gate = workspace.fake.holdWorkflowStage("preparation");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    await gate.entered;
+    gate.release(503);
+    let snapshot: ActiveInputSnapshot | undefined;
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(
+          new URL("api/app/GetActiveInput", app!.url).toString(),
+        );
+        snapshot = await response.json();
+        return snapshot?.current?.operation?.status;
+      })
+      .toBe("failed");
+    expect(snapshot?.current?.release).toBeUndefined();
+    expect(snapshot?.current?.inputReadiness).toBeUndefined();
+    expect(
+      snapshot?.current?.inputReview?.fields?.some((field) => field.status === "missing"),
+    ).toBe(true);
+    await expect(warning).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry metadata", exact: true })).toBeEnabled();
+    await page.reload();
+    await expect(page.getByLabel("Source path", { exact: true })).toHaveValue(workspace.sourcePath);
+    await expect(warning).toBeVisible();
+    await expect(page.getByRole("button", { name: "Dupe Check", exact: true })).toBeDisabled();
+    await warning.getByRole("button", { name: "Review IMDb ID", exact: true }).click();
+    await page.getByRole("textbox", { name: "IMDb ID", exact: true }).fill("tt1234567");
+    await page.getByRole("textbox", { name: "TVDB ID", exact: true }).fill("2001");
+    gate = workspace.fake.holdWorkflowStage("preparation");
+    gate.release();
+    await page.getByRole("button", { name: "Retry metadata", exact: true }).click();
+    snapshot = await waitForMetadataReady(page, app.url);
+    expect(snapshot.current?.inputReview).toBeUndefined();
+    await expect(warning).toBeHidden();
+    await page.reload();
+    await expect(warning).toBeHidden();
+  } finally {
+    gate?.release();
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web correction warnings navigate and follow saved preparation state", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  let failRefresh = false;
+  try {
+    app = await startApp(workspace);
+    // Exercise the production UI with synthetic readiness requirements. Corrections still
+    // pass through the real preparation and persisted-input boundaries.
+    await page.route(
+      /\/api\/app\/(OpenActiveInput|ContinueReleaseWorkflow|GetActiveInput)$/,
+      async (route) => {
+        if (failRefresh && route.request().url().endsWith("/OpenActiveInput")) {
+          failRefresh = false;
+          await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+          return;
+        }
+        const response = await route.fetch();
+        const body = await response.json();
+        const current = body.current ?? body;
+        const release = current.release?.release;
+        const metadata = current.corrections?.corrections.metadata;
+        const track = release?.Media.Tracks.find(
+          (track: { Kind: string }) => track.Kind === "audio",
+        );
+        if (track && current.inputReadiness) {
+          current.inputReadiness.fields.push(
+            {
+              key: "synthetic-origin",
+              trackId: track.ID,
+              correctionField: "metadata.track_audio_origins",
+              status: metadata?.TrackAudioOrigins?.some(
+                (value: { trackId: string; origin: string }) =>
+                  value.trackId === track.ID && value.origin === "original",
+              )
+                ? "ready"
+                : "missing",
+              disposition: "strict",
+              trackerIds: ["EXAMPLE"],
+              message: "Review this inspected track's soundtrack origin.",
+            },
+            {
+              key: "synthetic-genres",
+              correctionField: "metadata.genres",
+              status: metadata?.Genres?.includes("Comedy") ? "ready" : "invalid",
+              disposition: "strict",
+              message: "Review this release's genres.",
+            },
+          );
+        }
+        await route.fulfill({ response, json: body });
+      },
+    );
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    const editor = page.getByText("Edit Release Details", { exact: true }).locator("..");
+    const warning = page.getByRole("alert");
+    const genresAction = warning.getByRole("button", { name: "Review Genres", exact: true });
+    const originAction = warning.getByRole("button", {
+      name: "Review Audio track 1 soundtrack origin",
+      exact: true,
+    });
+    await expect(editor).not.toHaveAttribute("open");
+    await expect(genresAction).toBeVisible();
+    await expect(originAction).toBeVisible();
+    await expect(warning).toContainText("Refresh metadata");
+    for (const mode of ["Dark", "Light"] as const) {
+      await page.getByRole("button", { name: "Appearance", exact: true }).click();
+      await page.getByRole("radio", { name: mode, exact: true }).click();
+      await page.getByRole("button", { name: "Input", exact: true }).click();
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        await warning.scrollIntoViewIfNeeded();
+        await expect(warning).toBeInViewport();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+          width,
+        );
+        await page.screenshot({
+          path: test.info().outputPath(`correction-warning-${mode.toLowerCase()}-${width}.png`),
+        });
+      }
+    }
+    await genresAction.focus();
+    await page.keyboard.press("Enter");
+    const genres = page.getByRole("textbox", { name: "Genres", exact: true });
+    await expect(genres).toBeFocused();
+    await genres.fill("Comedy");
+    await expect(genresAction).toBeVisible();
+    failRefresh = true;
+    const failed = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await failed).status()).toBe(503);
+    await expect(genresAction).toBeVisible();
+    await expect(originAction).toBeVisible();
+    await page.reload();
+    await expect(editor).not.toHaveAttribute("open");
+    await expect(genresAction).toBeVisible();
+    await genresAction.click();
+    await genres.fill("Comedy");
+    let saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await saved).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(genresAction).toBeHidden();
+    await expect(originAction).toBeVisible();
+    await page.getByTestId("input-track-coverage").locator("summary").click();
+    await expect(page.getByTestId("input-track-coverage")).not.toHaveAttribute("open");
+    await originAction.focus();
+    await page.keyboard.press("Space");
+    const origin = page.getByRole("combobox", {
+      name: "Audio track 1 soundtrack origin",
+      exact: true,
+    });
+    await expect(origin).toBeFocused();
+    await expect(origin).toBeInViewport();
+    await origin.selectOption("original");
+    await expect(originAction).toBeVisible();
+    saved = waitForAppMethod(page, "OpenActiveInput");
+    await page.getByRole("button", { name: "Refresh metadata", exact: true }).click();
+    expect((await saved).ok()).toBe(true);
+    await waitForMetadataReady(page, app.url);
+    await expect(warning).toBeHidden();
+    await page.reload();
+    await expect(
+      page.getByText("Review release facts, source options, and selected tracker input."),
+    ).toBeVisible();
+    await expect(warning).toBeHidden();
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    try {
+      await page.unrouteAll({ behavior: "wait" });
+    } finally {
+      await app?.stop();
+      await workspace.cleanup();
+    }
   }
 });
 
@@ -3623,3 +3829,412 @@ for (const size of [
     }
   });
 }
+
+for (const stage of [
+  "preparation",
+  "duplicates",
+  "screenshots",
+  "images",
+  "descriptions",
+  "torrent",
+] as const) {
+  test(`embedded web confirms cancellation at the ${stage} boundary and retains explicit retry`, async ({
+    page,
+  }) => {
+    const workspace = await createE2EWorkspace(
+      stage === "torrent" ? { mediaKind: "tv", preparedMediaInfo: true } : {},
+    );
+    workspace.env.UPBRR_E2E_CANCELLATION_STAGE = stage;
+    let app: AppServer | undefined;
+    let gate: ReturnType<typeof workspace.fake.holdWorkflowStage> | undefined;
+    try {
+      app = await startApp(workspace);
+      if (stage === "preparation") {
+        await page.goto(app.url);
+        await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+        await page.getByLabel("Source path", { exact: true }).press("Escape");
+      } else {
+        await fetchMetadata(
+          page,
+          app.url,
+          workspace.sourcePath,
+          stage === "torrent"
+            ? "E2E.Show.2026.S01E01.1080p.WEB-DL"
+            : releaseWorkflowParityFixture.releaseDisplayName,
+        );
+      }
+      const snapshot = async (): Promise<ActiveInputSnapshot> => {
+        const response = await page.request.get(
+          new URL("api/app/GetActiveInput", app!.url).toString(),
+        );
+        expect(response.ok()).toBe(true);
+        return response.json() as Promise<ActiveInputSnapshot>;
+      };
+      let start: () => Promise<void>;
+      if (stage === "preparation") {
+        start = () =>
+          page.getByRole("button", { name: /^(Fetch|Refresh) metadata$/, exact: true }).click();
+      } else {
+        await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+        if (stage !== "torrent") {
+          await page
+            .getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID })
+            .uncheck();
+          await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+        }
+        if (stage === "duplicates") {
+          start = () => page.getByRole("button", { name: "Run dupe check", exact: true }).click();
+        } else {
+          await runDuplicateCheck(page);
+          if (stage === "torrent") {
+            await page.getByRole("button", { name: "Upload", exact: true }).click();
+            await page.getByLabel("Skip client injection").setChecked(true);
+            start = () => page.getByRole("button", { name: "Run dry run", exact: true }).click();
+          } else {
+            await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+            await expect(
+              page.getByRole("button", { name: "Generate screenshots", exact: true }),
+            ).toBeEnabled();
+            if (stage === "screenshots") {
+              start = () =>
+                page.getByRole("button", { name: "Generate screenshots", exact: true }).click();
+            } else {
+              await page.getByRole("button", { name: "Generate screenshots", exact: true }).click();
+              await expect(page.getByAltText("Screenshot 1")).toBeVisible();
+              if (stage === "images") {
+                await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+                start = () => page.getByRole("button", { name: /^Prepare required hosts/ }).click();
+              } else {
+                await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+                start = () =>
+                  page.getByRole("button", { name: "Refresh descriptions", exact: true }).click();
+              }
+            }
+          }
+        }
+      }
+      const retry = async () => {
+        await start();
+        if (stage === "images") {
+          // Canceling an image-host submission requires explicit reconciliation before replay.
+          const reconcile = page.getByRole("button", {
+            name: "Confirmed not completed; allow a fresh exact attempt",
+            exact: true,
+          });
+          await expect(reconcile).toBeVisible();
+          const reconciled = waitForAppMethod(page, "ReconcileActiveInput");
+          await reconcile.click();
+          expect((await reconciled).ok()).toBe(true);
+          await expect(reconcile).toHaveCount(0);
+          await start();
+        }
+      };
+      const before = await snapshot();
+      const visits = workspace.fake.workflowStageVisits.length;
+      gate = workspace.fake.holdWorkflowStage(stage);
+      await start();
+      await gate.entered;
+      const active = await snapshot();
+      expect(active.current?.operation?.status).toBe("running");
+      if (stage !== "preparation") expect(active.inputId).toBe(before.inputId);
+      const cancellationRequest = waitForAppMethod(page, "CancelReleaseWorkflowOperation");
+      await page.getByRole("button", { name: "Cancel active work", exact: true }).click();
+      expect((await cancellationRequest).ok()).toBe(true);
+      if (stage === "torrent") {
+        await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toBeDisabled();
+        await expect(
+          page.getByText(/torrent hashing or verification must finish first/),
+        ).toBeVisible();
+        expect((await snapshot()).current?.operation?.status).toBe("running");
+        await page.reload();
+        await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toBeDisabled();
+        await expect(
+          page
+            .getByRole("status")
+            .filter({ hasText: "Release workflow" })
+            .locator("span")
+            .filter({ hasText: /^Synthetic torrent work active\.$/ }),
+        ).toBeVisible();
+        gate.release();
+      }
+      await expect.poll(async () => (await snapshot()).current?.operation?.status).toBe("canceled");
+      await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toHaveCount(0);
+      await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
+      const canceled = await snapshot();
+      expect(canceled.state).toBe("active");
+      expect(canceled.inputId).toBe(active.inputId);
+      expect(canceled.sourceVersion).toBe(active.sourceVersion);
+      expect(canceled.current?.operation?.id).toBe(active.current?.operation?.id);
+      expect(workspace.fake.workflowStageVisits.slice(visits)).toEqual([stage]);
+      expect(workspace.fake.counters.trackerUploads).toBe(0);
+      expect(workspace.fake.counters.clientInjections).toBe(0);
+      gate.release();
+      gate = workspace.fake.holdWorkflowStage(stage);
+      await retry();
+      await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
+      await gate.entered;
+      const rerun = await snapshot();
+      expect(rerun.current?.operation?.id).not.toBe(canceled.current?.operation?.id);
+      const repeatCancellation = waitForAppMethod(page, "CancelReleaseWorkflowOperation");
+      await page.getByRole("button", { name: "Cancel active work", exact: true }).click();
+      expect((await repeatCancellation).ok()).toBe(true);
+      gate.release();
+      await expect.poll(async () => (await snapshot()).current?.operation?.status).toBe("canceled");
+      await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
+      const canceledAgain = await snapshot();
+      await retry();
+      await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
+      // Re-admission may change the slot while a snapshot is being assembled.
+      await expect(async () => {
+        expect((await snapshot()).current?.operation?.status).toBe("completed");
+      }).toPass({ timeout: 10_000 });
+      expect((await snapshot()).inputId).toBe(active.inputId);
+      await expect(
+        page.getByRole("button", { name: "Cancel active work", exact: true }),
+      ).toBeDisabled();
+      await page.route(
+        "**/api/app/GetActiveInput",
+        (route) => route.fulfill({ json: canceledAgain }),
+        {
+          times: 1,
+        },
+      );
+      const staleResponse = waitForAppMethod(page, "GetActiveInput");
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      expect((await staleResponse).ok()).toBe(true);
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+      await expect(page.getByText(/Work canceled\. Selected input/)).toHaveCount(0);
+    } finally {
+      gate?.release();
+      await app?.stop();
+      await workspace.cleanup();
+    }
+  });
+}
+
+test("embedded web cancels source verification before worker acceptance and confirms rollback", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_CANCELLATION_STAGE = "verification";
+  const gate = workspace.fake.holdWorkflowStage("verification");
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(app.url);
+    await page.getByLabel("Source path", { exact: true }).fill(workspace.sourcePath);
+    await page.getByLabel("Source path", { exact: true }).press("Escape");
+    await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+    await gate.entered;
+    const confirmed = waitForAppMethod(page, "CancelActiveInputOpen");
+    const cancel = page.getByRole("button", { name: "Cancel active work", exact: true });
+    await cancel.focus();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.keyboard.press("Enter");
+    const response = await confirmed;
+    expect(response.ok()).toBe(true);
+    const cancelled = (await response.json()) as ActiveInputSnapshot;
+    expect(cancelled.state).toBe("empty");
+    expect(cancelled.revision).toBe(2);
+    expect(cancelled.current).toBeUndefined();
+    await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Source path", { exact: true })).toHaveValue(workspace.sourcePath);
+    expect(workspace.fake.workflowStageVisits).toEqual(["verification"]);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+    gate.release();
+    await page.getByRole("button", { name: "Fetch metadata", exact: true }).click();
+    const retried = await waitForMetadataReady(page, app.url);
+    expect(retried.state).toBe("active");
+    expect(retried.current?.operation?.status).toBe("completed");
+  } finally {
+    gate.release();
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web replaces an unanswered tracker and reconciles retained duplicate evidence", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ preparedMediaInfo: true });
+  let app: AppServer | undefined;
+  try {
+    const config = await readFile(workspace.configPath, "utf8");
+    await writeFile(
+      workspace.configPath,
+      config.replace('default_trackers: ["BTN"]', 'default_trackers: ["AITHER"]'),
+    );
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    const initial = await runDuplicateCheck(page);
+    const original = initial.dupes!.results[0]!;
+    const selectedCurrent = (tracker: string, checked: boolean) =>
+      page.waitForResponse(async (response) => {
+        if (
+          !response.ok() ||
+          (!response.url().endsWith("/api/app/ContinueReleaseWorkflow") &&
+            !response.url().endsWith("/api/app/GetReleaseWorkflow"))
+        )
+          return false;
+        const current = (await response.json()) as ReleaseWorkflowCurrent;
+        return (
+          current.projections?.projections.length === 1 &&
+          current.projections.projections[0]?.trackerId === tracker &&
+          (checked
+            ? current.dupes?.results[0]?.trackerId === tracker
+            : !current.dupes && current.continuation?.duplicateReusePending === true)
+        );
+      });
+    const blockedResponse = selectedCurrent("ANT", false);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).uncheck();
+    await page.getByRole("checkbox", { name: "ANT", exact: true }).check();
+    const blocked = (await (await blockedResponse).json()) as ReleaseWorkflowCurrent;
+    expect(
+      blocked.workflow.requiredActions.some(
+        (action) =>
+          action.kind === "answer_questionnaire" &&
+          action.trackerId === "ANT" &&
+          action.status === "pending",
+      ),
+    ).toBe(true);
+    await expect(antQuestionPanel(page).locator("summary")).toContainText("Required");
+    const goals = new Map<string, string>();
+    page.on("request", (request) => {
+      if (!request.url().endsWith("/api/app/ContinueReleaseWorkflow")) return;
+      const body = request.postDataJSON() as {
+        goal: string;
+        idempotencyKey: string;
+        intent: { trackerIds?: string[] };
+      };
+      if (body.intent.trackerIds?.length === 1 && body.intent.trackerIds[0] === "AITHER")
+        goals.set(body.idempotencyKey, body.goal);
+    });
+    const restoredResponse = selectedCurrent("AITHER", true);
+    await page.getByRole("checkbox", { name: "ANT", exact: true }).uncheck();
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).check();
+    const restored = (await (await restoredResponse).json()) as ReleaseWorkflowCurrent;
+    expect(restored.dupes!.results[0]).toEqual({
+      ...original,
+      projectionFingerprint: expect.any(String),
+    });
+    expect(restored.dupes!.expiresAt).toBe(initial.dupes!.expiresAt);
+    await expect(page.getByText("No dupes", { exact: true })).toBeVisible();
+    await expect(antQuestionPanel(page)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+    expect([...goals.values()]).toEqual(["trackers_projected", "duplicates_decided"]);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web retains duplicate evidence when adding and removing trackers", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ preparedMediaInfo: true, mediaKind: "tv" });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath, "E2E.Show.2026.S01E01.1080p.WEB-DL");
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    const initial = await runDuplicateCheck(page);
+    const original = initial.dupes!.results.find((lane) => lane.trackerId === "BTN")!;
+    const selectedDuplicates = (trackers: string[]) =>
+      page.waitForResponse(async (response) => {
+        if (
+          !response.url().endsWith("/api/app/ContinueReleaseWorkflow") &&
+          !response.url().endsWith("/api/app/GetReleaseWorkflow")
+        )
+          return false;
+        if (!response.ok()) return false;
+        const current = (await response.json()) as ReleaseWorkflowCurrent;
+        return (
+          current.dupes?.results.length === trackers.length &&
+          trackers.every((tracker) =>
+            current.dupes?.results.some((lane) => lane.trackerId === tracker),
+          ) &&
+          current.dupes?.projectionSet.id === current.projections?.id
+        );
+      });
+    const addedResponse = selectedDuplicates(["AITHER", "BTN"]);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).check();
+    const added = (await (await addedResponse).json()) as ReleaseWorkflowCurrent;
+    const retained = added.dupes!.results.find((lane) => lane.trackerId === "BTN")!;
+    expect(retained).toEqual({ ...original, projectionFingerprint: expect.any(String) });
+    expect(added.dupes!.expiresAt).toBe(initial.dupes!.expiresAt);
+    const duplicate = added.dupes!.results.find((lane) => lane.trackerId === "AITHER")!;
+    expect(duplicate.decision).toBe("skipped");
+    expect(duplicate.failures?.length).toBeGreaterThan(0);
+    const removedResponse = selectedDuplicates(["BTN"]);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).uncheck();
+    const removed = (await (await removedResponse).json()) as ReleaseWorkflowCurrent;
+    expect(removed.dupes!.results).toEqual([
+      { ...original, projectionFingerprint: expect.any(String) },
+    ]);
+    expect(removed.dupes!.expiresAt).toBe(initial.dupes!.expiresAt);
+    expect(removed.dupes!.status).toBe("completed");
+    await expect(page.getByText("No dupes", { exact: true })).toBeVisible();
+    const readdedResponse = selectedDuplicates(["AITHER", "BTN"]);
+    await page.getByRole("checkbox", { name: "AITHER", exact: true }).check();
+    const readded = (await (await readdedResponse).json()) as ReleaseWorkflowCurrent;
+    expect(readded.dupes!.results.find((lane) => lane.trackerId === "BTN")!.checkedAt).toBe(
+      original.checkedAt,
+    );
+    expect(readded.dupes!.results.find((lane) => lane.trackerId === "AITHER")!.checkedAt).not.toBe(
+      duplicate.checkedAt,
+    );
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+    const reconciliations = new Set<string>();
+    page.on("request", (request) => {
+      if (!request.url().endsWith("/api/app/ContinueReleaseWorkflow")) return;
+      const body = request.postDataJSON() as { goal: string; idempotencyKey: string };
+      if (body.goal === "duplicates_decided") reconciliations.add(body.idempotencyKey);
+    });
+    const restoredResponse = waitForAppMethod(page, "GetActiveInput");
+    await page.reload();
+    const restored = await activeCurrentFromResponse(await restoredResponse);
+    expect(restored.dupes?.expiresAt).toBe(readded.dupes!.expiresAt);
+    expect(
+      restored.dupes?.results.map((lane) => ({
+        tracker: lane.trackerId,
+        decision: lane.decision,
+        checkedAt: lane.checkedAt,
+        freshUntil: lane.freshUntil,
+      })),
+    ).toEqual(
+      readded.dupes!.results.map((lane) => ({
+        tracker: lane.trackerId,
+        decision: lane.decision,
+        checkedAt: lane.checkedAt,
+        freshUntil: lane.freshUntil,
+      })),
+    );
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await expect(page.getByRole("checkbox", { name: "AITHER", exact: true })).toBeChecked();
+    await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+    await expect(page.getByText("No dupes", { exact: true })).toBeVisible();
+    const blocked = page
+      .getByRole("article")
+      .filter({ has: page.getByRole("heading", { name: "AITHER", exact: true }) });
+    await expect(blocked.getByText("Blocked", { exact: true })).toBeVisible();
+    await expect(
+      blocked.getByText(duplicate.failures![0]!.failure.Message, { exact: true }),
+    ).toBeVisible();
+    expect(reconciliations.size).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});

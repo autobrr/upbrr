@@ -10,12 +10,55 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestGetInfoSpokenLanguages(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, spoken string
+		want         []string
+	}{
+		{name: "missing"},
+		{name: "empty", spoken: `,"spokenLanguages":{"spokenLanguages":[]}`},
+		{
+			name: "provider names",
+			spoken: `,"spokenLanguages":{"language":{"id":"en-US","text":"English (United States)"},
+				"spokenLanguages":[{"id":"fr","text":"French"},{"id":"de","text":" German "},{"id":"en","text":""},null]}`,
+			want: []string{"French", "German"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				var payload struct{ Query string }
+				if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+					t.Error(err)
+				}
+				if !strings.Contains(payload.Query, "spokenLanguages { spokenLanguages { text } }") {
+					t.Error("title query does not request spoken language names")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"title":{"id":"tt0555001","titleText":{"text":"Example Movie"}%s}}}`, test.spoken)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			info, err := client.GetInfo(t.Context(), "tt0555001", "ja", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(info.SpokenLanguages, test.want) || info.OriginalLanguage != "ja" || info.Title != "Example Movie" {
+				t.Fatalf("title languages = %v, manual language = %q, title = %q", info.SpokenLanguages, info.OriginalLanguage, info.Title)
+			}
+		})
+	}
+}
 
 func TestPostGraphQLPostsUnseenHashThenGetsKnownHash(t *testing.T) {
 	const query = `query TestOperation($id: ID!) { title(id: $id) { id } }`

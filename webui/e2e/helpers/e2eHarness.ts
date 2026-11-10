@@ -57,6 +57,12 @@ type FakeServer = {
   url: string;
   counters: FakeCounters;
   trackerUploadBodies: Buffer[];
+  /** Holds one synthetic backend stage; release may return an HTTP failure. */
+  holdWorkflowStage: (stage: string) => {
+    entered: Promise<void>;
+    release: (status?: number) => void;
+  };
+  workflowStageVisits: string[];
   delayTrackerUploads: (delayMs: number) => void;
   delayClientInjections: (delayMs: number) => void;
   close: () => Promise<void>;
@@ -685,9 +691,23 @@ async function startFakeServer(): Promise<FakeServer> {
     clientInjections: 0,
   };
   const trackerUploadBodies: Buffer[] = [];
+  const workflowStageVisits: string[] = [];
+  const gates = new Map<
+    string,
+    { entered: () => void; waiting: Promise<void>; release: () => void; status: number }
+  >();
   let trackerUploadDelayMs = 0;
   let clientInjectionDelayMs = 0;
   const server = createServer(async (req, res) => {
+    if (req.method === "POST" && req.url?.startsWith("/workflow-stage/")) {
+      const stage = req.url.slice("/workflow-stage/".length);
+      workflowStageVisits.push(stage);
+      const gate = gates.get(stage);
+      gate?.entered();
+      await gate?.waiting;
+      writeJSON(res, gate?.status ?? 200, { ok: true });
+      return;
+    }
     if (req.method === "POST" && req.url === "/client-search") {
       counters.clientSearches++;
       writeJSON(res, 200, { ok: true });
@@ -727,13 +747,36 @@ async function startFakeServer(): Promise<FakeServer> {
     url: `http://127.0.0.1:${address.port}`,
     counters,
     trackerUploadBodies,
+    workflowStageVisits,
+    holdWorkflowStage: (stage) => {
+      let entered!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const waiting = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const gate = { entered, waiting, release, status: 200 };
+      gates.set(stage, gate);
+      return {
+        entered: started,
+        release: (status = 200) => {
+          gate.status = status;
+          release();
+        },
+      };
+    },
     delayTrackerUploads: (delayMs) => {
       trackerUploadDelayMs = Math.max(0, delayMs);
     },
     delayClientInjections: (delayMs) => {
       clientInjectionDelayMs = Math.max(0, delayMs);
     },
-    close: () => closeServer(server),
+    close: () => {
+      gates.forEach((gate) => gate.release());
+      return closeServer(server);
+    },
   };
 }
 

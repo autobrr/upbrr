@@ -2388,6 +2388,10 @@ func (b workflowMediaBuilder) UploadImages(
 		retainedLinks,
 		blockedRetainedLinks,
 	)
+	// Leave interrupted or uncertain uploads unresolved for explicit reconciliation.
+	if imageUploadOutcomeUnresolved(ctx, err) {
+		return api.MediaArtifactSet{}, nil, nil, err
+	}
 	receiptErr := api.CompleteWorkflowExternalEffect(ctx, effectReceipt, err == nil)
 	if receiptErr != nil {
 		return api.MediaArtifactSet{}, nil, nil, api.NewOperationError(api.OperationFailure{

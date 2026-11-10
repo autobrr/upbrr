@@ -43,13 +43,14 @@ func projectWorkflowContinuationForState(
 		}
 	}
 	return api.WorkflowContinuation{
-		Lifecycle:       lifecycle,
-		Disposition:     disposition,
-		Refs:            exactRefs(current.Workflow),
-		TrackerOutcomes: lanes,
-		RequiredActions: actions,
-		AvailableGoals:  projectAvailableGoals(current, now),
-		Events:          projectWorkflowEvents(current),
+		DuplicateReusePending: state != nil && state.PendingDuplicateReuse != nil,
+		Lifecycle:             lifecycle,
+		Disposition:           disposition,
+		Refs:                  exactRefs(current.Workflow),
+		TrackerOutcomes:       lanes,
+		RequiredActions:       actions,
+		AvailableGoals:        projectAvailableGoals(current, now),
+		Events:                projectWorkflowEvents(current),
 	}
 }
 

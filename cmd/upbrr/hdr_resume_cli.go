@@ -95,14 +95,46 @@ func printCLIHDRResult(out io.Writer, current releaseworkflow.CommandResult) {
 	var report strings.Builder
 	fmt.Fprintf(&report, "HDR workflow: %s · attempt: %s · status: %s\n", current.Workflow.ID, current.HDRAnalysis.AttemptID, current.HDRAnalysis.Status)
 	for _, target := range current.HDRAnalysis.Targets {
+		label := target.Label
+		if strings.TrimSpace(label) == "" {
+			label = target.TargetID
+		}
+		fmt.Fprintf(&report, "HDR target: %s · status: %s\n", label, target.Status)
+		if target.Failure != nil {
+			fmt.Fprintf(&report, "  Failure: %s\n", target.Failure.Message)
+		}
+		for _, format := range target.Formats {
+			fmt.Fprintf(&report, "  HDR format: %s · %s\n", format.Format, format.State)
+			if format.Failure != nil {
+				fmt.Fprintf(&report, "    Failure: %s\n", format.Failure.Message)
+			}
+			for _, check := range format.Checks {
+				if check.State != api.HDRCheckPass && strings.TrimSpace(check.Message) != "" {
+					fmt.Fprintf(&report, "    Check %s: %s\n", check.State, check.Message)
+				}
+			}
+		}
+		for _, decoded := range target.Decoded {
+			fmt.Fprintf(&report, "  HDR analysis: %s · %s\n", decoded.Mode, decoded.State)
+			if strings.TrimSpace(decoded.Reason) != "" {
+				fmt.Fprintf(&report, "    %s\n", decoded.Reason)
+			}
+			for _, track := range decoded.AudioTracks {
+				fmt.Fprintf(&report, "    Audio track %d · %s\n", track.Ordinal, track.State)
+				if track.Failure != nil {
+					fmt.Fprintf(&report, "      Failure: %s\n", track.Failure.Message)
+				}
+			}
+		}
 		for _, artifact := range target.Artifacts {
 			fmt.Fprintf(&report, "HDR artifact: %s · %s\n", artifact.ID, artifact.Kind)
 		}
 	}
+	text := safeDiagnosticText(report.String())
 	if bridge := cliBridgeFromOutput(out); bridge != nil {
-		bridge.RetainHDRReport(report.String())
+		bridge.RetainHDRReport(text)
 	}
-	fmt.Fprint(out, report.String())
+	fmt.Fprint(out, text)
 }
 
 func cliHDRResumeInstructions(current releaseworkflow.CommandResult, opts cliOptions) (api.HDRAnalysisInstructions, error) {

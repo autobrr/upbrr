@@ -1162,6 +1162,17 @@
           "Resolution"
         ]
       },
+      "CancelActiveInputOpenRequest": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotencyKey"
+        ]
+      },
       "CancelReleaseWorkflowRequest": {
         "type": "object",
         "properties": {
@@ -1282,6 +1293,9 @@
                 "type": "null"
               }
             ]
+          },
+          "InfoHash": {
+            "type": "string"
           },
           "Skip": {
             "type": "boolean"
@@ -3824,6 +3838,12 @@
               "type": "string"
             }
           },
+          "SpokenLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "Stars": {
             "type": "array",
             "items": {
@@ -4294,6 +4314,29 @@
           "revision"
         ]
       },
+      "InputReviewContext": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputReadinessFieldOutcome"
+            }
+          },
+          "release": {
+            "$ref": "#/components/schemas/PreparedRelease"
+          },
+          "selectedTrackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          }
+        },
+        "required": [
+          "release"
+        ]
+      },
       "InteractionMode": {
         "type": "string"
       },
@@ -4342,6 +4385,9 @@
               "type": "string"
             }
           },
+          "OriginalLanguageDefinitive": {
+            "type": "boolean"
+          },
           "OriginalLanguages": {
             "type": "array",
             "items": {
@@ -4386,6 +4432,7 @@
           "AudioAbsent",
           "AudioStatus",
           "FullSubtitleLanguages",
+          "OriginalLanguageDefinitive",
           "OriginalLanguages",
           "OriginalLanguagesKnown",
           "PrimaryAudioTrackID",
@@ -4855,6 +4902,12 @@
           },
           "ThreeD": {
             "type": "string"
+          },
+          "TitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "TrackAudioLanguages": {
             "type": "array",
@@ -7720,6 +7773,16 @@
               }
             ]
           },
+          "inputReview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputReviewContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "media": {
             "anyOf": [
               {
@@ -10515,6 +10578,12 @@
           },
           "Runtime": {
             "type": "integer"
+          },
+          "SpokenLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "TMDBID": {
             "type": "integer"
@@ -13408,6 +13477,9 @@
           },
           "disposition": {
             "$ref": "#/components/schemas/WorkflowDisposition"
+          },
+          "duplicateReusePending": {
+            "type": "boolean"
           },
           "events": {
             "type": "array",

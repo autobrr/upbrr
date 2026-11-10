@@ -56,6 +56,7 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 			ForceRecheck: &forceRecheck,
 		},
 		ConfirmBDMVRescan: true,
+		TorrentOverrides:  TorrentOverrides{InfoHash: new("abcdef0123456789abcdef0123456789abcdef01")},
 	}
 
 	input, err := MapPreparationRequest(request, PreparationIntentUpload)
@@ -91,7 +92,11 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 			KeepImages: true,
 			OnlyID:     true,
 		},
-		Search: ClientSearchPolicy{Skip: true, Client: new("qbit")},
+		Search: ClientSearchPolicy{
+			Skip:     true,
+			Client:   new("qbit"),
+			InfoHash: "abcdef0123456789abcdef0123456789abcdef01",
+		},
 		Controls: PreparationControls{
 			Interaction:       InteractionModeInteractive,
 			ConfirmBDMVRescan: true,
@@ -109,6 +114,7 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 	*request.ReleaseNameOverrides.NoDistributor = false
 	*request.MetadataOverrides.Distributor = "CHANGED"
 	*request.ClientOverrides.Client = "changed"
+	*request.TorrentOverrides.InfoHash = "changed"
 	request.TrackerIDOverrides["btn"] = "changed"
 	request.PlaylistInstruction.Selected = append(request.PlaylistInstruction.Selected, "00001.mpls")
 	if !reflect.DeepEqual(input, expected) {

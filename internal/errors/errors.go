@@ -13,4 +13,6 @@ var (
 	ErrNotFound        = errors.New("not found")
 	ErrBannedGroup     = errors.New("banned group")
 	ErrFrameCorruption = errors.New("frame corruption detected")
+	// ErrClientRecheckFailed identifies a failed explicit action that optional discovery must not hide.
+	ErrClientRecheckFailed = errors.New("explicit client recheck failed")
 )
