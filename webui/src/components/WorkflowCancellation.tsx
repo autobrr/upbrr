@@ -11,7 +11,7 @@ export function WorkflowCancellation() {
   return (
     <section
       aria-label="Active work"
-      className={`${pageStyle.panel} mb-3 flex flex-wrap items-center gap-2 py-2`}
+      className={`${pageStyle.panel} mb-3 flex w-fit max-w-full flex-wrap items-center gap-2 py-2`}
     >
       <button
         className="danger px-3 py-1 text-sm"
