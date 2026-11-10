@@ -143,9 +143,12 @@ func TestCreateHonorsMaxPieceSizeOverride(t *testing.T) {
 
 	dir := t.TempDir()
 	source := filepath.Join(dir, "video.mkv")
-	content := make([]byte, 10<<20)
-	if err := os.WriteFile(source, content, 0o600); err != nil {
-		t.Fatalf("write file: %v", err)
+	// Without the override, the 1,000-piece target chooses 2 MiB pieces.
+	if err := os.WriteFile(source, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(source, 2<<30); err != nil {
+		t.Fatal(err)
 	}
 
 	tmpRoot := t.TempDir()

@@ -28,7 +28,7 @@ type trackerTorrentPolicy struct {
 }
 
 // resolveTrackerPolicy combines registered artifact limits and uses the most
-// restrictive mkbrr piece-size profile selected for this source size.
+// restrictive mkbrr piece-size profile and explicit maximum for this source.
 func resolveTrackerPolicy(meta api.TorrentSubject, registry *trackers.Registry) *trackerTorrentPolicy {
 	var policy *trackerTorrentPolicy
 	for _, name := range meta.Trackers {
@@ -70,18 +70,25 @@ func resolveTrackerPolicy(meta api.TorrentSubject, registry *trackers.Registry) 
 			policy.profileMaxPieceExp = profileExp
 		}
 	}
-	if policy != nil {
-		return policy
-	}
-	if hasTracker(meta.Trackers, []string{"PTP"}) {
-		return &trackerTorrentPolicy{
+	if policy == nil && hasTracker(meta.Trackers, []string{"PTP"}) {
+		policy = &trackerTorrentPolicy{
 			name:                "PTP",
 			maxPieceExp:         24,
 			pieceSizeProfileURL: "https://passthepopcorn.me",
 			ptp:                 true,
 		}
 	}
-	return nil
+	if limit := meta.TorrentOverrides.MaxPieceSizeMiB; limit != nil {
+		if exp, ok := pieceExpForMiB(*limit); ok {
+			if policy == nil {
+				policy = &trackerTorrentPolicy{}
+			}
+			if policy.maxPieceExp == 0 || exp < policy.maxPieceExp {
+				policy.maxPieceExp = exp
+			}
+		}
+	}
+	return policy
 }
 
 func (p *trackerTorrentPolicy) createOptions(meta api.TorrentSubject) mkbrrPieceOptions {

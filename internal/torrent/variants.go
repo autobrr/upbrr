@@ -65,16 +65,25 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 	}
 	// Layout, captured-byte identity, and requested recheck are evaluated once per
-	// candidate; a policy miss must not discard a candidate useful to another lane.
+	// candidate; stale alternatives must not discard a verified reusable base.
+	// A failed explicit recheck remains fatal when no verified candidate survives.
 	valid := make([]string, 0, len(candidates))
+	var recheckErr error
 	for _, candidate := range candidates {
 		path, err := findReusableTorrent(ctx, []string{candidate}, nil, meta, cache, logger)
+		if errors.Is(err, internalerrors.ErrClientRecheckFailed) {
+			recheckErr = err
+			continue
+		}
 		if err != nil {
 			return api.TorrentResult{}, err
 		}
 		if path != "" {
 			valid = append(valid, path)
 		}
+	}
+	if len(valid) == 0 && recheckErr != nil {
+		return api.TorrentResult{}, recheckErr
 	}
 	candidates = valid
 	rankCandidates(candidates, meta)
@@ -85,18 +94,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	selected := make(map[string]string)
 	choose := func(subject api.TorrentSubject) (string, error) {
 		policy := resolveTrackerPolicy(subject, s.registry)
-		if subject.TorrentOverrides.MaxPieceSizeMiB != nil {
-			if policy == nil {
-				policy = &trackerTorrentPolicy{}
-			} else {
-				policyCopy := *policy
-				policy = &policyCopy
-			}
-			exp, _ := pieceExpForMiB(*subject.TorrentOverrides.MaxPieceSizeMiB)
-			if exp > 0 && (policy.maxPieceExp == 0 || exp < policy.maxPieceExp) {
-				policy.maxPieceExp = exp
-			}
-		}
+
 		return findReusableTorrent(ctx, candidates, policy, subject, cache, logger)
 	}
 	generate := func(subject api.TorrentSubject) (string, error) {
@@ -285,6 +283,9 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		} else if _, err := publications.Publish(); err != nil {
 			return api.TorrentResult{}, err
 		}
+	}
+	if result.Path != "" && result.PendingPublication == nil && !meta.DeferWrapperConversion {
+		emitTorrentProgress(ctx, meta, "completed", "Torrent ready")
 	}
 	return result, nil
 }

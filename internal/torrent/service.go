@@ -165,12 +165,9 @@ func (s *Service) createSingle(ctx context.Context, meta api.TorrentSubject) (ap
 			}
 		}
 	}()
-	pieceOptions := mkbrrPieceOptions{maxPieceExp: 27}
-	if policy != nil {
-		pieceOptions = policy.createOptions(meta)
-		if err := policy.validateCreateOptions(meta, pieceOptions); err != nil {
-			return api.TorrentResult{}, fmt.Errorf("torrent: resolve tracker piece size: %w", err)
-		}
+	pieceOptions := policy.createOptions(meta)
+	if err := policy.validateCreateOptions(meta, pieceOptions); err != nil {
+		return api.TorrentResult{}, fmt.Errorf("torrent: resolve tracker piece size: %w", err)
 	}
 	logger.Infof("torrent: creating torrent output=%s max_piece_exp=%d piece_exp_set=%t", outputPath, pieceOptions.maxPieceExp, pieceOptions.pieceExp != nil)
 	reason := "Hashing torrent: no compatible reusable artifact"
