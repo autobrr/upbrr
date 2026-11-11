@@ -113,45 +113,62 @@ type extractedTorrent struct {
 	publication *generatedTorrentPublication
 }
 
-// extractSingleFile reuses aligned v1 pieces and, when permitted and necessary,
-// hashes only the selected video's final partial piece before publication.
-func extractSingleFile(
-	ctx context.Context,
-	tmpRoot, path string,
-	subject api.TorrentSubject,
-	policy *trackerTorrentPolicy,
-	allowHash bool,
-) (extractedTorrent, error) {
-	if strings.TrimSpace(tmpRoot) == "" {
-		return extractedTorrent{}, nil
-	}
+// preparedSingleFileExtraction holds validated, captured metainfo so ranking
+// alternatives never writes artifacts or hashes media.
+type preparedSingleFileExtraction struct {
+	metadata   metainfo.MetaInfo
+	plan       *singleFileExtraction
+	pieceCount int64
+	encoded    []byte
+}
+
+func prepareSingleFileExtraction(path string, subject api.TorrentSubject, policy *trackerTorrentPolicy) (*preparedSingleFileExtraction, error) {
 	data, err := os.ReadFile(path)
 	if err != nil || validateClientCandidateBytes(path, data, subject) != nil {
-		return extractedTorrent{}, nil
+		return nil, nil
 	}
 	mi, err := metainfo.Load(bytes.NewReader(data))
 	if err != nil {
-		return extractedTorrent{}, nil
+		return nil, nil
 	}
 	plan, err := planSingleFileExtraction(mi.InfoBytes, subject)
-	if err != nil || plan == nil || plan.tailBytes > 0 && !allowHash {
-		return extractedTorrent{}, err
+	if err != nil || plan == nil {
+		return nil, err
 	}
 	mi.InfoBytes, err = bencode.Marshal(plan.dictionary)
 	if err != nil {
-		return extractedTorrent{}, fmt.Errorf("torrent: encode extracted file: %w", err)
+		return nil, fmt.Errorf("torrent: encode extracted file: %w", err)
 	}
 	info, err := mi.UnmarshalInfo()
 	if err != nil || policy != nil && policy.validateTorrentInfo(&info, subject) != nil {
-		return extractedTorrent{}, nil
+		return nil, nil
+	}
+	if validateReusablePieceCount(&info, policy, subject) != nil {
+		return nil, nil
 	}
 	var output bytes.Buffer
 	if err := mi.Write(&output); err != nil {
-		return extractedTorrent{}, fmt.Errorf("torrent: encode converted metainfo: %w", err)
+		return nil, fmt.Errorf("torrent: encode converted metainfo: %w", err)
 	}
 	if policy != nil && policy.maxTorrentBytes > 0 && int64(output.Len()) > policy.maxTorrentBytes {
+		return nil, nil
+	}
+	return &preparedSingleFileExtraction{
+		metadata:   *mi,
+		plan:       plan,
+		pieceCount: int64(info.NumPieces()),
+		encoded:    output.Bytes(),
+	}, nil
+}
+
+// publish materializes the selected captured extraction. Callers must permit
+// hashing before publishing a plan with a nonzero tailBytes value.
+func (p *preparedSingleFileExtraction) publish(ctx context.Context, tmpRoot string, subject api.TorrentSubject) (extractedTorrent, error) {
+	if strings.TrimSpace(tmpRoot) == "" {
 		return extractedTorrent{}, nil
 	}
+	mi, plan := p.metadata, p.plan
+	output := bytes.NewBuffer(p.encoded)
 	if err := ctx.Err(); err != nil {
 		return extractedTorrent{}, fmt.Errorf("torrent: canceled before extraction: %w", err)
 	}
@@ -159,12 +176,13 @@ func extractSingleFile(
 		if err := plan.hashFinalPiece(ctx, subject); err != nil {
 			return extractedTorrent{}, err
 		}
-		mi.InfoBytes, err = bencode.Marshal(plan.dictionary)
+		infoBytes, err := bencode.Marshal(plan.dictionary)
 		if err != nil {
 			return extractedTorrent{}, fmt.Errorf("torrent: encode partial piece: %w", err)
 		}
-		output.Reset()
-		if err := mi.Write(&output); err != nil {
+		mi.InfoBytes = infoBytes
+		output = &bytes.Buffer{}
+		if err := mi.Write(output); err != nil {
 			return extractedTorrent{}, fmt.Errorf("torrent: encode extracted metainfo: %w", err)
 		}
 	}
@@ -175,7 +193,7 @@ func extractSingleFile(
 	if err != nil {
 		return extractedTorrent{}, err
 	}
-	path = filepath.Join(filepath.Dir(base), fmt.Sprintf("converted-%x.torrent", sha256.Sum256(output.Bytes())))
+	path := filepath.Join(filepath.Dir(base), fmt.Sprintf("converted-%x.torrent", sha256.Sum256(output.Bytes())))
 	convertedTorrentPublicationMu.Lock()
 	defer convertedTorrentPublicationMu.Unlock()
 	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, output.Bytes()) {
@@ -219,7 +237,8 @@ func (p *singleFileExtraction) hashFinalPiece(ctx context.Context, subject api.T
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("torrent: canceled before partial piece: %w", err)
 	}
-	file, err := os.Open(p.source.LocalPath) //nolint:gosec // Only the validated local submission inventory is opened, never a torrent-supplied path.
+	// Only the validated submission inventory is opened, never a torrent-supplied path.
+	file, err := os.Open(p.source.LocalPath)
 	if err != nil {
 		return fmt.Errorf("torrent: open source for partial piece: %w", err)
 	}

@@ -4,6 +4,7 @@
 package torrent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/autobrr/go-torrent/metainfo"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ant"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdb"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -247,55 +249,189 @@ func TestGeneratedBasesRemainStagedUntilPublication(t *testing.T) {
 	}
 }
 
-func TestGeneralPieceGoalHonorsAttainableBounds(t *testing.T) {
+func TestExistingTorrentSelectionAvoidsOptionalGeneration(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name       string
-		piece      int64
-		count      int
-		maximum    *int
-		acceptable bool
+		name   string
+		pieces []int64
+		want   int
+		nohash bool
 	}{
 		{
-			name:       "general target",
-			piece:      32 << 20,
-			count:      1500,
-			acceptable: true,
+			name:   "prefer target range",
+			pieces: []int64{32 << 10, 128 << 10},
+			want:   1,
 		},
 		{
-			name:  "needs larger pieces",
-			piece: 16 << 20,
-			count: 4000,
+			name:   "reuse closest outside range",
+			pieces: []int64{32 << 10, 256 << 10},
+			want:   1,
+		},
+		{name: "stable target ties", pieces: []int64{128 << 10, 64 << 10}},
+		{name: "no optional compact base", pieces: []int64{32 << 20}},
+		{
+			name:   "nohash skips excessive pieces",
+			pieces: []int64{8 << 10},
+			want:   -1,
+			nohash: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const size int64 = 125 << 20
+			dir := t.TempDir()
+			source := filepath.Join(dir, "synthetic.mkv")
+			file, err := os.OpenFile(source, os.O_CREATE|os.O_WRONLY, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Truncate(size); err != nil {
+				_ = file.Close()
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			candidates := make([]api.ClientTorrentCandidate, 0, len(tc.pieces))
+			for i, piece := range tc.pieces {
+				candidates = append(candidates, writeExtractionTorrent(t, filepath.Join(dir, []string{"first.torrent", "second.torrent"}[i]), metainfo.Info{
+					Name:        filepath.Base(source),
+					Length:      size,
+					PieceLength: piece,
+					Pieces:      make([]byte, ((size+piece-1)/piece)*metainfo.HashSize),
+				}))
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			hashing := false
+			ctx = api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+				if update.TotalPieces > 0 {
+					hashing = true
+					cancel()
+				}
+			})
+			result, err := NewService(nil, t.TempDir()).Create(ctx, api.TorrentSubject{
+				SourcePath:              source,
+				SourceSize:              size,
+				Trackers:                []string{"EXAMPLE"},
+				ClientTorrentCandidates: candidates,
+				TorrentOverrides:        api.TorrentOverrides{NoHash: &tc.nohash},
+			})
+			if err != nil || hashing {
+				t.Fatalf("compatible existing torrent should avoid hashing: %v hashing=%v", err, hashing)
+			}
+			if tc.want < 0 {
+				if len(result.SkippedTrackers) != 1 || result.SkippedTrackers[0] != "EXAMPLE" || len(result.TrackerArtifacts) != 0 {
+					t.Fatalf("incompatible nohash lane was not skipped: %+v", result)
+				}
+				return
+			}
+			artifact := result.TrackerArtifacts["EXAMPLE"]
+			if artifact.InfoHash != candidates[tc.want].InfoHash {
+				t.Fatalf("selected hash %s, want %s", artifact.InfoHash, candidates[tc.want].InfoHash)
+			}
+			if len(result.BaseArtifacts) != 1 || result.PendingPublication != nil || len(result.RehashedTrackers) != 0 {
+				t.Fatalf("unexpected optional artifacts or generation: %+v", result)
+			}
+		})
+	}
+}
+
+func TestProvidedTorrentPieceCountLimits(t *testing.T) {
+	t.Parallel()
+	registry := trackers.NewRegistry()
+	for _, descriptor := range []trackers.Descriptor{
+		{
+			Name:       "HDB",
+			Definition: hdb.New(),
+			Artifact:   &trackers.ArtifactPolicy{MaxPieceSizeMiB: 32, PieceSizeProfileURL: "https://hdbits.org"},
 		},
 		{
-			name:       "explicit maximum",
-			piece:      16 << 20,
-			count:      4000,
-			maximum:    new(16),
-			acceptable: true,
+			Name:       "ANT",
+			Definition: ant.New(),
+			Artifact:   &trackers.ArtifactPolicy{MaxPieceSizeMiB: 128, MaxTorrentBytes: 250 << 10},
+		},
+	} {
+		if err := registry.RegisterDescriptor(descriptor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		tracker string
+		piece   int64
+		count   int
+		maximum *int
+		allowed bool
+	}{
+		{
+			name:    "cap boundary",
+			piece:   64 << 10,
+			count:   10000,
+			allowed: true,
 		},
 		{
-			name:       "generator maximum",
-			piece:      128 << 20,
-			count:      4000,
-			acceptable: true,
+			name:  "above cap",
+			piece: 64 << 10,
+			count: 10001,
 		},
 		{
-			name:  "needs smaller pieces",
-			piece: 16 << 20,
-			count: 500,
+			name:    "user maximum wins",
+			piece:   1 << 20,
+			count:   10001,
+			maximum: new(1),
+			allowed: true,
 		},
 		{
-			name:       "minimum pieces",
-			piece:      64 << 10,
-			count:      500,
-			acceptable: true,
+			name:    "smaller than user maximum",
+			piece:   512 << 10,
+			count:   20002,
+			maximum: new(1),
 		},
 		{
-			name:       "tiny source",
-			piece:      1 << 20,
-			count:      8,
-			acceptable: true,
+			name:    "PTP maximum wins",
+			tracker: "PTP",
+			piece:   16 << 20,
+			count:   10001,
+			allowed: true,
+		},
+		{
+			name:    "PTP smaller allowed size still exceeds cap",
+			tracker: "PTP",
+			piece:   8 << 20,
+			count:   20002,
+		},
+		{
+			name:    "HDB large source maximum",
+			tracker: "HDB",
+			piece:   32 << 20,
+			count:   32769,
+			allowed: true,
+		},
+		{
+			name:    "HDB current generation ceiling",
+			tracker: "HDB",
+			piece:   16 << 20,
+			count:   65538,
+			allowed: true,
+		},
+		{
+			name:    "generator ceiling",
+			piece:   128 << 20,
+			count:   10001,
+			allowed: true,
+		},
+		{
+			name:    "HDB below generation ceiling",
+			tracker: "HDB",
+			piece:   8 << 20,
+			count:   131076,
+		},
+		{
+			name:    "ANT byte cap still applies",
+			tracker: "ANT",
+			piece:   1 << 20,
+			count:   13000,
+			maximum: new(1),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -303,13 +439,23 @@ func TestGeneralPieceGoalHonorsAttainableBounds(t *testing.T) {
 				Name:        "synthetic.mkv",
 				Length:      tc.piece * int64(tc.count),
 				PieceLength: tc.piece,
-				Pieces:      make([]byte, tc.count*20),
+				Pieces:      make([]byte, tc.count*metainfo.HashSize),
 			}
-			path := writeExtractionTorrent(t, filepath.Join(t.TempDir(), "base.torrent"), info).Path
-			subject := api.TorrentSubject{}
-			subject.TorrentOverrides.MaxPieceSizeMiB = tc.maximum
-			if got := generalPieceCount(path, subject); got != tc.acceptable {
-				t.Fatalf("acceptable piece goal = %v, want %v", got, tc.acceptable)
+			candidate := writeExtractionTorrent(t, filepath.Join(t.TempDir(), "source.torrent"), info)
+			subject := api.TorrentSubject{
+				SourcePath:       candidate.Path,
+				SourceSize:       info.Length,
+				TorrentOverrides: api.TorrentOverrides{MaxPieceSizeMiB: tc.maximum},
+			}
+			if tc.tracker != "" {
+				subject.Trackers = []string{tc.tracker}
+			}
+			result, err := NewServiceWithRegistry(nil, t.TempDir(), registry).Create(t.Context(), subject)
+			if (err == nil) != tc.allowed {
+				t.Fatalf("accepted=%v, want %v: %v", err == nil, tc.allowed, err)
+			}
+			if tc.allowed && result.Path != candidate.Path {
+				t.Fatalf("provided artifact changed: %+v", result)
 			}
 		})
 	}
@@ -360,7 +506,7 @@ func TestEffectivePolicySharesGenerationAndValidationMaximum(t *testing.T) {
 	}{
 		{name: "unmapped without override", trackers: []string{"EXAMPLE"}},
 		{
-			name:    "compact without tracker",
+			name:    "explicit maximum without tracker",
 			maximum: new(16),
 			wantMiB: 16,
 		},

@@ -258,3 +258,16 @@ func pieceExpForMiB(sizeMiB int) (uint, bool) {
 		return 0, false
 	}
 }
+
+// validateReusablePieceCount bounds metainfo work unless the effective piece
+// ceiling makes a larger count unavoidable. Tracker and user maxima stay hard.
+func validateReusablePieceCount(info *metainfo.Info, policy *trackerTorrentPolicy, meta api.TorrentSubject) error {
+	if info.NumPieces() <= 10000 {
+		return nil
+	}
+	maximum := policy.createOptions(meta).maxPieceExp
+	if maximum > 0 && info.PieceLength >= int64(1)<<maximum {
+		return nil
+	}
+	return fmt.Errorf("torrent has %d pieces, exceeding 10000 without an unavoidable piece-size limit", info.NumPieces())
+}

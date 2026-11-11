@@ -495,16 +495,21 @@ func validateCandidateTorrent(ctx context.Context, path string, policy *trackerT
 }
 
 func validateCandidateTorrentPolicy(path string, policy *trackerTorrentPolicy, meta api.TorrentSubject, logger api.Logger) error {
-	if policy == nil {
-		return nil
-	}
 	if err := policy.validateTorrent(path, meta); err != nil {
 		if logger != nil {
 			logger.Debugf("torrent: reusable candidate rejected path=%s stage=tracker_policy reason=%s", path, redaction.RedactValue(err.Error(), nil))
 		}
 		return err
 	}
-	return nil
+	mi, err := metainfo.LoadFromFile(path)
+	if err != nil {
+		return fmt.Errorf("load reusable torrent: %w", err)
+	}
+	info, err := mi.UnmarshalInfo()
+	if err != nil {
+		return fmt.Errorf("decode reusable torrent: %w", err)
+	}
+	return validateReusablePieceCount(&info, policy, meta)
 }
 
 func validateCandidateTorrentContent(ctx context.Context, path string, meta api.TorrentSubject, logger api.Logger) error {

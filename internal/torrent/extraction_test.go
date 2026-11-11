@@ -173,7 +173,7 @@ func TestExtractionPrefersCompatibleSingleFile(t *testing.T) {
 	}
 }
 
-func TestExtractionTriesGeneralTargetBeforeHashing(t *testing.T) {
+func TestExtractionPrefersTargetRangeBeforeHashing(t *testing.T) {
 	t.Parallel()
 	const size int64 = 128 << 20
 	dir := t.TempDir()
@@ -189,7 +189,13 @@ func TestExtractionTriesGeneralTargetBeforeHashing(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	candidates := make([]api.ClientTorrentCandidate, 0, 2)
+	candidates := make([]api.ClientTorrentCandidate, 0, 3)
+	candidates = append(candidates, writeExtractionTorrent(t, filepath.Join(dir, "direct.torrent"), metainfo.Info{
+		Name:        filepath.Base(source),
+		Length:      size,
+		PieceLength: 32 << 10,
+		Pieces:      make([]byte, size/(32<<10)*metainfo.HashSize),
+	}))
 	for i, piece := range []int64{64 << 10, 128 << 10} {
 		candidates = append(candidates, writeExtractionTorrent(t, filepath.Join(dir, []string{"compact.torrent", "general.torrent"}[i]), metainfo.Info{
 			Name:        "Example.Release.2026",

@@ -10,7 +10,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -27,9 +26,8 @@ import (
 
 // Create retains compatible base variants and assigns an exact artifact to each
 // selected tracker. Existing pieces are preferred; NoHash never generates missing
-// pieces. A general-purpose base and a base with pieces at most 16 MiB are retained
-// automatically when available, or generated when hashing is permitted. Hard
-// tracker limits and the explicit maximum take precedence over piece-count goals.
+// pieces. Selection prefers 1,000–2,000 pieces within each tracker's hard limits.
+// Only missing required artifacts are generated; no optional variants are made.
 func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
 	if err := ctx.Err(); err != nil {
 		return api.TorrentResult{}, fmt.Errorf("torrent: create canceled: %w", err)
@@ -60,92 +58,130 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	valid := make([]string, 0, len(candidates))
 	var recheckErr error
 	for _, candidate := range candidates {
-		path, err := findReusableTorrent(ctx, []string{candidate}, nil, meta, cache, logger)
+		if err := ctx.Err(); err != nil {
+			return api.TorrentResult{}, fmt.Errorf("torrent: canceled while checking candidates: %w", err)
+		}
+		err := validateCandidateTorrentContent(ctx, candidate, meta, logger)
+		cache[candidate] = err
 		if errors.Is(err, internalerrors.ErrClientRecheckFailed) {
 			recheckErr = err
 			continue
 		}
-		if err != nil {
-			return api.TorrentResult{}, err
-		}
-		if path != "" {
-			valid = append(valid, path)
+		if err == nil {
+			valid = append(valid, candidate)
 		}
 	}
 	candidates = valid
-	rankCandidates(candidates, meta)
 	result := api.TorrentResult{TrackerArtifacts: make(map[string]api.TorrentArtifact)}
 	publications := &variantPublication{}
 	defer func() { _ = publications.Discard() }()
 	generated := make(map[string]bool)
 	selected := make(map[string]string)
 	extracted := make(map[string]bool)
-	choose := func(subject api.TorrentSubject, requireGeneral bool) (string, error) {
+	choose := func(subject api.TorrentSubject) (string, error) {
 		policy := resolveTrackerPolicy(subject, s.registry)
 		allowHash := !nohash && !hasTracker(meta.SkipIfRehashTrackers, subject.Trackers)
-		available := candidates
-		if !allowHash || requireGeneral {
-			available = slices.DeleteFunc(slices.Clone(candidates), func(path string) bool {
-				return !allowHash && generated[path] || requireGeneral && !generalPieceCount(path, subject)
-			})
+		type choice struct {
+			path       string
+			pieces     int64
+			extraction *preparedSingleFileExtraction
+			hashTail   bool
 		}
-		path, err := findReusableTorrent(ctx, available, policy, subject, cache, logger)
-		if err != nil || path != "" {
-			return path, err
+		choices := make([]choice, 0, len(candidates)+len(extractionCandidates))
+		for _, path := range candidates {
+			if !allowHash && generated[path] {
+				continue
+			}
+			if validateCandidateTorrentPolicy(path, policy, subject, logger) != nil {
+				continue
+			}
+			mi, err := metainfo.LoadFromFile(path)
+			if err != nil {
+				continue
+			}
+			info, err := mi.UnmarshalInfo()
+			if err == nil {
+				choices = append(choices, choice{path: path, pieces: int64(info.NumPieces())})
+			}
 		}
-		if !meta.DeferWrapperConversion {
-			// Prefer metadata-only extraction before hashing any final partial piece.
-			for _, hashTail := range []bool{false, true} {
-				if hashTail && !allowHash {
-					break
+		if !meta.DeferWrapperConversion && s.tmpRoot != "" {
+			for _, path := range extractionCandidates {
+				if extracted[path] {
+					continue
 				}
-				for _, candidate := range extractionCandidates {
-					if extracted[candidate] {
-						continue
-					}
-					conversion, err := extractSingleFile(ctx, s.tmpRoot, candidate, subject, policy, hashTail)
-					if err != nil {
-						return "", err
-					}
-					if conversion.path == "" {
-						continue
-					}
-					converted := conversion.path
-					if conversion.publication != nil {
-						publications.files = append(publications.files, conversion.publication)
-						if err := trackers.WriteUploadTorrent(converted, converted); err != nil {
-							return "", fmt.Errorf("torrent: canonicalize extracted torrent: %w", err)
-						}
-						destination, err := s.variantPath(meta, converted)
-						if err != nil {
-							return "", err
-						}
-						conversion.publication.destination = destination
-						generated[converted] = true
-					}
-					extracted[candidate] = true
-					path, err := findReusableTorrent(ctx, []string{converted}, policy, subject, cache, logger)
-					if path == "" && conversion.publication != nil {
-						if discardErr := conversion.publication.Discard(); discardErr != nil {
-							return "", errors.Join(err, discardErr)
-						}
-						publications.files = publications.files[:len(publications.files)-1]
-						delete(generated, converted)
-					}
-					if errors.Is(err, internalerrors.ErrClientRecheckFailed) {
-						recheckErr = err
-						continue
-					}
-					if err != nil {
-						return "", err
-					}
-					if path != "" {
-						candidates = appendUniqueTorrentCandidate(candidates, path)
-						if !requireGeneral || generalPieceCount(path, subject) {
-							return path, nil
-						}
-					}
+				prepared, err := prepareSingleFileExtraction(path, subject, policy)
+				if err != nil {
+					return "", err
 				}
+				if prepared == nil || prepared.plan.tailBytes > 0 && !allowHash {
+					continue
+				}
+				choices = append(choices, choice{
+					path:       path,
+					pieces:     prepared.pieceCount,
+					extraction: prepared,
+					hashTail:   prepared.plan.tailBytes > 0,
+				})
+			}
+		}
+		// Reuse existing pieces before hashing a partial tail. Equal scores retain
+		// discovery order, with already usable artifacts before conversions.
+		slices.SortStableFunc(choices, func(a, b choice) int {
+			if a.hashTail != b.hashTail {
+				if a.hashTail {
+					return 1
+				}
+				return -1
+			}
+			return cmp.Compare(pieceCountDistance(a.pieces), pieceCountDistance(b.pieces))
+		})
+		for _, candidate := range choices {
+			if candidate.extraction == nil {
+				path, err := findReusableTorrent(ctx, []string{candidate.path}, policy, subject, cache, logger)
+				if err != nil || path != "" {
+					return path, err
+				}
+				continue
+			}
+			conversion, err := candidate.extraction.publish(ctx, s.tmpRoot, subject)
+			if err != nil {
+				return "", err
+			}
+			converted := conversion.path
+			if converted == "" {
+				continue
+			}
+			if conversion.publication != nil {
+				publications.files = append(publications.files, conversion.publication)
+				if err := trackers.WriteUploadTorrent(converted, converted); err != nil {
+					return "", fmt.Errorf("torrent: canonicalize extracted torrent: %w", err)
+				}
+				destination, err := s.variantPath(meta, converted)
+				if err != nil {
+					return "", err
+				}
+				conversion.publication.destination = destination
+				generated[converted] = true
+			}
+			extracted[candidate.path] = true
+			path, err := findReusableTorrent(ctx, []string{converted}, policy, subject, cache, logger)
+			if path == "" && conversion.publication != nil {
+				if discardErr := conversion.publication.Discard(); discardErr != nil {
+					return "", errors.Join(err, discardErr)
+				}
+				publications.files = publications.files[:len(publications.files)-1]
+				delete(generated, converted)
+			}
+			if errors.Is(err, internalerrors.ErrClientRecheckFailed) {
+				recheckErr = err
+				continue
+			}
+			if err != nil {
+				return "", err
+			}
+			if path != "" {
+				candidates = appendUniqueTorrentCandidate(candidates, path)
+				return path, nil
 			}
 		}
 		if len(candidates) == 0 && recheckErr != nil {
@@ -178,7 +214,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		generated[created.Path] = true
 		return created.Path, nil
 	}
-	// Prefer reuse for tracker lanes before preparing optional global variants.
+	// Reuse the best compatible artifact for each requested tracker.
 	for _, tracker := range normalizedTrackerNames(meta.Trackers) {
 		skipGeneration := hasTracker(meta.SkipIfRehashTrackers, []string{tracker})
 		if rehash && skipGeneration {
@@ -187,7 +223,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 		subject := meta
 		subject.Trackers = []string{tracker}
-		path, err := choose(subject, false)
+		path, err := choose(subject)
 		if err != nil {
 			return api.TorrentResult{}, err
 		}
@@ -208,41 +244,24 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		// hashing media solely for lanes that cannot run.
 		nohash = true
 	}
-	rankCandidates(candidates, meta)
 	// The search probe must discover alternatives before accepting partial lanes.
 	if meta.DeferWrapperConversion && (len(result.SkippedTrackers) != 0 || len(candidates) == 0) {
 		return api.TorrentResult{}, fmt.Errorf("torrent: reusable variants unavailable: %w", internalerrors.ErrNotFound)
 	}
-	generalSubject := meta
-	generalSubject.Trackers = nil
-	general, err := choose(generalSubject, !nohash)
-	if err != nil {
-		return api.TorrentResult{}, err
-	}
-	if !nohash && general == "" {
-		general, err = generate(generalSubject)
+	var general string
+	if len(selected) == 0 {
+		generalSubject := meta
+		generalSubject.Trackers = nil
+		general, err = choose(generalSubject)
 		if err != nil {
 			return api.TorrentResult{}, err
 		}
-	}
-	compactSubject := generalSubject
-	limit := 16
-	if override := meta.TorrentOverrides.MaxPieceSizeMiB; override != nil {
-		limit = min(limit, *override)
-	}
-	compactSubject.TorrentOverrides.MaxPieceSizeMiB = &limit
-	compact, err := choose(compactSubject, false)
-	if err != nil {
-		return api.TorrentResult{}, err
-	}
-	if compact == "" && !nohash {
-		compact, err = generate(compactSubject)
-		if err != nil {
-			return api.TorrentResult{}, err
+		if general == "" && !nohash {
+			general, err = generate(generalSubject)
+			if err != nil {
+				return api.TorrentResult{}, err
+			}
 		}
-	}
-	if meta.DeferWrapperConversion && (compact == "" || general == "" || !generalPieceCount(general, meta)) {
-		return api.TorrentResult{}, fmt.Errorf("torrent: reusable base variants incomplete: %w", internalerrors.ErrNotFound)
 	}
 	if general == "" && len(selected) == 0 {
 		if len(result.SkippedTrackers) > 0 && !meta.DeferWrapperConversion {
@@ -295,11 +314,9 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 		return artifact, nil
 	}
-	for _, path := range []string{general, compact} {
-		if path != "" {
-			if _, err := retain(path); err != nil {
-				return api.TorrentResult{}, err
-			}
+	if general != "" {
+		if _, err := retain(general); err != nil {
+			return api.TorrentResult{}, err
 		}
 	}
 	for _, tracker := range normalizedTrackerNames(meta.Trackers) {
@@ -349,48 +366,10 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	return result, nil
 }
 
-// generalPieceCount treats 1,000–2,000 pieces as a preference, with mkbrr's
-// supported minimum and the effective maximum defining attainable boundaries.
-func generalPieceCount(path string, meta api.TorrentSubject) bool {
-	return pieceCountDistance(path, meta) == 0
-}
-
-func pieceCountDistance(path string, meta api.TorrentSubject) int64 {
-	mi, err := metainfo.LoadFromFile(path)
-	if err != nil {
-		return math.MaxInt64
-	}
-	info, err := mi.UnmarshalInfo()
-	if err != nil {
-		return math.MaxInt64
-	}
-	maxPiece := int64(128 << 20)
-	if limit := meta.TorrentOverrides.MaxPieceSizeMiB; limit != nil {
-		maxPiece = int64(*limit) << 20
-	}
-	count := int64(info.NumPieces())
-	switch {
-	case count < 1000:
-		if info.PieceLength <= 64<<10 || info.TotalLength() < 1000*(64<<10) {
-			return 0
-		}
-		return 1000 - count
-	case count > 2000:
-		if info.PieceLength >= maxPiece {
-			return 0
-		}
-		return count - 2000
-	default:
-		return 0
-	}
-}
-
-func rankCandidates(candidates []string, meta api.TorrentSubject) {
-	scores := make(map[string]int64, len(candidates))
-	for _, candidate := range candidates {
-		scores[candidate] = pieceCountDistance(candidate, meta)
-	}
-	slices.SortStableFunc(candidates, func(a, b string) int { return cmp.Compare(scores[a], scores[b]) })
+// pieceCountDistance ranks reusable artifacts without making the preferred
+// range a reason to hash again. Hard policy eligibility is checked separately.
+func pieceCountDistance(count int64) int64 {
+	return max(1000-count, count-2000, 0)
 }
 
 func (s *Service) variantPath(meta api.TorrentSubject, path string) (string, error) {

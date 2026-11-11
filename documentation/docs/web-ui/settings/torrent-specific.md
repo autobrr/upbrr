@@ -13,7 +13,7 @@ Use **Settings → Torrent preparation** to delay rehash-dependent submissions. 
 
 A negative rehash cooldown behaves as zero.
 
-Preparation retains reusable base torrents with different piece layouts when needed. Each tracker uses a base that satisfies its limits. upbrr tries to retain a variant with pieces no larger than 16 MiB and a general-purpose variant near 1,000–2,000 pieces; one artifact can serve both purposes. Tracker limits and an explicit maximum piece size take precedence over the general piece-count preference.
+Preparation selects a compatible base for each tracker from discovered torrents, preferring 1,000–2,000 pieces and then the closest available count. Equal scores preserve candidate order. Existing torrents are capped at 10,000 pieces unless using the effective maximum piece size makes a larger count unavoidable. Tracker limits and an explicit maximum piece size take precedence over piece-count goals; torrent-file size limits still apply. Compatible bases are retained for reuse without generating optional compact or general-purpose variants.
 
 The former `prefer_max_16_torrent` setting and `UA_DEFAULT_PREFER_MAX_16_TORRENT` environment variable are removed. Older configuration files can still be imported; that preference is ignored and omitted when settings are exported. The CLI `--max-piece-size` override remains available.
 
