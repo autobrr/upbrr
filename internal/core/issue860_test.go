@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/go-torrent/bencode"
 	"github.com/autobrr/go-torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -35,6 +36,13 @@ type issue860Collector struct{ candidate api.ClientTorrentCandidate }
 
 func (c issue860Collector) Collect(ctx context.Context, request preparationstate.Request) (preparedrelease.CollectedFacts, error) {
 	facts, err := (workflowMediaCollector{}).Collect(ctx, request)
+	if request.Input.Search.Skip && request.Input.Search.InfoHash == "" {
+		facts.Resources.ClientEvidence = preparationstate.ClientEvidenceSnapshot{
+			Disposition: preparationstate.ClientEvidenceDispositionSkipped,
+			Policy:      request.Input.Search,
+		}
+		return facts, err
+	}
 	facts.Resources.ClientEvidence = preparationstate.ClientEvidenceSnapshot{
 		Disposition: preparationstate.ClientEvidenceDispositionSearched,
 		Policy:      request.Input.Search,
@@ -49,66 +57,79 @@ func (c issue860Collector) Collect(ctx context.Context, request preparationstate
 
 func TestPreparedWorkflowSearchesCompatibleAlternative(t *testing.T) {
 	t.Parallel()
-	source, candidates := issue860CandidateFixture(t)
-	repository, err := db.Open(filepath.Join(t.TempDir(), "prepared.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repository.Close() })
-	if err := repository.Migrate(); err != nil {
-		t.Fatal(err)
-	}
-	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, issue860Collector{candidate: candidates[0]})
-	if err != nil {
-		t.Fatal(err)
-	}
-	facts, err := prepared.Prepare(t.Context(), api.PrepareInput{
-		SourcePath: source,
-		Search:     api.ClientSearchPolicy{InfoHash: candidates[0].InfoHash, Skip: true},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	clients := &issue860Client{result: api.ClientSearchResult{TorrentCandidates: []api.ClientTorrentCandidate{candidates[1]}}}
-	retained := &workflowRetainedUploadServiceFake{torrentPaths: map[api.TrackerID]string{"PTP": candidates[1].Path}}
-	builder := workflowUploadPlanBuilder{
-		resolver: prepared,
-		trackers: retained,
-		torrents: torrent.NewService(nil, t.TempDir()),
-		clients:  clients,
-	}
-	var pieceWork atomic.Int64
-	ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
-		if update.TotalPieces > 0 {
-			pieceWork.Add(1)
-		}
-	})
-	_, execution, err := builder.Build(ctx,
-		api.TrackerReleaseProjectionSet{
-			ReleaseRef: api.ReleaseRef{SourcePath: source, Generation: facts.Release.Generation},
-			Projections: []api.TrackerReleaseProjection{{
-				TrackerID:   "PTP",
-				Readiness:   api.ReadinessStatusReady,
-				UploadReady: true,
-			}},
-		},
-		api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
-			TrackerID: "PTP",
-			Decision:  api.DupeDecisionNoMatch,
-			Status:    api.StageStatusCompleted,
-		}}},
-		workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{},
-		api.DescriptionInstructions{
-			Options: api.UploadOptions{SkipAutoTorrent: true},
-			Torrent: api.TorrentOverrides{NoHash: new(true)},
-		},
-		releaseworkflow.UploadPlanBuildOptions{DryRun: true, NoSeed: true}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = execution.Release() }()
-	if retained.subject.TorrentPath != candidates[1].Path || clients.searches != 1 || pieceWork.Load() != 0 {
-		t.Fatalf("wrong artifact or unnecessary media work: path=%q searches=%d pieces=%d", retained.subject.TorrentPath, clients.searches, pieceWork.Load())
+	for _, test := range []struct {
+		name             string
+		explicitInfoHash bool
+	}{
+		{name: "explicit infohash", explicitInfoHash: true},
+		{name: "client auto search skipped"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source, candidates := issue860CandidateFixture(t)
+			policy := api.ClientSearchPolicy{Skip: true}
+			if test.explicitInfoHash {
+				policy.InfoHash = candidates[0].InfoHash
+			}
+			repository, err := db.Open(filepath.Join(t.TempDir(), "prepared.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repository.Close() })
+			if err := repository.Migrate(); err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, issue860Collector{candidate: candidates[0]})
+			if err != nil {
+				t.Fatal(err)
+			}
+			facts, err := prepared.Prepare(t.Context(), api.PrepareInput{
+				SourcePath: source,
+				Search:     policy,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			clients := &issue860Client{result: api.ClientSearchResult{TorrentCandidates: []api.ClientTorrentCandidate{candidates[1]}}}
+			retained := &workflowRetainedUploadServiceFake{torrentPaths: map[api.TrackerID]string{"PTP": candidates[1].Path}}
+			builder := workflowUploadPlanBuilder{
+				resolver: prepared,
+				trackers: retained,
+				torrents: torrent.NewService(nil, t.TempDir()),
+				clients:  clients,
+			}
+			var pieceWork atomic.Int64
+			ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+				if update.TotalPieces > 0 {
+					pieceWork.Add(1)
+				}
+			})
+			_, execution, err := builder.Build(ctx,
+				api.TrackerReleaseProjectionSet{
+					ReleaseRef: api.ReleaseRef{SourcePath: source, Generation: facts.Release.Generation},
+					Projections: []api.TrackerReleaseProjection{{
+						TrackerID:   "PTP",
+						Readiness:   api.ReadinessStatusReady,
+						UploadReady: true,
+					}},
+				},
+				api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+					TrackerID: "PTP",
+					Decision:  api.DupeDecisionNoMatch,
+					Status:    api.StageStatusCompleted,
+				}}},
+				workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{},
+				api.DescriptionInstructions{
+					Options: api.UploadOptions{SkipAutoTorrent: true},
+				},
+				releaseworkflow.UploadPlanBuildOptions{DryRun: true, NoSeed: true}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = execution.Release() }()
+			if retained.subject.TorrentPath != candidates[1].Path || clients.searches != 1 || pieceWork.Load() != 0 {
+				t.Fatalf("wrong artifact or unnecessary media work: path=%q searches=%d pieces=%d", retained.subject.TorrentPath, clients.searches, pieceWork.Load())
+			}
+		})
 	}
 }
 
@@ -221,16 +242,11 @@ func TestWorkflowAlternativeSearchForwardsExplicitRecheck(t *testing.T) {
 	if clients.searches != 1 || clients.subject.ClientOverrides.ForceRecheck == nil || !*clients.subject.ClientOverrides.ForceRecheck || clients.subject.InfoHash != candidates[0].InfoHash {
 		t.Fatalf("alternative search did not receive recheck: searches=%d overrides=%+v", clients.searches, clients.subject.ClientOverrides)
 	}
+	builder.torrents = torrent.NewService(api.NopLogger{}, t.TempDir()) // force a fresh alternative search, rather than a retained compatible base.
 	clients.err = internalerrors.ErrClientRecheckFailed
 	_, err = builder.prepareWorkflowTorrent(t.Context(), subject, input)
 	if !errors.Is(err, internalerrors.ErrClientRecheckFailed) {
 		t.Fatalf("alternative search hid explicit recheck failure: %v", err)
-	}
-	clients.searches = 0
-	subject.ClientSearchPolicy.InfoHash = ""
-	result, err := builder.prepareWorkflowTorrent(t.Context(), subject, input)
-	if err != nil || clients.searches != 0 || len(result.SkippedTrackers) != 1 || result.SkippedTrackers[0] != "PTP" {
-		t.Fatalf("ordinary skip changed: result=%+v searches=%d err=%v", result, clients.searches, err)
 	}
 }
 
@@ -263,7 +279,12 @@ func TestWorkflowSearchesFurtherOnlyWhenPolicyRequiresIt(t *testing.T) {
 	for _, test := range []struct {
 		name         string
 		first        int
+		skipSearch   bool
+		rehash       bool
+		searchErr    error
+		noMatch      bool
 		wantSearches int
+		wantHashing  bool
 	}{
 		{name: "compatible existing artifact", first: 1},
 		{
@@ -271,21 +292,76 @@ func TestWorkflowSearchesFurtherOnlyWhenPolicyRequiresIt(t *testing.T) {
 			first:        0,
 			wantSearches: 1,
 		},
+		{
+			name:         "client auto search skipped",
+			first:        -1,
+			skipSearch:   true,
+			wantSearches: 1,
+		},
+		{
+			name:       "compatible local base with client auto search skipped",
+			first:      1,
+			skipSearch: true,
+		},
+		{
+			name:        "forced rehash bypasses clients",
+			first:       -1,
+			skipSearch:  true,
+			rehash:      true,
+			wantHashing: true,
+		},
+		{
+			name:         "no client match falls back to hashing",
+			first:        -1,
+			skipSearch:   true,
+			noMatch:      true,
+			wantSearches: 1,
+			wantHashing:  true,
+		},
+		{
+			name:         "client unavailable falls back to hashing",
+			first:        -1,
+			skipSearch:   true,
+			searchErr:    errors.New("client unavailable"),
+			wantSearches: 1,
+			wantHashing:  true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			clients := &issue860Client{result: api.ClientSearchResult{TorrentCandidates: []api.ClientTorrentCandidate{candidates[1]}}}
+			clients := &issue860Client{err: test.searchErr}
+			if !test.noMatch {
+				clients.result = api.ClientSearchResult{TorrentCandidates: []api.ClientTorrentCandidate{candidates[1]}}
+			}
 			builder := workflowUploadPlanBuilder{torrents: torrent.NewService(api.NopLogger{}, t.TempDir()), clients: clients}
 			input := api.TorrentSubject{
-				SourcePath:            source,
-				SourceSize:            11,
-				Trackers:              []string{"PTP"},
-				ClientTorrentPath:     candidates[test.first].Path,
-				ClientTorrentInfoHash: candidates[test.first].InfoHash,
-				TorrentOverrides:      api.TorrentOverrides{NoHash: new(true)},
+				SourcePath:       source,
+				SourceSize:       11,
+				Trackers:         []string{"PTP"},
+				TorrentOverrides: api.TorrentOverrides{Rehash: new(test.rehash)},
 			}
-			result, err := builder.prepareWorkflowTorrent(t.Context(), api.UploadSubject{ClientSearchPerformed: true}, input)
-			if err != nil || result.InfoHash != candidates[1].InfoHash || clients.searches != test.wantSearches {
-				t.Fatalf("result=%+v searches=%d err=%v", result, clients.searches, err)
+			if test.first >= 0 {
+				input.ClientTorrentPath = candidates[test.first].Path
+				input.ClientTorrentInfoHash = candidates[test.first].InfoHash
+			}
+			var pieceWork atomic.Int64
+			ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+				if update.TotalPieces > 0 {
+					pieceWork.Add(1)
+				}
+			})
+			policy := api.ClientSearchPolicy{Skip: test.skipSearch, Client: new("selected-client")}
+			result, err := builder.prepareWorkflowTorrent(ctx, api.UploadSubject{
+				ClientSearchPerformed: !test.skipSearch,
+				ClientSearchPolicy:    policy,
+			}, input)
+			if err != nil || result.Path == "" || clients.searches != test.wantSearches || (pieceWork.Load() > 0) != test.wantHashing {
+				t.Fatalf("result=%+v searches=%d pieces=%d err=%v", result, clients.searches, pieceWork.Load(), err)
+			}
+			if !test.wantHashing && result.InfoHash != candidates[1].InfoHash {
+				t.Fatalf("compatible client base was not reused: hash=%s", result.InfoHash)
+			}
+			if clients.searches > 0 && (clients.subject.ClientOverrides.Client == nil || *clients.subject.ClientOverrides.Client != "selected-client") {
+				t.Fatal("base search lost selected client")
 			}
 		})
 	}
@@ -436,5 +512,83 @@ func TestWorkflowSearchesExactFileBeforeConvertingWrapper(t *testing.T) {
 	result, err := builder.prepareWorkflowTorrent(t.Context(), api.UploadSubject{ClientSearchPerformed: true}, input)
 	if err != nil || result.InfoHash != exactMeta.HashInfoBytes().String() || clients.searches != 1 {
 		t.Fatalf("exact alternative should precede wrapper conversion: result=%+v searches=%d err=%v", result, clients.searches, err)
+	}
+}
+
+func TestWorkflowSelectsPreferredDiscoveredWrapperWithoutSearching(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "video.mkv")
+	const size = 64 << 20
+	if err := os.WriteFile(source, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(source, size); err != nil {
+		t.Fatal(err)
+	}
+	candidates := make([]api.ClientTorrentCandidate, 0, 2)
+	for _, wrapped := range []bool{false, true} {
+		info := metainfo.Info{
+			Name:        "video.mkv",
+			Length:      size,
+			PieceLength: 16 << 10,
+			Pieces:      make([]byte, 4096*metainfo.HashSize),
+		}
+		path := filepath.Join(dir, "exact.torrent")
+		if wrapped {
+			info.Name = "wrapped"
+			info.Length = 0
+			info.Files = []metainfo.FileInfo{{Length: size, Path: []string{"video.mkv"}}}
+			info.PieceLength = 64 << 10
+			info.Pieces = make([]byte, 1024*metainfo.HashSize)
+			path = filepath.Join(dir, "wrapped.torrent")
+		}
+		infoBytes, err := bencode.Marshal(info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta := metainfo.MetaInfo{InfoBytes: infoBytes}
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeErr := meta.Write(file)
+		closeErr := file.Close()
+		if err := errors.Join(writeErr, closeErr); err != nil {
+			t.Fatal(err)
+		}
+		candidates = append(candidates, api.ClientTorrentCandidate{Path: path, InfoHash: meta.HashInfoBytes().String()})
+	}
+	clients := &issue860Client{}
+	builder := workflowUploadPlanBuilder{torrents: torrent.NewService(nil, t.TempDir()), clients: clients}
+	var pieceWork atomic.Int64
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ctx = api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+		if update.TotalPieces > 0 {
+			pieceWork.Add(1)
+			cancel()
+		}
+	})
+	result, err := builder.prepareWorkflowTorrent(ctx, api.UploadSubject{ClientSearchPerformed: true}, api.TorrentSubject{
+		SourcePath:              source,
+		SourceSize:              size,
+		Trackers:                []string{"EXAMPLE"},
+		ClientTorrentCandidates: candidates,
+		TorrentOverrides:        api.TorrentOverrides{NoHash: new(true)},
+	})
+	if err != nil || clients.searches != 0 || pieceWork.Load() != 0 {
+		t.Fatalf("known candidates should require no search or hashing: searches=%d pieces=%d err=%v", clients.searches, pieceWork.Load(), err)
+	}
+	selected, err := metainfo.LoadFromFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := selected.UnmarshalInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Name != "video.mkv" || info.Length != size || len(info.Files) != 0 || info.PieceLength != 64<<10 || len(info.Pieces) != 1024*metainfo.HashSize {
+		t.Fatalf("expected converted 1024-piece wrapper: name=%q length=%d files=%d pieceLength=%d pieces=%d", info.Name, info.Length, len(info.Files), info.PieceLength, len(info.Pieces)/metainfo.HashSize)
 	}
 }

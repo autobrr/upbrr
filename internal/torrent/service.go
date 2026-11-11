@@ -63,23 +63,9 @@ func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *tracker
 	}
 }
 
-// Create returns the first reusable torrent in client, source, temporary, then
-// adjacent-path order, unless Rehash requests a new artifact. Reused candidates
-// are checked against tracker policy and source layout without reading media
-// bytes. ForceRecheck verifies pieces; NoHash fails when none qualify, while Rehash takes precedence when both overrides
-// are enabled.
-//
-// Selected trackers share one combined base policy. When regeneration is
-// required, configured skip-if-rehash trackers are omitted and every remaining
-// tracker uses one newly created trackerless base. The result identifies which
-// trackers required regeneration and which were skipped.
-//
-// New artifacts are private, written below the configured temporary root, and
-// may use a temporary hardlink-or-copy staging tree for selected files. Staging
-// cleanup is attempted before return. Cancellation does not interrupt an active
-// mkbrr call: progress continues until it returns, then cancellation stops reuse,
-// fallback hashing and publication before further work.
-func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
+// createSingle generates one artifact under the supplied tracker policy. It also
+// validates direct .torrent inputs, for which there is no local media to hash.
+func (s *Service) createSingle(ctx context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
 	logger := logging.FromContext(ctx, s.logger)
 
 	select {
@@ -120,87 +106,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		return resultFromExistingTorrent(ctx, meta, source, "Using provided torrent")
 	}
 
-	candidates, err := reusableTorrentCandidates(s.tmpRoot, meta)
-	if err != nil {
-		return api.TorrentResult{}, err
-	}
-	validationCache := make(map[string]error, len(candidates))
 	policy := resolveTrackerPolicy(meta, s.registry)
-	if !forceRehash {
-		reusable, err := findReusableTorrent(ctx, candidates, policy, meta, validationCache, logger)
-		if err != nil {
-			return api.TorrentResult{}, err
-		}
-		if reusable != "" {
-			return resultFromExistingTorrent(ctx, meta, reusable, "Reusing existing torrent")
-		}
-		if !meta.DeferWrapperConversion {
-			for _, candidate := range candidates {
-				converted, err := convertSingleFileWrapper(s.tmpRoot, candidate, meta)
-				if err != nil {
-					return api.TorrentResult{}, err
-				}
-				if converted == "" {
-					continue
-				}
-				candidates = appendUniqueTorrentCandidate(candidates, converted)
-				reusable, err := findReusableTorrent(ctx, []string{converted}, policy, meta, validationCache, logger)
-				if err != nil {
-					return api.TorrentResult{}, err
-				}
-				if reusable != "" {
-					return resultFromExistingTorrent(ctx, meta, reusable, "Reusing torrent pieces with a single-file layout")
-				}
-			}
-		}
-	}
-
-	skippedTrackers := []string(nil)
-	rehashedTrackers := []string(nil)
-	if forceRehash {
-		skippedTrackers = selectedTrackerNames(meta.Trackers, meta.SkipIfRehashTrackers)
-		meta.Trackers = removeTrackerNames(meta.Trackers, skippedTrackers)
-		rehashedTrackers = normalizedTrackerNames(meta.Trackers)
-	} else if hasExistingTorrentCandidate(candidates) {
-		compatible, err := reusableTrackers(ctx, candidates, meta, validationCache, logger, s.registry)
-		if err != nil {
-			return api.TorrentResult{}, err
-		}
-		for _, tracker := range selectedTrackerNames(meta.Trackers, meta.SkipIfRehashTrackers) {
-			if _, ok := compatible[tracker]; !ok {
-				skippedTrackers = append(skippedTrackers, tracker)
-			}
-		}
-		meta.Trackers = removeTrackerNames(meta.Trackers, skippedTrackers)
-		policy = resolveTrackerPolicy(meta, s.registry)
-		reusable, err := findReusableTorrent(ctx, candidates, policy, meta, validationCache, logger)
-		if err != nil {
-			return api.TorrentResult{}, err
-		}
-		if reusable != "" {
-			result, resultErr := resultFromExistingTorrent(ctx, meta, reusable, "Reusing existing torrent")
-			result.SkippedTrackers = skippedTrackers
-			return result, resultErr
-		}
-		for _, tracker := range normalizedTrackerNames(meta.Trackers) {
-			if _, ok := compatible[tracker]; !ok {
-				rehashedTrackers = append(rehashedTrackers, tracker)
-			}
-		}
-		if len(rehashedTrackers) == 0 {
-			rehashedTrackers = normalizedTrackerNames(meta.Trackers)
-		}
-	}
-	if reuseOnly {
-		return api.TorrentResult{}, fmt.Errorf("torrent: no reusable torrent found with nohash enabled: %w", internalerrors.ErrNotFound)
-	}
-	for _, tracker := range skippedTrackers {
-		logger.Infof("torrent: skipping tracker=%s decision=skip_if_rehash", tracker)
-	}
-	if len(meta.Trackers) == 0 && len(skippedTrackers) > 0 {
-		return api.TorrentResult{SkippedTrackers: skippedTrackers}, nil
-	}
-	policy = resolveTrackerPolicy(meta, s.registry)
 
 	logger.Debugf("torrent: resolving create spec for %s", source)
 	createSpec, err := resolveCreateSpec(meta, source, s.tmpRoot)
@@ -259,12 +165,9 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 			}
 		}
 	}()
-	pieceOptions := mkbrrPieceOptions{maxPieceExp: 27}
-	if policy != nil {
-		pieceOptions = policy.createOptions(meta)
-		if err := policy.validateCreateOptions(meta, pieceOptions); err != nil {
-			return api.TorrentResult{}, fmt.Errorf("torrent: resolve tracker piece size: %w", err)
-		}
+	pieceOptions := policy.createOptions(meta)
+	if err := policy.validateCreateOptions(meta, pieceOptions); err != nil {
+		return api.TorrentResult{}, fmt.Errorf("torrent: resolve tracker piece size: %w", err)
 	}
 	logger.Infof("torrent: creating torrent output=%s max_piece_exp=%d piece_exp_set=%t", outputPath, pieceOptions.maxPieceExp, pieceOptions.pieceExp != nil)
 	reason := "Hashing torrent: no compatible reusable artifact"
@@ -280,6 +183,10 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	if cancelErr := ctx.Err(); cancelErr != nil {
 		return api.TorrentResult{}, fmt.Errorf("torrent: canceled before hashing: %w", cancelErr)
 	}
+	var target *uint
+	if pieceOptions.pieceExp == nil {
+		target = new(uint(1000))
+	}
 	info, err := mkbrr.Create(mkbrr.CreateOptions{
 		Path:             createSpec.path,
 		Name:             createSpec.name,
@@ -287,6 +194,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		IsPrivate:        true,
 		TrackerURLs:      trackerURLs,
 		MaxPieceLength:   &pieceOptions.maxPieceExp,
+		TargetPieceCount: target,
 		PieceLengthExp:   pieceOptions.pieceExp,
 		IncludePatterns:  createSpec.includePatterns,
 		ProgressCallback: torrentProgressCallback(ctx, meta),
@@ -341,8 +249,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		Path:               resultPath,
 		InfoHash:           info.InfoHash,
 		PendingPublication: pending,
-		RehashedTrackers:   rehashedTrackers,
-		SkippedTrackers:    skippedTrackers,
+		RehashedTrackers:   normalizedTrackerNames(meta.Trackers),
 	}, nil
 }
 
@@ -480,6 +387,22 @@ func reusableTorrentCandidates(tmpRoot string, meta api.TorrentSubject) ([]strin
 			return nil, err
 		}
 		candidates = appendUniqueTorrentCandidate(candidates, tmpTorrentPath)
+		retainedDir := filepath.Join(filepath.Dir(tmpTorrentPath), "base-torrents")
+		retained, err := os.ReadDir(retainedDir)
+		if errors.Is(err, os.ErrNotExist) {
+			// Windows can report a regular file as missing during directory reads.
+			if _, statErr := os.Stat(retainedDir); errors.Is(statErr, os.ErrNotExist) {
+				err = nil
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("torrent: list retained bases: %w", err)
+		}
+		for _, candidate := range retained {
+			if !candidate.IsDir() && strings.HasSuffix(candidate.Name(), ".torrent") {
+				candidates = appendUniqueTorrentCandidate(candidates, filepath.Join(retainedDir, candidate.Name()))
+			}
+		}
 	}
 	candidates = appendUniqueTorrentCandidate(candidates, meta.SourcePath+".torrent")
 	baseName := filepath.Base(meta.SourcePath)
@@ -500,15 +423,6 @@ func appendUniqueTorrentCandidate(candidates []string, candidate string) []strin
 		}
 	}
 	return append(candidates, candidate)
-}
-
-func hasExistingTorrentCandidate(candidates []string) bool {
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return true
-		}
-	}
-	return false
 }
 
 // findReusableTorrent returns the first candidate that satisfies the provided
@@ -539,6 +453,9 @@ func findReusableTorrent(
 				return "", fmt.Errorf("torrent: canceled after checking candidate: %w", err)
 			}
 			validationCache[candidate] = validationErr
+			if errors.Is(validationErr, internalerrors.ErrClientRecheckFailed) {
+				return "", validationErr
+			}
 		}
 		if validationErr == nil {
 			if logger != nil {
@@ -548,61 +465,6 @@ func findReusableTorrent(
 		}
 	}
 	return "", nil
-}
-
-// reusableTrackers returns trackers for which at least one candidate satisfies
-// that tracker's policy and the prepared source content.
-func reusableTrackers(
-	ctx context.Context,
-	candidates []string,
-	meta api.TorrentSubject,
-	validationCache map[string]error,
-	logger api.Logger,
-	registry *trackers.Registry,
-) (map[string]struct{}, error) {
-	compatible := make(map[string]struct{}, len(meta.Trackers))
-	for _, tracker := range normalizedTrackerNames(meta.Trackers) {
-		trackerMeta := meta
-		trackerMeta.Trackers = []string{tracker}
-		reusable, err := findReusableTorrent(ctx, candidates, resolveTrackerPolicy(trackerMeta, registry), trackerMeta, validationCache, logger)
-		if err != nil {
-			return nil, err
-		}
-		if reusable != "" {
-			compatible[tracker] = struct{}{}
-		}
-	}
-	return compatible, nil
-}
-
-func selectedTrackerNames(trackers []string, selected []string) []string {
-	wanted := make(map[string]struct{}, len(selected))
-	for _, tracker := range selected {
-		if normalized := strings.ToUpper(strings.TrimSpace(tracker)); normalized != "" {
-			wanted[normalized] = struct{}{}
-		}
-	}
-	result := make([]string, 0, len(wanted))
-	for _, tracker := range normalizedTrackerNames(trackers) {
-		if _, ok := wanted[tracker]; ok {
-			result = append(result, tracker)
-		}
-	}
-	return result
-}
-
-func removeTrackerNames(trackers []string, removed []string) []string {
-	blocked := make(map[string]struct{}, len(removed))
-	for _, tracker := range removed {
-		blocked[strings.ToUpper(strings.TrimSpace(tracker))] = struct{}{}
-	}
-	result := make([]string, 0, len(trackers))
-	for _, tracker := range normalizedTrackerNames(trackers) {
-		if _, ok := blocked[tracker]; !ok {
-			result = append(result, tracker)
-		}
-	}
-	return result
 }
 
 func normalizedTrackerNames(trackers []string) []string {
@@ -633,16 +495,21 @@ func validateCandidateTorrent(ctx context.Context, path string, policy *trackerT
 }
 
 func validateCandidateTorrentPolicy(path string, policy *trackerTorrentPolicy, meta api.TorrentSubject, logger api.Logger) error {
-	if policy == nil {
-		return nil
-	}
 	if err := policy.validateTorrent(path, meta); err != nil {
 		if logger != nil {
 			logger.Debugf("torrent: reusable candidate rejected path=%s stage=tracker_policy reason=%s", path, redaction.RedactValue(err.Error(), nil))
 		}
 		return err
 	}
-	return nil
+	mi, err := metainfo.LoadFromFile(path)
+	if err != nil {
+		return fmt.Errorf("load reusable torrent: %w", err)
+	}
+	info, err := mi.UnmarshalInfo()
+	if err != nil {
+		return fmt.Errorf("decode reusable torrent: %w", err)
+	}
+	return validateReusablePieceCount(&info, policy, meta)
 }
 
 func validateCandidateTorrentContent(ctx context.Context, path string, meta api.TorrentSubject, logger api.Logger) error {
@@ -666,7 +533,7 @@ func validateCandidateTorrentContent(ctx context.Context, path string, meta api.
 		if logger != nil {
 			logger.Debugf("torrent: reusable candidate rejected path=%s stage=piece_hash reason=%s", path, redaction.RedactValue(err.Error(), nil))
 		}
-		return err
+		return fmt.Errorf("%w: %w", internalerrors.ErrClientRecheckFailed, err)
 	}
 	return nil
 }

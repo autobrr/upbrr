@@ -74,7 +74,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
   Metadata: {
     SkipAutoTorrent: field(
       "Skip automatic torrent-client search",
-      "Do not automatically search configured torrent clients for reusable torrents during preparation.",
+      "Skip the initial search for tracker metadata and reusable torrents. BASE preparation still checks clients for compatible torrents before hashing.",
     ),
     SkipTrackerFilenameLookup: field(
       "Skip filename-based tracker lookup",
@@ -281,10 +281,6 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     MkbrrThreads: field(
       "Torrent hashing threads (compatibility)",
       "Retained for configuration compatibility. This value does not currently control mkbrr hashing concurrency.",
-    ),
-    PreferMax16: field(
-      "Prefer reusable torrents with pieces up to 16 MiB",
-      "Prefer a validated reusable client torrent with piece size at most 16 MiB. Does not impose that piece size on newly generated torrents.",
     ),
     RehashCooldown: field(
       "Rehash-dependent upload delay (seconds)",

@@ -115,10 +115,12 @@ func (s *Service) Upload(ctx context.Context, meta api.UploadSubject) (api.Uploa
 		s.logger.Infof("trackers: no trackers configured, skipping upload")
 		return api.UploadSummary{}, nil
 	}
-	if baseTorrent, err := resolveUploadTorrentBasePath(meta, s.cfg.MainSettings.DBPath); err == nil {
-		meta.TorrentPath = baseTorrent
-	} else if !isUploadTorrentNotFound(err) {
-		return api.UploadSummary{}, fmt.Errorf("trackers: shared upload torrent: %w", err)
+	if meta.TrackerTorrentArtifacts == nil {
+		if baseTorrent, err := resolveUploadTorrentBasePath(meta, s.cfg.MainSettings.DBPath); err == nil {
+			meta.TorrentPath = baseTorrent
+		} else if !isUploadTorrentNotFound(err) {
+			return api.UploadSummary{}, fmt.Errorf("trackers: shared upload torrent: %w", err)
+		}
 	}
 
 	preflight := s.preflightDescriptionImageHosts(ctx, meta, resolved)
@@ -381,10 +383,12 @@ func (s *Service) PrepareRetainedUploadPlan(
 		return nil, errors.New("trackers: retained upload preparation has no eligible projections")
 	}
 	meta.Trackers = append([]string(nil), resolved...)
-	if baseTorrent, err := resolveUploadTorrentBasePath(meta, s.cfg.MainSettings.DBPath); err == nil {
-		meta.TorrentPath = baseTorrent
-	} else if !isUploadTorrentNotFound(err) {
-		return nil, fmt.Errorf("trackers: retained upload shared torrent: %w", err)
+	if meta.TrackerTorrentArtifacts == nil {
+		if baseTorrent, err := resolveUploadTorrentBasePath(meta, s.cfg.MainSettings.DBPath); err == nil {
+			meta.TorrentPath = baseTorrent
+		} else if !isUploadTorrentNotFound(err) {
+			return nil, fmt.Errorf("trackers: retained upload shared torrent: %w", err)
+		}
 	}
 	preflight := s.preflightDescriptionImageHosts(ctx, meta, resolved)
 	slots := s.prepareUploadPlans(ctx, meta, resolved, preflight, nil, projectionByTracker)

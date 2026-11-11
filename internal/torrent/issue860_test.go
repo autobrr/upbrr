@@ -281,59 +281,79 @@ func TestKeepFolderRejectsSameBasenameSingleFileMetainfo(t *testing.T) {
 
 func TestConcurrentSingleFileWrapperConversion(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	folder := filepath.Join(dir, "release")
-	source := filepath.Join(folder, "video.mkv")
-	writeTestFile(t, source, "source-data")
-	wrapper := filepath.Join(dir, "wrapper.torrent")
-	createTestTorrentFromExisting(t, folder, wrapper)
-	mi, err := metainfo.LoadFromFile(wrapper)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpRoot := t.TempDir()
-	subject := api.TorrentSubject{
-		SourcePath:            source,
-		ClientTorrentPath:     wrapper,
-		ClientTorrentInfoHash: mi.HashInfoBytes().String(),
-		TorrentOverrides:      api.TorrentOverrides{NoHash: new(true)},
-	}
-	const count = 8
-	results := make(chan api.TorrentResult, count)
-	errors := make(chan error, count)
-	var workers sync.WaitGroup
-	var ready sync.WaitGroup
-	ready.Add(count)
-	start := make(chan struct{})
-	for range count {
-		service := NewService(nil, tmpRoot)
-		workers.Go(func() {
-			ready.Done()
-			<-start
-			result, err := service.Create(t.Context(), subject)
-			results <- result
-			errors <- err
+	for name, sidecars := range map[string]bool{"folder wrapper": false, "partial piece": true} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			folder := filepath.Join(dir, "release")
+			source := filepath.Join(folder, "video.mkv")
+			writeTestFile(t, source, "source-data")
+			if sidecars {
+				writeTestFile(t, filepath.Join(folder, "zz-readme.nfo"), "sidecar")
+			}
+			wrapper := filepath.Join(dir, "wrapper.torrent")
+			createTestTorrentFromExisting(t, folder, wrapper)
+			mi, err := metainfo.LoadFromFile(wrapper)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tmpRoot := t.TempDir()
+			subject := api.TorrentSubject{
+				SourcePath:            source,
+				ClientTorrentPath:     wrapper,
+				ClientTorrentInfoHash: mi.HashInfoBytes().String(),
+				TorrentOverrides:      api.TorrentOverrides{NoHash: new(!sidecars)},
+			}
+			const count = 8
+			results := make(chan api.TorrentResult, count)
+			errors := make(chan error, count)
+			var workers sync.WaitGroup
+			var ready sync.WaitGroup
+			var partial, other atomic.Int64
+			ctx := api.WithUploadProgressReporter(t.Context(), func(update api.UploadProgressUpdate) {
+				if update.TotalPieces > 0 {
+					if update.Message == "Hashing final partial torrent piece" {
+						partial.Add(1)
+					} else {
+						other.Add(1)
+					}
+				}
+			})
+			ready.Add(count)
+			start := make(chan struct{})
+			for range count {
+				service := NewService(nil, tmpRoot)
+				workers.Go(func() {
+					ready.Done()
+					<-start
+					result, err := service.Create(ctx, subject)
+					results <- result
+					errors <- err
+				})
+			}
+			ready.Wait()
+			close(start)
+			workers.Wait()
+			close(results)
+			close(errors)
+			for err := range errors {
+				if err != nil {
+					t.Fatalf("concurrent wrapper conversion: %v", err)
+				}
+			}
+			var hash string
+			for result := range results {
+				if hash != "" && result.InfoHash != hash {
+					t.Fatalf("concurrent conversions produced different infohashes: %s and %s", hash, result.InfoHash)
+				}
+				hash = result.InfoHash
+			}
+			if hash == "" {
+				t.Fatal("no converted artifact")
+			}
+			if other.Load() != 0 || sidecars && partial.Load() == 0 || !sidecars && partial.Load() != 0 {
+				t.Fatalf("wrong hashing work: partial=%d other=%d", partial.Load(), other.Load())
+			}
 		})
-	}
-	ready.Wait()
-	close(start)
-	workers.Wait()
-	close(results)
-	close(errors)
-	for err := range errors {
-		if err != nil {
-			t.Fatalf("concurrent wrapper conversion: %v", err)
-		}
-	}
-	var hash string
-	for result := range results {
-		if hash != "" && result.InfoHash != hash {
-			t.Fatalf("concurrent conversions produced different infohashes: %s and %s", hash, result.InfoHash)
-		}
-		hash = result.InfoHash
-	}
-	if hash == "" {
-		t.Fatal("no converted artifact")
 	}
 }
 
