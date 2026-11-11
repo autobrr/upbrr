@@ -13,7 +13,7 @@ Use **Settings → Torrent preparation** to delay rehash-dependent submissions. 
 
 A negative rehash cooldown behaves as zero.
 
-Preparation selects a compatible base for each tracker from discovered torrents, preferring 1,000–2,000 pieces and then the closest available count. Equal scores preserve candidate order. Existing torrents are capped at 10,000 pieces unless using the effective maximum piece size makes a larger count unavoidable. Tracker limits and an explicit maximum piece size take precedence over piece-count goals; torrent-file size limits still apply. Compatible bases are retained for reuse without generating optional compact or general-purpose variants.
+Preparation selects a compatible base for each tracker from discovered torrents, ranking candidates that need no partial-tail hashing ahead of those that do. Within each group, selection prefers 1,000–2,000 pieces and then the closest available count. Equal scores prefer already usable artifacts over layout conversions, then preserve candidate order within each category. Existing torrents are capped at 10,000 pieces unless using the effective maximum piece size makes a larger count unavoidable. Tracker limits and an explicit maximum piece size take precedence over piece-count goals; torrent-file size limits still apply. Compatible bases are retained for reuse without generating optional compact or general-purpose variants.
 
 The former `prefer_max_16_torrent` setting and `UA_DEFAULT_PREFER_MAX_16_TORRENT` environment variable are removed. Older configuration files can still be imported; that preference is ignored and omitted when settings are exported. The CLI `--max-piece-size` override remains available.
 
