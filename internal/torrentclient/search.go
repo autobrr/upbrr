@@ -1566,7 +1566,7 @@ func (s *Service) selectValidTorrent(
 						return validatedTorrentSelection{}, err
 					}
 					considerClientMatch(match)
-					if validation.reason == "single_file_alternative" || validation.reason == "single_file_wrapper" {
+					if validation.reason == "single_file_alternative" || validation.reason == "single_file_extraction" {
 						if err := retainCandidate(normalizedHash, outputPath, data); err != nil {
 							return validatedTorrentSelection{}, err
 						}
@@ -1623,7 +1623,7 @@ func (s *Service) selectValidTorrent(
 
 		if !validation.reusable {
 			s.logger.Tracef("clients: validated exported torrent as client match only for %s (reason=%s)", normalizedHash, validation.reason)
-			if validation.reason == "path_mismatch" || validation.reason == "single_file_alternative" || validation.reason == "single_file_wrapper" {
+			if validation.reason == "path_mismatch" || validation.reason == "single_file_alternative" || validation.reason == "single_file_extraction" {
 				if err := retainCandidate(normalizedHash, outputPath, data); err != nil {
 					return validatedTorrentSelection{}, err
 				}
@@ -1855,7 +1855,14 @@ func validateTorrentData(meta api.ClientSubject, hash string, data []byte) torre
 	}
 
 	valid, wrongFile := validateTorrentPaths(meta, info)
-	if !valid && !wrongFile {
+	subject := api.TorrentSubject{
+		SourcePath: meta.SourcePath,
+		FileList:   meta.FileList,
+		DiscType:   meta.DiscType,
+		KeepFolder: meta.KeepFolder,
+	}
+	extractable := !valid && torrent.CanExtractSingleFile(metaInfo.InfoBytes, subject)
+	if !valid && !wrongFile && !extractable {
 		return torrentDataValidation{infoHash: infoHash, reason: "path_mismatch"}
 	}
 
@@ -1869,12 +1876,6 @@ func validateTorrentData(meta api.ClientSubject, hash string, data []byte) torre
 		}
 	}
 
-	subject := api.TorrentSubject{
-		SourcePath: meta.SourcePath,
-		FileList:   meta.FileList,
-		DiscType:   meta.DiscType,
-		KeepFolder: meta.KeepFolder,
-	}
 	if err := torrent.ValidateTorrentLayout(info, subject); err == nil {
 		return torrentDataValidation{
 			reusable:    true,
@@ -1883,12 +1884,12 @@ func validateTorrentData(meta api.ClientSubject, hash string, data []byte) torre
 			infoHash:    infoHash,
 		}
 	}
-	if converted, err := torrent.ConvertSingleFileWrapperInfo(metaInfo.InfoBytes, subject); err == nil && len(converted) > 0 {
+	if extractable {
 		return torrentDataValidation{
 			clientMatch: true,
 			pieceSize:   pieceSize,
 			infoHash:    infoHash,
-			reason:      "single_file_wrapper",
+			reason:      "single_file_extraction",
 		}
 	}
 	// Requested hashes require a source-valid artifact, including safe wrapper

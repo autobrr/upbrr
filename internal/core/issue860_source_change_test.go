@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/go-torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -22,71 +23,95 @@ import (
 
 func TestWorkflowDiscardsGeneratedTorrentWhenSourceChanges(t *testing.T) {
 	t.Parallel()
-	source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
-	if err := os.WriteFile(source, []byte("source-data"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	inspected, err := preparedrelease.VerifyInputSource(t.Context(), api.PrepareInput{SourcePath: source})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpRoot := t.TempDir()
-	torrents := torrent.NewService(nil, tmpRoot)
-	builder := workflowUploadPlanBuilder{
-		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
-			SourcePath:     source,
-			SourceManifest: inspected.Manifest,
-			SourceIdentity: inspected.Identity,
-		}},
-		trackers: &workflowRetainedUploadServiceFake{},
-		torrents: torrents,
-	}
-	ctx := api.WithActiveInputAuthority(t.Context(), api.ActiveInputAuthority{CoordinatorID: "coordinator", Fence: 1})
-	var mutateOnce sync.Once
-	var mutationErr error
-	ctx = api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
-		if update.Message != "Hashing complete" {
-			return
-		}
-		mutateOnce.Do(func() {
-			mutationErr = os.WriteFile(source, []byte("source-evil"), 0o600)
-			if mutationErr == nil {
-				changed := time.Now().Add(time.Hour)
-				mutationErr = os.Chtimes(source, changed, changed)
+	for name, partial := range map[string]bool{"full generation": false, "partial extraction": true} {
+		t.Run(name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+			if err := os.WriteFile(source, []byte("source-data"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var clientCandidates []api.ClientTorrentCandidate
+			if partial {
+				if err := os.WriteFile(filepath.Join(filepath.Dir(source), "readme.nfo"), []byte("sidecar"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(t.TempDir(), "client.torrent")
+				if _, err := mkbrr.Create(mkbrr.CreateOptions{
+					Path:       filepath.Dir(source),
+					OutputPath: path,
+					Quiet:      true,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				mi, err := metainfo.LoadFromFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				clientCandidates = []api.ClientTorrentCandidate{{Path: path, InfoHash: mi.HashInfoBytes().String()}}
+			}
+			inspected, err := preparedrelease.VerifyInputSource(t.Context(), api.PrepareInput{SourcePath: source})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tmpRoot := t.TempDir()
+			torrents := torrent.NewService(nil, tmpRoot)
+			builder := workflowUploadPlanBuilder{
+				resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
+					SourcePath:              source,
+					SourceManifest:          inspected.Manifest,
+					SourceIdentity:          inspected.Identity,
+					ClientTorrentCandidates: clientCandidates,
+				}},
+				trackers: &workflowRetainedUploadServiceFake{},
+				torrents: torrents,
+			}
+			ctx := api.WithActiveInputAuthority(t.Context(), api.ActiveInputAuthority{CoordinatorID: "coordinator", Fence: 1})
+			var mutateOnce sync.Once
+			var mutationErr error
+			ctx = api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+				if (!partial && update.Message != "Hashing complete") || (partial && (update.Message != "Hashing final partial torrent piece" || update.CompletedPieces != 1)) {
+					return
+				}
+				mutateOnce.Do(func() {
+					mutationErr = os.WriteFile(source, []byte("source-evil"), 0o600)
+					if mutationErr == nil {
+						changed := time.Now().Add(time.Hour)
+						mutationErr = os.Chtimes(source, changed, changed)
+					}
+				})
+			})
+			_, execution, err := builder.Build(ctx,
+				api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+					TrackerID:   "EXAMPLE",
+					Readiness:   api.ReadinessStatusReady,
+					UploadReady: true,
+				}}},
+				api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+					TrackerID: "EXAMPLE",
+					Decision:  api.DupeDecisionNoMatch,
+					Status:    api.StageStatusCompleted,
+				}}},
+				workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{}, api.DescriptionInstructions{},
+				releaseworkflow.UploadPlanBuildOptions{DryRun: true, NoSeed: true}, time.Now())
+			if execution != nil {
+				_ = execution.Release()
+			}
+			if mutationErr != nil {
+				t.Fatal(mutationErr)
+			}
+			if !errors.Is(err, preparedrelease.ErrSourceChanged) {
+				t.Fatalf("expected changed source rejection, got %v", err)
+			}
+			path, err := torrent.TempTorrentPath(tmpRoot, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("failed generation left reusable artifact: %s: %v", path, err)
+			}
+			if _, err := torrents.Create(t.Context(), api.TorrentSubject{SourcePath: source, TorrentOverrides: api.TorrentOverrides{NoHash: new(true)}}); err == nil {
+				t.Fatal("retry reused a failed generation")
 			}
 		})
-	})
-	_, execution, err := builder.Build(ctx,
-		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
-			TrackerID:   "EXAMPLE",
-			Readiness:   api.ReadinessStatusReady,
-			UploadReady: true,
-		}}},
-		api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
-			TrackerID: "EXAMPLE",
-			Decision:  api.DupeDecisionNoMatch,
-			Status:    api.StageStatusCompleted,
-		}}},
-		workflowDupePrivateEvidence{}, api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{}, api.DescriptionInstructions{},
-		releaseworkflow.UploadPlanBuildOptions{DryRun: true, NoSeed: true}, time.Now())
-	if execution != nil {
-		_ = execution.Release()
-	}
-	if mutationErr != nil {
-		t.Fatal(mutationErr)
-	}
-	if !errors.Is(err, preparedrelease.ErrSourceChanged) {
-		t.Fatalf("expected changed source rejection, got %v", err)
-	}
-	path, err := torrent.TempTorrentPath(tmpRoot, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("failed generation left reusable artifact: %s: %v", path, err)
-	}
-	if _, err := torrents.Create(t.Context(), api.TorrentSubject{SourcePath: source, TorrentOverrides: api.TorrentOverrides{NoHash: new(true)}}); err == nil {
-		t.Fatal("retry reused a failed generation")
 	}
 }
 

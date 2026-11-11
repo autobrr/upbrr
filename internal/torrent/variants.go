@@ -53,17 +53,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	if rehash {
 		candidates = nil
 	}
-	if !meta.DeferWrapperConversion {
-		for _, candidate := range slices.Clone(candidates) {
-			converted, err := convertSingleFileWrapper(s.tmpRoot, candidate, meta)
-			if err != nil {
-				return api.TorrentResult{}, err
-			}
-			if converted != "" {
-				candidates = appendUniqueTorrentCandidate(candidates, converted)
-			}
-		}
-	}
+	extractionCandidates := slices.Clone(candidates)
 	// Layout, captured-byte identity, and requested recheck are evaluated once per
 	// candidate; stale alternatives must not discard a verified reusable base.
 	// A failed explicit recheck remains fatal when no verified candidate survives.
@@ -82,9 +72,6 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 			valid = append(valid, path)
 		}
 	}
-	if len(valid) == 0 && recheckErr != nil {
-		return api.TorrentResult{}, recheckErr
-	}
 	candidates = valid
 	rankCandidates(candidates, meta)
 	result := api.TorrentResult{TrackerArtifacts: make(map[string]api.TorrentArtifact)}
@@ -92,10 +79,75 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	defer func() { _ = publications.Discard() }()
 	generated := make(map[string]bool)
 	selected := make(map[string]string)
+	extracted := make(map[string]bool)
 	choose := func(subject api.TorrentSubject) (string, error) {
 		policy := resolveTrackerPolicy(subject, s.registry)
-
-		return findReusableTorrent(ctx, candidates, policy, subject, cache, logger)
+		allowHash := !nohash && !hasTracker(meta.SkipIfRehashTrackers, subject.Trackers)
+		available := candidates
+		if !allowHash {
+			available = slices.DeleteFunc(slices.Clone(candidates), func(path string) bool { return generated[path] })
+		}
+		path, err := findReusableTorrent(ctx, available, policy, subject, cache, logger)
+		if err != nil || path != "" {
+			return path, err
+		}
+		if !meta.DeferWrapperConversion {
+			// Prefer metadata-only extraction before hashing any final partial piece.
+			for _, hashTail := range []bool{false, true} {
+				if hashTail && !allowHash {
+					break
+				}
+				for _, candidate := range extractionCandidates {
+					if extracted[candidate] {
+						continue
+					}
+					conversion, err := extractSingleFile(ctx, s.tmpRoot, candidate, subject, policy, hashTail)
+					if err != nil {
+						return "", err
+					}
+					if conversion.path == "" {
+						continue
+					}
+					converted := conversion.path
+					if conversion.publication != nil {
+						publications.files = append(publications.files, conversion.publication)
+						if err := trackers.WriteUploadTorrent(converted, converted); err != nil {
+							return "", fmt.Errorf("torrent: canonicalize extracted torrent: %w", err)
+						}
+						destination, err := s.variantPath(meta, converted)
+						if err != nil {
+							return "", err
+						}
+						conversion.publication.destination = destination
+						generated[converted] = true
+					}
+					extracted[candidate] = true
+					path, err := findReusableTorrent(ctx, []string{converted}, policy, subject, cache, logger)
+					if path == "" && conversion.publication != nil {
+						if discardErr := conversion.publication.Discard(); discardErr != nil {
+							return "", errors.Join(err, discardErr)
+						}
+						publications.files = publications.files[:len(publications.files)-1]
+						delete(generated, converted)
+					}
+					if errors.Is(err, internalerrors.ErrClientRecheckFailed) {
+						recheckErr = err
+						continue
+					}
+					if err != nil {
+						return "", err
+					}
+					if path != "" {
+						candidates = appendUniqueTorrentCandidate(candidates, path)
+						return path, nil
+					}
+				}
+			}
+		}
+		if len(candidates) == 0 && recheckErr != nil {
+			return "", recheckErr
+		}
+		return "", nil
 	}
 	generate := func(subject api.TorrentSubject) (string, error) {
 		subject.TorrentOverrides.Rehash = new(true)
@@ -276,6 +328,9 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 	}
 	publications.path = result.Path
+	if err := ctx.Err(); err != nil {
+		return api.TorrentResult{}, fmt.Errorf("torrent: canceled before publication: %w", err)
+	}
 	if len(publications.files) > 0 {
 		if meta.DeferGenerationPublication {
 			result.PendingPublication = publications
