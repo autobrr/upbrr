@@ -72,8 +72,8 @@
     "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "reason": "Issue 905 advances the AZ/CZ bindings for canonical title dialogue evidence and confirmed-dub handling. Provider selectors, manual-finalized authority, source/country/age checks and callback ownership are unchanged. PHD retains its maintainer-selected English fallback; this is not a verified PHD policy.",
-    "sha256": "16752048e2eec911a1cd01bbae248ea20d9cfeb7ad4635fd5589247a74807684"
+    "reason": "Advances AZ/CZ policy versions for confirmed original multilingual soundtrack eligibility. The binding changes only version literals; provider selectors, manual-finalized authority, source/country/age checks and callback ownership are unchanged. PHD retains its maintainer-selected English fallback; this is not a verified PHD policy.",
+    "sha256": "6de9af196d57eed591042cf097ee84ca2a4d3ec3de0aa57d40408613df8b16c2"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
     "reason": "Appends the AZ/CZ language assessment using finalized LanguageFacts without a provider fallback. Existing TMDB origin-country routing, manual-aware age checks and constructibility remain unchanged; conflicting-provider corrections and explicit clears remain authoritative.",
@@ -1144,8 +1144,8 @@
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "reason": "Issue 905 advances the owned validation version for confirmed-dub source guidance. Provider/manual metadata selectors, full-DVD constructibility, callback ownership and taxonomy remain unchanged.",
-    "sha256": "8288d0d440863064d923fc1d2e0dd5067d50815648aaa61c4e68d1931075fd71"
+    "reason": "Advances the owned validation version for confirmed original multilingual soundtrack eligibility. Only the version literal changes in this binding; provider/manual metadata selectors, full-DVD constructibility, callback ownership and taxonomy remain unchanged.",
+    "sha256": "a5a4581c9335c15fe9c871d53ace4ad99e2a067b5b9adb7604b567f2ed409573"
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
