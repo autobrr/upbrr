@@ -74,7 +74,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
   Metadata: {
     SkipAutoTorrent: field(
       "Skip automatic torrent-client search",
-      "Do not automatically search configured torrent clients for reusable torrents during preparation.",
+      "Skip the initial search for tracker metadata and reusable torrents. BASE preparation still checks clients for compatible torrents before hashing.",
     ),
     SkipTrackerFilenameLookup: field(
       "Skip filename-based tracker lookup",
