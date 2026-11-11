@@ -14,31 +14,44 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/emuw/v1", trackers.StructuredNamePolicy{Defaults: applyTVYear})
+	return trackers.StructuredReleaseNamePolicy("unit3d/emuw/v2", trackers.StructuredNamePolicy{Defaults: applyTVYear})
 }
 
 // applyTVYear includes the matching prepared TMDB year independently of TVDB
-// disambiguation, while retaining manual naming and missing-evidence behavior.
+// disambiguation and orders automatic years after the episode or season. Manual
+// naming is preserved, and missing evidence never supplies a replacement year.
 func applyTVYear(editor *trackers.NameEditor, subject api.UploadSubject, _ config.TrackerConfig) error {
 	if subject.Identity.Category != api.CanonicalCategoryTV || subject.EffectiveMetadata.YearProvenance.IsManual() {
 		return nil
 	}
+	if year := currentTMDBTVYear(subject); year > 0 {
+		if err := editor.Set(api.NameRoleYear, strconv.Itoa(year)); err != nil {
+			return fmt.Errorf("set EMUW TV year: %w", err)
+		}
+		if err := editor.Include(api.NameRoleYear); err != nil {
+			return fmt.Errorf("include EMUW TV year: %w", err)
+		}
+	}
+	for _, anchor := range []api.ReleaseNameRole{api.NameRoleSeason, api.NameRoleEpisode} {
+		if err := editor.MoveAfter(api.NameRoleYear, anchor); err != nil {
+			return fmt.Errorf("order EMUW TV year: %w", err)
+		}
+	}
+	return nil
+}
+
+// currentTMDBTVYear returns a year only from matching, current prepared TV metadata.
+func currentTMDBTVYear(subject api.UploadSubject) int {
 	data := subject.ProviderMetadata.TMDB
 	if data == nil || data.Year <= 0 || subject.Identity.TMDBID <= 0 || data.TMDBID != subject.Identity.TMDBID ||
 		strings.TrimSpace(subject.SourcePath) == "" || strings.TrimSpace(subject.Identity.SourcePath) == "" ||
 		strings.TrimSpace(subject.ProviderMetadata.SourcePath) == "" || subject.Identity.Generation == 0 ||
 		!subject.ProviderMetadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
-		return nil
+		return 0
 	}
 	category, err := api.NormalizeCanonicalCategory(data.Category)
 	if err != nil || category != api.CanonicalCategoryTV {
-		return nil
+		return 0
 	}
-	if err := editor.Set(api.NameRoleYear, strconv.Itoa(data.Year)); err != nil {
-		return fmt.Errorf("set EMUW TV year: %w", err)
-	}
-	if err := editor.Include(api.NameRoleYear); err != nil {
-		return fmt.Errorf("include EMUW TV year: %w", err)
-	}
-	return nil
+	return data.Year
 }

@@ -1389,7 +1389,11 @@
   },
   "internal/trackers/impl/unit3d/sites/emuw/name.go:applyTVYear": {
     "reason": "EMUW TV year uses current source/generation-bound TMDB metadata with matching positive identity and TV category. Manual year facts and components, including omission, and opaque names retain authority. Movie and other destination policies remain unchanged; the profile, structured-name caller and provider boundary were independently reviewed.",
-    "sha256": "708158033187d7ef9c9ec24d6a1ab9500a515ecd005e4d141ff43d05d86a857a"
+    "sha256": "aa730c7f00a8fde976e6f34f40b13a72678f1f17f42c31b210403bdcf7dcf613"
+  },
+  "internal/trackers/impl/unit3d/sites/emuw/name.go:currentTMDBTVYear": {
+    "reason": "EMUW TV year uses current source/generation-bound TMDB metadata with matching positive identity and TV category. Manual year facts and components, including omission, and opaque names retain authority. Movie and other destination policies remain unchanged; the profile, structured-name caller and provider boundary were independently reviewed.",
+    "sha256": "ef9c4d9d04180c815bc0917ad0713442766a46ade7579ef9277282119923fcca"
   },
   "internal/trackers/impl/unit3d/sites/hhd/name.go:applyHHDTVDBDisambiguation": {
     "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",

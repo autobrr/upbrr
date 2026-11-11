@@ -23,10 +23,11 @@ func TestTVYearPolicy(t *testing.T) {
 		mode     string
 		want     string
 	}{
-		{"episode", "TV", "E02", "", "Example Series 2020 S01E02 1080p WEB-DL H.265-GRP"},
-		{"season pack", "TV", "", "", "Example Series 2020 S01 1080p WEB-DL H.265-GRP"},
+		{"episode", "TV", "E02", "", "Example Series S01E02 2020 1080p WEB-DL H.265-GRP"},
+		{"season pack", "TV", "", "", "Example Series S01 2020 1080p WEB-DL H.265-GRP"},
 		{"movie unchanged", "MOVIE", "", "", "Example Series 2020 1080p WEB-DL H.265-GRP"},
 		{"missing provider year", "TV", "E02", "missing year", "Example Series S01E02 1080p WEB-DL H.265-GRP"},
+		{"existing automatic year", "TV", "E02", "existing year", "Example Series S01E02 2026 1080p WEB-DL H.265-GRP"},
 		{"manual year", "TV", "E02", "manual", "Example Series 2026 S01E02 1080p WEB-DL H.265-GRP"},
 		{"manual omission", "TV", "E02", "omit", "Example Series S01E02 1080p WEB-DL H.265-GRP"},
 		{"complete override", "TV", "E02", "override", "Custom Complete Name"},
@@ -51,6 +52,9 @@ func TestTVYearPolicy(t *testing.T) {
 				request.Season = ""
 				request.SearchYear = "2026"
 			}
+			if tc.mode == "existing year" {
+				request.SearchYear = "2026"
+			}
 			generated := metadata.BuildReleaseName(request, api.NopLogger{})
 			subject := api.UploadSubject{
 				SourcePath:    "source",
@@ -73,7 +77,7 @@ func TestTVYearPolicy(t *testing.T) {
 				},
 			}
 			switch tc.mode {
-			case "missing year":
+			case "missing year", "existing year":
 				subject.ProviderMetadata.TMDB.Year = 0
 			case "stale", "wrong identity", "wrong category":
 				// Manual title bypasses title-provider validation, so year evidence must
