@@ -8,8 +8,9 @@ import (
 // encode ID, while unknown resolutions use the site's Other ID.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:    "EMUW",
-		BaseURL: "https://emuwarez.com",
+		Name:              "EMUW",
+		BaseURL:           "https://emuwarez.com",
+		ReleaseNamePolicy: namePolicy(),
 		Site: unit3d.SiteProfile{
 			ResolveTypeID:       typeID,
 			ResolveResolutionID: resolutionID,
