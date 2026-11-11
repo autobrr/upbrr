@@ -99,7 +99,7 @@ func selectedProgrammeResourceInspected(subject api.TrackerValidationSubject) bo
 }
 
 func programmeCoverageGuidance(subject api.TrackerValidationSubject) []api.RuleFailure {
-	if ProgrammeLanguageStatus(subject) == subject.LanguageFacts.ProgrammeStatus {
+	if subject.LanguageFacts.TrackCoverageComplete || ProgrammeAudioStatus(subject) == subject.LanguageFacts.ProgrammeStatus {
 		return nil
 	}
 	failure := NewRuleFailure(

@@ -4,6 +4,7 @@
 package trackers_test
 
 import (
+	"context"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -284,5 +285,33 @@ func TestOriginalMultilingualTrackerRequirements(t *testing.T) {
 		return f.Rule == "language_evidence" && slices.Contains(f.LanguageCorrectionTrackIDs, "original")
 	}) {
 		t.Fatalf("unknown English coverage no longer requests evidence: %+v", failures)
+	}
+}
+
+func TestOriginalMultilingualPackCoverageGuidance(t *testing.T) {
+	registry, err := impl.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, complete := range []bool{false, true} {
+		subject := originalMultilingualSubject()
+		subject.LanguageFacts.TrackCoverageComplete = complete
+		subject.SourcePath = t.TempDir()
+		subject.VideoPath = filepath.Join(subject.SourcePath, "Example.S01E01.mkv")
+		subject.FileList = []string{subject.VideoPath, filepath.Join(subject.SourcePath, "Example.S01E02.mkv")}
+		before := subject.LanguageFacts.Clone()
+		failures, err := trackers.EvaluateTrackerValidationWithRegistry(context.Background(), registry, "PTP", subject, api.NopLogger{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+			return f.Rule == "guidance_programme_pack_coverage" && f.Disposition == api.RuleDispositionAdvisory && f.EvidenceStatus == api.MetadataEvidenceStatusPartial
+		})
+		if got == complete {
+			t.Fatalf("coverage complete=%v: pack guidance=%v, failures=%+v", complete, got, failures)
+		}
+		if !reflect.DeepEqual(subject.LanguageFacts, before) {
+			t.Fatal("guidance changed canonical language facts")
+		}
 	}
 }

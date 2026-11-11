@@ -51,7 +51,7 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		add("non_english_dub", "Non-English Language Dub; a replacement must resolve this defect", trackers.LanguageTrumpable)
 	}
 	failures = append(failures, ptpRemuxLanguageFailures(subject)...)
-	if ptpNeedsTrackPurposeReview(facts) {
+	if audioStatus == api.MetadataEvidenceStatusComplete && ptpNeedsTrackPurposeReview(facts) {
 		failure := trackers.LanguageRuleFailure(
 			subject,
 			"redundant_audio",
@@ -208,9 +208,6 @@ func ptpPrimaryProgrammeLanguage(facts api.LanguageFacts) string {
 // language differences alone never prove that a mix or dub is redundant.
 func ptpNeedsTrackPurposeReview(facts api.LanguageFacts) bool {
 	confirmedOtherDub := false
-	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
-		return false
-	}
 	seen := map[string]bool{}
 	programmeTracks := 0
 	for _, track := range facts.Tracks {
