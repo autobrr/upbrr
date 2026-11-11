@@ -329,8 +329,9 @@ func TestMetadataAccumulatesAcrossClientsWithoutRebindingArtifact(t *testing.T) 
 
 func TestDiscoveryRetainsSidecarTorrentForSingleFileExtraction(t *testing.T) {
 	t.Parallel()
-	for _, explicit := range []bool{false, true} {
-		t.Run(map[bool]string{true: "requested infohash", false: "ordinary discovery"}[explicit], func(t *testing.T) {
+	for _, mode := range []string{"ordinary discovery", "requested infohash", "top subfolder"} {
+		t.Run(mode, func(t *testing.T) {
+			explicit := mode == "requested infohash"
 			root := filepath.Join(t.TempDir(), "Example.Video.2026")
 			source := filepath.Join(root, "Example.Video.2026.mkv")
 			if err := os.MkdirAll(root, 0o700); err != nil {
@@ -359,7 +360,18 @@ func TestDiscoveryRetainsSidecarTorrentForSingleFileExtraction(t *testing.T) {
 				t.Fatal(err)
 			}
 			hash := mi.HashInfoBytes().String()
-			var exactLookups, ordinarySearches atomic.Int64
+			clientName := filepath.Base(root)
+			clientContentPath := root
+			if mode == "top subfolder" {
+				volumeRoot := filepath.Join(filepath.VolumeName(source), string(filepath.Separator))
+				relative, err := filepath.Rel(volumeRoot, source)
+				if err != nil {
+					t.Fatal(err)
+				}
+				clientName = strings.Split(filepath.ToSlash(relative), "/")[1]
+				clientContentPath = ""
+			}
+			var exactLookups, ordinarySearches, folderSearches atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v2/torrents/info", "/api/v2/torrents/search":
@@ -377,11 +389,18 @@ func TestDiscoveryRetainsSidecarTorrentForSingleFileExtraction(t *testing.T) {
 							_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{})
 							return
 						}
+						if mode == "top subfolder" {
+							if r.URL.Query().Get("search") != normalizeSearchBase(clientName) {
+								_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{})
+								return
+							}
+							folderSearches.Add(1)
+						}
 					}
 					_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{{
 						Hash:        hash,
-						Name:        filepath.Base(root),
-						ContentPath: root,
+						Name:        clientName,
+						ContentPath: clientContentPath,
 					}})
 				case "/api/v2/torrents/properties":
 					_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{})
@@ -413,6 +432,9 @@ func TestDiscoveryRetainsSidecarTorrentForSingleFileExtraction(t *testing.T) {
 			}
 			if explicit && (exactLookups.Load() != 1 || ordinarySearches.Load() != 0 || found.InfoHash != hash) {
 				t.Fatalf("requested infohash was not selected directly: lookups=%d searches=%d matched=%t", exactLookups.Load(), ordinarySearches.Load(), found.InfoHash == hash)
+			}
+			if mode == "top subfolder" && (folderSearches.Load() != 1 || ordinarySearches.Load() < 2) {
+				t.Fatalf("folder and release searches were not both used: folder=%d total=%d", folderSearches.Load(), ordinarySearches.Load())
 			}
 			extracted, err := torrentservice.NewService(nil, t.TempDir()).Create(ctx, api.TorrentSubject{SourcePath: source, ClientTorrentCandidates: found.TorrentCandidates})
 			if err != nil || extracted.Path == "" || work.Load() != 1 {

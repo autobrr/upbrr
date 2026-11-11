@@ -105,6 +105,10 @@ type torrentDataValidation struct {
 	reason      string
 }
 
+func (v torrentDataValidation) matchesSourceContent() bool {
+	return v.reusable || v.reason == "single_file_extraction" || v.reason == "single_file_alternative"
+}
+
 // SearchPathedTorrents searches selected qBittorrent or Qui clients in
 // configured order, retaining tracker metadata independently of artifact
 // selection and preferring compatible torrents by the active piece-size policy.
@@ -679,8 +683,8 @@ func (s *Service) searchQbitClient(
 	return result, selection.matches, nil
 }
 
-// buildSearchTerms returns distinct sanitized qBittorrent search terms for the
-// source path, including extensionless single-file variants when safe.
+// buildSearchTerms returns distinct sanitized release-name and top-subfolder
+// searches, including extensionless single-file variants when safe.
 func buildSearchTerms(meta api.ClientSubject) []string {
 	terms := make([]string, 0, 4)
 	seen := make(map[string]struct{}, 4)
@@ -708,8 +712,37 @@ func buildSearchTerms(meta api.ClientSubject) []string {
 	if singleFile && !strings.EqualFold(sourceBase, fileBase) {
 		add(fileBase, true)
 	}
+	add(topSubfolderSearchBase(meta.SourcePath), false)
 
 	return terms
+}
+
+// topSubfolderSearchBase skips the volume/root and its first directory. Only
+// the next directory is a search hint; deeper directories and the leaf are not.
+// POSIX paths are rooted at /; this lexical hint does not infer mount points.
+func topSubfolderSearchBase(source string) string {
+	cleaned := normalizeClientContentPath(source)
+	var relative string
+	switch {
+	case strings.HasPrefix(cleaned, "//"):
+		// A UNC server/share is the volume, rather than two directories.
+		parts := strings.SplitN(strings.TrimPrefix(cleaned, "//"), "/", 3)
+		if len(parts) != 3 {
+			return ""
+		}
+		relative = parts[2]
+	case windowsClientPath(cleaned):
+		relative = cleaned[3:]
+	case strings.HasPrefix(cleaned, "/"):
+		relative = strings.TrimPrefix(cleaned, "/")
+	default:
+		return ""
+	}
+	parts := strings.Split(relative, "/")
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[1]
 }
 
 func addSearchTerm(terms *[]string, seen map[string]struct{}, base string) {
@@ -783,7 +816,11 @@ func torrentMatchesMeta(torrent qbittorrent.Torrent, meta api.ClientSubject) boo
 		return true
 	}
 	contentBase := pathutil.Base(torrent.ContentPath)
-	return contentBase != "" && torrentNameMatches(contentBase, meta)
+	if contentBase != "" && torrentNameMatches(contentBase, meta) {
+		return true
+	}
+	folder := topSubfolderSearchBase(meta.SourcePath)
+	return folder != "" && (torrentNameEquals(torrent.Name, folder) || torrentNameEquals(contentBase, folder))
 }
 
 func qbitTorrentDataVerified(torrent qbittorrent.Torrent, meta api.ClientSubject, clientCfg config.TorrentClientConfig) bool {
@@ -1416,6 +1453,45 @@ func (s *Service) selectValidTorrent(
 	if len(matches) == 0 {
 		return selection, nil
 	}
+	considerClientMatch := func(match api.TorrentMatch, contentValidated bool) bool {
+		// Folder-only hints identify a container, not the selected file. They
+		// must establish usable content before contributing tracker metadata.
+		if !contentValidated && meta.InfoHash == "" && !torrentNameMatches(match.Name, meta) &&
+			!torrentNameMatches(pathutil.Base(match.ContentPath), meta) {
+			return false
+		}
+		selection.matches = append(selection.matches, match)
+		return true
+	}
+	collectClientMatches := func(remaining []api.TorrentMatch, validatedHash string) error {
+		for _, match := range remaining {
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("clients: folder candidate lookup canceled: %w", err)
+			}
+			if considerClientMatch(match, validatedHash != "" && strings.EqualFold(match.Hash, validatedHash)) {
+				continue
+			}
+			// A preferred artifact can finish piece selection, but folder-only
+			// alternatives still need an export to establish source metadata.
+			hash := normalizeQbitHash(match.Hash)
+			if hash == "" {
+				continue
+			}
+			data, err := exportTorrent(ctx, qbitClient, httpClient, clientEndpoint, hash, useProxy)
+			if err != nil {
+				if cancelErr := ctx.Err(); cancelErr != nil {
+					return fmt.Errorf("clients: folder candidate lookup canceled: %w", cancelErr)
+				}
+				s.logger.Debugf("clients: export folder candidate failed for %s: %v", hash, safeClientError(err, clientEndpoint))
+				continue
+			}
+			validation := validateTorrentData(meta, hash, data)
+			if strings.EqualFold(validation.infoHash, hash) && validation.matchesSourceContent() {
+				considerClientMatch(match, true)
+			}
+		}
+		return nil
+	}
 	tmpRoot, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 	if err != nil {
 		return selection, fmt.Errorf("clients: tmp dir: %w", err)
@@ -1457,7 +1533,9 @@ func (s *Service) selectValidTorrent(
 			if localPath == outputPath && matched < 0 {
 				continue
 			}
-			selection.matches = append(selection.matches, matches...)
+			if err := collectClientMatches(matches, localHash); err != nil {
+				return validatedTorrentSelection{}, err
+			}
 			selection.foundPreferred = label
 			if matched >= 0 {
 				match := matches[matched]
@@ -1491,10 +1569,6 @@ func (s *Service) selectValidTorrent(
 	var bestPiece int64
 	bestDataVerified := false
 	rechecked := make(map[string]struct{})
-
-	considerClientMatch := func(match api.TorrentMatch) {
-		selection.matches = append(selection.matches, match)
-	}
 
 	retainCandidate := func(hash string, path string, data []byte) error {
 		snapshotPath, err := writeTorrentSnapshot(path, data)
@@ -1562,10 +1636,12 @@ func (s *Service) selectValidTorrent(
 			if err == nil {
 				validation := validateTorrentData(meta, normalizedHash, data)
 				if validation.clientMatch && strings.EqualFold(validation.infoHash, normalizedHash) {
+					if !considerClientMatch(match, validation.matchesSourceContent()) {
+						continue
+					}
 					if err := forceRecheckValidated(normalizedHash); err != nil {
 						return validatedTorrentSelection{}, err
 					}
-					considerClientMatch(match)
 					if validation.reason == "single_file_alternative" || validation.reason == "single_file_extraction" {
 						if err := retainCandidate(normalizedHash, outputPath, data); err != nil {
 							return validatedTorrentSelection{}, err
@@ -1580,7 +1656,9 @@ func (s *Service) selectValidTorrent(
 					}
 					if !meta.FindAllCandidates && !shouldForceRecheck(meta.ClientOverrides) &&
 						shouldStopSearch(preferredPieceLabel(bestPiece)) {
-						selection.matches = append(selection.matches, matches[matchIndex+1:]...)
+						if err := collectClientMatches(matches[matchIndex+1:], ""); err != nil {
+							return validatedTorrentSelection{}, err
+						}
 						break
 					}
 					continue
@@ -1595,12 +1673,12 @@ func (s *Service) selectValidTorrent(
 		data, err := exportTorrent(ctx, qbitClient, httpClient, clientEndpoint, normalizedHash, useProxy)
 		if err != nil {
 			s.logger.Debugf("clients: export torrent failed for %s: %v", normalizedHash, safeClientError(err, clientEndpoint))
-			considerClientMatch(match)
+			considerClientMatch(match, false)
 			continue
 		}
 		if len(data) == 0 {
 			s.logger.Debugf("clients: empty torrent export for %s", normalizedHash)
-			considerClientMatch(match)
+			considerClientMatch(match, false)
 			continue
 		}
 
@@ -1616,10 +1694,12 @@ func (s *Service) selectValidTorrent(
 			s.logger.Tracef("clients: exported torrent infohash mismatch for %s", normalizedHash)
 			continue
 		}
+		if !considerClientMatch(match, validation.matchesSourceContent()) {
+			continue
+		}
 		if err := forceRecheckValidated(normalizedHash); err != nil {
 			return validatedTorrentSelection{}, err
 		}
-		considerClientMatch(match)
 
 		if !validation.reusable {
 			s.logger.Tracef("clients: validated exported torrent as client match only for %s (reason=%s)", normalizedHash, validation.reason)
@@ -1637,7 +1717,9 @@ func (s *Service) selectValidTorrent(
 		}
 		if !meta.FindAllCandidates && !shouldForceRecheck(meta.ClientOverrides) &&
 			shouldStopSearch(preferredPieceLabel(bestPiece)) {
-			selection.matches = append(selection.matches, matches[matchIndex+1:]...)
+			if err := collectClientMatches(matches[matchIndex+1:], ""); err != nil {
+				return validatedTorrentSelection{}, err
+			}
 			break
 		}
 	}
