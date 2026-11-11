@@ -287,7 +287,7 @@ Client and Torrent:
   -no-seed, --no-seed, -ns
       Do not inject torrent into clients
   -skip_auto_torrent, --skip_auto_torrent, -sat
-      Skip automated torrent client searching
+      Skip initial torrent-client discovery; BASE reuse still checks clients before hashing
   -keep-folder, --keep-folder, -kf
       Keep the supplied folder around one movie or episode video, excluding sidecars
   -onlyID, --onlyID

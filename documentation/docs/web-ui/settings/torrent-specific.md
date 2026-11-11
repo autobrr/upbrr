@@ -1,18 +1,23 @@
 ---
 title: Torrent preparation settings
-description: Prefer reusable torrents with smaller pieces and delay rehash-dependent submissions.
+description: Automatic torrent reuse and rehash-dependent upload scheduling.
 ---
 
 # Torrent preparation settings
 
-Use **Settings → Torrent preparation** for torrent reuse and rehash scheduling.
+Use **Settings → Torrent preparation** to delay rehash-dependent submissions. Torrent artifact selection is automatic.
 
-| Field                                                 | Default | Effect                                                                                                      |
-| ----------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
-| **Prefer reusable torrents with pieces up to 16 MiB** | Off     | During torrent-client search, prefers a validated reusable torrent whose piece size is at most 16 MiB.      |
-| **Rehash-dependent upload delay (seconds)**           | `0`     | Waits this many seconds after reusable-torrent submissions finish before starting rehash-dependent uploads. |
+| Field                                       | Default | Effect                                                                                                      |
+| ------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
+| **Rehash-dependent upload delay (seconds)** | `0`     | Waits this many seconds after reusable-torrent submissions finish before starting rehash-dependent uploads. |
 
-**Prefer reusable torrents with pieces up to 16 MiB** affects selection among reusable client torrents; it does not impose a piece size on every newly generated torrent. A negative rehash cooldown behaves as zero.
+A negative rehash cooldown behaves as zero.
+
+Preparation selects a compatible base for each tracker from discovered torrents, ranking candidates that need no partial-tail hashing ahead of those that do. Within each group, selection prefers 1,000–2,000 pieces and then the closest available count. Equal scores prefer already usable artifacts over layout conversions, then preserve candidate order within each category. Existing torrents are capped at 10,000 pieces unless using the effective maximum piece size makes a larger count unavoidable. Tracker limits and an explicit maximum piece size take precedence over piece-count goals; torrent-file size limits still apply. Compatible bases are retained for reuse without generating optional compact or general-purpose variants.
+
+The former `prefer_max_16_torrent` setting and `UA_DEFAULT_PREFER_MAX_16_TORRENT` environment variable are removed. Older configuration files can still be imported; that preference is ignored and omitted when settings are exported. The CLI `--max-piece-size` override remains available.
+
+With `--nohash`, upbrr only retains and reuses suitable existing pieces. It does not hash media to create a missing variant, and skips trackers for which no compatible artifact is available.
 
 Compatible existing torrents are checked for metainfo, layout and applicable limits without automatically reading every media byte. Those checks do not prove that same-sized media bytes match the piece hashes. Explicit recheck verifies pieces; rehash creates a fresh torrent. Tracker metadata personalization and eligible wrapper-only changes can reuse existing pieces.
 
