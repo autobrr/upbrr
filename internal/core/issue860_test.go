@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/go-torrent/bencode"
 	"github.com/autobrr/go-torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -511,5 +512,83 @@ func TestWorkflowSearchesExactFileBeforeConvertingWrapper(t *testing.T) {
 	result, err := builder.prepareWorkflowTorrent(t.Context(), api.UploadSubject{ClientSearchPerformed: true}, input)
 	if err != nil || result.InfoHash != exactMeta.HashInfoBytes().String() || clients.searches != 1 {
 		t.Fatalf("exact alternative should precede wrapper conversion: result=%+v searches=%d err=%v", result, clients.searches, err)
+	}
+}
+
+func TestWorkflowSelectsPreferredDiscoveredWrapperWithoutSearching(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "video.mkv")
+	const size = 64 << 20
+	if err := os.WriteFile(source, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(source, size); err != nil {
+		t.Fatal(err)
+	}
+	candidates := make([]api.ClientTorrentCandidate, 0, 2)
+	for _, wrapped := range []bool{false, true} {
+		info := metainfo.Info{
+			Name:        "video.mkv",
+			Length:      size,
+			PieceLength: 16 << 10,
+			Pieces:      make([]byte, 4096*metainfo.HashSize),
+		}
+		path := filepath.Join(dir, "exact.torrent")
+		if wrapped {
+			info.Name = "wrapped"
+			info.Length = 0
+			info.Files = []metainfo.FileInfo{{Length: size, Path: []string{"video.mkv"}}}
+			info.PieceLength = 64 << 10
+			info.Pieces = make([]byte, 1024*metainfo.HashSize)
+			path = filepath.Join(dir, "wrapped.torrent")
+		}
+		infoBytes, err := bencode.Marshal(info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta := metainfo.MetaInfo{InfoBytes: infoBytes}
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeErr := meta.Write(file)
+		closeErr := file.Close()
+		if err := errors.Join(writeErr, closeErr); err != nil {
+			t.Fatal(err)
+		}
+		candidates = append(candidates, api.ClientTorrentCandidate{Path: path, InfoHash: meta.HashInfoBytes().String()})
+	}
+	clients := &issue860Client{}
+	builder := workflowUploadPlanBuilder{torrents: torrent.NewService(nil, t.TempDir()), clients: clients}
+	var pieceWork atomic.Int64
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ctx = api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
+		if update.TotalPieces > 0 {
+			pieceWork.Add(1)
+			cancel()
+		}
+	})
+	result, err := builder.prepareWorkflowTorrent(ctx, api.UploadSubject{ClientSearchPerformed: true}, api.TorrentSubject{
+		SourcePath:              source,
+		SourceSize:              size,
+		Trackers:                []string{"EXAMPLE"},
+		ClientTorrentCandidates: candidates,
+		TorrentOverrides:        api.TorrentOverrides{NoHash: new(true)},
+	})
+	if err != nil || clients.searches != 0 || pieceWork.Load() != 0 {
+		t.Fatalf("known candidates should require no search or hashing: searches=%d pieces=%d err=%v", clients.searches, pieceWork.Load(), err)
+	}
+	selected, err := metainfo.LoadFromFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := selected.UnmarshalInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Name != "video.mkv" || info.Length != size || len(info.Files) != 0 || info.PieceLength != 64<<10 || len(info.Pieces) != 1024*metainfo.HashSize {
+		t.Fatalf("expected converted 1024-piece wrapper: name=%q length=%d files=%d pieceLength=%d pieces=%d", info.Name, info.Length, len(info.Files), info.PieceLength, len(info.Pieces)/metainfo.HashSize)
 	}
 }

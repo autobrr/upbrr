@@ -2034,7 +2034,8 @@ type TorrentSubject struct {
 	ClientTorrentDataVerified bool
 	// ForceRecheck requests a local piece check before reusing a candidate.
 	ForceRecheck bool
-	// DeferWrapperConversion lets an operation search for exact-layout alternatives first.
+	// DeferWrapperConversion searches for exact-layout alternatives when none are usable.
+	// Known metadata-only conversions still compete with usable artifacts.
 	DeferWrapperConversion bool
 	// DeferGenerationPublication transfers a newly generated artifact to the caller
 	// for publication after its source-stability fence succeeds.

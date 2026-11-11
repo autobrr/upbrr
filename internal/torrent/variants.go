@@ -104,7 +104,9 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 				choices = append(choices, choice{path: path, pieces: int64(info.NumPieces())})
 			}
 		}
-		if !meta.DeferWrapperConversion && s.tmpRoot != "" {
+		// A successful probe still ranks known metadata-only conversions against
+		// its usable artifacts; missing lanes retain the exact-layout search retry.
+		if s.tmpRoot != "" && (!meta.DeferWrapperConversion || len(choices) > 0) {
 			for _, path := range extractionCandidates {
 				if extracted[path] {
 					continue
