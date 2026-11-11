@@ -80,12 +80,14 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	generated := make(map[string]bool)
 	selected := make(map[string]string)
 	extracted := make(map[string]bool)
-	choose := func(subject api.TorrentSubject) (string, error) {
+	choose := func(subject api.TorrentSubject, requireGeneral bool) (string, error) {
 		policy := resolveTrackerPolicy(subject, s.registry)
 		allowHash := !nohash && !hasTracker(meta.SkipIfRehashTrackers, subject.Trackers)
 		available := candidates
-		if !allowHash {
-			available = slices.DeleteFunc(slices.Clone(candidates), func(path string) bool { return generated[path] })
+		if !allowHash || requireGeneral {
+			available = slices.DeleteFunc(slices.Clone(candidates), func(path string) bool {
+				return !allowHash && generated[path] || requireGeneral && !generalPieceCount(path, subject)
+			})
 		}
 		path, err := findReusableTorrent(ctx, available, policy, subject, cache, logger)
 		if err != nil || path != "" {
@@ -139,7 +141,9 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 					}
 					if path != "" {
 						candidates = appendUniqueTorrentCandidate(candidates, path)
-						return path, nil
+						if !requireGeneral || generalPieceCount(path, subject) {
+							return path, nil
+						}
 					}
 				}
 			}
@@ -183,7 +187,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 		subject := meta
 		subject.Trackers = []string{tracker}
-		path, err := choose(subject)
+		path, err := choose(subject, false)
 		if err != nil {
 			return api.TorrentResult{}, err
 		}
@@ -211,11 +215,11 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	}
 	generalSubject := meta
 	generalSubject.Trackers = nil
-	general, err := choose(generalSubject)
+	general, err := choose(generalSubject, !nohash)
 	if err != nil {
 		return api.TorrentResult{}, err
 	}
-	if !nohash && (general == "" || !generalPieceCount(general, meta)) {
+	if !nohash && general == "" {
 		general, err = generate(generalSubject)
 		if err != nil {
 			return api.TorrentResult{}, err
@@ -227,7 +231,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		limit = min(limit, *override)
 	}
 	compactSubject.TorrentOverrides.MaxPieceSizeMiB = &limit
-	compact, err := choose(compactSubject)
+	compact, err := choose(compactSubject, false)
 	if err != nil {
 		return api.TorrentResult{}, err
 	}
@@ -467,6 +471,10 @@ type variantPublication struct {
 }
 
 func (p *variantPublication) Publish() (string, error) {
+	// Share the retained-base publication lock so identical writers never replace
+	// an artifact that another operation may already have open on Windows.
+	retainedVariantMu.Lock()
+	defer retainedVariantMu.Unlock()
 	for _, file := range p.files {
 		if existing, err := os.ReadFile(file.destination); err == nil {
 			staged, err := os.ReadFile(file.stage)

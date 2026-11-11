@@ -40,23 +40,7 @@ func TestNoHashRetainsDifferentTrackerBasesAcrossRestart(t *testing.T) {
 			PieceLength: piece,
 			Pieces:      make([]byte, 20*(size/piece)),
 		}
-		data, err := bencode.Marshal(info)
-		if err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(root, name+".torrent")
-		output, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
-		if err != nil {
-			t.Fatal(err)
-		}
-		mi := metainfo.MetaInfo{InfoBytes: data}
-		if err := mi.Write(output); err != nil {
-			t.Fatal(err)
-		}
-		if err := output.Close(); err != nil {
-			t.Fatal(err)
-		}
-		return path
+		return writeExtractionTorrent(t, filepath.Join(root, name+".torrent"), info).Path
 	}
 	smaller := makeCandidate("small", 256<<10)
 	larger := makeCandidate("large", 512<<10)
@@ -321,22 +305,7 @@ func TestGeneralPieceGoalHonorsAttainableBounds(t *testing.T) {
 				PieceLength: tc.piece,
 				Pieces:      make([]byte, tc.count*20),
 			}
-			data, err := bencode.Marshal(info)
-			if err != nil {
-				t.Fatal(err)
-			}
-			path := filepath.Join(t.TempDir(), "base.torrent")
-			file, err := os.Create(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			mi := metainfo.MetaInfo{InfoBytes: data}
-			if err := mi.Write(file); err != nil {
-				t.Fatal(err)
-			}
-			if err := file.Close(); err != nil {
-				t.Fatal(err)
-			}
+			path := writeExtractionTorrent(t, filepath.Join(t.TempDir(), "base.torrent"), info).Path
 			subject := api.TorrentSubject{}
 			subject.TorrentOverrides.MaxPieceSizeMiB = tc.maximum
 			if got := generalPieceCount(path, subject); got != tc.acceptable {

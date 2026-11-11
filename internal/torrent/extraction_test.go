@@ -173,6 +173,61 @@ func TestExtractionPrefersCompatibleSingleFile(t *testing.T) {
 	}
 }
 
+func TestExtractionTriesGeneralTargetBeforeHashing(t *testing.T) {
+	t.Parallel()
+	const size int64 = 128 << 20
+	dir := t.TempDir()
+	source := filepath.Join(dir, "Example.Video.2026.mkv")
+	file, err := os.OpenFile(source, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(size); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	candidates := make([]api.ClientTorrentCandidate, 0, 2)
+	for i, piece := range []int64{64 << 10, 128 << 10} {
+		candidates = append(candidates, writeExtractionTorrent(t, filepath.Join(dir, []string{"compact.torrent", "general.torrent"}[i]), metainfo.Info{
+			Name:        "Example.Release.2026",
+			PieceLength: piece,
+			Pieces:      make([]byte, size/piece*metainfo.HashSize),
+			Files:       []metainfo.FileInfo{{Length: size, Path: []string{filepath.Base(source)}}},
+		}))
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	work := 0
+	ctx = api.WithUploadProgressReporter(ctx, func(u api.UploadProgressUpdate) {
+		if u.TotalPieces > 0 {
+			work++
+			cancel()
+		}
+	})
+	result, err := NewService(nil, t.TempDir()).Create(ctx, api.TorrentSubject{
+		SourcePath:              source,
+		SourceSize:              size,
+		ClientTorrentCandidates: candidates,
+	})
+	if err != nil || work != 0 {
+		t.Fatalf("available extraction should avoid hashing: work=%d err=%v", work, err)
+	}
+	mi, err := metainfo.LoadFromFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := mi.UnmarshalInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.PieceLength != 128<<10 || info.NumPieces() != 1024 || len(info.Files) != 0 {
+		t.Fatalf("wrong general extraction: piece=%d count=%d files=%d", info.PieceLength, info.NumPieces(), len(info.Files))
+	}
+}
+
 func TestExtractionPrefersExistingHashesOverPartialHashing(t *testing.T) {
 	t.Parallel()
 	subject, video, _ := extractionFixture(t, 0, 37, 7)
