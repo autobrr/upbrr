@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -546,6 +547,9 @@ func TestCheckWithAssessmentSearchesDebugBannedGroupWithoutWaiver(t *testing.T) 
 	if len(summary.Results) != 1 || summary.Results[0].Status != "completed" || summary.Results[0].SkipCode != "" {
 		t.Fatalf("diagnostic duplicate result = %#v", summary.Results)
 	}
+	if !slices.Contains(summary.Results[0].Notes, "Diagnostic policy: group grp is banned on DP") {
+		t.Fatalf("diagnostic search lost banned-group outcome: %+v", summary.Results[0])
+	}
 	decision, ok := assessment.Decision("DP")
 	if !ok || decision.Verdict == VerdictWaived || decision.Authorization == AuthorizationWaiver {
 		t.Fatalf("diagnostic search fabricated a waiver = %#v found=%t", decision, ok)
@@ -578,6 +582,18 @@ func TestCheckWithAssessmentSearchesDebugBannedGroupWithoutWaiver(t *testing.T) 
 	}, "DP", CheckOptions{Diagnostic: true})
 	if canceled || adapterCalled.Load() || !result.HasDupes || entry.verdict != VerdictBlocked {
 		t.Fatalf("diagnostic local-client gate = %#v, adapterCalled=%t", result, adapterCalled.Load())
+	}
+	brokenCache := t.TempDir()
+	service.banned = trackerspkg.NewBannedGroupCheckerWithRegistry(filepath.Join(brokenCache, "upbrr.db"), registry)
+	if err := os.WriteFile(filepath.Join(brokenCache, "cache", "banned"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	adapterCalled.Store(false)
+	result, _, canceled = service.checkTracker(context.Background(), api.DuplicateSubject{Tag: "GRP"}, "DP", CheckOptions{Diagnostic: true})
+	if canceled || !adapterCalled.Load() || result.Status != "completed" || !slices.ContainsFunc(result.Notes, func(note string) bool {
+		return strings.HasPrefix(note, "Diagnostic policy: banned group check failed:")
+	}) {
+		t.Fatalf("diagnostic refresh failure lost or search blocked: %+v", result)
 	}
 }
 

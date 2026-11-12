@@ -454,12 +454,16 @@ func (s *Service) checkTracker(
 	options CheckOptions,
 ) (result api.DupeCheckResult, entry assessmentEntry, operationCanceled bool) {
 	checkedAt := time.Now().UTC()
+	var diagnosticNotes []string
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			message := panicFailureMessage(recovered)
 			result = failedPublicResult(tracker, FailureInternal, message, checkedAt)
 			entry = newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil)
 			s.logger.Warnf("dupechecking: search panicked tracker=%s source=%s err=%s", tracker, meta.SourcePath, message)
+		}
+		if !operationCanceled {
+			result.Notes = append(result.Notes, diagnosticNotes...)
 		}
 	}()
 
@@ -508,6 +512,9 @@ func (s *Service) checkTracker(
 				meta.SourcePath,
 				redaction.RedactValue(err.Error(), nil),
 			)
+			if options.Diagnostic {
+				diagnosticNotes = append(diagnosticNotes, "Diagnostic policy: "+message)
+			}
 			if !options.Diagnostic {
 				result = failedPublicResult(tracker, FailureInternal, message, checkedAt)
 				return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
@@ -523,12 +530,16 @@ func (s *Service) checkTracker(
 				meta.SourcePath,
 				redaction.RedactValue(err.Error(), nil),
 			)
+			if options.Diagnostic {
+				diagnosticNotes = append(diagnosticNotes, "Diagnostic policy: "+bannedGroupCheckFailureMessage(err))
+			}
 			if !options.Diagnostic {
 				message := bannedGroupCheckFailureMessage(err)
 				result = failedPublicResult(tracker, FailureInternal, message, checkedAt)
 				return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
 			}
 		case options.Diagnostic:
+			diagnosticNotes = append(diagnosticNotes, "Diagnostic policy: "+redaction.RedactValue(reason, nil))
 			s.logger.Warnf("dupechecking: banned-group policy blocked tracker=%s; continuing diagnostic search", tracker)
 		default:
 			result = notRunPublicResult(tracker, NotRunBannedGroup, reason, checkedAt)

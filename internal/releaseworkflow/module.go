@@ -8066,7 +8066,7 @@ func uploadDryRunReports(trackers []api.UploadPlanTracker) []api.TrackerDryRunRe
 			status = api.StageStatusBlocked
 		case tracker.Status == api.StageStatusSkipped:
 			status = api.StageStatusSkipped
-		case tracker.Status != api.StageStatusReady || tracker.ClientInjectionStatus == api.StageStatusFailed:
+		case tracker.Status != api.StageStatusReady || tracker.ClientInjectionStatus == api.StageStatusFailed || len(failures) > 0:
 			status = api.StageStatusFailed
 			if len(failures) == 0 {
 				message := uploadDryRunFailureMessage(tracker)
