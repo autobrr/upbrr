@@ -17,7 +17,7 @@ This document is a guide to help you through the process of contributing to upbr
 
 ## Reporting bugs and requesting features
 
-Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md) for unexpected behavior and the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md) for new capabilities. Search open and closed issues first. For development or PR builds, check the relevant Markdown documentation in this repository at the build's commit or branch; the published site describes released versions.
+Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md) for unexpected behavior and the [feature request template](.github/ISSUE_TEMPLATE/feature_request.md) for new capabilities. Search open and closed issues first. For development or PR builds, check the relevant Markdown documentation in this repository at the build's commit or branch; the public introduction identifies the version covered by the site.
 
 ### Automated bug-report completeness check
 

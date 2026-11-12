@@ -27,11 +27,11 @@ It guides those tasks. It does not replace tracker rules, staff direction, or op
 
 ## Documentation and versions
 
-The published site updates through the release workflow and is built from the exact release tag. Development builds can include changes documented only in the repository's [documentation source](https://github.com/autobrr/upbrr/tree/main/documentation/docs).
+This documentation covers **v0.4.2**, the current version. For a development or PR build, use the [documentation source](https://github.com/autobrr/upbrr/tree/main/documentation/docs) at that build's commit.
 
 Use your installed binary's `--help` and embedded [OpenAPI reference](./api/index.md) for its exact CLI and API contracts.
 
-See the [upcoming v0.4.2 notes](./changelog/v0.4.2.md) for development changes since `v0.4.1`, or the [v0.4.1 changelog](./changelog/v0.4.1.md) for that published release.
+See the [v0.4.2 release notes](./changelog/v0.4.2.md) for changes, compatibility information and upgrade instructions.
 
 ## What upbrr does
 

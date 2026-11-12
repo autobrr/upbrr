@@ -36,7 +36,7 @@ Export the current configuration first. Import replaces the configuration stored
 
 ## Test a connection
 
-Select **Test connection** beside an integration or configured instance to check the current form values without saving them. An unchanged `[REDACTED]` value uses its preserved secret; an edited credential is tested immediately. The request runs on the server with the integration's applicable proxy and TLS settings.
+Where offered, select **Test connection** beside an integration or configured instance to check the current form values without saving them. Torrent-client checks are available for qBittorrent/qui entries; watch-folder entries have no test button. An unchanged `[REDACTED]` value uses its preserved secret; an edited credential is tested immediately. The request runs on the server with the integration's applicable proxy and TLS settings.
 
 Wait for the result beside the button. Other instances can be tested independently. Editing the tested fields clears their result and cancels a pending test. Requests have a ten-second timeout; a denied response can also indicate account permissions, IP restrictions, or proxy access.
 

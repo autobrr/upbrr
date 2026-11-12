@@ -121,6 +121,8 @@ The torrent contains only the original ISO, with its physical size and source pa
 
 The CLI shares one active-input slot with every process using its database. Queue entries run serially. If another session owns the input, the command returns a busy error; unattended mode never prompts or takes over a live input. After its terminal result, the CLI closes its owned input. Cancellation uses bounded cleanup; a reported cleanup failure requires recovery before further work.
 
+Tracker preflight can automatically log in or refresh sessions using saved credentials and a configured TOTP where supported, persist refreshed authentication, or remove confirmed-invalid sessions. The CLI does not prompt for tracker login or manual 2FA. If automatic recovery cannot complete, resolve the blocked tracker in [Tracker authentication](../web-ui/settings/tracker-auth.md), then retry preparation.
+
 After an interrupted legacy workflow, check the tracker or torrent client before answering the recovery confirmation. Confirm that the operation did not complete only when you have verified its outcome. Interactive mode and `--unattended_confirm` can ask this question; `--unattended` exits without prompting or starting a new submission. Recovery does not submit anything by itself.
 
 If a configuration change blocks startup because an external outcome is unresolved, stop other processes using that database and run `upbrr recover`. Pass the same `--config` option and environment as the original command so recovery selects the existing database. Check each tracker, image host or torrent client before confirming that its action did not complete; answer No for completed or uncertain outcomes.
@@ -633,18 +635,20 @@ upbrr serve [options]
 
 `--config` seeds an empty database. For an existing database, the server uses its stored settings. Use Settings or configuration import to activate later changes.
 
-| Option                     | Purpose                                                                    |
-| -------------------------- | -------------------------------------------------------------------------- |
-| `--config <path>`          | Use a config file path.                                                    |
-| `--addr <host:port>`       | Set the complete listen address.                                           |
-| `--host <host>`            | Set the listen host.                                                       |
-| `--port <port>`            | Set the decimal listen port, from `1` through `65535`.                     |
-| `--base-url <url-or-path>` | Set the external Web UI URL or path prefix.                                |
-| `--persist-listen`         | Persist listen host and port to `web-config.json`.                         |
-| `--persist-web-config`     | Persist the full resolved Web UI settings, including listen host and port. |
-| `--dev-no-auth`            | Disable Web auth for local development on loopback only.                   |
+| Option                     | Purpose                                                                   |
+| -------------------------- | ------------------------------------------------------------------------- |
+| `--config <path>`          | Use a config file path.                                                   |
+| `--addr <host:port>`       | Set the complete listen address.                                          |
+| `--host <host>`            | Set the listen host.                                                      |
+| `--port <port>`            | Set the decimal listen port, from `1` through `65535`.                    |
+| `--base-url <url-or-path>` | Set the external Web UI URL or path prefix.                               |
+| `--persist-listen`         | Update explicitly supplied listen settings and clear the saved base URL.  |
+| `--persist-web-config`     | Persist the full resolved Web UI settings, including listen and base URL. |
+| `--dev-no-auth`            | Disable Web auth for local development on loopback only.                  |
 
 `--addr` cannot be combined with `--host` or `--port`. Without overrides, the listener defaults to `localhost:7480`; environment variables and saved settings can change it. `--live-test` and `--live-test-max-images` also apply to `serve`. See [Web server and reverse proxy](../configuration/web-server.md) for precedence and proxy examples.
+
+Persistence happens after a successful listener bind, including when either persistence flag is explicitly `false`; omit both flags to avoid saving settings. `--persist-listen` requires an explicit listen flag and, unless `--persist-web-config` is also supplied, clears the saved `base_url` even if `--base-url` is supplied for the current run. Use `--persist-web-config` with `--base-url` to save a path prefix with listen settings. `--persist-web-config` requires a supplied listen/base setting or a supported `UPBRR_WEB_*` environment variable.
 
 ## `auth`
 

@@ -40,7 +40,9 @@ Supported environment variables:
 | `UPBRR_WEB_OPEN_BROWSER`    | Whether to open a browser at startup                |
 | `UPBRR_WEB_TRUSTED_PROXIES` | Comma-separated trusted proxy addresses or networks |
 
-Use `--persist-web-config` to save the full effective `serve` configuration, including listen settings. To save only an explicitly supplied `--addr`, `--host`, or `--port`, use `--persist-listen` instead. Persistence happens after the listener binds successfully. `--persist-listen` requires an explicit listen flag; `--persist-web-config` requires a supplied listen/base setting or one of the supported environment variables. These checks apply even when the persistence flag is explicitly false.
+Use `--persist-web-config` to save the full effective `serve` configuration, including listen settings and the base URL. With `--persist-listen` alone, only explicitly supplied `--addr`, `--host`, or `--port` settings are updated, and the saved `base_url` is cleared. This clears any saved path prefix even when `--base-url` is supplied for the current run. To save a base URL with the listen settings, use `--persist-web-config` with `--base-url`.
+
+Persistence happens after the listener binds successfully. `--persist-listen` requires an explicit listen flag; `--persist-web-config` requires a supplied listen/base setting or one of the supported environment variables. Supplying either persistence flag as `false` still applies these checks and saves settings. Omit both persistence flags to avoid saving settings.
 
 The persisted `web-config.json` keys are `host`, `port`, `open_browser`, `trusted_proxies` (an array), `base_url`, and `session_ttl` (minutes). Only `session_ttl` has no CLI/environment override; a missing or nonpositive value uses 1,440 minutes. Stop the server before editing this file manually, then restart to load it. Listener state is separate from application configuration import/export.
 
