@@ -93,6 +93,7 @@ export type OperationFailure = {
 };
 
 export type SourceScopedMetadata = {
+  IdentityCandidates?: ExternalIdentityCandidate[];
   SourcePath: string;
   Generation: number;
   TMDB?: TMDBMetadata | null;
@@ -518,6 +519,7 @@ export type TMDBMetadata = {
   LastAirDate: string;
   OriginCountry: string[];
   OriginalLanguage: string;
+  SpokenLanguages?: string[];
   Overview: string;
   Poster: string;
   TMDBPosterPath: string;
@@ -621,6 +623,7 @@ export type IMDBMetadata = {
   SoundMixes: string[];
   TVYear: number;
   OriginalLanguage: string;
+  SpokenLanguages?: string[];
 };
 
 export type TVDBMetadata = {

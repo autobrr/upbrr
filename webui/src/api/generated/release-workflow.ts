@@ -278,6 +278,10 @@ export type BlurayVideoSpec = Readonly<{
   Resolution: string;
 }>;
 
+export type CancelActiveInputOpenRequest = Readonly<{
+  idempotencyKey: string;
+}>;
+
 export type CancelReleaseWorkflowRequest = Readonly<{
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
@@ -307,6 +311,7 @@ export type ClientOverrides = Readonly<{
 
 export type ClientSearchPolicy = Readonly<{
   Client?: string | null;
+  InfoHash?: string;
   Skip: boolean;
 }>;
 
@@ -465,6 +470,7 @@ export type DupeAssessment = Readonly<{
   results: readonly TrackerDupeAssessment[];
   revision: WorkflowRevision;
   selection: TrackerSelectionRef;
+  skipRemote?: boolean;
   status: StageStatus;
   workflowId: WorkflowID;
 }>;
@@ -1007,6 +1013,7 @@ export type IMDBMetadata = Readonly<{
   RuntimeText: string;
   SeasonsSummary: readonly IMDBSeasonSummary[];
   SoundMixes: readonly string[];
+  SpokenLanguages?: readonly string[];
   Stars: readonly IMDBPerson[];
   TVYear: number;
   Title: string;
@@ -1134,6 +1141,12 @@ export type InputReadinessSnapshotRef = Readonly<{
   revision: WorkflowRevision;
 }>;
 
+export type InputReviewContext = Readonly<{
+  fields?: readonly InputReadinessFieldOutcome[];
+  release: PreparedRelease;
+  selectedTrackerIds?: readonly TrackerID[];
+}>;
+
 export type InteractionMode = string;
 
 export type InvalidateReleaseWorkflowTrackersRequest = Readonly<{
@@ -1148,6 +1161,7 @@ export type LanguageFacts = Readonly<{
   AudioAbsent: boolean;
   AudioStatus: MetadataEvidenceStatus;
   FullSubtitleLanguages: readonly string[];
+  OriginalLanguageDefinitive: boolean;
   OriginalLanguages: readonly string[];
   OriginalLanguagesKnown: boolean;
   PrimaryAudioTrackID: string;
@@ -1287,6 +1301,7 @@ export type MediaFacts = Readonly<{
   SubtitleLanguages: readonly string[];
   SubtitleLanguagesProvenance: FactProvenance;
   ThreeD: string;
+  TitleLanguages?: readonly string[];
   TrackAudioLanguages: readonly string[];
   TrackCoverageComplete: boolean;
   TrackSubtitleLanguages: readonly string[];
@@ -1927,6 +1942,7 @@ export type ReleaseWorkflowCurrent = Readonly<{
   hdrComparison?: HDRComparisonSourceRef | null;
   hdrPendingRequest?: HDRAnalysisInstructions | null;
   inputReadiness?: InputReadinessSnapshot | null;
+  inputReview?: InputReviewContext | null;
   media?: MediaArtifactSet | null;
   operation?: Operation | null;
   preflight?: TrackerPreflightAssessment | null;
@@ -2435,6 +2451,7 @@ export type SourceScopedMetadata = Readonly<{
   Bluray?: BlurayMetadata | null;
   Generation: PreparedGeneration;
   IMDB?: IMDBMetadata | null;
+  IdentityCandidates?: readonly ExternalIdentityCandidate[];
   ImportedScreenshotEvidence?: ImportedScreenshotEvidence | null;
   ProviderAvailability: readonly ProviderAvailabilityEvidence[];
   SourcePath: string;
@@ -2535,6 +2552,7 @@ export type TMDBMetadata = Readonly<{
   ReleaseDate: string;
   RetrievedAKA: string;
   Runtime: number;
+  SpokenLanguages?: readonly string[];
   TMDBID: number;
   TMDBLogo: string;
   TMDBPosterPath: string;
@@ -3310,6 +3328,7 @@ export type WorkflowAuthority = Readonly<{
 export type WorkflowContinuation = Readonly<{
   availableGoals: readonly GoalAvailability[];
   disposition: WorkflowDisposition;
+  duplicateReusePending?: boolean;
   events?: readonly WorkflowEvent[];
   lifecycle: OperationLifecycle;
   refs: WorkflowExactRefs;

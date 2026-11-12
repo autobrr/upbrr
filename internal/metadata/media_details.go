@@ -660,6 +660,37 @@ func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []s
 		return ""
 	}
 
+	if meta.ProviderMetadata.TMDB != nil && len(meta.ProviderMetadata.TMDB.SpokenLanguages) > 0 {
+		// Preferred dialogue evidence needs soundtrack origins, not aggregate language
+		// count: one multilingual original stream does not establish dual audio.
+		media := api.MediaFacts{
+			OriginalLanguage:         originalAudioLanguage(meta),
+			TitleLanguages:           meta.ProviderMetadata.TMDB.SpokenLanguages,
+			AudioLanguages:           languages,
+			AudioLanguagesProvenance: meta.AudioLanguagesProvenance,
+			Tracks:                   meta.MediaTracks,
+			TrackCoverageComplete:    meta.TrackCoverageComplete,
+		}
+		if meta.MetadataOverrides.OriginalLanguage != nil {
+			media.OriginalLanguageProvenance = factProvenanceForString(media.OriginalLanguage)
+		}
+		facts := mediafacts.ResolveLanguages(media)
+		if facts.HasOriginalAudio() {
+			separateDub := languageutil.LanguageIdentityCount(facts.ProgrammeLanguages) > 1 &&
+				slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+					return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed
+				})
+			if facts.HasEnglishDub() || separateDub {
+				return "Dual-Audio"
+			}
+			return ""
+		}
+		if facts.HasEnglishDub() && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !facts.HasUnresolvedProgrammeAudioOrigin() {
+			return "Dubbed"
+		}
+		return ""
+	}
+
 	originalValue := originalAudioLanguage(meta)
 	if !languageutil.IsIdentifiedLanguage(originalValue) {
 		return ""

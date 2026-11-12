@@ -300,16 +300,18 @@ func (p *cliMetadataProgress) Print(output io.Writer, operation api.WorkflowOper
 	if output == nil || operation.Operation != api.OperationKindPreparation {
 		return
 	}
+	if summary := cliPreparationFailureSummary(operation); summary != "" {
+		if summary != p.message {
+			_, _ = fmt.Fprintln(output, summary)
+			p.lastPrinted, p.message, p.printed = now, summary, true
+		}
+		return
+	}
 	if p.lastPrinted.IsZero() {
 		p.lastPrinted = now
 	}
 	terminal := isTerminalCLIWorkflowOperation(operation.Status)
-	var partial []string
-	for _, item := range operation.Items {
-		if strings.HasPrefix(item.Kind, "preparation_") && item.Status == api.StageStatusPartial {
-			partial = append(partial, item.Label)
-		}
-	}
+	partial := cliPartialMetadataLabels(operation)
 	if terminal && !p.printed && len(partial) == 0 {
 		return
 	}
@@ -327,4 +329,39 @@ func (p *cliMetadataProgress) Print(output io.Writer, operation api.WorkflowOper
 	}
 	_, _ = fmt.Fprintln(output, "Metadata: "+safeDiagnosticText(message))
 	p.lastPrinted, p.message, p.printed = now, message, true
+}
+
+// cliPreparationFailureSummary explains retained preparation failures without
+// changing their error authority or starting recovery work.
+func cliPreparationFailureSummary(operation api.WorkflowOperationStatus) string {
+	if operation.Operation != api.OperationKindPreparation || !isTerminalCLIWorkflowOperation(operation.Status) || cliWorkflowOperationError(operation) == nil {
+		return ""
+	}
+	var summary strings.Builder
+	fmt.Fprintln(&summary, "Preparation stopped; this input will not proceed to tracker upload.")
+	message := strings.TrimSpace(safeDiagnosticText(operation.Message))
+	if message != "" {
+		fmt.Fprintln(&summary, message)
+	}
+	for _, failure := range operation.Failures {
+		if detail := cliWorkflowFailureMessage(failure.Failure); detail != message {
+			fmt.Fprintln(&summary, detail)
+		}
+	}
+	if partial := cliPartialMetadataLabels(operation); len(partial) > 0 {
+		fmt.Fprintf(&summary, "Partial metadata: %s.\n", strings.Join(partial, ", "))
+	}
+	return strings.TrimSpace(safeDiagnosticText(summary.String()))
+}
+
+// cliPartialMetadataLabels retains phase and substep labels for both summaries.
+// Callers sanitize the labels with the surrounding diagnostic at the output boundary.
+func cliPartialMetadataLabels(operation api.WorkflowOperationStatus) []string {
+	var labels []string
+	for _, item := range operation.Items {
+		if strings.HasPrefix(item.Kind, "preparation_") && item.Status == api.StageStatusPartial {
+			labels = append(labels, item.Label)
+		}
+	}
+	return labels
 }

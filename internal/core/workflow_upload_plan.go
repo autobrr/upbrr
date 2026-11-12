@@ -339,12 +339,13 @@ func (b workflowUploadPlanBuilder) Build(
 		subject.SubmissionContentIdentity = identity
 	}
 	var pendingTorrent api.TorrentPublication
-	if len(eligible) > 0 && b.torrents != nil && !descriptionInstructions.Options.SkipAutoTorrent {
+	if len(eligible) > 0 && b.torrents != nil {
 		torrent, err := b.prepareWorkflowTorrent(ctx, subject, torrentSubject)
 		if err != nil {
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare torrent: %w", err)
 		}
 		subject.TorrentPath = torrent.Path
+		subject.TrackerTorrentArtifacts = torrent.TrackerArtifacts
 		pendingTorrent = torrent.PendingPublication
 		if pendingTorrent != nil {
 			defer func() {
@@ -573,13 +574,14 @@ func emitWorkflowTorrentOutcome(ctx context.Context, subject api.TorrentSubject,
 
 // prepareWorkflowTorrent searches further only after current artifacts fail the
 // requested policy. The probe never generates and does not apply skip-if-rehash.
+// Skipping preparation discovery does not disable this final chance to reuse pieces.
 func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 	ctx context.Context,
 	subject api.UploadSubject,
 	input api.TorrentSubject,
 ) (api.TorrentResult, error) {
 	forcedRehash := input.TorrentOverrides.Rehash != nil && *input.TorrentOverrides.Rehash
-	if b.clients != nil && subject.ClientSearchPerformed && !subject.ClientSearchPolicy.Skip && !forcedRehash {
+	if b.clients != nil && !forcedRehash {
 		probe := input
 		probe.TorrentOverrides.NoHash = new(true)
 		probe.SkipIfRehashTrackers = nil
@@ -591,21 +593,29 @@ func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 		if !errors.Is(err, internalerrors.ErrNotFound) {
 			return api.TorrentResult{}, fmt.Errorf("probe reusable torrent: %w", err)
 		}
+		policy := subject.ClientSearchPolicy
+		policy.Skip = false
 		found, searchErr := clientdiscovery.New(b.clients, api.NopLogger{}).Discover(ctx, clientdiscovery.SearchInput{
 			SourcePath:        input.SourcePath,
 			FileList:          append([]string(nil), input.FileList...),
 			DiscType:          input.DiscType,
 			KeepFolder:        input.KeepFolder,
-			Policy:            subject.ClientSearchPolicy,
+			Policy:            policy,
 			ForceRecheck:      new(input.ForceRecheck),
 			FindAllCandidates: true,
 		})
 		if ctx.Err() != nil {
 			return api.TorrentResult{}, fmt.Errorf("workflow torrent search canceled: %w", ctx.Err())
 		}
+		if errors.Is(searchErr, internalerrors.ErrClientRecheckFailed) {
+			return api.TorrentResult{}, fmt.Errorf("workflow torrent search: %w", searchErr)
+		}
 		if searchErr == nil {
 			input.ClientTorrentCandidates = append(input.ClientTorrentCandidates, found.TorrentCandidates...)
 		}
+	}
+	if input.TorrentOverrides.NoHash != nil && *input.TorrentOverrides.NoHash && !forcedRehash {
+		input.SkipIfRehashTrackers = append([]string(nil), input.Trackers...)
 	}
 	result, err := b.torrents.Create(ctx, input)
 	if err != nil {

@@ -344,6 +344,9 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		Diagnostics: diagnostics,
 		Resources:   collectedResources(meta),
 	}
+	if meta.ProviderMetadata.TMDB != nil {
+		facts.Media.TitleLanguages = append([]string(nil), meta.ProviderMetadata.TMDB.SpokenLanguages...)
+	}
 	facts.Media.LanguageFacts = mediafacts.ResolveLanguages(facts.Media)
 	for _, record := range meta.TrackerData {
 		if record.ImportedScreenshotEvidence != nil {

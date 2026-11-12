@@ -7,6 +7,7 @@ import { Outlet, RouterProvider, useNavigate, useRouterState } from "@tanstack/r
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { applicationClient } from "./api/app";
 import { WorkflowOperationProgress } from "./components/WorkflowOperationProgress";
+import { WorkflowCancellation } from "./components/WorkflowCancellation";
 import { WorkflowRequiredActions } from "./components/WorkflowRequiredActions";
 import { HostBrowserDialog } from "./features/hostBrowser/HostBrowserDialog";
 import { ImageLightbox, useImageLightbox } from "./features/lightbox/ImageLightbox";
@@ -261,6 +262,7 @@ function AppShell() {
             {navigationNotice}
           </p>
         ) : null}
+        <WorkflowCancellation />
         <WorkflowOperationProgress operation={releaseSession.workflow.view.current?.operation} />
         <WorkflowRequiredActions
           continuation={releaseSession.workflow.view.current?.continuation}

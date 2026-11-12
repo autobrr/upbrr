@@ -26,7 +26,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v80"
+const ContractVersion = "prepared-release-v85-partial-season"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -283,6 +283,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 			}
 			owned := envelopeFromPersisted(current, input)
 			owned.resources = mergePreparationResources(owned.resources, resourcesFromCollected(resources))
+			owned.result.Diagnostics = append(owned.result.Diagnostics, sourceSeasonDiagnostics(owned)...)
 			m.publish(owned)
 		}
 		api.EmitPreparationProgress(
@@ -303,7 +304,9 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		}
 		m.logPreparedFacts(ctx, current, cache, resolved.Corrections.Revision)
 		return cloneResult(api.PrepareResult{
-			Diagnostics:           sourceSeasonDiagnostics(owned),
+			Diagnostics: append(
+				externalidentity.CandidateDiagnostics(current.ProviderMetadata.IdentityCandidates),
+				sourceSeasonDiagnostics(owned)...),
 			Release:               current,
 			EffectiveInstructions: input.Instructions,
 			Corrections:           resolved.Corrections,
@@ -771,6 +774,7 @@ func (m *Module) retainedClientEvidence(
 	}
 	evidence := current.resources.clientEvidence
 	if evidence.Disposition != preparationstate.ClientEvidenceDispositionSearched || evidence.Policy.Skip != input.Search.Skip ||
+		evidence.Policy.InfoHash != input.Search.InfoHash ||
 		(evidence.Policy.Client == nil) != (input.Search.Client == nil) ||
 		evidence.Policy.Client != nil && *evidence.Policy.Client != *input.Search.Client {
 		return nil
@@ -1062,6 +1066,7 @@ func envelopeFromPersisted(release api.PreparedRelease, input api.PrepareInput) 
 	return envelope{
 		result: api.PrepareResult{
 			Release:               release,
+			Diagnostics:           externalidentity.CandidateDiagnostics(release.ProviderMetadata.IdentityCandidates),
 			EffectiveInstructions: input.Instructions,
 		},
 		resources: resourcesFromManifest(release.Source, input),

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -21,7 +22,7 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 				return nil, fmt.Errorf("context canceled: %w", err)
 			}
 			meta := standalone.UploadSubjectForValidation(subject)
-			fields := buildFields(meta, "", "", standalone.QuestionnaireAnswers(meta, "BJS"))
+			fields := buildFields(meta, config.TrackerConfig{}, "", "", standalone.QuestionnaireAnswers(meta, "BJS"))
 			failures := make([]api.RuleFailure, 0, 3)
 			if strings.TrimSpace(fields["imdblink"]) == "" {
 				failures = append(failures, trackers.NewRuleFailure(

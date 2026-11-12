@@ -287,13 +287,13 @@ Client and Torrent:
   -no-seed, --no-seed, -ns
       Do not inject torrent into clients
   -skip_auto_torrent, --skip_auto_torrent, -sat
-      Skip automated torrent client searching
+      Skip initial torrent-client discovery; BASE reuse still checks clients before hashing
   -keep-folder, --keep-folder, -kf
       Keep the supplied folder around one movie or episode video, excluding sidecars
   -onlyID, --onlyID
       Only grab tracker metadata IDs
-  -infohash, --infohash, -th, -torrenthash string
-      Override v1 info hash
+  -infohash, --infohash string
+      Find an existing client torrent by v1 info hash before ordinary discovery
   -max-piece-size, --max-piece-size, -mps int
       Set maximum torrent piece size in MiB
   -nohash, --nohash, -nh

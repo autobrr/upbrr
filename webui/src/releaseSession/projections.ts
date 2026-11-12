@@ -160,7 +160,7 @@ export const sameNames = (left: readonly string[], right: readonly string[]) => 
   const normalizedRight = normalizedNames(right);
   return (
     normalizedLeft.length === normalizedRight.length &&
-    normalizedLeft.every((value, index) => value === normalizedRight[index])
+    normalizedLeft.every((value) => normalizedRight.includes(value))
   );
 };
 
@@ -300,7 +300,9 @@ export const preparationWithEffectiveCorrections = (
 });
 
 export const workflowSelectedInputTrackers = (current: ReleaseWorkflowCurrent) =>
-  current.inputReadiness?.selectedTrackerIds ?? current.selection?.trackerIds;
+  current.inputReadiness?.selectedTrackerIds ??
+  current.selection?.trackerIds ??
+  current.inputReview?.selectedTrackerIds;
 
 export const metadataPreviewFromWorkflow = (
   current: ReleaseWorkflowCurrent,

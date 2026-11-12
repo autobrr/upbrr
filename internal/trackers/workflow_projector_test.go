@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -417,5 +418,72 @@ func TestWorkflowProjectorFingerprintIncludesSelectedTrackerAnswers(t *testing.T
 	}
 	if withAnswer.InputFingerprint != withUnselectedAnswer.InputFingerprint {
 		t.Fatalf("unselected answers changed projection fingerprint: with=%q unselected=%q", withAnswer.InputFingerprint, withUnselectedAnswer.InputFingerprint)
+	}
+}
+
+func TestWorkflowProjectionRetainsEffectiveAnonymity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		stored   bool
+		override *bool
+		want     bool
+	}{
+		{name: "stored named"},
+		{
+			name:   "stored anonymous",
+			stored: true,
+			want:   true,
+		},
+		{
+			name:     "explicit anonymous",
+			override: new(true),
+			want:     true,
+		},
+		{
+			name:     "explicit named",
+			stored:   true,
+			override: new(false),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			registry := NewRegistry()
+			for _, name := range []string{"ONE", "TWO"} {
+				if err := registry.Register(projectionStubDefinition{name: name}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+				"ONE": {Anon: tc.stored}, "TWO": {Anon: !tc.stored},
+			}}}
+			projector, err := NewWorkflowProjector(registry, cfg, api.NopLogger{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, _, projected, err := projector.Build(t.Context(), api.ReleaseSnapshot{}, structuredSubject(), []api.TrackerID{"ONE", "TWO"},
+				map[api.TrackerID]api.TrackerProjectionInstructions{"ONE": {TrackerConfig: api.TrackerConfigOverrides{Anon: tc.override}}}, nil, api.WorkflowExecutionModeNormal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved, err := json.Marshal(projected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored api.TrackerReleaseProjectionSet
+			if err := json.Unmarshal(saved, &restored); err != nil {
+				t.Fatal(err)
+			}
+			for _, projection := range restored.Projections {
+				want := tc.want
+				if projection.TrackerID == "TWO" {
+					want = !tc.stored
+				}
+				applied := applyReviewedProjection(PreparationInput{TrackerConfig: config.TrackerConfig{Anon: !want}, Projection: &projection})
+				if applied.TrackerConfig.Anon != want {
+					t.Fatalf("%s payload anonymity = %t, want %t", projection.TrackerID, applied.TrackerConfig.Anon, want)
+				}
+			}
+		})
 	}
 }

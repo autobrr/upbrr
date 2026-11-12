@@ -8,11 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -25,9 +23,9 @@ import (
 )
 
 // prepareUpload performs authenticated lookup for every intent. Upload intent
-// also creates the remote task and uploads screenshots during preparation, then
-// captures the finalized form, client session, redirect, and local torrent
-// target for one later submission.
+// captures the exact upload artifact and its hash before remote mutations, then
+// uploads screenshots and creates the remote task. It retains the finalized
+// form, client session, redirect, and local torrent target for one submission.
 func prepareUpload(ctx context.Context, site siteDefinition, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 	if req.Intent != trackers.PreparationIntentUpload {
 		preview, err := buildUploadDryRun(ctx, site, req)
@@ -64,12 +62,16 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s prepared upload torrent: %w", site.Name, err)
 	}
+	torrent, err := captureUploadTorrent(torrentPath)
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s prepared upload torrent: %w", site.Name, err)
+	}
 	fileInfo, err := resolveMediaInfoText(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
 	if mediaMissing {
-		return prepareMissingMediaOperation(ctx, site, state, req, torrentPath, fileInfo)
+		return prepareMissingMediaOperation(ctx, site, state, req, torrent, fileInfo)
 	}
 	preparedScreenshots, screenshotMinimum, err := prepareScreenshotUploads(ctx, site, state, req)
 	if err != nil {
@@ -81,7 +83,7 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 		state,
 		req,
 		media.MediaCode,
-		torrentPath,
+		torrent,
 		fileInfo,
 		preparedScreenshots,
 		screenshotMinimum,
@@ -93,7 +95,7 @@ func prepareMissingMediaOperation(
 	site siteDefinition,
 	state sessionState,
 	req trackers.PreparationInput,
-	torrentPath string,
+	torrent preparedUploadTorrent,
 	fileInfo string,
 ) (trackers.PreparedOperation, error) {
 	releaseName, err := req.ReviewedUploadName()
@@ -110,7 +112,7 @@ func prepareMissingMediaOperation(
 		Endpoint:         site.BaseURL + "/upload/" + categorySlug(req.Meta),
 		Files: []api.TrackerDryRunFile{{
 			Field:   "torrent_file",
-			Path:    torrentPath,
+			Path:    torrent.path,
 			Present: true,
 		}},
 		RequiredActions: []api.RequiredAction{{
@@ -151,7 +153,7 @@ func prepareMissingMediaOperation(
 				state,
 				req,
 				mediaCode,
-				torrentPath,
+				torrent,
 				fileInfo,
 				preparedScreenshots,
 				screenshotMinimum,
@@ -166,7 +168,7 @@ func prepareResolvedUpload(
 	state sessionState,
 	req trackers.PreparationInput,
 	mediaCode string,
-	torrentPath string,
+	torrent preparedUploadTorrent,
 	fileInfo string,
 	preparedScreenshots []preparedScreenshotUpload,
 	screenshotMinimum int,
@@ -186,11 +188,11 @@ func prepareResolvedUpload(
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	task, err := createTask(ctx, site, state, req, mediaCode, fileInfo, torrentPath)
+	task, err := createTask(ctx, site, state, req, mediaCode, fileInfo, torrent)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	payload.Set("info_hash", strings.TrimSpace(req.Meta.InfoHash))
+	payload.Set("info_hash", torrent.infoHash)
 	payload.Set("task_id", task.TaskID)
 	preview := api.TrackerDryRunEntry{
 		Tracker:          site.Name,
@@ -203,7 +205,7 @@ func prepareResolvedUpload(
 		Payload:          valuesToMap(payload),
 		Files: []api.TrackerDryRunFile{{
 			Field:   "torrent_file",
-			Path:    torrentPath,
+			Path:    torrent.path,
 			Present: true,
 		}},
 	}
@@ -313,7 +315,8 @@ func createTask(
 	site siteDefinition,
 	state sessionState,
 	req trackers.PreparationInput,
-	mediaCode, fileInfo, torrentPath string,
+	mediaCode, fileInfo string,
+	torrent preparedUploadTorrent,
 ) (taskInfo, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -327,16 +330,11 @@ func createTask(
 			return taskInfo{}, fmt.Errorf("trackers: %s write multipart field %q: %w", site.Name, key, err)
 		}
 	}
-	file, err := os.Open(torrentPath)
-	if err != nil {
-		return taskInfo{}, fmt.Errorf("trackers: %s open torrent file: %w", site.Name, err)
-	}
-	defer file.Close()
-	part, err := writer.CreateFormFile("torrent_file", filepath.Base(torrentPath))
+	part, err := writer.CreateFormFile("torrent_file", filepath.Base(torrent.path))
 	if err != nil {
 		return taskInfo{}, fmt.Errorf("trackers: %s create torrent form file: %w", site.Name, err)
 	}
-	if _, err := io.Copy(part, file); err != nil {
+	if _, err := part.Write(torrent.data); err != nil {
 		return taskInfo{}, fmt.Errorf("trackers: %s copy torrent file: %w", site.Name, err)
 	}
 	if err := writer.Close(); err != nil {

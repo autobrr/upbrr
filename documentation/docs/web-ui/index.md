@@ -45,6 +45,8 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+An explicit remote duplicate-search waiver stays in effect through later workflow stages and after reloading the workflow. Run duplicate checking again without skipping remote searches to replace the waiver with a new assessment. Existing in-client duplicates and readiness requirements remain enforced.
+
 **Screenshots** requires at least one tracker eligible to continue after duplicate checking. If all trackers are blocked, return to **Dupe Checking** and resolve the displayed prerequisite or acknowledge an available policy review. The accepted server response updates navigation for the same workflow; independently eligible trackers can continue while others remain blocked. An acknowledgement does not remove strict restrictions or replace renewed review when evidence changes or expires.
 
 Background workflow updates preserve an unsubmitted **Source path**, unsaved **Descriptions** text, and the selected TVDB preview language for the same input. Description drafts are cleared when the active input, prepared generation, or selected trackers change. **Render** previews the current editor text without saving it. Use **Save group** to retain the complete edited description, including image order and custom text placement, without adding generated sections again. **Reset group** replaces that group with its generated description.
@@ -88,6 +90,8 @@ Choose **Browse folder**, select a folder containing one eligible movie or episo
 The option is not shown for direct file inputs, season packs, multi-video folders, or discs; their existing handling is unchanged.
 
 ### Correct Input facts
+
+When saved release fields need review or correction, a warning remains visible above **Edit Release Details**, even while the editor is collapsed. Use each **Review** action to open the relevant sections and focus its control, including individual inspected tracks. Detailed guidance stays beside the fields. Apply **Refresh metadata** or **Retry metadata** to reevaluate the requirements. Opening the editor or changing a draft does not resolve the warning. A failed preparation keeps unresolved requests visible; successful preparation removes each resolved field independently. Reloading reflects the saved Input state.
 
 In **Edit Release Details**, the information icons explain each field and grouped actions. Open help by hovering over its icon, focusing it with the keyboard, or tapping it. Escape or an outside interaction closes it; moving into the floating text keeps it readable without moving the form. Opening help does not apply edits.
 

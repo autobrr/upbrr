@@ -316,6 +316,11 @@ type MediaFacts struct {
 	MediaInfoUniqueID string
 	Anime             bool
 	AnimeKnown        bool
+
+	// TitleLanguages retains automatic TMDB spoken-language evidence. Rule consumers
+	// use LanguageFacts, which preserves OriginalLanguage corrections and clears.
+	// These values never populate inspected soundtrack languages.
+	TitleLanguages []string `json:",omitempty"`
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as
@@ -810,6 +815,9 @@ func (i ExternalIdentity) RequireCategory() (CanonicalCategory, error) {
 // SourceScopedMetadata stores optional provider enrichment for one source and
 // prepared generation.
 type SourceScopedMetadata struct {
+	// IdentityCandidates retain advisory provider matches for this generation.
+	// They never select or replace a canonical provider ID.
+	IdentityCandidates []ExternalIdentityCandidate `json:",omitempty"`
 	// ImportedScreenshotEvidence is a receipt snapshot, not a local image asset.
 	ImportedScreenshotEvidence *ImportedScreenshotEvidence `json:",omitempty"`
 	SourcePath                 string

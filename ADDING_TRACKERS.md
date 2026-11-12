@@ -990,6 +990,11 @@ needed. If the tracker requires a genuinely new config field, also update:
 
 Prefer an existing semantically correct field over adding an alias for the same credential.
 
+Retained compatibility controls without feature consumers are excluded from workflow comparisons
+in `internal/config/effective_fingerprint.go`. When wiring one of these controls, remove its
+comparison exclusion and cover active-setting invalidation. Persist and export the original
+configuration, never the comparison-only view.
+
 ### 9. Unit3D tests
 
 At minimum, cover:
@@ -1424,7 +1429,28 @@ with `python3 scripts/languages/update-registry.py <downloaded-registry-file> > 
 regenerate correction choices when changing it.
 
 Use `WithLanguagePolicy` or `WithLanguageAssessment` to expose the same pure language predicate
-through `ValidationPolicyBinding.LanguageAssessment` for source-level readiness. A custom binding
+through `ValidationPolicyBinding.LanguageAssessment` for source-level readiness.
+Canonical `LanguageFacts.OriginalLanguages` prefers TMDB's normalized spoken-language
+set when available. Explicit original-language corrections and clears remain
+authoritative; the scalar provider original language remains available for other
+owned metadata policies. Treat the preferred reference as a set, never as an ordered
+primary-language choice or a requirement for one stream per title language.
+Classify actual soundtracks through `ProgrammeAudioOrigin`: matching title evidence
+cannot override a confirmed dub. English title dialogue alone does not establish
+English programme audio or subtitle coverage. `HasEnglishOriginalAudio` requires
+an original programme track identified only as English; English dialogue in a
+multilingual original or an English dub does not satisfy it. Original-soundtrack
+policy evidence takes precedence over a conflicting provider production-language
+value. For original-show classification, a verified title-language correction
+governs even when track-origin facts disagree. Auto title-language matches can
+fill an evidence gap but cannot override an established original soundtrack.
+A language set alone does not establish dialogue predominance; preserve
+site-specific uncertainty and do not turn possible trumpability into prohibition.
+A country derivation for one original
+primary soundtrack needs that soundtrack's origin evidence and an unambiguous
+reference, rather than the first title-language entry.
+
+A custom binding
 wrapper must preserve that callback when composing validation. Missing programme-language findings
 carry `LanguageCorrectionTrackIDs`; source review requests only the addressable tracks needed by
 non-advisory current policy, once across selected trackers. Save answers through canonical,
@@ -1488,9 +1514,13 @@ Advice about primary programme audio must use an unambiguous inspected primary t
 and exclude secondary roles. Missing facts produce no speculative recommendation.
 
 Origin-country defaults must use current, source-bound provider evidence and the inspected primary
-original-language audio. Normalize supported country codes and names, retain all co-production
-countries when checking agreement, and never use the work’s origin to infer a dub’s country.
-Explicit answers and finalized language corrections retain precedence.
+original-language audio. Normalize supported country codes and names. For BTN non-disc country autofill,
+each provider with at least one supported origin counts once toward the majority total. Only fully
+supported origins identifying one country cast a vote; co-productions and partly supported origins
+remain in the total without voting. Missing or entirely unsupported origins do not count. Autofill
+requires a strict majority of that total; otherwise, leave the country unresolved for the existing
+country question. Never use the work’s origin to infer a dub’s country. Explicit answers and finalized
+language corrections retain precedence.
 
 Compatibility-audio inference stays tracker-local and uses the shared measured-relationship
 helpers. A distinct same-resource stream with fully known matching languages may accompany one

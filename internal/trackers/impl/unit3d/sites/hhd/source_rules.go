@@ -42,8 +42,7 @@ func sourceLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFail
 }
 
 func needsSubtitleAcknowledgement(facts api.LanguageFacts) bool {
-	return facts.OriginalLanguagesKnown && len(facts.OriginalLanguages) > 0 &&
-		!languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
+	return trackers.ForeignLanguageContent(facts) &&
 		!languageutil.ContainsLanguage(facts.SubtitleLanguages, "English")
 }
 

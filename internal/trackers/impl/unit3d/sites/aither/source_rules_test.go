@@ -188,6 +188,31 @@ func TestAitherMultilingualSourceAnswerReachesStructuredName(t *testing.T) {
 	}
 }
 
+func TestAitherOriginalMultilingualMarkerRetainsBalanceReview(t *testing.T) {
+	subject := api.UploadSubject{Type: "ENCODE", LanguageFacts: aitherTestLanguageFacts("Japanese", []string{"mul"}, []string{"English"})}
+	subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioOriginal
+	validation := api.NewTrackerValidationSubject(subject, "AITHER")
+	key := trackers.LanguageQuestionKey(validation, "multilingual_balance_audio-0")
+	assertAitherFailure(t, languageAssessment(validation), "language_multilingual_balance", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	questionnaire := languageQuestionnaire(trackers.PreparationInput{Meta: subject})
+	if questionnaire == nil || !slices.ContainsFunc(questionnaire.Fields, func(field api.TrackerQuestionnaireField) bool {
+		return field.Key == key && slices.Equal(field.Options, []string{"evenly_split", "unresolved"})
+	}) {
+		t.Fatalf("multilingual marker bypassed balance review or offered an unidentified predominant language: %+v", questionnaire)
+	}
+	subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"AITHER": {key: "evenly_split"}}
+	if got := aitherLanguage(subject); got != "MULTIPLE LANGUAGES" {
+		t.Fatalf("confirmed evenly split soundtrack marker = %q", got)
+	}
+	if failures := languageAssessment(api.NewTrackerValidationSubject(subject, "AITHER")); len(failures) != 0 {
+		t.Fatalf("confirmed original evenly split soundtrack blocked: %+v", failures)
+	}
+	subject.TrackerQuestionnaireAnswers["AITHER"][key] = "predominant:mul"
+	if got := aitherLanguage(subject); got != "" {
+		t.Fatalf("multilingual marker accepted as a predominant language: %q", got)
+	}
+}
+
 func TestAitherProjectionRetainsMultilingualBalanceReview(t *testing.T) {
 	mediaInfo := filepath.Join(t.TempDir(), "mediainfo.txt")
 	if err := os.WriteFile(mediaInfo, []byte("prepared media"), 0o600); err != nil {

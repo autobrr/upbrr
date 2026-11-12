@@ -72,6 +72,8 @@ const (
 type cliLaneView struct {
 	ID, State, Reason, Detail, URL string
 	Status                         cliLaneStatus
+	// ShowDetail expands retained outcomes while working tracker rows stay compact.
+	ShowDetail bool
 }
 
 // Raw password input disables OS signal generation, so own Ctrl+C explicitly.

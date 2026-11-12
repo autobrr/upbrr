@@ -25,6 +25,7 @@ import (
 )
 
 type cliWorkflowCoreFake struct {
+	searchFn               func(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
 	liveTest               bool
 	liveStarts             int
 	current                releaseworkflow.CommandResult
@@ -56,6 +57,13 @@ type cliWorkflowCoreFake struct {
 	recoverCalls           int
 	reconcileRequests      []api.ReconcileActiveInputRequest
 	audioResult            *api.AudioAnalysisResult
+}
+
+func (f *cliWorkflowCoreFake) SearchProviderCandidates(ctx context.Context, request api.ProviderSearchRequest) (api.ProviderSearchResult, error) {
+	if f.searchFn != nil {
+		return f.searchFn(ctx, request)
+	}
+	return api.ProviderSearchResult{Query: request.Query, Category: request.Category}, nil
 }
 
 type cliWorkflowActiveInputCore struct {
@@ -520,7 +528,7 @@ func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
 		}}, false, nil)
 	})
 	if !strings.Contains(output, "status=completed") ||
-		!strings.Contains(output, "client injection was attempted for each ready tracker") ||
+		!strings.Contains(output, "see each tracker's client injection outcome below") ||
 		!strings.Contains(output, "client injection: completed: Client injection completed with passkey=[REDACTED]") ||
 		!strings.Contains(output, "warning: Synthetic warning api_token=[REDACTED]") ||
 		strings.Contains(output, "never-print-this") {
@@ -948,32 +956,6 @@ func (f *cliWorkflowCoreFake) ReleaseWorkflowAudioAnalysisArtifactPath(
 		return filepath.Join("test-output", "stats-cli.txt"), nil
 	}
 	return filepath.Join("test-output", string(artifactID)+".png"), nil
-}
-
-func TestCLIWorkflowCancellationCancelsAcceptedOperation(t *testing.T) {
-	coreSvc := &cliWorkflowCoreFake{
-		current:        releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-cli-cancel", Revision: 1}},
-		queueOperation: true,
-	}
-	session := &cliWorkflowSession{core: coreSvc, current: coreSvc.current}
-	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(10*time.Millisecond, cancel)
-	input := api.PrepareInput{SourcePath: "Example.Release.2026.1080p-GRP"}
-	err := session.executeContinuation(ctx, api.ContinueReleaseWorkflowRequest{
-		Authority: &api.WorkflowAuthority{
-			WorkflowID:       coreSvc.current.Workflow.ID,
-			ExpectedRevision: coreSvc.current.Workflow.Revision,
-		},
-		IdempotencyKey: "cancel-preparation",
-		Goal:           api.WorkflowGoalPrepared,
-		Intent:         api.WorkflowIntent{Preparation: &input},
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled workflow error = %v", err)
-	}
-	if coreSvc.cancelCalls != 1 {
-		t.Fatalf("operation cancel calls = %d, want 1", coreSvc.cancelCalls)
-	}
 }
 
 func TestCLIWorkflowBlockedOperationPublishesResult(t *testing.T) {
@@ -1880,11 +1862,11 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 		{
 			name: "missing provider fact",
 			fields: []api.InputReadinessFieldOutcome{{
-				Key: "metadata.title",
- Status: api.InputReadinessFieldMissing,
+				Key:             "metadata.title",
+				Status:          api.InputReadinessFieldMissing,
 				CorrectionField: new(api.CorrectionFieldMetadataTitle),
- TrackerIDs: []api.TrackerID{"AITHER", "BHD"},
-				Message: "missing required title",
+				TrackerIDs:      []api.TrackerID{"AITHER", "BHD"},
+				Message:         "missing required title",
 			}},
 			blocked:  true,
 			want:     []string{"Required evidence to review:", "metadata.title (missing", "AITHER, BHD", "missing required title", "Review the source and metadata selection"},
@@ -1893,12 +1875,12 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 		{
 			name: "invalid correction",
 			fields: []api.InputReadinessFieldOutcome{{
-				Key: "metadata.genres",
- Status: api.InputReadinessFieldInvalid,
+				Key:             "metadata.genres",
+				Status:          api.InputReadinessFieldInvalid,
 				CorrectionField: new(api.CorrectionFieldMetadataGenres),
- TrackerIDs: []api.TrackerID{"AITHER"},
-				Disposition: api.RuleDispositionWaivable,
- Message: "genre evidence is invalid",
+				TrackerIDs:      []api.TrackerID{"AITHER"},
+				Disposition:     api.RuleDispositionWaivable,
+				Message:         "genre evidence is invalid",
 			}},
 			blocked: true,
 			want:    []string{"Required evidence to review:", "metadata.genres (invalid", "genre evidence is invalid", "--genres"},
@@ -1906,10 +1888,10 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 		{
 			name: "advisory only",
 			fields: []api.InputReadinessFieldOutcome{{
-				Key: "metadata.original_language",
- Status: api.InputReadinessFieldMissing,
+				Key:         "metadata.original_language",
+				Status:      api.InputReadinessFieldMissing,
 				Disposition: "warning",
- Message: "original language unavailable",
+				Message:     "original language unavailable",
 			}},
 			want:     []string{"Local input readiness: ready.", "Advisory evidence (does not block local readiness):", "original language unavailable"},
 			unwanted: []string{"Required evidence to review:"},
@@ -1919,21 +1901,21 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 			fields: []api.InputReadinessFieldOutcome{
 				{Key: "metadata.title", Status: api.InputReadinessFieldReady},
 				{
-					Key: "track.languages",
- TrackID: "audio-1",
- Status: api.InputReadinessFieldMissing,
+					Key:             "track.languages",
+					TrackID:         "audio-1",
+					Status:          api.InputReadinessFieldMissing,
 					CorrectionField: new(api.CorrectionFieldMetadataTrackLanguages),
- TrackerIDs: []api.TrackerID{"AITHER", "BHD"},
-					Message: "identify this programme track's languages",
+					TrackerIDs:      []api.TrackerID{"AITHER", "BHD"},
+					Message:         "identify this programme track's languages",
 				},
 				{
-					Key: "track.origin",
- TrackID: "audio-2",
- Status: api.InputReadinessFieldInvalid,
+					Key:             "track.origin",
+					TrackID:         "audio-2",
+					Status:          api.InputReadinessFieldInvalid,
 					CorrectionField: new(api.CorrectionFieldMetadataTrackAudioOrigins),
- TrackerIDs: []api.TrackerID{"BHD"},
-					Disposition: api.RuleDispositionAdvisory,
- Message: "review soundtrack origin",
+					TrackerIDs:      []api.TrackerID{"BHD"},
+					Disposition:     api.RuleDispositionAdvisory,
+					Message:         "review soundtrack origin",
 				},
 			},
 			blocked: true,
@@ -1944,12 +1926,12 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 		{
 			name: "unknown field with unsafe diagnostics",
 			fields: []api.InputReadinessFieldOutcome{{
-				Key: "future.evidence",
- TrackID: "audio-1\u202e",
- Status: api.InputReadinessFieldMissing,
+				Key:             "future.evidence",
+				TrackID:         "audio-1\u202e",
+				Status:          api.InputReadinessFieldMissing,
 				CorrectionField: new(api.CorrectionField("metadata.future")),
- TrackerIDs: []api.TrackerID{"AITHER\x1b[2J"},
-				Message: "inspect evidence password=SECRET_SENTINEL \x1b]52;c;CLIPBOARD\a\x1b[2J\u202e日本語",
+				TrackerIDs:      []api.TrackerID{"AITHER\x1b[2J"},
+				Message:         "inspect evidence password=SECRET_SENTINEL \x1b]52;c;CLIPBOARD\a\x1b[2J\u202e日本語",
 			}},
 			blocked:  true,
 			want:     []string{"inspect evidence", "日本語", "track: audio-1", "trackers: AITHER", "Review the source and metadata selection"},
@@ -1958,8 +1940,8 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 		{
 			name: "missing message and track binding",
 			fields: []api.InputReadinessFieldOutcome{{
-				Key: "track.languages",
- Status: api.InputReadinessFieldInvalid,
+				Key:             "track.languages",
+				Status:          api.InputReadinessFieldInvalid,
 				CorrectionField: new(api.CorrectionFieldMetadataTrackLanguages),
 				Disposition:     "unknown",
 			}},

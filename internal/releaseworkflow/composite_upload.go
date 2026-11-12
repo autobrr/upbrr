@@ -416,6 +416,9 @@ func normalizeCompositeUploadRequest(
 	if request.Execution.PreparedRelease == api.ReleaseWorkflowPreparedReleaseRequire {
 		prepareInput.RequirePrepared = true
 	}
+	if request.Torrent.InfoHash != nil {
+		prepareInput.Search.InfoHash = *request.Torrent.InfoHash
+	}
 	projections := compositeUploadProjectionInstructions(request.Trackers.Projection)
 	trackerIDs := normalizeCompositeTrackerIDs(request.Trackers.Include)
 	if len(trackerIDs) > 0 {
@@ -1002,6 +1005,27 @@ func (m *Module) runCompositeUpload(
 		if err != nil {
 			return CommandResult{}, err
 		}
+		intent := compositeContinuationIntent(initial, session)
+		intent.TrackerIDs = workflowTrackerScope(state, intent.TrackerIDs)
+		request := api.ContinueReleaseWorkflowRequest{
+			Authority: &api.WorkflowAuthority{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+			},
+			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
+			Goal:           session.Goal,
+			Intent:         intent,
+		}
+		if !compositeUploadAllTrackersRemoved(current, session) {
+			if refresh, refreshErr := m.planCatalogRefresh(request, current, m.clock.Now().UTC()); refreshErr != nil {
+				return CommandResult{}, refreshErr
+			} else if refresh != nil {
+				if _, err := m.execute(ctx, ownerID, refresh); err != nil {
+					return CommandResult{}, fmt.Errorf("release workflow composite refresh projection catalog: %w", err)
+				}
+				continue
+			}
+		}
 		if compositeUploadGoalReached(current, session, command.ExpectedRevision) {
 			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "goal_reached"); err != nil {
 				return CommandResult{}, err
@@ -1009,6 +1033,7 @@ func (m *Module) runCompositeUpload(
 			return m.Current(ctx, ownerID, command.WorkflowID)
 		}
 		if session.Goal == api.WorkflowGoalUploaded && current.DryRun != nil &&
+			!duplicateSearchModeChanged(current.Dupes, session.Intent.SkipRemoteDuplicates) &&
 			current.DryRun.Revision > command.ExpectedRevision && current.DryRun.Status == api.StageStatusFailed &&
 			dryRunMatchesIntent(current.DryRun, session.Intent.NoSeed, session.Intent.UploadTrackerIDs) {
 			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "dry_run_failed"); err != nil {
@@ -1033,17 +1058,6 @@ func (m *Module) runCompositeUpload(
 			}, errors.New("release workflow composite upload has no remaining trackers"))
 		}
 
-		intent := compositeContinuationIntent(initial, session)
-		intent.TrackerIDs = workflowTrackerScope(state, intent.TrackerIDs)
-		request := api.ContinueReleaseWorkflowRequest{
-			Authority: &api.WorkflowAuthority{
-				WorkflowID:       current.Workflow.ID,
-				ExpectedRevision: current.Workflow.Revision,
-			},
-			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
-			Goal:           session.Goal,
-			Intent:         intent,
-		}
 		_, recovered, plannerTransition, recoveryErr := m.recoverPersistedMediaForContinuation(
 			ctx,
 			ownerID,
@@ -1325,6 +1339,9 @@ func compositeUploadGoalReached(current CommandResult, session *compositeUploadS
 		len(withoutConfirmedSubmissions(session.Intent.TrackerIDs, current.Workflow.SubmissionExclusions)) == 0 {
 		return true
 	}
+	if duplicateSearchModeChanged(current.Dupes, session.Intent.SkipRemoteDuplicates) {
+		return false
+	}
 	switch session.Goal {
 	case api.WorkflowGoalDryRun:
 		return current.DryRun != nil && current.DryRun.Revision > startedAt &&
@@ -1365,6 +1382,10 @@ func compositeUploadPendingAction(
 	for index := range current.Continuation.RequiredActions {
 		action := &current.Continuation.RequiredActions[index]
 		if action.Status != api.RequiredActionStatusPending {
+			continue
+		}
+		if (action.Kind == api.RequiredActionReviewDuplicates || action.Kind == api.RequiredActionApproveTrackers) &&
+			duplicateSearchModeChanged(current.Dupes, session.Intent.SkipRemoteDuplicates) {
 			continue
 		}
 		if strictDuplicateForTracker(current.Dupes, action.TrackerID) {
@@ -1474,7 +1495,7 @@ func (m *Module) applyCompositeAutomaticPolicy(
 		}
 		return true, nil
 	}
-	if current.Dupes == nil {
+	if current.Dupes == nil || duplicateSearchModeChanged(current.Dupes, session.Intent.SkipRemoteDuplicates) {
 		return false, nil
 	}
 	decisions := make(map[api.TrackerID]api.DupeDecision)

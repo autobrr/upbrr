@@ -525,7 +525,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 
 	filename, secondary := resolveSearchTitles(meta)
 	year := resolveSearchYear(meta)
-	unattendedSearch := isUnattendedMetadataSearch(meta)
+	// Provider confidence thresholds apply in every mode; the CLI owns required selection.
 	explicitCategory := meta.ReleaseNameOverrides.Category != nil && normalizeCategory(*meta.ReleaseNameOverrides.Category) != "" ||
 		ids.Overrides.Category == api.OverrideStateValue || ids.Provenance.Category == api.IdentityProvenanceExplicit
 	imdbSearchCategory := ids.Category
@@ -537,7 +537,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			UntouchedFilename: pathutil.Base(meta.SourcePath),
 			SearchYear:        stageYear,
 			Category:          string(ids.Category),
-			Unattended:        unattendedSearch,
 			Debug:             false,
 		})
 		if err != nil {
@@ -560,7 +559,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 		for _, stageYear := range buildSearchYears(year) {
 			searchIMDb(stageYear)
-			if ids.IMDBID != 0 {
+			if ids.IMDBID != 0 || len(candidates.IMDB) > 0 {
 				break
 			}
 		}
@@ -618,7 +617,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				Year:          year,
 			},
 			RequireExternalIDAgreement: hasExplicitProviderAnchor || ids.TVDBID != 0 && shouldUseTVDBForCategory(meta, ids),
-			Unattended:                 unattendedSearch,
 			Debug:                      false,
 		})
 		if err != nil {
@@ -650,11 +648,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	if needsTMDBSearch || needsIMDBSearch {
 		searchYears := buildSearchYears(year)
 		logger.Debugf(
-			"metadata: external ids search filename=%q year=%d stages=%v unattended=%t category=%q tmdb=%t imdb=%t",
+			"metadata: external ids search filename=%q year=%d stages=%v category=%q tmdb=%t imdb=%t",
 			filename,
 			year,
 			searchYears,
-			unattendedSearch,
 			tmdbCategoryPref,
 			needsTMDBSearch,
 			needsIMDBSearch,
@@ -665,8 +662,9 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				break
 			}
 
-			stageNeedsTMDB := tmdbClient != nil && !overrideTMDB && !clearedTMDB && ids.TMDBID == 0
-			stageNeedsIMDB := !overrideIMDB && !clearedIMDB && ids.IMDBID == 0
+			// Unresolved candidates require selection, not a different year's match.
+			stageNeedsTMDB := tmdbClient != nil && !overrideTMDB && !clearedTMDB && ids.TMDBID == 0 && len(candidates.TMDB) == 0
+			stageNeedsIMDB := !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && len(candidates.IMDB) == 0
 			if !stageNeedsTMDB && !stageNeedsIMDB {
 				break
 			}
@@ -687,7 +685,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 					SecondaryTitle: secondary,
 					SearchYear:     stageYear,
 					Category:       tmdbCategoryPref,
-					Unattended:     unattendedSearch,
 					DontSwitch:     explicitCategory || strings.EqualFold(tmdbCategoryPref, "TV"),
 					Debug:          false,
 				})
@@ -703,7 +700,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				candidates.TMDB = mapTMDBCandidates(tmdbOutcome.Candidates, tmdbOutcome.Category)
 			}
 			// IMDb selection must use the category of the selected TMDB resource.
-			stageNeedsIMDB = !overrideIMDB && !clearedIMDB && ids.IMDBID == 0
+			stageNeedsIMDB = !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && len(candidates.IMDB) == 0
 			if stageNeedsIMDB {
 				imdbResult = searchIMDb(stageYear)
 			}
@@ -1491,6 +1488,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		appendProviderRefreshWarning(&meta, "TVDB", tvdbErr)
 		appendProviderRefreshWarning(&meta, "TVmaze", tvmazeErr)
 		appendProviderRefreshWarning(&meta, "AniList", anilistErr)
+	}
+	// Keep unresolved searches free to discover TV before applying the final default.
+	if normalizeCategory(string(ids.Category)) == "" {
+		ids.Category = api.CanonicalCategoryMovie
 	}
 	ids = ids.WithProviderRetention(meta.ExternalIDOverrides)
 	logger.Tracef(
@@ -2413,16 +2414,6 @@ func uniqueSearchYears(values []int) []int {
 	return result
 }
 
-func isUnattendedMetadataSearch(meta preparationstate.State) bool {
-	//nolint:exhaustive // Interactive modes are intentionally treated as attended.
-	switch meta.Policy.InteractionMode {
-	case api.InteractionModeUnattended, api.InteractionModeUnattendedConfirm:
-		return true
-	default:
-		return false
-	}
-}
-
 func resolveCategoryPreference(meta preparationstate.State) string {
 	if meta.ReleaseNameOverrides.Category != nil {
 		category := normalizeCategory(*meta.ReleaseNameOverrides.Category)
@@ -2551,6 +2542,7 @@ func mapTMDBMetadata(ids api.ExternalIdentity, result tmdb.MetadataResult) *api.
 		LastAirDate:         result.LastAirDate,
 		OriginCountry:       append([]string{}, result.OriginCountry...),
 		OriginalLanguage:    result.OriginalLanguage,
+		SpokenLanguages:     append([]string(nil), result.SpokenLanguages...),
 		Overview:            result.Overview,
 		Poster:              result.Poster,
 		TMDBPosterPath:      result.TMDBPosterPath,
@@ -2724,6 +2716,7 @@ func mapIMDBMetadata(info imdb.Info) *api.IMDBMetadata {
 		SoundMixes:       append([]string{}, info.SoundMixes...),
 		TVYear:           info.TVYear,
 		OriginalLanguage: info.OriginalLanguage,
+		SpokenLanguages:  slices.Clone(info.SpokenLanguages),
 	}
 }
 

@@ -116,7 +116,6 @@ arr_integration:
 
 torrent_creation:
   mkbrr_threads: 0
-  prefer_max_16_torrent: false
   rehash_cooldown: 0
 
 post_upload:

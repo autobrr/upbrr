@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -184,7 +185,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 		assets = trackers.DescriptionAssets{}
 	}
 	description := buildDescription(req, assets)
-	fields := buildFields(req.Meta, description, auth, standalone.QuestionnaireAnswers(req.Meta, "BJS"))
+	fields := buildFields(req.Meta, req.TrackerConfig, description, auth, standalone.QuestionnaireAnswers(req.Meta, "BJS"))
 	releaseName, err := req.ReviewedUploadName()
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: BJS reviewed upload name: %w", err)
@@ -202,7 +203,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 	return state, cookies, nil
 }
 
-func buildFields(meta api.UploadSubject, description string, auth string, answers map[string]string) map[string]string {
+func buildFields(meta api.UploadSubject, trackerConfig config.TrackerConfig, description string, auth string, answers map[string]string) map[string]string {
 	width, height := resolveResolution(meta)
 	runtimeMinutes := resolveRuntime(meta)
 	ptBR := api.ExtractTrackerLocalizedPTBR(meta)
@@ -238,6 +239,12 @@ func buildFields(meta api.UploadSubject, description string, auth string, answer
 		"traileryoutube":   resolveYouTube(meta, ptBR),
 		"type":             resolveType(meta),
 		"year":             resolveYearLabel(meta),
+	}
+	if trackerConfig.Anon {
+		fields["anonymous"] = "on"
+		if trackerConfig.ShowGroupIfAnon {
+			fields["anonymousshowgroup"] = "on"
+		}
 	}
 	category := strings.ToUpper(strings.TrimSpace(categoryOf(meta)))
 	if category == "MOVIE" {

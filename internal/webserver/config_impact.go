@@ -19,6 +19,8 @@ func ConfigImpactDetails(previous, next config.Config) []api.ConfigImpactDetail 
 }
 
 func configImpactDetails(previous, next config.Config) []api.ConfigImpactDetail {
+	previous = config.WorkflowConfigForComparison(previous)
+	next = config.WorkflowConfigForComparison(next)
 	impacts := make([]api.ConfigImpact, 0, 8)
 	add := func(impact api.ConfigImpact) {
 		if !slices.Contains(impacts, impact) {
@@ -32,23 +34,19 @@ func configImpactDetails(previous, next config.Config) []api.ConfigImpactDetail 
 		!configValueEqual(previous.ArrIntegration, next.ArrIntegration) {
 		add(api.ConfigImpactProvider)
 	}
-	if previous.MainSettings.TrackerPassChecks != next.MainSettings.TrackerPassChecks ||
-		!configValueEqual(previous.TorrentCreation, next.TorrentCreation) {
+	if !configValueEqual(previous.TorrentCreation, next.TorrentCreation) {
 		add(api.ConfigImpactTrackers)
 	}
 	if !configValueEqual(previous.Description, next.Description) {
 		add(api.ConfigImpactDescription)
 	}
-	if previous.ScreenshotHandling.Screens != next.ScreenshotHandling.Screens ||
-		previous.ScreenshotHandling.CutoffScreens != next.ScreenshotHandling.CutoffScreens {
+	if previous.ScreenshotHandling.Screens != next.ScreenshotHandling.Screens {
 		add(api.ConfigImpactScreenshotSelection)
 	}
 	previousCapture := previous.ScreenshotHandling
 	nextCapture := next.ScreenshotHandling
 	previousCapture.Screens = 0
-	previousCapture.CutoffScreens = 0
 	nextCapture.Screens = 0
-	nextCapture.CutoffScreens = 0
 	if !configValueEqual(previousCapture, nextCapture) {
 		add(api.ConfigImpactScreenshotCapture)
 	}
@@ -60,9 +58,7 @@ func configImpactDetails(previous, next config.Config) []api.ConfigImpactDetail 
 		!configValueEqual(previous.PostUpload, next.PostUpload) {
 		add(api.ConfigImpactClientInjection)
 	}
-	if previous.MainSettings.UpdateNotification != next.MainSettings.UpdateNotification ||
-		previous.MainSettings.VerboseNotification != next.MainSettings.VerboseNotification ||
-		previous.MainSettings.InputHistoryLimit != next.MainSettings.InputHistoryLimit ||
+	if previous.MainSettings.InputHistoryLimit != next.MainSettings.InputHistoryLimit ||
 		previous.MainSettings.UseFavicons != next.MainSettings.UseFavicons ||
 		previous.MainSettings.FaviconOnly != next.MainSettings.FaviconOnly ||
 		!configValueEqual(previous.Logging, next.Logging) {

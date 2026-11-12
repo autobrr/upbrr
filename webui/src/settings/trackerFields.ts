@@ -107,11 +107,11 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   }),
   Anon: boolField("Anon", {
     label: "Anonymous upload",
-    help: "Request anonymous uploader attribution where implemented. Does not guarantee privacy from the tracker. Current BHDTV and BJS upload payloads do not use this preference.",
+    help: "Request anonymous uploader attribution where implemented. Does not guarantee privacy from the tracker; account defaults may still apply when this preference is off. The BHDTV adapter does not use this preference.",
   }),
   ShowGroupIfAnon: boolField("ShowGroupIfAnon", {
-    label: "Show group when anonymous (compatibility)",
-    help: "Retained for compatibility; not currently used to alter group display on anonymous uploads.",
+    label: "Show group when anonymous",
+    help: "Request release-group visibility on anonymous uploads. Only applies when Anonymous upload is enabled.",
   }),
   BhdRSSKey: stringField("BhdRSSKey", {
     label: "BHD RSS search key",

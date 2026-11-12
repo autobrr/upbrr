@@ -279,6 +279,8 @@ type ReleaseWorkflowUploadClient struct {
 
 // ReleaseWorkflowUploadTorrent contains torrent construction choices.
 type ReleaseWorkflowUploadTorrent struct {
+	// InfoHash selects a client torrent for preparation-time metadata and validated reuse.
+	// A miss reports an error and falls back to ordinary discovery; it does not assert a generated hash.
 	InfoHash        *string `json:"infoHash,omitempty"`
 	MaxPieceSizeMiB *int    `json:"maxPieceSizeMiB,omitempty"`
 	NoHash          *bool   `json:"noHash,omitempty"`

@@ -277,8 +277,10 @@ type Module struct {
 }
 
 type operationWorker struct {
-	cancel context.CancelFunc
-	done   <-chan struct{}
+	ownerID    string
+	workflowID api.WorkflowID
+	cancel     context.CancelFunc
+	done       <-chan struct{}
 }
 
 // New constructs the deep release-workflow application module.
@@ -471,6 +473,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	state.Workflow.Revision = nextRevision
 	state.Workflow.UpdatedAt = now
 	result.Workflow = state.Workflow
+	result.InputReview = inputReviewContext(&state)
 	if operationID, _ := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID); operationID != "" {
 		m.checkpointCompositeStage(&state, operationID, command, nextRevision)
 	}
@@ -892,7 +895,12 @@ func (m *Module) dispatchOperationWorker(
 		}
 		return
 	}
-	m.operationWorkers[record.OperationID] = operationWorker{cancel: cancel, done: workerDone}
+	m.operationWorkers[record.OperationID] = operationWorker{
+		ownerID:    record.OwnerID,
+		workflowID: record.WorkflowID,
+		cancel:     cancel,
+		done:       workerDone,
+	}
 	m.operationWorkersMu.Unlock()
 	go func() {
 		defer func() {
@@ -2089,7 +2097,11 @@ func (m *Module) convergeCompletedOperationCheckpoint(
 		return false, nil
 	}
 	lock := m.operationLock(record.OperationID)
-	lock.Lock()
+	if !lock.TryLock() {
+		// Completion already owns this checkpoint. A poll can retain its
+		// active receipt and retry without blocking behind durable writes.
+		return false, nil
+	}
 	defer lock.Unlock()
 
 	// A completed checkpoint is immutable, but polling may have loaded the
@@ -2619,6 +2631,7 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 		return CommandResult{}, fmt.Errorf("release workflow current operation query: %w", operationErr)
 	}
 	result := CommandResult{Workflow: state.Workflow}
+	result.InputReview = inputReviewContext(&state)
 	if operationErr == nil {
 		result.Operation = &operation.Status
 	}
@@ -3214,8 +3227,9 @@ func (m *Module) waitForOperationCleanup(ctx context.Context, operationID api.Wo
 }
 
 // CancelOperation requests cancellation of one active owner-scoped operation.
-// If the operation finishes before the cancellation message is saved, its
-// terminal status is returned unchanged.
+// The acknowledgement is advisory; the worker persists its terminal outcome.
+// If the operation finishes while cancellation is requested, its terminal
+// status is returned unchanged.
 func (m *Module) CancelOperation(
 	ctx context.Context,
 	ownerID string,
@@ -3243,13 +3257,16 @@ func (m *Module) CancelOperation(
 	if worker.cancel != nil {
 		worker.cancel()
 	}
-	return m.mutateOperationIf(ctx, record.OwnerID, workflowID, operationID, func(status *api.WorkflowOperationStatus) bool {
-		if !workflowOperationActive(status.Status) {
-			return false
-		}
-		status.Message = "Cancellation requested."
-		return true
-	})
+	// Do not queue an advisory write behind the worker's durable completion.
+	// In particular, cancellation must not lose its caller's cleanup deadline.
+	record, err = m.operations.LoadOperation(ctx, record.OwnerID, workflowID, operationID)
+	if err != nil {
+		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow read cancellation acknowledgement: %w", err)
+	}
+	if workflowOperationActive(record.Status.Status) {
+		record.Status.Message = "Cancellation requested."
+	}
+	return cloneWorkflowOperationStatus(record.Status, "acknowledge cancellation")
 }
 
 func (m *Module) newID(prefix string) (string, error) {
@@ -3838,17 +3855,14 @@ func (m *Module) apply(
 	command mutation,
 ) (CommandResult, error) {
 	switch typed := command.(type) {
-	case ProjectTrackersCommand, PreflightTrackersCommand, CheckDuplicatesCommand, ResolveActionCommand, resolveTrackerPreparationCommand:
+	case ProjectTrackersCommand, PreflightTrackersCommand, CheckDuplicatesCommand,
+		ResolveActionCommand, resolveTrackerPreparationCommand, EvaluateInputReadinessCommand:
 	case ReplaceFactInstructionsCommand:
 		stageMetadataDuplicateReuse(state, now)
 	case PrepareReleaseCommand:
 		if ordinaryMetadataRefresh(typed.Input) {
 			stageMetadataDuplicateReuse(state, now)
 		} else {
-			state.PendingDuplicateReuse = nil
-		}
-	case EvaluateInputReadinessCommand:
-		if state.PendingDuplicateReuse != nil && !state.PendingDuplicateReuse.MetadataRefresh {
 			state.PendingDuplicateReuse = nil
 		}
 	default:
@@ -4124,6 +4138,7 @@ func (m *Module) replaceFactInstructions(
 	}
 	state.FactInstructions[snapshot.ID] = snapshot
 	state.Workflow.FactInstructions = api.ReleaseFactInstructionSnapshotRef{ID: snapshot.ID, Revision: snapshot.Revision}
+	retainInputReview(state)
 	invalidatePreparedAndDownstream(&state.Workflow)
 	state.Workflow.Status = api.WorkflowStatusDraft
 	state.Workflow.RequiredActions = nil
@@ -4270,6 +4285,10 @@ func (m *Module) prepareRelease(
 		state.PendingHDRAnalysisWorkflowID = state.Workflow.ID
 	}
 	prior := state.Workflow.Release
+	retainInputReview(state)
+	if review := state.InputReview; review != nil && state.Releases[review.Release.ID].Release.Source.SourcePath != ref.SourcePath {
+		state.InputReview = nil
+	}
 	state.Workflow.Release = &api.ReleaseSnapshotRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	if prior == nil || prior.ID != snapshot.ID || prior.Revision != snapshot.Revision {
 		invalidateTrackerAndDownstream(&state.Workflow)
@@ -4864,6 +4883,11 @@ func (m *Module) projectTrackers(
 	var authorizations map[api.TrackerID]api.WorkflowFingerprint
 	if questionnaireOnly && state.Workflow.TrackerProjections != nil {
 		authorizations = projectionRuleAuthorizations(state.Projections[state.Workflow.TrackerProjections.ID])
+	} else if pending := state.PendingDuplicateReuse; questionnaireOnly && pending != nil && pending.ProjectionContext != nil {
+		authorizations = projectionRuleAuthorizations(state.Projections[pending.ProjectionContext.ID])
+		for _, trackerID := range pending.InvalidatedTrackers {
+			delete(authorizations, trackerID)
+		}
 	}
 	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, command, authorizations)
 }
@@ -5578,23 +5602,26 @@ func (m *Module) checkDuplicates(
 	if err != nil {
 		return CommandResult{}, err
 	}
-	return m.publishBuiltDupes(ownerID, state, nextRevision, now, projections, snapshot, privateEvidence, command.CheckOrdinal)
+	return m.publishBuiltDupes(ownerID, state, nextRevision, now, projections, snapshot, privateEvidence, command.CheckOrdinal, command.SkipRemote)
 }
 
 func (m *Module) publishBuiltDupes(
 	ownerID string, state *State, nextRevision api.WorkflowRevision, now time.Time,
-	projections api.TrackerReleaseProjectionSet, snapshot api.DupeAssessment, privateEvidence any, checkOrdinal uint8,
+	projections api.TrackerReleaseProjectionSet, snapshot api.DupeAssessment, privateEvidence any, checkOrdinal uint8, skipRemote bool,
 ) (CommandResult, error) {
 	if err := validateDupeBuild(projections, snapshot); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build duplicate assessment: %w", err)
 	}
 	snapshot.CheckOrdinal = normalizedDuplicateCheckOrdinal(checkOrdinal)
+	snapshot.SkipRemote = skipRemote
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		BuilderFingerprint api.WorkflowFingerprint
 		CheckOrdinal       uint8
+		SkipRemote         bool
 	}{
 		BuilderFingerprint: snapshot.InputFingerprint,
 		CheckOrdinal:       snapshot.CheckOrdinal,
+		SkipRemote:         skipRemote,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint duplicate assessment ordinal: %w", err)
