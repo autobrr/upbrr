@@ -444,16 +444,16 @@
     "sha256": "f842b38e1da2aa167cb1ecc18d87d2aa2fe721634b27c75ca153f21de57e23e4"
   },
   "internal/trackers/impl/standalone/bjs/upload.go:buildFields": {
-    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
-    "sha256": "3d3700bcd16aec4dcbf9622a84c525520cfe5553355deb3a7ed36ed916764f5d"
+    "reason": "BJS anonymity wiring review: effective tracker configuration only adds anonymous attribution and conditional group visibility fields. Existing manual title/year/genre precedence, questionnaire answers, provider selectors and reviewed upload-name authority are unchanged; callers and provider helpers were reviewed together.",
+    "sha256": "37913e89c51441ce0c1cc8c1658122b99d133554b1a415d11adc098548ad50d6"
   },
   "internal/trackers/impl/standalone/bjs/upload.go:prepareUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
     "sha256": "1b4ea68456b81d1bbf92b9ac8b0e77f72a236972191aac69d0f2b26129ae465f"
   },
   "internal/trackers/impl/standalone/bjs/upload.go:prepareUploadState": {
-    "reason": "Questionnaire construction now reads the same operation subject through pure overview/tag resolvers. Payload and schema both prefer explicit nonempty answers before localized/base provider defaults; reviewed upload-name authority and provider precedence are unchanged.",
-    "sha256": "9cb6849531336e9a3edc563810927fe98037c0f80c2438e7614d215ca59a8834"
+    "reason": "BJS anonymity wiring review: effective tracker configuration only adds anonymous attribution and conditional group visibility fields. Existing manual title/year/genre precedence, questionnaire answers, provider selectors and reviewed upload-name authority are unchanged; callers and provider helpers were reviewed together.",
+    "sha256": "f3699896681c89943d6de4cac097161175c2946ceb051a92fd7fd827e92fa764"
   },
   "internal/trackers/impl/standalone/bjs/upload.go:resolveCast": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -492,8 +492,8 @@
     "sha256": "8c44f7534b83f381c733beddb6344ebf3bf8a8fd5560c80a7cad20be2d469892"
   },
   "internal/trackers/impl/standalone/bjs/validation.go:validationPolicy": {
-    "reason": "Questionnaire gating review: only missing overview is answer-correctable, preserving explicit-answer and finalized metadata precedence. Identifier and director/creator requirements remain independent strict failures.",
-    "sha256": "f22102c52538e391876bcfe00e2a2e561690fe68e23bde46b1241801ef3dfaf4"
+    "reason": "BJS anonymity wiring review: effective tracker configuration only adds anonymous attribution and conditional group visibility fields. Existing manual title/year/genre precedence, questionnaire answers, provider selectors and reviewed upload-name authority are unchanged; callers and provider helpers were reviewed together.",
+    "sha256": "17a17cea5caa7d5055c2c865ef91fd5aaf22bde6d4a94035a20f0bd03cb823d5"
   },
   "internal/trackers/impl/standalone/bt/definition.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",

@@ -658,6 +658,61 @@ func TestCompositeUploadRechecksPriorCompletedDryRunOnNewAttempt(t *testing.T) {
 	}
 }
 
+type upgradedCatalogProjector struct {
+	TrackerProjectionBuilder
+	stale api.TrackerCatalogSnapshotID
+}
+
+func (p upgradedCatalogProjector) CatalogCurrent(catalog api.TrackerCatalogSnapshot) (bool, error) {
+	return catalog.ID != p.stale, nil
+}
+
+func TestCompositeUploadRefreshesOldCatalogBeforeRetainedAuthority(t *testing.T) {
+	for _, goal := range []api.WorkflowGoal{api.WorkflowGoalDryRun, api.WorkflowGoalUploaded} {
+		t.Run(string(goal), func(t *testing.T) {
+			module, repository, _ := newCompositeUploadTestModule(t)
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "old-catalog")
+			request.Trackers.DefaultProjection = &api.ReleaseWorkflowUploadTrackerProjection{Config: api.ReleaseWorkflowUploadTrackerConfig{Anon: new(true)}}
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			prior := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-old-catalog")
+			if prior.DryRun == nil || prior.Catalog == nil {
+				t.Fatal("fixture lacks retained catalog/dry run")
+			}
+			state, err := repository.Load(t.Context(), testOwnerID, prior.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state.Composite.Goal = goal
+			repository.states[prior.Workflow.ID] = &memoryState{State: state}
+			module.trackerProjector = upgradedCatalogProjector{TrackerProjectionBuilder: module.trackerProjector, stale: prior.Catalog.ID}
+			operation, err := module.Start(t.Context(), testOwnerID, CompositeUploadCommand{
+				WorkflowID:         prior.Workflow.ID,
+				ExpectedRevision:   prior.Workflow.Revision,
+				SessionFingerprint: state.Composite.RequestFingerprint,
+				Goal:               goal,
+				IdempotencyKey:     "resume-upgraded-catalog",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			current := waitCompositeUploadTestOperation(t, module, CommandResult{Operation: &operation})
+			if current.Projections == nil || current.Projections.ID == prior.Projections.ID || current.Catalog.ID == prior.Catalog.ID {
+				t.Fatalf("old projection authority reused: before=%v after=%v operation=%+v", prior.Projections.ID, current.Projections, current.Operation)
+			}
+			if current.Release.Release.Generation != prior.Release.Release.Generation {
+				t.Fatal("catalog refresh replaced compatible source facts")
+			}
+			if current.DryRun != nil || current.Workflow.TrackerApproval != nil {
+				t.Fatal("old dry run or approval survived changed projection contract")
+			}
+		})
+	}
+}
+
 func TestCompositeUploadPartialDryRunStopsAfterOneReview(t *testing.T) {
 	t.Parallel()
 

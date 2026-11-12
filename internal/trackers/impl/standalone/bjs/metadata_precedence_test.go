@@ -6,6 +6,7 @@ package bjs
 import (
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -33,13 +34,13 @@ func TestBJSMetadataSelectorsPreferManualFacts(t *testing.T) {
 	if got := resolveTags(meta, api.ExtractTrackerLocalizedPTBR(meta)); got != "drama" {
 		t.Fatalf("manual tags = %q", got)
 	}
-	if got := buildFields(meta, "", "", nil)["titulobrasileiro"]; got != "Manual Title" {
+	if got := buildFields(meta, config.TrackerConfig{}, "", "", nil)["titulobrasileiro"]; got != "Manual Title" {
 		t.Fatalf("manual localized title = %q", got)
 	}
 	meta.EffectiveMetadata.Title = ""
 	meta.EffectiveMetadata.TitleProvenance = api.FactProvenanceManualEmpty
 	meta.EffectiveMetadata.OriginalTitleProvenance = api.FactProvenanceManualEmpty
-	fields := buildFields(meta, "", "", nil)
+	fields := buildFields(meta, config.TrackerConfig{}, "", "", nil)
 	if got := fields["title"]; got != "" {
 		t.Fatalf("manual-empty original title = %q", got)
 	}
@@ -53,7 +54,7 @@ func TestBJSMetadataSelectorsPreferManualFacts(t *testing.T) {
 			OriginalTitle: "Effective Original Title",
 		},
 	}
-	fields = buildFields(automatic, "", "", nil)
+	fields = buildFields(automatic, config.TrackerConfig{}, "", "", nil)
 	if got := fields["title"]; got != "Effective Original Title" {
 		t.Fatalf("automatic original title = %q", got)
 	}

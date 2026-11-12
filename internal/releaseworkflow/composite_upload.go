@@ -1005,6 +1005,27 @@ func (m *Module) runCompositeUpload(
 		if err != nil {
 			return CommandResult{}, err
 		}
+		intent := compositeContinuationIntent(initial, session)
+		intent.TrackerIDs = workflowTrackerScope(state, intent.TrackerIDs)
+		request := api.ContinueReleaseWorkflowRequest{
+			Authority: &api.WorkflowAuthority{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+			},
+			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
+			Goal:           session.Goal,
+			Intent:         intent,
+		}
+		if !compositeUploadAllTrackersRemoved(current, session) {
+			if refresh, refreshErr := m.planCatalogRefresh(request, current, m.clock.Now().UTC()); refreshErr != nil {
+				return CommandResult{}, refreshErr
+			} else if refresh != nil {
+				if _, err := m.execute(ctx, ownerID, refresh); err != nil {
+					return CommandResult{}, fmt.Errorf("release workflow composite refresh projection catalog: %w", err)
+				}
+				continue
+			}
+		}
 		if compositeUploadGoalReached(current, session, command.ExpectedRevision) {
 			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "goal_reached"); err != nil {
 				return CommandResult{}, err
@@ -1037,17 +1058,6 @@ func (m *Module) runCompositeUpload(
 			}, errors.New("release workflow composite upload has no remaining trackers"))
 		}
 
-		intent := compositeContinuationIntent(initial, session)
-		intent.TrackerIDs = workflowTrackerScope(state, intent.TrackerIDs)
-		request := api.ContinueReleaseWorkflowRequest{
-			Authority: &api.WorkflowAuthority{
-				WorkflowID:       current.Workflow.ID,
-				ExpectedRevision: current.Workflow.Revision,
-			},
-			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
-			Goal:           session.Goal,
-			Intent:         intent,
-		}
 		_, recovered, plannerTransition, recoveryErr := m.recoverPersistedMediaForContinuation(
 			ctx,
 			ownerID,
