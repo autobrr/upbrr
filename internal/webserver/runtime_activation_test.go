@@ -260,48 +260,66 @@ func TestRuntimeActivatorSerializesCompleteTransition(t *testing.T) {
 
 func TestRuntimeActivatorPersistsStoredOnlyChangeWithoutBuilding(t *testing.T) {
 	t.Setenv("UA_DEFAULT_TMDB_API", "env-value")
-	repo := openRuntimeActivationTestRepo(t)
-	activator, err := NewRuntimeActivator(repo, repo.DBPath(), &activationTestInstaller{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stored := validRuntimeActivationConfig()
-	stored.MainSettings.DBPath = repo.DBPath()
-	candidate := stored
-	candidate.MainSettings.TMDBAPI = "saved-value"
-	var persisted config.Config
-	activator.deps = runtimeActivationDeps{
-		build: func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
-			t.Fatal("stored-only activation rebuilt runtime")
-			return RuntimeGeneration{}, nil
-		},
-		cookies: func(context.Context, *db.SQLiteRepository, string, api.Logger) error {
-			t.Fatal("stored-only activation maintained cookies")
-			return nil
-		},
-		persist: func(_ context.Context, cfg *config.Config, _ *db.SQLiteRepository, _ string, _ api.Logger) error {
-			persisted = *cfg
-			return nil
-		},
-		loadStored: func(context.Context, *db.SQLiteRepository) (*config.Config, error) { return &stored, nil },
-		loadActivation: func(context.Context, *db.SQLiteRepository) (api.ConfigActivation, error) {
-			return api.ConfigActivation{
-				Status:           api.ConfigActivationActive,
-				ActiveGeneration: 4,
-				Impacts:          []api.ConfigImpact{},
-			}, nil
-		},
-	}
+	for _, compatibilityOnly := range []bool{false, true} {
+		t.Run(map[bool]string{false: "environment masked", true: "compatibility-only"}[compatibilityOnly], func(t *testing.T) {
+			repo := openRuntimeActivationTestRepo(t)
+			activator, err := NewRuntimeActivator(repo, repo.DBPath(), &activationTestInstaller{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored := validRuntimeActivationConfig()
+			stored.MainSettings.DBPath = repo.DBPath()
+			candidate := stored
+			if compatibilityOnly {
+				candidate.Metadata.UserOverrides = true
+				candidate.ScreenshotHandling.CutoffScreens = 4
+				candidate.Description.CharLimit = 100
+			} else {
+				candidate.MainSettings.TMDBAPI = "saved-value"
+			}
+			var persisted config.Config
+			activator.deps = runtimeActivationDeps{
+				build: func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
+					t.Fatal("stored-only activation rebuilt runtime")
+					return RuntimeGeneration{}, nil
+				},
+				cookies: func(context.Context, *db.SQLiteRepository, string, api.Logger) error {
+					t.Fatal("stored-only activation maintained cookies")
+					return nil
+				},
+				persist: func(_ context.Context, cfg *config.Config, _ *db.SQLiteRepository, _ string, _ api.Logger) error {
+					persisted = *cfg
+					return nil
+				},
+				loadStored: func(context.Context, *db.SQLiteRepository) (*config.Config, error) { return &stored, nil },
+				activationSafe: func(context.Context, *db.SQLiteRepository) (bool, error) {
+					t.Fatal("stored-only edit reached workflow effect admission")
+					return false, nil
+				},
+				loadActivation: func(context.Context, *db.SQLiteRepository) (api.ConfigActivation, error) {
+					return api.ConfigActivation{
+						Status:           api.ConfigActivationActive,
+						ActiveGeneration: 4,
+						Impacts:          []api.ConfigImpact{},
+					}, nil
+				},
+			}
 
-	result, err := activator.ActivateResult(t.Context(), candidate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if persisted.MainSettings.TMDBAPI != "saved-value" {
-		t.Fatal("persisted stored value did not match candidate")
-	}
-	if result.ActiveGeneration != 4 || result.Status != api.ConfigActivationActive {
-		t.Fatalf("activation result = %#v", result)
+			result, err := activator.ActivateResult(t.Context(), candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if compatibilityOnly {
+				if !persisted.Metadata.UserOverrides || persisted.ScreenshotHandling.CutoffScreens != 4 || persisted.Description.CharLimit != 100 {
+					t.Fatal("compatibility-only values were not persisted")
+				}
+			} else if persisted.MainSettings.TMDBAPI != "saved-value" {
+				t.Fatal("persisted stored value did not match candidate")
+			}
+			if result.ActiveGeneration != 4 || result.Status != api.ConfigActivationActive {
+				t.Fatalf("activation result = %#v", result)
+			}
+		})
 	}
 }
 
