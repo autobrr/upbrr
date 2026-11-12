@@ -470,6 +470,7 @@ export type DupeAssessment = Readonly<{
   results: readonly TrackerDupeAssessment[];
   revision: WorkflowRevision;
   selection: TrackerSelectionRef;
+  skipRemote?: boolean;
   status: StageStatus;
   workflowId: WorkflowID;
 }>;

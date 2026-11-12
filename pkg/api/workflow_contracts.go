@@ -507,6 +507,9 @@ type TrackerDupeAssessment struct {
 
 // DupeAssessment retains duplicate results for exact projection and preflight revisions.
 type DupeAssessment struct {
+	// SkipRemote records the explicit remote-search waiver used for this assessment.
+	// In-client duplicate evidence remains authoritative.
+	SkipRemote       bool                           `json:"skipRemote,omitempty"`
 	ID               DupeAssessmentID               `json:"id"`
 	WorkflowID       WorkflowID                     `json:"workflowId"`
 	Revision         WorkflowRevision               `json:"revision"`

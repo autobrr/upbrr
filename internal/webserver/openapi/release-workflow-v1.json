@@ -1907,6 +1907,9 @@
           "selection": {
             "$ref": "#/components/schemas/TrackerSelectionRef"
           },
+          "skipRemote": {
+            "type": "boolean"
+          },
           "status": {
             "$ref": "#/components/schemas/StageStatus"
           },

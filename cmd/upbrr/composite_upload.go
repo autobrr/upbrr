@@ -482,11 +482,17 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 				projection.Artifacts.Description,
 			)
 		}
-		// Only a completed clear check grants affirmative authorization by default.
-		// Duplicate overrides remain a separate decision, including in unattended mode.
+		// An explicit remote-search waiver grants the same default as a clear check.
+		// Other skipped prerequisites and duplicate overrides still require a decision.
+		clearCheck := dupe.Decision == api.DupeDecisionNoMatch && dupe.Status == api.StageStatusCompleted && dupe.Search.Complete
+		waivedCheck := s.uploadRequest.SkipDupeCheck && s.current.Dupes.SkipRemote &&
+			dupe.Decision == api.DupeDecisionSkipped && dupe.Status == api.StageStatusSkipped &&
+			projection.DupeReady && len(dupe.Matches) == 0 && s.current.Preflight != nil &&
+			slices.ContainsFunc(s.current.Preflight.Results, func(result api.TrackerPreflightResult) bool {
+				return result.TrackerID == trackerID && result.State == api.TrackerPreflightStateReady
+			})
 		defaultYes := releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, true) &&
-			dupe.Decision == api.DupeDecisionNoMatch && dupe.Status == api.StageStatusCompleted &&
-			dupe.Search.Complete && !dupe.RequiresStaffToken && !cliDupeRequiresRiskAcknowledgement(dupe)
+			(clearCheck || waivedCheck) && !dupe.RequiresStaffToken && !cliDupeRequiresRiskAcknowledgement(dupe)
 		confirmed := defaultYes
 		if s.intent.interaction != api.InteractionModeUnattended {
 			choice := "[y/N]"

@@ -5602,23 +5602,26 @@ func (m *Module) checkDuplicates(
 	if err != nil {
 		return CommandResult{}, err
 	}
-	return m.publishBuiltDupes(ownerID, state, nextRevision, now, projections, snapshot, privateEvidence, command.CheckOrdinal)
+	return m.publishBuiltDupes(ownerID, state, nextRevision, now, projections, snapshot, privateEvidence, command.CheckOrdinal, command.SkipRemote)
 }
 
 func (m *Module) publishBuiltDupes(
 	ownerID string, state *State, nextRevision api.WorkflowRevision, now time.Time,
-	projections api.TrackerReleaseProjectionSet, snapshot api.DupeAssessment, privateEvidence any, checkOrdinal uint8,
+	projections api.TrackerReleaseProjectionSet, snapshot api.DupeAssessment, privateEvidence any, checkOrdinal uint8, skipRemote bool,
 ) (CommandResult, error) {
 	if err := validateDupeBuild(projections, snapshot); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build duplicate assessment: %w", err)
 	}
 	snapshot.CheckOrdinal = normalizedDuplicateCheckOrdinal(checkOrdinal)
+	snapshot.SkipRemote = skipRemote
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		BuilderFingerprint api.WorkflowFingerprint
 		CheckOrdinal       uint8
+		SkipRemote         bool
 	}{
 		BuilderFingerprint: snapshot.InputFingerprint,
 		CheckOrdinal:       snapshot.CheckOrdinal,
+		SkipRemote:         skipRemote,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint duplicate assessment ordinal: %w", err)
