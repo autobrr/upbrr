@@ -52,6 +52,9 @@ func (s *cliWorkflowSession) completeComposite(
 	if err != nil {
 		return 0, err
 	}
+	if request.ImageHosting.SkipUpload != nil && *request.ImageHosting.SkipUpload {
+		fmt.Fprintln(s.streams.out, "New image-host uploads are disabled for this run; existing hosted images must still meet tracker requirements.")
+	}
 	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
 		printCLIWorkflowDupeProgress(s.streams.out, update)
 	})
@@ -464,7 +467,10 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		printCLICompositeDupeEvidence(output, dupe)
 		fmt.Fprintf(output, "Preparation: %d screenshots; %d DVD menu images.\n", projection.Artifacts.ScreenshotCount, projection.Artifacts.DVDMenuCount)
 		if projection.Artifacts.ImageHosting {
-			fmt.Fprintln(output, "Images will be uploaded to an image host.")
+			fmt.Fprintln(
+				output,
+				"Image-host requirements will be checked; compatible existing uploads may be reused. Missing images may be uploaded when uploads are enabled.",
+			)
 		}
 		if projection.Artifacts.Description {
 			fmt.Fprintln(output, "A tracker description will be prepared.")

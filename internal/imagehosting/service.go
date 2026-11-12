@@ -373,7 +373,6 @@ func (s *Service) Upload(
 	}
 	logTracker := s.imageHostLogTracker(normalizedHost)
 
-	logger.Infof("image hosting: uploading images count=%d host=%s tracker=%s", len(images), normalizedHost, logTracker)
 	logger.Debugf("image hosting: upload source path=%s host=%s tracker=%s", meta.SourcePath, normalizedHost, logTracker)
 
 	var storedScreenshots []api.Screenshot
@@ -462,6 +461,7 @@ func (s *Service) Upload(
 	}
 	emitUploadProgress(ctx, progressTarget, api.ImageUploadProgressRunning, progressTarget.Reused, 0, 0, "Uploading images.")
 
+	logger.Infof("image hosting: Uploading %d images to %s. tracker=%s", len(unique), normalizedHost, logTracker)
 	logger.Tracef("image hosting: prepared unique images count=%d host=%s tracker=%s", len(unique), normalizedHost, logTracker)
 
 	if batch, ok := uploader.(batchUploader); ok {
@@ -487,7 +487,7 @@ func (s *Service) Upload(
 			if audioCount > 0 {
 				batchCount++
 			}
-			logger.Infof(
+			logger.Debugf(
 				"image hosting: HDB gallery upload plan host=%s tracker=%s normal=%d menu=%d audio=%d hdr=%d",
 				normalizedHost,
 				logTracker,
@@ -612,7 +612,7 @@ func (s *Service) Upload(
 				)
 			}
 		}
-		logger.Infof(
+		logger.Debugf(
 			"image hosting: completed batch upload host=%s tracker=%s batches=%d images=%d wall_duration=%v",
 			normalizedHost,
 			logTracker,
@@ -620,6 +620,7 @@ func (s *Service) Upload(
 			len(results),
 			batchWallDuration,
 		)
+		logger.Infof("image hosting: %s returned %d usable image links. tracker=%s", normalizedHost, len(results), logTracker)
 		emitUploadProgress(
 			ctx,
 			progressTarget,
@@ -637,7 +638,7 @@ func (s *Service) Upload(
 		limit = 1
 	}
 
-	logger.Infof("image hosting: starting concurrent uploads limit=%d host=%s tracker=%s", limit, normalizedHost, logTracker)
+	logger.Debugf("image hosting: starting concurrent uploads limit=%d host=%s tracker=%s", limit, normalizedHost, logTracker)
 	uploadStart := time.Now()
 
 	var (
@@ -789,7 +790,7 @@ dispatchLoop:
 	totalDuration := time.Since(uploadStart)
 	orderedResults := orderedUploadResults(results)
 	timing := summarizeUploadTiming(attemptDurations, len(orderedResults), len(failures))
-	logger.Infof(
+	logger.Debugf(
 		"image hosting: completed uploads host=%s tracker=%s wall_duration=%v mean_attempt_duration=%v attempts=%d succeeded=%d unsuccessful=%d",
 		normalizedHost,
 		logTracker,
@@ -798,6 +799,13 @@ dispatchLoop:
 		timing.Attempts,
 		timing.Succeeded,
 		timing.Failed,
+	)
+	logger.Infof(
+		"image hosting: %s returned %d usable image links; %d image uploads were unsuccessful. tracker=%s",
+		normalizedHost,
+		len(orderedResults),
+		len(failures),
+		logTracker,
 	)
 
 	if s.repo != nil && len(orderedResults) > 0 {

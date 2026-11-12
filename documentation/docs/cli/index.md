@@ -140,6 +140,8 @@ Terminal errors explain the next recovery step in plain language. A confirmation
 
 During image hosting, the TUI shows each host's latest message and separate uploaded, reused and failed image counts. Fallback hosts are identified. These image counts do not replace overall workflow progress; a processed image may have failed. Overall progress stays above the host details. Focus **Application flow** and use Page Up/Page Down to inspect earlier hosts; new attempts start with the latest details visible.
 
+Normal logs identify image uploads and returned-link counts, explain reused images and requested upload skips, and show when another host is tried. A partial-upload warning explains when enough images remain to meet the configured minimum. Skipping new uploads preserves reusable links; it does not make missing images available or establish tracker readiness. Timing and concurrency details remain available at DEBUG.
+
 | Option                     | Behavior                                                                                                                                      |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--debug`                  | Runs preparation and payload preview without tracker submission. Image uploads and client injection remain enabled unless explicitly skipped. |
