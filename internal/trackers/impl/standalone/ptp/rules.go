@@ -20,6 +20,7 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	}
 	facts := subject.LanguageFacts
 	programmeStatus := trackers.ProgrammeLanguageStatus(subject)
+	audioStatus := trackers.ProgrammeAudioStatus(subject)
 	if ptpNoProgrammeDialogue(facts) {
 		return ptpRemuxLanguageFailures(subject)
 	}
@@ -41,8 +42,8 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 			subject,
 			"confirmed dubbing needs usable programme-language and inspected-coverage evidence to assess the non-English-dub rule; identify its language and correct or reset cleared or contradictory Audio languages",
 		))
-	case facts.OriginalLanguagesKnown && programmeStatus != api.MetadataEvidenceStatusComplete:
-		add("evidence", "original/programme language and track-role evidence is unresolved", trackers.LanguageUnresolved)
+	case facts.OriginalLanguagesKnown && audioStatus != api.MetadataEvidenceStatusComplete:
+		failures = append(failures, trackers.ProgrammeAudioEvidenceFailure(subject, "original/programme language and track-role evidence is unresolved"))
 	case facts.OriginalLanguagesKnown && !facts.HasOriginalAudio() && !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") && facts.HasUnresolvedProgrammeAudioOrigin():
 		failures = append(failures, trackers.ProgrammeAudioOriginFailures(subject)...)
 	case programmeStatus == api.MetadataEvidenceStatusComplete && len(facts.ProgrammeLanguages) > 0 &&
@@ -50,7 +51,7 @@ func languageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 		add("non_english_dub", "Non-English Language Dub; a replacement must resolve this defect", trackers.LanguageTrumpable)
 	}
 	failures = append(failures, ptpRemuxLanguageFailures(subject)...)
-	if ptpNeedsTrackPurposeReview(facts) {
+	if audioStatus == api.MetadataEvidenceStatusComplete && ptpNeedsTrackPurposeReview(facts) {
 		failure := trackers.LanguageRuleFailure(
 			subject,
 			"redundant_audio",
@@ -101,7 +102,8 @@ func ptpRemuxLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFa
 	add := func(key, reason string, outcome trackers.LanguageOutcome) {
 		failures = append(failures, trackers.LanguageRuleFailure(subject, key, reason, outcome))
 	}
-	primary, primaryKnown := ptpPrimaryProgrammeTrack(facts)
+	audioStatus := trackers.ProgrammeAudioStatus(subject)
+	primary, primaryKnown := ptpPrimaryProgrammeTrack(facts, audioStatus)
 	switch {
 	case !facts.TrackCoverageComplete || !primaryKnown:
 		add(
@@ -122,9 +124,15 @@ func ptpRemuxLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFa
 			trackers.LanguageTrumpable,
 		)
 	}
-	if subject.Anime && !ptpNoProgrammeDialogue(facts) && facts.TrackCoverageComplete && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete {
+	if subject.Anime && !ptpNoProgrammeDialogue(facts) && facts.TrackCoverageComplete && audioStatus == api.MetadataEvidenceStatusComplete {
 		if reason, outcome := ptpAnimeRemuxProgrammeIssue(facts); reason != "" {
-			add("anime_remux_programme", reason+". Programme tracks: "+ptpProgrammeTrackDetails(facts), outcome)
+			if outcome == trackers.LanguageUnresolved {
+				failure := trackers.LanguageRuleFailure(subject, "evidence", reason+". Programme tracks: "+ptpProgrammeTrackDetails(facts), outcome)
+				failure.Rule = "language_anime_remux_programme"
+				failures = append(failures, failure)
+			} else {
+				add("anime_remux_programme", reason+". Programme tracks: "+ptpProgrammeTrackDetails(facts), outcome)
+			}
 		}
 	}
 	return failures
@@ -137,7 +145,7 @@ func ptpAnimeRemuxProgrammeIssue(facts api.LanguageFacts) (string, trackers.Lang
 		if track.Kind != api.MediaTrackAudio || (track.Role != api.AudioRoleProgramme && track.Role != api.AudioRoleAlternateMix) {
 			continue
 		}
-		if len(track.Languages) != 1 {
+		if len(track.Languages) != 1 || !languageutil.IsIdentifiedLanguage(track.Languages[0]) {
 			return "anime remux programme-track languages do not establish the one-Japanese/one-English track count", trackers.LanguageUnresolved
 		}
 		language := languageutil.NormalizeLanguageCode(track.Languages[0])
@@ -152,8 +160,8 @@ func ptpAnimeRemuxProgrammeIssue(facts api.LanguageFacts) (string, trackers.Lang
 	return "", ""
 }
 
-func ptpPrimaryProgrammeTrack(facts api.LanguageFacts) (api.MediaTrackFacts, bool) {
-	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete || facts.PrimaryAudioTrackID == "" {
+func ptpPrimaryProgrammeTrack(facts api.LanguageFacts, status api.MetadataEvidenceStatus) (api.MediaTrackFacts, bool) {
+	if status != api.MetadataEvidenceStatusComplete || facts.PrimaryAudioTrackID == "" {
 		return api.MediaTrackFacts{}, false
 	}
 	var primary api.MediaTrackFacts
@@ -186,7 +194,7 @@ func ptpNoProgrammeDialogue(facts api.LanguageFacts) bool {
 // ptpPrimaryProgrammeLanguage uses the inspected primary stream, never original
 // metadata or an optional English/secondary track elsewhere in the release.
 func ptpPrimaryProgrammeLanguage(facts api.LanguageFacts) string {
-	track, ok := ptpPrimaryProgrammeTrack(facts)
+	track, ok := ptpPrimaryProgrammeTrack(facts, facts.ProgrammeStatus)
 	if !ok || len(track.Languages) != 1 {
 		return ""
 	}
@@ -200,9 +208,6 @@ func ptpPrimaryProgrammeLanguage(facts api.LanguageFacts) string {
 // language differences alone never prove that a mix or dub is redundant.
 func ptpNeedsTrackPurposeReview(facts api.LanguageFacts) bool {
 	confirmedOtherDub := false
-	if facts.ProgrammeStatus != api.MetadataEvidenceStatusComplete {
-		return false
-	}
 	seen := map[string]bool{}
 	programmeTracks := 0
 	for _, track := range facts.Tracks {

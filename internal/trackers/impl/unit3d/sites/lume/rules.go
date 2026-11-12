@@ -76,15 +76,17 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		if len(track.Languages) == 0 || slices.ContainsFunc(track.Languages, func(value string) bool {
 			return !languageutil.IsIdentifiedLanguage(value)
 		}) {
-			failures = append(
-				failures,
-				trackers.LanguageRuleFailure(
-					subject,
-					"track_language",
-					"correct language assignment is unresolved for track "+track.ID,
-					trackers.LanguageUnresolved,
-				),
+			failure := trackers.LanguageRuleFailure(
+				subject,
+				"track_language",
+				"correct language assignment is unresolved for track "+track.ID,
+				trackers.LanguageUnresolved,
 			)
+			if track.Kind == api.MediaTrackAudio && (track.Role == api.AudioRoleProgramme || track.Role == api.AudioRoleAlternateMix) &&
+				track.ID != "" && track.ManifestFingerprint != "" {
+				failure.LanguageCorrectionTrackIDs = []string{track.ID}
+			}
+			failures = append(failures, failure)
 		}
 	}
 	failures = append(failures, trackOrderingFailures(subject)...)
