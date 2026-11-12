@@ -8,6 +8,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -97,6 +99,61 @@ func TestE2EUploadReconcilesSucceededReceipt(t *testing.T) {
 			history, err := repo.ListUploadHistoryByPath(t.Context(), source)
 			if err != nil || len(history) != 1 || history[0].Status != "uploaded" {
 				t.Fatalf("history=%#v err=%v", history, err)
+			}
+		})
+	}
+}
+
+// Test the retained fake at its execution boundary, not only through workflow gates.
+func TestE2ERetainedPlanDiagnosticMode(t *testing.T) {
+	for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
+		t.Run(string(mode), func(t *testing.T) {
+			service := e2eTrackerService{}
+			plan, err := service.PrepareRetainedUploadPlan(t.Context(), api.UploadSubject{}, []api.TrackerReleaseProjection{
+				{
+					TrackerID:   "ALPHA",
+					Readiness:   api.ReadinessStatusReady,
+					UploadReady: true,
+				},
+				{
+					TrackerID:       "BETA",
+					Readiness:       api.ReadinessStatusIneligible,
+					DiagnosticReady: true,
+				},
+				{TrackerID: "GAMMA", Readiness: api.ReadinessStatusIneligible},
+			}, mode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = plan.Release() })
+			preparations := plan.Preparations()
+			want := 1
+			if mode == api.WorkflowExecutionModeDebug {
+				want = 2
+			}
+			if len(preparations) != want || preparations[0].Tracker != "ALPHA" {
+				t.Fatalf("preparations = %#v, want %d eligible trackers", preparations, want)
+			}
+			if mode != api.WorkflowExecutionModeDebug {
+				return
+			}
+			if preparations[1].Tracker != "BETA" || preparations[1].Preview.Status != "ready" {
+				t.Fatalf("diagnostic preparation = %#v", preparations[1])
+			}
+			for _, execute := range []func(context.Context) ([]trackers.RetainedTrackerResult, error){
+				plan.Execute,
+				func(ctx context.Context) ([]trackers.RetainedTrackerResult, error) {
+					return plan.ExecuteSelected(ctx, []string{"BETA"})
+				},
+			} {
+				results, err := execute(t.Context())
+				if !errors.Is(err, trackers.ErrPlanNotSubmittable) || len(results) != 0 {
+					t.Fatalf("debug execution = %#v, %v", results, err)
+				}
+			}
+			retained := plan.(*e2eRetainedUploadPlan)
+			if retained.executed || retained.released {
+				t.Fatal("rejected debug execution consumed the retained plan")
 			}
 		})
 	}

@@ -1382,6 +1382,68 @@ func TestCLICompositeTrackerApprovalDefaults(t *testing.T) {
 	}
 }
 
+func TestCLICompositeDebugTrackerApprovalIncludesDuplicateCandidates(t *testing.T) {
+	for _, mode := range []api.InteractionMode{api.InteractionModeInteractive, api.InteractionModeUnattendedConfirm, api.InteractionModeUnattended} {
+		t.Run(string(mode), func(t *testing.T) {
+			var output strings.Builder
+			session := &cliWorkflowSession{
+				intent:  cliWorkflowIntent{interaction: mode},
+				streams: cliIO{out: &output},
+				current: releaseworkflow.CommandResult{
+					Projections: &api.TrackerReleaseProjectionSet{
+						ExecutionMode: api.WorkflowExecutionModeDebug,
+						Projections: []api.TrackerReleaseProjection{
+							{
+								TrackerID:         "ALPHA",
+								UploadReleaseName: "Example.Release.2026-GRP",
+								Readiness:         api.ReadinessStatusReady,
+								UploadReady:       true,
+							},
+							{
+								TrackerID:         "BETA",
+								UploadReleaseName: "Example.Release.2026-GRP",
+								Readiness:         api.ReadinessStatusBlocked,
+								DiagnosticReady:   true,
+							},
+						},
+					},
+					Dupes: &api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+						{
+							TrackerID: "ALPHA",
+							Decision:  api.DupeDecisionAccepted,
+							Status:    api.StageStatusCompleted,
+							Matches:   []api.DupeMatchProjection{{Reason: "in_client"}},
+						},
+						{
+							TrackerID: "BETA",
+							Decision:  api.DupeDecisionAccepted,
+							Status:    api.StageStatusCompleted,
+						},
+					}},
+				},
+			}
+			action := api.RequiredAction{
+				ID:               "debug-approval",
+				Kind:             api.RequiredActionApproveTrackers,
+				WorkflowRevision: 7,
+				Options:          []api.RequiredActionOption{{Value: "ALPHA"}, {Value: "BETA"}},
+			}
+			input := bufio.NewReader(strings.NewReader("n\nn\n"))
+			feedback, declined, err := session.collectCompositeUploadFeedback(t.Context(), input, config.Config{}, api.NopLogger{}, action)
+			if err != nil || declined || feedback.Response.TrackerApproval == nil ||
+				!slices.Equal(feedback.Response.TrackerApproval.TrackerIDs, []api.TrackerID{"ALPHA", "BETA"}) {
+				t.Fatalf("debug excluded diagnostic candidates: feedback=%+v declined=%t err=%v", feedback.Response, declined, err)
+			}
+			if remaining, _ := io.ReadAll(input); string(remaining) != "n\nn\n" {
+				t.Fatal("debug requested upload approval instead of preparing diagnostic candidates")
+			}
+			if !strings.Contains(output.String(), "Tracker: ALPHA") || !strings.Contains(output.String(), "Tracker: BETA") {
+				t.Fatal("debug hid the retained duplicate evidence")
+			}
+		})
+	}
+}
+
 func TestCLICompositeTargetReviewWithoutCandidates(t *testing.T) {
 	var output strings.Builder
 	session := &cliWorkflowSession{streams: cliIO{out: &output}, current: releaseworkflow.CommandResult{Dupes: &api.DupeAssessment{Results: []api.TrackerDupeAssessment{{

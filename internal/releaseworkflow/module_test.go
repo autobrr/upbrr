@@ -5983,3 +5983,58 @@ func TestPreparationSubstepCountersDoNotMixWithStageOrder(t *testing.T) {
 		t.Fatalf("mixed counter units: %#v", status)
 	}
 }
+
+func TestUploadDryRunReportsRetainDiagnosticCheckFailuresWithPayload(t *testing.T) {
+	failure := api.WorkflowFailure{
+		TrackerID: "EXAMPLE",
+		Failure: api.OperationFailure{
+			Code:      api.OperationFailureInvalidInput,
+			Operation: api.OperationKindUploadDryRun,
+			Message:   "Final description rejected",
+			Recovery:  api.OperationRecoveryEditInput,
+		},
+	}
+	for _, injection := range []api.StageStatus{api.StageStatusSkipped, api.StageStatusCompleted} {
+		t.Run(string(injection), func(t *testing.T) {
+			reports := uploadDryRunReports([]api.UploadPlanTracker{{
+				TrackerID:             "EXAMPLE",
+				UploadReleaseName:     "Example",
+				SemanticFingerprint:   testFingerprint(t, "diagnostic-plan"),
+				Status:                api.StageStatusReady,
+				Eligible:              true,
+				ClientInjectionStatus: injection,
+				Fields:                []api.UploadPlanField{{Key: "name", Value: "Example"}},
+				Failures:              []api.WorkflowFailure{failure},
+				Warnings:              []string{"Diagnostic payload only"},
+			}})
+			if len(reports) != 1 || reports[0].Status != api.StageStatusFailed || len(reports[0].Fields) != 1 ||
+				len(reports[0].Failures) != 1 || reports[0].Failures[0] != failure || len(reports[0].Warnings) != 1 {
+				t.Fatalf("diagnostic report lost structured failed check or payload: %#v", reports)
+			}
+			succeeded, failed, skipped, status := reduceUploadDryRunReports(reports)
+			result := api.UploadDryRunResult{
+				ID:               "diagnostic-result",
+				WorkflowID:       "diagnostic-workflow",
+				Revision:         1,
+				ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: "projections", Revision: 1},
+				Dupes:            api.DupeAssessmentRef{ID: "dupes", Revision: 1},
+				Media:            api.MediaArtifactSetRef{ID: "media", Revision: 1},
+				Descriptions:     api.DescriptionSetRef{ID: "descriptions", Revision: 1},
+				InputFingerprint: testFingerprint(t, "diagnostic-input"),
+				TrackerIDs:       []api.TrackerID{"EXAMPLE"},
+				Reports:          reports,
+				SucceededCount:   succeeded,
+				FailedCount:      failed,
+				SkippedCount:     skipped,
+				Status:           status,
+				CreatedAt:        time.Now().UTC(),
+			}
+			if err := result.Validate(); err != nil {
+				t.Fatalf("diagnostic result cannot be published: %v", err)
+			}
+			if status != api.StageStatusFailed || failed != 1 || succeeded != 0 || skipped != 0 {
+				t.Fatalf("diagnostic outcome: status=%s succeeded=%d failed=%d skipped=%d", status, succeeded, failed, skipped)
+			}
+		})
+	}
+}

@@ -34,7 +34,7 @@ import (
 const workflowUploadPlanTTL = 15 * time.Minute
 
 type workflowRetainedUploadService interface {
-	PrepareRetainedUploadPlan(context.Context, api.UploadSubject, []api.TrackerReleaseProjection) (workflowRetainedUploadPlan, error)
+	PrepareRetainedUploadPlan(context.Context, api.UploadSubject, []api.TrackerReleaseProjection, api.WorkflowExecutionMode) (workflowRetainedUploadPlan, error)
 }
 
 type workflowRetainedUploadPlan interface {
@@ -53,8 +53,9 @@ func (a workflowTrackerServiceAdapter) PrepareRetainedUploadPlan(
 	ctx context.Context,
 	subject api.UploadSubject,
 	projections []api.TrackerReleaseProjection,
+	mode api.WorkflowExecutionMode,
 ) (workflowRetainedUploadPlan, error) {
-	plan, err := a.service.PrepareRetainedUploadPlan(ctx, subject, projections)
+	plan, err := a.service.PrepareRetainedUploadPlan(ctx, subject, projections, mode)
 	if err != nil {
 		return nil, fmt.Errorf("core: prepare retained workflow upload plan: %w", err)
 	}
@@ -71,6 +72,8 @@ type workflowUploadPlanBuilder struct {
 }
 
 type workflowUploadExecution struct {
+	diagnostic            bool
+	dupes                 map[api.TrackerID]api.TrackerDupeAssessment
 	sourceManifest        *api.SourceManifest
 	plan                  workflowRetainedUploadPlan
 	clients               api.ClientService
@@ -124,6 +127,7 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 		ProjectionSet    api.TrackerReleaseProjectionSetRef
 		Projection       api.WorkflowFingerprint
 		ProjectionPolicy api.WorkflowFingerprint
+		ExecutionMode    api.WorkflowExecutionMode
 		Dupes            api.DupeAssessmentRef
 		DupeInput        api.WorkflowFingerprint
 		Media            api.MediaArtifactSetRef
@@ -139,6 +143,7 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
 		Projection:       projections.InputFingerprint,
 		ProjectionPolicy: projections.PolicyFingerprint,
+		ExecutionMode:    api.NormalizeWorkflowExecutionMode(projections.ExecutionMode),
 		Dupes:            api.DupeAssessmentRef{ID: dupes.ID, Revision: dupes.Revision},
 		DupeInput:        dupes.InputFingerprint,
 		Media:            api.MediaArtifactSetRef{ID: media.ID, Revision: media.Revision},
@@ -169,6 +174,9 @@ func (b workflowUploadPlanBuilder) Build(
 	options releaseworkflow.UploadPlanBuildOptions,
 	now time.Time,
 ) (api.UploadPlan, releaseworkflow.RetainedUploadExecution, error) {
+	if projections.ExecutionMode == api.WorkflowExecutionModeDebug {
+		options.DryRun = true
+	}
 	if b.liveTest != nil {
 		options.NoSeed = true
 		if !options.DryRun {
@@ -219,7 +227,7 @@ func (b workflowUploadPlanBuilder) Build(
 			}
 		}
 		dupe, exists := dupeByTracker[projection.TrackerID]
-		if !releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, exists) {
+		if !releaseworkflow.ProjectionEligibleForPreparation(projection, dupe, exists, projections.ExecutionMode) {
 			continue
 		}
 		if failure, failed := releaseworkflow.TrackerImageHostFailure(media, projection.TrackerID); failed {
@@ -395,7 +403,7 @@ func (b workflowUploadPlanBuilder) Build(
 	}
 	var retained workflowRetainedUploadPlan
 	if len(eligible) > 0 {
-		retained, err = b.trackers.PrepareRetainedUploadPlan(ctx, subject, eligible)
+		retained, err = b.trackers.PrepareRetainedUploadPlan(ctx, subject, eligible, projections.ExecutionMode)
 		if err != nil {
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare retained operations: %w", err)
 		}
@@ -414,6 +422,8 @@ func (b workflowUploadPlanBuilder) Build(
 		ClientOverrides: descriptionInstructions.Client,
 	}
 	execution := &workflowUploadExecution{
+		diagnostic:            projections.ExecutionMode == api.WorkflowExecutionModeDebug,
+		dupes:                 dupeByTracker,
 		sourceManifest:        sourceManifest,
 		plan:                  retained,
 		clients:               b.clients,
@@ -488,6 +498,7 @@ func (b workflowUploadPlanBuilder) Build(
 			tracker.TorrentFingerprint = torrentFingerprint
 			tracker.Endpoint, tracker.Fields, tracker.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
 			tracker.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
+			execution.retainDiagnosticOutcomes(&tracker, projection, preparation.Preview)
 			if identityErr != nil || torrentArtifactID == "" {
 				markWorkflowUploadTrackerMissingExactTorrent(&tracker, projection.TrackerID)
 				break
@@ -1141,6 +1152,52 @@ func workflowClientInjectionFingerprint(
 	return fingerprint, nil
 }
 
+// retainDiagnosticOutcomes separates successful payload construction from failed live checks.
+// Rebuild these outcomes from retained evidence and the current preview after every resolution.
+func (e *workflowUploadExecution) retainDiagnosticOutcomes(
+	tracker *api.UploadPlanTracker,
+	projection api.TrackerReleaseProjection,
+	preview api.TrackerDryRunEntry,
+) {
+	if !e.diagnostic {
+		return
+	}
+	dupe, hasDupe := e.dupes[projection.TrackerID]
+	failures := append([]api.WorkflowFailure(nil), projection.Failures...)
+	failures = append(failures, dupe.Failures...)
+	if !releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, hasDupe) && len(failures) == 0 {
+		failures = append(failures, api.WorkflowFailure{
+			Failure: api.OperationFailure{
+				Code:      api.OperationFailureNoEligibleTrackers,
+				Operation: api.OperationKindUploadDryRun,
+				Message:   fmt.Sprintf("Normal upload remains blocked (projection=%s, duplicate=%s).", projection.Readiness, dupe.Decision),
+				Recovery:  api.OperationRecoveryReviewAgain,
+			},
+			TrackerID: projection.TrackerID,
+		})
+	}
+	if preview.Status == "blocked" {
+		message := strings.TrimSpace(preview.Message)
+		if message == "" {
+			message = "Tracker payload validation blocked normal upload."
+		}
+		failures = append(failures, api.WorkflowFailure{
+			Failure: api.OperationFailure{
+				Code:      api.OperationFailureInvalidInput,
+				Operation: api.OperationKindUploadDryRun,
+				Message:   message,
+				Recovery:  api.OperationRecoveryEditInput,
+			},
+			TrackerID: projection.TrackerID,
+		})
+	}
+	for _, failure := range failures {
+		failure.Failure.Message = logging.SanitizeMessage(failure.Failure.Message)
+		tracker.Failures = append(tracker.Failures, failure)
+		tracker.Warnings = append(tracker.Warnings, "Diagnostic payload only: "+failure.Failure.Message)
+	}
+}
+
 func (e *workflowUploadExecution) ResolveAction(
 	ctx context.Context,
 	trackerID api.TrackerID,
@@ -1202,6 +1259,7 @@ func (e *workflowUploadExecution) ResolveAction(
 	} else {
 		updated.Endpoint, updated.Fields, updated.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
 		updated.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
+		e.retainDiagnosticOutcomes(&updated, projection, preparation.Preview)
 		updated.PreparedOperationID, updated.TorrentArtifactID, updated.TorrentFingerprint, err = workflowTrackerArtifactIdentity(
 			trackerID,
 			preparation.TorrentPath,
@@ -1792,7 +1850,14 @@ func sanitizeWorkflowUploadPreview(preview api.TrackerDryRunEntry) (string, []ap
 	sort.Strings(keys)
 	fields := make([]api.UploadPlanField, 0, len(keys))
 	for _, key := range keys {
-		fields = append(fields, api.UploadPlanField{Key: key, Value: sanitizeWorkflowFieldValue(key, preview.Payload[key])})
+		// Encoded attachment bytes can contain announce credentials.
+		value := "[attachment]"
+		if !slices.ContainsFunc(preview.Files, func(file api.TrackerDryRunFile) bool {
+			return strings.TrimSpace(file.Field) == key
+		}) {
+			value = sanitizeWorkflowFieldValue(key, preview.Payload[key])
+		}
+		fields = append(fields, api.UploadPlanField{Key: key, Value: value})
 	}
 	files := make([]api.UploadPlanFile, 0, len(preview.Files))
 	for _, file := range preview.Files {

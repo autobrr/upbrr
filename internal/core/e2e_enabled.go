@@ -1541,6 +1541,7 @@ type e2eRetainedUploadPlan struct {
 	service      e2eTrackerService
 	subject      api.UploadSubject
 	preparations []trackers.RetainedTrackerPreparation
+	mode         api.WorkflowExecutionMode
 	executed     bool
 	released     bool
 }
@@ -1549,13 +1550,16 @@ func (s e2eTrackerService) PrepareRetainedUploadPlan(
 	ctx context.Context,
 	subject api.UploadSubject,
 	projections []api.TrackerReleaseProjection,
+	mode api.WorkflowExecutionMode,
 ) (workflowRetainedUploadPlan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("e2e tracker: prepare retained plan: %w", err)
 	}
+	mode = api.NormalizeWorkflowExecutionMode(mode)
 	trackerNames := make([]string, 0, len(projections))
 	for _, projection := range projections {
-		if projection.UploadReady && projection.Readiness == api.ReadinessStatusReady {
+		if (projection.UploadReady && projection.Readiness == api.ReadinessStatusReady) ||
+			(mode == api.WorkflowExecutionModeDebug && projection.DiagnosticReady) {
 			trackerNames = append(trackerNames, string(projection.TrackerID))
 		}
 	}
@@ -1630,6 +1634,7 @@ func (s e2eTrackerService) PrepareRetainedUploadPlan(
 		service:      s,
 		subject:      subject,
 		preparations: preparations,
+		mode:         mode,
 	}, nil
 }
 
@@ -1712,6 +1717,9 @@ func (p *e2eRetainedUploadPlan) ExecuteSelected(
 	}
 	if len(selected) == 0 {
 		return nil, errors.New("e2e tracker: retained plan selection is empty")
+	}
+	if p.mode == api.WorkflowExecutionModeDebug {
+		return nil, trackers.ErrPlanNotSubmittable
 	}
 	p.mu.Lock()
 	if p.released || p.executed {

@@ -708,7 +708,8 @@ func PrepareInputWithReleaseNamePolicy(
 		return input, nil
 	}
 	reviewed := input.Projection
-	if reviewed.Readiness != api.ReadinessStatusReady || !reviewed.UploadReady {
+	if (reviewed.Readiness != api.ReadinessStatusReady || !reviewed.UploadReady) &&
+		(api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug || !reviewed.DiagnosticReady) {
 		return input, NewPreparationFailure(
 			input.Tracker,
 			"name_projection_mismatch",
@@ -767,7 +768,8 @@ func (input PreparationInput) ReviewedUploadName() (string, error) {
 		return "", errors.New("reviewed upload name is unavailable")
 	}
 	projection := input.Projection
-	if projection.Readiness != api.ReadinessStatusReady || !projection.UploadReady {
+	if (projection.Readiness != api.ReadinessStatusReady || !projection.UploadReady) &&
+		(api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug || !projection.DiagnosticReady) {
 		return "", fmt.Errorf("tracker %s release-name projection is not upload-ready", input.Tracker)
 	}
 	name := strings.TrimSpace(projection.UploadReleaseName)

@@ -181,10 +181,11 @@ func prepareUnit3DUpload(
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	if req.Intent != trackers.PreparationIntentUpload {
+	debug := api.NormalizeWorkflowExecutionMode(req.ExecutionMode) == api.WorkflowExecutionModeDebug
+	if req.Intent != trackers.PreparationIntentUpload && !debug {
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
-	if !strings.EqualFold(preview.Status, "ready") {
+	if !debug && !strings.EqualFold(preview.Status, "ready") {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s upload blocked: %s", preview.Tracker, preview.Message)
 	}
 	reportGuidance := apiKeyGuidanceReporter(ctx, req, firstSiteProfile(profiles).APIKeyGuidance)
@@ -197,6 +198,13 @@ func prepareUnit3DUpload(
 	torrentPath := preparedFilePath(preview.Files, "torrent")
 	nfoPath := preparedFilePath(preview.Files, "nfo")
 	payload, contentType, err := buildMultipartPayload(preview.Payload, torrentPath, nfoPath, logger)
+	if debug {
+		if err != nil {
+			preview.Status = "blocked"
+			preview.Message = strings.TrimSpace(preview.Message + "; " + err.Error())
+		}
+		return trackers.NewPreparedOperation(preview, nil, nil), nil
+	}
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
@@ -363,9 +371,9 @@ func isNumericID(value string) bool {
 }
 
 // buildUploadDryRunUnit3D returns a Unit3D preview entry with the payload,
-// files, and endpoint that would be used locally. TV payloads with zero-valued
-// canonical season or episode metadata are returned as blocked because the
-// payload no longer satisfies upload prerequisites.
+// files, and endpoint that would be used locally. Missing canonical TV metadata
+// blocks the preview. Debug also retains final-description validation failures
+// alongside the inspectable payload without granting submission authority.
 func buildUploadDryRunUnit3D(
 	ctx context.Context,
 	req trackers.PreparationInput,
@@ -465,8 +473,10 @@ func buildUploadDryRunUnit3D(
 		return api.TrackerDryRunEntry{}, err
 	}
 	data["mod_queue_opt_in"] = boolFlag(req.TrackerConfig.ModQ)
-	if err := applySubmissionRequirements(req, data, profile); err != nil {
-		return api.TrackerDryRunEntry{}, err
+	submissionRequirementErr := applySubmissionRequirements(req, data, profile)
+	if submissionRequirementErr != nil && (api.NormalizeWorkflowExecutionMode(req.ExecutionMode) != api.WorkflowExecutionModeDebug ||
+		!errors.Is(submissionRequirementErr, errFinalDescriptionRequirements)) {
+		return api.TrackerDryRunEntry{}, submissionRequirementErr
 	}
 	description = data["description"]
 	if req.TrackerConfig.Exclusive {
@@ -494,6 +504,10 @@ func buildUploadDryRunUnit3D(
 
 	message := "dry-run payload generated"
 	status := "ready"
+	if submissionRequirementErr != nil {
+		status = "blocked"
+		message += "; " + redaction.RedactValue(submissionRequirementErr.Error(), nil)
+	}
 	if metadataMessage, err := validateUnit3DTVPayloadMetadata(trackerName, req.Meta, data, profile); err != nil {
 		message += "; " + metadataMessage
 		status = "blocked"

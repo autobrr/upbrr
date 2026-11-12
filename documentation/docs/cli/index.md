@@ -152,6 +152,8 @@ Normal logs identify image uploads and returned-link counts, explain reused imag
 | `--unattended_confirm`     | Uses unattended defaults but permits required confirmation or manual-input prompts.                                                           |
 | `--no-seed`                | Disables torrent-client injection.                                                                                                            |
 
+Debug runs the normal authentication, banned-group, claim, rule and duplicate checks using the configured cache and refresh rules. Blocked or failed outcomes remain visible. When the required inputs are available, diagnostic preparation continues to a redacted final payload even after an upload-related approval is declined. Missing inputs and construction failures still stop the affected preparation; metadata corrections and explicit cancellation retain their normal meaning. No approval, continuation or retry can submit a tracker upload in debug mode.
+
 Interactive tracker questions with exactly `yes`/`no` choices also accept `y`/`n`, regardless of letter case. Other choices still require their listed values. Strict `--unattended` remains prompt-free.
 
 With `--ui=auto`, a terminal-dashboard failure before work starts falls back to plain output. Explicit `--ui=tui` startup failures stop the command. User cancellation or interruption never starts a fallback run.

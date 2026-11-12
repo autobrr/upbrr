@@ -97,7 +97,7 @@ func TestLiveTestTrackerServiceBlocksBeforePreparation(t *testing.T) {
 	}
 	// Retained callers may prepare upload-capable adapters directly. Their returned
 	// plans must acquire the same process policy before escaping the service.
-	slots := svc.prepareUploadPlans(t.Context(), api.UploadSubject{}, []string{"ALPHA"}, nil, nil, nil)
+	slots := svc.prepareUploadPlans(t.Context(), api.UploadSubject{}, []string{"ALPHA"}, nil, nil, nil, api.WorkflowExecutionModeNormal)
 	if len(slots) != 1 || slots[0].failure != nil || len(started) != 1 {
 		t.Fatalf("retained preparation = %#v, calls=%d", slots, len(started))
 	}

@@ -125,7 +125,7 @@ func (s *Service) Upload(ctx context.Context, meta api.UploadSubject) (api.Uploa
 
 	preflight := s.preflightDescriptionImageHosts(ctx, meta, resolved)
 	banned := s.prepareBannedState(ctx, meta, resolved)
-	slots := s.prepareUploadPlans(ctx, meta, resolved, preflight, banned, nil)
+	slots := s.prepareUploadPlans(ctx, meta, resolved, preflight, banned, nil, api.WorkflowExecutionModeNormal)
 	if err := ctx.Err(); err != nil {
 		s.releaseTrackerPlans(slots)
 		for idx := range slots {
@@ -193,6 +193,7 @@ func (s *Service) prepareUploadPlans(
 	preflight imageHostPreflight,
 	banned map[string]*TrackerFailure,
 	projections map[string]api.TrackerReleaseProjection,
+	mode api.WorkflowExecutionMode,
 ) []trackerPlanSlot {
 	slots := make([]trackerPlanSlot, len(resolved))
 	workerCount := min(defaultMaxConcurrentTrackerPreparations, len(resolved))
@@ -258,6 +259,7 @@ func (s *Service) prepareUploadPlans(
 				continue
 			}
 			input := s.preparationInput(ctx, PreparationIntentUpload, tracker, trackerMeta, trackerCfg, content.Assets)
+			input.ExecutionMode = mode
 			slot.internal = input.Runtime.Internal
 			if projection, ok := projections[normalizeTrackerName(tracker)]; ok {
 				projected := projection
@@ -283,7 +285,7 @@ func (s *Service) prepareUploadPlans(
 				continue
 			}
 			slot.torrentPath = trackerMeta.TorrentPath
-			slot.plan = plan.withLiveTestPolicy(s.liveTest)
+			slot.plan = plan.withLiveTestPolicy(s.liveTest).withExecutionMode(mode)
 			slots[idx] = slot
 			emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "completed", "Tracker plan ready")
 		}
@@ -339,19 +341,22 @@ type RetainedTrackerResult struct {
 // RetainedUploadPlan owns exact single-use tracker plans produced by one
 // preparation barrier. It is process-local execution authority.
 type RetainedUploadPlan struct {
-	service  *Service
-	meta     api.UploadSubject
-	slots    []trackerPlanSlot
-	mu       sync.Mutex
-	executed bool
-	released bool
+	executionMode api.WorkflowExecutionMode
+	service       *Service
+	meta          api.UploadSubject
+	slots         []trackerPlanSlot
+	mu            sync.Mutex
+	executed      bool
+	released      bool
 }
 
-// PrepareRetainedUploadPlan builds submittable operations from exact reviewed projections.
+// PrepareRetainedUploadPlan captures operations from exact reviewed projections.
+// Debug operations retain their payloads but cannot submit.
 func (s *Service) PrepareRetainedUploadPlan(
 	ctx context.Context,
 	meta api.UploadSubject,
 	projections []api.TrackerReleaseProjection,
+	mode api.WorkflowExecutionMode,
 ) (*RetainedUploadPlan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: retained upload preparation: %w", err)
@@ -370,7 +375,11 @@ func (s *Service) PrepareRetainedUploadPlan(
 	projectionByTracker := make(map[string]api.TrackerReleaseProjection, len(projections))
 	for _, projection := range projections {
 		tracker := normalizeTrackerName(string(projection.TrackerID))
-		if tracker == "" || !projection.UploadReady || projection.Readiness != api.ReadinessStatusReady {
+		eligible := projection.UploadReady && projection.Readiness == api.ReadinessStatusReady
+		if api.NormalizeWorkflowExecutionMode(mode) == api.WorkflowExecutionModeDebug {
+			eligible = projection.DiagnosticReady
+		}
+		if tracker == "" || !eligible {
 			continue
 		}
 		if _, exists := projectionByTracker[tracker]; exists {
@@ -391,15 +400,16 @@ func (s *Service) PrepareRetainedUploadPlan(
 		}
 	}
 	preflight := s.preflightDescriptionImageHosts(ctx, meta, resolved)
-	slots := s.prepareUploadPlans(ctx, meta, resolved, preflight, nil, projectionByTracker)
+	slots := s.prepareUploadPlans(ctx, meta, resolved, preflight, nil, projectionByTracker, mode)
 	if err := ctx.Err(); err != nil {
 		s.releaseTrackerPlans(slots)
 		return nil, fmt.Errorf("trackers: retained upload preparation: %w", err)
 	}
 	return &RetainedUploadPlan{
-		service: s,
-		meta:    meta,
-		slots:   slots,
+		executionMode: api.NormalizeWorkflowExecutionMode(mode),
+		service:       s,
+		meta:          meta,
+		slots:         slots,
 	}, nil
 }
 
@@ -521,12 +531,14 @@ func retainedTrackerPreparation(slot trackerPlanSlot) RetainedTrackerPreparation
 }
 
 // Execute consumes all retained tracker plans without rebuilding payloads.
+// Debug plans return ErrPlanNotSubmittable without consuming plans or recording submissions.
 func (p *RetainedUploadPlan) Execute(ctx context.Context) ([]RetainedTrackerResult, error) {
 	return p.execute(ctx, nil)
 }
 
 // ExecuteSelected consumes only the named retained tracker plans without
 // rebuilding payloads. Unselected plans are released without submission.
+// Debug plans return ErrPlanNotSubmittable without consuming plans or recording submissions.
 func (p *RetainedUploadPlan) ExecuteSelected(
 	ctx context.Context,
 	trackerIDs []string,
@@ -543,6 +555,9 @@ func (p *RetainedUploadPlan) execute(
 ) ([]RetainedTrackerResult, error) {
 	if p == nil || p.service == nil {
 		return nil, ErrPlanNotSubmittable
+	}
+	if p.executionMode == api.WorkflowExecutionModeDebug {
+		return nil, submission.NewError(submission.NotSent, ErrPlanNotSubmittable)
 	}
 	p.mu.Lock()
 	if p.released {

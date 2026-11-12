@@ -193,12 +193,12 @@ func TestResolveReleaseNamesAppliesFinalizedPresentationToAutomaticSubjectCopy(t
 
 	base := api.UploadSubject{
 		EpisodeCoverage: api.EpisodeCoverage{
-SeasonKnown: true,
- Part: "E02-E03",
- Episodes: []int{2, 3},
- Status: api.MetadataEvidenceStatusComplete,
-},
-		ReleaseName:     "Example Show 2026 S02E03 1080p-GRP",
+			SeasonKnown: true,
+			Part:        "E02-E03",
+			Episodes:    []int{2, 3},
+			Status:      api.MetadataEvidenceStatusComplete,
+		},
+		ReleaseName: "Example Show 2026 S02E03 1080p-GRP",
 		Release: api.ReleaseInfo{
 			Year:    2026,
 			Season:  2,
@@ -522,6 +522,31 @@ func TestReviewedUploadNameRequiresProjection(t *testing.T) {
 
 	if _, err := (PreparationInput{Meta: api.UploadSubject{ReleaseName: "Example.Release.2026-GRP"}}).ReviewedUploadName(); err == nil {
 		t.Fatal("expected missing reviewed projection error")
+	}
+	for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
+		projection := api.TrackerReleaseProjection{
+			TrackerID:         "EXAMPLE",
+			UploadReleaseName: "Example.Release.2026-GRP",
+			Readiness:         api.ReadinessStatusBlocked,
+			DiagnosticReady:   true,
+		}
+		input := PreparationInput{
+			Tracker:       "EXAMPLE",
+			ExecutionMode: mode,
+			Projection:    &projection,
+		}
+		name, err := input.ReviewedUploadName()
+		if mode == api.WorkflowExecutionModeDebug {
+			if err != nil || name != projection.UploadReleaseName {
+				t.Fatalf("diagnostic payload name=%q err=%v", name, err)
+			}
+			projection.DiagnosticReady = false
+			if _, err := input.ReviewedUploadName(); err == nil {
+				t.Fatal("diagnostics accepted an unconstructible projection")
+			}
+		} else if err == nil {
+			t.Fatal("normal upload accepted diagnostic-only authority")
+		}
 	}
 }
 

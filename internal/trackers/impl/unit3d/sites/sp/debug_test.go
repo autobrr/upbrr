@@ -176,7 +176,7 @@ func TestSPDebugPackGuidancePreservesCompletePackFailure(t *testing.T) {
 	if err := trackers.ApplyProjectionRuleFailures(&projection, failures, api.WorkflowExecutionModeDebug, "", api.NopLogger{}); err != nil {
 		t.Fatal(err)
 	}
-	if projection.Readiness != api.ReadinessStatusIneligible || projection.DupeReady {
+	if projection.Readiness != api.ReadinessStatusIneligible || projection.DupeReady || projection.DiagnosticReady {
 		t.Fatalf("debug projection waived independent pack completeness: %#v", projection)
 	}
 	if !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {

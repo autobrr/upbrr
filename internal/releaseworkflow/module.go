@@ -5569,7 +5569,7 @@ func (m *Module) checkDuplicates(
 	projections, projectionsOK := state.Projections[workflow.TrackerProjections.ID]
 	preflight, preflightOK := state.Preflights[workflow.TrackerPreflight.ID]
 	if !projectionsOK || !preflightOK || projections.Preflight == nil || *projections.Preflight != *workflow.TrackerPreflight ||
-		projections.Status != api.StageStatusReady || preflight.Status != api.StageStatusReady || !preflight.ExpiresAt.After(now) {
+		((projections.Status != api.StageStatusReady || preflight.Status != api.StageStatusReady) && !diagnosticProjectionsReady(projections)) || !preflight.ExpiresAt.After(now) {
 		return CommandResult{}, fmt.Errorf("%w: duplicate assessment dependencies are stale or not ready", ErrInvalidTransition)
 	}
 	trackerIDs := make([]string, len(projections.Projections))
@@ -5699,7 +5699,8 @@ func (m *Module) decideDuplicates(
 			return CommandResult{}, fmt.Errorf("%w: tracker %s is already in client and cannot be overridden", ErrInvalidTransition, result.TrackerID)
 		}
 		confirmed := command.StaffTokenConfirmations[result.TrackerID] == current.ID
-		if decision == api.DupeDecisionIgnored && result.RequiresStaffToken && !confirmed {
+		if decision == api.DupeDecisionIgnored && result.RequiresStaffToken && !confirmed &&
+			!workflowDebugMode(state) {
 			return CommandResult{}, fmt.Errorf(
 				"%w: tracker %s requires confirmation of an appropriate staff-issued token",
 				ErrInvalidTransition,
@@ -5943,11 +5944,12 @@ func (m *Module) publishDupes(
 		return CommandResult{}, fmt.Errorf("%w: duplicate assessment dependencies are incomplete", ErrInvalidTransition)
 	}
 	preflight, ok := state.Preflights[workflow.TrackerPreflight.ID]
-	if !ok || preflight.Revision != workflow.TrackerPreflight.Revision || !preflight.ExpiresAt.After(now) || preflight.Status != api.StageStatusReady {
+	if !ok || preflight.Revision != workflow.TrackerPreflight.Revision || !preflight.ExpiresAt.After(now) {
 		return CommandResult{}, fmt.Errorf("%w: tracker preflight is unavailable, expired, or not ready", ErrInvalidTransition)
 	}
 	projections, ok := state.Projections[workflow.TrackerProjections.ID]
-	if !ok || (projections.Preflight != nil && *projections.Preflight != *workflow.TrackerPreflight) {
+	if !ok || (projections.Preflight != nil && *projections.Preflight != *workflow.TrackerPreflight) ||
+		(preflight.Status != api.StageStatusReady && !diagnosticProjectionsReady(projections)) {
 		return CommandResult{}, fmt.Errorf("%w: finalized tracker projections do not match preflight", ErrInvalidTransition)
 	}
 	id, err := m.newID("dupes")
@@ -7668,7 +7670,7 @@ func (m *Module) prepareUploads(
 		media.Revision != workflow.Media.Revision || descriptions.Revision != workflow.Descriptions.Revision ||
 		dupes.ProjectionSet != *workflow.TrackerProjections || media.ProjectionSet != *workflow.TrackerProjections ||
 		descriptions.ProjectionSet != *workflow.TrackerProjections || descriptions.Media == nil || *descriptions.Media != *workflow.Media ||
-		projections.Status != api.StageStatusReady || !dupesAllowContinuation(&projections, &dupes) || !dupes.ExpiresAt.After(now) ||
+		(projections.Status != api.StageStatusReady && !diagnosticProjectionsReady(projections)) || !dupesAllowContinuation(&projections, &dupes) || !dupes.ExpiresAt.After(now) ||
 		!stageSucceeded(media.Status) ||
 		!descriptionsHaveViableTracker(&descriptions) {
 		return preparedUploads{}, fmt.Errorf("%w: upload dependencies are stale or not ready", ErrInvalidTransition)
@@ -8064,7 +8066,7 @@ func uploadDryRunReports(trackers []api.UploadPlanTracker) []api.TrackerDryRunRe
 			status = api.StageStatusBlocked
 		case tracker.Status == api.StageStatusSkipped:
 			status = api.StageStatusSkipped
-		case tracker.Status != api.StageStatusReady || tracker.ClientInjectionStatus == api.StageStatusFailed:
+		case tracker.Status != api.StageStatusReady || tracker.ClientInjectionStatus == api.StageStatusFailed || len(failures) > 0:
 			status = api.StageStatusFailed
 			if len(failures) == 0 {
 				message := uploadDryRunFailureMessage(tracker)

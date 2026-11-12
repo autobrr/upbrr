@@ -361,8 +361,8 @@ func TestCLICollectsNativeCompatibilityCorrections(t *testing.T) {
 						t.Fatal(failure)
 					}
 					if boundary == "debug" {
-						if !result.UploadReady || len(result.RequiredActions) != 0 || slices.ContainsFunc(result.Questionnaire, func(f api.TrackerQuestionnaireRequirement) bool { return f.NeedsReview }) {
-							t.Fatalf("conflict correction overrode debug bypass: %+v", result)
+						if result.UploadReady || !result.DiagnosticReady || result.Readiness != api.ReadinessStatusBlocked || !slices.ContainsFunc(result.PolicyDecisions, func(d api.TrackerPolicyDecision) bool { return d.Blocking && d.Decision == "input_required" }) || len(result.RequiredActions) != 0 || slices.ContainsFunc(result.Questionnaire, func(f api.TrackerQuestionnaireRequirement) bool { return f.NeedsReview }) {
+							t.Fatalf("conflict correction lost real outcome or diagnostic readiness: %+v", result)
 						}
 					} else {
 						if result.Readiness != api.ReadinessStatusIneligible || len(result.Questionnaire) != 0 || len(result.RequiredActions) != 0 {
@@ -449,9 +449,10 @@ func TestCLIHHDConditionalAndInferredCompatibilityCorrections(t *testing.T) {
 				Meta:          subject,
 				ExecutionMode: api.WorkflowExecutionModeDebug,
 			}, "debug", "catalog", "config")
-			if failure != nil || !debugProjection.UploadReady || len(debugProjection.RequiredActions) != 0 ||
+			if failure != nil || debugProjection.UploadReady || !debugProjection.DiagnosticReady || debugProjection.Readiness != projection.Readiness ||
+				!slices.ContainsFunc(debugProjection.PolicyDecisions, func(d api.TrackerPolicyDecision) bool { return d.Blocking }) || len(debugProjection.RequiredActions) != 0 ||
 				slices.ContainsFunc(debugProjection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool { return field.NeedsReview }) {
-				t.Fatalf("HHD assignment review overrode debug bypass: %+v, %v", debugProjection, failure)
+				t.Fatalf("HHD assignment review lost real outcome or diagnostic readiness: %+v, %v", debugProjection, failure)
 			}
 			if scenario == "impossible conditional parent" {
 				if projection.Readiness != api.ReadinessStatusIneligible || len(projection.Questionnaire) != 0 || len(projection.RequiredActions) != 0 {
@@ -596,9 +597,10 @@ func TestCLIAitherAdditionalAudioAssociationCorrections(t *testing.T) {
 					Meta:          subject,
 					ExecutionMode: api.WorkflowExecutionModeDebug,
 				}, "debug", "catalog", "config")
-				if failure != nil || !debugProjection.UploadReady || len(debugProjection.RequiredActions) != 0 ||
+				if failure != nil || debugProjection.UploadReady || !debugProjection.DiagnosticReady || debugProjection.Readiness != projection.Readiness ||
+					!slices.ContainsFunc(debugProjection.PolicyDecisions, func(d api.TrackerPolicyDecision) bool { return d.Blocking }) || len(debugProjection.RequiredActions) != 0 ||
 					slices.ContainsFunc(debugProjection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool { return field.NeedsReview }) {
-					t.Fatalf("extra-audio correction overrode debug bypass: %+v, %v", debugProjection, failure)
+					t.Fatalf("extra-audio correction lost real outcome or diagnostic readiness: %+v, %v", debugProjection, failure)
 				}
 			})
 		}
@@ -689,9 +691,9 @@ func TestCLIHHDNonWebFormatAssociationCorrections(t *testing.T) {
 				Meta:          subject,
 				ExecutionMode: api.WorkflowExecutionModeDebug,
 			}, "debug", "catalog", "config")
-			if failure != nil || !debugProjection.UploadReady || len(debugProjection.RequiredActions) != 0 ||
+			if failure != nil || debugProjection.UploadReady || !debugProjection.DiagnosticReady || debugProjection.Readiness != api.ReadinessStatusBlocked || !slices.ContainsFunc(debugProjection.PolicyDecisions, func(d api.TrackerPolicyDecision) bool { return d.Blocking && d.Decision == "input_required" }) || len(debugProjection.RequiredActions) != 0 ||
 				slices.ContainsFunc(debugProjection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool { return field.NeedsReview }) {
-				t.Fatalf("format correction overrode debug bypass: %+v, %v", debugProjection, failure)
+				t.Fatalf("format correction lost real outcome or diagnostic readiness: %+v, %v", debugProjection, failure)
 			}
 		})
 	}

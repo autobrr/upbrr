@@ -344,3 +344,37 @@ func TestDownstreamTrackerSetEnforcesModeAndExactApproval(t *testing.T) {
 		t.Fatalf("changed dupe input retained stale approval: %v", err)
 	}
 }
+
+func TestDiagnosticPreparationPreservesBlockedDecisions(t *testing.T) {
+	t.Parallel()
+	projection := api.TrackerReleaseProjection{
+		TrackerID:       "ALPHA",
+		Readiness:       api.ReadinessStatusBlocked,
+		DiagnosticReady: true,
+	}
+	for _, decision := range []api.DupeDecision{api.DupeDecisionAccepted, api.DupeDecisionIgnored} {
+		dupe := api.TrackerDupeAssessment{
+			TrackerID:          "ALPHA",
+			Decision:           decision,
+			Status:             api.StageStatusCompleted,
+			RequiresStaffToken: true,
+		}
+		if !ProjectionEligibleForPreparation(projection, dupe, true, api.WorkflowExecutionModeDebug) {
+			t.Fatalf("debug preparation blocked for decision %s", decision)
+		}
+		if ProjectionEligibleForDownstream(projection, dupe, true) {
+			t.Fatal("diagnostic preparation granted live upload authority")
+		}
+		dupe.Matches = []api.DupeMatchProjection{{Reason: "in_client"}}
+		if !ProjectionEligibleForPreparation(projection, dupe, true, api.WorkflowExecutionModeDebug) {
+			t.Fatal("in-client evidence blocked diagnostic preparation")
+		}
+		if ProjectionEligibleForDownstream(projection, dupe, true) {
+			t.Fatal("in-client evidence gained live upload authority")
+		}
+	}
+	projection.DiagnosticReady = false
+	if ProjectionEligibleForPreparation(projection, api.TrackerDupeAssessment{Decision: api.DupeDecisionNoMatch}, true, api.WorkflowExecutionModeDebug) {
+		t.Fatal("debug bypassed missing construction prerequisites")
+	}
+}

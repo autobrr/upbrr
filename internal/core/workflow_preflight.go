@@ -146,7 +146,7 @@ func (b workflowPreflightBuilder) Build(
 			projection.PolicyDecisions = slices.Clone(projection.PolicyDecisions)
 			projection.RequiredActions = slices.Clone(projection.RequiredActions)
 			projection.Failures = slices.Clone(projection.Failures)
-			if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
+			if !preflightProjectionConstructible(*projection, debugMode) {
 				continue
 			}
 			trackerSubject := trackers.FilterImportedScreenshotEvidenceForTrackerWithRegistry(
@@ -206,7 +206,7 @@ func (b workflowPreflightBuilder) Build(
 
 	hasReadyProjection := false
 	for _, projection := range initial.Projections {
-		if projection.Readiness == api.ReadinessStatusReady && projection.DupeReady {
+		if preflightProjectionConstructible(projection, debugMode) {
 			hasReadyProjection = true
 			break
 		}
@@ -243,7 +243,7 @@ func (b workflowPreflightBuilder) Build(
 	if capabilityErr == nil && len(managed) > 0 {
 		ids := make([]string, 0, len(initial.Projections))
 		for _, projection := range initial.Projections {
-			if _, ok := managed[projection.TrackerID]; ok && projection.Readiness == api.ReadinessStatusReady && projection.DupeReady {
+			if _, ok := managed[projection.TrackerID]; ok && preflightProjectionConstructible(projection, debugMode) {
 				ids = append(ids, string(projection.TrackerID))
 			}
 		}
@@ -265,13 +265,13 @@ func (b workflowPreflightBuilder) Build(
 	}
 	selectedIDs := make([]string, 0, len(initial.Projections))
 	for _, projection := range initial.Projections {
-		if projection.Readiness == api.ReadinessStatusReady && projection.DupeReady {
+		if preflightProjectionConstructible(projection, debugMode) {
 			selectedIDs = append(selectedIDs, string(projection.TrackerID))
 		}
 	}
-	var bannedRefreshErr error
-	if !debugMode {
-		bannedRefreshErr = b.banned.RefreshDynamic(ctx, b.config, selectedIDs, b.logger)
+	bannedRefreshErr := b.banned.RefreshDynamic(ctx, b.config, selectedIDs, b.logger)
+	if err := ctx.Err(); err != nil {
+		return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("tracker preflight: banned-group refresh: %w", err)
 	}
 
 	freshUntil := assessedAt.Add(workflowPreflightFreshness)
@@ -300,12 +300,12 @@ func (b workflowPreflightBuilder) Build(
 			ConfigFingerprint:     projection.ConfigFingerprint,
 			ProjectionFingerprint: projectionFingerprint,
 			RequiredActions:       append([]api.RequiredAction(nil), projection.RequiredActions...),
+			Failures:              append([]api.WorkflowFailure(nil), projection.Failures...),
 			AssessedAt:            assessedAt,
 			FreshUntil:            freshUntil,
 		}
-		if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
+		if !preflightProjectionConstructible(projection, debugMode) {
 			result.State = api.TrackerPreflightStateFailed
-			result.Failures = append([]api.WorkflowFailure(nil), projection.Failures...)
 			hasPendingAction := slices.ContainsFunc(result.RequiredActions, func(action api.RequiredAction) bool {
 				return action.Status == "" || action.Status == api.RequiredActionStatusPending
 			})
@@ -368,21 +368,24 @@ func (b workflowPreflightBuilder) Build(
 				)
 			}
 		}
+		diagnosticReady := preflightProjectionConstructible(projection, debugMode) && result.State == api.TrackerPreflightStateReady
+		checkPolicy := func() bool { return result.State == api.TrackerPreflightStateReady || debugMode && diagnosticReady }
 		descriptor := descriptorByID[projection.TrackerID]
-		if !debugMode && result.State == api.TrackerPreflightStateReady && descriptor.Capabilities.DynamicBannedGroups && bannedRefreshErr != nil {
+		if checkPolicy() && descriptor.Capabilities.DynamicBannedGroups && bannedRefreshErr != nil {
 			setRetryablePreflight(&result, "Tracker banned-group data could not be refreshed. Retry preflight.")
 			result.BannedGroupsReady = false
 		}
-		if !debugMode && result.State == api.TrackerPreflightStateReady {
+		if checkPolicy() {
 			banned, err := b.banned.IsBanned(string(projection.TrackerID), subject.Tag)
 			if err != nil {
 				setRetryablePreflight(&result, "Tracker banned-group data could not be checked. Retry preflight.")
 				result.BannedGroupsReady = false
 			} else if banned {
+				result.BannedGroupsReady = false
 				setPolicyBlockedPreflight(&result, "Release group is banned by this tracker.")
 			}
 		}
-		if !debugMode && result.State == api.TrackerPreflightStateReady && descriptor.Capabilities.Claims {
+		if checkPolicy() && descriptor.Capabilities.Claims {
 			if factory, ok := b.registry.LookupClaimCheckerFactory(string(projection.TrackerID)); ok {
 				checker := factory.NewClaimChecker(b.config, b.logger)
 				claimed, err := checker.HasClaim(ctx, subject)
@@ -393,6 +396,7 @@ func (b workflowPreflightBuilder) Build(
 					setRetryablePreflight(&result, "Tracker claim data could not be checked. Retry preflight.")
 					result.ClaimsReady = false
 				} else if claimed {
+					result.ClaimsReady = false
 					setPolicyBlockedPreflight(&result, "Tracker claim policy blocks this release.")
 				}
 			}
@@ -415,25 +419,16 @@ func (b workflowPreflightBuilder) Build(
 				})
 			}
 		}
-		if debugMode && result.State == api.TrackerPreflightStateReady {
-			if descriptor.Capabilities.StaticBannedGroups || descriptor.Capabilities.DynamicBannedGroups {
-				appendBypassedRuntimeDecision(
-					&finalProjection,
-					"banned_group",
-					"Debug mode bypassed tracker banned-group policy.",
-				)
-			}
-			if descriptor.Capabilities.Claims {
-				appendBypassedRuntimeDecision(
-					&finalProjection,
-					"claim_policy",
-					"Debug mode bypassed tracker claim policy.",
-				)
+		finalProjection.DiagnosticReady = debugMode && diagnosticReady
+		if result.State == api.TrackerPreflightStateReady && projection.Readiness != api.ReadinessStatusReady {
+			result.State = api.TrackerPreflightStateFailed
+			if len(result.Failures) == 0 {
+				setPolicyBlockedPreflight(&result, "Tracker policy requires authorization for a normal upload; diagnostic preparation remains available.")
 			}
 		}
 		finalProjection.RequiredActions = append([]api.RequiredAction(nil), result.RequiredActions...)
 		finalProjection.Failures = append([]api.WorkflowFailure(nil), result.Failures...)
-		if result.State == api.TrackerPreflightStateFailed || result.State == api.TrackerPreflightStateRetryable {
+		if !finalProjection.DiagnosticReady && (result.State == api.TrackerPreflightStateFailed || result.State == api.TrackerPreflightStateRetryable) {
 			finalProjection.Questionnaire = nil
 		}
 		if result.State == api.TrackerPreflightStateReady {
@@ -441,7 +436,7 @@ func (b workflowPreflightBuilder) Build(
 			finalProjection.DupeReady = true
 		} else {
 			finalProjection.Readiness = api.ReadinessStatusBlocked
-			if result.State == api.TrackerPreflightStateFailed {
+			if result.State == api.TrackerPreflightStateFailed && projection.Readiness != api.ReadinessStatusBlocked {
 				finalProjection.Readiness = api.ReadinessStatusIneligible
 			}
 			finalProjection.DupeReady = false
@@ -542,24 +537,20 @@ func subjectWithAvailablePreparedResources(subject api.UploadSubject) (api.Uploa
 	return checked, changed, nil
 }
 
-func appendBypassedRuntimeDecision(projection *api.TrackerReleaseProjection, code string, message string) {
-	projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
-		Code:     code,
-		Decision: "bypassed",
-		Blocking: false,
-		Message:  message,
-	})
+// preflightProjectionConstructible permits diagnostic checks without granting
+// the projection live upload authority.
+func preflightProjectionConstructible(projection api.TrackerReleaseProjection, debug bool) bool {
+	return projection.Readiness == api.ReadinessStatusReady && projection.DupeReady || debug && projection.DiagnosticReady
 }
 
 func setRetryablePreflight(result *api.TrackerPreflightResult, message string) {
 	result.State = api.TrackerPreflightStateRetryable
-	result.AuthReady = false
-	result.Failures = []api.WorkflowFailure{preflightFailure(
+	result.Failures = append(result.Failures, preflightFailure(
 		result.TrackerID,
 		api.OperationFailureInternal,
 		message,
 		api.OperationRecoveryRetry,
-	)}
+	))
 }
 
 func setAuthBlockedPreflight(result *api.TrackerPreflightResult, status api.TrackerAuthStatus) {
@@ -669,12 +660,12 @@ func (b workflowPreflightBuilder) logAuthBlocked(
 
 func setPolicyBlockedPreflight(result *api.TrackerPreflightResult, message string) {
 	result.State = api.TrackerPreflightStateFailed
-	result.Failures = []api.WorkflowFailure{preflightFailure(
+	result.Failures = append(result.Failures, preflightFailure(
 		result.TrackerID,
 		api.OperationFailureNoEligibleTrackers,
 		message,
 		api.OperationRecoverySelectTrackers,
-	)}
+	))
 }
 
 func setMissingImageHostPreflight(result *api.TrackerPreflightResult, message string) {

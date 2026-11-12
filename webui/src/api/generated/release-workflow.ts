@@ -3059,6 +3059,7 @@ export type TrackerReleaseProjection = Readonly<{
   criteriaFingerprint: WorkflowFingerprint;
   derivedFlags?: readonly TrackerDerivedFlag[];
   descriptionGroup?: string;
+  diagnosticReady?: boolean;
   displayName: string;
   dupeReady: boolean;
   duplicateCriteria: TrackerDuplicateCriteria;

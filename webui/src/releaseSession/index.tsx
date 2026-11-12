@@ -3938,7 +3938,10 @@ export function ReleaseSessionProvider({
                 [normalizedTracker]: ignored ? "ignored" : "accepted",
               },
               staffTokenConfirmations:
-                ignored && result.requiresStaffToken && workflowDupeAssessment
+                ignored &&
+                current.projections?.executionMode !== "debug" &&
+                result.requiresStaffToken &&
+                workflowDupeAssessment
                   ? { [normalizedTracker]: workflowDupeAssessment.id }
                   : undefined,
             },

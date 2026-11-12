@@ -657,18 +657,32 @@ func TestApplyProjectionRuleFailuresRequiresExactNormalAuthorization(t *testing.
 
 	debug := readyProjection()
 	apply(&debug, waivable, api.WorkflowExecutionModeDebug, "", nil)
-	if debug.Readiness != api.ReadinessStatusReady || !debug.DupeReady || debug.PolicyDecisions[0].Decision != "bypassed" ||
-		debug.PolicyDecisions[0].Blocking || len(debug.RequiredActions) != 0 {
+	if debug.Readiness != api.ReadinessStatusBlocked || debug.DupeReady || !debug.DiagnosticReady ||
+		debug.PolicyDecisions[0].Decision != "authorization_required" || !debug.PolicyDecisions[0].Blocking || len(debug.RequiredActions) != 0 {
 		t.Fatalf("debug waivable outcome = %#v", debug)
 	}
 
 	debugStrict := readyProjection()
 	logger := &warningLogger{}
 	apply(&debugStrict, strict, api.WorkflowExecutionModeDebug, "", logger)
-	if debugStrict.Readiness != api.ReadinessStatusIneligible || debugStrict.DupeReady ||
+	if debugStrict.Readiness != api.ReadinessStatusIneligible || debugStrict.DupeReady || debugStrict.DiagnosticReady ||
 		debugStrict.PolicyDecisions[0].Decision != "ineligible" || len(debugStrict.RequiredActions) != 0 {
 		t.Fatalf("debug strict outcome = %#v", debugStrict)
 	}
+	debugPolicy := readyProjection()
+	policyFailure := strict[0]
+	policyFailure.DebugBypass = true
+	apply(&debugPolicy, []api.RuleFailure{policyFailure}, api.WorkflowExecutionModeDebug, "", nil)
+	if !debugPolicy.DiagnosticReady || debugPolicy.Readiness != api.ReadinessStatusIneligible ||
+		!debugPolicy.PolicyDecisions[0].Blocking || debugPolicy.PolicyDecisions[0].Decision != "ineligible" {
+		t.Fatalf("diagnostic policy erased actual result = %#v", debugPolicy)
+	}
+	questionnaire := readyProjection()
+	apply(&questionnaire, []api.RuleFailure{NewQuestionnaireRuleFailure("required_answer", "answer required")}, api.WorkflowExecutionModeDebug, "", nil)
+	if questionnaire.DiagnosticReady || questionnaire.Readiness != api.ReadinessStatusBlocked {
+		t.Fatalf("missing construction answer was diagnostic-ready = %#v", questionnaire)
+	}
+
 	if len(logger.warnings) != 1 || logger.warnings[0] != "trackers: projection validation blocked tracker=EXAMPLE rule=constructibility decision=ineligible" {
 		t.Fatalf("blocking validation warnings = %#v", logger.warnings)
 	}
@@ -823,6 +837,22 @@ func TestProjectionQuestionnaireIsOmittedWithStrictFailure(t *testing.T) {
 	}
 	if projection.Readiness != api.ReadinessStatusIneligible || projection.DupeReady || projection.UploadReady || len(projection.Failures) == 0 {
 		t.Fatalf("questionnaire waived strict failure: %+v", projection)
+	}
+	debug, failure := registry.ProjectRelease(t.Context(), PreparationInput{
+		Tracker:       "ONE",
+		Meta:          api.UploadSubject{ReleaseName: "Example.Movie.2026.1080p-GRP"},
+		ExecutionMode: api.WorkflowExecutionModeDebug,
+	}, "input", "catalog", "config")
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	if len(debug.Questionnaire) == 0 || !slices.ContainsFunc(debug.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionAnswerQuestionnaire && action.TrackerID == "ONE"
+	}) {
+		t.Fatalf("diagnostic policy failure hid corrective input: %+v", debug)
+	}
+	if debug.DiagnosticReady || debug.DupeReady || debug.UploadReady || len(debug.Failures) == 0 {
+		t.Fatalf("diagnostic questionnaire waived missing prerequisites: %+v", debug)
 	}
 }
 

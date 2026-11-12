@@ -79,7 +79,7 @@ func TestLSTHostedScreenshotEvidenceNeedsNoReassurance(t *testing.T) {
 	}
 	prepare := func(subject api.UploadSubject) trackers.RetainedTrackerPreparation {
 		t.Helper()
-		plan, err := service.PrepareRetainedUploadPlan(t.Context(), subject, projections)
+		plan, err := service.PrepareRetainedUploadPlan(t.Context(), subject, projections, api.WorkflowExecutionModeNormal)
 		if err != nil {
 			t.Fatal(err)
 		}

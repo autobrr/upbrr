@@ -342,10 +342,13 @@ type TrackerReleaseProjection struct {
 	CriteriaFingerprint          WorkflowFingerprint               `json:"criteriaFingerprint"`
 	PreparedResourceFingerprint  WorkflowFingerprint               `json:"preparedResourceFingerprint,omitempty"`
 	Readiness                    ReadinessStatus                   `json:"readiness"`
-	DupeReady                    bool                              `json:"dupeReady"`
-	UploadReady                  bool                              `json:"uploadReady"`
-	RequiredActions              []RequiredAction                  `json:"requiredActions,omitempty"`
-	Failures                     []WorkflowFailure                 `json:"failures,omitempty"`
+	// DiagnosticReady permits non-submitting preparation despite policy outcomes.
+	// It never grants upload or client-injection authority.
+	DiagnosticReady bool              `json:"diagnosticReady,omitempty"`
+	DupeReady       bool              `json:"dupeReady"`
+	UploadReady     bool              `json:"uploadReady"`
+	RequiredActions []RequiredAction  `json:"requiredActions,omitempty"`
+	Failures        []WorkflowFailure `json:"failures,omitempty"`
 }
 
 // TrackerReleaseProjectionSet is an immutable projection for every selected tracker.

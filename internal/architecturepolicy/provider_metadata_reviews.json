@@ -1176,8 +1176,8 @@
     "sha256": "0a91ed1adfc0baa68a30f72e3bba9c6e15aad9f23a604374b5c0c619828b3b07"
   },
   "internal/trackers/impl/standalone/rtf/rules.go:checkRules": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "d5da4ffe413ec25a2189bad2a3d8cb47a68902802d623beff6879c566a3d9d7f"
+    "reason": "Only permits debug preparation for retained eligibility failures; adult detection preserves manual/current-provider genre precedence and age evidence preserves reviewed manual-year precedence and exact provider dates.",
+    "sha256": "b2d522a629c76075093e80e13a67c0967dba20496ba370baa1ea19a9ae815d9f"
   },
   "internal/trackers/impl/standalone/rtf/rules.go:minimumContentAgeViolation": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1188,8 +1188,8 @@
     "sha256": "7d2be43309676cb687a210c4579ffc23b7e833b77a91067f7caa189f33d0f0cf"
   },
   "internal/trackers/impl/standalone/rtf/rules.go:validationPolicy": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "f13bc58d540b1b9428023bfbf1f3898b4386759fa268ecfaab9c87640601beb4"
+    "reason": "Advances the debug eligibility policy version while retaining the same checkRules binding and reviewed provider/manual precedence.",
+    "sha256": "9173f2c1ba9ff83bffa96bcdfaf6d20288976f0c9b1fd385e05f9c9594619e4f"
   },
   "internal/trackers/impl/standalone/rtf/rules.go:youngestRTFReleaseEvidence": {
     "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence.",
@@ -1617,7 +1617,7 @@
   },
   "internal/trackers/impl/unit3d/upload.go:buildUploadDryRunUnit3D": {
     "reason": "Preserves finalized canonical and effective provider facts and current scoped review answers through questionnaire, validation and submission finalization.",
-    "sha256": "278bd5d29ef745f148f4186579550b9ed9dad7d1c4c933a617e689ff35c8f91c"
+    "sha256": "282e191250a8c1aa5757c8a1db9fe3a60b6d290ba7506303e24b61c3ce4ab27d"
   },
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
     "reason": "Annotation-display review: copies canonical ReleaseFeatures and the ordered display-only projection into detached slices. Existing provider snapshot, identity, manual provenance and validation mappings remain unchanged; display text is not semantic evidence.",
