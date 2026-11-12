@@ -1008,7 +1008,11 @@ export function ReleaseSessionProvider({
       throw new Error("Tracker submission is unavailable in this runtime.");
     }
     let current = initial;
-    let nextIntent = intent;
+    // Follow-on stages retain the recorded waiver; an explicit false requests a fresh remote check.
+    let nextIntent: WorkflowIntent = {
+      ...intent,
+      skipRemoteDuplicates: intent.skipRemoteDuplicates ?? initial.dupes?.skipRemote,
+    };
     for (let transition = 0; transition < 32; transition += 1) {
       if (activeAuthority.current.workflowID !== current.workflow.id) {
         throw new DOMException("Active input changed.", "AbortError");

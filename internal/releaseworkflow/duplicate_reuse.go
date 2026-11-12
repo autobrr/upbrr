@@ -228,6 +228,6 @@ func (m *Module) rebindQuestionnaireDupes(
 	if err != nil {
 		return nil, err
 	}
-	result, err := m.publishBuiltDupes(ownerID, state, nextRevision, now, projections, snapshot, evidence, prior.CheckOrdinal)
+	result, err := m.publishBuiltDupes(ownerID, state, nextRevision, now, projections, snapshot, evidence, prior.CheckOrdinal, command.SkipRemoteDuplicates)
 	return result.Dupes, err
 }

@@ -10454,6 +10454,71 @@ it.each(["rejected", "accepted lookup failed"])(
   },
 );
 
+it("retains a restored remote-search waiver across browser stages until an explicit recheck", async () => {
+  const workflowID = "workflow-waiver";
+  const fixture = workflowPorts();
+  const checked = await fixture.checkDuplicates(
+    workflowCurrent(workflowID, 2),
+    true,
+    "seed",
+    new AbortController().signal,
+  );
+  const current = { ...checked, dupes: { ...checked.dupes!, skipRemote: true } };
+  const continueWorkflow = vi.fn(async (_request: ContinueReleaseWorkflowRequest) => current);
+  const { result, unmount } = renderHook(useReleaseSession, {
+    wrapper: wrapperFor(
+      portsFor({
+        resumeWorkflowID: workflowID,
+        workflow: workflowPorts({ current: async () => current, continue: continueWorkflow }),
+      }),
+    ),
+  });
+  try {
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    await act(() =>
+      result.current.workflow.captureMedia({
+        screenshotCount: 1,
+        purpose: "final",
+        captureDvdMenus: false,
+      }),
+    );
+    await act(() =>
+      result.current.workflow.generateDescriptions({
+        imageHost: { FailedHosts: [], SkipUpload: true },
+        options: {
+          AudioAnalysis: false,
+          AudioImages: "both",
+          AudioTracks: "primary",
+          CaptureDVDMenus: false,
+          InteractionMode: "interactive",
+          KeepFolder: false,
+          KeepImages: false,
+          NoSeed: true,
+          OnlyID: false,
+          RunLogLevel: "info",
+          Screens: 0,
+          SkipAutoTorrent: false,
+        },
+      }),
+    );
+    await act(() => result.current.workflow.dryRunUploads());
+    expect(
+      continueWorkflow.mock.calls.map(([request]) => [
+        request.goal,
+        request.intent.skipRemoteDuplicates,
+      ]),
+    ).toEqual([
+      ["media_ready", true],
+      ["descriptions_ready", true],
+      ["dry_run", true],
+    ]);
+    await act(() => result.current.workflow.checkDuplicates(false));
+    expect(continueWorkflow.mock.lastCall?.[0].intent.skipRemoteDuplicates).toBe(false);
+  } finally {
+    unmount();
+  }
+});
+
 it.each([
   "trackers_assessed",
   "duplicates_decided",
