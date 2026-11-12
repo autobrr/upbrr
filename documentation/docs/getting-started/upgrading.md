@@ -19,8 +19,6 @@ If a retained workflow reports incompatible prepared data after an update, prepa
 
 ## 1. Stop upbrr
 
-For the `v0.4.2` artifact layout, also follow the [manual legacy report-cache cleanup notice](../changelog/v0.4.2.md#remove-the-legacy-report-cache). No automatic migration or legacy cache discovery is performed; releases must be prepared again.
-
 Stop every binary, service, and container using the database before upgrading or copying it. Disable scheduled tasks and automatic restarts that could start an older process during the upgrade. Take the backup only after all writers have stopped.
 
 Running old and new versions against the same database is unsupported. Older binaries do not enforce the newer active-input and submission protections.
@@ -34,6 +32,8 @@ Back up the directory containing `db.sqlite`. Keep adjacent files with it, espec
 - the `cookies` directory, when legacy cookie import files have not yet been migrated.
 
 Default locations are described in [Configuration](../configuration/index.md#state-location).
+
+After completing the stopped-service backup, follow the [manual legacy report-cache cleanup notice](../changelog/v0.4.2.md#remove-the-legacy-report-cache) for the `v0.4.2` artifact layout. Complete the backup before deleting any legacy cache or installing and starting the new version. No automatic migration or legacy cache discovery is performed; releases must be prepared again.
 
 ## 3. Install the new version
 
