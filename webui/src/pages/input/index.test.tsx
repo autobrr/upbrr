@@ -963,6 +963,22 @@ describe("InputPage", () => {
       />,
     );
     expect(screen.getByText(/Conflicting source evidence needs review/)).toBeVisible();
+    refreshed.Episode.Coverage = {
+      Part: "",
+      Episodes: [1, 2],
+      Status: "partial",
+      CompleteSeason: true,
+    };
+    rerender(
+      <InputPage
+        facet={{ ...facet, view: { ...facet.view, release: refreshed } }}
+        {...inputPageProps()}
+      />,
+    );
+    expect(screen.getByText(/Known episodes: 1, 2/)).toHaveTextContent(
+      "Some included episodes may remain unidentified. Source is marked as a complete season.",
+    );
+    expect(screen.queryByText(/Season completeness is unverified/)).not.toBeInTheDocument();
   });
 
   it("honors applied primary-provider clears and keeps search available", () => {

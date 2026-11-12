@@ -1438,12 +1438,13 @@ export default function InputPage(props: Props) {
                 ? `Known episodes: ${view.release.Episode.Coverage.Episodes.join(", ")}. `
                 : "Episode membership unknown. "}
               {view.release.Episode.Coverage.Status === "contradictory"
-                ? "Conflicting source evidence needs review."
+                ? "Conflicting source evidence needs review. "
                 : view.release.Episode.Coverage.Status === "partial"
-                  ? "Some included episodes remain unidentified."
-                  : view.release.Episode.Coverage.CompleteSeason
-                    ? "Source is marked as a complete season."
-                    : "Season completeness is unverified."}
+                  ? "Some included episodes may remain unidentified. "
+                  : ""}
+              {view.release.Episode.Coverage.CompleteSeason
+                ? "Source is marked as a complete season."
+                : "Season completeness is unverified."}
             </p>
           </div>
         ) : null}
