@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -512,6 +513,7 @@ func (f *cliWorkflowCoreFake) ContinueReleaseWorkflow(
 }
 
 func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
+	encodedAttachment := base64.StdEncoding.EncodeToString([]byte("https://tracker.example/announce?passkey=never-print-this"))
 	output := captureWriter(func(output io.Writer) {
 		printCLIWorkflowDryRun(output, api.UploadDryRunResult{Reports: []api.TrackerDryRunReport{
 			{
@@ -524,6 +526,15 @@ func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
 					Message: "Client injection completed with passkey=never-print-this.",
 				},
 				Warnings: []string{"Synthetic warning api_token=never-print-this."},
+				Endpoint: "https://example.invalid/upload?api_token=never-print-this",
+				Fields: []api.UploadPlanField{
+					{Key: "name", Value: "Example.Release.2026.BETA-GRP"},
+					{Key: "description", Value: "Synthetic description\npasskey=never-print-this"},
+					{Key: "api_token", Value: "never-print-this"},
+					{Key: "username", Value: "never-print-this"},
+					{Key: "file", Value: encodedAttachment},
+				},
+				Files: []api.UploadPlanFile{{Field: "torrent", Present: true}, {Field: "nfo", Present: false}, {Field: "file", Present: true}},
 			},
 		}}, false, nil)
 	})
@@ -531,6 +542,13 @@ func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
 		!strings.Contains(output, "see each tracker's client injection outcome below") ||
 		!strings.Contains(output, "client injection: completed: Client injection completed with passkey=[REDACTED]") ||
 		!strings.Contains(output, "warning: Synthetic warning api_token=[REDACTED]") ||
+		!strings.Contains(output, "endpoint: https://example.invalid/upload") ||
+		!strings.Contains(output, `"name": "Example.Release.2026.BETA-GRP"`) ||
+		!strings.Contains(output, `"description": "Synthetic description`) ||
+		!strings.Contains(output, `"file": "[attachment]"`) ||
+		!strings.Contains(output, "attachment: torrent present=true") ||
+		!strings.Contains(output, "attachment: nfo present=false") ||
+		strings.Contains(output, encodedAttachment) ||
 		strings.Contains(output, "never-print-this") {
 		t.Fatalf("upload dry-run output = %q", output)
 	}

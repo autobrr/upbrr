@@ -5,6 +5,7 @@ package rtf
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,20 +40,43 @@ func TestBuildUploadDryRunUsesDescriptionPayloadAndLeavesNFOEmpty(t *testing.T) 
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 		Assets:        &trackers.DescriptionAssets{Description: "Custom description"},
 	}
-	plan, failure := New().Prepare(context.Background(), input)
-	if failure != nil {
-		t.Fatalf("unexpected error: %v", failure)
-	}
-	entry := plan.DryRun()
-
-	if entry.Payload["description"] != "Custom description" {
-		t.Fatalf("expected description payload, got %#v", entry.Payload)
-	}
-	if entry.Payload["descr"] != "Custom description" {
-		t.Fatalf("expected descr payload mirror, got %#v", entry.Payload)
-	}
-	if entry.Payload["nfo"] != "" {
-		t.Fatalf("expected empty nfo payload, got %#v", entry.Payload["nfo"])
+	for _, test := range []struct {
+		name    string
+		year    int
+		mode    api.WorkflowExecutionMode
+		blocked bool
+	}{
+		{name: "eligible", year: 2010},
+		{
+			name:    "too young for upload",
+			year:    9999,
+			blocked: true,
+		},
+		{
+			name: "too young diagnostic preview",
+			year: 9999,
+			mode: api.WorkflowExecutionModeDebug,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input.Meta.Release.Year = test.year
+			input.Meta.ReleaseName = fmt.Sprintf("Example.Release.%d.1080p-GRP", test.year)
+			input.ExecutionMode = test.mode
+			plan, failure := New().Prepare(context.Background(), input)
+			if test.blocked {
+				if failure == nil || !strings.Contains(failure.Message(), "minimum_content_age") {
+					t.Fatalf("normal preparation did not retain age block: %v", failure)
+				}
+				return
+			}
+			if failure != nil {
+				t.Fatalf("unexpected error: %v", failure)
+			}
+			entry := plan.DryRun()
+			if entry.Payload["description"] != "Custom description" || entry.Payload["descr"] != "Custom description" || entry.Payload["nfo"] != "" {
+				t.Fatalf("description payload changed: %#v", entry.Payload)
+			}
+		})
 	}
 }
 

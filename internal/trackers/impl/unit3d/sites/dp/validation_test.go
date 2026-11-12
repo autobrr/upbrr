@@ -302,6 +302,71 @@ func TestDPOriginalAudioLatePreparation(t *testing.T) {
 	}
 }
 
+func TestDPSingleFileFolderDiagnosticPreparation(t *testing.T) {
+	t.Parallel()
+	registry := dpManualMarkerRegistry(t)
+	definition := unit3d.NewWithProfile(Profile())
+	dir := t.TempDir()
+	meta := dpEligibilitySubject("English")
+	meta.SourcePath = filepath.Join(dir, "Example.Release.2026")
+	meta.Identity.SourcePath = meta.SourcePath
+	meta.Identity.Generation = 1
+	meta.ProviderMetadata = api.SourceScopedMetadata{
+		SourcePath: meta.SourcePath,
+		Generation: meta.Identity.Generation,
+		TMDB: &api.TMDBMetadata{
+			TMDBID:   meta.Identity.TMDBID,
+			Category: string(meta.Identity.Category),
+			Title:    "Example",
+		},
+	}
+	meta.FileList = []string{filepath.Join(meta.SourcePath, "video.mkv")}
+	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL-GRP"
+	meta.MediaInfoTextPath, meta.TorrentPath = filepath.Join(dir, "MediaInfo.txt"), filepath.Join(dir, "example.torrent")
+	for _, path := range []string{meta.MediaInfoTextPath, meta.TorrentPath} {
+		if err := os.WriteFile(path, []byte("Synthetic prepared content"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
+		input := trackers.PreparationInput{
+			Intent:              trackers.PreparationIntentDryRun,
+			ExecutionMode:       mode,
+			Tracker:             "DP",
+			Meta:                meta,
+			RequestedUploadName: &meta.ReleaseName,
+			TrackerConfig:       config.TrackerConfig{APIKey: "synthetic-key"},
+			Logger:              api.NopLogger{},
+			Assets:              &trackers.DescriptionAssets{Description: "Synthetic description", Final: true},
+		}
+		projection, failure := registry.ProjectRelease(t.Context(), input, "input", "catalog", "config")
+		if failure != nil || (mode == api.WorkflowExecutionModeDebug && !projection.DiagnosticReady) ||
+			projection.Readiness != api.ReadinessStatusIneligible || projection.UploadReady ||
+			!slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+				return decision.Code == "block_single_file_folder" && decision.Blocking && decision.Disposition == api.RuleDispositionStrict
+			}) {
+			t.Fatalf("mode=%s: folder policy lost diagnostic constructibility or live block: projection=%+v failure=%v", mode, projection, failure)
+		}
+		input.Projection = &projection
+		plan, failure := definition.Prepare(t.Context(), input)
+		if mode == api.WorkflowExecutionModeNormal {
+			if failure == nil {
+				t.Fatalf("normal preparation did not retain folder policy: %v", failure)
+			}
+			continue
+		}
+		if failure != nil || plan.DryRun().Payload["description"] != "Synthetic description" {
+			t.Fatalf("debug folder payload was not prepared: %v", failure)
+		}
+		if _, err := plan.Submit(t.Context()); !errors.Is(err, trackers.ErrPlanNotSubmittable) {
+			t.Fatalf("debug folder preview allowed submission: %v", err)
+		}
+		if err := plan.Release(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func dpEligibilitySubject(languages ...string) api.UploadSubject {
 	media := api.MediaFacts{
 		OriginalLanguage:      "Japanese",

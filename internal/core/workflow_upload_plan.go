@@ -1850,7 +1850,14 @@ func sanitizeWorkflowUploadPreview(preview api.TrackerDryRunEntry) (string, []ap
 	sort.Strings(keys)
 	fields := make([]api.UploadPlanField, 0, len(keys))
 	for _, key := range keys {
-		fields = append(fields, api.UploadPlanField{Key: key, Value: sanitizeWorkflowFieldValue(key, preview.Payload[key])})
+		// Encoded attachment bytes can contain announce credentials.
+		value := "[attachment]"
+		if !slices.ContainsFunc(preview.Files, func(file api.TrackerDryRunFile) bool {
+			return strings.TrimSpace(file.Field) == key
+		}) {
+			value = sanitizeWorkflowFieldValue(key, preview.Payload[key])
+		}
+		fields = append(fields, api.UploadPlanField{Key: key, Value: value})
 	}
 	files := make([]api.UploadPlanFile, 0, len(preview.Files))
 	for _, file := range preview.Files {

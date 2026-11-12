@@ -106,7 +106,7 @@ func ProjectionEligibleForPreparation(
 		return ProjectionEligibleForDownstream(projection, dupe, hasDupe)
 	}
 	return (projection.DiagnosticReady || projection.Readiness == api.ReadinessStatusReady && projection.UploadReady) &&
-		hasDupe && !strictDupeResult(dupe) &&
+		hasDupe &&
 		(dupe.Decision != api.DupeDecisionPending || dupe.Status == api.StageStatusFailed)
 }
 

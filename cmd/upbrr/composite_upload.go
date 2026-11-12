@@ -424,6 +424,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 	if s.current.Projections == nil || s.current.Dupes == nil {
 		return feedback, false, errors.New("upbrr: post-dupe tracker review is unavailable")
 	}
+	diagnostic := s.current.Projections.ExecutionMode == api.WorkflowExecutionModeDebug
 	projectionByTracker := make(map[api.TrackerID]api.TrackerReleaseProjection, len(s.current.Projections.Projections))
 	for _, projection := range s.current.Projections.Projections {
 		projectionByTracker[projection.TrackerID] = projection
@@ -499,8 +500,9 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			})
 		defaultYes := releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, true) &&
 			(clearCheck || waivedCheck) && !dupe.RequiresStaffToken && !cliDupeRequiresRiskAcknowledgement(dupe)
-		confirmed := defaultYes
-		if s.intent.interaction != api.InteractionModeUnattended {
+		// Debug prepares every diagnostic candidate; upload approval cannot prune previews.
+		confirmed := diagnostic || defaultYes
+		if !diagnostic && s.intent.interaction != api.InteractionModeUnattended {
 			choice := "[y/N]"
 			if defaultYes {
 				choice = "[Y/n]"
@@ -519,7 +521,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 				return feedback, false, err
 			}
 		}
-		if s.intent.interaction == api.InteractionModeUnattended {
+		if diagnostic || s.intent.interaction == api.InteractionModeUnattended {
 			fmt.Fprint(s.streams.out, safeTerminalText(evidence.String()))
 		}
 		if confirmed {

@@ -19,7 +19,7 @@ const minimumContentAgeReason = "content must be at least 10 years and 1 month o
 // validationPolicy strictly blocks content newer than RTF's ten-year-and-one-month
 // eligibility cutoff and adult-classified releases.
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "standalone-rtf-constructibility-v3", Check: checkRules}
+	return trackers.ValidationPolicyBinding{ID: "standalone-rtf-constructibility-v4", Check: checkRules}
 }
 
 func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
@@ -28,18 +28,22 @@ func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Lo
 	}
 	failures := make([]api.RuleFailure, 0, 2)
 	if trackers.AdultContent(trackers.RuleSubjectFromValidation(meta)) {
-		failures = append(failures, trackers.NewRuleFailure(
+		failure := trackers.NewRuleFailure(
 			"block_adult",
 			"adult content is not allowed",
 			api.RuleDispositionStrict,
-		))
+		)
+		failure.DebugBypass = true
+		failures = append(failures, failure)
 	}
 	if minimumContentAgeViolation(meta, time.Now().UTC()) {
-		failures = append(failures, trackers.NewRuleFailure(
+		failure := trackers.NewRuleFailure(
 			"minimum_content_age",
 			minimumContentAgeReason,
 			api.RuleDispositionStrict,
-		))
+		)
+		failure.DebugBypass = true
+		failures = append(failures, failure)
 	}
 	return failures, nil
 }

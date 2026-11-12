@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -1724,6 +1725,30 @@ func printCLIWorkflowDryRun(
 			fmt.Fprintf(output, "  upload:   %s\n", report.UploadReleaseName)
 		} else {
 			fmt.Fprintf(output, "- %s: %s status=%s\n", report.DisplayName, report.UploadReleaseName, report.Status)
+		}
+		if report.Endpoint != "" {
+			fmt.Fprintf(output, "  endpoint: %s\n", redaction.RedactValue(redaction.TrackerPageURL(report.Endpoint), nil))
+		}
+		if len(report.Fields) > 0 {
+			payload := make(map[string]any, len(report.Fields))
+			for _, field := range report.Fields {
+				payload[field.Key] = field.Value
+			}
+			// Retained reports may predate attachment masking during preparation.
+			for _, file := range report.Files {
+				if _, exists := payload[file.Field]; exists {
+					payload[file.Field] = "[attachment]"
+				}
+			}
+			data, err := json.MarshalIndent(redaction.RedactPrivateInfo(payload, nil), "    ", "  ")
+			if err != nil {
+				fmt.Fprintln(output, "  payload: could not format the prepared request")
+			} else {
+				fmt.Fprintf(output, "  payload:\n    %s\n", stripTerminalControls(string(data)))
+			}
+		}
+		for _, file := range report.Files {
+			fmt.Fprintf(output, "  attachment: %s present=%t\n", safeDiagnosticText(file.Field), file.Present)
 		}
 		clientMessage := strings.TrimSpace(safeDiagnosticText(report.ClientInjection.Message))
 		if report.ClientInjection.Status != "" {

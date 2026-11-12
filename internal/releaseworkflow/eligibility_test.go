@@ -366,8 +366,11 @@ func TestDiagnosticPreparationPreservesBlockedDecisions(t *testing.T) {
 			t.Fatal("diagnostic preparation granted live upload authority")
 		}
 		dupe.Matches = []api.DupeMatchProjection{{Reason: "in_client"}}
-		if ProjectionEligibleForPreparation(projection, dupe, true, api.WorkflowExecutionModeDebug) {
-			t.Fatal("debug bypassed in-client evidence")
+		if !ProjectionEligibleForPreparation(projection, dupe, true, api.WorkflowExecutionModeDebug) {
+			t.Fatal("in-client evidence blocked diagnostic preparation")
+		}
+		if ProjectionEligibleForDownstream(projection, dupe, true) {
+			t.Fatal("in-client evidence gained live upload authority")
 		}
 	}
 	projection.DiagnosticReady = false

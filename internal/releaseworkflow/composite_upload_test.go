@@ -566,12 +566,18 @@ func TestCompositeUploadStrictDebugContinuesWithEligibleTrackers(t *testing.T) {
 		name          string
 		disposition   api.ReleaseWorkflowDuplicateDisposition
 		blockedPolicy bool
+		inClient      bool
 		answer        api.DupeDecision
 	}{
 		{name: "clear"},
 		{name: "declined_duplicate", disposition: api.ReleaseWorkflowDuplicateBlock},
 		{name: "accepted_duplicate", disposition: api.ReleaseWorkflowDuplicateUpload},
 		{name: "blocked_policy", blockedPolicy: true},
+		{
+			name:        "in_client_duplicate",
+			disposition: api.ReleaseWorkflowDuplicateBlock,
+			inClient:    true,
+		},
 		{
 			name:        "reply_yes",
 			disposition: api.ReleaseWorkflowDuplicateAsk,
@@ -615,7 +621,11 @@ func TestCompositeUploadStrictDebugContinuesWithEligibleTrackers(t *testing.T) {
 				})
 			}
 			if disposition != "" {
-				module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA", "same release")
+				reason := "same release"
+				if tc.inClient {
+					reason = "in_client"
+				}
+				module.dupeBuilder = compositeUploadDuplicateBlockedBuilder(module.dupeBuilder, "BETA", reason)
 			}
 			request := compositeUploadTestRequest(tc.answer != "", api.ReleaseWorkflowUploadModeDebug, "composite-debug")
 			if disposition != "" {
@@ -671,6 +681,9 @@ func TestCompositeUploadStrictDebugContinuesWithEligibleTrackers(t *testing.T) {
 			}
 			if uploads.execution == nil || uploads.execution.executions != 0 {
 				t.Fatalf("debug upload execution plan = %#v", uploads.execution)
+			}
+			if !slices.Equal(current.DryRun.TrackerIDs, []api.TrackerID{"ALPHA", "BETA"}) || len(current.DryRun.Reports) != 2 || current.Descriptions == nil {
+				t.Fatalf("debug did not prepare every diagnostic tracker: %+v", current.DryRun)
 			}
 			if tc.blockedPolicy && (current.Preflight.Status != api.StageStatusFailed || current.Projections.Projections[0].Readiness != api.ReadinessStatusBlocked) {
 				t.Fatal("diagnostic progress rewrote real blocked outcomes")
