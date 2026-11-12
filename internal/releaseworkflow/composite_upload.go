@@ -1388,6 +1388,20 @@ func compositeUploadPendingAction(
 			duplicateSearchModeChanged(current.Dupes, session.Intent.SkipRemoteDuplicates) {
 			continue
 		}
+		if action.Kind == api.RequiredActionApproveTrackers && session.Intent.ExecutionMode == api.WorkflowExecutionModeDebug &&
+			current.Dupes != nil && slices.ContainsFunc(current.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
+			if strictDupeResult(result) {
+				return false
+			}
+			decision, decided := session.Intent.DuplicateDecisions[result.TrackerID]
+			if decided {
+				return decision != result.Decision
+			}
+			return result.Decision == api.DupeDecisionAccepted && session.DuplicateDisposition != api.ReleaseWorkflowDuplicateBlock
+		}) {
+			// Finish duplicate choices before binding the explicit preparation subset.
+			continue
+		}
 		if strictDuplicateForTracker(current.Dupes, action.TrackerID) {
 			continue
 		}
@@ -1406,7 +1420,8 @@ func compositeUploadPendingAction(
 			}
 			if decided {
 				// An ignored intent cannot replace a confirmation for the current assessment.
-				requiresConfirmation := decision == api.DupeDecisionIgnored && current.Dupes != nil &&
+				requiresConfirmation := session.Intent.ExecutionMode != api.WorkflowExecutionModeDebug &&
+					decision == api.DupeDecisionIgnored && current.Dupes != nil &&
 					session.Intent.StaffTokenConfirmations[action.TrackerID] != current.Dupes.ID &&
 					slices.ContainsFunc(current.Dupes.Results, func(result api.TrackerDupeAssessment) bool {
 						return result.TrackerID == action.TrackerID && result.RequiresStaffToken && !result.StaffTokenConfirmed
@@ -1518,7 +1533,7 @@ func (m *Module) applyCompositeAutomaticPolicy(
 		}
 		switch onEvidence {
 		case api.ReleaseWorkflowDuplicateUpload:
-			if result.RequiresStaffToken {
+			if result.RequiresStaffToken && session.Intent.ExecutionMode != api.WorkflowExecutionModeDebug {
 				continue
 			}
 			decisions[result.TrackerID] = api.DupeDecisionIgnored

@@ -670,8 +670,7 @@ func (m *Module) resolveContinuationAnswer(
 func trackerDupeReady(projections *api.TrackerReleaseProjectionSet, trackerID api.TrackerID) bool {
 	return projections != nil && slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
 		return projection.TrackerID == trackerID &&
-			projection.Readiness == api.ReadinessStatusReady &&
-			projection.DupeReady
+			projectionReadyForChecks(projection, projections.ExecutionMode)
 	})
 }
 
@@ -988,7 +987,7 @@ func planContinuationCommandWithReadiness(
 		return nil, ""
 	}
 	if !slices.ContainsFunc(current.Projections.Projections, func(projection api.TrackerReleaseProjection) bool {
-		return projection.Readiness == api.ReadinessStatusReady && projection.DupeReady
+		return projectionReadyForChecks(projection, current.Projections.ExecutionMode)
 	}) {
 		return nil, "no-eligible-trackers"
 	}

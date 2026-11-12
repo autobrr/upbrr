@@ -788,6 +788,11 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	if result.RequiresStaffToken {
 		help += "\nYes attests that you already have the required staff-issued token; do not enter the token here. No leaves this tracker blocked."
 	}
+	debug := s.current.Projections != nil && s.current.Projections.ExecutionMode == api.WorkflowExecutionModeDebug
+	if debug {
+		prompt = fmt.Sprintf("Record an override of the duplicate evidence for %s? [y/N]: ", result.TrackerID)
+		help = "Debug never submits tracker uploads. Yes records the diagnostic override; No preserves the duplicate block. Both answers continue to payload inspection when inputs permit it. Neither answer establishes missing evidence or confirms possession of a staff token."
+	}
 	allow, err := askCLIConfirmation(reader, s.streams.out, cliPrompt{
 		Kind:     cliPromptConfirm,
 		Question: prompt,
@@ -805,7 +810,7 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
 		Kind: api.ReleaseWorkflowUploadFeedbackDuplicateReview,
 		DuplicateReview: &api.ReleaseWorkflowUploadDuplicateReview{
-			StaffTokenConfirmed: result.RequiresStaffToken && allow,
+			StaffTokenConfirmed: result.RequiresStaffToken && allow && !debug,
 			TrackerID:           result.TrackerID,
 			Decision:            decision,
 		},
@@ -827,7 +832,7 @@ func printCLICompositeDupeEvidence(output io.Writer, result api.TrackerDupeAsses
 	case api.DupeDecisionIgnored:
 		decision = "An explicit duplicate override is retained for this assessment"
 	case api.DupeDecisionBypassed:
-		decision = "The run's debug authority bypasses this duplicate gate"
+		decision = "The retained assessment records a bypass of this duplicate gate"
 	case api.DupeDecisionSkipped:
 		decision = "The duplicate search was skipped by workflow policy"
 	}

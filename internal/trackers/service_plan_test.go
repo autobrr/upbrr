@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers/submission"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -430,51 +431,70 @@ func TestRetainedUploadPlanRecordsResolutionFailure(t *testing.T) {
 func TestRetainedUploadPlanExecutesExactReviewedProjectionWithoutRepreparing(t *testing.T) {
 	t.Parallel()
 
-	var prepared atomic.Int32
-	var submitted atomic.Int32
-	inputs := make(chan PreparationInput, 1)
-	registry := NewRegistry()
-	if err := registry.Register(retainedProjectionDefinition{
-		name:      "EXAMPLE",
-		prepared:  &prepared,
-		submitted: &submitted,
-		input:     inputs,
-	}); err != nil {
-		t.Fatalf("register retained definition: %v", err)
-	}
-	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
-	projection := api.TrackerReleaseProjection{
-		TrackerID:         "EXAMPLE",
-		UploadReleaseName: "Example.Release.2026.REVIEWED-GRP",
-		Readiness:         api.ReadinessStatusReady,
-		UploadReady:       true,
-	}
-	retained, err := service.PrepareRetainedUploadPlan(
-		context.Background(),
-		api.UploadSubject{SourcePath: "Example.Release.2026", ReleaseName: "Example.Release.2026.ORIGINAL-GRP"},
-		[]api.TrackerReleaseProjection{projection},
-	)
-	if err != nil {
-		t.Fatalf("prepare retained upload plan: %v", err)
-	}
-	preparations := retained.Preparations()
-	if prepared.Load() != 1 || submitted.Load() != 0 || len(preparations) != 1 ||
-		preparations[0].Preview.UploadReleaseName != projection.UploadReleaseName {
-		t.Fatalf("retained preparation = %#v prepared=%d submitted=%d", preparations, prepared.Load(), submitted.Load())
-	}
-	results, err := retained.Execute(context.Background())
-	if err != nil {
-		t.Fatalf("execute retained upload plan: %v", err)
-	}
-	if prepared.Load() != 1 || submitted.Load() != 1 || len(results) != 1 || results[0].Summary.Uploaded != 1 {
-		t.Fatalf("retained execution = %#v prepared=%d submitted=%d", results, prepared.Load(), submitted.Load())
-	}
-	input := <-inputs
-	if input.Projection == nil || input.Meta.ReleaseName != "Example.Release.2026.ORIGINAL-GRP" {
-		t.Fatalf("executed input = %#v", input)
-	}
-	if _, err := retained.Execute(context.Background()); !errors.Is(err, ErrPlanReleased) && !errors.Is(err, ErrPlanAlreadyUsed) {
-		t.Fatalf("second retained execution error = %v", err)
+	for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			var prepared atomic.Int32
+			var submitted atomic.Int32
+			inputs := make(chan PreparationInput, 1)
+			registry := NewRegistry()
+			if err := registry.Register(retainedProjectionDefinition{
+				name:      "EXAMPLE",
+				prepared:  &prepared,
+				submitted: &submitted,
+				input:     inputs,
+			}); err != nil {
+				t.Fatalf("register retained definition: %v", err)
+			}
+			service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
+			projection := api.TrackerReleaseProjection{
+				TrackerID:         "EXAMPLE",
+				UploadReleaseName: "Example.Release.2026.REVIEWED-GRP",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+				DiagnosticReady:   true,
+			}
+			if mode == api.WorkflowExecutionModeDebug {
+				projection.Readiness = api.ReadinessStatusBlocked
+				projection.UploadReady = false
+			}
+
+			retained, err := service.PrepareRetainedUploadPlan(
+				context.Background(),
+				api.UploadSubject{SourcePath: "Example.Release.2026", ReleaseName: "Example.Release.2026.ORIGINAL-GRP"},
+				[]api.TrackerReleaseProjection{projection},
+				mode,
+			)
+			if err != nil {
+				t.Fatalf("prepare retained upload plan: %v", err)
+			}
+			defer func() { _ = retained.Release() }()
+			preparations := retained.Preparations()
+			if prepared.Load() != 1 || submitted.Load() != 0 || len(preparations) != 1 ||
+				preparations[0].Preview.UploadReleaseName != projection.UploadReleaseName {
+				t.Fatalf("retained preparation = %#v prepared=%d submitted=%d", preparations, prepared.Load(), submitted.Load())
+			}
+			reporter := &trackerEffectReporterStub{alreadySucceeded: mode == api.WorkflowExecutionModeDebug}
+			ctx := api.WithWorkflowExternalEffectReporter(context.Background(), reporter)
+			results, err := retained.Execute(ctx)
+			if mode == api.WorkflowExecutionModeDebug {
+				if !errors.Is(err, ErrPlanNotSubmittable) || submission.OutcomeOf(err) != submission.NotSent || len(results) != 0 || submitted.Load() != 0 || len(reporter.begun) != 0 {
+					t.Fatalf("debug execution: err=%v submissions=%d effects=%d", err, submitted.Load(), len(reporter.begun))
+				}
+			} else if err != nil || prepared.Load() != 1 || submitted.Load() != 1 || len(results) != 1 || results[0].Summary.Uploaded != 1 {
+				t.Fatalf("retained execution = %#v err=%v prepared=%d submitted=%d", results, err, prepared.Load(), submitted.Load())
+			}
+
+			if mode != api.WorkflowExecutionModeDebug {
+				input := <-inputs
+				if input.ExecutionMode != mode || input.Projection == nil || input.Meta.ReleaseName != "Example.Release.2026.ORIGINAL-GRP" {
+					t.Fatalf("executed input = %#v", input)
+				}
+			}
+			if _, err := retained.Execute(context.Background()); !errors.Is(err, ErrPlanReleased) && !errors.Is(err, ErrPlanAlreadyUsed) && (mode != api.WorkflowExecutionModeDebug || !errors.Is(err, ErrPlanNotSubmittable)) {
+				t.Fatalf("second retained execution error = %v", err)
+			}
+		})
 	}
 }
 
@@ -523,6 +543,7 @@ func TestRetainedUploadPlanPersistsAuthorizedRuleAudit(t *testing.T) {
 				},
 			},
 		}},
+		api.WorkflowExecutionModeNormal,
 	)
 	if err != nil {
 		t.Fatalf("prepare retained upload plan: %v", err)
@@ -593,6 +614,7 @@ func TestRetainedUploadPlanLogsReturnedTorrentPageURL(t *testing.T) {
 			Readiness:         api.ReadinessStatusReady,
 			UploadReady:       true,
 		}},
+		api.WorkflowExecutionModeNormal,
 	)
 	if err != nil {
 		t.Fatalf("prepare retained upload plan: %v", err)
@@ -697,6 +719,7 @@ func TestRetainedUploadPlanExecutesOnlyApprovedTrackers(t *testing.T) {
 				UploadReady:       true,
 			},
 		},
+		api.WorkflowExecutionModeNormal,
 	)
 	if err != nil {
 		t.Fatalf("prepare retained upload plan: %v", err)
@@ -747,6 +770,7 @@ func TestRetainedUploadPlanRejectsStaleReleaseNamePolicyTrackerLocally(t *testin
 				{Code: releaseNameInstructionCode, Decision: "automatic"},
 			},
 		}},
+		api.WorkflowExecutionModeNormal,
 	)
 	if err != nil {
 		t.Fatalf("prepare retained upload plan: %v", err)
@@ -811,6 +835,7 @@ func TestRetainedUploadPlanPublishesExactDistinctTrackerArtifacts(t *testing.T) 
 			ReleaseName: "Example.Release.2026-GRP",
 		},
 		projections,
+		api.WorkflowExecutionModeNormal,
 	)
 	if err != nil {
 		t.Fatalf("prepare retained upload plan: %v", err)
@@ -880,6 +905,7 @@ func TestRetainedUploadPlanKeepsArtifactFailureTrackerLocal(t *testing.T) {
 				UploadReady:       true,
 			},
 		},
+		api.WorkflowExecutionModeNormal,
 	)
 	if err != nil {
 		t.Fatalf("prepare retained upload plan: %v", err)

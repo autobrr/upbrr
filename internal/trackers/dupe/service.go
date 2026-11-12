@@ -39,9 +39,9 @@ type indexedResult struct {
 type CheckOptions struct {
 	// SkipRemote suppresses tracker network search while preserving definitive local-client checks.
 	SkipRemote bool
-	// BypassBannedGroups classifies a known banned-group gate as explicitly
-	// bypassed without refreshing dynamic policy or invoking the tracker adapter.
-	BypassBannedGroups bool
+	// Diagnostic runs policy checks and duplicate search without treating policy
+	// outcomes as authority to skip independent diagnostic work.
+	Diagnostic bool
 }
 
 // CheckProjectionSet searches dupe-ready projections and preserves definitive local-client matches from one exact set.
@@ -55,14 +55,15 @@ func (s *Service) CheckProjectionSet(
 		return api.DupeCheckSummary{}, EmptyAssessment(), fmt.Errorf("dupechecking: projection set: %w", err)
 	}
 	options := CheckOptions{
-		SkipRemote:         projectionOptions.SkipRemote,
-		BypassBannedGroups: projectionOptions.BypassBannedGroups,
+		SkipRemote: projectionOptions.SkipRemote,
+		Diagnostic: projectionOptions.Diagnostic,
 	}
 	projections := make(map[string]api.TrackerReleaseProjection, len(projectionSet.Projections))
 	trackers := make([]string, 0, len(projectionSet.Projections))
 	for _, projection := range projectionSet.Projections {
 		tracker := normalizeTracker(string(projection.TrackerID))
-		if (projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady) && !containsTracker(meta.MatchedTrackers, tracker) {
+		if (projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady) &&
+			(!options.Diagnostic || !projection.DiagnosticReady) && !containsTracker(meta.MatchedTrackers, tracker) {
 			continue
 		}
 		projections[tracker] = projection
@@ -494,7 +495,7 @@ func (s *Service) checkTracker(
 		return result, entry, false
 	}
 
-	if trackerspkg.NormalizeBannedReleaseGroup(meta.Tag) != "" && !options.BypassBannedGroups {
+	if trackerspkg.NormalizeBannedReleaseGroup(meta.Tag) != "" {
 		if err := s.banned.RefreshDynamic(ctx, s.cfg, []string{tracker}, s.logger); err != nil {
 			if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 				return api.DupeCheckResult{}, assessmentEntry{}, true
@@ -506,30 +507,28 @@ func (s *Service) checkTracker(
 				meta.SourcePath,
 				redaction.RedactValue(err.Error(), nil),
 			)
-			result = failedPublicResult(tracker, FailureInternal, message, checkedAt)
-			return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
+			if !options.Diagnostic {
+				result = failedPublicResult(tracker, FailureInternal, message, checkedAt)
+				return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
+			}
 		}
 	}
 	if reason, err := s.bannedGroupSkipReason(tracker, meta.Tag); reason != "" || err != nil {
 		switch {
 		case err != nil:
-			if !options.BypassBannedGroups {
+			s.logger.Warnf(
+				"dupechecking: banned-group check failed tracker=%s source=%s err=%s",
+				tracker,
+				meta.SourcePath,
+				redaction.RedactValue(err.Error(), nil),
+			)
+			if !options.Diagnostic {
 				message := bannedGroupCheckFailureMessage(err)
-				s.logger.Warnf(
-					"dupechecking: banned-group check failed tracker=%s source=%s err=%s",
-					tracker,
-					meta.SourcePath,
-					redaction.RedactValue(err.Error(), nil),
-				)
 				result = failedPublicResult(tracker, FailureInternal, message, checkedAt)
 				return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
 			}
-		case options.BypassBannedGroups:
-			result = bypassedPublicResult(tracker, NotRunBannedGroup, reason, checkedAt)
-			entry = newAssessmentEntry(meta, s.cfg, tracker, DispositionNotRun, NotRunBannedGroup, false, api.DupeMatch{}, nil)
-			entry.authorization = AuthorizationWaiver
-			entry.verdict = VerdictWaived
-			return result, entry, false
+		case options.Diagnostic:
+			s.logger.Warnf("dupechecking: banned-group policy blocked tracker=%s; continuing diagnostic search", tracker)
 		default:
 			result = notRunPublicResult(tracker, NotRunBannedGroup, reason, checkedAt)
 			return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionNotRun, NotRunBannedGroup, false, api.DupeMatch{}, nil), false
@@ -1040,19 +1039,6 @@ func notRunPublicResult(tracker string, code string, message string, checkedAt t
 		SkipReason: message,
 		SkipCode:   code,
 		Status:     "skipped",
-		CheckedAt:  checkedAt,
-	}
-}
-
-func bypassedPublicResult(tracker string, code string, message string, checkedAt time.Time) api.DupeCheckResult {
-	message = sanitizeSafeMessage(message, "duplicate policy bypassed")
-	return api.DupeCheckResult{
-		Tracker:    tracker,
-		Notes:      []string{message},
-		Skipped:    true,
-		SkipReason: "debug mode bypassed policy: " + message,
-		SkipCode:   code,
-		Status:     "bypassed",
 		CheckedAt:  checkedAt,
 	}
 }

@@ -61,6 +61,7 @@ describe("DupeCheckPage", () => {
   it.each([
     {
       name: "pending after reproject",
+      debug: false,
       requiresStaffToken: true,
       decision: "pending",
       confirmed: false,
@@ -94,9 +95,25 @@ describe("DupeCheckPage", () => {
       confirmed: false,
       checked: false,
     },
+    {
+      name: "debug choice without staff attestation",
+      debug: true,
+      requiresStaffToken: true,
+      decision: "ignored",
+      confirmed: false,
+      checked: true,
+    },
+    {
+      name: "debug declined choice",
+      debug: true,
+      requiresStaffToken: true,
+      decision: "accepted",
+      confirmed: false,
+      checked: false,
+    },
   ])(
     "uses current assessment authority for $name",
-    ({ requiresStaffToken, decision, confirmed, checked }) => {
+    ({ requiresStaffToken, decision, confirmed, checked, debug }) => {
       const setIgnored = vi.fn();
       renderPage(
         facetFor(
@@ -118,6 +135,7 @@ describe("DupeCheckPage", () => {
               ],
             } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
             projections: {
+              executionMode: debug ? "debug" : "normal",
               projections: [{ trackerId: "EXAMPLE", readiness: "ready" }],
             } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
             preflight: {
@@ -128,11 +146,13 @@ describe("DupeCheckPage", () => {
         ),
       );
       const control = screen.getByRole("switch", {
-        name: requiresStaffToken
-          ? "Confirm staff-issued token for EXAMPLE"
-          : decision === "pending"
-            ? "Acknowledge dupe risk for EXAMPLE"
-            : "Ignore dupes for EXAMPLE",
+        name: debug
+          ? "Ignore duplicate evidence for EXAMPLE (debug only)"
+          : requiresStaffToken
+            ? "Confirm staff-issued token for EXAMPLE"
+            : decision === "pending"
+              ? "Acknowledge dupe risk for EXAMPLE"
+              : "Ignore dupes for EXAMPLE",
       });
       expect(control).toHaveAttribute("aria-checked", String(checked));
       fireEvent.click(control);

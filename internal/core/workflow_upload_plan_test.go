@@ -237,14 +237,17 @@ type workflowRetainedUploadServiceFake struct {
 	torrentPaths   map[api.TrackerID]string
 	results        []trackers.RetainedTrackerResult
 	subject        api.UploadSubject
+	mode           api.WorkflowExecutionMode
 }
 
 func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 	_ context.Context,
 	subject api.UploadSubject,
 	projections []api.TrackerReleaseProjection,
+	mode api.WorkflowExecutionMode,
 ) (workflowRetainedUploadPlan, error) {
 	f.subject = subject
+	f.mode = mode
 	f.projections = append([]api.TrackerReleaseProjection(nil), projections...)
 	preparations := make([]trackers.RetainedTrackerPreparation, 0, len(projections))
 	for _, projection := range projections {
@@ -2108,6 +2111,59 @@ func TestWorkflowUploadExecutionPendingRegisteredDraft(t *testing.T) {
 			}
 			if test.wantCalls == 1 && clients.injections[0].Path != artifact {
 				t.Fatal("injected a different artifact")
+			}
+		})
+	}
+}
+
+func TestWorkflowDebugPlanPreservesDeclinedDuplicateAndNoSeed(t *testing.T) {
+	for _, noSeed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("no-seed=%t", noSeed), func(t *testing.T) {
+			dir := t.TempDir()
+			preparedPath := filepath.Join(dir, "prepared.torrent")
+			writeWorkflowRegisteredTorrent(t, preparedPath, "prepared")
+			service := &workflowRetainedUploadServiceFake{torrentPaths: map[api.TrackerID]string{"ALPHA": preparedPath}}
+			clients := &dryRunClientService{}
+			builder := workflowUploadPlanBuilder{
+				resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
+					SourcePath: filepath.Join(dir, "Example.Release.2026.mkv"),
+					Options:    api.UploadOptions{SkipAutoTorrent: true},
+				}},
+				trackers: service,
+				clients:  clients,
+			}
+			projections := api.TrackerReleaseProjectionSet{
+				ExecutionMode: api.WorkflowExecutionModeDebug,
+				Projections: []api.TrackerReleaseProjection{{
+					TrackerID: "ALPHA",
+ Readiness: api.ReadinessStatusIneligible,
+ DiagnosticReady: true,
+				}},
+			}
+			dupes := api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+				TrackerID: "ALPHA",
+ Decision: api.DupeDecisionAccepted,
+ Status: api.StageStatusCompleted,
+			}}}
+			plan, execution, err := builder.Build(t.Context(), projections, dupes, workflowDupePrivateEvidence{},
+				api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{},
+				api.DescriptionInstructions{}, releaseworkflow.UploadPlanBuildOptions{NoSeed: noSeed}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = execution.Release() }()
+			if service.mode != api.WorkflowExecutionModeDebug || len(plan.Trackers) != 1 || len(plan.Trackers[0].Files) == 0 {
+				t.Fatalf("diagnostic preparation missing: mode=%s plan=%#v", service.mode, plan)
+			}
+			if dupes.Results[0].Decision != api.DupeDecisionAccepted || projections.Projections[0].Readiness != api.ReadinessStatusIneligible {
+				t.Fatal("diagnostic preparation changed live policy outcomes")
+			}
+			wantInjections := 1
+			if noSeed {
+				wantInjections = 0
+			}
+			if len(clients.injections) != wantInjections {
+				t.Fatalf("client injections=%d want=%d", len(clients.injections), wantInjections)
 			}
 		})
 	}

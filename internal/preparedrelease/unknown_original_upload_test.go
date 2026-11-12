@@ -136,7 +136,7 @@ func TestUnknownOriginalRepreparationReachesSyntheticUpload(t *testing.T) {
 				t.Fatalf("upload eligibility = %#v", projection)
 			}
 			before := submitted
-			plan, err := service.PrepareRetainedUploadPlan(t.Context(), subject, []api.TrackerReleaseProjection{projection})
+			plan, err := service.PrepareRetainedUploadPlan(t.Context(), subject, []api.TrackerReleaseProjection{projection}, api.WorkflowExecutionModeNormal)
 			if step.blocked {
 				if err == nil || submitted != before {
 					t.Fatal("ambiguous known-original source crossed upload boundary")

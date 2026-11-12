@@ -829,8 +829,8 @@ Do not infer specials from a release name or relax other sites' season requireme
 Choose dispositions deliberately:
 
 - `advisory` records a decision but never blocks;
-- `waivable` records an upload warning; exact user approval permits that tracker, while no response leaves only that tracker excluded; debug mode bypasses it automatically;
-- `strict` blocks normal uploads and cannot be acknowledged. An explicitly marked `RuleFailure.DebugBypass` may preserve a tracker eligibility bypass in debug mode; unrelated strict constructibility checks still block.
+- `waivable` records an upload warning; exact user approval permits that tracker, while no response leaves only that tracker excluded; debug records the same outcome but permits non-submitting diagnostic preparation;
+- `strict` blocks normal uploads and cannot be acknowledged. An explicitly marked `RuleFailure.DebugBypass` permits diagnostic preparation in debug mode without changing the blocked policy outcome; unrelated strict constructibility checks still block.
 
 The workflow emits one tracker-scoped override for the exact current tracker warning set.
 The shared heuristic `modified_release` warning is separate: one generation-bound release
@@ -1462,7 +1462,7 @@ use `WithEnglishLanguageFallback`. BLU and PHD opt into this maintainer-selected
 it is not a claim about verified site rules. It reuses `EnglishLanguagePolicy`, the common
 AITHER original-audio, extra-dub and English-accessibility predicates, without AITHER's
 questionnaire, compatibility or music-video extensions. Known failures remain strict in normal
-execution; full-disc exemptions, source-level corrections and the non-submitting debug bypass
+execution; full-disc exemptions, source-level corrections and non-submitting diagnostic preparation
 remain shared. Keep a verified tracker-specific policy in preference to this fallback, and do
 not infer English orientation from membership in a tracker family.
 

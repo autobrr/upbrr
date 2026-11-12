@@ -86,7 +86,7 @@ func (b workflowDupeBuilder) build(
 		return api.DupeAssessment{}, nil, errors.New("workflow duplicate check: service is required")
 	}
 	b.logger = logging.FromContext(ctx, b.logger)
-	if preflight.Status != api.StageStatusReady || !preflight.ExpiresAt.After(checkedAt) {
+	if (preflight.Status != api.StageStatusReady && projections.ExecutionMode != api.WorkflowExecutionModeDebug) || !preflight.ExpiresAt.After(checkedAt) {
 		return api.DupeAssessment{}, nil, errors.New("workflow duplicate check: preflight is stale or not ready")
 	}
 	preflightByTracker := make(map[api.TrackerID]api.TrackerPreflightResult, len(preflight.Results))
@@ -151,7 +151,7 @@ func (b workflowDupeBuilder) build(
 			continue
 		}
 		if inClient(projection.TrackerID) ||
-			(ok && projection.Readiness == api.ReadinessStatusReady && projection.DupeReady && result.State == api.TrackerPreflightStateReady) {
+			(ok && ((projection.Readiness == api.ReadinessStatusReady && projection.DupeReady && result.State == api.TrackerPreflightStateReady) || projections.ExecutionMode == api.WorkflowExecutionModeDebug && projection.DiagnosticReady)) {
 			eligibleProjections.Projections = append(eligibleProjections.Projections, projection)
 			continue
 		}
@@ -177,8 +177,8 @@ func (b workflowDupeBuilder) build(
 	assessment = dupechecking.EmptyAssessment()
 	if len(eligibleProjections.Projections) > 0 {
 		summary, assessment, err = b.service.CheckProjectionSet(ctx, subject, eligibleProjections, api.ProjectionDupeCheckOptions{
-			SkipRemote:         skipRemote,
-			BypassBannedGroups: projections.ExecutionMode == api.WorkflowExecutionModeDebug,
+			SkipRemote: skipRemote,
+			Diagnostic: projections.ExecutionMode == api.WorkflowExecutionModeDebug,
 		})
 		if err != nil {
 			return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: %w", err)
@@ -224,7 +224,8 @@ func (b workflowDupeBuilder) build(
 		}
 		result, resultOK := resultsByTracker[projection.TrackerID]
 		if !inClient(projection.TrackerID) &&
-			(projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady || preflightResult.State != api.TrackerPreflightStateReady) {
+			(projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady || preflightResult.State != api.TrackerPreflightStateReady) &&
+			(projections.ExecutionMode != api.WorkflowExecutionModeDebug || !projection.DiagnosticReady) {
 			trackerResult.Decision = api.DupeDecisionSkipped
 			trackerResult.Status = api.StageStatusSkipped
 			trackerResult.RequiredActions = append([]api.RequiredAction(nil), preflightResult.RequiredActions...)

@@ -66,8 +66,8 @@ type FilesystemService interface {
 type ProjectionDupeCheckOptions struct {
 	// SkipRemote limits evaluation to local/client evidence when true.
 	SkipRemote bool
-	// BypassBannedGroups allows debug-mode callers to bypass banned-group policy.
-	BypassBannedGroups bool
+	// Diagnostic permits independent searches after policy failures without waiving them.
+	Diagnostic bool
 }
 
 // DupeAssessmentEvidence is private retained duplicate authority. Public

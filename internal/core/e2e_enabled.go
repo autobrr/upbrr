@@ -1549,6 +1549,7 @@ func (s e2eTrackerService) PrepareRetainedUploadPlan(
 	ctx context.Context,
 	subject api.UploadSubject,
 	projections []api.TrackerReleaseProjection,
+	_ api.WorkflowExecutionMode,
 ) (workflowRetainedUploadPlan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("e2e tracker: prepare retained plan: %w", err)

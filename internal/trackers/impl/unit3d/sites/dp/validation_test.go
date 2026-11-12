@@ -92,8 +92,8 @@ func TestDPOriginalAudioCountsProgrammeLanguagesOnly(t *testing.T) {
 func TestDPOriginalAudioRequiresCompleteFinalFacts(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
-		name string
-		edit func(*api.UploadSubject)
+		name                  string
+		edit                  func(*api.UploadSubject)
 		comparisonUnavailable bool
 	}{
 		{name: "partial programme", edit: func(meta *api.UploadSubject) { meta.LanguageFacts.ProgrammeStatus = api.MetadataEvidenceStatusPartial }},
@@ -112,17 +112,17 @@ func TestDPOriginalAudioRequiresCompleteFinalFacts(t *testing.T) {
 			})
 		}},
 		{
-name: "missing original",
- comparisonUnavailable: true,
- edit: func(meta *api.UploadSubject) { meta.LanguageFacts.OriginalLanguagesKnown = false },
-},
-		{
-name: "cleared original",
- edit: func(meta *api.UploadSubject) {
-			meta.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{Tracks: meta.LanguageFacts.Tracks, TrackCoverageComplete: true})
+			name:                  "missing original",
+			comparisonUnavailable: true,
+			edit:                  func(meta *api.UploadSubject) { meta.LanguageFacts.OriginalLanguagesKnown = false },
 		},
- comparisonUnavailable: true,
-},
+		{
+			name: "cleared original",
+			edit: func(meta *api.UploadSubject) {
+				meta.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{Tracks: meta.LanguageFacts.Tracks, TrackCoverageComplete: true})
+			},
+			comparisonUnavailable: true,
+		},
 		{name: "cleared programme languages", edit: func(meta *api.UploadSubject) {
 			meta.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
 				OriginalLanguage:         "Japanese",
@@ -250,8 +250,8 @@ func TestDPOriginalAudioCannotBeWaived(t *testing.T) {
 			if err := trackers.ApplyProjectionRuleFailures(&projection, failures, mode, authority, api.NopLogger{}); err != nil {
 				t.Fatal(err)
 			}
-			if projection.DupeReady != (mode == api.WorkflowExecutionModeDebug) || projection.UploadReady != projection.DupeReady {
-				t.Fatalf("policy projection permitted normal bypass or blocked debug: %+v", projection)
+			if projection.DupeReady || projection.UploadReady || !projection.DiagnosticReady || projection.Readiness != api.ReadinessStatusIneligible {
+				t.Fatalf("policy projection lost actual failure or diagnostic constructibility: %+v", projection)
 			}
 		}
 	}

@@ -123,11 +123,9 @@ func (f *workflowProjectionDupeServiceFake) CheckProjectionSet(
 	return api.DupeCheckSummary{
 		SourcePath: subject.SourcePath,
 		Results: []api.DupeCheckResult{{
-			Tracker:    string(projections.Projections[0].TrackerID),
-			Skipped:    true,
-			SkipCode:   dupechecking.NotRunBannedGroup,
-			SkipReason: "debug mode bypassed policy: group GRP is banned",
-			Status:     "bypassed",
+			Tracker: string(projections.Projections[0].TrackerID),
+			Status:  "completed",
+			Search: api.DupeSearchEvidence{Complete: true},
 		}},
 	}, dupechecking.EmptyAssessment(), nil
 }
@@ -184,7 +182,7 @@ func (f *workflowDupeServiceFake) CheckProjectionSet(
 	return summary, dupechecking.EmptyAssessment(), err
 }
 
-func TestWorkflowDupeBuilderReportsDebugBannedGroupAsBypassed(t *testing.T) {
+func TestWorkflowDupeBuilderChecksDiagnosticPolicyBlockedLane(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
@@ -204,9 +202,10 @@ func TestWorkflowDupeBuilderReportsDebugBannedGroupAsBypassed(t *testing.T) {
 		ConfigFingerprint:    workflowTestFingerprint(t, "debug-bypass-config"),
 		ProjectorFingerprint: workflowTestFingerprint(t, "debug-bypass-projector"),
 		CriteriaFingerprint:  criteriaFingerprint,
-		Readiness:            api.ReadinessStatusReady,
-		DupeReady:            true,
-		UploadReady:          true,
+		Readiness:            api.ReadinessStatusIneligible,
+		DiagnosticReady:      true,
+		DupeReady:            false,
+		UploadReady:          false,
 	}
 	projections := api.TrackerReleaseProjectionSet{
 		ID:            "projections-debug",
@@ -222,11 +221,11 @@ func TestWorkflowDupeBuilderReportsDebugBannedGroupAsBypassed(t *testing.T) {
 		api.TrackerPreflightAssessment{
 			ID:        "preflight-debug",
 			Revision:  5,
-			Status:    api.StageStatusReady,
+			Status:    api.StageStatusFailed,
 			ExpiresAt: now.Add(time.Hour),
 			Results: []api.TrackerPreflightResult{{
 				TrackerID: "ALPHA",
-				State:     api.TrackerPreflightStateReady,
+				State:     api.TrackerPreflightStateFailed,
 			}},
 		},
 		now,
@@ -235,10 +234,10 @@ func TestWorkflowDupeBuilderReportsDebugBannedGroupAsBypassed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build debug bypassed dupes: %v", err)
 	}
-	if !service.options.BypassBannedGroups {
-		t.Fatal("debug duplicate check did not carry banned-group bypass authority")
+	if !service.options.Diagnostic {
+		t.Fatal("debug duplicate check did not carry diagnostic mode")
 	}
-	if len(snapshot.Results) != 1 || snapshot.Results[0].Decision != api.DupeDecisionBypassed ||
+	if len(snapshot.Results) != 1 || snapshot.Results[0].Decision != api.DupeDecisionNoMatch ||
 		snapshot.Results[0].Status != api.StageStatusCompleted {
 		t.Fatalf("debug bypassed duplicate snapshot = %#v", snapshot.Results)
 	}

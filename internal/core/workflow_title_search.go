@@ -93,6 +93,9 @@ func (b workflowPreflightBuilder) assessTitleSearchRules(
 		); err != nil {
 			return subject, initial, fmt.Errorf("tracker preflight: title-evidence rule authority: %w", err)
 		}
+		if hasNonRuleProjectionBlock(*projection) {
+			projection.DiagnosticReady = false
+		}
 	}
 	return subject, initial, nil
 }

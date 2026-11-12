@@ -12538,6 +12538,9 @@
           "descriptionGroup": {
             "type": "string"
           },
+          "diagnosticReady": {
+            "type": "boolean"
+          },
           "displayName": {
             "type": "string"
           },

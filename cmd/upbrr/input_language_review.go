@@ -21,7 +21,7 @@ import (
 // reviewInputLanguages collects one manifest-bound source patch before tracker
 // work. Canonical preparation then rebuilds all selected trackers' projections.
 func (s *cliWorkflowSession) reviewInputLanguages(ctx context.Context, reader *bufio.Reader, debug bool, defaults []string) error {
-	// Language eligibility already has an explicit non-submitting debug bypass.
+	// Debug retains language-policy outcomes while permitting diagnostic preparation.
 	// Do not turn that diagnostic path into a mandatory source correction.
 	if debug || s.current.Workflow.AllSelectedTrackersAlreadyUploaded() {
 		return nil

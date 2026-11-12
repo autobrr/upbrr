@@ -283,11 +283,16 @@ func TestAitherProjectionRetainsMultilingualBalanceReview(t *testing.T) {
 		if projection.Questionnaire[0].NeedsReview != (test.answer == "unresolved" && test.mode != api.WorkflowExecutionModeDebug) {
 			t.Fatalf("balance correction flag ignored execution mode: %+v", projection)
 		}
-		if (test.answer == "" || test.answer == "unresolved") && test.mode != api.WorkflowExecutionModeDebug {
+		switch {
+		case (test.answer == "" || test.answer == "unresolved") && test.mode != api.WorkflowExecutionModeDebug:
 			if projection.Readiness != api.ReadinessStatusBlocked || len(projection.RequiredActions) != 1 || projection.UploadReady {
 				t.Fatalf("unresolved balance lost corrective action: %+v", projection)
 			}
-		} else if !projection.UploadReady {
+		case test.mode == api.WorkflowExecutionModeDebug && test.answer == "unresolved":
+			if projection.UploadReady || !projection.DiagnosticReady || projection.Readiness != api.ReadinessStatusBlocked || len(projection.RequiredActions) != 0 {
+				t.Fatalf("diagnostic balance lost actual outcome or constructibility: %+v", projection)
+			}
+		case !projection.UploadReady:
 			t.Fatalf("resolved balance did not recover: %+v", projection)
 		}
 	}

@@ -34,7 +34,7 @@ import (
 const workflowUploadPlanTTL = 15 * time.Minute
 
 type workflowRetainedUploadService interface {
-	PrepareRetainedUploadPlan(context.Context, api.UploadSubject, []api.TrackerReleaseProjection) (workflowRetainedUploadPlan, error)
+	PrepareRetainedUploadPlan(context.Context, api.UploadSubject, []api.TrackerReleaseProjection, api.WorkflowExecutionMode) (workflowRetainedUploadPlan, error)
 }
 
 type workflowRetainedUploadPlan interface {
@@ -53,8 +53,9 @@ func (a workflowTrackerServiceAdapter) PrepareRetainedUploadPlan(
 	ctx context.Context,
 	subject api.UploadSubject,
 	projections []api.TrackerReleaseProjection,
+	mode api.WorkflowExecutionMode,
 ) (workflowRetainedUploadPlan, error) {
-	plan, err := a.service.PrepareRetainedUploadPlan(ctx, subject, projections)
+	plan, err := a.service.PrepareRetainedUploadPlan(ctx, subject, projections, mode)
 	if err != nil {
 		return nil, fmt.Errorf("core: prepare retained workflow upload plan: %w", err)
 	}
@@ -124,6 +125,7 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 		ProjectionSet    api.TrackerReleaseProjectionSetRef
 		Projection       api.WorkflowFingerprint
 		ProjectionPolicy api.WorkflowFingerprint
+		ExecutionMode    api.WorkflowExecutionMode
 		Dupes            api.DupeAssessmentRef
 		DupeInput        api.WorkflowFingerprint
 		Media            api.MediaArtifactSetRef
@@ -139,6 +141,7 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
 		Projection:       projections.InputFingerprint,
 		ProjectionPolicy: projections.PolicyFingerprint,
+		ExecutionMode:    api.NormalizeWorkflowExecutionMode(projections.ExecutionMode),
 		Dupes:            api.DupeAssessmentRef{ID: dupes.ID, Revision: dupes.Revision},
 		DupeInput:        dupes.InputFingerprint,
 		Media:            api.MediaArtifactSetRef{ID: media.ID, Revision: media.Revision},
@@ -169,6 +172,9 @@ func (b workflowUploadPlanBuilder) Build(
 	options releaseworkflow.UploadPlanBuildOptions,
 	now time.Time,
 ) (api.UploadPlan, releaseworkflow.RetainedUploadExecution, error) {
+	if projections.ExecutionMode == api.WorkflowExecutionModeDebug {
+		options.DryRun = true
+	}
 	if b.liveTest != nil {
 		options.NoSeed = true
 		if !options.DryRun {
@@ -219,7 +225,7 @@ func (b workflowUploadPlanBuilder) Build(
 			}
 		}
 		dupe, exists := dupeByTracker[projection.TrackerID]
-		if !releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, exists) {
+		if !releaseworkflow.ProjectionEligibleForPreparation(projection, dupe, exists, projections.ExecutionMode) {
 			continue
 		}
 		if failure, failed := releaseworkflow.TrackerImageHostFailure(media, projection.TrackerID); failed {
@@ -395,7 +401,7 @@ func (b workflowUploadPlanBuilder) Build(
 	}
 	var retained workflowRetainedUploadPlan
 	if len(eligible) > 0 {
-		retained, err = b.trackers.PrepareRetainedUploadPlan(ctx, subject, eligible)
+		retained, err = b.trackers.PrepareRetainedUploadPlan(ctx, subject, eligible, projections.ExecutionMode)
 		if err != nil {
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare retained operations: %w", err)
 		}
@@ -488,6 +494,10 @@ func (b workflowUploadPlanBuilder) Build(
 			tracker.TorrentFingerprint = torrentFingerprint
 			tracker.Endpoint, tracker.Fields, tracker.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
 			tracker.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
+			if projections.ExecutionMode == api.WorkflowExecutionModeDebug && preparation.Preview.Status == "blocked" {
+				tracker.Warnings = append(tracker.Warnings, "Diagnostic payload only; normal upload is blocked: "+
+					logging.SanitizeMessage(preparation.Preview.Message))
+			}
 			if identityErr != nil || torrentArtifactID == "" {
 				markWorkflowUploadTrackerMissingExactTorrent(&tracker, projection.TrackerID)
 				break

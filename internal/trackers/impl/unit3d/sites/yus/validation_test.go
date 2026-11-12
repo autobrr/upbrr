@@ -144,12 +144,11 @@ func TestYUSNamingEvidencePreservesPresentationAndManualNames(t *testing.T) {
 			ExecutionMode:       mode,
 			Logger:              api.NopLogger{},
 		}, "input", "catalog", "config")
-		if failure != nil || projection.UploadReleaseName != requested || projection.UploadReady != (mode == api.WorkflowExecutionModeDebug) {
+		if failure != nil || projection.UploadReleaseName != requested || projection.UploadReady || !projection.DiagnosticReady || projection.Readiness != api.ReadinessStatusIneligible {
 			t.Fatalf("mode=%s: projection=%+v failure=%v", mode, projection, failure)
 		}
 		if !slices.ContainsFunc(projection.PolicyDecisions, func(item api.TrackerPolicyDecision) bool {
-			return item.Code == "language_naming_evidence" && item.Blocking == (mode == api.WorkflowExecutionModeNormal) &&
-				(mode != api.WorkflowExecutionModeDebug || item.Decision == "bypassed")
+			return item.Code == "language_naming_evidence" && item.Blocking && item.Decision == "ineligible"
 		}) {
 			t.Fatalf("missing visible naming assessment: %+v", projection.PolicyDecisions)
 		}

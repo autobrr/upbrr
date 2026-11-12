@@ -734,7 +734,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 	})
 
-	t.Run("debug bypasses runtime policy calls and records decisions", func(t *testing.T) {
+	t.Run("debug checks runtime policy and preserves blocked outcomes", func(t *testing.T) {
 		policyRegistry := trackerspkg.NewRegistry()
 		claimCalls := 0
 		if err := policyRegistry.RegisterDescriptor(trackerspkg.Descriptor{
@@ -791,7 +791,11 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		if err := trackerspkg.ApplyProjectionRuleFailures(&debugProjections.Projections[0], languageFailures, api.WorkflowExecutionModeDebug, "", nil); err != nil {
 			t.Fatal(err)
 		}
-		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: policyRegistry}
+		builder := workflowPreflightBuilder{
+auth: workflowPreflightAuthFake{},
+ registry: policyRegistry,
+			config: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}},
+		}
 		progress := make([]api.WorkflowProgressUpdate, 0, 1)
 		ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
 			progress = append(progress, update)
@@ -800,25 +804,46 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		if err != nil {
 			t.Fatalf("build debug policy preflight: %v", err)
 		}
-		if claimCalls != 0 {
-			t.Fatalf("debug claim calls = %d, want 0", claimCalls)
+		if claimCalls != 1 {
+			t.Fatalf("debug claim calls = %d, want 1", claimCalls)
 		}
-		if assessment.ExecutionMode != api.WorkflowExecutionModeDebug || assessment.Results[0].State != api.TrackerPreflightStateReady ||
-			!finalized[0].DupeReady {
+		if assessment.ExecutionMode != api.WorkflowExecutionModeDebug || assessment.Results[0].State != api.TrackerPreflightStateFailed ||
+			finalized[0].DupeReady || !finalized[0].DiagnosticReady {
 			t.Fatalf("debug preflight = %#v/%#v", assessment, finalized[0])
 		}
-		for _, code := range []string{"banned_group", "claim_policy", "language_extra_dub"} {
-			if !slices.ContainsFunc(finalized[0].PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
-				return decision.Code == code && decision.Decision == "bypassed" && !decision.Blocking
-			}) {
-				t.Errorf("debug decision %s missing from %#v", code, finalized[0].PolicyDecisions)
-			}
+		if assessment.Results[0].BannedGroupsReady || len(assessment.Results[0].Failures) < 2 {
+			t.Fatalf("runtime policy failures lost: %#v", assessment.Results[0])
+		}
+		if !slices.ContainsFunc(finalized[0].PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+			return decision.Code == "language_extra_dub" && decision.Blocking && decision.Decision != "bypassed"
+		}) {
+			t.Fatalf("language decision was bypassed: %#v", finalized[0].PolicyDecisions)
 		}
 		if !slices.ContainsFunc(progress, func(update api.WorkflowProgressUpdate) bool {
-			return update.ItemID == "ALPHA" && update.Status == api.StageStatusCompleted &&
-				strings.Contains(update.Message, "policy_code=language_extra_dub decision=bypassed")
+			return update.ItemID == "ALPHA" && update.Status == api.StageStatusSkipped
 		}) {
 			t.Fatalf("debug preflight progress = %#v", progress)
+		}
+	})
+
+	t.Run("debug retains unauthorised rule without invalid empty failure", func(t *testing.T) {
+		diagnostic := projections
+		diagnostic.ExecutionMode = api.WorkflowExecutionModeDebug
+		diagnostic.Projections = slices.Clone(projections.Projections)
+		projection := &diagnostic.Projections[0]
+		if err := trackerspkg.ApplyProjectionRuleFailures(projection, []api.RuleFailure{{
+			Rule: "manual_policy",
+ Reason: "Normal upload requires approval.",
+ Disposition: api.RuleDispositionWaivable,
+		}}, api.WorkflowExecutionModeDebug, "", nil); err != nil {
+			t.Fatal(err)
+		}
+		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: registry}
+		assessment, finalized, err := builder.Build(t.Context(), api.UploadSubject{}, catalog, runtime, diagnostic, now)
+		if err != nil { t.Fatal(err) }
+		if assessment.Results[0].State != api.TrackerPreflightStateFailed || len(assessment.Results[0].Failures) == 0 ||
+			!finalized[0].DiagnosticReady || finalized[0].Readiness != api.ReadinessStatusBlocked || finalized[0].UploadReady {
+			t.Fatalf("diagnostic rule outcome = %#v / %#v", assessment.Results[0], finalized[0])
 		}
 	})
 

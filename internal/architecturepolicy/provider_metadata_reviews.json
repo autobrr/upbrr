@@ -1617,7 +1617,7 @@
   },
   "internal/trackers/impl/unit3d/upload.go:buildUploadDryRunUnit3D": {
     "reason": "Preserves finalized canonical and effective provider facts and current scoped review answers through questionnaire, validation and submission finalization.",
-    "sha256": "278bd5d29ef745f148f4186579550b9ed9dad7d1c4c933a617e689ff35c8f91c"
+    "sha256": "282e191250a8c1aa5757c8a1db9fe3a60b6d290ba7506303e24b61c3ce4ab27d"
   },
   "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
     "reason": "Annotation-display review: copies canonical ReleaseFeatures and the ordered display-only projection into detached slices. Existing provider snapshot, identity, manual provenance and validation mappings remain unchanged; display text is not semantic evidence.",

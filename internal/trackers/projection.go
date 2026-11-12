@@ -152,6 +152,7 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		Readiness:           readiness,
 		DupeReady:           dupeReady,
 		UploadReady:         dupeReady,
+		DiagnosticReady:     dupeReady,
 		CriteriaFingerprint: criteriaFingerprint,
 	}
 	if sceneName := strings.TrimSpace(input.Meta.SceneName); sceneName != "" && sceneName != uploadName {
@@ -576,7 +577,8 @@ func (r *Registry) ProjectRelease(
 		projection.UploadReady = false
 	}
 	if failure == nil &&
-		projection.Readiness == api.ReadinessStatusReady &&
+		(projection.Readiness == api.ReadinessStatusReady ||
+			(api.NormalizeWorkflowExecutionMode(input.ExecutionMode) == api.WorkflowExecutionModeDebug && projection.DiagnosticReady)) &&
 		releaseNameConfirmationApplies(input, descriptor.ReleaseNamePolicy) {
 		trackerName := strings.TrimSpace(projection.DisplayName)
 		if trackerName == "" {
@@ -607,7 +609,8 @@ func (r *Registry) ProjectRelease(
 			})
 		}
 	}
-	if failure == nil && projection.Readiness != api.ReadinessStatusIneligible {
+	if failure == nil && (projection.Readiness != api.ReadinessStatusIneligible ||
+		api.NormalizeWorkflowExecutionMode(input.ExecutionMode) == api.WorkflowExecutionModeDebug) {
 		if provider, ok := descriptor.Definition.(ProjectionQuestionnaireProvider); ok {
 			input.Projection = &projection
 			projection.Questionnaire = ProjectQuestionnaire(provider.ProjectionQuestionnaire(input))
@@ -615,9 +618,12 @@ func (r *Registry) ProjectRelease(
 		inputRequired := slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
 			return decision.Decision == "input_required"
 		})
-		if inputRequired || slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
-			return field.NeedsReview || (field.Required && strings.TrimSpace(field.Value) == "")
-		}) {
+		// Diagnostic-safe policy corrections remain visible without blocking construction.
+		// Required questionnaire values and corrections still gate every mode.
+		if (inputRequired && (api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug || !projection.DiagnosticReady)) ||
+			slices.ContainsFunc(projection.Questionnaire, func(field api.TrackerQuestionnaireRequirement) bool {
+				return field.NeedsReview || (field.Required && strings.TrimSpace(field.Value) == "")
+			}) {
 			projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
 				Kind:      api.RequiredActionAnswerQuestionnaire,
 				TrackerID: projection.TrackerID,
@@ -625,8 +631,12 @@ func (r *Registry) ProjectRelease(
 			})
 			projection.UploadReady = false
 			projection.DupeReady = false
+			projection.DiagnosticReady = false
 			projection.Readiness = api.ReadinessStatusBlocked
 		}
+	}
+	if failure != nil {
+		projection.DiagnosticReady = false
 	}
 	return projection, failure
 }
@@ -738,6 +748,7 @@ func ApplyProjectionRuleFailures(
 	if authorized {
 		projection.RuleAuthorizationFingerprint = waivableFingerprint
 	}
+	projection.DiagnosticReady = true
 	hasModified := false
 	hasStrict := false
 	hasQuestionnaireInput := false
@@ -749,11 +760,12 @@ func ApplyProjectionRuleFailures(
 		if shared {
 			ruleAuthorized = projection.ModifiedReleaseDecision != nil && *projection.ModifiedReleaseDecision
 		}
-		blocking := RuleFailureBlocksExecution(failure, executionMode, ruleAuthorized)
+		if RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeDebug, ruleAuthorized) {
+			projection.DiagnosticReady = false
+		}
+		blocking := RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, ruleAuthorized)
 		decision := string(disposition)
 		switch {
-		case disposition == api.RuleDispositionStrict && !blocking:
-			decision = "bypassed"
 		case disposition == api.RuleDispositionStrict && failure.QuestionnaireInput:
 			hasQuestionnaireInput = true
 			decision = "input_required"
@@ -778,8 +790,6 @@ func ApplyProjectionRuleFailures(
 			})
 		case disposition == api.RuleDispositionWaivable && ruleAuthorized:
 			decision = "authorized"
-		case disposition == api.RuleDispositionWaivable && !blocking:
-			decision = "bypassed"
 		case disposition == api.RuleDispositionWaivable:
 			decision = "authorization_required"
 			if logger != nil {
@@ -809,16 +819,18 @@ func ApplyProjectionRuleFailures(
 		projection.UploadReady = false
 		return nil
 	}
-	if hasModified && api.NormalizeWorkflowExecutionMode(executionMode) != api.WorkflowExecutionModeDebug {
+	if hasModified {
 		if projection.ModifiedReleaseDecision == nil {
 			projection.Readiness = api.ReadinessStatusBlocked
 			projection.DupeReady, projection.UploadReady = false, false
-			projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
-				Kind:        api.RequiredActionAuthorizeRules,
-				Status:      api.RequiredActionStatusPending,
-				ReleaseRule: "modified_release",
-				Prompt:      "The selected release appears renamed or modified. Have you verified its file hashes and source provenance and want to continue for all selected trackers?",
-			})
+			if api.NormalizeWorkflowExecutionMode(executionMode) != api.WorkflowExecutionModeDebug {
+				projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
+					Kind:        api.RequiredActionAuthorizeRules,
+					Status:      api.RequiredActionStatusPending,
+					ReleaseRule: "modified_release",
+					Prompt:      "The selected release appears renamed or modified. Have you verified its file hashes and source provenance and want to continue for all selected trackers?",
+				})
+			}
 		} else if !*projection.ModifiedReleaseDecision {
 			projection.Readiness = api.ReadinessStatusIneligible
 			projection.DupeReady, projection.UploadReady = false, false
@@ -841,7 +853,7 @@ func ApplyProjectionRuleFailures(
 		projection.DupeReady = false
 		projection.UploadReady = false
 	}
-	if waivableFingerprint != "" && api.NormalizeWorkflowExecutionMode(executionMode) != api.WorkflowExecutionModeDebug {
+	if waivableFingerprint != "" {
 		status := api.RequiredActionStatusResolved
 		if !authorized {
 			status = api.RequiredActionStatusPending
@@ -849,12 +861,14 @@ func ApplyProjectionRuleFailures(
 			projection.DupeReady = false
 			projection.UploadReady = false
 		}
-		projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
-			Kind:      api.RequiredActionAuthorizeRules,
-			Status:    status,
-			TrackerID: projection.TrackerID,
-			Prompt:    waivableRuleAuthorizationPrompt(*projection, trackerFailures),
-		})
+		if api.NormalizeWorkflowExecutionMode(executionMode) != api.WorkflowExecutionModeDebug {
+			projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
+				Kind:      api.RequiredActionAuthorizeRules,
+				Status:    status,
+				TrackerID: projection.TrackerID,
+				Prompt:    waivableRuleAuthorizationPrompt(*projection, trackerFailures),
+			})
+		}
 	}
 	return nil
 }

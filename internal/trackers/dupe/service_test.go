@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -498,9 +500,19 @@ func TestCandidateLogShowsDifferentTargetAndCandidateOperands(t *testing.T) {
 	}
 }
 
-func TestCheckWithAssessmentReportsDebugBannedGroupAsBypassed(t *testing.T) {
+func TestCheckWithAssessmentSearchesDebugBannedGroupWithoutWaiver(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"data":[{"name":"GRP"}]}`))
+	}))
+	defer server.Close()
 	registry := trackerspkg.NewRegistry()
-	if err := registry.Register(bannedGroupDefinition{}); err != nil {
+	if err := registry.RegisterDescriptor(trackerspkg.Descriptor{
+		Name:         "DP",
+		Definition:   bannedGroupDefinition{},
+		BannedPolicy: &trackerspkg.BannedGroupPolicy{DefaultEndpoint: server.URL},
+	}); err != nil {
 		t.Fatalf("register banned-group definition: %v", err)
 	}
 	tempDir := t.TempDir()
@@ -523,28 +535,49 @@ func TestCheckWithAssessmentReportsDebugBannedGroupAsBypassed(t *testing.T) {
 	})
 	summary, assessment, err := service.CheckWithAssessment(ctx, api.DuplicateSubject{
 		SourcePath: filepath.Join(tempDir, "Example.Release.2026.1080p-GRP.mkv"),
-		Tag:        "SubsPlease",
-	}, []string{"DP"}, CheckOptions{BypassBannedGroups: true})
+		Tag:        "GRP",
+	}, []string{"DP"}, CheckOptions{Diagnostic: true})
 	if err != nil {
 		t.Fatalf("check bypassed banned group: %v", err)
 	}
-	if adapterCalled.Load() {
-		t.Fatal("bypassed banned-group result invoked duplicate adapter")
+	if !adapterCalled.Load() {
+		t.Fatal("diagnostic banned-group check skipped duplicate adapter")
 	}
-	if len(summary.Results) != 1 || summary.Results[0].Status != "bypassed" ||
-		summary.Results[0].SkipCode != NotRunBannedGroup ||
-		!strings.Contains(summary.Results[0].SkipReason, "debug mode bypassed policy") {
-		t.Fatalf("bypassed duplicate result = %#v", summary.Results)
+	if len(summary.Results) != 1 || summary.Results[0].Status != "completed" || summary.Results[0].SkipCode != "" {
+		t.Fatalf("diagnostic duplicate result = %#v", summary.Results)
 	}
 	decision, ok := assessment.Decision("DP")
-	if !ok || decision.Verdict != VerdictWaived || decision.Authorization != AuthorizationWaiver {
-		t.Fatalf("bypassed assessment decision = %#v found=%t", decision, ok)
+	if !ok || decision.Verdict == VerdictWaived || decision.Authorization == AuthorizationWaiver {
+		t.Fatalf("diagnostic search fabricated a waiver = %#v found=%t", decision, ok)
 	}
 	progressMu.Lock()
-	defer progressMu.Unlock()
-	if len(progress) == 0 || progress[len(progress)-1].Status != "bypassed" ||
-		!strings.Contains(progress[len(progress)-1].Message, "debug mode bypassed policy") {
-		t.Fatalf("bypassed duplicate progress = %#v", progress)
+	if len(progress) == 0 || progress[len(progress)-1].Status != "completed" {
+		t.Fatalf("diagnostic duplicate progress = %#v", progress)
+	}
+	progressMu.Unlock()
+	if requests.Load() != 1 {
+		t.Fatalf("diagnostic refresh requests = %d, want 1", requests.Load())
+	}
+	for _, diagnostic := range []bool{true, false} {
+		adapterCalled.Store(false)
+		result, _, canceled := service.checkTracker(context.Background(), api.DuplicateSubject{Tag: "GRP"}, "DP", CheckOptions{Diagnostic: diagnostic})
+		if canceled || adapterCalled.Load() != diagnostic {
+			t.Fatalf("diagnostic=%t adapterCalled=%t canceled=%t", diagnostic, adapterCalled.Load(), canceled)
+		}
+		if !diagnostic && result.SkipCode != NotRunBannedGroup {
+			t.Fatalf("normal banned outcome = %#v", result)
+		}
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("fresh banned-group cache was not reused: requests=%d", requests.Load())
+	}
+	adapterCalled.Store(false)
+	result, entry, canceled := service.checkTracker(context.Background(), api.DuplicateSubject{
+		Tag:             "GRP",
+		MatchedTrackers: []string{"DP"},
+	}, "DP", CheckOptions{Diagnostic: true})
+	if canceled || adapterCalled.Load() || !result.HasDupes || entry.verdict != VerdictBlocked {
+		t.Fatalf("diagnostic local-client gate = %#v, adapterCalled=%t", result, adapterCalled.Load())
 	}
 }
 
