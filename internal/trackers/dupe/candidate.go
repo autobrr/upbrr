@@ -12,6 +12,7 @@ import (
 	"github.com/autobrr/rls"
 
 	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -26,6 +27,8 @@ type TrackerCandidate struct {
 	TVScope           *api.DupeTVScope
 	Evidence          api.DupeReleaseEvidence
 	SourceFingerprint api.WorkflowFingerprint
+	ProviderIDs       []api.TrackerProviderID
+	providerConflicts []string
 
 	// TrackerSlot preserves the adapter's opaque native evidence, including unknown components.
 	TrackerSlot      string
@@ -70,6 +73,7 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 	sourceFingerprint, _ := api.CanonicalWorkflowFingerprint(source)
 	candidate := TrackerCandidate{
 		TVScope:           entry.TVScope.Clone(),
+		ProviderIDs:       slices.Clone(entry.ProviderIDs),
 		SourceFingerprint: sourceFingerprint,
 		Evidence:          entry.Evidence,
 		TrackerSlot:       entry.TrackerSlot,
@@ -263,4 +267,26 @@ func cloneHDRFacts(facts api.HDRFacts) api.HDRFacts {
 	facts.SourceFields = append([]string(nil), facts.SourceFields...)
 	facts.Contradictions = append([]string(nil), facts.Contradictions...)
 	return facts
+}
+
+// providerIdentityConflicts compares only known IDs; missing or malformed IDs
+// do not establish disagreement with independently selected provider resources.
+func providerIdentityConflicts(ids []api.TrackerProviderID, identity api.ExternalIdentity) []string {
+	var conflicts []string
+	for _, item := range ids {
+		provider := api.IdentityProvider(strings.ToLower(strings.TrimSpace(item.Provider)))
+		wanted, known := identity.ProviderID(provider)
+		if !known {
+			continue
+		}
+		value := strings.TrimSpace(item.Value)
+		if provider == api.IdentityProviderIMDB {
+			value = strings.TrimPrefix(strings.ToLower(value), "tt")
+		}
+		if id := providerid.ParseDecimal(value); id > 0 && id != wanted {
+			conflicts = append(conflicts, string(provider))
+		}
+	}
+	slices.Sort(conflicts)
+	return slices.Compact(conflicts)
 }

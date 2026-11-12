@@ -51,7 +51,7 @@ func TestUploadRequiresAcceptanceEvidence(t *testing.T) {
 		{`{"status":"error","message":"Invalid torrent"}`, ""},
 		{`{"link":["https://tracker.invalid/torrents.php?id=123"]}`, ""},
 		{`{"link":"garbage id=123"}`, ""},
-		{`{"status":"success","view":"https://anthelion.dev/torrents.php?torrentid=123"}`, "https://anthelion.dev/torrents.php?torrentid=123"},
+		{`{"status":"success","view":"https://anthelion.me/torrents.php?torrentid=123"}`, "https://anthelion.me/torrents.php?torrentid=123"},
 	} {
 		t.Run(test.body, func(t *testing.T) {
 			output := filepath.Join(t.TempDir(), "registered.torrent")

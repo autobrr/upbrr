@@ -33,20 +33,20 @@ func TestANTCandidateIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name, guid, want string
 	}{
-		{"torrent details", "https://anthelion.dev/torrents.php?torrentid=42", "42"},
-		{"group and torrent", "https://anthelion.dev/torrents.php?id=7&amp;torrentid=42#torrent42", "42"},
+		{"torrent details", "https://anthelion.me/torrents.php?torrentid=42", "42"},
+		{"group and torrent", "https://anthelion.me/torrents.php?id=7&amp;torrentid=42#torrent42", "42"},
 		{"missing", "", ""},
-		{"group only", "https://anthelion.dev/torrents.php?id=42", ""},
-		{"invalid ID", "https://anthelion.dev/torrents.php?torrentid=42token", ""},
-		{"zero ID", "https://anthelion.dev/torrents.php?torrentid=0", ""},
-		{"negative ID", "https://anthelion.dev/torrents.php?torrentid=-42", ""},
-		{"repeated ID", "https://anthelion.dev/torrents.php?torrentid=42&torrentid=43", ""},
-		{"malformed query", "https://anthelion.dev/torrents.php?torrentid=42&key=%zz", ""},
-		{"foreign host", "https://anthelion.dev.example.invalid/torrents.php?torrentid=42", ""},
-		{"previous host", "https://anthelion.me/torrents.php?torrentid=42", ""},
-		{"insecure URL", "http://anthelion.dev/torrents.php?torrentid=42", ""},
-		{"URL credentials", "https://user:secret@anthelion.dev/torrents.php?torrentid=42", ""},
-		{"download URL", "https://anthelion.dev/download.php?torrentid=42", ""},
+		{"group only", "https://anthelion.me/torrents.php?id=42", ""},
+		{"invalid ID", "https://anthelion.me/torrents.php?torrentid=42token", ""},
+		{"zero ID", "https://anthelion.me/torrents.php?torrentid=0", ""},
+		{"negative ID", "https://anthelion.me/torrents.php?torrentid=-42", ""},
+		{"repeated ID", "https://anthelion.me/torrents.php?torrentid=42&torrentid=43", ""},
+		{"malformed query", "https://anthelion.me/torrents.php?torrentid=42&key=%zz", ""},
+		{"foreign host", "https://anthelion.me.example.invalid/torrents.php?torrentid=42", ""},
+		{"alternate host", "https://anthelion.dev/torrents.php?torrentid=42", ""},
+		{"insecure URL", "http://anthelion.me/torrents.php?torrentid=42", ""},
+		{"URL credentials", "https://user:secret@anthelion.me/torrents.php?torrentid=42", ""},
+		{"download URL", "https://anthelion.me/download.php?torrentid=42", ""},
 		{"relative URL", "/torrents.php?torrentid=42", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -516,8 +516,8 @@ func TestANTDiscSearchResultsFilterIncompatibleVariants(t *testing.T) {
 	http.DefaultTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 		body := `{"item":[
 			{"fileName":"Example.2026.SD.DVD.VOBIFO.123.torrent","media":"DVD","resolution":"SD","codec":"MPEG2"},
-			{"fileName":"Example.2026.1080p.BluRay.m2ts.124.torrent","guid":"https://anthelion.dev/torrents.php?torrentid=42&passkey=private-key","files":[{"name":"BDMV/index.bdmv"},{"name":"BDMV/MovieObject.bdmv"}],"media":"BluRay","resolution":"1080p","codec":"H264"},
-			{"fileName":"generated.999.torrent","guid":"https://anthelion.dev/torrents.php?torrentid=43&passkey=private-key","link":"https://anthelion.dev/download.php?id=43&passkey=private-key","files":[{"name":"` + filename + `"}],"media":"BluRay","resolution":"1080p","codec":"H264","container":"MKV"},
+			{"fileName":"Example.2026.1080p.BluRay.m2ts.124.torrent","guid":"https://anthelion.me/torrents.php?torrentid=42&passkey=private-key","files":[{"name":"BDMV/index.bdmv"},{"name":"BDMV/MovieObject.bdmv"}],"media":"BluRay","resolution":"1080p","codec":"H264"},
+			{"fileName":"generated.999.torrent","guid":"https://anthelion.me/torrents.php?torrentid=43&passkey=private-key","link":"https://anthelion.me/download.php?id=43&passkey=private-key","files":[{"name":"` + filename + `"}],"media":"BluRay","resolution":"1080p","codec":"H264","container":"MKV"},
 			{"files":[{"name":"Example.2026.1080p.BluRay.REMUX.AVC-GRP.mkv"}],"media":"BluRay","resolution":"1080p","codec":"H264","container":"MKV","flags":["Remux"]}
 		]}`
 		return &http.Response{

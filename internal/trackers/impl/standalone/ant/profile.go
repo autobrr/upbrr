@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	antHost    = "anthelion.dev"
+	antHost    = "anthelion.me"
 	antBaseURL = "https://" + antHost
 	antAPIURL  = antBaseURL + "/api.php"
 )
@@ -72,8 +72,8 @@ func Profile() standalone.Profile {
 			}},
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
-			TrackerURLPatterns: []string{"tracker." + antHost, "tracker.anthelion.me"},
-			CommentURLPatterns: []string{antHost + "/torrents.php", "anthelion.me/torrents.php"},
+			TrackerURLPatterns: []string{"tracker." + antHost, "tracker.anthelion.dev"},
+			CommentURLPatterns: []string{antHost + "/torrents.php", "anthelion.dev/torrents.php"},
 			DetailIDPattern:    `(?i)[?&]torrentid=(\d+)`,
 			WorkingTrackerID:   "1",
 		},

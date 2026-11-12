@@ -365,7 +365,7 @@ func TestANTTrumpChallengeRetainsFinalOutcome(t *testing.T) {
 			requests := 0
 			http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				requests++
-				if req.URL.String() != "https://anthelion.dev/api.php" {
+				if req.URL.String() != "https://anthelion.me/api.php" {
 					t.Fatalf("upload endpoint = %s", req.URL)
 				}
 				if err := req.ParseMultipartForm(1 << 20); err != nil {

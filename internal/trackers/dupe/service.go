@@ -569,6 +569,7 @@ func (s *Service) projectAdapterResult(
 		candidates := make([]TrackerCandidate, len(raw))
 		for index, rawCandidate := range raw {
 			candidates[index] = NormalizeCandidate(rawCandidate, tracker)
+			candidates[index].providerConflicts = providerIdentityConflicts(candidates[index].ProviderIDs, meta.Identity)
 		}
 		policy := s.duplicatePolicy(tracker, meta)
 		search := adapterResult.SearchEvidence()

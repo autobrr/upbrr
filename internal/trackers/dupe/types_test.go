@@ -68,3 +68,38 @@ name: "tracker group",
 		})
 	}
 }
+
+func TestCandidateProviderIdentityEvidence(t *testing.T) {
+	t.Parallel()
+	entry := api.DupeEntry{ProviderIDs: []api.TrackerProviderID{
+		{Provider: "imdb", Value: "tt0012345"},
+		{Provider: "tvdb", Value: "100001"},
+		{Provider: "tmdb", Value: "200002"},
+		{Provider: "tracker", Value: "300001"},
+		{Provider: "mal", Value: ""},
+		{Provider: "tvmaze", Value: "invalid"},
+	}}
+	candidate := NormalizeCandidate(entry, "EXAMPLE")
+	fingerprint := candidateEvidenceFingerprint(candidate)
+	entry.ProviderIDs[2].Value = "200001"
+	if candidate.ProviderIDs[2].Value != "200002" || candidateEvidenceFingerprint(candidate) != fingerprint {
+		t.Fatal("adapter mutation changed retained provider evidence")
+	}
+	identity := api.ExternalIdentity{
+IMDBID: 12345,
+ TVDBID: 100001,
+ TMDBID: 200001,
+ MALID: 400001,
+ TVmazeID: 500001,
+}
+	if conflicts := providerIdentityConflicts(candidate.ProviderIDs, identity); len(conflicts) != 1 || conflicts[0] != "tmdb" {
+		t.Fatalf("unexpected conflicts from equivalent, unsupported or missing provider IDs: %v", conflicts)
+	}
+	if conflicts := providerIdentityConflicts(candidate.ProviderIDs, api.ExternalIdentity{}); len(conflicts) != 0 {
+		t.Fatalf("missing selected IDs establish conflict: %v", conflicts)
+	}
+	candidate.ProviderIDs[2].Value = "200001"
+	if candidateEvidenceFingerprint(candidate) == fingerprint {
+		t.Fatal("changed provider evidence retained the old fingerprint")
+	}
+}

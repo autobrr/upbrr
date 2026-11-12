@@ -76,7 +76,7 @@ func TestAPIConnectionProbesUseOnlyBoundedReadContracts(t *testing.T) {
 	for _, tc := range []struct {
 		name, host, path, method, header, queryKey, response, rejected string
 	}{
-		{"ANT", "anthelion.dev", "/api.php", http.MethodGet, "X-Api-Key", "", `{"response":{"offset":0,"total":0},"item":[]}`, `{"error":"synthetic-private-error","response":{"offset":0,"total":0},"item":[]}`},
+		{"ANT", "anthelion.me", "/api.php", http.MethodGet, "X-Api-Key", "", `{"response":{"offset":0,"total":0},"item":[]}`, `{"error":"synthetic-private-error","response":{"offset":0,"total":0},"item":[]}`},
 		{"BHD", "beyond-hd.me", "/api/torrents/synthetic-key", http.MethodPost, "", "", `{"status_code":1,"success":true,"results":[]}`, `{"status_code":1,"success":false,"results":[]}`},
 		{"DC", "digitalcore.club", "/api/v1/torrents/dupe-search", http.MethodGet, "X-Api-Key", "", `{"results":[],"index":0,"limit":1,"count":0,"total":0,"includesPending":false}`, `{"results":[],"index":0,"limit":1,"count":0,"total":0}`},
 		{"GPW", "greatposterwall.com", "/api.php", http.MethodGet, "", "api_key", `{"status":200,"response":[]}`, `{"status":403,"response":[]}`},

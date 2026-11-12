@@ -1084,3 +1084,20 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+func appendProviderIdentityFinding(candidate TrackerCandidate, facts normalizedFacts, findings []RuleFinding) []RuleFinding {
+	if len(candidate.providerConflicts) == 0 {
+		return findings
+	}
+	ordinary := resolveCandidateFindings(candidate, facts, findings)
+	// Exact identity and proven distinct variants remain authoritative. A pack
+	// preference is not distinct content and cannot settle conflicting work IDs.
+	if ordinary.Relation == api.DupeRelationExactDuplicate ||
+		ordinary.Relation == api.DupeRelationCoexists && ordinary.Reasons[0].Code != "proposed_season_pack" {
+		return findings
+	}
+	finding := contradictionFinding("provider_identity")
+	finding.Contradictions = slices.Clone(candidate.providerConflicts)
+	finding.Priority = findingPriorityContentConflict
+	return append(findings, finding)
+}
