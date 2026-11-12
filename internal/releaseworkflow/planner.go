@@ -624,6 +624,16 @@ func (m *Module) resolveContinuationAnswer(
 				// Apply changed tracker inputs before requiring review of their resulting evidence.
 				continue
 			}
+			if action.Kind == api.RequiredActionAnswerQuestionnaire {
+				stale, err := m.projectionCatalogStale(current)
+				if err != nil {
+					return CommandResult{}, true, err
+				}
+				if stale {
+					// Resolve supplied answers before rebuilding obsolete questions.
+					continue
+				}
+			}
 			if continuationActionBlocksAllLanesForMode(current, action, trackerDecisionMode) {
 				return current, true, nil
 			}

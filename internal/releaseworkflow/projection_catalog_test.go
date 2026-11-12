@@ -193,3 +193,45 @@ func TestContinueHydratesBeforeRestartedCatalogRefresh(t *testing.T) {
 		})
 	}
 }
+
+func TestContinueRefreshesCatalogBeforeUnansweredQuestionnaire(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		t.Run(map[bool]string{false: "current catalog remains blocked", true: "stale catalog refreshes"}[stale], func(t *testing.T) {
+			module, _ := newQuestionnaireCompositeTestModule(t)
+			input := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "catalog-questionnaire")
+			input.Trackers.Include = []api.TrackerID{"ALPHA"}
+			started, err := module.StartUpload(t.Context(), testOwnerID, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			pendingCompositeFeedbackAction(t, blocked, api.RequiredActionAnswerQuestionnaire, "ALPHA")
+			// Give the continuation a distinct timestamp from the completed fixture operation.
+			module.clock = fixedClock{now: module.clock.Now().Add(time.Second)}
+			if stale {
+				module.trackerProjector = upgradedCatalogProjector{TrackerProjectionBuilder: module.trackerProjector, stale: blocked.Catalog.ID}
+			}
+			continued, err := module.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+				Authority:      &api.WorkflowAuthority{WorkflowID: blocked.Workflow.ID, ExpectedRevision: blocked.Workflow.Revision},
+				Goal:           api.WorkflowGoalDryRun,
+				IdempotencyKey: "refresh-questionnaire-catalog",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !stale {
+				if continued.Projections.ID != blocked.Projections.ID || continued.Workflow.Revision != blocked.Workflow.Revision {
+					t.Fatal("current unanswered questionnaire was bypassed")
+				}
+				return
+			}
+			result := waitCompositeUploadTestOperation(t, module, continued)
+			if result.Projections.ID == blocked.Projections.ID {
+				t.Fatal("stale catalog remained blocked on obsolete questionnaire")
+			}
+			if result.Release.Release.Generation != blocked.Release.Release.Generation {
+				t.Fatal("catalog refresh replaced compatible source facts")
+			}
+		})
+	}
+}
