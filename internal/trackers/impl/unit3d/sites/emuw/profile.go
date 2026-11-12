@@ -10,8 +10,9 @@ import (
 // URLs remain recognized without sending API requests to the old domain.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:    "EMUW",
-		BaseURL: "https://emu-warez.com",
+		Name:              "EMUW",
+		BaseURL:           "https://emu-warez.com",
+		ReleaseNamePolicy: namePolicy(),
 		TorrentIdentity: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"https://emuwarez.com"},
 			CommentURLPatterns: []string{"https://emuwarez.com"},

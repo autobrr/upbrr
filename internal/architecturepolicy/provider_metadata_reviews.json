@@ -1387,6 +1387,14 @@
     "reason": "ValidationRuleSubject preserves EffectiveMetadata; RuleGenres honors manual genres, including empty values, while RuleKeywords independently supplies current-source TMDB policy evidence.",
     "sha256": "3cbfb44250cad8ac2dac79c4e87a0bd9efdb589114163f31d72fb5be32c3634c"
   },
+  "internal/trackers/impl/unit3d/sites/emuw/name.go:applyTVYear": {
+    "reason": "EMUW TV year uses current source/generation-bound TMDB metadata with matching positive identity and TV category. Manual year facts and components, including omission, and opaque names retain authority. Movie and other destination policies remain unchanged; the profile, structured-name caller and provider boundary were independently reviewed.",
+    "sha256": "aa730c7f00a8fde976e6f34f40b13a72678f1f17f42c31b210403bdcf7dcf613"
+  },
+  "internal/trackers/impl/unit3d/sites/emuw/name.go:currentTMDBTVYear": {
+    "reason": "EMUW TV year uses current source/generation-bound TMDB metadata with matching positive identity and TV category. Manual year facts and components, including omission, and opaque names retain authority. Movie and other destination policies remain unchanged; the profile, structured-name caller and provider boundary were independently reviewed.",
+    "sha256": "ef9c4d9d04180c815bc0917ad0713442766a46ade7579ef9277282119923fcca"
+  },
   "internal/trackers/impl/unit3d/sites/hhd/name.go:applyHHDTVDBDisambiguation": {
     "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
     "sha256": "7484db35a0bb9fe36b5f35e18e7d243eb1fc90021c4e030e26e61d5493b3e750"
