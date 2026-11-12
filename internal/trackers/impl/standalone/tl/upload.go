@@ -129,7 +129,7 @@ func submitPreparedUpload(
 		announceURL = announces[0]
 	}
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-		req.Logger, "TL", state.torrentPath, artifactPath, announceURL, sourceFlag, urlValue,
+		req.Logger, "TL", state.torrentPath, artifactPath, announceURL, sourceFlag, urlValue, announces...,
 	)
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 		Tracker:     "TL",
@@ -188,8 +188,8 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		}
 		category, _ := req.Meta.Identity.RequireCategory()
 		switch {
-		case req.Meta.Anime && req.Meta.Identity.MALID > 0:
-			state.fields["animeid"] = tlAnimeIDURL(req.Meta.Identity.MALID)
+		case req.Meta.Anime:
+			state.fields["animeid"] = animeIDURL(req.Meta)
 		case category == api.CanonicalCategoryMovie && req.Meta.Identity.IMDBID > 0:
 			state.fields["imdb"] = providerid.IMDb(req.Meta.Identity.IMDBID).Prefixed()
 		case category == api.CanonicalCategoryTV:
@@ -224,8 +224,8 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		"uploaderComments":    "",
 		"is_anonymous_upload": boolWord(req.TrackerConfig.Anon, "on", "off"),
 	}
-	if req.TrackerConfig.ImgRehost {
-		for idx, shot := range screenshots(assets.Screenshots) {
+	if nativeRehosting(req.TrackerConfig) {
+		for idx, shot := range screenshots(assets.MenuImages, assets.Screenshots) {
 			state.fields["screenshots["+strconv.Itoa(idx)+"]"] = shot
 		}
 	}
@@ -246,11 +246,4 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		return uploadState{}, nil, err
 	}
 	return state, client, nil
-}
-
-// tlAnimeIDURL formats TorrentLeech's animeid field. TL names the value as an
-// AniList URL, while upbrr's canonical MALID carries the same anime identifier
-// for this tracker payload.
-func tlAnimeIDURL(malID int) string {
-	return fmt.Sprintf("https://anilist.co/anime/%d", malID)
 }

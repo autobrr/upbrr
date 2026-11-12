@@ -150,12 +150,13 @@ func PersistReconstructedRegisteredTorrent(
 	announceURL string,
 	source string,
 	torrentURL string,
+	additionalAnnounces ...string,
 ) string {
 	if strings.TrimSpace(announceURL) == "" || strings.TrimSpace(outputPath) == "" {
 		LogRegisteredTorrentUnavailable(logger, tracker)
 		return ""
 	}
-	if err := writePersonalizedTorrent(sourcePath, outputPath, announceURL, source, torrentURL); err != nil {
+	if err := writePersonalizedTorrent(sourcePath, outputPath, announceURL, source, torrentURL, additionalAnnounces...); err != nil {
 		LogRegisteredTorrentUnavailable(logger, tracker)
 		return ""
 	}

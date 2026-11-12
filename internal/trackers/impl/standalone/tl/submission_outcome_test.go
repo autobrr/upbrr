@@ -6,8 +6,15 @@ package tl
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/autobrr/go-torrent/bencode"
+	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -54,5 +61,57 @@ func TestUploadRequiresAcceptedIdentity(t *testing.T) {
 				t.Fatalf("uploaded=%d requests=%d error=%v", summary.Uploaded, requests.Load(), err)
 			}
 		})
+	}
+}
+
+func TestSuccessfulUploadReturnsBothRegisteredAnnounces(t *testing.T) {
+	t.Parallel()
+	for _, apiUpload := range []bool{false, true} {
+		cfg := config.TrackerConfig{APIUpload: apiUpload, Passkey: "synthetic"}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if apiUpload {
+				_, _ = w.Write([]byte("123"))
+				return
+			}
+			w.Header().Set("Location", "/successfulupload?torrentID=123")
+			w.WriteHeader(http.StatusFound)
+		}))
+		t.Cleanup(server.Close)
+		client := server.Client()
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		info, err := bencode.Marshal(metainfo.Info{
+			Name:        "Example.Release.2026",
+			Length:      1024,
+			PieceLength: 16384,
+			Pieces:      make([]byte, 20),
+			Source:      sourceFlag,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := filepath.Join(t.TempDir(), "prepared.torrent")
+		output := filepath.Join(t.TempDir(), "registered.torrent")
+		prepared := metainfo.MetaInfo{InfoBytes: info}
+		file, err := os.OpenFile(source, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := prepared.Write(file); err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		summary, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{TrackerConfig: cfg}, uploadState{endpoint: server.URL, torrentPath: source}, client, nil, "application/octet-stream", announceList(cfg), output)
+		if err != nil || summary.Uploaded != 1 || len(summary.UploadedTorrents) != 1 {
+			t.Fatalf("summary=%+v err=%v", summary, err)
+		}
+		registered, err := metainfo.LoadFromFile(summary.UploadedTorrents[0].TorrentPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if registered.Announce != announceList(cfg)[0] || len(registered.AnnounceList) != 1 || !slices.Equal(registered.AnnounceList[0], announceList(cfg)) || registered.HashInfoBytes() != prepared.HashInfoBytes() || !strings.HasSuffix(registered.Comment, "\n"+torrentURL+"123") {
+			t.Fatal("returned registered artifact lost announce or identity authority")
+		}
 	}
 }

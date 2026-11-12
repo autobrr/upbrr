@@ -265,6 +265,12 @@ type TrackerProjectionCatalogChecker interface {
 	CatalogCurrent(api.TrackerCatalogSnapshot) (bool, error)
 }
 
+// TrackerProjectionPolicyChecker checks retained selected lanes during restart
+// recovery without preparing metadata or contacting trackers.
+type TrackerProjectionPolicyChecker interface {
+	StaleTrackerPolicies(api.TrackerCatalogSnapshot, []api.TrackerID) ([]api.TrackerID, error)
+}
+
 // DupeAssessmentBuilder executes projection-bound duplicate checks and returns
 // a safe retained snapshot plus optional private evidence for later planning.
 type DupeAssessmentBuilder interface {

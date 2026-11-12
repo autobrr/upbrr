@@ -151,6 +151,30 @@ func (p *WorkflowProjector) CatalogCurrent(retained api.TrackerCatalogSnapshot) 
 	return retained.Fingerprint == current.Fingerprint, nil
 }
 
+// StaleTrackerPolicies identifies selected lanes whose tracker-owned policy
+// changed without invalidating unrelated catalog entries.
+func (p *WorkflowProjector) StaleTrackerPolicies(retained api.TrackerCatalogSnapshot, selected []api.TrackerID) ([]api.TrackerID, error) {
+	current, err := p.catalogSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	previous := make(map[api.TrackerID]api.WorkflowFingerprint, len(retained.Trackers))
+	for _, descriptor := range retained.Trackers {
+		previous[descriptor.TrackerID] = descriptor.PolicyFingerprint
+	}
+	policies := make(map[api.TrackerID]api.WorkflowFingerprint, len(current.Trackers))
+	for _, descriptor := range current.Trackers {
+		policies[descriptor.TrackerID] = descriptor.PolicyFingerprint
+	}
+	var stale []api.TrackerID
+	for _, trackerID := range selected {
+		if fingerprint := policies[trackerID]; fingerprint == "" || retained.CatalogVersion != current.CatalogVersion || fingerprint != previous[trackerID] {
+			stale = append(stale, trackerID)
+		}
+	}
+	return stale, nil
+}
+
 func (p *WorkflowProjector) catalogSnapshot() (api.TrackerCatalogSnapshot, error) {
 	descriptors, err := p.registry.CatalogDescriptors()
 	if err != nil {

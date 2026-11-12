@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/go-torrent/bencode"
@@ -262,7 +263,7 @@ func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL 
 	return writePersonalizedTorrent(sourcePath, outputPath, announceURL, source, "")
 }
 
-func writePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, source string, torrentURL string) error {
+func writePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, source string, torrentURL string, additionalAnnounces ...string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {
 		return fmt.Errorf("trackers: load torrent artifact: %w", err)
@@ -279,6 +280,11 @@ func writePersonalizedTorrent(sourcePath string, outputPath string, announceURL 
 	if trimmedAnnounce := strings.TrimSpace(announceURL); trimmedAnnounce != "" {
 		torrentMeta.Announce = trimmedAnnounce
 		torrentMeta.AnnounceList = metainfo.AnnounceList{{trimmedAnnounce}}
+		for _, additional := range additionalAnnounces {
+			if value := strings.TrimSpace(additional); value != "" && !slices.Contains(torrentMeta.AnnounceList[0], value) {
+				torrentMeta.AnnounceList[0] = append(torrentMeta.AnnounceList[0], value)
+			}
+		}
 	}
 
 	return writeTorrentMeta(*torrentMeta, outputPath, "torrent artifact")

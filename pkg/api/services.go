@@ -825,6 +825,8 @@ type ProvenanceFacts struct {
 // tracker answers, and prepared-resource readiness used by side-effect-free
 // pre-duplicate validation.
 type TrackerValidationSubject struct {
+	// APIUpload selects API payload constructibility without carrying credentials.
+	APIUpload bool
 	// CheckSourceFolder includes the retained folder in modified-release checks.
 	CheckSourceFolder bool
 	// ImportedScreenshotEvidence contains only exact-generation accepted references.

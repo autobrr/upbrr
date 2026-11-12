@@ -949,7 +949,7 @@ func planContinuationCommandWithReadiness(
 		}
 		return nil, ""
 	}
-	if current.Projections == nil || !trackerIntentMatches(request.Intent, current) ||
+	if current.Projections == nil || current.Projections.Status == api.StageStatusStale || !trackerIntentMatches(request.Intent, current) ||
 		(request.Goal == api.WorkflowGoalTrackersProjected && !trackerProjectionGoalSatisfied(current)) {
 		instructions := request.Intent.ProjectionInstructions
 		// Omission retains saved choices; an explicit empty map clears them.
