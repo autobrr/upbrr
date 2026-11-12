@@ -113,6 +113,9 @@ func TestProfileReleaseNamePolicyOmitsOnlyGeneratedEpisodeTitles(t *testing.T) {
 	t.Parallel()
 
 	binding := Profile().ReleaseNamePolicy
+	if binding.ID != "standalone/hdb/v15" {
+		t.Fatalf("HDB release-name policy = %q, want standalone/hdb/v15", binding.ID)
+	}
 	elementPolicy := binding.Elements.Normalized()
 	if elementPolicy.Version != api.ReleaseNameElementPolicyVersionV1 ||
 		elementPolicy.EpisodeTitleMode != api.EpisodeTitleModeOmit {

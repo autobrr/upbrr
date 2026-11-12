@@ -82,7 +82,10 @@ func collectCandidateFindings(
 	findings = append(findings, collectExactFindings(target, candidate)...)
 	targetTitleScope := parseBestTitle(target.Names).Content
 	candidateTitleScope := parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content
-	if contentScopesContradict(targetFacts.Content, targetTitleScope) || contentScopesContradict(candidateFacts.Content, candidateTitleScope) {
+	if targetFacts.Content.Coverage.Status == api.MetadataEvidenceStatusContradictory ||
+		candidateFacts.Content.Coverage.Status == api.MetadataEvidenceStatusContradictory ||
+		contentScopesContradict(targetFacts.Content, targetTitleScope) ||
+		contentScopesContradict(candidateFacts.Content, candidateTitleScope) {
 		findings = append(findings, RuleFinding{
 			RuleID:         GeneralPolicyID + "/content_scope",
 			Source:         "general",
@@ -241,10 +244,17 @@ func contentScopesContradict(structured contentScope, title contentScope) bool {
 		title.Kind == contentScopeWork || title.Kind == contentScopeUnknownTV {
 		return false
 	}
+	if structured.Kind == contentScopeSeasonPart || title.Kind == contentScopeSeasonPart {
+		return compareContentScopes(structured, title) == contentDefinitelyDisjoint
+	}
 	return structured.Kind != title.Kind || compareContentScopes(structured, title) == contentDefinitelyDisjoint
 }
 
 func sameKnownContentScope(target contentScope, candidate contentScope) bool {
+	if target.Kind == contentScopeSeasonPart || candidate.Kind == contentScopeSeasonPart {
+		return contentSeasonKnown(target) && contentSeasonKnown(candidate) && target.Season == candidate.Season &&
+			compareContentScopes(target, candidate) == contentEqual
+	}
 	switch target.Kind {
 	case contentScopeUnknownTV:
 		return false
@@ -252,10 +262,10 @@ func sameKnownContentScope(target contentScope, candidate contentScope) bool {
 		if target.Season <= 0 || candidate.Season <= 0 {
 			return false
 		}
-	case contentScopeWork, contentScopeDaily, contentScopeCompleteSeries:
+	case contentScopeWork, contentScopeDaily, contentScopeCompleteSeries, contentScopeSeasonPart:
 	}
-	target.Origin = candidate.Origin
-	return target == candidate
+	return target.Kind == candidate.Kind && target.Season == candidate.Season &&
+		target.EpisodeStart == candidate.EpisodeStart && target.EpisodeEnd == candidate.EpisodeEnd && target.Date == candidate.Date
 }
 
 func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, policy trackerspkg.DupePolicy, workScope WorkScope) []RuleFinding {
@@ -363,17 +373,18 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 }
 
 func collectPackContainmentFinding(target contentScope, candidate contentScope) (RuleFinding, bool) {
-	if target.Season <= 0 || candidate.Season <= 0 || target.Season != candidate.Season {
+	if target.Coverage.Status == api.MetadataEvidenceStatusContradictory || candidate.Coverage.Status == api.MetadataEvidenceStatusContradictory ||
+		target.Season <= 0 || candidate.Season <= 0 || target.Season != candidate.Season {
 		return RuleFinding{}, false
 	}
 	var relation api.DupeRelation
 	var reason string
 	switch {
 	case target.Kind == contentScopeSeasonPack &&
-		(candidate.Kind == contentScopeEpisode || candidate.Kind == contentScopeEpisodeRange):
+		(candidate.Kind == contentScopeEpisode || candidate.Kind == contentScopeEpisodeRange || candidate.Kind == contentScopeSeasonPart):
 		relation, reason = api.DupeRelationCoexists, "proposed_season_pack"
 	case candidate.Kind == contentScopeSeasonPack &&
-		(target.Kind == contentScopeEpisode || target.Kind == contentScopeEpisodeRange):
+		(target.Kind == contentScopeEpisode || target.Kind == contentScopeEpisodeRange || target.Kind == contentScopeSeasonPart):
 		relation, reason = api.DupeRelationExistingPreferred, "existing_season_pack"
 	default:
 		return RuleFinding{}, false
