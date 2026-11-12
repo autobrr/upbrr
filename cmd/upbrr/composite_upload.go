@@ -52,6 +52,9 @@ func (s *cliWorkflowSession) completeComposite(
 	if err != nil {
 		return 0, err
 	}
+	if request.ImageHosting.SkipUpload != nil && *request.ImageHosting.SkipUpload {
+		fmt.Fprintln(s.streams.out, "New image-host uploads are disabled for this run; existing hosted images must still meet tracker requirements.")
+	}
 	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
 		printCLIWorkflowDupeProgress(s.streams.out, update)
 	})
@@ -464,7 +467,10 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		printCLICompositeDupeEvidence(output, dupe)
 		fmt.Fprintf(output, "Preparation: %d screenshots; %d DVD menu images.\n", projection.Artifacts.ScreenshotCount, projection.Artifacts.DVDMenuCount)
 		if projection.Artifacts.ImageHosting {
-			fmt.Fprintln(output, "Images will be uploaded to an image host.")
+			fmt.Fprintln(
+				output,
+				"Image-host requirements will be checked; compatible existing uploads may be reused. Missing images may be uploaded when uploads are enabled.",
+			)
 		}
 		if projection.Artifacts.Description {
 			fmt.Fprintln(output, "A tracker description will be prepared.")
@@ -482,11 +488,17 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 				projection.Artifacts.Description,
 			)
 		}
-		// Only a completed clear check grants affirmative authorization by default.
-		// Duplicate overrides remain a separate decision, including in unattended mode.
+		// An explicit remote-search waiver grants the same default as a clear check.
+		// Other skipped prerequisites and duplicate overrides still require a decision.
+		clearCheck := dupe.Decision == api.DupeDecisionNoMatch && dupe.Status == api.StageStatusCompleted && dupe.Search.Complete
+		waivedCheck := s.uploadRequest.SkipDupeCheck && s.current.Dupes.SkipRemote &&
+			dupe.Decision == api.DupeDecisionSkipped && dupe.Status == api.StageStatusSkipped &&
+			projection.DupeReady && len(dupe.Matches) == 0 && s.current.Preflight != nil &&
+			slices.ContainsFunc(s.current.Preflight.Results, func(result api.TrackerPreflightResult) bool {
+				return result.TrackerID == trackerID && result.State == api.TrackerPreflightStateReady
+			})
 		defaultYes := releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, true) &&
-			dupe.Decision == api.DupeDecisionNoMatch && dupe.Status == api.StageStatusCompleted &&
-			dupe.Search.Complete && !dupe.RequiresStaffToken && !cliDupeRequiresRiskAcknowledgement(dupe)
+			(clearCheck || waivedCheck) && !dupe.RequiresStaffToken && !cliDupeRequiresRiskAcknowledgement(dupe)
 		confirmed := defaultYes
 		if s.intent.interaction != api.InteractionModeUnattended {
 			choice := "[y/N]"

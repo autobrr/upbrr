@@ -56,7 +56,7 @@ func (b workflowDupeBuilder) BuildWithReuse(
 	return b.build(ctx, subject, projections, preflight, checkedAt, skipRemote, &reuse, false)
 }
 
-// RebindQuestionnaire publishes only fully compatible, fresh questionnaire or
+// RebindQuestionnaire publishes only fully compatible, fresh selection/answer or
 // owner-certified metadata-refresh evidence. It never invokes remote searches.
 func (b workflowDupeBuilder) RebindQuestionnaire(
 	ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet,

@@ -81,7 +81,7 @@ func TestCancellationStopsBeforeTorrentWorkAndPublication(t *testing.T) {
 	}
 }
 
-func TestCancellationWaitsForMkbrrAndStopsAtItsReturnBoundary(t *testing.T) {
+func TestCancellationInterruptsMkbrrAndPreservesArtifacts(t *testing.T) {
 	for _, verify := range []bool{false, true} {
 		name := "creation"
 		if verify {
@@ -114,10 +114,10 @@ func TestCancellationWaitsForMkbrrAndStopsAtItsReturnBoundary(t *testing.T) {
 				if update.TotalPieces == 0 {
 					return
 				}
-				hold.Do(func() { close(started); <-release })
 				if ctx.Err() != nil && update.CompletedPieces == update.TotalPieces {
 					completedAfterCancel.Store(true)
 				}
+				hold.Do(func() { close(started); <-release })
 			})
 			type outcome struct {
 				result api.TorrentResult
@@ -149,8 +149,8 @@ func TestCancellationWaitsForMkbrrAndStopsAtItsReturnBoundary(t *testing.T) {
 			if !errors.Is(result.err, context.Canceled) || result.result.Path != "" {
 				t.Fatalf("expected cancellation without a published/reused result: result=%+v err=%v", result.result, result.err)
 			}
-			if !completedAfterCancel.Load() {
-				t.Fatal("mkbrr completion progress stopped after cancellation was requested")
+			if completedAfterCancel.Load() {
+				t.Fatal("mkbrr reported completion after cancellation was requested")
 			}
 			data, err := os.ReadFile(destination)
 			if err != nil || string(data) != string(retained) {

@@ -264,7 +264,7 @@ func (m *Module) Continue(
 		}
 		return m.Current(ctx, ownerID, operation.WorkflowID)
 	}
-	if request.TrackerApproval != nil {
+	if request.TrackerApproval != nil && !duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) {
 		result, approveErr := m.Execute(ctx, ownerID, ApproveTrackersCommand{
 			WorkflowID:       current.Workflow.ID,
 			ExpectedRevision: current.Workflow.Revision,
@@ -280,9 +280,10 @@ func (m *Module) Continue(
 		}
 		return m.Current(ctx, ownerID, result.Workflow.ID)
 	}
-	if slices.ContainsFunc(current.Continuation.RequiredActions, func(action api.RequiredAction) bool {
-		return action.Kind == api.RequiredActionApproveTrackers && action.Status == api.RequiredActionStatusPending
-	}) {
+	if !duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) &&
+		slices.ContainsFunc(current.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+			return action.Kind == api.RequiredActionApproveTrackers && action.Status == api.RequiredActionStatusPending
+		}) {
 		return current, nil
 	}
 	if continuationGoalReached(current, request) {
@@ -597,6 +598,9 @@ func (m *Module) resolveContinuationAnswer(
 		if action.Status != api.RequiredActionStatusPending {
 			continue
 		}
+		if action.Kind == api.RequiredActionReviewDuplicates && duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) {
+			continue
+		}
 		if continuationUnattendedSkipsTrackerAction(request.Intent, action) {
 			continue
 		}
@@ -662,7 +666,7 @@ func trackerDupeReady(projections *api.TrackerReleaseProjectionSet, trackerID ap
 }
 
 func continuationHasDupeDecisionUpdate(intent api.WorkflowIntent, dupes *api.DupeAssessment) bool {
-	if dupes == nil {
+	if dupes == nil || intent.SkipRemoteDuplicates {
 		return false
 	}
 	return slices.ContainsFunc(dupes.Results, func(result api.TrackerDupeAssessment) bool {
@@ -979,7 +983,8 @@ func planContinuationCommandWithReadiness(
 		return nil, "no-eligible-trackers"
 	}
 	requiredDuplicateChecks := normalizedDuplicateCheckOrdinal(request.Intent.DuplicateCheckCount)
-	dupesCurrent := current.Dupes != nil && current.Dupes.ProjectionSet.ID == current.Projections.ID &&
+	dupesCurrent := current.Dupes != nil && !duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) &&
+		current.Dupes.ProjectionSet.ID == current.Projections.ID &&
 		current.Dupes.ProjectionSet.Revision == current.Projections.Revision && current.Dupes.ExpiresAt.After(now)
 	if !dupesCurrent || normalizedDuplicateCheckOrdinal(current.Dupes.CheckOrdinal) < requiredDuplicateChecks {
 		checkOrdinal := uint8(1)
@@ -997,7 +1002,7 @@ func planContinuationCommandWithReadiness(
 	decisions := make(map[api.TrackerID]api.DupeDecision)
 	for _, result := range current.Dupes.Results {
 		decision, ok := request.Intent.DuplicateDecisions[result.TrackerID]
-		if !ok || decision == api.DupeDecisionPending || decision == "" || decision == result.Decision {
+		if request.Intent.SkipRemoteDuplicates || !ok || decision == api.DupeDecisionPending || decision == "" || decision == result.Decision {
 			continue
 		}
 		decisions[result.TrackerID] = decision
@@ -1412,6 +1417,10 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 	if workflowGoalRank(request.Goal) >= workflowGoalRank(api.WorkflowGoalTrackersProjected) && !trackerIntentMatches(request.Intent, current) {
 		return false
 	}
+	if workflowGoalRank(request.Goal) >= workflowGoalRank(api.WorkflowGoalDuplicatesDecided) &&
+		duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) {
+		return false
+	}
 	switch request.Goal {
 	case api.WorkflowGoalPrepared:
 		return current.Release != nil && continuationPreparationSatisfied(current.Release, request.Intent.Preparation)
@@ -1538,7 +1547,14 @@ func normalizedDuplicateCheckOrdinal(value uint8) uint8 {
 	return value
 }
 
+func duplicateSearchModeChanged(dupes *api.DupeAssessment, skipRemote bool) bool {
+	return dupes != nil && dupes.SkipRemote != skipRemote
+}
+
 func duplicateIntentMatches(dupes *api.DupeAssessment, decisions map[api.TrackerID]api.DupeDecision) bool {
+	if dupes.SkipRemote {
+		return true
+	}
 	for trackerID, decision := range decisions {
 		if decision == "" || decision == api.DupeDecisionPending {
 			continue

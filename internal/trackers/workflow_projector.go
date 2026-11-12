@@ -453,6 +453,9 @@ func projectionAdditionalNames(instruction api.TrackerProjectionInstructions) []
 }
 
 func safeTrackerConfigFingerprint(trackerConfig config.TrackerConfig) (api.WorkflowFingerprint, error) {
+	trackerConfig = config.TrackerConfigForComparison(trackerConfig)
+	// Keep the existing hash shape so already-zero legacy controls do not
+	// invalidate otherwise compatible tracker review snapshots.
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		HasAPIKey          bool
 		HasLogin           bool

@@ -71,7 +71,7 @@ func TestHDBGeneratedReleaseVersions(t *testing.T) {
 					if version != "" {
 						want += version + " "
 					}
-					want += "1080p WEB-DL DDP 5.1 H.264-GRP"
+					want += "1080p WEB-DL DDP5.1 H.264-GRP"
 					got, err := input.ReviewedUploadName()
 					if err != nil || got != want || input.Projection.DuplicateCriteria.Name != want {
 						t.Fatalf("upload=%q search=%q err=%v, want %q", got, input.Projection.DuplicateCriteria.Name, err, want)
@@ -105,7 +105,7 @@ func TestHDBRequestedNamePreservesAutomaticSearch(t *testing.T) {
 	if err != nil || got != requested {
 		t.Fatalf("requested HDB name = %q, err=%v", got, err)
 	}
-	const automatic = "Example Original 2026 REPACK 1080p WEB-DL DDP 5.1 H.264-GRP"
+	const automatic = "Example Original 2026 REPACK 1080p WEB-DL DDP5.1 H.264-GRP"
 	if input.Projection.DuplicateCriteria.Name != automatic {
 		t.Fatalf("manual upload changed automatic search: %q", input.Projection.DuplicateCriteria.Name)
 	}
@@ -158,7 +158,7 @@ func TestHDBSeasonPackVersionReachesReviewedPayload(t *testing.T) {
 		t.Fatal(failure)
 	}
 	preview := plan.DryRun()
-	const want = "Example Original S01 REPACK 1080p WEB-DL DDP 5.1 H.264-GRP"
+	const want = "Example Original S01 REPACK 1080p WEB-DL DDP5.1 H.264-GRP"
 	if preview.ReleaseName != want || preview.Payload["name"] != want || input.Projection.UploadReleaseName != want {
 		t.Fatalf("review=%q preview=%q payload=%q", input.Projection.UploadReleaseName, preview.ReleaseName, preview.Payload["name"])
 	}
@@ -168,10 +168,10 @@ func TestHDBSeasonPackVersionReachesReviewedPayload(t *testing.T) {
 	}
 }
 
-func TestHDBReleaseVersionInvalidatesRetainedCatalog(t *testing.T) {
+func TestHDBNamingPolicyInvalidatesRetainedCatalog(t *testing.T) {
 	t.Parallel()
 	oldProfile := Profile()
-	oldProfile.ReleaseNamePolicy.ID = "standalone/hdb/v6"
+	oldProfile.ReleaseNamePolicy.ID = "standalone/hdb/v13"
 	oldRegistry := trackers.NewRegistry()
 	if err := oldRegistry.Register(standalone.MustNew(oldProfile)); err != nil {
 		t.Fatal(err)

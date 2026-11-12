@@ -11,10 +11,10 @@ export function WorkflowCancellation() {
   return (
     <section
       aria-label="Active work"
-      className={`${pageStyle.panel} mb-3 flex flex-wrap items-center gap-3 py-3`}
+      className={`${pageStyle.panel} mb-3 flex w-fit max-w-full flex-wrap items-center gap-2 py-2`}
     >
       <button
-        className="danger"
+        className="danger px-3 py-1 text-sm"
         type="button"
         disabled={(!available && !pending) || (pending && !retry)}
         onClick={() => void workflow.cancel()}
@@ -25,7 +25,7 @@ export function WorkflowCancellation() {
         <p role="status" className="text-muted-foreground text-sm">
           {message ||
             (pending
-              ? "Cancellation requested. Waiting for active work to stop; torrent hashing or verification must finish first. Progress remains live."
+              ? "Cancellation requested. Waiting for active work to stop and clean up. Progress remains live."
               : "")}
         </p>
       ) : null}

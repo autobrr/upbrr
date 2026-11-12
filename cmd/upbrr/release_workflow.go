@@ -242,6 +242,10 @@ func (s *cliWorkflowSession) executeContinuation(
 	s.current = current
 	s.publishPresentation(ctx)
 	if current.Operation != nil && isTerminalCLIWorkflowOperation(current.Operation.Status) {
+		if cliBridgeFromOutput(s.streams.out) == nil {
+			var progress cliMetadataProgress
+			progress.Print(s.progressWriter, *current.Operation, time.Now())
+		}
 		return cliWorkflowOperationError(*current.Operation)
 	}
 	if current.Operation != nil {
@@ -1707,7 +1711,7 @@ func printCLIWorkflowDryRun(
 	case noSeed:
 		fmt.Fprintln(output, "Debug mode: tracker uploads and client injection are disabled.")
 	default:
-		fmt.Fprintln(output, "Debug mode: tracker uploads are disabled; client injection was attempted for each ready tracker.")
+		fmt.Fprintln(output, "Debug mode: tracker uploads are disabled; see each tracker's client injection outcome below.")
 	}
 	for index, report := range result.Reports {
 		if index > 0 {
@@ -1721,13 +1725,19 @@ func printCLIWorkflowDryRun(
 		} else {
 			fmt.Fprintf(output, "- %s: %s status=%s\n", report.DisplayName, report.UploadReleaseName, report.Status)
 		}
+		clientMessage := strings.TrimSpace(safeDiagnosticText(report.ClientInjection.Message))
 		if report.ClientInjection.Status != "" {
 			fmt.Fprintf(
 				output,
 				"  client injection: %s: %s\n",
 				report.ClientInjection.Status,
-				logging.SanitizeMessage(report.ClientInjection.Message),
+				clientMessage,
 			)
+		}
+		for _, failure := range slices.Concat(report.Failures, report.ClientInjection.Failures) {
+			if message := cliWorkflowFailureMessage(failure.Failure); message != "" && message != clientMessage {
+				fmt.Fprintf(output, "  failure: %s\n", message)
+			}
 		}
 		for _, warning := range report.Warnings {
 			fmt.Fprintf(output, "  warning: %s\n", logging.SanitizeMessage(warning))
@@ -1743,23 +1753,31 @@ func printCLIWorkflowDryRun(
 	)
 }
 
+func cliWorkflowFailureMessage(failure api.OperationFailure) string {
+	if message := strings.TrimSpace(safeDiagnosticText(failure.Message)); message != "" {
+		return message
+	}
+	return safeTerminalText(string(failure.Code))
+}
+
 func printCLIWorkflowUploadResult(output io.Writer, result *api.UploadResult) (int, error) {
 	if result == nil {
 		return 0, errors.New("upbrr: upload workflow produced no result")
 	}
 	uploaded := 0
 	failed := 0
+	skipped := 0
 	clientFailed := 0
 	for _, tracker := range result.Results {
 		submissionStatus := tracker.EffectiveSubmissionStatus()
 		clientStatus := tracker.EffectiveClientInjectionStatus()
 		fmt.Fprintf(output, "Upload %s: submission=%s client-injection=%s\n", tracker.TrackerID, submissionStatus, clientStatus)
-		clientMessage := strings.TrimSpace(logging.SanitizeMessage(tracker.ClientInjectionMessage))
+		clientMessage := strings.TrimSpace(safeDiagnosticText(tracker.ClientInjectionMessage))
 		if clientMessage != "" {
 			fmt.Fprintf(output, "  client injection: %s\n", clientMessage)
 		}
 		for _, failure := range tracker.Failures {
-			message := strings.TrimSpace(logging.SanitizeMessage(failure.Failure.Message))
+			message := cliWorkflowFailureMessage(failure.Failure)
 			if message != "" && message != clientMessage {
 				fmt.Fprintf(output, "  failure: %s\n", message)
 			}
@@ -1769,25 +1787,30 @@ func printCLIWorkflowUploadResult(output io.Writer, result *api.UploadResult) (i
 			uploaded++
 		case api.StageStatusFailed, api.StageStatusUnavailable:
 			failed++
+		case api.StageStatusSkipped:
+			skipped++
 		case api.StageStatusPending,
 			api.StageStatusQueued,
 			api.StageStatusReady,
 			api.StageStatusBlocked,
 			api.StageStatusStale,
 			api.StageStatusPartial,
-			api.StageStatusSkipped,
 			api.StageStatusRunning,
 			api.StageStatusExecuted,
 			api.StageStatusInterrupted,
 			api.StageStatusCanceled:
 		}
-		if clientStatus == api.StageStatusFailed {
+		if clientStatus == api.StageStatusFailed || clientStatus == api.StageStatusUnavailable {
 			clientFailed++
 		}
 	}
-	fmt.Fprintf(output, "Upload complete: %d tracker upload(s).\n", uploaded)
+	fmt.Fprintf(output, "Upload complete: %d tracker upload(s), %d failed, %d skipped.\n", uploaded, failed, skipped)
 	if clientFailed > 0 {
-		fmt.Fprintf(output, "Client injection incomplete: %d tracker artifact(s); retry client injection without resubmitting.\n", clientFailed)
+		fmt.Fprintf(
+			output,
+			"Client injection incomplete: %d tracker artifact(s). Inspect the torrent client before retrying; do not resubmit accepted uploads.\n",
+			clientFailed,
+		)
 	}
 	if failed > 0 {
 		return uploaded, fmt.Errorf("upbrr: %d tracker upload(s) failed", failed)

@@ -5,7 +5,9 @@ package trackers
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -557,5 +559,60 @@ func assertInfoSourceKeyAbsent(t *testing.T, meta metainfo.MetaInfo) {
 
 	if bytes.Contains(meta.InfoBytes, []byte("6:source")) {
 		t.Fatalf("expected raw info source key absent, got %q", string(meta.InfoBytes))
+	}
+}
+
+func TestTrackerAssignedBaseDoesNotFallBackOrRewriteOtherLane(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	subject := api.UploadSubject{SourcePath: filepath.Join(dir, "synthetic.mkv"), TrackerTorrentArtifacts: make(map[string]api.TorrentArtifact)}
+	for index, tracker := range []string{"ALPHA", "BETA"} {
+		path := filepath.Join(dir, tracker+".torrent")
+		writeTestMetaInfo(t, path, metainfo.MetaInfo{InfoBytes: testInfoBytes(t, tracker)})
+		mi := readTestMetaInfo(t, path)
+		info, err := mi.UnmarshalInfo()
+		if err != nil {
+			t.Fatal(err)
+		}
+		info.PieceLength = int64(1 << (20 + index))
+		mi.InfoBytes, err = bencode.Marshal(info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeTestMetaInfo(t, path, mi)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		subject.TrackerTorrentArtifacts[tracker] = api.TorrentArtifact{
+			Path:          path,
+			InfoHash:      mi.HashInfoBytes().String(),
+			ContentSHA256: fmt.Sprintf("%x", sha256.Sum256(data)),
+		}
+	}
+	database := filepath.Join(dir, "state", "upbrr.db")
+	for index, tracker := range []string{"ALPHA", "BETA"} {
+		prepared, err := prepareTrackerUploadTorrentWithRegistry(subject, database, tracker, config.TrackerConfig{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		personalized := readTestMetaInfo(t, prepared.TorrentPath)
+		info, err := personalized.UnmarshalInfo()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.PieceLength != int64(1<<(20+index)) || info.Source != tracker {
+			t.Fatalf("wrong tracker base: %+v", info)
+		}
+	}
+	if _, err := prepareTrackerUploadTorrentWithRegistry(subject, database, "MISSING", config.TrackerConfig{}, nil); err == nil {
+		t.Fatal("missing assignment fell back")
+	}
+	artifact := subject.TrackerTorrentArtifacts["ALPHA"]
+	mi := readTestMetaInfo(t, artifact.Path)
+	mi.Comment = "changed outer metadata"
+	writeTestMetaInfo(t, artifact.Path, mi)
+	if _, err := prepareTrackerUploadTorrentWithRegistry(subject, database, "ALPHA", config.TrackerConfig{}, nil); err == nil {
+		t.Fatal("changed artifact bytes accepted")
 	}
 }

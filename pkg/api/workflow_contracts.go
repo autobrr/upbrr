@@ -507,6 +507,9 @@ type TrackerDupeAssessment struct {
 
 // DupeAssessment retains duplicate results for exact projection and preflight revisions.
 type DupeAssessment struct {
+	// SkipRemote records the explicit remote-search waiver used for this assessment.
+	// In-client duplicate evidence remains authoritative.
+	SkipRemote       bool                           `json:"skipRemote,omitempty"`
 	ID               DupeAssessmentID               `json:"id"`
 	WorkflowID       WorkflowID                     `json:"workflowId"`
 	Revision         WorkflowRevision               `json:"revision"`
@@ -821,6 +824,8 @@ type ReleaseWorkflow struct {
 // ReleaseWorkflowCurrent is the complete safe current projection returned to
 // every workflow adapter. Private execution resources never appear here.
 type ReleaseWorkflowCurrent struct {
+	// InputReview is display-only evidence for retrying incomplete Input preparation.
+	InputReview *InputReviewContext `json:"inputReview,omitempty"`
 	// PreparationOperationID identifies preparation accepted by this
 	// continuation response. Busy responses and passive reads omit it.
 	PreparationOperationID WorkflowOperationID                   `json:"preparationOperationId,omitempty"`

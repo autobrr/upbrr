@@ -76,7 +76,7 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		return info, nil
 	}
 
-	const query = `query GetTitleInfo($id: ID!) { title(id: $id) { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } } }`
+	const query = `query GetTitleInfo($id: ID!) { title(id: $id) { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } spokenLanguages { spokenLanguages { text } } } }`
 
 	var response map[string]any
 	if err := c.postGraphQL(ctx, "GetTitleInfo", query, map[string]any{"id": id}, &response); err != nil {
@@ -138,6 +138,12 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		}
 	}
 	info.Genres = strings.Join(genreNames, ", ")
+
+	for _, item := range getList(titleData, "spokenLanguages", "spokenLanguages") {
+		if name := strings.TrimSpace(getStringFromMap(item, "text")); name != "" {
+			info.SpokenLanguages = append(info.SpokenLanguages, name)
+		}
+	}
 
 	rating := getFloat(titleData, "ratingsSummary", "aggregateRating")
 	if rating == 0 {

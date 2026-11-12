@@ -32,9 +32,11 @@ func ApplyConfigImpact(record api.ReleaseWorkflowStateRecord, impact api.ConfigI
 	}
 	switch impact.Kind {
 	case api.ConfigImpactProvider:
+		retainInputReview(&state)
 		state.PendingDuplicateReuse = nil
 		invalidatePreparedAndDownstream(&state.Workflow)
 	case api.ConfigImpactTrackers:
+		retainInputReview(&state)
 		state.PendingDuplicateReuse = nil
 		if len(impact.TrackerIDs) == 0 {
 			invalidateTrackerAndDownstream(&state.Workflow)

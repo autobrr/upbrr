@@ -15,7 +15,7 @@ One input can be active per database, shared by the Web UI and CLI. Tabs in the 
 
 Switching during local preparation cancels that work and waits for cleanup. While an input remains active, a submission or uncertain remote outcome must finish or be reconciled before switching that input. CLI queue continuation follows the recovery rules below after releasing the idle input. Closing a browser tab does not release the input.
 
-Use **Cancel active work** above any workflow page to stop its current operation and further automatic continuation. The control stays in place and is disabled when idle. **Cancelling…** remains visible until the backend confirms a terminal result. Torrent hashing and reusable-torrent verification cannot stop mid-call: progress continues while cancellation waits, then work stops as soon as that call returns. A page reload resumes confirmation for the exact saved operation. If confirmation fails, review the active work or retry cancellation before starting another attempt.
+Use **Cancel active work** above any workflow page to stop its current operation and further automatic continuation. The control stays in place and is disabled when idle. **Cancelling…** remains visible until the backend confirms a terminal result. Torrent hashing and reusable-torrent verification stop during processing and wait for their workers to finish cleanup. A file read blocked by the operating system must return before cancellation can finish. A page reload resumes confirmation for the exact saved operation. If confirmation fails, review the active work or retry cancellation before starting another attempt.
 
 Cancellation keeps the selected input, retained results and completed work available for review or an explicit retry. Work that finishes before cancellation retains its result. Cancellation does not undo an image upload, tracker submission or client action; check any retained recovery actions for uncertain remote outcomes.
 
@@ -72,6 +72,31 @@ Web UI refresh verifies the source and reuses provider evidence whose lookup inp
 
 Input readiness evaluates missing release facts and selected tracker metadata before tracker assessment. Correct missing source, type, genre, or languages on Input. A tracker-specific requirement affects that tracker; global missing facts prevent advancement.
 
+For automatic soundtrack comparisons, a single usable TMDB spoken language takes
+precedence over its original-language field. With multiple spoken languages, the
+original-language field is definitive when that language appears in the list.
+For example, Japanese original language with Japanese and English spoken languages
+establishes a Japanese title. An English-only programme track is classified as a
+dub; separate Japanese and English programme tracks are original plus dubbed dual
+audio. Explicit soundtrack-origin corrections remain authoritative.
+
+When multiple spoken languages do not include the recorded original language,
+the unranked spoken-language set remains available for comparison. List order does
+not select a primary soundtrack or require separate audio for every listed
+language. Inspected tracks still establish the release's audio; listed English
+dialogue does not supply an English track or erase a confirmed dub.
+Independent subtitle, soundtrack-origin and default-track requirements still apply.
+
+An original-language correction, including an explicit clear, overrides this
+automatic evidence. **Auto** restores the preferred provider evidence. When TMDB
+has no usable spoken-language entries, the existing original-language/provider
+fallback remains available. The scalar original-language metadata is retained for
+other uses. A production-language value does not override an established original
+soundtrack's language. Title-level corrections do not rewrite independently
+confirmed track origins. Mixed dialogue evidence does not establish which language
+predominates; an applicable exception can remain uncertain without making the
+release prohibited.
+
 When a selected tracker's current rules need an unidentified programme audio
 language, **Inspected tracks** opens on Input and identifies the affected track.
 Correct its verified languages once, then prepare Input again. The canonical
@@ -90,9 +115,16 @@ Soundtrack origin is independent of language identification. In **Inspected trac
 choose **Original soundtrack**, **Dubbed soundtrack**, or **Unresolved** only from
 verified source knowledge. **Auto** removes that origin correction without changing
 the track's language correction. A `mul` tag does not identify the languages, and a
-known language differing from the title's recorded original language does not prove
-a dub. Ordinary matching-language original tracks need no special title or flag.
+language difference alone does not normally prove a dub. English-only programme
+audio is classified as dubbed when the non-English original language is definitive
+under the rules above or a verified original-language correction.
+Ordinary matching-language original tracks need no special title or flag.
 Commentary is not programme audio.
+Automatic title-language matches can fill a soundtrack evidence gap. They do not
+override an established original soundtrack; changing that classification needs
+verified original-source evidence or a correction based on that knowledge.
+A verified title-level original-language correction governs title-level
+restrictions without changing the inspected track's soundtrack-origin flag.
 
 When soundtrack review is needed, the plain CLI and TUI show the source, resource,
 track title, codec and channels, title original language, and inspected/effective
@@ -179,7 +211,7 @@ Duplicate search results are evidence, not an automatic upload decision. Review 
 
 Some duplicate overrides require a staff-issued token. Confirm that you have the appropriate token for the current upload; without confirmation, upbrr blocks the upload even when automatic duplicate overrides are enabled. Reprojecting upload inputs or refreshing duplicate evidence requires a new confirmation. Check the tracker's current rules for token conditions.
 
-Before searching, upbrr excludes trackers with a confirmed upload of the same verified submitted content. These appear as **Already uploaded**. Remaining trackers receive fresh duplicate checks; if every selected tracker is excluded, the operation completes successfully without another approval or upload. Changing metadata or a screenshot playlist does not make a full-disc upload new content. A different actual file subset can be different submitted content.
+Before searching, upbrr excludes trackers with a confirmed upload of the same verified submitted content. These appear as **Already uploaded**. Remaining trackers receive compatible retained evidence or fresh duplicate checks; if every selected tracker is excluded, the operation completes successfully without another approval or upload. Changing metadata or a screenshot playlist does not make a full-disc upload new content. A different actual file subset can be different submitted content.
 
 A complete structured group is preferred for group-policy decisions. When a tracker omits that field, only one unambiguous normalized release-name suffix can prove different-group ownership; conflicting, missing, or multi-group text keeps the normal duplicate review.
 
@@ -272,15 +304,15 @@ Debug mode is not a non-mutating dry run. It can perform screenshots, image uplo
 
 ## Tracker questions
 
-Answer tracker-specific questions on **Dupe Checking**, alongside release-name and duplicate review. Questions appear immediately for selected trackers, including defaults, using the current prepared facts. Loading these questions does not run duplicate searches, remote metadata enrichment, authentication, banned-group checks, or claim checks. If the current prepared facts are unavailable or insufficient for this review, upbrr asks you to prepare the source instead of fetching metadata in the background.
+Answer tracker-specific questions on **Dupe Checking**, alongside release-name and duplicate review. Questions appear immediately for selected trackers, including defaults, using the current prepared facts. Before the first duplicate check, loading these questions does not run duplicate searches, remote metadata enrichment, authentication, banned-group checks, or claim checks. Once duplicate results exist, selection changes reconcile those results as described in [duplicate evidence](#4-review-duplicate-evidence). If the current prepared facts are unavailable or insufficient for this review, upbrr asks you to prepare the source instead of fetching metadata in the background.
 
 Questions are omitted when finalized media and current provider metadata establish the required answer. Conflicting or incomplete evidence still requires review. A tracker with an unanswered required field cannot proceed to upload; other eligible trackers can continue.
 
 Questions are also hidden when an independent eligibility or preparation failure prevents the tracker from accepting the release. If an answer can resolve the blocker, the relevant questions remain available, including rejected answers that are already filled in. Review those answers before continuing. An optional multi-select answer can be cleared in the CLI by submitting a blank response; required questions still need an answer.
 
-Each tracker panel starts collapsed and identifies **Required answers missing**, **Required fields filled**, or **Optional controls**. **Unapplied changes** means a local edit has not reached the assessment; filled fields are not a claim that pending changes have been accepted. Open the summary with a click, Enter, or Space to review the fields. Collapsing preserves your edits. Choose **Apply tracker answers** to refresh the assessment without uploading or starting another duplicate search. Unapplied changes block dry runs and uploads. Passive warnings require no answer; a separate **Acknowledge tracker warnings** control appears only for findings that require explicit acknowledgement. Guidance does not certify unknown source history. An acknowledgement permits proceeding past the stated warning; it does not change inspected facts, establish tracker permission, or prove replacement eligibility.
+Each tracker panel starts collapsed and identifies **Required answers missing**, **Required fields filled**, or **Optional controls**. **Unapplied changes** means a local edit has not reached the assessment; filled fields are not a claim that pending changes have been accepted. Open the summary with a click, Enter, or Space to review the fields. Collapsing preserves your edits. Choose **Apply tracker answers** to refresh the assessment without uploading. Compatible duplicate results are retained; changed duplicate-search inputs require a new check for the affected tracker. Unapplied changes block dry runs and uploads. Passive warnings require no answer; a separate **Acknowledge tracker warnings** control appears only for findings that require explicit acknowledgement. Guidance does not certify unknown source history. An acknowledgement permits proceeding past the stated warning; it does not change inspected facts, establish tracker permission, or prove replacement eligibility.
 
-An answer-only edit retains fresh duplicate evidence when every duplicate-relevant input still matches. Changes to the source, reviewed names, selected trackers, configuration, or rules, and expired evidence, can require a new duplicate check. Follow the stages requested after applying; retained evidence keeps its original freshness window.
+After duplicate checking, adding or deselecting trackers rebuilds the assessment for the selected set. Unchanged trackers retain compatible results; added trackers are checked. Tracker answers and reviewed-name changes affect only their own tracker. If prerequisites interrupt a selection refresh, the next selection change retries reconciliation while retaining compatible sibling evidence. Results retain their original check times and expiry, within the existing 30-minute freshness window. Changed source or prepared input and expired evidence require fresh checks for all selected trackers. Changed reviewed names, configuration or rules can also invalidate affected evidence. Follow the stages requested after applying: retained results never supply tracker approval or renew staff-token confirmation.
 
 Some new-group or channel requirements can only be confirmed during tracker preparation. When preparation reports them, late-only fields appear in a separate **Tracker preparation details** section on **Dupe Checking**. Requirements for an existing question update its normal tracker panel. Existing-group uploads do not require new-group-only details. Tracker-local source and encoding notes are answered here; canonical metadata and language corrections remain in **Input**.
 

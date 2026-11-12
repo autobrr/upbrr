@@ -113,8 +113,8 @@ func (b *cliTUIBridge) Publish(view cliView) {
 			var item strings.Builder
 			item.WriteString(b.latest.Result)
 			item.WriteByte('\n')
-			for _, lane := range b.latest.Lanes {
-				fmt.Fprintf(&item, "%s: %s (%s)\n", lane.ID, lane.State, lane.Reason)
+			for index := range b.latest.Lanes {
+				item.WriteString(cliLaneSummary(b.latest.Lanes[index : index+1]))
 				if item.Len() >= cliQueueResultBytes {
 					break
 				}

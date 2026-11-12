@@ -112,7 +112,7 @@ const fieldGroups: Record<string, Array<{ title: string; keys: string[] }>> = {
     { title: "Client selection", keys: ["InjectClients", "SearchClients"] },
   ],
   TorrentCreation: [
-    { title: "Torrent construction", keys: ["MkbrrThreads", "PreferMax16"] },
+    { title: "Torrent construction", keys: ["MkbrrThreads"] },
     { title: "Rehash scheduling", keys: ["RehashCooldown"] },
   ],
   Trackers: [

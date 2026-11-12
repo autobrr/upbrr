@@ -398,7 +398,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			workers := cancelPriorWorkers()
 			admission.Unlock()
 			for _, done := range workers {
-				// Noninterruptible hashing retains its fence until durable cleanup.
+				// Canceled workers retain their fence until durable cleanup.
 				<-done
 			}
 		}
@@ -634,6 +634,11 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 				stageMetadataDuplicateReuse(&state, m.clock.Now())
 			} else {
 				state.PendingDuplicateReuse = nil
+			}
+			if prior.SourceVersion == record.SourceVersion {
+				retainInputReview(&state)
+			} else {
+				state.InputReview = nil
 			}
 			invalidatePreparedAndDownstream(&state.Workflow)
 			if state.Composite != nil {

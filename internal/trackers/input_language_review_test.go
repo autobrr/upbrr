@@ -117,3 +117,45 @@ func TestInputLanguageReviewRequiresTheCurrentPolicyPredicate(t *testing.T) {
 		t.Fatal("invented a track for absent audio")
 	}
 }
+
+func TestOriginalMultilingualReviewTargetsUnresolvedCompanion(t *testing.T) {
+	media := api.MediaFacts{
+		OriginalLanguage:      "Japanese",
+		TrackCoverageComplete: true,
+		Tracks: []api.MediaTrackFacts{
+			{
+				ID:                  "original",
+				Kind:                api.MediaTrackAudio,
+				Role:                api.AudioRoleProgramme,
+				ManifestFingerprint: "manifest",
+				Languages:           []string{"mul"},
+				AudioOrigin:         api.TrackAudioOriginal,
+			},
+			{
+				ID:                  "companion",
+				Kind:                api.MediaTrackAudio,
+				Role:                api.AudioRoleProgramme,
+				ManifestFingerprint: "manifest",
+				Languages:           []string{"und"},
+			},
+		},
+	}
+	binding := WithLanguagePolicy(NoExtraValidationPolicy("test"), LanguagePolicy{OriginalAudio: LanguageProhibited, ExtraDubs: LanguageProhibited})
+	subject := api.UploadSubject{LanguageFacts: mediafacts.ResolveLanguages(media)}
+	fields := inputLanguageReview(binding, subject, "ONE")
+	if len(fields) == 0 || slices.ContainsFunc(fields, func(field api.InputReadinessFieldOutcome) bool { return field.TrackID != "companion" }) {
+		t.Fatalf("original soundtrack requested language enumeration: %+v", fields)
+	}
+	media.Tracks[1].Languages = []string{"English"}
+	subject.LanguageFacts = mediafacts.ResolveLanguages(media)
+	fields = inputLanguageReview(binding, subject, "ONE")
+	if len(fields) != 1 || fields[0].TrackID != "companion" || fields[0].CorrectionField == nil || *fields[0].CorrectionField != api.CorrectionFieldMetadataTrackAudioOrigins {
+		t.Fatalf("unclassified companion origin was accepted without review: %+v", fields)
+	}
+	media.Tracks[1].Languages = []string{"German"}
+	media.Tracks[1].AudioOrigin = api.TrackAudioDubbed
+	failures := EvaluateLanguagePolicy(api.TrackerValidationSubject{LanguageFacts: mediafacts.ResolveLanguages(media)}, LanguagePolicy{OriginalAudio: LanguageProhibited, ExtraDubs: LanguageProhibited})
+	if len(failures) != 1 || failures[0].Rule != "language_extra_dub" || !api.IsStrictRuleFailure(failures[0]) {
+		t.Fatalf("original multilingual soundtrack permitted an unrelated dub: %+v", failures)
+	}
+}

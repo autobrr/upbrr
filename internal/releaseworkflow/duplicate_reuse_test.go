@@ -47,6 +47,9 @@ func newDuplicateReuseWorkflow(t *testing.T) (*Module, *MemoryRepository, *dupli
 	) (api.TrackerCatalogSnapshot, api.TrackerRuntimeSnapshot, api.TrackerSelection, api.TrackerReleaseProjectionSet, error) {
 		snapshot := testProjectionSet(t)
 		snapshot.ExecutionMode = mode
+		snapshot.Projections = slices.DeleteFunc(snapshot.Projections, func(projection api.TrackerReleaseProjection) bool {
+			return !slices.Contains(trackerIDs, projection.TrackerID)
+		})
 		for index := range snapshot.Projections {
 			projection := &snapshot.Projections[index]
 			projection.WaivableRuleFingerprint = testFingerprint(t, string(projection.TrackerID)+"-rules")
@@ -232,6 +235,7 @@ func TestDuplicateReuseInvalidatedByNewPreparationOrProjection(t *testing.T) {
 					WorkflowID:       result.Workflow.ID,
 					ExpectedRevision: result.Workflow.Revision,
 					TrackerIDs:       []api.TrackerID{"ALPHA", "BETA"},
+					ExecutionMode:    api.WorkflowExecutionModeDebug,
 				})
 			}
 			state, err := repository.Load(t.Context(), testOwnerID, result.Workflow.ID)
@@ -313,9 +317,9 @@ func TestDuplicateReuseRejectsRuleActionWithPendingStrictEvidence(t *testing.T) 
 	}
 }
 
-func TestQuestionnaireDuplicateReuseRetainsOnlyAnswerTransitions(t *testing.T) {
+func TestQuestionnaireDuplicateReuseRetainsScopedTransitions(t *testing.T) {
 	for _, scenario := range []string{
-		"answers", "selection", "execution", "settings", "name", "screenshots", "no change",
+		"answers", "selection", "selection and name", "execution", "settings", "name", "screenshots", "no change",
 		"submitted sibling", "submitted sibling changed name", "submitted sibling omitted name", "submitted sibling selection",
 	} {
 		t.Run(scenario, func(t *testing.T) {
@@ -334,7 +338,10 @@ func TestQuestionnaireDuplicateReuseRetainsOnlyAnswerTransitions(t *testing.T) {
 				command.ExecutionMode = api.WorkflowExecutionModeDebug
 			case "settings":
 				instruction.TrackerConfig.Anon = new(false)
-			case "name":
+			case "name", "selection and name":
+				if scenario == "selection and name" {
+					command.TrackerIDs = append(command.TrackerIDs, "GAMMA")
+				}
 				instruction.UploadReleaseName = api.WorkflowPatch[string]{Present: true, Value: "Changed.Name-GRP"}
 			case "screenshots":
 				instruction.ScreenshotCount = new(4)
@@ -363,12 +370,202 @@ func TestQuestionnaireDuplicateReuseRetainsOnlyAnswerTransitions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if want := scenario == "answers" || scenario == "submitted sibling"; only != want || (state.PendingDuplicateReuse != nil) != want {
+			if want := scenario != "execution"; only != want || (state.PendingDuplicateReuse != nil) != want {
 				t.Fatalf("only=%t pending=%+v", only, state.PendingDuplicateReuse)
 			}
 			if only && state.PendingDuplicateReuse.Assessment != baseline {
 				t.Fatal("wrong baseline")
 			}
+			if only {
+				changed := scenario == "settings" || scenario == "name" || scenario == "selection and name" || scenario == "screenshots"
+				if slices.Contains(state.PendingDuplicateReuse.InvalidatedTrackers, "ALPHA") != changed {
+					t.Fatal("instruction edit did not isolate the changed tracker")
+				}
+			}
 		})
+	}
+}
+
+func TestDuplicateReuseSelectionRetainsBaselineAndWithdrawsApproval(t *testing.T) {
+	t.Parallel()
+	module, repository, builder, current := newDuplicateReuseWorkflow(t)
+	baseline := *current.Workflow.Dupes
+	initial, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial.TrackerDecisionMode = TrackerDecisionModePostDupeGate
+	initial.Workflow.Revision++
+	if err := repository.Save(t.Context(), testOwnerID, current.Workflow.Revision, initial); err != nil {
+		t.Fatal(err)
+	}
+	current.Workflow = initial.Workflow
+	approve := func(trackers []api.TrackerID) {
+		t.Helper()
+		state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		action, _, err := projectedTrackerApprovalAction(&state, module.clock.Now())
+		if err != nil || action == nil {
+			t.Fatalf("approval action: %v", err)
+		}
+		dupes := state.Dupes[state.Workflow.Dupes.ID]
+		current = executeCommand(t, module, ApproveTrackersCommand{
+			WorkflowID:       current.Workflow.ID,
+			ExpectedRevision: current.Workflow.Revision,
+			Approval: api.TrackerApproval{
+				ActionID:         action.ID,
+				Dupes:            *state.Workflow.Dupes,
+				InputFingerprint: dupes.InputFingerprint,
+				TrackerIDs:       trackers,
+			},
+		})
+	}
+	approve([]api.TrackerID{"ALPHA", "BETA"})
+	prepared, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Workflow.Media = &api.MediaArtifactSetRef{ID: "prior-media", Revision: current.Workflow.Revision}
+	prepared.Workflow.DryRun = &api.UploadDryRunResultRef{ID: "prior-plan", Revision: current.Workflow.Revision}
+	prepared.Workflow.Revision++
+	if err := repository.Save(t.Context(), testOwnerID, current.Workflow.Revision, prepared); err != nil {
+		t.Fatal(err)
+	}
+	current.Workflow = prepared.Workflow
+	before, err := module.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil || before.Workflow.Media == nil || before.Workflow.DryRun == nil {
+		t.Fatal("missing prior downstream authority")
+	}
+	current = executeCommand(t, module, ProjectTrackersCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"BETA"},
+	})
+	state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The persistence round trip must retain evidence, never the prior approval.
+	record, err := workflowStateRecord(testOwnerID, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = decodeWorkflowState(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	continuation := projectWorkflowContinuationForState(CommandResult{Workflow: state.Workflow}, &state, module.clock.Now())
+	if !continuation.DuplicateReusePending {
+		t.Fatal("persisted pending evidence was hidden from selection recovery")
+	}
+	if state.PendingDuplicateReuse == nil || state.PendingDuplicateReuse.Assessment != baseline ||
+		state.Workflow.TrackerApproval != nil || state.Workflow.Dupes != nil ||
+		state.Workflow.Media != nil || state.Workflow.DryRun != nil {
+		t.Fatal("selection discarded evidence or retained downstream authority")
+	}
+	projection := state.Projections[state.Workflow.TrackerProjections.ID].Projections[0]
+	if projection.TrackerID != "BETA" || !projection.DupeReady || projection.RuleAuthorizationFingerprint == "" {
+		t.Fatal("selection discarded unchanged sibling rule acknowledgement")
+	}
+	reuse, err := module.pendingDuplicateReuse(testOwnerID, &state,
+		state.Projections[state.Workflow.TrackerProjections.ID], CheckDuplicatesCommand{}, module.clock.Now())
+	if err != nil || reuse == nil || reuse.PrivateEvidence == nil {
+		t.Fatalf("persisted reuse unavailable: %v", err)
+	}
+	current = executeCommand(t, module, PreflightTrackersCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
+	current = executeCommand(t, module, CheckDuplicatesCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
+	if builder.full != 1 || len(builder.reuses) != 1 || len(current.Dupes.Results) != 1 || current.Workflow.TrackerApproval != nil {
+		t.Fatal("selection failed to rebuild exact duplicate authority")
+	}
+	approve([]api.TrackerID{"BETA"})
+	if current.TrackerApproval == nil || !slices.Equal(current.TrackerApproval.ApprovedTrackerIDs, []api.TrackerID{"BETA"}) {
+		t.Fatal("explicit approval did not bind the reduced selection")
+	}
+}
+
+func TestDuplicateReuseSurvivesSelectionReadinessRefresh(t *testing.T) {
+	t.Parallel()
+	module, repository, builder, current := newDuplicateReuseWorkflow(t)
+	baseline := *current.Workflow.Dupes
+	current = executeCommand(t, module, ProjectTrackersCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA", "BETA"},
+	})
+	// An interrupted selection has withdrawn authority before a later selection
+	// reaches the planner's readiness stage.
+	request := api.ContinueReleaseWorkflowRequest{
+		Goal:   api.WorkflowGoalDuplicatesDecided,
+		Intent: api.WorkflowIntent{TrackerIDs: []api.TrackerID{"BETA"}},
+	}
+	current, err := module.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, stage := module.planContinuationCommand(request, current, module.clock.Now(), current.Workflow.Revision)
+	if stage != "evaluate-input-readiness" {
+		t.Fatalf("selection did not refresh readiness: %s", stage)
+	}
+	readiness, ok := command.(EvaluateInputReadinessCommand)
+	if !ok {
+		t.Fatalf("unexpected readiness command: %T", command)
+	}
+	current = executeCommand(t, module, readiness)
+	state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil || state.PendingDuplicateReuse == nil || state.PendingDuplicateReuse.Assessment != baseline {
+		t.Fatalf("readiness discarded historical evidence: %v", err)
+	}
+	current = executeCommand(t, module, ProjectTrackersCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"BETA"},
+	})
+	current = executeCommand(t, module, PreflightTrackersCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
+	current = executeCommand(t, module, CheckDuplicatesCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
+	if builder.full != 1 || len(builder.reuses) != 1 || builder.reuses[0].Assessment.ID != baseline.ID || current.Workflow.TrackerApproval != nil {
+		t.Fatal("readiness refresh did not preserve compatible reuse without approval")
+	}
+}
+
+func TestDuplicateReuseScopesLocalInputAnswerChanges(t *testing.T) {
+	t.Parallel()
+	module, repository, builder, current := newDuplicateReuseWorkflow(t)
+	module.inputReadiness = readyInputReadinessEvaluator{}
+	baseline := *current.Workflow.Dupes
+	for _, answer := range []*string{new("director"), nil} {
+		current = executeCommand(t, module, EvaluateInputReadinessCommand{
+			WorkflowID:          current.Workflow.ID,
+			ExpectedRevision:    current.Workflow.Revision,
+			TrackerIDs:          []api.TrackerID{"ALPHA", "BETA"},
+			TrackerInputAnswers: map[api.TrackerID]map[string]*string{"ALPHA": {"edition": answer}},
+		})
+	}
+	state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil || state.PendingDuplicateReuse == nil || state.PendingDuplicateReuse.ProjectionContext == nil ||
+		!slices.Equal(state.PendingDuplicateReuse.InvalidatedTrackers, []api.TrackerID{"ALPHA"}) ||
+		state.Workflow.TrackerProjections != nil || state.Workflow.Dupes != nil {
+		t.Fatalf("local answers lost lane isolation or retained authority: %v", err)
+	}
+	current = executeCommand(t, module, ProjectTrackersCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA", "BETA"},
+	})
+	for _, projection := range current.Projections.Projections {
+		if projection.TrackerID == "BETA" && (!projection.DupeReady || projection.RuleAuthorizationFingerprint == "") {
+			t.Fatal("local answer discarded unchanged sibling rule acknowledgement")
+		}
+		if projection.TrackerID == "ALPHA" && projection.RuleAuthorizationFingerprint != "" {
+			t.Fatal("local answer restored invalidated rule acknowledgement")
+		}
+	}
+	current = resolveDuplicateReuseRule(t, module, current, "ALPHA", true)
+	current = executeCommand(t, module, PreflightTrackersCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
+	current = executeCommand(t, module, CheckDuplicatesCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
+	if builder.full != 1 || len(builder.reuses) != 1 || builder.reuses[0].Assessment.ID != baseline.ID ||
+		!slices.Equal(builder.reuses[0].InvalidatedTrackers, []api.TrackerID{"ALPHA"}) || current.Workflow.TrackerApproval != nil {
+		t.Fatal("local answers did not preserve sibling reuse without approval")
 	}
 }

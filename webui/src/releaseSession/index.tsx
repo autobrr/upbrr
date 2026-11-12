@@ -312,6 +312,7 @@ export function ReleaseSessionProvider({
     retry: false,
     message: "",
   });
+  const dismissedWorkflowOperations = useRef(new WeakMap<AbortSignal, WorkflowOperationStatus>());
   const observedOperations = useRef(
     new WeakMap<
       AbortSignal,
@@ -553,6 +554,12 @@ export function ReleaseSessionProvider({
     setScreenshotCommand((command) =>
       command?.status === "error" && commandFailureSuperseded(command, current) ? null : command,
     );
+    if (
+      isActiveWorkflowOperation(current.operation) &&
+      current.operation.id !== stateRef.current.workflowView.current?.operation?.id
+    ) {
+      resetCancellationFeedback();
+    }
     dispatch({ type: "workflow_current_published", status, current });
     return current;
   };
@@ -567,6 +574,29 @@ export function ReleaseSessionProvider({
     if (confirmed) storeCancellation(null);
     setCancellationView({ pending: false, retry: false, message });
     request.resolve(confirmed);
+  };
+
+  const resetCancellationFeedback = (
+    controller?: AbortController,
+    previousController?: AbortController,
+  ) => {
+    // An unconfirmed cancellation still belongs to its active operation.
+    if (cancellation.current) return;
+    // Async callers may hold an older render; retain the operation this attempt dismisses.
+    const current = stateRef.current.workflowView.current?.operation;
+    const operation =
+      current?.status === "canceled"
+        ? current
+        : previousController && dismissedWorkflowOperations.current.get(previousController.signal);
+    if (
+      controller &&
+      operation?.status === "canceled" &&
+      !dismissedWorkflowOperations.current.has(controller.signal)
+    ) {
+      dismissedWorkflowOperations.current.set(controller.signal, operation);
+    }
+    setCancellationView({ pending: false, retry: false, message: "" });
+    dispatch({ type: "workflow_attempt_started" });
   };
 
   const requestCancellation = (controller: AbortController) => {
@@ -711,6 +741,7 @@ export function ReleaseSessionProvider({
     ) {
       throw new DOMException("Active input changed.", "AbortError");
     }
+    dismissedWorkflowOperations.current.delete(signal);
     publishWorkflowCurrent(initial, "running");
     let operation = initial.operation;
     if (operation)
@@ -943,7 +974,15 @@ export function ReleaseSessionProvider({
     return attempt.cancellation;
   };
 
-  const failBackendWorkflow = (error: unknown) => {
+  const restoreRejectedCancellation = (controller: AbortController) => {
+    dispatch({
+      type: "workflow_attempt_rejected",
+      operation: dismissedWorkflowOperations.current.get(controller.signal),
+    });
+  };
+
+  const failBackendWorkflow = (error: unknown, rejectedController?: AbortController) => {
+    if (rejectedController) restoreRejectedCancellation(rejectedController);
     const failure = operationFailureFromError(error);
     if (failure?.Code === "missing_prerequisite" && failure.Recovery === "refresh_release") {
       storeWorkflowID("");
@@ -969,7 +1008,11 @@ export function ReleaseSessionProvider({
       throw new Error("Tracker submission is unavailable in this runtime.");
     }
     let current = initial;
-    let nextIntent = intent;
+    // Follow-on stages retain the recorded waiver; an explicit false requests a fresh remote check.
+    let nextIntent: WorkflowIntent = {
+      ...intent,
+      skipRemoteDuplicates: intent.skipRemoteDuplicates ?? initial.dupes?.skipRemote,
+    };
     for (let transition = 0; transition < 32; transition += 1) {
       if (activeAuthority.current.workflowID !== current.workflow.id) {
         throw new DOMException("Active input changed.", "AbortError");
@@ -996,6 +1039,7 @@ export function ReleaseSessionProvider({
       if (signal.aborted || !activeSlotMatches(expectedSlot)) {
         throw new DOMException("Active input changed.", "AbortError");
       }
+      dismissedWorkflowOperations.current.delete(signal);
       await onOperation?.(continued);
       const next = await awaitWorkflowCommand(continued, signal, expectedSlot);
       // Each dry run or live-upload review owns one assessment; retries are explicit.
@@ -1194,6 +1238,7 @@ export function ReleaseSessionProvider({
     abortController("activeInput");
     const controller = attempt?.controller ?? new AbortController();
     controllers.current.workflow = controller;
+    resetCancellationFeedback(controller);
     dispatch({ type: "active_input_loading" });
     const commandID =
       attempt?.correlationID || timestampedCommandID("workflow", state.commandRevision);
@@ -1268,7 +1313,7 @@ export function ReleaseSessionProvider({
       releaseWorkflowController(controller);
       lastWorkflowError.current = error;
       if (!controller.signal.aborted) {
-        failBackendWorkflow(error);
+        failBackendWorkflow(error, controller);
         if (operationFailureFromError(error)?.Recovery === "review_again") {
           await reloadBackendWorkflow(true, controller);
         }
@@ -1287,11 +1332,13 @@ export function ReleaseSessionProvider({
       signal: AbortSignal,
     ) => Promise<ReleaseWorkflowCurrent>,
     callbacks: WorkflowCommandCallbacks = {},
+    previousController?: AbortController,
   ): Promise<boolean> => {
     if (activeAuthority.current.state === "recovering") return false;
     if (!workflowView.current || controllers.current.workflow) return false;
     const controller = new AbortController();
     controllers.current.workflow = controller;
+    resetCancellationFeedback(controller, previousController);
     dispatch({ type: "active_input_loading" });
     const commandID = `workflow-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     let commandAuthority = {
@@ -1323,7 +1370,7 @@ export function ReleaseSessionProvider({
           };
         }
         callbacks.onError?.(error, commandAuthority);
-        failBackendWorkflow(error);
+        failBackendWorkflow(error, controller);
       }
       return false;
     } finally {
@@ -1489,6 +1536,7 @@ export function ReleaseSessionProvider({
     }
     const controller = new AbortController();
     controllers.current.workflow = controller;
+    resetCancellationFeedback(controller);
     dispatch({ type: "active_input_loading" });
     const commandID = `workflow-dupes-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     try {
@@ -1525,17 +1573,32 @@ export function ReleaseSessionProvider({
           ];
         }),
       );
-      const current = await continueBackendGoal(
+      const intent = {
+        trackerIds: [...state.selectedTrackers],
+        projectionInstructions,
+        skipRemoteDuplicates: false,
+      };
+      let current = await continueBackendGoal(
         workflowView.current,
         goal,
-        {
-          trackerIds: [...state.selectedTrackers],
-          projectionInstructions,
-          skipRemoteDuplicates: false,
-        },
+        intent,
         commandID,
         controller.signal,
       );
+      if (
+        goal === "trackers_assessed" &&
+        workflowView.current.dupes &&
+        !current.dupes &&
+        !controller.signal.aborted
+      ) {
+        current = await continueBackendGoal(
+          current,
+          "duplicates_decided",
+          intent,
+          `${commandID}-duplicates`,
+          controller.signal,
+        );
+      }
       releaseWorkflowController(controller);
       if (controller.signal.aborted) return false;
       acceptWorkflowCurrent(current);
@@ -1549,7 +1612,7 @@ export function ReleaseSessionProvider({
       return true;
     } catch (error) {
       releaseWorkflowController(controller);
-      if (!controller.signal.aborted) failBackendWorkflow(error);
+      if (!controller.signal.aborted) failBackendWorkflow(error, controller);
       return false;
     } finally {
       releaseWorkflowController(controller);
@@ -1577,35 +1640,59 @@ export function ReleaseSessionProvider({
     const controller = new AbortController();
     controllers.current.workflow = controller;
     questionnaireController.current = controller;
+    resetCancellationFeedback(controller);
     setQuestionnaireRefresh({ key: questionnaireKey, status: "running", error: "" });
     const expectedInputContentRevision =
       state.inputEditRevision - state.trackerSelectionEditRevision;
     const trackers = [...state.selectedTrackers];
     try {
-      const current = await continueBackendGoal(
+      const reconcileDuplicates =
+        (initial.dupes || initial.continuation?.duplicateReusePending) &&
+        !sameNames(
+          trackers.filter(
+            (tracker) =>
+              !initial.workflow.submissionExclusions?.some(
+                (exclusion) => exclusion.trackerId === tracker,
+              ),
+          ),
+          initial.projections?.projections.map((projection) => projection.trackerId) || [],
+        );
+      const intent: WorkflowIntent = {
+        trackerIds: trackers,
+        // Selection discovers schemas; only explicit Apply/Run may submit local drafts.
+        projectionInstructions: Object.fromEntries(
+          trackers.map((tracker) => [
+            tracker,
+            {
+              ...initial.projectionInstructions?.instructions[tracker],
+              questionnaire: {
+                ...initial.projectionInstructions?.instructions[tracker]?.questionnaire,
+                ...initial.projections?.projections.find(
+                  (projection) => projection.trackerId === tracker,
+                )?.questionnaireAnswers,
+              },
+            },
+          ]),
+        ),
+      };
+      const commandID = timestampedCommandID("workflow-questions", initial.workflow.revision);
+      // Replace the selection before enforcing questions owned by removed trackers.
+      let current = await continueBackendGoal(
         initial,
         "trackers_projected",
-        {
-          trackerIds: trackers,
-          // Selection discovers schemas; only explicit Apply/Run may submit local drafts.
-          projectionInstructions: Object.fromEntries(
-            trackers.map((tracker) => [
-              tracker,
-              {
-                ...initial.projectionInstructions?.instructions[tracker],
-                questionnaire: {
-                  ...initial.projectionInstructions?.instructions[tracker]?.questionnaire,
-                  ...initial.projections?.projections.find(
-                    (projection) => projection.trackerId === tracker,
-                  )?.questionnaireAnswers,
-                },
-              },
-            ]),
-          ),
-        },
-        timestampedCommandID("workflow-questions", initial.workflow.revision),
+        intent,
+        commandID,
         controller.signal,
       );
+      if (reconcileDuplicates) {
+        current = await continueBackendGoal(
+          current,
+          "duplicates_decided",
+          intent,
+          `${commandID}-duplicates`,
+          controller.signal,
+        );
+      }
       if (controller.signal.aborted) return false;
       releaseWorkflowController(controller);
       acceptWorkflowCurrent(current);
@@ -1657,6 +1744,7 @@ export function ReleaseSessionProvider({
             stateRef.current.workflowView.current ||
             initial,
         });
+        restoreRejectedCancellation(controller);
       }
       return false;
     } finally {
@@ -1717,8 +1805,10 @@ export function ReleaseSessionProvider({
     status: "idle" | "cancelled" = "idle",
   ) => {
     (["screenshots", "menuImages", "uploadedImages", "descriptions"] as const).forEach((facet) => {
-      if (!controllers.current[facet]) return;
-      controllers.current[facet]?.abort();
+      const controller = controllers.current[facet];
+      if (!controller) return;
+      restoreRejectedCancellation(controller);
+      controller.abort();
       delete controllers.current[facet];
       dispatch({
         type: "workflow_canceled",
@@ -2025,6 +2115,7 @@ export function ReleaseSessionProvider({
         return false;
       }
       if (!controller.signal.aborted) {
+        restoreRejectedCancellation(controller);
         const pendingCancel =
           candidateAttempt.current?.controller === controller &&
           candidateAttempt.current.cancelRequested;
@@ -2073,6 +2164,7 @@ export function ReleaseSessionProvider({
     abortWorkflowFacets();
     const controller = new AbortController();
     controllers.current.preparation = controller;
+    resetCancellationFeedback(controller);
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
@@ -2146,6 +2238,7 @@ export function ReleaseSessionProvider({
     abortWorkflowFacets();
     const controller = new AbortController();
     controllers.current.preparation = controller;
+    resetCancellationFeedback(controller);
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
@@ -2228,7 +2321,11 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const beginWorkflow = (facet: WorkflowFacet, unavailableReason = ""): WorkflowCommand | null => {
+  const beginWorkflow = (
+    facet: WorkflowFacet,
+    unavailableReason = "",
+    previousController?: AbortController,
+  ): WorkflowCommand | null => {
     if (controllers.current[facet]) return null;
     const revision = Math.max(
       (workflowRevisions.current[facet] || 0) + 1,
@@ -2248,6 +2345,7 @@ export function ReleaseSessionProvider({
     }
     const controller = new AbortController();
     controllers.current[facet] = controller;
+    resetCancellationFeedback(controller, previousController);
     return {
       controller,
       release: { ...state.release },
@@ -2271,6 +2369,7 @@ export function ReleaseSessionProvider({
         revision: command.revision,
         error: operationFailureFromError(error)?.Message || fallbackMessage[facet],
       });
+      restoreRejectedCancellation(command.controller);
     }
   };
 
@@ -2325,10 +2424,11 @@ export function ReleaseSessionProvider({
   });
 
   const loadScreenshotPlan = async (): Promise<boolean> => {
-    // Authority invalidation can leave an older plan request pending.
+    // Authority invalidation can replace a plan request without accepting a new operation.
+    const previousController = controllers.current.screenshots;
     if (state.screenshots.status !== "running") abortController("screenshots");
     setScreenshotCommand(null);
-    const command = beginWorkflow("screenshots", access.screenshots.reason);
+    const command = beginWorkflow("screenshots", access.screenshots.reason, previousController);
     if (!command || !workflowView.current) return false;
     try {
       const workflowPlan = await activePorts.workflow.mediaPlan(
@@ -2414,6 +2514,7 @@ export function ReleaseSessionProvider({
               signal,
             ),
           screenshotCommandCallbacks(true),
+          command.controller,
         );
       }
       return !command.controller.signal.aborted;
@@ -2783,6 +2884,7 @@ export function ReleaseSessionProvider({
     }
     const controller = new AbortController();
     controllers.current.workflow = controller;
+    resetCancellationFeedback(controller);
     dispatch({ type: "active_input_loading" });
     const commandID = `workflow-upload-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     try {
@@ -2816,7 +2918,7 @@ export function ReleaseSessionProvider({
       return true;
     } catch (error) {
       releaseWorkflowController(controller);
-      if (!controller.signal.aborted) failBackendWorkflow(error);
+      if (!controller.signal.aborted) failBackendWorkflow(error, controller);
       return false;
     } finally {
       releaseWorkflowController(controller);
@@ -3516,6 +3618,9 @@ export function ReleaseSessionProvider({
           ? workflowViewValue(workflowView.current.release.release)
           : null,
         readiness: workflowView.current?.inputReadiness || null,
+        retainedReview: workflowView.current?.inputReview
+          ? workflowViewValue(workflowView.current.inputReview)
+          : null,
         trackerData: state.preview?.TrackerData || [],
         source: {
           discCount: workflowView.current?.release?.release.Source.Classification?.DiscCount || 0,
@@ -3585,6 +3690,7 @@ export function ReleaseSessionProvider({
         abortController("preparation");
         const controller = new AbortController();
         controllers.current.preparation = controller;
+        resetCancellationFeedback(controller);
         const sourcePath = state.preparation.sourcePath;
         const commandRevision = state.commandRevision;
         const correlationID = state.preparation.correlationID;

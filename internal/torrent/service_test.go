@@ -143,9 +143,12 @@ func TestCreateHonorsMaxPieceSizeOverride(t *testing.T) {
 
 	dir := t.TempDir()
 	source := filepath.Join(dir, "video.mkv")
-	content := make([]byte, 10<<20)
-	if err := os.WriteFile(source, content, 0o600); err != nil {
-		t.Fatalf("write file: %v", err)
+	// Without the override, the 1,000-piece target chooses 2 MiB pieces.
+	if err := os.WriteFile(source, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(source, 2<<30); err != nil {
+		t.Fatal(err)
 	}
 
 	tmpRoot := t.TempDir()
@@ -759,8 +762,8 @@ func TestCreateRehashBypassesReusableTempTorrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.Path != tmpTorrentPath {
-		t.Fatalf("expected recreated torrent at temp path %s, got %s", tmpTorrentPath, result.Path)
+	if filepath.Dir(result.Path) != filepath.Join(filepath.Dir(tmpTorrentPath), "base-torrents") {
+		t.Fatalf("expected immutable base beneath release owner, got %s", result.Path)
 	}
 	if got := mustStat(t, result.Path).ModTime(); !got.After(past) {
 		t.Fatalf("expected rehash to recreate torrent, modtime %v was not after %v", got, past)
@@ -830,8 +833,8 @@ func TestCreateRehashOverridesNoHashReusableTorrents(t *testing.T) {
 			if err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
-			if result.Path != tmpTorrentPath {
-				t.Fatalf("expected rehash to create temp torrent %s, got %s", tmpTorrentPath, result.Path)
+			if filepath.Dir(result.Path) != filepath.Join(filepath.Dir(tmpTorrentPath), "base-torrents") {
+				t.Fatalf("expected immutable generated base beneath release owner, got %s", result.Path)
 			}
 			if reusablePath != tmpTorrentPath && result.Path == reusablePath {
 				t.Fatalf("expected rehash to ignore reusable torrent %s", reusablePath)
@@ -1627,5 +1630,49 @@ func TestCreateISOFullDiscKeepsOnlyOriginalPayload(t *testing.T) {
 	reused, err := service.Create(t.Context(), subject)
 	if err != nil || reused.InfoHash != result.InfoHash {
 		t.Fatalf("ISO reuse changed content: %+v err=%v", reused, err)
+	}
+}
+
+func TestReusableTorrentCandidatesUseLiteralRetainedDirectory(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"[", "[Group]"} {
+		t.Run(name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "synthetic.mkv")
+			root := filepath.Join(t.TempDir(), name)
+			meta := api.TorrentSubject{SourcePath: source}
+			base, err := TempTorrentPath(root, source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retained := filepath.Join(filepath.Dir(base), "base-torrents")
+			want := []string{base, source + ".torrent"}
+			if got, err := reusableTorrentCandidates(root, meta); err != nil || !slices.Equal(got, want) {
+				t.Fatalf("absent retained directory: got %v, err %v, want %v", got, err, want)
+			}
+			if err := os.Mkdir(retained, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, filename := range []string{"b.torrent", "a.torrent", "other.TORRENT", "note.txt"} {
+				if err := os.WriteFile(filepath.Join(retained, filename), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Mkdir(filepath.Join(retained, "directory.torrent"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			want = []string{base, filepath.Join(retained, "a.torrent"), filepath.Join(retained, "b.torrent"), source + ".torrent"}
+			if got, err := reusableTorrentCandidates(root, meta); err != nil || !slices.Equal(got, want) {
+				t.Fatalf("retained candidate filtering/order: got %v, err %v, want %v", got, err, want)
+			}
+			if err := os.RemoveAll(retained); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(retained, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := reusableTorrentCandidates(root, meta); err == nil {
+				t.Fatal("non-directory retained path error suppressed")
+			}
+		})
 	}
 }

@@ -162,8 +162,12 @@ func (m *cliTUIModel) flow(width, height int) string {
 		if metadataIndex >= 0 {
 			status += "\n" + m.telemetry[metadataIndex].Phase
 		}
-		var partial []string
+		var partial, imageOutcomes []string
 		for _, item := range m.telemetry {
+			if item.Kind == "image_host" {
+				imageOutcomes = append(imageOutcomes, item.Phase)
+				separateProgress = true
+			}
 			if item.Kind == "preparation_phase" && item.Status == api.StageStatusPartial {
 				partial = append(partial, item.Phase)
 			}
@@ -179,6 +183,20 @@ func (m *cliTUIModel) flow(width, height int) string {
 		}
 		if m.view.Debug {
 			status += "\nDebug: tracker submission suppressed."
+		}
+		if len(imageOutcomes) > 0 {
+			if !m.dashboard {
+				status += "\nImage hosts • PgUp/PgDn scroll"
+			}
+			hosts := &m.panels[cliPanelFlow]
+			follow := hosts.AtBottom()
+			hosts.SetWidth(max(1, width))
+			hosts.SetHeight(max(1, height-3-lipgloss.Height(ansi.Wrap(status, max(1, width), ""))))
+			hosts.SetContent(strings.Join(imageOutcomes, "\n"))
+			if follow {
+				hosts.GotoBottom()
+			}
+			status += "\n" + hosts.View()
 		}
 		return status
 	}

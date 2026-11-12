@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -62,7 +63,9 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 	if track, ok := multilingualProgrammeTrack(subject); ok {
 		options := []string{"evenly_split", "unresolved"}
 		for _, language := range track.Languages {
-			options = append(options, "predominant:"+language)
+			if languageutil.IsIdentifiedLanguage(language) {
+				options = append(options, "predominant:"+language)
+			}
 		}
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:      trackers.LanguageQuestionKey(subject, "multilingual_balance_"+track.ID),
@@ -70,7 +73,7 @@ func languageQuestionnaire(input trackers.PreparationInput) *api.TrackerQuestion
 			Kind:     "select",
 			Options:  options,
 			Required: true,
-			Help:     "Review the spoken content: is this one track evenly split between its identified languages, or does one language predominate? Only source-confirmed evenly split content uses MULTIPLE LANGUAGES. A list of languages or their order does not establish balance. This changes naming only and does not permit otherwise prohibited dubs.",
+			Help:     "Review the spoken content: is this one track evenly split between languages, or does one language predominate? Only source-confirmed evenly split content uses MULTIPLE LANGUAGES. If a language predominates, identify that language in Inspected tracks; listing every other language is unnecessary. A list of languages or their order does not establish balance. This changes naming only and does not permit otherwise prohibited dubs.",
 		})
 	}
 	for i := range fields {

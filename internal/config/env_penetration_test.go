@@ -152,7 +152,6 @@ func TestApplyEnvOverridesBadBool(t *testing.T) {
 	}{
 		{"UA_DEFAULT_ONLY_ID", func(c Config) bool { return c.Metadata.OnlyID }, func(c *Config) { c.Metadata.OnlyID = true }},
 		{"UA_DEFAULT_KEEP_IMAGES", func(c Config) bool { return c.Metadata.KeepImages }, func(c *Config) { c.Metadata.KeepImages = true }},
-		{"UA_DEFAULT_PREFER_MAX_16_TORRENT", func(c Config) bool { return c.TorrentCreation.PreferMax16 }, func(c *Config) { c.TorrentCreation.PreferMax16 = true }},
 		{"UA_SONARR_USE", func(c Config) bool { return c.ArrIntegration.UseSonarr }, func(c *Config) { c.ArrIntegration.UseSonarr = true }},
 		{"UA_RADARR_USE", func(c Config) bool { return c.ArrIntegration.UseRadarr }, func(c *Config) { c.ArrIntegration.UseRadarr = true }},
 	}
