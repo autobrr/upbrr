@@ -72,6 +72,8 @@ type workflowUploadPlanBuilder struct {
 }
 
 type workflowUploadExecution struct {
+	diagnostic            bool
+	dupes                 map[api.TrackerID]api.TrackerDupeAssessment
 	sourceManifest        *api.SourceManifest
 	plan                  workflowRetainedUploadPlan
 	clients               api.ClientService
@@ -420,6 +422,8 @@ func (b workflowUploadPlanBuilder) Build(
 		ClientOverrides: descriptionInstructions.Client,
 	}
 	execution := &workflowUploadExecution{
+		diagnostic:            projections.ExecutionMode == api.WorkflowExecutionModeDebug,
+		dupes:                 dupeByTracker,
 		sourceManifest:        sourceManifest,
 		plan:                  retained,
 		clients:               b.clients,
@@ -494,10 +498,7 @@ func (b workflowUploadPlanBuilder) Build(
 			tracker.TorrentFingerprint = torrentFingerprint
 			tracker.Endpoint, tracker.Fields, tracker.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
 			tracker.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
-			if projections.ExecutionMode == api.WorkflowExecutionModeDebug && preparation.Preview.Status == "blocked" {
-				tracker.Warnings = append(tracker.Warnings, "Diagnostic payload only; normal upload is blocked: "+
-					logging.SanitizeMessage(preparation.Preview.Message))
-			}
+			execution.retainDiagnosticOutcomes(&tracker, projection, preparation.Preview)
 			if identityErr != nil || torrentArtifactID == "" {
 				markWorkflowUploadTrackerMissingExactTorrent(&tracker, projection.TrackerID)
 				break
@@ -1151,6 +1152,52 @@ func workflowClientInjectionFingerprint(
 	return fingerprint, nil
 }
 
+// retainDiagnosticOutcomes separates successful payload construction from failed live checks.
+// Rebuild these outcomes from retained evidence and the current preview after every resolution.
+func (e *workflowUploadExecution) retainDiagnosticOutcomes(
+	tracker *api.UploadPlanTracker,
+	projection api.TrackerReleaseProjection,
+	preview api.TrackerDryRunEntry,
+) {
+	if !e.diagnostic {
+		return
+	}
+	dupe, hasDupe := e.dupes[projection.TrackerID]
+	failures := append([]api.WorkflowFailure(nil), projection.Failures...)
+	failures = append(failures, dupe.Failures...)
+	if !releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, hasDupe) && len(failures) == 0 {
+		failures = append(failures, api.WorkflowFailure{
+			Failure: api.OperationFailure{
+				Code:      api.OperationFailureNoEligibleTrackers,
+				Operation: api.OperationKindUploadDryRun,
+				Message:   fmt.Sprintf("Normal upload remains blocked (projection=%s, duplicate=%s).", projection.Readiness, dupe.Decision),
+				Recovery:  api.OperationRecoveryReviewAgain,
+			},
+			TrackerID: projection.TrackerID,
+		})
+	}
+	if preview.Status == "blocked" {
+		message := strings.TrimSpace(preview.Message)
+		if message == "" {
+			message = "Tracker payload validation blocked normal upload."
+		}
+		failures = append(failures, api.WorkflowFailure{
+			Failure: api.OperationFailure{
+				Code:      api.OperationFailureInvalidInput,
+				Operation: api.OperationKindUploadDryRun,
+				Message:   message,
+				Recovery:  api.OperationRecoveryEditInput,
+			},
+			TrackerID: projection.TrackerID,
+		})
+	}
+	for _, failure := range failures {
+		failure.Failure.Message = logging.SanitizeMessage(failure.Failure.Message)
+		tracker.Failures = append(tracker.Failures, failure)
+		tracker.Warnings = append(tracker.Warnings, "Diagnostic payload only: "+failure.Failure.Message)
+	}
+}
+
 func (e *workflowUploadExecution) ResolveAction(
 	ctx context.Context,
 	trackerID api.TrackerID,
@@ -1212,6 +1259,7 @@ func (e *workflowUploadExecution) ResolveAction(
 	} else {
 		updated.Endpoint, updated.Fields, updated.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
 		updated.EditionFeatures = slices.Clone(preparation.Preview.EditionFeatures)
+		e.retainDiagnosticOutcomes(&updated, projection, preparation.Preview)
 		updated.PreparedOperationID, updated.TorrentArtifactID, updated.TorrentFingerprint, err = workflowTrackerArtifactIdentity(
 			trackerID,
 			preparation.TorrentPath,

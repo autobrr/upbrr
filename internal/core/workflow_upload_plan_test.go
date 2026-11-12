@@ -229,15 +229,16 @@ func TestWorkflowUploadExecutionResolveActionReprojectsResolvedPreparation(t *te
 }
 
 type workflowRetainedUploadServiceFake struct {
-	questionnaires map[api.TrackerID]*api.TrackerQuestionnaire
-	projections    []api.TrackerReleaseProjection
-	failures       map[api.TrackerID]trackers.TrackerFailure
-	actions        map[api.TrackerID][]api.RequiredAction
-	resolved       map[string]trackers.RetainedTrackerPreparation
-	torrentPaths   map[api.TrackerID]string
-	results        []trackers.RetainedTrackerResult
-	subject        api.UploadSubject
-	mode           api.WorkflowExecutionMode
+	blockedPreviews map[api.TrackerID]string
+	questionnaires  map[api.TrackerID]*api.TrackerQuestionnaire
+	projections     []api.TrackerReleaseProjection
+	failures        map[api.TrackerID]trackers.TrackerFailure
+	actions         map[api.TrackerID][]api.RequiredAction
+	resolved        map[string]trackers.RetainedTrackerPreparation
+	torrentPaths    map[api.TrackerID]string
+	results         []trackers.RetainedTrackerResult
+	subject         api.UploadSubject
+	mode            api.WorkflowExecutionMode
 }
 
 func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
@@ -265,6 +266,9 @@ func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 					Present: true,
 				}},
 			},
+		}
+		if message := f.blockedPreviews[projection.TrackerID]; message != "" {
+			preparation.Preview.Status, preparation.Preview.Message = "blocked", message
 		}
 		if torrentPath := f.torrentPaths[projection.TrackerID]; torrentPath != "" {
 			preparation.TorrentPath = torrentPath
@@ -2123,6 +2127,9 @@ func TestWorkflowDebugPlanPreservesDeclinedDuplicateAndNoSeed(t *testing.T) {
 			preparedPath := filepath.Join(dir, "prepared.torrent")
 			writeWorkflowRegisteredTorrent(t, preparedPath, "prepared")
 			service := &workflowRetainedUploadServiceFake{torrentPaths: map[api.TrackerID]string{"ALPHA": preparedPath}}
+			if noSeed {
+				service.blockedPreviews = map[api.TrackerID]string{"ALPHA": "Final description rejected"}
+			}
 			clients := &dryRunClientService{}
 			builder := workflowUploadPlanBuilder{
 				resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
@@ -2135,15 +2142,15 @@ func TestWorkflowDebugPlanPreservesDeclinedDuplicateAndNoSeed(t *testing.T) {
 			projections := api.TrackerReleaseProjectionSet{
 				ExecutionMode: api.WorkflowExecutionModeDebug,
 				Projections: []api.TrackerReleaseProjection{{
-					TrackerID: "ALPHA",
- Readiness: api.ReadinessStatusIneligible,
- DiagnosticReady: true,
+					TrackerID:       "ALPHA",
+					Readiness:       api.ReadinessStatusIneligible,
+					DiagnosticReady: true,
 				}},
 			}
 			dupes := api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
 				TrackerID: "ALPHA",
- Decision: api.DupeDecisionAccepted,
- Status: api.StageStatusCompleted,
+				Decision:  api.DupeDecisionAccepted,
+				Status:    api.StageStatusCompleted,
 			}}}
 			plan, execution, err := builder.Build(t.Context(), projections, dupes, workflowDupePrivateEvidence{},
 				api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, api.DescriptionSet{},
@@ -2154,6 +2161,13 @@ func TestWorkflowDebugPlanPreservesDeclinedDuplicateAndNoSeed(t *testing.T) {
 			defer func() { _ = execution.Release() }()
 			if service.mode != api.WorkflowExecutionModeDebug || len(plan.Trackers) != 1 || len(plan.Trackers[0].Files) == 0 {
 				t.Fatalf("diagnostic preparation missing: mode=%s plan=%#v", service.mode, plan)
+			}
+			wantFailures := 1
+			if noSeed {
+				wantFailures++
+			}
+			if len(plan.Trackers[0].Failures) != wantFailures || len(plan.Trackers[0].Warnings) != wantFailures {
+				t.Fatalf("diagnostic outcomes missing: %#v", plan.Trackers[0])
 			}
 			if dupes.Results[0].Decision != api.DupeDecisionAccepted || projections.Projections[0].Readiness != api.ReadinessStatusIneligible {
 				t.Fatal("diagnostic preparation changed live policy outcomes")
@@ -2166,5 +2180,64 @@ func TestWorkflowDebugPlanPreservesDeclinedDuplicateAndNoSeed(t *testing.T) {
 				t.Fatalf("client injections=%d want=%d", len(clients.injections), wantInjections)
 			}
 		})
+	}
+}
+
+func TestWorkflowDebugResolutionRefreshesValidationButRetainsPolicyFailure(t *testing.T) {
+	torrentPath := filepath.Join(t.TempDir(), "diagnostic.torrent")
+	writeWorkflowRegisteredTorrent(t, torrentPath, "EXAMPLE")
+	retained := &workflowRetainedUploadPlanFake{resolved: map[string]trackers.RetainedTrackerPreparation{
+		"EXAMPLE": {
+Tracker: "EXAMPLE",
+ TorrentPath: torrentPath,
+ Preview: api.TrackerDryRunEntry{
+			Status: "blocked",
+ Message: "Final description rejected",
+ Payload: map[string]string{"name": "Example"},
+		},
+},
+	}}
+	execution := &workflowUploadExecution{
+		diagnostic: true,
+ plan: retained,
+ noSeed: true,
+		projections: map[api.TrackerID]api.TrackerReleaseProjection{
+			"EXAMPLE": {
+TrackerID: "EXAMPLE",
+ Readiness: api.ReadinessStatusIneligible,
+ DiagnosticReady: true,
+},
+		},
+		dupes: map[api.TrackerID]api.TrackerDupeAssessment{
+			"EXAMPLE": {
+TrackerID: "EXAMPLE",
+ Decision: api.DupeDecisionAccepted,
+ Status: api.StageStatusCompleted,
+},
+		},
+		trackers: []api.UploadPlanTracker{{TrackerID: "EXAMPLE", Warnings: []string{"stale preparation failure"}}},
+	}
+	for _, blocked := range []bool{true, false} {
+		if !blocked {
+			preparation := retained.resolved["EXAMPLE"]
+			preparation.Preview.Status, preparation.Preview.Message = "ready", ""
+			retained.resolved["EXAMPLE"] = preparation
+		}
+		result, err := execution.ResolveAction(t.Context(), "EXAMPLE", api.RequiredActionResolveTrackerPreparation, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantFailures := 1
+		if blocked {
+			wantFailures++
+		}
+		if !result.Eligible || result.Status != api.StageStatusReady || len(result.Fields) != 1 ||
+			len(result.Failures) != wantFailures || len(result.Warnings) != wantFailures ||
+			result.Failures[0].Failure.Code != api.OperationFailureNoEligibleTrackers {
+			t.Fatalf("resolved diagnostic outcomes: %#v", result)
+		}
+		if blocked && result.Failures[1].Failure.Code != api.OperationFailureInvalidInput {
+			t.Fatalf("validation failure missing: %#v", result.Failures)
+		}
 	}
 }

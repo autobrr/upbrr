@@ -734,6 +734,27 @@ func TestCheckProjectionSetUsesExactCriteriaAndRetainsBlockedClientMatch(t *test
 		clientResult.Search.Scope != "local_client" {
 		t.Fatalf("blocked local-client result = %#v adapter_calls=%d", clientResult, blockedAdapterCalls.Load())
 	}
+	projectionSet.Projections = projectionSet.Projections[:1]
+	projectionSet.Status = api.StageStatusBlocked
+	projectionSet.Failures = []api.WorkflowFailure{{TrackerID: "A", Failure: api.OperationFailure{
+		Code:      api.OperationFailureNoEligibleTrackers,
+		Operation: api.OperationKindDuplicateCheck,
+		Message:   "policy restriction",
+	}}}
+	projectionSet.Projections[0].Readiness = api.ReadinessStatusIneligible
+	projectionSet.Projections[0].DupeReady = false
+	projectionSet.Projections[0].UploadReady = false
+	projectionSet.Projections[0].DiagnosticReady = true
+	for _, diagnostic := range []bool{false, true} {
+		received = api.DuplicateSubject{}
+		_, _, err := service.CheckProjectionSet(t.Context(), api.DuplicateSubject{SourcePath: projectionSet.ReleaseRef.SourcePath}, projectionSet, api.ProjectionDupeCheckOptions{Diagnostic: diagnostic})
+		if err != nil || (received.Projection != nil) != diagnostic {
+			t.Fatalf("diagnostic=%t adapter subject=%+v err=%v", diagnostic, received, err)
+		}
+		if diagnostic && (received.ReleaseName != "Example Release 2026" || received.Projection.DupeReady) {
+			t.Fatalf("diagnostic search changed criteria or granted readiness: %+v", received)
+		}
+	}
 }
 
 func mustDupeFingerprint(t *testing.T, value string) api.WorkflowFingerprint {

@@ -104,9 +104,9 @@ func TestWorkflowTitleSearchDecisionsAndChangedEvidence(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
 			definition := &titleSearchTestDefinition{
-				workflowImageHostPolicyDefinition: workflowImageHostPolicyDefinition{name: "TITLE"},
-				result:                            test.result,
-				calls:                             &calls,
+				name:   "TITLE",
+				result: test.result,
+				calls:  &calls,
 			}
 			registry := trackers.NewRegistry()
 			validation := trackers.WithLanguageAssessment(trackers.NoExtraValidationPolicy("title-test-v1"), titleSearchTestFailures)
@@ -308,9 +308,9 @@ func TestTitleSearchSubtitleInspectionChangesEvidence(t *testing.T) {
 	rows := []api.DupeEntry{{ID: "one", EnglishSubtitlesKnown: true}, {ID: "two", EnglishSubtitlesKnown: true}}
 	complete := dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID}
 	definition := &titleSearchTestDefinition{
-		workflowImageHostPolicyDefinition: workflowImageHostPolicyDefinition{name: "TITLE"},
-		result:                            dupe.ResolvedWithSearch(rows, nil, complete),
-		calls:                             &calls,
+		name:   "TITLE",
+		result: dupe.ResolvedWithSearch(rows, nil, complete),
+		calls:  &calls,
 	}
 	registry := trackers.NewRegistry()
 	if err := registry.RegisterDescriptor(trackers.Descriptor{Name: "TITLE", Definition: definition}); err != nil {
@@ -350,7 +350,7 @@ func TestTitleSearchRetainsFinalNameBoundReviews(t *testing.T) {
 		t.Run(finalName, func(t *testing.T) {
 			calls := 0
 			definition := &titleSearchTestDefinition{
-				workflowImageHostPolicyDefinition: workflowImageHostPolicyDefinition{name: "TITLE"},
+				name: "TITLE",
 				result: dupe.ResolvedWithSearch(
 					nil,
 					nil,
@@ -423,5 +423,53 @@ func TestTitleSearchRetainsFinalNameBoundReviews(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTitleSearchRetainsRequiredDiagnosticQuestionnaire(t *testing.T) {
+	calls := 0
+	definition := &titleSearchTestDefinition{
+		name:   "TITLE",
+		result: dupe.ResolvedWithSearch(nil, nil, dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID}),
+		calls:  &calls,
+	}
+	registry := trackers.NewRegistry()
+	validation := trackers.WithLanguageAssessment(trackers.NoExtraValidationPolicy("required-input-test"), func(api.TrackerValidationSubject) []api.RuleFailure {
+		return []api.RuleFailure{{
+			Rule:        "policy",
+			Reason:      "policy restriction",
+			Disposition: api.RuleDispositionStrict,
+			DebugBypass: true,
+		}}
+	})
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:       "TITLE",
+		Definition: definition,
+		Validation: validation,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	initial := api.TrackerReleaseProjectionSet{
+		ExecutionMode: api.WorkflowExecutionModeDebug,
+		Projections: []api.TrackerReleaseProjection{{
+			TrackerID:       "TITLE",
+			Readiness:       api.ReadinessStatusBlocked,
+			RequiredActions: []api.RequiredAction{{Kind: api.RequiredActionAnswerQuestionnaire, TrackerID: "TITLE"}},
+			Questionnaire:   []api.TrackerQuestionnaireRequirement{{Key: "exception_note", Required: true}},
+		}},
+	}
+	builder := workflowPreflightBuilder{registry: registry, logger: api.NopLogger{}}
+	_, got, err := builder.assessTitleSearchRules(t.Context(), api.UploadSubject{Identity: api.ExternalIdentity{
+		SourcePath: filepath.Join(t.TempDir(), "example.mkv"),
+		Generation: 1,
+		TMDBID:     123,
+		Category:   api.CanonicalCategoryMovie,
+	}}, initial, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := got.Projections[0]
+	if calls != 1 || projection.DiagnosticReady || projection.UploadReady || len(projection.Questionnaire) != 1 || !slices.ContainsFunc(projection.RequiredActions, func(action api.RequiredAction) bool { return action.Kind == api.RequiredActionAnswerQuestionnaire }) {
+		t.Fatalf("title evidence removed required construction input: %+v calls=%d", projection, calls)
 	}
 }

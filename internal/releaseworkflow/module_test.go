@@ -5983,3 +5983,24 @@ func TestPreparationSubstepCountersDoNotMixWithStageOrder(t *testing.T) {
 		t.Fatalf("mixed counter units: %#v", status)
 	}
 }
+
+func TestUploadDryRunReportsRetainDiagnosticCheckFailuresWithPayload(t *testing.T) {
+	failure := api.WorkflowFailure{TrackerID: "EXAMPLE", Failure: api.OperationFailure{
+		Code: api.OperationFailureInvalidInput,
+ Operation: api.OperationKindUploadDryRun,
+		Message: "Final description rejected",
+ Recovery: api.OperationRecoveryEditInput,
+	}}
+	reports := uploadDryRunReports([]api.UploadPlanTracker{{
+		TrackerID: "EXAMPLE",
+ Status: api.StageStatusReady,
+ Eligible: true,
+		Fields:   []api.UploadPlanField{{Key: "name", Value: "Example"}},
+		Failures: []api.WorkflowFailure{failure},
+ Warnings: []string{"Diagnostic payload only"},
+	}})
+	if len(reports) != 1 || reports[0].Status != api.StageStatusCompleted || len(reports[0].Fields) != 1 ||
+		len(reports[0].Failures) != 1 || reports[0].Failures[0] != failure || len(reports[0].Warnings) != 1 {
+		t.Fatalf("diagnostic report lost structured failed check or payload: %#v", reports)
+	}
+}

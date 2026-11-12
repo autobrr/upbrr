@@ -4,6 +4,7 @@
 package unit3d
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -91,33 +92,7 @@ func TestFinalDescriptionValidationRunsAfterAppendix(t *testing.T) {
 }
 
 func TestDebugFinalDescriptionFailureRetainsPayload(t *testing.T) {
-	mediaPath := filepath.Join(t.TempDir(), "mediainfo.txt")
-	if err := os.WriteFile(mediaPath, []byte("General\nFormat: Matroska"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	input := trackers.PreparationInput{
-		Tracker:       "EXAMPLE",
-		TrackerConfig: config.TrackerConfig{APIKey: "test-key"},
-		Projection: &api.TrackerReleaseProjection{
-			TrackerID:         "EXAMPLE",
-			UploadReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
-			Readiness:         api.ReadinessStatusReady,
-			UploadReady:       true,
-			DiagnosticReady:   true,
-		},
-		Meta: api.UploadSubject{
-			TorrentPath:       filepath.Join(t.TempDir(), "example.torrent"),
-			MediaInfoTextPath: mediaPath,
-			Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 1234567},
-			Type:              "WEBDL",
-			Release:           api.ReleaseInfo{Resolution: "1080p"},
-			Assessments:       api.ReleaseAssessments{MediaInfoEncodeSettings: api.EncodeSettingsStatusPresent},
-		},
-		Assets: &trackers.DescriptionAssets{Description: "description", Final: true},
-	}
-	if err := os.WriteFile(input.Meta.TorrentPath, []byte("synthetic torrent"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	input := diagnosticUploadTestInput(t)
 	want := errors.New("missing final assets")
 	profile := SiteProfile{ValidateFinalDescription: func(api.UploadSubject, string, string, string) error { return want }}
 	if _, err := buildUploadDryRunUnit3D(t.Context(), input, "https://tracker.example.invalid", profile); !errors.Is(err, want) {
@@ -158,5 +133,96 @@ func TestDebugFinalDescriptionFailureRetainsPayload(t *testing.T) {
 	}
 	if _, err := plan.Submit(t.Context()); !errors.Is(err, trackers.ErrPlanNotSubmittable) || submission.OutcomeOf(err) != submission.NotSent {
 		t.Fatal("debug definition permitted a tracker submission")
+	}
+}
+
+func diagnosticUploadTestInput(t *testing.T) trackers.PreparationInput {
+	t.Helper()
+	mediaPath := filepath.Join(t.TempDir(), "mediainfo.txt")
+	if err := os.WriteFile(mediaPath, []byte("General\nFormat: Matroska"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input := trackers.PreparationInput{
+		Tracker:       "EXAMPLE",
+		TrackerConfig: config.TrackerConfig{APIKey: "test-key"},
+		Projection: &api.TrackerReleaseProjection{
+			TrackerID:         "EXAMPLE",
+			UploadReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+			Readiness:         api.ReadinessStatusReady,
+			UploadReady:       true,
+			DiagnosticReady:   true,
+		},
+		Meta: api.UploadSubject{
+			TorrentPath:       filepath.Join(t.TempDir(), "example.torrent"),
+			MediaInfoTextPath: mediaPath,
+			Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 1234567},
+			Type:              "WEBDL",
+			Release:           api.ReleaseInfo{Resolution: "1080p"},
+			Assessments:       api.ReleaseAssessments{MediaInfoEncodeSettings: api.EncodeSettingsStatusPresent},
+		},
+		Assets: &trackers.DescriptionAssets{Description: "description", Final: true},
+	}
+	if err := os.WriteFile(input.Meta.TorrentPath, []byte("synthetic torrent"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return input
+}
+
+type disappearingAttachmentLogger struct {
+	api.NopLogger
+	t     *testing.T
+	field string
+	path  string
+}
+
+func (l disappearingAttachmentLogger) Debugf(format string, _ ...any) {
+	if strings.Contains(format, "attaching "+l.field+" file") {
+		if err := os.Remove(l.path); err != nil {
+			l.t.Fatal(err)
+		}
+	}
+}
+
+func TestDebugUploadChecksAttachmentReads(t *testing.T) {
+	for _, field := range []string{"torrent", "NFO"} {
+		for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
+			t.Run(field+"/"+string(mode), func(t *testing.T) {
+				input := diagnosticUploadTestInput(t)
+				input.Intent = trackers.PreparationIntentUpload
+				input.ExecutionMode = mode
+				path := input.Meta.TorrentPath
+				if field == "NFO" {
+					path = filepath.Join(t.TempDir(), "example.nfo")
+					if err := os.WriteFile(path, []byte("synthetic NFO"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					input.Meta.SceneNFOPath = path
+				}
+				input.Logger = disappearingAttachmentLogger{
+t: t,
+ field: field,
+ path: path,
+}
+				plan, failure := trackers.PrepareAdapter(t.Context(), input, nil, func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+					return prepareUnit3DUpload(ctx, req, "https://tracker.example.invalid")
+				})
+				if mode == api.WorkflowExecutionModeNormal {
+					if failure == nil {
+						t.Fatal("normal preparation ignored unreadable attachment")
+					}
+					return
+				}
+				if failure != nil {
+					t.Fatal(failure)
+				}
+				preview := plan.DryRun()
+				if preview.Status != "blocked" || !strings.Contains(preview.Message, "open multipart file") || preview.Payload["description"] != "description" {
+					t.Fatalf("diagnostic preview: %+v", preview)
+				}
+				if _, err := plan.Submit(t.Context()); !errors.Is(err, trackers.ErrPlanNotSubmittable) {
+					t.Fatalf("debug submission: %v", err)
+				}
+			})
+		}
 	}
 }

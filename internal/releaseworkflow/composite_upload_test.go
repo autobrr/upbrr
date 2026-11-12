@@ -3019,9 +3019,6 @@ func compositeUploadReadyPreflightBuilder(t *testing.T) TrackerPreflightBuilder 
 	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
 		assessment, finalized, err := base.Build(ctx, subject, catalog, runtime, initial, now)
 		if err != nil {
-			return assessment, finalized, fmt.Errorf("build diagnostic preflight: %w", err)
-		}
-		if err != nil {
 			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("build composite upload test preflight: %w", err)
 		}
 		assessment.ExecutionMode = initial.ExecutionMode
@@ -3041,9 +3038,6 @@ func compositeUploadNameReviewPreflightBuilder(t *testing.T) TrackerPreflightBui
 		now time.Time,
 	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
 		assessment, finalized, err := base.Build(ctx, subject, catalog, runtime, initial, now)
-		if err != nil {
-			return assessment, finalized, fmt.Errorf("build diagnostic preflight: %w", err)
-		}
 		if err != nil {
 			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("build name-review composite preflight: %w", err)
 		}
@@ -3082,9 +3076,6 @@ func compositeUploadAuthBlockedPreflightBuilderFor(
 		now time.Time,
 	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
 		assessment, finalized, err := base.Build(ctx, subject, catalog, runtime, initial, now)
-		if err != nil {
-			return assessment, finalized, fmt.Errorf("build diagnostic preflight: %w", err)
-		}
 		if err != nil {
 			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("build auth-blocked composite preflight: %w", err)
 		}

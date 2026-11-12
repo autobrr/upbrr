@@ -181,10 +181,11 @@ func prepareUnit3DUpload(
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	if req.Intent != trackers.PreparationIntentUpload || api.NormalizeWorkflowExecutionMode(req.ExecutionMode) == api.WorkflowExecutionModeDebug {
+	debug := api.NormalizeWorkflowExecutionMode(req.ExecutionMode) == api.WorkflowExecutionModeDebug
+	if req.Intent != trackers.PreparationIntentUpload && !debug {
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
-	if !strings.EqualFold(preview.Status, "ready") {
+	if !debug && !strings.EqualFold(preview.Status, "ready") {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s upload blocked: %s", preview.Tracker, preview.Message)
 	}
 	reportGuidance := apiKeyGuidanceReporter(ctx, req, firstSiteProfile(profiles).APIKeyGuidance)
@@ -197,6 +198,13 @@ func prepareUnit3DUpload(
 	torrentPath := preparedFilePath(preview.Files, "torrent")
 	nfoPath := preparedFilePath(preview.Files, "nfo")
 	payload, contentType, err := buildMultipartPayload(preview.Payload, torrentPath, nfoPath, logger)
+	if debug {
+		if err != nil {
+			preview.Status = "blocked"
+			preview.Message = strings.TrimSpace(preview.Message + "; " + err.Error())
+		}
+		return trackers.NewPreparedOperation(preview, nil, nil), nil
+	}
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}

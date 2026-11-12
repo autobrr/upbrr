@@ -341,12 +341,13 @@ type RetainedTrackerResult struct {
 // RetainedUploadPlan owns exact single-use tracker plans produced by one
 // preparation barrier. It is process-local execution authority.
 type RetainedUploadPlan struct {
-	service  *Service
-	meta     api.UploadSubject
-	slots    []trackerPlanSlot
-	mu       sync.Mutex
-	executed bool
-	released bool
+	executionMode api.WorkflowExecutionMode
+	service       *Service
+	meta          api.UploadSubject
+	slots         []trackerPlanSlot
+	mu            sync.Mutex
+	executed      bool
+	released      bool
 }
 
 // PrepareRetainedUploadPlan captures operations from exact reviewed projections.
@@ -405,9 +406,10 @@ func (s *Service) PrepareRetainedUploadPlan(
 		return nil, fmt.Errorf("trackers: retained upload preparation: %w", err)
 	}
 	return &RetainedUploadPlan{
-		service: s,
-		meta:    meta,
-		slots:   slots,
+		executionMode: api.NormalizeWorkflowExecutionMode(mode),
+		service:       s,
+		meta:          meta,
+		slots:         slots,
 	}, nil
 }
 
@@ -554,6 +556,9 @@ func (p *RetainedUploadPlan) execute(
 	if p == nil || p.service == nil {
 		return nil, ErrPlanNotSubmittable
 	}
+	if p.executionMode == api.WorkflowExecutionModeDebug {
+		return nil, submission.NewError(submission.NotSent, ErrPlanNotSubmittable)
+	}
 	p.mu.Lock()
 	if p.released {
 		p.mu.Unlock()
@@ -571,10 +576,6 @@ func (p *RetainedUploadPlan) execute(
 	if err != nil {
 		p.mu.Unlock()
 		return nil, err
-	}
-	if slices.ContainsFunc(selectedSlots, func(slot trackerPlanSlot) bool { return slot.plan.executionMode == api.WorkflowExecutionModeDebug }) {
-		p.mu.Unlock()
-		return nil, submission.NewError(submission.NotSent, ErrPlanNotSubmittable)
 	}
 	p.executed = true
 	p.mu.Unlock()

@@ -220,6 +220,7 @@ type canceledPreparationDefinition struct {
 }
 
 type retainedProjectionDefinition struct {
+	failure        *PreparationFailure
 	name           string
 	prepared       *atomic.Int32
 	submitted      *atomic.Int32
@@ -259,6 +260,9 @@ func (d retainedProjectionDefinition) UploadArtifactPolicy() *UploadArtifactPoli
 
 func (d retainedProjectionDefinition) Prepare(ctx context.Context, input PreparationInput) (TrackerPlan, *PreparationFailure) {
 	d.prepared.Add(1)
+	if d.failure != nil {
+		return TrackerPlan{}, d.failure
+	}
 	return prepareTestDefinition(ctx, input, d)
 }
 
@@ -1059,5 +1063,35 @@ func TestRetainedQuestionnaireFailurePreservesSafeReviewWithoutSubmission(t *tes
 	preparation.Preview.Questionnaire.Fields[0].Options[0] = "mutated"
 	if next := retainedTrackerPreparation(slot); next.Preview.Questionnaire.Fields[0].Options[0] != "example" {
 		t.Fatal("published questionnaire shares storage with retained failure")
+	}
+}
+
+func TestDebugRetainedPlanRejectsExecutionAfterPreparationFailure(t *testing.T) {
+	t.Parallel()
+	var prepared atomic.Int32
+	registry := NewRegistry()
+	if err := registry.Register(retainedProjectionDefinition{
+		name:     "EXAMPLE",
+		prepared: &prepared,
+		failure:  NewPreparationFailure("EXAMPLE", "failed", "synthetic preparation failure", nil),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewServiceWithRegistry(trackerTestConfig(t, config.Config{}), nil, nil, registry)
+	retained, err := service.PrepareRetainedUploadPlan(t.Context(), api.UploadSubject{SourcePath: "Example.Release"}, []api.TrackerReleaseProjection{{TrackerID: "EXAMPLE", DiagnosticReady: true}}, api.WorkflowExecutionModeDebug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = retained.Release() }()
+	if preparations := retained.Preparations(); len(preparations) != 1 || preparations[0].Failure == nil {
+		t.Fatalf("preparations: %+v", preparations)
+	}
+	for range 2 {
+		if results, err := retained.ExecuteSelected(t.Context(), []string{"EXAMPLE"}); !errors.Is(err, ErrPlanNotSubmittable) || submission.OutcomeOf(err) != submission.NotSent || len(results) != 0 {
+			t.Fatalf("selected execution: %+v, %v", results, err)
+		}
+		if results, err := retained.Execute(t.Context()); !errors.Is(err, ErrPlanNotSubmittable) || submission.OutcomeOf(err) != submission.NotSent || len(results) != 0 {
+			t.Fatalf("execution: %+v, %v", results, err)
+		}
 	}
 }

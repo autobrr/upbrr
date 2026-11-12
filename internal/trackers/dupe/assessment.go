@@ -563,7 +563,7 @@ func (a Assessment) rebindEquivalentMetadata(
 			assessmentBinding(original, tracker, trackerConfig) != entry.binding {
 			return Assessment{}, false
 		}
-		next, err := duplicateSubjectForProjection(meta, tracker, byTracker)
+		next, err := duplicateSubjectForProjection(meta, tracker, byTracker, false)
 		if err != nil || containsTracker(next.MatchedTrackers, tracker) {
 			return Assessment{}, false
 		}

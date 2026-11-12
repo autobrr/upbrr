@@ -212,7 +212,7 @@ func (s *Service) checkWithAssessment(
 					Message:    "searching",
 					Total:      total,
 				})
-				trackerMeta, projectionErr := duplicateSubjectForProjection(meta, job.tracker, projections)
+				trackerMeta, projectionErr := duplicateSubjectForProjection(meta, job.tracker, projections, options.Diagnostic)
 				if projectionErr != nil {
 					checkedAt := time.Now().UTC()
 					result := notRunPublicResult(job.tracker, NotRunMissingMetadata, projectionErr.Error(), checkedAt)
@@ -325,6 +325,7 @@ func duplicateSubjectForProjection(
 	meta api.DuplicateSubject,
 	tracker string,
 	projections map[string]api.TrackerReleaseProjection,
+	diagnostic bool,
 ) (api.DuplicateSubject, error) {
 	if projections == nil {
 		return meta, nil
@@ -390,7 +391,7 @@ func duplicateSubjectForProjection(
 	if value := strings.TrimSpace(criteria.Date); value != "" {
 		meta.DailyEpisodeDate = value
 	}
-	if !projection.DupeReady || projection.Readiness != api.ReadinessStatusReady {
+	if (!projection.DupeReady || projection.Readiness != api.ReadinessStatusReady) && (!diagnostic || !projection.DiagnosticReady) {
 		return meta, errors.New("tracker projection is not duplicate-ready")
 	}
 	return meta, nil
