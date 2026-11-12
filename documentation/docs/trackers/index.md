@@ -40,9 +40,9 @@ Tracker adapters normalize duplicate results into a common review surface. A tra
 - a not-run result with a reason, such as missing auth or metadata;
 - an attempted search failure.
 
-Warnings that permit an override can block a live upload while allowing debug preparation. Strict constructibility failures block every mode. Non-submitting debug execution preserves the explicit language-eligibility bypass and displays the bypassed assessment. Subjective or incomplete tracker rules remain visible for review.
+Warnings that permit an override can block a live upload while allowing debug preparation. Strict constructibility failures block every mode. Debug retains the actual blocked or failed assessment and can continue diagnostic payload preparation when its inputs are available; it never grants submission authority. Subjective or incomplete tracker rules remain visible for review.
 
-Tracker settings can restrict duplicate competition by incoming release group. When a tag matches that tracker's **Duplicate bypass groups** or **Internal groups**, confirmed candidates from other groups coexist and are omitted from slot-capacity decisions. Exact duplicates, same-group candidates, conflicting evidence, and unknown groups keep their normal duplicate result. See [tracker group policy lists](../web-ui/settings/trackers.md#group-policy-lists).
+Tracker settings can restrict duplicate competition by incoming release group. When a tag matches that tracker's **Same-group duplicate-check groups** or **Internal release groups**, confirmed candidates from other groups coexist and are omitted from slot-capacity decisions. Exact duplicates, same-group candidates, conflicting evidence, and unknown groups keep their normal duplicate result. See [tracker group policy lists](../web-ui/settings/trackers.md#group-policy-lists).
 
 A completed search with no matches can still require duplicate-policy review when ordinary-slot eligibility, source availability, or staff-owned decisions are unresolved. Review these reasons alongside potential duplicates. Acknowledgement records your decision for the current evidence; it does not establish tracker staff approval or missing source evidence. Changing the reviewed name, relevant facts, or review reasons requires a new decision.
 
@@ -54,9 +54,9 @@ Duplicate checks use structured 3D labels when available. Release-name fallback 
 
 Some tracker warnings permit an explicit override. On **Dupe Check**, read the warnings on the affected tracker's card. Turn on **Acknowledge tracker warnings** only after deciding that the release is appropriate for that tracker. The warning details remain visible while acknowledged.
 
-Approval applies only to that tracker and its current warning set. After the initial duplicate check, changing its warning toggle rechecks only that tracker when eligible. Other trackers keep their fresh, unchanged duplicate evidence and decisions. Turning the toggle off withdraws approval and skips that tracker's search until it is eligible again. Changed inputs, configuration, or expired evidence still require fresh checks. Changed warnings or a new prepared generation require renewed approval. Strict failures cannot be waived for a live upload. Debug may bypass the explicitly identified language-eligibility assessments, but never authorizes tracker submission.
+Approval applies only to that tracker and its current warning set. After the initial duplicate check, changing its warning toggle rechecks only that tracker when eligible. Other trackers keep their fresh, unchanged duplicate evidence and decisions. Turning the toggle off withdraws approval and skips that tracker's search until it is eligible again. Changed inputs, configuration, or expired evidence still require fresh checks. Changed warnings or a new prepared generation require renewed approval. Strict failures cannot be waived for a live upload. Debug can continue diagnostic preparation while preserving the real assessment; it never authorizes tracker submission.
 
-The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug mode bypasses warnings that permit an override and explicitly marked language-eligibility assessments; bypass details remain visible.
+The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug can continue diagnostic preparation after an approval is declined when required inputs are available; unresolved construction requirements still block the affected preparation.
 
 ### Blocking reasons and warnings
 
@@ -80,11 +80,11 @@ Ordinary audio tracks contribute their inspected languages without needing an "O
 
 Correct language and other factual evidence on **Input**. Naming overrides and warning acknowledgements do not change media facts. An acknowledgement applies only to its tracker and current prepared generation; it cannot clear an independent strict finding. Changed evidence requires renewed review.
 
-Do not modify another group's release to address a prohibited extra programme dub; use a compliant source instead. Track-removal advice applies only to your own **personal release**. For a personal release, the finding may recommend creating a separate remux when original programme audio can safely remain. Keep original audio and permitted secondary tracks; do not strip complete retail discs or remove a release's only programme audio. If safe removal is not established, use a compliant source instead. Prepare the new file or source again so metadata and tracker checks use fresh evidence. Other tracker requirements still apply. upbrr does not remove or remux tracks automatically.
+When source contents fail a destination's rules, review those rules before selecting or preparing a corrected source. upbrr does not remove or remux media tracks automatically.
 
 ### Media analysis
 
-The release-level audio name describes a selected track. A destination may also flag features found on other inspected non-commentary tracks; changing the audio name does not establish those features. After updating, prepare saved releases again to rebuild inspected audio evidence. Some destinations require a nonempty MediaInfo Unique ID for non-disc MKV sources. If this check fails, use a source with the required metadata and prepare it again.
+The release-level audio name describes a selected track. A destination may also flag features found on other inspected non-commentary tracks; changing the audio name does not establish those features. After updating, prepare saved releases again to rebuild inspected audio evidence. Missing required container evidence can block a destination; follow its displayed finding and current rules, then prepare corrected source evidence again.
 
 Partial-season sources retain explicit part labels or source episode ranges in generated names. Known episode membership comes from included filenames; unidentified or conflicting members remain unverified. A part number never implies an episode range, and identifying every included episode does not prove a complete season. Duplicate checks distinguish verified disjoint membership from overlapping coverage. Tracker restrictions and explicit overrides still apply.
 
@@ -96,7 +96,7 @@ Non-disc pack preparation uses the selected primary video’s MediaInfo report. 
 
 On **Dupe Checking**, open **Tracker questions** for a selected tracker, review any required fields, and choose **Apply tracker answers**. Loading the questions uses existing prepared facts without contacting the tracker. Applying answers refreshes the assessment; it does not upload or start another duplicate search. Unanswered required fields block only their tracker, and unapplied edits must be applied before dry runs or uploads. See [the questionnaire workflow](../workflow/index.md#tracker-questions) for retained duplicate evidence and questions discovered during preparation.
 
-Questions remain for genuine upload inputs, naming choices and ambiguous track associations that available metadata cannot supply. Available provider genres can supply genre tags automatically; unsupported or missing defaults may use a supported fallback provider. Explicit tag answers and genre corrections, including clears, take precedence. An optional tag field may remain empty when the destination can obtain genres from its metadata provider. Required fields with supplied values are identified separately from missing answers; optional controls do not require a response. Correct missing canonical facts on **Input**. An answer cannot waive an independent prohibited or staff-only finding. Existing debug-mode policy bypasses also leave eligibility-only questions optional; evidence needed to construct names, payloads or required descriptions remains necessary.
+Questions remain for genuine upload inputs, naming choices and ambiguous track associations that available metadata cannot supply. Available provider genres can supply genre tags automatically; unsupported or missing defaults may use a supported fallback provider. Explicit tag answers and genre corrections, including clears, take precedence. An optional tag field may remain empty when the destination can obtain genres from its metadata provider. Required fields with supplied values are identified separately from missing answers; optional controls do not require a response. Correct missing canonical facts on **Input**. An answer cannot waive an independent prohibited or staff-only finding. Debug can preserve an eligibility failure while continuing diagnostic preparation; evidence needed to construct names, payloads or required descriptions remains necessary.
 
 Where supported, an opt-in class-based replacement setting exposes an explicit intended-replacement choice and optional reason in tracker questions. The setting alone does not approve a replacement: review the current release and duplicate evidence, then confirm upload as usual. Changing the source generation requires a fresh intention. Exact duplicates and files already present in the client keep their existing protections. Staff-managed authorization remains site-side and requires no token value in these controls. Unattended operation does not supply missing confirmations.
 
@@ -106,7 +106,7 @@ Automatic downscale markers require explicit evidence in the source name; output
 
 upbrr resolves upload and search names before duplicate checking. Review the projected name for every selected tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time. Manual naming controls are presentation choices and do not grant upload eligibility or replace required factual evidence.
 
-Correct `PROPER`, `REPACK`, their supported numbered variants, or `RERIP` with the independent **Release version** control on **Input**, then refresh metadata and review the projected names again. Clearing **Edition** does not clear the release version; see [Input corrections](../web-ui/index.md#correct-input-facts) for **None**, **Auto**, and the legacy **No edition** behavior.
+Correct `PROPER`, `REPACK`, `PROPER2`, `PROPER3`, `REPACK2`, `REPACK3`, or `RERIP` with the independent **Release version** control on **Input**, then refresh metadata and review the projected names again. Clearing **Edition** does not clear the release version; see [Input corrections](../web-ui/index.md#correct-input-facts) for **None**, **Auto**, and the legacy **No edition** behavior.
 
 Automatic title and year sources can differ by destination. A required title must come from matching metadata for the current release; missing or outdated evidence blocks that name instead of silently substituting another provider. Refresh metadata and prepare the release again when requested. Explicit manual titles and complete name overrides remain authoritative, while an automatic duplicate-search name can still require its own provider evidence. These naming choices do not change the shared release facts or another destination's name. TV series-year disambiguation can use a different provider from the primary title. Established evidence may add or omit an automatic series year; manual title choices remain authoritative.
 
@@ -135,12 +135,6 @@ Region and distributor fields accept supported suggestions or explicit numeric I
 ### Diagnostics
 
 For a tracker defect, follow [troubleshooting guidance](../troubleshooting/index.md) and collect only the relevant sanitized excerpt. upbrr is intended to redact credentials automatically, but inspect every log and remove any remaining credentials, cookies, tokens, private URLs and unrelated personal information before sharing.
-
-### BHD NFOs
-
-BHD sends an available local scene NFO through the dedicated `nfo` upload field without changing the reviewed description. NFO content is captured during upload preparation; an unreadable supplied NFO or content larger than 8 MiB blocks preparation. Uploads without NFO content omit the optional field.
-
-Scene NFOs must stay within the database-adjacent `nfo` storage, including any symlink targets. Safe nested paths and links within that storage remain usable; a supplied NFO outside it blocks BHD preparation.
 
 ## Image hosts and clients
 

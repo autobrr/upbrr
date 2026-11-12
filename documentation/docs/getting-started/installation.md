@@ -44,6 +44,8 @@ FFmpeg is required for screenshot generation.
 - **Linux:** install FFmpeg through your distribution package manager.
 - **macOS:** install with Homebrew using `brew install ffmpeg`, then start upbrr from an environment that includes Homebrew's binary directory.
 
+Screenshots from [supported decrypted 3D Blu-ray ISOs](../cli/index.md#decrypted-3d-blu-ray-iso-input) require FFmpeg with the `bluray:` input protocol provided by libbluray. Ordinary FFmpeg availability does not prove that capability.
+
 Automatic DVD menu capture has stricter requirements. The selected FFmpeg must expose the `dvdvideo` demuxer and its menu-coordinate options. upbrr checks this at runtime; a version number alone does not prove support.
 
 ## Docker Compose

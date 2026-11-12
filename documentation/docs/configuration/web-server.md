@@ -40,11 +40,15 @@ Supported environment variables:
 | `UPBRR_WEB_OPEN_BROWSER`    | Whether to open a browser at startup                |
 | `UPBRR_WEB_TRUSTED_PROXIES` | Comma-separated trusted proxy addresses or networks |
 
-Use `--persist-web-config` to save the full effective `serve` configuration, including listen settings. To save only an explicitly supplied `--addr`, `--host`, or `--port`, use `--persist-listen` instead. Persistence happens after the listener binds successfully.
+Use `--persist-web-config` to save the full effective `serve` configuration, including listen settings. To save only an explicitly supplied `--addr`, `--host`, or `--port`, use `--persist-listen` instead. Persistence happens after the listener binds successfully. `--persist-listen` requires an explicit listen flag; `--persist-web-config` requires a supplied listen/base setting or one of the supported environment variables. These checks apply even when the persistence flag is explicitly false.
+
+The persisted `web-config.json` keys are `host`, `port`, `open_browser`, `trusted_proxies` (an array), `base_url`, and `session_ttl` (minutes). Only `session_ttl` has no CLI/environment override; a missing or nonpositive value uses 1,440 minutes. Stop the server before editing this file manually, then restart to load it. Listener state is separate from application configuration import/export.
 
 ```powershell
 .\upbrr.exe serve --host 127.0.0.1 --port 7480 --persist-listen
 ```
+
+`--base-url` accepts an absolute `http://` or `https://` URL without user information, or a path prefix. `/` selects the root deployment; an explicitly empty CLI or environment value is rejected. An omitted setting can use the stored/default root deployment. Query strings and fragments are discarded; do not use them to configure routing. Protocol-relative URLs and path traversal are rejected.
 
 ## First-run authentication and browse policy
 

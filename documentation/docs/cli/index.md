@@ -10,16 +10,17 @@ upbrr [options] <input path>...
 upbrr serve [options]
 upbrr api-token <list|revoke> [options]
 upbrr auth <password|browse-roots> [options]
+upbrr recover [options]
 upbrr live-test <init|cleanup> [options]
 ```
 
 On Windows, examples use `upbrr.exe`. Put options before input paths for consistent behavior across commands. Use `--` to end option parsing when a path begins with a hyphen or could be mistaken for an option value.
 
-Upload, `serve`, `auth`, and `api-token` options accept either one or two leading hyphens, including the aliases below. The exception is `--console-log-level`, which requires two hyphens for its full name; `-cll` and `--cll` also work. Boolean options can use `=true` or `=false`; use the equals sign instead of a separate value. The `-hc` language shorthand has additional forms described under [Subtitle review](#subtitle-review).
+Upload, `serve`, `recover`, `auth`, and `api-token` options accept either one or two leading hyphens, including the aliases below. The exception is `--console-log-level`, which requires two hyphens for its full name; `-cll` and `--cll` also work. Command and option names are case-sensitive, including `--onlyID` and underscores in `--skip_auto_torrent`, `--manual_frames`, `--comparison_index`, and `--unattended_confirm`. Aliases also accept two hyphens, for example `--tk`. Boolean options accept `true`, `false`, `1`, `0`, `t`, `f`, `T`, `F`, `TRUE`, `FALSE`, `True`, or `False` after `=`; a bare boolean option means true. Use the equals sign instead of a separate value. The `-hc` language shorthand has additional forms described under [Subtitle review](#subtitle-review).
 
-Omitted correction flags preserve saved values, and omitted configuration overrides use the active configuration. Workflow switches such as `--debug`, `--no-seed`, and `--unattended` are off unless enabled. Numeric and audio-selection defaults are noted below.
+Omitted correction flags preserve saved values, and omitted configuration overrides use the active configuration. Workflow switches such as `--debug`, `--no-seed`, and `--unattended` are off unless enabled. `--hdr-boundary-audio` defaults to true within bounded HDR mode. Non-correction boolean overrides use the configured value when omitted. Numeric and audio-selection defaults are noted below. Paths and free text have no fixed choice list; quote spaces and use the spelling shown for constrained values. Integer options accept Go integer syntax unless a decimal-only rule is stated; use ordinary decimal digits to avoid base-prefix interpretation.
 
-Use `--help` (also `-h`) as the exact option-name reference for your installed version:
+Use `--help` (also `-h`, `--h`, or `-help` outside `live-test`) as the exact option-name reference for your installed version:
 
 ```powershell
 .\upbrr.exe --help
@@ -27,6 +28,8 @@ Use `--help` (also `-h`) as the exact option-name reference for your installed v
 .\upbrr.exe api-token list --help
 .\upbrr.exe auth password --help
 ```
+
+Upload accepts one or more local file or folder paths; named queues require exactly one root. Standalone audio/HDR analysis requires exactly one source. `serve`, `recover`, `auth password`, `api-token list`, and both `live-test` subcommands accept no positional arguments. `api-token revoke` requires exactly one token ID; `auth browse-roots` requires existing directory paths or `--allow-unrestricted`, never both. Command groups without a subcommand show help. There are no command-name aliases or shell-completion command.
 
 ## Common operations
 
@@ -98,7 +101,7 @@ For BDMV, interactive preparation groups playlist choices by disc and requires a
 
 When Blu-ray.com lookup is enabled, the CLI and TUI first show the release listing, including each edition’s release ID. Enter a release number to select its available country, publisher and release URL; enabled cover handling inspects only that edition. Enter `a` to fetch and score all eligible editions, then choose a release or `n` to skip. Unattended runs do not prompt or implicitly fetch all details. Country filtering and automatic unique-country selection still apply.
 
-Use `--bluray-release "https://www.blu-ray.com/movies/Example-Release-Blu-ray/123/"` or `--bluray-release 123` for an exact release. Numeric IDs use the source's Blu-ray or DVD catalogue; a URL identifies its own catalogue. This fetches only that edition when its details are needed to resolve it. `--bluray-release=""` explicitly skips selection; `--bluray-release auto` restores automatic matching. Compatible listings, details and manual choices survive ordinary corrections. The separate `--blu` argument remains the torrent-site source argument.
+Use `--bluray-release "https://www.blu-ray.com/movies/Example-Release-Blu-ray/123/"` or `--bluray-release 123` for an exact release. Numeric IDs use the source's Blu-ray or DVD catalogue; a URL identifies its own catalogue. This fetches only that edition when its details are needed to resolve it. `--bluray-release=""` explicitly skips selection; `--bluray-release auto` restores automatic matching (`auto` ignores case and surrounding whitespace). Compatible listings, details and manual choices survive ordinary corrections. The separate source-torrent ID flags remain independent of this edition selection.
 
 ### Decrypted 3D Blu-ray ISO input
 
@@ -184,40 +187,46 @@ The terminal log view bounds each line to 4,096 bytes. Oversized raw diagnostic 
 
 ## Execution
 
-| Option                        | Aliases                       | Purpose                                                                                            |
-| ----------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------- |
-| `--queue <name>`              | `-queue`                      | Create or resume a saved queue; supply its original root as the single input path.                 |
-| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit remaining eligible items; defaults to `0` (unlimited). Negative values are rejected.         |
-| `--refresh-queue`             | `-refresh-queue`              | Add new members without resetting progress; requires `--queue`.                                    |
-| `--retry-queue`               | `-retry-queue`                | Include failed, interrupted and skipped items; requires `--queue`.                                 |
-| `--site-check`                | `-site-check`, `-sc`          | Check sites and prepare upload previews without tracker submission.                                |
-| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                                   |
-| `--debug`                     | `-debug`                      | Prepare and preview without tracker submission; image uploads and client injection remain enabled. |
-| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.              |
-| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                          |
-| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                                         |
-| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                                       |
-| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                            |
-| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                               |
-| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                                      |
+| Option                        | Aliases                       | Purpose                                                                                                                                 |
+| ----------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `--ui <mode>`                 | `-ui`                         | Select `plain` (default), `auto`, or `tui`; exact lowercase, with empty following auto detection. Static commands keep ordinary output. |
+| `--ui-keep-open`              | `-ui-keep-open`               | Keep a TUI dashboard open after completion; default false, ignored in plain mode.                                                       |
+| `--queue <name>`              | `-queue`                      | Create or resume a saved queue; supply its original root as the single input path.                                                      |
+| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit remaining eligible items; defaults to `0` (unlimited). Negative values are rejected.                                              |
+| `--refresh-queue`             | `-refresh-queue`              | Add new members without resetting progress; requires `--queue`.                                                                         |
+| `--retry-queue`               | `-retry-queue`                | Include failed, interrupted and skipped items; requires `--queue`.                                                                      |
+| `--site-check`                | `-site-check`, `-sc`          | Check sites and prepare upload previews without tracker submission.                                                                     |
+| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                                                                        |
+| `--debug`                     | `-debug`                      | Prepare and preview without tracker submission; image uploads and client injection remain enabled.                                      |
+| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run.                                                   |
+| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.                                                               |
+| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                                                                              |
+| `--input-only`                | `-input-only`                 | Stop after local Input preparation and readiness evaluation.                                                                            |
+| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                                                                                 |
+| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                                                                    |
+| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                                                                           |
+
+Log levels ignore case and surrounding whitespace; `warning` aliases `warn`. An explicit empty log-level value selects `info`; omission inherits the applicable application/console threshold.
 
 `--live-test` and `--live-test-max-images` are development options described under [`live-test`](#live-test). There is no `--dry-run` option; use `--debug --no-seed` for preparation without tracker submission or client injection.
 
 ## Tracker selection and IDs
 
-| Option                     | Aliases                    | Purpose                             |
-| -------------------------- | -------------------------- | ----------------------------------- |
-| `--trackers <list>`        | `-trackers`, `-tk`         | Use comma-separated trackers.       |
-| `--trackers-remove <list>` | `-trackers-remove`, `-rtk` | Remove comma-separated trackers.    |
-| `--ptp <id-or-url>`        | `-ptp`                     | Supply a PTP torrent ID or URL.     |
-| `--blu <id-or-url>`        | `-blu`                     | Supply a BLU torrent ID or URL.     |
-| `--aither <id-or-url>`     | `-aither`                  | Supply an Aither torrent ID or URL. |
-| `--lst <id-or-url>`        | `-lst`                     | Supply an LST torrent ID or URL.    |
-| `--oe <id-or-url>`         | `-oe`                      | Supply an OE torrent ID or URL.     |
-| `--hdb <id-or-url>`        | `-hdb`                     | Supply an HDB torrent ID or URL.    |
-| `--btn <id-or-url>`        | `-btn`                     | Supply a BTN torrent ID or URL.     |
-| `--bhd <id-or-url>`        | `-bhd`                     | Supply a BHD torrent ID or URL.     |
-| `--ulcx <id-or-url>`       | `-ulcx`                    | Supply a ULCX torrent ID or URL.    |
+| Option                     | Aliases                    | Purpose                            |
+| -------------------------- | -------------------------- | ---------------------------------- |
+| `--trackers <list>`        | `-trackers`, `-tk`         | Use comma-separated trackers.      |
+| `--trackers-remove <list>` | `-trackers-remove`, `-rtk` | Remove comma-separated trackers.   |
+| `--ptp <id-or-url>`        | `-ptp`                     | Supply a source torrent ID or URL. |
+| `--blu <id-or-url>`        | `-blu`                     | Supply a source torrent ID or URL. |
+| `--aither <id-or-url>`     | `-aither`                  | Supply a source torrent ID or URL. |
+| `--lst <id-or-url>`        | `-lst`                     | Supply a source torrent ID or URL. |
+| `--oe <id-or-url>`         | `-oe`                      | Supply a source torrent ID or URL. |
+| `--hdb <id-or-url>`        | `-hdb`                     | Supply a source torrent ID or URL. |
+| `--btn <id-or-url>`        | `-btn`                     | Supply a source torrent ID or URL. |
+| `--bhd <id-or-url>`        | `-bhd`                     | Supply a source torrent ID or URL. |
+| `--ulcx <id-or-url>`       | `-ulcx`                    | Supply a source torrent ID or URL. |
+
+Tracker lists trim comma-separated entries and normalize IDs to uppercase; use IDs advertised by the running catalog rather than public display names. `--site-upload` takes one nonempty ID. Omitted lists inherit scope/configuration; there is no global `all` choice.
 
 Omitting `--trackers` uses the retained workflow scope when available, otherwise the configured default trackers. `--site-upload` replaces the requested tracker list with its one tracker; `--trackers-remove` still excludes named trackers. Removing every selected tracker stops the upload. Tracker ID flags supply lookup identities and do not select upload destinations.
 
@@ -230,7 +239,7 @@ Metadata review always prints the effective `Commentary: true` or `Commentary: f
 ### Review Input without advancing the workflow
 
 ```powershell
-.\upbrr.exe --input-only --skip_auto_torrent --trackers BLU,PTP "E:\Media\Example.Release.2026.1080p-GRP.mkv"
+.\upbrr.exe --input-only --skip_auto_torrent --trackers "<tracker-id>,<other-tracker-id>" "E:\Media\Example.Release.2026.1080p-GRP.mkv"
 ```
 
 This loads release facts and evaluates selected tracker input requirements. It stops before tracker assessment, duplicate searches, screenshots, descriptions, torrent preparation, or uploads. Metadata provider requests and media inspection can still run. `--skip_auto_torrent` also disables torrent-client discovery.
@@ -251,6 +260,7 @@ Title and original title are read-only provider values. Use `--alternate-title` 
 | `--subtitle-languages "French"`                   | Replace the regular subtitle language list.                                                                                         |
 | `--hardcoded-subs` / `-hc`                        | Enable hardcoded subtitles; `-hc Spanish` supplies a language; `--hardcoded-subs=false` disables them.                              |
 | `--hardcoded-subtitle-languages "English"`        | Set hardcoded languages and enable them; an empty list disables them.                                                               |
+| `--track-audio-origin "<track-id>=original"`      | Classify one programme or alternate-mix audio track as `original`, `dubbed`, or `unresolved`; repeat for distinct track IDs.        |
 | `--track-languages "<track-id>=English, Spanish"` | Correct one previously inspected track. Repeat for distinct track IDs.                                                              |
 | `--bluray-release "<release-url-or-id>"`          | Select one Blu-ray.com edition without scanning unrelated release pages. Empty skips selection; `auto` restores automatic matching. |
 | `--source-lookup "<tracker-url>"`                 | Look up source metadata using a tracker URL.                                                                                        |
@@ -260,7 +270,7 @@ Title and original title are read-only provider values. Use `--alternate-title` 
 
 Language entries accept one or more comma-separated values. Blank segments are ignored, duplicate languages are removed, and multiword names remain intact. Use `--audio-languages=` for an explicit empty list. Original production language remains separate from track languages. Regional/script tags and Full/Forced coverage are retained; collectives and unknown values do not establish a specific language. See [language corrections](../workflow/index.md#2-review-canonical-metadata) for identity and clear/Auto behavior.
 
-Run `--input-only` first to obtain track IDs. Track corrections require the retained scan manifest and one source. If the source, playlist, or track order changes, inspect the source again and select a current track. Release-level lists do not assign languages to individual streams.
+Run `--input-only` first to obtain track IDs. Track corrections require the retained scan manifest and one source. `--track-audio-origin` trims whitespace and ignores case in its three values; `unresolved` retains an explicit unknown answer. Reset `metadata.track_audio_origins:<track-id>` to restore Auto. It does not change the track language; commentary and other secondary roles are ineligible. If the source, playlist, or track order changes, inspect the source again and select a current track. Release-level lists do not assign languages to individual streams.
 
 Reset examples:
 
@@ -274,6 +284,22 @@ Apply fact corrections before tracker answers in separate commands. Combining th
 Generated descriptions include manually supplied audio, subtitle, and hardcoded language lines. User-supplied descriptions pass through each tracker's normal formatting. Selected screenshots still appear in the tracker's usual location, including separate screenshot fields where applicable.
 
 Saved corrections use a newer database format. Older binaries do not support writing this correction state.
+
+### Correction targets and repetition
+
+`--reset-input` and `--confirm-input` take exact, case-sensitive field IDs. Use a full prefix from this list; they are not the CLI flag names.
+
+| Prefix          | Supported suffixes                                                                                                                                                                                                                                                                                                                                                      |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity.`     | `tmdb`, `imdb`, `tvdb`, `tvmaze`, `mal`, `keep_tmdb`, `keep_imdb`, `keep_tvdb`, `keep_tvmaze`, `keep_mal`                                                                                                                                                                                                                                                               |
+| `release_name.` | `category`, `type`, `source`, `resolution`, `tag`, `service`, `edition`, `presentation`, `release_features`, `repack`, `three_d`, `season`, `episode`, `episode_title`, `manual_year`, `manual_date`, `use_season_episode`, `no_season`, `no_year`, `no_aka`, `no_tag`, `no_episode_title`, `no_distributor`, `no_edition`, `no_dub`, `no_dual`, `dual_audio`, `region` |
+| `metadata.`     | `distributor`, `original_language`, `personal_release`, `commentary`, `web_dv`, `stream_optimized`, `anime`, `alternate_title`, `genres`, `audio_languages`, `subtitle_languages`, `hardcoded_subs`, `hardcoded_subtitle_languages`, `title`, `original_title`, `track_languages`, `track_audio_origins`                                                                |
+
+The two track fields require `:<track-id>` for reset and cannot be confirmed; other fields reject that suffix. Provider-owned `metadata.title` and `metadata.original_title` cannot be manually corrected. Confirmation supports only `metadata.title`, `metadata.alternate_title`, `metadata.original_title`, `metadata.genres`, `metadata.original_language`, `release_name.manual_year`, `release_name.manual_date`, `release_name.season`, `release_name.episode`, and `release_name.episode_title`. It is only for a currently requested stale content correction and requires matching retained revision/context; it is not a general approval switch.
+
+Repeat track, reset, confirm, and tracker-input options for different targets; duplicate targets and overlapping value/reset/confirm requests are rejected. Supply each other correction flag once, including its aliases. `--release-features` takes one comma-separated list. A repeated ordinary execution/configuration option uses its last value.
+
+`--tracker-input` uses a tracker ID and exact questionnaire field key from the current review. Choices come from that questionnaire, rather than a global list. `yes`, `no`, and `auto` ignore case; `auto` removes that answer. Other values retain their spelling. Interactive `y`/`n` shorthand is not a general command-line answer alias.
 
 ### Subtitle review
 
@@ -297,10 +323,10 @@ Existing prepared releases are rebuilt after this update. Older binaries do not 
 
 | Option                        | Aliases                                           | Purpose                                                                                               |
 | ----------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `--category <value>`          | `-category`, `-c`                                 | Override category.                                                                                    |
-| `--type <value>`              | `-type`, `-t`                                     | Override release type.                                                                                |
-| `--source <value>`            | `-source`                                         | Override source.                                                                                      |
-| `--resolution <value>`        | `-resolution`, `-res`                             | Override resolution.                                                                                  |
+| `--category <value>`          | `-category`, `-c`                                 | Select a [category value](#accepted-naming-values).                                                   |
+| `--type <value>`              | `-type`, `-t`                                     | Set a [release type](#accepted-naming-values).                                                        |
+| `--source <value>`            | `-source`                                         | Set a [source value](#accepted-naming-values).                                                        |
+| `--resolution <value>`        | `-resolution`, `-res`                             | Set a [resolution value](#accepted-naming-values).                                                    |
 | `--tag <value>`               | `-tag`, `-g`                                      | Override group tag.                                                                                   |
 | `--service <value>`           | `-service`, `-serv`                               | Override streaming service.                                                                           |
 | `--distributor <value>`       | `-distributor`, `-dist`                           | Override distributor.                                                                                 |
@@ -338,6 +364,23 @@ Omit a flag to retain a saved correction. Use `--reset-input release_name.presen
 
 If `--use-season-episode` has neither an explicit season/episode nor a matching TMDB episode, an existing daily date is retained with a warning. `--use-season-episode=false` selects daily-date naming when a date is available.
 
+### Accepted naming values
+
+Category is validated against a fixed vocabulary. Type, Source, and Resolution are text corrections: the CLI trims them but does not reject every unknown value at parsing time. Their canonical values below are supported choices, not a promise that arbitrary text works with every tracker. Use these exact source/resolution spellings and inspect the prepared facts and projected names. An empty correction differs from omitting the flag; use reset to restore detection. The literal `auto` is not a reset value for these flags.
+
+| Option         | Values and handling                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--category`   | `movie` or `tv`. Case-insensitive aliases: `film` → movie; `television`, `series`, `episode` → TV. Empty or `unknown` selects unknown; preparation can still derive a category from source/provider evidence and finally fall back to Movie. Reset `release_name.category` for Auto.                                                                                                                                                                       |
+| `--type`       | `DISC`, `REMUX`, `ENCODE`, `WEBDL`, `WEBRIP`, `HDTV`, `DVDRIP`. Naming uppercases and removes spaces/hyphens; `WEB-DL`, `WEB_DL`, `WEB-Rip`, and `WEB_RIP` normalize to the corresponding WEB type. Saved fact text is not a validated enum. Omitted values derive from media/source evidence; Use a release type here rather than a Movie/TV category label.                                                                                              |
+| `--source`     | `Blu-ray` (disc), `BluRay` (encode/remux), `Blu-ray 3D`, `DVD`, `PAL DVD`, `NTSC DVD`, `HD DVD` (disc), `HDDVD` (encode/remux), `Web`, `HDTV`, `UHDTV`. These are the canonical source strings; do not enter display text such as `Blu-ray (disc)`. The naming source recognizer also accepts `BLU RAY`, `BD`, and `BDMV` case-insensitively, but does not globally normalize the saved correction for every destination.                                  |
+| `--resolution` | `360p`, `480i`, `480p`, `540i`, `540p`, `576i`, `576p`, `720p`, `900p`, `1080i`, `1080p`, `1440p`, `1800p`, `2160p`, `2880p`, `3240p`, `4320p`, `8640p`, `DCI2K`, `DCI4K`. No global case/alias normalization is applied to the saved correction; use lowercase `p`/`i` and the shown DCI spelling. `OTHER` (case-insensitive) suppresses the resolution in generic naming; it does not establish a measured tier. Omission uses measured/source evidence. |
+
+For example, `--category movie --type WEBDL --source Web --resolution 1080p` supplies canonical corrections for a synthetic WEB source. Setting `DISC` does not turn an ordinary file into a disc or establish its technical evidence.
+
+`--service` accepts a recognized service acronym/name or custom text; recognized matches resolve to their service code. `--region` and `--distributor` accept suggestions or custom text, with numeric destination IDs where supported. They have no CLI-wide allowlist. `--tag`, `--edition`, `--episode-title`, and `--alternate-title` are free text; `--genres` is a comma-separated text list. Language options accept the names/codes described above, rather than a fixed language enum.
+
+Presentation ignores case and collapses whitespace between words, but accepts only the three complete labels listed above or empty. Release-feature IDs are case-sensitive lowercase IDs; display labels such as `4K Restoration` are not accepted IDs. Season/episode prefixes ignore case and surrounding whitespace. `--daily` accepts a real `YYYY-MM-DD` calendar date or empty to clear the manual date override; `--manual-year` is an integer, with `0` clearing it.
+
 ### Required release facts
 
 Category, Type, Source, and Resolution must be present in the saved prepared metadata before upload. The release preview labels the filesystem location **Path**, then shows Type, Resolution, and Source above Upload name. A recognizable filename or provider summary does not replace a missing saved fact.
@@ -358,7 +401,7 @@ Strict `--unattended` reports the missing facts and exits without prompting. Int
 
 Multiple provider flags select each provider independently, even when their returned cross-links disagree. Each successful lookup remains available for preparation. See [manual metadata authority](../workflow/index.md#2-review-canonical-metadata).
 
-TMDB also accepts `movie/<id>`, `tv/<id>`, or a URL ending in the ID; a movie/TV hint sets the category when no explicit `--category` is supplied. A category chosen during provider selection takes precedence over a retained hint. IMDb accepts numeric IDs or the `tt` prefix. TVDB, TVmaze, and MAL take numeric IDs, not URLs.
+TMDB also accepts `movie/<id>`, `tv/<id>`, or a URL ending in the ID; a movie/TV hint sets the category when no explicit `--category` is supplied. A category chosen during provider selection takes precedence over a retained hint. IMDb accepts numeric IDs or the `tt` prefix. TVDB, TVmaze, and MAL take nonnegative integer IDs, not URLs. Their parser accepts Go base prefixes, so use decimal IDs without leading zeroes to avoid octal interpretation. TMDB and IMDb numeric parts are decimal; their prefixes ignore case.
 
 Use `--keep-existing-ids` to keep existing provider matches and their data when correcting another provider. You can pass it on the command line or in the correction arguments after **Metadata correct?**. For a release you have already prepared, this updates IMDb while keeping the other matches:
 
@@ -428,13 +471,15 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 | `--draft`             | `-draft`, `-dr`              | Send to drafts where supported.                                         |
 | `--modq`              | `-modq`, `-mq`               | Opt into mod queue where supported.                                     |
 
-`--personalrelease=true` and `--personalrelease=false` are both explicit choices and override tracker group defaults. Omit the option to leave **Personal Release** on **Auto**, where each tracker's configured personal-release groups can supply the default.
+`--personalrelease=true` and `--personalrelease=false` are both explicit choices and override tracker group defaults. Omitting the option preserves any saved correction. Use `--reset-input metadata.personal_release` to return **Personal Release** to **Auto**, where each tracker's configured personal-release groups can supply the default.
 
 After duplicate checks, trackers with completed clear results default to **Yes** (`[Y/n]`). An explicit `--skip-dupe-check` replaces stored remote duplicate results with a waiver and grants this default when the tracker's preflight is ready; matching torrents already in your client still block that tracker. Strict `--unattended` applies this default without prompting and records only that exact eligible subset for preparation and upload. Duplicate results and separately overridden duplicate evidence default to **No**; other viable trackers can continue. Missing prerequisites, other incomplete or failed checks, rule waivers and staff-token requirements never become automatic Yes decisions.
 
 `--skip-dupe-asking` skips trackers with duplicate evidence; it does not authorize duplicate uploads. Separate explicit per-tracker duplicate overrides take precedence over this skip policy, but still require tracker authorization and any staff-token confirmation. Duplicate options never bypass authoritative client blocks. Use `--anime=false` to explicitly classify a release as non-anime. The obsolete `--not-anime` flag has been removed and is rejected as an unknown option.
 
-TIK `--disctype` accepts `BD100`, `BD66`, `BD50`, `BD25`, `NTSC DVD9`, `NTSC DVD5`, `PAL DVD9`, `PAL DVD5`, `CUSTOM`, or `3D`. Quote values containing spaces.
+`--foreign`, `--opera`, and `--asian` set destination-specific classification booleans where supported; they default to false. `--channel <value>` (alias `-ch`) supplies a destination channel ID or tag, resolved by the applicable questionnaire rather than a global choice list. These flags do not select a tracker or waive its requirements.
+
+`--disctype` accepts `BD100`, `BD66`, `BD50`, `BD25`, `NTSC DVD9`, `NTSC DVD5`, `PAL DVD9`, `PAL DVD5`, `CUSTOM`, or `3D`. Values ignore case and surrounding whitespace. Quote values containing spaces.
 
 ## Screenshots, images, and descriptions
 
@@ -442,18 +487,22 @@ Without `--screens`, the CLI uses `screenshot_handling.screens` when selected tr
 
 When required release images are missing, the CLI stops with the media failure and recovery guidance, or the existing prompt to capture, select, or host images. Resolve that media prerequisite before retrying. This block does not open a tracker questionnaire or prompt for media recovery, including with `--unattended_confirm`; required images continue to block upload in every interaction mode.
 
-| Option                       | Aliases                             | Purpose                                                                        |
-| ---------------------------- | ----------------------------------- | ------------------------------------------------------------------------------ |
-| `--screens <count>`          | `-screens`, `-s`                    | Override the configured screenshot count.                                      |
-| `--manual_frames <list>`     | `-manual_frames`, `-mf`             | Use comma-separated positive frame numbers.                                    |
-| `--comparison <paths>`       | `-comparison`, `-comps`             | Set one comparison folder or comma-separated folders.                          |
-| `--comparison_index <index>` | `-comparison_index`, `-comps_index` | Select a one-based primary comparison path; omission keeps the supplied order. |
-| `--menu-images <path>`       | `-menu-images`                      | Import manually captured disc-menu screenshots.                                |
-| `--get-dvd-menus`            | `-get-dvd-menus`                    | Capture distinct menus from extracted DVD `VIDEO_TS`.                          |
-| `--imghost <name>`           | `-imghost`, `-ih`                   | Override a supported, non-tracker-owned image host.                            |
-| `--skip-imagehost-upload`    | `-skip-imagehost-upload`, `-siu`    | Skip automatic image-host uploads.                                             |
-| `--descfile <path>`          | `-descfile`, `-df`                  | Use a custom description file.                                                 |
-| `--desclink <url>`           | `-desclink`, `-pb`                  | Use a custom description link.                                                 |
+| Option                       | Aliases                             | Purpose                                                                                            |
+| ---------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `--screens <count>`          | `-screens`, `-s`                    | Set a nonnegative screenshot count; `0` requests none. Omission uses configuration (built-in `4`). |
+| `--manual_frames <list>`     | `-manual_frames`, `-mf`             | Use comma-separated positive frame numbers.                                                        |
+| `--comparison <paths>`       | `-comparison`, `-comps`             | Set one comparison folder or comma-separated folders.                                              |
+| `--comparison_index <index>` | `-comparison_index`, `-comps_index` | Select a one-based primary comparison path; omission keeps the supplied order.                     |
+| `--menu-images <path>`       | `-menu-images`                      | Import manually captured disc-menu screenshots.                                                    |
+| `--get-dvd-menus`            | `-get-dvd-menus`                    | Capture distinct menus from extracted DVD `VIDEO_TS`.                                              |
+| `--imghost <name>`           | `-imghost`, `-ih`                   | Override a supported, non-tracker-owned image host.                                                |
+| `--skip-imagehost-upload`    | `-skip-imagehost-upload`, `-siu`    | Skip automatic image-host uploads.                                                                 |
+| `--descfile <path>`          | `-descfile`, `-df`                  | Use a custom description file.                                                                     |
+| `--desclink <url>`           | `-desclink`, `-pb`                  | Use a custom description link.                                                                     |
+
+`--imghost` accepts `dalexni`, `imgbb`, `imgbox`, `lensdump`, `onlyimage`, `passtheimage`, `pixhost`, `ptscreens`, `seedpool_cdn`, `sharex`, `utppm`, or `zipline`. Values ignore case and surrounding whitespace. Tracker-owned hosts are not valid global overrides. Omission uses configured host policy; empty is invalid.
+
+`--manual_frames` ignores blank comma-separated segments but requires at least one positive decimal frame number. `--comparison` takes nonempty comma-separated local paths; `--comparison_index` must be positive when supplied and within the available paths. `--descfile`, `--desclink`, and `--menu-images` are paths/URLs rather than choice labels.
 
 ### HDR analysis options
 
@@ -478,11 +527,15 @@ When required release images are missing, the CLI stops with the media failure a
 | `--hdr-active-area`            | Check decoded picture borders against Dolby Vision active areas.                                                         |
 | `--hdr-compare-source <path>`  | Explicit local reference source B for grade or colour checks.                                                            |
 | `--hdr-compare-offset <n>`     | Confirm the frame mapping `B = A + n`; explicit zero is required for aligned sources.                                    |
-| `--hdr-compare-crop <l,t,w,h>` | Common coded-pixel crop for both sources; positive even width and height must fit both.                                  |
+| `--hdr-compare-crop <l,t,w,h>` | Common coded-pixel crop for both sources; nonnegative left/top and positive even width/height must fit both.             |
 | `--hdr-grade`                  | Compare brightness and PQ values against the selected reference.                                                         |
 | `--hdr-colour`                 | Compare colour distributions against the selected reference.                                                             |
 
-For requested upload analysis, every selected target needs usable native metadata or, when audio was requested, usable audio output. Partial results can qualify; canceled and interrupted attempts cannot. A comparison requires source B, an explicit offset, a crop, and at least one of `--hdr-grade` or `--hdr-colour`. Bounded mode accepts audio and active-area checks, but cannot combine metadata-only, audio-only, automatic pictures, full-frame pictures, the individual scene check, or comparison options. `--hdr-boundary-audio` requires bounded mode even when explicitly false.
+`--hdr-peak-source` and `--hdr-formats` require exact lowercase spellings without added whitespace; an empty value selects their default. `--hdr-playlist` accepts decimal `0`–`99999`, with an optional case-insensitive `.MPLS` suffix, and normalizes to five digits. `--hdr-targets` takes at most 16 distinct nonempty IDs; IDs are case-sensitive and must belong to the prepared release.
+
+For requested upload analysis, every selected target needs usable native metadata or, when audio was requested, usable audio output. Partial results can qualify; canceled and interrupted attempts cannot. A comparison requires source B, an explicit decimal frame offset from `-500000` through `500000`, a crop, and at least one of `--hdr-grade` or `--hdr-colour`. Bounded mode accepts audio and active-area checks, but cannot combine metadata-only, audio-only, automatic pictures, full-frame pictures, the individual scene check, or comparison options. `--hdr-boundary-audio` requires bounded mode even when explicitly false.
+
+Crop coordinates are decimal integers: left/top are nonnegative, width/height are positive even values, and the crop must fit both sources within an `8192×4320` bound. `--hdr-compare-offset` does not trim whitespace; supply the signed number directly.
 
 Individual picture flags select manual work rather than the default audio operation. For scene checks, borders, and audio together, use `--hdr-boundary-sync --hdr-active-area`. See [HDR analysis](../workflow/hdr-analysis.md) for examples and the limits of sampled and bounded coverage.
 
@@ -495,7 +548,9 @@ Individual picture flags select manual work rather than the default audio operat
 | `--hdr-retry-modes <list>`   | Explicit unsuccessful decoded modes to measure again, from the current retained request. Requires an attempt ID. |
 | `--hdr-image-ids <id,id>`    | Select exact current HDR artifact IDs for descriptions on continuation.                                          |
 
-Retry and image-selection flags require `--hdr-resume-workflow`; do not combine resume with either new-analysis flag. Retry measurements before selecting their new artifact IDs, in separate invocations. Resume accepts configuration, logging, and unattended options but cannot change the retained analysis request. Use IDs from the retained workflow; they are opaque. A decoded retry does not authorize a native metadata rescan.
+`--hdr-retry-modes` takes comma-separated, case-sensitive IDs: `automatic`, `boundary_sync`, `audio`, `scene_sync`, `active_area`, `grade`, `colour`. Only unsuccessful modes requested by that retained attempt can be retried; a list is not authorization to add work. Whitespace around each ID is trimmed. Artifact and workflow IDs must identify the exact retained objects.
+
+Resume takes no input paths. Retry and image-selection flags require `--hdr-resume-workflow`; do not combine resume with either new-analysis flag. Retry measurements before selecting their new artifact IDs, in separate invocations. Resume accepts configuration, logging, and unattended options but cannot change the retained analysis request. Use IDs from the retained workflow; they are opaque. A decoded retry does not authorize a native metadata rescan.
 
 The retained HDR report identifies each target and reports native-format and decoded-analysis outcomes, including saved failure and cancellation reasons. Successful artifact IDs remain listed even when other requested outputs are incomplete. Review those outcomes before choosing retry modes; printing the report does not retry analysis or select images.
 
@@ -529,9 +584,11 @@ Analyze only audio and save it outside managed temporary storage:
 .\upbrr.exe --audio-analysis-only --audio-output "D:\reports\audio" "D:\releases\Example.Release.2026.1080p-GRP.mkv"
 ```
 
+`primary`, `all`, and audio image-type values ignore case and surrounding whitespace. Empty values are invalid. Numeric lists require positive decimal ordinals and reject blank segments.
+
 The numeric selectors are audio-only ordinals, not container-wide stream indexes. Repeated ordinals are ignored, and results retain source track order. `--audio-tracks` and `--audio-images` require either analysis mode.
 
-`--audio-output` is only valid with `--audio-analysis-only`. Standalone analysis requires exactly one regular media file and accepts only its four audio-analysis options; do not combine it with `--config`, upload options, or `--audio-analysis`.
+`--audio-output` is only valid with `--audio-analysis-only`. Standalone analysis requires exactly one regular media file and accepts its audio-analysis options, `--ui`, and `--ui-keep-open`; do not combine it with `--config`, upload options, or `--audio-analysis`.
 
 During upload, the CLI prints the path of every successfully retained PNG and statistics file. Standalone analysis prints paths to PNGs and statistics files in a new directory under `--audio-output`. A partial or failed analysis exits nonzero, even when some artifacts succeeded. See [Audio analysis](../workflow/audio-analysis.md) for output, retry, and retention behavior.
 
@@ -551,6 +608,8 @@ During upload, the CLI prints the path of every successfully retained PNG and st
 | `--max-piece-size <MiB>` | `-max-piece-size`, `-mps`    | Override the configured maximum: `1`, `2`, `4`, `8`, `16`, `32`, `64`, or `128` MiB.     |
 | `--nohash`               | `-nohash`, `-nh`             | Reuse existing torrents only; do not generate a new torrent.                             |
 | `--rehash`               | `-rehash`, `-rh`             | Force generation of a fresh torrent.                                                     |
+
+`--client` takes a configured client entry name, not a client type. Matching trims whitespace, prefers an exact name, then accepts one unambiguous case-insensitive match. Omission uses [client selection order](../web-ui/settings/client-handling.md); `none` disables ordinary selection, subject to the explicit infohash lookup below. Tags and categories are free text. Infohash letters ignore case and surrounding whitespace is trimmed; an empty hash is invalid. `none` ignores case and surrounding whitespace; ambiguous folded names do not select an arbitrary client. `--max-piece-size=0` is invalid when explicitly supplied; omission uses configured/default torrent policy.
 
 `--keep-folder` applies only when a supplied folder contains one selected movie or episode video. The torrent retains that folder as its root and includes only the selected video; samples, NFOs, text files, and other sidecars are excluded. The default remains a single-file torrent. Season packs, multi-video folders, disc sources, and direct file inputs are unchanged. Reused torrents must match the requested layout.
 
@@ -613,6 +672,8 @@ To remove the roots and explicitly allow unrestricted host browsing:
 .\upbrr.exe auth browse-roots --allow-unrestricted
 ```
 
+`auth password` also accepts `--ui plain|auto|tui` (default `plain`) and `--ui-keep-open` (default false). `auth browse-roots` accepts `--allow-unrestricted` (default false) and requires at least one existing directory otherwise. Both subcommands accept `--help`.
+
 Both subcommands accept `--config` when the active database is selected through a non-default config file. For containers, run the command in the same environment as upbrr and use paths visible inside the container.
 
 ## `api-token`
@@ -634,6 +695,10 @@ Revoke by token ID:
 List and revoke accept `--config`.
 
 See the [API reference](../api/index.md) before granting `workflow:execute`.
+
+## `recover`
+
+`upbrr recover [--config <path>]` accepts `--help` and no other options or positional arguments. It requires the existing database and uses interactive confirmations; it has no unattended switch. See [interaction and safety](#interaction-and-safety) before confirming any remote outcome.
 
 ## `live-test`
 

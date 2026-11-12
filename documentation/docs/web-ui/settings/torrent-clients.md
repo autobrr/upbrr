@@ -65,4 +65,4 @@ Hardlinks require source and destination on the same filesystem. Reflinks requir
 
 ## Verify the entry
 
-Save, select it under **Clients searched for existing torrents**, and prepare a known source to test read-only discovery. There is no connection-test button. Injection writes or links data, so verify mappings and permissions before the first controlled upload.
+Use **Test connection** on the entry to check its draft connection without saving or adding a torrent. A qBittorrent/qui check reads service information; watch folders report that they have no remote connection to authenticate. Neither proves write permission, successful injection, or media-path mapping. See [connection-test behavior](./index.md#test-a-connection). Save, select it under **Clients searched for existing torrents**, and prepare a known source to test discovery. Injection writes or links data, so verify mappings and permissions before the first controlled upload.

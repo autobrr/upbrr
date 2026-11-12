@@ -64,7 +64,7 @@ Startup automatically removes identifiable leftovers from previously deleted His
 
 Saving effective settings reuses the running process's startup maintenance. It does not repeat the startup-wide History and provisional-file cleanup; expiry cleanup continues while the server runs.
 
-After prior-process input and work leases expire, startup retains completed checkpoints and marks unfinished operations interrupted. It marks unresolved prior-process external attempts failed locally and removes their retry blocks. This does not prove that the tracker upload or client operation failed remotely. Check the tracker or torrent client before retrying an interrupted stage.
+After prior-process input and work leases expire, startup retains completed checkpoints and marks unfinished operations interrupted. It preserves unresolved external attempts as uncertain and retains their retry protection. An interrupted local operation does not prove that the tracker upload or client operation failed remotely. Check the tracker or torrent client before retrying an interrupted stage.
 
 If **Legacy workflow recovery** still lists an unresolved external outcome, choose **Recover workflow** and inspect the remote result before resolving the action. Choose **Confirmed not completed; allow a fresh exact attempt** only when you have verified that the operation did not complete. Recovery itself does not resubmit anything.
 
