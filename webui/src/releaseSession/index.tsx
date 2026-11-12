@@ -1420,7 +1420,12 @@ export function ReleaseSessionProvider({
         controller.signal,
       );
       if (controller.signal.aborted) return false;
-      return applyActiveInputSnapshot(snapshot, "ready", stateRef.current.inputEditRevision);
+      // Reconciliation can finish before the previous command's terminal poll.
+      return applyActiveInputSnapshot(
+        snapshot,
+        controllers.current.workflow ? "running" : "ready",
+        stateRef.current.inputEditRevision,
+      );
     } catch (error) {
       if (!controller.signal.aborted) {
         dispatch({

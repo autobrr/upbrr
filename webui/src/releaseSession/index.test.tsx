@@ -2783,6 +2783,105 @@ describe("useReleaseSession", () => {
     unmount();
   });
 
+  it("keeps image retry busy until the pre-reconciliation observer finishes", async () => {
+    const reconciliationAction = {
+      id: "action-active-reconcile",
+      kind: "reconcile_submission",
+      status: "pending" as const,
+      workflowRevision: 9,
+      trackerId: "AITHER",
+      effectKind: "tracker_submission" as const,
+      effectScopeId: "AITHER",
+      prompt: "Verify whether the interrupted upload completed.",
+      options: [
+        {
+          value: "not_completed",
+          label: "Confirmed not completed; allow a fresh exact attempt",
+        },
+      ],
+      createdAt: "2026-09-19T00:00:00Z",
+    };
+    const baseCurrent = workflowCurrent("workflow-active-reconcile", 9);
+    const activeCurrent: ReleaseWorkflowCurrent = {
+      ...baseCurrent,
+      workflow: {
+        ...baseCurrent.workflow,
+        status: "blocked",
+        requiredActions: [reconciliationAction],
+      },
+      continuation: {
+        ...baseCurrent.continuation,
+        lifecycle: "waiting",
+        disposition: "needs_action",
+        requiredActions: [reconciliationAction],
+        availableGoals: baseCurrent.continuation.availableGoals.map((goal) => ({
+          ...goal,
+          available: false,
+        })),
+      },
+    };
+    const operation = {
+      id: "operation-before-reconcile",
+      workflowId: activeCurrent.workflow.id,
+      revision: 1,
+      sequence: 1,
+      command: "upload_images",
+      operation: "image_upload",
+      status: "running",
+      progress: 0,
+      completed: 0,
+      total: 1,
+      startedAt: "2026-09-19T00:00:00Z",
+      updatedAt: "2026-09-19T00:00:00Z",
+    } as const;
+    const pendingOperation = createDeferred<NonNullable<ReleaseWorkflowCurrent["operation"]>>();
+    const poll = vi.fn(() => pendingOperation.promise);
+    const reconciled = workflowCurrent(activeCurrent.workflow.id, 10);
+    const snapshot = (current: ReleaseWorkflowCurrent): ActiveInputSnapshot => ({
+      state: "active",
+      revision: 4,
+      inputId: "input-active-reconcile",
+      sourceVersion: "source-active-reconcile-v1",
+      current,
+    });
+    const reconcile = vi.fn(async () => snapshot(reconciled));
+    const uploadImages = vi
+      .fn(async (_current: ReleaseWorkflowCurrent) => reconciled)
+      .mockResolvedValueOnce({ ...activeCurrent, operation });
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            get: async () => snapshot(activeCurrent),
+            reconcile,
+          },
+          workflow: workflowPorts({
+            operation: poll,
+            current: async () => reconciled,
+            uploadImages,
+          }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    let firstUpload!: Promise<boolean>;
+    act(() => {
+      firstUpload = result.current.uploadedImages.upload();
+    });
+    await waitFor(() => expect(poll).toHaveBeenCalled(), { timeout: 5000 });
+    await act(() =>
+      expect(result.current.workflow.confirmAction(reconciliationAction)).resolves.toBe(true),
+    );
+    expect(result.current.uploadedImages.view.status).toBe("running");
+    await act(async () => pendingOperation.resolve({ ...operation, status: "completed" }));
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    await act(() => result.current.uploadedImages.upload());
+    await firstUpload;
+    expect(uploadImages).toHaveBeenCalledTimes(2);
+    expect(uploadImages.mock.calls[1]?.[0].workflow.revision).toBe(10);
+    unmount();
+  });
+
   it("resyncs on focus and the visible fifteen-second fallback", async () => {
     vi.useFakeTimers();
     const get = vi.fn(async () => ({ state: "empty", revision: 1 }));
