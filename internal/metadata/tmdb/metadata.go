@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 )
@@ -135,6 +137,16 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		originalLanguage = strings.TrimSpace(media.OriginalLanguage)
 	}
 	result.OriginalLanguage = originalLanguage
+	for _, language := range media.SpokenLanguages {
+		tag, valid := languageutil.LanguageTag(language.Code)
+		code := languageutil.NormalizeLanguageCode(language.Code)
+		// TMDB supplies base-language codes, not regional tags or extensions.
+		if valid && tag.String() == code && code != "zxx" && languageutil.IsIdentifiedLanguage(code) {
+			result.SpokenLanguages = append(result.SpokenLanguages, code)
+		}
+	}
+	slices.Sort(result.SpokenLanguages)
+	result.SpokenLanguages = slices.Compact(result.SpokenLanguages)
 
 	result.Creators = uniqueNames(media.CreatedBy)
 	result.Genres, result.GenreIDs = genresFromMedia(media.Genres)
@@ -933,19 +945,22 @@ func (p *lockPool) lock(key string) *lockHandle {
 // JSON response types.
 
 type mediaResponse struct {
-	Title               string    `json:"title"`
-	Name                string    `json:"name"`
-	OriginalTitle       string    `json:"original_title"`
-	OriginalName        string    `json:"original_name"`
-	ReleaseDate         string    `json:"release_date"`
-	FirstAirDate        string    `json:"first_air_date"`
-	LastAirDate         string    `json:"last_air_date"`
-	Runtime             int       `json:"runtime"`
-	EpisodeRunTime      []int     `json:"episode_run_time"`
-	Type                string    `json:"type"`
-	Genres              []genre   `json:"genres"`
-	Overview            string    `json:"overview"`
-	OriginalLanguage    string    `json:"original_language"`
+	Title            string  `json:"title"`
+	Name             string  `json:"name"`
+	OriginalTitle    string  `json:"original_title"`
+	OriginalName     string  `json:"original_name"`
+	ReleaseDate      string  `json:"release_date"`
+	FirstAirDate     string  `json:"first_air_date"`
+	LastAirDate      string  `json:"last_air_date"`
+	Runtime          int     `json:"runtime"`
+	EpisodeRunTime   []int   `json:"episode_run_time"`
+	Type             string  `json:"type"`
+	Genres           []genre `json:"genres"`
+	Overview         string  `json:"overview"`
+	OriginalLanguage string  `json:"original_language"`
+	SpokenLanguages  []struct {
+		Code string `json:"iso_639_1"`
+	} `json:"spoken_languages"`
 	PosterPath          string    `json:"poster_path"`
 	BackdropPath        string    `json:"backdrop_path"`
 	ProductionCompanies []Company `json:"production_companies"`

@@ -31,8 +31,9 @@ import (
 )
 
 type captureLogger struct {
-	trace []string
-	debug []string
+	trace  []string
+	debug  []string
+	errors []string
 }
 
 func trackerPatternRegistry(t *testing.T) *trackers.Registry {
@@ -56,21 +57,13 @@ func (l *captureLogger) Infof(string, ...any) {}
 
 func (l *captureLogger) Warnf(string, ...any) {}
 
-func (l *captureLogger) Errorf(string, ...any) {}
+func (l *captureLogger) Errorf(format string, args ...any) {
+	l.errors = append(l.errors, fmt.Sprintf(format, args...))
+}
 
 func TestSearchPathedTorrentsProxyPrefersPieceSize(t *testing.T) {
 	t.Parallel()
-	testSearchPathedTorrentsProxyPieceSelection(t, true, "16MiB", "16MiB")
-}
-
-func TestSearchPathedTorrentsProxyReusesFirstWithoutPiecePreference(t *testing.T) {
-	t.Parallel()
-	testSearchPathedTorrentsProxyPieceSelection(t, false, "no_constraints", "")
-}
-
-func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool, expectedFound string, expectedConstraint string) {
-	t.Helper()
-
+	const expectedFound, expectedConstraint = "16MiB", "16MiB"
 	dir := t.TempDir()
 	sourcePath := filepath.Join(dir, "Movie.Title.2024.mkv")
 	hashLarge, dataLarge := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 25)
@@ -158,7 +151,6 @@ func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool,
 			DefaultClient: "qbit",
 			SearchClients: config.CSVList{"qbit"},
 		},
-		TorrentCreation: config.TorrentCreationConfig{PreferMax16: preferMax16},
 		TorrentClients: map[string]config.TorrentClientConfig{
 			"qbit": {
 				Type:        "qui",
@@ -177,10 +169,7 @@ func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool,
 	if err != nil {
 		t.Fatalf("search pathed torrents: %v", err)
 	}
-	wantHash := hashLarge
-	if preferMax16 {
-		wantHash = hashSmall
-	}
+	wantHash := hashSmall
 	if result.InfoHash != wantHash {
 		t.Fatalf("expected reusable hash %q, got %q", wantHash, result.InfoHash)
 	}
@@ -1737,5 +1726,22 @@ func TestCollectTrackerURLsStableDeduplicates(t *testing.T) {
 	want := []string{"https://tracker.example/announce", "https://second.example/announce"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("tracker URLs = %#v, want %#v", got, want)
+	}
+}
+
+func TestEMUWIdentityRecognizesCurrentAndLegacyDomains(t *testing.T) {
+	t.Parallel()
+	patterns := buildTrackerIDPatterns(trackerPatternRegistry(t))
+	for _, host := range []string{"emu-warez.com", "emuwarez.com"} {
+		t.Run(host, func(t *testing.T) {
+			announce := "https://" + host + "/announce/redacted"
+			if !containsString(matchTrackerURLs([]string{announce}, patterns), "EMUW") {
+				t.Fatal("EMUW announce was not recognized")
+			}
+			matches, found := extractTrackerMatchesWithPatterns("https://"+host+"/torrents/1234567", []string{announce}, true, []string{"emuw"}, patterns)
+			if !found || len(matches) != 1 || matches[0].ID != "emuw" || matches[0].TrackerID != "1234567" {
+				t.Fatal("EMUW comment did not retain torrent identity")
+			}
+		})
 	}
 }

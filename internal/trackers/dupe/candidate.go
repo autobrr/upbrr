@@ -174,7 +174,7 @@ func enrichCandidateCoordinatesFromTitle(candidate *TrackerCandidate) {
 		return
 	}
 	if candidate.Season == 0 || (!candidate.Pack && candidate.Episode == 0) {
-		if match := candidateEpisodePattern.FindStringSubmatch(candidate.Name); len(match) >= 2 {
+		if match := candidateEpisodePattern.FindStringSubmatch(strings.ReplaceAll(candidate.Name, "_", ".")); len(match) >= 2 {
 			if candidate.Season == 0 {
 				candidate.Season, _ = strconv.Atoi(match[1])
 			}

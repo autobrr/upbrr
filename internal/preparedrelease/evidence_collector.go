@@ -256,9 +256,16 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			Personal:                 meta.PersonalRelease,
 		},
 		Episode: api.EpisodeFacts{
-			Season:            meta.SeasonInt,
-			Episode:           meta.EpisodeInt,
-			MultipleEpisodes:  meta.MultipleEpisodes,
+			Season:           meta.SeasonInt,
+			Episode:          meta.EpisodeInt,
+			MultipleEpisodes: meta.MultipleEpisodes,
+			Coverage: api.EpisodeCoverage{
+				SeasonKnown:    meta.EpisodeCoverage.SeasonKnown,
+				CompleteSeason: meta.EpisodeCoverage.CompleteSeason,
+				Part:           meta.EpisodeCoverage.Part,
+				Episodes:       append([]int{}, meta.EpisodeCoverage.Episodes...),
+				Status:         meta.EpisodeCoverage.Status,
+			},
 			SeasonLabel:       meta.SeasonStr,
 			EpisodeLabel:      meta.EpisodeStr,
 			DailyDate:         meta.DailyEpisodeDate,
@@ -336,6 +343,9 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		},
 		Diagnostics: diagnostics,
 		Resources:   collectedResources(meta),
+	}
+	if meta.ProviderMetadata.TMDB != nil {
+		facts.Media.TitleLanguages = append([]string(nil), meta.ProviderMetadata.TMDB.SpokenLanguages...)
 	}
 	facts.Media.LanguageFacts = mediafacts.ResolveLanguages(facts.Media)
 	for _, record := range meta.TrackerData {

@@ -72,8 +72,8 @@
     "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. PHD explicitly opts into the maintainer-selected English-language fallback over finalized LanguageFacts; this is not a verified PHD policy. The existing evaluator, provider consumers, manual metadata precedence, country and age routing, constructibility, and AZ/CZ language policies are unchanged. The shared callback exposes canonical source corrections and the versioned binding invalidates prior projections. Confirmed-dub review fix advances the owned validation binding version; provider selection, manual precedence and existing payload/category checks remain unchanged. Staged companion-origin correction advances the owned validation version; the callback and all provider/manual selectors remain unchanged.",
-    "sha256": "20884c0ddb0d424c52f9ff73fec0d2ced9d4c4eb4064ef558c2fda11faf45c97"
+    "reason": "Advances AZ/CZ policy versions for confirmed original multilingual soundtrack eligibility. The binding changes only version literals; provider selectors, manual-finalized authority, source/country/age checks and callback ownership are unchanged. PHD retains its maintainer-selected English fallback; this is not a verified PHD policy.",
+    "sha256": "6de9af196d57eed591042cf097ee84ca2a4d3ec3de0aa57d40408613df8b16c2"
   },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
     "reason": "Appends the AZ/CZ language assessment using finalized LanguageFacts without a provider fallback. Existing TMDB origin-country routing, manual-aware age checks and constructibility remain unchanged; conflicting-provider corrections and explicit clears remain authoritative.",
@@ -109,15 +109,15 @@
   },
   "internal/trackers/impl/azfamily/upload.go:prepareMissingMediaOperation": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "e77d9d27f25d0eccef83469642ce6c27c47470c9e23241188ae52c7322761035"
+    "sha256": "b02f925325ff34ca61b15b10b94963ed596a011804ed3c403e72b5c9da0744ce"
   },
   "internal/trackers/impl/azfamily/upload.go:prepareResolvedUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "8b67058b9b85f829c94cdf7593d362b65a09d542f6f9db767bfd13e8b4dc0084"
+    "sha256": "fc3b691d83405f8bec1dda3f05b42725056643220dec87e4f0ee2fd473b46626"
   },
   "internal/trackers/impl/azfamily/upload.go:prepareUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "e6b54f4724bf9a470ed6956ef426001dee841da77798ae2142b04d9118bb1ecf"
+    "sha256": "af22719ba00cd8c19001bfcc6eacfb4868f66443d122063d0d8c05f1f796c7b3"
   },
   "internal/trackers/impl/azfamily/validation.go:azUploadSubject": {
     "reason": "Annotation-display review: copies canonical ReleaseFeatures and the ordered display-only projection into detached slices. Existing provider snapshot, identity, manual provenance and validation mappings remain unchanged; display text is not semantic evidence.",
@@ -328,12 +328,12 @@
     "sha256": "6e86c975425160b27c238e1d0feabdc0eabd87dd1a58139fefec634e8c71094f"
   },
   "internal/trackers/impl/standalone/asc/name.go:resolveUploadTitle": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "3262a761092f75ef76cb9d4761052f368b4ad6abd2e6f194b19bb61e3c74cb69"
+    "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
+    "sha256": "c31c114245d785d79ff5c2f0b1e48b2d51355ada74ac0dc51a183b6676834a0c"
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
-    "sha256": "3c24c9117bb0eb6c03b3638da044bfec835f2b444d9ba3b9612acdaa09c69605"
+    "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
+    "sha256": "e4d9601f70baf80257409a8cd5411ab2379e07199c21fa2aed624563f2492d8e"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks.",
@@ -388,8 +388,8 @@
     "sha256": "a4ec6882cc85f867aea4171272169f2323a46bdb5b5d4e1a8f4b94d6aa1e3641"
   },
   "internal/trackers/impl/standalone/bhd/rules.go:languageAssessment": {
-    "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "6dce8d687412fb4fadce05a692d63756505be8db1604ba9d700ea6e9cd83d889"
+    "reason": "Issue 905 uses canonical title-dialogue evidence and preserves manual genre selection. Owner confirmation of BHD sections 2.5.5 and 5.3.4 exempts an established English-only original soundtrack from extra English-dub guidance while retaining foreign-dialogue subtitle guidance and multilingual-original handling. Provider genre selectors and manual corrections are unchanged.",
+    "sha256": "6acbdab67fb4cfa7d81d6f4a0a26bde6d9ab52a971fe9e9893f72a5426cc4f99"
   },
   "internal/trackers/impl/standalone/bhd/validation.go:validationPolicy": {
     "reason": "Advances the validation policy for advisory foreign-dialogue guidance across release types. Existing finalized/manual metadata precedence, provider selectors and independent eligibility checks remain unchanged.",
@@ -444,16 +444,16 @@
     "sha256": "f842b38e1da2aa167cb1ecc18d87d2aa2fe721634b27c75ca153f21de57e23e4"
   },
   "internal/trackers/impl/standalone/bjs/upload.go:buildFields": {
-    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
-    "sha256": "3d3700bcd16aec4dcbf9622a84c525520cfe5553355deb3a7ed36ed916764f5d"
+    "reason": "BJS anonymity wiring review: effective tracker configuration only adds anonymous attribution and conditional group visibility fields. Existing manual title/year/genre precedence, questionnaire answers, provider selectors and reviewed upload-name authority are unchanged; callers and provider helpers were reviewed together.",
+    "sha256": "37913e89c51441ce0c1cc8c1658122b99d133554b1a415d11adc098548ad50d6"
   },
   "internal/trackers/impl/standalone/bjs/upload.go:prepareUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
     "sha256": "1b4ea68456b81d1bbf92b9ac8b0e77f72a236972191aac69d0f2b26129ae465f"
   },
   "internal/trackers/impl/standalone/bjs/upload.go:prepareUploadState": {
-    "reason": "Questionnaire construction now reads the same operation subject through pure overview/tag resolvers. Payload and schema both prefer explicit nonempty answers before localized/base provider defaults; reviewed upload-name authority and provider precedence are unchanged.",
-    "sha256": "9cb6849531336e9a3edc563810927fe98037c0f80c2438e7614d215ca59a8834"
+    "reason": "BJS anonymity wiring review: effective tracker configuration only adds anonymous attribution and conditional group visibility fields. Existing manual title/year/genre precedence, questionnaire answers, provider selectors and reviewed upload-name authority are unchanged; callers and provider helpers were reviewed together.",
+    "sha256": "f3699896681c89943d6de4cac097161175c2946ceb051a92fd7fd827e92fa764"
   },
   "internal/trackers/impl/standalone/bjs/upload.go:resolveCast": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -492,8 +492,8 @@
     "sha256": "8c44f7534b83f381c733beddb6344ebf3bf8a8fd5560c80a7cad20be2d469892"
   },
   "internal/trackers/impl/standalone/bjs/validation.go:validationPolicy": {
-    "reason": "Questionnaire gating review: only missing overview is answer-correctable, preserving explicit-answer and finalized metadata precedence. Identifier and director/creator requirements remain independent strict failures.",
-    "sha256": "f22102c52538e391876bcfe00e2a2e561690fe68e23bde46b1241801ef3dfaf4"
+    "reason": "BJS anonymity wiring review: effective tracker configuration only adds anonymous attribution and conditional group visibility fields. Existing manual title/year/genre precedence, questionnaire answers, provider selectors and reviewed upload-name authority are unchanged; callers and provider helpers were reviewed together.",
+    "sha256": "17a17cea5caa7d5055c2c865ef91fd5aaf22bde6d4a94035a20f0bd03cb823d5"
   },
   "internal/trackers/impl/standalone/bt/definition.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -699,9 +699,13 @@
     "reason": "Reviewed with primary-country resolution: current agreeing origin evidence suppresses only an unanswered original-audio country question; explicit answers, including invalid or empty values, retain review precedence.",
     "sha256": "4f28f2bb7db460b918bdc55682b0a9d289800e06d51d3d811459844220a708e8"
   },
+  "internal/trackers/impl/standalone/btn/rules.go:englishOriginalShow": {
+    "reason": "Owner-confirmed definitive-language precedence: verified title corrections govern staff applicability before soundtrack evidence, without rewriting track origins. Identified confirmed original-source language still outranks automatic title inference. When source evidence cannot identify the original-show language, a single spoken language or original/spoken agreement resolves the title; listed English alone cannot make an agreed Japanese title English-original. Unranked multilingual evidence remains unresolved. Regression coverage retains conflicting manual corrections, explicit source origins, unidentified-language gaps, Auto/reset, clears and track-order independence.",
+    "sha256": "aafd2e19b3a2d4c1755483c567baaf9713174ab75160e61749740a62368e6f2d"
+  },
   "internal/trackers/impl/standalone/btn/rules.go:languageAssessment": {
-    "reason": "Issue 904: unknown original metadata skips only original-language comparison. Confirmed dubs retain a concrete staff-assessment evidence need; Foreign/country, anime, source and manual-finalized facts remain authoritative. Known-original and manual-clear controls plus synthetic correction/repreparation coverage verify the boundary.",
-    "sha256": "fc2d7abc01498963a881be38041264f1bd93ccd352844f78afbadd43b8c8dd9d"
+    "reason": "Issue 905 preserves known title-dialogue evidence for soundtrack review and country derivation independently of original-show uncertainty. Owner-confirmed staff applicability uses verified title corrections, otherwise affirmative source language before Auto; missing/cleared title evidence keeps the unknown-comparison exemption. Mixed-reference unclassified tracks still require source-bound review even after the country answer. No provider genre selection or primary-country precedence changed.",
+    "sha256": "7bee9da73e8d0ab616eaab10f83a1b98a63545fec663ae42ccabce894e5007bc"
   },
   "internal/trackers/impl/standalone/btn/rules.go:languageValidationPolicy": {
     "reason": "Issue 606 source-review audit: source questions and eligibility consume finalized language/source/genre facts and evidence-bound answers; existing current-provider title/year selection and manual metadata/name precedence remain unchanged.",
@@ -720,8 +724,8 @@
     "sha256": "c167e166843a683aa3c0717c800e0950df4e6552f013a0af1a551debe13f8463"
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnOriginalAudioCountryID": {
-    "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "3aa21e18bf39227103b70fb294fa49cd4115d72a03650317e18e6a0beb36a936"
+    "reason": "BTN co-production majority review: canonical original-language corrections/clears, original-primary-audio evidence, source/generation and provider-ID guards remain authoritative. Every provider with supported origin evidence counts toward the majority total, including co-productions and partly supported lists, while only unambiguous origins cast one country vote. MAL-ID-matched AniList origin participates only for finalized anime. btnPrimaryCountryID still applies explicit answers/clears first; full-disc behavior is unchanged. Regression cases cover both multi-country providers, partial evidence and preserved two-of-three majorities.",
+    "sha256": "f0fa65fc7c35d2e7546a946c74160b841407e23bd73ed75d21f3a5789ba816b6"
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:btnPrimaryCountryID": {
     "reason": "Explicit evidence-bound country answers take precedence over the reviewed original-audio provider fallback; blank or invalid answers are not silently replaced.",
@@ -776,8 +780,8 @@
     "sha256": "66b2caee30f282136c2528aaac181412fc0a1bde9c9010652478205df686780e"
   },
   "internal/trackers/impl/standalone/btn/validation.go:validationPolicy": {
-    "reason": "Audio-order policy review: only order eligibility, its retired questionnaire/call arguments, or the validation policy version changed. Existing finalized/manual metadata precedence and provider selectors remain unchanged; HDB animation uses finalized Anime/Genres, including explicit manual clears.",
-    "sha256": "563303aa549e4333ebfff571a9273bbaf57ad83b4b08defd00e9ce0fa65d1c97"
+    "reason": "Reviewed declarative BTN validation binding: only the version advances to v9 so country majorities retain co-production evidence in their denominator. The Check callback and metadata precedence remain unchanged.",
+    "sha256": "6f35f9ff588fbc7ade614886687899c51f4bf5d3fb947832b2989a7766f768b3"
   },
   "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
     "reason": "TRACE request logging review: cztSearchQuery continues to apply manual title authority before the unchanged text request.",
@@ -892,8 +896,8 @@
     "sha256": "0063e9bc54c2bc4cf92a8b171291e969297a9e450b7f33c67dd329221c9e306a"
   },
   "internal/trackers/impl/standalone/hdb/name.go:buildGeneratedHDBName": {
-    "reason": "3D correction naming review: generated names delegate region/source/subtype ordering to the existing source-layout helper, preserving Country before 3D for regional formats and ordinary non-3D region placement. Complete-name/P2P exits, current original-title authority and PreferredYear manual precedence remain unchanged; caller and helper reviewed together. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged.",
-    "sha256": "63299471d31a65e9a9d5c0695f060c103d06e9151e805d9829155d7a87c0a8d8"
+    "reason": "3D correction naming review: generated names delegate region/source/subtype ordering to the existing source-layout helper, preserving Country before 3D for regional formats and ordinary non-3D region placement. Complete-name/P2P exits, current original-title authority and PreferredYear manual precedence remain unchanged; caller and helper reviewed together. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "dce7e8753e552748efbdc3fcd0d863db3f080a031609348d31aa5d3e7cd39973"
   },
   "internal/trackers/impl/standalone/hdb/name.go:hdbIMDbYear": {
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
@@ -912,8 +916,8 @@
     "sha256": "157993f3722ac5dec52aaae574dd3ad9a0a647c541ec29e6d62354c1d297014e"
   },
   "internal/trackers/impl/standalone/hdb/rules.go:languageAssessment": {
-    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "b5d1eb2e0afe93098f6b9cdcc76cf5c0f7de6cc9b508961a18d8cdb208f25f33"
+    "reason": "Preserves issue 905 finalized non-English dialogue evidence without treating a listed English language as proof of an English soundtrack; actual original/dub evidence remains authoritative. Forced-subtitle default findings become waivable, with acknowledgement bound to the source, prepared generation and finalized language evidence. Inspected-track matching and explicit subtitle clears remain authoritative; provider selectors, manual metadata precedence and independent audio restrictions are unchanged.",
+    "sha256": "689379a6c0e2199d45e9c554a5c8ee4361a39bd3979d7f6f72e25fb6a40b34da"
   },
   "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -952,8 +956,8 @@
     "sha256": "81567f861b320e76b0817ee0f08fbce8ae0e0cdb1a5515305d9ab43f9e58ffb7"
   },
   "internal/trackers/impl/standalone/hdb/validation.go:validationPolicy": {
-    "reason": "Advances the validation fingerprint for inferred English dub handling without changing provider selectors, callback wiring, finalized metadata authority, manual precedence or independent eligibility checks.",
-    "sha256": "f4c3432feacd6dbc8b1abb935a990f8fd9bbb20552233207c4f89042d3f93534"
+    "reason": "Advances the validation fingerprint for waivable forced-subtitle default findings without changing provider selectors, callback wiring, finalized metadata authority, manual precedence or independent eligibility checks.",
+    "sha256": "ebd180e1f84731eb81c40fe5a7cd94d985113af8b8bfab22fe370788fd743551"
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers. Screenshot notices consume selected image processing evidence only; provider/manual metadata precedence and tracker markup remain unchanged.",
@@ -1136,8 +1140,8 @@
     "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66"
   },
   "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
-    "reason": "Full-DVD eligibility review: the strict check consumes finalized DiscType and release Type through the existing full-disc predicate; an absent disc label uses the finalized DVD/PAL/NTSC source family. HD DVD and DVD-derived remuxes/encodes remain distinct. Current-source provider selectors, explicit manual metadata precedence, language assessment and taxonomy are unchanged. The policy version invalidates retained approvals. Confirmed-dub review fix advances the owned validation binding version; provider selection, manual precedence and existing payload/category checks remain unchanged. Staged companion-origin correction advances the owned validation version; the callback and all provider/manual selectors remain unchanged.",
-    "sha256": "75bdd6a4763d131cb2b95219429b429a5b58101e48d001ce6a3523a2fd76afdf"
+    "reason": "Advances the owned validation version for confirmed original multilingual soundtrack eligibility. Only the version literal changes in this binding; provider/manual metadata selectors, full-DVD constructibility, callback ownership and taxonomy remain unchanged.",
+    "sha256": "a5a4581c9335c15fe9c871d53ace4ad99e2a067b5b9adb7604b567f2ed409573"
   },
   "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -1272,12 +1276,12 @@
     "sha256": "e8e37af6bbfd8428156d5cc75416de4caf836faa4f65e414e70b16ad03edf668"
   },
   "internal/trackers/impl/standalone/tvc/name.go:resolveName": {
-    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together.",
-    "sha256": "f8953a4679fa96231aaf1f3422f140462d4c16c8b5bb24c2484b5931afb7ac38"
+    "reason": "Canonical edition-parts review: existing current-provider and manual fact/component precedence is preserved; only finalized cut/edition/presentation/set consumption, component formatting, or its policy version changed. Callers and provider-value helpers reviewed together. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "44c9ae2594a6a71603bf2d31340c502117ad7b204b3ced5232a3a6c2bf4291de"
   },
   "internal/trackers/impl/standalone/tvc/profile.go:Profile": {
-    "reason": "Settings connection-test review: only the probe binding, exact draft-credential selector or unverified-contract explanation is added. Existing provider/manual metadata precedence, naming and prepared-upload callbacks and their consumers are unchanged; independently reviewed together. Probes receive only tracker credentials and cookie snapshots, never metadata subjects.",
-    "sha256": "2ffcf7bd91698e368a5221f9d61edbb5faceb2f5ac48634d4c794931ed4aca46"
+    "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
+    "sha256": "f636fd4c777b1d60c586526e519db1c8c8261ed036227b55dab3353662375001"
   },
   "internal/trackers/impl/standalone/tvc/taxonomy.go:resolveCategory": {
     "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged.",
@@ -1379,6 +1383,14 @@
     "reason": "ValidationRuleSubject preserves EffectiveMetadata; RuleGenres honors manual genres, including empty values, while RuleKeywords independently supplies current-source TMDB policy evidence.",
     "sha256": "3cbfb44250cad8ac2dac79c4e87a0bd9efdb589114163f31d72fb5be32c3634c"
   },
+  "internal/trackers/impl/unit3d/sites/emuw/name.go:applyTVYear": {
+    "reason": "EMUW TV year uses current source/generation-bound TMDB metadata with matching positive identity and TV category. Manual year facts and components, including omission, and opaque names retain authority. Movie and other destination policies remain unchanged; the profile, structured-name caller and provider boundary were independently reviewed.",
+    "sha256": "aa730c7f00a8fde976e6f34f40b13a72678f1f17f42c31b210403bdcf7dcf613"
+  },
+  "internal/trackers/impl/unit3d/sites/emuw/name.go:currentTMDBTVYear": {
+    "reason": "EMUW TV year uses current source/generation-bound TMDB metadata with matching positive identity and TV category. Manual year facts and components, including omission, and opaque names retain authority. Movie and other destination policies remain unchanged; the profile, structured-name caller and provider boundary were independently reviewed.",
+    "sha256": "ef9c4d9d04180c815bc0917ad0713442766a46ade7579ef9277282119923fcca"
+  },
   "internal/trackers/impl/unit3d/sites/hhd/name.go:applyHHDTVDBDisambiguation": {
     "reason": "Provider-title projection review: site qualifier decisions use exact current source/generation and positive matching TVDB identity independently of title wording; manual title and year authority and site-local ordering remain protected. Shared evidence helper and calling defaults reviewed together.",
     "sha256": "7484db35a0bb9fe36b5f35e18e7d243eb1fc90021c4e030e26e61d5493b3e750"
@@ -1448,8 +1460,8 @@
     "sha256": "1d2e6c4777073ecc7d623f65cffda22c444db8a48442dd84a1282d2e5664d3e0"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:buildName": {
-    "reason": "Preserves current TMDB identity/source/generation guards, explicit manual title/year and complete-name authority, and finalized modifier omissions. Effective generic/subtype 3D wording occupies the dedicated position before source, without changing language or technical evidence. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged.",
-    "sha256": "0c430630ee42487fc5fda6f80669559eb660afac9c1765dc9e25145f69b1fe75"
+    "reason": "Preserves current TMDB identity/source/generation guards, explicit manual title/year and complete-name authority, and finalized modifier omissions. Effective generic/subtype 3D wording occupies the dedicated position before source, without changing language or technical evidence. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged. Partial-season naming review: only the canonical part/range label and naming-policy version change; manual names and title/year precedence, provider fallback order, and source/identity/generation guards remain unchanged.",
+    "sha256": "221e109a0a28497513c1d038ca7aa75e3341121ebb4cfb7bb4ec18de67e6a7a1"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:currentOTWTMDBTitleYear": {
     "reason": "OTW buildName applies PreferredTitle and PreferredYear; snapshot currentness remains an identity prerequisite.",
@@ -1460,8 +1472,8 @@
     "sha256": "31f03c020b50ac67eecc6fa7d688fb167cb03619651bb0d8b4992339e46e7450"
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:releaseNamePolicy": {
-    "reason": "Issue 904: the owning policy version and confirmed-dub evidence gates advance; finalized/manual metadata authority, provider selectors and callback ownership remain unchanged. Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "57588fd197cc7b2e2dc1758657d4abe7d90317dbcdab07546b7d3f138e3a8570"
+    "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
+    "sha256": "d77dde3ef5f4c29944bfab425b263510ed3ab458fffe98535b2afac84353d52b"
   },
   "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
     "reason": "Wires the OTW v7 release-name policy that preserves explicit upload names and finalized manual title, year and edition corrections. Existing TMDB selection, required metadata, language validation, season-zero behavior and duplicate policy remain unchanged.",
@@ -1492,12 +1504,12 @@
     "sha256": "776d1d6fcd4fc8c61202322f9b4388220565bfbb8bb64d8343df6a7b87c0db87"
   },
   "internal/trackers/impl/unit3d/sites/rhd/name.go:buildName": {
-    "reason": "3D correction naming review: stereo subtype display fragments move to the dedicated source-adjacent position without changing canonical facts. Current provider identity/source guards, localized title fallback, manual title/year precedence and independent search names remain unchanged; other edition display parts are preserved. Manual 3D component omissions are respected by the subject-level naming accessor; retained media/subtype facts and provider authority remain unchanged.",
-    "sha256": "492ab6303e6972a0521eac7031d6ff23a419ddfa6ba977bf87142a2ae45aaab2"
+    "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
+    "sha256": "75c725703c6d812e9445db1584fe05029b45bbde973a7417b4cf4c9834782b71"
   },
   "internal/trackers/impl/unit3d/sites/rhd/profile.go:Profile": {
-    "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "d406a33579bdf0226ffa1c6bad510bded452b4f23ee54f17cc1e32637f8afc8d"
+    "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
+    "sha256": "8aa3bd9e877ceac599c8af8aae3efeef0feb5b13c0aa3e7b800e305bcb4f007f"
   },
   "internal/trackers/impl/unit3d/sites/rmc/name.go:applyRMCNameDefaults": {
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together.",

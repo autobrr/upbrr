@@ -44,6 +44,12 @@ Each tracker shows a different subset.
 
 Other fields are tracker-owned. Their labels and defaults come from the running backend, not a universal schema. See [Trackers](../../trackers/index.md) for support boundaries.
 
+## Anonymous uploads
+
+**Anonymous upload** requests anonymous attribution where the adapter supports it. **Show group when anonymous**, when shown for a tracker, requests release-group visibility only for an anonymous upload. An unchecked preference does not guarantee that the tracker's account default is disabled. These controls do not guarantee privacy from the tracker.
+
+A per-upload anonymity choice overrides the stored **Anonymous upload** setting. **Show group when anonymous** continues to use its stored setting. When an upgrade changes the tracker review contract, unfinished reviews are rebuilt before their upload authority is reused. Compatible prepared source facts remain available, confirmed uploads are not repeated, and uncertain outcomes remain available for reconciliation.
+
 ## Group policy lists
 
 Every tracker card provides three independent comma-separated release-group lists. Configure each tracker separately; a group listed for one tracker has no effect on another.

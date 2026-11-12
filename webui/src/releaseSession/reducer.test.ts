@@ -28,6 +28,87 @@ const current = (workflowID: string, revision: number): ReleaseWorkflowCurrent =
   }) as unknown as ReleaseWorkflowCurrent;
 
 describe("sessionReducer upload intent", () => {
+  it("rehydrates retained Input review without granting prepared or downstream authority", () => {
+    const initial = initialSessionState();
+    const sourcePath = "C:\\media\\Example.Release.2026.mkv";
+    const retained = {
+      ...current("workflow-one", 9),
+      inputReview: {
+        release: { Source: { SourcePath: sourcePath } },
+        fields: [],
+        selectedTrackerIds: ["ONE"],
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const hydration = {
+      type: "active_input_applied" as const,
+      snapshot: {
+        state: "active" as const,
+        revision: 3,
+        inputId: "input-one",
+        sourceVersion: "same-source",
+        sourcePath,
+        current: retained,
+      },
+      status: "running" as const,
+      preview: null,
+      intent: { ...initial.preparationIntent, metadata: { Genres: ["Drama"] } },
+      capturedInputEditRevision: 0,
+      selectedTrackers: ["ONE"],
+    };
+    let state = sessionReducer(initial, hydration);
+    expect(state.sourceDraft).toBe(sourcePath);
+    expect(state.selectedSource).toBe(sourcePath);
+    expect(state.preparationIntent.metadata.Genres).toEqual(["Drama"]);
+    expect(state.selectedTrackers).toEqual(["ONE"]);
+    expect(state.release).toBeNull();
+    expect(state.preview).toBeNull();
+    expect(state.workflowView.current?.inputReadiness).toBeUndefined();
+    state = sessionReducer(state, { ...hydration, status: "ready" });
+    expect(state.preparation.status).toBe("ready");
+    const commandRevision = state.commandRevision + 1;
+    state = sessionReducer(state, {
+      type: "preparation_started",
+      sourcePath,
+      commandRevision,
+      inputEditRevision: state.inputEditRevision,
+      correlationID: "refresh-retained",
+      intent: state.preparationIntent,
+    });
+    state = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 4,
+        inputId: "input-one",
+        sourceVersion: "same-source",
+        sourcePath,
+        current: { ...retained, workflow: { ...retained.workflow, revision: commandRevision + 2 } },
+      },
+      status: "running",
+      preview: null,
+      intent: state.preparationIntent,
+      capturedInputEditRevision: state.inputEditRevision,
+      selectedTrackers: ["ONE"],
+    });
+    state = sessionReducer(state, {
+      type: "workflow_current_published",
+      current: state.workflowView.current!,
+      status: "ready",
+    });
+    expect(state.preparation.status).toBe("running");
+    expect(state.preparation.correlationID).toBe("refresh-retained");
+    state = sessionReducer(state, {
+      type: "preparation_failed",
+      sourcePath,
+      commandRevision,
+      correlationID: "refresh-retained",
+      error: "Synthetic refresh failure",
+      failure: null,
+    });
+    expect(state.preparation.status).toBe("error");
+    expect(state.preparation.error).toBe("Synthetic refresh failure");
+  });
+
   it("retains full successful preview processing and clears it for a new source", () => {
     const initial = initialSessionState();
     const processing = {
@@ -1027,7 +1108,7 @@ describe("sessionReducer active input snapshots", () => {
     expect(state.preparationDirty).toBe(false);
   });
 
-  it.each(["active input", "workflow publication"])(
+  it.each(["active input", "workflow publication", "retained preparation pause"])(
     "drops identity-stale confirmations during %s resync while retaining ordinary drafts",
     (resync) => {
       const sourcePath = "C:\\media\\Correction.Review.2026.mkv";
@@ -1045,6 +1126,10 @@ describe("sessionReducer active input snapshots", () => {
       const base = current("workflow-draft", 3);
       const reviewed: ReleaseWorkflowCurrent = {
         ...base,
+        inputReview: {
+          release: { Source: { SourcePath: sourcePath } },
+          fields: [],
+        } as unknown as NonNullable<ReleaseWorkflowCurrent["inputReview"]>,
         workflow: {
           ...base.workflow,
           requiredActions: [
@@ -1070,11 +1155,21 @@ describe("sessionReducer active input snapshots", () => {
       let state = sessionReducer(initial, {
         type: "active_input_applied",
         snapshot,
-        status: "ready",
+        status: resync === "workflow publication" ? "running" : "ready",
         preview: preview(sourcePath, 1),
         intent: initial.preparationIntent,
         capturedInputEditRevision: 0,
       });
+      if (resync === "retained preparation pause") {
+        state = sessionReducer(state, {
+          type: "preparation_started",
+          sourcePath,
+          commandRevision: state.commandRevision + 1,
+          inputEditRevision: state.inputEditRevision,
+          correlationID: "refresh-awaiting-corrections",
+          intent: state.preparationIntent,
+        });
+      }
       state = sessionReducer(state, {
         type: "correction_confirmed",
         field: { field: "metadata.title" },
@@ -1083,12 +1178,12 @@ describe("sessionReducer active input snapshots", () => {
       const resynchronize = (incoming: ReleaseWorkflowCurrent) => {
         state = sessionReducer(
           state,
-          resync === "active input"
+          resync !== "workflow publication"
             ? {
                 type: "active_input_applied",
                 snapshot: { ...snapshot, current: incoming },
                 status: "ready",
-                preview: preview(sourcePath, 1),
+                preview: resync === "retained preparation pause" ? null : preview(sourcePath, 1),
                 intent: initial.preparationIntent,
                 capturedInputEditRevision: state.inputEditRevision,
                 preserveInputDraft: true,
@@ -1097,6 +1192,8 @@ describe("sessionReducer active input snapshots", () => {
         );
       };
       resynchronize(structuredClone(reviewed));
+      if (resync === "retained preparation pause" || resync === "workflow publication")
+        expect(state.preparation.status).toBe("awaiting_input");
       expect(state.correctionConfirmFields).toEqual([{ field: "metadata.title" }]);
       const changedIdentity: ReleaseWorkflowCurrent = {
         ...reviewed,

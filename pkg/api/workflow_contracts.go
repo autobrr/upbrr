@@ -204,29 +204,30 @@ type TrackerDuplicateTarget struct {
 	Comparisons []DupeComparisonEvidence `json:"comparisons,omitempty"`
 
 	// TrackerSlot is opaque native slot evidence resolved from this prepared generation.
-	TrackerSlot   string   `json:"trackerSlot,omitempty"`
-	Names         []string `json:"names,omitempty"`
-	Category      string   `json:"category,omitempty"`
-	Type          string   `json:"type,omitempty"`
-	Source        string   `json:"source,omitempty"`
-	Provider      string   `json:"provider,omitempty"`
-	ReleaseOrigin string   `json:"releaseOrigin,omitempty"`
-	Resolution    string   `json:"resolution,omitempty"`
-	Container     string   `json:"container,omitempty"`
-	VideoCodec    string   `json:"videoCodec,omitempty"`
-	VideoEncode   string   `json:"videoEncode,omitempty"`
-	HDR           HDRFacts `json:"hdr"`
-	Edition       string   `json:"edition,omitempty"`
-	Region        string   `json:"region,omitempty"`
-	ThreeD        string   `json:"threeD,omitempty"`
-	Group         string   `json:"group,omitempty"`
-	Repack        string   `json:"repack,omitempty"`
-	Season        int      `json:"season,omitempty"`
-	Episode       int      `json:"episode,omitempty"`
-	Date          string   `json:"date,omitempty"`
-	Pack          bool     `json:"pack"`
-	SizeBytes     int64    `json:"sizeBytes,omitempty"`
-	FileNames     []string `json:"fileNames,omitempty"`
+	TrackerSlot   string          `json:"trackerSlot,omitempty"`
+	Names         []string        `json:"names,omitempty"`
+	Category      string          `json:"category,omitempty"`
+	Type          string          `json:"type,omitempty"`
+	Source        string          `json:"source,omitempty"`
+	Provider      string          `json:"provider,omitempty"`
+	ReleaseOrigin string          `json:"releaseOrigin,omitempty"`
+	Resolution    string          `json:"resolution,omitempty"`
+	Container     string          `json:"container,omitempty"`
+	VideoCodec    string          `json:"videoCodec,omitempty"`
+	VideoEncode   string          `json:"videoEncode,omitempty"`
+	HDR           HDRFacts        `json:"hdr"`
+	Edition       string          `json:"edition,omitempty"`
+	Region        string          `json:"region,omitempty"`
+	ThreeD        string          `json:"threeD,omitempty"`
+	Group         string          `json:"group,omitempty"`
+	Repack        string          `json:"repack,omitempty"`
+	Season        int             `json:"season,omitempty"`
+	Episode       int             `json:"episode,omitempty"`
+	Date          string          `json:"date,omitempty"`
+	Pack          bool            `json:"pack"`
+	Coverage      EpisodeCoverage `json:"coverage"`
+	SizeBytes     int64           `json:"sizeBytes,omitempty"`
+	FileNames     []string        `json:"fileNames,omitempty"`
 
 	// ReleaseFeatures retain non-edition annotations without changing edition comparisons.
 	ReleaseFeatures []ReleaseFeature `json:"releaseFeatures,omitempty"`
@@ -509,6 +510,9 @@ type TrackerDupeAssessment struct {
 
 // DupeAssessment retains duplicate results for exact projection and preflight revisions.
 type DupeAssessment struct {
+	// SkipRemote records the explicit remote-search waiver used for this assessment.
+	// In-client duplicate evidence remains authoritative.
+	SkipRemote       bool                           `json:"skipRemote,omitempty"`
 	ID               DupeAssessmentID               `json:"id"`
 	WorkflowID       WorkflowID                     `json:"workflowId"`
 	Revision         WorkflowRevision               `json:"revision"`
@@ -823,6 +827,8 @@ type ReleaseWorkflow struct {
 // ReleaseWorkflowCurrent is the complete safe current projection returned to
 // every workflow adapter. Private execution resources never appear here.
 type ReleaseWorkflowCurrent struct {
+	// InputReview is display-only evidence for retrying incomplete Input preparation.
+	InputReview *InputReviewContext `json:"inputReview,omitempty"`
 	// PreparationOperationID identifies preparation accepted by this
 	// continuation response. Busy responses and passive reads omit it.
 	PreparationOperationID WorkflowOperationID                   `json:"preparationOperationId,omitempty"`

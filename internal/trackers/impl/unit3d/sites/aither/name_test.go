@@ -456,6 +456,14 @@ func TestAitherHDDVDNumbering(t *testing.T) {
 			if test.manualOmission {
 				markAitherManual(t, subject.GeneratedName, api.NameRoleSeason)
 				markAitherManual(t, subject.GeneratedName, api.NameRoleEpisode)
+				for index := range subject.GeneratedName.Components {
+					component := &subject.GeneratedName.Components[index]
+					if component.Role == api.NameRoleSeason || component.Role == api.NameRoleEpisode {
+						component.Present = false
+					}
+				}
+				rendered := subject.GeneratedName.Render()
+				subject.ReleaseName, subject.ReleaseNameNoTag = rendered.Name, rendered.NameNoTag
 			}
 			if got := aitherReviewedName(t, subject, nil); got != test.want {
 				t.Fatalf("reviewed name = %q, want %q", got, test.want)

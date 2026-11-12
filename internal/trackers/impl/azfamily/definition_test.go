@@ -4,6 +4,7 @@
 package azfamily
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -18,6 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/autobrr/go-torrent/bencode"
+	"github.com/autobrr/go-torrent/metainfo"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -75,16 +78,45 @@ func TestBuildUploadDryRunBlockedWhenMediaMissing(t *testing.T) {
 }
 
 func TestUploadMissingMediaDecisionAndScreenshotProtocol(t *testing.T) {
+	for _, name := range []string{"AZ", "CZ", "PHD"} {
+		t.Run(name, func(t *testing.T) { testUploadMissingMediaDecisionAndScreenshotProtocol(t, name) })
+	}
+}
+
+func testUploadMissingMediaDecisionAndScreenshotProtocol(t *testing.T, name string) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
-	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+	if err := os.WriteFile(torrentPath, testTorrentBytes(t, "alternative"), 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
 	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
+	base, err := metainfo.LoadFromFile(torrentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseHash := base.HashInfoBytes().String()
+	site := siteFor(name)
+	if err := trackers.WritePersonalizedTorrent(torrentPath, torrentPath, "https://tracker.example/announce", site.SourceFlag); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := os.ReadFile(torrentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	personalized, err := metainfo.Load(bytes.NewReader(artifact))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHash := personalized.HashInfoBytes().String()
+	if wantHash == baseHash {
+		t.Fatal("personalization did not change hash")
+	}
+	var uploadedHash string
+	var submittedHash string
 	imageBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
 	menuPath := "/img/menu.png"
 	imagePaths := []string{"/img/1.png", "/img/2.png", "/img/3.png"}
@@ -126,9 +158,35 @@ func TestUploadMissingMediaDecisionAndScreenshotProtocol(t *testing.T) {
 			w.Header().Set("Location", "/movies/77")
 			w.WriteHeader(http.StatusFound)
 		case strings.Contains(r.URL.Path, "/upload/") && strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data"):
+
+			file, _, err := r.FormFile("torrent_file")
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			uploaded, err := io.ReadAll(file)
+			_ = file.Close()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if !bytes.Equal(uploaded, artifact) {
+				t.Error("uploaded artifact changed after preparation")
+			}
+			info, err := metainfo.Load(bytes.NewReader(uploaded))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			uploadedHash = info.HashInfoBytes().String()
 			taskCount.Add(1)
 			http.Redirect(w, r, "/upload/movie/task/999", http.StatusFound)
 		case strings.Contains(r.URL.Path, "/upload/movie/task/999"):
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
+			}
+			submittedHash = r.Form.Get("info_hash")
 			http.Redirect(w, r, "/torrent/123", http.StatusFound)
 		case r.URL.Path == "/requests":
 			_, _ = io.WriteString(w, "<html></html>")
@@ -167,13 +225,22 @@ func TestUploadMissingMediaDecisionAndScreenshotProtocol(t *testing.T) {
 	defer server.Close()
 	parsedServerURL, _ := url.Parse(server.URL)
 	writeAZCookieFile(t, tmp, parsedServerURL.Hostname())
+	if name != "AZ" {
+		if err := os.Rename(filepath.Join(tmp, "cookies", "AZ.txt"), filepath.Join(tmp, "cookies", name+".txt")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	site.BaseURL = server.URL
+	site.RequestsURL = server.URL + "/requests"
+	definition := &Definition{site: site}
 
 	input := trackers.PreparationInput{
 		Intent:  trackers.PreparationIntentUpload,
-		Tracker: "AZ",
+		Tracker: name,
 		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Example.Release.2026.mkv"),
 			TorrentPath:       torrentPath,
+			InfoHash:          baseHash,
 			MediaInfoTextPath: mediaInfoPath,
 			Identity:          api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
 			ReleaseName:       "Example.Release.2026.1080p.WEB-DL.x265-GRP",
@@ -201,7 +268,7 @@ func TestUploadMissingMediaDecisionAndScreenshotProtocol(t *testing.T) {
 		},
 	}
 
-	plan, failure := testDefinitionAt(server.URL).Prepare(context.Background(), input)
+	plan, failure := definition.Prepare(context.Background(), input)
 	if failure != nil {
 		t.Fatalf("unexpected upload preparation error: %v", failure)
 	}
@@ -220,11 +287,16 @@ func TestUploadMissingMediaDecisionAndScreenshotProtocol(t *testing.T) {
 		t.Fatalf("decline mutations add=%d task=%d", addCount.Load(), taskCount.Load())
 	}
 
-	plan, failure = testDefinitionAt(server.URL).Prepare(context.Background(), input)
+	plan, failure = definition.Prepare(context.Background(), input)
 	if failure != nil {
 		t.Fatalf("prepare confirmed upload: %v", failure)
 	}
-	plan, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, true)
+
+	// The pending decision must retain the artifact, not reread a later replacement.
+	if err := os.WriteFile(torrentPath, testTorrentBytes(t, "replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, true)
 	if err != nil {
 		t.Fatalf("confirm missing media action: %v", err)
 	}
@@ -244,6 +316,9 @@ func TestUploadMissingMediaDecisionAndScreenshotProtocol(t *testing.T) {
 		t.Fatalf("first uploaded image = %q, want menu.png", firstUploadedName)
 	}
 
+	if got := plan.DryRun().Payload["info_hash"]; got != wantHash {
+		t.Fatalf("preview hash = %v, want %s", got, wantHash)
+	}
 	result, err := plan.Submit(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected upload error: %v", err)
@@ -256,6 +331,10 @@ func TestUploadMissingMediaDecisionAndScreenshotProtocol(t *testing.T) {
 	}
 	if result.UploadedTorrents[0].TorrentID != "123" {
 		t.Fatalf("expected torrent id 123, got %q", result.UploadedTorrents[0].TorrentID)
+	}
+
+	if submittedHash != uploadedHash || submittedHash != wantHash {
+		t.Fatalf("submitted hash %q, uploaded %q, expected %q", submittedHash, uploadedHash, wantHash)
 	}
 }
 
@@ -301,7 +380,7 @@ func TestUploadScreenshotPreflightRejectsBeforeTask(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
-	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+	if err := os.WriteFile(torrentPath, testTorrentBytes(t, "base"), 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
 	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
@@ -362,7 +441,7 @@ func TestUploadScreenshotPublishFailureDoesNotCreateTask(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
-	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+	if err := os.WriteFile(torrentPath, testTorrentBytes(t, "base"), 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
 	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
@@ -431,7 +510,7 @@ func TestUploadTagDecodeFailureDoesNotCreateTask(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
-	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+	if err := os.WriteFile(torrentPath, testTorrentBytes(t, "base"), 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
 	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
@@ -504,7 +583,7 @@ func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
-	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+	if err := os.WriteFile(torrentPath, testTorrentBytes(t, "base"), 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
 	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
@@ -577,5 +656,82 @@ func writeAZCookieFile(t *testing.T, tmp string, domain string) {
 	content := "# Netscape HTTP Cookie File\n" + domain + "\tTRUE\t/\tTRUE\t0\tsession\tcookievalue\n"
 	if err := os.WriteFile(filepath.Join(cookieDir, "AZ.txt"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write cookie file: %v", err)
+	}
+}
+
+func testTorrentBytes(t *testing.T, source string) []byte {
+	t.Helper()
+	info, err := bencode.Marshal(metainfo.Info{
+		Name:        "Example.Release.mkv",
+		Length:      1,
+		PieceLength: 16384,
+		Pieces:      bytes.Repeat([]byte{1}, 20),
+		Source:      source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := (&metainfo.MetaInfo{InfoBytes: info}).Write(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+func TestUploadRejectsInvalidArtifactBeforeRemoteEffects(t *testing.T) {
+	for _, artifact := range []string{"missing", "invalid", "missing info"} {
+		t.Run(artifact, func(t *testing.T) {
+			tmp := t.TempDir()
+			torrentPath := filepath.Join(tmp, "release.torrent")
+			if artifact != "missing" {
+				data := []byte("invalid")
+				if artifact == "missing info" {
+					data = []byte("de")
+				}
+				if err := os.WriteFile(torrentPath, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+			if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var effects atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					effects.Add(1)
+				}
+				switch r.URL.Path {
+				case "/torrents":
+					_, _ = io.WriteString(w, `<meta name="_token" content="token">`)
+				case "/ajax/movies/1":
+					_, _ = io.WriteString(w, `{"data":[{"id":"77","imdb":"tt0000123"}]}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			parsed, _ := url.Parse(server.URL)
+			writeAZCookieFile(t, tmp, parsed.Hostname())
+			_, failure := testDefinitionAt(server.URL).Prepare(t.Context(), trackers.PreparationInput{
+				Intent:  trackers.PreparationIntentUpload,
+				Tracker: "AZ",
+				Meta: api.UploadSubject{
+					TorrentPath:       torrentPath,
+					MediaInfoTextPath: mediaInfoPath,
+					Identity:          api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
+					ReleaseName:       "Example.Release.2026",
+					Release:           api.ReleaseInfo{Resolution: "1080p"},
+					Type:              "WEBDL",
+				},
+				Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
+			})
+			if failure == nil || !strings.Contains(failure.Message(), "torrent") {
+				t.Fatalf("expected artifact failure, got %v", failure)
+			}
+			if effects.Load() != 0 {
+				t.Fatalf("invalid artifact caused %d remote effects", effects.Load())
+			}
+		})
 	}
 }

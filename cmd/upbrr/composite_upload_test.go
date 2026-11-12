@@ -84,7 +84,7 @@ func TestCLICompositeFailurePreservesInvalidInputRecovery(t *testing.T) {
 			if uploaded != 0 || !ok || got != failure {
 				t.Fatalf("composite failure = uploaded:%d failure:%#v err:%v", uploaded, got, err)
 			}
-			if got, want := formatCLIError(err), failure.Message+" (recovery: edit_input)"; got != want {
+			if got, want := formatCLIError(err), failure.Message+" Next step: correct the input options or source path before running this command again."; got != want {
 				t.Fatalf("CLI failure = %q, want %q", got, want)
 			}
 			if strings.Contains(output.String(), "No trackers configured") {
@@ -205,7 +205,7 @@ func TestCLICompositeBlockedMediaStopsWithoutTrackerFeedback(t *testing.T) {
 				}
 				if withFailure {
 					got, ok := api.AsOperationFailure(err)
-					if !ok || got != failure || formatCLIError(err) != failure.Message+" (recovery: retry)" {
+					if !ok || got != failure || formatCLIError(err) != failure.Message+" Next step: resolve the reported problem before retrying the failed operation." {
 						t.Fatalf("media recovery was lost: failure:%#v err:%v", got, err)
 					}
 				} else if !strings.Contains(err.Error(), prompt) || !strings.Contains(err.Error(), "media blocked") {
@@ -1197,14 +1197,17 @@ func TestCLICompositeTrackerApprovalDefaults(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 			for _, tc := range []struct {
-				name     string
-				decision api.DupeDecision
-				status   api.StageStatus
-				complete bool
-				staff    bool
-				reasons  []api.DupeReason
-				input    string
-				want     bool
+				name          string
+				decision      api.DupeDecision
+				status        api.StageStatus
+				complete      bool
+				staff         bool
+				reasons       []api.DupeReason
+				matches       []api.DupeMatchProjection
+				skipDupeCheck bool
+				preflight     api.TrackerPreflightState
+				input         string
+				want          bool
 			}{
 				{
 					name:     "clear Enter",
@@ -1249,10 +1252,50 @@ func TestCLICompositeTrackerApprovalDefaults(t *testing.T) {
 					input:    "\n",
 				},
 				{
-					name:     "skipped check",
-					decision: api.DupeDecisionSkipped,
-					status:   api.StageStatusSkipped,
-					input:    "\n",
+					name:      "skipped check",
+					decision:  api.DupeDecisionSkipped,
+					status:    api.StageStatusSkipped,
+					preflight: api.TrackerPreflightStateReady,
+					input:     "\n",
+				},
+				{
+					name:          "explicit skip waiver",
+					decision:      api.DupeDecisionSkipped,
+					status:        api.StageStatusSkipped,
+					skipDupeCheck: true,
+					preflight:     api.TrackerPreflightStateReady,
+					input:         "\n",
+					want:          true,
+				},
+				{
+					name:          "explicit skip preserves in-client block",
+					decision:      api.DupeDecisionAccepted,
+					status:        api.StageStatusCompleted,
+					complete:      true,
+					skipDupeCheck: true,
+					preflight:     api.TrackerPreflightStateReady,
+					matches: []api.DupeMatchProjection{{
+						Name:     "Example.Release.2026.1080p-GRP",
+						Reason:   "in_client",
+						Relation: api.DupeRelationExactDuplicate,
+					}},
+					input: "\n",
+				},
+				{
+					name:          "explicit skip preserves auth block",
+					decision:      api.DupeDecisionSkipped,
+					status:        api.StageStatusSkipped,
+					skipDupeCheck: true,
+					preflight:     api.TrackerPreflightStateActionRequired,
+					input:         "\n",
+				},
+				{
+					name:          "explicit skip preserves failed check",
+					decision:      api.DupeDecisionSkipped,
+					status:        api.StageStatusFailed,
+					skipDupeCheck: true,
+					preflight:     api.TrackerPreflightStateReady,
+					input:         "\n",
 				},
 				{
 					name:     "staff token",
@@ -1275,25 +1318,33 @@ func TestCLICompositeTrackerApprovalDefaults(t *testing.T) {
 					t.Parallel()
 					var output strings.Builder
 					session := &cliWorkflowSession{
-						intent:  cliWorkflowIntent{interaction: mode},
-						streams: cliIO{out: &output},
+						intent:        cliWorkflowIntent{interaction: mode},
+						streams:       cliIO{out: &output},
+						uploadRequest: api.Request{SkipDupeCheck: tc.skipDupeCheck},
 						current: releaseworkflow.CommandResult{
 							Projections: &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
 								TrackerID:         "EXAMPLE",
 								UploadReleaseName: "Example.Release.2026.1080p-GRP",
 								UploadReady:       true,
+								DupeReady:         true,
 								Readiness:         api.ReadinessStatusReady,
 								EditionFeatures:   []api.TrackerEditionFeature{{Label: "With Commentary", Selected: true}},
 							}}},
-							Dupes: &api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+							Dupes: &api.DupeAssessment{SkipRemote: tc.skipDupeCheck, Results: []api.TrackerDupeAssessment{{
 								TrackerID:          "EXAMPLE",
 								Decision:           tc.decision,
 								Status:             tc.status,
 								Search:             api.DupeSearchEvidence{Complete: tc.complete},
 								RequiresStaffToken: tc.staff,
 								ReviewReasons:      tc.reasons,
+								Matches:            tc.matches,
 							}}},
 						},
+					}
+					if tc.preflight != "" {
+						session.current.Preflight = &api.TrackerPreflightAssessment{
+							Results: []api.TrackerPreflightResult{{TrackerID: "EXAMPLE", State: tc.preflight}},
+						}
 					}
 					action := api.RequiredAction{
 						ID:               "approval-default",

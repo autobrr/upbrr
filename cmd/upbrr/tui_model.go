@@ -186,6 +186,9 @@ func (m *cliTUIModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case cliBridgeUpdate:
 		if msg.view != nil && msg.view.Epoch >= m.view.Epoch && msg.view.Item >= m.view.Item &&
 			(msg.view.WorkflowID != m.view.WorkflowID || msg.view.Revision >= m.view.Revision) {
+			if msg.view.Epoch > m.view.Epoch || msg.view.Item > m.view.Item {
+				m.panels[cliPanelFlow].GotoBottom()
+			}
 			if m.question != nil && m.question.prompt.WorkflowID != "" &&
 				(m.question.prompt.WorkflowID != msg.view.WorkflowID || m.question.prompt.Revision != msg.view.Revision) {
 				answer := cliPromptAnswer(m.question.prompt, "", false)

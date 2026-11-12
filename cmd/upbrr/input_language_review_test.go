@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"reflect"
 	"slices"
@@ -62,36 +63,63 @@ func TestCollectCLIInputLanguagesBatchesCanonicalCorrections(t *testing.T) {
 	media.Tracks[0].Codec = "AC-3"
 	media.Tracks[0].DetectedLanguages = []string{"und"}
 	for _, mode := range []api.InteractionMode{api.InteractionModeInteractive, api.InteractionModeUnattendedConfirm} {
-		for _, terminal := range []bool{false, true} {
+		for _, test := range []struct{ terminal, retry bool }{{}, {terminal: true}, {retry: true}, {terminal: true, retry: true}} {
 			var output bytes.Buffer
-			reader := bufio.NewReader(strings.NewReader("jpn\nJapanese, English\n"))
+			answers := []string{"jpn", "Japanese, English"}
+			if test.retry {
+				answers = append([]string{"mul", "und", "unknown-language", "Japanese, mul"}, answers...)
+			}
+			reader := bufio.NewReader(strings.NewReader(strings.Join(answers, "\n") + "\n"))
 			var presenter cliPresenter = &cliPlainPresenter{reader: reader, output: &output}
 			var model *modelPresenter
-			if terminal {
+			if test.terminal {
 				tui := newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true)
 				tui.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-				model = &modelPresenter{model: tui, answers: []string{"jpn", "Japanese, English"}}
+				model = &modelPresenter{model: tui, answers: answers}
 				presenter = model
 			}
 			writer := &cliPresentationWriter{
 				Writer:    &output,
 				ctx:       t.Context(),
 				presenter: presenter,
-				terminal:  terminal,
+				terminal:  test.terminal,
 			}
 			bindCLIQuestion(t.Context(), writer, "source-review", 8, "", "Current source generation")
 			corrections, err := collectCLIInputLanguages(reader, writer, mode, fields, "Example.Release.mkv", media)
-			if err != nil || len(corrections) != 2 || corrections[0].ManifestFingerprint != "current" || corrections[0].Languages[0] != "Japanese" || len(corrections[1].Languages) != 2 {
+			want := []api.TrackLanguageCorrection{
+				{
+					TrackID:             "one",
+					Languages:           []string{"Japanese"},
+					ManifestFingerprint: "current",
+				},
+				{
+					TrackID:             "two",
+					Languages:           []string{"Japanese", "English"},
+					ManifestFingerprint: "current",
+				},
+			}
+			if err != nil || !reflect.DeepEqual(corrections, want) {
 				t.Fatalf("corrections: %#v, %v", corrections, err)
 			}
 			text := output.String()
-			if terminal {
-				if len(model.prompts) != 2 || model.prompts[0].WorkflowID != "source-review" || model.prompts[0].Revision != 8 || model.prompts[0].ActionID != "" {
+			if test.terminal {
+				if len(model.prompts) != len(answers) {
 					t.Fatal("source review lost deduplication or current authority")
 				}
+				for i, prompt := range model.prompts {
+					if prompt.WorkflowID != "source-review" || prompt.Revision != 8 || prompt.ActionID != "" || prompt.ID != uint64(i+1) {
+						t.Fatal("source review lost current authority on retry")
+					}
+				}
+				if test.retry && !strings.Contains(model.prompts[1].Help, "Invalid language answer") {
+					t.Fatal("retry did not explain the invalid answer")
+				}
 				text = cliPlainPromptText(model.prompts[0])
-			} else if strings.Count(text, "Programme audio track") != 2 {
+			} else if strings.Count(text, "Programme audio track") != len(answers) {
 				t.Fatal("source review repeated or omitted a language question")
+			}
+			if !test.terminal && test.retry && !strings.Contains(text, "Invalid language answer") {
+				t.Fatal("retry did not explain the invalid answer")
 			}
 			for _, fact := range []string{"Example.Release.mkv", "Main surround", "AC-3", "German", "und", "ONE, TWO", "one=LANGUAGE", "--input-only"} {
 				if !strings.Contains(text, fact) {
@@ -105,9 +133,10 @@ func TestCollectCLIInputLanguagesBatchesCanonicalCorrections(t *testing.T) {
 	if err != nil || len(corrections) != 0 || !strings.Contains(output.String(), "--track-languages") || strings.Contains(output.String(), "Programme audio track") {
 		t.Fatalf("unattended prompted or lost guidance: %v %s", err, output.String())
 	}
-	for _, value := range []string{"und", "mul", "unknown-language"} {
-		if _, err := collectCLIInputLanguages(bufio.NewReader(strings.NewReader(value+"\n")), &bytes.Buffer{}, api.InteractionModeInteractive, fields[:1], "Example.Release.mkv", api.MediaFacts{Tracks: tracks}); err == nil {
-			t.Fatalf("accepted unresolved answer %q", value)
+	for _, value := range []string{"", "und", "mul", "unknown-language"} {
+		corrections, err := collectCLIInputLanguages(bufio.NewReader(strings.NewReader(value+"\n")), &bytes.Buffer{}, api.InteractionModeInteractive, fields[:1], "Example.Release.mkv", api.MediaFacts{Tracks: tracks})
+		if !errors.Is(err, io.EOF) || len(corrections) != 0 {
+			t.Fatalf("retry did not stop on EOF after %q: corrections=%#v, err=%v", value, corrections, err)
 		}
 	}
 	if _, err := collectCLIInputLanguages(bufio.NewReader(strings.NewReader("Japanese\n")), &bytes.Buffer{}, api.InteractionModeInteractive, fields[:1], "Example.Release.mkv", api.MediaFacts{}); err == nil {

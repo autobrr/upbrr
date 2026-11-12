@@ -1,6 +1,6 @@
 module github.com/autobrr/upbrr
 
-go 1.27.3
+go 1.27.4
 
 require (
 	charm.land/bubbles/v2 v2.2.1
@@ -14,7 +14,7 @@ require (
 	github.com/autobrr/go-mediainfo v0.8.1-0.20261020113756-56fa5814c646
 	github.com/autobrr/go-qbittorrent v1.19.0
 	github.com/autobrr/go-torrent v1.1.1
-	github.com/autobrr/mkbrr v1.27.0
+	github.com/autobrr/mkbrr v1.27.1-0.20261111220256-2322f032f936
 	github.com/autobrr/rls v0.10.0
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/bluenviron/mediacommon/v2 v2.9.6

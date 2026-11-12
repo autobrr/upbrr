@@ -70,3 +70,18 @@ func TestSatisfiedOriginalOrEnglishDoesNotRequireExtraOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestOriginalMultilingualTrackPurposeGuidance(t *testing.T) {
+	for _, language := range []string{"German", "und"} {
+		subject := ptpLanguageSubject("Japanese", "mul", language)
+		subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioOriginal
+		failures := languageFailures(subject)
+		got := slices.ContainsFunc(failures, func(f api.RuleFailure) bool { return f.Rule == "language_redundant_audio" })
+		if got != (language == "German") {
+			t.Fatalf("companion %s: track-purpose guidance=%v, failures=%+v", language, got, failures)
+		}
+		if subject.LanguageFacts.ProgrammeStatus != api.MetadataEvidenceStatusPartial {
+			t.Fatal("guidance established unknown language identities")
+		}
+	}
+}

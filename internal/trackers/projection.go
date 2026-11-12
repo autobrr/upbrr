@@ -52,6 +52,7 @@ func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection 
 	target := duplicateTarget(input.Meta)
 	target.Names = append([]string{canonicalName}, target.Names...)
 	projection := api.TrackerReleaseProjection{
+		DerivedFlags:            []api.TrackerDerivedFlag{{Key: "anonymous", Value: input.TrackerConfig.Anon}},
 		ModifiedReleaseDecision: input.Meta.ModifiedReleaseDecision,
 		QuestionnaireAnswers:    answers,
 		TrackerID:               api.TrackerID(strings.ToUpper(strings.TrimSpace(input.Tracker))),
@@ -195,6 +196,12 @@ func applyReviewedProjection(input PreparationInput) PreparationInput {
 	}
 	projection := *input.Projection
 	input.Projection = &projection
+	// Attribution follows the reviewed effective choice, including explicit false.
+	for _, flag := range projection.DerivedFlags {
+		if flag.Key == "anonymous" {
+			input.TrackerConfig.Anon = flag.Value
+		}
+	}
 
 	if value := strings.TrimSpace(projection.Taxonomy.Type.Label); value != "" {
 		input.Meta.Type = value
@@ -675,6 +682,7 @@ func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 		Episode:     subject.EpisodeInt,
 		Date:        strings.TrimSpace(subject.DailyEpisodeDate),
 		Pack:        subject.TVPack,
+		Coverage:    subject.EpisodeCoverage,
 		SizeBytes:   subject.SourceSize,
 		FileNames:   append([]string(nil), subject.FileList...),
 

@@ -235,8 +235,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.IntVar(&opts.Screens, "s", -1, "Number of screenshots to take")
 	fs.BoolVar(&opts.NoSeed, "no-seed", false, "Do not inject torrent into clients")
 	fs.BoolVar(&opts.NoSeed, "ns", false, "Do not inject torrent into clients")
-	fs.BoolVar(&opts.SkipAutoTorrent, "skip_auto_torrent", false, "Skip automated torrent client searching")
-	fs.BoolVar(&opts.SkipAutoTorrent, "sat", false, "Skip automated torrent client searching")
+	fs.BoolVar(&opts.SkipAutoTorrent, "skip_auto_torrent", false, "Skip initial torrent-client discovery; BASE reuse still checks clients before hashing")
+	fs.BoolVar(&opts.SkipAutoTorrent, "sat", false, "Skip initial torrent-client discovery; BASE reuse still checks clients before hashing")
 	fs.BoolVar(&opts.KeepFolder, "keep-folder", false, "Keep the supplied folder around one movie or episode video, excluding sidecars")
 	fs.BoolVar(&opts.KeepFolder, "kf", false, "Keep the supplied folder around one movie or episode video, excluding sidecars")
 	fs.BoolVar(&opts.OnlyID, "onlyID", false, "Only grab tracker metadata IDs")
@@ -363,9 +363,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.AudioOutput, "audio-output", "", "Output directory for --audio-analysis-only artifacts")
 	fs.StringVar(&opts.AudioTracks, "audio-tracks", "primary", "Audio tracks: primary (default), all, or comma-separated one-based audio ordinals")
 	fs.StringVar(&opts.AudioImages, "audio-images", "both", "Audio images: both (default), waveform, or spectrogram")
-	fs.StringVar(&opts.InfoHash, "torrenthash", "", "Reuse an existing torrent info hash")
-	fs.StringVar(&opts.InfoHash, "th", "", "Reuse an existing torrent info hash")
-	fs.StringVar(&opts.InfoHash, "infohash", "", "Override v1 info hash")
+	fs.StringVar(&opts.InfoHash, "infohash", "", "Find an existing client torrent by v1 info hash before ordinary discovery")
 	fs.IntVar(&opts.MaxPieceSize, "max-piece-size", 0, "Set maximum torrent piece size in MiB")
 	fs.IntVar(&opts.MaxPieceSize, "mps", 0, "Set maximum torrent piece size in MiB")
 	fs.BoolVar(&opts.NoHash, "nohash", false, "Reuse existing torrents only without generating a new one")
@@ -774,8 +772,6 @@ func cliFlagAliases() map[string]string {
 		"mf":                   "manual_frames",
 		"comps":                "comparison",
 		"comps_index":          "comparison_index",
-		"th":                   "infohash",
-		"torrenthash":          "infohash",
 		"mps":                  "max-piece-size",
 		"nh":                   "nohash",
 		"rh":                   "rehash",

@@ -618,15 +618,25 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 
 	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
 	store := newMemoryStore()
+	requestedHash := strings.Repeat("a", 40)
 	initialCollector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("initial-hash"))
 	initial := newTestModule(t, store, initialCollector)
-	input := api.PrepareInput{SourcePath: path, Policy: api.PreparationPolicy{KeepImages: true}}
+	input := api.PrepareInput{
+		SourcePath: path,
+		Policy:     api.PreparationPolicy{KeepImages: true, OnlyID: true},
+		Search: api.ClientSearchPolicy{
+			Skip:     true,
+			InfoHash: requestedHash,
+			Client:   new("none"),
+		},
+	}
 	prepared, err := initial.Prepare(context.Background(), input)
 	if err != nil {
 		t.Fatalf("initial prepare: %v", err)
 	}
 
-	hydrated := clientEvidenceTestSnapshot("hydrated-hash")
+	hydrated := clientEvidenceTestSnapshot(requestedHash)
+	hydrated.Policy = input.Search
 	candidate := api.ClientTorrentCandidate{
 		Path:          "hydrated.torrent",
 		InfoHash:      "hydrated-candidate-hash",
@@ -649,6 +659,12 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 			restartedCollector.hydrateCount(),
 		)
 	}
+	if restartedCollector.hydratedInfoHash != requestedHash {
+		t.Fatalf("restart hydration received infohash %q, want %q", restartedCollector.hydratedInfoHash, requestedHash)
+	}
+	if restartedCollector.hydratedPolicy != input.Policy {
+		t.Fatalf("infohash changed hydrated metadata policy: got=%+v want=%+v", restartedCollector.hydratedPolicy, input.Policy)
+	}
 	if _, err := restarted.Prepare(context.Background(), input); err != nil {
 		t.Fatalf("second restart reuse: %v", err)
 	}
@@ -661,7 +677,7 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	if err != nil {
 		t.Fatalf("resolve hydrated upload subject: %v", err)
 	}
-	if upload.InfoHash != "hydrated-hash" || !upload.ClientTorrentDataVerified || upload.TrackerIDs["ant"] != "hydrated-id" ||
+	if upload.InfoHash != requestedHash || upload.ClientSearchPolicy.InfoHash != requestedHash || !upload.ClientTorrentDataVerified || upload.TrackerIDs["ant"] != "hydrated-id" ||
 		len(upload.MatchedTrackers) != 1 || upload.MatchedTrackers[0] != "ANT" {
 		t.Fatalf("hydrated upload evidence = %#v", upload)
 	}
@@ -884,6 +900,7 @@ func TestPreparationCompatibilityIncludesEvidencePolicyAndExcludesOneShotControl
 		{name: "only id", mutate: func(input *api.PrepareInput) { input.Policy.OnlyID = true }},
 		{name: "skip client", mutate: func(input *api.PrepareInput) { input.Search.Skip = true }},
 		{name: "client selector", mutate: func(input *api.PrepareInput) { input.Search.Client = stringPtr("qbit") }},
+		{name: "requested infohash", mutate: func(input *api.PrepareInput) { input.Search.InfoHash = "abcdef0123456789abcdef0123456789abcdef01" }},
 	}
 	for _, test := range included {
 		t.Run(test.name, func(t *testing.T) {
@@ -1759,11 +1776,13 @@ func (c *recordingCollector) externalFreshnessAt(index int) api.ExternalFreshnes
 }
 
 type clientEvidenceTestCollector struct {
-	base     recordingCollector
-	mu       sync.Mutex
-	hydrates int
-	snapshot preparationstate.ClientEvidenceSnapshot
-	retained []bool
+	base             recordingCollector
+	mu               sync.Mutex
+	hydrates         int
+	hydratedInfoHash string
+	hydratedPolicy   api.PreparationPolicy
+	snapshot         preparationstate.ClientEvidenceSnapshot
+	retained         []bool
 }
 
 func newClientEvidenceTestCollector(snapshot preparationstate.ClientEvidenceSnapshot) *clientEvidenceTestCollector {
@@ -1791,6 +1810,8 @@ func (c *clientEvidenceTestCollector) HydratePrivateResources(
 ) (CollectedResources, error) {
 	c.mu.Lock()
 	c.hydrates++
+	c.hydratedInfoHash = request.Input.Search.InfoHash
+	c.hydratedPolicy = request.Input.Policy
 	c.mu.Unlock()
 	return CollectedResources{
 		SourcePath:        request.Manifest.SourcePath,
@@ -1930,6 +1951,100 @@ func (s *memoryStore) commitCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.commits
+}
+
+func TestPreparationChangedInfoHashReplacesClientEvidence(t *testing.T) {
+	t.Parallel()
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	firstHash, secondHash := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	snapshot := clientEvidenceTestSnapshot(firstHash)
+	snapshot.Policy.InfoHash = firstHash
+	collector := newClientEvidenceTestCollector(snapshot)
+	module := newTestModule(t, newMemoryStore(), collector)
+	input := api.PrepareInput{SourcePath: path, Search: api.ClientSearchPolicy{InfoHash: firstHash}}
+	if _, err := module.Prepare(t.Context(), input); err != nil {
+		t.Fatal(err)
+	}
+	collector.snapshot = clientEvidenceTestSnapshot(secondHash)
+	collector.snapshot.Policy.InfoHash = secondHash
+	input.Search.InfoHash = secondHash
+	prepared, err := module.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{
+		Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation},
+	})
+	if err != nil || subject.InfoHash != secondHash || len(collector.retained) != 2 || collector.retained[1] {
+		t.Fatalf("requested hash reused stale evidence: hash=%s retained=%v err=%v", subject.InfoHash, collector.retained, err)
+	}
+}
+
+func TestPreparationRefreshesPreviousInfoHashSearchPolicy(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, hash      string
+		overridesSearch bool
+	}{
+		{name: "ordinary source"},
+		{name: "supplied hash", hash: strings.Repeat("a", 40)},
+		{
+			name:            "source validation and wrapper lookup",
+			hash:            strings.Repeat("a", 40),
+			overridesSearch: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requestedHash := test.hash
+			path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+			store := newMemoryStore()
+			input := api.PrepareInput{SourcePath: path, Search: api.ClientSearchPolicy{InfoHash: requestedHash}}
+			initial := newTestModule(t, store, newClientEvidenceTestCollector(clientEvidenceTestSnapshot(requestedHash)))
+			prepared, err := initial.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			normalized, err := normalizePrepareInput(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Persist either prior requested-hash policy without changing ordinary cache identity.
+			previousPolicy, err := fingerprintJSON(struct {
+				Policy                  api.PreparationPolicy
+				Search                  api.ClientSearchPolicy
+				MetadataRequirements    api.MetadataRequirementSet
+				InfoHashOverridesSearch bool `json:",omitempty"`
+			}{
+				Policy:                  normalized.input.Policy,
+				Search:                  normalized.input.Search,
+				MetadataRequirements:    normalized.input.MetadataRequirements,
+				InfoHashOverridesSearch: test.overridesSearch,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			previous := prepared.Release
+			previous.Compatibility.PolicyFingerprint = previousPolicy
+			store.current[canonicalSourceKey(path)] = previous
+			collector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot(requestedHash))
+			restarted := newTestModule(t, store, collector)
+			current, err := restarted.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCollections := 0
+			if requestedHash != "" {
+				wantCollections = 1
+			}
+			if current.Release.Generation != prepared.Release.Generation+api.PreparedGeneration(wantCollections) || collector.collectCount() != wantCollections {
+				t.Fatalf("previous policy reuse: generation=%d collections=%d, want generation=%d collections=%d",
+					current.Release.Generation, collector.collectCount(), prepared.Release.Generation+api.PreparedGeneration(wantCollections), wantCollections)
+			}
+			if _, err := restarted.Prepare(t.Context(), input); err != nil || collector.collectCount() != wantCollections {
+				t.Fatalf("current policy did not reuse compatible generation: collections=%d err=%v", collector.collectCount(), err)
+			}
+		})
+	}
 }
 
 func TestPreparationEnrichmentReusesOnlyCompatibleClientEvidence(t *testing.T) {

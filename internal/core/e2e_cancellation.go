@@ -16,8 +16,7 @@ import (
 )
 
 // e2eWaitForWorkflowStage holds a synthetic service at a test-owned HTTP gate.
-// The torrent gate models mkbrr's noninterruptible lifetime; its production
-// return-boundary behavior is exercised with the real library in torrent tests.
+// The real mkbrr cancellation and cleanup behavior is exercised in torrent tests.
 func e2eWaitForWorkflowStage(ctx context.Context, stage string) error {
 	if !isE2EEnabled() || os.Getenv("UPBRR_E2E_CANCELLATION_STAGE") != stage {
 		return nil
@@ -29,12 +28,8 @@ func e2eWaitForWorkflowStage(ctx context.Context, stage string) error {
 		CompletedPieces: 0,
 		TotalPieces:     2,
 	})
-	waitCtx := ctx
-	if stage == "torrent" {
-		waitCtx = context.WithoutCancel(ctx)
-	}
 	endpoint := strings.TrimRight(os.Getenv(e2eTrackerURLEnv), "/") + "/workflow-stage/" + stage
-	request, err := http.NewRequestWithContext(waitCtx, http.MethodPost, endpoint, http.NoBody)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("e2e workflow gate request: %w", err)
 	}

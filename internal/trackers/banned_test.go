@@ -65,6 +65,7 @@ func newTestBannedPolicyRegistry(t *testing.T) *Registry {
 		policy  BannedGroupPolicy
 	}{
 		"AITHER": {baseURL: "https://aither.cc", policy: BannedGroupPolicy{EndpointPath: "/api/blacklists/releasegroups", RequireAPIKey: true}},
+		"ULCX":   {baseURL: "https://upload.cx", policy: BannedGroupPolicy{EndpointPath: "/api/blocked-groups", RequireAPIKey: true}},
 		"LST":    {baseURL: "https://lst.gg", policy: BannedGroupPolicy{EndpointPath: "/api/bannedReleaseGroups", RequireAPIKey: true}},
 		"LUME":   {baseURL: "https://luminarr.me", policy: BannedGroupPolicy{TRaSHGuideURL: trashGuideBannedGroupsURL}},
 		"SPD": {baseURL: "https://speedapp.io", policy: BannedGroupPolicy{
@@ -85,22 +86,21 @@ func newTestBannedPolicyRegistry(t *testing.T) *Registry {
 		}
 	}
 	static := map[string][]string{
-		"BLU":  {"TheFarm"},
-		"CBR":  {"YTS.MX"},
-		"DP":   {"FGT", "PSA", "HorribleSubs", "Subsplease", "SyncUp", "Trix"},
-		"GPW":  {"MOMOWEB"},
-		"HHD":  {"EVO"},
-		"LT":   {"EVO"},
-		"OE":   {"VipapkSudios"},
-		"OTW":  {"Sync0rdi"},
-		"PHD":  {"VisionXpert"},
-		"PTP":  {"WORLD"},
-		"PTT":  {"M@RTiNU$"},
-		"RAS":  {"INFINITY"},
-		"RHD":  {"MagicX"},
-		"TOS":  {"FL3ER"},
-		"ULCX": {"EDGE2020", "NuBz", "Ralphy"},
-		"YUS":  {"YOLAND"},
+		"BLU": {"TheFarm"},
+		"CBR": {"YTS.MX"},
+		"DP":  {"FGT", "PSA", "HorribleSubs", "Subsplease", "SyncUp", "Trix"},
+		"GPW": {"MOMOWEB"},
+		"HHD": {"EVO"},
+		"LT":  {"EVO"},
+		"OE":  {"VipapkSudios"},
+		"OTW": {"Sync0rdi"},
+		"PHD": {"VisionXpert"},
+		"PTP": {"WORLD"},
+		"PTT": {"M@RTiNU$"},
+		"RAS": {"INFINITY"},
+		"RHD": {"MagicX"},
+		"TOS": {"FL3ER"},
+		"YUS": {"YOLAND"},
 	}
 	for name, groups := range static {
 		if err := registry.RegisterDescriptor(Descriptor{
@@ -164,20 +164,19 @@ func TestBannedGroupCheckerStaticBuiltins(t *testing.T) {
 
 	checker := newTestBannedGroupChecker(t, filepath.Join(t.TempDir(), "db.sqlite"))
 	cases := map[string][]string{
-		"BLU":  {"TheFarm"},
-		"CBR":  {"YTS.MX"},
-		"DP":   {"FGT", "PSA", "HorribleSubs", "Subsplease", "SyncUp", "Trix"},
-		"GPW":  {"MOMOWEB"},
-		"HHD":  {"EVO"},
-		"LT":   {"EVO"},
-		"OE":   {"VipapkSudios"},
-		"OTW":  {"Sync0rdi"},
-		"PHD":  {"VisionXpert"},
-		"PTP":  {"WORLD"},
-		"PTT":  {"M@RTiNU$"},
-		"RAS":  {"INFINITY"},
-		"ULCX": {"EDGE2020", "NuBz", "Ralphy"},
-		"YUS":  {"YOLAND"},
+		"BLU": {"TheFarm"},
+		"CBR": {"YTS.MX"},
+		"DP":  {"FGT", "PSA", "HorribleSubs", "Subsplease", "SyncUp", "Trix"},
+		"GPW": {"MOMOWEB"},
+		"HHD": {"EVO"},
+		"LT":  {"EVO"},
+		"OE":  {"VipapkSudios"},
+		"OTW": {"Sync0rdi"},
+		"PHD": {"VisionXpert"},
+		"PTP": {"WORLD"},
+		"PTT": {"M@RTiNU$"},
+		"RAS": {"INFINITY"},
+		"YUS": {"YOLAND"},
 	}
 	for tracker, groups := range cases {
 		for _, group := range groups {
@@ -277,92 +276,6 @@ func TestBannedGroupCheckerDPDoesNotIncludeRemovedHDT(t *testing.T) {
 	}
 	if banned {
 		t.Fatalf("expected HDT not to be banned on DP")
-	}
-}
-
-func TestRefreshDynamicBannedGroupsCachesAither(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		if got := r.URL.Path; got != "/api/blacklists/releasegroups" {
-			t.Errorf("unexpected path %q", got)
-			return
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer aither-key" {
-			t.Error("unexpected auth header")
-			return
-		}
-		if got := r.URL.Query().Get("per_page"); got != "100" {
-			t.Errorf("unexpected per_page %q", got)
-			return
-		}
-		switch r.URL.Query().Get("cursor") {
-		case "":
-			_, _ = w.Write([]byte(`{
-				"data":[{"attributes":{"name":"GRP"}},{"attributes":{"release_group":"AnotherGRP"}}],
-				"meta":{"next_cursor":"next"}
-			}`))
-		case "next":
-			_, _ = w.Write([]byte(`{
-				"data":[{"name":"ThirdGRP"}],
-				"meta":{"next_cursor":""}
-			}`))
-		default:
-			t.Errorf("unexpected cursor")
-		}
-	}))
-	defer server.Close()
-
-	tempDir := t.TempDir()
-	cfg := config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "upbrr.db")},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"AITHER": {APIKey: "aither-key"},
-			},
-		},
-	}
-	checker := newTestBannedGroupChecker(t, cfg.MainSettings.DBPath)
-	checker.client = bannedRewriteClient(t, server)
-
-	if err := checker.RefreshDynamic(context.Background(), cfg, []string{"AITHER"}, api.NopLogger{}); err != nil {
-		t.Fatalf("refresh banned groups: %v", err)
-	}
-	if got := requests.Load(); got != 2 {
-		t.Fatalf("expected paginated fetch, got %d requests", got)
-	}
-
-	cachePath := filepath.Join(tempDir, "cache", "banned", "AITHER_banned_groups.json")
-	payload, err := os.ReadFile(cachePath)
-	if err != nil {
-		t.Fatalf("read banned groups cache: %v", err)
-	}
-	var cache bannedGroupsFile
-	if err := json.Unmarshal(payload, &cache); err != nil {
-		t.Fatalf("unmarshal banned groups cache: %v", err)
-	}
-	for _, group := range []string{"AnotherGRP", "GRP", "ThirdGRP"} {
-		if !strings.Contains(cache.BannedGroups, group) {
-			t.Fatalf("expected cached banned group %q in %q", group, cache.BannedGroups)
-		}
-	}
-	if len(cache.RawData) != 3 {
-		t.Fatalf("expected raw cache data for 3 groups, got %d", len(cache.RawData))
-	}
-
-	banned, err := checker.IsBanned("AITHER", "grp")
-	if err != nil {
-		t.Fatalf("check refreshed banned group: %v", err)
-	}
-	if !banned {
-		t.Fatalf("expected refreshed group to be banned")
-	}
-
-	if err := checker.RefreshDynamic(context.Background(), cfg, []string{"AITHER"}, api.NopLogger{}); err != nil {
-		t.Fatalf("refresh fresh banned groups: %v", err)
-	}
-	if got := requests.Load(); got != 2 {
-		t.Fatalf("expected fresh cache to avoid refetch, got %d requests", got)
 	}
 }
 
@@ -865,5 +778,168 @@ func TestRefreshDynamicBannedGroupsMissingAPIKeyDoesNotWriteEmptyCache(t *testin
 	cachePath := filepath.Join(tempDir, "cache", "banned", "AITHER_banned_groups.json")
 	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
 		t.Fatalf("expected no empty banned groups cache, stat err=%v", err)
+	}
+}
+
+func TestRefreshDynamicBannedGroupsCachesAPI(t *testing.T) {
+	t.Parallel()
+
+	paginatedPages := []string{
+		`{"data":[{"attributes":{"name":"GRP"}},{"attributes":{"release_group":"AnotherGRP"}}],"meta":{"next_cursor":"next"}}`,
+		`{"data":[{"name":"ThirdGRP"}],"meta":{"next_cursor":""}}`,
+	}
+	for _, tc := range []struct {
+		tracker  string
+		endpoint string
+		pages    []string
+	}{
+		{
+			tracker:  "AITHER",
+			endpoint: "/api/blacklists/releasegroups",
+			pages:    paginatedPages,
+		},
+		{
+			tracker:  "ULCX",
+			endpoint: "/api/blocked-groups",
+			pages: []string{`{
+				"data":[{"name":"GRP","reason":"Blocked release group","created_at":"2026-11-08T08:03:11.000000Z","updated_at":"2026-11-08T08:03:11.000000Z"},
+				{"name":"AnotherGRP","reason":"Blocked release group"},{"name":"ThirdGRP","reason":"Blocked release group"}],
+				"updated_at":"2026-11-08T08:03:11.000000Z"
+			}`},
+		},
+	} {
+		t.Run(tc.tracker, func(t *testing.T) {
+			t.Parallel()
+
+			var requests atomic.Int32
+			var pages atomic.Pointer[[]string]
+			var status atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Method != http.MethodGet || r.URL.Path != tc.endpoint {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				if r.Header.Get("Authorization") != "Bearer test-key" || r.Header.Get("Accept") != "application/json" {
+					t.Error("missing API authentication or JSON accept header")
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				if got := r.URL.Query().Get("per_page"); got != "100" {
+					t.Errorf("unexpected per_page %q", got)
+				}
+				page := 0
+				switch r.URL.Query().Get("cursor") {
+				case "":
+				case "next":
+					page = 1
+				default:
+					t.Errorf("unexpected cursor %q", r.URL.Query().Get("cursor"))
+					http.NotFound(w, r)
+					return
+				}
+				responsePages := *pages.Load()
+				if page >= len(responsePages) {
+					t.Errorf("unexpected page %d", page)
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(int(status.Load()))
+				_, _ = w.Write([]byte(responsePages[page]))
+			}))
+			t.Cleanup(server.Close)
+
+			dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+			checker := newTestBannedGroupChecker(t, dbPath)
+			checker.client = bannedRewriteClient(t, server)
+			cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+				tc.tracker: {APIKey: "test-key"},
+			}}}
+			cachePath := filepath.Join(filepath.Dir(dbPath), "cache", "banned", tc.tracker+"_banned_groups.json")
+			initialGroups := []string{"AnotherGRP", "GRP", "ThirdGRP"}
+			wantRequests := 0
+			for _, step := range []struct {
+				name     string
+				pages    []string
+				status   int
+				stale    bool
+				requests int
+				groups   []string
+			}{
+				{
+					name:     "fetch current list",
+					pages:    tc.pages,
+					status:   http.StatusOK,
+					requests: len(tc.pages),
+					groups:   initialGroups,
+				},
+				{
+					name:   "reuse fresh cache",
+					pages:  []string{`{"data":[]}`},
+					status: http.StatusOK,
+					groups: initialGroups,
+				},
+				{
+					name:     "apply additions and removals",
+					pages:    []string{`{"data":[{"name":"NewGRP","reason":"Blocked release group"}],"updated_at":"2026-11-09T08:03:11.000000Z"}`},
+					status:   http.StatusOK,
+					stale:    true,
+					requests: 1,
+					groups:   []string{"NewGRP"},
+				},
+				{
+					name:     "retain cached list on API failure",
+					pages:    []string{`{"message":"Unavailable"}`},
+					status:   http.StatusServiceUnavailable,
+					stale:    true,
+					requests: 1,
+					groups:   []string{"NewGRP"},
+				},
+				{
+					name:     "empty list clears bans",
+					pages:    []string{`{"data":[],"updated_at":"2026-11-09T09:00:00.000000Z"}`},
+					status:   http.StatusOK,
+					stale:    true,
+					requests: 1,
+				},
+			} {
+				t.Run(step.name, func(t *testing.T) {
+					pages.Store(new(step.pages))
+					status.Store(int32(step.status))
+					if step.stale {
+						stale := time.Now().Add(-bannedGroupsCacheTTL - time.Hour)
+						if err := os.Chtimes(cachePath, stale, stale); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := checker.RefreshDynamic(t.Context(), cfg, []string{tc.tracker}, api.NopLogger{}); err != nil {
+						t.Fatal(err)
+					}
+					wantRequests += step.requests
+					if got := int(requests.Load()); got != wantRequests {
+						t.Fatalf("API requests = %d, want %d", got, wantRequests)
+					}
+					payload, err := os.ReadFile(cachePath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var cache bannedGroupsFile
+					if err := json.Unmarshal(payload, &cache); err != nil {
+						t.Fatal(err)
+					}
+					if want := strings.Join(step.groups, ", "); cache.BannedGroups != want || len(cache.RawData) != len(step.groups) {
+						t.Fatalf("cache groups = %q, raw records = %d; want %q, %d", cache.BannedGroups, len(cache.RawData), want, len(step.groups))
+					}
+					for _, group := range []string{"GRP", "AnotherGRP", "ThirdGRP", "NewGRP", "AllowedGRP"} {
+						want := slices.Contains(step.groups, group)
+						if got, err := checker.IsBanned(tc.tracker, " -"+strings.ToLower(group)+"- "); err != nil || got != want {
+							t.Errorf("IsBanned(%q) = %t, %v; want %t", group, got, err, want)
+						}
+					}
+				})
+			}
+		})
 	}
 }

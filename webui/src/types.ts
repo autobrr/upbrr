@@ -181,7 +181,17 @@ export type NamingFacts = {
   Personal: boolean;
 };
 
+/** Pack identity and included members; complete evidence does not prove a complete season. */
+export type EpisodeCoverage = {
+  SeasonKnown?: boolean;
+  CompleteSeason?: boolean;
+  Part: string;
+  Episodes: number[];
+  Status: string;
+};
+
 export type EpisodeFacts = {
+  Coverage?: EpisodeCoverage;
   MultipleEpisodes: boolean;
   Season: number;
   Episode: number;
@@ -509,6 +519,7 @@ export type TMDBMetadata = {
   LastAirDate: string;
   OriginCountry: string[];
   OriginalLanguage: string;
+  SpokenLanguages?: string[];
   Overview: string;
   Poster: string;
   TMDBPosterPath: string;
@@ -612,6 +623,7 @@ export type IMDBMetadata = {
   SoundMixes: string[];
   TVYear: number;
   OriginalLanguage: string;
+  SpokenLanguages?: string[];
 };
 
 export type TVDBMetadata = {

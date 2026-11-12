@@ -30,6 +30,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/progress"
+	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -338,6 +339,11 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	// clears win over derived evidence and the final name cannot diverge from
 	// the facts every downstream projection consumes.
 	applyReleaseNameValueOverrides(&meta)
+	if meta.TVPack {
+		seasonKnown := meta.SeasonInt > 0 || meta.HasExplicitSeasonZero()
+		meta.EpisodeCoverage = seasonep.Coverage(meta.SeasonInt, seasonKnown, meta.SourcePath, meta.PackageInventory.Files, meta.PackageInventory.Status)
+		meta.EpisodeCoverage.SeasonKnown = seasonKnown
+	}
 	// Scene detection can supply the service (from the NFO), which WEB release
 	// names embed, so rebuild once more to fold in scene-derived metadata and
 	// the effective instruction values.
@@ -651,6 +657,37 @@ func audioLanguagePrefix(meta preparationstate.State, tracks []map[string]any) s
 
 func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []string) string {
 	if len(languages) == 0 {
+		return ""
+	}
+
+	if meta.ProviderMetadata.TMDB != nil && len(meta.ProviderMetadata.TMDB.SpokenLanguages) > 0 {
+		// Preferred dialogue evidence needs soundtrack origins, not aggregate language
+		// count: one multilingual original stream does not establish dual audio.
+		media := api.MediaFacts{
+			OriginalLanguage:         originalAudioLanguage(meta),
+			TitleLanguages:           meta.ProviderMetadata.TMDB.SpokenLanguages,
+			AudioLanguages:           languages,
+			AudioLanguagesProvenance: meta.AudioLanguagesProvenance,
+			Tracks:                   meta.MediaTracks,
+			TrackCoverageComplete:    meta.TrackCoverageComplete,
+		}
+		if meta.MetadataOverrides.OriginalLanguage != nil {
+			media.OriginalLanguageProvenance = factProvenanceForString(media.OriginalLanguage)
+		}
+		facts := mediafacts.ResolveLanguages(media)
+		if facts.HasOriginalAudio() {
+			separateDub := languageutil.LanguageIdentityCount(facts.ProgrammeLanguages) > 1 &&
+				slices.ContainsFunc(facts.Tracks, func(track api.MediaTrackFacts) bool {
+					return facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed
+				})
+			if facts.HasEnglishDub() || separateDub {
+				return "Dual-Audio"
+			}
+			return ""
+		}
+		if facts.HasEnglishDub() && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete && !facts.HasUnresolvedProgrammeAudioOrigin() {
+			return "Dubbed"
+		}
 		return ""
 	}
 

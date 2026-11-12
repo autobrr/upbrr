@@ -63,7 +63,7 @@ func publishCLIItemResult(streams cliIO, err error, status string) {
 	}
 	view.ItemFailed = err != nil
 	if err != nil {
-		view.Result = "Item failed or interrupted. Verify retained state before retrying."
+		view.Result = "Item failed or interrupted. Verify retained state before retrying.\n" + safeDiagnosticText(formatCLIError(err))
 	}
 	bridge.Publish(view)
 }
@@ -391,6 +391,9 @@ func (s *cliWorkflowSession) publishPresentation(ctx context.Context) {
 		view.OperationID = op.ID
 		view.Stage = op.Phase + " / " + string(op.Status)
 		view.Completed, view.Total = op.Completed, op.Total
+		if summary := cliPreparationFailureSummary(*op); summary != "" {
+			view.Summary = strings.TrimSpace(view.Summary + "\n" + summary)
+		}
 	}
 	if bridge := cliBridgeFromOutput(s.streams.out); bridge != nil {
 		bridge.mu.Lock()
@@ -500,8 +503,22 @@ func (s *cliWorkflowSession) presentationProgressContext(ctx context.Context) co
 	})
 	ctx = api.WithImageUploadProgressReporter(ctx, func(update api.ImageUploadProgressUpdate) {
 		progress := base
-		progress.Phase, progress.Lane, progress.Attempt = "Image hosting: "+update.Host+" / "+string(update.Status), update.UsageScope, update.AttemptID
+		host := update.Host
+		if update.Fallback {
+			host += " (fallback)"
+		}
+		if len(update.Trackers) > 0 {
+			host += " for " + strings.Join(update.Trackers, ", ")
+		}
+		message := strings.TrimSpace(update.Message)
+		if message == "" {
+			message = string(update.Status)
+		}
+		progress.Phase = fmt.Sprintf("Images on %s [%s]: %s (%d/%d processed; %d uploaded, %d reused, %d failed)",
+			host, update.Status, message, update.Completed, update.Total, update.Succeeded, update.Reused, update.Failed)
+		progress.Lane, progress.Attempt, progress.Kind = update.UsageScope, update.AttemptID, "image_host"
 		progress.Completed, progress.Total = update.Completed, update.Total
+		progress.ItemOnly = true
 		bridge.Progress(progress)
 	})
 	return ctx

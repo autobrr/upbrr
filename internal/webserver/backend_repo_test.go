@@ -123,6 +123,47 @@ func TestStartupReconcilesNewDefaultsBeforeConfigIsSaved(t *testing.T) {
 	}
 }
 
+func TestStartupPreservesEvidenceOnlyForProvenFingerprintFormatChange(t *testing.T) {
+	for _, activeChange := range []bool{false, true} {
+		t.Run(map[bool]string{false: "same effective configuration", true: "active setting changed"}[activeChange], func(t *testing.T) {
+			repo := openRuntimeActivationTestRepo(t)
+			cfg := validRuntimeActivationConfig()
+			cfg.MainSettings.DBPath = repo.DBPath()
+			cfg.Description.CharLimit = 37
+			legacy := cfg
+			legacy.MainSettings.DBPath = ""
+			oldFingerprint, err := api.CanonicalWorkflowFingerprint(legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.InitializeConfigActivationFingerprint(t.Context(), oldFingerprint); err != nil {
+				t.Fatal(err)
+			}
+			if activeChange {
+				cfg.Metadata.KeepImages = true
+			}
+			want, err := config.EffectiveConfigFingerprint(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := InitializeRuntimeConfigActivation(t.Context(), repo, cfg, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.ActiveGeneration != 1 || result.Fingerprint != want {
+				t.Fatalf("comparison transition = %+v", result)
+			}
+			if activeChange {
+				if !slices.Equal(result.Impacts, []api.ConfigImpact{api.ConfigImpactProvider}) {
+					t.Fatalf("unproven active change lost conservative impact: %v", result.Impacts)
+				}
+			} else if len(result.Impacts) != 0 {
+				t.Fatalf("proven format-only change invalidates evidence: %v", result.Impacts)
+			}
+		})
+	}
+}
+
 func TestNewBackendReconcilesExpiredOpeningInput(t *testing.T) {
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")

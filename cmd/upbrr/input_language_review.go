@@ -131,19 +131,25 @@ func collectCLIInputLanguages(
 			continue
 		}
 		prompt := cliProgrammeTrackPrompt(sourcePath, media, field, track)
-		prompt.Question += " languages: "
-		prompt.Help = fmt.Sprintf("Enter verified language names or codes, separated by commas. Do not guess; ZXX is only for verified non-linguistic audio.\n"+
+		prompt.Question += " actual languages (e.g. English,French): "
+		help := fmt.Sprintf("Enter the actual languages spoken in this track as names or codes, separated by commas (for example, English,French or en,fr).\n"+
+			"MUL means multiple languages but does not identify them; MUL, UND and unknown values cannot resolve this review. Do not guess; ZXX is only for verified non-linguistic audio.\n"+
 			"This corrects this track's language evidence and rebuilds the selected trackers' assessments; it does not classify the soundtrack as original or dubbed.\n"+
 			"To correct it later, use --track-languages %q with this inspected source. Use --input-only to inspect current track IDs after source changes.", track.ID+"=LANGUAGE")
-		answer, err := askCLIField(reader, output, prompt)
-		if err != nil {
-			return nil, err
-		}
-		languages := languageutil.NormalizeLanguageList([]string{answer})
-		if len(languages) == 0 || slices.ContainsFunc(languages, func(value string) bool {
-			return !languageutil.IsIdentifiedLanguage(value)
-		}) {
-			return nil, fmt.Errorf("upbrr: programme track %s requires identified languages, not unknown or unspecified multilingual evidence", track.ID)
+		prompt.Help = help
+		var languages []string
+		for {
+			answer, err := askCLIField(reader, output, prompt)
+			if err != nil {
+				return nil, err
+			}
+			languages = languageutil.NormalizeLanguageList([]string{answer})
+			if len(languages) > 0 && !slices.ContainsFunc(languages, func(value string) bool {
+				return !languageutil.IsIdentifiedLanguage(value)
+			}) {
+				break
+			}
+			prompt.Help = "Invalid language answer. Please try again.\n" + help
 		}
 		corrections = append(corrections, api.TrackLanguageCorrection{
 			TrackID:             track.ID,

@@ -47,6 +47,18 @@ var videoExtensions = map[string]struct{}{
 	".m2v":  {},
 	".mpg":  {},
 	".mpeg": {},
+	".3gp":  {},
+	".flv":  {},
+	".m4v":  {},
+	".mts":  {},
+	".vob":  {},
+	".iso":  {},
+}
+
+// IsVideoFile identifies supported video members by extension without inspecting media.
+func IsVideoFile(name string) bool {
+	_, ok := videoExtensions[strings.ToLower(filepath.Ext(name))]
+	return ok
 }
 
 // Result contains normalized episodic signals. DailyDate uses YYYY-MM-DD;
@@ -69,7 +81,7 @@ type Result struct {
 // fills missing values from parsed release metadata. Season-only or multi-video
 // sources become TV packs unless the primary basename names one explicit
 // episode. Directory inspection is best-effort and filesystem errors are
-// treated as no multi-video evidence.
+// treated as no multi-video evidence. With DiscType set, segment counts do not establish packs.
 func Extract(path string, meta preparationstate.State) Result {
 	candidates := buildCandidates(path, meta)
 	primaryCandidate := ""
@@ -77,7 +89,7 @@ func Extract(path string, meta preparationstate.State) Result {
 		primaryCandidate = candidates[0]
 	}
 	primaryHasSingleEpisode := hasExplicitSingleEpisodeToken(primaryCandidate)
-	multipleVideos := hasMultipleVideos(path, meta.FileList)
+	multipleVideos := meta.DiscType == "" && hasMultipleVideos(path, meta.FileList)
 
 	result := Result{}
 	seasonOnly := false

@@ -982,6 +982,7 @@ func duplicateTargetForEvaluation(meta api.DuplicateSubject) api.TrackerDuplicat
 		Episode:     meta.EpisodeInt,
 		Date:        meta.DailyEpisodeDate,
 		Pack:        meta.TVPack,
+		Coverage:    meta.EpisodeCoverage,
 		SizeBytes:   meta.SourceSize,
 		FileNames:   append([]string(nil), meta.FileList...),
 

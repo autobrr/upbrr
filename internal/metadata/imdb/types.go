@@ -35,6 +35,7 @@ type Info struct {
 	SoundMixes       []string
 	TVYear           int
 	OriginalLanguage string
+	SpokenLanguages  []string
 }
 
 type Person struct {

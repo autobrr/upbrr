@@ -5,6 +5,7 @@ package hdb
 
 import (
 	"errors"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -15,6 +16,8 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+var hdbCompactAudioChannels = regexp.MustCompile(`(?i)^(DD|DD\+|DDP|AAC|FLAC) ([0-9]+(?:\.[0-9]+)+)( |$)`)
 
 // uploadTorrentFilename keeps endpoint filename restrictions separate from the reviewed display name.
 func uploadTorrentFilename(name string) string {
@@ -38,7 +41,7 @@ func uploadTorrentFilename(name string) string {
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v13", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v15", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
@@ -136,7 +139,7 @@ func hdbGenerationMatches(scoped, current api.PreparedGeneration) bool {
 func buildGeneratedHDBName(meta api.UploadSubject, originalTitle string) string {
 	parts := []string{normalizedHDBElement(originalTitle)}
 	if hdbCategory(meta) == "TV" {
-		parts = append(parts, hdbSeasonEpisode(meta))
+		parts = append(parts, hdbSeasonEpisode(meta), meta.EpisodeCoverage.Part)
 	} else {
 		parts = append(parts, hdbIMDbYear(meta))
 	}
@@ -274,10 +277,10 @@ func hdbAudioElement(meta api.UploadSubject) string {
 	if audio == "" {
 		return channels
 	}
-	if channels == "" || strings.EqualFold(audio, "DTS") || strings.Contains(strings.ToUpper(audio), strings.ToUpper(channels)) {
-		return audio
+	if channels != "" && !strings.EqualFold(audio, "DTS") && !strings.Contains(strings.ToUpper(audio), strings.ToUpper(channels)) {
+		audio += " " + channels
 	}
-	return audio + " " + channels
+	return hdbCompactAudioChannels.ReplaceAllString(audio, "${1}${2}${3}")
 }
 
 func stripHDBAudioLabels(value string) string {
