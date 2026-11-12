@@ -398,7 +398,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			workers := cancelPriorWorkers()
 			admission.Unlock()
 			for _, done := range workers {
-				// Noninterruptible hashing retains its fence until durable cleanup.
+				// Canceled workers retain their fence until durable cleanup.
 				<-done
 			}
 		}

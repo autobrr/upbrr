@@ -3940,23 +3940,6 @@ for (const stage of [
       const cancellationRequest = waitForAppMethod(page, "CancelReleaseWorkflowOperation");
       await page.getByRole("button", { name: "Cancel active work", exact: true }).click();
       expect((await cancellationRequest).ok()).toBe(true);
-      if (stage === "torrent") {
-        await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toBeDisabled();
-        await expect(
-          page.getByText(/torrent hashing or verification must finish first/),
-        ).toBeVisible();
-        expect((await snapshot()).current?.operation?.status).toBe("running");
-        await page.reload();
-        await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toBeDisabled();
-        await expect(
-          page
-            .getByRole("status")
-            .filter({ hasText: "Release workflow" })
-            .locator("span")
-            .filter({ hasText: /^Synthetic torrent work active\.$/ }),
-        ).toBeVisible();
-        gate.release();
-      }
       await expect.poll(async () => (await snapshot()).current?.operation?.status).toBe("canceled");
       await expect(page.getByRole("button", { name: "Cancelling…", exact: true })).toHaveCount(0);
       await expect(page.getByText(/Work canceled\. Selected input/)).toBeVisible();
