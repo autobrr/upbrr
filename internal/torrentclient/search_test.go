@@ -1745,3 +1745,20 @@ func TestEMUWIdentityRecognizesCurrentAndLegacyDomains(t *testing.T) {
 		})
 	}
 }
+
+func TestANTIdentityRecognizesCurrentAndLegacyDomains(t *testing.T) {
+	t.Parallel()
+	patterns := buildTrackerIDPatterns(trackerPatternRegistry(t))
+	for _, host := range []string{"anthelion.dev", "anthelion.me"} {
+		t.Run(host, func(t *testing.T) {
+			announce := "https://tracker." + host + "/announce/redacted"
+			if !containsString(matchTrackerURLs([]string{announce}, patterns), "ANT") {
+				t.Fatal("ANT announce was not recognized")
+			}
+			matches, found := extractTrackerMatchesWithPatterns("https://"+host+"/torrents.php?torrentid=1234567", []string{announce}, true, []string{"ant"}, patterns)
+			if !found || len(matches) != 1 || matches[0].ID != "ant" || matches[0].TrackerID != "1234567" {
+				t.Fatal("ANT comment did not retain torrent identity")
+			}
+		})
+	}
+}

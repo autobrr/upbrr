@@ -418,12 +418,13 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 		),
 	}
-	if candidate.Pack {
+	if candidate.Pack || candidate.TVScope != nil {
 		status := api.MetadataEvidenceStatusPartial
 		if candidate.FileCount == len(candidate.Files) {
 			status = api.MetadataEvidenceStatusComplete
 		}
-		coverage := seasonep.Coverage(candidate.Season, candidate.Season > 0, candidate.Name, candidate.Files, status)
+		seasonKnown := candidate.Season > 0 || candidate.TVScope != nil && candidate.TVScope.Season != nil
+		coverage := seasonep.Coverage(candidate.Season, seasonKnown, candidate.Name, candidate.Files, status)
 		if coverage.Part != "" || len(coverage.Episodes) > 0 || coverage.CompleteSeason || coverage.Status == api.MetadataEvidenceStatusContradictory {
 			switch {
 			case facts.Content.Kind == contentScopeDaily && len(coverage.Episodes) == 0 && !coverage.CompleteSeason:

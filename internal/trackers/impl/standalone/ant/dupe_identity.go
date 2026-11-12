@@ -78,22 +78,22 @@ func antProviderIDs(item map[string]any) []api.TrackerProviderID {
 	return ids
 }
 
+// filterANTWork rejects mismatches only for the provider used by Search.
+// Secondary IDs remain candidate evidence rather than vetoing the bound work.
 func filterANTWork(entries []api.DupeEntry, identity api.ExternalIdentity) []api.DupeEntry {
+	provider, wanted := "imdb", identity.IMDBID
+	switch {
+	case identity.Category == api.CanonicalCategoryTV && identity.TVDBID != 0:
+		provider, wanted = "tvdb", identity.TVDBID
+	case identity.TMDBID != 0:
+		provider, wanted = "tmdb", identity.TMDBID
+	}
 	return slices.DeleteFunc(entries, func(entry api.DupeEntry) bool {
 		if entry.Category != "" && identity.Category != "" && entry.Category != string(identity.Category) {
 			return true
 		}
 		for _, id := range entry.ProviderIDs {
-			wanted := 0
-			switch id.Provider {
-			case "imdb":
-				wanted = identity.IMDBID
-			case "tmdb":
-				wanted = identity.TMDBID
-			case "tvdb":
-				wanted = identity.TVDBID
-			}
-			if wanted > 0 && id.Value != strconv.Itoa(wanted) {
+			if id.Provider == provider && wanted > 0 && id.Value != strconv.Itoa(wanted) {
 				return true
 			}
 		}

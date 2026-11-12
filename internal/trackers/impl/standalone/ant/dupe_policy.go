@@ -31,7 +31,7 @@ func duplicatePolicy() *trackers.DupePolicy {
 }
 
 func resolveTargetTVScope(meta api.UploadSubject) *api.DupeTVScope {
-	if !meta.TVPack || !meta.MultipleEpisodes {
+	if !meta.MultipleEpisodes {
 		return nil
 	}
 	var season *int

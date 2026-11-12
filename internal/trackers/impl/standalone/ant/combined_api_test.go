@@ -182,15 +182,20 @@ func TestTVSearchUsesTVCategoryAndFiltersWrongWork(t *testing.T) {
 			if useTVDB && (query.Get("tvdbid") != "100001" || query.Get("tmdbid") != "") || !useTVDB && query.Get("tmdbid") != "200001" {
 				t.Errorf("wrong TV provider: %s", req.URL.RawQuery)
 			}
-			body := `{"response":{"offset":0,"total":3},"item":[
+			body := `{"response":{"offset":0,"total":4},"item":[
 			{"category":[5000,100003],"tvdbid":100001,"tmdb":200001,"season":2,"fileName":"Example.Series.2026.S02.1080p.WEB.H264.torrent","media":"WEB","codec":"H264","resolution":"1080p"},
+			{"category":[5000,100004],"tvdbid":100001,"tmdb":200002,"season":2,"episode":3,"fileName":"Example.Series.2026.S02E03.torrent"},
 			{"category":[2000,100001],"tmdb":200001,"fileName":"Unrelated.Film.2026.torrent"},
 			{"category":[5000,100004],"tvdbid":100002,"tmdb":200002,"season":2,"episode":3,"fileName":"Other.Series.2026.S02E03.torrent"}]}`
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 		})}
 		result := dupe.NewAdapter(New(), "ANT", antDupeTestConfig(t), client, api.NopLogger{}).Search(t.Context(), api.DuplicateSubject{Identity: identity})
 		entries := result.Entries()
-		if result.Cause() != nil || !result.SearchEvidence().EffectiveComplete() || len(entries) != 1 ||
+		wantEntries := 1
+		if useTVDB {
+			wantEntries = 2
+		}
+		if result.Cause() != nil || !result.SearchEvidence().EffectiveComplete() || len(entries) != wantEntries ||
 			entries[0].Category != "tv" || entries[0].Pack || entries[0].Season != 2 || entries[0].Episode != 0 || entries[0].TrackerSlot != "" {
 			t.Fatalf("wrong TV evidence: entries=%+v search=%+v err=%v", entries, result.SearchEvidence(), result.Cause())
 		}

@@ -540,3 +540,44 @@ func TestDatedCompleteSeasonsRetainSeasonIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestNumberedCandidateRetainsConflictingFileSeason(t *testing.T) {
+	t.Parallel()
+	files := []string{"Example.S02E01.mkv"}
+	candidate := NormalizeCandidate(api.DupeEntry{
+		Name: "Example.S01",
+ Season: 1,
+ Pack: true,
+		Files: files,
+ FileCount: len(files),
+		TVScope: NumberedTVScopeFromFiles(files, len(files), new(1)),
+	}, "")
+	got := Evaluate(api.TrackerDuplicateTarget{Season: 2, Episode: 2}, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+	if got.Candidates[0].Relation != api.DupeRelationManualReview || !got.RequiresAction {
+		t.Fatalf("contradictory file season escaped review: %+v", got)
+	}
+}
+
+func TestNumberedMembershipConflictsWithExplicitTitleRange(t *testing.T) {
+	t.Parallel()
+	for _, reverse := range []bool{false, true} {
+		target := api.TrackerDuplicateTarget{Season: 1, Episode: 2}
+		candidate := TrackerCandidate{
+Name: "Example.S01E01-E03",
+ Season: 1,
+ TVScope: &api.DupeTVScope{Season: new(1), Episodes: []int{1, 3}},
+}
+		if reverse {
+			target = api.TrackerDuplicateTarget{
+Names: []string{candidate.Name},
+ Season: 1,
+ TVScope: candidate.TVScope,
+}
+			candidate = TrackerCandidate{Season: 1, Episode: 2}
+		}
+		got := Evaluate(target, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+		if got.Candidates[0].Relation != api.DupeRelationManualReview || !got.RequiresAction {
+			t.Fatalf("reverse=%t title range conflict escaped review: %+v", reverse, got)
+		}
+	}
+}

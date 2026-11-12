@@ -100,5 +100,9 @@ func numberedScopeContradictsTitle(scope, title contentScope, numbered bool) boo
 	if numbered && title.Kind == contentScopeSeasonPack && contentSeasonKnown(scope) && scope.Season == title.Season {
 		return false
 	}
+	if numbered && len(scope.Episodes) > 0 &&
+		(title.Kind == contentScopeEpisode || title.Kind == contentScopeEpisodeRange) {
+		return scope.Season != title.Season || compareEpisodeMembership(scope, title) != contentEqual
+	}
 	return contentScopesContradict(scope, title)
 }

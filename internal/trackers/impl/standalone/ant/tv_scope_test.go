@@ -115,23 +115,26 @@ Category: "tv",
 func TestANTExplicitSpecialSeasonSurvivesFilenameFallback(t *testing.T) {
 	t.Parallel()
 	item := map[string]any{
-"category": []any{5000, 100004},
- "season": 0,
- "episode": 1,
- "fileName": "Example.Series.2026.S00E01.1080p.WEB.H264.torrent",
- "files": []any{map[string]any{"name": "Example.Series.S01E01.1080p.WEB.H264-OTHER.mkv"}},
-}
+		"category":  []any{5000, 100004},
+		"season":    0,
+		"episode":   1,
+		"fileName":  "Example.Series.2026.S00E01.1080p.WEB.H264.torrent",
+		"files":     []any{map[string]any{"name": "Example.Series.S01E01.1080p.WEB.H264-OTHER.mkv"}, map[string]any{"name": "Example.Series.nfo"}},
+		"fileCount": 2,
+	}
 	entry := antDupeEntries(map[string]any{"item": []any{item}})[0]
 	candidate := dupe.NormalizeCandidate(entry, "ANT")
 	result := dupe.Evaluate(api.TrackerDuplicateTarget{
-Category: "tv",
- Season: 0,
- Episode: 1,
- Names: []string{"Example.Series.S00E01.1080p.WEB.H264-GRP"},
-}, []dupe.TrackerCandidate{candidate}, *Profile().CategoryPolicies[api.CanonicalCategoryTV].DupePolicy, dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
-	if candidate.Season != 0 || result.Candidates[0].Relation == api.DupeRelationCoexists {
+		Category: "tv",
+		Season:   0,
+		Episode:  1,
+		Names:    []string{"Example.Series.S00E01.1080p.WEB.H264-GRP"},
+	}, []dupe.TrackerCandidate{candidate}, *Profile().CategoryPolicies[api.CanonicalCategoryTV].DupePolicy, dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+	if candidate.Season != 0 || result.Candidates[0].Relation != api.DupeRelationManualReview {
 		t.Fatalf("explicit special numbering lost: candidate=%+v relation=%s", candidate, result.Candidates[0].Relation)
 	}
+	item["files"] = []any{map[string]any{"name": "Example.Series.S01E01.1080p.WEB.H264-OTHER.mkv"}}
+	item["fileCount"] = 1
 	delete(item, "season")
 	delete(item, "episode")
 	entry = antDupeEntries(map[string]any{"item": []any{item}})[0]
@@ -174,5 +177,29 @@ Category: "tv",
 }}, policy, dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
 	if result.Candidates[0].Relation == api.DupeRelationCoexists || !result.RequiresAction {
 		t.Fatalf("batch incorrectly superseded an overlapping episode: %+v", result)
+	}
+}
+
+func TestANTCombinedEpisodeTargetPreservesMembership(t *testing.T) {
+	t.Parallel()
+	target := api.TrackerDuplicateTarget{
+Category: "tv",
+ Season: 1,
+ Episode: 1,
+		TVScope: resolveTargetTVScope(api.UploadSubject{
+SeasonInt: 1,
+ MultipleEpisodes: true,
+			FileList: []string{"Example.Series.S01E01E02.1080p.WEB.H264-GRP.mkv"},
+}),
+}
+	result := dupe.Evaluate(target, []dupe.TrackerCandidate{{
+Category: "tv",
+ Season: 1,
+ Episode: 2,
+}},
+		*Profile().CategoryPolicies[api.CanonicalCategoryTV].DupePolicy,
+		dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+	if result.Candidates[0].Relation == api.DupeRelationCoexists || !result.RequiresAction {
+		t.Fatalf("combined file lost overlapping episode: %+v", result)
 	}
 }

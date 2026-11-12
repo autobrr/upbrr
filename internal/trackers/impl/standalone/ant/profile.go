@@ -72,8 +72,8 @@ func Profile() standalone.Profile {
 			}},
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
-			TrackerURLPatterns: []string{"tracker." + antHost},
-			CommentURLPatterns: []string{antHost + "/torrents.php"},
+			TrackerURLPatterns: []string{"tracker." + antHost, "tracker.anthelion.me"},
+			CommentURLPatterns: []string{antHost + "/torrents.php", "anthelion.me/torrents.php"},
 			DetailIDPattern:    `(?i)[?&]torrentid=(\d+)`,
 			WorkingTrackerID:   "1",
 		},
