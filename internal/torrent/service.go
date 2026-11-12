@@ -187,7 +187,7 @@ func (s *Service) createSingle(ctx context.Context, meta api.TorrentSubject) (ap
 	if pieceOptions.pieceExp == nil {
 		target = new(uint(1000))
 	}
-	info, err := mkbrr.Create(mkbrr.CreateOptions{
+	info, err := mkbrr.CreateContext(ctx, mkbrr.CreateOptions{
 		Path:             createSpec.path,
 		Name:             createSpec.name,
 		OutputPath:       stagePath,
@@ -584,7 +584,7 @@ func verifyCandidateTorrentData(ctx context.Context, path string, meta api.Torre
 	if cancelErr := ctx.Err(); cancelErr != nil {
 		return fmt.Errorf("torrent: canceled before verification: %w", cancelErr)
 	}
-	result, err := mkbrr.VerifyData(mkbrr.VerifyOptions{
+	result, err := mkbrr.VerifyDataContext(ctx, mkbrr.VerifyOptions{
 		TorrentPath: path,
 		ContentPath: contentPath,
 		Quiet:       true,

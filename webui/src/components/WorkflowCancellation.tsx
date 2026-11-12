@@ -25,7 +25,7 @@ export function WorkflowCancellation() {
         <p role="status" className="text-muted-foreground text-sm">
           {message ||
             (pending
-              ? "Cancellation requested. Waiting for active work to stop; torrent hashing or verification must finish first. Progress remains live."
+              ? "Cancellation requested. Waiting for active work to stop and clean up. Progress remains live."
               : "")}
         </p>
       ) : null}
