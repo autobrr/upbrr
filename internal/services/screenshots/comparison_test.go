@@ -32,7 +32,14 @@ func comparisonDiagnostics(pts int, picture string) string {
 
 func comparisonTestSource(t *testing.T) ComparisonSource {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "Example.Movie.2026.mkv")
+	root := t.TempDir()
+	if err := writeTestBundledFFmpeg(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	// Scripted runners must not depend on a host FFmpeg installation.
+	t.Setenv("PATH", t.TempDir())
+	path := filepath.Join(root, "Example.Movie.2026.mkv")
 	if err := os.WriteFile(path, []byte("synthetic runner input"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -157,9 +164,10 @@ func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 	source := comparisonTestSource(t)
 	source.StartTimeSeconds = -0.2
 	pixels := bytes.Repeat([]byte{42}, 512)
+	_, secondFrame, _ := strings.Cut(comparisonDiagnostics(0, "B"), "\n")
 	runner := &scriptedRenderRunner{replies: []renderReply{{
 		payload: pixels,
-		stderr:  comparisonDiagnostics(-200, "I") + comparisonDiagnostics(0, "B"),
+		stderr:  comparisonDiagnostics(-200, "I") + "frame=    1 fps=0.0\r" + secondFrame,
 	}}}
 	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
 	samples, err := service.SampleComparisonSource(t.Context(), source, 0, 1, 0.5)

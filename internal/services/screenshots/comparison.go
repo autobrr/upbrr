@@ -283,6 +283,8 @@ var (
 )
 
 func comparisonObservations(stderr []byte) ([]ComparisonFrameObservation, error) {
+	// FFmpeg progress reports can end with CR immediately before a showinfo record.
+	stderr = bytes.ReplaceAll(stderr, []byte{'\r'}, []byte{'\n'})
 	var numerator, denominator int64
 	var observations []ComparisonFrameObservation
 	for _, line := range comparisonShowInfoLine.FindAllSubmatch(stderr, -1) {
