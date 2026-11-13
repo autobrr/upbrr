@@ -673,7 +673,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                       return (
                         <div
                           className="grid min-w-0 content-start gap-2"
-                          key={cell.artifactId || cell.sourceId}
+                          key={draft.imported && cell.artifactId ? cell.artifactId : cell.sourceId}
                         >
                           <h4>{source?.label || "Unmapped column"}</h4>
                           {image?.url ? (

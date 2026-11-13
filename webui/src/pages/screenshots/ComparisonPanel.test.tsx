@@ -292,4 +292,9 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
     { sourceId: "2", timestampSeconds: 20.13 },
     { sourceId: "3", timestampSeconds: 0 },
   ]);
+  const timestamp = screen.getByLabelText("Frame time for Source, row 1, image 1");
+  timestamp.focus();
+  fireEvent.change(timestamp, { target: { value: "12.3" } });
+  expect(timestamp).toHaveFocus();
+  expect(timestamp).toHaveValue(12.3);
 });
