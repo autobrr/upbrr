@@ -265,7 +265,251 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 			if len(years) == 1 {
 				entry.YearRange = strconv.Itoa(years[0])
 			} else {
-				entry.YearRange = fmt.Sprintf("%d-%d", years[0],…2081 tokens truncated….Series.Season = getStringFromMap(seasonInfo, "season")
+				entry.YearRange = fmt.Sprintf("%d-%d", years[0], years[len(years)-1])
+			}
+			info.SeasonsSummary = append(info.SeasonsSummary, entry)
+		}
+	}
+
+	soundMixes := getList(titleData, "technicalSpecifications", "soundMixes", "items")
+	for _, mix := range soundMixes {
+		text := getStringFromMap(mix, "text")
+		if text != "" {
+			info.SoundMixes = append(info.SoundMixes, text)
+		}
+	}
+
+	if info.EndYear != 0 {
+		info.TVYear = info.EndYear
+	} else if len(info.Episodes) > 0 {
+		nowYear := time.Now().UTC().Year()
+		closest := 0
+		for _, ep := range info.Episodes {
+			if ep.ReleaseYear == 0 {
+				continue
+			}
+			if closest == 0 || metautil.AbsInt(ep.ReleaseYear-nowYear) < metautil.AbsInt(closest-nowYear) {
+				closest = ep.ReleaseYear
+			}
+		}
+		info.TVYear = closest
+	}
+
+	logger.Debugf("imdb: info loaded id=%s title=%q year=%d type=%s", id, info.Title, info.Year, info.Type)
+
+	return info, nil
+}
+
+// Search tries increasingly broad title variants in order, pausing one second
+// between remote attempts. Individual request failures are treated as no results.
+// A single result or a sufficiently separated similarity winner is selected;
+// Unattended selects the top ambiguous candidate, while interactive mode returns
+// candidates with a zero IMDbID. Quickie validates only the first result.
+func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
+	results := []map[string]any{}
+	imdbID := 0
+	attempted := 0
+
+	input = applyReleaseHints(input)
+	filename := strings.TrimSpace(input.Filename)
+	if filename == "" {
+		return SearchResult{}, nil
+	}
+
+	category := strings.ToUpper(strings.TrimSpace(input.Category))
+	if category == "" {
+		category = "MOVIE"
+	}
+
+	searchYear := input.SearchYear
+	secondary := strings.TrimSpace(input.SecondaryTitle)
+	parsedTitle := strings.TrimSpace(input.ParsedTitle)
+	if parsedTitle == "" {
+		parsedTitle = fallbackParsedTitle(input.UntouchedFilename)
+	}
+
+	run := func(name string, year int, wide bool) []map[string]any {
+		if attempted > 0 {
+			time.Sleep(1 * time.Second)
+		}
+		attempted++
+		results := c.runSearch(ctx, name, year, category, input.DurationMinutes, wide)
+		return slices.DeleteFunc(results, func(result map[string]any) bool {
+			return !typeMatches(category, getStringFromMap(result, "node", "title", "titleType", "text"))
+		})
+	}
+
+	if len(results) == 0 {
+		results = run(filename, searchYear, false)
+	}
+	if len(results) == 0 && secondary != "" {
+		results = run(secondary, searchYear, true)
+	}
+	if len(results) == 0 {
+		if trimmed := trimLeadingThe(filename); trimmed != "" && trimmed != filename {
+			results = run(trimmed, searchYear, false)
+		}
+	}
+	if len(results) == 0 {
+		results = run(filename, searchYear, true)
+	}
+	if len(results) == 0 && parsedTitle != "" {
+		results = run(parsedTitle, searchYear, true)
+	}
+	if len(results) == 0 {
+		if reduced := metautil.ReduceTitle(filename, 1); reduced != "" {
+			results = run(reduced, searchYear, true)
+		}
+	}
+	if len(results) == 0 {
+		if reduced := metautil.ReduceTitle(filename, 2); reduced != "" {
+			results = run(reduced, searchYear, true)
+		}
+	}
+
+	if input.Quickie {
+		if len(results) == 0 {
+			return SearchResult{}, nil
+		}
+		first := results[0]
+		node := getMapFromMap(first, "node")
+		title := getMapFromMap(node, "title")
+		typeInfo := strings.ToLower(getStringFromMap(title, "titleType", "text"))
+		year := getIntFromMap(title, "releaseYear", "year")
+		id := getStringFromMap(title, "id")
+		titleText := getStringFromMap(title, "titleText", "text")
+		if typeMatches(category, typeInfo) {
+			if searchYear > 0 && year != 0 && year != searchYear {
+				return SearchResult{}, nil
+			}
+			imdbID = metautil.ParseIMDbNumeric(id)
+		}
+		if imdbID != 0 {
+			logger.Infof("imdb: search auto-selected id=%d title=%q year=%d category=%s", imdbID, titleText, year, category)
+			return SearchResult{IMDbID: imdbID, AutoSelected: true}, nil
+		}
+		return SearchResult{}, nil
+	}
+
+	if len(results) == 1 {
+		imdbID = metautil.ParseIMDbNumeric(getStringFromMap(results[0], "node", "title", "id"))
+		if imdbID != 0 {
+			logger.Infof("imdb: search auto-selected single result id=%d", imdbID)
+			return SearchResult{IMDbID: imdbID, AutoSelected: true}, nil
+		}
+	}
+
+	if len(results) > 1 {
+		candidates := rankCandidates(results, filename, searchYear)
+		if len(candidates) == 0 {
+			return SearchResult{}, nil
+		}
+		best := candidates[0]
+		if best.confidenceScore >= 0.85 {
+			second := 0.0
+			for _, candidate := range candidates[1:] {
+				second = max(second, candidate.confidenceScore)
+			}
+			if best.confidenceScore-second >= 0.10 {
+				logger.Infof("imdb: search auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
+				return SearchResult{
+					IMDbID:       best.IMDbID,
+					Candidates:   candidates,
+					AutoSelected: true,
+				}, nil
+			}
+		}
+		if input.Unattended {
+			logger.Infof("imdb: search unattended auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
+			return SearchResult{
+				IMDbID:       best.IMDbID,
+				Candidates:   candidates,
+				AutoSelected: true,
+			}, nil
+		}
+		return SearchResult{IMDbID: 0, Candidates: candidates}, nil
+	}
+
+	return SearchResult{}, nil
+}
+
+func applyReleaseHints(input SearchInput) SearchInput {
+	base := strings.TrimSpace(input.UntouchedFilename)
+	if base == "" {
+		base = strings.TrimSpace(input.Filename)
+	}
+	if base == "" {
+		return input
+	}
+	release := metautil.ParseRelease(base)
+
+	mainTitle := release.Title
+	secondaryTitle := release.Alt
+	if mainTitle == "" {
+		mainTitle = release.Subtitle
+	}
+	if secondaryTitle == "" {
+		secondaryTitle = release.Subtitle
+	}
+	if mainTitle != "" && secondaryTitle == mainTitle {
+		secondaryTitle = ""
+	}
+
+	if mainTitle != "" {
+		input.Filename = mainTitle
+	}
+	if secondaryTitle != "" {
+		input.SecondaryTitle = secondaryTitle
+	}
+	if strings.TrimSpace(input.Category) == "" && release.Category != "" {
+		input.Category = release.Category
+	}
+	if input.SearchYear == 0 && release.Year != 0 {
+		input.SearchYear = release.Year
+	}
+	if strings.TrimSpace(input.ParsedTitle) == "" {
+		input.ParsedTitle = mainTitle
+	}
+	return input
+}
+
+// GetEpisodeInfo returns episode numbering, parent-series identity, and adjacent
+// episode references. Empty IDs and missing titles return an empty result without
+// error; request and decode failures return no partial result.
+func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) (EpisodeLookup, error) {
+	logger := logging.FromContext(ctx, c.logger)
+
+	id := metautil.NormalizeIMDbID(imdbID)
+	if id == "" {
+		return EpisodeLookup{}, nil
+	}
+
+	const query = `query GetEpisodeInfo($id: ID!) { title(id: $id) { id titleText { text } series { displayableEpisodeNumber { displayableSeason { id season text } episodeNumber { id text } } nextEpisode { id titleText { text } } previousEpisode { id titleText { text } } series { id titleText { text } } } } }`
+	var response map[string]any
+	if err := c.postGraphQL(ctx, "GetEpisodeInfo", query, map[string]any{"id": id}, &response); err != nil {
+		return EpisodeLookup{}, err
+	}
+	title := getMap(response, "data", "title")
+	if len(title) == 0 {
+		return EpisodeLookup{}, nil
+	}
+
+	lookup := EpisodeLookup{
+		ID:    getStringFromMap(title, "id"),
+		Title: getStringFromMap(title, "titleText", "text"),
+	}
+	series := getMapFromMap(title, "series")
+	if len(series) == 0 {
+		return lookup, nil
+	}
+
+	displayable := getMapFromMap(series, "displayableEpisodeNumber")
+	seasonInfo := getMapFromMap(displayable, "displayableSeason")
+	episodeInfo := getMapFromMap(displayable, "episodeNumber")
+	lookup.Series.SeasonID = getStringFromMap(seasonInfo, "id")
+	lookup.Series.Season = getStringFromMap(seasonInfo, "season")
 	lookup.Series.SeasonText = getStringFromMap(seasonInfo, "text")
 	lookup.Series.EpisodeID = getStringFromMap(episodeInfo, "id")
 	lookup.Series.EpisodeText = getStringFromMap(episodeInfo, "text")
