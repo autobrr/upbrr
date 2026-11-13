@@ -118,19 +118,22 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: %w", err)
 	}
-	comparisonPaths := make(map[string]struct{})
+	var comparisonPaths []string
 	for _, shot := range screens {
 		if shot.Purpose == api.ScreenshotPurposeComparison {
-			comparisonPaths[strings.TrimSpace(shot.ImagePath)] = struct{}{}
+			comparisonPaths = append(comparisonPaths, strings.TrimSpace(shot.ImagePath))
 		}
 	}
 	uploaded = slices.DeleteFunc(uploaded, func(upload api.UploadedImageLink) bool {
 		if upload.Purpose == api.ScreenshotPurposeComparison {
-			comparisonPaths[strings.TrimSpace(upload.ImagePath)] = struct{}{}
+			comparisonPaths = append(comparisonPaths, strings.TrimSpace(upload.ImagePath))
 			return true
 		}
 		return upload.Purpose.IsAnalysis()
 	})
+	isComparisonPath := func(candidate string) bool {
+		return slices.ContainsFunc(comparisonPaths, func(comparison string) bool { return pathutil.SamePath(comparison, candidate) })
+	}
 	selections, err := s.repo.ListFinalSelections(ctx, meta.MediaBinding)
 	if err != nil {
 		logger.Debugf("image hosting: final selections unavailable: %v", err)
@@ -159,7 +162,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	images := make([]api.ScreenshotImage, 0, len(screens))
 	for _, shot := range screens {
 		pathValue := strings.TrimSpace(shot.ImagePath)
-		if _, comparison := comparisonPaths[pathValue]; comparison {
+		if isComparisonPath(pathValue) {
 			continue
 		}
 		if pathValue == "" || !isAllowedImageExt(pathValue) {
@@ -215,7 +218,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	}
 	for _, sel := range selections {
 		pathValue := strings.TrimSpace(sel.ImagePath)
-		if _, comparison := comparisonPaths[pathValue]; comparison {
+		if isComparisonPath(pathValue) {
 			continue
 		}
 		if pathValue == "" || !isAllowedImageExt(pathValue) {
@@ -265,7 +268,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 
 	for _, upload := range uploaded {
 		pathValue := strings.TrimSpace(upload.ImagePath)
-		if _, comparison := comparisonPaths[pathValue]; comparison {
+		if isComparisonPath(pathValue) {
 			continue
 		}
 		if pathValue == "" || !isAllowedImageExt(pathValue) {

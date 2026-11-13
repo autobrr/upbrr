@@ -119,7 +119,7 @@ func Match(sources []SampledSource, mainID string, options MatchOptions) (MatchR
 				return MatchResult{}, errors.New("comparison moments resolve to the same sampled frame")
 			}
 			used[index] = true
-			appendRow(matchRow(columns, main, index), columns[main].frames[index].frame)
+			appendRow(matchRow(columns, main, index, result.Rows), columns[main].frames[index].frame)
 		}
 	} else {
 		var unresolved []MatchedRow
@@ -129,7 +129,7 @@ func Match(sources []SampledSource, mainID string, options MatchOptions) (MatchR
 				break
 			}
 			used[index] = true
-			row := matchRow(columns, main, index)
+			row := matchRow(columns, main, index, result.Rows)
 			if row.Complete {
 				appendRow(row, columns[main].frames[index].frame)
 			} else {
@@ -262,7 +262,7 @@ func visualScore(a, b matchingFrame) float64 {
 	return max(0, min(1, score))
 }
 
-func matchRow(columns []matchingColumn, main, index int) MatchedRow {
+func matchRow(columns []matchingColumn, main, index int, selected []MatchedRow) MatchedRow {
 	frame := columns[main].frames[index]
 	row := MatchedRow{
 		MainSeconds: frame.frame.TimestampSeconds,
@@ -285,7 +285,10 @@ func matchRow(columns []matchingColumn, main, index int) MatchedRow {
 			matched := matchFrame(frame, column)
 			if matched.Resolved && matched.Method == "visual" {
 				target := column.frames[nearestSample(column.frames, matched.TimestampSeconds)]
-				if ambiguousVisualMatch(target, columns[main].frames, frame.frame.TimestampSeconds, matched.Confidence) {
+				reused := slices.ContainsFunc(selected, func(row MatchedRow) bool {
+					return row.Complete && math.Abs(row.Frames[i].TimestampSeconds-matched.TimestampSeconds) < 1e-6
+				})
+				if reused || ambiguousVisualMatch(target, columns[main].frames, frame.frame.TimestampSeconds, matched.Confidence) {
 					matched.Resolved, matched.Confidence, matched.Reason = false, 0, "ambiguous_visual_match"
 				}
 			}

@@ -99,13 +99,38 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
   };
   const addSource = () => {
     let next = draft.sources.length + 1;
-    while (draft.sources.some((source) => source.id === `column-${next}`)) next++;
+    while (
+      draft.sources.some((source) => source.id === `column-${next}`) ||
+      view.plan?.sources.some((source) => source.id === `column-${next}`)
+    )
+      next++;
     change({
       ...draft,
       sources: [
         ...draft.sources,
         { id: `column-${next}`, label: `Source ${next}`, imported: draft.imported, overlay: false },
       ],
+    });
+  };
+  const removeSource = (id: string) => {
+    change({
+      ...draft,
+      sources: draft.sources.filter((source) => source.id !== id),
+      rows: draft.rows.map((row) => ({
+        ...row,
+        cells: row.cells.filter((cell) => cell.sourceId !== id),
+      })),
+      anchors: draft.anchors?.filter((anchor) => anchor.sourceId !== id),
+    });
+    setPaths((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+    setPositions((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
     });
   };
   const addManualRow = () => {
@@ -139,7 +164,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
     if (rows.some((row) => row.id === target))
       rows = rows.map((row) => (row.id === target ? { ...row, cells: [...row.cells, cell] } : row));
     else rows = [...rows, { id: target, excluded: false, cells: [cell] }];
-    change({ ...draft, rows: rows.filter((row) => row.cells.length > 0) });
+    change({ ...draft, rows });
   };
   const showImage = (url: string, label: string) => {
     setLightboxImage(url);
@@ -301,6 +326,13 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                       onClick={() => moveSource(index, 1)}
                     >
                       Move right
+                    </Button>
+                    <Button
+                      disabled={source.id === draft.mainSourceId}
+                      aria-label={`Remove ${source.label || source.id} column`}
+                      onClick={() => removeSource(source.id)}
+                    >
+                      Remove column
                     </Button>
                   </div>
                   {!source.imported && (
@@ -793,6 +825,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                                       void facet.importImages([file], draft, {
                                         rowID: row.id,
                                         sourceID: cell.sourceId,
+                                        artifactID: cell.artifactId,
                                       });
                                   }}
                                 />

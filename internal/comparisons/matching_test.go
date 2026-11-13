@@ -122,6 +122,18 @@ func TestMatchingDoesNotReuseAnAutomaticTargetFrame(t *testing.T) {
 			t.Fatalf("one target occurrence resolved distinct main moments: %+v", row)
 		}
 	}
+	main.Frames[1].TimestampSeconds = 1.4
+	result, err = Match([]SampledSource{main, other}, "main", MatchOptions{Count: 2})
+	complete := 0
+	for _, row := range result.Rows {
+		if row.Complete {
+			complete++
+		}
+	}
+	if err != nil || len(result.Rows) != 2 || complete != 1 {
+		t.Fatalf("nearby main moments reused the same automatic target: %+v %v", result, err)
+	}
+	main.Frames[1].TimestampSeconds = 20
 	main.Frames = slices.Insert(main.Frames, 1, sampleFrame(2, 10, "I"))
 	other.Frames = append(other.Frames, sampleFrame(2, 10, "I"))
 	result, err = Match([]SampledSource{main, other}, "main", MatchOptions{Count: 2})

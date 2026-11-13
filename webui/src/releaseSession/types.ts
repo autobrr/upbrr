@@ -343,7 +343,7 @@ export type ComparisonsFacet = Readonly<{
   importImages(
     files: readonly File[],
     plan: ComparisonPlan,
-    replacement?: Readonly<{ rowID: string; sourceID: string }>,
+    replacement?: Readonly<{ rowID: string; sourceID: string; artifactID?: string }>,
   ): Promise<boolean>;
 }>;
 

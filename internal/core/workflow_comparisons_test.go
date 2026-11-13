@@ -141,6 +141,33 @@ func TestComparisonImportReplacementRetainsMappingAndPixels(t *testing.T) {
 	if media.Comparisons.Rows[0].ID == plan.Rows[0].ID {
 		t.Fatal("editing mutated the retained prior revision")
 	}
+	incomplete, err := updated.Comparisons.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	incomplete.Rows = append(incomplete.Rows, api.ComparisonRow{ID: "unmapped", Cells: []api.ComparisonCell{{SourceID: "1"}, {SourceID: "2"}, {SourceID: "3"}}})
+	incomplete.Sources = append(incomplete.Sources, api.ComparisonSource{
+		ID:       "empty-column",
+		Label:    "Pending",
+		Imported: true,
+	})
+	incomplete.Rows[0].Cells[0].ArtifactID = "next-replacement"
+	updated, _, err = b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: filepath.Join(root, "Example.Movie.mkv"), Generation: 1}, api.TrackerReleaseProjectionSet{}, &updated, private,
+		api.ComparisonInstructions{Action: "configure", Plan: incomplete}, []releaseworkflow.StagedMediaAttachment{{
+			Attachment: api.MediaAttachment{
+				Resource: api.WorkflowResourceRef{ID: "next-replacement"},
+				Kind:     api.MediaArtifactComparison,
+				Purpose:  api.ScreenshotPurposeComparison,
+			},
+			Content: releaseworkflow.StagedMediaContent{Name: "replacement.png", Bytes: content},
+		}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Comparisons.Rows) != 3 || updated.Comparisons.Rows[2].ID != "unmapped" || len(updated.Comparisons.Rows[2].Cells) != 3 ||
+		len(updated.Comparisons.Sources) != 4 || len(updated.Comparisons.Problems) == 0 {
+		t.Fatalf("replacement discarded incomplete review intent: %+v", updated.Comparisons)
+	}
 }
 
 func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
@@ -373,5 +400,33 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	}
 	if cell := anchored.Rows[0].Cells[1]; cell.TimestampSeconds == nil || *cell.TimestampSeconds != 1.1 {
 		t.Fatal("manual anchor between coarse samples was not resolved")
+	}
+	removed, err := captured.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed.Sources, removed.Rows = removed.Sources[:1], nil
+	_, removedPrivate, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained,
+		api.ComparisonInstructions{Action: "configure", Plan: removed}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := removedPrivate.(workflowMediaPrivateArtifacts).ComparisonSources["other"]; exists {
+		t.Error("removing a column retained a video handle reusable by a new column")
+	}
+	b.resolver = workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{VideoPath: secondPath}}
+	restored, restoredPrivate, err := b.RestoreComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 2}, api.TrackerReleaseProjectionSet{}, snapshot, retained, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := restoredPrivate.(workflowMediaPrivateArtifacts).ComparisonSources["main"]; exists {
+		t.Error("restoration retained the previous main video's handle")
+	}
+	for _, action := range []string{"match", "capture"} {
+		_, _, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 2}, api.TrackerReleaseProjectionSet{}, &restored, restoredPrivate,
+			api.ComparisonInstructions{Action: action, Plan: *restored.Comparisons}, nil, time.Now())
+		if err == nil || action == "match" && !strings.Contains(err.Error(), "configure this column again") {
+			t.Errorf("%s used a stale main video: %v", action, err)
+		}
 	}
 }

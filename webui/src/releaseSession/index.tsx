@@ -4230,7 +4230,7 @@ export function ReleaseSessionProvider({
           ),
           busy: screenshotStatus === "running" || workflowView.status === "running",
           blockedReason: screenshotMutationBlockedReason || access.screenshots.reason,
-          error: screenshotError || workflowView.failure?.Message || "",
+          error: screenshotError,
         },
         edit: editComparisons,
         preview: previewComparisonFrame,
@@ -4251,7 +4251,12 @@ export function ReleaseSessionProvider({
                         ? {
                             ...row,
                             cells: [
-                              ...row.cells.filter((cell) => cell.sourceId !== replacement.sourceID),
+                              ...row.cells.filter((cell) =>
+                                replacement.artifactID
+                                  ? cell.artifactId !== replacement.artifactID
+                                  : cell.sourceId !== replacement.sourceID ||
+                                    Boolean(cell.artifactId),
+                              ),
                               { sourceId: replacement.sourceID, artifactId: resources[0]!.id },
                             ],
                           }

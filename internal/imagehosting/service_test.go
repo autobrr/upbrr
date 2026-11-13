@@ -826,15 +826,17 @@ func TestUploadImagesSeparatesHDBMenuGalleryWithoutDuplicates(t *testing.T) {
 }
 
 func TestListCandidatesExcludesScopedMedia(t *testing.T) {
-	t.Parallel()
 	for _, test := range []struct {
 		name    string
 		purpose api.ScreenshotPurpose
 		stored  bool
+		alias   bool
 	}{
-		{"hosted audio", api.ScreenshotPurposeAudioAnalysis, false},
-		{"hosted comparison", api.ScreenshotPurposeComparison, false},
-		{"stored comparison", api.ScreenshotPurposeComparison, true},
+		{"hosted audio", api.ScreenshotPurposeAudioAnalysis, false, false},
+		{"hosted comparison", api.ScreenshotPurposeComparison, false, false},
+		{"stored comparison", api.ScreenshotPurposeComparison, true, false},
+		{"hosted comparison alias", api.ScreenshotPurposeComparison, false, true},
+		{"stored comparison alias", api.ScreenshotPurposeComparison, true, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			pathValue := filepath.Join(t.TempDir(), "image.png")
@@ -852,6 +854,13 @@ func TestListCandidatesExcludesScopedMedia(t *testing.T) {
 					Purpose:   test.purpose,
 					ImgURL:    "https://images.example.invalid/image.png",
 				}}
+			}
+			if test.alias {
+				t.Chdir(filepath.Dir(pathValue))
+				alias := filepath.Base(pathValue)
+				repo.screens = append(repo.screens, api.Screenshot{ImagePath: alias})
+				repo.selections = []api.ScreenshotFinalSelection{{ImagePath: alias}}
+				repo.uploads = append(repo.uploads, api.UploadedImageLink{ImagePath: alias, ImgURL: "https://images.example.invalid/image.png"})
 			}
 			service := &Service{repo: repo, logger: &recordingImageHostLogger{}}
 			candidates, err := service.ListCandidates(t.Context(), api.ImageHostingSubject{

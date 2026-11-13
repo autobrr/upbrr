@@ -194,6 +194,15 @@ it("keeps each duplicate-column image's row input attached to its own pixels", (
     })),
   });
   render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  const file = new File(["png"], "replacement.png", { type: "image/png" });
+  fireEvent.change(screen.getByLabelText("Replace Source, row 1, image 1"), {
+    target: { files: [file] },
+  });
+  expect(facet.importImages).toHaveBeenCalledWith([file], facet.view.plan, {
+    rowID: "1",
+    sourceID: "1",
+    artifactID: "image-0",
+  });
   const first = screen.getByLabelText("Row for Source, row 1, image 1");
   fireEvent.change(first, { target: { value: "new-row" } });
   fireEvent.blur(first);
@@ -210,6 +219,16 @@ it("keeps each duplicate-column image's row input attached to its own pixels", (
   expect(rows.find((row) => row.id === "new-row")!.cells.map((cell) => cell.artifactId)).toEqual([
     "image-0",
   ]);
+  const moved = within(
+    screen.getByRole("region", { name: "Comparison row new-row" }),
+  ).getByLabelText("Row for Source, row new-row, image 1");
+  fireEvent.change(moved, { target: { value: "final-row" } });
+  fireEvent.blur(moved);
+  expect(screen.getByRole("region", { name: "Comparison row new-row" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
+  expect(
+    vi.mocked(facet.edit).mock.lastCall![0].plan.rows.find((row) => row.id === "new-row")?.cells,
+  ).toEqual([]);
 });
 
 it("keeps source previews independent, steps decoded frames and anchors displayed frames", async () => {
@@ -297,4 +316,42 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
   fireEvent.change(timestamp, { target: { value: "12.3" } });
   expect(timestamp).toHaveFocus();
   expect(timestamp).toHaveValue(12.3);
+});
+
+it("removes an unwanted column without discarding remaining rows or anchors", () => {
+  const initial = comparisonPlan(false);
+  const plan = {
+    ...initial,
+    sources: initial.sources.map((source) =>
+      source.id === "3" ? { ...source, id: "column-3" } : source,
+    ),
+    rows: initial.rows.map((row) => ({
+      ...row,
+      cells: row.cells.map((cell) =>
+        cell.sourceId === "3" ? { ...cell, sourceId: "column-3" } : cell,
+      ),
+    })),
+    anchors: [
+      { sourceId: "2", mainSeconds: 1, sourceSeconds: 2 },
+      { sourceId: "column-3", mainSeconds: 1, sourceSeconds: 3 },
+    ],
+  };
+  const facet = comparisonFacet(plan);
+  render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Video path for Filtered"), {
+    target: { value: "unwanted.mkv" },
+  });
+  expect(screen.getByRole("button", { name: "Remove Source column" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Remove Filtered column" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add comparison video" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove Source 4 column" }));
+  fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
+  const instructions = vi.mocked(facet.edit).mock.lastCall![0];
+  expect(instructions.plan.sources.map((source) => source.id)).toEqual(["main", "2"]);
+  expect(instructions.plan.rows[0]!.cells.map((cell) => cell.artifactId)).toEqual([
+    "image-0",
+    "image-1",
+  ]);
+  expect(instructions.plan.anchors).toEqual([plan.anchors[0]]);
+  expect(instructions.videoSources).toEqual([]);
 });

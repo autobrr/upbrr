@@ -9673,6 +9673,141 @@ describe("useReleaseSession", () => {
 });
 
 describe("saved-image plan authority", () => {
+  const comparisonMedia = (
+    current: ReleaseWorkflowCurrent,
+    imported: boolean,
+  ): NonNullable<ReleaseWorkflowCurrent["media"]> => ({
+    id: "retained-media",
+    workflowId: current.workflow.id,
+    revision: 8,
+    release: current.workflow.release!,
+    releaseRef: { SourcePath: current.release!.release.Source.SourcePath, Generation: 1 },
+    projectionSet: { id: "projections-1", revision: 1 },
+    captureFingerprint: "capture",
+    requirementsFingerprint: "requirements",
+    imageRequirementsPrepared: false,
+    artifacts: [],
+    status: "completed",
+    createdAt: "2026-11-13T00:00:00Z",
+    comparisons: {
+      imported,
+      sources: ["Source", "Encode"].map((label, index) => ({
+        id: String(index + 1),
+        label,
+        imported,
+        overlay: false,
+      })),
+      rows: [],
+      mainSourceId: "1",
+      reuseMainScreenshots: false,
+      preferences: { count: 1, darkPercent: 0, motionPercent: 0 },
+      fingerprint: "restored-content",
+    },
+  });
+
+  it("scopes comparison errors to the active command after a successful preview", async () => {
+    const prepared = workflowCurrentFromPreview(
+      workflowCurrent("comparison-preview", 8),
+      preview("Example.mkv", 1),
+    );
+    const current: ReleaseWorkflowCurrent = {
+      ...prepared,
+      workflow: { ...prepared.workflow, media: { id: "retained-media", revision: 8 } },
+      media: comparisonMedia(prepared, false),
+    };
+    const failure = {
+      Code: "invalid_input",
+      Operation: "media",
+      Message: "Correct the comparison mapping.",
+      Recovery: "edit_input",
+    };
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: current.workflow.id,
+          workflow: workflowPorts({
+            current: async () => current,
+            editComparisons: async () => {
+              throw { failure };
+            },
+            previewFrame: async (value, _disc, timestampSeconds, _command, _signal, sourceID) => ({
+              id: "preview",
+              workflowId: value.workflow.id,
+              workflowRevision: value.workflow.revision,
+              release: value.workflow.release!,
+              timestampSeconds,
+              comparisonSourceId: sourceID,
+              contentUrl: "/preview.png",
+              expiresAt: "2026-11-13T01:00:00Z",
+            }),
+          }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.screenshots.comparisons.view.plan).not.toBeNull());
+    await act(async () => {
+      expect(
+        await result.current.screenshots.comparisons.edit({
+          action: "configure",
+          plan: current.media!.comparisons!,
+        }),
+      ).toBe(false);
+    });
+    expect(result.current.screenshots.comparisons.view.error).toBe(failure.Message);
+    await act(async () => {
+      expect(await result.current.screenshots.comparisons.preview("1", 1)).not.toBeNull();
+    });
+    expect(result.current.screenshots.comparisons.view.error).toBe("");
+  });
+
+  it("replaces only the selected duplicate-mapped imported image", async () => {
+    const prepared = workflowCurrentFromPreview(
+      workflowCurrent("comparison-replacement", 8),
+      preview("Example.mkv", 1),
+    );
+    const media = comparisonMedia(prepared, true);
+    const plan = {
+      ...media.comparisons!,
+      rows: [
+        {
+          id: "row",
+          excluded: false,
+          cells: [
+            { sourceId: "1", artifactId: "first" },
+            { sourceId: "1", artifactId: "second" },
+          ],
+        },
+      ],
+    };
+    const current: ReleaseWorkflowCurrent = {
+      ...prepared,
+      workflow: { ...prepared.workflow, media: { id: "retained-media", revision: 8 } },
+      media: { ...media, comparisons: plan },
+    };
+    const edit = vi.fn<ReleaseSessionPorts["workflow"]["editComparisons"]>(async () => current);
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: current.workflow.id,
+          workflow: workflowPorts({ current: async () => current, editComparisons: edit }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.screenshots.comparisons.view.plan).not.toBeNull());
+    await act(() =>
+      result.current.screenshots.comparisons.importImages(
+        [new File(["png"], "replacement.png", { type: "image/png" })],
+        plan,
+        { rowID: "row", sourceID: "1", artifactID: "first" },
+      ),
+    );
+    const instructions = edit.mock.calls[0]?.[1];
+    expect(instructions?.plan.rows[0]?.cells.map((cell) => cell.artifactId)).toEqual([
+      "second",
+      "resource-replacement.png",
+    ]);
+  });
+
   it("restores pending comparisons on the optional screenshot page without capture or hosting", async () => {
     const workflowID = "workflow-reopened-comparisons";
     let current = workflowCurrentFromPreview(
@@ -9700,34 +9835,7 @@ describe("saved-image plan authority", () => {
           media: { id: "retained-media", revision: 8 },
         },
         continuation: { ...current.continuation, comparisonRestorePending: false },
-        media: {
-          id: "retained-media",
-          workflowId: workflowID,
-          revision: 8,
-          release: current.workflow.release!,
-          releaseRef: { SourcePath: "C:\\media\\Example.Release.2026.mkv", Generation: 1 },
-          projectionSet: { id: "projections-1", revision: 1 },
-          captureFingerprint: "capture",
-          requirementsFingerprint: "requirements",
-          imageRequirementsPrepared: false,
-          artifacts: [],
-          comparisons: {
-            imported: true,
-            sources: ["Source", "Encode"].map((label, index) => ({
-              id: String(index + 1),
-              label,
-              imported: true,
-              overlay: false,
-            })),
-            rows: [],
-            mainSourceId: "1",
-            reuseMainScreenshots: false,
-            preferences: { count: 1, darkPercent: 0, motionPercent: 0 },
-            fingerprint: "restored-content",
-          },
-          status: "completed",
-          createdAt: "2026-11-13T00:00:00Z",
-        },
+        media: comparisonMedia(current, true),
       };
       return current;
     });

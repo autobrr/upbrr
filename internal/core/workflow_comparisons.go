@@ -224,6 +224,9 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 	if !mainFound {
 		return errors.New("include the main release input in the comparison columns")
 	}
+	maps.DeleteFunc(retained.ComparisonSources, func(id string, _ workflowComparisonSource) bool {
+		return !slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool { return source.ID == id })
+	})
 	return nil
 }
 
@@ -311,19 +314,29 @@ func (b workflowMediaBuilder) importWorkflowComparisons(ctx context.Context, rel
 		}
 	}
 	plan, _ := comparisons.Import(images, requested.MainSourceID)
+	for _, wanted := range requested.Rows {
+		index := slices.IndexFunc(plan.Rows, func(row api.ComparisonRow) bool { return row.ID == wanted.ID })
+		if index < 0 {
+			plan.Rows = append(plan.Rows, api.ComparisonRow{ID: wanted.ID})
+			index = len(plan.Rows) - 1
+		}
+		for _, cell := range wanted.Cells {
+			if cell.ArtifactID == "" {
+				plan.Rows[index].Cells = append(plan.Rows[index].Cells, api.ComparisonCell{SourceID: cell.SourceID})
+			}
+		}
+	}
 	if len(requested.Sources) > 0 {
 		ordered := make([]api.ComparisonSource, 0, len(plan.Sources))
 		seen := map[string]bool{}
 		for _, wanted := range requested.Sources {
-			for _, source := range plan.Sources {
-				if source.ID == wanted.ID {
-					source.Label = wanted.Label
-					source.Overlay = wanted.Overlay
-					ordered = append(ordered, source)
-					seen[source.ID] = true
-					break
-				}
-			}
+			ordered = append(ordered, api.ComparisonSource{
+				ID:       wanted.ID,
+				Label:    wanted.Label,
+				Imported: true,
+				Overlay:  wanted.Overlay,
+			})
+			seen[wanted.ID] = true
 		}
 		for _, source := range plan.Sources {
 			if !seen[source.ID] {
@@ -1176,6 +1189,7 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 	}
 	mainChanged = mainChanged || changed[plan.MainSourceID]
 	if mainChanged {
+		delete(retained.ComparisonSources, plan.MainSourceID)
 		plan.Anchors = nil
 		plan.SceneMix = nil
 	}
