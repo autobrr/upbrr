@@ -56,7 +56,7 @@ The Web UI and TUI update their existing progress display in place. Plain CLI ou
 Metadata providers and local media inspection produce shared release facts. Review at least:
 
 - title and year;
-- movie, TV, anime, or other category;
+- movie or TV category and independent anime classification;
 - release type, source, and resolution;
 - season, episode, edition, service, distributor, region, and group;
 - external IDs;
@@ -269,7 +269,7 @@ A failure to download or persist the registered torrent does not turn a confirme
 
 Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. While an unknown outcome is retained, it requires reconciliation and is never treated as confirmed success. Restarting does not clear its retry block; verify and reconcile the remote outcome before another attempt.
 
-Automatically managed reports, screenshots, descriptions, torrent exports and analysis files share the release's `tmp/<release>/` folder in the active state directory. Analysis and secondary-file reports may use nested folders. Compatible source evidence is reused; changing the source requires fresh evidence. History deletion includes these nested files and preserves active or shared ownership. See the [v0.4.2 artifact notice](../changelog/v0.4.2.md) for legacy cache removal.
+Automatically managed reports, screenshots, descriptions, torrent exports and analysis files share the release's `tmp/<release>/` folder in the active state directory. Analysis and secondary-file reports may use nested folders. Compatible source evidence is reused; changing the source requires fresh evidence. History deletion includes these nested files and preserves active or shared ownership. See the [v0.4.2 upgrade notes](../changelog/v0.4.2.md) for legacy cache removal.
 
 ## 8. Inject into clients
 

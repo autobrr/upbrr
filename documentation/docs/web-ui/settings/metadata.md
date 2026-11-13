@@ -20,6 +20,12 @@ Use **Settings → Metadata** to control how preparation gathers reusable torren
 
 **Collect existing tracker images** and **Limit tracker lookup to only metadata ids** work independently. With both enabled, supported trackers can still supply images while omitting description text. Imported comparison blocks stay in descriptions and are excluded from the ordinary screenshot set. Eligible existing description images are loaded automatically when you open **Screenshots**. Review them in the normal screenshot list, where you can unselect, delete or reorder them. Their capture timestamps and provenance are unknown, including their chronological order relative to new captures.
 
+:::note Compatibility fields
+
+`user_overrides`, `ping_unit3d`, and `check_predb` remain in imported/exported configuration but have no current workflow behavior. They do not enable automatic user corrections, extra tracker pings, or another pre-database check.
+
+:::
+
 ## Blu-ray edition matching
 
 A recognized three-letter country marker in the selected source folder, such as `USA` or `GER`, restricts the displayed Blu-ray.com candidates to that release country. This country is separate from playback regions A, B, and C, which appear in each candidate's technical details.

@@ -9,17 +9,15 @@ upbrr applies forward-only SQLite migrations during startup. Back up application
 
 The upgrade from `v0.3.5.1` to `v0.4.0` adds stored metadata-lookup evidence, release-cut metadata, image-account reuse boundaries, and imported tracker-media details. Older prepared snapshots may need preparation again. Keep the pre-upgrade backup if you might return to `v0.3.5.1`; changing only the binary or image tag does not undo these changes.
 
-The upgrade from `v0.4.0` to `v0.4.1` adds stored acceptance evidence for imported screenshot links, screenshot content and tonemapping provenance, and retained HDR analysis associations. Existing images and links without the new evidence remain unknown. Imported-link acceptance survives a restart of the same prepared generation, but preparation for a new or corrected generation requires fresh matching evidence. Older prepared snapshots require preparation again. These additive database migrations are forward-only; keep a stopped-service backup before upgrading and restore it before returning to `v0.4.0`.
+Earlier upgrades added stored acceptance evidence for imported screenshot links, screenshot content and tonemapping provenance, and retained HDR analysis associations. Existing images and links without that evidence remain unknown. Imported-link acceptance survives a restart of the same prepared generation, but preparation for a new or corrected generation requires fresh matching evidence. Older prepared snapshots require preparation again. These additive database migrations are forward-only; keep a stopped-service backup before upgrading and restore it before returning to an older version.
 
-The upcoming `v0.4.2` moves workflow source ownership and command receipts into separate database rows and stores exact immutable snapshot references. The first startup backfills existing workflows; allow extra time and disk space for that transaction. An interrupted migration rolls back and retries on the next startup. Retained History and command results are preserved. Malformed or uncertain source ownership defers cleanup so recoverable evidence remains available. This storage format is forward-only: restore the complete stopped-service backup before returning to an earlier version, rather than replacing only the binary or image tag.
+`v0.4.2` moves workflow source ownership and command receipts into separate database rows and stores exact immutable snapshot references. The first startup backfills existing workflows; allow extra time and disk space for that transaction. An interrupted migration rolls back and retries on the next startup. Retained History and command results are preserved. Malformed or uncertain source ownership defers cleanup so recoverable evidence remains available. This storage format is forward-only: restore the complete stopped-service backup before returning to an earlier version, rather than replacing only the binary or image tag.
 
 If a retained workflow reports incompatible prepared data after an update, prepare the input again before continuing. Repeating continuation does not rebuild that data. Saved corrections remain available; preparation and the normal review steps must complete again. Check and reconcile any uncertain external outcome before retrying a tracker or client operation.
 
-Development builds for v0.4.2 retain ambiguous provider-title matches for explicit CLI/TUI selection, including across reuse and restart through an additive SQLite migration. Strict unattended runs no longer choose the top ambiguous TMDB or IMDb match. Older automatic identities and prepared snapshots require preparation again under the new confidence policy; manual IDs and explicit clears remain authoritative. Use exact provider IDs or `--uac` when a title needs selection.
+`v0.4.2` retains ambiguous provider-title matches for explicit CLI/TUI selection, including across reuse and restart through an additive SQLite migration. Strict unattended runs no longer choose the top ambiguous TMDB or IMDb match. Older automatic identities and prepared snapshots require preparation again under the new confidence policy; manual IDs and explicit clears remain authoritative. Use exact provider IDs or `--uac` when a title needs selection.
 
 ## 1. Stop upbrr
-
-For the upcoming `v0.4.2` artifact layout, also follow the [manual legacy report-cache cleanup notice](../changelog/v0.4.2.md#remove-the-legacy-report-cache). No automatic migration or legacy cache discovery is performed; releases must be prepared again.
 
 Stop every binary, service, and container using the database before upgrading or copying it. Disable scheduled tasks and automatic restarts that could start an older process during the upgrade. Take the backup only after all writers have stopped.
 
@@ -34,6 +32,8 @@ Back up the directory containing `db.sqlite`. Keep adjacent files with it, espec
 - the `cookies` directory, when legacy cookie import files have not yet been migrated.
 
 Default locations are described in [Configuration](../configuration/index.md#state-location).
+
+After completing the stopped-service backup, follow the [manual legacy report-cache cleanup notice](../changelog/v0.4.2.md#remove-the-legacy-report-cache) for the `v0.4.2` artifact layout. Complete the backup before deleting any legacy cache or installing and starting the new version. No automatic migration or legacy cache discovery is performed; releases must be prepared again.
 
 ## 3. Install the new version
 
@@ -64,7 +64,7 @@ Startup automatically removes identifiable leftovers from previously deleted His
 
 Saving effective settings reuses the running process's startup maintenance. It does not repeat the startup-wide History and provisional-file cleanup; expiry cleanup continues while the server runs.
 
-After prior-process input and work leases expire, startup retains completed checkpoints and marks unfinished operations interrupted. It marks unresolved prior-process external attempts failed locally and removes their retry blocks. This does not prove that the tracker upload or client operation failed remotely. Check the tracker or torrent client before retrying an interrupted stage.
+After prior-process input and work leases expire, startup retains completed checkpoints and marks unfinished operations interrupted. It preserves unresolved external attempts as uncertain and retains their retry protection. An interrupted local operation does not prove that the tracker upload or client operation failed remotely. Check the tracker or torrent client before retrying an interrupted stage.
 
 If **Legacy workflow recovery** still lists an unresolved external outcome, choose **Recover workflow** and inspect the remote result before resolving the action. Choose **Confirmed not completed; allow a fresh exact attempt** only when you have verified that the operation did not complete. Recovery itself does not resubmit anything.
 
@@ -76,4 +76,4 @@ Never start an older binary against the upgraded database. To roll back, stop ev
 
 :::
 
-Development builds for v0.4.2 also add per-image screenshot renderer outcomes. Existing captures keep their known tone-mapping status but have no invented renderer history. The capture compatibility version changes, so older automatic captures are not reused as if they were made by the new renderer policy. Stop the service and back up the whole state directory before testing; restore that backup when returning to an older version.
+`v0.4.2` also adds per-image screenshot renderer outcomes. Existing captures keep their known tone-mapping status but have no invented renderer history. The capture compatibility version changes, so older automatic captures are not reused as if they were made by the new renderer policy. Stop the service and back up the whole state directory before upgrading; restore that backup when returning to an older version.
