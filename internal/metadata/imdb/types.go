@@ -112,6 +112,8 @@ type Candidate struct {
 	Plot       string
 	PosterURL  string
 	Similarity float64
+	// confidenceScore retains the identity score before the ranking-only year bonus.
+	confidenceScore float64
 }
 
 type EpisodeLookup struct {

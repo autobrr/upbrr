@@ -407,12 +407,12 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 			return SearchResult{}, nil
 		}
 		best := candidates[0]
-		if best.Similarity >= 0.85 {
+		if best.confidenceScore >= 0.85 {
 			second := 0.0
-			if len(candidates) > 1 {
-				second = candidates[1].Similarity
+			for _, candidate := range candidates[1:] {
+				second = max(second, candidate.confidenceScore)
 			}
-			if best.Similarity-second >= 0.10 {
+			if best.confidenceScore-second >= 0.10 {
 				logger.Infof("imdb: search auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
 				return SearchResult{
 					IMDbID:       best.IMDbID,
@@ -821,22 +821,28 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 		plot := getStringFromMap(title, "plot", "plotText", "plainText")
 		posterURL := getStringFromMap(title, "primaryImage", "url")
 		similarity := metautil.SimilarityRatio(filenameNorm, strings.ToLower(strings.TrimSpace(text)))
+		confidenceScore := similarity
 		if similarity >= 0.99 && searchYearInt > 0 && year > 0 {
 			switch year {
 			case searchYearInt:
-				similarity += 0.1
+				confidenceScore += 0.1
 			case searchYearInt - 1:
 				similarity += 0.05
+				confidenceScore += 0.05
 			}
 		}
+		if searchYearInt > 0 && year == searchYearInt {
+			similarity += 0.2
+		}
 		candidates = append(candidates, Candidate{
-			IMDbID:     imdbID,
-			Title:      text,
-			Year:       year,
-			Type:       getStringFromMap(title, "titleType", "text"),
-			Plot:       plot,
-			PosterURL:  posterURL,
-			Similarity: similarity,
+			IMDbID:          imdbID,
+			Title:           text,
+			Year:            year,
+			Type:            getStringFromMap(title, "titleType", "text"),
+			Plot:            plot,
+			PosterURL:       posterURL,
+			Similarity:      similarity,
+			confidenceScore: confidenceScore,
 		})
 	}
 
@@ -845,11 +851,11 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 	})
 
 	if len(candidates) > 0 {
-		best := candidates[0].Similarity
+		best := candidates[0].confidenceScore
 		if best >= 0.90 {
 			filtered := make([]Candidate, 0, len(candidates))
 			for _, cand := range candidates {
-				if cand.Similarity >= 0.75 {
+				if cand.confidenceScore >= 0.75 {
 					filtered = append(filtered, cand)
 				}
 			}
