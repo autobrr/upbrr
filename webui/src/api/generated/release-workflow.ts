@@ -2163,7 +2163,7 @@ export type ReleaseWorkflowUploadFeedback = Readonly<{
   response: ReleaseWorkflowUploadFeedbackResponse;
 }>;
 
-export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "trackerPreparation" | "duplicateReview" | "trackerApproval" | "uploadApproval" | "reprepare" | "reconciliation";
+export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "trackerPreparation" | "duplicateReview" | "trackerApproval" | "comparisonApproval" | "uploadApproval" | "reprepare" | "reconciliation";
 
 export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
   comparisonApproval?: ReleaseWorkflowUploadComparisonApproval | null;

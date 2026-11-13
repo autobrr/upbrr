@@ -9,6 +9,23 @@ import ComparisonPanel from "./ComparisonPanel";
 
 afterEach(cleanup);
 
+it("returns to the entry actions after removing an unapplied setup", async () => {
+  const facet = comparisonFacet(null);
+  vi.mocked(facet.edit).mockResolvedValueOnce(false);
+  render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Import existing comparisons" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add mapped column" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove comparisons" }));
+  await waitFor(() => expect(facet.edit).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("button", { name: "Add mapped column" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Remove comparisons" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Import existing comparisons" })).toBeVisible(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Create from videos" }));
+  expect(screen.getByRole("group", { name: "Main input · column 1" })).toBeVisible();
+});
+
 const comparisonPlan = (imported = true): ComparisonPlan => ({
   imported,
   sources: ["Source", "Encode", "Filtered"].map((label, index) => ({
@@ -165,6 +182,34 @@ it("imports prepared files without guessing the main column or flattening them i
     expect.objectContaining({ imported: true, mainSourceId: "", rows: [], sources: [] }),
   );
   expect(facet.edit).not.toHaveBeenCalled();
+});
+
+it("keeps each duplicate-column image's row input attached to its own pixels", () => {
+  const plan = comparisonPlan();
+  const facet = comparisonFacet({
+    ...plan,
+    rows: plan.rows.map((row) => ({
+      ...row,
+      cells: row.cells.map((cell, index) => (index === 1 ? { ...cell, sourceId: "1" } : cell)),
+    })),
+  });
+  render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  const first = screen.getByLabelText("Row for Source, row 1, image 1");
+  fireEvent.change(first, { target: { value: "new-row" } });
+  fireEvent.blur(first);
+  const remaining = within(screen.getByRole("region", { name: "Comparison row 1" })).getByLabelText(
+    "Row for Source, row 1, image 1",
+  );
+  expect(remaining).toHaveValue("1");
+  fireEvent.blur(remaining);
+  fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
+  const rows = vi.mocked(facet.edit).mock.lastCall![0].plan.rows;
+  expect(rows.find((row) => row.id === "1")!.cells.map((cell) => cell.artifactId)).toContain(
+    "image-1",
+  );
+  expect(rows.find((row) => row.id === "new-row")!.cells.map((cell) => cell.artifactId)).toEqual([
+    "image-0",
+  ]);
 });
 
 it("keeps source previews independent, steps decoded frames and anchors displayed frames", async () => {

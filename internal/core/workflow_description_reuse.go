@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/comparisons"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -189,10 +190,12 @@ type workflowReusableDescriptionHostedImage struct {
 }
 
 type workflowReusableDescriptionMedia struct {
-	Screenshots       []workflowReusableDescriptionImage
-	DVDMenus          []workflowReusableDescriptionDVDMenu
-	ScreenshotUploads []workflowReusableDescriptionHostedImage
-	DVDMenuUploads    []workflowReusableDescriptionHostedImage
+	ComparisonFingerprint api.WorkflowFingerprint
+	ComparisonUploads     []workflowReusableDescriptionHostedImage
+	Screenshots           []workflowReusableDescriptionImage
+	DVDMenus              []workflowReusableDescriptionDVDMenu
+	ScreenshotUploads     []workflowReusableDescriptionHostedImage
+	DVDMenuUploads        []workflowReusableDescriptionHostedImage
 }
 
 type workflowReusableDescriptionReportResources struct {
@@ -239,7 +242,7 @@ func workflowReusableDescriptionFingerprint(
 		LocalResources                       workflowReusableDescriptionLocalResources
 		ExactMedia                           workflowReusableDescriptionMedia
 	}{
-		Version:                              "description-reuse-v3",
+		Version:                              "description-reuse-v4",
 		Config:                               cfg,
 		CompatibilityKey:                     compatibilityKey,
 		Projections:                          reusableDescriptionProjections(projections.Projections),
@@ -425,6 +428,30 @@ func normalizeReusableDescriptionMedia(
 		})
 	}
 	var err error
+	if exact.Comparisons != nil {
+		normalized.ComparisonFingerprint, err = comparisons.ReviewFingerprint(*exact.Comparisons)
+		if err != nil {
+			return workflowReusableDescriptionMedia{}, false, fmt.Errorf("workflow reusable descriptions: fingerprint comparisons: %w", err)
+		}
+		for _, row := range exact.Comparisons.Rows {
+			if row.Excluded {
+				continue
+			}
+			for _, cell := range row.Cells {
+				image := exact.ComparisonImages[cell.ArtifactID]
+				digest, available, err := reusableDescriptionFileDigest(ctx, image.Path)
+				if err != nil || !available || digest == "" || digest != cell.ContentSHA256 {
+					return workflowReusableDescriptionMedia{}, false, err
+				}
+				digestsByPath[image.Path] = digest
+				links, err := normalizeReusableDescriptionHostedImages(exact.ComparisonUploads[cell.ArtifactID], digestsByPath)
+				if err != nil {
+					return workflowReusableDescriptionMedia{}, false, err
+				}
+				normalized.ComparisonUploads = append(normalized.ComparisonUploads, links...)
+			}
+		}
+	}
 	normalized.ScreenshotUploads, err = normalizeReusableDescriptionHostedImages(exact.ScreenshotUploads, digestsByPath)
 	if err != nil {
 		return workflowReusableDescriptionMedia{}, false, err

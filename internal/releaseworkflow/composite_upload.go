@@ -1434,6 +1434,11 @@ func compositeUploadPendingAction(
 		if action.Status != api.RequiredActionStatusPending {
 			continue
 		}
+		if action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "" &&
+			continuationIntentResolvesAction(session.Intent, current, *action) &&
+			!continuationMediaCaptureSatisfied(current, session.Intent.Media) {
+			continue
+		}
 		if (action.Kind == api.RequiredActionReviewDuplicates || action.Kind == api.RequiredActionApproveTrackers) &&
 			duplicateSearchModeChanged(current.Dupes, session.Intent.SkipRemoteDuplicates) {
 			continue

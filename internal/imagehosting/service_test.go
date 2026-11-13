@@ -845,6 +845,7 @@ func TestListCandidatesExcludesScopedMedia(t *testing.T) {
 			if test.stored {
 				repo.screens = []api.Screenshot{{ImagePath: pathValue, Purpose: test.purpose}}
 				repo.selections = []api.ScreenshotFinalSelection{{ImagePath: pathValue}}
+				repo.uploads = []api.UploadedImageLink{{ImagePath: pathValue, ImgURL: "https://images.example.invalid/image.png"}}
 			} else {
 				repo.uploads = []api.UploadedImageLink{{
 					ImagePath: pathValue,

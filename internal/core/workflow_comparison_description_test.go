@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -137,5 +138,70 @@ func TestComparisonDescriptionProjectionRetainsCellIdentity(t *testing.T) {
 				t.Fatal("unreviewed comparison reached description projection")
 			}
 		})
+	}
+}
+
+func TestComparisonDescriptionReuseTracksRowsPixelsAndLinks(t *testing.T) {
+	media, retained := testComparisonDescriptionMedia(t, false)
+	exact, err := resolveWorkflowExactMedia(t.Context(), retained, media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized := func() []byte {
+		t.Helper()
+		value, available, err := normalizeReusableDescriptionMedia(t.Context(), exact)
+		if err != nil || !available {
+			t.Fatalf("comparison reuse unavailable: %v", err)
+		}
+		payload, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return payload
+	}
+	before := normalized()
+	exact.Comparisons.Sources[0].Label = "Changed source label"
+	after := normalized()
+	if bytes.Equal(before, after) {
+		t.Fatal("comparison label changes reused stale descriptions")
+	}
+	before = after
+	id := exact.Comparisons.Rows[0].Cells[0].ArtifactID
+	exact.ComparisonUploads[id][0].RawURL = "https://images.example.invalid/replaced.png"
+	if bytes.Equal(before, normalized()) {
+		t.Fatal("comparison link changes reused stale descriptions")
+	}
+	if err := os.WriteFile(exact.ComparisonImages[id].Path, []byte("changed pixels"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, available, _ := normalizeReusableDescriptionMedia(t.Context(), exact); available {
+		t.Fatal("changed comparison bytes remained reusable")
+	}
+}
+
+func TestComparisonHostingRetryRequiresCompleteCoverage(t *testing.T) {
+	media, _ := testComparisonDescriptionMedia(t, true)
+	projections := []api.TrackerReleaseProjection{{TrackerID: "ALPHA", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}}}
+	attempt := api.HostedImageAttempt{
+		Host:       "imgbb",
+		TrackerIDs: []api.TrackerID{"ALPHA"},
+		Status:     api.StageStatusCompleted,
+	}
+	for _, artifact := range media.Artifacts {
+		if artifact.Kind == api.MediaArtifactHostedImage {
+			attempt.Results = append(attempt.Results, artifact)
+		}
+	}
+	failure := hostedImageFailure("ALPHA", "imgbb", "previous upload failed")
+	media.Failures = []api.WorkflowFailure{failure}
+	reconcileRetriedImageHostFailures(&media, projections, []api.HostedImageAttempt{attempt}, nil)
+	if len(media.Failures) != 0 {
+		t.Fatal("successful complete comparison retry retained the old hosting failure")
+	}
+	media.Failures = []api.WorkflowFailure{failure}
+	attempt.Results = attempt.Results[:len(attempt.Results)-1]
+	reconcileRetriedImageHostFailures(&media, projections, []api.HostedImageAttempt{attempt}, nil)
+	if len(media.Failures) != 1 {
+		t.Fatal("partial comparison retry cleared the old hosting failure")
 	}
 }

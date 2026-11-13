@@ -855,6 +855,22 @@ func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage
 		if _, prepared := restore(); prepared {
 			t.Fatal("a stale comparison upload was treated as current")
 		}
+		byPath := map[string]api.PublicResourceID{}
+		paths := map[api.PublicResourceID]string{}
+		for id := range selected {
+			path := comparisonRetained.ArtifactImages[id].Path
+			paths[id] = path
+			byPath[strings.ToLower(normalizedUploadImagePath(path))] = id
+		}
+		links, blocked, retired := builder.retainedHostedImageLinks(comparisonSnapshot, comparisonRetained, selected, byPath, paths,
+			[]trackers.ImageUploadTarget{{
+				Host:       "imgbb",
+				UsageScope: "global",
+				Trackers:   []string{"ONE"},
+			}})
+		if len(links) != 5 || len(blocked) != 1 || len(retired) != 1 {
+			t.Fatalf("rejected comparison link could return through stored uploads: links=%d blocked=%d retired=%d", len(links), len(blocked), len(retired))
+		}
 		if network.uploads != 0 {
 			t.Fatalf("comparison cache check made %d image-host calls", network.uploads)
 		}

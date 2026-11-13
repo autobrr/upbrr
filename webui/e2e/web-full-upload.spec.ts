@@ -366,6 +366,26 @@ test("embedded video comparisons match three native sources and retain reviewed 
     await expect(
       comparison.getByText("These captured comparison images are approved.", { exact: true }),
     ).toBeVisible();
+    await page.getByRole("button", { name: "Upload Images", exact: true }).click();
+    const reuseResponse = waitForAppMethod(page, "UploadReleaseWorkflowImages");
+    await page.getByRole("button", { name: /^Prepare required hosts/ }).click();
+    const reuseAccepted = await reuseResponse;
+    expect(reuseAccepted.ok()).toBe(true);
+    const reuseStarted = (await reuseAccepted.json()) as ReleaseWorkflowCurrent;
+    await expect
+      .poll(async () => {
+        const current = (await snapshot()).current!;
+        expect(current.operation?.id).toBe(reuseStarted.operation?.id);
+        if (current.operation?.status !== "completed") return false;
+        const artifacts = current.media!.artifacts;
+        return cellIDs.every((id) =>
+          artifacts.some(
+            (artifact) =>
+              artifact.kind === "hosted_image" && artifact.selected && artifact.source === id,
+          ),
+        );
+      })
+      .toBe(true);
     expect(workspace.fake.counters.imageUploads).toBe(hostedBeforeReopen);
   } finally {
     await app.stop();

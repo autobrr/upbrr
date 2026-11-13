@@ -334,8 +334,19 @@ func (b workflowMediaBuilder) importWorkflowComparisons(ctx context.Context, rel
 	}
 	plan.ReuseMainScreenshots = requested.ReuseMainScreenshots
 	plan.Preferences = requested.Preferences
-	removeComparisonArtifacts(snapshot, retained)
+	unchanged := map[api.PublicResourceID]bool{}
 	for _, input := range images {
+		id := api.PublicResourceID(input.ID)
+		digest := sha256.Sum256(input.Bytes)
+		if image, exists := retained.ArtifactImages[id]; exists && image.ContentSHA256 == hex.EncodeToString(digest[:]) {
+			unchanged[id] = true
+		}
+	}
+	removeComparisonArtifactsExcept(snapshot, retained, unchanged)
+	for _, input := range images {
+		if unchanged[api.PublicResourceID(input.ID)] {
+			continue
+		}
 		config, format, err := comparisons.InspectImage(input.Bytes)
 		if err != nil {
 			continue
@@ -472,7 +483,7 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 		if source.ID == plan.MainSourceID {
 			for _, row := range plan.Rows {
 				for _, cell := range row.Cells {
-					if !row.Excluded && cell.SourceID == source.ID && cell.TimestampSeconds != nil {
+					if !row.Excluded && cell.SourceID == source.ID && cell.TimestampSeconds != nil && cell.Confidence == nil {
 						manualMoments = append(manualMoments, *cell.TimestampSeconds)
 					}
 				}
@@ -505,7 +516,7 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 			continue
 		}
 		for _, cell := range row.Cells {
-			if cell.SourceID == plan.MainSourceID && cell.TimestampSeconds != nil {
+			if cell.SourceID == plan.MainSourceID && cell.TimestampSeconds != nil && cell.Confidence == nil {
 				options.MainMoments = append(options.MainMoments, *cell.TimestampSeconds)
 			}
 		}
@@ -555,7 +566,7 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 			if frame.Resolved {
 				cell.TimestampSeconds = new(frame.TimestampSeconds)
 				cell.PictureType = frame.FrameType
-				if frame.Method != "manual" {
+				if frame.Method != "manual" && (frame.SourceID != plan.MainSourceID || len(options.MainMoments) == 0) {
 					cell.Confidence = new(frame.Confidence)
 				}
 				for _, observation := range observations[frame.SourceID] {
@@ -761,9 +772,13 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(ctx context.Context, re
 }
 
 func removeComparisonArtifacts(snapshot *api.MediaArtifactSet, retained *workflowMediaPrivateArtifacts) {
+	removeComparisonArtifactsExcept(snapshot, retained, nil)
+}
+
+func removeComparisonArtifactsExcept(snapshot *api.MediaArtifactSet, retained *workflowMediaPrivateArtifacts, keep map[api.PublicResourceID]bool) {
 	removed := map[api.PublicResourceID]bool{}
 	for _, artifact := range snapshot.Artifacts {
-		if artifact.Kind == api.MediaArtifactComparison {
+		if artifact.Kind == api.MediaArtifactComparison && !keep[artifact.ID] {
 			removed[artifact.ID] = true
 			delete(retained.ArtifactImages, artifact.ID)
 		}
@@ -955,6 +970,7 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 	plan.SceneMix = nil
 	sameScenes := prior != nil && prior.Comparisons != nil && !plan.Imported
 	priorRows := map[string]api.ComparisonRow{}
+	unchangedMain := map[string]bool{}
 	if sameScenes {
 		for _, row := range prior.Comparisons.Rows {
 			priorRows[row.ID] = row
@@ -963,7 +979,7 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 	for r := range plan.Rows {
 		row := &plan.Rows[r]
 		previous, ok := priorRows[row.ID]
-		same := ok
+		same := ok && prior.Comparisons.MainSourceID == plan.MainSourceID
 		var before, after *float64
 		for _, cell := range previous.Cells {
 			if cell.SourceID == plan.MainSourceID {
@@ -976,6 +992,7 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 			}
 		}
 		same = same && before != nil && after != nil && *before == *after
+		unchangedMain[row.ID] = same
 		if same {
 			row.Scene = previous.Scene
 		} else {
@@ -1060,6 +1077,10 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 				cell.TimeBaseDenominator = 0
 				cell.PictureType = ""
 				cell.Confidence = nil
+				if cell.SourceID == plan.MainSourceID && unchangedMain[plan.Rows[r].ID] {
+					// Rendering invalidation must not turn an automatic main moment into a manual pin.
+					cell.Confidence = previous.Confidence
+				}
 				continue
 			}
 			if knownImage {
@@ -1070,6 +1091,9 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 			cell.TimeBaseDenominator = previous.TimeBaseDenominator
 			cell.PictureType = previous.PictureType
 			cell.Confidence = previous.Confidence
+			if cell.SourceID != plan.MainSourceID && !unchangedMain[plan.Rows[r].ID] {
+				cell.Confidence = nil
+			}
 		}
 	}
 }

@@ -282,7 +282,14 @@ func matchRow(columns []matchingColumn, main, index int) MatchedRow {
 		if i == main {
 			row.Frames[i] = matchedSample(column.source, frame.frame, "main", 1)
 		} else {
-			row.Frames[i] = matchFrame(frame, column)
+			matched := matchFrame(frame, column)
+			if matched.Resolved && matched.Method == "visual" {
+				target := column.frames[nearestSample(column.frames, matched.TimestampSeconds)]
+				if ambiguousVisualMatch(target, columns[main].frames, frame.frame.TimestampSeconds, matched.Confidence) {
+					matched.Resolved, matched.Confidence, matched.Reason = false, 0, "ambiguous_visual_match"
+				}
+			}
+			row.Frames[i] = matched
 		}
 		row.Complete = row.Complete && row.Frames[i].Resolved
 	}
@@ -329,11 +336,9 @@ func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		matched.Resolved, matched.TypeFallback, matched.Reason = false, false, "no_visual_match"
 		return matched
 	}
-	for _, candidate := range column.frames {
-		if math.Abs(candidate.frame.TimestampSeconds-matched.TimestampSeconds) > .5 && visualScore(main, candidate) >= bestScore-.03 {
-			matched.Resolved, matched.TypeFallback, matched.Reason = false, false, "ambiguous_visual_match"
-			return matched
-		}
+	if ambiguousVisualMatch(main, column.frames, matched.TimestampSeconds, bestScore) {
+		matched.Resolved, matched.TypeFallback, matched.Reason = false, false, "ambiguous_visual_match"
+		return matched
 	}
 	if matched.TypeFallback {
 		allowedScore := 0.0
@@ -346,6 +351,14 @@ func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		}
 	}
 	return matched
+}
+
+// Both directions must distinguish distant repeated scenes before a row is
+// counted, allowing the existing selector to try another common moment.
+func ambiguousVisualMatch(reference matchingFrame, frames []matchingFrame, seconds, score float64) bool {
+	return slices.ContainsFunc(frames, func(candidate matchingFrame) bool {
+		return math.Abs(candidate.frame.TimestampSeconds-seconds) > .5 && visualScore(reference, candidate) >= score-.03
+	})
 }
 
 func matchedSample(source SampledSource, frame FrameSample, method string, confidence float64) FrameMatch {

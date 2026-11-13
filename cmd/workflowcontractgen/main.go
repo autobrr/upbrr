@@ -1264,6 +1264,7 @@ func newSchemaBuilder() *schemaBuilder {
 				"trackerPreparation",
 				"duplicateReview",
 				"trackerApproval",
+				"comparisonApproval",
 				"uploadApproval",
 				"reprepare",
 				"reconciliation",

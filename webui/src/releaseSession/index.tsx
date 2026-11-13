@@ -2679,6 +2679,7 @@ export function ReleaseSessionProvider({
       (candidate) => candidate.id === sourceID,
     );
     if (!current || !source || source.imported) return null;
+    setScreenshotCommand(null);
     const command = beginWorkflow("screenshots", access.screenshots.reason);
     if (!command) return null;
     try {

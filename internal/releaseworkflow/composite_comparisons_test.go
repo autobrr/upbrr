@@ -14,6 +14,34 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestComparisonImportAllowsPlannedOrdinaryCapture(t *testing.T) {
+	action := api.RequiredAction{
+		ID:     "capture-images",
+		Kind:   api.RequiredActionProvideTrackerInput,
+		Status: api.RequiredActionStatusPending,
+	}
+	current := CommandResult{
+		Media:        &api.MediaArtifactSet{RequiredActions: []api.RequiredAction{action}},
+		Projections:  &api.TrackerReleaseProjectionSet{},
+		Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{action}},
+	}
+	session := &compositeUploadSession{}
+	if compositeUploadPendingAction(current, session) == nil {
+		t.Fatal("missing media intent bypassed required input")
+	}
+	session.Intent.Media = &api.MediaCaptureInstructions{ScreenshotCount: 2}
+	if compositeUploadPendingAction(current, session) != nil {
+		t.Fatal("imported media blocked the planned ordinary screenshot capture")
+	}
+	current.Media.Artifacts = []api.MediaArtifact{
+		{Kind: api.MediaArtifactScreenshot, Selected: true},
+		{Kind: api.MediaArtifactScreenshot, Selected: true},
+	}
+	if compositeUploadPendingAction(current, session) == nil {
+		t.Fatal("completed capture bypassed the remaining media readiness block")
+	}
+}
+
 func TestCompositeComparisonImportRequiresBoundReviewBeforeHosting(t *testing.T) {
 	module, _, uploads := newCompositeUploadTestModule(t)
 	builder := &comparisonMediaFake{host: "synthetic"}
@@ -45,7 +73,7 @@ func TestCompositeComparisonImportRequiresBoundReviewBeforeHosting(t *testing.T)
 		t.Fatal(err)
 	}
 	current := waitCompositeUploadTestOperation(t, module, started)
-	current = approveCompositeUploadTrackers(t, module, current, []api.TrackerID{"ALPHA", "BETA"}, "approve-comparison-trackers")
+	current = approveCompositeUploadTrackers(t, module, current, []api.TrackerID{"ALPHA"}, "approve-comparison-trackers")
 	if current.Media == nil || current.Media.Comparisons == nil {
 		t.Fatalf("comparison images were flattened or lost: operation=%+v", current.Operation)
 	}

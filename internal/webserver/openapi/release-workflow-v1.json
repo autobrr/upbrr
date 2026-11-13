@@ -8818,6 +8818,7 @@
           "trackerPreparation",
           "duplicateReview",
           "trackerApproval",
+          "comparisonApproval",
           "uploadApproval",
           "reprepare",
           "reconciliation"

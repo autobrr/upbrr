@@ -546,9 +546,20 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
               </>
             )}
             <Button
-              onClick={() =>
-                void facet.edit({ action: "configure", plan: { ...emptyPlan(false), sources: [] } })
-              }
+              onClick={async () => {
+                if (
+                  await facet.edit({
+                    action: "configure",
+                    plan: { ...emptyPlan(false), sources: [] },
+                  })
+                ) {
+                  setEnabled(false);
+                  setDraft(emptyPlan(false));
+                  setPaths({});
+                  setPositions({});
+                  setFiles([]);
+                }
+              }}
             >
               Remove comparisons
             </Button>
@@ -662,7 +673,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                       return (
                         <div
                           className="grid min-w-0 content-start gap-2"
-                          key={`${cell.sourceId}-${index}`}
+                          key={cell.artifactId || cell.sourceId}
                         >
                           <h4>{source?.label || "Unmapped column"}</h4>
                           {image?.url ? (

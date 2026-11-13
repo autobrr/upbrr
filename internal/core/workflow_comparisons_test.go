@@ -124,6 +124,9 @@ func TestComparisonImportReplacementRetainsMappingAndPixels(t *testing.T) {
 	if !ok {
 		t.Fatal("comparison private resource has wrong type")
 	}
+	if len(keptPrivate.HostedImages) != 5 || keptPrivate.HostedSources[api.PublicResourceID("hosted-"+string(original.ArtifactID))] != original.ArtifactID {
+		t.Fatal("replacing one cell discarded unchanged hosted links")
+	}
 	pixels, err := os.ReadFile(keptPrivate.ArtifactImages[kept.ArtifactID].Path)
 	if err != nil {
 		t.Fatal(err)
@@ -203,6 +206,26 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	matched, err := b.matchWorkflowComparisons(t.Context(), retained, plan)
 	if err != nil {
 		t.Fatal(err)
+	}
+	automatic, err := plan.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	automatic.Rows = nil
+	automatic, err = b.matchWorkflowComparisons(t.Context(), retained, automatic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	automaticPrior, err := automatic.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	automatic.Sources[0].Overlay = true
+	retainComparisonCellFacts(&automatic, &api.MediaArtifactSet{Comparisons: &automaticPrior})
+	automatic.Preferences.Count = 3
+	automatic, err = b.matchWorkflowComparisons(t.Context(), retained, automatic)
+	if err != nil || len(automatic.Rows) != 3 {
+		t.Fatalf("automatic rows ignored changed selection preferences: rows=%d err=%v", len(automatic.Rows), err)
 	}
 	snapshot := api.MediaArtifactSet{}
 	captured, err := b.captureWorkflowComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, &snapshot, &retained, matched, time.Now())
@@ -291,6 +314,9 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if current.ArtifactID == "orphan" || current.ArtifactID == old.ArtifactID || current.FrameNumber != nil || fresh.Comparisons.ApprovedFingerprint != "" {
 		t.Fatalf("old pixels/fabricated ordinal survived recapture: %+v", current)
 	}
+	if fresh.Comparisons.Rows[0].Cells[1].Confidence != nil || fresh.Comparisons.Rows[0].Cells[1].ArtifactID != captured.Rows[0].Cells[1].ArtifactID {
+		t.Fatal("changing the main moment retained stale correspondence confidence or replaced unchanged pixels")
+	}
 	// Recapturing the same observed frame must not append duplicate artifact IDs.
 	again, err := fresh.Comparisons.Clone()
 	if err != nil {
@@ -311,16 +337,16 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	}
 	// A replacement submitted with matching must select that video immediately.
 	fresh.Comparisons.Anchors = []api.ComparisonAnchor{{
-SourceID: "other",
- MainSeconds: 1,
- SourceSeconds: 1.1,
-}}
+		SourceID:      "other",
+		MainSeconds:   1,
+		SourceSeconds: 1.1,
+	}}
 	replaced, replacedPrivate, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &fresh, private,
 		api.ComparisonInstructions{
-Action: "match",
- Plan: *fresh.Comparisons,
- VideoSources: []api.ComparisonVideoSelection{{ID: "other", Path: mainPath}},
-}, nil, time.Now())
+			Action:       "match",
+			Plan:         *fresh.Comparisons,
+			VideoSources: []api.ComparisonVideoSelection{{ID: "other", Path: mainPath}},
+		}, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,10 +363,10 @@ Action: "match",
 	}
 	plan.Rows = plan.Rows[:1]
 	plan.Anchors = []api.ComparisonAnchor{{
-SourceID: "other",
- MainSeconds: 1,
- SourceSeconds: 1.1,
-}}
+		SourceID:      "other",
+		MainSeconds:   1,
+		SourceSeconds: 1.1,
+	}}
 	anchored, err := b.matchWorkflowComparisons(t.Context(), retained, plan)
 	if err != nil {
 		t.Fatal(err)

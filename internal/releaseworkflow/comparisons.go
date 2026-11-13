@@ -356,7 +356,7 @@ func (m *Module) editComparisons(ctx context.Context, owner string, state *State
 	if !ok {
 		return CommandResult{}, fmt.Errorf("%w: comparison media service is unavailable", ErrInvalidTransition)
 	}
-	release, projections, eligible, prior, private, err := m.mediaExtensionContext(ctx, owner, state, command.Media, now)
+	release, _, eligible, prior, private, err := m.mediaExtensionContext(ctx, owner, state, command.Media, now)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -411,7 +411,7 @@ func (m *Module) editComparisons(ctx context.Context, owner string, state *State
 	} else if updated.Comparisons != nil {
 		updated.Comparisons.ApprovedFingerprint = ""
 	}
-	if err := validateMediaRequirementsFingerprint(updated, projections); err != nil {
+	if err := validateMediaRequirementsFingerprint(updated, eligible); err != nil {
 		return CommandResult{}, err
 	}
 	updated.ImageRequirementsPrepared = false

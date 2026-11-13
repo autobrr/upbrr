@@ -35,7 +35,12 @@ type ImportedImage struct {
 // facts. Invalid rows remain visible with correction problems; mainSourceID names
 // a parsed column, never an index into the supplied paths or images.
 func Import(images []ImportedImage, mainSourceID string) (api.ComparisonPlan, []api.ComparisonProblem) {
-	plan := api.ComparisonPlan{Imported: true, MainSourceID: comparisonImportID(mainSourceID)}
+	plan := api.ComparisonPlan{
+		Imported:     true,
+		MainSourceID: comparisonImportID(mainSourceID),
+		Sources:      []api.ComparisonSource{},
+		Rows:         []api.ComparisonRow{},
+	}
 	sources := map[string]int{}
 	rows := map[string]int{}
 	conflictingLabels := map[string]bool{}

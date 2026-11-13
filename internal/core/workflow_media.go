@@ -2041,6 +2041,7 @@ func (b workflowMediaBuilder) retainedHostedImageLinks(
 ) ([]api.UploadedImageLink, []api.UploadedImageLink, []api.PublicResourceID) {
 	links := make([]api.UploadedImageLink, 0, len(retained.HostedImages))
 	valid := make(map[api.PublicResourceID]struct{}, len(retained.HostedImages))
+	comparisonCells := workflowComparisonCells(snapshot.Comparisons)
 	for _, candidate := range b.retainedHostedImageCandidates(snapshot, retained, selectedSources) {
 		pathKey := strings.ToLower(normalizedUploadImagePath(candidate.link.ImagePath))
 		if pathKey == "" || sourceByPath[pathKey] != candidate.sourceID {
@@ -2085,7 +2086,8 @@ func (b workflowMediaBuilder) retainedHostedImageLinks(
 			scopeErr == nil && link.AccountScope == accountScope &&
 			strings.EqualFold(normalizedUploadImagePath(link.ImagePath), normalizedUploadImagePath(currentPath)) &&
 			(!hostMatched || scopeMatched)
-		if validAssociation {
+		_, comparison := comparisonCells[sourceID]
+		if validAssociation && !comparison {
 			continue
 		}
 		if artifact.Selected {
@@ -2975,10 +2977,6 @@ func reconcileRetriedImageHostFailures(
 	attempts []api.HostedImageAttempt,
 	currentFailures []api.WorkflowFailure,
 ) {
-	artifacts := make(map[api.PublicResourceID]api.MediaArtifact, len(snapshot.Artifacts))
-	for _, artifact := range snapshot.Artifacts {
-		artifacts[artifact.ID] = artifact
-	}
 	allAttempts := make([]api.HostedImageAttempt, 0, len(snapshot.HostAttempts)+len(attempts))
 	allAttempts = append(allAttempts, snapshot.HostAttempts...)
 	allAttempts = append(allAttempts, attempts...)
@@ -2995,28 +2993,14 @@ func reconcileRetriedImageHostFailures(
 	satisfied := make(map[string]struct{}, len(projections))
 	for _, projection := range projections {
 		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
-		required := projection.Artifacts.ScreenshotCount
 		if tracker == "" || !slices.ContainsFunc(attempts, func(attempt api.HostedImageAttempt) bool {
 			return attempt.Status == api.StageStatusCompleted && attemptApplies(attempt, tracker)
 		}) {
 			continue
 		}
-		sources := make(map[api.PublicResourceID]struct{}, required)
-		for _, attempt := range allAttempts {
-			if !attemptApplies(attempt, tracker) {
-				continue
-			}
-			for _, result := range attempt.Results {
-				hosted, hostedOK := artifacts[result.ID]
-				source, sourceOK := artifacts[api.PublicResourceID(strings.TrimSpace(hosted.Source))]
-				if hostedOK && sourceOK && hosted.Selected && hosted.Kind == api.MediaArtifactHostedImage &&
-					hosted.Purpose == api.ScreenshotPurposeFinal && source.Selected &&
-					source.Kind == api.MediaArtifactScreenshot && source.Purpose == api.ScreenshotPurposeFinal {
-					sources[source.ID] = struct{}{}
-				}
-			}
-		}
-		if len(sources) >= required {
+		coverage := *snapshot
+		coverage.HostAttempts = allAttempts
+		if releaseworkflow.HostedScreenshotRequirementsMet(coverage, []api.TrackerReleaseProjection{projection}) {
 			satisfied[tracker] = struct{}{}
 		}
 	}

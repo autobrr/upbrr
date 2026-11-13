@@ -80,6 +80,12 @@ func TestImportProblemsRemainExplicit(t *testing.T) {
 		{"duplicate cell", func(images []ImportedImage) []ImportedImage { return append(images, images[0]) }},
 		{"missing cell", func(images []ImportedImage) []ImportedImage { return images[1:] }},
 		{"unmapped image", func(images []ImportedImage) []ImportedImage { images[0].Name = "custom.png"; return images }},
+		{"all unmapped images", func(images []ImportedImage) []ImportedImage {
+			for i := range images {
+				images[i].Name = "custom.png"
+			}
+			return images
+		}},
 		{"conflicting labels", func(images []ImportedImage) []ImportedImage { images[0].Name = "10-01-other.png"; return images }},
 		{"unreadable image", func(images []ImportedImage) []ImportedImage { images[0].Bytes = []byte("not an image"); return images }},
 		{"oversized decoded image", func(images []ImportedImage) []ImportedImage {
@@ -94,6 +100,9 @@ func TestImportProblemsRemainExplicit(t *testing.T) {
 			plan, problems := Import(test.change(comparisonImportImages(t)), "2")
 			if len(problems) == 0 || len(plan.Problems) == 0 {
 				t.Fatalf("invalid import became ready: %+v", plan)
+			}
+			if plan.Sources == nil || plan.Rows == nil {
+				t.Fatal("editable import collections must serialize as arrays")
 			}
 			if test.name == "missing cell" {
 				if len(plan.Rows) != 2 || len(plan.Rows[1].Cells) != 2 {

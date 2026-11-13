@@ -110,6 +110,31 @@ func TestMatchingAmbiguityAnchorsAndPictureTypes(t *testing.T) {
 	}
 }
 
+func TestMatchingDoesNotReuseAnAutomaticTargetFrame(t *testing.T) {
+	main := SampledSource{ID: "main", Frames: []FrameSample{sampleFrame(1, 1, "I"), sampleFrame(1, 20, "I")}}
+	other := SampledSource{ID: "other", Frames: []FrameSample{sampleFrame(1, 4, "I")}}
+	result, err := Match([]SampledSource{main, other}, "main", MatchOptions{Count: 2})
+	if err != nil || len(result.Rows) != 2 {
+		t.Fatalf("matching failed: %+v %v", result, err)
+	}
+	for _, row := range result.Rows {
+		if row.Complete || row.Frames[1].Resolved || row.Frames[1].Reason != "ambiguous_visual_match" {
+			t.Fatalf("one target occurrence resolved distinct main moments: %+v", row)
+		}
+	}
+	main.Frames = slices.Insert(main.Frames, 1, sampleFrame(2, 10, "I"))
+	other.Frames = append(other.Frames, sampleFrame(2, 10, "I"))
+	result, err = Match([]SampledSource{main, other}, "main", MatchOptions{Count: 2})
+	if err != nil || !slices.ContainsFunc(result.Rows, func(row MatchedRow) bool { return row.Complete && row.MainSeconds == 10 }) {
+		t.Fatalf("ambiguous scenes prevented a different common moment: %+v %v", result, err)
+	}
+	other.Anchors = []MatchAnchor{{MainSeconds: 1, SourceSeconds: 4}, {MainSeconds: 20, SourceSeconds: 4}}
+	result, err = Match([]SampledSource{main, other}, "main", MatchOptions{MainMoments: []float64{1, 20}})
+	if err != nil || len(result.Rows) != 2 || !result.Rows[0].Complete || !result.Rows[1].Complete {
+		t.Fatalf("explicit correspondence did not resolve ambiguity: %+v %v", result, err)
+	}
+}
+
 func TestMatchingSceneMixExcludesBlankAndReportsUnmet(t *testing.T) {
 	source := SampledSource{ID: "main"}
 	for i := range 9 {

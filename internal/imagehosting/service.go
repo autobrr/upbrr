@@ -265,6 +265,9 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 
 	for _, upload := range uploaded {
 		pathValue := strings.TrimSpace(upload.ImagePath)
+		if _, comparison := comparisonPaths[pathValue]; comparison {
+			continue
+		}
 		if pathValue == "" || !isAllowedImageExt(pathValue) {
 			continue
 		}

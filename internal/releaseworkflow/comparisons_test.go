@@ -165,7 +165,7 @@ func reviewedComparisonFixture(t *testing.T) api.ComparisonPlan {
 
 func TestComparisonReviewBlocksHostingAndCannotApplyUnreviewedEdits(t *testing.T) {
 	module, _, _, current := newDuplicateReuseWorkflow(t)
-	builder := &comparisonMediaFake{}
+	builder := &comparisonMediaFake{host: "synthetic"}
 	module.mediaBuilder = builder
 	plan := reviewedComparisonFixture(t)
 	configured := executeCommand(t, module, EditComparisonsCommand{
@@ -249,10 +249,13 @@ func TestComparisonReviewBlocksHostingAndCannotApplyUnreviewedEdits(t *testing.T
 		WorkflowID:       approved.Workflow.ID,
 		ExpectedRevision: approved.Workflow.Revision,
 		Media:            media,
-		Host:             "synthetic",
+		ArtifactIDs:      []api.PublicResourceID{"source-image"},
 	})
 	if builder.uploads != 1 || !ComparisonReviewSatisfied(hosted.Media.Comparisons) {
 		t.Fatal("approved comparison did not retain review through hosting")
+	}
+	if len(hosted.Media.HostAttempts) != 1 || len(hosted.Media.HostAttempts[0].Results) != 2 {
+		t.Fatal("explicit image list omitted selected comparison cells from required hosting")
 	}
 	media = api.MediaArtifactSetRef{ID: hosted.Media.ID, Revision: hosted.Media.Revision}
 	plan = *hosted.Media.Comparisons
@@ -332,11 +335,11 @@ func TestComparisonMainColumnIsTheOnlyReusableScreenshot(t *testing.T) {
 		t.Fatal("orphan comparison images bypassed review")
 	}
 	snapshot.Comparisons = &plan
-	if hostedScreenshotRequirementsMet(snapshot, projections) {
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("partial comparison hosting satisfied readiness")
 	}
 	projections[0].Artifacts.ScreenshotCount = 0
-	if hostedScreenshotRequirementsMet(snapshot, projections) {
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("zero ordinary screenshot minimum bypassed comparison hosting")
 	}
 	sourceHosted := api.MediaArtifact{
@@ -352,22 +355,32 @@ func TestComparisonMainColumnIsTheOnlyReusableScreenshot(t *testing.T) {
 		TrackerIDs: []api.TrackerID{"ALPHA"},
 		Results:    []api.MediaArtifact{sourceHosted},
 	})
-	if hostedScreenshotRequirementsMet(snapshot, projections) {
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("split-host comparison images satisfied complete set coverage")
 	}
 	snapshot.HostAttempts[0].Results = append(snapshot.HostAttempts[0].Results, sourceHosted)
 	projections[0].Artifacts.ScreenshotCount = 1
-	if !hostedScreenshotRequirementsMet(snapshot, projections) {
+	if !HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("hosted main-column image did not satisfy the screenshot requirement")
 	}
 	projections[0].Artifacts.ScreenshotCount = 2
-	if hostedScreenshotRequirementsMet(snapshot, projections) {
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("other comparison columns inflated the normal screenshot count")
 	}
 	projections[0].Artifacts.ScreenshotCount = 1
 	plan.ReuseMainScreenshots = false
-	if hostedScreenshotRequirementsMet(snapshot, projections) {
+	if HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("disabled main-column reuse still satisfied normal screenshots")
+	}
+	snapshot.ImageHostPreference = new("primary")
+	snapshot.Comparisons = nil
+	snapshot.Artifacts[0].Kind = api.MediaArtifactScreenshot
+	snapshot.Artifacts[0].Purpose = api.ScreenshotPurposeFinal
+	snapshot.Artifacts[2].Source = string(snapshot.Artifacts[0].ID)
+	snapshot.Artifacts[2].Purpose = api.ScreenshotPurposeFinal
+	snapshot.HostAttempts[0].Host = "fallback"
+	if !HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("accepted ordinary fallback upload failed the screenshot requirement")
 	}
 }
 
