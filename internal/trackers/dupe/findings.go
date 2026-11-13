@@ -84,8 +84,8 @@ func collectCandidateFindings(
 	candidateTitleScope := parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content
 	if targetFacts.Content.Coverage.Status == api.MetadataEvidenceStatusContradictory ||
 		candidateFacts.Content.Coverage.Status == api.MetadataEvidenceStatusContradictory ||
-		contentScopesContradict(targetFacts.Content, targetTitleScope) ||
-		contentScopesContradict(candidateFacts.Content, candidateTitleScope) {
+		numberedScopeContradictsTitle(targetFacts.Content, targetTitleScope, target.TVScope != nil) ||
+		numberedScopeContradictsTitle(candidateFacts.Content, candidateTitleScope, candidate.TVScope != nil) {
 		findings = append(findings, RuleFinding{
 			RuleID:         GeneralPolicyID + "/content_scope",
 			Source:         "general",
@@ -264,8 +264,13 @@ func sameKnownContentScope(target contentScope, candidate contentScope) bool {
 		}
 	case contentScopeWork, contentScopeDaily, contentScopeCompleteSeries, contentScopeSeasonPart:
 	}
-	return target.Kind == candidate.Kind && target.Season == candidate.Season &&
-		target.EpisodeStart == candidate.EpisodeStart && target.EpisodeEnd == candidate.EpisodeEnd && target.Date == candidate.Date
+	if target.Kind != candidate.Kind || target.Season != candidate.Season || target.Date != candidate.Date {
+		return false
+	}
+	if target.Kind == contentScopeEpisode || target.Kind == contentScopeEpisodeRange {
+		return compareEpisodeMembership(target, candidate) == contentEqual
+	}
+	return target.EpisodeStart == candidate.EpisodeStart && target.EpisodeEnd == candidate.EpisodeEnd
 }
 
 func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, policy trackerspkg.DupePolicy, workScope WorkScope) []RuleFinding {
@@ -1078,4 +1083,21 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func appendProviderIdentityFinding(candidate TrackerCandidate, facts normalizedFacts, findings []RuleFinding) []RuleFinding {
+	if len(candidate.providerConflicts) == 0 {
+		return findings
+	}
+	ordinary := resolveCandidateFindings(candidate, facts, findings)
+	// Exact identity and proven distinct variants remain authoritative. A pack
+	// preference is not distinct content and cannot settle conflicting work IDs.
+	if ordinary.Relation == api.DupeRelationExactDuplicate ||
+		ordinary.Relation == api.DupeRelationCoexists && ordinary.Reasons[0].Code != "proposed_season_pack" {
+		return findings
+	}
+	finding := contradictionFinding("provider_identity")
+	finding.Contradictions = slices.Clone(candidate.providerConflicts)
+	finding.Priority = findingPriorityContentConflict
+	return append(findings, finding)
 }

@@ -275,7 +275,7 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 		}
 		processedTrackers[trackerName] = origName
 
-		if strings.EqualFold(strings.TrimSpace(trackerName), "THR") {
+		if strings.EqualFold(strings.TrimSpace(trackerName), "THR") || strings.EqualFold(strings.TrimSpace(trackerName), "NBL") {
 			warnings = append(warnings, "ignored removed tracker entry: "+trackerName)
 			continue
 		}

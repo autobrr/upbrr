@@ -137,6 +137,8 @@ const (
 )
 
 type contentScope struct {
+	SeasonKnown  bool
+	Episodes     []int
 	Kind         contentScopeKind
 	Season       int
 	EpisodeStart int
@@ -289,6 +291,11 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			facts.Content = packCoverageScope(target.Season, target.Coverage, FactOriginTargetMedia)
 		}
 	}
+	if target.TVScope != nil {
+		coverage := facts.Content.Coverage
+		facts.Content = numberedTVScope(target.TVScope, FactOriginTargetMedia)
+		facts.Content.Coverage = coverage
+	}
 	if target.VideoEncode != "" && target.VideoCodec != "" && canonicalCodec(target.VideoEncode) != canonicalCodec(target.VideoCodec) {
 		facts.Codec.Status = FactContradictory
 		facts.Codec.Contradictions = append(facts.Codec.Contradictions, canonicalCodec(target.VideoCodec))
@@ -411,12 +418,13 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 		),
 	}
-	if candidate.Pack {
+	if candidate.Pack || candidate.TVScope != nil {
 		status := api.MetadataEvidenceStatusPartial
 		if candidate.FileCount == len(candidate.Files) {
 			status = api.MetadataEvidenceStatusComplete
 		}
-		coverage := seasonep.Coverage(candidate.Season, candidate.Season > 0, candidate.Name, candidate.Files, status)
+		seasonKnown := candidate.Season > 0 || candidate.TVScope != nil && candidate.TVScope.Season != nil
+		coverage := seasonep.Coverage(candidate.Season, seasonKnown, candidate.Name, candidate.Files, status)
 		if coverage.Part != "" || len(coverage.Episodes) > 0 || coverage.CompleteSeason || coverage.Status == api.MetadataEvidenceStatusContradictory {
 			switch {
 			case facts.Content.Kind == contentScopeDaily && len(coverage.Episodes) == 0 && !coverage.CompleteSeason:
@@ -433,7 +441,11 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 	}
 	// Coordinate enrichment remains useful for scope comparison, but a title
 	// cannot prove complete collection membership for an automatic vacant slot.
-	if candidate.contentFromTitle {
+	if candidate.TVScope != nil {
+		coverage := facts.Content.Coverage
+		facts.Content = numberedTVScope(candidate.TVScope, FactOriginTrackerAPI)
+		facts.Content.Coverage = coverage
+	} else if candidate.contentFromTitle {
 		facts.Content.Origin = FactOriginTrackerTitle
 	}
 	if candidate.SizeKnown && candidate.SizeBytes > 0 {
@@ -1311,13 +1323,7 @@ func compareContentScopes(target contentScope, candidate contentScope) contentOv
 		return contentUnknown
 	}
 	if target.EpisodeStart > 0 && candidate.EpisodeStart > 0 {
-		if target.EpisodeEnd < candidate.EpisodeStart || candidate.EpisodeEnd < target.EpisodeStart {
-			return contentDefinitelyDisjoint
-		}
-		if target.EpisodeStart == candidate.EpisodeStart && target.EpisodeEnd == candidate.EpisodeEnd {
-			return contentEqual
-		}
-		return contentOverlaps
+		return compareEpisodeMembership(target, candidate)
 	}
 	if target.Kind == contentScopeUnknownTV || candidate.Kind == contentScopeUnknownTV {
 		return contentUnknown
@@ -1330,7 +1336,7 @@ func contentSeasonKnown(scope contentScope) bool {
 	case contentScopeEpisode, contentScopeEpisodeRange, contentScopeSeasonPack:
 		return true
 	case contentScopeSeasonPart, contentScopeUnknownTV:
-		return scope.Season > 0 || scope.Coverage.SeasonKnown
+		return scope.SeasonKnown || scope.Season > 0 || scope.Coverage.SeasonKnown
 	case contentScopeWork, contentScopeDaily, contentScopeCompleteSeries:
 		return false
 	}
@@ -1612,6 +1618,9 @@ func scopeMembers(scope contentScope) ([]int, bool) {
 		return scope.Coverage.Episodes, scope.Coverage.Status == api.MetadataEvidenceStatusComplete
 	}
 	if scope.Kind == contentScopeEpisode || scope.Kind == contentScopeEpisodeRange {
+		if len(scope.Episodes) > 0 {
+			return scope.Episodes, true
+		}
 		if scope.EpisodeStart <= 0 || scope.EpisodeEnd < scope.EpisodeStart {
 			return nil, false
 		}

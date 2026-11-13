@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package nbl
+package ant
 
 import (
 	"bytes"
@@ -51,8 +51,7 @@ func TestUploadRequiresAcceptanceEvidence(t *testing.T) {
 		{`{"status":"error","message":"Invalid torrent"}`, ""},
 		{`{"link":["https://tracker.invalid/torrents.php?id=123"]}`, ""},
 		{`{"link":"garbage id=123"}`, ""},
-		{`{"link":"https://tracker.invalid/torrents.php?id=123"}`, "https://tracker.invalid/torrents.php?id=123"},
-		{`{"link":"/torrents.php?id=123"}`, "https://nebulance.io/torrents.php?id=123"},
+		{`{"status":"success","view":"https://anthelion.me/torrents.php?torrentid=123"}`, "https://anthelion.me/torrents.php?torrentid=123"},
 	} {
 		t.Run(test.body, func(t *testing.T) {
 			output := filepath.Join(t.TempDir(), "registered.torrent")

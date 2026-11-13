@@ -69,6 +69,7 @@ func Evaluate(
 		setCandidateFacts = append(setCandidateFacts, facts)
 		findings := collectCandidateFindings(target, targetFacts, candidate, facts, policy, search.WorkScope)
 		findings = appendEvidenceFinding(target, targetFacts, candidate, facts, policy, search.WorkScope, findings)
+		findings = appendProviderIdentityFinding(candidate, facts, findings)
 		evaluation.Candidates = append(evaluation.Candidates, resolveCandidateFindings(candidate, facts, findings))
 	}
 	evaluation.SetFindings = evaluateSetRules(targetFacts, setCandidates, setCandidateFacts, policy, search)
@@ -369,6 +370,8 @@ func winningRuleID(findings []RuleFinding, relation api.DupeRelation, reason str
 
 func dupeReasonMessage(reason string, relation api.DupeRelation) string {
 	switch strings.TrimSpace(reason) {
+	case "candidate_provider_identity_contradictory":
+		return "Candidate provider identifiers conflict with the selected work; review the conflicting provider evidence."
 	case "ordinary_slot_unproven":
 		return "The required ordinary-slot eligibility is unproven; review technical evidence and tracker justification."
 	case "ordinary_slot_contradictory":

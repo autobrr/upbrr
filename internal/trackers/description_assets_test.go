@@ -106,7 +106,6 @@ func descriptionAssetsTestRegistry(t *testing.T) *Registry {
 		{name: "ANT", family: FamilyStandalone},
 		{name: "HDB", family: FamilyStandalone},
 		{name: "BTN", family: FamilyStandalone},
-		{name: "NBL", family: FamilyStandalone},
 		{name: "OE", family: FamilyUnit3D},
 		{name: "PTP", family: FamilyStandalone},
 		{name: "RHD", family: FamilyUnit3D},
@@ -1704,17 +1703,17 @@ func TestStripDefaultDescriptionSignature(t *testing.T) {
 func TestResolveDescriptionAssetsPreservesDefaultSignatureForStandaloneBuilder(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{
-			{Tracker: "NBL", Description: "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"},
+			{Tracker: "ANT", Description: "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"},
 		},
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "NBL", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if assets.Description != repo.trackerRecords[0].Description {
-		t.Fatalf("expected original NBL description for tracker-local cleanup, got %q", assets.Description)
+		t.Fatalf("expected original ANT description for tracker-local cleanup, got %q", assets.Description)
 	}
 }
 

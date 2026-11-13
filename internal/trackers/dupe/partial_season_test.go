@@ -208,6 +208,68 @@ func TestPartialSeasonDuplicateCoverage(t *testing.T) {
 	}
 }
 
+func TestPartialSeasonAndNumberedBatchPreserveMembershipGaps(t *testing.T) {
+	t.Parallel()
+	for _, direction := range []struct {
+		name    string
+		reverse bool
+	}{
+		{name: "numbered target"},
+		{name: "numbered candidate", reverse: true},
+	} {
+		t.Run(direction.name, func(t *testing.T) {
+			numbered := &api.DupeTVScope{Season: new(1), Episodes: []int{1, 3}}
+			coverage := api.EpisodeCoverage{
+				Part:     "Part.2",
+				Episodes: []int{2},
+				Status:   api.MetadataEvidenceStatusComplete,
+			}
+			target := api.TrackerDuplicateTarget{Season: 1, TVScope: numbered}
+			candidate := TrackerCandidate{
+				Name:      "Example.Show.S01.Part.2.1080p.WEB-DL-GRP",
+				Season:    1,
+				Pack:      true,
+				Files:     []string{"Example.Show.S01E02.mkv"},
+				FileCount: 1,
+			}
+			if direction.reverse {
+				target = api.TrackerDuplicateTarget{
+					Season:   1,
+					Pack:     true,
+					Coverage: coverage,
+				}
+				candidate = TrackerCandidate{Season: 1, TVScope: numbered}
+			}
+			got := Evaluate(target, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{
+				Complete:  true,
+				WorkScope: WorkScopeProviderID,
+			})
+			if got.Candidates[0].Relation != api.DupeRelationCoexists || got.Blocks || got.RequiresAction {
+				t.Fatalf("disjoint numbered batch and partial season remain actionable: %+v", got)
+			}
+		})
+	}
+}
+
+func TestNumberedBatchRetainsContradictoryCoverage(t *testing.T) {
+	t.Parallel()
+	got := Evaluate(api.TrackerDuplicateTarget{
+		Season:  1,
+		Pack:    true,
+		TVScope: &api.DupeTVScope{Season: new(1), Episodes: []int{1, 3}},
+		Coverage: api.EpisodeCoverage{
+			Episodes: []int{1, 3},
+			Status:   api.MetadataEvidenceStatusContradictory,
+		},
+	}, []TrackerCandidate{{Season: 1, Episode: 2}}, trackerspkg.DupePolicy{}, SearchEvidence{
+		Complete:  true,
+		WorkScope: WorkScopeProviderID,
+	})
+	if got.Candidates[0].Relation != api.DupeRelationManualReview || !got.RequiresAction || got.Blocks {
+		t.Fatalf("numbered membership discarded contradictory prepared coverage: %+v", got)
+	}
+}
+
 func TestPartialSeasonZeroRequiresExplicitPresence(t *testing.T) {
 	t.Parallel()
 	for _, coverage := range []api.EpisodeCoverage{
@@ -476,5 +538,46 @@ func TestDatedCompleteSeasonsRetainSeasonIdentity(t *testing.T) {
 				t.Fatalf("season=%d derived=%t relation=%s action=%t", tc.candidate.Season, tc.candidate.contentFromTitle, got.Candidates[0].Relation, got.RequiresAction)
 			}
 		})
+	}
+}
+
+func TestNumberedCandidateRetainsConflictingFileSeason(t *testing.T) {
+	t.Parallel()
+	files := []string{"Example.S02E01.mkv"}
+	candidate := NormalizeCandidate(api.DupeEntry{
+		Name: "Example.S01",
+ Season: 1,
+ Pack: true,
+		Files: files,
+ FileCount: len(files),
+		TVScope: NumberedTVScopeFromFiles(files, len(files), new(1)),
+	}, "")
+	got := Evaluate(api.TrackerDuplicateTarget{Season: 2, Episode: 2}, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+	if got.Candidates[0].Relation != api.DupeRelationManualReview || !got.RequiresAction {
+		t.Fatalf("contradictory file season escaped review: %+v", got)
+	}
+}
+
+func TestNumberedMembershipConflictsWithExplicitTitleRange(t *testing.T) {
+	t.Parallel()
+	for _, reverse := range []bool{false, true} {
+		target := api.TrackerDuplicateTarget{Season: 1, Episode: 2}
+		candidate := TrackerCandidate{
+Name: "Example.S01E01-E03",
+ Season: 1,
+ TVScope: &api.DupeTVScope{Season: new(1), Episodes: []int{1, 3}},
+}
+		if reverse {
+			target = api.TrackerDuplicateTarget{
+Names: []string{candidate.Name},
+ Season: 1,
+ TVScope: candidate.TVScope,
+}
+			candidate = TrackerCandidate{Season: 1, Episode: 2}
+		}
+		got := Evaluate(target, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+		if got.Candidates[0].Relation != api.DupeRelationManualReview || !got.RequiresAction {
+			t.Fatalf("reverse=%t title range conflict escaped review: %+v", reverse, got)
+		}
 	}
 }

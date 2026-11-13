@@ -91,6 +91,11 @@ func (d *Definition) UploadContentMode() trackers.UploadContentMode {
 	return d.profile.UploadContentMode
 }
 
+// CategoryPolicies returns the profile's category-specific capability overrides.
+func (d *Definition) CategoryPolicies() map[api.CanonicalCategory]trackers.CategoryPolicy {
+	return trackers.CloneCategoryPolicies(d.profile.CategoryPolicies)
+}
+
 // UsesMenuImages reports whether the description consumes selected DVD menus.
 func (d *Definition) UsesMenuImages() bool { return d.profile.UsesMenuImages }
 
@@ -122,7 +127,11 @@ func (d *Definition) EditionFeatureResolver() trackers.EditionFeatureResolver {
 
 // Prepare dispatches intent through the tracker-local profile callbacks.
 func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
-	if input.Intent == trackers.PreparationIntentDescriptionPreview && !d.profile.UploadContentMode.UsesDescription() {
+	mode := d.profile.UploadContentMode
+	if policy, ok := d.profile.CategoryPolicies[input.Meta.Identity.Category]; ok && policy.UploadContentMode != "" {
+		mode = policy.UploadContentMode
+	}
+	if input.Intent == trackers.PreparationIntentDescriptionPreview && !mode.UsesDescription() {
 		return trackers.TrackerPlan{}, trackers.NewPreparationFailure(
 			input.Tracker,
 			"capability",
@@ -224,6 +233,7 @@ func (d *Definition) AuthPolicy() *trackers.AuthPolicy { return cloneValue(d.pro
 func (d *Definition) AuthStateManager() trackers.AuthStateManager { return d.profile.AuthStateManager }
 
 func cloneProfile(profile Profile) Profile {
+	profile.CategoryPolicies = trackers.CloneCategoryPolicies(profile.CategoryPolicies)
 	profile.Rules = cloneRules(profile.Rules)
 	profile.ClaimPolicy = cloneValue(profile.ClaimPolicy)
 	profile.DataPolicy = cloneValue(profile.DataPolicy)

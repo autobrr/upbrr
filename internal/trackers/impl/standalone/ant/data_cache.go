@@ -17,5 +17,5 @@ func (l *dataLookup) CacheKey(req trackers.DataLookupRequest) any {
 	if strings.TrimSpace(req.Meta.DiscType) != "" || apiKey == "" || fileName == "" {
 		return nil
 	}
-	return []any{l.endpoint, apiKey, fileName}
+	return []any{l.endpoint, apiKey, fileName, "100000"}
 }

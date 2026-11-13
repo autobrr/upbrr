@@ -22,7 +22,7 @@ import (
 func evaluateNonMetadataRulesForTest(ctx context.Context, tracker string, meta api.RuleSubject) []api.RuleFailure {
 	if strings.TrimSpace(string(meta.Identity.Category)) == "" {
 		switch strings.ToUpper(strings.TrimSpace(tracker)) {
-		case "NBL", "BTN":
+		case "BTN":
 			meta.Identity.Category = api.CanonicalCategoryTV
 		default:
 			meta.Identity.Category = api.CanonicalCategoryMovie
@@ -118,6 +118,7 @@ func withConstructibleTrackerFactsForTest(meta api.RuleSubject) api.RuleSubject 
 	}
 	meta.MediaInfoJSONReady = true
 	meta.MediaInfoTextReady = true
+	meta.DVDVOBMediaInfoReady = true
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		meta.Disc.Summary = "BDINFO"
 	}
@@ -183,7 +184,6 @@ func TestStandaloneConstructibilityAuditPoliciesRejectInvalidFacts(t *testing.T)
 		{tracker: "BHDTV", rule: "unsupported_category"},
 		{tracker: "FF", rule: "unsupported_category"},
 		{tracker: "FL", rule: "unsupported_category"},
-		{tracker: "NBL", rule: "nbl_asset_mediainfo_text"},
 		{tracker: "TL", rule: "unsupported_category"},
 		{tracker: "GPW", rule: "prepared_media_missing"},
 		{tracker: "PTP", rule: "unsupported_category"},
@@ -195,45 +195,6 @@ func TestStandaloneConstructibilityAuditPoliciesRejectInvalidFacts(t *testing.T)
 			failures := validationPolicyFailuresForTest(t, test.tracker, test.subject)
 			if !hasRuleFailure(failures, test.rule) {
 				t.Fatalf("%s validation missing %s failure: %#v", test.tracker, test.rule, failures)
-			}
-		})
-	}
-}
-
-func TestNBLPreparedMediaAssetDispositionTracksEvidence(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		subject     api.TrackerValidationSubject
-		disposition api.RuleDisposition
-	}{
-		{
-			name:        "unavailable evidence is advisory",
-			disposition: api.RuleDispositionAdvisory,
-		},
-		{
-			name: "proved missing asset is strict",
-			subject: api.TrackerValidationSubject{
-				AssetFacts: api.AssetFacts{
-					Status: api.MetadataEvidenceStatusComplete,
-					MediaInfoText: api.AssetEvidence{
-						Status: api.MetadataEvidenceStatusComplete,
-					},
-				},
-			},
-			disposition: api.RuleDispositionStrict,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			failures := validationPolicyFailuresForTest(t, "NBL", test.subject)
-			failure, ok := findRuleFailure(failures, "nbl_asset_mediainfo_text")
-			if !ok || failure.Disposition != test.disposition {
-				t.Fatalf("NBL MediaInfo asset failure=%#v, want disposition=%q", failure, test.disposition)
-			}
-			if hasRuleFailure(failures, "prepared_media_missing") {
-				t.Fatalf("obsolete prepared_media_missing failure returned: %#v", failures)
 			}
 		})
 	}
@@ -549,9 +510,10 @@ func TestEvaluateRulesANTDoesNotBlanketRejectTV(t *testing.T) {
 	meta := api.RuleSubject{
 		Identity:    api.ExternalIdentity{Category: "tv"},
 		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
+		LanguageFacts: api.LanguageFacts{ProgrammeLanguages: []string{"English"}, ProgrammeStatus: api.MetadataEvidenceStatusComplete},
 	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
-	if len(failures) != 0 {
+	if len(nonAdvisoryFailures(failures)) != 0 {
 		t.Fatalf("supported ANT content types must decide TV eligibility: %#v", failures)
 	}
 }
@@ -953,18 +915,12 @@ func TestEvaluateRulesBLUContainerRules(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesNBLRequiresTV(t *testing.T) {
-	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "movie"}, LanguageFacts: api.LanguageFacts{ProgrammeLanguages: []string{"English"}, ProgrammeStatus: api.MetadataEvidenceStatusComplete}}
-	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
-	blocking := nonAdvisoryFailures(failures)
-	if len(blocking) != 1 || blocking[0].Rule != "require_tv_only" {
-		t.Fatalf("expected independent TV category block, got %#v", failures)
+func TestEvaluateRulesANTTVMissingLanguageIsUnresolved(t *testing.T) {
+	meta := api.RuleSubject{
+		Identity:    api.ExternalIdentity{Category: "tv"},
+		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 	}
-}
-
-func TestEvaluateRulesNBLMissingLanguageIsUnresolved(t *testing.T) {
-	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}}
-	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
+	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
 	blocking := nonAdvisoryFailures(failures)
 	if len(blocking) != 2 || !hasRuleFailure(blocking, "language_evidence") || !hasRuleFailure(blocking, "language_subtitles") {
 		t.Fatalf("expected explicit missing language evidence, got %#v", failures)
@@ -976,20 +932,21 @@ func TestEvaluateRulesNBLMissingLanguageIsUnresolved(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesNBLAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
+func TestEvaluateRulesANTTVAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
 	meta := withFinalizedLanguageFactsForTest(api.RuleSubject{
 		Identity:          api.ExternalIdentity{Category: "tv"},
+		Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 		AudioLanguages:    []string{"Japanese"},
 		SubtitleLanguages: []string{"English"},
 		ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"}},
 	})
-	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
+	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
 	if blocking := nonAdvisoryFailures(failures); len(blocking) != 0 {
 		t.Fatalf("expected no blocking failures, got %#v", failures)
 	}
 }
 
-func TestEvaluateRulesNBLPreservesFullDiscLanguages(t *testing.T) {
+func TestEvaluateRulesANTTVPreservesFullDiscLanguages(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name             string
@@ -1086,6 +1043,7 @@ func TestEvaluateRulesNBLPreservesFullDiscLanguages(t *testing.T) {
 			t.Parallel()
 			meta := api.RuleSubject{
 				Identity:          api.ExternalIdentity{Category: "tv"},
+				Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 				DiscType:          test.disc,
 				Type:              "DISC",
 				AudioLanguages:    test.audio,
@@ -1093,7 +1051,7 @@ func TestEvaluateRulesNBLPreservesFullDiscLanguages(t *testing.T) {
 				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: test.original}},
 				LanguageFacts:     api.LanguageFacts{ProgrammeStatus: api.MetadataEvidenceStatusPartial},
 			}
-			failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
+			failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
 			blocking := nonAdvisoryFailures(failures)
 			if test.wantReason == "" {
 				if len(blocking) != 0 {
@@ -1108,16 +1066,17 @@ func TestEvaluateRulesNBLPreservesFullDiscLanguages(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesNBLIncludesDiscSourcedRemuxes(t *testing.T) {
+func TestEvaluateRulesANTTVIncludesDiscSourcedRemuxes(t *testing.T) {
 	t.Parallel()
 	for _, disc := range []string{"BDMV", "DVD", "HDDVD"} {
 		meta := api.RuleSubject{
 			Identity:       api.ExternalIdentity{Category: "tv"},
+			Assessments:    api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 			DiscType:       disc,
 			Type:           "REMUX",
 			AudioLanguages: []string{"English"},
 		}
-		failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
+		failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
 		blocking := nonAdvisoryFailures(failures)
 		if len(blocking) != 2 || !hasRuleFailure(blocking, "language_evidence") || !hasRuleFailure(blocking, "language_subtitles") {
 			t.Fatalf("%s sourced remux escaped finalized assessment: %+v", disc, failures)
@@ -1130,14 +1089,15 @@ func TestEvaluateRulesNBLIncludesDiscSourcedRemuxes(t *testing.T) {
 	}
 }
 
-func TestNBLFullDiscLanguagePreservesWaiverAndDebug(t *testing.T) {
+func TestANTTVFullDiscLanguagePreservesWaiverAndDebug(t *testing.T) {
 	t.Parallel()
-	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", api.RuleSubject{
-		Identity: api.ExternalIdentity{Category: "tv"},
-		DiscType: "DVD",
-		Type:     "DISC",
+	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", api.RuleSubject{
+		Identity:    api.ExternalIdentity{Category: "tv"},
+		Assessments: api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
+		DiscType:    "DVD",
+		Type:        "DISC",
 	})
-	fingerprint, err := trackers.WaivableRuleFailureFingerprint("NBL", failures)
+	fingerprint, err := trackers.WaivableRuleFailureFingerprint("ANT", failures)
 	if err != nil || fingerprint == "" {
 		t.Fatalf("missing legacy waiver fingerprint: %q %v", fingerprint, err)
 	}
@@ -1163,7 +1123,7 @@ func TestNBLFullDiscLanguagePreservesWaiverAndDebug(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			failure, err := trackers.FirstBlockingRuleFailure("NBL", failures, test.mode, test.projection)
+			failure, err := trackers.FirstBlockingRuleFailure("ANT", failures, test.mode, test.projection)
 			if err != nil || (failure != nil) != test.wantBlock {
 				t.Fatalf("blocking failure = %+v %v, want block %v", failure, err, test.wantBlock)
 			}

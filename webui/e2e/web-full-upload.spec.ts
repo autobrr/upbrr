@@ -609,6 +609,17 @@ for (const scenario of [
     upload: true,
   },
   {
+    name: "ANT TV uploads without images or descriptions",
+    trackers: ["ANT"],
+    mediaKind: "tv",
+    preparedMediaInfo: true,
+    releaseDisplayName: "E2E.Show.2026.S01E01.1080p.WEB-DL",
+    screenshots: false,
+    descriptions: false,
+    upload: true,
+    verifyUpload: true,
+  },
+  {
     name: "ANT requires descriptions before upload",
     trackers: ["ANT"],
     mediaKind: "movie",
@@ -619,14 +630,14 @@ for (const scenario of [
     upload: false,
   },
   {
-    name: "mixed trackers expose the strictest shared content workflow",
+    name: "mixed TV trackers ignore ineligible description requirements",
     trackers: ["BTN", "ANT", "AITHER"],
     mediaKind: "tv",
     preparedMediaInfo: true,
     releaseDisplayName: "E2E.Show.2026.S01E01.1080p.WEB-DL",
     screenshots: true,
     descriptions: false,
-    upload: false,
+    upload: true,
   },
 ] as const) {
   test(`embedded web ${scenario.name}`, async ({ page }) => {
@@ -649,10 +660,7 @@ for (const scenario of [
       for (const tracker of scenario.trackers) {
         await page.getByRole("checkbox", { name: tracker }).check();
       }
-      if (
-        scenario.trackers.some((tracker) => tracker === "ANT") &&
-        scenario.mediaKind === "movie"
-      ) {
+      if (scenario.trackers.some((tracker) => tracker === "ANT")) {
         await answerAntTags(page);
       }
       await runDuplicateCheck(page);
@@ -675,6 +683,21 @@ for (const scenario of [
         scenario.upload,
       );
       await expect.poll(() => workspace.fake.counters.clientSearches).toBe(1);
+      if ("verifyUpload" in scenario) {
+        await page.getByRole("button", { name: "Upload", exact: true }).click();
+        await page.getByRole("button", { name: "Run dry run", exact: true }).click();
+        await expect(
+          page
+            .getByRole("heading", { name: "Tracker uploads" })
+            .locator("..")
+            .getByText("completed", { exact: true }),
+        ).toBeVisible();
+        expect(workspace.fake.counters.trackerUploads).toBe(0);
+        await page.getByRole("button", { name: "Start upload", exact: true }).click();
+        await expect(page.getByRole("heading", { name: "Workflow upload result" })).toBeVisible();
+        expect(workspace.fake.counters.trackerUploads).toBe(1);
+        expect(workspace.fake.counters.imageUploads).toBe(0);
+      }
     } finally {
       await app?.stop();
       await workspace.cleanup();

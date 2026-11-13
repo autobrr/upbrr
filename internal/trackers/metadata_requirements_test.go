@@ -5,7 +5,6 @@ package trackers
 
 import (
 	"context"
-	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -83,22 +82,22 @@ func TestMetadataRequirementMatrix(t *testing.T) {
 			fail:     true,
 		},
 		{
-			name:     "nbl tvmaze",
-			tracker:  "NBL",
+			name:     "ant tvdb",
+			tracker:  "ANT",
 			category: "tv",
-			ids:      api.ExternalIdentity{TVmazeID: 3},
-			metadata: api.SourceScopedMetadata{TVmaze: &api.TVmazeMetadata{TVmazeID: 3, Name: "Example Series"}},
+			ids:      api.ExternalIdentity{TVDBID: 3},
+			metadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{TVDBID: 3, Name: "Example Series"}},
 		},
 		{
-			name:     "nbl id only",
-			tracker:  "NBL",
+			name:     "ant tvdb id only",
+			tracker:  "ANT",
 			category: "tv",
-			ids:      api.ExternalIdentity{TVmazeID: 3},
+			ids:      api.ExternalIdentity{TVDBID: 3},
 			fail:     true,
 		},
 		{
-			name:     "nbl wrong provider",
-			tracker:  "NBL",
+			name:     "ant tv wrong provider",
+			tracker:  "ANT",
 			category: "tv",
 			ids:      api.ExternalIdentity{IMDBID: 1234567},
 			fail:     true,
@@ -405,7 +404,10 @@ func TestMetadataRequirementRejectsMismatchedProviderSnapshot(t *testing.T) {
 func newMetadataRegistry(t *testing.T) *Registry {
 	t.Helper()
 	registry := NewRegistry()
-	policy := &TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldTMDB}}}}
+	policy := &TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{
+		{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldTMDB}},
+		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTVDB, MetadataFieldTMDB}},
+	}}
 	if err := registry.RegisterDescriptor(Descriptor{
 		Name:       "ANT",
 		Definition: stubDefinition{name: "ANT"},
@@ -463,7 +465,6 @@ func newMetadataRegistry(t *testing.T) *Registry {
 		AnyOf:       []MetadataField{MetadataFieldIMDBIDOnly},
 		Disposition: api.RuleDispositionAdvisory,
 	}}})
-	register("NBL", TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTVmaze}}}})
 	register("AR", TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{
 		{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}},
 		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB, MetadataFieldTVDB}},
@@ -768,32 +769,4 @@ func TestARMetadataPosterRejectsStaleSnapshots(t *testing.T) {
 		}
 	}
 	t.Fatalf("expected stale poster failure, got %#v", failures)
-}
-
-func TestOnlyNBLDeclaresTVmazeIdentityRequirement(t *testing.T) {
-	t.Parallel()
-	registry := newMetadataRegistry(t)
-	foundNBL := false
-	for _, tracker := range registry.Names() {
-		policy, ok := registry.LookupMetadataPolicy(tracker)
-		if !ok {
-			continue
-		}
-		for _, requirement := range policy.Requirements {
-			if !containsMetadataField(requirement.AnyOf, MetadataFieldTVmaze) {
-				continue
-			}
-			if tracker != "NBL" {
-				t.Fatalf("tracker %s unexpectedly accepts TVmaze identity", tracker)
-			}
-			foundNBL = true
-		}
-	}
-	if !foundNBL {
-		t.Fatal("expected NBL TVmaze identity requirement")
-	}
-}
-
-func containsMetadataField(fields []MetadataField, want MetadataField) bool {
-	return slices.Contains(fields, want)
 }

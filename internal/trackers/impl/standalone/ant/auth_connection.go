@@ -23,7 +23,7 @@ func testConnection(ctx context.Context, input trackers.ConnectionProbeInput, cl
 	if !connectiontest.CredentialPresent(key) {
 		return api.ConnectionTestResult{Code: "missing_configuration", Message: "Enter this tracker's API key before testing."}
 	}
-	endpoint := "https://anthelion.me/api.php?" + url.Values{
+	endpoint := antAPIURL + "?" + url.Values{
 		"t":      {"search"},
 		"o":      {"json"},
 		"imdbid": {"0133093"},

@@ -16,7 +16,7 @@ func TestTrackerGroupListsNormalizeYAMLScalarAndSequence(t *testing.T) {
 	}
 	err := yaml.Unmarshal([]byte(`
 trackers:
-  NBL:
+  ANT:
     api_key: key
     dupe_bypass_groups: " NTb, -GRP, ntb, --Keep "
     personal_release_groups:
@@ -28,7 +28,7 @@ trackers:
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
 
-	tracker := cfg.Trackers.Trackers["NBL"]
+	tracker := cfg.Trackers.Trackers["ANT"]
 	if !slices.Equal(tracker.DupeBypassGroups, CSVList{"NTb", "GRP", "-Keep"}) {
 		t.Fatalf("DupeBypassGroups = %#v", tracker.DupeBypassGroups)
 	}
@@ -44,7 +44,7 @@ func TestTrackerGroupListsNormalizeJSONAndRoundTripLegacyInternal(t *testing.T) 
 	var trackers TrackersConfig
 	err := json.Unmarshal([]byte(`{
   "Trackers": {
-    "NBL": {
+    "ANT": {
       "APIKey": "key",
       "Internal": true,
       "DupeBypassGroups": ["-NTb", "ntb"],
@@ -57,7 +57,7 @@ func TestTrackerGroupListsNormalizeJSONAndRoundTripLegacyInternal(t *testing.T) 
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
 
-	tracker := trackers.Trackers["NBL"]
+	tracker := trackers.Trackers["ANT"]
 	if !tracker.Internal || !slices.Equal(tracker.DupeBypassGroups, CSVList{"NTb"}) ||
 		!slices.Equal(tracker.PersonalReleaseGroups, CSVList{"Mine"}) ||
 		!slices.Equal(tracker.InternalGroups, CSVList{"Internal"}) {
@@ -76,9 +76,9 @@ func TestTrackerGroupListsNormalizeJSONAndRoundTripLegacyInternal(t *testing.T) 
 	if !ok {
 		t.Fatalf("Trackers was not serialized as an object: %#v", decoded["Trackers"])
 	}
-	entry, ok := decodedTrackers["NBL"].(map[string]any)
+	entry, ok := decodedTrackers["ANT"].(map[string]any)
 	if !ok {
-		t.Fatalf("NBL was not serialized as an object: %#v", decodedTrackers["NBL"])
+		t.Fatalf("ANT was not serialized as an object: %#v", decodedTrackers["ANT"])
 	}
 	if entry["Internal"] != true {
 		t.Fatalf("legacy Internal field was not preserved: %#v", entry)

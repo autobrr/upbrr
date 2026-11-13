@@ -580,6 +580,7 @@ func (s *Service) projectAdapterResult(
 		candidates := make([]TrackerCandidate, len(raw))
 		for index, rawCandidate := range raw {
 			candidates[index] = NormalizeCandidate(rawCandidate, tracker)
+			candidates[index].providerConflicts = providerIdentityConflicts(candidates[index].ProviderIDs, meta.Identity)
 		}
 		policy := s.duplicatePolicy(tracker, meta)
 		search := adapterResult.SearchEvidence()
@@ -954,7 +955,7 @@ func dupeCandidateLogValue(value string) string {
 func (s *Service) duplicatePolicy(tracker string, meta api.DuplicateSubject) trackerspkg.DupePolicy {
 	var policy trackerspkg.DupePolicy
 	if s != nil && s.registry != nil {
-		policy, _ = s.registry.LookupDupePolicy(tracker)
+		policy, _ = s.registry.LookupDupePolicyForCategory(tracker, meta.Identity.Category)
 	}
 	if strings.TrimSpace(policy.ID) == "" {
 		if meta.Projection != nil && strings.TrimSpace(meta.Projection.DuplicatePolicyID) != "" {

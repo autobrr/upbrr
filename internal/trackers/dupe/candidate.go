@@ -12,6 +12,7 @@ import (
 	"github.com/autobrr/rls"
 
 	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -23,8 +24,11 @@ var (
 
 // TrackerCandidate is protocol-independent private candidate evidence.
 type TrackerCandidate struct {
+	TVScope           *api.DupeTVScope
 	Evidence          api.DupeReleaseEvidence
 	SourceFingerprint api.WorkflowFingerprint
+	ProviderIDs       []api.TrackerProviderID
+	providerConflicts []string
 
 	// TrackerSlot preserves the adapter's opaque native evidence, including unknown components.
 	TrackerSlot      string
@@ -68,6 +72,8 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 	source.Download, source.Link = "", ""
 	sourceFingerprint, _ := api.CanonicalWorkflowFingerprint(source)
 	candidate := TrackerCandidate{
+		TVScope:           entry.TVScope.Clone(),
+		ProviderIDs:       slices.Clone(entry.ProviderIDs),
 		SourceFingerprint: sourceFingerprint,
 		Evidence:          entry.Evidence,
 		TrackerSlot:       entry.TrackerSlot,
@@ -103,6 +109,15 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 	}
 	if candidate.FileCount == 0 {
 		candidate.FileCount = len(candidate.Files)
+	}
+	if candidate.TVScope != nil {
+		candidate.Pack = false
+		if candidate.TVScope.Season != nil {
+			candidate.Season = *candidate.TVScope.Season
+		}
+		if len(candidate.TVScope.Episodes) > 0 {
+			candidate.Episode = candidate.TVScope.Episodes[0]
+		}
 	}
 	if candidate.HDR.Status == "" {
 		candidate.HDR = NormalizeTrackerHDRFlags(entry.Flags, entry.FlagsPresent, entry.FlagsComplete)
@@ -159,7 +174,7 @@ func NormalizeTrackerHDRFlags(flags []string, present bool, complete bool) api.H
 }
 
 func enrichCandidateCoordinatesFromTitle(candidate *TrackerCandidate) {
-	if candidate == nil {
+	if candidate == nil || candidate.TVScope != nil {
 		return
 	}
 	if candidate.Season == 0 || (!candidate.Pack && candidate.Episode == 0) {
@@ -252,4 +267,26 @@ func cloneHDRFacts(facts api.HDRFacts) api.HDRFacts {
 	facts.SourceFields = append([]string(nil), facts.SourceFields...)
 	facts.Contradictions = append([]string(nil), facts.Contradictions...)
 	return facts
+}
+
+// providerIdentityConflicts compares only known IDs; missing or malformed IDs
+// do not establish disagreement with independently selected provider resources.
+func providerIdentityConflicts(ids []api.TrackerProviderID, identity api.ExternalIdentity) []string {
+	var conflicts []string
+	for _, item := range ids {
+		provider := api.IdentityProvider(strings.ToLower(strings.TrimSpace(item.Provider)))
+		wanted, known := identity.ProviderID(provider)
+		if !known {
+			continue
+		}
+		value := strings.TrimSpace(item.Value)
+		if provider == api.IdentityProviderIMDB {
+			value = strings.TrimPrefix(strings.ToLower(value), "tt")
+		}
+		if id := providerid.ParseDecimal(value); id > 0 && id != wanted {
+			conflicts = append(conflicts, string(provider))
+		}
+	}
+	slices.Sort(conflicts)
+	return slices.Compact(conflicts)
 }

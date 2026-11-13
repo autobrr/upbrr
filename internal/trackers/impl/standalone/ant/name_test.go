@@ -22,7 +22,7 @@ func TestResolveUploadNameUsesNormalNameForSceneRelease(t *testing.T) {
 	if got != normal {
 		t.Fatalf("ANT release name = %q, want %q", got, normal)
 	}
-	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/ant/v2" {
-		t.Fatalf("ANT release-name policy = %q, want standalone/ant/v2", got)
+	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/ant/v3" {
+		t.Fatalf("ANT release-name policy = %q, want standalone/ant/v3", got)
 	}
 }

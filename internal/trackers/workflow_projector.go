@@ -378,6 +378,7 @@ func applyWorkflowProjectionRequirements(
 	cfg config.Config,
 	subject api.UploadSubject,
 ) {
+	descriptor = descriptor.ForCategory(subject.Identity.Category)
 	if descriptor.UploadContentMode.UsesImages() {
 		trackerScreenshotCount := trackerConfigFor(cfg, descriptor.Name).ImageCount
 		switch {

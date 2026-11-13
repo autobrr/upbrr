@@ -80,7 +80,6 @@ func TestAPIConnectionProbesUseOnlyBoundedReadContracts(t *testing.T) {
 		{"BHD", "beyond-hd.me", "/api/torrents/synthetic-key", http.MethodPost, "", "", `{"status_code":1,"success":true,"results":[]}`, `{"status_code":1,"success":false,"results":[]}`},
 		{"DC", "digitalcore.club", "/api/v1/torrents/dupe-search", http.MethodGet, "X-Api-Key", "", `{"results":[],"index":0,"limit":1,"count":0,"total":0,"includesPending":false}`, `{"results":[],"index":0,"limit":1,"count":0,"total":0}`},
 		{"GPW", "greatposterwall.com", "/api.php", http.MethodGet, "", "api_key", `{"status":200,"response":[]}`, `{"status":403,"response":[]}`},
-		{"NBL", "nebulance.io", "/api.php", http.MethodGet, "", "api_key", `{"current_page":0,"total_pages":0,"count":0,"total_results":0,"items":[]}`, `{"error":"synthetic-private-error","current_page":0,"total_pages":0,"count":0,"total_results":0,"items":[]}`},
 		{"SPD", "speedapp.io", "/api/torrent", http.MethodGet, "Authorization", "", `[]`, `null`},
 		{"HDB", "hdbits.org", "/api/torrents", http.MethodPost, "", "", `{"status":0,"data":[]}`, `{"status":5,"data":[]}`},
 		{"BTN", "api.broadcasthe.net", "/", http.MethodPost, "", "", `{"result":{"results":0,"torrents":{}}}`, `{"error":{"code":5},"result":{"results":0,"torrents":{}}}`},
@@ -134,10 +133,6 @@ func TestAPIConnectionProbesUseOnlyBoundedReadContracts(t *testing.T) {
 					case "DC":
 						if req.URL.Query().Get("index") != "0" || req.URL.Query().Get("limit") != "1" || req.URL.Query().Get("releaseName") != "upbrr.connection.test.synthetic" {
 							t.Error("DC did not bound its read")
-						}
-					case "NBL":
-						if req.URL.Query().Get("action") != "search" || req.URL.Query().Get("release") != "upbrr.connection.test.synthetic" || req.URL.Query().Get("per_page") != "1" {
-							t.Error("NBL did not bound its read")
 						}
 					case "SPD":
 						if req.URL.Query().Get("search") != "upbrr.connection.test.synthetic" {

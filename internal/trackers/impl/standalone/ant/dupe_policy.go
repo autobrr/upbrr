@@ -30,6 +30,17 @@ func duplicatePolicy() *trackers.DupePolicy {
 	}
 }
 
+func resolveTargetTVScope(meta api.UploadSubject) *api.DupeTVScope {
+	if !meta.MultipleEpisodes {
+		return nil
+	}
+	var season *int
+	if meta.SeasonInt > 0 || strings.TrimSpace(meta.SeasonStr) != "" {
+		season = new(meta.SeasonInt)
+	}
+	return dupe.NumberedTVScopeFromFiles(meta.FileList, len(meta.FileList), season)
+}
+
 func resolveTargetSlot(meta api.UploadSubject) string {
 	kind := strings.ToUpper(strings.TrimSpace(meta.Type))
 	if fullDisc(meta) {
@@ -128,6 +139,9 @@ func slotFlags(flags []string) ([]string, bool) {
 	upperFlags := make([]string, 0, len(flags))
 	for _, flag := range flags {
 		upper := strings.ToUpper(flag)
+		if upper == "REMASTERED" {
+			upper = "4KREMASTER"
+		}
 		switch upper {
 		case "DIRECTORS",
 			"EXTENDED",
@@ -224,6 +238,9 @@ func slotContradictsTitle(slot []string, name string) bool {
 	}
 	meta.Edition = strings.Join(editions, " ")
 	for _, flag := range resolveFlags(meta) {
+		if flag == "Remastered" {
+			flag = "4KRemaster"
+		}
 		if flag == "3D" {
 			if slot[0] != "3D" {
 				return true

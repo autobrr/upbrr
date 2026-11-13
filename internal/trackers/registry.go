@@ -115,6 +115,9 @@ func (r *Registry) Register(def Definition) error {
 		if provider, ok := def.(UploadContentModeProvider); ok {
 			descriptor.UploadContentMode = provider.UploadContentMode()
 		}
+		if provider, ok := def.(CategoryPolicyProvider); ok {
+			descriptor.CategoryPolicies = CloneCategoryPolicies(provider.CategoryPolicies())
+		}
 		if provider, ok := def.(WorkflowMediaRequirementsProvider); ok {
 			descriptor.WorkflowMedia = provider.WorkflowMediaRequirements()
 		}
@@ -685,6 +688,20 @@ func (r *Registry) RegisterDescriptor(descriptor Descriptor) error {
 			return fmt.Errorf("trackers: definition %s has invalid duplicate policy: %w", name, err)
 		}
 		descriptor.DupePolicy = &policy
+	}
+	descriptor.CategoryPolicies = CloneCategoryPolicies(descriptor.CategoryPolicies)
+	for category, policy := range descriptor.CategoryPolicies {
+		if category != api.CanonicalCategoryMovie && category != api.CanonicalCategoryTV {
+			return fmt.Errorf("trackers: definition %s has invalid policy category %q", name, category)
+		}
+		if policy.UploadContentMode != "" && !policy.UploadContentMode.Valid() {
+			return fmt.Errorf("trackers: definition %s has invalid category content mode %q", name, policy.UploadContentMode)
+		}
+		if policy.DupePolicy != nil {
+			if err := validateDupePolicy(*policy.DupePolicy); err != nil {
+				return fmt.Errorf("trackers: definition %s has invalid category duplicate policy: %w", name, err)
+			}
+		}
 	}
 	r.descriptors[name] = descriptor
 	return nil

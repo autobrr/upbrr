@@ -1112,3 +1112,67 @@ func TestCheckLogsOneBoundedOutcomeForEachPass(t *testing.T) {
 		})
 	}
 }
+
+func TestProjectAdapterResultPreservesProviderConflicts(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name             string
+		tmdb             string
+		episode          int
+		resolution       string
+		exact            bool
+		pack, targetPack bool
+		want             api.DupeRelation
+	}{
+		{"secondary conflict", "200002", 1, "1080p", false, false, false, api.DupeRelationManualReview},
+		{"matching IDs", "200001", 1, "1080p", false, false, false, api.DupeRelationSameSlot},
+		{"missing secondary", "", 1, "1080p", false, false, false, api.DupeRelationSameSlot},
+		{"different episode", "200002", 2, "1080p", false, false, false, api.DupeRelationCoexists},
+		{"different resolution", "200002", 1, "720p", false, false, false, api.DupeRelationCoexists},
+		{"exact identity", "200002", 1, "1080p", true, false, false, api.DupeRelationExactDuplicate},
+		{"existing pack", "200002", 0, "1080p", false, true, false, api.DupeRelationManualReview},
+		{"proposed pack", "200002", 1, "1080p", false, false, true, api.DupeRelationManualReview},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := api.DuplicateSubject{
+				Identity: api.ExternalIdentity{
+Category: api.CanonicalCategoryTV,
+ TVDBID: 100001,
+ TMDBID: 200001,
+},
+				Projection: &api.TrackerReleaseProjection{DuplicateTarget: api.TrackerDuplicateTarget{
+					Names: []string{"Example.S01E01.1080p.WEB-DL-GRP"},
+ Category: "tv",
+ Season: 1,
+ Episode: 1,
+ Resolution: "1080p",
+				}},
+			}
+			entry := api.DupeEntry{
+ID: "1",
+ Name: "Example.Series",
+ Season: 1,
+ Episode: test.episode,
+ Res: test.resolution,
+				ProviderIDs: []api.TrackerProviderID{{Provider: "tvdb", Value: "100001"}, {Provider: "tmdb", Value: test.tmdb}},
+			}
+			entry.Pack = test.pack
+			if test.targetPack {
+				meta.Projection.DuplicateTarget.Pack = true
+				meta.Projection.DuplicateTarget.Episode = 0
+				meta.Projection.DuplicateTarget.Names = nil
+			}
+			if test.exact {
+				entry.Name = meta.Projection.DuplicateTarget.Names[0]
+			}
+			result, _ := testService(nil).projectAdapterResult("EXAMPLE", meta,
+				ResolvedWithSearch([]api.DupeEntry{entry}, nil, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID}), time.Now())
+			if len(result.Evaluations) != 1 || result.Evaluations[0].Relation != test.want {
+				t.Fatalf("provider evidence result=%+v want=%s", result, test.want)
+			}
+			if test.want == api.DupeRelationManualReview && result.Evaluations[0].Reasons[0].Code != "candidate_provider_identity_contradictory" {
+				t.Fatalf("provider conflict not explained: %+v", result.Evaluations[0])
+			}
+		})
+	}
+}

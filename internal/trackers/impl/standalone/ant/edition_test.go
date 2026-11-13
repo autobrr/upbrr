@@ -24,15 +24,15 @@ func TestEditionLabelPreservesStructuredParts(t *testing.T) {
 			Presentation: "Open Matte",
 		}, []string{"Extended"}},
 		{"presentation only", "IMAX", api.UploadSubject{Presentation: "IMAX"}, []string{"IMAX"}},
-		{"4K remaster", "4K Remaster", api.UploadSubject{ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature4KRemaster}}, []string{"4KRemaster"}},
+		{"4K remaster", "4K Remaster", api.UploadSubject{ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature4KRemaster}}, []string{"Remastered"}},
 		{"duplicate 4K remaster", "4K Remaster", api.UploadSubject{
 			Edition:         "4K Remaster",
 			ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature4KRemaster, api.ReleaseFeature4KRemaster},
-		}, []string{"4KRemaster"}},
+		}, []string{"Remastered"}},
 		{"cut and remaster", "Director's Cut 4K Remaster", api.UploadSubject{
 			Cut:             "Director's Cut",
 			ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature4KRemaster},
-		}, []string{"Directors", "4KRemaster"}},
+		}, []string{"Directors", "Remastered"}},
 		{"restoration is not remaster", "", api.UploadSubject{ReleaseFeatures: []api.ReleaseFeature{api.ReleaseFeature4KRestoration}}, nil},
 	}
 	for _, test := range tests {

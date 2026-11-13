@@ -29,8 +29,6 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const antUploadURL = "https://anthelion.me/api.php"
-
 type uploadState struct {
 	torrentPath  string
 	description  string
@@ -87,7 +85,7 @@ func submitPreparedUpload(
 ) (api.UploadSummary, error) {
 	client := httpclient.New(httpclient.DefaultTimeout)
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 || req.URL.Scheme != "https" || req.URL.Host != "anthelion.me" {
+		if len(via) >= 10 || req.URL.Scheme != "https" || req.URL.Host != antHost {
 			return http.ErrUseLastResponse
 		}
 		return nil
@@ -145,7 +143,7 @@ func submitPreparedUpload(
 	case downloadURL != "":
 		// Only retrieve ANT-hosted download links; API credentials must not leave ANT.
 		download, parseErr := url.Parse(downloadURL)
-		if parseErr == nil && download.Scheme == "https" && download.Host == "anthelion.me" && artifactPath != "" {
+		if parseErr == nil && download.Scheme == "https" && download.Host == antHost && artifactPath != "" {
 			downloadReq, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 			if requestErr == nil {
 				downloadReq.Header.Set("User-Agent", "upbrr")
@@ -192,7 +190,7 @@ func (e trumpRetryError) Unwrap() error { return e.cause }
 
 // postPreparedUpload sends one captured request without transport-level retries.
 func postPreparedUpload(ctx context.Context, client *http.Client, body []byte, contentType string, secrets ...string) (int, map[string]any, []byte, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, antUploadURL, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, antAPIURL, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, nil, submission.NewError(submission.NotSent, fmt.Errorf("trackers: ANT request build: %w", err))
 	}
@@ -283,7 +281,7 @@ func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDr
 		ReleaseName:      state.releaseName,
 		DescriptionGroup: "ant",
 		Description:      state.description,
-		Endpoint:         antUploadURL,
+		Endpoint:         antAPIURL,
 		Payload:          state.fields,
 		Files: []api.TrackerDryRunFile{{
 			Field:   "file_input",
@@ -303,8 +301,9 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" {
 		return uploadState{}, errors.New("trackers: ANT missing api_key")
 	}
-	if req.Meta.Identity.TMDBID == 0 {
-		return uploadState{}, errors.New("trackers: ANT missing tmdb id")
+	isTV := req.Meta.Identity.Category == api.CanonicalCategoryTV
+	if req.Meta.Identity.TMDBID == 0 && (!isTV || req.Meta.Identity.TVDBID == 0) {
+		return uploadState{}, errors.New("trackers: ANT missing tmdb id or TV series tvdb id")
 	}
 
 	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
@@ -315,21 +314,25 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: ANT reviewed upload name: %w", err)
 	}
-	descriptionAssets, err := trackers.PreparedDescriptionAssets(req.Assets)
-	if err != nil {
-		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
-		descriptionAssets = trackers.DescriptionAssets{}
-	}
-	description, err := buildDescription(ctx, req, descriptionAssets)
-	if err != nil {
-		return uploadState{}, err
+	var descriptionAssets trackers.DescriptionAssets
+	description := ""
+	if !isTV {
+		descriptionAssets, err = trackers.PreparedDescriptionAssets(req.Assets)
+		if err != nil {
+			trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
+			descriptionAssets = trackers.DescriptionAssets{}
+		}
+		description, err = buildDescription(ctx, req, descriptionAssets)
+		if err != nil {
+			return uploadState{}, err
+		}
 	}
 
 	answers := standalone.QuestionnaireAnswers(req.Meta, "ANT")
 	typeName, typeID := resolveType(req.Meta, answers)
 	flags := resolveFlags(req.Meta)
 	tags, manualTags := resolveTags(req.Meta, answers)
-	adultContent := detectAdult(req.Meta)
+	adultContent := !isTV && detectAdult(req.Meta)
 	safeScreens := resolveAdultScreensAllowed(answers, adultContent)
 	screenshots := resolveScreenshotPayload(descriptionAssets.Screenshots, safeScreens)
 	mediaFields, err := resolveMediaFields(req.Meta, req.Runtime.DBPath)
@@ -340,11 +343,25 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	fields := map[string]string{
 		"api_key":      strings.TrimSpace(req.TrackerConfig.APIKey),
 		"action":       "upload",
-		"tmdbid":       strconv.Itoa(req.Meta.Identity.TMDBID),
 		"type":         strconv.Itoa(typeID),
 		"media":        resolveMediaSource(req.Meta.Source),
 		"release_desc": description,
 		"screenshots":  screenshots,
+	}
+	if req.Meta.Identity.TMDBID != 0 {
+		fields["tmdbid"] = strconv.Itoa(req.Meta.Identity.TMDBID)
+	}
+	if isTV {
+		delete(fields, "release_desc")
+		delete(fields, "screenshots")
+		if req.Meta.Identity.TVDBID != 0 {
+			fields["tvdbid"] = strconv.Itoa(req.Meta.Identity.TVDBID)
+		}
+		coordinates, err := tvCoordinates(req.Meta)
+		if err != nil {
+			return uploadState{}, err
+		}
+		maps.Copy(fields, coordinates)
 	}
 	maps.Copy(fields, mediaFields)
 	if req.TrackerConfig.Anon {
@@ -399,17 +416,6 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		typeName:     typeName,
 		tags:         tags,
 	}, nil
-}
-
-func resolveReleaseGroup(tag string) (string, bool) {
-	trimmed := strings.TrimSpace(strings.TrimPrefix(tag, "-"))
-	if trimmed == "" {
-		return "", false
-	}
-	if isBannedReleaseGroup(trimmed) {
-		return "", false
-	}
-	return trimmed, true
 }
 
 func resolveKeywords(meta api.UploadSubject) string {

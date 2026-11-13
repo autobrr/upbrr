@@ -16,7 +16,7 @@ import (
 )
 
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
-const GeneralDuplicatePolicyID = "general/duplicate/v13"
+const GeneralDuplicatePolicyID = "general/duplicate/v14"
 
 // DuplicateSearchContractID versions authoritative search scope and completion semantics.
 // Projection/catalog fingerprints and persisted private evidence carry this ID so older
@@ -529,6 +529,8 @@ type UploadArtifactPolicyProvider interface {
 
 // DupePolicy declares tracker-specific duplicate comparison semantics.
 type DupePolicy struct {
+	// TargetTVScope resolves numbered membership when category labels cannot prove whole-season coverage.
+	TargetTVScope func(api.UploadSubject) *api.DupeTVScope `json:"-"`
 	// Questionnaire projects comparison questions only from server-owned duplicate candidates.
 	Questionnaire func(PreparationInput) []api.TrackerQuestionnaireField `json:"-"`
 	// TargetEvidence resolves generation-bound source and comparison evidence.
@@ -955,6 +957,18 @@ type WorkflowMediaRequirementsProvider interface {
 	WorkflowMediaRequirements() *WorkflowMediaRequirements
 }
 
+// CategoryPolicy replaces the capabilities that differ for one content category.
+// Empty content modes and nil policies retain the tracker defaults.
+type CategoryPolicy struct {
+	UploadContentMode UploadContentMode
+	DupePolicy        *DupePolicy
+}
+
+// CategoryPolicyProvider declares category-specific tracker capabilities.
+type CategoryPolicyProvider interface {
+	CategoryPolicies() map[api.CanonicalCategory]CategoryPolicy
+}
+
 // Descriptor binds a tracker definition to its optional capabilities.
 type Descriptor struct {
 	// Name is the stable normalized tracker identifier.
@@ -977,6 +991,8 @@ type Descriptor struct {
 	EditionFeatures EditionFeatureResolver
 	// UploadContentMode identifies the shared content object consumed before preparation.
 	UploadContentMode UploadContentMode
+	// CategoryPolicies contains explicit overrides for supported content categories.
+	CategoryPolicies map[api.CanonicalCategory]CategoryPolicy
 	// WorkflowMedia contains tracker-owned media minimums and reuse policy.
 	WorkflowMedia *WorkflowMediaRequirements
 	// Rules contains optional tracker-owned validation rules.

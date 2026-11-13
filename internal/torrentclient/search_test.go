@@ -1017,12 +1017,17 @@ func TestExtractTrackerMatchesIncludesPatternsOutsidePriority(t *testing.T) {
 func TestExtractTrackerMatchesPrefersANTCommentID(t *testing.T) {
 	t.Parallel()
 
+	registry := trackerPatternRegistry(t)
+	descriptor, ok := registry.LookupDescriptor("ANT")
+	if !ok {
+		t.Fatal("ANT is not registered")
+	}
 	matches, found := extractTrackerMatchesWithPatterns(
-		"https://anthelion.me/torrents.php?torrentid=12345",
-		[]string{"https://tracker.anthelion.me/redacted/announce"},
+		descriptor.BaseURL+"/torrents.php?torrentid=12345",
+		[]string{strings.Replace(descriptor.BaseURL, "://", "://tracker.", 1) + "/redacted/announce"},
 		true,
 		[]string{"ant"},
-		buildTrackerIDPatterns(trackerPatternRegistry(t)),
+		buildTrackerIDPatterns(registry),
 	)
 
 	if !found {
@@ -1036,12 +1041,17 @@ func TestExtractTrackerMatchesPrefersANTCommentID(t *testing.T) {
 func TestExtractTrackerMatchesFallsBackToANTWorkingID(t *testing.T) {
 	t.Parallel()
 
+	registry := trackerPatternRegistry(t)
+	descriptor, ok := registry.LookupDescriptor("ANT")
+	if !ok {
+		t.Fatal("ANT is not registered")
+	}
 	matches, found := extractTrackerMatchesWithPatterns(
 		"",
-		[]string{"https://tracker.anthelion.me/redacted/announce"},
+		[]string{strings.Replace(descriptor.BaseURL, "://", "://tracker.", 1) + "/redacted/announce"},
 		true,
 		[]string{"ant"},
-		buildTrackerIDPatterns(trackerPatternRegistry(t)),
+		buildTrackerIDPatterns(registry),
 	)
 
 	if !found {
@@ -1731,6 +1741,23 @@ func TestEMUWIdentityRecognizesCurrentAndLegacyDomains(t *testing.T) {
 			matches, found := extractTrackerMatchesWithPatterns("https://"+host+"/torrents/1234567", []string{announce}, true, []string{"emuw"}, patterns)
 			if !found || len(matches) != 1 || matches[0].ID != "emuw" || matches[0].TrackerID != "1234567" {
 				t.Fatal("EMUW comment did not retain torrent identity")
+			}
+		})
+	}
+}
+
+func TestANTIdentityRecognizesCurrentAndLegacyDomains(t *testing.T) {
+	t.Parallel()
+	patterns := buildTrackerIDPatterns(trackerPatternRegistry(t))
+	for _, host := range []string{"anthelion.dev", "anthelion.me"} {
+		t.Run(host, func(t *testing.T) {
+			announce := "https://tracker." + host + "/announce/redacted"
+			if !containsString(matchTrackerURLs([]string{announce}, patterns), "ANT") {
+				t.Fatal("ANT announce was not recognized")
+			}
+			matches, found := extractTrackerMatchesWithPatterns("https://"+host+"/torrents.php?torrentid=1234567", []string{announce}, true, []string{"ant"}, patterns)
+			if !found || len(matches) != 1 || matches[0].ID != "ant" || matches[0].TrackerID != "1234567" {
+				t.Fatal("ANT comment did not retain torrent identity")
 			}
 		})
 	}

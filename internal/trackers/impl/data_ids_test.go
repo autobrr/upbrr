@@ -34,8 +34,9 @@ func TestTrackerLookupExternalIDs(t *testing.T) {
 		},
 		{
 			name:     "ANT",
-			response: `{"item":[{"imdb":%[1]s,"tmdb":%[1]s}]}`,
+			response: `{"item":[{"imdb":%[1]s,"tmdb":%[1]s,"tvdbid":%[1]s}]}`,
 			tmdb:     true,
+			tvdb:     true,
 		},
 		{
 			name:     "BHD",

@@ -136,11 +136,11 @@
     "sha256": "f214ae6d4b0be023d28822d94ba5b175daaf58b2edf1c8fb0547d90add5f4e8a"
   },
   "internal/trackers/impl/standalone/ant/questionnaire.go:buildQuestionnaire": {
-    "reason": "Only eligible movie content offers film type choices or retains explicit film answers. Known TMDB TV identities, unsupported IMDb types including TV shorts, and unresolved canonical TV content suppress the selector because an answer cannot change programme eligibility or the provider ID namespace. Resolved tags preserve manual genre and tag clears. Request IDs stay optional; invalid supplied IDs require correction without changing positive-integer validation or private blank/reset acceptance. Adult-screen precedence is unchanged.",
-    "sha256": "9bbdb308b83a947f1ca2b0ad62ec2a67494d352476376b2057c69f6c9a39da8d"
+    "reason": "Film type and adult screenshot questions are confined to finalized movies. TV genres may come from TVDb before TMDb; explicit tag answers and manual genre clears retain priority in resolveTags. Provider genres determine whether the site can supply omitted tags, preserving movie manual-clear behavior. Request ID correction behavior is unchanged.",
+    "sha256": "6e51bdeeb9b1c9d69213b5fc13738e956d753a63195a53be8aeb8bddf0d1be21"
   },
   "internal/trackers/impl/standalone/ant/questionnaire.go:projectionQuestionnaire": {
-    "reason": "Projection reuses upload resolvers: normalized questionnaire type and tags take precedence; manual genres remain ahead of TMDB defaults. IMDb/TMDB type and adult evidence retain their existing order on the exact operation subject. The added Guru intention controls consume only source-generation-bound explicit answers, with the reviewed projection authoritative; their default is no and they do not replace provider/manual metadata selectors.",
+    "reason": "Projection reuses combined movie/TV upload resolvers: normalized questionnaire type and tags take precedence; manual genres remain ahead of provider defaults. Movie IMDb/TMDB type and adult evidence retain their existing order, while TV subjects suppress film and adult-screen controls. Guru intention controls consume only source-generation-bound explicit answers, with the reviewed projection authoritative; their default is no and they do not replace provider/manual metadata selectors.",
     "sha256": "f66b247d98bf587c3b04e65c9f4c9b0ff644bc4ecc94488dce1956d276a6c967"
   },
   "internal/trackers/impl/standalone/ant/taxonomy.go:detectAdult": {
@@ -148,28 +148,28 @@
     "sha256": "241c618ed9924a3390983d0eddfda979e6d08dd8f81e59125c365f277c31876d"
   },
   "internal/trackers/impl/standalone/ant/taxonomy.go:movieContent": {
-    "reason": "Programme eligibility uses exact prepared provider evidence. A TMDB TV category or non-Movie programme type rejects TV identity even with conflicting canonical movie or IMDb film evidence, because ANT requires a film TMDB ID. Otherwise supported IMDb movie/TV movie/movie-short types precede canonical movie fallback when IMDb type is absent. TV shorts and unresolved canonical TV content cannot be relabeled through questionnaire answers. No title, genre or naming fallback is introduced.",
-    "sha256": "9568216640322bd65023ec0bb1a02b848733fba3169ffab5f26f83e8e1528e90"
+    "reason": "Canonical TV subjects use the combined API television namespace and cannot offer film controls. Existing movie subjects retain TMDb programme-kind checks followed by IMDb film type evidence. Provider title, year and manually corrected metadata selectors are unchanged.",
+    "sha256": "03adb7b1b6897316706afd9d49a69df81c78cba3b3f784b5fdc719867cb3a930"
   },
   "internal/trackers/impl/standalone/ant/taxonomy.go:resolveTags": {
-    "reason": "Explicit tag answers, including empty values, precede manual genre corrections, including manual-empty. Only automatic resolution falls back from unusable normalized TMDB genres to IMDb genres on the exact prepared subject. Provider alias normalization and comma whitespace handling are shared with questionnaire requiredness.",
-    "sha256": "15b412cb2c3f3d6089c2d3428376b3e1f61b00c1779db41cc4e992da3ac1cac2"
+    "reason": "Explicit tag answers including empty values precede manual genres including clears. Automatic TV genres use the exact prepared TVDb series snapshot before TMDb and IMDb; existing movie normalization and TMDb-before-IMDb fallback remain unchanged.",
+    "sha256": "10bcf7774e687c44ab9ece1562bbdca24643392540c43419620c188b2169b742"
   },
   "internal/trackers/impl/standalone/ant/taxonomy.go:resolveType": {
-    "reason": "The reviewed movie-content gate precedes answers, so a film choice cannot relabel known TV provider identities, TV shorts, unsupported IMDb programmes or unresolved canonical TV content. Eligible films retain explicit Feature/Short answers, then exact-subject IMDb movie/TV movie/movie-short type and runtime, then TMDB runtime. Title, genre and naming precedence are unchanged.",
-    "sha256": "3df9f9bfd69487f81276b642eb046acbbec9d0988f153ddd03c1f355ea1f4486"
+    "reason": "Canonical TV category selects Season for packs/batches or Episode, independent of retained film answers and film runtime. Movie subjects retain the reviewed provider eligibility gate, explicit Feature/Short answers, then exact-subject IMDb and TMDb runtime precedence. Combined API type IDs are now 1 through 4.",
+    "sha256": "095518a40f1244ebe83406585ca08b4bd4f01315ce1458bba0a5d6c90a75dae2"
   },
   "internal/trackers/impl/standalone/ant/upload.go:prepareUploadState": {
-    "reason": "Payload reuses reviewed type, tags and adult resolvers on the exact prepared subject. Media and disc country use finalized source/Region; flags use finalized edition/language/media facts. Optional request ID uses explicit questionnaire answers. Reviewed release naming and explicit tags/manual-genre clears retain precedence. Description composition consumes the same prepared subject and preserves final user-reviewed text apart from the requested ANT TMDB logo exclusion; composition errors propagate without changing metadata selectors. The added retry intention and optional reason are read from exact current reviewed questionnaire answers with Guru mode enabled. They affect only one site-issued challenge retry, not metadata, naming, genre, description or staff-token selection.",
-    "sha256": "dbfe42099b2b0139290baa9121e592e0bac1c0b66ba34ca90d58a945825d7972"
+    "reason": "Payload uses the reviewed name, type, tag, media and disc-country resolvers on the exact prepared subject. Canonical TV permits a TVDb series ID without TMDb and suppresses descriptions/images. The maintainer-selected union of former ANT/NBL static bans applies to every category through the existing group mapper and shared gates. Movie descriptions, manual genre precedence, request IDs and registered-torrent authority remain unchanged. The retry intention and optional reason consume exact current reviewed questionnaire answers with Guru mode enabled and authorize only one site-issued challenge retry without changing metadata selectors or staff-token selection.",
+    "sha256": "d74545b6f734ef3921b09d075437222aa4d1f3d17c24eca7970a0c3d0d597e49"
   },
   "internal/trackers/impl/standalone/ant/upload.go:resolveKeywords": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
     "sha256": "8209548d8420fcc71ea0118be8d19c360bebe37d2b722e8b5f963bba73d780e1"
   },
   "internal/trackers/impl/standalone/ant/validation.go:validationPolicy": {
-    "reason": "Constructibility advances so retained projections reject TV shorts and known TMDB TV identities explicitly. Validation uses the same reviewed movie eligibility gate and type resolver as questionnaire and payload preparation through the exact-subject adapter; answers cannot relabel ineligible or unresolved TV content. Movie shorts remain eligible. Invalid request IDs remain strict corrective input failures; prepared media and other provider/manual precedence are unchanged.",
-    "sha256": "52cee2dde186b18d7ebeb61d72d1a2cf5868b341c41fadb60dea97001b9ad5f8"
+    "reason": "Combined API constructibility resolves finalized category and type through the same upload mapper, checks TV numbering and preserves prepared-media and request-ID validation. TV-only package and language checks retain former NBL requirements; movie provider/manual precedence and eligibility are preserved. LanguageAssessment remains available to both workflow surfaces.",
+    "sha256": "aded91849e0ea4bf57f814e7edaa97290178a055504d5697b3e01b3194b94e52"
   },
   "internal/trackers/impl/standalone/ar/definition.go:prepareDescription": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -1082,10 +1082,6 @@
   "internal/trackers/impl/standalone/is/validation.go:validationPolicy": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
     "sha256": "4eee21a393ea1a6121beba93b4824ecbf49ff88058acaa47b148372836e79d43"
-  },
-  "internal/trackers/impl/standalone/nbl/dupe.go:*dupeSearcher.Search": {
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged. Operation-local logger binding leaves these selectors and search filters unchanged.",
-    "sha256": "908b6f516b68c90705f5310a197cf9346db4927cf51ef69ee190550b1fad9df7"
   },
   "internal/trackers/impl/standalone/ptp/description.go:resolveDirectors": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",

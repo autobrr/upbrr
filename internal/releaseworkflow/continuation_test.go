@@ -359,6 +359,24 @@ func TestWorkflowContinuationAdvertisesAndEnforcesDescriptionViability(t *testin
 	}
 }
 
+func TestWorkflowContinuationUsesProjectedDescriptionRequirements(t *testing.T) {
+	t.Parallel()
+
+	current := continuationTestCurrent()
+	current.Catalog = &api.TrackerCatalogSnapshot{Trackers: []api.TrackerCatalogDescriptor{{
+		TrackerID:    "ALPHA",
+		Capabilities: api.TrackerCapabilityDescriptor{Description: true},
+	}}}
+	current.Selection = &api.TrackerSelection{TrackerIDs: []api.TrackerID{"ALPHA", "BETA"}}
+	continuation := projectWorkflowContinuation(current)
+	for _, goal := range []api.WorkflowGoal{api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun, api.WorkflowGoalUploaded} {
+		availability := findGoalAvailability(t, continuation.AvailableGoals, goal)
+		if !availability.Available {
+			t.Errorf("%s must use release requirements rather than catalog defaults: %+v", goal, availability)
+		}
+	}
+}
+
 func TestWorkflowContinuationExplainsDescriptionMediaReadiness(t *testing.T) {
 	t.Parallel()
 

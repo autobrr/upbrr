@@ -9,7 +9,7 @@ import (
 )
 
 func isRemovedTracker(name string) bool {
-	return strings.EqualFold(strings.TrimSpace(name), "THR")
+	return strings.EqualFold(strings.TrimSpace(name), "THR") || strings.EqualFold(strings.TrimSpace(name), "NBL")
 }
 
 func isDeprecatedTrackerField(key string) bool {
