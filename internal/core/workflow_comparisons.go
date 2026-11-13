@@ -71,6 +71,7 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
 	}
+	pruneComparisonSources(&retained, snapshot.Comparisons)
 	if instructions.Action == "approve" {
 		if snapshot.Comparisons == nil {
 			return api.MediaArtifactSet{}, nil, errors.New("comparison setup is unavailable")
@@ -94,6 +95,7 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	}
 	retainComparisonCellFacts(&plan, prior)
 	plan.ApprovedFingerprint = ""
+	pruneComparisonSources(&retained, &plan)
 	if instructions.Action == "configure" && len(plan.Sources) == 0 && len(plan.Rows) == 0 && len(attachments) == 0 && len(instructions.VideoSources) == 0 {
 		removeComparisonArtifacts(&snapshot, &retained)
 		snapshot.Comparisons = nil
@@ -146,6 +148,14 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	snapshot.ImageRequirementsPrepared = false
 	snapshot.ImageHostUploadSkipped = false
 	return snapshot, retained, nil
+}
+
+// pruneComparisonSources prevents removed columns from supplying a retained
+// video handle when a later column reuses their ID.
+func pruneComparisonSources(retained *workflowMediaPrivateArtifacts, plan *api.ComparisonPlan) {
+	maps.DeleteFunc(retained.ComparisonSources, func(id string, _ workflowComparisonSource) bool {
+		return plan == nil || !slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool { return source.ID == id })
+	})
 }
 
 func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, release api.ReleaseRef,
@@ -224,9 +234,6 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 	if !mainFound {
 		return errors.New("include the main release input in the comparison columns")
 	}
-	maps.DeleteFunc(retained.ComparisonSources, func(id string, _ workflowComparisonSource) bool {
-		return !slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool { return source.ID == id })
-	})
 	return nil
 }
 
@@ -262,6 +269,16 @@ func verifyComparisonVideos(ctx context.Context, plan api.ComparisonPlan, retain
 func (b workflowMediaBuilder) importWorkflowComparisons(ctx context.Context, release api.ReleaseRef,
 	snapshot *api.MediaArtifactSet, retained *workflowMediaPrivateArtifacts, requested api.ComparisonPlan,
 	attachments []releaseworkflow.StagedMediaAttachment) (api.ComparisonPlan, error) {
+	requested.MainSourceID = comparisons.NormalizeImportID(requested.MainSourceID)
+	for i := range requested.Sources {
+		requested.Sources[i].ID = comparisons.NormalizeImportID(requested.Sources[i].ID)
+	}
+	for r := range requested.Rows {
+		requested.Rows[r].ID = comparisons.NormalizeImportID(requested.Rows[r].ID)
+		for c := range requested.Rows[r].Cells {
+			requested.Rows[r].Cells[c].SourceID = comparisons.NormalizeImportID(requested.Rows[r].Cells[c].SourceID)
+		}
+	}
 	images := make([]comparisons.ImportedImage, 0, len(attachments))
 	incoming := map[api.PublicResourceID]releaseworkflow.StagedMediaAttachment{}
 	used := map[api.PublicResourceID]bool{}
@@ -317,7 +334,7 @@ func (b workflowMediaBuilder) importWorkflowComparisons(ctx context.Context, rel
 	for _, wanted := range requested.Rows {
 		index := slices.IndexFunc(plan.Rows, func(row api.ComparisonRow) bool { return row.ID == wanted.ID })
 		if index < 0 {
-			plan.Rows = append(plan.Rows, api.ComparisonRow{ID: wanted.ID})
+			plan.Rows = append(plan.Rows, api.ComparisonRow{ID: wanted.ID, Cells: []api.ComparisonCell{}})
 			index = len(plan.Rows) - 1
 		}
 		for _, cell := range wanted.Cells {

@@ -141,33 +141,68 @@ func TestComparisonImportReplacementRetainsMappingAndPixels(t *testing.T) {
 	if media.Comparisons.Rows[0].ID == plan.Rows[0].ID {
 		t.Fatal("editing mutated the retained prior revision")
 	}
-	incomplete, err := updated.Comparisons.Clone()
-	if err != nil {
-		t.Fatal(err)
+	replace := func(t *testing.T, request api.ComparisonPlan) api.MediaArtifactSet {
+		t.Helper()
+		request.Rows[0].Cells[0].ArtifactID = "next-replacement"
+		next, _, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: filepath.Join(root, "Example.Movie.mkv"), Generation: 1}, api.TrackerReleaseProjectionSet{}, &updated, private,
+			api.ComparisonInstructions{Action: "configure", Plan: request}, []releaseworkflow.StagedMediaAttachment{{
+				Attachment: api.MediaAttachment{
+					Resource: api.WorkflowResourceRef{ID: "next-replacement"},
+					Kind:     api.MediaArtifactComparison,
+					Purpose:  api.ScreenshotPurposeComparison,
+				},
+				Content: releaseworkflow.StagedMediaContent{Name: "replacement.png", Bytes: content},
+			}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return next
 	}
-	incomplete.Rows = append(incomplete.Rows, api.ComparisonRow{ID: "unmapped", Cells: []api.ComparisonCell{{SourceID: "1"}, {SourceID: "2"}, {SourceID: "3"}}})
-	incomplete.Sources = append(incomplete.Sources, api.ComparisonSource{
-		ID:       "empty-column",
-		Label:    "Pending",
-		Imported: true,
+	t.Run("numeric layout aliases", func(t *testing.T) {
+		request, err := updated.Comparisons.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Rows[0].ID = "0" + request.Rows[0].ID
+		request.MainSourceID = "0" + request.MainSourceID
+		for i := range request.Sources {
+			request.Sources[i].ID = "0" + request.Sources[i].ID
+		}
+		for r := range request.Rows {
+			for c := range request.Rows[r].Cells {
+				request.Rows[r].Cells[c].SourceID = "0" + request.Rows[r].Cells[c].SourceID
+			}
+		}
+		next := replace(t, request)
+		if len(next.Comparisons.Rows) != 2 || next.Comparisons.Rows[0].ID != updated.Comparisons.Rows[0].ID ||
+			len(next.Comparisons.Sources) != 3 || next.Comparisons.MainSourceID != updated.Comparisons.MainSourceID || len(next.Comparisons.Problems) != 0 {
+			t.Fatalf("numeric aliases changed retained layout: %+v", next.Comparisons)
+		}
 	})
-	incomplete.Rows[0].Cells[0].ArtifactID = "next-replacement"
-	updated, _, err = b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: filepath.Join(root, "Example.Movie.mkv"), Generation: 1}, api.TrackerReleaseProjectionSet{}, &updated, private,
-		api.ComparisonInstructions{Action: "configure", Plan: incomplete}, []releaseworkflow.StagedMediaAttachment{{
-			Attachment: api.MediaAttachment{
-				Resource: api.WorkflowResourceRef{ID: "next-replacement"},
-				Kind:     api.MediaArtifactComparison,
-				Purpose:  api.ScreenshotPurposeComparison,
-			},
-			Content: releaseworkflow.StagedMediaContent{Name: "replacement.png", Bytes: content},
-		}}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(updated.Comparisons.Rows) != 3 || updated.Comparisons.Rows[2].ID != "unmapped" || len(updated.Comparisons.Rows[2].Cells) != 3 ||
-		len(updated.Comparisons.Sources) != 4 || len(updated.Comparisons.Problems) == 0 {
-		t.Fatalf("replacement discarded incomplete review intent: %+v", updated.Comparisons)
-	}
+	t.Run("incomplete row serialization", func(t *testing.T) {
+		incomplete, err := updated.Comparisons.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		incomplete.Rows = append(incomplete.Rows,
+			api.ComparisonRow{ID: "unmapped", Cells: []api.ComparisonCell{{SourceID: "1"}, {SourceID: "2"}, {SourceID: "3"}}},
+			api.ComparisonRow{ID: "empty", Cells: []api.ComparisonCell{}},
+		)
+		incomplete.Sources = append(incomplete.Sources, api.ComparisonSource{
+			ID:       "empty-column",
+			Label:    "Pending",
+			Imported: true,
+		})
+		next := replace(t, incomplete)
+		wire, err := next.Comparisons.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(wire.Rows) != 4 || wire.Rows[2].ID != "unmapped" || len(wire.Rows[2].Cells) != 3 || wire.Rows[3].ID != "empty" || wire.Rows[3].Cells == nil ||
+			len(wire.Sources) != 4 || len(wire.Problems) == 0 {
+			t.Fatalf("replacement discarded or nulled incomplete review intent: %+v", wire)
+		}
+	})
 }
 
 func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
@@ -413,6 +448,35 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	}
 	if _, exists := removedPrivate.(workflowMediaPrivateArtifacts).ComparisonSources["other"]; exists {
 		t.Error("removing a column retained a video handle reusable by a new column")
+	}
+	three, err := captured.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	three.Sources = append(three.Sources, api.ComparisonSource{ID: "extra", Label: "Extra"})
+	extra, extraPrivate, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained,
+		api.ComparisonInstructions{
+			Action:       "configure",
+			Plan:         three,
+			VideoSources: []api.ComparisonVideoSelection{{ID: "extra", Path: secondPath}},
+		}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reduced, err := extra.Comparisons.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reduced.Sources = reduced.Sources[:2]
+	for _, action := range []string{"match", "capture"} {
+		_, nextPrivate, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &extra, extraPrivate,
+			api.ComparisonInstructions{Action: action, Plan: reduced}, nil, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := nextPrivate.(workflowMediaPrivateArtifacts).ComparisonSources["extra"]; exists {
+			t.Errorf("%s retained a removed column handle", action)
+		}
 	}
 	b.resolver = workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{VideoPath: secondPath}}
 	restored, restoredPrivate, err := b.RestoreComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 2}, api.TrackerReleaseProjectionSet{}, snapshot, retained, time.Now())

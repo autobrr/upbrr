@@ -37,7 +37,7 @@ type ImportedImage struct {
 func Import(images []ImportedImage, mainSourceID string) (api.ComparisonPlan, []api.ComparisonProblem) {
 	plan := api.ComparisonPlan{
 		Imported:     true,
-		MainSourceID: comparisonImportID(mainSourceID),
+		MainSourceID: NormalizeImportID(mainSourceID),
 		Sources:      []api.ComparisonSource{},
 		Rows:         []api.ComparisonRow{},
 	}
@@ -126,7 +126,7 @@ func InspectImage(payload []byte) (image.Config, string, error) {
 
 func comparisonImportMapping(input ImportedImage) (rowID, sourceID, label string) {
 	if input.RowID != "" || input.SourceID != "" || input.Label != "" {
-		return comparisonImportID(input.RowID), comparisonImportID(input.SourceID), strings.TrimSpace(input.Label)
+		return NormalizeImportID(input.RowID), NormalizeImportID(input.SourceID), strings.TrimSpace(input.Label)
 	}
 	extension := filepath.Ext(input.Name)
 	if !strings.EqualFold(extension, ".png") && !strings.EqualFold(extension, ".jpg") &&
@@ -142,10 +142,12 @@ func comparisonImportMapping(input ImportedImage) (rowID, sourceID, label string
 	if !found || !comparisonImportNumeric(row) || !comparisonImportNumeric(source) {
 		return "", "", ""
 	}
-	return comparisonImportID(row), comparisonImportID(source), strings.TrimSpace(label)
+	return NormalizeImportID(row), NormalizeImportID(source), strings.TrimSpace(label)
 }
 
-func comparisonImportID(value string) string {
+// NormalizeImportID trims an explicit row or source ID and removes numeric zero
+// padding. Non-numeric identities retain their spelling.
+func NormalizeImportID(value string) string {
 	value = strings.TrimSpace(value)
 	if comparisonImportNumeric(value) {
 		value = strings.TrimLeft(value, "0")
