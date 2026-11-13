@@ -710,6 +710,7 @@ func continuationIntentResolvesAction(intent api.WorkflowIntent, current Command
 		legacyTrackerAuthActionKind, legacyTrackerTwoFactorActionKind, api.RequiredActionAuthorizeRules,
 		api.RequiredActionResolveTrackerPreparation,
 		api.RequiredActionApproveTrackers,
+		api.RequiredActionReviewComparisons,
 		api.RequiredActionApproveUpload, //nolint:staticcheck // Retained v1 actions cannot be satisfied by desired intent.
 		api.RequiredActionReprepare,
 		api.RequiredActionReconcileSubmission:
@@ -1036,6 +1037,16 @@ func planContinuationCommandWithReadiness(
 	if !dupesAllowContinuation(current.Projections, current.Dupes) {
 		return nil, ""
 	}
+	if current.Media == nil && current.Continuation.ComparisonRestorePending {
+		return RestoreComparisonsCommand{
+			WorkflowID:       workflowID,
+			ExpectedRevision: revision,
+			IdempotencyKey:   key("restore-comparisons"),
+		}, "restore-comparisons"
+	}
+	if current.Media != nil && !ComparisonMediaReviewSatisfied(*current.Media) {
+		return nil, "comparison-review-required"
+	}
 	if current.Media == nil || !continuationMediaCaptureSatisfied(current, request.Intent.Media) {
 		if request.Intent.Media == nil {
 			return nil, "capture-media"
@@ -1209,6 +1220,7 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		return true
 	}
 	var screenshots, automaticMenus int
+	comparisonScreenshots := ComparisonMainScreenshotIDs(current.Media.Comparisons)
 	for _, artifact := range current.Media.Artifacts {
 		if !artifact.Selected {
 			continue
@@ -1216,6 +1228,10 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot:
 			screenshots++
+		case api.MediaArtifactComparison:
+			if _, reused := comparisonScreenshots[artifact.ID]; reused {
+				screenshots++
+			}
 		case api.MediaArtifactDVDMenu:
 			if artifact.Source == api.ScreenshotSelectionSourceDVDMenu {
 				automaticMenus++
@@ -1240,7 +1256,7 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		return stageSucceeded(current.Media.Status)
 	case api.ScreenshotPurposePreview:
 		return false
-	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
+	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis, api.ScreenshotPurposeComparison:
 		return false
 	}
 	return false
@@ -1362,6 +1378,7 @@ func continuationUnattendedSkipsTrackerAction(intent api.WorkflowIntent, action 
 		api.RequiredActionConfirmRescan,
 		api.RequiredActionConfirmCorrections,
 		api.RequiredActionReviewDuplicates,
+		api.RequiredActionReviewComparisons,
 		api.RequiredActionApproveTrackers,
 		api.RequiredActionApproveUpload, //nolint:staticcheck // Retained v1 action remains a global blocker.
 		api.RequiredActionReprepare,
@@ -1404,6 +1421,10 @@ func normalizeContinuationTrackerIDs(values []api.TrackerID) []api.TrackerID {
 // continuationGoalReached checks retained results against the requested intent.
 // Goals after media capture also require preparation for the requested hosting mode.
 func continuationGoalReached(current CommandResult, request api.ContinueReleaseWorkflowRequest) bool {
+	if workflowGoalRank(request.Goal) > workflowGoalRank(api.WorkflowGoalMediaReady) && current.Media != nil &&
+		!ComparisonMediaReviewSatisfied(*current.Media) {
+		return false
+	}
 	if request.Intent.HDRAnalysis != nil && workflowGoalRank(request.Goal) > workflowGoalRank(api.WorkflowGoalMediaReady) {
 		instructions, err := requestedHDRInstructions(current, request.Intent.HDRAnalysis)
 		if err != nil || !requestedHDRMatches(current, instructions) || !requestedHDRUsable(current.HDRAnalysis) ||
@@ -1630,7 +1651,8 @@ func mediaRequirementsPreparedForIntent(media *api.MediaArtifactSet, skipImageHo
 // need image preparation; hosted variants do not count.
 func mediaHasSelectedLocalImages(media *api.MediaArtifactSet) bool {
 	return media != nil && slices.ContainsFunc(media.Artifacts, func(artifact api.MediaArtifact) bool {
-		return artifact.Selected && (artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu)
+		return artifact.Selected &&
+			(artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu || artifact.Kind == api.MediaArtifactComparison)
 	})
 }
 

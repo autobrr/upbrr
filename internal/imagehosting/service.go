@@ -92,7 +92,8 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, repo repositor
 
 // ListCandidates returns existing local and uploaded screenshot selections for
 // image hosting, deduplicated by local image path. Disc-menu selections retain
-// [api.ScreenshotPurposeMenu]; all other candidates use final purpose.
+// [api.ScreenshotPurposeMenu]. Comparison images remain exclusively in their
+// structured workflow plan rather than becoming ordinary screenshot candidates.
 func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("image hosting: list candidates canceled: %w", err)
@@ -117,7 +118,17 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: %w", err)
 	}
+	comparisonPaths := make(map[string]struct{})
+	for _, shot := range screens {
+		if shot.Purpose == api.ScreenshotPurposeComparison {
+			comparisonPaths[strings.TrimSpace(shot.ImagePath)] = struct{}{}
+		}
+	}
 	uploaded = slices.DeleteFunc(uploaded, func(upload api.UploadedImageLink) bool {
+		if upload.Purpose == api.ScreenshotPurposeComparison {
+			comparisonPaths[strings.TrimSpace(upload.ImagePath)] = struct{}{}
+			return true
+		}
 		return upload.Purpose.IsAnalysis()
 	})
 	selections, err := s.repo.ListFinalSelections(ctx, meta.MediaBinding)
@@ -148,6 +159,9 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	images := make([]api.ScreenshotImage, 0, len(screens))
 	for _, shot := range screens {
 		pathValue := strings.TrimSpace(shot.ImagePath)
+		if _, comparison := comparisonPaths[pathValue]; comparison {
+			continue
+		}
 		if pathValue == "" || !isAllowedImageExt(pathValue) {
 			continue
 		}
@@ -201,6 +215,9 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	}
 	for _, sel := range selections {
 		pathValue := strings.TrimSpace(sel.ImagePath)
+		if _, comparison := comparisonPaths[pathValue]; comparison {
+			continue
+		}
 		if pathValue == "" || !isAllowedImageExt(pathValue) {
 			continue
 		}

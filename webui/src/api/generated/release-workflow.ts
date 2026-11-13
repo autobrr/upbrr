@@ -315,6 +315,93 @@ export type ClientSearchPolicy = Readonly<{
   Skip: boolean;
 }>;
 
+export type ComparisonAnchor = Readonly<{
+  mainSeconds: number;
+  sourceId: string;
+  sourceSeconds: number;
+}>;
+
+export type ComparisonCell = Readonly<{
+  artifactId?: PublicResourceID;
+  confidence?: number | null;
+  contentSha256?: string;
+  frameNumber?: number | null;
+  observedPts?: number | null;
+  pictureType?: string;
+  sourceId: string;
+  timeBaseDenominator?: number;
+  timeBaseNumerator?: number;
+  timestampSeconds?: number | null;
+  warning?: string;
+}>;
+
+export type ComparisonInstructions = Readonly<{
+  action: string;
+  attachments?: readonly MediaAttachment[];
+  expectedFingerprint?: WorkflowFingerprint;
+  plan: ComparisonPlan;
+  videoSources?: readonly ComparisonVideoSelection[];
+}>;
+
+export type ComparisonPlan = Readonly<{
+  anchors?: readonly ComparisonAnchor[];
+  approvedFingerprint?: WorkflowFingerprint;
+  fingerprint: WorkflowFingerprint;
+  imported: boolean;
+  mainSourceId: string;
+  preferences: ComparisonPreferences;
+  problems?: readonly ComparisonProblem[];
+  reuseMainScreenshots: boolean;
+  rows: readonly ComparisonRow[];
+  sceneMix?: ComparisonSceneMix | null;
+  sources: readonly ComparisonSource[];
+  warnings?: readonly string[];
+}>;
+
+export type ComparisonPreferences = Readonly<{
+  count: number;
+  darkPercent: number;
+  motionPercent: number;
+}>;
+
+export type ComparisonProblem = Readonly<{
+  message: string;
+  rowId?: string;
+  sourceId?: string;
+}>;
+
+export type ComparisonRow = Readonly<{
+  cells: readonly ComparisonCell[];
+  excluded: boolean;
+  id: string;
+  scene?: string;
+}>;
+
+export type ComparisonSceneMix = Readonly<{
+  achievedDark: number;
+  achievedMotion: number;
+  requestedDark: number;
+  requestedMotion: number;
+}>;
+
+export type ComparisonSource = Readonly<{
+  allowedFrameTypes?: readonly string[];
+  durationSeconds?: number;
+  fingerprint?: string;
+  frameRate?: number;
+  height?: number;
+  id: string;
+  imported: boolean;
+  label: string;
+  overlay: boolean;
+  width?: number;
+}>;
+
+export type ComparisonVideoSelection = Readonly<{
+  id: string;
+  path: string;
+}>;
+
 export type ContentBinding = Readonly<{
   category: CanonicalCategory;
   providerIds: ProviderIDSet;
@@ -557,6 +644,14 @@ export type DupeSearchEvidence = Readonly<{
   wrongWorkCount?: number;
 }>;
 
+export type EditReleaseWorkflowComparisonsRequest = Readonly<{
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  instructions: ComparisonInstructions;
+  media?: MediaArtifactSetRef | null;
+  workflowId: WorkflowID;
+}>;
+
 export type EditionDisplayPart = Readonly<{
   Feature?: ReleaseFeature;
   Text: string;
@@ -653,13 +748,18 @@ export type FailedTrackerRetryRef = Readonly<{
 }>;
 
 export type FramePreview = Readonly<{
+  comparisonSourceId?: string;
   contentUrl: string;
   discId?: string;
   discName?: string;
   expiresAt: string;
   id: PublicResourceID;
+  observedPts?: number | null;
+  pictureType?: string;
   processing?: ScreenshotProcessing | null;
   release: ReleaseSnapshotRef;
+  timeBaseDenominator?: number;
+  timeBaseNumerator?: number;
   timestampSeconds: number;
   workflowId: WorkflowID;
   workflowRevision: WorkflowRevision;
@@ -1199,6 +1299,7 @@ export type MediaArtifactSet = Readonly<{
   artifacts: readonly MediaArtifact[];
   automaticScreenshotSelection?: boolean;
   captureFingerprint: WorkflowFingerprint;
+  comparisons?: ComparisonPlan | null;
   createdAt: string;
   failedHosts?: readonly string[];
   failures?: readonly WorkflowFailure[];
@@ -1634,6 +1735,8 @@ export type PreparedReleaseDisplay = Readonly<{
 }>;
 
 export type PreviewReleaseWorkflowFrameRequest = Readonly<{
+  comparisonSourceId?: string;
+  comparisonStepDirection?: number;
   discId?: string;
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
@@ -1991,6 +2094,11 @@ export type ReleaseWorkflowUploadClientSearch = Readonly<{
   skip?: boolean | null;
 }>;
 
+export type ReleaseWorkflowUploadComparisonApproval = Readonly<{
+  confirmed: boolean;
+  expectedFingerprint: WorkflowFingerprint;
+}>;
+
 export type ReleaseWorkflowUploadConfirmation = Readonly<{
   confirmed: boolean;
 }>;
@@ -2058,6 +2166,7 @@ export type ReleaseWorkflowUploadFeedback = Readonly<{
 export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "trackerPreparation" | "duplicateReview" | "trackerApproval" | "uploadApproval" | "reprepare" | "reconciliation";
 
 export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
+  comparisonApproval?: ReleaseWorkflowUploadComparisonApproval | null;
   duplicateReview?: ReleaseWorkflowUploadDuplicateReview | null;
   kind: ReleaseWorkflowUploadFeedbackKind;
   metadataSelection?: ReleaseWorkflowUploadMetadataSelection | null;
@@ -2178,6 +2287,7 @@ export type ReleaseWorkflowUploadScreenshots = Readonly<{
   artifactIds?: readonly PublicResourceID[];
   comparisonPaths?: readonly string[];
   comparisonPrimaryIndex?: number | null;
+  comparisonReuseMain?: boolean;
   count?: number | null;
   countIsDefault?: boolean;
   frames?: readonly number[];
@@ -3328,6 +3438,7 @@ export type WorkflowAuthority = Readonly<{
 
 export type WorkflowContinuation = Readonly<{
   availableGoals: readonly GoalAvailability[];
+  comparisonRestorePending?: boolean;
   disposition: WorkflowDisposition;
   duplicateReusePending?: boolean;
   events?: readonly WorkflowEvent[];

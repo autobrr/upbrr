@@ -89,6 +89,14 @@ func CommandFromRequest(request any) (Command, error) {
 			Instructions:     request.Instructions,
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
+	case api.EditReleaseWorkflowComparisonsRequest:
+		return EditComparisonsCommand{
+			WorkflowID:       request.WorkflowID,
+			ExpectedRevision: request.ExpectedRevision,
+			Media:            request.Media,
+			Instructions:     request.Instructions,
+			IdempotencyKey:   request.IdempotencyKey,
+		}, nil
 	case api.SelectReleaseWorkflowHDRComparisonRequest:
 		return SelectHDRComparisonCommand{
 			WorkflowID:       request.WorkflowID,

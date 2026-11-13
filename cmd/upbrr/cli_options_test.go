@@ -1553,6 +1553,7 @@ func TestBuildCLIRequestScreenshotOverrides(t *testing.T) {
 		"--manual_frames", "100,250,500",
 		"--comparison", comparisonDir,
 		"--comparison_index", "2",
+		"--comparison-use-main-screenshots",
 		"movie.mkv",
 	})
 	if err != nil {
@@ -1570,6 +1571,9 @@ func TestBuildCLIRequestScreenshotOverrides(t *testing.T) {
 	}
 	if req.ScreenshotOverrides.ComparisonPrimaryIndex == nil || *req.ScreenshotOverrides.ComparisonPrimaryIndex != 2 {
 		t.Fatalf("expected comparison primary index override, got %#v", req.ScreenshotOverrides.ComparisonPrimaryIndex)
+	}
+	if !req.ScreenshotOverrides.ComparisonReuseMain {
+		t.Fatal("comparison main screenshot opt-in was dropped")
 	}
 }
 

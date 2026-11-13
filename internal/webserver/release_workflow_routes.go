@@ -52,6 +52,7 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 	registerReleaseWorkflowCommand[api.DeleteReleaseWorkflowMediaRequest](s, mux, "DeleteReleaseWorkflowMedia", false)
 	registerReleaseWorkflowCommand[api.ReorderReleaseWorkflowMediaRequest](s, mux, "ReorderReleaseWorkflowMedia", false)
 	registerReleaseWorkflowCommand[api.AttachReleaseWorkflowMediaRequest](s, mux, "AttachReleaseWorkflowMedia", false)
+	registerReleaseWorkflowCommand[api.EditReleaseWorkflowComparisonsRequest](s, mux, "EditReleaseWorkflowComparisons", true)
 	registerReleaseWorkflowCommand[api.UploadReleaseWorkflowImagesRequest](s, mux, "UploadReleaseWorkflowImages", true)
 	registerReleaseWorkflowCommand[api.RetryReleaseWorkflowImageHostRequest](s, mux, "RetryReleaseWorkflowImageHost", true)
 	registerReleaseWorkflowCommand[api.RemoveReleaseWorkflowHostedImagesRequest](s, mux, "RemoveReleaseWorkflowHostedImages", false)
@@ -210,6 +211,8 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 			request.ExpectedRevision,
 			request.DiscID,
 			request.TimestampSeconds,
+			request.ComparisonSourceID,
+			request.ComparisonStepDirection,
 		)
 		if err != nil {
 			writeAppError(w, err)

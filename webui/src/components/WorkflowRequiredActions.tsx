@@ -12,6 +12,7 @@ const actionRoutes: Readonly<Record<string, ReleaseRoute>> = {
   reprepare: "input",
   select_metadata: "input",
   select_playlist: "input",
+  review_comparisons: "screenshots",
 };
 
 const actionLabels: Readonly<Record<string, string>> = {
@@ -21,6 +22,7 @@ const actionLabels: Readonly<Record<string, string>> = {
   reprepare: "Review source",
   select_metadata: "Review metadata",
   select_playlist: "Select playlist",
+  review_comparisons: "Review comparison images",
 };
 
 const actionOwnedByDupeCard = (action: RequiredAction) =>

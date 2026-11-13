@@ -31,6 +31,10 @@ import type {
   MediaTrackFacts,
   WorkflowGoal,
   WorkflowIntent,
+  ComparisonInstructions,
+  ComparisonSource,
+  FramePreview,
+  WorkflowResourceRef,
 } from "../api/generated/release-workflow";
 import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
@@ -79,6 +83,8 @@ import type {
 } from "./types";
 
 const SessionContext = createContext<ReleaseSession | null>(null);
+const comparisonPreviewRendering = (source: ComparisonSource) =>
+  JSON.stringify([source.overlay, source.overlay ? source.label : ""]);
 
 type WorkflowFacet = "screenshots" | "menuImages" | "uploadedImages" | "descriptions";
 type ControllerKey =
@@ -293,6 +299,19 @@ export function ReleaseSessionProvider({
     workflowID: string;
     operationID: string;
   }> | null>(null);
+  const [comparisonPreviews, setComparisonPreviews] = useState<
+    Readonly<
+      Record<
+        string,
+        Readonly<{
+          workflowID: string;
+          fingerprint: string;
+          rendering: string;
+          preview: FramePreview;
+        }>
+      >
+    >
+  >({});
   const [questionnaireRefresh, setQuestionnaireRefresh] = useState<Readonly<{
     key: string;
     status: "running" | "ready" | "error";
@@ -2432,21 +2451,35 @@ export function ReleaseSessionProvider({
     // Authority invalidation can replace a plan request without accepting a new operation.
     const previousController = controllers.current.screenshots;
     if (state.screenshots.status !== "running") abortController("screenshots");
+    let current = workflowView.current;
+    if (!current) return false;
+    if (current.continuation.comparisonRestorePending) {
+      if (controllers.current.screenshots) return false;
+      const restored = await runBackendWorkflow(
+        async (value, commandID, signal) => {
+          current = await continueBackendGoal(value, "media_ready", {}, commandID, signal);
+          return current;
+        },
+        screenshotCommandCallbacks(),
+        previousController,
+      );
+      if (!restored) return false;
+    }
     setScreenshotCommand(null);
     const command = beginWorkflow("screenshots", access.screenshots.reason, previousController);
-    if (!command || !workflowView.current) return false;
+    if (!command) return false;
     try {
       const workflowPlan = await activePorts.workflow.mediaPlan(
-        workflowView.current.workflow.id,
+        current.workflow.id,
         command.controller.signal,
       );
       if (command.controller.signal.aborted) return false;
-      const selectedArtifactIDs = (workflowView.current.media?.artifacts || [])
+      const selectedArtifactIDs = (current.media?.artifacts || [])
         .filter((artifact) => artifact.kind === "screenshot" && artifact.selected)
         .sort((left, right) => (left.order || 0) - (right.order || 0))
         .map((artifact) => artifact.id);
       const plan: ScreenshotPlan = {
-        SourcePath: workflowView.current.release?.release.Source.SourcePath || "",
+        SourcePath: current.release?.release.Source.SourcePath || "",
         SavedImagePlanID: workflowPlan.id,
         DiscType: workflowPlan.discType || "",
         Discs: (workflowPlan.discs || []).map((disc) => ({
@@ -2486,7 +2519,7 @@ export function ReleaseSessionProvider({
       if (
         workflowPlan.autoAdoptSavedImages &&
         workflowPlan.savedTrackerImages?.length &&
-        workflowView.current.media?.savedImagePlanId !== workflowPlan.id
+        current.media?.savedImagePlanId !== workflowPlan.id
       ) {
         // Another facet can acquire the workflow while the plan request is pending.
         if (controllers.current.workflow) {
@@ -2636,6 +2669,61 @@ export function ReleaseSessionProvider({
     }
   };
 
+  const previewComparisonFrame = async (
+    sourceID: string,
+    timestampSeconds: number,
+    stepDirection?: -1 | 0 | 1,
+  ): Promise<FramePreview | null> => {
+    const current = workflowView.current;
+    const source = current?.media?.comparisons?.sources.find(
+      (candidate) => candidate.id === sourceID,
+    );
+    if (!current || !source || source.imported) return null;
+    const command = beginWorkflow("screenshots", access.screenshots.reason);
+    if (!command) return null;
+    try {
+      const preview = await activePorts.workflow.previewFrame(
+        current,
+        "",
+        timestampSeconds,
+        `comparison-preview-${current.workflow.id}-${current.workflow.revision}-${sourceID}-${timestampSeconds}-${stepDirection || 0}`,
+        command.controller.signal,
+        sourceID,
+        stepDirection,
+      );
+      if (command.controller.signal.aborted) return null;
+      if (preview.comparisonSourceId !== sourceID)
+        throw new Error("The preview source changed. Retry the preview.");
+      setComparisonPreviews((previous) => ({
+        ...previous,
+        [sourceID]: {
+          workflowID: current.workflow.id,
+          fingerprint: source.fingerprint || "",
+          rendering: comparisonPreviewRendering(source),
+          preview,
+        },
+      }));
+      dispatch({
+        type: "comparison_previewed",
+        sessionRevision: command.sessionRevision,
+        revision: command.revision,
+      });
+      return preview;
+    } catch (error) {
+      failWorkflow("screenshots", command, error);
+      return null;
+    } finally {
+      finishWorkflow("screenshots", command);
+    }
+  };
+
+  const editComparisons = (instructions: ComparisonInstructions): Promise<boolean> =>
+    runBackendWorkflow(
+      (current, commandID, signal) =>
+        activePorts.workflow.editComparisons(current, instructions, commandID, signal),
+      screenshotCommandCallbacks(),
+    );
+
   const loadMenuImages = async (): Promise<boolean> => {
     const command = beginWorkflow("menuImages", access.menuImages.reason);
     if (!command || !workflowView.current) return false;
@@ -2685,7 +2773,10 @@ export function ReleaseSessionProvider({
       const candidates = (media?.artifacts || [])
         .filter(
           (artifact) =>
-            artifact.selected && (artifact.kind === "screenshot" || artifact.kind === "dvd_menu"),
+            artifact.selected &&
+            (artifact.kind === "screenshot" ||
+              artifact.kind === "dvd_menu" ||
+              artifact.kind === "comparison"),
         )
         .map((artifact, index) => ({
           image: {
@@ -3047,7 +3138,10 @@ export function ReleaseSessionProvider({
     return (current?.media?.artifacts || [])
       .filter(
         (artifact) =>
-          artifact.selected && (artifact.kind === "screenshot" || artifact.kind === "dvd_menu"),
+          artifact.selected &&
+          (artifact.kind === "screenshot" ||
+            artifact.kind === "dvd_menu" ||
+            artifact.kind === "comparison"),
       )
       .map((artifact, index) => ({
         image: {
@@ -3438,6 +3532,20 @@ export function ReleaseSessionProvider({
     return cancelAcceptedCandidate(attempt, attempt.operation.workflowID, attempt.operation.status);
   };
 
+  const currentComparisonPreviews = Object.entries(comparisonPreviews).flatMap(
+    ([sourceID, retained]) => {
+      const source = workflowView.current?.media?.comparisons?.sources.find(
+        (candidate) => candidate.id === sourceID,
+      );
+      if (
+        retained.workflowID !== workflowView.current?.workflow.id ||
+        !source ||
+        (source.fingerprint || "") !== retained.fingerprint
+      )
+        return [];
+      return [{ sourceID, source, retained }];
+    },
+  );
   const session: ReleaseSession = {
     workflow: {
       view: workflowView,
@@ -4092,10 +4200,87 @@ export function ReleaseSessionProvider({
           : "",
     },
     screenshots: {
+      comparisons: {
+        view: {
+          workflowID: workflowView.current?.workflow.id || "",
+          plan: workflowView.current?.media?.comparisons || null,
+          artifacts: workflowView.current?.media
+            ? {
+                ...workflowView.current.media,
+                artifacts: workflowView.current.media.artifacts.map((artifact) => ({
+                  ...artifact,
+                  url:
+                    artifact.kind === "hosted_image" ? artifact.url : workflowMediaURL(artifact.id),
+                })),
+              }
+            : null,
+          previews: Object.fromEntries(
+            currentComparisonPreviews
+              .filter(
+                ({ source, retained }) => comparisonPreviewRendering(source) === retained.rendering,
+              )
+              .map(({ sourceID, retained }) => [sourceID, retained.preview]),
+          ),
+          previewPositions: Object.fromEntries(
+            currentComparisonPreviews.map(({ sourceID, retained }) => [
+              sourceID,
+              retained.preview.timestampSeconds,
+            ]),
+          ),
+          busy: screenshotStatus === "running" || workflowView.status === "running",
+          blockedReason: screenshotMutationBlockedReason || access.screenshots.reason,
+          error: screenshotError || workflowView.failure?.Message || "",
+        },
+        edit: editComparisons,
+        preview: previewComparisonFrame,
+        importImages: (files, plan, replacement) =>
+          runBackendWorkflow(async (current, commandID, signal) => {
+            const resources: WorkflowResourceRef[] = [];
+            for (const file of files) {
+              resources.push(await activePorts.workflow.stageMedia(current, file, signal));
+              if (cancellation.current?.controller.signal === signal)
+                await awaitWorkflowCommand(current, signal);
+            }
+            const edited =
+              replacement && resources[0]
+                ? {
+                    ...plan,
+                    rows: plan.rows.map((row) =>
+                      row.id === replacement.rowID
+                        ? {
+                            ...row,
+                            cells: [
+                              ...row.cells.filter((cell) => cell.sourceId !== replacement.sourceID),
+                              { sourceId: replacement.sourceID, artifactId: resources[0]!.id },
+                            ],
+                          }
+                        : row,
+                    ),
+                  }
+                : plan;
+            return activePorts.workflow.editComparisons(
+              current,
+              {
+                action: "configure",
+                plan: edited,
+                attachments: resources.map((resource, order) => ({
+                  resource,
+                  kind: "comparison",
+                  purpose: "comparison",
+                  order,
+                })),
+              },
+              commandID,
+              signal,
+            );
+          }, screenshotCommandCallbacks()),
+      },
       view: {
         revision: state.screenshots.revision,
         status: screenshotStatus,
-        plan: state.screenshots.value,
+        plan: workflowView.current?.continuation.comparisonRestorePending
+          ? null
+          : state.screenshots.value,
         artifacts: workflowView.current?.media
           ? {
               ...workflowView.current.media,
@@ -4107,6 +4292,9 @@ export function ReleaseSessionProvider({
             }
           : null,
         workflowMode: Boolean(workflowView.current),
+        autoLoadPlan:
+          requirements.needsImages ||
+          Boolean(workflowView.current?.continuation.comparisonRestorePending),
         selections: state.screenshots.selections,
         finalSelectionArtifactIDs: selectedScreenshotIDs,
         previewImage: state.screenshots.previewImage,

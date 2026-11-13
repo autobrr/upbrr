@@ -627,6 +627,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
       sizeBytes: file.size,
     }),
     attachMedia: async (current) => current,
+    editComparisons: async (current) => current,
     uploadImages: async (current) => current,
     retryImageHost: async (current) => current,
     removeHostedImages: async (current) => current,
@@ -654,6 +655,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     reorderMedia: async (...args) => remember(await configured.reorderMedia(...args)),
     deleteMedia: async (...args) => remember(await configured.deleteMedia(...args)),
     attachMedia: async (...args) => remember(await configured.attachMedia(...args)),
+    editComparisons: async (...args) => remember(await configured.editComparisons(...args)),
     analyzeHDR: async (...args) => remember(await configured.analyzeHDR(...args)),
     selectHDRComparison: async (...args) => remember(await configured.selectHDRComparison(...args)),
     setHDRAnalysisEnabled: async (...args) =>
@@ -907,7 +909,8 @@ describe("tracker workflow capabilities", () => {
       })),
     });
     const none = routeAccess(available(), false, { needsImages: false, needsDescriptions: false });
-    expect(none.screenshots.available).toBe(false);
+    expect(none.screenshots.available).toBe(true);
+    expect(none.uploadedImages.available).toBe(false);
     expect(none.descriptions.available).toBe(false);
     expect(none.upload.available).toBe(true);
 
@@ -954,7 +957,7 @@ describe("tracker workflow capabilities", () => {
     expect(noLongerApplicable.duplicates.reasonCode).toBe("operation_active");
     expect(noLongerApplicable.trackerData.reasonCode).toBeUndefined();
     expect(noLongerApplicable.trackerData.reason).toBe("No tracker data is available.");
-    expect(noLongerApplicable.screenshots.reasonCode).toBeUndefined();
+    expect(noLongerApplicable.screenshots.reasonCode).toBe("operation_active");
     expect(noLongerApplicable.uploadedImages.reasonCode).toBeUndefined();
     expect(noLongerApplicable.descriptions.reasonCode).toBeUndefined();
   });
@@ -9670,6 +9673,106 @@ describe("useReleaseSession", () => {
 });
 
 describe("saved-image plan authority", () => {
+  it("restores pending comparisons on the optional screenshot page without capture or hosting", async () => {
+    const workflowID = "workflow-reopened-comparisons";
+    let current = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 7),
+      preview("C:\\media\\Example.Release.2026.mkv", 1),
+    );
+    current = {
+      ...current,
+      continuation: { ...current.continuation, comparisonRestorePending: true },
+    };
+    const events: string[] = [];
+    const captureMedia = vi.fn(async (value: ReleaseWorkflowCurrent) => value);
+    const uploadImages = vi.fn(async (value: ReleaseWorkflowCurrent) => value);
+    const baseMediaPlan = workflowPorts().mediaPlan;
+    const continueWorkflow = vi.fn(async (request: ContinueReleaseWorkflowRequest) => {
+      events.push("restore");
+      expect(request.goal).toBe("media_ready");
+      expect(request.intent.media).toBeUndefined();
+      if (!current.continuation.comparisonRestorePending) return current;
+      current = {
+        ...current,
+        workflow: {
+          ...current.workflow,
+          revision: 8,
+          media: { id: "retained-media", revision: 8 },
+        },
+        continuation: { ...current.continuation, comparisonRestorePending: false },
+        media: {
+          id: "retained-media",
+          workflowId: workflowID,
+          revision: 8,
+          release: current.workflow.release!,
+          releaseRef: { SourcePath: "C:\\media\\Example.Release.2026.mkv", Generation: 1 },
+          projectionSet: { id: "projections-1", revision: 1 },
+          captureFingerprint: "capture",
+          requirementsFingerprint: "requirements",
+          imageRequirementsPrepared: false,
+          artifacts: [],
+          comparisons: {
+            imported: true,
+            sources: ["Source", "Encode"].map((label, index) => ({
+              id: String(index + 1),
+              label,
+              imported: true,
+              overlay: false,
+            })),
+            rows: [],
+            mainSourceId: "1",
+            reuseMainScreenshots: false,
+            preferences: { count: 1, darkPercent: 0, motionPercent: 0 },
+            fingerprint: "restored-content",
+          },
+          status: "completed",
+          createdAt: "2026-11-13T00:00:00Z",
+        },
+      };
+      return current;
+    });
+    const ports = portsFor({
+      resumeWorkflowID: workflowID,
+      workflow: workflowPorts({
+        current: async () => current,
+        continue: continueWorkflow,
+        captureMedia,
+        uploadImages,
+        mediaPlan: async (...args) => {
+          events.push("plan");
+          return baseMediaPlan(...args);
+        },
+      }),
+    });
+    function RestoredScreenshots() {
+      const session = useReleaseSession();
+      return (
+        <ScreenshotsPage
+          facet={session.screenshots}
+          setLightboxImage={vi.fn()}
+          setLightboxAlt={vi.fn()}
+        />
+      );
+    }
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          {children}
+          <RestoredScreenshots />
+        </ReleaseSessionProvider>
+      ),
+    });
+    await waitFor(() => expect(result.current.screenshots.view.plan).not.toBeNull());
+    expect(events[0]).toBe("restore");
+    expect(events[events.length - 1]).toBe("plan");
+    expect(
+      result.current.screenshots.comparisons.view.plan?.sources.map((source) => source.label),
+    ).toEqual(["Source", "Encode"]);
+    expect(result.current.screenshots.view.autoLoadPlan).toBe(false);
+    expect(captureMedia).not.toHaveBeenCalled();
+    expect(uploadImages).not.toHaveBeenCalled();
+  });
+
   it.each([
     "metadata refresh",
     "tracker reassessment",

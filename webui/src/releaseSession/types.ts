@@ -47,6 +47,9 @@ import type {
   RequiredAction,
   ReleaseWorkflowCurrent,
   ScreenshotProcessing,
+  ComparisonInstructions,
+  ComparisonPlan,
+  FramePreview,
   TrackerLaneOutcome,
   SubmissionExclusion,
   TrackerPreflightAssessment,
@@ -281,12 +284,15 @@ export type DuplicatesFacet = Readonly<{
 
 /** Screenshot planning, generation, preview, removal, ordering, and final selection state. */
 export type ScreenshotsFacet = Readonly<{
+  comparisons: ComparisonsFacet;
   view: Readonly<{
     revision: number;
     status: FacetStatus;
     plan: ScreenshotPlan | null;
     artifacts?: MediaArtifactSet | null;
     workflowMode?: boolean;
+    /** Optional comparisons do not enable automatic ordinary screenshot planning. */
+    autoLoadPlan?: boolean;
     selections: readonly ScreenshotSelection[];
     finalSelectionArtifactIDs: readonly string[];
     previewImage: string;
@@ -314,6 +320,31 @@ export type ScreenshotsFacet = Readonly<{
   selectArtifact(artifactID: string, selected: boolean): Promise<boolean>;
   deleteArtifacts(artifactIDs: readonly string[]): Promise<boolean>;
   readImage(artifactID: string): Promise<string>;
+}>;
+
+/** Retained comparison rows, source previews and explicit review intents. */
+export type ComparisonsFacet = Readonly<{
+  view: Readonly<{
+    workflowID: string;
+    plan: ComparisonPlan | null;
+    artifacts: MediaArtifactSet | null;
+    previews: Readonly<Record<string, FramePreview>>;
+    previewPositions: Readonly<Record<string, number>>;
+    busy: boolean;
+    blockedReason: string;
+    error: string;
+  }>;
+  edit(instructions: ComparisonInstructions): Promise<boolean>;
+  preview(
+    sourceID: string,
+    timestampSeconds: number,
+    stepDirection?: -1 | 0 | 1,
+  ): Promise<FramePreview | null>;
+  importImages(
+    files: readonly File[],
+    plan: ComparisonPlan,
+    replacement?: Readonly<{ rowID: string; sourceID: string }>,
+  ): Promise<boolean>;
 }>;
 
 /** Exact prepared-resource selection submitted for one audio-analysis attempt. */

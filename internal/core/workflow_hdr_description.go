@@ -138,7 +138,7 @@ func resolveWorkflowDescriptionMedia(
 	privateMedia any,
 	media api.MediaArtifactSet,
 ) (*api.ExactMediaAssets, error) {
-	exact, err := resolveWorkflowExactMedia(privateMedia, media)
+	exact, err := resolveWorkflowExactMedia(ctx, privateMedia, media)
 	if err != nil {
 		return nil, err
 	}

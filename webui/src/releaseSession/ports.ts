@@ -7,6 +7,7 @@ import type {
   AudioAnalysisInstructions,
   ContinueReleaseWorkflowRequest,
   FramePreview,
+  ComparisonInstructions,
   MediaPlan,
   OpenActiveInputRequest,
   CancelActiveInputOpenRequest,
@@ -110,7 +111,15 @@ export type ReleaseWorkflowPorts = Readonly<{
     timestampSeconds: number,
     idempotencyKey: string,
     signal: AbortSignal,
+    comparisonSourceID?: string,
+    comparisonStepDirection?: -1 | 0 | 1,
   ): Promise<FramePreview>;
+  editComparisons(
+    current: ReleaseWorkflowCurrent,
+    instructions: ComparisonInstructions,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
   setMediaSelection(
     current: ReleaseWorkflowCurrent,
     artifactIDs: readonly string[],

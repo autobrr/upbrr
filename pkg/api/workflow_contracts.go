@@ -556,6 +556,8 @@ const (
 	MediaArtifactDVDMenu MediaArtifactKind = "dvd_menu"
 	// MediaArtifactHostedImage identifies a hosted image result.
 	MediaArtifactHostedImage MediaArtifactKind = "hosted_image"
+	// MediaArtifactComparison is one identified cell in a reviewed comparison row.
+	MediaArtifactComparison MediaArtifactKind = "comparison"
 )
 
 // MediaArtifact is a safe opaque projection of one retained private artifact.
@@ -601,6 +603,7 @@ type MediaCaptureInstructions struct {
 
 // MediaArtifactSet retains generation- and projection-bound media results.
 type MediaArtifactSet struct {
+	Comparisons *ComparisonPlan `json:"comparisons,omitempty"`
 	// AutomaticScreenshotSelection records known automatic screenshot intent.
 	// False includes legacy/unknown and explicit selections; imported references must not expand those selections.
 	AutomaticScreenshotSelection bool                           `json:"automaticScreenshotSelection,omitempty"`

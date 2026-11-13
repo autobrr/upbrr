@@ -136,7 +136,7 @@ func TestWorkflowDescriptionUsesExactAudioAnalysisWithoutAddingScreenshots(t *te
 			},
 		}},
 	}
-	exact, err := resolveWorkflowExactMedia(releaseworkflow.DescriptionResources{
+	exact, err := resolveWorkflowExactMedia(t.Context(), releaseworkflow.DescriptionResources{
 		Media:         workflowMediaPrivateArtifacts{},
 		AudioAnalysis: analysis,
 		AudioPaths:    descriptionAudioPathsFake{path: graphPath},
@@ -156,7 +156,7 @@ func TestWorkflowDescriptionUsesExactAudioAnalysisWithoutAddingScreenshots(t *te
 		t.Fatal("audio assets were not detached")
 	}
 	analysis.Revision = 8
-	changed, err := resolveWorkflowExactMedia(releaseworkflow.DescriptionResources{
+	changed, err := resolveWorkflowExactMedia(t.Context(), releaseworkflow.DescriptionResources{
 		Media:         workflowMediaPrivateArtifacts{},
 		AudioAnalysis: analysis,
 		AudioPaths:    descriptionAudioPathsFake{path: graphPath},
@@ -487,7 +487,7 @@ func TestResolveWorkflowExactMediaKeepsChannelsAndHostedVariantsSeparate(t *test
 		},
 	}
 
-	exact, err := resolveWorkflowExactMedia(private, media)
+	exact, err := resolveWorkflowExactMedia(t.Context(), private, media)
 	if err != nil {
 		t.Fatalf("resolve exact media: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestResolveWorkflowExactMediaKeepsChannelsAndHostedVariantsSeparate(t *test
 			media.Artifacts[index].Selected = false
 		}
 	}
-	exact, err = resolveWorkflowExactMedia(private, media)
+	exact, err = resolveWorkflowExactMedia(t.Context(), private, media)
 	if err != nil {
 		t.Fatalf("resolve deselected media: %v", err)
 	}

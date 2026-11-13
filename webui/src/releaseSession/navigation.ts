@@ -56,13 +56,7 @@ export const routeAccess = (
               "Complete the required facts on Input and refresh metadata before opening Dupe Check.",
           }
         : trackerAssessment,
-    screenshots: {
-      available: media.available && requirements.needsImages,
-      reasonCode: requirements.needsImages ? media.reasonCode : undefined,
-      reason: requirements.needsImages
-        ? media.reason
-        : "Selected trackers do not use shared screenshots.",
-    },
+    screenshots: media,
     menuImages: media,
     uploadedImages: {
       available: media.available && requirements.needsImages,

@@ -65,7 +65,23 @@ Existing description images are marked with unknown capture timestamps and prove
 
 Unselected or deleted screenshots are excluded from the links shown on **Upload Images** and from generated descriptions. You can select an unselected screenshot again to include it.
 
-Review the final screenshot selection and order before continuing. Existing URLs are reused only when the destination tracker and chosen image host allow them; other images need rehosting. Imported comparison blocks remain part of the description and do not count as ordinary screenshots. See [image-host requirements](./settings/image-hosting.md).
+Review the final screenshot selection and order before continuing. Existing URLs are reused only when the destination tracker and chosen image host allow them; other images need rehosting. Existing comparison blocks remain part of the description. Structured comparison sets can optionally supply their main column as ordinary screenshots; other columns never count toward screenshot requirements. See [image-host requirements](./settings/image-hosting.md).
+
+### Comparison sets
+
+Open **Comparisons** before ordinary screenshot capture. Choose videos or **Import existing comparisons**. Each column identifies one source; each row contains images of the same moment from every column. Comparison videos remain separate from the main release input.
+
+For videos, add the other files, label and order their columns, and apply the setup. Each source has independent preview, timeline, I/P/B preferences and optional comparison overlays. Overlay labels accept up to 80 ASCII letters, digits, spaces, dots, dashes and underscores. Previous/next preview controls select adjacent decoded frames; FPS-based seek positions are estimates, not verified frame ordinals. Choose the row count and dark/motion preferences, then run automatic matching. Resolved rows immediately retain strict preview captures for inspection; these are not approved or uploaded. Matching scores describe visual similarity, not a probability or proof of identity. Review uncertain proposals, add manual correspondence anchors, or correct individual timestamps. A single opening anchor does not establish correspondence across later edits. Missing scenes remain unresolved; correct or exclude those rows before capture.
+
+Capture the comparison rows, open their images at full size, and inspect actual timestamps, picture types and processing outcomes. Unsupported picture-type preferences keep the matching moment and report the actual selected type. Captures cannot silently move to another frame to recover from blank output. Correct the correspondence and recapture when necessary. Frame ordinals remain unknown unless established by the decoder.
+
+Prepared-image imports do not require the original videos. Names such as `01-01-source.png`, `01-02-encode.png` and `01-03-filtered.png` identify one complete row. Numeric IDs determine initial ordering; zero padding does not create a different group. You can correct labels, order and mappings, replace images, or explicitly exclude rows. Duplicate cells, unreadable images and incomplete rows require correction. Imported pixels remain unchanged, with unknown video timing and processing.
+
+Select the source column belonging to the main release, and choose whether to reuse it as ordinary screenshots. Reuse preserves the exact images and uploads; leaving it disabled preserves the separate ordinary screenshot flow. Normal screenshot requirements still apply.
+
+**Approve reviewed comparison images** only after inspecting the retained rows. Approval binds their pixels, mapping and settings. Changes require renewed review. Image uploading and downstream description preparation wait for this approval, including after reload. Hosting retries preserve row/column identity; descriptions cannot silently truncate incomplete rows or shift images between columns.
+
+After restarting upbrr, reopen the input and run duplicate checks again. For the same verified input, the comparison setup and retained images are offered again on Screenshots; review them before uploading in the new workflow. A metadata refresh that creates a new prepared generation also retains the setup and requires renewed review.
 
 ### Generate audio analysis
 

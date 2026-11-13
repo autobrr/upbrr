@@ -233,11 +233,13 @@ type ReleaseWorkflowUploadScreenshots struct {
 	Count *int `json:"count,omitempty"`
 	// CountIsDefault allows tracker policy to replace automatic capture with
 	// imported references. Omitted and false retain explicit-count semantics.
-	CountIsDefault         bool               `json:"countIsDefault,omitempty"`
-	Frames                 []int              `json:"frames,omitempty"`
-	ComparisonPaths        []string           `json:"comparisonPaths,omitempty"`
-	ComparisonPrimaryIndex *int               `json:"comparisonPrimaryIndex,omitempty"`
-	ArtifactIDs            []PublicResourceID `json:"artifactIds,omitempty"`
+	CountIsDefault         bool     `json:"countIsDefault,omitempty"`
+	Frames                 []int    `json:"frames,omitempty"`
+	ComparisonPaths        []string `json:"comparisonPaths,omitempty"`
+	ComparisonPrimaryIndex *int     `json:"comparisonPrimaryIndex,omitempty"`
+	// ComparisonReuseMain explicitly reuses the main column as normal screenshots.
+	ComparisonReuseMain bool               `json:"comparisonReuseMain,omitempty"`
+	ArtifactIDs         []PublicResourceID `json:"artifactIds,omitempty"`
 }
 
 // ReleaseWorkflowUploadDVDMenus carries automatic and manual DVD-menu intent.
@@ -344,8 +346,8 @@ func (r CreateReleaseWorkflowUploadRequest) Validate() error {
 	}
 	if r.Media.Screenshots.ComparisonPrimaryIndex != nil {
 		index := *r.Media.Screenshots.ComparisonPrimaryIndex
-		if index < 1 || index > len(r.Media.Screenshots.ComparisonPaths) {
-			return errors.New("comparison primary index must identify a supplied comparison path")
+		if index < 1 || len(r.Media.Screenshots.ComparisonPaths) == 0 {
+			return errors.New("comparison primary index must be a positive source-group number with comparison inputs")
 		}
 	}
 	if r.Media.DVDMenus.MaxItems != nil && *r.Media.DVDMenus.MaxItems < 0 {
@@ -452,6 +454,7 @@ const (
 	ReleaseWorkflowUploadFeedbackTrackerPreparation ReleaseWorkflowUploadFeedbackKind = "trackerPreparation"
 	ReleaseWorkflowUploadFeedbackDuplicateReview    ReleaseWorkflowUploadFeedbackKind = "duplicateReview"
 	ReleaseWorkflowUploadFeedbackTrackerApproval    ReleaseWorkflowUploadFeedbackKind = "trackerApproval"
+	ReleaseWorkflowUploadFeedbackComparisonApproval ReleaseWorkflowUploadFeedbackKind = "comparisonApproval"
 	// Deprecated: final upload approval is no longer emitted by runtime workflows.
 	ReleaseWorkflowUploadFeedbackUploadApproval ReleaseWorkflowUploadFeedbackKind = "uploadApproval"
 	ReleaseWorkflowUploadFeedbackReprepare      ReleaseWorkflowUploadFeedbackKind = "reprepare"
@@ -486,6 +489,7 @@ type ReleaseWorkflowUploadFeedbackResponse struct {
 	TrackerPreparation    *ReleaseWorkflowUploadConfirmation          `json:"trackerPreparation,omitempty"`
 	DuplicateReview       *ReleaseWorkflowUploadDuplicateReview       `json:"duplicateReview,omitempty"`
 	TrackerApproval       *ReleaseWorkflowUploadTrackerApproval       `json:"trackerApproval,omitempty"`
+	ComparisonApproval    *ReleaseWorkflowUploadComparisonApproval    `json:"comparisonApproval,omitempty"`
 	// Deprecated: retained for v1 decoding compatibility.
 	UploadApproval *ReleaseWorkflowUploadApproval       `json:"uploadApproval,omitempty"`
 	Reprepare      *ReleaseWorkflowUploadReprepare      `json:"reprepare,omitempty"`
@@ -509,6 +513,13 @@ type ReleaseWorkflowUploadMetadataSelection struct {
 type ReleaseWorkflowUploadConfirmation struct {
 	Confirmed        bool `json:"confirmed"`
 	confirmedOmitted bool
+}
+
+// ReleaseWorkflowUploadComparisonApproval approves only the retained images and
+// mapping identified by ExpectedFingerprint, never pending configuration edits.
+type ReleaseWorkflowUploadComparisonApproval struct {
+	Confirmed           bool                `json:"confirmed"`
+	ExpectedFingerprint WorkflowFingerprint `json:"expectedFingerprint"`
 }
 
 // ReleaseWorkflowUploadApproval authorizes an exact subset of the reviewed tracker operations.
@@ -600,6 +611,7 @@ func (f ReleaseWorkflowUploadFeedback) Validate() error {
 		{ReleaseWorkflowUploadFeedbackTrackerPreparation, f.Response.TrackerPreparation != nil},
 		{ReleaseWorkflowUploadFeedbackDuplicateReview, f.Response.DuplicateReview != nil},
 		{ReleaseWorkflowUploadFeedbackTrackerApproval, f.Response.TrackerApproval != nil},
+		{ReleaseWorkflowUploadFeedbackComparisonApproval, f.Response.ComparisonApproval != nil},
 		{ReleaseWorkflowUploadFeedbackUploadApproval, f.Response.UploadApproval != nil},
 		{ReleaseWorkflowUploadFeedbackReprepare, f.Response.Reprepare != nil},
 		{ReleaseWorkflowUploadFeedbackReconciliation, f.Response.Reconciliation != nil},
@@ -616,6 +628,10 @@ func (f ReleaseWorkflowUploadFeedback) Validate() error {
 		return errors.New("feedback response requires exactly one member matching kind")
 	}
 	switch f.Response.Kind {
+	case ReleaseWorkflowUploadFeedbackComparisonApproval:
+		if !f.Response.ComparisonApproval.Confirmed || f.Response.ComparisonApproval.ExpectedFingerprint == "" {
+			return errors.New("comparison review requires explicit confirmation of the retained fingerprint")
+		}
 	case ReleaseWorkflowUploadFeedbackTrackerAuthentication:
 		if strings.TrimSpace(string(f.Response.TrackerAuthentication.TrackerID)) == "" {
 			return errors.New("tracker authentication feedback requires tracker ID")

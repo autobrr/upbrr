@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Select } from "../../components/ui/select";
 import type { ScreenshotsFacet } from "../../releaseSession/types";
 import type { ScreenshotSelection } from "../../types";
+import ComparisonPanel from "./ComparisonPanel";
 
 type Props = Readonly<{
   facet: ScreenshotsFacet;
@@ -31,12 +32,20 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
       view.status !== "error" &&
       view.status !== "cancelled" &&
       !view.mutationBlockedReason &&
+      view.autoLoadPlan !== false &&
       !view.plan &&
       (view.workflowMode || Boolean(view.staleReason))
     ) {
       void loadRef.current();
     }
-  }, [view.mutationBlockedReason, view.plan, view.staleReason, view.status, view.workflowMode]);
+  }, [
+    view.autoLoadPlan,
+    view.mutationBlockedReason,
+    view.plan,
+    view.staleReason,
+    view.status,
+    view.workflowMode,
+  ]);
 
   const plan = view.plan;
   const busy = view.status === "running";
@@ -150,6 +159,13 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
           Review tracker images, adjust frame times, and generate screenshots.
         </p>
       </header>
+
+      <ComparisonPanel
+        key={`${facet.comparisons.view.workflowID}:${facet.comparisons.view.plan?.fingerprint || "none"}`}
+        facet={facet.comparisons}
+        setLightboxImage={setLightboxImage}
+        setLightboxAlt={setLightboxAlt}
+      />
 
       {view.artifacts ? (
         <section className={`${pageStyle.panel} grid gap-1`} role="status">

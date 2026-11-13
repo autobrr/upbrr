@@ -89,6 +89,70 @@ describe("productionReleaseSessionPorts", () => {
     );
   });
 
+  it("binds comparison approval to exact media and preview to its separate source", async () => {
+    const requests: Array<{ method: string; body: unknown }> = [];
+    setAppRequestHandlerForTests(async (method, body) => {
+      requests.push({ method, body });
+      return { workflow: { id: "workflow-1", revision: 8 } };
+    });
+    const ports = productionReleaseSessionPorts();
+    const current = {
+      workflow: { id: "workflow-1", revision: 7 },
+      media: { id: "media-1", revision: 6 },
+    } as ReleaseWorkflowCurrent;
+    const instructions = {
+      action: "approve",
+      expectedFingerprint: "review-1",
+      plan: {
+        imported: true,
+        sources: [],
+        rows: [],
+        mainSourceId: "2",
+        reuseMainScreenshots: false,
+        preferences: { count: 1, darkPercent: 0, motionPercent: 0 },
+        fingerprint: "review-1",
+      },
+    };
+    await ports.workflow.editComparisons(
+      current,
+      instructions,
+      "approve-1",
+      new AbortController().signal,
+    );
+    await ports.workflow.previewFrame(
+      current,
+      "",
+      12,
+      "preview-1",
+      new AbortController().signal,
+      "source-2",
+      -1,
+    );
+    expect(requests).toEqual([
+      {
+        method: "EditReleaseWorkflowComparisons",
+        body: {
+          workflowId: "workflow-1",
+          expectedRevision: 7,
+          media: { id: "media-1", revision: 6 },
+          instructions,
+          idempotencyKey: "approve-1",
+        },
+      },
+      {
+        method: "PreviewReleaseWorkflowFrame",
+        body: {
+          workflowId: "workflow-1",
+          expectedRevision: 7,
+          comparisonSourceId: "source-2",
+          comparisonStepDirection: -1,
+          timestampSeconds: 12,
+          idempotencyKey: "preview-1",
+        },
+      },
+    ]);
+  });
+
   it("uses both input-change hints and event-stream reconnects to request resync", async () => {
     const verification = vi.fn();
     const encoder = new TextEncoder();

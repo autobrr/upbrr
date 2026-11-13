@@ -1184,7 +1184,7 @@ export type ImageHostWarning = {
 };
 
 /** Image category shared by capture, selection, upload, and menu workflows. */
-export type ScreenshotPurpose = "preview" | "final" | "menu";
+export type ScreenshotPurpose = "preview" | "final" | "menu" | "comparison";
 
 export type ScreenshotSelection = {
   /** Prepared disc identity; omitted only by legacy single-disc callers. */

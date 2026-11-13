@@ -489,22 +489,33 @@ Without `--screens`, the CLI uses `screenshot_handling.screens` when selected tr
 
 When required release images are missing, the CLI stops with the media failure and recovery guidance, or the existing prompt to capture, select, or host images. Resolve that media prerequisite before retrying. This block does not open a tracker questionnaire or prompt for media recovery, including with `--unattended_confirm`; required images continue to block upload in every interaction mode.
 
-| Option                       | Aliases                             | Purpose                                                                                            |
-| ---------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `--screens <count>`          | `-screens`, `-s`                    | Set a nonnegative screenshot count; `0` requests none. Omission uses configuration (built-in `4`). |
-| `--manual_frames <list>`     | `-manual_frames`, `-mf`             | Use comma-separated positive frame numbers.                                                        |
-| `--comparison <paths>`       | `-comparison`, `-comps`             | Set one comparison folder or comma-separated folders.                                              |
-| `--comparison_index <index>` | `-comparison_index`, `-comps_index` | Select a one-based primary comparison path; omission keeps the supplied order.                     |
-| `--menu-images <path>`       | `-menu-images`                      | Import manually captured disc-menu screenshots.                                                    |
-| `--get-dvd-menus`            | `-get-dvd-menus`                    | Capture distinct menus from extracted DVD `VIDEO_TS`.                                              |
-| `--imghost <name>`           | `-imghost`, `-ih`                   | Override a supported, non-tracker-owned image host.                                                |
-| `--skip-imagehost-upload`    | `-skip-imagehost-upload`, `-siu`    | Skip automatic image-host uploads.                                                                 |
-| `--descfile <path>`          | `-descfile`, `-df`                  | Use a custom description file.                                                                     |
-| `--desclink <url>`           | `-desclink`, `-pb`                  | Use a custom description link.                                                                     |
+| Option                              | Aliases                             | Purpose                                                                                            |
+| ----------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `--screens <count>`                 | `-screens`, `-s`                    | Set a nonnegative screenshot count; `0` requests none. Omission uses configuration (built-in `4`). |
+| `--manual_frames <list>`            | `-manual_frames`, `-mf`             | Use comma-separated positive frame numbers.                                                        |
+| `--comparison <paths>`              | `-comparison`, `-comps`             | Set one comparison folder or comma-separated folders.                                              |
+| `--comparison_index <group>`        | `-comparison_index`, `-comps_index` | Select the main source group from prepared comparison image names.                                 |
+| `--comparison-use-main-screenshots` | None                                | Also use the main comparison column as normal screenshots; disabled by default.                    |
+| `--menu-images <path>`              | `-menu-images`                      | Import manually captured disc-menu screenshots.                                                    |
+| `--get-dvd-menus`                   | `-get-dvd-menus`                    | Capture distinct menus from extracted DVD `VIDEO_TS`.                                              |
+| `--imghost <name>`                  | `-imghost`, `-ih`                   | Override a supported, non-tracker-owned image host.                                                |
+| `--skip-imagehost-upload`           | `-skip-imagehost-upload`, `-siu`    | Skip automatic image-host uploads.                                                                 |
+| `--descfile <path>`                 | `-descfile`, `-df`                  | Use a custom description file.                                                                     |
+| `--desclink <url>`                  | `-desclink`, `-pb`                  | Use a custom description link.                                                                     |
 
 `--imghost` accepts `dalexni`, `imgbb`, `imgbox`, `lensdump`, `onlyimage`, `passtheimage`, `pixhost`, `ptscreens`, `seedpool_cdn`, `sharex`, `utppm`, or `zipline`. Values ignore case and surrounding whitespace. Tracker-owned hosts are not valid global overrides. Omission uses configured host policy; empty is invalid.
 
-`--manual_frames` ignores blank comma-separated segments but requires at least one positive decimal frame number. `--comparison` takes nonempty comma-separated local paths; `--comparison_index` must be positive when supplied and within the available paths. `--descfile`, `--desclink`, and `--menu-images` are paths/URLs rather than choice labels.
+`--manual_frames` ignores blank comma-separated segments but requires at least one positive decimal frame number. `--comparison` takes nonempty comma-separated local paths. `--comparison_index` identifies a positive source group, rather than a position in that path list. `--descfile`, `--desclink`, and `--menu-images` are paths/URLs rather than choice labels.
+
+Prepared comparison images use names such as `01-01-source.png`, `01-02-encode.png`, and `01-03-filtered.png`: the first number identifies a common moment and the second identifies its source column. PNG, JPEG and WebP are supported. Every retained row needs one readable image per source; incomplete rows, duplicate cells, inconsistent labels and ambiguous names must be corrected before continuing. Importing preserves the pixels and leaves unavailable video timing and processing facts unknown.
+
+Select group `02` with `--comparison_index 2`, including when all images are in one folder. Interactive mode and `--uac` ask for a missing main-column choice before starting the workflow; strict unattended mode returns an actionable error. Quote Windows paths containing spaces:
+
+```powershell
+.\upbrr.exe --comparison "E:\Comparisons\Example Movie 2026" --comparison_index 2 --comparison-use-main-screenshots "E:\Media\Example.Movie.2026.mkv"
+```
+
+After import, inspect the retained image paths shown for each row and column, then explicitly approve the set before any of its images are hosted. Choosing the main column or enabling screenshot reuse does not approve the images. Strict unattended mode cannot supply this review. Replacing images or changing their mapping requires a fresh review; leaving main-column reuse disabled preserves the separate normal screenshot flow.
 
 ### HDR analysis options
 
