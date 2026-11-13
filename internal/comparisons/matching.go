@@ -349,6 +349,9 @@ func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
 				matched, allowedScore = matchedSample(column.source, candidate.frame, "visual", score), score
 			}
 		}
+		if ambiguousVisualMatch(main, column.frames, matched.TimestampSeconds, matched.Confidence) {
+			matched.Resolved, matched.TypeFallback, matched.Reason = false, false, "ambiguous_visual_match"
+		}
 	}
 	return matched
 }

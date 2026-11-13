@@ -7109,8 +7109,6 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 				continue
 			}
 			host := strings.ToLower(strings.TrimSpace(attempt.Host))
-			comparisonHost := snapshot.ImageHostPreference == nil || strings.TrimSpace(*snapshot.ImageHostPreference) == "" ||
-				strings.EqualFold(host, strings.TrimSpace(*snapshot.ImageHostPreference))
 			scope := strings.ToLower(strings.TrimSpace(attempt.UsageScope))
 			if scope == "" {
 				scope = "global"
@@ -7119,7 +7117,7 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 			for _, result := range attempt.Results {
 				hosted := artifacts[result.ID]
 				source := artifacts[api.PublicResourceID(strings.TrimSpace(hosted.Source))]
-				if _, comparison := comparisonCells[source.ID]; comparison && comparisonHost && hosted.Selected && source.Selected &&
+				if _, comparison := comparisonCells[source.ID]; comparison && hosted.Selected && source.Selected &&
 					hosted.Kind == api.MediaArtifactHostedImage && hosted.Purpose == api.ScreenshotPurposeComparison &&
 					source.Kind == api.MediaArtifactComparison && source.Purpose == api.ScreenshotPurposeComparison {
 					if comparisonCoverage[group] == nil {

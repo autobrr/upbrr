@@ -363,6 +363,11 @@ func TestComparisonMainColumnIsTheOnlyReusableScreenshot(t *testing.T) {
 	if !HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("hosted main-column image did not satisfy the screenshot requirement")
 	}
+	snapshot.ImageHostPreference = new("primary")
+	snapshot.HostAttempts[0].Host = "fallback"
+	if !HostedScreenshotRequirementsMet(snapshot, projections) {
+		t.Fatal("complete fallback-hosted comparison rows failed readiness")
+	}
 	projections[0].Artifacts.ScreenshotCount = 2
 	if HostedScreenshotRequirementsMet(snapshot, projections) {
 		t.Fatal("other comparison columns inflated the normal screenshot count")

@@ -113,9 +113,10 @@ func comparisonMediaForTrackerHost(
 	if err != nil {
 		return err
 	}
+	failedHosts := normalizeImageHostNames(meta.ImageHostOverrides.FailedHosts)
 	for id, uploads := range exact.ComparisonUploads {
 		exact.ComparisonUploads[id] = slices.DeleteFunc(uploads, func(upload api.UploadedImageLink) bool {
-			return !slices.Contains(selected.ScreenshotUploads, upload)
+			return hostInList(upload.Host, failedHosts) || !slices.Contains(selected.ScreenshotUploads, upload)
 		})
 	}
 	return nil

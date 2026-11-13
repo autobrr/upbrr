@@ -118,24 +118,38 @@ func TestComparisonDescriptionUsesCompatibleHostedVariants(t *testing.T) {
 		link.RawURL = "https://pixhost.example.invalid/" + string(id) + ".png"
 		exact.ComparisonUploads[id] = append(uploads, link)
 	}
-	registry := NewRegistry()
-	if err := registry.RegisterDescriptor(Descriptor{
-		Name:       "ALPHA",
-		Definition: stubDefinition{name: "ALPHA"},
-		ImageHost:  &ImageHostPolicy{AllowedHosts: []string{"pixhost"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	filtered, err := exactMediaForTrackerHost("ALPHA", api.UploadSubject{ExactMedia: exact}, config.Config{}, config.TrackerConfig{}, registry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, err := exactComparisonDescriptionBlock("ALPHA", filtered)
-	if err != nil || strings.Count(block, "https://pixhost.example.invalid/") != 6 || strings.Contains(block, "https://images.example.invalid/") {
-		t.Fatalf("comparison host policy changed row coverage: %q, err=%v", block, err)
-	}
-	if len(exact.ComparisonUploads["row-1-source-1"]) != 2 {
-		t.Fatal("tracker selection mutated shared upload variants")
+	for _, test := range []struct {
+		name   string
+		policy *ImageHostPolicy
+		failed []string
+	}{
+		{"required host", &ImageHostPolicy{AllowedHosts: []string{"pixhost"}}, nil},
+		{"failed optional host", nil, []string{" IMGBB "}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registry := NewRegistry()
+			if err := registry.RegisterDescriptor(Descriptor{
+				Name:       "ALPHA",
+				Definition: stubDefinition{name: "ALPHA"},
+				ImageHost:  test.policy,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			filtered, err := exactMediaForTrackerHost("ALPHA", api.UploadSubject{
+				ExactMedia:         exact,
+				ImageHostOverrides: api.ImageHostOverrides{FailedHosts: test.failed},
+			}, config.Config{}, config.TrackerConfig{}, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			block, err := exactComparisonDescriptionBlock("ALPHA", filtered)
+			if err != nil || strings.Count(block, "https://pixhost.example.invalid/") != 6 || strings.Contains(block, "https://images.example.invalid/") {
+				t.Fatalf("comparison host policy changed row coverage: %q, err=%v", block, err)
+			}
+			if len(exact.ComparisonUploads["row-1-source-1"]) != 2 {
+				t.Fatal("tracker selection mutated shared upload variants")
+			}
+		})
 	}
 }
 

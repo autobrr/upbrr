@@ -1207,8 +1207,10 @@ type UploadMediaImagesCommand struct {
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	Media            api.MediaArtifactSetRef
-	// ArtifactIDs defaults to selected local screenshots and DVD menus. With an
-	// empty Host, explicit IDs replace local selection without changing hosted selection.
+	// ArtifactIDs defaults to selected local screenshots, menus and comparison
+	// images. With an empty Host, explicit IDs replace ordinary local selection
+	// while retaining selected comparisons. A named Host keeps the explicit
+	// subset and does not change selection state, including for partial retries.
 	ArtifactIDs []api.PublicResourceID
 	// Host selects one host; an empty value prepares all required image hosts.
 	Host string

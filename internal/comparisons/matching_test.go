@@ -135,6 +135,23 @@ func TestMatchingDoesNotReuseAnAutomaticTargetFrame(t *testing.T) {
 	}
 }
 
+func TestMatchingChecksAmbiguityAfterPictureTypeSubstitution(t *testing.T) {
+	frame := func(seconds, score float64, kind string) matchingFrame {
+		a, b := score/math.Sqrt2, math.Sqrt(1-score*score)/math.Sqrt(6)
+		return matchingFrame{
+			frame:     FrameSample{TimestampSeconds: seconds, FrameType: kind},
+			signature: []float64{a + b, -a + b, -2 * b},
+		}
+	}
+	matched := matchFrame(frame(1, 1, "I"), matchingColumn{
+		source: SampledSource{ID: "encode", AllowedTypes: []string{"I"}},
+		frames: []matchingFrame{frame(1, 1, "P"), frame(1.2, .9806, "I"), frame(10, .9578, "I")},
+	})
+	if matched.TimestampSeconds != 1.2 || matched.Resolved || matched.Reason != "ambiguous_visual_match" {
+		t.Fatalf("picture-type substitution concealed target ambiguity: %+v", matched)
+	}
+}
+
 func TestMatchingSceneMixExcludesBlankAndReportsUnmet(t *testing.T) {
 	source := SampledSource{ID: "main"}
 	for i := range 9 {
