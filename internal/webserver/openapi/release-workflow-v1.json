@@ -1453,6 +1453,12 @@
               "$ref": "#/components/schemas/ComparisonProblem"
             }
           },
+          "resizeLargerOnly": {
+            "type": "boolean"
+          },
+          "resizeSmaller": {
+            "type": "boolean"
+          },
           "reuseMainScreenshots": {
             "type": "boolean"
           },

@@ -96,15 +96,21 @@ type ComparisonPlan struct {
 	MainSourceID string              `json:"mainSourceId"`
 	// SizeReferenceSourceID fits video captures within this column's inspected
 	// display size, padding without cropping. Empty retains each video's size.
-	SizeReferenceSourceID string                `json:"sizeReferenceSourceId,omitempty"`
-	ReuseMainScreenshots  bool                  `json:"reuseMainScreenshots"`
-	Imported              bool                  `json:"imported"`
-	Anchors               []ComparisonAnchor    `json:"anchors,omitempty"`
-	Preferences           ComparisonPreferences `json:"preferences"`
-	Problems              []ComparisonProblem   `json:"problems,omitempty"`
-	Warnings              []string              `json:"warnings,omitempty"`
-	Fingerprint           WorkflowFingerprint   `json:"fingerprint"`
-	ApprovedFingerprint   WorkflowFingerprint   `json:"approvedFingerprint,omitempty"`
+	SizeReferenceSourceID string `json:"sizeReferenceSourceId,omitempty"`
+	// ResizeLargerOnly replaces fit-and-pad with proportional resizing. Wide
+	// references match width; references narrower than 16:9 match height.
+	// Lower resolutions keep their size unless ResizeSmaller is also enabled.
+	ResizeLargerOnly bool `json:"resizeLargerOnly,omitempty"`
+	// ResizeSmaller also upscales lower-resolution sources in proportional mode.
+	ResizeSmaller        bool                  `json:"resizeSmaller,omitempty"`
+	ReuseMainScreenshots bool                  `json:"reuseMainScreenshots"`
+	Imported             bool                  `json:"imported"`
+	Anchors              []ComparisonAnchor    `json:"anchors,omitempty"`
+	Preferences          ComparisonPreferences `json:"preferences"`
+	Problems             []ComparisonProblem   `json:"problems,omitempty"`
+	Warnings             []string              `json:"warnings,omitempty"`
+	Fingerprint          WorkflowFingerprint   `json:"fingerprint"`
+	ApprovedFingerprint  WorkflowFingerprint   `json:"approvedFingerprint,omitempty"`
 }
 
 // Clone detaches editable rows, source settings and observation pointers from a

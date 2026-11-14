@@ -93,10 +93,10 @@ type MatchResult struct {
 // returning unresolved proposals; explicit preferences retain one search pass.
 // Invalid source IDs, samples, moments or preferences return an error.
 func Match(sources []SampledSource, mainID string, options MatchOptions) (MatchResult, error) {
-	return match(sources, mainID, options, nil)
+	return match(sources, mainID, options, nil, nil)
 }
 
-func match(sources []SampledSource, mainID string, options MatchOptions, alignments map[string]ConstantAlignment) (MatchResult, error) {
+func match(sources []SampledSource, mainID string, options MatchOptions, alignments map[string]ConstantAlignment, previous []MatchedRow) (MatchResult, error) {
 	columns, main, err := prepareMatching(sources, mainID, options)
 	if err != nil {
 		return MatchResult{}, err
@@ -126,6 +126,12 @@ func match(sources []SampledSource, mainID string, options MatchOptions, alignme
 		}
 	}
 	used := map[int]bool{}
+	for _, row := range previous {
+		index := nearestSample(columns[main].frames, row.MainSeconds)
+		if index >= 0 && math.Abs(columns[main].frames[index].frame.TimestampSeconds-row.MainSeconds) < 1e-6 {
+			used[index] = true
+		}
+	}
 	if len(options.MainMoments) > 0 {
 		for _, moment := range options.MainMoments {
 			index := nearestSample(columns[main].frames, moment)
@@ -133,7 +139,7 @@ func match(sources []SampledSource, mainID string, options MatchOptions, alignme
 				return MatchResult{}, errors.New("comparison moments resolve to the same sampled frame")
 			}
 			used[index] = true
-			appendRow(matchRow(columns, main, index, result.Rows), columns[main].frames[index].frame)
+			appendRow(matchRow(columns, main, index, slices.Concat(previous, result.Rows)), columns[main].frames[index].frame)
 		}
 	} else {
 		var unresolved []MatchedRow
@@ -148,7 +154,7 @@ func match(sources []SampledSource, mainID string, options MatchOptions, alignme
 					break
 				}
 				used[index] = true
-				row := matchRow(columns, main, index, result.Rows)
+				row := matchRow(columns, main, index, slices.Concat(previous, result.Rows))
 				if row.Complete {
 					appendRow(row, columns[main].frames[index].frame)
 				} else {

@@ -93,6 +93,8 @@ func TestReviewFingerprintBindsRetainedContentAndChoices(t *testing.T) {
 		{"main column", func(plan *api.ComparisonPlan) { plan.MainSourceID = "1" }},
 		{"normal screenshot reuse", func(plan *api.ComparisonPlan) { plan.ReuseMainScreenshots = true }},
 		{"render size", func(plan *api.ComparisonPlan) { plan.SizeReferenceSourceID = "2" }},
+		{"resize mode", func(plan *api.ComparisonPlan) { plan.ResizeLargerOnly = true }},
+		{"upscale choice", func(plan *api.ComparisonPlan) { plan.ResizeSmaller = true }},
 		{"tone mapping", func(plan *api.ComparisonPlan) { plan.Sources[0].ToneMap = new(false) }},
 		{"capture choices", func(plan *api.ComparisonPlan) {
 			plan.Sources[0].Overlay = true

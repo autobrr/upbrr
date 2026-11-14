@@ -330,31 +330,60 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           </div>
 
           {!draft.imported && (
-            <label className="grid gap-1">
-              <span>Comparison frame size</span>
-              <Select
-                aria-label="Comparison frame size"
-                aria-describedby="comparison-size-help"
-                value={draft.sizeReferenceSourceId || ""}
-                onChange={(event) =>
-                  change({ ...draft, sizeReferenceSourceId: event.target.value })
-                }
-              >
-                <option value="">Keep each source's original size</option>
-                {draft.sources
-                  .filter((source) => !source.imported)
-                  .map((source) => (
-                    <option key={source.id} value={source.id}>
-                      Match {source.label || source.id}
-                      {source.width && source.height ? ` · ${source.width} × ${source.height}` : ""}
-                    </option>
-                  ))}
-              </Select>
-              <span id="comparison-size-help" className="text-muted-foreground">
-                Fit videos to the selected source's display size, adding centered padding when
-                aspect ratios differ. No cropping or stretching. Apply setup before previewing.
-              </span>
-            </label>
+            <div className="grid gap-2">
+              <label className="grid gap-1">
+                <span>Comparison frame size</span>
+                <Select
+                  aria-label="Comparison frame size"
+                  aria-describedby="comparison-size-help"
+                  value={draft.sizeReferenceSourceId || ""}
+                  onChange={(event) =>
+                    change({ ...draft, sizeReferenceSourceId: event.target.value })
+                  }
+                >
+                  <option value="">Keep each source's original size</option>
+                  {draft.sources
+                    .filter((source) => !source.imported)
+                    .map((source) => (
+                      <option key={source.id} value={source.id}>
+                        Match {source.label || source.id}
+                        {source.width && source.height
+                          ? ` · ${source.width} × ${source.height}`
+                          : ""}
+                      </option>
+                    ))}
+                </Select>
+                <span id="comparison-size-help" className="text-muted-foreground">
+                  {draft.resizeLargerOnly ? (
+                    `Match width for wide references or height for references narrower than 16:9, preserving each source's aspect ratio. ${draft.resizeSmaller ? "Lower resolutions are resized too." : "Lower resolutions keep their original size."} No padding or stretching. Apply setup before previewing.`
+                  ) : (
+                    <>
+                      Fit videos to the selected source's display size, adding centered padding when
+                      aspect ratios differ. No cropping or stretching. Apply setup before
+                      previewing.
+                    </>
+                  )}
+                </span>
+              </label>
+              {draft.sizeReferenceSourceId && (
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={draft.resizeLargerOnly || false}
+                    onCheckedChange={(checked) => change({ ...draft, resizeLargerOnly: checked })}
+                  />
+                  Resize resolutions proportionally, without padding
+                </label>
+              )}
+              {draft.sizeReferenceSourceId && draft.resizeLargerOnly && (
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={draft.resizeSmaller || false}
+                    onCheckedChange={(checked) => change({ ...draft, resizeSmaller: checked })}
+                  />
+                  Also resize lower resolutions
+                </label>
+              )}
+            </div>
           )}
 
           <div className="grid gap-3 lg:grid-cols-2">
@@ -485,8 +514,9 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                         </p>
                       )}
                       <p className="text-muted-foreground">
-                        Captions show frame position, picture type, then your column label.
-                        Unverified frame numbers and totals remain unknown.
+                        Captions show frame position, picture type, your column label, any applied
+                        tone mapping, and resolutions when sources differ. Unverified frame numbers
+                        and totals remain unknown.
                       </p>
                       <label className="grid gap-1">
                         <span>Tone mapping · {source.label}</span>

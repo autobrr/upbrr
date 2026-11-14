@@ -319,26 +319,52 @@ func TestConstantAlignmentRequiresTemporalEvidence(t *testing.T) {
 	}
 	reference := frames(30, 34, 0)
 	for _, offset := range []float64{0, 13.3, -7.2} {
-		fitted, ok := DiscoverAlignment(reference, frames(0, 80, offset))
-		if !ok || math.Abs(fitted.OffsetSeconds-offset) > 1e-7 {
-			t.Fatalf("offset=%g fit=%+v ok=%t", offset, fitted, ok)
+		fitted, reason := DiscoverAlignment(reference, frames(0, 80, offset))
+		if reason != "" || math.Abs(fitted.OffsetSeconds-offset) > 1e-7 {
+			t.Fatalf("offset=%g fit=%+v reason=%s", offset, fitted, reason)
 		}
-		independent, ok := DiscoverAlignment(frames(45, 49, 0), frames(35, 75, offset))
-		if !ok || !fitted.Consistent(independent) {
-			t.Fatalf("independent offset=%g fit=%+v ok=%t", offset, independent, ok)
+		independent, reason := DiscoverAlignment(frames(45, 49, 0), frames(35, 75, offset))
+		if reason != "" || !fitted.Consistent(independent) {
+			t.Fatalf("independent offset=%g fit=%+v reason=%s", offset, independent, reason)
 		}
-		changed, ok := DiscoverAlignment(frames(45, 49, 0), frames(35, 75, offset+.1))
-		if !ok || fitted.Consistent(changed) {
+		changed, reason := DiscoverAlignment(frames(45, 49, 0), frames(35, 75, offset+.1))
+		if reason != "" || fitted.Consistent(changed) {
 			t.Fatalf("persistent one-frame shift accepted: %+v %+v", fitted, changed)
 		}
 	}
-	for _, kind := range []string{"static", "repeated", "variable cadence", "unrelated"} {
+	// One distinct cut can establish frame-accurate correspondence when every
+	// reference frame is checked; a count of three large changes is unnecessary.
+	cutReference, cutTarget := frames(30, 34, 0), frames(0, 80, 13.3)
+	for i := range cutReference {
+		seed := uint64(20000)
+		if i >= len(cutReference)/2 {
+			seed++
+		}
+		cutReference[i].Luma = sampleFrame(seed, 0, "B").Luma
+		cutTarget[433+i].Luma = cutReference[i].Luma
+	}
+	if fit, reason := DiscoverAlignment(cutReference, cutTarget); reason != "" || math.Abs(fit.OffsetSeconds-13.3) > 1e-7 {
+		t.Fatalf("single informative cut fit=%+v reason=%s", fit, reason)
+	}
+	for _, kind := range []string{"static", "finite static segment", "constant scenes", "repeated", "variable cadence", "unrelated"} {
 		t.Run(kind, func(t *testing.T) {
 			main, target := slices.Clone(reference), frames(0, 80, 0)
 			switch kind {
 			case "static":
 				for i := range main {
 					main[i].Luma = reference[0].Luma
+				}
+			case "finite static segment":
+				for i := range main {
+					main[i].Luma = reference[0].Luma
+					target[300+i].Luma = main[i].Luma
+				}
+			case "constant scenes":
+				for i := range main {
+					main[i].Luma = reference[0].Luma
+				}
+				for i := range target {
+					target[i].Luma = reference[0].Luma
 				}
 			case "repeated":
 				for i := range target {
@@ -351,7 +377,7 @@ func TestConstantAlignmentRequiresTemporalEvidence(t *testing.T) {
 			case "unrelated":
 				target = frames(0, 80, 500)
 			}
-			if fitted, ok := DiscoverAlignment(main, target); ok {
+			if fitted, reason := DiscoverAlignment(main, target); reason == "" {
 				t.Fatalf("%s established offset %+v", kind, fitted)
 			}
 		})
@@ -360,15 +386,15 @@ func TestConstantAlignmentRequiresTemporalEvidence(t *testing.T) {
 
 func TestAlignedMatchingKeepsStaticPredictionAndRejectsReuse(t *testing.T) {
 	main := SampledSource{
-ID: "main",
- PreferBFrames: true,
- AllowedTypes: []string{"B"},
-}
+		ID:            "main",
+		PreferBFrames: true,
+		AllowedTypes:  []string{"B"},
+	}
 	other := SampledSource{
-ID: "other",
- PreferBFrames: true,
- AllowedTypes: []string{"B"},
-}
+		ID:            "other",
+		PreferBFrames: true,
+		AllowedTypes:  []string{"B"},
+	}
 	for _, seconds := range []float64{1, 4, 8} {
 		main.Frames = append(main.Frames, sampleFrame(1, seconds, "B"))
 		nearby := sampleFrame(1, seconds+10, "B")
@@ -377,7 +403,7 @@ ID: "other",
 		other.Frames = append(other.Frames, nearby, sampleFrame(1, seconds+10.04, "B"))
 	}
 	offsets := map[string]ConstantAlignment{"other": {OffsetSeconds: 10, ToleranceSeconds: .01}}
-	result, err := AlignedMatch([]SampledSource{main, other}, "main", MatchOptions{Count: 3}, offsets)
+	result, err := AlignedMatch([]SampledSource{main, other}, "main", MatchOptions{Count: 3}, offsets, nil)
 	if err != nil || len(result.Rows) != 3 {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
@@ -388,7 +414,7 @@ ID: "other",
 	}
 	main.Frames = []FrameSample{sampleFrame(1, 1, "B"), sampleFrame(1, 1.1, "B")}
 	other.Frames = []FrameSample{sampleFrame(1, 11, "P")}
-	result, err = AlignedMatch([]SampledSource{main, other}, "main", MatchOptions{Count: 2}, offsets)
+	result, err = AlignedMatch([]SampledSource{main, other}, "main", MatchOptions{Count: 2}, offsets, nil)
 	complete := 0
 	for _, row := range result.Rows {
 		if row.Complete {
@@ -398,8 +424,18 @@ ID: "other",
 	if err != nil || complete != 1 {
 		t.Fatalf("target reuse was accepted: %+v err=%v", result, err)
 	}
+	previous := []MatchedRow{}
+	for _, row := range result.Rows {
+		if row.Complete {
+			previous = append(previous, row)
+		}
+	}
+	continued, err := AlignedMatch([]SampledSource{main, other}, "main", MatchOptions{Count: 1}, offsets, previous)
+	if err != nil || len(continued.Rows) != 1 || continued.Rows[0].Complete {
+		t.Fatalf("a later bounded region reused a retained target: %+v err=%v", continued, err)
+	}
 	other.Frames[0].FrameType = "I"
-	result, err = AlignedMatch([]SampledSource{main, other}, "main", MatchOptions{Count: 1}, offsets)
+	result, err = AlignedMatch([]SampledSource{main, other}, "main", MatchOptions{Count: 1}, offsets, nil)
 	if err != nil || len(result.Rows) != 1 || result.Rows[0].Complete {
 		t.Fatalf("non-I main gained I fallback: %+v err=%v", result, err)
 	}

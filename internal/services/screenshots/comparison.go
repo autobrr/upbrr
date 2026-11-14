@@ -27,7 +27,7 @@ import (
 )
 
 // ComparisonCaptionVersion identifies the generated caption layout for retained pixels.
-const ComparisonCaptionVersion = 2
+const ComparisonCaptionVersion = 3
 
 // ComparisonSource describes one local video. Missing timing stays zero; callers
 // own source fingerprint verification and alignment with other inputs.
@@ -80,8 +80,9 @@ type ComparisonFrameObservation struct {
 }
 
 // ComparisonCaptureRequest selects a seek relative to the file's start time.
-// OverlayLabel optionally adds the three-line comparison caption: metadata-based
-// frame counters, observed picture type, then label. Missing counters stay unknown.
+// OverlayLabel optionally adds metadata-based frame counters, observed picture
+// type, resolution when requested, applied tone mapping, then the label.
+// Missing counters stay unknown.
 // Labels accept at most 80 ASCII letters, digits, spaces, dots, dashes and
 // underscores. Overlay enablement is comparison-local; text size follows the
 // ordinary screenshot setting and scales with the source height.
@@ -89,12 +90,16 @@ type ComparisonCaptureRequest struct {
 	Source           ComparisonSource
 	TimestampSeconds float64
 	OverlayLabel     string
+	// ShowResolution includes inspected display and actual output dimensions.
+	ShowResolution bool
 	// ToneMap overrides the ordinary screenshot setting; nil inherits it.
 	ToneMap *bool
 	// OutputWidth/OutputHeight select a square-pixel fit-and-pad canvas. Both
 	// zero retain the source size; both must be positive when scaling is enabled.
 	OutputWidth  int
 	OutputHeight int
+	// ResizeOnly uses the caller's aspect-preserving dimensions without padding.
+	ResizeOnly bool
 }
 
 // ComparisonFrame retains a PNG and its observed identity without persisting or
@@ -114,6 +119,24 @@ type ComparisonSample struct {
 	ComparisonFrameObservation
 	Pixels []byte
 }
+
+// ComparisonSampleRequest bounds a source-clock sampling window. NormalizeSDR
+// requests matching-only colour conversion, independently of capture preferences.
+type ComparisonSampleRequest struct {
+	Source          ComparisonSource
+	StartSeconds    float64
+	DurationSeconds float64
+	StrideSeconds   float64
+	NormalizeSDR    bool
+	// MatchAspectRatio selects the shared central picture area for normalized
+	// matching only. Captures retain the source's own framing.
+	MatchAspectRatio float64
+}
+
+// ErrComparisonNormalizationUnavailable permits matching to use its existing
+// full scan when inspected colour facts or a compatible converter are unavailable.
+// Cancellation, corruption and invalid frame identities never use this fallback.
+var ErrComparisonNormalizationUnavailable = errors.New("screenshots: comparison SDR normalization unavailable")
 
 // InspectComparisonSource probes one regular local file using the existing
 // native MediaInfo reader. It rejects ambiguous video selection and does not
@@ -220,12 +243,13 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		return ComparisonFrame{}, err
 	}
 	runner := &comparisonRunner{
-		runner:        s.runner,
-		source:        request.Source,
-		seek:          request.TimestampSeconds,
-		label:         request.OverlayLabel,
-		overlaySize:   s.cfg.ScreenshotHandling.OverlayTextSize,
-		overlayHeight: request.Source.Height,
+		runner:         s.runner,
+		source:         request.Source,
+		seek:           request.TimestampSeconds,
+		label:          request.OverlayLabel,
+		showResolution: request.ShowResolution,
+		overlaySize:    s.cfg.ScreenshotHandling.OverlayTextSize,
+		overlayHeight:  request.Source.Height,
 	}
 	if request.OutputHeight > 0 {
 		runner.overlayHeight = request.OutputHeight
@@ -252,6 +276,7 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		Compression:   s.cfg.ScreenshotHandling.FFmpegCompression,
 		OutputWidth:   request.OutputWidth,
 		OutputHeight:  request.OutputHeight,
+		ResizeOnly:    request.ResizeOnly,
 	}, logging.FromContext(ctx, s.logger))
 	if err != nil {
 		return ComparisonFrame{}, err
@@ -282,13 +307,16 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 // measured on actual frame timestamps. At most 50,000 samples may be requested.
 // Returned PTS remains in the original source clock, including a nonzero start.
 // A successfully decoded window containing no frames returns an empty result.
-func (s *Service) SampleComparisonSource(ctx context.Context, source ComparisonSource, start, duration, strideSeconds float64) ([]ComparisonSample, error) {
+func (s *Service) SampleComparisonSource(ctx context.Context, request ComparisonSampleRequest) ([]ComparisonSample, error) {
+	source := request.Source
+	start, duration, strideSeconds := request.StartSeconds, request.DurationSeconds, request.StrideSeconds
 	logger := logging.FromContext(ctx, s.logger)
 	logger.Debugf("comparisons: phase=sampling decision=decode window_seconds=%.3f stride_seconds=%.4f", duration, strideSeconds)
 	windowStart := source.StartTimeSeconds + start
 	windowEnd := windowStart + duration
 	if !comparisonFinite(start) || !comparisonFinite(duration) || !comparisonFinite(strideSeconds) || !comparisonFinite(source.StartTimeSeconds) ||
-		!comparisonFinite(windowEnd) || start < 0 || duration <= 0 || strideSeconds <= 0 || math.Ceil(duration/strideSeconds)+1 > 50000 {
+		!comparisonFinite(windowEnd) || !comparisonFinite(request.MatchAspectRatio) || request.MatchAspectRatio < 0 ||
+		start < 0 || duration <= 0 || strideSeconds <= 0 || math.Ceil(duration/strideSeconds)+1 > 50000 {
 		logger.Warnf("comparisons: phase=sampling state=blocked reason=invalid_window")
 		return nil, errors.New("screenshots: comparison sampling window exceeds its bounds")
 	}
@@ -301,7 +329,7 @@ func (s *Service) SampleComparisonSource(ctx context.Context, source ComparisonS
 		return nil, err
 	}
 	filter := fmt.Sprintf(
-		"trim=start=%.9f:end=%.9f,select='isnan(prev_selected_t)+gte(t-prev_selected_t,%.9f)',showinfo,scale=16:16:out_range=full,format=gray",
+		"trim=start=%.9f:end=%.9f,select='isnan(prev_selected_t)+gte(t-prev_selected_t,%.9f)',showinfo",
 		windowStart,
 		windowEnd,
 		strideSeconds,
@@ -317,23 +345,30 @@ func (s *Service) SampleComparisonSource(ctx context.Context, source ComparisonS
 		start:    windowStart,
 		duration: duration,
 	})
-	result, err := s.runner.Run(ctx, executable, []string{
+	args := []string{
 		"-hide_banner", "-loglevel", "info", "-copyts", "-ss", strconv.FormatFloat(start, 'f', 9, 64), "-i", path,
-		"-map", "0:V:0", "-an", "-sn", "-dn", "-vf", filter, "-fps_mode", "passthrough",
-		"-frames:v", "50000", "-pix_fmt", "gray", "-f", "rawvideo", "-",
-	}, "")
-	if ctx.Err() != nil {
-		return nil, fmt.Errorf("screenshots: comparison sampling canceled: %w", ctx.Err())
+		"-map", "0:V:0", "-an", "-sn", "-dn",
 	}
-	if corruption := ffmpegFrameCorruptionError(result.Stderr); corruption != nil {
-		return nil, corruption
-	}
-	if err != nil || result.ExitCode != 0 {
-		return nil, errors.New("screenshots: comparison sampling failed")
+	result, err := s.runComparisonSamples(ctx, executable, args, filter, request)
+	if err != nil {
+		return nil, err
 	}
 	observations, err := comparisonObservations(result.Stderr)
 	if err != nil || len(observations) > 50000 || len(result.Stdout) != len(observations)*256 {
 		return nil, errors.New("screenshots: comparison samples lack matching decoded frame identities")
+	}
+	if request.NormalizeSDR {
+		output, outputErr := comparisonObservationsFor(result.Stderr, comparisonOutputShowInfoLine)
+		if outputErr != nil || len(output) != len(observations) {
+			return nil, errors.New("screenshots: normalized samples lack matching output frame identities")
+		}
+		for i, frame := range output {
+			// Some renderers rescale their output clock to microseconds. Retain
+			// the original PTS/timebase and allow only that rounding difference.
+			if math.Abs(frame.TimestampSeconds-observations[i].TimestampSeconds) > 1e-6 {
+				return nil, errors.New("screenshots: normalization changed comparison frame identity")
+			}
+		}
 	}
 	samples := make([]ComparisonSample, 0, len(observations))
 	for i, observation := range observations {
@@ -352,6 +387,101 @@ func (s *Service) SampleComparisonSource(ctx context.Context, source ComparisonS
 		ItemOnly:  true,
 	})
 	return samples, nil
+}
+
+func (s *Service) runComparisonSamples(ctx context.Context, executable string, args []string, filter string,
+	request ComparisonSampleRequest,
+) (CommandResult, error) {
+	if err := ctx.Err(); err != nil {
+		return CommandResult{}, fmt.Errorf("screenshots: comparison sampling canceled: %w", err)
+	}
+	modes := []string{"none"}
+	if request.NormalizeSDR {
+		if len(request.Source.HDRFacts.Formats) == 0 {
+			return CommandResult{}, fmt.Errorf("%w: missing colour facts", ErrComparisonNormalizationUnavailable)
+		}
+		for _, format := range request.Source.HDRFacts.Formats {
+			switch format {
+			case api.HDRFormatSDR:
+			case api.HDRFormatHDR10, api.HDRFormatHDR10Plus, api.HDRFormatHLG, api.HDRFormatPQ10, api.HDRFormatDolbyVision, api.HDRFormatHDRVivid:
+				modes = []string{"software"}
+				if s.cfg.ScreenshotHandling.UseLibplacebo {
+					modes = []string{"libplacebo", "software"}
+				}
+			case api.HDRFormatWCG:
+				fallthrough
+			default:
+				return CommandResult{}, fmt.Errorf("%w: unsupported colour facts", ErrComparisonNormalizationUnavailable)
+			}
+		}
+	}
+	for _, mode := range modes {
+		if err := ctx.Err(); err != nil {
+			return CommandResult{}, fmt.Errorf("screenshots: comparison sampling canceled: %w", err)
+		}
+		if mode == "software" && !softwareTonemappingCompatible(request.Source.HDRFacts) {
+			continue
+		}
+		normalized := filter
+		if mode != "none" {
+			normalized += "," + strings.Join(toneMappingFilters(captureRequest{
+				ToneMap:   true,
+				Algorithm: s.cfg.ScreenshotHandling.TonemapAlgorithm,
+				Desat:     s.cfg.ScreenshotHandling.Desat,
+			}, mode == "libplacebo"), ",")
+		}
+		if request.NormalizeSDR {
+			if scale := buildPARScaleFilter(captureRequest{
+				SourceWidth:  request.Source.Width,
+				SourceHeight: request.Source.Height,
+				WidthScale:   request.Source.WidthScale,
+				HeightScale:  request.Source.HeightScale,
+			}); scale != "" {
+				normalized += "," + scale
+			}
+			width, height := request.Source.DisplaySize()
+			if request.MatchAspectRatio > 0 && width > 0 && height > 0 && math.Abs(float64(width)/float64(height)-request.MatchAspectRatio) > 1e-6 {
+				normalized += fmt.Sprintf(
+					",crop=w='min(iw,round(ih*%.9f/2)*2)':h='min(ih,round(iw/%.9f/2)*2)':exact=1",
+					request.MatchAspectRatio,
+					request.MatchAspectRatio,
+				)
+			}
+			// Area averaging keeps small matching rasters stable across resolutions.
+			normalized += ",scale=16:16:flags=area:out_range=full,format=gray"
+		} else {
+			normalized += ",scale=16:16:out_range=full,format=gray"
+		}
+		if request.NormalizeSDR {
+			normalized += ",showinfo@comparison_output"
+		}
+		command := slices.Clone(args)
+		if mode == "libplacebo" {
+			command = append([]string{"-init_hw_device", "vulkan=upbrr", "-filter_hw_device", "upbrr"}, command...)
+		}
+		command = append(command, "-vf", normalized, "-fps_mode", "passthrough",
+			"-frames:v", "50000", "-pix_fmt", "gray", "-f", "rawvideo", "-")
+		result, err := s.runner.Run(ctx, executable, command, "")
+		if ctx.Err() != nil {
+			return CommandResult{}, fmt.Errorf("screenshots: comparison sampling canceled: %w", ctx.Err())
+		}
+		if corruption := ffmpegFrameCorruptionError(result.Stderr); corruption != nil {
+			return CommandResult{}, corruption
+		}
+		if err == nil && result.ExitCode == 0 {
+			profile, _, _ := strings.Cut(request.Source.HDRFacts.DolbyVisionProfile, ".")
+			if mode == "libplacebo" && profile == "5" && !showInfoDOVIMetadata.Match(result.Stderr) {
+				return CommandResult{}, fmt.Errorf("%w: decoded Dolby Vision metadata missing", ErrComparisonNormalizationUnavailable)
+			}
+			logging.FromContext(ctx, s.logger).Debugf("comparisons: phase=sampling renderer=%s normalized_sdr=%t", mode, request.NormalizeSDR)
+			return result, nil
+		}
+		if mode == "none" {
+			return CommandResult{}, errors.New("screenshots: comparison sampling failed")
+		}
+		logging.FromContext(ctx, s.logger).Debugf("comparisons: phase=sampling renderer=%s state=failed reason=%s", mode, renderFailureStage(result, err))
+	}
+	return CommandResult{}, fmt.Errorf("%w: compatible tone-mapping renderers failed", ErrComparisonNormalizationUnavailable)
 }
 
 type comparisonSampleProgressKey struct{}
@@ -417,20 +547,25 @@ func (p *comparisonSampleProgress) report() {
 }
 
 var (
-	comparisonLabel        = regexp.MustCompile(`^[A-Za-z0-9 ._-]{0,80}$`)
-	comparisonShowInfoLine = regexp.MustCompile(`(?m)^\[Parsed_showinfo_\d+ @ [^\]\r\n]+\]\s+([^\r\n]+)`)
-	comparisonTimeBase     = regexp.MustCompile(`^config in time_base:\s*(\d+)/(\d+),`)
-	comparisonPTS          = regexp.MustCompile(`^n:\s*\d+\s+pts:\s*(-?\d+)\s`)
-	comparisonInputStart   = regexp.MustCompile(`(?m)^  Duration: [^\r\n]*, start: ([+-]?[0-9.]+), bitrate:`)
-	comparisonFrameRate    = regexp.MustCompile(`(?m)^\[Parsed_showinfo_\d+ @ [^\]\r\n]+\]\s+config in time_base: [^\r\n]*frame_rate:\s*(\d+)/(\d+)`)
+	comparisonLabel              = regexp.MustCompile(`^[A-Za-z0-9 ._-]{0,80}$`)
+	comparisonShowInfoLine       = regexp.MustCompile(`(?m)^\[Parsed_showinfo_\d+ @ [^\]\r\n]+\]\s+([^\r\n]+)`)
+	comparisonOutputShowInfoLine = regexp.MustCompile(`(?m)^\[showinfo@comparison_output @ [^\]\r\n]+\]\s+([^\r\n]+)`)
+	comparisonTimeBase           = regexp.MustCompile(`^config in time_base:\s*(\d+)/(\d+),`)
+	comparisonPTS                = regexp.MustCompile(`^n:\s*\d+\s+pts:\s*(-?\d+)\s`)
+	comparisonInputStart         = regexp.MustCompile(`(?m)^  Duration: [^\r\n]*, start: ([+-]?[0-9.]+), bitrate:`)
+	comparisonFrameRate          = regexp.MustCompile(`(?m)^\[Parsed_showinfo_\d+ @ [^\]\r\n]+\]\s+config in time_base: [^\r\n]*frame_rate:\s*(\d+)/(\d+)`)
 )
 
 func comparisonObservations(stderr []byte) ([]ComparisonFrameObservation, error) {
+	return comparisonObservationsFor(stderr, comparisonShowInfoLine)
+}
+
+func comparisonObservationsFor(stderr []byte, pattern *regexp.Regexp) ([]ComparisonFrameObservation, error) {
 	// FFmpeg progress reports can end with CR immediately before a showinfo record.
 	stderr = bytes.ReplaceAll(stderr, []byte{'\r'}, []byte{'\n'})
 	var numerator, denominator int64
 	var observations []ComparisonFrameObservation
-	for _, line := range comparisonShowInfoLine.FindAllSubmatch(stderr, -1) {
+	for _, line := range pattern.FindAllSubmatch(stderr, -1) {
 		body := string(line[1])
 		if match := comparisonTimeBase.FindStringSubmatch(body); len(match) == 3 {
 			numerator, _ = strconv.ParseInt(match[1], 10, 64)
@@ -464,14 +599,15 @@ func comparisonObservations(stderr []byte) ([]ComparisonFrameObservation, error)
 }
 
 type comparisonRunner struct {
-	runner        Runner
-	source        ComparisonSource
-	seek          float64
-	label         string
-	overlaySize   int
-	overlayHeight int
-	observed      *ComparisonFrameObservation
-	changed       bool
+	runner         Runner
+	source         ComparisonSource
+	seek           float64
+	label          string
+	showResolution bool
+	overlaySize    int
+	overlayHeight  int
+	observed       *ComparisonFrameObservation
+	changed        bool
 }
 
 func (r *comparisonRunner) Run(ctx context.Context, executable string, args []string, dir string) (CommandResult, error) {
@@ -505,8 +641,25 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 	lines := []string{
 		"Frame " + number + " of " + total,
 		"Picture type\\: " + pictureType,
-		r.label,
 	}
+	if r.showResolution {
+		width, height := r.source.DisplaySize()
+		geometry, _, geometryErr := image.DecodeConfig(bytes.NewReader(result.Stdout))
+		if geometryErr != nil {
+			return result, errors.New("screenshots: comparison overlay output dimensions unavailable")
+		}
+		resolution := fmt.Sprintf("Resolution\\: %d x %d", width, height)
+		if width != geometry.Width || height != geometry.Height {
+			resolution += fmt.Sprintf(" -> %d x %d", geometry.Width, geometry.Height)
+		}
+		lines = append(lines, resolution)
+	}
+	for i := range args {
+		if args[i] == "-vf" && i+1 < len(args) && (strings.Contains(args[i+1], "tonemap=") || strings.Contains(args[i+1], "libplacebo=")) {
+			lines = append(lines, "Source\\: "+hdrOverlaySourceLabel(r.source.HDRFacts)+" - Tonemapped")
+		}
+	}
+	lines = append(lines, r.label)
 	for i := range args {
 		if args[i] == "-vf" && i+1 < len(args) {
 			args[i+1] += "," + strings.Join(overlayTextFilters(lines, r.overlaySize, r.overlayHeight), ",")

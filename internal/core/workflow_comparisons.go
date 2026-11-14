@@ -38,7 +38,7 @@ type workflowComparisonSource struct {
 
 type comparisonFrameRenderer interface {
 	InspectComparisonSource(context.Context, string) (screenshots.ComparisonSource, error)
-	SampleComparisonSource(context.Context, screenshots.ComparisonSource, float64, float64, float64) ([]screenshots.ComparisonSample, error)
+	SampleComparisonSource(context.Context, screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error)
 	ComparisonPreview(context.Context, screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error)
 	ComparisonCapture(context.Context, screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error)
 }
@@ -71,6 +71,7 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
 	}
+	priorMixedResolution := snapshot.Comparisons != nil && comparisonMixedResolution(*snapshot.Comparisons, retained)
 	snapshot.RequirementsFingerprint, err = workflowMediaRequirementsFingerprint(projections.Projections)
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
@@ -129,6 +130,19 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	}
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
+	}
+	if !plan.Imported && priorMixedResolution != comparisonMixedResolution(plan, retained) {
+		for r := range plan.Rows {
+			for c := range plan.Rows[r].Cells {
+				if !slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool {
+					return source.ID == plan.Rows[r].Cells[c].SourceID && !source.Imported
+				}) {
+					continue
+				}
+				plan.Rows[r].Cells[c].ArtifactID = ""
+				plan.Rows[r].Cells[c].ContentSHA256 = ""
+			}
+		}
 	}
 	switch instructions.Action {
 	case "match":
@@ -545,10 +559,11 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 		progress.item(sourceIndex, len(plan.Sources), source.ID, "comparison_source", label, api.StageStatusRunning, 0)
 		frames, err := renderer.SampleComparisonSource(
 			progress.child(ctx, sourceIndex, len(plan.Sources), source.ID, "comparison_source", label),
-			private.Source,
-			0,
-			private.Source.DurationSeconds,
-			0.5,
+			screenshots.ComparisonSampleRequest{
+				Source:          private.Source,
+				DurationSeconds: private.Source.DurationSeconds,
+				StrideSeconds:   0.5,
+			},
 		)
 		if err != nil {
 			return plan, fmt.Errorf("sample comparison column %d: %w", sourceIndex+1, err)
@@ -596,10 +611,12 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 					"comparison_window",
 					windowLabel,
 				),
-				private.Source,
-				max(0, moment-1),
-				2,
-				0.0001,
+				screenshots.ComparisonSampleRequest{
+					Source:          private.Source,
+					StartSeconds:    max(0, moment-1),
+					DurationSeconds: 2,
+					StrideSeconds:   0.0001,
+				},
 			)
 			if err != nil {
 				return plan, fmt.Errorf("decode manual comparison moment: %w", err)
@@ -651,10 +668,12 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 				label := fmt.Sprintf("Row %d / column %d", rowIndex+1, i+1)
 				dense, err := renderer.SampleComparisonSource(
 					progress.child(ctx, window, windows, id, "comparison_window", label),
-					source.Source,
-					start,
-					2,
-					0.0001,
+					screenshots.ComparisonSampleRequest{
+						Source:          source.Source,
+						StartSeconds:    start,
+						DurationSeconds: 2,
+						StrideSeconds:   0.0001,
+					},
 				)
 				if err != nil {
 					return plan, fmt.Errorf("match comparison sources: %w", err)
@@ -1029,7 +1048,12 @@ func (b workflowMediaBuilder) PreviewComparisonFrame(ctx context.Context, _ api.
 	}
 	var selected *screenshots.ComparisonFrameObservation
 	if step != 0 {
-		frames, err := renderer.SampleComparisonSource(ctx, source.Source, max(0, timestamp-1), 2, 0.0001)
+		frames, err := renderer.SampleComparisonSource(ctx, screenshots.ComparisonSampleRequest{
+			Source:          source.Source,
+			StartSeconds:    max(0, timestamp-1),
+			DurationSeconds: 2,
+			StrideSeconds:   0.0001,
+		})
 		if err != nil {
 			return releaseworkflow.MediaPreviewContent{}, fmt.Errorf("decode comparison frame step: %w", err)
 		}
@@ -1119,6 +1143,7 @@ func comparisonCaptureRequest(plan api.ComparisonPlan, retained workflowMediaPri
 		Source:           source.Source,
 		TimestampSeconds: timestamp,
 		OverlayLabel:     comparisonOverlayLabel(plan, sourceID),
+		ShowResolution:   comparisonMixedResolution(plan, retained),
 	}
 	if strings.TrimSpace(request.OverlayLabel) == "" {
 		return request, errors.New("choose a video-column label before comparison preview or capture")
@@ -1137,8 +1162,40 @@ func comparisonCaptureRequest(plan api.ComparisonPlan, retained workflowMediaPri
 		if request.OutputWidth <= 0 || request.OutputHeight <= 0 {
 			return request, errors.New("the comparison size-reference video has no inspected dimensions")
 		}
+		if plan.ResizeLargerOnly {
+			width, height := source.Source.DisplaySize()
+			if width <= 0 || height <= 0 {
+				return request, errors.New("the comparison video has no inspected dimensions")
+			}
+			scale := float64(request.OutputWidth) / float64(width)
+			if float64(request.OutputWidth)/float64(request.OutputHeight) < 16.0/9 {
+				scale = float64(request.OutputHeight) / float64(height)
+			}
+			request.OutputWidth, request.OutputHeight = 0, 0
+			if scale < 1 || plan.ResizeSmaller && scale > 1 {
+				request.OutputWidth = max(2, int(math.Round(float64(width)*scale/2))*2)
+				request.OutputHeight = max(2, int(math.Round(float64(height)*scale/2))*2)
+				request.ResizeOnly = true
+			}
+		}
 	}
 	return request, nil
+}
+
+func comparisonMixedResolution(plan api.ComparisonPlan, retained workflowMediaPrivateArtifacts) bool {
+	width, height := 0, 0
+	for _, source := range plan.Sources {
+		private, ok := retained.ComparisonSources[source.ID]
+		if !ok || source.Imported {
+			continue
+		}
+		w, h := private.Source.DisplaySize()
+		if width != 0 && (w != width || h != height) {
+			return true
+		}
+		width, height = w, h
+	}
+	return false
 }
 
 // retainComparisonCellFacts permits manual seeking and imported remapping without
@@ -1231,7 +1288,8 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 			changed := !sameMoment
 			renderChanged := false
 			if prior != nil && prior.Comparisons != nil {
-				renderChanged = prior.Comparisons.SizeReferenceSourceID != plan.SizeReferenceSourceID
+				renderChanged = prior.Comparisons.SizeReferenceSourceID != plan.SizeReferenceSourceID ||
+					prior.Comparisons.ResizeLargerOnly != plan.ResizeLargerOnly || prior.Comparisons.ResizeSmaller != plan.ResizeSmaller
 				for _, source := range plan.Sources {
 					if source.ID != cell.SourceID {
 						continue

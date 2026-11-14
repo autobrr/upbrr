@@ -295,6 +295,15 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await comparison
         .getByRole("combobox", { name: "Comparison frame size", exact: true })
         .selectOption("main");
+      await comparison
+        .getByRole("checkbox", {
+          name: "Resize resolutions proportionally, without padding",
+          exact: true,
+        })
+        .check();
+      await comparison
+        .getByRole("checkbox", { name: "Also resize lower resolutions", exact: true })
+        .check();
       await encode
         .getByRole("combobox", { name: "Tone mapping · Encode", exact: true })
         .selectOption("on");
@@ -319,6 +328,8 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await expect(approve).toBeEnabled();
       const captured = (await snapshot()).current!.media!.comparisons!;
       expect(captured.sizeReferenceSourceId).toBe("main");
+      expect(captured.resizeLargerOnly).toBe(true);
+      expect(captured.resizeSmaller).toBe(true);
       expect(captured.sources.map((source) => source.toneMap)).toEqual([false, true, false]);
       const cells = captured.rows[0]!.cells;
       expect(cells).toHaveLength(3);

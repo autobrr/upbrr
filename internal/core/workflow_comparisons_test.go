@@ -30,12 +30,11 @@ type comparisonPictureTypeRenderer struct {
 	comparisonFrameRenderer
 }
 
-func (r comparisonPictureTypeRenderer) SampleComparisonSource(ctx context.Context, source screenshots.ComparisonSource,
-	start, duration, stride float64) ([]screenshots.ComparisonSample, error) {
-	frames, err := r.comparisonFrameRenderer.SampleComparisonSource(ctx, source, start, duration, stride)
+func (r comparisonPictureTypeRenderer) SampleComparisonSource(ctx context.Context, request screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error) {
+	frames, err := r.comparisonFrameRenderer.SampleComparisonSource(ctx, request)
 	for i := range frames {
 		frames[i].PictureType = "B"
-		if source.StartTimeSeconds < 1 && math.Abs(frames[i].RelativeTimestampSeconds*2-math.Round(frames[i].RelativeTimestampSeconds*2)) < 1e-6 {
+		if request.Source.StartTimeSeconds < 1 && math.Abs(frames[i].RelativeTimestampSeconds*2-math.Round(frames[i].RelativeTimestampSeconds*2)) < 1e-6 {
 			frames[i].PictureType = "I"
 		}
 	}
@@ -552,6 +551,24 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			t.Fatalf("preview did not share capture choices: size=%dx%d err=%v", preview.Width, preview.Height, err)
 		}
 		previewBeforeRestart := preview
+		// Changing only the sizing mode invalidates pixels while retaining the
+		// matched source frame, and the preview uses the same downscaling policy.
+		proportional, _ := updated.Comparisons.Clone()
+		proportional.ResizeLargerOnly = true
+		retainComparisonCellFacts(&proportional, &updated)
+		for _, row := range proportional.Rows {
+			for _, cell := range row.Cells {
+				if cell.ArtifactID != "" || cell.ObservedPTS == nil {
+					t.Fatal("sizing-mode change retained pixels or discarded decoded identity")
+				}
+			}
+		}
+		proportionalSnapshot, _ := updated.Clone()
+		proportionalSnapshot.Comparisons = &proportional
+		proportionalPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, proportionalSnapshot, private, "main", 1, 0)
+		if err != nil || proportionalPreview.Width != 96 || proportionalPreview.Height != 64 || *proportionalPreview.ObservedPTS != *preview.ObservedPTS {
+			t.Fatalf("resize-only preview enlarged the smaller input or changed its frame: %+v err=%v", proportionalPreview, err)
+		}
 		_, payload, err := kept.MarshalPrivateResource()
 		if err != nil {
 			t.Fatal(err)
@@ -815,6 +832,55 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	}
 }
 
+func TestComparisonResizeLargerOnlyUsesReferenceAxisAndPrivateDimensions(t *testing.T) {
+	for _, tc := range []struct {
+		name                                 string
+		referenceWidth, referenceHeight      int
+		width, height, wantWidth, wantHeight int
+		resizeSmaller                        bool
+	}{
+		{"same width cropped input", 1920, 1080, 1920, 1040, 0, 0, false},
+		{"wide UHD", 1920, 1080, 3840, 1800, 1920, 900, false},
+		{"cropped wide reference", 1920, 1040, 3840, 2160, 1920, 1080, false},
+		{"four by three reference", 1440, 1080, 3840, 1800, 2304, 1080, false},
+		{"smaller source", 1920, 1080, 1280, 720, 0, 0, false},
+		{"resize smaller source", 1920, 1080, 1280, 720, 1920, 1080, true},
+		{"resize cropped smaller source", 1920, 1080, 1280, 692, 1920, 1038, true},
+		{"resize smaller by height", 1440, 1080, 1280, 720, 1920, 1080, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := api.ComparisonPlan{
+				MainSourceID:          "main",
+				SizeReferenceSourceID: "main",
+				ResizeLargerOnly:      true,
+				ResizeSmaller:         tc.resizeSmaller,
+				Sources: []api.ComparisonSource{{
+					ID:     "main",
+					Label:  "Main",
+					Width:  1,
+					Height: 1,
+				}, {
+					ID:     "other",
+					Label:  "Other",
+					Width:  1,
+					Height: 1,
+				}},
+			}
+			private := workflowMediaPrivateArtifacts{ComparisonSources: map[string]workflowComparisonSource{
+				"main":  {Source: screenshots.ComparisonSource{Width: tc.referenceWidth, Height: tc.referenceHeight}},
+				"other": {Source: screenshots.ComparisonSource{Width: tc.width, Height: tc.height}},
+			}}
+			request, err := comparisonCaptureRequest(plan, private, "other", 1)
+			if err != nil || request.OutputWidth != tc.wantWidth || request.OutputHeight != tc.wantHeight || request.ResizeOnly != (tc.wantWidth > 0) {
+				t.Fatalf("request=%+v err=%v", request, err)
+			}
+			if !request.ShowResolution {
+				t.Fatal("mixed inspected dimensions were hidden by public geometry")
+			}
+		})
+	}
+}
+
 // comparisonWindowRecorder verifies which real decoder windows orchestration
 // requests; it does not replace pixel, clock or capture behavior.
 type comparisonWindowRecorder struct {
@@ -822,9 +888,9 @@ type comparisonWindowRecorder struct {
 	durations []float64
 }
 
-func (r *comparisonWindowRecorder) SampleComparisonSource(ctx context.Context, source screenshots.ComparisonSource, start, duration, stride float64) ([]screenshots.ComparisonSample, error) {
-	r.durations = append(r.durations, duration)
-	frames, err := r.comparisonFrameRenderer.SampleComparisonSource(ctx, source, start, duration, stride)
+func (r *comparisonWindowRecorder) SampleComparisonSource(ctx context.Context, request screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error) {
+	r.durations = append(r.durations, request.DurationSeconds)
+	frames, err := r.comparisonFrameRenderer.SampleComparisonSource(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("record comparison window: %w", err)
 	}
@@ -837,7 +903,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		t.Skip("native alignment requires FFmpeg")
 	}
 	root := t.TempDir()
-	paths := []string{filepath.Join(root, "Example.Reference.mkv"), filepath.Join(root, "Example.Padded.mkv"), filepath.Join(root, "Example.Trimmed.mkv")}
+	paths := []string{filepath.Join(root, "Example.Reference.mkv"), filepath.Join(root, "Example.Padded.mkv"), filepath.Join(root, "Example.Trimmed.mkv"), filepath.Join(root, "Example.HDR.mkv"), filepath.Join(root, "Example.Cropped.mkv")}
 	run := func(args ...string) {
 		t.Helper()
 		if output, err := exec.CommandContext(t.Context(), ffmpeg, append([]string{"-hide_banner", "-loglevel", "error"}, args...)...).CombinedOutput(); err != nil {
@@ -847,6 +913,10 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	run("-f", "lavfi", "-i", "nullsrc=size=64x48:rate=10:duration=90", "-vf", "geq=lum='random(1)*255':cb=128:cr=128,setpts=PTS+5/TB", "-c:v", "ffv1", paths[0])
 	run("-i", paths[0], "-vf", "setpts=PTS-STARTPTS,tpad=start=30:start_mode=add:color=black,setpts=N/(10*TB)", "-c:v", "ffv1", paths[1])
 	run("-copyts", "-i", paths[0], "-vf", "trim=start=7,setpts=PTS-STARTPTS", "-c:v", "ffv1", paths[2])
+	run("-i", paths[1], "-vf",
+		"zscale=primariesin=bt709:transferin=bt709:matrixin=bt709:rangein=limited:primaries=bt2020:transfer=smpte2084:matrix=bt2020nc:range=limited,format=yuv420p10le",
+		"-c:v", "ffv1", paths[3])
+	run("-copyts", "-i", paths[0], "-vf", "crop=64:44:0:2", "-c:v", "ffv1", paths[4])
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "app.sqlite")}}
 	renderer := &comparisonWindowRecorder{comparisonFrameRenderer: screenshots.NewService(cfg, api.NopLogger{}, root, nil)}
 	private := workflowMediaPrivateArtifacts{ComparisonSources: map[string]workflowComparisonSource{}, ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{}}
@@ -856,7 +926,10 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		id := []string{"main", "positive", "negative"}[i]
+		id := []string{"main", "positive", "negative", "hdr", "cropped"}[i]
+		if id == "hdr" && (len(source.HDRFacts.Formats) == 0 || source.HDRFacts.Formats[0] == api.HDRFormatSDR) {
+			t.Fatalf("native HDR fixture was not inspected as HDR: %+v", source.HDRFacts)
+		}
 		fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
 		if err != nil {
 			t.Fatal(err)
@@ -910,7 +983,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		}
 	}
 	for _, row := range matched.Rows {
-		for i, want := range []float64{0, 3, -2} {
+		for i, want := range []float64{0, 3, -2, 3, 0} {
 			cell := row.Cells[i]
 			if cell.TimestampSeconds == nil || cell.ObservedPTS == nil || math.Abs(*cell.TimestampSeconds-*row.Cells[0].TimestampSeconds-want) > .001 {
 				t.Fatalf("wrong source-relative correspondence: %+v", row)
@@ -919,7 +992,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	}
 	found := false
 	for _, phase := range phases {
-		if phase == "comparisons_alignment_validation" {
+		if phase == "comparisons_alignment_rows" {
 			found = true
 		}
 	}
@@ -928,11 +1001,16 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	}
 	media := api.MediaArtifactSet{}
 	captured, err := b.captureWorkflowComparisons(ctx, api.ReleaseRef{SourcePath: paths[0], Generation: 1}, &media, &private, matched, progress, false)
-	if err != nil || len(media.Artifacts) != 6 {
+	if err != nil || len(media.Artifacts) != 10 {
 		t.Fatalf("bounded captures=%d err=%v", len(media.Artifacts), err)
 	}
 	for r, row := range matched.Rows {
 		for c, cell := range row.Cells {
+			width, height := private.ComparisonSources[cell.SourceID].Source.DisplaySize()
+			image := private.ArtifactImages[captured.Rows[r].Cells[c].ArtifactID]
+			if image.Width != width || image.Height != height {
+				t.Fatal("matching-only geometry normalization changed captured framing")
+			}
 			if *cell.ObservedPTS != *captured.Rows[r].Cells[c].ObservedPTS {
 				t.Fatal("capture changed the matched native picture")
 			}
@@ -957,14 +1035,36 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		t.Fatalf("scene quota bypassed full sampling: %v", renderer.durations)
 	}
 	plan.Preferences.DarkCount = nil
+	t.Run("unsupported normalization uses logged full scan", func(t *testing.T) {
+		changed := cloneWorkflowMediaPrivateArtifacts(private)
+		source := changed.ComparisonSources["hdr"]
+		source.Source.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatDolbyVision}, DolbyVisionProfile: "5"}
+		changed.ComparisonSources["hdr"] = source
+		renderer.durations = nil
+		logger := &recordingMediaLogger{}
+		builder := b
+		builder.media = &mediaModule{logger: logger}
+		if _, err := builder.matchWorkflowComparisons(t.Context(), changed, plan, builder.comparisonProgress(t.Context(), 5)); err != nil {
+			t.Fatal(err)
+		}
+		full := false
+		for _, duration := range renderer.durations {
+			full = full || duration > 65
+		}
+		if !full || logger.countLevelContaining("INFO", "decision=full_scan reason=normalization_unavailable column=4") != 1 {
+			t.Fatalf("normalization failure did not select and explain full sampling: windows=%v logs=%+v", renderer.durations, logger.entries)
+		}
+	})
 	for _, tc := range []struct {
 		name, filter string
 		sourceIndex  int
+		bounded      bool
 	}{
-		{"varying cadence", "select='not(eq(mod(n,10),5))',setpts=PTS-STARTPTS", 1},
-		{"contradictory offset", "select='not(between(t,45,46))',setpts=N/(10*TB)", 1},
-		{"empty calibration window", "select='not(between(t,19,27))'", 0},
-		{"empty row windows", "select='not(between(t,32.8,37.1)+between(t,62.8,67.1))'", 0},
+		{"varying cadence", "select='not(eq(mod(n,10),5))',setpts=PTS-STARTPTS", 1, false},
+		{"timing edit between regions", "select='not(between(t,45,46))',setpts=N/(10*TB)", 1, true},
+		{"empty calibration window", "select='not(between(t,19,27))'", 0, true},
+		{"empty row windows", "select='not(between(t,32.8,37.1)+between(t,62.8,67.1))'", 0, true},
+		{"unverified first row", "negate=enable='between(t,15,50)'", 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(root, "Example.Variant.mkv")
@@ -994,8 +1094,8 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 					full = true
 				}
 			}
-			if !full {
-				t.Fatalf("unsupported evidence bypassed full scan: %v", renderer.durations)
+			if full == tc.bounded {
+				t.Fatalf("bounded=%t got full=%t windows=%v", tc.bounded, full, renderer.durations)
 			}
 			checkProgress(t, false)
 			if tc.sourceIndex == 0 {

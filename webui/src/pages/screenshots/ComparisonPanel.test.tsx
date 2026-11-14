@@ -34,6 +34,12 @@ it("retains comparison render choices and defaults new videos without rewriting 
   fireEvent.change(screen.getByRole("combobox", { name: "Comparison frame size" }), {
     target: { value: "column-2" },
   });
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "Resize resolutions proportionally, without padding",
+    }),
+  );
+  fireEvent.click(screen.getByRole("checkbox", { name: "Also resize lower resolutions" }));
   fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
   await waitFor(() => expect(facet.edit).toHaveBeenCalledTimes(1));
   const plan = vi.mocked(facet.edit).mock.calls[0]![0].plan;
@@ -50,6 +56,8 @@ it("retains comparison render choices and defaults new videos without rewriting 
     toneMap: false,
   });
   expect(plan.sizeReferenceSourceId).toBe("column-2");
+  expect(plan.resizeLargerOnly).toBe(true);
+  expect(plan.resizeSmaller).toBe(true);
   unmount();
   render(
     <ComparisonPanel
@@ -66,6 +74,12 @@ it("retains comparison render choices and defaults new videos without rewriting 
   ).toBeNull();
   expect(saved.getByRole("combobox", { name: /Tone mapping/ })).toHaveValue("on");
   expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("column-2");
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Resize resolutions proportionally, without padding",
+    }),
+  ).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Also resize lower resolutions" })).toBeChecked();
   fireEvent.click(screen.getByRole("button", { name: "Remove Source 2 column" }));
   expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("");
 });

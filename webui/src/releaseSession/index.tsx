@@ -90,10 +90,19 @@ const comparisonPreviewRendering = (
   plan: ComparisonPlan | null | undefined,
 ) => {
   const reference = plan?.sources.find((candidate) => candidate.id === plan.sizeReferenceSourceId);
+  const mixedResolution =
+    new Set(
+      plan?.sources
+        .filter((candidate) => !candidate.imported)
+        .map((candidate) => `${candidate.width}x${candidate.height}`),
+    ).size > 1;
   return JSON.stringify([
     source.label,
     source.toneMap,
     plan?.sizeReferenceSourceId || "",
+    plan?.resizeLargerOnly || false,
+    plan?.resizeSmaller || false,
+    mixedResolution,
     reference?.fingerprint,
     reference?.width,
     reference?.height,

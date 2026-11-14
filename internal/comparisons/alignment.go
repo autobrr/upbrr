@@ -22,17 +22,18 @@ func (a ConstantAlignment) Consistent(b ConstantAlignment) bool {
 	return math.Abs(a.OffsetSeconds-b.OffsetSeconds) <= min(a.ToleranceSeconds, b.ToleranceSeconds)
 }
 
-// DiscoverAlignment searches actual timestamps using an informative temporal
-// sequence. Weak, repeated, variable/unequal-cadence or competing evidence does
-// not establish an offset. Visual floors/margins match the ordinary matcher.
-func DiscoverAlignment(reference, target []FrameSample) (ConstantAlignment, bool) {
+// DiscoverAlignment searches actual timestamps using a temporal sequence.
+// An empty reason means an offset was established. Flat, repeated, variable or
+// unequal-cadence evidence cannot establish one. Visual floors and margins match
+// the ordinary matcher; every ordinary film frame contributes to the proof.
+func DiscoverAlignment(reference, target []FrameSample) (ConstantAlignment, string) {
 	columns, _, err := prepareMatching(
 		[]SampledSource{{ID: "reference", Frames: reference}, {ID: "target", Frames: target}},
 		"reference",
 		MatchOptions{Count: 1},
 	)
 	if err != nil {
-		return ConstantAlignment{}, false
+		return ConstantAlignment{}, "invalid_samples"
 	}
 	period := func(frames []FrameSample) float64 {
 		if len(frames) < 4 {
@@ -51,23 +52,27 @@ func DiscoverAlignment(reference, target []FrameSample) (ConstantAlignment, bool
 	}
 	step, targetStep := period(reference), period(target)
 	if step == 0 || targetStep == 0 || math.Abs(step-targetStep) > max(.002, step*.02) {
-		return ConstantAlignment{}, false
+		return ConstantAlignment{}, "incompatible_cadence"
 	}
 	var points []matchingFrame
-	count := min(12, len(reference))
-	changes := 0
+	temporalChange := false
+	// Bound high-frame-rate work while retaining every frame of a four-second
+	// film-rate reference. Sparse points cannot precisely register a single cut.
+	count := min(128, len(reference))
 	for i := range count {
 		frame := columns[0].frames[i*(len(reference)-1)/(count-1)]
 		if len(frame.signature) == 0 {
-			return ConstantAlignment{}, false
+			continue
 		}
-		if len(points) > 0 && visualScore(points[len(points)-1], frame) < .97 {
-			changes++
+		// Texture alone cannot register time. Compare across the window so
+		// gradual motion can provide evidence as well as a single cut.
+		if len(points) > 0 && visualScore(points[0], frame) < .97 {
+			temporalChange = true
 		}
 		points = append(points, frame)
 	}
-	if changes < 3 || points[len(points)-1].frame.TimestampSeconds-points[0].frame.TimestampSeconds < 1 {
-		return ConstantAlignment{}, false
+	if len(points) < 4 || !temporalChange || points[len(points)-1].frame.TimestampSeconds-points[0].frame.TimestampSeconds < 1 {
+		return ConstantAlignment{}, "uninformative_reference"
 	}
 	scoreAt := func(offset float64) float64 {
 		total := 0.0
@@ -102,20 +107,26 @@ func DiscoverAlignment(reference, target []FrameSample) (ConstantAlignment, bool
 		}
 	}
 	if bestScore < .92 {
-		return ConstantAlignment{}, false
+		return ConstantAlignment{}, "no_visual_match"
 	}
 	for i, frame := range target {
 		if math.Abs(frame.TimestampSeconds-anchor-best) > .5 && scores[i] >= bestScore-.03 {
-			return ConstantAlignment{}, false
+			return ConstantAlignment{}, "ambiguous_alignment"
 		}
 	}
-	return ConstantAlignment{OffsetSeconds: best, ToleranceSeconds: min(step, targetStep) / 4}, true
+	return ConstantAlignment{OffsetSeconds: best, ToleranceSeconds: min(step, targetStep) / 4}, ""
 }
 
 // AlignedMatch uses caller-verified constant offsets only for automatic default
 // picture preferences without scene quotas. Manual/explicit choices keep Match.
 // Target reuse is still rejected; static scenes cannot drift for a higher score.
-func AlignedMatch(sources []SampledSource, mainID string, options MatchOptions, alignments map[string]ConstantAlignment) (MatchResult, error) {
+func AlignedMatch(
+	sources []SampledSource,
+	mainID string,
+	options MatchOptions,
+	alignments map[string]ConstantAlignment,
+	previous []MatchedRow,
+) (MatchResult, error) {
 	if len(options.MainMoments) != 0 || options.DarkCount != 0 || options.MotionCount != 0 {
 		return MatchResult{}, errors.New("aligned matching requires automatic scenes without quotas")
 	}
@@ -127,7 +138,17 @@ func AlignedMatch(sources []SampledSource, mainID string, options MatchOptions, 
 			return MatchResult{}, errors.New("aligned matching requires checked offsets and default picture preferences")
 		}
 	}
-	return match(sources, mainID, options, alignments)
+	for _, row := range previous {
+		if !row.Complete || len(row.Frames) != len(sources) {
+			return MatchResult{}, errors.New("prior aligned rows must be complete and use the same columns")
+		}
+		for i, frame := range row.Frames {
+			if frame.SourceID != sources[i].ID {
+				return MatchResult{}, errors.New("prior aligned rows must retain column order")
+			}
+		}
+	}
+	return match(sources, mainID, options, alignments, previous)
 }
 
 func matchAlignedFrame(main matchingFrame, column matchingColumn) FrameMatch {

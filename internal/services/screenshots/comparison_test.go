@@ -108,6 +108,46 @@ func TestComparisonCapturePreservesObservedIdentityAcrossRendererFallback(t *tes
 	}
 }
 
+func TestComparisonCaptionReportsResolutionAndActualToneMapping(t *testing.T) {
+	source := comparisonTestSource(t)
+	source.Width, source.Height = 4, 4
+	source.HDRFacts = api.HDRFacts{
+		Formats: []api.HDRFormat{api.HDRFormatHDR10},
+		Origin:  api.HDREvidenceMediaInfo,
+		Status:  api.HDREvidenceComplete,
+	}
+	valid := testPNGBytes(t, color.RGBA{R: 200, A: 255})
+	for _, degraded := range []bool{false, true} {
+		t.Run(strconv.FormatBool(degraded), func(t *testing.T) {
+			cfg := config.Config{}
+			cfg.ScreenshotHandling.ToneMap = true
+			replies := []renderReply{}
+			if degraded {
+				replies = append(replies, renderReply{err: errors.New("converter unavailable")})
+			}
+			replies = append(replies, renderReply{payload: valid, stderr: comparisonDiagnostics(5800, "B")}, renderReply{payload: valid, stderr: comparisonDiagnostics(5800, "B")})
+			runner := &scriptedRenderRunner{replies: replies}
+			frame, err := NewService(cfg, api.NopLogger{}, t.TempDir(), runner).ComparisonCapture(t.Context(), ComparisonCaptureRequest{
+				Source:           source,
+				TimestampSeconds: .75,
+				OverlayLabel:     "Source B",
+				ShowResolution:   true,
+				OutputWidth:      2,
+				OutputHeight:     2,
+				ResizeOnly:       true,
+			})
+			if err != nil || frame.Processing.Tonemapped == degraded || frame.PTS != 5800 {
+				t.Fatalf("frame=%+v err=%v", frame, err)
+			}
+			filter := ffmpegValueAfter(runner.args[len(runner.args)-1], "-vf")
+			if !strings.Contains(filter, `Resolution\: 4 x 4 -> 2 x 2`) || !strings.Contains(filter, "text='Source B'") ||
+				strings.Contains(filter, "- Tonemapped") == degraded {
+				t.Fatalf("caption did not report actual dimensions and conversion outcome: %s", filter)
+			}
+		})
+	}
+}
+
 func TestComparisonCaptureRejectsBlackMissingAndChangedIdentity(t *testing.T) {
 	source := comparisonTestSource(t)
 	valid := testPNGBytes(t, color.RGBA{R: 200, A: 255})
@@ -206,7 +246,11 @@ func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 		stderr:  comparisonDiagnostics(-200, "I") + "frame=    1 fps=0.0\r" + secondFrame,
 	}}}
 	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
-	samples, err := service.SampleComparisonSource(t.Context(), source, 0, 1, 0.5)
+	samples, err := service.SampleComparisonSource(t.Context(), ComparisonSampleRequest{
+		Source:          source,
+		DurationSeconds: 1,
+		StrideSeconds:   0.5,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,11 +258,19 @@ func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 		samples[1].PictureType != "B" || len(samples[0].Pixels) != 256 || !bytes.Equal(samples[1].Pixels, pixels[256:]) {
 		t.Fatalf("samples = %+v", samples)
 	}
-	if _, err := service.SampleComparisonSource(t.Context(), source, 0, 50000, 0.5); err == nil || len(runner.args) != 1 {
+	if _, err := service.SampleComparisonSource(t.Context(), ComparisonSampleRequest{
+		Source:          source,
+		DurationSeconds: 50000,
+		StrideSeconds:   0.5,
+	}); err == nil || len(runner.args) != 1 {
 		t.Fatalf("unbounded sampling err=%v calls=%d", err, len(runner.args))
 	}
 	runner.replies[0].payload = pixels[:256]
-	if _, err := service.SampleComparisonSource(t.Context(), source, 0, 1, 0.5); err == nil {
+	if _, err := service.SampleComparisonSource(t.Context(), ComparisonSampleRequest{
+		Source:          source,
+		DurationSeconds: 1,
+		StrideSeconds:   0.5,
+	}); err == nil {
 		t.Fatal("unmatched sample pixels were accepted")
 	}
 	for _, tc := range []struct {
@@ -239,10 +291,134 @@ func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 				runner.cancel = cancel
 			}
 			service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
-			samples, err := service.SampleComparisonSource(ctx, source, 0, 1, 0.5)
+			samples, err := service.SampleComparisonSource(ctx, ComparisonSampleRequest{
+				Source:          source,
+				DurationSeconds: 1,
+				StrideSeconds:   0.5,
+			})
 			wantError := tc.reply.err != nil || tc.reply.stderr != "" || tc.cancel
 			if len(samples) != 0 || (err != nil) != wantError || tc.cancel && !errors.Is(err, context.Canceled) {
 				t.Fatalf("empty sampling result=%+v err=%v", samples, err)
+			}
+		})
+	}
+}
+
+func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
+	source := comparisonTestSource(t)
+	source.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatHDR10}}
+	source.StartTimeSeconds = 5
+	identity := comparisonDiagnostics(5800, "B")
+	output := strings.ReplaceAll(identity, "Parsed_showinfo_1", "showinfo@comparison_output")
+	pixels := bytes.Repeat([]byte{42}, 256)
+	for _, tc := range []struct {
+		name      string
+		replies   []renderReply
+		profile   string
+		cancel    bool
+		want      error
+		wantError bool
+		calls     int
+	}{
+		{
+			name: "GPU unavailable uses software",
+			replies: []renderReply{
+				{stderr: "No such filter: libplacebo", err: errors.New("unsupported")},
+				{payload: pixels, stderr: identity + output},
+			},
+			calls: 2,
+		},
+		{
+			name: "converters unavailable",
+			replies: []renderReply{
+				{err: errors.New("unsupported")}, {err: errors.New("unsupported")},
+			},
+			want:  ErrComparisonNormalizationUnavailable,
+			calls: 2,
+		},
+		{
+			name:    "Dolby Vision profile 5 needs decoded metadata",
+			profile: "5",
+			replies: []renderReply{
+				{payload: pixels, stderr: identity + output},
+			},
+			want:  ErrComparisonNormalizationUnavailable,
+			calls: 1,
+		},
+		{
+			name: "changed output timestamp",
+			replies: []renderReply{
+				{payload: pixels, stderr: identity + strings.ReplaceAll(output, "5800", "5900")},
+			},
+			wantError: true,
+			calls:     1,
+		},
+		{
+			name: "missing output identity",
+			replies: []renderReply{
+				{payload: pixels, stderr: identity},
+			},
+			wantError: true,
+			calls:     1,
+		},
+		{
+			name: "corruption never falls back",
+			replies: []renderReply{
+				{stderr: "error while decoding"},
+			},
+			want:  internalerrors.ErrFrameCorruption,
+			calls: 1,
+		},
+		{
+			name:    "cancellation never falls back",
+			cancel:  true,
+			replies: []renderReply{{}},
+			want:    context.Canceled,
+			calls:   1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Config{}
+			cfg.ScreenshotHandling.UseLibplacebo = true
+			// Analysis conversion is independent of the final screenshot opt-out.
+			cfg.ScreenshotHandling.ToneMap = false
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			runner := &scriptedRenderRunner{replies: tc.replies}
+			if tc.cancel {
+				runner.cancel = cancel
+			}
+			source := source
+			source.HDRFacts.DolbyVisionProfile = tc.profile
+			samples, err := NewService(cfg, api.NopLogger{}, t.TempDir(), runner).SampleComparisonSource(ctx, ComparisonSampleRequest{
+				Source:          source,
+				StartSeconds:    .75,
+				DurationSeconds: .22,
+				StrideSeconds:   .05,
+				NormalizeSDR:    true,
+			})
+			if len(runner.args) != tc.calls || (err != nil) != (tc.want != nil || tc.wantError) || tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("samples=%+v calls=%d err=%v", samples, len(runner.args), err)
+			}
+			if tc.wantError && errors.Is(err, ErrComparisonNormalizationUnavailable) {
+				t.Fatal("invalid frame identity permitted a full-scan fallback")
+			}
+			if err == nil {
+				if len(samples) != 1 || samples[0].PTS != 5800 || samples[0].TimeBaseDenominator != 1000 ||
+					samples[0].PictureType != "B" || math.Abs(samples[0].RelativeTimestampSeconds-.8) > 1e-9 || !bytes.Equal(samples[0].Pixels, pixels) {
+					t.Fatalf("normalization changed source identity or pixels: %+v", samples)
+				}
+				filter := ffmpegValueAfter(runner.args[1], "-vf")
+				if !strings.Contains(filter, "zscale=transfer=linear") || !strings.Contains(filter, "tonemap=tonemap=mobius") ||
+					strings.Index(filter, "showinfo,") > strings.Index(filter, "tonemap=") || strings.Contains(filter, "setpts") {
+					t.Fatalf("normalization bypassed the existing pipeline or changed the source clock: %s", filter)
+				}
+			}
+			for _, args := range runner.args {
+				if ffmpegValueAfter(args, "-ss") != "0.750000000" || ffmpegValueAfter(args, "-map") != "0:V:0" ||
+					!slices.Contains(args, "-an") || !strings.Contains(ffmpegValueAfter(args, "-vf"), "trim=start=5.750000000:end=5.970000000") {
+					t.Fatalf("sampling lost its video-only window: %v", args)
+				}
 			}
 		})
 	}
@@ -316,6 +492,12 @@ func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
 			t.Fatal("scaling did not preserve aspect ratio with padding")
 		}
 	}
+	request.OutputWidth, request.OutputHeight, request.ResizeOnly = 32, 24, true
+	resized, err := service.ComparisonCapture(t.Context(), request)
+	if err != nil || resized.Width != 32 || resized.Height != 24 || resized.ComparisonFrameObservation != capture.ComparisonFrameObservation {
+		t.Fatalf("proportional downscaling changed native frame identity or geometry: %+v err=%v", resized, err)
+	}
+	request.ResizeOnly = false
 	request.OutputWidth, request.OutputHeight = 0, 0
 	request.OverlayLabel = "Source B"
 	labelled, err := service.ComparisonCapture(t.Context(), request)
@@ -324,7 +506,12 @@ func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
 	}
 	var progress []api.WorkflowProgressUpdate
 	ctx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) { progress = append(progress, update) })
-	samples, err := service.SampleComparisonSource(ctx, source, 0.75, 0.22, 0.05)
+	samples, err := service.SampleComparisonSource(ctx, ComparisonSampleRequest{
+		Source:          source,
+		StartSeconds:    0.75,
+		DurationSeconds: 0.22,
+		StrideSeconds:   0.05,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +547,11 @@ func TestComparisonNativeFractionalFrameRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	samples, err := service.SampleComparisonSource(t.Context(), source, 0, 0.5, 0.0001)
+	samples, err := service.SampleComparisonSource(t.Context(), ComparisonSampleRequest{
+		Source:          source,
+		DurationSeconds: 0.5,
+		StrideSeconds:   0.0001,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

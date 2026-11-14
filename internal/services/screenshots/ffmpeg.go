@@ -154,6 +154,7 @@ type captureRequest struct {
 	HeightScale    float64
 	OutputWidth    int
 	OutputHeight   int
+	ResizeOnly     bool
 }
 
 type frameInfoResult struct {
@@ -426,35 +427,19 @@ func buildFilterChain(req captureRequest, useLibplacebo bool) string {
 		filters = append(filters, scale)
 	}
 
-	if req.ToneMap {
-		if useLibplacebo {
-			// Keep decoded software frames (and Dolby Vision side data) intact;
-			// libplacebo owns GPU transfer and returns the explicit PNG/drawtext format.
-			filters = append(
-				filters,
-				"libplacebo=apply_dolbyvision=1:tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=rgb24",
-			)
-		} else {
-			algo := strings.TrimSpace(req.Algorithm)
-			if algo == "" {
-				algo = "mobius"
-			}
-			filters = append(filters,
-				"zscale=transfer=linear",
-				"format=gbrpf32le",
-				fmt.Sprintf("tonemap=tonemap=%s:desat=%.2f", algo, req.Desat),
-				"zscale=primaries=bt709:transfer=bt709:matrix=bt709:range=tv",
-			)
-		}
-	}
+	filters = append(filters, toneMappingFilters(req, useLibplacebo)...)
 
 	filters = append(filters, "format=rgb24")
 	if req.OutputWidth > 0 && req.OutputHeight > 0 {
-		filters = append(filters,
-			fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", req.OutputWidth, req.OutputHeight),
-			fmt.Sprintf("pad=%d:%d:(ow-iw)/2:(oh-ih)/2", req.OutputWidth, req.OutputHeight),
-			"setsar=1",
-		)
+		if req.ResizeOnly {
+			filters = append(filters, fmt.Sprintf("scale=%d:%d", req.OutputWidth, req.OutputHeight), "setsar=1")
+		} else {
+			filters = append(filters,
+				fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", req.OutputWidth, req.OutputHeight),
+				fmt.Sprintf("pad=%d:%d:(ow-iw)/2:(oh-ih)/2", req.OutputWidth, req.OutputHeight),
+				"setsar=1",
+			)
+		}
 	}
 
 	if req.FrameOverlay {
@@ -462,6 +447,31 @@ func buildFilterChain(req captureRequest, useLibplacebo bool) string {
 	}
 
 	return strings.Join(filters, ",")
+}
+
+// toneMappingFilters shares the colour conversion used by captures and matching
+// samples. Callers retain ownership of frame selection and output geometry.
+func toneMappingFilters(req captureRequest, useLibplacebo bool) []string {
+	if !req.ToneMap {
+		return nil
+	}
+	if useLibplacebo {
+		// Keep decoded software frames (and Dolby Vision side data) intact;
+		// libplacebo owns GPU transfer and returns the explicit PNG/drawtext format.
+		return []string{
+			"libplacebo=apply_dolbyvision=1:tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=rgb24",
+		}
+	}
+	algo := strings.TrimSpace(req.Algorithm)
+	if algo == "" {
+		algo = "mobius"
+	}
+	return []string{
+		"zscale=transfer=linear",
+		"format=gbrpf32le",
+		fmt.Sprintf("tonemap=tonemap=%s:desat=%.2f", algo, req.Desat),
+		"zscale=primaries=bt709:transfer=bt709:matrix=bt709:range=tv",
+	}
 }
 
 func buildPARScaleFilter(req captureRequest) string {

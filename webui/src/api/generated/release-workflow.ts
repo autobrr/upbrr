@@ -351,6 +351,8 @@ export type ComparisonPlan = Readonly<{
   mainSourceId: string;
   preferences: ComparisonPreferences;
   problems?: readonly ComparisonProblem[];
+  resizeLargerOnly?: boolean;
+  resizeSmaller?: boolean;
   reuseMainScreenshots: boolean;
   rows: readonly ComparisonRow[];
   sceneMix?: ComparisonSceneMix | null;
