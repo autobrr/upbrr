@@ -61,7 +61,7 @@ func exactComparisonDescriptionBlock(tracker string, exact *api.ExactMediaAssets
 				urls = nil
 				break
 			}
-			urls = append(urls, "[img]"+imageURL+"[/img]")
+			urls = append(urls, imageURL)
 		}
 		images = append(images, urls...)
 	}

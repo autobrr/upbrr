@@ -44,6 +44,19 @@ func TestBuildDescriptionKeepsComparisonImagesWhenReplacingScreenshots(t *testin
 	}
 }
 
+func TestBuildDescriptionUnwrapsGeneratedComparison(t *testing.T) {
+	const native = "[comparison=Source, Encode]\nhttps://images.example.invalid/source.png\nhttps://images.example.invalid/encode.png\n[/comparison]"
+	const managed = "[spoiler=source_comparisons]\n" + native + "\n[/spoiler]"
+	const literal = "[code]" + managed + "[/code]"
+	const manual = "[comparison=Manual, Reference]" + managed + "[/comparison]"
+	kept := "Notes\n\n" + managed + "\n\n" + literal + "\n\n" + manual
+	want := "Notes\n\n" + native + "\n\n" + literal + "\n\n" + manual
+	result, err := BuildDescription(t.Context(), api.DescriptionSubject{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
+	if err != nil || !strings.Contains(result, want) || strings.Count(result, "[spoiler=source_comparisons]") != 2 {
+		t.Fatalf("generated comparison wrapper or protected content changed: %q, err=%v", result, err)
+	}
+}
+
 func TestBuildScreenshotTagUsesHostedThumbnailAndFullSizeLink(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

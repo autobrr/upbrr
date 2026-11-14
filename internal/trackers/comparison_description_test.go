@@ -6,6 +6,7 @@ package trackers
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -66,6 +67,8 @@ func comparisonDescriptionFixture(t *testing.T) *api.ExactMediaAssets {
 				Host:          "imgbb",
 				UsageScope:    "global",
 				RawURL:        "https://images.example.invalid/" + string(id) + ".png",
+				ImgURL:        "https://images.example.invalid/thumb-" + string(id) + ".png",
+				WebURL:        "https://images.example.invalid/page-" + string(id),
 			}}
 		}
 		exact.Comparisons.Rows = append(exact.Comparisons.Rows, row)
@@ -86,13 +89,18 @@ func TestComparisonDescriptionKeepsCompleteRowsInSourceOrder(t *testing.T) {
 	if err != nil || !strings.Contains(block, "[comparison=Source HD, Encode, Filtered]") {
 		t.Fatalf("comparison labels = %q, err=%v", block, err)
 	}
-	last := -1
-	for _, id := range []string{"row-1-source-1", "row-1-source-2", "row-1-source-3", "row-2-source-1", "row-2-source-2", "row-2-source-3"} {
-		index := strings.Index(block, id+".png")
-		if index <= last {
-			t.Fatalf("comparison image %s was omitted or shifted: %s", id, block)
-		}
-		last = index
+	_, body, _ := strings.Cut(block, "[comparison=Source HD, Encode, Filtered]")
+	body, _, _ = strings.Cut(body, "[/comparison]")
+	want := []string{
+		"https://images.example.invalid/row-1-source-1.png",
+		"https://images.example.invalid/row-1-source-2.png",
+		"https://images.example.invalid/row-1-source-3.png",
+		"https://images.example.invalid/row-2-source-1.png",
+		"https://images.example.invalid/row-2-source-2.png",
+		"https://images.example.invalid/row-2-source-3.png",
+	}
+	if got := strings.Fields(body); !slices.Equal(got, want) {
+		t.Fatalf("comparison URL tokens = %q, want %q", got, want)
 	}
 	delete(exact.ComparisonUploads, "row-2-source-2")
 	if _, err := exactComparisonDescriptionBlock("ALPHA", exact); err == nil {
@@ -100,7 +108,7 @@ func TestComparisonDescriptionKeepsCompleteRowsInSourceOrder(t *testing.T) {
 	}
 	exact.ImageHostUploadSkipped = true
 	block, err = exactComparisonDescriptionBlock("ALPHA", exact)
-	if err != nil || strings.Contains(block, "row-2-") || strings.Count(block, "[img]") != 3 {
+	if err != nil || strings.Contains(block, "row-2-") || strings.Count(block, "https://images.example.invalid/") != 3 {
 		t.Fatalf("hosting opt-out did not omit the whole unavailable row: %s, err=%v", block, err)
 	}
 	exact.Comparisons.Sources[0].Label = "Changed"
