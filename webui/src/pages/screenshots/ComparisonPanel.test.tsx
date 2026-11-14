@@ -9,6 +9,53 @@ import ComparisonPanel from "./ComparisonPanel";
 
 afterEach(cleanup);
 
+it("defaults new videos to B-frame matching and overlays without rewriting saved choices", async () => {
+  const facet = comparisonFacet(null);
+  const { unmount } = render(
+    <ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Create from videos" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add comparison video" }));
+  for (const group of ["Main input · column 1", "Source 2 · column 2"]) {
+    const column = within(screen.getByRole("group", { name: group }));
+    expect(column.getByRole("checkbox", { name: "B" })).toBeChecked();
+    expect(
+      column.getByRole("checkbox", { name: "Comparison-only frame overlay and label" }),
+    ).toBeChecked();
+  }
+  const main = within(screen.getByRole("group", { name: "Main input · column 1" }));
+  fireEvent.click(main.getByRole("checkbox", { name: "B" }));
+  fireEvent.click(main.getByRole("checkbox", { name: "I" }));
+  fireEvent.click(main.getByRole("checkbox", { name: "Comparison-only frame overlay and label" }));
+  fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
+  await waitFor(() => expect(facet.edit).toHaveBeenCalledTimes(1));
+  const plan = vi.mocked(facet.edit).mock.calls[0]![0].plan;
+  expect(plan.sources[0]).toMatchObject({
+    preferBFrames: false,
+    allowedFrameTypes: ["I"],
+    overlay: false,
+  });
+  expect(plan.sources[1]).toMatchObject({
+    preferBFrames: true,
+    allowedFrameTypes: ["B"],
+    overlay: true,
+  });
+  unmount();
+  render(
+    <ComparisonPanel
+      facet={comparisonFacet(plan)}
+      setLightboxImage={vi.fn()}
+      setLightboxAlt={vi.fn()}
+    />,
+  );
+  const saved = within(screen.getByRole("group", { name: "Main input · column 1" }));
+  expect(saved.getByRole("checkbox", { name: "I" })).toBeChecked();
+  expect(saved.getByRole("checkbox", { name: "Default B-frame preference" })).not.toBeChecked();
+  expect(
+    saved.getByRole("checkbox", { name: "Comparison-only frame overlay and label" }),
+  ).not.toBeChecked();
+});
+
 it("returns to the entry actions after removing an unapplied setup", async () => {
   const facet = comparisonFacet(null);
   vi.mocked(facet.edit).mockResolvedValueOnce(false);

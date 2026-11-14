@@ -1612,6 +1612,9 @@
           "overlay": {
             "type": "boolean"
           },
+          "preferBFrames": {
+            "type": "boolean"
+          },
           "width": {
             "type": "integer"
           }

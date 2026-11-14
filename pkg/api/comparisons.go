@@ -15,7 +15,10 @@ type ComparisonSource struct {
 	Width             int      `json:"width,omitempty"`
 	Height            int      `json:"height,omitempty"`
 	AllowedFrameTypes []string `json:"allowedFrameTypes,omitempty"`
-	Overlay           bool     `json:"overlay"`
+	// PreferBFrames enables the default B/P/I policy. False preserves explicit
+	// choices and plans saved before this policy was introduced.
+	PreferBFrames bool `json:"preferBFrames,omitempty"`
+	Overlay       bool `json:"overlay"`
 }
 
 // ComparisonCell binds one image to a row and source. Nil timing, frame and

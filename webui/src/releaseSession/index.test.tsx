@@ -9721,6 +9721,7 @@ describe("saved-image plan authority", () => {
       Message: "Correct the comparison mapping.",
       Recovery: "edit_input",
     };
+    const pendingEdit = createDeferred<void>();
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
@@ -9728,6 +9729,7 @@ describe("saved-image plan authority", () => {
           workflow: workflowPorts({
             current: async () => current,
             editComparisons: async () => {
+              await pendingEdit.promise;
               throw { failure };
             },
             previewFrame: async (value, _disc, timestampSeconds, _command, _signal, sourceID) => ({
@@ -9745,13 +9747,19 @@ describe("saved-image plan authority", () => {
       ),
     });
     await waitFor(() => expect(result.current.screenshots.comparisons.view.plan).not.toBeNull());
+    let edit: Promise<boolean>;
+    act(() => {
+      edit = result.current.screenshots.comparisons.edit({
+        action: "configure",
+        plan: current.media!.comparisons!,
+      });
+    });
+    await waitFor(() => expect(result.current.screenshots.view.activeAction).toBe("comparison"));
+    expect(result.current.screenshots.view.status).toBe("running");
+    expect(result.current.screenshots.comparisons.view.busy).toBe(true);
     await act(async () => {
-      expect(
-        await result.current.screenshots.comparisons.edit({
-          action: "configure",
-          plan: current.media!.comparisons!,
-        }),
-      ).toBe(false);
+      pendingEdit.resolve();
+      expect(await edit!).toBe(false);
     });
     expect(result.current.screenshots.comparisons.view.error).toBe(failure.Message);
     await act(async () => {

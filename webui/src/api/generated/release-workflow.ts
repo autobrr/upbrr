@@ -394,6 +394,7 @@ export type ComparisonSource = Readonly<{
   imported: boolean;
   label: string;
   overlay: boolean;
+  preferBFrames?: boolean;
   width?: number;
 }>;
 

@@ -5,6 +5,9 @@ package core
 
 import (
 	"bytes"
+	"context"
+ "fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +21,26 @@ import (
 	"github.com/autobrr/upbrr/internal/services/screenshots"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// comparisonPictureTypeRenderer models a GOP whose coarse target samples are I
+// pictures but intervening decoded pictures are B. Native pixels and PTS are
+// supplied by the existing renderer; only the picture-type fixture is scripted.
+type comparisonPictureTypeRenderer struct {
+	comparisonFrameRenderer
+}
+
+func (r comparisonPictureTypeRenderer) SampleComparisonSource(ctx context.Context, source screenshots.ComparisonSource,
+	start, duration, stride float64) ([]screenshots.ComparisonSample, error) {
+	frames, err := r.comparisonFrameRenderer.SampleComparisonSource(ctx, source, start, duration, stride)
+	for i := range frames {
+		frames[i].PictureType = "B"
+		if source.StartTimeSeconds < 1 && math.Abs(frames[i].RelativeTimestampSeconds*2-math.Round(frames[i].RelativeTimestampSeconds*2)) < 1e-6 {
+			frames[i].PictureType = "I"
+		}
+	}
+	if err != nil { return nil, fmt.Errorf("sample comparison fixture: %w",err) }
+ return frames,nil
+}
 
 func TestComparisonApprovalBindsRetainedPixelsAcrossRestart(t *testing.T) {
 	media, retained := testComparisonDescriptionMedia(t, false)
@@ -265,16 +288,37 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		comparisonRenderer: renderer,
 		resolver:           workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{VideoPath: mainPath}},
 	}
-	matched, err := b.matchWorkflowComparisons(t.Context(), retained, plan)
+	matched, err := b.matchWorkflowComparisons(t.Context(), retained, plan, b.comparisonProgress(t.Context(), 5))
 	if err != nil {
 		t.Fatal(err)
+	}
+	policyPlan, err := plan.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range policyPlan.Sources {
+		policyPlan.Sources[i].PreferBFrames = true
+		policyPlan.Sources[i].AllowedFrameTypes = []string{"B"}
+	}
+	policyBuilder := b
+	policyBuilder.comparisonRenderer = comparisonPictureTypeRenderer{renderer}
+	policyMatched, err := policyBuilder.matchWorkflowComparisons(t.Context(), retained, policyPlan, b.comparisonProgress(t.Context(), 5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range policyMatched.Rows {
+		for _, cell := range row.Cells {
+			if cell.TimestampSeconds == nil || cell.PictureType != "B" {
+				t.Fatalf("coarse I prevented nearby B refinement: %+v", row)
+			}
+		}
 	}
 	automatic, err := plan.Clone()
 	if err != nil {
 		t.Fatal(err)
 	}
 	automatic.Rows = nil
-	automatic, err = b.matchWorkflowComparisons(t.Context(), retained, automatic)
+	automatic, err = b.matchWorkflowComparisons(t.Context(), retained, automatic, b.comparisonProgress(t.Context(), 5))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,12 +329,12 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	automatic.Sources[0].Overlay = true
 	retainComparisonCellFacts(&automatic, &api.MediaArtifactSet{Comparisons: &automaticPrior})
 	automatic.Preferences.Count = 3
-	automatic, err = b.matchWorkflowComparisons(t.Context(), retained, automatic)
+	automatic, err = b.matchWorkflowComparisons(t.Context(), retained, automatic, b.comparisonProgress(t.Context(), 5))
 	if err != nil || len(automatic.Rows) != 3 {
 		t.Fatalf("automatic rows ignored changed selection preferences: rows=%d err=%v", len(automatic.Rows), err)
 	}
 	snapshot := api.MediaArtifactSet{}
-	captured, err := b.captureWorkflowComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, &snapshot, &retained, matched, time.Now())
+	captured, err := b.captureWorkflowComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, &snapshot, &retained, matched, b.comparisonProgress(t.Context(), 1), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +447,9 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		MainSeconds:   1,
 		SourceSeconds: 1.1,
 	}}
-	replaced, replacedPrivate, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &fresh, private,
+	var updates []api.WorkflowProgressUpdate
+	progressCtx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) { updates = append(updates, update) })
+	replaced, replacedPrivate, err := b.EditComparisons(progressCtx, api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &fresh, private,
 		api.ComparisonInstructions{
 			Action:       "match",
 			Plan:         *fresh.Comparisons,
@@ -411,6 +457,28 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		}, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
+	}
+	previous := 0
+	phases := map[string]bool{}
+	captureCount := 0
+	for _, update := range updates {
+		if update.ItemOnly {
+			if update.Kind == "comparison_source" && update.Completed > 0 && !strings.Contains(update.Message, "%") {
+				t.Fatalf("source progress is not visible in the workflow item: %+v", update)
+			}
+			if update.Kind == "comparison_cell" && update.Status == api.StageStatusCompleted {
+				captureCount++
+			}
+			continue
+		}
+		if update.Total != 5000 || update.Completed < previous || update.Completed == 5000 && captureCount < 4 {
+			t.Fatalf("comparison progress finished early or regressed: update=%+v captures=%d previous=%d", update, captureCount, previous)
+		}
+		previous = update.Completed
+		phases[update.Phase] = true
+	}
+	if previous != 5000 || len(phases) != 5 || captureCount != 4 {
+		t.Fatalf("incomplete comparison progress: phases=%v captures=%d completed=%d", phases, captureCount, previous)
 	}
 	replacedArtifacts, ok := replacedPrivate.(workflowMediaPrivateArtifacts)
 	if !ok || replacedArtifacts.ComparisonSources["other"].Source.Path != mainPath || replaced.Comparisons.ApprovedFingerprint != "" || len(replaced.Comparisons.Anchors) != 0 {
@@ -429,7 +497,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		MainSeconds:   1,
 		SourceSeconds: 1.1,
 	}}
-	anchored, err := b.matchWorkflowComparisons(t.Context(), retained, plan)
+	anchored, err := b.matchWorkflowComparisons(t.Context(), retained, plan, b.comparisonProgress(t.Context(), 5))
 	if err != nil {
 		t.Fatal(err)
 	}

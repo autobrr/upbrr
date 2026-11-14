@@ -233,6 +233,21 @@ test("embedded video comparisons match three native sources and retain reviewed 
           .fill(alternatePaths[index]!);
       }
       await comparison.getByLabel("Comparison rows", { exact: true }).fill("1");
+      // Keep two columns plain for the pixel-identity witness; the Encode
+      // column's later opt-in must remain a real overlay-setting transition.
+      for (const [index, label] of ["Main input", "Encode", "Filtered"].entries()) {
+        const source = comparison.getByRole("group", {
+          name: `${label} · column ${index + 1}`,
+          exact: true,
+        });
+        await expect(source.getByRole("checkbox", { name: "B", exact: true })).toBeChecked();
+        const overlay = source.getByRole("checkbox", {
+          name: "Comparison-only frame overlay and label",
+          exact: true,
+        });
+        await expect(overlay).toBeChecked();
+        await overlay.uncheck();
+      }
       await comparison
         .getByRole("checkbox", { name: "Use the main column as normal screenshots" })
         .check();
@@ -246,10 +261,18 @@ test("embedded video comparisons match three native sources and retain reviewed 
         })
         .toBe(3);
       const matched = (await snapshot()).current!.media!.comparisons!;
-      expect(matched.sources.map((source) => [source.label, source.width, source.height])).toEqual([
-        ["Main input", 160, 120],
-        ["Encode", 160, 120],
-        ["Filtered", 160, 120],
+      expect(
+        matched.sources.map((source) => [
+          source.label,
+          source.width,
+          source.height,
+          Boolean(source.preferBFrames),
+          source.overlay,
+        ]),
+      ).toEqual([
+        ["Main input", 160, 120, true, false],
+        ["Encode", 160, 120, false, false],
+        ["Filtered", 160, 120, true, false],
       ]);
       const seconds = encode.getByLabel("Preview seconds · Encode", { exact: true });
       await seconds.fill("1.1");

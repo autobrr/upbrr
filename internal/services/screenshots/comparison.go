@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	gomediainfo "github.com/autobrr/go-mediainfo"
 
@@ -56,7 +57,8 @@ type ComparisonFrameObservation struct {
 // ComparisonCaptureRequest selects a seek relative to the file's start time.
 // OverlayLabel optionally adds a comparison-only label, observed PTS and picture
 // type. Labels accept at most 80 ASCII letters, digits, spaces, dots, dashes and
-// underscores. Ordinary screenshot overlay preferences do not apply.
+// underscores. Overlay enablement is comparison-local; text size follows the
+// ordinary screenshot setting and scales with the source height.
 type ComparisonCaptureRequest struct {
 	Source           ComparisonSource
 	TimestampSeconds float64
@@ -177,9 +179,11 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		return ComparisonFrame{}, err
 	}
 	runner := &comparisonRunner{
-		runner: s.runner,
-		seek:   request.TimestampSeconds,
-		label:  request.OverlayLabel,
+		runner:        s.runner,
+		seek:          request.TimestampSeconds,
+		label:         request.OverlayLabel,
+		overlaySize:   s.cfg.ScreenshotHandling.OverlayTextSize,
+		overlayHeight: request.Source.Height,
 	}
 	frame, err := renderFrame(ctx, runner, executable, captureRequest{
 		InputPath:    path,
@@ -224,10 +228,13 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 // measured on actual frame timestamps. At most 50,000 samples may be requested.
 // Returned PTS remains in the original source clock, including a nonzero start.
 func (s *Service) SampleComparisonSource(ctx context.Context, source ComparisonSource, start, duration, strideSeconds float64) ([]ComparisonSample, error) {
+	logger := logging.FromContext(ctx, s.logger)
+	logger.Debugf("comparisons: phase=sampling decision=decode window_seconds=%.3f stride_seconds=%.4f", duration, strideSeconds)
 	windowStart := source.StartTimeSeconds + start
 	windowEnd := windowStart + duration
 	if !comparisonFinite(start) || !comparisonFinite(duration) || !comparisonFinite(strideSeconds) || !comparisonFinite(source.StartTimeSeconds) ||
 		!comparisonFinite(windowEnd) || start < 0 || duration <= 0 || strideSeconds <= 0 || math.Ceil(duration/strideSeconds)+1 > 50000 {
+		logger.Warnf("comparisons: phase=sampling state=blocked reason=invalid_window")
 		return nil, errors.New("screenshots: comparison sampling window exceeds its bounds")
 	}
 	path, err := comparisonLocalPath(source.Path)
@@ -244,6 +251,17 @@ func (s *Service) SampleComparisonSource(ctx context.Context, source ComparisonS
 		windowEnd,
 		strideSeconds,
 	)
+	started := time.Now()
+	succeeded := false
+	defer func() {
+		logger.Debugf("comparisons: phase=sampling completed=%t elapsed_seconds=%.3f window_seconds=%.3f stride_seconds=%.4f",
+			succeeded, time.Since(started).Seconds(), duration, strideSeconds)
+	}()
+	ctx = context.WithValue(ctx, comparisonSampleProgressKey{}, &comparisonSampleProgress{
+		ctx:      ctx,
+		start:    windowStart,
+		duration: duration,
+	})
 	result, err := s.runner.Run(ctx, executable, []string{
 		"-hide_banner", "-loglevel", "info", "-copyts", "-ss", strconv.FormatFloat(start, 'f', 9, 64), "-i", path,
 		"-map", "0:V:0", "-an", "-sn", "-dn", "-vf", filter, "-fps_mode", "passthrough",
@@ -270,7 +288,77 @@ func (s *Service) SampleComparisonSource(ctx context.Context, source ComparisonS
 			Pixels:                     bytes.Clone(result.Stdout[i*256 : (i+1)*256]),
 		})
 	}
+	succeeded = true
+	api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+		Phase:     "comparisons_sampling",
+		Status:    api.StageStatusCompleted,
+		Completed: 1000,
+		Total:     1000,
+		ItemOnly:  true,
+	})
 	return samples, nil
+}
+
+type comparisonSampleProgressKey struct{}
+
+// comparisonSampleProgress observes existing showinfo records without changing
+// decoding or buffering raw diagnostics in progress events. Units are permille of
+// the requested source-clock window; completion requires validated output.
+type comparisonSampleProgress struct {
+	ctx             context.Context
+	start, duration float64
+	header          []byte
+	line            []byte
+	discard         bool
+	completed       int
+}
+
+func (p *comparisonSampleProgress) Write(data []byte) (int, error) {
+	for _, value := range data {
+		switch {
+		case value == '\n' || value == '\r':
+			if !p.discard {
+				p.report()
+			}
+			p.line, p.discard = p.line[:0], false
+		case len(p.line) < 8192:
+			p.line = append(p.line, value)
+		default:
+			p.discard = true
+		}
+	}
+	return len(data), nil
+}
+
+func (p *comparisonSampleProgress) report() {
+	line := comparisonShowInfoLine.FindSubmatch(p.line)
+	if len(line) != 2 {
+		return
+	}
+	if comparisonTimeBase.Match(line[1]) {
+		p.header = append(bytes.Clone(p.line), '\n')
+		return
+	}
+	if len(p.header) == 0 || !comparisonPTS.Match(line[1]) {
+		return
+	}
+	observed, err := comparisonObservations(append(bytes.Clone(p.header), p.line...))
+	if err != nil || len(observed) != 1 {
+		return
+	}
+	completed := int(math.Floor(1000 * (observed[0].TimestampSeconds - p.start) / p.duration))
+	completed = max(0, min(999, completed))
+	if completed < p.completed+10 {
+		return
+	}
+	p.completed = completed
+	api.EmitWorkflowProgress(p.ctx, api.WorkflowProgressUpdate{
+		Phase:     "comparisons_sampling",
+		Status:    api.StageStatusRunning,
+		Completed: completed,
+		Total:     1000,
+		ItemOnly:  true,
+	})
 }
 
 var (
@@ -321,11 +409,13 @@ func comparisonObservations(stderr []byte) ([]ComparisonFrameObservation, error)
 }
 
 type comparisonRunner struct {
-	runner   Runner
-	seek     float64
-	label    string
-	observed *ComparisonFrameObservation
-	changed  bool
+	runner        Runner
+	seek          float64
+	label         string
+	overlaySize   int
+	overlayHeight int
+	observed      *ComparisonFrameObservation
+	changed       bool
 }
 
 func (r *comparisonRunner) Run(ctx context.Context, executable string, args []string, dir string) (CommandResult, error) {
@@ -355,12 +445,17 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 	if pictureType == "" {
 		pictureType = "Unknown"
 	}
-	text := fmt.Sprintf("%s  PTS %d x %d/%d  Type %s", r.label, r.observed.PTS, r.observed.TimeBaseNumerator, r.observed.TimeBaseDenominator, pictureType)
+	lines := []string{
+		"Column\\: " + r.label,
+		fmt.Sprintf("PTS\\: %d x %d/%d", r.observed.PTS, r.observed.TimeBaseNumerator, r.observed.TimeBaseDenominator),
+		"Frame Type\\: " + pictureType,
+	}
 	for i := range args {
 		if args[i] == "-vf" && i+1 < len(args) {
-			args[i+1] += fmt.Sprintf(",drawtext=text='%s':expansion=none:fontcolor=white:fontsize=18:x=10:y=10:box=1:boxcolor=black@0.5", text)
+			args[i+1] += "," + strings.Join(overlayTextFilters(lines, r.overlaySize, r.overlayHeight), ",")
 		}
 	}
+
 	return r.run(ctx, executable, args, dir)
 }
 

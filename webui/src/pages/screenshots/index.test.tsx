@@ -103,6 +103,38 @@ const facet = (): ScreenshotsFacet => {
 };
 
 describe("ScreenshotsPage", () => {
+  it("blocks ordinary screenshot actions without claiming they run during comparison work", () => {
+    const value = facet();
+    const props = {
+      facet: {
+        ...value,
+        view: { ...value.view, status: "running" as const, activeAction: "comparison" as const },
+      },
+      setLightboxImage: vi.fn(),
+      setLightboxAlt: vi.fn(),
+    };
+    const { rerender } = render(<ScreenshotsPage {...props} />);
+    for (const name of [
+      "Load suggestions",
+      "Generate screenshots",
+      "Run preview",
+      "Capture preview",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(
+      screen.queryByRole("button", { name: /Loading|Working|Capturing/ }),
+    ).not.toBeInTheDocument();
+    rerender(
+      <ScreenshotsPage
+        {...props}
+        facet={{ ...props.facet, view: { ...props.facet.view, activeAction: "preview" } }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Loading..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Generate screenshots" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Capture preview" })).toBeDisabled();
+  });
   it.each([
     { renderer: "libplacebo", tonemapped: true, applied: "yes" },
     { renderer: "none", tonemapped: false, applied: "no" },

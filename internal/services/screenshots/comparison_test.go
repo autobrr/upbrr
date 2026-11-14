@@ -241,12 +241,18 @@ func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
 	}
 	request.OverlayLabel = "Source B"
 	labelled, err := service.ComparisonCapture(t.Context(), request)
-	if err != nil || labelled.ComparisonFrameObservation != capture.ComparisonFrameObservation {
+	if err != nil || labelled.ComparisonFrameObservation != capture.ComparisonFrameObservation || bytes.Equal(labelled.ImageBytes, capture.ImageBytes) {
 		t.Fatalf("comparison label changed native frame identity: %v %+v", err, labelled.ComparisonFrameObservation)
 	}
-	samples, err := service.SampleComparisonSource(t.Context(), source, 0.75, 0.22, 0.05)
+	var progress []api.WorkflowProgressUpdate
+	ctx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) { progress = append(progress, update) })
+	samples, err := service.SampleComparisonSource(ctx, source, 0.75, 0.22, 0.05)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(progress) < 2 || progress[0].Completed <= 0 || progress[0].Completed >= progress[0].Total ||
+		progress[len(progress)-1].Status != api.StageStatusCompleted || progress[len(progress)-1].Completed != 1000 {
+		t.Fatalf("sampling did not report live source-clock progress before validated completion: %+v", progress)
 	}
 	if len(samples) != 2 || samples[0].PTS != 5800 || samples[0].TimestampSeconds != 5.8 ||
 		math.Abs(samples[0].RelativeTimestampSeconds-0.8) > 1e-9 || len(samples[0].Pixels) != 256 {

@@ -13,6 +13,7 @@ export function WorkflowOperationProgress({
   if (!operation || operation.operation === "duplicate_check") return null;
 
   const metadataPreparation = operation.operation === "preparation";
+  const comparisonProgress = Boolean(operation.phase?.startsWith("comparisons_"));
   const metadataItemIDs = new Set(
     (operation.items || [])
       .filter((item) => item.kind.startsWith("preparation_"))
@@ -77,7 +78,8 @@ export function WorkflowOperationProgress({
         <div>
           <p className={pageStyle.label}>Release workflow</p>
           <p className="font-semibold text-foreground">
-            {(operation.operation === "analyze_hdr"
+            {(operation.operation === "analyze_hdr" ||
+            (comparisonProgress && operation.status === "running")
               ? operation.message
               : events.length
                 ? rootEvent?.message
@@ -90,7 +92,7 @@ export function WorkflowOperationProgress({
         <span className="text-muted-foreground text-sm">
           {metadataPreparation
             ? "Metadata stages"
-            : operation.total > 0 && operation.operation !== "analyze_hdr"
+            : operation.total > 0 && operation.operation !== "analyze_hdr" && !comparisonProgress
               ? `${completed}/${operation.total} complete`
               : `${Math.round(progress)}%`}
         </span>

@@ -80,6 +80,7 @@ import type {
   ReleaseSession,
   RouteAccess,
   UploadRunOptions,
+  ScreenshotAction,
 } from "./types";
 
 const SessionContext = createContext<ReleaseSession | null>(null);
@@ -286,12 +287,14 @@ export function ReleaseSessionProvider({
     operationSequence: number;
     message: string;
   }> | null>(null);
+  const [screenshotLocalAction, setScreenshotLocalAction] = useState<ScreenshotAction | null>(null);
   const [screenshotCommand, setScreenshotCommand] = useState<Readonly<{
     workflowID: string;
     workflowRevision: number;
     commandID: string;
     operationID: string;
     operationSequence: number;
+    action: ScreenshotAction;
     status: "running" | "error";
     message: string;
   }> | null>(null);
@@ -2401,7 +2404,10 @@ export function ReleaseSessionProvider({
     if (controllers.current[facet] === command.controller) delete controllers.current[facet];
   };
 
-  const screenshotCommandCallbacks = (expectsMediaOperation = false): WorkflowCommandCallbacks => ({
+  const screenshotCommandCallbacks = (
+    expectsMediaOperation = false,
+    action: ScreenshotAction = "edit",
+  ): WorkflowCommandCallbacks => ({
     onAbort: (authority) =>
       setScreenshotCommand((command) =>
         command?.commandID === authority.commandID ? null : command,
@@ -2409,6 +2415,7 @@ export function ReleaseSessionProvider({
     onError: (error, authority) =>
       setScreenshotCommand({
         ...authority,
+        action,
         status: "error",
         message:
           operationFailureFromError(error)?.Message ||
@@ -2418,6 +2425,7 @@ export function ReleaseSessionProvider({
       dispatch({ type: "screenshot_command_started" });
       setScreenshotCommand({
         ...authority,
+        action,
         status: "running",
         message: "",
       });
@@ -2431,6 +2439,7 @@ export function ReleaseSessionProvider({
       ) {
         setScreenshotCommand({
           ...authority,
+          action,
           operationID: operation.id,
           operationSequence: operation.sequence,
           workflowID: current.workflow.id,
@@ -2460,7 +2469,7 @@ export function ReleaseSessionProvider({
           current = await continueBackendGoal(value, "media_ready", {}, commandID, signal);
           return current;
         },
-        screenshotCommandCallbacks(),
+        screenshotCommandCallbacks(false, "comparison"),
         previousController,
       );
       if (!restored) return false;
@@ -2468,6 +2477,7 @@ export function ReleaseSessionProvider({
     setScreenshotCommand(null);
     const command = beginWorkflow("screenshots", access.screenshots.reason, previousController);
     if (!command) return false;
+    setScreenshotLocalAction("plan");
     try {
       const workflowPlan = await activePorts.workflow.mediaPlan(
         current.workflow.id,
@@ -2551,7 +2561,7 @@ export function ReleaseSessionProvider({
               commandID,
               signal,
             ),
-          screenshotCommandCallbacks(true),
+          screenshotCommandCallbacks(true, "plan"),
           command.controller,
         );
       }
@@ -2560,6 +2570,7 @@ export function ReleaseSessionProvider({
       failWorkflow("screenshots", command, error);
       return false;
     } finally {
+      if (controllers.current.screenshots === command.controller) setScreenshotLocalAction(null);
       finishWorkflow("screenshots", command);
     }
   };
@@ -2598,7 +2609,7 @@ export function ReleaseSessionProvider({
             commandID,
             signal,
           ),
-        screenshotCommandCallbacks(true),
+        screenshotCommandCallbacks(true, selections?.length ? "preview_capture" : "capture"),
       );
     }
     return false;
@@ -2643,6 +2654,7 @@ export function ReleaseSessionProvider({
     setScreenshotCommand(null);
     const command = beginWorkflow("screenshots", access.screenshots.reason);
     if (!command || !workflowView.current) return false;
+    setScreenshotLocalAction("preview");
     try {
       const preview = await activePorts.workflow.previewFrame(
         workflowView.current,
@@ -2665,6 +2677,7 @@ export function ReleaseSessionProvider({
       failWorkflow("screenshots", command, error);
       return false;
     } finally {
+      if (controllers.current.screenshots === command.controller) setScreenshotLocalAction(null);
       finishWorkflow("screenshots", command);
     }
   };
@@ -2682,6 +2695,7 @@ export function ReleaseSessionProvider({
     setScreenshotCommand(null);
     const command = beginWorkflow("screenshots", access.screenshots.reason);
     if (!command) return null;
+    setScreenshotLocalAction("comparison");
     try {
       const preview = await activePorts.workflow.previewFrame(
         current,
@@ -2714,6 +2728,7 @@ export function ReleaseSessionProvider({
       failWorkflow("screenshots", command, error);
       return null;
     } finally {
+      if (controllers.current.screenshots === command.controller) setScreenshotLocalAction(null);
       finishWorkflow("screenshots", command);
     }
   };
@@ -2722,7 +2737,7 @@ export function ReleaseSessionProvider({
     runBackendWorkflow(
       (current, commandID, signal) =>
         activePorts.workflow.editComparisons(current, instructions, commandID, signal),
-      screenshotCommandCallbacks(),
+      screenshotCommandCallbacks(false, "comparison"),
     );
 
   const loadMenuImages = async (): Promise<boolean> => {
@@ -4235,55 +4250,62 @@ export function ReleaseSessionProvider({
         edit: editComparisons,
         preview: previewComparisonFrame,
         importImages: (files, plan, replacement) =>
-          runBackendWorkflow(async (current, commandID, signal) => {
-            const resources: WorkflowResourceRef[] = [];
-            for (const file of files) {
-              resources.push(await activePorts.workflow.stageMedia(current, file, signal));
-              if (cancellation.current?.controller.signal === signal)
-                await awaitWorkflowCommand(current, signal);
-            }
-            const edited =
-              replacement && resources[0]
-                ? {
-                    ...plan,
-                    rows: plan.rows.map((row) =>
-                      row.id === replacement.rowID
-                        ? {
-                            ...row,
-                            cells: [
-                              ...row.cells.filter((cell) =>
-                                replacement.artifactID
-                                  ? cell.artifactId !== replacement.artifactID
-                                  : cell.sourceId !== replacement.sourceID ||
-                                    Boolean(cell.artifactId),
-                              ),
-                              { sourceId: replacement.sourceID, artifactId: resources[0]!.id },
-                            ],
-                          }
-                        : row,
-                    ),
-                  }
-                : plan;
-            return activePorts.workflow.editComparisons(
-              current,
-              {
-                action: "configure",
-                plan: edited,
-                attachments: resources.map((resource, order) => ({
-                  resource,
-                  kind: "comparison",
-                  purpose: "comparison",
-                  order,
-                })),
-              },
-              commandID,
-              signal,
-            );
-          }, screenshotCommandCallbacks()),
+          runBackendWorkflow(
+            async (current, commandID, signal) => {
+              const resources: WorkflowResourceRef[] = [];
+              for (const file of files) {
+                resources.push(await activePorts.workflow.stageMedia(current, file, signal));
+                if (cancellation.current?.controller.signal === signal)
+                  await awaitWorkflowCommand(current, signal);
+              }
+              const edited =
+                replacement && resources[0]
+                  ? {
+                      ...plan,
+                      rows: plan.rows.map((row) =>
+                        row.id === replacement.rowID
+                          ? {
+                              ...row,
+                              cells: [
+                                ...row.cells.filter((cell) =>
+                                  replacement.artifactID
+                                    ? cell.artifactId !== replacement.artifactID
+                                    : cell.sourceId !== replacement.sourceID ||
+                                      Boolean(cell.artifactId),
+                                ),
+                                { sourceId: replacement.sourceID, artifactId: resources[0]!.id },
+                              ],
+                            }
+                          : row,
+                      ),
+                    }
+                  : plan;
+              return activePorts.workflow.editComparisons(
+                current,
+                {
+                  action: "configure",
+                  plan: edited,
+                  attachments: resources.map((resource, order) => ({
+                    resource,
+                    kind: "comparison",
+                    purpose: "comparison",
+                    order,
+                  })),
+                },
+                commandID,
+                signal,
+              );
+            },
+            screenshotCommandCallbacks(false, "comparison"),
+          ),
       },
       view: {
         revision: state.screenshots.revision,
         status: screenshotStatus,
+        activeAction:
+          screenshotStatus === "running"
+            ? currentScreenshotCommand?.action || screenshotLocalAction
+            : null,
         plan: workflowView.current?.continuation.comparisonRestorePending
           ? null
           : state.screenshots.value,

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -50,6 +51,9 @@ func (commandRunner) Run(ctx context.Context, name string, args []string, dir st
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if progress, ok := ctx.Value(comparisonSampleProgressKey{}).(*comparisonSampleProgress); ok {
+		cmd.Stderr = io.MultiWriter(&stderr, progress)
+	}
 	err := cmd.Run()
 	result := CommandResult{
 		Stdout:   stdout.Bytes(),
@@ -483,39 +487,36 @@ func roundToEven(value float64) int {
 }
 
 func overlayFilters(req captureRequest) []string {
-	textSize := req.OverlaySize
-	if textSize <= 0 {
-		textSize = 18
-	}
-	res := digitsOnly(req.Resolution)
-	if res == 0 {
-		res = 1080
-	}
-	fontSize := (textSize * res) / 1080
-	xAll := (10 * res) / 1080
-	lineSpacing := int(float64(fontSize) * 1.1)
-	if lineSpacing <= 0 {
-		lineSpacing = fontSize
-	}
-	yNumber := xAll
-	yType := yNumber + lineSpacing
-	yHDR := yType + lineSpacing
-
 	frameNumber := int((req.Timestamp + req.TimelineOffset) * req.FrameRate)
 	frameType := req.FrameInfo.FrameType
 	if strings.TrimSpace(frameType) == "" {
 		frameType = "Unknown"
 	}
-
-	filters := []string{
-		fmt.Sprintf("drawtext=text='Frame Number\\: %d':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", frameNumber, fontSize, xAll, yNumber),
-		fmt.Sprintf("drawtext=text='Frame Type\\: %s':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", frameType, fontSize, xAll, yType),
-	}
+	lines := []string{fmt.Sprintf("Frame Number\\: %d", frameNumber), "Frame Type\\: " + frameType}
 	if req.ToneMap {
+		lines = append(lines, "Source\\: "+hdrOverlaySourceLabel(req.HDRFacts)+" - Tonemapped")
+	}
+	return overlayTextFilters(lines, req.OverlaySize, digitsOnly(req.Resolution))
+}
+
+// overlayTextFilters shares the scaled, stacked screenshot presentation. Callers
+// supply escaped, validated text; comparison callers use observed PTS instead of
+// an estimated frame ordinal.
+func overlayTextFilters(lines []string, textSize, resolution int) []string {
+	if textSize <= 0 {
+		textSize = 18
+	}
+	if resolution <= 0 {
+		resolution = 1080
+	}
+	fontSize := textSize * resolution / 1080
+	margin := 10 * resolution / 1080
+	spacing := max(fontSize, int(float64(fontSize)*1.1))
+	filters := make([]string, 0, len(lines))
+	for i, text := range lines {
 		filters = append(
 			filters,
-			fmt.Sprintf("drawtext=text='Source\\: %s - Tonemapped':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5",
-				hdrOverlaySourceLabel(req.HDRFacts), fontSize, xAll, yHDR),
+			fmt.Sprintf("drawtext=text='%s':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", text, fontSize, margin, margin+i*spacing),
 		)
 	}
 	return filters

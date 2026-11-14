@@ -25,6 +25,80 @@ func sampleFrame(seed uint64, seconds float64, kind string) FrameSample {
 	}
 }
 
+func TestMatchingDefaultPicturePolicy(t *testing.T) {
+	main := SampledSource{
+		ID:            "main",
+		PreferBFrames: true,
+		AllowedTypes:  []string{"B"},
+		Frames: []FrameSample{
+			sampleFrame(1, 1, "I"), sampleFrame(2, 10, "P"), sampleFrame(3, 20, "B"),
+		},
+	}
+	other := main
+	other.ID = "other"
+	for count := 1; count <= 3; count++ {
+		result, err := Match([]SampledSource{main, other}, "main", MatchOptions{Count: count})
+		if err != nil || len(result.Rows) != count {
+			t.Fatalf("count=%d rows=%+v error=%v", count, result.Rows, err)
+		}
+		types := make([]string,0,len(result.Rows))
+		for _, row := range result.Rows {
+			if !row.Complete {
+				t.Fatalf("default fallback did not complete a suitable scene: %+v", row)
+			}
+			types = append(types, row.Frames[0].FrameType)
+		}
+		slices.Sort(types)
+		want := []string{"B", "P", "I"}[:count]
+		want = slices.Clone(want)
+		slices.Sort(want)
+		if !slices.Equal(types, want) {
+			t.Fatalf("count=%d selected=%v want=%v", count, types, want)
+		}
+	}
+	// A preferred B picture without correspondence must not prevent a useful P scene.
+	other.Frames = other.Frames[:2]
+	fallback, err := Match([]SampledSource{main, other}, "main", MatchOptions{Count: 1})
+	if err != nil || len(fallback.Rows) != 1 || !fallback.Rows[0].Complete || fallback.Rows[0].Frames[0].FrameType != "P" {
+		t.Fatalf("unmatched B prevented P fallback: %+v %v", fallback.Rows, err)
+	}
+	for _, tc := range []struct {
+		name      string
+		mainType  string
+		otherType string
+		explicit  bool
+		manual    bool
+		resolved  bool
+	}{
+		{"B main permits P fallback", "B", "P", false, false, true},
+		{"B main rejects I fallback", "B", "I", false, false, false},
+		{"P main rejects I fallback", "P", "I", false, false, false},
+		{"I main permits I fallback", "I", "I", false, false, true},
+		{"explicit I remains selected", "B", "I", true, false, true},
+		{"manual I remains selected", "B", "I", false, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			main := SampledSource{ID: "main", Frames: []FrameSample{sampleFrame(1, 1, tc.mainType)}}
+			other := SampledSource{
+				ID:            "other",
+				PreferBFrames: !tc.explicit,
+				AllowedTypes:  []string{"B"},
+				Frames:        []FrameSample{sampleFrame(1, 4, tc.otherType)},
+			}
+			if tc.explicit {
+				other.AllowedTypes = []string{"I"}
+			}
+			if tc.manual {
+				other.Anchors = []MatchAnchor{{MainSeconds: 1, SourceSeconds: 4}}
+			}
+			result, err := Match([]SampledSource{main, other}, "main", MatchOptions{MainMoments: []float64{1}})
+			if err != nil || len(result.Rows) != 1 || result.Rows[0].Complete != tc.resolved || result.Rows[0].Frames[1].Resolved != tc.resolved {
+				t.Fatalf("rows=%+v error=%v", result.Rows, err)
+			}
+		})
+	}
+}
+
 func TestMatchingFollowsContentAcrossTimingEdits(t *testing.T) {
 	main := SampledSource{ID: "release"}
 	other := SampledSource{ID: "source", Anchors: []MatchAnchor{{MainSeconds: 1, SourceSeconds: 4}}}
@@ -155,12 +229,22 @@ func TestMatchingChecksAmbiguityAfterPictureTypeSubstitution(t *testing.T) {
 			signature: []float64{a + b, -a + b, -2 * b},
 		}
 	}
-	matched := matchFrame(frame(1, 1, "I"), matchingColumn{
-		source: SampledSource{ID: "encode", AllowedTypes: []string{"I"}},
-		frames: []matchingFrame{frame(1, 1, "P"), frame(1.2, .9806, "I"), frame(10, .9578, "I")},
-	})
-	if matched.TimestampSeconds != 1.2 || matched.Resolved || matched.Reason != "ambiguous_visual_match" {
-		t.Fatalf("picture-type substitution concealed target ambiguity: %+v", matched)
+	for _, defaults := range []bool{false, true} {
+		kind := "I"
+		if defaults {
+			kind = "B"
+		}
+		matched := matchFrame(frame(1, 1, "I"), matchingColumn{
+			source: SampledSource{
+				ID:            "encode",
+				AllowedTypes:  []string{kind},
+				PreferBFrames: defaults,
+			},
+			frames: []matchingFrame{frame(1, 1, "P"), frame(1.2, .9806, kind), frame(10, .9578, kind)},
+		})
+		if matched.TimestampSeconds != 1.2 || matched.Resolved || matched.Reason != "ambiguous_visual_match" {
+			t.Fatalf("defaults=%t picture-type substitution concealed target ambiguity: %+v", defaults, matched)
+		}
 	}
 }
 

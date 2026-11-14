@@ -31,12 +31,14 @@ type MatchAnchor struct {
 }
 
 // SampledSource carries ordered presentation-time samples for one column.
-// Empty AllowedTypes accepts any picture type; an empty FrameType stays unknown.
+// Empty AllowedTypes accepts any picture type unless PreferBFrames enables the
+// default policy. An empty FrameType stays unknown. Manual anchors stay explicit.
 type SampledSource struct {
-	ID           string
-	Frames       []FrameSample
-	AllowedTypes []string
-	Anchors      []MatchAnchor
+	ID            string
+	Frames        []FrameSample
+	AllowedTypes  []string
+	PreferBFrames bool
+	Anchors       []MatchAnchor
 }
 
 // MatchOptions selects automatic scenes or explicit main-source moments.
@@ -85,7 +87,8 @@ type MatchResult struct {
 // Match proposes correspondence without mutating samples or performing IO.
 // Every automatic moment is searched independently across the sampled timelines;
 // anchors never authorize extrapolation through an unverified edit. Automatic
-// selection tries at most 64 extra scenes before returning unresolved proposals.
+// selection tries at most 64 extra scenes per default picture-type tier before
+// returning unresolved proposals; explicit preferences retain one search pass.
 // Invalid source IDs, samples, moments or preferences return an error.
 func Match(sources []SampledSource, mainID string, options MatchOptions) (MatchResult, error) {
 	columns, main, err := prepareMatching(sources, mainID, options)
@@ -123,17 +126,23 @@ func Match(sources []SampledSource, mainID string, options MatchOptions) (MatchR
 		}
 	} else {
 		var unresolved []MatchedRow
-		for range min(count, len(columns[main].frames)) + 64 {
-			index := chooseScene(columns[main], used, result, count)
-			if index < 0 || len(result.Rows) == count {
-				break
-			}
-			used[index] = true
-			row := matchRow(columns, main, index, result.Rows)
-			if row.Complete {
-				appendRow(row, columns[main].frames[index].frame)
-			} else {
-				unresolved = append(unresolved, row)
+		tiers := []string{""}
+		if columns[main].source.PreferBFrames {
+			tiers = []string{"B", "P", "I"}
+		}
+		for _, kind := range tiers {
+			for range min(count, len(columns[main].frames)) + 64 {
+				index := chooseScene(columns[main], used, result, count, kind)
+				if index < 0 || len(result.Rows) == count {
+					break
+				}
+				used[index] = true
+				row := matchRow(columns, main, index, result.Rows)
+				if row.Complete {
+					appendRow(row, columns[main].frames[index].frame)
+				} else {
+					unresolved = append(unresolved, row)
+				}
 			}
 		}
 		for _, row := range unresolved {
@@ -343,6 +352,33 @@ func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		matched.Resolved, matched.TypeFallback, matched.Reason = false, false, "ambiguous_visual_match"
 		return matched
 	}
+	if column.source.PreferBFrames {
+		types := []string{"B", "P"}
+		if main.frame.FrameType == "I" {
+			types = append(types, "I")
+		}
+		for _, kind := range types {
+			selected, score := -1, 0.0
+			for i, candidate := range column.frames {
+				if candidate.frame.FrameType != kind || math.Abs(candidate.frame.TimestampSeconds-column.frames[best].frame.TimestampSeconds) > .25 {
+					continue
+				}
+				candidateScore := visualScore(main, candidate)
+				if candidateScore >= max(.92, bestScore-.03) && candidateScore > score {
+					selected, score = i, candidateScore
+				}
+			}
+			if selected >= 0 {
+				matched = matchedSample(column.source, column.frames[selected].frame, "visual", score)
+				if ambiguousVisualMatch(main, column.frames, matched.TimestampSeconds, matched.Confidence) {
+					matched.Resolved, matched.TypeFallback, matched.Reason = false, false, "ambiguous_visual_match"
+				}
+				return matched
+			}
+		}
+		matched.Resolved, matched.TypeFallback, matched.Reason = false, false, "no_compatible_picture_type"
+		return matched
+	}
 	if matched.TypeFallback {
 		allowedScore := 0.0
 		for _, candidate := range column.frames {
@@ -385,6 +421,9 @@ func matchedSample(source SampledSource, frame FrameSample, method string, confi
 }
 
 func allowedPicture(source SampledSource, kind string) bool {
+	if source.PreferBFrames {
+		return kind == "B"
+	}
 	return len(source.AllowedTypes) == 0 || slices.Contains(source.AllowedTypes, strings.ToUpper(strings.TrimSpace(kind)))
 }
 
@@ -398,11 +437,11 @@ func nearestSample(frames []matchingFrame, seconds float64) int {
 	return best
 }
 
-func chooseScene(main matchingColumn, used map[int]bool, result MatchResult, count int) int {
+func chooseScene(main matchingColumn, used map[int]bool, result MatchResult, count int, kind string) int {
 	best, bestScore := -1, math.Inf(-1)
 	duration := main.frames[len(main.frames)-1].frame.TimestampSeconds - main.frames[0].frame.TimestampSeconds
 	for i, candidate := range main.frames {
-		if used[i] || len(candidate.signature) == 0 {
+		if used[i] || len(candidate.signature) == 0 || kind != "" && candidate.frame.FrameType != kind {
 			continue
 		}
 		score := 0.0

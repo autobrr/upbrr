@@ -22,7 +22,18 @@ type Props = Readonly<{
 
 const inputClass = "min-w-0 rounded border border-input bg-card p-2 text-card-foreground";
 const emptyPlan = (imported: boolean): ComparisonPlan => ({
-  sources: imported ? [] : [{ id: "main", label: "Main input", imported: false, overlay: false }],
+  sources: imported
+    ? []
+    : [
+        {
+          id: "main",
+          label: "Main input",
+          imported: false,
+          overlay: true,
+          allowedFrameTypes: ["B"],
+          preferBFrames: true,
+        },
+      ],
   rows: [],
   mainSourceId: imported ? "" : "main",
   imported,
@@ -108,7 +119,13 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
       ...draft,
       sources: [
         ...draft.sources,
-        { id: `column-${next}`, label: `Source ${next}`, imported: draft.imported, overlay: false },
+        {
+          id: `column-${next}`,
+          label: `Source ${next}`,
+          imported: draft.imported,
+          overlay: !draft.imported,
+          ...(!draft.imported ? { allowedFrameTypes: ["B"], preferBFrames: true } : {}),
+        },
       ],
     });
   };
@@ -365,12 +382,25 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                       </p>
                       <fieldset className="flex flex-wrap gap-3">
                         <legend>Allowed picture types · unchecked means any</legend>
+                        <label className="flex items-center gap-1">
+                          <Checkbox
+                            checked={Boolean(source.preferBFrames)}
+                            onCheckedChange={(preferBFrames) =>
+                              sourceChange(source.id, {
+                                preferBFrames,
+                                ...(preferBFrames ? { allowedFrameTypes: ["B"] } : {}),
+                              })
+                            }
+                          />
+                          Default B-frame preference
+                        </label>
                         {["I", "P", "B"].map((type) => (
                           <label className="flex items-center gap-1" key={type}>
                             <Checkbox
                               checked={Boolean(source.allowedFrameTypes?.includes(type))}
                               onCheckedChange={(checked) =>
                                 sourceChange(source.id, {
+                                  preferBFrames: false,
                                   allowedFrameTypes: checked
                                     ? [...(source.allowedFrameTypes || []), type]
                                     : source.allowedFrameTypes?.filter((value) => value !== type),
@@ -381,6 +411,13 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                           </label>
                         ))}
                       </fieldset>
+                      {source.preferBFrames && (
+                        <p className="text-muted-foreground">
+                          Prefer B frames. The main column can fall back to P, then I. Automatic
+                          matches for a non-I main frame can fall back only to P. Explicit picture
+                          types and manual correspondence stay as selected.
+                        </p>
+                      )}
                       <label className="flex items-center gap-2">
                         <Checkbox
                           checked={source.overlay}
@@ -388,6 +425,10 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                         />
                         Comparison-only frame overlay and label
                       </label>
+                      <p className="text-muted-foreground">
+                        Preview seconds is a seek position from the start of this source, not a
+                        duration or scan interval.
+                      </p>
                       <label className="grid gap-1">
                         <span>Preview seconds · {source.label}</span>
                         <input

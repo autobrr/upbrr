@@ -282,12 +282,22 @@ export type DuplicatesFacet = Readonly<{
   setIgnored(tracker: string, ignored: boolean): void;
 }>;
 
+/** The active screenshot-page intent; unrelated controls remain disabled without claiming activity. */
+export type ScreenshotAction =
+  | "plan"
+  | "capture"
+  | "preview_capture"
+  | "preview"
+  | "comparison"
+  | "edit";
+
 /** Screenshot planning, generation, preview, removal, ordering, and final selection state. */
 export type ScreenshotsFacet = Readonly<{
   comparisons: ComparisonsFacet;
   view: Readonly<{
     revision: number;
     status: FacetStatus;
+    activeAction?: ScreenshotAction | null;
     plan: ScreenshotPlan | null;
     artifacts?: MediaArtifactSet | null;
     workflowMode?: boolean;
