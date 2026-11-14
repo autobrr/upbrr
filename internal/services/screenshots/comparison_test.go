@@ -179,6 +179,8 @@ func TestComparisonCaptureRejectsBlackMissingAndChangedIdentity(t *testing.T) {
 		{payload: valid, stderr: comparisonDiagnostics(5800, "P")},
 		{payload: valid, stderr: comparisonDiagnostics(5800, "P")},
 	}}
+	source.StartTimeSeconds, source.FrameRate = 5, 10
+	source.FrameCount = 100
 	if _, err := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner).ComparisonCapture(t.Context(),
 		ComparisonCaptureRequest{
 			Source:           source,
@@ -188,7 +190,7 @@ func TestComparisonCaptureRejectsBlackMissingAndChangedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	filter := ffmpegValueAfter(runner.args[len(runner.args)-1], "-vf")
-	frameLine, typeLine, labelLine := strings.Index(filter, "text='Frame unknown of unknown'"), strings.Index(filter, `text='Picture type\: P'`), strings.Index(filter, "text='Source B'")
+	frameLine, typeLine, labelLine := strings.Index(filter, "text='Frame 8 of 100'"), strings.Index(filter, `text='Picture type\: P'`), strings.Index(filter, "text='Source B'")
 	if strings.Count(filter, "drawtext=") != 3 || frameLine < 0 || typeLine <= frameLine || labelLine <= typeLine {
 		t.Fatalf("comparison caption must contain exactly the three requested lines in order: %s", filter)
 	}
@@ -239,7 +241,7 @@ func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.Width != 64 || source.Height != 48 || source.FrameRate != 10 || source.DurationSeconds <= 0 || source.StartTimeSeconds != 5 {
+	if source.Width != 64 || source.Height != 48 || source.FrameRate != 10 || source.DurationSeconds <= 0 || source.StartTimeSeconds != 5 || source.FrameCount != 20 {
 		t.Fatalf("source facts = %+v", source)
 	}
 	request := ComparisonCaptureRequest{Source: source, TimestampSeconds: 0.75}
@@ -353,5 +355,47 @@ func TestComparisonNativeFractionalFrameRoundTrip(t *testing.T) {
 			t.Fatalf("sampled picture changed after seeking to %.12f: sampled=%+v captured=%+v",
 				sample.RelativeTimestampSeconds, sample.ComparisonFrameObservation, captured.ComparisonFrameObservation)
 		}
+	}
+}
+
+func TestComparisonDisplayCountersUseMetadataWithoutIndexClaims(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		source        ComparisonSource
+		seconds       float64
+		number, total string
+	}{
+		{"nonzero origin and reported count", ComparisonSource{
+StartTimeSeconds: 5,
+ FrameRate: 10,
+ FrameCount: 20,
+ DurationSeconds: 6.9,
+}, 5.8, "8", "20"},
+		{"VFR metadata is a nominal display position", ComparisonSource{
+StartTimeSeconds: 5,
+ FrameRate: 4,
+ FrameCount: 4,
+ VideoDurationSeconds: .9,
+}, 5.4, "1", "4"},
+		{"video duration fallback excludes general origin", ComparisonSource{
+StartTimeSeconds: 5,
+ FrameRate: 10,
+ VideoDurationSeconds: 2,
+ DurationSeconds: 7,
+}, 5.8, "8", "20"},
+		{"unqualified general duration is not a count", ComparisonSource{
+StartTimeSeconds: 5,
+ FrameRate: 10,
+ DurationSeconds: 7,
+}, 5.8, "8", "unknown"},
+		{"missing rate preserves reported total", ComparisonSource{FrameCount: 20}, .8, "unknown", "20"},
+		{"inconsistent nominal rate cannot exceed total", ComparisonSource{FrameRate: 10, FrameCount: 4}, .9, "unknown", "4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			number, total := comparisonDisplayCounters(tc.source, ComparisonFrameObservation{TimestampSeconds: tc.seconds})
+			if number != tc.number || total != tc.total {
+				t.Fatalf("display=%s of %s want=%s of %s", number, total, tc.number, tc.total)
+			}
+		})
 	}
 }

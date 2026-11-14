@@ -93,9 +93,18 @@ type MatchResult struct {
 // returning unresolved proposals; explicit preferences retain one search pass.
 // Invalid source IDs, samples, moments or preferences return an error.
 func Match(sources []SampledSource, mainID string, options MatchOptions) (MatchResult, error) {
+	return match(sources, mainID, options, nil)
+}
+
+func match(sources []SampledSource, mainID string, options MatchOptions, alignments map[string]ConstantAlignment) (MatchResult, error) {
 	columns, main, err := prepareMatching(sources, mainID, options)
 	if err != nil {
 		return MatchResult{}, err
+	}
+	for i := range columns {
+		if alignment, ok := alignments[columns[i].source.ID]; ok && i != main {
+			columns[i].alignment = &alignment
+		}
 	}
 	count := options.Count
 	if len(options.MainMoments) > 0 {
@@ -173,8 +182,9 @@ type matchingFrame struct {
 }
 
 type matchingColumn struct {
-	source SampledSource
-	frames []matchingFrame
+	source    SampledSource
+	frames    []matchingFrame
+	alignment *ConstantAlignment
 }
 
 func prepareMatching(sources []SampledSource, mainID string, options MatchOptions) ([]matchingColumn, int, error) {
@@ -294,12 +304,12 @@ func matchRow(columns []matchingColumn, main, index int, selected []MatchedRow) 
 			row.Frames[i] = matchedSample(column.source, frame.frame, "main", 1)
 		} else {
 			matched := matchFrame(frame, column)
-			if matched.Resolved && matched.Method == "visual" {
+			if matched.Resolved && (matched.Method == "visual" || matched.Method == "aligned") {
 				target := column.frames[nearestSample(column.frames, matched.TimestampSeconds)]
 				reused := slices.ContainsFunc(selected, func(row MatchedRow) bool {
 					return row.Complete && math.Abs(row.Frames[i].TimestampSeconds-matched.TimestampSeconds) < 1e-6
 				})
-				if reused || ambiguousVisualMatch(target, columns[main].frames, frame.frame.TimestampSeconds, matched.Confidence) {
+				if reused || column.alignment == nil && ambiguousVisualMatch(target, columns[main].frames, frame.frame.TimestampSeconds, matched.Confidence) {
 					matched.Resolved, matched.Confidence, matched.Reason = false, 0, "ambiguous_visual_match"
 				}
 			}
@@ -311,6 +321,9 @@ func matchRow(columns []matchingColumn, main, index int, selected []MatchedRow) 
 }
 
 func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
+	if column.alignment != nil {
+		return matchAlignedFrame(main, column)
+	}
 	expected := main.frame.TimestampSeconds
 	distance := math.Inf(1)
 	for _, anchor := range column.source.Anchors {
@@ -355,11 +368,7 @@ func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		return matched
 	}
 	if column.source.PreferBFrames {
-		types := []string{"B", "P"}
-		if main.frame.FrameType == "I" {
-			types = append(types, "I")
-		}
-		for _, kind := range types {
+		for _, kind := range preferredPictureTypes(main.frame.FrameType) {
 			selected, score := -1, 0.0
 			for i, candidate := range column.frames {
 				if candidate.frame.FrameType != kind || math.Abs(candidate.frame.TimestampSeconds-column.frames[best].frame.TimestampSeconds) > .25 {
@@ -403,6 +412,14 @@ func ambiguousVisualMatch(reference matchingFrame, frames []matchingFrame, secon
 	return slices.ContainsFunc(frames, func(candidate matchingFrame) bool {
 		return math.Abs(candidate.frame.TimestampSeconds-seconds) > .5 && visualScore(reference, candidate) >= score-.03
 	})
+}
+
+func preferredPictureTypes(mainType string) []string {
+	types := []string{"B", "P"}
+	if mainType == "I" {
+		types = append(types, "I")
+	}
+	return types
 }
 
 func matchedSample(source SampledSource, frame FrameSample, method string, confidence float64) FrameMatch {

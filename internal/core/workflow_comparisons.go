@@ -226,7 +226,7 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 			return fmt.Errorf("resolve main comparison source: %w", err)
 		}
 		inspected := previous.Source
-		if !exists || previous.Fingerprint != fingerprint {
+		if !exists || previous.Fingerprint != fingerprint || inspected.FrameCount == 0 && inspected.VideoDurationSeconds == 0 {
 			inspected, err = renderer.InspectComparisonSource(ctx, path)
 			if err != nil {
 				return fmt.Errorf("inspect comparison column %s: %w", source.Label, err)
@@ -235,7 +235,7 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 			if err != nil || checked != fingerprint {
 				return api.ErrActiveInputChanged
 			}
-			if exists {
+			if exists && previous.Fingerprint != fingerprint {
 				mainChanged := source.ID == plan.MainSourceID
 				plan.Anchors = slices.DeleteFunc(plan.Anchors, func(anchor api.ComparisonAnchor) bool {
 					return mainChanged || anchor.SourceID == source.ID
@@ -288,8 +288,11 @@ func verifyComparisonVideos(ctx context.Context, plan api.ComparisonPlan, retain
 			return errors.New("comparison source identity is unavailable; configure this column again")
 		}
 		current, err := comparisonVideoFingerprint(ctx, private.Source.Path)
+		if ctx.Err() != nil {
+			return fmt.Errorf("verify comparison source: %w", ctx.Err())
+		}
 		if err != nil || current != private.Fingerprint {
-			return errors.New("comparison video changed; rematch and recapture its rows")
+			return fmt.Errorf("%w: comparison video changed; rematch and recapture its rows", api.ErrActiveInputChanged)
 		}
 	}
 	return nil
@@ -517,6 +520,15 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 	if err != nil {
 		return plan, fmt.Errorf("resolve comparison scene targets: %w", err)
 	}
+	if result, observations, accepted, matchErr := b.tryAlignedComparisons(ctx, retained, plan, options, progress); matchErr != nil {
+		return plan, matchErr
+	} else if accepted {
+		plan = applyComparisonMatches(plan, result, observations, options)
+		if err := verifyComparisonVideos(ctx, plan, retained); err != nil {
+			return plan, err
+		}
+		return plan, nil
+	}
 	sampled := make([]comparisons.SampledSource, 0, len(plan.Sources))
 	observations := map[string][]screenshots.ComparisonSample{}
 	progress.begin("sampling", len(plan.Sources))
@@ -659,6 +671,15 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 		return plan, fmt.Errorf("match comparison sources: %w", err)
 	}
 	progress.complete()
+	plan = applyComparisonMatches(plan, result, observations, options)
+	if err := verifyComparisonVideos(ctx, plan, retained); err != nil {
+		return plan, fmt.Errorf("match comparison sources: %w", err)
+	}
+	return plan, nil
+}
+
+func applyComparisonMatches(plan api.ComparisonPlan, result comparisons.MatchResult,
+	observations map[string][]screenshots.ComparisonSample, options comparisons.MatchOptions) api.ComparisonPlan {
 	plan.Rows = nil
 	plan.SceneMix = &api.ComparisonSceneMix{
 		RequestedDark:   result.RequestedDark,
@@ -694,10 +715,7 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 		}
 		plan.Rows = append(plan.Rows, mapped)
 	}
-	if err := verifyComparisonVideos(ctx, plan, retained); err != nil {
-		return plan, fmt.Errorf("match comparison sources: %w", err)
-	}
-	return plan, nil
+	return plan
 }
 
 func orderedComparisonSamples(samples []screenshots.ComparisonSample) []screenshots.ComparisonSample {

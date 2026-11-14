@@ -40,11 +40,14 @@ func (b workflowMediaBuilder) comparisonProgress(ctx context.Context, stages int
 func (p *comparisonProgress) begin(phase string, items int) {
 	p.phase, p.started, p.active = phase, time.Now(), true
 	p.message = map[string]string{
-		"sampling":         "Scanning comparison videos",
-		"matching":         "Matching common scenes",
-		"refinement":       "Refining comparison frames",
-		"matching_refined": "Matching refined frames",
-		"capture":          "Capturing comparison images",
+		"alignment_calibration": "Discovering comparison offsets",
+		"alignment_validation":  "Checking comparison offsets",
+		"alignment_rows":        "Matching bounded comparison regions",
+		"sampling":              "Scanning comparison videos",
+		"matching":              "Matching common scenes",
+		"refinement":            "Refining comparison frames",
+		"matching_refined":      "Matching refined frames",
+		"capture":               "Capturing comparison images",
 	}[phase]
 	p.logger.Infof("comparisons: phase=%s state=running items=%d", phase, items)
 	p.update(0, 1)

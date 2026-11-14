@@ -6,6 +6,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -318,6 +319,25 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("refresh old counter metadata preserves correspondence", func(t *testing.T) {
+		old := cloneWorkflowMediaPrivateArtifacts(retained)
+		source := old.ComparisonSources["main"]
+		source.Source.FrameCount, source.Source.VideoDurationSeconds = 0, 0
+		old.ComparisonSources["main"] = source
+		updated, resource, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{},
+			&api.MediaArtifactSet{Comparisons: &matched}, old, api.ComparisonInstructions{Action: "configure", Plan: matched}, nil, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		refreshed, ok := resource.(workflowMediaPrivateArtifacts)
+		if !ok {
+			t.Fatal("comparison metadata resource has wrong type")
+		}
+		facts := refreshed.ComparisonSources["main"].Source
+		if facts.FrameCount != 40 || updated.Comparisons.Rows[0].Cells[0].ObservedPTS == nil || *updated.Comparisons.Rows[0].Cells[0].ObservedPTS != *matched.Rows[0].Cells[0].ObservedPTS {
+			t.Fatal("metadata refresh lost counts or existing correspondence")
+		}
+	})
 	t.Run("retain resolved cells in incomplete rows", func(t *testing.T) {
 		partial, err := matched.Clone()
 		if err != nil {
@@ -738,5 +758,176 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		if err == nil || action == "match" && !strings.Contains(err.Error(), "configure this column again") {
 			t.Errorf("%s used a stale main video: %v", action, err)
 		}
+	}
+}
+
+// comparisonWindowRecorder verifies which real decoder windows orchestration
+// requests; it does not replace pixel, clock or capture behavior.
+type comparisonWindowRecorder struct {
+	comparisonFrameRenderer
+	durations []float64
+}
+
+func (r *comparisonWindowRecorder) SampleComparisonSource(ctx context.Context, source screenshots.ComparisonSource, start, duration, stride float64) ([]screenshots.ComparisonSample, error) {
+	r.durations = append(r.durations, duration)
+	frames, err := r.comparisonFrameRenderer.SampleComparisonSource(ctx, source, start, duration, stride)
+	if err != nil {
+		return nil, fmt.Errorf("record comparison window: %w", err)
+	}
+	return frames, nil
+}
+
+func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("native alignment requires FFmpeg")
+	}
+	root := t.TempDir()
+	paths := []string{filepath.Join(root, "Example.Reference.mkv"), filepath.Join(root, "Example.Padded.mkv"), filepath.Join(root, "Example.Trimmed.mkv")}
+	run := func(args ...string) {
+		t.Helper()
+		if output, err := exec.CommandContext(t.Context(), ffmpeg, append([]string{"-hide_banner", "-loglevel", "error"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("synthetic alignment fixture: %v %s", err, output)
+		}
+	}
+	run("-f", "lavfi", "-i", "nullsrc=size=64x48:rate=10:duration=90", "-vf", "geq=lum='random(1)*255':cb=128:cr=128,setpts=PTS+5/TB", "-c:v", "ffv1", paths[0])
+	run("-i", paths[0], "-vf", "setpts=PTS-STARTPTS,tpad=start=30:start_mode=add:color=black,setpts=N/(10*TB)", "-c:v", "ffv1", paths[1])
+	run("-copyts", "-i", paths[0], "-vf", "trim=start=7,setpts=PTS-STARTPTS", "-c:v", "ffv1", paths[2])
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "app.sqlite")}}
+	renderer := &comparisonWindowRecorder{comparisonFrameRenderer: screenshots.NewService(cfg, api.NopLogger{}, root, nil)}
+	private := workflowMediaPrivateArtifacts{ComparisonSources: map[string]workflowComparisonSource{}, ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{}}
+	plan := api.ComparisonPlan{MainSourceID: "main", Preferences: api.ComparisonPreferences{Count: 2}}
+	for i, path := range paths {
+		source, err := renderer.InspectComparisonSource(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := []string{"main", "positive", "negative"}[i]
+		fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		private.ComparisonSources[id] = workflowComparisonSource{Source: source, Fingerprint: fingerprint}
+		plan.Sources = append(plan.Sources, api.ComparisonSource{
+			ID:                id,
+			Label:             id,
+			PreferBFrames:     true,
+			AllowedFrameTypes: []string{"B"},
+			Fingerprint:       fingerprint,
+			Overlay:           true,
+		})
+	}
+	b := workflowMediaBuilder{
+		config:             cfg,
+		media:              &mediaModule{},
+		comparisonRenderer: renderer,
+	}
+	var phases []string
+	ctx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) {
+		if update.Phase != "" {
+			phases = append(phases, update.Phase)
+		}
+	})
+	matched, err := b.matchWorkflowComparisons(ctx, private, plan, b.comparisonProgress(ctx, 5))
+	if err != nil || len(matched.Rows) != 2 {
+		t.Fatalf("bounded match rows=%+v err=%v", matched.Rows, err)
+	}
+	for _, duration := range renderer.durations {
+		if duration > 65 {
+			t.Fatalf("eligible sources triggered a full scan: windows=%v facts=%+v", renderer.durations, private.ComparisonSources)
+		}
+	}
+	for _, row := range matched.Rows {
+		for i, want := range []float64{0, 3, -2} {
+			cell := row.Cells[i]
+			if cell.TimestampSeconds == nil || cell.ObservedPTS == nil || math.Abs(*cell.TimestampSeconds-*row.Cells[0].TimestampSeconds-want) > .001 {
+				t.Fatalf("wrong source-relative correspondence: %+v", row)
+			}
+		}
+	}
+	found := false
+	for _, phase := range phases {
+		if phase == "comparisons_alignment_validation" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("independent offset validation did not report progress")
+	}
+	media := api.MediaArtifactSet{}
+	captured, err := b.captureWorkflowComparisons(ctx, api.ReleaseRef{SourcePath: paths[0], Generation: 1}, &media, &private, matched, b.comparisonProgress(ctx, 1), false)
+	if err != nil || len(media.Artifacts) != 6 {
+		t.Fatalf("bounded captures=%d err=%v", len(media.Artifacts), err)
+	}
+	for r, row := range matched.Rows {
+		for c, cell := range row.Cells {
+			if *cell.ObservedPTS != *captured.Rows[r].Cells[c].ObservedPTS {
+				t.Fatal("capture changed the matched native picture")
+			}
+		}
+	}
+	_, payload, err := private.MarshalPrivateResource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := decodeWorkflowMediaPrivateArtifacts(b, payload)
+	if err != nil || restored.ComparisonSources["main"].Source.FrameCount != 900 {
+		t.Fatalf("restart lost caption metadata: %v", err)
+	}
+	// A quota deliberately keeps the existing full scan and reports unmet targets.
+	plan.Preferences.DarkCount = new(1)
+	renderer.durations = nil
+	if _, err := b.matchWorkflowComparisons(t.Context(), private, plan, b.comparisonProgress(t.Context(), 5)); err != nil {
+		t.Fatal(err)
+	}
+	if len(renderer.durations) == 0 || renderer.durations[0] <= 65 {
+		t.Fatalf("scene quota bypassed full sampling: %v", renderer.durations)
+	}
+	plan.Preferences.DarkCount = nil
+	for _, tc := range []struct{ name, filter string }{
+		{"varying cadence", "select='not(eq(mod(n,10),5))',setpts=PTS-STARTPTS"},
+		{"contradictory offset", "select='not(between(t,45,46))',setpts=N/(10*TB)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(root, "Example.Variant.mkv")
+			run("-y", "-copyts", "-i", paths[0], "-vf", tc.filter, "-fps_mode", "vfr", "-c:v", "ffv1", path)
+			source, err := renderer.InspectComparisonSource(t.Context(), path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := cloneWorkflowMediaPrivateArtifacts(private)
+			changed.ComparisonSources["positive"] = workflowComparisonSource{Source: source, Fingerprint: fingerprint}
+			choices, _ := plan.Clone()
+			choices.Sources[1].Fingerprint = fingerprint
+			renderer.durations = nil
+			if _, err := b.matchWorkflowComparisons(t.Context(), changed, choices, b.comparisonProgress(t.Context(), 5)); err != nil {
+				t.Fatal(err)
+			}
+			full := false
+			for _, duration := range renderer.durations {
+				if duration > 65 {
+					full = true
+				}
+			}
+			if !full {
+				t.Fatalf("unsupported evidence bypassed full scan: %v", renderer.durations)
+			}
+		})
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := b.matchWorkflowComparisons(canceled, private, plan, b.comparisonProgress(canceled, 5)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation=%v", err)
+	}
+	if err := os.WriteFile(paths[2], []byte("changed synthetic source"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	renderer.durations = nil
+	if _, err := b.matchWorkflowComparisons(t.Context(), private, plan, b.comparisonProgress(t.Context(), 5)); !errors.Is(err, api.ErrActiveInputChanged) || len(renderer.durations) != 0 {
+		t.Fatalf("changed source reached decoder: windows=%v err=%v", renderer.durations, err)
 	}
 }

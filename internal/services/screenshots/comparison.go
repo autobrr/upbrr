@@ -27,7 +27,7 @@ import (
 )
 
 // ComparisonCaptionVersion identifies the generated caption layout for retained pixels.
-const ComparisonCaptionVersion = 1
+const ComparisonCaptionVersion = 2
 
 // ComparisonSource describes one local video. Missing timing stays zero; callers
 // own source fingerprint verification and alignment with other inputs.
@@ -37,11 +37,16 @@ type ComparisonSource struct {
 	StartTimeSeconds float64
 	DurationSeconds  float64
 	FrameRate        float64
-	Width            int
-	Height           int
-	WidthScale       float64
-	HeightScale      float64
-	HDRFacts         api.HDRFacts
+	// FrameCount is reported video metadata, not an enumerated decoder index.
+	FrameCount int64
+	// VideoDurationSeconds is video-only timing for display-count estimation.
+	// General duration may include a nonzero source-clock origin.
+	VideoDurationSeconds float64
+	Width                int
+	Height               int
+	WidthScale           float64
+	HeightScale          float64
+	HDRFacts             api.HDRFacts
 }
 
 // DisplaySize returns the square-pixel dimensions used by comparison captures.
@@ -75,8 +80,8 @@ type ComparisonFrameObservation struct {
 }
 
 // ComparisonCaptureRequest selects a seek relative to the file's start time.
-// OverlayLabel optionally adds the three-line comparison caption: frame position,
-// picture type, then label. Unverified global frame numbers/totals stay unknown.
+// OverlayLabel optionally adds the three-line comparison caption: metadata-based
+// frame counters, observed picture type, then label. Missing counters stay unknown.
 // Labels accept at most 80 ASCII letters, digits, spaces, dots, dashes and
 // underscores. Overlay enablement is comparison-local; text size follows the
 // ordinary screenshot setting and scales with the source height.
@@ -131,9 +136,13 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 		return ComparisonSource{}, fmt.Errorf("screenshots: decode comparison source facts: %w", err)
 	}
 	videos := 0
+	var frameCount int64
+	var videoDuration float64
 	for _, track := range doc.Media.Track {
 		if strings.EqualFold(trackString(track, "@type"), "video") {
 			videos++
+			frameCount, _ = strconv.ParseInt(trackString(track, "FrameCount"), 10, 64)
+			videoDuration = parseDurationValue(trackString(track, "Duration", "Duration/String3", "Duration/String2", "Duration/String"))
 		}
 	}
 	if videos != 1 {
@@ -171,15 +180,17 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 		}
 	}
 	return ComparisonSource{
-		Path:             path,
-		StartTimeSeconds: startSeconds,
-		DurationSeconds:  mediaInfoDurationSeconds(doc),
-		FrameRate:        frameRate,
-		Width:            width,
-		Height:           height,
-		WidthScale:       widthScale,
-		HeightScale:      heightScale,
-		HDRFacts:         mediafacts.HDRFromMediaInfoDocument(mediafacts.MediaInfoDocument(doc)),
+		Path:                 path,
+		StartTimeSeconds:     startSeconds,
+		DurationSeconds:      mediaInfoDurationSeconds(doc),
+		FrameRate:            frameRate,
+		FrameCount:           max(0, frameCount),
+		VideoDurationSeconds: videoDuration,
+		Width:                width,
+		Height:               height,
+		WidthScale:           widthScale,
+		HeightScale:          heightScale,
+		HDRFacts:             mediafacts.HDRFromMediaInfoDocument(mediafacts.MediaInfoDocument(doc)),
 	}, nil
 }
 
@@ -210,6 +221,7 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 	}
 	runner := &comparisonRunner{
 		runner:        s.runner,
+		source:        request.Source,
 		seek:          request.TimestampSeconds,
 		label:         request.OverlayLabel,
 		overlaySize:   s.cfg.ScreenshotHandling.OverlayTextSize,
@@ -452,6 +464,7 @@ func comparisonObservations(stderr []byte) ([]ComparisonFrameObservation, error)
 
 type comparisonRunner struct {
 	runner        Runner
+	source        ComparisonSource
 	seek          float64
 	label         string
 	overlaySize   int
@@ -487,8 +500,9 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 	if pictureType == "" {
 		pictureType = "Unknown"
 	}
+	number, total := comparisonDisplayCounters(r.source, *r.observed)
 	lines := []string{
-		"Frame unknown of unknown",
+		"Frame " + number + " of " + total,
 		"Picture type\\: " + pictureType,
 		r.label,
 	}
@@ -499,6 +513,47 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 	}
 
 	return r.run(ctx, executable, args, dir)
+}
+
+// comparisonDisplayCounters uses the ordinary screenshot's zero-based nominal
+// frame convention at the actual captured position. These display estimates do
+// not replace PTS/timebase identity or enumerate variable-rate video frames.
+func comparisonDisplayCounters(source ComparisonSource, observed ComparisonFrameObservation) (string, string) {
+	number, total := "unknown", "unknown"
+	if source.FrameCount > 0 {
+		total = strconv.FormatInt(source.FrameCount, 10)
+	}
+	if source.FrameRate <= 0 || !comparisonFinite(source.FrameRate) {
+		return number, total
+	}
+	// Absorb floating-point residue at an integer frame boundary, without
+	// rounding an arbitrary fractional position to the following nominal frame.
+	counter := func(value float64) string {
+		if !comparisonFinite(value) || value < 0 || value >= math.Exp2(63) {
+			return "unknown"
+		}
+		return strconv.FormatInt(int64(math.Floor(value+1e-7)), 10)
+	}
+	position := observed.TimestampSeconds - source.StartTimeSeconds
+	number = counter(position * source.FrameRate)
+	if total == "unknown" {
+		duration := source.VideoDurationSeconds
+		if duration <= 0 && source.StartTimeSeconds == 0 {
+			duration = source.DurationSeconds
+		}
+		if duration > 0 {
+			total = counter(duration * source.FrameRate)
+			if total == "0" {
+				total = "unknown"
+			}
+		}
+	}
+	if n, err := strconv.ParseInt(number, 10, 64); err == nil {
+		if count, err := strconv.ParseInt(total, 10, 64); err == nil && n >= count {
+			number = "unknown"
+		}
+	}
+	return number, total
 }
 
 func (r *comparisonRunner) run(ctx context.Context, executable string, args []string, dir string) (CommandResult, error) {

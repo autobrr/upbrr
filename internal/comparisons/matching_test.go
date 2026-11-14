@@ -308,3 +308,99 @@ func TestMatchingSceneMixExcludesBlankAndReportsUnmet(t *testing.T) {
 		t.Fatal("manual moment allowed a scene target beyond the requested row count")
 	}
 }
+
+func TestConstantAlignmentRequiresTemporalEvidence(t *testing.T) {
+	frames := func(start, end, offset float64) []FrameSample {
+		var out []FrameSample
+		for i := int(math.Round(start * 10)); i < int(math.Round(end*10)); i++ {
+			out = append(out, sampleFrame(uint64(int64(math.Round((float64(i)/10-offset)*10))+10000), float64(i)/10, "B"))
+		}
+		return out
+	}
+	reference := frames(30, 34, 0)
+	for _, offset := range []float64{0, 13.3, -7.2} {
+		fitted, ok := DiscoverAlignment(reference, frames(0, 80, offset))
+		if !ok || math.Abs(fitted.OffsetSeconds-offset) > 1e-7 {
+			t.Fatalf("offset=%g fit=%+v ok=%t", offset, fitted, ok)
+		}
+		independent, ok := DiscoverAlignment(frames(45, 49, 0), frames(35, 75, offset))
+		if !ok || !fitted.Consistent(independent) {
+			t.Fatalf("independent offset=%g fit=%+v ok=%t", offset, independent, ok)
+		}
+		changed, ok := DiscoverAlignment(frames(45, 49, 0), frames(35, 75, offset+.1))
+		if !ok || fitted.Consistent(changed) {
+			t.Fatalf("persistent one-frame shift accepted: %+v %+v", fitted, changed)
+		}
+	}
+	for _, kind := range []string{"static", "repeated", "variable cadence", "unrelated"} {
+		t.Run(kind, func(t *testing.T) {
+			main, target := slices.Clone(reference), frames(0, 80, 0)
+			switch kind {
+			case "static":
+				for i := range main {
+					main[i].Luma = reference[0].Luma
+				}
+			case "repeated":
+				for i := range target {
+					if target[i].TimestampSeconds >= 50 && target[i].TimestampSeconds < 54 {
+						target[i].Luma = frames(target[i].TimestampSeconds-20, target[i].TimestampSeconds-19.9, 0)[0].Luma
+					}
+				}
+			case "variable cadence":
+				main[4].TimestampSeconds += .03
+			case "unrelated":
+				target = frames(0, 80, 500)
+			}
+			if fitted, ok := DiscoverAlignment(main, target); ok {
+				t.Fatalf("%s established offset %+v", kind, fitted)
+			}
+		})
+	}
+}
+
+func TestAlignedMatchingKeepsStaticPredictionAndRejectsReuse(t *testing.T) {
+	main := SampledSource{
+ID: "main",
+ PreferBFrames: true,
+ AllowedTypes: []string{"B"},
+}
+	other := SampledSource{
+ID: "other",
+ PreferBFrames: true,
+ AllowedTypes: []string{"B"},
+}
+	for _, seconds := range []float64{1, 4, 8} {
+		main.Frames = append(main.Frames, sampleFrame(1, seconds, "B"))
+		nearby := sampleFrame(1, seconds+10, "B")
+		nearby.Luma = slices.Clone(nearby.Luma)
+		nearby.Luma[0]++
+		other.Frames = append(other.Frames, nearby, sampleFrame(1, seconds+10.04, "B"))
+	}
+	offsets := map[string]ConstantAlignment{"other": {OffsetSeconds: 10, ToleranceSeconds: .01}}
+	result, err := AlignedMatch([]SampledSource{main, other}, "main", MatchOptions{Count: 3}, offsets)
+	if err != nil || len(result.Rows) != 3 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	for _, row := range result.Rows {
+		if !row.Complete || math.Abs(row.Frames[1].TimestampSeconds-row.MainSeconds-10) > 1e-7 {
+			t.Fatalf("static scene drifted: %+v", row)
+		}
+	}
+	main.Frames = []FrameSample{sampleFrame(1, 1, "B"), sampleFrame(1, 1.1, "B")}
+	other.Frames = []FrameSample{sampleFrame(1, 11, "P")}
+	result, err = AlignedMatch([]SampledSource{main, other}, "main", MatchOptions{Count: 2}, offsets)
+	complete := 0
+	for _, row := range result.Rows {
+		if row.Complete {
+			complete++
+		}
+	}
+	if err != nil || complete != 1 {
+		t.Fatalf("target reuse was accepted: %+v err=%v", result, err)
+	}
+	other.Frames[0].FrameType = "I"
+	result, err = AlignedMatch([]SampledSource{main, other}, "main", MatchOptions{Count: 1}, offsets)
+	if err != nil || len(result.Rows) != 1 || result.Rows[0].Complete {
+		t.Fatalf("non-I main gained I fallback: %+v err=%v", result, err)
+	}
+}
