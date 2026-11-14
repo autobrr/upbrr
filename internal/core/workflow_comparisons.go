@@ -510,14 +510,16 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 			}
 		}
 		for momentIndex, moment := range manualMoments {
+			id := source.ID + "/manual-" + strconv.Itoa(momentIndex+1)
+			windowLabel := label + " manual moment"
 			dense, err := renderer.SampleComparisonSource(
 				progress.child(
 					ctx,
 					sourceIndex,
 					len(plan.Sources),
-					source.ID+"/manual-"+strconv.Itoa(momentIndex+1),
+					id,
 					"comparison_window",
-					label+" manual moment",
+					windowLabel,
 				),
 				private.Source,
 				max(0, moment-1),
@@ -528,6 +530,7 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 				return plan, fmt.Errorf("decode manual comparison moment: %w", err)
 			}
 			frames = append(frames, dense...)
+			progress.item(sourceIndex, len(plan.Sources), id, "comparison_window", windowLabel, api.StageStatusCompleted, 1000)
 		}
 		frames = orderedComparisonSamples(frames)
 		observations[source.ID] = frames

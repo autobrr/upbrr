@@ -6,7 +6,7 @@ package core
 import (
 	"bytes"
 	"context"
- "fmt"
+	"fmt"
 	"math"
 	"os"
 	"os/exec"
@@ -38,8 +38,10 @@ func (r comparisonPictureTypeRenderer) SampleComparisonSource(ctx context.Contex
 			frames[i].PictureType = "I"
 		}
 	}
-	if err != nil { return nil, fmt.Errorf("sample comparison fixture: %w",err) }
- return frames,nil
+	if err != nil {
+		return nil, fmt.Errorf("sample comparison fixture: %w", err)
+	}
+	return frames, nil
 }
 
 func TestComparisonApprovalBindsRetainedPixelsAcrossRestart(t *testing.T) {
@@ -458,11 +460,15 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	windowStates := map[string]api.StageStatus{}
 	previous := 0
 	phases := map[string]bool{}
 	captureCount := 0
 	for _, update := range updates {
 		if update.ItemOnly {
+			if update.Kind == "comparison_window" {
+				windowStates[update.ItemID] = update.Status
+			}
 			if update.Kind == "comparison_source" && update.Completed > 0 && !strings.Contains(update.Message, "%") {
 				t.Fatalf("source progress is not visible in the workflow item: %+v", update)
 			}
@@ -476,6 +482,11 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		}
 		previous = update.Completed
 		phases[update.Phase] = true
+	}
+	for id, status := range windowStates {
+		if status != api.StageStatusCompleted {
+			t.Fatalf("finished comparison window remains active: %s status=%s", id, status)
+		}
 	}
 	if previous != 5000 || len(phases) != 5 || captureCount != 4 {
 		t.Fatalf("incomplete comparison progress: phases=%v captures=%d completed=%d", phases, captureCount, previous)
