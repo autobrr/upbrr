@@ -217,6 +217,15 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
       await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
       await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+      await expect
+        .poll(async () => {
+          const current = (await snapshot()).current;
+          return {
+            trackers: current?.selection?.trackerIds,
+            status: current?.operation?.status,
+          };
+        })
+        .toEqual({ trackers: ["HDS"], status: "completed" });
       expect((await snapshot()).current?.dupes).toBeUndefined();
       await page.getByRole("button", { name: "Screenshots", exact: true }).click();
       const comparison = page.getByRole("region", { name: "Comparisons", exact: true });

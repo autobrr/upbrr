@@ -910,6 +910,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		{"varying cadence", "select='not(eq(mod(n,10),5))',setpts=PTS-STARTPTS", 1},
 		{"contradictory offset", "select='not(between(t,45,46))',setpts=N/(10*TB)", 1},
 		{"empty calibration window", "select='not(between(t,19,27))'", 0},
+		{"empty row windows", "select='not(between(t,32.8,37.1)+between(t,62.8,67.1))'", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(root, "Example.Variant.mkv")

@@ -177,6 +177,9 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	}
 	for i, source := range plan.Sources {
 		observations[source.ID] = orderedComparisonSamples(observations[source.ID])
+		if len(observations[source.ID]) == 0 {
+			return fallback("empty_rows")
+		}
 		sampled[i].Frames = comparisonSamples(observations[source.ID])
 	}
 	result, err := comparisons.AlignedMatch(sampled, plan.MainSourceID, options, offsets)
