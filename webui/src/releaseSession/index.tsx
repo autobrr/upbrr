@@ -1365,6 +1365,7 @@ export function ReleaseSessionProvider({
       current: ReleaseWorkflowCurrent,
       commandID: string,
       signal: AbortSignal,
+      updateAuthority: (current: ReleaseWorkflowCurrent) => void,
     ) => Promise<ReleaseWorkflowCurrent>,
     callbacks: WorkflowCommandCallbacks = {},
     previousController?: AbortController,
@@ -1383,7 +1384,15 @@ export function ReleaseSessionProvider({
     };
     callbacks.onStart?.(commandAuthority);
     try {
-      const initial = await execute(workflowView.current, commandID, controller.signal);
+      const initial = await execute(
+        workflowView.current,
+        commandID,
+        controller.signal,
+        (current) => {
+          // Intermediate preparation can advance authority before a later request fails.
+          commandAuthority = backendCommandAuthority(commandID, current);
+        },
+      );
       commandAuthority = backendCommandAuthority(commandID, initial);
       const current = await awaitWorkflowCommand(initial, controller.signal);
       releaseWorkflowController(controller);
@@ -2765,13 +2774,11 @@ export function ReleaseSessionProvider({
 
   const editComparisons = (instructions: ComparisonInstructions): Promise<boolean> =>
     runBackendWorkflow(
-      async (current, commandID, signal) =>
-        activePorts.workflow.editComparisons(
-          await comparisonContext(current, commandID, signal),
-          instructions,
-          commandID,
-          signal,
-        ),
+      async (current, commandID, signal, updateAuthority) => {
+        const projected = await comparisonContext(current, commandID, signal);
+        updateAuthority(projected);
+        return activePorts.workflow.editComparisons(projected, instructions, commandID, signal);
+      },
       screenshotCommandCallbacks(false, "comparison"),
     );
 
@@ -4295,8 +4302,9 @@ export function ReleaseSessionProvider({
         preview: previewComparisonFrame,
         importImages: (files, plan, replacement) =>
           runBackendWorkflow(
-            async (initial, commandID, signal) => {
+            async (initial, commandID, signal, updateAuthority) => {
               const current = await comparisonContext(initial, commandID, signal);
+              updateAuthority(current);
               const resources: WorkflowResourceRef[] = [];
               for (const file of files) {
                 resources.push(await activePorts.workflow.stageMedia(current, file, signal));

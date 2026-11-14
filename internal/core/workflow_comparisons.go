@@ -107,6 +107,9 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 			}
 		}
 	}
+	if plan.Preferences.Count == 0 {
+		plan.Preferences.Count = 4
+	}
 	if _, _, err := comparisons.SceneCounts(plan.Preferences, plan.Preferences.Count); err != nil {
 		return api.MediaArtifactSet{}, nil, fmt.Errorf("validate comparison scene targets: %w", err)
 	}
@@ -235,20 +238,21 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 			if err != nil || checked != fingerprint {
 				return api.ErrActiveInputChanged
 			}
-			if exists && previous.Fingerprint != fingerprint {
-				mainChanged := source.ID == plan.MainSourceID
+			changed := exists && previous.Fingerprint != fingerprint
+			mainChanged := changed && source.ID == plan.MainSourceID
+			if changed {
 				plan.Anchors = slices.DeleteFunc(plan.Anchors, func(anchor api.ComparisonAnchor) bool {
 					return mainChanged || anchor.SourceID == source.ID
 				})
 				plan.SceneMix = nil
-				for r := range plan.Rows {
-					for c := range plan.Rows[r].Cells {
-						cell := &plan.Rows[r].Cells[c]
-						if mainChanged || cell.SourceID == source.ID {
-							*cell = api.ComparisonCell{SourceID: cell.SourceID}
-						} else if source.ID == plan.SizeReferenceSourceID {
-							cell.ArtifactID, cell.ContentSHA256 = "", ""
-						}
+			}
+			for r := range plan.Rows {
+				for c := range plan.Rows[r].Cells {
+					cell := &plan.Rows[r].Cells[c]
+					if changed && (mainChanged || cell.SourceID == source.ID) {
+						*cell = api.ComparisonCell{SourceID: cell.SourceID}
+					} else if source.ID == plan.SizeReferenceSourceID && (!exists || changed) {
+						cell.ArtifactID, cell.ContentSHA256 = "", ""
 					}
 				}
 			}

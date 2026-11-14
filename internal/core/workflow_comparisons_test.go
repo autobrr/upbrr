@@ -296,17 +296,24 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	t.Run("new video defaults and retained tone-mapping intent", func(t *testing.T) {
 		for _, legacy := range []bool{false, true} {
 			var prior *api.MediaArtifactSet
+			requested := plan
 			if legacy {
 				prior = &api.MediaArtifactSet{Comparisons: &plan}
+			} else {
+				requested.Preferences.Count = 0
+				requested.Preferences.DarkCount = new(1)
 			}
 			configured, _, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, prior, retained,
 				api.ComparisonInstructions{
 					Action:       "configure",
-					Plan:         plan,
+					Plan:         requested,
 					VideoSources: []api.ComparisonVideoSelection{{ID: "other", Path: secondPath}},
 				}, nil, time.Now())
 			if err != nil {
 				t.Fatal(err)
+			}
+			if !legacy && configured.Comparisons.Preferences.Count != 4 {
+				t.Fatal("default row count was not retained with the scene target")
 			}
 			for _, source := range configured.Comparisons.Sources {
 				if !source.Overlay || legacy && source.ToneMap != nil || !legacy && (source.ToneMap == nil || *source.ToneMap) {
@@ -561,6 +568,53 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		if err != nil || preview.Width != 192 || preview.Height != 128 || wire.Comparisons.SizeReferenceSourceID != "other" ||
 			wire.Comparisons.Sources[0].ToneMap == nil || *wire.Comparisons.Sources[0].ToneMap || !bytes.Equal(preview.Bytes, previewBeforeRestart.Bytes) {
 			t.Fatalf("restart lost comparison render settings: %v", err)
+		}
+		removed, _ := wire.Comparisons.Clone()
+		removed.Sources = removed.Sources[:1]
+		for r := range removed.Rows {
+			removed.Rows[r].Cells = removed.Rows[r].Cells[:1]
+		}
+		reduced, reducedPrivate, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &wire, restored,
+			api.ComparisonInstructions{Action: "configure", Plan: removed}, nil, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		readded, _ := reduced.Comparisons.Clone()
+		readded.Sources = append(readded.Sources, request.Sources[1])
+		for r := range readded.Rows {
+			readded.Rows[r].Cells = append(readded.Rows[r].Cells, api.ComparisonCell{SourceID: "other", TimestampSeconds: readded.Rows[r].Cells[0].TimestampSeconds})
+		}
+		rebound, reboundPrivate, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &reduced, reducedPrivate,
+			api.ComparisonInstructions{
+				Action:       "configure",
+				Plan:         readded,
+				VideoSources: []api.ComparisonVideoSelection{{ID: "other", Path: mainPath}},
+			}, nil, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for r, row := range rebound.Comparisons.Rows {
+			cell := row.Cells[0]
+			if cell.ArtifactID != "" || cell.ContentSHA256 != "" || cell.ObservedPTS == nil || *cell.ObservedPTS != *reduced.Comparisons.Rows[r].Cells[0].ObservedPTS {
+				t.Fatal("re-added reference retained old pixels or lost dependent frame identity")
+			}
+		}
+		resized, resizedPrivate, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &rebound, reboundPrivate,
+			api.ComparisonInstructions{Action: "capture", Plan: *rebound.Comparisons}, nil, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		resizedArtifacts, ok := resizedPrivate.(workflowMediaPrivateArtifacts)
+		if !ok {
+			t.Fatal("resized comparison private resource has the wrong type")
+		}
+		for _, row := range resized.Comparisons.Rows {
+			for _, cell := range row.Cells {
+				image := resizedArtifacts.ArtifactImages[cell.ArtifactID]
+				if image.Width != 96 || image.Height != 64 {
+					t.Fatalf("re-added reference left a mixed canvas: %dx%d", image.Width, image.Height)
+				}
+			}
 		}
 		request.SizeReferenceSourceID = "removed"
 		if _, err := comparisonCaptureRequest(request, retained, "main", 1); err == nil {

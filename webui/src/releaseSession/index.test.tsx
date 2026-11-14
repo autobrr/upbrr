@@ -9784,6 +9784,55 @@ describe("saved-image plan authority", () => {
     expect(result.current.screenshots.comparisons.view.error).toBe("");
   });
 
+  it.each(["edit", "import"] as const)(
+    "retains comparison errors after context projection for %s",
+    async (action) => {
+      let current = workflowCurrentFromPreview(
+        workflowCurrent(`comparison-projection-${action}`, 7),
+        preview("Example.mkv", 1),
+      );
+      current = { ...current, projections: undefined, media: undefined };
+      const plan = comparisonMedia(current, action === "import").comparisons!;
+      const failure = {
+        Code: "invalid_input",
+        Operation: "media",
+        Message: "Correct the comparison mapping.",
+        Recovery: "edit_input",
+      };
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: current.workflow.id,
+            workflow: workflowPorts({
+              current: async () => current,
+              continue: async () => {
+                current = { ...current, workflow: { ...current.workflow, revision: 8 } };
+                return current;
+              },
+              editComparisons: async () => {
+                throw { failure };
+              },
+            }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(result.current.workflow.view.current?.workflow.revision).toBe(7));
+      await act(() => result.current.duplicates.chooseTrackers(["HDS"]));
+      await act(async () => {
+        const accepted =
+          action === "edit"
+            ? await result.current.screenshots.comparisons.edit({ action: "configure", plan })
+            : await result.current.screenshots.comparisons.importImages(
+                [new File(["png"], "comparison.png", { type: "image/png" })],
+                plan,
+              );
+        expect(accepted).toBe(false);
+      });
+      expect(result.current.workflow.view.current?.workflow.revision).toBe(8);
+      expect(result.current.screenshots.comparisons.view.error).toBe(failure.Message);
+    },
+  );
+
   it("replaces only the selected duplicate-mapped imported image", async () => {
     const prepared = workflowCurrentFromPreview(
       workflowCurrent("comparison-replacement", 8),
