@@ -41,6 +41,23 @@ type ComparisonSource struct {
 	HDRFacts         api.HDRFacts
 }
 
+// DisplaySize returns the square-pixel dimensions used by comparison captures.
+func (s ComparisonSource) DisplaySize() (int, int) {
+	width, height := s.Width, s.Height
+	widthScale, heightScale := s.WidthScale, s.HeightScale
+	if widthScale == 0 {
+		widthScale = 1
+	}
+	if heightScale == 0 {
+		heightScale = 1
+	}
+	if widthScale != 1 || heightScale != 1 {
+		width = roundToEven(float64(width) * widthScale)
+		height = roundToEven(float64(height) * heightScale)
+	}
+	return width, height
+}
+
 // ComparisonFrameObservation identifies the decoded picture in the source clock.
 // TimestampSeconds is PTS * TimeBaseNumerator / TimeBaseDenominator, not the
 // requested seek or a frame ordinal. Empty PictureType means unknown.
@@ -63,6 +80,12 @@ type ComparisonCaptureRequest struct {
 	Source           ComparisonSource
 	TimestampSeconds float64
 	OverlayLabel     string
+	// ToneMap overrides the ordinary screenshot setting; nil inherits it.
+	ToneMap *bool
+	// OutputWidth/OutputHeight select a square-pixel fit-and-pad canvas. Both
+	// zero retain the source size; both must be positive when scaling is enabled.
+	OutputWidth  int
+	OutputHeight int
 }
 
 // ComparisonFrame retains a PNG and its observed identity without persisting or
@@ -170,6 +193,9 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		request.TimestampSeconds < 0 || !comparisonLabel.MatchString(request.OverlayLabel) {
 		return ComparisonFrame{}, errors.New("screenshots: invalid comparison seek or overlay label")
 	}
+	if (request.OutputWidth != 0 || request.OutputHeight != 0) && (request.OutputWidth <= 0 || request.OutputHeight <= 0) {
+		return ComparisonFrame{}, errors.New("screenshots: comparison output dimensions must both be positive")
+	}
 	path, err := comparisonLocalPath(request.Source.Path)
 	if err != nil {
 		return ComparisonFrame{}, err
@@ -185,6 +211,13 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		overlaySize:   s.cfg.ScreenshotHandling.OverlayTextSize,
 		overlayHeight: request.Source.Height,
 	}
+	if request.OutputHeight > 0 {
+		runner.overlayHeight = request.OutputHeight
+	}
+	toneMap := s.cfg.ScreenshotHandling.ToneMap
+	if request.ToneMap != nil {
+		toneMap = *request.ToneMap
+	}
 	frame, err := renderFrame(ctx, runner, executable, captureRequest{
 		InputPath:    path,
 		Timestamp:    request.TimestampSeconds,
@@ -194,13 +227,15 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		SourceHeight: request.Source.Height,
 		WidthScale:   request.Source.WidthScale,
 		HeightScale:  request.Source.HeightScale,
-		ToneMap: s.cfg.ScreenshotHandling.ToneMap && slices.ContainsFunc(request.Source.HDRFacts.Formats, func(format api.HDRFormat) bool {
+		ToneMap: toneMap && slices.ContainsFunc(request.Source.HDRFacts.Formats, func(format api.HDRFormat) bool {
 			return format != api.HDRFormatSDR && format != api.HDRFormatWCG
 		}),
 		UseLibplacebo: s.cfg.ScreenshotHandling.UseLibplacebo,
 		Algorithm:     s.cfg.ScreenshotHandling.TonemapAlgorithm,
 		Desat:         s.cfg.ScreenshotHandling.Desat,
 		Compression:   s.cfg.ScreenshotHandling.FFmpegCompression,
+		OutputWidth:   request.OutputWidth,
+		OutputHeight:  request.OutputHeight,
 	}, logging.FromContext(ctx, s.logger))
 	if err != nil {
 		return ComparisonFrame{}, err
@@ -212,6 +247,9 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 	geometry, _, err := image.DecodeConfig(bytes.NewReader(frame.Payload))
 	if err != nil {
 		return ComparisonFrame{}, fmt.Errorf("screenshots: decode comparison PNG: %w", err)
+	}
+	if request.OutputWidth > 0 && (geometry.Width != request.OutputWidth || geometry.Height != request.OutputHeight) {
+		return ComparisonFrame{}, errors.New("screenshots: comparison renderer did not produce the selected frame size")
 	}
 	return ComparisonFrame{
 		ComparisonFrameObservation: *runner.observed,

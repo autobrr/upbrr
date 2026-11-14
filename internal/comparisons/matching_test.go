@@ -41,7 +41,7 @@ func TestMatchingDefaultPicturePolicy(t *testing.T) {
 		if err != nil || len(result.Rows) != count {
 			t.Fatalf("count=%d rows=%+v error=%v", count, result.Rows, err)
 		}
-		types := make([]string,0,len(result.Rows))
+		types := make([]string, 0, len(result.Rows))
 		for _, row := range result.Rows {
 			if !row.Complete {
 				t.Fatalf("default fallback did not complete a suitable scene: %+v", row)
@@ -260,9 +260,9 @@ func TestMatchingSceneMixExcludesBlankAndReportsUnmet(t *testing.T) {
 	other := source
 	other.ID = "other"
 	result, err := Match([]SampledSource{source, other}, "main", MatchOptions{
-		Count:          3,
-		DarkFraction:   1.0 / 3,
-		MotionFraction: 1.0 / 3,
+		Count:       3,
+		DarkCount:   1,
+		MotionCount: 1,
 	})
 	if err != nil || len(result.Rows) != 3 || result.AchievedDark < 1 || result.AchievedMotion < 1 {
 		t.Fatalf("mix=%+v err=%v", result, err)
@@ -272,8 +272,22 @@ func TestMatchingSceneMixExcludesBlankAndReportsUnmet(t *testing.T) {
 			t.Fatalf("invalid automatic scene: %+v", row)
 		}
 	}
-	result, err = Match([]SampledSource{source, other}, "main", MatchOptions{Count: 3, DarkFraction: 1})
+	result, err = Match([]SampledSource{source, other}, "main", MatchOptions{Count: 3, DarkCount: 3})
 	if err != nil || result.AchievedDark != 1 || len(result.Warnings) == 0 {
 		t.Fatalf("unmet mix not reported: %+v %v", result, err)
+	}
+	source.Frames[3].Motion = .8
+	other = source
+	other.ID = "other"
+	result, err = Match([]SampledSource{source, other}, "main", MatchOptions{
+		Count:       1,
+		DarkCount:   1,
+		MotionCount: 1,
+	})
+	if err != nil || len(result.Rows) != 1 || result.AchievedDark != 1 || result.AchievedMotion != 1 || result.Rows[0].Scene != "dark,motion" {
+		t.Fatalf("overlapping scene was not counted truthfully: %+v err=%v", result, err)
+	}
+	if _, err := Match([]SampledSource{source, other}, "main", MatchOptions{Count: 1, DarkCount: 2}); err == nil {
+		t.Fatal("scene target greater than total rows accepted")
 	}
 }

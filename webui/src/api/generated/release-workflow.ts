@@ -354,13 +354,16 @@ export type ComparisonPlan = Readonly<{
   reuseMainScreenshots: boolean;
   rows: readonly ComparisonRow[];
   sceneMix?: ComparisonSceneMix | null;
+  sizeReferenceSourceId?: string;
   sources: readonly ComparisonSource[];
   warnings?: readonly string[];
 }>;
 
 export type ComparisonPreferences = Readonly<{
   count: number;
+  darkCount?: number | null;
   darkPercent: number;
+  motionCount?: number | null;
   motionPercent: number;
 }>;
 
@@ -395,6 +398,7 @@ export type ComparisonSource = Readonly<{
   label: string;
   overlay: boolean;
   preferBFrames?: boolean;
+  toneMap?: boolean | null;
   width?: number;
 }>;
 

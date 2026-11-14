@@ -42,12 +42,13 @@ type SampledSource struct {
 }
 
 // MatchOptions selects automatic scenes or explicit main-source moments.
-// MainMoments overrides Count. Fractions request scene coverage in [0,1].
+// MainMoments overrides Count. Scene targets count complete rows independently;
+// a row qualifying as both dark and motion contributes to both targets.
 type MatchOptions struct {
-	Count          int
-	MainMoments    []float64
-	DarkFraction   float64
-	MotionFraction float64
+	Count       int
+	MainMoments []float64
+	DarkCount   int
+	MotionCount int
 }
 
 // FrameMatch retains the actual proposed frame, including unresolved proposals
@@ -100,8 +101,8 @@ func Match(sources []SampledSource, mainID string, options MatchOptions) (MatchR
 		count = len(options.MainMoments)
 	}
 	result := MatchResult{
-		RequestedDark:   int(math.Ceil(float64(count) * options.DarkFraction)),
-		RequestedMotion: int(math.Ceil(float64(count) * options.MotionFraction)),
+		RequestedDark:   options.DarkCount,
+		RequestedMotion: options.MotionCount,
 	}
 	appendRow := func(row MatchedRow, frame FrameSample) {
 		result.Rows = append(result.Rows, row)
@@ -176,9 +177,12 @@ type matchingColumn struct {
 }
 
 func prepareMatching(sources []SampledSource, mainID string, options MatchOptions) ([]matchingColumn, int, error) {
-	if len(sources) < 2 || (options.Count < 1 && len(options.MainMoments) == 0) ||
-		!matchingUnit(options.DarkFraction) || !matchingUnit(options.MotionFraction) {
-		return nil, 0, errors.New("comparison matching requires multiple sources, a positive count and valid scene fractions")
+	count := options.Count
+	if len(options.MainMoments) > 0 {
+		count = len(options.MainMoments)
+	}
+	if len(sources) < 2 || count < 1 || options.DarkCount < 0 || options.DarkCount > count || options.MotionCount < 0 || options.MotionCount > count {
+		return nil, 0, errors.New("comparison matching requires multiple sources, a positive row count and scene targets within that count")
 	}
 	columns := make([]matchingColumn, len(sources))
 	main, pixels := -1, 0

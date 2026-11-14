@@ -503,6 +503,75 @@ func TestComparisonReprepareRetainsEditedMappingAndRequiresFreshReview(t *testin
 	}
 }
 
+func TestComparisonLongProcessingAllowsExpiredChecksToRefresh(t *testing.T) {
+	for _, goal := range []api.WorkflowGoal{api.WorkflowGoalTrackersAssessed, api.WorkflowGoalDuplicatesDecided} {
+		t.Run(string(goal), func(t *testing.T) {
+			module, repository, _, current := newDuplicateReuseWorkflow(t)
+			module.mediaBuilder = &comparisonMediaFake{}
+			module.inputReadiness = readyInputReadinessEvaluator{}
+			current = executeCommand(t, module, EditComparisonsCommand{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+				Instructions:     api.ComparisonInstructions{Action: "configure", Plan: reviewedComparisonFixture(t)},
+			})
+			if goal == api.WorkflowGoalDuplicatesDecided {
+				current = executeCommand(t, module, EditComparisonsCommand{
+					WorkflowID:       current.Workflow.ID,
+					ExpectedRevision: current.Workflow.Revision,
+					Media:            current.Workflow.Media,
+					Instructions:     api.ComparisonInstructions{Action: "approve", ExpectedFingerprint: current.Media.Comparisons.Fingerprint},
+				})
+			}
+			current, err := module.Current(t.Context(), testOwnerID, current.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retained := *current.Workflow.Media
+			priorPreflight, priorDupes := current.Preflight.ID, current.Dupes.ID
+			clock := &mutableClock{now: module.clock.Now().Add(time.Hour)}
+			module.clock = clock
+			for attempt := range 4 {
+				clock.now = clock.now.Add(time.Second)
+				started, err := module.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+					Authority:      &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision},
+					Goal:           goal,
+					Intent:         api.WorkflowIntent{TrackerIDs: []api.TrackerID{"ALPHA", "BETA"}},
+					IdempotencyKey: fmt.Sprintf("expired-comparisons-%d", attempt),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if started.Operation == nil || current.Operation != nil && started.Operation.ID == current.Operation.ID {
+					t.Fatalf("expired check refresh reused completed work at transition %d", attempt)
+				}
+				waitForWorkflowOperation(t, module, current.Workflow.ID, started.Operation.ID, func(status api.WorkflowOperationStatus) bool { return isTerminalProgressStatus(status.Status) })
+				current, err = module.Current(t.Context(), testOwnerID, current.Workflow.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if current.Preflight != nil && current.Preflight.ID != priorPreflight && current.Preflight.ExpiresAt.After(module.clock.Now()) &&
+					(goal == api.WorkflowGoalTrackersAssessed || current.Dupes != nil && current.Dupes.ID != priorDupes) {
+					break
+				}
+			}
+			if current.Preflight == nil || current.Preflight.ID == priorPreflight || !current.Preflight.ExpiresAt.After(module.clock.Now()) ||
+				goal == api.WorkflowGoalDuplicatesDecided && (current.Dupes == nil || current.Dupes.ID == priorDupes || !current.Dupes.ExpiresAt.After(module.clock.Now())) {
+				t.Fatalf("refresh did not replace expired checks: operation=%+v actions=%+v", current.Operation, current.Workflow.RequiredActions)
+			}
+			state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.ComparisonMedia == nil || *state.ComparisonMedia != retained || state.Media[retained.ID].Comparisons == nil {
+				t.Fatal("refresh discarded retained comparison rows")
+			}
+			if _, err := module.private.Get(testOwnerID, current.Workflow.ID, mediaPrivateResourceID(retained.ID), module.clock.Now()); err != nil {
+				t.Fatalf("refresh lost retained comparison bytes: %v", err)
+			}
+		})
+	}
+}
+
 func TestLegacyCompositeComparisonImportsRequireFreshReimport(t *testing.T) {
 	module, repository, _, current := newDuplicateReuseWorkflow(t)
 	for _, scenario := range []string{"menu only", "legacy comparison", "typed comparison"} {

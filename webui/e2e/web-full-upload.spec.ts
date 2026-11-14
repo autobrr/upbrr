@@ -233,20 +233,21 @@ test("embedded video comparisons match three native sources and retain reviewed 
           .fill(alternatePaths[index]!);
       }
       await comparison.getByLabel("Comparison rows", { exact: true }).fill("1");
-      // Keep two columns plain for the pixel-identity witness; the Encode
-      // column's later opt-in must remain a real overlay-setting transition.
       for (const [index, label] of ["Main input", "Encode", "Filtered"].entries()) {
         const source = comparison.getByRole("group", {
           name: `${label} · column ${index + 1}`,
           exact: true,
         });
         await expect(source.getByRole("checkbox", { name: "B", exact: true })).toBeChecked();
-        const overlay = source.getByRole("checkbox", {
-          name: "Comparison-only frame overlay and label",
-          exact: true,
-        });
-        await expect(overlay).toBeChecked();
-        await overlay.uncheck();
+        await expect(
+          source.getByRole("checkbox", {
+            name: "Comparison-only frame overlay and label",
+            exact: true,
+          }),
+        ).toHaveCount(0);
+        await expect(
+          source.getByRole("combobox", { name: `Tone mapping · ${label}`, exact: true }),
+        ).toHaveValue("off");
       }
       await comparison
         .getByRole("checkbox", { name: "Use the main column as normal screenshots" })
@@ -270,24 +271,30 @@ test("embedded video comparisons match three native sources and retain reviewed 
           source.overlay,
         ]),
       ).toEqual([
-        ["Main input", 160, 120, true, false],
-        ["Encode", 160, 120, false, false],
-        ["Filtered", 160, 120, true, false],
+        ["Main input", 160, 120, true, true],
+        ["Encode", 160, 120, false, true],
+        ["Filtered", 160, 120, true, true],
       ]);
+      const seek = encode.getByLabel("Approximate frame seek · Encode", { exact: true });
       const seconds = encode.getByLabel("Preview seconds · Encode", { exact: true });
-      await seconds.fill("1.1");
+      await seek.fill("11");
       await encode.getByRole("button", { name: "Preview Encode", exact: true }).click();
       await expect(encode.getByText("Actual preview: 1.100s · I", { exact: true })).toBeVisible();
       await encode.getByRole("button", { name: "Next frame", exact: true }).click();
-      await expect.poll(async () => Number(await seconds.inputValue())).toBeCloseTo(1.2, 8);
+      await expect(seek).toHaveValue("12");
+      await expect(seconds).toContainText("1.200");
+      await comparison
+        .getByRole("combobox", { name: "Comparison frame size", exact: true })
+        .selectOption("main");
       await encode
-        .getByRole("checkbox", { name: "Comparison-only frame overlay and label", exact: true })
-        .check();
+        .getByRole("combobox", { name: "Tone mapping · Encode", exact: true })
+        .selectOption("on");
       await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
       await expect(
         encode.getByRole("img", { name: "Encode comparison preview", exact: true }),
       ).toHaveCount(0);
-      await expect.poll(async () => Number(await seconds.inputValue())).toBeCloseTo(1.2, 8);
+      await expect(seek).toHaveValue("12");
+      await expect(seconds).toContainText("1.200");
       await encode.getByRole("button", { name: "Preview Encode", exact: true }).click();
       await expect(
         encode.getByRole("img", { name: "Encode comparison preview", exact: true }),
@@ -302,6 +309,8 @@ test("embedded video comparisons match three native sources and retain reviewed 
       });
       await expect(approve).toBeEnabled();
       const captured = (await snapshot()).current!.media!.comparisons!;
+      expect(captured.sizeReferenceSourceId).toBe("main");
+      expect(captured.sources.map((source) => source.toneMap)).toEqual([false, true, false]);
       const cells = captured.rows[0]!.cells;
       expect(cells).toHaveLength(3);
       expect(
@@ -309,8 +318,8 @@ test("embedded video comparisons match three native sources and retain reviewed 
       ).toBe(true);
       for (const cell of cells) expect(cell.timestampSeconds).toBeCloseTo(1.2, 8);
       expect(cells.map((cell) => cell.observedPts)).toEqual([1200, 3200, 5200]);
-      expect(cells[0]!.contentSha256).toBe(cells[2]!.contentSha256);
-      expect(cells[1]!.contentSha256).not.toBe(cells[0]!.contentSha256);
+      // Column labels differ even when the matched source pixels are identical.
+      expect(new Set(cells.map((cell) => cell.contentSha256)).size).toBe(3);
       expect(captured.approvedFingerprint).toBeFalsy();
       expect(workspace.fake.counters.imageUploads).toBe(0);
       await comparison.getByRole("img", { name: "Encode, row 1, image 2", exact: true }).click();

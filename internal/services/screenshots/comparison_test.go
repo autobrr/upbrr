@@ -87,6 +87,23 @@ func TestComparisonCapturePreservesObservedIdentityAcrossRendererFallback(t *tes
 					t.Fatalf("comparison frame or overlay policy changed: %v", args)
 				}
 			}
+			// A comparison-local opt-out wins over the ordinary screenshot setting.
+			request.ToneMap = new(false)
+			plainRunner := &scriptedRenderRunner{replies: []renderReply{{payload: valid, stderr: comparisonDiagnostics(5800, "B")}}}
+			plain, err := NewService(cfg, api.NopLogger{}, t.TempDir(), plainRunner).ComparisonCapture(t.Context(), request)
+			if err != nil || plain.Processing.Tonemapped || plain.Processing.RequestedRenderer != "none" || len(plainRunner.args) != 1 {
+				t.Fatalf("local tone-mapping opt-out ignored: %+v err=%v", plain.Processing, err)
+			}
+			// Opt-in also works independently of a globally disabled setting.
+			cfg := cfg
+			cfg.ScreenshotHandling.ToneMap = false
+			cfg.ScreenshotHandling.UseLibplacebo = false
+			request.ToneMap = new(true)
+			toneRunner := &scriptedRenderRunner{replies: []renderReply{{payload: valid, stderr: comparisonDiagnostics(5800, "B")}}}
+			tone, err := NewService(cfg, api.NopLogger{}, t.TempDir(), toneRunner).ComparisonPreview(t.Context(), request)
+			if err != nil || !tone.Processing.Tonemapped || tone.Processing.Renderer != "software" {
+				t.Fatalf("local tone-mapping opt-in ignored: %+v err=%v", tone.Processing, err)
+			}
 		})
 	}
 }
@@ -239,6 +256,23 @@ func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(witnessImage, capturedImage) {
 		t.Fatalf("capture pixels differ from independently selected source frame: %v", err)
 	}
+	request.OutputWidth, request.OutputHeight = 96, 64
+	scaled, err := service.ComparisonCapture(t.Context(), request)
+	if err != nil || scaled.Width != 96 || scaled.Height != 64 || scaled.ComparisonFrameObservation != capture.ComparisonFrameObservation {
+		t.Fatalf("scaled capture size=%dx%d identity=%+v err=%v", scaled.Width, scaled.Height, scaled.ComparisonFrameObservation, err)
+	}
+	scaledImage, _, err := image.Decode(bytes.NewReader(scaled.ImageBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The 4:3 source fits inside 3:2 without stretching: centered side bars.
+	for _, x := range []int{0, 95} {
+		r, g, b, _ := scaledImage.At(x, 32).RGBA()
+		if r != 0 || g != 0 || b != 0 {
+			t.Fatal("scaling did not preserve aspect ratio with padding")
+		}
+	}
+	request.OutputWidth, request.OutputHeight = 0, 0
 	request.OverlayLabel = "Source B"
 	labelled, err := service.ComparisonCapture(t.Context(), request)
 	if err != nil || labelled.ComparisonFrameObservation != capture.ComparisonFrameObservation || bytes.Equal(labelled.ImageBytes, capture.ImageBytes) {

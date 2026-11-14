@@ -152,6 +152,8 @@ type captureRequest struct {
 	SourceHeight   int
 	WidthScale     float64
 	HeightScale    float64
+	OutputWidth    int
+	OutputHeight   int
 }
 
 type frameInfoResult struct {
@@ -447,6 +449,13 @@ func buildFilterChain(req captureRequest, useLibplacebo bool) string {
 	}
 
 	filters = append(filters, "format=rgb24")
+	if req.OutputWidth > 0 && req.OutputHeight > 0 {
+		filters = append(filters,
+			fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", req.OutputWidth, req.OutputHeight),
+			fmt.Sprintf("pad=%d:%d:(ow-iw)/2:(oh-ih)/2", req.OutputWidth, req.OutputHeight),
+			"setsar=1",
+		)
+	}
 
 	if req.FrameOverlay {
 		filters = append(filters, overlayFilters(req)...)

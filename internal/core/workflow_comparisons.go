@@ -93,6 +93,19 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, fmt.Errorf("copy comparison choices: %w", err)
 	}
+	for i := range plan.Sources {
+		if !plan.Imported && !plan.Sources[i].Imported {
+			plan.Sources[i].Overlay = true
+			known := prior != nil && prior.Comparisons != nil && !prior.Comparisons.Imported && slices.ContainsFunc(prior.Comparisons.Sources,
+				func(source api.ComparisonSource) bool { return source.ID == plan.Sources[i].ID && !source.Imported })
+			if plan.Sources[i].ToneMap == nil && !known {
+				plan.Sources[i].ToneMap = new(false)
+			}
+		}
+	}
+	if _, _, err := comparisons.SceneCounts(plan.Preferences, plan.Preferences.Count); err != nil {
+		return api.MediaArtifactSet{}, nil, fmt.Errorf("validate comparison scene targets: %w", err)
+	}
 	retainComparisonCellFacts(&plan, prior)
 	plan.ApprovedFingerprint = ""
 	pruneComparisonSources(&retained, &plan)
@@ -211,6 +224,8 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 						cell := &plan.Rows[r].Cells[c]
 						if mainChanged || cell.SourceID == source.ID {
 							*cell = api.ComparisonCell{SourceID: cell.SourceID}
+						} else if source.ID == plan.SizeReferenceSourceID {
+							cell.ArtifactID, cell.ContentSHA256 = "", ""
 						}
 					}
 				}
@@ -220,7 +235,7 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 		source.Imported = false
 		source.DurationSeconds = inspected.DurationSeconds
 		source.FrameRate = inspected.FrameRate
-		source.Width, source.Height = inspected.Width, inspected.Height
+		source.Width, source.Height = inspected.DisplaySize()
 		retained.ComparisonSources[source.ID] = workflowComparisonSource{Source: inspected, Fingerprint: fingerprint}
 	}
 	if !mainFound {
@@ -458,6 +473,32 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 	if err != nil {
 		return plan, fmt.Errorf("match comparison sources: %w", err)
 	}
+	options := comparisons.MatchOptions{
+		Count: plan.Preferences.Count,
+	}
+	if options.Count <= 0 {
+		options.Count = 4
+	}
+	// Manually selected row moments remain explicit; each other source is still
+	// matched visually unless an exact inspected anchor confirms correspondence.
+	for _, row := range plan.Rows {
+		if row.Excluded {
+			continue
+		}
+		for _, cell := range row.Cells {
+			if cell.SourceID == plan.MainSourceID && cell.TimestampSeconds != nil && cell.Confidence == nil {
+				options.MainMoments = append(options.MainMoments, *cell.TimestampSeconds)
+			}
+		}
+	}
+	requestedRows := options.Count
+	if len(options.MainMoments) > 0 {
+		requestedRows = len(options.MainMoments)
+	}
+	options.DarkCount, options.MotionCount, err = comparisons.SceneCounts(plan.Preferences, requestedRows)
+	if err != nil {
+		return plan, fmt.Errorf("resolve comparison scene targets: %w", err)
+	}
 	sampled := make([]comparisons.SampledSource, 0, len(plan.Sources))
 	observations := map[string][]screenshots.ComparisonSample{}
 	progress.begin("sampling", len(plan.Sources))
@@ -539,26 +580,6 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 		progress.item(sourceIndex, len(plan.Sources), source.ID, "comparison_source", label, api.StageStatusCompleted, 1000)
 	}
 	progress.complete()
-	options := comparisons.MatchOptions{
-		Count:          plan.Preferences.Count,
-		DarkFraction:   float64(plan.Preferences.DarkPercent) / 100,
-		MotionFraction: float64(plan.Preferences.MotionPercent) / 100,
-	}
-	if options.Count <= 0 {
-		options.Count = 4
-	}
-	// Manually selected row moments remain explicit; each other source is still
-	// matched visually unless an exact inspected anchor confirms correspondence.
-	for _, row := range plan.Rows {
-		if row.Excluded {
-			continue
-		}
-		for _, cell := range row.Cells {
-			if cell.SourceID == plan.MainSourceID && cell.TimestampSeconds != nil && cell.Confidence == nil {
-				options.MainMoments = append(options.MainMoments, *cell.TimestampSeconds)
-			}
-		}
-	}
 	progress.begin("matching", 1)
 	result, err := comparisons.Match(sampled, plan.MainSourceID, options)
 	if err != nil {
@@ -758,11 +779,11 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 			if !ok {
 				return plan, errors.New("comparison source handle is unavailable")
 			}
-			captured, err := renderer.ComparisonCapture(ctx, screenshots.ComparisonCaptureRequest{
-				Source:           source.Source,
-				TimestampSeconds: *cell.TimestampSeconds,
-				OverlayLabel:     comparisonOverlayLabel(plan, cell.SourceID),
-			})
+			request, err := comparisonCaptureRequest(plan, *retained, cell.SourceID, *cell.TimestampSeconds)
+			if err != nil {
+				return plan, err
+			}
+			captured, err := renderer.ComparisonCapture(ctx, request)
 			if err != nil {
 				return plan, fmt.Errorf("capture comparison row %s column %s: %w", row.ID, cell.SourceID, err)
 			}
@@ -973,11 +994,11 @@ func (b workflowMediaBuilder) PreviewComparisonFrame(ctx context.Context, _ api.
 		}
 		timestamp = nearest
 	}
-	preview, err := renderer.ComparisonPreview(ctx, screenshots.ComparisonCaptureRequest{
-		Source:           source.Source,
-		TimestampSeconds: timestamp,
-		OverlayLabel:     comparisonOverlayLabel(*snapshot.Comparisons, sourceID),
-	})
+	request, err := comparisonCaptureRequest(*snapshot.Comparisons, retained, sourceID, timestamp)
+	if err != nil {
+		return releaseworkflow.MediaPreviewContent{}, err
+	}
+	preview, err := renderer.ComparisonPreview(ctx, request)
 	if err != nil {
 		return releaseworkflow.MediaPreviewContent{}, fmt.Errorf("preview comparison source: %w", err)
 	}
@@ -1026,11 +1047,45 @@ func comparisonMediaArtifact(id api.PublicResourceID, image api.ScreenshotImage,
 
 func comparisonOverlayLabel(plan api.ComparisonPlan, sourceID string) string {
 	for _, source := range plan.Sources {
-		if source.ID == sourceID && source.Overlay {
+		if source.ID == sourceID && !source.Imported && !plan.Imported {
 			return source.Label
 		}
 	}
 	return ""
+}
+
+// comparisonCaptureRequest resolves rendering choices against private inspected
+// sources, never client-supplied dimensions. Preview and capture share this policy.
+func comparisonCaptureRequest(plan api.ComparisonPlan, retained workflowMediaPrivateArtifacts, sourceID string,
+	timestamp float64) (screenshots.ComparisonCaptureRequest, error) {
+	source, ok := retained.ComparisonSources[sourceID]
+	if !ok {
+		return screenshots.ComparisonCaptureRequest{}, errors.New("comparison source handle is unavailable")
+	}
+	request := screenshots.ComparisonCaptureRequest{
+		Source:           source.Source,
+		TimestampSeconds: timestamp,
+		OverlayLabel:     comparisonOverlayLabel(plan, sourceID),
+	}
+	if strings.TrimSpace(request.OverlayLabel) == "" {
+		return request, errors.New("choose a video-column label before comparison preview or capture")
+	}
+	for _, configured := range plan.Sources {
+		if configured.ID == sourceID {
+			request.ToneMap = configured.ToneMap
+		}
+	}
+	if plan.SizeReferenceSourceID != "" {
+		reference, exists := retained.ComparisonSources[plan.SizeReferenceSourceID]
+		if !exists || !slices.ContainsFunc(plan.Sources, func(s api.ComparisonSource) bool { return s.ID == plan.SizeReferenceSourceID && !s.Imported }) {
+			return request, errors.New("choose an available video column as the comparison size reference")
+		}
+		request.OutputWidth, request.OutputHeight = reference.Source.DisplaySize()
+		if request.OutputWidth <= 0 || request.OutputHeight <= 0 {
+			return request, errors.New("the comparison size-reference video has no inspected dimensions")
+		}
+	}
+	return request, nil
 }
 
 // retainComparisonCellFacts permits manual seeking and imported remapping without
@@ -1071,8 +1126,7 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 	}
 	if sameScenes && prior.Comparisons.SceneMix != nil {
 		summary := *prior.Comparisons.SceneMix
-		summary.RequestedDark = int(math.Ceil(float64(plan.Preferences.Count) * float64(plan.Preferences.DarkPercent) / 100))
-		summary.RequestedMotion = int(math.Ceil(float64(plan.Preferences.Count) * float64(plan.Preferences.MotionPercent) / 100))
+		summary.RequestedDark, summary.RequestedMotion, _ = comparisons.SceneCounts(plan.Preferences, plan.Preferences.Count)
 		summary.AchievedDark, summary.AchievedMotion = 0, 0
 		for _, row := range plan.Rows {
 			if row.Excluded {
@@ -1122,20 +1176,26 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 			sameMoment := previous.SourceID == cell.SourceID && previous.TimestampSeconds != nil && cell.TimestampSeconds != nil &&
 				*previous.TimestampSeconds == *cell.TimestampSeconds
 			changed := !sameMoment
+			renderChanged := false
 			if prior != nil && prior.Comparisons != nil {
+				renderChanged = prior.Comparisons.SizeReferenceSourceID != plan.SizeReferenceSourceID
 				for _, source := range plan.Sources {
 					if source.ID != cell.SourceID {
 						continue
 					}
 					for _, old := range prior.Comparisons.Sources {
-						if old.ID == source.ID && (old.Overlay != source.Overlay || source.Overlay && old.Label != source.Label ||
-							old.PreferBFrames != source.PreferBFrames || !slices.Equal(old.AllowedFrameTypes, source.AllowedFrameTypes)) {
+						if old.ID == source.ID &&
+							(old.Overlay != source.Overlay || old.Label != source.Label || !sameOptionalBool(old.ToneMap, source.ToneMap)) {
+							renderChanged = true
+						}
+						if old.ID == source.ID && (old.PreferBFrames != source.PreferBFrames ||
+							!slices.Equal(old.AllowedFrameTypes, source.AllowedFrameTypes)) {
 							changed = true
 						}
 					}
 				}
 			}
-			if !knownImage || changed {
+			if !knownImage || changed || renderChanged {
 				cell.ArtifactID = ""
 				cell.ContentSHA256 = ""
 			}
@@ -1152,7 +1212,7 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 				}
 				continue
 			}
-			if knownImage {
+			if knownImage && !renderChanged {
 				cell.ContentSHA256 = previous.ContentSHA256
 			}
 			cell.ObservedPTS = previous.ObservedPTS
@@ -1165,6 +1225,10 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 			}
 		}
 	}
+}
+
+func sameOptionalBool(a, b *bool) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 // MediaArtifactPath exposes a verified retained path only to the owning local

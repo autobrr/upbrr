@@ -9,6 +9,41 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestSceneCountsPreserveLegacyIntentAndExplicitAuthority(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		preferences  api.ComparisonPreferences
+		dark, motion int
+		invalid      bool
+	}{
+		{"legacy percentages round to rows", api.ComparisonPreferences{
+			Count:         7,
+			DarkPercent:   2,
+			MotionPercent: 30,
+		}, 1, 3, false},
+		{"explicit zero overrides percentages", api.ComparisonPreferences{
+			Count:       7,
+			DarkPercent: 100,
+			DarkCount:   new(0),
+			MotionCount: new(2),
+		}, 0, 2, false},
+		{"overlap allowed", api.ComparisonPreferences{
+			Count:       2,
+			DarkCount:   new(2),
+			MotionCount: new(2),
+		}, 2, 2, false},
+		{"negative target", api.ComparisonPreferences{Count: 2, DarkCount: new(-1)}, 0, 0, true},
+		{"target exceeds total", api.ComparisonPreferences{Count: 2, MotionCount: new(3)}, 0, 0, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dark, motion, err := SceneCounts(test.preferences, test.preferences.Count)
+			if (err != nil) != test.invalid || dark != test.dark || motion != test.motion {
+				t.Fatalf("counts=%d/%d err=%v", dark, motion, err)
+			}
+		})
+	}
+}
+
 func TestComparisonValidationRejectsAmbiguousAuthority(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -26,6 +61,9 @@ func TestComparisonValidationRejectsAmbiguousAuthority(t *testing.T) {
 			plan.Sources[0].Overlay = true
 		}},
 		{"unbound image", func(plan *api.ComparisonPlan) { plan.Rows[0].Cells[0].ArtifactID = "" }},
+		{"unknown size reference", func(plan *api.ComparisonPlan) { plan.SizeReferenceSourceID = "missing" }},
+		{"imported size reference", func(plan *api.ComparisonPlan) { plan.SizeReferenceSourceID = plan.Sources[0].ID }},
+		{"imported tone mapping", func(plan *api.ComparisonPlan) { plan.Sources[0].ToneMap = new(true) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			plan, _ := Import(comparisonImportImages(t), "2")
@@ -54,6 +92,8 @@ func TestReviewFingerprintBindsRetainedContentAndChoices(t *testing.T) {
 		{"exclusion", func(plan *api.ComparisonPlan) { plan.Rows[0].Excluded = true }},
 		{"main column", func(plan *api.ComparisonPlan) { plan.MainSourceID = "1" }},
 		{"normal screenshot reuse", func(plan *api.ComparisonPlan) { plan.ReuseMainScreenshots = true }},
+		{"render size", func(plan *api.ComparisonPlan) { plan.SizeReferenceSourceID = "2" }},
+		{"tone mapping", func(plan *api.ComparisonPlan) { plan.Sources[0].ToneMap = new(false) }},
 		{"capture choices", func(plan *api.ComparisonPlan) {
 			plan.Sources[0].Overlay = true
 			plan.Sources[0].AllowedFrameTypes = []string{"I"}

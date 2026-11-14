@@ -1472,6 +1472,9 @@
               }
             ]
           },
+          "sizeReferenceSourceId": {
+            "type": "string"
+          },
           "sources": {
             "type": "array",
             "items": {
@@ -1501,8 +1504,28 @@
           "count": {
             "type": "integer"
           },
+          "darkCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "darkPercent": {
             "type": "integer"
+          },
+          "motionCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "motionPercent": {
             "type": "integer"
@@ -1614,6 +1637,16 @@
           },
           "preferBFrames": {
             "type": "boolean"
+          },
+          "toneMap": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "width": {
             "type": "integer"

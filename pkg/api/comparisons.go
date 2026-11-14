@@ -18,7 +18,11 @@ type ComparisonSource struct {
 	// PreferBFrames enables the default B/P/I policy. False preserves explicit
 	// choices and plans saved before this policy was introduced.
 	PreferBFrames bool `json:"preferBFrames,omitempty"`
-	Overlay       bool `json:"overlay"`
+	// Overlay is retained for compatibility; video comparisons require true.
+	Overlay bool `json:"overlay"`
+	// ToneMap overrides the screenshot setting for this video. Nil preserves
+	// plans saved before comparison-local tone mapping; new plans use false.
+	ToneMap *bool `json:"toneMap,omitempty"`
 }
 
 // ComparisonCell binds one image to a row and source. Nil timing, frame and
@@ -56,9 +60,14 @@ type ComparisonAnchor struct {
 
 // ComparisonPreferences requests common scenes; unmet preferences are reported.
 type ComparisonPreferences struct {
-	Count         int `json:"count"`
+	Count int `json:"count"`
+	// Percent fields decode older plans only; explicit counts take precedence.
 	MotionPercent int `json:"motionPercent"`
 	DarkPercent   int `json:"darkPercent"`
+	// Nil counts retain legacy percentage intent. A row qualifying for both
+	// categories counts toward both targets; their sum may exceed Count.
+	MotionCount *int `json:"motionCount,omitempty"`
+	DarkCount   *int `json:"darkCount,omitempty"`
 }
 
 // ComparisonSceneMix reports measured thumbnail selection outcomes. It does not
@@ -81,18 +90,21 @@ type ComparisonProblem struct {
 // Fingerprint binds the reviewed mapping, settings and image content. Approval
 // must match that fingerprint and verified current bytes before any host call.
 type ComparisonPlan struct {
-	SceneMix             *ComparisonSceneMix   `json:"sceneMix,omitempty"`
-	Sources              []ComparisonSource    `json:"sources"`
-	Rows                 []ComparisonRow       `json:"rows"`
-	MainSourceID         string                `json:"mainSourceId"`
-	ReuseMainScreenshots bool                  `json:"reuseMainScreenshots"`
-	Imported             bool                  `json:"imported"`
-	Anchors              []ComparisonAnchor    `json:"anchors,omitempty"`
-	Preferences          ComparisonPreferences `json:"preferences"`
-	Problems             []ComparisonProblem   `json:"problems,omitempty"`
-	Warnings             []string              `json:"warnings,omitempty"`
-	Fingerprint          WorkflowFingerprint   `json:"fingerprint"`
-	ApprovedFingerprint  WorkflowFingerprint   `json:"approvedFingerprint,omitempty"`
+	SceneMix     *ComparisonSceneMix `json:"sceneMix,omitempty"`
+	Sources      []ComparisonSource  `json:"sources"`
+	Rows         []ComparisonRow     `json:"rows"`
+	MainSourceID string              `json:"mainSourceId"`
+	// SizeReferenceSourceID fits video captures within this column's inspected
+	// display size, padding without cropping. Empty retains each video's size.
+	SizeReferenceSourceID string                `json:"sizeReferenceSourceId,omitempty"`
+	ReuseMainScreenshots  bool                  `json:"reuseMainScreenshots"`
+	Imported              bool                  `json:"imported"`
+	Anchors               []ComparisonAnchor    `json:"anchors,omitempty"`
+	Preferences           ComparisonPreferences `json:"preferences"`
+	Problems              []ComparisonProblem   `json:"problems,omitempty"`
+	Warnings              []string              `json:"warnings,omitempty"`
+	Fingerprint           WorkflowFingerprint   `json:"fingerprint"`
+	ApprovedFingerprint   WorkflowFingerprint   `json:"approvedFingerprint,omitempty"`
 }
 
 // Clone detaches editable rows, source settings and observation pointers from a

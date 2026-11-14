@@ -280,13 +280,14 @@ func (m *Module) Continue(
 		}
 		return m.Current(ctx, ownerID, result.Workflow.ID)
 	}
-	if !duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) &&
+	assessmentsCurrent := continuationAssessmentGoalCurrent(current, request.Goal, m.clock.Now().UTC())
+	if assessmentsCurrent && !duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) &&
 		slices.ContainsFunc(current.Continuation.RequiredActions, func(action api.RequiredAction) bool {
 			return action.Kind == api.RequiredActionApproveTrackers && action.Status == api.RequiredActionStatusPending
 		}) {
 		return current, nil
 	}
-	if continuationGoalReached(current, request) {
+	if assessmentsCurrent && continuationGoalReached(current, request) {
 		return current, nil
 	}
 	if refreshed, handled, _, refreshErr := m.recoverPersistedMediaForContinuation(
@@ -596,6 +597,10 @@ func (m *Module) resolveContinuationAnswer(
 	}
 	for _, action := range current.Workflow.RequiredActions {
 		if action.Status != api.RequiredActionStatusPending {
+			continue
+		}
+		if action.Kind == api.RequiredActionReviewComparisons && workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalDuplicatesDecided) {
+			// Image review gates hosting, not refresh of earlier tracker evidence.
 			continue
 		}
 		if action.Kind == api.RequiredActionReviewDuplicates && duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) {
@@ -1157,6 +1162,21 @@ func continuationPreflightCurrent(current CommandResult, now time.Time) bool {
 	}
 	return current.Preflight.ProjectionSet.ID == current.Projections.ID &&
 		current.Preflight.ProjectionSet.Revision == current.Projections.Revision
+}
+
+// continuationAssessmentGoalCurrent lets explicit check requests reach the
+// refresh planner instead of treating expired completed assessments as success.
+// Later submission goals keep their separate exact-authority validation.
+func continuationAssessmentGoalCurrent(current CommandResult, goal api.WorkflowGoal, now time.Time) bool {
+	if goal != api.WorkflowGoalTrackersAssessed && goal != api.WorkflowGoalDuplicatesDecided {
+		return true
+	}
+	if !continuationPreflightCurrent(current, now) {
+		return false
+	}
+	return goal != api.WorkflowGoalDuplicatesDecided || current.Dupes != nil &&
+		current.Dupes.ProjectionSet.ID == current.Projections.ID && current.Dupes.ProjectionSet.Revision == current.Projections.Revision &&
+		current.Dupes.ExpiresAt.After(now)
 }
 
 // continuationMediaCaptureSatisfied recognizes retained capture results and

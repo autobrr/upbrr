@@ -242,7 +242,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("synthetic main fixture: %v %s", err, output)
 	}
-	command = exec.CommandContext(t.Context(), executable, "-hide_banner", "-loglevel", "error", "-i", mainPath, "-vf", "setpts=PTS-STARTPTS", "-c:v", "ffv1", secondPath)
+	command = exec.CommandContext(t.Context(), executable, "-hide_banner", "-loglevel", "error", "-i", mainPath, "-vf", "setpts=PTS-STARTPTS,scale=192:128", "-c:v", "ffv1", secondPath)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("synthetic second fixture: %v %s", err, output)
 	}
@@ -276,10 +276,12 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		Sources: []api.ComparisonSource{{
 			ID:          "main",
 			Label:       "Source",
+			Overlay:     true,
 			Fingerprint: mainFingerprint,
 		}, {
 			ID:          "other",
 			Label:       "Encode",
+			Overlay:     true,
 			Fingerprint: secondFingerprint,
 		}},
 		Rows: []api.ComparisonRow{{ID: "1", Cells: []api.ComparisonCell{{SourceID: "main", TimestampSeconds: new(1.0)}}}, {ID: "2", Cells: []api.ComparisonCell{{SourceID: "main", TimestampSeconds: new(2.0)}}}},
@@ -290,6 +292,28 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		comparisonRenderer: renderer,
 		resolver:           workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{VideoPath: mainPath}},
 	}
+	t.Run("new video defaults and retained tone-mapping intent", func(t *testing.T) {
+		for _, legacy := range []bool{false, true} {
+			var prior *api.MediaArtifactSet
+			if legacy {
+				prior = &api.MediaArtifactSet{Comparisons: &plan}
+			}
+			configured, _, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, prior, retained,
+				api.ComparisonInstructions{
+					Action:       "configure",
+					Plan:         plan,
+					VideoSources: []api.ComparisonVideoSelection{{ID: "other", Path: secondPath}},
+				}, nil, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, source := range configured.Comparisons.Sources {
+				if !source.Overlay || legacy && source.ToneMap != nil || !legacy && (source.ToneMap == nil || *source.ToneMap) {
+					t.Fatalf("legacy=%t video defaults changed intent: %+v", legacy, source)
+				}
+			}
+		}
+	})
 	matched, err := b.matchWorkflowComparisons(t.Context(), retained, plan, b.comparisonProgress(t.Context(), 5))
 	if err != nil {
 		t.Fatal(err)
@@ -372,14 +396,106 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	overlaySnapshot.Comparisons.Sources[0].Overlay = true
+	overlaySnapshot.Comparisons.Sources[0].Overlay = false
 	overlayPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, overlaySnapshot, retained, "main", 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Equal(plainPreview.Bytes, overlayPreview.Bytes) || *plainPreview.ObservedPTS != *overlayPreview.ObservedPTS {
-		t.Error("comparison preview ignored its overlay or changed frame")
+	if !bytes.Equal(plainPreview.Bytes, overlayPreview.Bytes) || *plainPreview.ObservedPTS != *overlayPreview.ObservedPTS {
+		t.Error("a legacy overlay opt-out disabled the required comparison label or changed frame")
 	}
+	t.Run("render settings bind captures previews and retained review", func(t *testing.T) {
+		request, err := captured.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		label := request.Sources[0].Label
+		request.Sources[0].Label = ""
+		if _, err := comparisonCaptureRequest(request, retained, "main", 1); err == nil {
+			t.Fatal("an empty video label bypassed the mandatory comparison overlay")
+		}
+		request.Sources[0].Label = label
+		legacy, err := snapshot.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy.Comparisons.Sources[0].Overlay = false
+		upgraded, err := legacy.Comparisons.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		upgraded.Sources[0].Overlay = true
+		retainComparisonCellFacts(&upgraded, &legacy)
+		for r, row := range upgraded.Rows {
+			cell := row.Cells[0]
+			if cell.ArtifactID != "" || cell.ContentSHA256 != "" || cell.ObservedPTS == nil || *cell.ObservedPTS != *captured.Rows[r].Cells[0].ObservedPTS {
+				t.Fatal("mandatory overlay migration discarded saved decoded frame identity")
+			}
+		}
+		request.SizeReferenceSourceID = "other"
+		request.Sources[0].ToneMap = new(false)
+		// Public dimensions cannot choose the rendered size instead of private facts.
+		request.Sources[1].Width, request.Sources[1].Height = 1, 1
+		invalidated, err := request.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		retainComparisonCellFacts(&invalidated, &snapshot)
+		for r, row := range invalidated.Rows {
+			for c, cell := range row.Cells {
+				if cell.ArtifactID != "" || cell.ContentSHA256 != "" || cell.ObservedPTS == nil || *cell.ObservedPTS != *captured.Rows[r].Cells[c].ObservedPTS {
+					t.Fatal("render-setting invalidation retained pixels or discarded decoded identity")
+				}
+			}
+		}
+		updated, private, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained,
+			api.ComparisonInstructions{Action: "capture", Plan: request}, nil, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated.Comparisons.ApprovedFingerprint != "" || updated.Comparisons.Fingerprint == captured.Fingerprint {
+			t.Fatal("render setting changes retained approval")
+		}
+		kept, ok := private.(workflowMediaPrivateArtifacts)
+		if !ok {
+			t.Fatal("comparison private resource has the wrong type")
+		}
+		for r, row := range updated.Comparisons.Rows {
+			for c, cell := range row.Cells {
+				image := kept.ArtifactImages[cell.ArtifactID]
+				previous := captured.Rows[r].Cells[c]
+				if image.Width != 192 || image.Height != 128 || cell.ObservedPTS == nil || *cell.ObservedPTS != *previous.ObservedPTS {
+					t.Fatalf("render did not use private reference size or changed source frame: size=%dx%d cell=%+v", image.Width, image.Height, cell)
+				}
+			}
+		}
+		preview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, updated, private, "main", 1, 0)
+		if err != nil || preview.Width != 192 || preview.Height != 128 || *preview.ObservedPTS != *plainPreview.ObservedPTS {
+			t.Fatalf("preview did not share capture choices: size=%dx%d err=%v", preview.Width, preview.Height, err)
+		}
+		previewBeforeRestart := preview
+		_, payload, err := kept.MarshalPrivateResource()
+		if err != nil {
+			t.Fatal(err)
+		}
+		restored, err := decodeWorkflowMediaPrivateArtifacts(b, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire, err := updated.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		preview, err = b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, wire, restored, "main", 1, 0)
+		if err != nil || preview.Width != 192 || preview.Height != 128 || wire.Comparisons.SizeReferenceSourceID != "other" ||
+			wire.Comparisons.Sources[0].ToneMap == nil || *wire.Comparisons.Sources[0].ToneMap || !bytes.Equal(preview.Bytes, previewBeforeRestart.Bytes) {
+			t.Fatalf("restart lost comparison render settings: %v", err)
+		}
+		request.SizeReferenceSourceID = "removed"
+		if _, err := comparisonCaptureRequest(request, retained, "main", 1); err == nil {
+			t.Fatal("missing size-reference source accepted")
+		}
+	})
 	nextPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", plainPreview.TimestampSeconds, 1)
 	if err != nil {
 		t.Fatal(err)

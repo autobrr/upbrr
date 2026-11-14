@@ -9,37 +9,47 @@ import ComparisonPanel from "./ComparisonPanel";
 
 afterEach(cleanup);
 
-it("defaults new videos to B-frame matching and overlays without rewriting saved choices", async () => {
+it("retains comparison render choices and defaults new videos without rewriting saved choices", async () => {
   const facet = comparisonFacet(null);
   const { unmount } = render(
     <ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
   );
   fireEvent.click(screen.getByRole("button", { name: "Create from videos" }));
   fireEvent.click(screen.getByRole("button", { name: "Add comparison video" }));
+  expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("");
   for (const group of ["Main input · column 1", "Source 2 · column 2"]) {
     const column = within(screen.getByRole("group", { name: group }));
     expect(column.getByRole("checkbox", { name: "B" })).toBeChecked();
     expect(
-      column.getByRole("checkbox", { name: "Comparison-only frame overlay and label" }),
-    ).toBeChecked();
+      column.queryByRole("checkbox", { name: "Comparison-only frame overlay and label" }),
+    ).toBeNull();
+    expect(column.getByRole("combobox", { name: /Tone mapping/ })).toHaveValue("off");
   }
   const main = within(screen.getByRole("group", { name: "Main input · column 1" }));
   fireEvent.click(main.getByRole("checkbox", { name: "B" }));
   fireEvent.click(main.getByRole("checkbox", { name: "I" }));
-  fireEvent.click(main.getByRole("checkbox", { name: "Comparison-only frame overlay and label" }));
+  fireEvent.change(main.getByRole("combobox", { name: /Tone mapping/ }), {
+    target: { value: "on" },
+  });
+  fireEvent.change(screen.getByRole("combobox", { name: "Comparison frame size" }), {
+    target: { value: "column-2" },
+  });
   fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
   await waitFor(() => expect(facet.edit).toHaveBeenCalledTimes(1));
   const plan = vi.mocked(facet.edit).mock.calls[0]![0].plan;
   expect(plan.sources[0]).toMatchObject({
     preferBFrames: false,
     allowedFrameTypes: ["I"],
-    overlay: false,
+    overlay: true,
+    toneMap: true,
   });
   expect(plan.sources[1]).toMatchObject({
     preferBFrames: true,
     allowedFrameTypes: ["B"],
     overlay: true,
+    toneMap: false,
   });
+  expect(plan.sizeReferenceSourceId).toBe("column-2");
   unmount();
   render(
     <ComparisonPanel
@@ -52,8 +62,45 @@ it("defaults new videos to B-frame matching and overlays without rewriting saved
   expect(saved.getByRole("checkbox", { name: "I" })).toBeChecked();
   expect(saved.getByRole("checkbox", { name: "Default B-frame preference" })).not.toBeChecked();
   expect(
-    saved.getByRole("checkbox", { name: "Comparison-only frame overlay and label" }),
-  ).not.toBeChecked();
+    saved.queryByRole("checkbox", { name: "Comparison-only frame overlay and label" }),
+  ).toBeNull();
+  expect(saved.getByRole("combobox", { name: /Tone mapping/ })).toHaveValue("on");
+  expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("column-2");
+  fireEvent.click(screen.getByRole("button", { name: "Remove Source 2 column" }));
+  expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("");
+});
+
+it("converts saved scene percentages into fixed row targets and rejects invalid counts", async () => {
+  const plan = {
+    ...comparisonPlan(false),
+    preferences: { count: 10, motionPercent: 20, darkPercent: 30 },
+  };
+  const facet = comparisonFacet(plan);
+  render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  const motion = screen.getByRole("spinbutton", { name: "Fast-motion scenes (rows)" });
+  const dark = screen.getByRole("spinbutton", { name: "Dark scenes (rows)" });
+  expect(motion).toHaveValue(2);
+  expect(dark).toHaveValue(3);
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Comparison rows" }), {
+    target: { value: "3" },
+  });
+  expect(motion).toHaveValue(2);
+  expect(dark).toHaveValue(3);
+  fireEvent.change(motion, { target: { value: "1.5" } });
+  expect(motion).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByRole("button", { name: "Find matching scenes" })).toBeDisabled();
+  fireEvent.change(motion, { target: { value: "4" } });
+  expect(screen.getByRole("button", { name: "Apply comparison setup" })).toBeDisabled();
+  fireEvent.change(motion, { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
+  await waitFor(() => expect(facet.edit).toHaveBeenCalledOnce());
+  expect(vi.mocked(facet.edit).mock.calls[0]![0].plan.preferences).toEqual({
+    count: 3,
+    darkCount: 3,
+    motionCount: 3,
+    darkPercent: 0,
+    motionPercent: 0,
+  });
 });
 
 it("returns to the entry actions after removing an unapplied setup", async () => {
@@ -330,15 +377,15 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
   });
   fireEvent.click(screen.getByRole("button", { name: "Preview Encode" }));
   expect(facet.preview).toHaveBeenCalledWith("2", 20, undefined);
-  await waitFor(() => expect(screen.getByLabelText("Preview seconds · Encode")).toHaveValue(20.13));
+  await waitFor(() =>
+    expect(screen.getByLabelText("Preview seconds · Encode")).toHaveTextContent("20.130"),
+  );
+  expect(screen.queryByRole("spinbutton", { name: "Preview seconds · Encode" })).toBeNull();
   const source = screen.getByRole("group", { name: "Encode · column 2" });
   fireEvent.click(within(source).getByRole("button", { name: "Next frame" }));
   expect(facet.preview).toHaveBeenLastCalledWith("2", 20.13, 1);
   fireEvent.click(within(source).getByRole("checkbox", { name: "I" }));
   fireEvent.click(within(source).getByRole("checkbox", { name: "B" }));
-  fireEvent.click(
-    within(source).getByRole("checkbox", { name: "Comparison-only frame overlay and label" }),
-  );
   fireEvent.click(
     within(source).getByRole("button", { name: "Use displayed previews as an anchor" }),
   );

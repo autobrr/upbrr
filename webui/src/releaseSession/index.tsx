@@ -33,6 +33,7 @@ import type {
   WorkflowIntent,
   ComparisonInstructions,
   ComparisonSource,
+  ComparisonPlan,
   FramePreview,
   WorkflowResourceRef,
 } from "../api/generated/release-workflow";
@@ -84,8 +85,20 @@ import type {
 } from "./types";
 
 const SessionContext = createContext<ReleaseSession | null>(null);
-const comparisonPreviewRendering = (source: ComparisonSource) =>
-  JSON.stringify([source.overlay, source.overlay ? source.label : ""]);
+const comparisonPreviewRendering = (
+  source: ComparisonSource,
+  plan: ComparisonPlan | null | undefined,
+) => {
+  const reference = plan?.sources.find((candidate) => candidate.id === plan.sizeReferenceSourceId);
+  return JSON.stringify([
+    source.label,
+    source.toneMap,
+    plan?.sizeReferenceSourceId || "",
+    reference?.fingerprint,
+    reference?.width,
+    reference?.height,
+  ]);
+};
 
 type WorkflowFacet = "screenshots" | "menuImages" | "uploadedImages" | "descriptions";
 type ControllerKey =
@@ -2714,7 +2727,7 @@ export function ReleaseSessionProvider({
         [sourceID]: {
           workflowID: current.workflow.id,
           fingerprint: source.fingerprint || "",
-          rendering: comparisonPreviewRendering(source),
+          rendering: comparisonPreviewRendering(source, current.media?.comparisons),
           preview,
         },
       }));
@@ -4233,7 +4246,9 @@ export function ReleaseSessionProvider({
           previews: Object.fromEntries(
             currentComparisonPreviews
               .filter(
-                ({ source, retained }) => comparisonPreviewRendering(source) === retained.rendering,
+                ({ source, retained }) =>
+                  comparisonPreviewRendering(source, workflowView.current?.media?.comparisons) ===
+                  retained.rendering,
               )
               .map(({ sourceID, retained }) => [sourceID, retained.preview]),
           ),

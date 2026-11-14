@@ -6,6 +6,7 @@ import type {
   ComparisonCell,
   ComparisonPlan,
   ComparisonSource,
+  ComparisonPreferences,
 } from "../../api/generated/release-workflow";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -32,13 +33,14 @@ const emptyPlan = (imported: boolean): ComparisonPlan => ({
           overlay: true,
           allowedFrameTypes: ["B"],
           preferBFrames: true,
+          toneMap: false,
         },
       ],
   rows: [],
   mainSourceId: imported ? "" : "main",
   imported,
   reuseMainScreenshots: false,
-  preferences: { count: 3, motionPercent: 0, darkPercent: 0 },
+  preferences: { count: 3, motionPercent: 0, darkPercent: 0, motionCount: 0, darkCount: 0 },
   fingerprint: "",
 });
 const editableChoices = (plan: ComparisonPlan) => ({
@@ -47,6 +49,18 @@ const editableChoices = (plan: ComparisonPlan) => ({
   approvedFingerprint: "",
   problems: undefined,
   warnings: undefined,
+});
+
+// Old plans retain their percentage meaning until edited; an edit fixes both
+// targets as the row counts shown here before changing the total row count.
+const scenePreferences = (preferences: ComparisonPreferences) => ({
+  ...preferences,
+  motionCount:
+    preferences.motionCount ?? Math.ceil((preferences.count * preferences.motionPercent) / 100),
+  darkCount:
+    preferences.darkCount ?? Math.ceil((preferences.count * preferences.darkPercent) / 100),
+  motionPercent: 0,
+  darkPercent: 0,
 });
 
 /** Configures, corrects and reviews workflow-owned comparison images before hosting. */
@@ -68,6 +82,14 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
   const approved = Boolean(
     view.plan?.fingerprint && view.plan.approvedFingerprint === view.plan.fingerprint,
   );
+  const preferences = scenePreferences(draft.preferences);
+  const validScenes =
+    draft.imported ||
+    (Number.isInteger(preferences.count) &&
+      preferences.count > 0 &&
+      [preferences.motionCount, preferences.darkCount].every(
+        (count) => Number.isInteger(count) && count >= 0 && count <= preferences.count,
+      ));
   const sourceOrder = new Map(draft.sources.map((source, index) => [source.id, index]));
   const change = (next: ComparisonPlan) =>
     setDraft({ ...next, fingerprint: "", approvedFingerprint: "" });
@@ -95,7 +117,12 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
   const submit = async (action: "configure" | "match" | "capture", plan = draft) => {
     const applied = await facet.edit({
       action,
-      plan,
+      plan: {
+        ...plan,
+        sources: plan.sources.map((source) =>
+          source.imported || plan.imported ? source : { ...source, overlay: true },
+        ),
+      },
       videoSources: Object.entries(paths)
         .filter(([, path]) => path.trim())
         .map(([id, path]) => ({ id, path })),
@@ -124,7 +151,9 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           label: `Source ${next}`,
           imported: draft.imported,
           overlay: !draft.imported,
-          ...(!draft.imported ? { allowedFrameTypes: ["B"], preferBFrames: true } : {}),
+          ...(!draft.imported
+            ? { allowedFrameTypes: ["B"], preferBFrames: true, toneMap: false }
+            : {}),
         },
       ],
     });
@@ -133,6 +162,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
     change({
       ...draft,
       sources: draft.sources.filter((source) => source.id !== id),
+      sizeReferenceSourceId: draft.sizeReferenceSourceId === id ? "" : draft.sizeReferenceSourceId,
       rows: draft.rows.map((row) => ({
         ...row,
         cells: row.cells.filter((cell) => cell.sourceId !== id),
@@ -291,6 +321,34 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
             </label>
           </div>
 
+          {!draft.imported && (
+            <label className="grid gap-1">
+              <span>Comparison frame size</span>
+              <Select
+                aria-label="Comparison frame size"
+                aria-describedby="comparison-size-help"
+                value={draft.sizeReferenceSourceId || ""}
+                onChange={(event) =>
+                  change({ ...draft, sizeReferenceSourceId: event.target.value })
+                }
+              >
+                <option value="">Keep each source's original size</option>
+                {draft.sources
+                  .filter((source) => !source.imported)
+                  .map((source) => (
+                    <option key={source.id} value={source.id}>
+                      Match {source.label || source.id}
+                      {source.width && source.height ? ` · ${source.width} × ${source.height}` : ""}
+                    </option>
+                  ))}
+              </Select>
+              <span id="comparison-size-help" className="text-muted-foreground">
+                Fit videos to the selected source's display size, adding centered padding when
+                aspect ratios differ. No cropping or stretching. Apply setup before previewing.
+              </span>
+            </label>
+          )}
+
           <div className="grid gap-3 lg:grid-cols-2">
             {draft.sources.map((source, index) => {
               const preview = view.previews[source.id];
@@ -418,27 +476,34 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                           types and manual correspondence stay as selected.
                         </p>
                       )}
-                      <label className="flex items-center gap-2">
-                        <Checkbox
-                          checked={source.overlay}
-                          onCheckedChange={(overlay) => sourceChange(source.id, { overlay })}
-                        />
-                        Comparison-only frame overlay and label
-                      </label>
                       <p className="text-muted-foreground">
-                        Preview seconds is a seek position from the start of this source, not a
-                        duration or scan interval.
+                        Comparison captures include the column label, observed PTS and picture type.
                       </p>
                       <label className="grid gap-1">
-                        <span>Preview seconds · {source.label}</span>
-                        <input
-                          className={inputClass}
-                          type="number"
-                          min="0"
-                          step={source.frameRate ? 1 / source.frameRate : "any"}
-                          value={position}
-                          onChange={(event) => setPosition(Number(event.target.value) || 0)}
-                        />
+                        <span>Tone mapping · {source.label}</span>
+                        <Select
+                          aria-label={`Tone mapping · ${source.label}`}
+                          aria-describedby={`comparison-tonemap-${index}`}
+                          value={source.toneMap == null ? "default" : source.toneMap ? "on" : "off"}
+                          onChange={(event) =>
+                            sourceChange(source.id, {
+                              toneMap:
+                                event.target.value === "default"
+                                  ? undefined
+                                  : event.target.value === "on",
+                            })
+                          }
+                        >
+                          <option value="off">Off</option>
+                          <option value="on">On for HDR</option>
+                          {source.toneMap == null && (
+                            <option value="default">Use screenshot setting</option>
+                          )}
+                        </Select>
+                        <span id={`comparison-tonemap-${index}`} className="text-muted-foreground">
+                          Uses the configured tone-mapping renderer. Inspect processing outcomes;
+                          renderer fallback may leave colours inaccurate.
+                        </span>
                       </label>
                       <label className="grid gap-1">
                         <span>Approximate frame seek · {source.label}</span>
@@ -448,12 +513,21 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                           min="0"
                           step="1"
                           disabled={!source.frameRate}
+                          aria-describedby={`comparison-position-${index}`}
                           value={source.frameRate ? Math.round(position * source.frameRate) : ""}
                           onChange={(event) =>
                             setPosition((Number(event.target.value) || 0) / (source.frameRate || 1))
                           }
                         />
                       </label>
+                      <output
+                        id={`comparison-position-${index}`}
+                        aria-live="off"
+                        className="text-xs text-muted-foreground"
+                        aria-label={`Preview seconds · ${source.label}`}
+                      >
+                        Preview seconds: {position.toFixed(3)} · position from this source's start.
+                      </output>
                       <p className="text-sm text-muted-foreground">
                         Frame-number seeking estimates from average FPS. Previous and next use
                         actual decoded frames.
@@ -551,8 +625,8 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                 {(
                   [
                     ["count", "Comparison rows", 1],
-                    ["motionPercent", "Fast-motion scenes (%)", 0],
-                    ["darkPercent", "Dark scenes (%)", 0],
+                    ["motionCount", "Fast-motion scenes (rows)", 0],
+                    ["darkCount", "Dark scenes (rows)", 0],
                   ] as const
                 ).map(([key, label, min]) => (
                   <label className="grid gap-1" key={key}>
@@ -561,14 +635,22 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                       className={inputClass}
                       type="number"
                       min={min}
-                      max={key === "count" ? undefined : 100}
-                      value={draft.preferences[key]}
+                      max={key === "count" ? undefined : preferences.count}
+                      step={1}
+                      aria-invalid={
+                        !Number.isInteger(preferences[key]) ||
+                        preferences[key] < min ||
+                        (key !== "count" && preferences[key] > preferences.count) ||
+                        undefined
+                      }
+                      aria-describedby="comparison-scene-help"
+                      value={preferences[key]}
                       onChange={(event) =>
                         change({
                           ...draft,
                           preferences: {
-                            ...draft.preferences,
-                            [key]: Math.max(min, Math.trunc(Number(event.target.value) || 0)),
+                            ...preferences,
+                            [key]: Number(event.target.value) || 0,
                           },
                         })
                       }
@@ -576,6 +658,15 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   </label>
                 ))}
               </div>
+              <p
+                id="comparison-scene-help"
+                className="text-muted-foreground"
+                role={validScenes ? undefined : "alert"}
+              >
+                Scene targets must be whole row counts from 0 to the comparison row count. A row
+                qualifying as both dark and fast motion counts toward both targets. Unavailable
+                scenes remain reported as unmet.
+              </p>
               {(draft.anchors || []).map((anchor, index) => (
                 <div
                   className="flex flex-wrap items-center gap-2"
@@ -604,16 +695,24 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           )}
 
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => void submit("configure")}>Apply comparison setup</Button>
+            <Button disabled={!validScenes} onClick={() => void submit("configure")}>
+              Apply comparison setup
+            </Button>
             {!draft.imported && (
               <>
-                <Button disabled={draft.sources.length < 2} onClick={() => void submit("match")}>
+                <Button
+                  disabled={!validScenes || draft.sources.length < 2}
+                  onClick={() => void submit("match")}
+                >
                   Find matching scenes
                 </Button>
                 <Button disabled={draft.sources.length < 2} onClick={addManualRow}>
                   Add manual row from timeline positions
                 </Button>
-                <Button disabled={!draft.rows.length} onClick={() => void submit("capture")}>
+                <Button
+                  disabled={!validScenes || !draft.rows.length}
+                  onClick={() => void submit("capture")}
+                >
                   Capture comparison rows
                 </Button>
               </>

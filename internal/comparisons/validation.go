@@ -5,6 +5,7 @@ package comparisons
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"math"
@@ -41,7 +42,10 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 		if source.Overlay && (len(source.Label) > 80 || strings.IndexFunc(source.Label, func(r rune) bool {
 			return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune(" ._-", r)
 		}) >= 0) {
-			add("", source.ID, "Overlay labels support up to 80 ASCII letters, digits, spaces and ._-; change the label or disable its overlay.")
+			add("", source.ID, "Overlay labels support up to 80 ASCII letters, digits, spaces and ._-; change the column label.")
+		}
+		if !plan.Imported && !source.Imported && !source.Overlay {
+			add("", source.ID, "Video comparison overlays are required; apply the setup and recapture before review.")
 		}
 		if slices.ContainsFunc(source.AllowedFrameTypes, func(value string) bool { return value != "I" && value != "P" && value != "B" }) {
 			add("", source.ID, "Allowed picture types must contain only I, P, or B.")
@@ -51,6 +55,15 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 		}
 		if plan.Imported && !source.Imported {
 			add("", source.ID, "Imported comparison columns must retain their external provenance.")
+		}
+		if (plan.Imported || source.Imported) && source.ToneMap != nil && *source.ToneMap {
+			add("", source.ID, "Imported pixels cannot be tone mapped; replace the image instead.")
+		}
+	}
+	if plan.SizeReferenceSourceID != "" {
+		reference, exists := sources[plan.SizeReferenceSourceID]
+		if plan.Imported || !exists || reference.Imported || reference.Width <= 0 || reference.Height <= 0 {
+			add("", plan.SizeReferenceSourceID, "Choose an inspected video column as the comparison size reference; imported pixels cannot be resized.")
 		}
 	}
 	if len(sources) < 2 {
@@ -99,9 +112,8 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 	if activeRows == 0 {
 		add("", "", "Retain at least one complete comparison row.")
 	}
-	if plan.Preferences.Count < 0 || plan.Preferences.MotionPercent < 0 || plan.Preferences.MotionPercent > 100 ||
-		plan.Preferences.DarkPercent < 0 || plan.Preferences.DarkPercent > 100 {
-		add("", "", "Scene count must be nonnegative and scene percentages must be between 0 and 100.")
+	if _, _, err := SceneCounts(plan.Preferences, plan.Preferences.Count); err != nil {
+		add("", "", err.Error())
 	}
 	for _, anchor := range plan.Anchors {
 		_, exists := sources[anchor.SourceID]
@@ -111,6 +123,27 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 		}
 	}
 	return problems
+}
+
+// SceneCounts resolves explicit row targets or legacy percentages for the
+// requested row count. Overlap is allowed; each target must fit independently.
+func SceneCounts(preferences api.ComparisonPreferences, count int) (dark, motion int, err error) {
+	if count < 0 {
+		return 0, 0, errors.New("comparison row count must be nonnegative")
+	}
+	resolve := func(explicit *int, percent int) (int, bool) {
+		if explicit != nil {
+			return *explicit, *explicit >= 0 && *explicit <= count
+		}
+		return int(math.Ceil(float64(count) * float64(percent) / 100)), percent >= 0 && percent <= 100
+	}
+	var validDark, validMotion bool
+	dark, validDark = resolve(preferences.DarkCount, preferences.DarkPercent)
+	motion, validMotion = resolve(preferences.MotionCount, preferences.MotionPercent)
+	if !validDark || !validMotion {
+		return 0, 0, errors.New("dark and fast-motion targets must be whole row counts from 0 to the comparison row count")
+	}
+	return dark, motion, nil
 }
 
 // ReviewFingerprint binds retained sources, rows, content digests and all review
