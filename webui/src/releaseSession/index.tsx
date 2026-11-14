@@ -333,10 +333,37 @@ export function ReleaseSessionProvider({
           fingerprint: string;
           rendering: string;
           preview: FramePreview;
+          expired?: boolean;
         }>
       >
     >
   >({});
+  useEffect(() => {
+    const expiry = Math.min(
+      ...Object.values(comparisonPreviews).flatMap(({ preview, expired }) => {
+        const expires = Date.parse(preview.expiresAt);
+        return !expired && preview.observedIdentity && Number.isFinite(expires) ? [expires] : [];
+      }),
+    );
+    if (!Number.isFinite(expiry)) return;
+    const timer = window.setTimeout(
+      () => {
+        const now = Date.now();
+        setComparisonPreviews((previous) =>
+          Object.fromEntries(
+            Object.entries(previous).map(([id, retained]) => [
+              id,
+              retained.preview.observedIdentity && Date.parse(retained.preview.expiresAt) <= now
+                ? { ...retained, expired: true }
+                : retained,
+            ]),
+          ),
+        );
+      },
+      Math.max(0, expiry - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [comparisonPreviews]);
   const [questionnaireRefresh, setQuestionnaireRefresh] = useState<Readonly<{
     key: string;
     status: "running" | "ready" | "error";
@@ -2781,6 +2808,36 @@ export function ReleaseSessionProvider({
     );
   };
 
+  const discoverComparisonSource = async (sourceID: string, path: string) => {
+    const current = workflowView.current;
+    if (!current) return null;
+    const command = beginWorkflow("screenshots", access.screenshots.reason);
+    if (!command) return null;
+    setScreenshotLocalAction("comparison");
+    try {
+      const discovery = await activePorts.workflow.discoverComparisonSource(
+        current,
+        sourceID,
+        path,
+        `comparison-discovery-${current.workflow.id}-${current.workflow.revision}-${sourceID}`,
+        command.controller.signal,
+      );
+      if (command.controller.signal.aborted || discovery.sourceId !== sourceID) return null;
+      dispatch({
+        type: "comparison_discovered",
+        sessionRevision: command.sessionRevision,
+        revision: command.revision,
+      });
+      return discovery;
+    } catch (error) {
+      failWorkflow("screenshots", command, error);
+      return null;
+    } finally {
+      if (controllers.current.screenshots === command.controller) setScreenshotLocalAction(null);
+      finishWorkflow("screenshots", command);
+    }
+  };
+
   const editComparisons = (instructions: ComparisonInstructions): Promise<boolean> =>
     runBackendWorkflow(
       async (current, commandID, signal, updateAuthority) => {
@@ -4292,8 +4349,15 @@ export function ReleaseSessionProvider({
             currentComparisonPreviews
               .filter(
                 ({ source, retained }) =>
+                  !retained.expired &&
+                  (!retained.preview.observedIdentity ||
+                    (retained.preview.workflowRevision ===
+                      workflowView.current?.workflow.revision &&
+                      retained.preview.media?.id === workflowView.current?.media?.id &&
+                      retained.preview.media?.revision === workflowView.current?.media?.revision &&
+                      Number.isFinite(Date.parse(retained.preview.expiresAt)))) &&
                   comparisonPreviewRendering(source, workflowView.current?.media?.comparisons) ===
-                  retained.rendering,
+                    retained.rendering,
               )
               .map(({ sourceID, retained }) => [sourceID, retained.preview]),
           ),
@@ -4308,6 +4372,7 @@ export function ReleaseSessionProvider({
           error: screenshotError,
         },
         edit: editComparisons,
+        discover: discoverComparisonSource,
         preview: previewComparisonFrame,
         importImages: (files, plan, replacement) =>
           runBackendWorkflow(

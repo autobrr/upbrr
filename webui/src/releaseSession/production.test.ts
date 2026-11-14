@@ -128,6 +128,13 @@ describe("productionReleaseSessionPorts", () => {
       "source-2",
       -1,
     );
+    await ports.workflow.discoverComparisonSource(
+      current,
+      "source-2",
+      "Example.DVD",
+      "discover-1",
+      new AbortController().signal,
+    );
     expect(requests).toEqual([
       {
         method: "EditReleaseWorkflowComparisons",
@@ -148,6 +155,17 @@ describe("productionReleaseSessionPorts", () => {
           comparisonStepDirection: -1,
           timestampSeconds: 12,
           idempotencyKey: "preview-1",
+        },
+      },
+      {
+        method: "DiscoverReleaseWorkflowComparisonSource",
+        body: {
+          workflowId: "workflow-1",
+          expectedRevision: 7,
+          media: { id: "media-1", revision: 6 },
+          sourceId: "source-2",
+          path: "Example.DVD",
+          idempotencyKey: "discover-1",
         },
       },
     ]);

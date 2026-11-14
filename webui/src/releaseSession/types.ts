@@ -346,6 +346,10 @@ export type ComparisonsFacet = Readonly<{
     error: string;
   }>;
   edit(instructions: ComparisonInstructions): Promise<boolean>;
+  discover(
+    sourceID: string,
+    path: string,
+  ): Promise<import("../api/generated/release-workflow").ComparisonSourceDiscovery | null>;
   preview(
     sourceID: string,
     timestampSeconds: number,

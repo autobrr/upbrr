@@ -13,13 +13,51 @@ import (
 // ConstantAlignment predicts source-relative time from independently checked
 // temporal evidence. It is not an anchor, frame index or whole-timeline proof.
 type ConstantAlignment struct {
-	OffsetSeconds    float64
-	ToleranceSeconds float64
+	Points                           []AlignmentPoint
+	ReferenceFrameIDs                []string
+	ScaleNumerator, ScaleDenominator int64
+	IntervalProof                    bool
+	OffsetSeconds                    float64
+	ToleranceSeconds                 float64
+}
+
+// AlignmentPoint retains an independently observed native transition's residual
+// limit for validation against the fitted offset, including the held-out region.
+type AlignmentPoint struct{ OffsetSeconds, ToleranceSeconds float64 }
+
+func (a ConstantAlignment) validatesOffset(offset float64) bool {
+	if math.Abs(offset-a.OffsetSeconds) > a.ToleranceSeconds {
+		return false
+	}
+	for _, point := range a.Points {
+		if math.Abs(offset-point.OffsetSeconds) > point.ToleranceSeconds {
+			return false
+		}
+	}
+	return true
 }
 
 // Consistent reports agreement within the finer observed subframe tolerance.
 func (a ConstantAlignment) Consistent(b ConstantAlignment) bool {
-	return math.Abs(a.OffsetSeconds-b.OffsetSeconds) <= min(a.ToleranceSeconds, b.ToleranceSeconds)
+	return a.Scale() == b.Scale() && a.IntervalProof == b.IntervalProof &&
+		math.Abs(a.OffsetSeconds-b.OffsetSeconds) <= min(a.ToleranceSeconds, b.ToleranceSeconds)
+}
+
+// Scale returns the exact selected rational's search-boundary representation.
+// Zero numerator/denominator decodes retained scale-one callers compatibly.
+func (a ConstantAlignment) Scale() float64 {
+	if a.ScaleNumerator == 0 && a.ScaleDenominator == 0 {
+		return 1
+	}
+	if a.ScaleNumerator <= 0 || a.ScaleDenominator <= 0 {
+		return math.NaN()
+	}
+	return float64(a.ScaleNumerator) / float64(a.ScaleDenominator)
+}
+
+// Predict maps title-relative presentation time, never decoder frame ordinals.
+func (a ConstantAlignment) Predict(seconds float64) float64 {
+	return a.Scale()*seconds + a.OffsetSeconds
 }
 
 // DiscoverAlignment searches actual timestamps using a temporal sequence.
@@ -127,6 +165,24 @@ func AlignedMatch(
 	alignments map[string]ConstantAlignment,
 	previous []MatchedRow,
 ) (MatchResult, error) {
+	// A frame-accurate transition proof authorizes its observed pictures, not
+	// arbitrary extrapolation across another cut in the decoded neighborhood.
+	for i, source := range sources {
+		if source.ID != mainID {
+			continue
+		}
+		filtered := slices.Clone(source.Frames)
+		for _, alignment := range alignments {
+			if len(alignment.ReferenceFrameIDs) > 0 {
+				filtered = slices.DeleteFunc(filtered, func(frame FrameSample) bool { return !slices.Contains(alignment.ReferenceFrameIDs, frame.FrameID) })
+			}
+		}
+		if len(filtered) == 0 {
+			return MatchResult{}, nil
+		}
+		sources = slices.Clone(sources)
+		sources[i].Frames = filtered
+	}
 	if len(options.MainMoments) != 0 || options.DarkCount != 0 || options.MotionCount != 0 {
 		return MatchResult{}, errors.New("aligned matching requires automatic scenes without quotas")
 	}
@@ -152,10 +208,20 @@ func AlignedMatch(
 }
 
 func matchAlignedFrame(main matchingFrame, column matchingColumn) FrameMatch {
-	predicted := main.frame.TimestampSeconds + column.alignment.OffsetSeconds
+	predicted := column.alignment.Predict(main.frame.TimestampSeconds)
+	within := func(frame FrameSample) bool {
+		if !column.alignment.IntervalProof {
+			return math.Abs(frame.TimestampSeconds-predicted) <= column.alignment.ToleranceSeconds
+		}
+		if main.frame.DisplayEndSeconds <= main.frame.TimestampSeconds || frame.DisplayEndSeconds <= frame.TimestampSeconds {
+			return false
+		}
+		return frame.TimestampSeconds <= column.alignment.Predict(main.frame.DisplayEndSeconds)+frame.TimebaseTickSeconds &&
+			frame.DisplayEndSeconds >= predicted-frame.TimebaseTickSeconds
+	}
 	best := 0.0
 	for _, frame := range column.frames {
-		if math.Abs(frame.frame.TimestampSeconds-predicted) <= .25 {
+		if within(frame.frame) {
 			best = max(best, visualScore(main, frame))
 		}
 	}
@@ -163,7 +229,7 @@ func matchAlignedFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		chosen, distance := -1, math.Inf(1)
 		for i, frame := range column.frames {
 			delta := math.Abs(frame.frame.TimestampSeconds - predicted)
-			if frame.frame.FrameType == kind && delta <= .25 && delta < distance && visualScore(main, frame) >= max(.92, best-.03) {
+			if frame.frame.FrameType == kind && within(frame.frame) && delta < distance && visualScore(main, frame) >= max(.92, best-.03) {
 				chosen, distance = i, delta
 			}
 		}

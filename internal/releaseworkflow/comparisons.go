@@ -32,6 +32,17 @@ type ComparisonMediaRestorer interface {
 		time.Time) (api.MediaArtifactSet, RetainedMediaResource, error)
 }
 
+// ComparisonFrameApplier transfers inspected witnesses into durable media state.
+type ComparisonFrameApplier interface {
+	ApplyComparisonFrames(
+		context.Context,
+		api.MediaArtifactSet,
+		RetainedMediaResource,
+		[]api.ComparisonFrameSelection,
+		[]MediaPreviewContent,
+	) (api.MediaArtifactSet, RetainedMediaResource, error)
+}
+
 // adoptInputComparisons materializes an owner-local pending snapshot only after
 // OpenInput verifies the same canonical source version. It does not activate
 // media or carry tracker, upload or comparison-review authority into the new run.
@@ -412,6 +423,40 @@ func (m *Module) editComparisons(ctx context.Context, owner string, state *State
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("edit comparisons: %w", err)
 	}
+	if len(instructions.FrameSelections) > 0 {
+		applier, ok := builder.(ComparisonFrameApplier)
+		if !ok {
+			return CommandResult{}, ErrInvalidTransition
+		}
+		contents := make([]MediaPreviewContent, 0, len(instructions.FrameSelections))
+		for _, selection := range instructions.FrameSelections {
+			value, loadErr := m.private.Get(owner, state.Workflow.ID, previewPrivateResourceID(selection.PreviewID), now)
+			if loadErr != nil {
+				return CommandResult{}, api.NewOperationError(api.OperationFailure{
+					Code:             api.OperationFailureStaleResult,
+					Operation:        api.OperationKindMedia,
+					Recovery:         api.OperationRecoveryReviewAgain,
+					ComparisonReason: "expired_preview",
+					Message:          "Inspect this comparison frame again before applying it.",
+				}, loadErr)
+			}
+			content, ok := value.(MediaPreviewContent)
+			if !ok || content.WorkflowID != state.Workflow.ID || content.WorkflowRevision != state.Workflow.Revision ||
+				content.ComparisonSourceID != selection.SourceID ||
+				content.ObservedIdentity == nil ||
+				content.Media == nil ||
+				prior == nil ||
+				content.Media.ID != prior.ID ||
+				content.Media.Revision != prior.Revision {
+				return CommandResult{}, ErrPrivateResourceIntegrity
+			}
+			contents = append(contents, content)
+		}
+		updated, retained, err = applier.ApplyComparisonFrames(ctx, updated, retained, instructions.FrameSelections, contents)
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("apply comparison frame selections: %w", err)
+		}
+	}
 	if instructions.Action == "approve" {
 		if updated.Comparisons == nil || updated.Comparisons.ApprovedFingerprint != instructions.ExpectedFingerprint ||
 			!ComparisonReviewSatisfied(updated.Comparisons) {
@@ -529,10 +574,15 @@ func (m *Module) PreviewComparisonFrame(ctx context.Context, owner string, workf
 	}
 	previewID := api.PublicResourceID(id)
 	expires := now.Add(workflowPreviewTTL)
+	content.WorkflowID = workflow
+	content.WorkflowRevision = revision
+	content.Media = new(api.MediaArtifactSetRef{ID: snapshot.ID, Revision: snapshot.Revision})
 	if err := m.private.Put(owner, workflow, previewPrivateResourceID(previewID), content, expires); err != nil {
 		return api.FramePreview{}, fmt.Errorf("retain comparison preview: %w", err)
 	}
 	return api.FramePreview{
+		ObservedIdentity:    content.ObservedIdentity,
+		Media:               content.Media,
 		Processing:          &content.Processing,
 		ID:                  previewID,
 		WorkflowID:          workflow,

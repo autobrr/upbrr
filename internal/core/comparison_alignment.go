@@ -38,6 +38,10 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			fallback("normalization_unavailable", column)
 			return nil
 		}
+		if errors.Is(err, screenshots.ErrComparisonFastInconclusive) {
+			fallback("fast_budget_exhausted", column)
+			return nil
+		}
 		return err
 	}
 	main := -1
@@ -99,23 +103,67 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		start, duration float64
 	}
 	cache := map[windowKey][]screenshots.ComparisonSample{}
+	decodedSeconds := make([]float64, len(plan.Sources))
+	budgets := make([]screenshots.ComparisonDecodeBudget, len(plan.Sources))
+	for i := range budgets {
+		budgets[i].RemainingEncodedBytes = 8 << 30
+	}
+	defer func() {
+		for i := range plan.Sources {
+			progress.logger.Debugf(
+				"comparisons: phase=alignment_budget column=%d requested_seconds=%.6f encoded_span_bytes=%d remaining_seconds=%.6f remaining_span_bytes=%d",
+				i+1,
+				decodedSeconds[i],
+				(8<<30)-budgets[i].RemainingEncodedBytes,
+				900-decodedSeconds[i],
+				budgets[i].RemainingEncodedBytes,
+			)
+		}
+	}()
+	activePictures := map[int]*screenshots.ComparisonCrop{}
+	if detector, ok := renderer.(interface {
+		DetectComparisonActivePicture(context.Context, screenshots.ComparisonSource, float64, float64, *screenshots.ComparisonDecodeBudget) (*screenshots.ComparisonCrop, error)
+	}); ok {
+		for i, source := range plan.Sources {
+			input := retained.ComparisonSources[source.ID].Source
+			if input.Input == nil || input.Input.Kind != "dvd" {
+				continue
+			}
+			crop, err := detector.DetectComparisonActivePicture(ctx, input, durations[i]*.2-2, 4, &budgets[i])
+			decodedSeconds[i] += 4
+			if err != nil {
+				return comparisons.MatchResult{}, nil, false, samplingFailure(err, i+1)
+			}
+			activePictures[i] = crop
+			if crop != nil {
+				progress.logger.Debugf("comparisons: phase=alignment_normalization column=%d crop=%dx%d+%d+%d", i+1, crop.Width, crop.Height, crop.X, crop.Y)
+			}
+		}
+	}
 	item, total := 0, 1
 	sample := func(source int, center, radius float64) ([]screenshots.ComparisonSample, error) {
 		start, end := max(0, center-radius), min(durations[source], center+radius)
+		windowDuration := min(64, end-start)
 		if end-start < 1.1 {
 			return nil, nil
 		}
-		key := windowKey{source, start, end - start}
+		key := windowKey{source, start, windowDuration}
 		if frames, ok := cache[key]; ok {
 			return frames, nil
 		}
+		if end-start > 64+1e-9 || decodedSeconds[source]+windowDuration > 900 {
+			return nil, screenshots.ErrComparisonFastInconclusive
+		}
+		decodedSeconds[source] += windowDuration
 		id := fmt.Sprintf("%d/%d", source, item)
 		frames, err := renderer.SampleComparisonSource(
 			progress.child(ctx, item, total, id, "comparison_window", fmt.Sprintf("Column %d", source+1)),
 			screenshots.ComparisonSampleRequest{
+				MatchCrop:        activePictures[source],
+				Budget:           &budgets[source],
 				Source:           retained.ComparisonSources[plan.Sources[source].ID].Source,
 				StartSeconds:     start,
-				DurationSeconds:  end - start,
+				DurationSeconds:  windowDuration,
 				StrideSeconds:    .002,
 				NormalizeSDR:     true,
 				MatchAspectRatio: matchAspect,
@@ -125,7 +173,10 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			return nil, fmt.Errorf("decode comparison alignment column %d: %w", source+1, err)
 		}
 		original := len(frames)
-		frames = orderedComparisonSamples(frames)
+		frames, err = orderedComparisonSamples(frames)
+		if err != nil {
+			return nil, err
+		}
 		if len(frames) != original {
 			frames = nil
 		}
@@ -135,38 +186,107 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		return frames, nil
 	}
 	offsets := map[string]comparisons.ConstantAlignment{}
+	hypotheses := map[string][]comparisons.PlaybackScale{}
+	proofs := map[string]map[comparisons.PlaybackScale][]comparisons.ConstantAlignment{}
+	mainRate := retained.ComparisonSources[plan.MainSourceID].Source
+	for i, source := range plan.Sources {
+		if i == main {
+			continue
+		}
+		rate := retained.ComparisonSources[source.ID].Source
+		hypotheses[source.ID] = comparisons.PlaybackScales(
+			mainRate.FrameRateNumerator,
+			mainRate.FrameRateDenominator,
+			rate.FrameRateNumerator,
+			rate.FrameRateDenominator,
+		)
+		proofs[source.ID] = map[comparisons.PlaybackScale][]comparisons.ConstantAlignment{}
+	}
 	item, total = 0, 3*len(plan.Sources)
 	progress.begin("alignment_calibration", total)
-	for _, fraction := range []float64{.2, .5, .8} {
-		reference, err := sample(main, duration*fraction, 2)
+	referenceWindow, err := sample(main, duration*.5, 32)
+	if err != nil {
+		return comparisons.MatchResult{}, nil, false, samplingFailure(err, main+1)
+	}
+	centers, reason := comparisons.CalibrationCenters(comparisonSamples(referenceWindow))
+	if reason != "" {
+		fallback(reason, main+1)
+		return comparisons.MatchResult{}, nil, false, nil
+	}
+	for i, source := range plan.Sources {
+		if i == main {
+			continue
+		}
+		target, err := sample(i, durations[i]*.5, 32)
 		if err != nil {
-			return comparisons.MatchResult{}, nil, false, samplingFailure(err, main+1)
+			return comparisons.MatchResult{}, nil, false, samplingFailure(err, i+1)
+		}
+		hypotheses[source.ID] = comparisons.NativePlaybackScales(comparisonSamples(referenceWindow), comparisonSamples(target), hypotheses[source.ID])
+		if len(hypotheses[source.ID]) == 0 {
+			fallback("rate_hypothesis_limit", i+1)
+			return comparisons.MatchResult{}, nil, false, nil
+		}
+	}
+	for _, center := range centers {
+		var reference []screenshots.ComparisonSample
+		for _, frame := range referenceWindow {
+			if frame.RelativeTimestampSeconds >= center-2 && frame.RelativeTimestampSeconds < center+2 {
+				reference = append(reference, frame)
+			}
 		}
 		for i, source := range plan.Sources {
 			if i == main {
 				continue
 			}
-			if _, found := offsets[source.ID]; found {
-				continue
-			}
-			target, err := sample(i, duration*fraction, 32)
+			target, err := sample(i, durations[i]*.5, 32)
 			if err != nil {
 				return comparisons.MatchResult{}, nil, false, samplingFailure(err, i+1)
 			}
-			alignment, reason := comparisons.DiscoverAlignment(comparisonSamples(reference), comparisonSamples(target))
-			if reason != "" {
+			for _, scale := range hypotheses[source.ID] {
+				alignment, reason := comparisons.DiscoverPlaybackAlignment(comparisonSamples(reference), comparisonSamples(target), scale)
+				if reason != "" {
+					progress.logger.Debugf(
+						"comparisons: phase=alignment_calibration decision=inconclusive column=%d reason=%s scale=%d/%d",
+						i+1,
+						reason,
+						scale.Numerator,
+						scale.Denominator,
+					)
+					continue
+				}
+				proofs[source.ID][scale] = append(proofs[source.ID][scale], alignment)
 				progress.logger.Debugf(
-					"comparisons: phase=alignment_calibration decision=retry column=%d reason=%s center_seconds=%.3f",
+					"comparisons: phase=alignment_calibration decision=region_verified column=%d center_seconds=%.3f scale=%d/%d offset_seconds=%.9f tolerance_seconds=%.9f",
 					i+1,
-					reason,
-					duration*fraction,
+					center,
+					scale.Numerator,
+					scale.Denominator,
+					alignment.OffsetSeconds,
+					alignment.ToleranceSeconds,
 				)
+			}
+		}
+	}
+	for id, proposals := range proofs {
+		var accepted []comparisons.ConstantAlignment
+		for scale, regions := range proposals {
+			if scale.Numerator == scale.Denominator && len(hypotheses[id]) == 1 && len(regions) > 0 && !regions[0].IntervalProof {
+				accepted = append(accepted, regions[0])
 				continue
 			}
-			offsets[source.ID] = alignment
+			if fit, verified := comparisons.VerifyPlaybackCalibration(regions); verified {
+				accepted = append(accepted, fit)
+			}
 		}
-		if len(offsets) == len(plan.Sources)-1 {
-			break
+		if len(accepted) == 1 {
+			offsets[id] = accepted[0]
+			progress.logger.Infof(
+				"comparisons: phase=alignment_calibration decision=verified source=%s scale=%d/%d offset_seconds=%.9f",
+				id,
+				accepted[0].ScaleNumerator,
+				accepted[0].ScaleDenominator,
+				accepted[0].OffsetSeconds,
+			)
 		}
 	}
 	for i, source := range plan.Sources {
@@ -212,11 +332,16 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 				}
 				// Calibration predicts only a bounded search region. Each row gets
 				// independent temporal proof, so small timing edits need no full scan.
-				target, err := sample(i, center+offsets[source.ID].OffsetSeconds, radius+4)
+				target, err := sample(i, offsets[source.ID].Predict(center), radius+4)
 				if err != nil {
 					return comparisons.MatchResult{}, nil, false, samplingFailure(err, i+1)
 				}
-				alignment, reason := comparisons.DiscoverAlignment(comparisonSamples(reference), comparisonSamples(target))
+				prior := offsets[source.ID]
+				alignment, reason := comparisons.DiscoverPlaybackAlignment(
+					comparisonSamples(reference),
+					comparisonSamples(target),
+					comparisons.PlaybackScale{Numerator: prior.ScaleNumerator, Denominator: prior.ScaleDenominator},
+				)
 				if reason != "" {
 					lastColumn = i + 1
 					progress.logger.Debugf(
@@ -268,7 +393,10 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		progress.update(row+1, options.Count)
 	}
 	for id, frames := range observations {
-		observations[id] = orderedComparisonSamples(frames)
+		observations[id], err = orderedComparisonSamples(frames)
+		if err != nil {
+			return comparisons.MatchResult{}, nil, false, err
+		}
 	}
 	progress.complete()
 	progress.stages = progress.stage + 1

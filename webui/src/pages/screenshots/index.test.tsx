@@ -42,6 +42,7 @@ const facet = (): ScreenshotsFacet => {
         error: "",
       },
       edit: vi.fn(async () => true),
+      discover: vi.fn(async () => null),
       preview: vi.fn(async () => null),
       importImages: vi.fn(async () => true),
     },

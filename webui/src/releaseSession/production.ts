@@ -172,6 +172,20 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
         },
         signal,
       ),
+    discoverComparisonSource: (current, sourceID, path, idempotencyKey, signal) =>
+      releaseWorkflowClient.discoverComparisonSource(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          ...(current.media
+            ? { media: { id: current.media.id, revision: current.media.revision } }
+            : {}),
+          sourceId: sourceID,
+          path,
+          idempotencyKey,
+        },
+        signal,
+      ),
     setMediaSelection: (current, artifactIDs, selected, idempotencyKey, signal) => {
       if (!current.media) throw new Error("Workflow media is unavailable.");
       return releaseWorkflowClient.setMediaSelection(

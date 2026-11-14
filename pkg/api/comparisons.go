@@ -6,15 +6,18 @@ package api
 // ComparisonSource is an ordered comparison column. Video paths remain private
 // workflow resources; imported columns have no inferred video or processing facts.
 type ComparisonSource struct {
-	ID                string   `json:"id"`
-	Label             string   `json:"label"`
-	Fingerprint       string   `json:"fingerprint,omitempty"`
-	Imported          bool     `json:"imported"`
-	DurationSeconds   float64  `json:"durationSeconds,omitempty"`
-	FrameRate         float64  `json:"frameRate,omitempty"`
-	Width             int      `json:"width,omitempty"`
-	Height            int      `json:"height,omitempty"`
-	AllowedFrameTypes []string `json:"allowedFrameTypes,omitempty"`
+	Programme            *ComparisonProgrammeCandidate `json:"programme,omitempty"`
+	FrameRateNumerator   int64                         `json:"frameRateNumerator,omitempty"`
+	FrameRateDenominator int64                         `json:"frameRateDenominator,omitempty"`
+	ID                   string                        `json:"id"`
+	Label                string                        `json:"label"`
+	Fingerprint          string                        `json:"fingerprint,omitempty"`
+	Imported             bool                          `json:"imported"`
+	DurationSeconds      float64                       `json:"durationSeconds,omitempty"`
+	FrameRate            float64                       `json:"frameRate,omitempty"`
+	Width                int                           `json:"width,omitempty"`
+	Height               int                           `json:"height,omitempty"`
+	AllowedFrameTypes    []string                      `json:"allowedFrameTypes,omitempty"`
 	// PreferBFrames enables the default B/P/I policy. False preserves explicit
 	// choices and plans saved before this policy was introduced.
 	PreferBFrames bool `json:"preferBFrames,omitempty"`
@@ -28,17 +31,30 @@ type ComparisonSource struct {
 // ComparisonCell binds one image to a row and source. Nil timing, frame and
 // confidence fields mean unknown; an imported image never inherits video facts.
 type ComparisonCell struct {
-	SourceID            string           `json:"sourceId"`
-	ArtifactID          PublicResourceID `json:"artifactId,omitempty"`
-	ContentSHA256       string           `json:"contentSha256,omitempty"`
-	TimestampSeconds    *float64         `json:"timestampSeconds,omitempty"`
-	FrameNumber         *int64           `json:"frameNumber,omitempty"`
-	ObservedPTS         *int64           `json:"observedPts,omitempty"`
-	TimeBaseNumerator   int64            `json:"timeBaseNumerator,omitempty"`
-	TimeBaseDenominator int64            `json:"timeBaseDenominator,omitempty"`
-	PictureType         string           `json:"pictureType,omitempty"`
-	Confidence          *float64         `json:"confidence,omitempty"`
-	Warning             string           `json:"warning,omitempty"`
+	ObservedIdentity    *ComparisonFrameIdentity `json:"observedIdentity,omitempty"`
+	SourceID            string                   `json:"sourceId"`
+	ArtifactID          PublicResourceID         `json:"artifactId,omitempty"`
+	ContentSHA256       string                   `json:"contentSha256,omitempty"`
+	TimestampSeconds    *float64                 `json:"timestampSeconds,omitempty"`
+	FrameNumber         *int64                   `json:"frameNumber,omitempty"`
+	ObservedPTS         *int64                   `json:"observedPts,omitempty"`
+	TimeBaseNumerator   int64                    `json:"timeBaseNumerator,omitempty"`
+	TimeBaseDenominator int64                    `json:"timeBaseDenominator,omitempty"`
+	PictureType         string                   `json:"pictureType,omitempty"`
+	Confidence          *float64                 `json:"confidence,omitempty"`
+	Warning             string                   `json:"warning,omitempty"`
+}
+
+// ComparisonFrameIdentity identifies an observed native picture in one authored
+// occurrence and clock domain. It grants no client replay authority.
+type ComparisonFrameIdentity struct {
+	Version             int    `json:"version"`
+	InputFingerprint    string `json:"inputFingerprint"`
+	Occurrence          string `json:"occurrence"`
+	StreamID            string `json:"streamId"`
+	PTS                 int64  `json:"pts"`
+	TimeBaseNumerator   int64  `json:"timeBaseNumerator"`
+	TimeBaseDenominator int64  `json:"timeBaseDenominator"`
 }
 
 // ComparisonRow is one common visual moment. Exclusion is explicit and retained;

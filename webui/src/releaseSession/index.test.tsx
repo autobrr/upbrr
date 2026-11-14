@@ -629,6 +629,11 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     }),
     attachMedia: async (current) => current,
     editComparisons: async (current) => current,
+    discoverComparisonSource: async (_current, sourceID) => ({
+      sourceId: sourceID,
+      fingerprint: "discovery",
+      candidates: [],
+    }),
     uploadImages: async (current) => current,
     retryImageHost: async (current) => current,
     removeHostedImages: async (current) => current,

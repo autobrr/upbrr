@@ -257,7 +257,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		deleted[artifactID] = struct{}{}
 	}
 	result := workflowMediaPrivateArtifacts{
-		ComparisonSources:  maps.Clone(a.ComparisonSources),
+		ComparisonSources:  cloneComparisonSources(a.ComparisonSources),
 		ComparisonCaptions: maps.Clone(a.ComparisonCaptions),
 		screenshotService:  a.screenshotService,
 		screenshotSubject:  a.screenshotSubject,
@@ -491,7 +491,7 @@ func cloneHostedSourceMap(values map[api.PublicResourceID]api.PublicResourceID) 
 
 func cloneWorkflowMediaPrivateArtifacts(value workflowMediaPrivateArtifacts) workflowMediaPrivateArtifacts {
 	return workflowMediaPrivateArtifacts{
-		ComparisonSources:  maps.Clone(value.ComparisonSources),
+		ComparisonSources:  cloneComparisonSources(value.ComparisonSources),
 		ComparisonCaptions: maps.Clone(value.ComparisonCaptions),
 		Screenshots:        append([]api.ScreenshotImage(nil), value.Screenshots...),
 		DVDMenus:           append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),

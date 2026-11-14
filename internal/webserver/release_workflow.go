@@ -310,6 +310,26 @@ func (b *Backend) previewReleaseWorkflowFrame(
 	return preview, nil
 }
 
+func (b *Backend) discoverReleaseWorkflowComparisonSource(
+	ctx context.Context,
+	owner string,
+	request api.DiscoverReleaseWorkflowComparisonSourceRequest,
+) (api.ComparisonSourceDiscovery, error) {
+	runtime, err := b.requireRuntime()
+	if err != nil {
+		return api.ComparisonSourceDiscovery{}, err
+	}
+	workflowCore, err := runtime.releaseWorkflowCore()
+	if err != nil {
+		return api.ComparisonSourceDiscovery{}, err
+	}
+	result, err := workflowCore.DiscoverReleaseWorkflowComparisonSource(ctx, owner, request)
+	if err != nil {
+		return result, classifyReleaseWorkflowError(err)
+	}
+	return result, nil
+}
+
 func (b *Backend) openReleaseWorkflowPreview(
 	ctx context.Context,
 	ownerID string,

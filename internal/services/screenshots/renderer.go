@@ -90,7 +90,7 @@ func renderFrame(ctx context.Context, runner Runner, executable string, req capt
 			}
 			lastErr = err
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-				errors.Is(err, internalerrors.ErrFrameCorruption) {
+				errors.Is(err, internalerrors.ErrFrameCorruption) || errors.Is(err, errComparisonDecoderLimit) {
 				return frame, err
 			}
 			stage := renderFailureStage(result, err)

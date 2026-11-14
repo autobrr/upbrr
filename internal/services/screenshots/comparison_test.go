@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -28,6 +29,57 @@ import (
 func comparisonDiagnostics(pts int, picture string) string {
 	return fmt.Sprintf("[Parsed_showinfo_1 @ 0x123] config in time_base: 1/1000, frame_rate: 10/1\n"+
 		"[Parsed_showinfo_1 @ 0x123] n: 0 pts: %d pts_time:5.8 fmt:yuv420p i:P iskey:0 type:%s\n", pts, picture)
+}
+
+func TestComparisonDiagnosticBoundsPreserveProvenance(t *testing.T) {
+	diagnostic := &comparisonDiagnosticStream{}
+	if _, err := diagnostic.Write([]byte(comparisonDiagnostics(5800, "B"))); err != nil {
+		t.Fatal(err)
+	}
+	for range 100 {
+		if _, err := diagnostic.Write([]byte(strings.Repeat("diagnostic ", 700) + "\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := diagnostic.result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed, err := comparisonObservations(data)
+	if err != nil || len(observed) != 1 || observed[0].PTS != 5800 {
+		t.Fatalf("provenance was evicted: %+v %v", observed, err)
+	}
+	if len(diagnostic.tail) > 64<<10 {
+		t.Fatal("unbounded diagnostic tail")
+	}
+	for _, line := range []string{strings.Repeat("x", 8193), "[] showinfo n: 0 pts: 1\n"} {
+		stream := &comparisonDiagnosticStream{}
+		_, err := stream.Write([]byte(line))
+		if len(line) > 8192 && err == nil {
+			t.Fatal("oversized diagnostic line accepted")
+		}
+	}
+	output := &comparisonOutputBuffer{limit: 4}
+	if _, err := output.Write([]byte("1234")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := output.Write([]byte("5")); err == nil || output.Len() != 4 {
+		t.Fatal("decoder output limit was not enforced")
+	}
+}
+
+func TestComparisonDecoderLimitTerminatesNativeProcess(t *testing.T) {
+	executable, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("native decoder limit test requires FFmpeg")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	runner := finiteComparisonRunner{base: commandRunner{}, outputLimit: 256}
+	_, err = runner.Run(ctx, executable, []string{"-hide_banner", "-loglevel", "info", "-filter_threads", "1", "-f", "lavfi", "-i", "testsrc2=size=16x16:rate=100", "-threads", "1", "-vf", "showinfo", "-pix_fmt", "gray", "-flush_packets", "1", "-f", "rawvideo", "-"}, "")
+	if !errors.Is(err, errComparisonDecoderLimit) || ctx.Err() != nil {
+		t.Fatalf("output overflow did not terminate the owned decoder promptly: %v context=%v", err, ctx.Err())
+	}
 }
 
 func comparisonTestSource(t *testing.T) ComparisonSource {
@@ -360,6 +412,12 @@ func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 			},
 			wantError: true,
 			calls:     1,
+		},
+		{
+			name:    "diagnostic overflow never falls back",
+			replies: []renderReply{{stderr: strings.Repeat("x", 8193)}},
+			want:    errComparisonDecoderLimit,
+			calls:   1,
 		},
 		{
 			name: "corruption never falls back",

@@ -7,12 +7,16 @@ import type {
   ComparisonPlan,
   ComparisonSource,
   ComparisonPreferences,
+  ComparisonSourceDiscovery,
+  ComparisonProgrammeSelection,
+  ComparisonFrameSelection,
 } from "../../api/generated/release-workflow";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Select } from "../../components/ui/select";
 import { pageStyle } from "../../components/ui/pageStyle";
 import { HostBrowserDialog } from "../../features/hostBrowser/HostBrowserDialog";
+import { ProgrammeCandidates } from "../../features/programmes/ProgrammeCandidates";
 import type { ComparisonsFacet } from "../../releaseSession/types";
 
 type Props = Readonly<{
@@ -71,14 +75,23 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
   const [paths, setPaths] = useState<Readonly<Record<string, string>>>({});
   const [positions, setPositions] = useState<Readonly<Record<string, number>>>({});
   const [browseSource, setBrowseSource] = useState("");
+  const [browseMode, setBrowseMode] = useState<"file" | "folder">("file");
+  const [discoveries, setDiscoveries] = useState<Record<string, ComparisonSourceDiscovery>>({});
+  const [programmes, setProgrammes] = useState<Record<string, ComparisonProgrammeSelection>>({});
+  const [frameSelections, setFrameSelections] = useState<Record<string, ComparisonFrameSelection>>(
+    {},
+  );
   const [files, setFiles] = useState<readonly File[]>([]);
   const positionFor = (sourceID: string) =>
     positions[sourceID] ?? view.previewPositions[sourceID] ?? 0;
   const blocked = view.busy || Boolean(view.blockedReason);
+  const pendingFrames = Object.keys(frameSelections).length > 0;
   const dirty =
     JSON.stringify(editableChoices(draft)) !==
       JSON.stringify(editableChoices(view.plan || emptyPlan(false))) ||
-    Object.values(paths).some(Boolean);
+    Object.values(paths).some(Boolean) ||
+    Object.keys(programmes).length > 0 ||
+    pendingFrames;
   const approved = Boolean(
     view.plan?.fingerprint && view.plan.approvedFingerprint === view.plan.fingerprint,
   );
@@ -93,6 +106,12 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
   const sourceOrder = new Map(draft.sources.map((source, index) => [source.id, index]));
   const change = (next: ComparisonPlan) =>
     setDraft({ ...next, fingerprint: "", approvedFingerprint: "" });
+  const clearFrameSelections = (sourceID: string) =>
+    setFrameSelections((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([, selection]) => selection.sourceId !== sourceID),
+      ),
+    );
   const sourceChange = (id: string, values: Partial<ComparisonSource>) =>
     change({
       ...draft,
@@ -100,7 +119,14 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
         source.id === id ? { ...source, ...values } : source,
       ),
     });
-  const updateCell = (rowID: string, index: number, values: Partial<ComparisonCell>) =>
+  const updateCell = (rowID: string, index: number, values: Partial<ComparisonCell>) => {
+    const cell = draft.rows.find((row) => row.id === rowID)?.cells[index];
+    if (cell && ("timestampSeconds" in values || "sourceId" in values))
+      setFrameSelections((previous) => {
+        const next = { ...previous };
+        delete next[`${rowID}/${cell.sourceId}`];
+        return next;
+      });
     change({
       ...draft,
       rows: draft.rows.map((row) =>
@@ -114,7 +140,9 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           : row,
       ),
     });
+  };
   const submit = async (action: "configure" | "match" | "capture", plan = draft) => {
+    if (action !== "configure" && pendingFrames) return false;
     const applied = await facet.edit({
       action,
       plan: {
@@ -123,12 +151,39 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           source.imported || plan.imported ? source : { ...source, overlay: true },
         ),
       },
-      videoSources: Object.entries(paths)
-        .filter(([, path]) => path.trim())
-        .map(([id, path]) => ({ id, path })),
+      videoSources: [...new Set([...Object.keys(paths), ...Object.keys(programmes)])]
+        .filter((id) => paths[id]?.trim() || programmes[id])
+        .map((id) => ({
+          id,
+          path: paths[id] || "",
+          ...(programmes[id] ? { programme: programmes[id] } : {}),
+        })),
+      ...(action === "configure" ? { frameSelections: Object.values(frameSelections) } : {}),
     });
-    if (applied) setPaths({});
+    if (applied) {
+      setPaths({});
+      setProgrammes({});
+      setFrameSelections({});
+    }
     return applied;
+  };
+  const changePath = (id: string, path: string) => {
+    clearFrameSelections(id);
+    setPaths((previous) => ({ ...previous, [id]: path }));
+    setDiscoveries((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+    setProgrammes((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+  };
+  const discover = async (id: string) => {
+    const discovery = await facet.discover(id, paths[id] || "");
+    if (discovery) setDiscoveries((previous) => ({ ...previous, [id]: discovery }));
   };
   const moveSource = (index: number, direction: number) => {
     const sources = [...draft.sources];
@@ -159,6 +214,17 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
     });
   };
   const removeSource = (id: string) => {
+    setDiscoveries((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+    setProgrammes((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+    clearFrameSelections(id);
     change({
       ...draft,
       sources: draft.sources.filter((source) => source.id !== id),
@@ -449,7 +515,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   </div>
                   {!source.imported && (
                     <>
-                      {source.id !== "main" && (
+                      {source.id !== draft.mainSourceId && (
                         <div className="flex gap-2">
                           <input
                             className={`${inputClass} flex-1`}
@@ -460,15 +526,78 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                                 ? "Registered video; enter a replacement path"
                                 : "Server-local video path"
                             }
-                            onChange={(event) =>
-                              setPaths((previous) => ({
-                                ...previous,
-                                [source.id]: event.target.value,
-                              }))
-                            }
+                            onChange={(event) => changePath(source.id, event.target.value)}
                           />
-                          <Button onClick={() => setBrowseSource(source.id)}>Browse video</Button>
+                          <Button
+                            onClick={() => {
+                              setBrowseMode("file");
+                              setBrowseSource(source.id);
+                            }}
+                          >
+                            Browse video
+                          </Button>
+                          <Button
+                            onClick={() => {
+                              setBrowseMode("folder");
+                              setBrowseSource(source.id);
+                            }}
+                          >
+                            Browse disc folder
+                          </Button>
                         </div>
+                      )}
+                      <Button
+                        disabled={
+                          blocked || (source.id !== draft.mainSourceId && !paths[source.id])
+                        }
+                        onClick={() => void discover(source.id)}
+                      >
+                        Discover titles and playlists
+                      </Button>
+                      {discoveries[source.id] && (
+                        <fieldset className="grid gap-1">
+                          <legend>Programme · {source.label}</legend>
+                          {discoveries[source.id]!.candidates.length ? (
+                            <ProgrammeCandidates
+                              name={`comparison-programme-${source.id}`}
+                              disabled={blocked}
+                              selected={
+                                programmes[source.id] ? [programmes[source.id]!.candidateId] : []
+                              }
+                              candidates={discoveries[source.id]!.candidates.map((candidate) => ({
+                                ...candidate,
+                                description: `${candidate.durationSeconds.toFixed(1)} seconds`,
+                                limitation: candidate.supported
+                                  ? undefined
+                                  : candidate.limitation || "Unavailable for comparisons",
+                              }))}
+                              onChoose={(id) => {
+                                clearFrameSelections(source.id);
+                                const discovery = discoveries[source.id]!;
+                                const candidate = discovery.candidates.find(
+                                  (entry) => entry.id === id,
+                                )!;
+                                setProgrammes((previous) => ({
+                                  ...previous,
+                                  [source.id]: {
+                                    kind: candidate.kind,
+                                    discId: candidate.discId,
+                                    candidateId: candidate.id,
+                                    discoveryFingerprint: discovery.fingerprint,
+                                    angle: 1,
+                                  },
+                                }));
+                              }}
+                            />
+                          ) : (
+                            <span>Regular video: no disc programme selection is needed.</span>
+                          )}
+                        </fieldset>
+                      )}
+                      {source.programme && (
+                        <p>
+                          Selected programme: {source.programme.discName} · {source.programme.label}
+                        </p>
                       )}
                       <p>
                         {source.width || "?"} × {source.height || "?"} ·{" "}
@@ -740,7 +869,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
             {!draft.imported && (
               <>
                 <Button
-                  disabled={!validScenes || draft.sources.length < 2}
+                  disabled={!validScenes || draft.sources.length < 2 || pendingFrames}
                   onClick={() => void submit("match")}
                 >
                   Find matching scenes
@@ -749,7 +878,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   Add manual row from timeline positions
                 </Button>
                 <Button
-                  disabled={!validScenes || !draft.rows.length}
+                  disabled={!validScenes || !draft.rows.length || pendingFrames}
                   onClick={() => void submit("capture")}
                 >
                   Capture comparison rows
@@ -767,6 +896,9 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   setEnabled(false);
                   setDraft(emptyPlan(false));
                   setPaths({});
+                  setProgrammes({});
+                  setDiscoveries({});
+                  setFrameSelections({});
                   setPositions({});
                   setFiles([]);
                 }
@@ -777,8 +909,9 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           </div>
           {dirty && (
             <p role="status">
-              Comparison choices changed. Apply or capture the changes before reviewing and
-              approving them.
+              {pendingFrames
+                ? "Apply comparison setup to retain displayed frame choices before matching or capturing."
+                : "Comparison choices changed. Apply or capture the changes before reviewing and approving them."}
             </p>
           )}
           {view.plan?.sceneMix && (
@@ -843,6 +976,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   </label>
                   {!draft.imported && (
                     <Button
+                      disabled={pendingFrames}
                       onClick={() =>
                         void submit("capture", {
                           ...draft,
@@ -925,6 +1059,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                                       artifactId: "",
                                       contentSha256: "",
                                       observedPts: undefined,
+                                      observedIdentity: undefined,
                                       timeBaseNumerator: 0,
                                       timeBaseDenominator: 0,
                                     })
@@ -938,6 +1073,33 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                                 }
                               >
                                 Preview {label}
+                              </Button>
+                              <Button
+                                disabled={
+                                  !view.previews[cell.sourceId]?.observedIdentity ||
+                                  Boolean(paths[cell.sourceId]?.trim()) ||
+                                  Boolean(programmes[cell.sourceId])
+                                }
+                                onClick={() => {
+                                  const preview = view.previews[cell.sourceId]!;
+                                  updateCell(row.id, index, {
+                                    timestampSeconds: preview.timestampSeconds,
+                                    artifactId: "",
+                                    contentSha256: "",
+                                    confidence: undefined,
+                                    observedIdentity: undefined,
+                                  });
+                                  setFrameSelections((previous) => ({
+                                    ...previous,
+                                    [`${row.id}/${cell.sourceId}`]: {
+                                      rowId: row.id,
+                                      sourceId: cell.sourceId,
+                                      previewId: preview.id,
+                                    },
+                                  }));
+                                }}
+                              >
+                                Use displayed frame for {label}
                               </Button>
                             </>
                           )}
@@ -1074,10 +1236,10 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
         </fieldset>
       )}
       <HostBrowserDialog
-        mode={browseSource ? "file" : null}
+        mode={browseSource ? browseMode : null}
         initialPath={paths[browseSource] || ""}
         onClose={() => setBrowseSource("")}
-        onSelect={(path) => setPaths((previous) => ({ ...previous, [browseSource]: path }))}
+        onSelect={(path) => changePath(browseSource, path)}
       />
     </section>
   );

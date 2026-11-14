@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -886,16 +887,23 @@ func TestComparisonResizeLargerOnlyUsesReferenceAxisAndPrivateDimensions(t *test
 type comparisonWindowRecorder struct {
 	comparisonFrameRenderer
 	durations []float64
+	strides   []float64
 }
 
 func (r *comparisonWindowRecorder) SampleComparisonSource(ctx context.Context, request screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error) {
+	if r.durations == nil {
+		r.strides = nil
+	}
 	r.durations = append(r.durations, request.DurationSeconds)
+	r.strides = append(r.strides, request.StrideSeconds)
 	frames, err := r.comparisonFrameRenderer.SampleComparisonSource(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("record comparison window: %w", err)
 	}
 	return frames, nil
 }
+
+func (r *comparisonWindowRecorder) usedFullScan() bool { return slices.Contains(r.strides, .5) }
 
 func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
@@ -1031,7 +1039,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	if _, err := b.matchWorkflowComparisons(t.Context(), private, plan, b.comparisonProgress(t.Context(), 5)); err != nil {
 		t.Fatal(err)
 	}
-	if len(renderer.durations) == 0 || renderer.durations[0] <= 65 {
+	if !renderer.usedFullScan() {
 		t.Fatalf("scene quota bypassed full sampling: %v", renderer.durations)
 	}
 	plan.Preferences.DarkCount = nil
@@ -1047,10 +1055,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		if _, err := builder.matchWorkflowComparisons(t.Context(), changed, plan, builder.comparisonProgress(t.Context(), 5)); err != nil {
 			t.Fatal(err)
 		}
-		full := false
-		for _, duration := range renderer.durations {
-			full = full || duration > 65
-		}
+		full := renderer.usedFullScan()
 		if !full || logger.countLevelContaining("INFO", "decision=full_scan reason=normalization_unavailable column=4") != 1 {
 			t.Fatalf("normalization failure did not select and explain full sampling: windows=%v logs=%+v", renderer.durations, logger.entries)
 		}
@@ -1088,12 +1093,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			full := false
-			for _, duration := range renderer.durations {
-				if duration > 65 {
-					full = true
-				}
-			}
+			full := renderer.usedFullScan()
 			if full == tc.bounded {
 				t.Fatalf("bounded=%t got full=%t windows=%v", tc.bounded, full, renderer.durations)
 			}

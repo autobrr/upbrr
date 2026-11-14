@@ -1353,6 +1353,16 @@
               }
             ]
           },
+          "observedIdentity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonFrameIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "observedPts": {
             "anyOf": [
               {
@@ -1393,6 +1403,60 @@
           "sourceId"
         ]
       },
+      "ComparisonFrameIdentity": {
+        "type": "object",
+        "properties": {
+          "inputFingerprint": {
+            "type": "string"
+          },
+          "occurrence": {
+            "type": "string"
+          },
+          "pts": {
+            "type": "integer"
+          },
+          "streamId": {
+            "type": "string"
+          },
+          "timeBaseDenominator": {
+            "type": "integer"
+          },
+          "timeBaseNumerator": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "inputFingerprint",
+          "occurrence",
+          "pts",
+          "streamId",
+          "timeBaseDenominator",
+          "timeBaseNumerator",
+          "version"
+        ]
+      },
+      "ComparisonFrameSelection": {
+        "type": "object",
+        "properties": {
+          "previewId": {
+            "$ref": "#/components/schemas/PublicResourceID"
+          },
+          "rowId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "previewId",
+          "rowId",
+          "sourceId"
+        ]
+      },
       "ComparisonInstructions": {
         "type": "object",
         "properties": {
@@ -1405,8 +1469,24 @@
               "$ref": "#/components/schemas/MediaAttachment"
             }
           },
+          "captureAfterMatch": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "expectedFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "frameSelections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonFrameSelection"
+            }
           },
           "plan": {
             "$ref": "#/components/schemas/ComparisonPlan"
@@ -1560,6 +1640,77 @@
           "message"
         ]
       },
+      "ComparisonProgrammeCandidate": {
+        "type": "object",
+        "properties": {
+          "discId": {
+            "type": "string"
+          },
+          "discName": {
+            "type": "string"
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "limitation": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "supported": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "discId",
+          "discName",
+          "durationSeconds",
+          "id",
+          "kind",
+          "label",
+          "rank",
+          "supported"
+        ]
+      },
+      "ComparisonProgrammeSelection": {
+        "type": "object",
+        "properties": {
+          "angle": {
+            "type": "integer"
+          },
+          "candidateId": {
+            "type": "string"
+          },
+          "discId": {
+            "type": "string"
+          },
+          "discoveryFingerprint": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidateId",
+          "discId",
+          "discoveryFingerprint",
+          "kind"
+        ]
+      },
       "ComparisonRow": {
         "type": "object",
         "properties": {
@@ -1626,6 +1777,12 @@
           "frameRate": {
             "type": "number"
           },
+          "frameRateDenominator": {
+            "type": "integer"
+          },
+          "frameRateNumerator": {
+            "type": "integer"
+          },
           "height": {
             "type": "integer"
           },
@@ -1643,6 +1800,16 @@
           },
           "preferBFrames": {
             "type": "boolean"
+          },
+          "programme": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonProgrammeCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "toneMap": {
             "anyOf": [
@@ -1665,6 +1832,28 @@
           "overlay"
         ]
       },
+      "ComparisonSourceDiscovery": {
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonProgrammeCandidate"
+            }
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidates",
+          "fingerprint",
+          "sourceId"
+        ]
+      },
       "ComparisonVideoSelection": {
         "type": "object",
         "properties": {
@@ -1673,6 +1862,16 @@
           },
           "path": {
             "type": "string"
+          },
+          "programme": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonProgrammeSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2231,6 +2430,43 @@
           "HDR10PlusConfirmed",
           "Playlist",
           "Summary"
+        ]
+      },
+      "DiscoverReleaseWorkflowComparisonSourceRequest": {
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "media": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MediaArtifactSetRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "idempotencyKey",
+          "path",
+          "sourceId",
+          "workflowId"
         ]
       },
       "DupeAssessment": {
@@ -3001,6 +3237,26 @@
           },
           "id": {
             "$ref": "#/components/schemas/PublicResourceID"
+          },
+          "media": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MediaArtifactSetRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedIdentity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonFrameIdentity"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "observedPts": {
             "anyOf": [
@@ -6389,6 +6645,9 @@
           },
           "Code": {
             "$ref": "#/components/schemas/OperationFailureCode"
+          },
+          "ComparisonReason": {
+            "type": "string"
           },
           "HDRAnalysisCode": {
             "$ref": "#/components/schemas/HDRAnalysisFailureCode"
@@ -16615,6 +16874,120 @@
           }
         },
         "summary": "Configure, match, capture or approve comparisons",
+        "tags": [
+          "Media"
+        ]
+      }
+    },
+    "/workflows/{workflowId}/media/comparisons/sources/discover": {
+      "post": {
+        "description": "Reads programme choices without changing workflow or media revisions.",
+        "operationId": "discoverWorkflowComparisonSource",
+        "parameters": [
+          {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
+            "in": "path",
+            "name": "workflowId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "media": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/MediaArtifactSetRef"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "sourceId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "sourceId"
+                ]
+              }
+            }
+          },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComparisonSourceDiscovery"
+                }
+              }
+            },
+            "description": "Discovered comparison programmes."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Discover comparison programmes",
         "tags": [
           "Media"
         ]

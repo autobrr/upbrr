@@ -8,6 +8,7 @@ import type {
   ContinueReleaseWorkflowRequest,
   FramePreview,
   ComparisonInstructions,
+  ComparisonSourceDiscovery,
   MediaPlan,
   OpenActiveInputRequest,
   CancelActiveInputOpenRequest,
@@ -120,6 +121,13 @@ export type ReleaseWorkflowPorts = Readonly<{
     idempotencyKey: string,
     signal: AbortSignal,
   ): Promise<ReleaseWorkflowCurrent>;
+  discoverComparisonSource(
+    current: ReleaseWorkflowCurrent,
+    sourceID: string,
+    path: string,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ComparisonSourceDiscovery>;
   setMediaSelection(
     current: ReleaseWorkflowCurrent,
     artifactIDs: readonly string[],

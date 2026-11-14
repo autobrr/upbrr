@@ -75,12 +75,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: webui/pnpm-lock.yaml
 
-      - name: Install FFmpeg
+      - name: Install native media test tools
         run: |
           # Azure's mirror intermittently stalls downloads (actions/runner-images#12949).
           sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg
+          sudo apt-get install --yes --no-install-recommends ffmpeg dvdauthor
 
       - name: Verify E2E prerequisites and runner capacity
         run: |

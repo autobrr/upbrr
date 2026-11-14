@@ -30,6 +30,134 @@ import {
 const waitForAppMethod = (page: Page, method: string) =>
   page.waitForResponse((response) => response.url().endsWith(`/api/app/${method}`));
 
+test("embedded DVD comparison selection retains native manual frames after restart", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    const run = promisify(execFile);
+    const root = path.dirname(workspace.sourcePath);
+    const mpeg = path.join(root, "Example.DVD.mpg");
+    const dvd = path.join(root, "Example.DVD");
+    await run("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=160x120:rate=25:duration=4",
+      "-c:v",
+      "ffv1",
+      workspace.sourcePath,
+    ]);
+    await run("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      workspace.sourcePath,
+      "-vf",
+      "scale=720:576,setsar=16/15",
+      "-target",
+      "pal-dvd",
+      "-aspect",
+      "4:3",
+      "-g",
+      "12",
+      "-bf",
+      "2",
+      "-flags",
+      "+cgop",
+      "-sc_threshold",
+      "1000000000",
+      "-an",
+      mpeg,
+    ]);
+    const xml = path.join(root, "dvd.xml");
+    const xmlPath = (value: string) =>
+      value.replaceAll("\\", "/").replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+    await writeFile(
+      xml,
+      `<dvdauthor dest="${xmlPath(dvd)}"><vmgm><menus><video format="pal"/></menus></vmgm><titleset><titles><video format="pal" aspect="4:3"/><pgc><vob file="${xmlPath(mpeg)}"/></pgc></titles></titleset></dvdauthor>`,
+    );
+    await run(process.env.UPBRR_TEST_DVDAUTHOR || "dvdauthor", ["-x", xml]);
+    app = await startApp(workspace);
+    const snapshot = async () =>
+      (await (
+        await page.request.get(new URL("api/app/GetActiveInput", app!.url).toString())
+      ).json()) as ActiveInputSnapshot;
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+    await expect
+      .poll(async () => (await snapshot()).current?.selection?.trackerIds)
+      .toEqual(["HDS"]);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    const comparison = page.getByRole("region", { name: "Comparisons", exact: true });
+    await comparison.getByRole("button", { name: "Create from videos" }).click();
+    await comparison.getByRole("button", { name: "Add comparison video" }).click();
+    const column = comparison.getByRole("group", { name: "Source 2 · column 2", exact: true });
+    await column.getByLabel("Video path for Source 2", { exact: true }).fill(dvd);
+    const before = (await snapshot()).current!;
+    await column.getByRole("button", { name: "Discover titles and playlists" }).click();
+    const title = column.getByRole("radio", { name: /^Title 1/ });
+    await expect(title).toBeVisible();
+    await title.check();
+    expect((await snapshot()).current?.workflow.revision).toBe(before.workflow.revision);
+    expect((await snapshot()).current?.media?.comparisons).toEqual(before.media?.comparisons);
+    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    await expect(column.getByText(/Selected programme:/)).toBeVisible();
+    await column.getByLabel("Approximate frame seek · Source 2", { exact: true }).fill("25");
+    await column.getByRole("button", { name: "Preview Source 2", exact: true }).click();
+    await expect(
+      column.getByRole("img", { name: "Source 2 comparison preview", exact: true }),
+    ).toBeVisible();
+    await column.getByRole("button", { name: "Next frame", exact: true }).click();
+    await comparison
+      .getByRole("button", { name: "Add manual row from timeline positions" })
+      .click();
+    await comparison.getByRole("button", { name: /^Use displayed frame for Source 2,/ }).click();
+    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    await expect
+      .poll(
+        async () =>
+          (await snapshot()).current?.media?.comparisons?.rows[0]?.cells[1]?.observedIdentity
+            ?.occurrence || "",
+      )
+      .toMatch(/^dvd-cell-/);
+    const uncaptured = (await snapshot()).current!;
+    const cell = uncaptured.media!.comparisons!.rows[0]!.cells[1]!;
+    expect(cell.observedIdentity?.occurrence).toMatch(/^dvd-cell-/);
+    expect(cell.artifactId).toBeFalsy();
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    await app.stop();
+    app = await startApp(workspace, { seed: false });
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await comparison
+      .getByRole("button", { name: "Restore retained comparisons", exact: true })
+      .click();
+    await comparison.getByRole("button", { name: "Capture comparison rows" }).click();
+    await expect(
+      comparison.getByRole("button", { name: "Approve reviewed comparison images" }),
+    ).toBeEnabled();
+    const captured = (await snapshot()).current!.media!.comparisons!.rows[0]!.cells[1]!;
+    expect(captured.observedIdentity).toEqual(cell.observedIdentity);
+    expect(captured.artifactId).toBeTruthy();
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded comparison imports retain complete rows and require review before controlled hosting", async ({
   page,
 }) => {

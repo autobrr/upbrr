@@ -326,6 +326,7 @@ export type ComparisonCell = Readonly<{
   confidence?: number | null;
   contentSha256?: string;
   frameNumber?: number | null;
+  observedIdentity?: ComparisonFrameIdentity | null;
   observedPts?: number | null;
   pictureType?: string;
   sourceId: string;
@@ -335,10 +336,28 @@ export type ComparisonCell = Readonly<{
   warning?: string;
 }>;
 
+export type ComparisonFrameIdentity = Readonly<{
+  inputFingerprint: string;
+  occurrence: string;
+  pts: number;
+  streamId: string;
+  timeBaseDenominator: number;
+  timeBaseNumerator: number;
+  version: number;
+}>;
+
+export type ComparisonFrameSelection = Readonly<{
+  previewId: PublicResourceID;
+  rowId: string;
+  sourceId: string;
+}>;
+
 export type ComparisonInstructions = Readonly<{
   action: string;
   attachments?: readonly MediaAttachment[];
+  captureAfterMatch?: boolean | null;
   expectedFingerprint?: WorkflowFingerprint;
+  frameSelections?: readonly ComparisonFrameSelection[];
   plan: ComparisonPlan;
   videoSources?: readonly ComparisonVideoSelection[];
 }>;
@@ -375,6 +394,27 @@ export type ComparisonProblem = Readonly<{
   sourceId?: string;
 }>;
 
+export type ComparisonProgrammeCandidate = Readonly<{
+  discId: string;
+  discName: string;
+  durationSeconds: number;
+  id: string;
+  kind: string;
+  label: string;
+  limitation?: string;
+  rank: number;
+  reason?: string;
+  supported: boolean;
+}>;
+
+export type ComparisonProgrammeSelection = Readonly<{
+  angle?: number;
+  candidateId: string;
+  discId: string;
+  discoveryFingerprint: string;
+  kind: string;
+}>;
+
 export type ComparisonRow = Readonly<{
   cells: readonly ComparisonCell[];
   excluded: boolean;
@@ -394,19 +434,29 @@ export type ComparisonSource = Readonly<{
   durationSeconds?: number;
   fingerprint?: string;
   frameRate?: number;
+  frameRateDenominator?: number;
+  frameRateNumerator?: number;
   height?: number;
   id: string;
   imported: boolean;
   label: string;
   overlay: boolean;
   preferBFrames?: boolean;
+  programme?: ComparisonProgrammeCandidate | null;
   toneMap?: boolean | null;
   width?: number;
+}>;
+
+export type ComparisonSourceDiscovery = Readonly<{
+  candidates: readonly ComparisonProgrammeCandidate[];
+  fingerprint: string;
+  sourceId: string;
 }>;
 
 export type ComparisonVideoSelection = Readonly<{
   id: string;
   path: string;
+  programme?: ComparisonProgrammeSelection | null;
 }>;
 
 export type ContentBinding = Readonly<{
@@ -549,6 +599,15 @@ export type DiscReportFacts = Readonly<{
   HDR10PlusConfirmed: boolean;
   Playlist: PlaylistInfo;
   Summary: string;
+}>;
+
+export type DiscoverReleaseWorkflowComparisonSourceRequest = Readonly<{
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  media?: MediaArtifactSetRef | null;
+  path: string;
+  sourceId: string;
+  workflowId: WorkflowID;
 }>;
 
 export type DupeAssessment = Readonly<{
@@ -761,6 +820,8 @@ export type FramePreview = Readonly<{
   discName?: string;
   expiresAt: string;
   id: PublicResourceID;
+  media?: MediaArtifactSetRef | null;
+  observedIdentity?: ComparisonFrameIdentity | null;
   observedPts?: number | null;
   pictureType?: string;
   processing?: ScreenshotProcessing | null;
@@ -1628,6 +1689,7 @@ export type Operation = Readonly<{
 export type OperationFailure = Readonly<{
   AudioAnalysisCode?: AudioAnalysisFailureCode;
   Code: OperationFailureCode;
+  ComparisonReason?: string;
   HDRAnalysisCode?: HDRAnalysisFailureCode;
   Message: string;
   Operation: OperationKind;

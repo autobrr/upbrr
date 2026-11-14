@@ -99,7 +99,7 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 			}
 			if (plan.Imported || source.Imported) &&
 				(cell.TimestampSeconds != nil || cell.FrameNumber != nil || cell.PictureType != "" || cell.Confidence != nil ||
-					cell.ObservedPTS != nil || cell.TimeBaseNumerator != 0 || cell.TimeBaseDenominator != 0) {
+					cell.ObservedPTS != nil || cell.ObservedIdentity != nil || cell.TimeBaseNumerator != 0 || cell.TimeBaseDenominator != 0) {
 				add(row.ID, cell.SourceID, "Imported image timing, picture type and matching confidence must remain unknown.")
 			}
 		}

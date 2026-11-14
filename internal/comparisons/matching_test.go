@@ -5,6 +5,7 @@ package comparisons
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"slices"
@@ -381,6 +382,99 @@ func TestConstantAlignmentRequiresTemporalEvidence(t *testing.T) {
 				t.Fatalf("%s established offset %+v", kind, fitted)
 			}
 		})
+	}
+}
+
+func TestPlaybackAlignmentVerifiesNativeRatesAcrossSeparatedRegions(t *testing.T) {
+	scale := PlaybackScale{960, 1001}
+	fitted := make([]ConstantAlignment, 0, 3)
+	for _, center := range []float64{600, 2400, 4200} {
+		var reference, target []FrameSample
+		first := int((center - 2) * 24000 / 1001)
+		for index := first; float64(index)*1001/24000 < center+2; index++ {
+			frame := sampleFrame(uint64(index+1), float64(index)*1001/24000, "B")
+			frame.FrameID = fmt.Sprint("main-", index)
+			frame.TimebaseTickSeconds = 1.0 / 90000
+			reference = append(reference, frame)
+		}
+		for index := first - 100; index < first+200; index++ {
+			frame := sampleFrame(uint64(index+1), float64(index)/25+3, "B")
+			frame.FrameID = fmt.Sprint("source-", index)
+			frame.TimebaseTickSeconds = 1.0 / 90000
+			target = append(target, frame)
+		}
+		proposals := NativePlaybackScales(reference, target, PlaybackScales(24000, 1001, 30, 1))
+		if !slices.Contains(proposals, scale) {
+			t.Fatal("misleading nominal rate excluded the native playback scale")
+		}
+		alignment, reason := DiscoverPlaybackAlignment(reference, target, scale)
+		if reason != "" || math.Abs(alignment.OffsetSeconds-3) > 1e-8 {
+			t.Fatalf("center=%g alignment=%+v reason=%s", center, alignment, reason)
+		}
+		fitted = append(fitted, alignment)
+		wrong, reason := DiscoverPlaybackAlignment(reference, target, PlaybackScale{24, 25})
+		if reason == "" && wrong.Consistent(alignment) {
+			t.Fatal("nominal nearby rate established the exact scale")
+		}
+	}
+	if !fitted[0].Consistent(fitted[1]) || !fitted[0].Consistent(fitted[2]) {
+		t.Fatal("exact scale drifted between regions")
+	}
+	if fit, verified := VerifyPlaybackCalibration(fitted); !verified || math.Abs(fit.OffsetSeconds-3) > 1e-8 {
+		t.Fatalf("held-out calibration failed: %+v %t", fit, verified)
+	}
+	shifted := fitted[2]
+	shifted.OffsetSeconds += 1.0 / 25
+	if fitted[0].Consistent(shifted) {
+		t.Fatal("held-out persistent frame shift was accepted")
+	}
+	if _, verified := VerifyPlaybackCalibration([]ConstantAlignment{fitted[0], fitted[1], shifted}); verified {
+		t.Fatal("held-out region adjusted the fitted offset")
+	}
+}
+
+func TestPlaybackAlignmentAcceptsLowerContrastTemporalEvidence(t *testing.T) {
+	before := sampleFrame(1, 0, "B").Luma
+	after := sampleFrame(2, 0, "B").Luma
+	reference, target := make([]FrameSample, 0, 100), make([]FrameSample, 0, 100)
+	for i := range 100 {
+		main := sampleFrame(1, float64(i)*1001/24000, "B")
+		main.FrameID = fmt.Sprint("reference-", i)
+		other := sampleFrame(1, float64(i)/25+3, "B")
+		other.FrameID = fmt.Sprint("target-", i)
+		if i >= 50 {
+			for j := range before {
+				main.Luma[j] = byte(.75*float64(before[j]) + .25*float64(after[j]))
+				other.Luma[j] = byte(.8*float64(before[j]) + .2*float64(after[j]))
+			}
+		}
+		reference = append(reference, main)
+		target = append(target, other)
+	}
+	alignment, reason := DiscoverPlaybackAlignment(reference, target, PlaybackScale{960, 1001})
+	if reason != "" || math.Abs(alignment.OffsetSeconds-3) > 1e-8 {
+		t.Fatalf("lower-contrast transition lost correspondence: %+v %s", alignment, reason)
+	}
+}
+
+func TestPlaybackAlignmentPreservesDuplicateNativeFrames(t *testing.T) {
+	reference, target := make([]FrameSample, 0, 100), make([]FrameSample, 0, 200)
+	for i := range 100 {
+		frame := sampleFrame(uint64(i+1), float64(i)/25, "B")
+		frame.FrameID = fmt.Sprint("reference-", i)
+		reference = append(reference, frame)
+	}
+	for i := range 200 {
+		frame := sampleFrame(uint64(i/2+1), float64(i)/50+3, "B")
+		frame.FrameID = fmt.Sprint("target-", i)
+		target = append(target, frame)
+	}
+	alignment, reason := DiscoverPlaybackAlignment(reference, target, PlaybackScale{1, 1})
+	if reason != "" || !alignment.IntervalProof || math.Abs(alignment.OffsetSeconds-3) > .021 {
+		t.Fatalf("alignment=%+v reason=%s", alignment, reason)
+	}
+	if target[0].FrameID == target[1].FrameID {
+		t.Fatal("test lost distinct repeated-picture identities")
 	}
 }
 

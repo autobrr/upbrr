@@ -3,11 +3,136 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { ComparisonPlan } from "../../api/generated/release-workflow";
+import type { ComparisonPlan, FramePreview } from "../../api/generated/release-workflow";
 import type { ComparisonsFacet } from "../../releaseSession/types";
 import ComparisonPanel from "./ComparisonPanel";
 
 afterEach(cleanup);
+
+it("applies displayed frame authority before matching or capturing, and clears replaced sources", async () => {
+  const facet = observedComparisonFacet();
+  render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  const choose = screen.getByRole("button", {
+    name: "Use displayed frame for Encode, row 1, image 2",
+  });
+  const capture = screen.getByRole("button", { name: "Capture comparison rows" });
+  fireEvent.click(choose);
+  for (const name of ["Capture comparison rows", "Find matching scenes", "Recapture row 1"])
+    expect(screen.getByRole("button", { name })).toBeDisabled();
+  expect(
+    screen.getByText(/Apply comparison setup to retain displayed frame choices/),
+  ).toBeVisible();
+  expect(facet.edit).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
+  expect(facet.edit).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      action: "configure",
+      frameSelections: [{ rowId: "1", sourceId: "2", previewId: "observed-2" }],
+    }),
+  );
+  await waitFor(() => expect(capture).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("Frame time for Encode, row 1, image 2"), {
+    target: { value: "12" },
+  });
+  expect(capture).toBeEnabled();
+  fireEvent.click(capture);
+  expect(facet.edit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "capture" }));
+
+  fireEvent.click(choose);
+  fireEvent.change(screen.getByLabelText("Video path for Encode"), {
+    target: { value: "Example.DVD" },
+  });
+  expect(choose).toBeDisabled();
+  expect(capture).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
+  expect(vi.mocked(facet.edit).mock.lastCall![0].frameSelections).toEqual([]);
+  await waitFor(() => expect(choose).toBeEnabled());
+  const mainChoice = screen.getByRole("button", {
+    name: "Use displayed frame for Source, row 1, image 1",
+  });
+  fireEvent.click(mainChoice);
+  const column = within(screen.getByRole("group", { name: "Source · column 1" }));
+  fireEvent.click(column.getByRole("button", { name: "Discover titles and playlists" }));
+  await waitFor(() => expect(column.getByRole("radio", { name: "Title 1" })).toBeVisible());
+  fireEvent.click(column.getByRole("radio", { name: "Title 1" }));
+  expect(capture).toBeEnabled();
+  expect(mainChoice).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
+  expect(vi.mocked(facet.edit).mock.lastCall![0].frameSelections).toEqual([]);
+});
+
+it("removes draft programme and preview authority before recreating comparisons", async () => {
+  const facet = observedComparisonFacet();
+  render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Use displayed frame for Encode, row 1, image 2" }),
+  );
+  const main = within(screen.getByRole("group", { name: "Source · column 1" }));
+  fireEvent.click(main.getByRole("button", { name: "Discover titles and playlists" }));
+  await waitFor(() => expect(main.getByRole("radio", { name: "Title 1" })).toBeVisible());
+  fireEvent.click(main.getByRole("radio", { name: "Title 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove comparisons" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Create from videos" })).toBeVisible(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Create from videos" }));
+  expect(screen.queryByRole("radio", { name: "Title 1" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
+  expect(facet.edit).toHaveBeenLastCalledWith(
+    expect.objectContaining({ frameSelections: [], videoSources: [] }),
+  );
+});
+
+it("keeps discovered programmes local to a column until setup is applied", async () => {
+  const discovery = {
+    sourceId: "2",
+    fingerprint: "discovery-2",
+    candidates: [
+      {
+        id: "title-1",
+        kind: "dvd",
+        discId: "disc-1",
+        discName: "Disc 1",
+        label: "Title 1",
+        durationSeconds: 120,
+        rank: 0,
+        supported: true,
+      },
+    ],
+  };
+  const facet = {
+    ...comparisonFacet(comparisonPlan(false)),
+    discover: vi.fn(async () => discovery),
+  };
+  render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  const column = within(screen.getByRole("group", { name: "Encode · column 2" }));
+  fireEvent.change(column.getByRole("textbox", { name: "Video path for Encode" }), {
+    target: { value: "Example.DVD" },
+  });
+  fireEvent.click(column.getByRole("button", { name: "Discover titles and playlists" }));
+  await waitFor(() => expect(column.getByRole("radio", { name: "Title 1" })).toBeVisible());
+  expect(facet.discover).toHaveBeenCalledWith("2", "Example.DVD");
+  expect(facet.edit).not.toHaveBeenCalled();
+  fireEvent.click(column.getByRole("radio", { name: "Title 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
+  expect(facet.edit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      videoSources: [
+        {
+          id: "2",
+          path: "Example.DVD",
+          programme: {
+            kind: "dvd",
+            discId: "disc-1",
+            candidateId: "title-1",
+            discoveryFingerprint: "discovery-2",
+            angle: 1,
+          },
+        },
+      ],
+    }),
+  );
+});
 
 it("retains comparison render choices and defaults new videos without rewriting saved choices", async () => {
   const facet = comparisonFacet(null);
@@ -202,9 +327,63 @@ const comparisonFacet = (plan: ComparisonPlan | null = comparisonPlan()): Compar
     error: "",
   },
   edit: vi.fn(async () => true),
+  discover: vi.fn(async () => null),
   preview: vi.fn(async () => null),
   importImages: vi.fn(async () => true),
 });
+
+const observedComparisonFacet = (): ComparisonsFacet => {
+  const facet = comparisonFacet(comparisonPlan(false));
+  const preview = (sourceId: string): FramePreview => ({
+    id: `observed-${sourceId}`,
+    workflowId: "workflow-1",
+    workflowRevision: 3,
+    release: { id: "release-1", revision: 1 },
+    comparisonSourceId: sourceId,
+    timestampSeconds: 11.25,
+    pictureType: "B",
+    contentUrl: `/previews/${sourceId}`,
+    expiresAt: "2027-01-01T00:00:00Z",
+    observedIdentity: {
+      version: 1,
+      inputFingerprint: sourceId === "main" ? "video-0" : "video-1",
+      occurrence: "file",
+      streamId: "0",
+      pts: 11250,
+      timeBaseNumerator: 1,
+      timeBaseDenominator: 1000,
+    },
+    processing: {
+      requestedRenderer: "software",
+      renderer: "software",
+      tonemapped: false,
+      degraded: false,
+    },
+  });
+  return {
+    ...facet,
+    view: {
+      ...facet.view,
+      previews: { "2": preview("2"), main: preview("main") },
+    },
+    discover: vi.fn(async (sourceId) => ({
+      sourceId,
+      fingerprint: "discovery",
+      candidates: [
+        {
+          id: "title-1",
+          kind: "dvd",
+          discId: "disc-1",
+          discName: "Disc 1",
+          label: "Title 1",
+          durationSeconds: 120,
+          rank: 0,
+          supported: true,
+        },
+      ],
+    })),
+  };
+};
 
 it("reviews exact retained images and invalidates approval when reuse choices change", () => {
   const facet = comparisonFacet();

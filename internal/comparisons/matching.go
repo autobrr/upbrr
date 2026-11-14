@@ -16,11 +16,14 @@ import (
 // dimensions and aspect treatment across sources. Brightness and Motion are
 // normalized thumbnail measurements in [0,1], not physical luminance claims.
 type FrameSample struct {
-	TimestampSeconds float64
-	FrameType        string
-	Luma             []uint8
-	Brightness       float64
-	Motion           float64
+	DisplayEndSeconds   float64
+	TimebaseTickSeconds float64
+	FrameID             string
+	TimestampSeconds    float64
+	FrameType           string
+	Luma                []uint8
+	Brightness          float64
+	Motion              float64
 }
 
 // MatchAnchor records explicitly inspected correspondence. Only a selected main
@@ -56,6 +59,7 @@ type MatchOptions struct {
 // useful for review. Confidence is a visual correlation score, not a calibrated
 // probability; manual correspondence has no inferred visual confidence.
 type FrameMatch struct {
+	FrameID          string
 	SourceID         string
 	TimestampSeconds float64
 	FrameType        string
@@ -225,6 +229,9 @@ func prepareMatching(sources []SampledSource, mainID string, options MatchOption
 			}
 			if len(frame.Luma) != pixels {
 				return nil, 0, errors.New("comparison luminance samples must have the same grid dimensions")
+			}
+			if j+1 < len(source.Frames) {
+				frame.DisplayEndSeconds = source.Frames[j+1].TimestampSeconds
 			}
 			column.frames[j] = matchingFrame{frame: frame, signature: matchingSignature(frame.Luma)}
 		}
@@ -430,6 +437,7 @@ func preferredPictureTypes(mainType string) []string {
 
 func matchedSample(source SampledSource, frame FrameSample, method string, confidence float64) FrameMatch {
 	match := FrameMatch{
+		FrameID:          frame.FrameID,
 		SourceID:         source.ID,
 		TimestampSeconds: frame.TimestampSeconds,
 		FrameType:        strings.ToUpper(strings.TrimSpace(frame.FrameType)),

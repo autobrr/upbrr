@@ -17,6 +17,7 @@ type LifecycleOwner interface{ Close() error }
 
 // ReleaseWorkflowCapability owns the authenticated browser workflow command/query boundary.
 type ReleaseWorkflowCapability interface {
+	DiscoverReleaseWorkflowComparisonSource(context.Context, string, api.DiscoverReleaseWorkflowComparisonSourceRequest) (api.ComparisonSourceDiscovery, error)
 	ContinueReleaseWorkflow(context.Context, string, api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
 	StartReleaseWorkflowUpload(context.Context, string, api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
 	SubmitReleaseWorkflowUploadFeedback(

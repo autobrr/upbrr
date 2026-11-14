@@ -7,6 +7,7 @@ package releaseworkflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,11 @@ type MediaArtifactContent struct {
 // MediaPreviewContent retains one non-authoritative frame preview without
 // exposing image bytes or filesystem identity in workflow snapshots.
 type MediaPreviewContent struct {
+	ObservedIdentity    *api.ComparisonFrameIdentity
+	ComparisonWitness   json.RawMessage
+	WorkflowID          api.WorkflowID
+	WorkflowRevision    api.WorkflowRevision
+	Media               *api.MediaArtifactSetRef
 	ComparisonSourceID  string
 	PictureType         string
 	ObservedPTS         *int64
