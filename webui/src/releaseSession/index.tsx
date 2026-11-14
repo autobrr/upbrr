@@ -2488,7 +2488,7 @@ export function ReleaseSessionProvider({
       if (!restored) return false;
     }
     setScreenshotCommand(null);
-    const command = beginWorkflow("screenshots", access.screenshots.reason, previousController);
+    const command = beginWorkflow("screenshots", ordinaryMediaReason, previousController);
     if (!command) return false;
     setScreenshotLocalAction("plan");
     try {
@@ -2665,7 +2665,7 @@ export function ReleaseSessionProvider({
     timestampSeconds: number,
   ): Promise<boolean> => {
     setScreenshotCommand(null);
-    const command = beginWorkflow("screenshots", access.screenshots.reason);
+    const command = beginWorkflow("screenshots", ordinaryMediaReason);
     if (!command || !workflowView.current) return false;
     setScreenshotLocalAction("preview");
     try {
@@ -2746,10 +2746,32 @@ export function ReleaseSessionProvider({
     }
   };
 
+  const comparisonContext = async (
+    current: ReleaseWorkflowCurrent,
+    commandID: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent> => {
+    if (current.projections || current.media) return current;
+    if (!state.selectedTrackers.length)
+      throw new Error("Select at least one tracker before comparison setup.");
+    return continueBackendGoal(
+      current,
+      "trackers_projected",
+      { trackerIds: [...state.selectedTrackers] },
+      `${commandID}-projection`,
+      signal,
+    );
+  };
+
   const editComparisons = (instructions: ComparisonInstructions): Promise<boolean> =>
     runBackendWorkflow(
-      (current, commandID, signal) =>
-        activePorts.workflow.editComparisons(current, instructions, commandID, signal),
+      async (current, commandID, signal) =>
+        activePorts.workflow.editComparisons(
+          await comparisonContext(current, commandID, signal),
+          instructions,
+          commandID,
+          signal,
+        ),
       screenshotCommandCallbacks(false, "comparison"),
     );
 
@@ -3138,6 +3160,12 @@ export function ReleaseSessionProvider({
           Boolean(workflowView.current?.release?.display.hdrTargets?.length),
           workflowView.current?.release?.release ?? null,
         );
+  const ordinaryMediaGoal = workflowView.current?.continuation.availableGoals.find(
+    (goal) => goal.goal === "media_ready",
+  );
+  const ordinaryMediaReason = ordinaryMediaGoal?.available
+    ? ""
+    : ordinaryMediaGoal?.reason || "Run duplicate checking before ordinary screenshot work.";
   const workflowMedia = workflowView.current?.media;
   const workflowMediaURL = (artifactID: string) =>
     workflowView.current ? activePorts.workflow.mediaURL(workflowView.current, artifactID) : "";
@@ -4232,6 +4260,7 @@ export function ReleaseSessionProvider({
       comparisons: {
         view: {
           workflowID: workflowView.current?.workflow.id || "",
+          restorePending: workflowView.current?.continuation.comparisonRestorePending,
           plan: workflowView.current?.media?.comparisons || null,
           artifacts: workflowView.current?.media
             ? {
@@ -4266,7 +4295,8 @@ export function ReleaseSessionProvider({
         preview: previewComparisonFrame,
         importImages: (files, plan, replacement) =>
           runBackendWorkflow(
-            async (current, commandID, signal) => {
+            async (initial, commandID, signal) => {
+              const current = await comparisonContext(initial, commandID, signal);
               const resources: WorkflowResourceRef[] = [];
               for (const file of files) {
                 resources.push(await activePorts.workflow.stageMedia(current, file, signal));
@@ -4336,15 +4366,16 @@ export function ReleaseSessionProvider({
           : null,
         workflowMode: Boolean(workflowView.current),
         autoLoadPlan:
-          requirements.needsImages ||
-          Boolean(workflowView.current?.continuation.comparisonRestorePending),
+          ordinaryMediaGoal?.available === true &&
+          (requirements.needsImages ||
+            Boolean(workflowView.current?.continuation.comparisonRestorePending)),
         selections: state.screenshots.selections,
         finalSelectionArtifactIDs: selectedScreenshotIDs,
         previewImage: state.screenshots.previewImage,
         previewProcessing: state.screenshots.previewProcessing,
         previewTimestampSeconds: state.screenshots.previewTimestampSeconds,
         staleReason: state.screenshots.staleReason,
-        mutationBlockedReason: screenshotMutationBlockedReason,
+        mutationBlockedReason: screenshotMutationBlockedReason || ordinaryMediaReason,
         error: screenshotError,
       },
       load: loadScreenshotPlan,

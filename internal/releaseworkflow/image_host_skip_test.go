@@ -166,4 +166,33 @@ func TestCaptureAfterSkippedHostingRequiresPendingReconciliation(t *testing.T) {
 			t.Fatal("capture removed pending reconciliation")
 		}
 	}
+	// Tracker/client uncertainty can live only on the workflow, not its media.
+	media.RequiredActions, media.Failures = nil, nil
+	media.Comparisons = new(reviewedComparisonFixture(t))
+	state.Media[media.ID] = media
+	for _, action := range []string{"configure", "restore"} {
+		working, err := cloneState(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		builder := &comparisonMediaFake{host: "synthetic"}
+		module.mediaBuilder = builder
+		instructions := api.ComparisonInstructions{Action: action}
+		if action == "restore" {
+			working.ComparisonMedia, working.Workflow.Media = working.Workflow.Media, nil
+		} else {
+			instructions.Plan = reviewedComparisonFixture(t)
+		}
+		if action == "restore" {
+			_, err = module.restoreComparisons(t.Context(), testOwnerID, &working, working.Workflow.Revision+1, module.clock.Now())
+		} else {
+			_, err = module.editComparisons(t.Context(), testOwnerID, &working, working.Workflow.Revision+1, module.clock.Now(), EditComparisonsCommand{
+				Media:        working.Workflow.Media,
+				Instructions: instructions,
+			})
+		}
+		if !errors.Is(err, ErrInvalidTransition) || builder.edits != 0 || builder.restores != 0 || len(working.Workflow.RequiredActions) != 1 {
+			t.Fatalf("comparison %s bypassed workflow-only reconciliation: err=%v edits=%d restores=%d", action, err, builder.edits, builder.restores)
+		}
+	}
 }

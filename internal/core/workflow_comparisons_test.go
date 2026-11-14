@@ -318,6 +318,25 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("retain resolved cells in incomplete rows", func(t *testing.T) {
+		partial, err := matched.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		partial.Rows = partial.Rows[:1]
+		partial.Sources[0].PreferBFrames, partial.Sources[0].AllowedFrameTypes = true, []string{"B"}
+		partial.Rows[0].Cells[1] = api.ComparisonCell{SourceID: "other", Warning: "no_visual_match"}
+		private := cloneWorkflowMediaPrivateArtifacts(retained)
+		media := api.MediaArtifactSet{}
+		partial, err = b.captureWorkflowComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, &media, &private,
+			partial, b.comparisonProgress(t.Context(), 1), true)
+		if err != nil || partial.Rows[0].Cells[0].ArtifactID == "" || partial.Rows[0].Cells[1].ArtifactID != "" || len(comparisons.Validate(partial)) == 0 {
+			t.Fatalf("resolved pixels were lost or an unresolved column gained capture authority: %+v err=%v", partial, err)
+		}
+		if strings.Contains(partial.Rows[0].Cells[0].Warning, "Rematch") {
+			t.Fatal("an allowed default picture-type fallback was reported as incompatible")
+		}
+	})
 	policyPlan, err := plan.Clone()
 	if err != nil {
 		t.Fatal(err)
@@ -402,6 +421,24 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if err := verifyWorkflowComparisons(t.Context(), snapshot, retained); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("old captions require recapture without losing decoded identity", func(t *testing.T) {
+		old := cloneWorkflowMediaPrivateArtifacts(retained)
+		cell := captured.Rows[0].Cells[0]
+		delete(old.ComparisonCaptions, cell.ArtifactID)
+		if err := verifyWorkflowComparisons(t.Context(), snapshot, old); err == nil {
+			t.Fatal("old caption pixels retained upload authority")
+		}
+		updated, err := captured.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		invalidateOutdatedComparisonCaptions(&updated, old)
+		current := updated.Rows[0].Cells[0]
+		if current.ArtifactID != "" || current.ContentSHA256 != "" || current.ObservedPTS == nil || *current.ObservedPTS != *cell.ObservedPTS ||
+			updated.Rows[0].Cells[1].ArtifactID != captured.Rows[0].Cells[1].ArtifactID {
+			t.Fatal("caption invalidation lost the decoded frame or discarded an unchanged image")
+		}
+	})
 	plainPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", 1, 0)
 	if err != nil {
 		t.Fatal(err)

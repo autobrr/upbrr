@@ -17,6 +17,7 @@ import type { ApplicationInfo, MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
 import type {
   ActiveInputSnapshot,
+  ComparisonInstructions,
   ContinueReleaseWorkflowRequest,
   DescriptionInstructions,
   HDRAnalysisInstructions,
@@ -891,6 +892,21 @@ describe("tracker workflow capabilities", () => {
     expect(access.upload.available).toBe(false);
     expect(access.screenshots.available).toBe(false);
     expect(access.descriptions.available).toBe(false);
+    const local = routeAccess(
+      {
+        ...continuation,
+        availableGoals: [
+          ...continuation.availableGoals,
+          { goal: "trackers_projected", available: true },
+        ],
+      },
+      false,
+      { needsImages: true, needsDescriptions: true },
+    );
+    expect(local.screenshots.available).toBe(true);
+    expect(local.menuImages.available).toBe(false);
+    expect(local.uploadedImages.available).toBe(false);
+    expect(local.descriptions.available).toBe(false);
   });
 
   it("opens only applicable pages and keeps tracker-scoped content failures local", () => {
@@ -9816,7 +9832,7 @@ describe("saved-image plan authority", () => {
     ]);
   });
 
-  it("restores pending comparisons on the optional screenshot page without capture or hosting", async () => {
+  it("restores comparisons before dupes without ordinary planning or hosting", async () => {
     const workflowID = "workflow-reopened-comparisons";
     let current = workflowCurrentFromPreview(
       workflowCurrent(workflowID, 7),
@@ -9824,34 +9840,52 @@ describe("saved-image plan authority", () => {
     );
     current = {
       ...current,
-      continuation: { ...current.continuation, comparisonRestorePending: true },
+      continuation: {
+        ...current.continuation,
+        comparisonRestorePending: true,
+        availableGoals: [
+          ...current.continuation.availableGoals.filter(
+            (goal) => goal.goal !== "media_ready" && goal.goal !== "trackers_projected",
+          ),
+          { goal: "trackers_projected", available: true },
+          { goal: "media_ready", available: false, reason: "Run duplicate checking first." },
+        ],
+      },
     };
     const events: string[] = [];
     const captureMedia = vi.fn(async (value: ReleaseWorkflowCurrent) => value);
     const uploadImages = vi.fn(async (value: ReleaseWorkflowCurrent) => value);
     const baseMediaPlan = workflowPorts().mediaPlan;
     const continueWorkflow = vi.fn(async (request: ContinueReleaseWorkflowRequest) => {
-      events.push("restore");
-      expect(request.goal).toBe("media_ready");
+      events.push("project");
+      expect(request.goal).toBe("trackers_projected");
       expect(request.intent.media).toBeUndefined();
-      if (!current.continuation.comparisonRestorePending) return current;
-      current = {
-        ...current,
-        workflow: {
-          ...current.workflow,
-          revision: 8,
-          media: { id: "retained-media", revision: 8 },
-        },
-        continuation: { ...current.continuation, comparisonRestorePending: false },
-        media: comparisonMedia(current, true),
-      };
       return current;
     });
+    const edit = vi.fn(
+      async (_value: ReleaseWorkflowCurrent, instructions: ComparisonInstructions) => {
+        events.push("restore");
+        expect(instructions.action).toBe("restore");
+        expect(instructions.plan.sources).toEqual([]);
+        current = {
+          ...current,
+          workflow: {
+            ...current.workflow,
+            revision: 8,
+            media: { id: "retained-media", revision: 8 },
+          },
+          continuation: { ...current.continuation, comparisonRestorePending: false },
+          media: comparisonMedia(current, true),
+        };
+        return current;
+      },
+    );
     const ports = portsFor({
       resumeWorkflowID: workflowID,
       workflow: workflowPorts({
         current: async () => current,
         continue: continueWorkflow,
+        editComparisons: edit,
         captureMedia,
         uploadImages,
         mediaPlan: async (...args) => {
@@ -9878,9 +9912,16 @@ describe("saved-image plan authority", () => {
         </ReleaseSessionProvider>
       ),
     });
-    await waitFor(() => expect(result.current.screenshots.view.plan).not.toBeNull());
-    expect(events[0]).toBe("restore");
-    expect(events[events.length - 1]).toBe("plan");
+    await waitFor(() =>
+      expect(result.current.screenshots.comparisons.view.restorePending).toBe(true),
+    );
+    await act(() => result.current.duplicates.chooseTrackers(["HDS"]));
+    await act(async () => {
+      screen.getByRole("button", { name: "Restore retained comparisons" }).click();
+    });
+    await waitFor(() => expect(result.current.screenshots.comparisons.view.plan).not.toBeNull());
+    expect(events).toEqual(["project", "restore"]);
+    expect(result.current.screenshots.view.plan).toBeNull();
     expect(
       result.current.screenshots.comparisons.view.plan?.sources.map((source) => source.label),
     ).toEqual(["Source", "Encode"]);

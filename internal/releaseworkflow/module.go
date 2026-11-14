@@ -6021,6 +6021,15 @@ func (m *Module) publishDupes(
 	return CommandResult{Dupes: &snapshot}, nil
 }
 
+func requireReconciledExternalEffects(workflow api.ReleaseWorkflow) error {
+	if slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
+	}) {
+		return fmt.Errorf("%w: reconcile the pending external effect before changing media", ErrInvalidTransition)
+	}
+	return nil
+}
+
 // captureMedia publishes local media for the current authorized tracker set.
 // Retained captures clear skip mode so continuation can prepare images again;
 // pending external-effect reconciliation prevents capture from replacing its evidence.
@@ -6050,10 +6059,8 @@ func (m *Module) captureMedia(
 		return CommandResult{}, fmt.Errorf("%w: invalid media capture purpose", ErrInvalidTransition)
 	}
 	workflow := state.Workflow
-	if slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
-		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
-	}) {
-		return CommandResult{}, fmt.Errorf("%w: reconcile the pending external effect before capturing media", ErrInvalidTransition)
+	if err := requireReconciledExternalEffects(workflow); err != nil {
+		return CommandResult{}, err
 	}
 	if workflow.Release == nil || workflow.TrackerProjections == nil || workflow.Dupes == nil {
 		return CommandResult{}, fmt.Errorf("%w: media dependencies are incomplete", ErrInvalidTransition)
@@ -6683,29 +6690,9 @@ func (m *Module) mediaExtensionContext(
 		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
 			fmt.Errorf("%w: media dependencies are stale or unresolved", ErrInvalidTransition)
 	}
-	var snapshot *api.MediaArtifactSet
-	var retained any
-	switch {
-	case workflow.Media == nil && mediaRef != nil:
-		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
-			fmt.Errorf("%w: media revision is stale", ErrInvalidTransition)
-	case workflow.Media != nil:
-		if mediaRef == nil || *workflow.Media != *mediaRef {
-			return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
-				fmt.Errorf("%w: media revision is stale", ErrInvalidTransition)
-		}
-		media, mediaOK := state.Media[workflow.Media.ID]
-		if !mediaOK || media.Revision != workflow.Media.Revision {
-			return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
-				fmt.Errorf("%w: media revision is unavailable", ErrInvalidTransition)
-		}
-		value, loadErr := m.private.Get(ownerID, workflow.ID, mediaPrivateResourceID(media.ID), now)
-		if loadErr != nil {
-			return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
-				fmt.Errorf("release workflow load media extension resource: %w", loadErr)
-		}
-		snapshot = &media
-		retained = value
+	snapshot, retained, err := m.mediaExtensionSnapshot(ownerID, state, mediaRef, now)
+	if err != nil {
+		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil, err
 	}
 	release := api.ReleaseRef{
 		SourcePath: releaseSnapshot.Release.Source.SourcePath,
@@ -6716,6 +6703,35 @@ func (m *Module) mediaExtensionContext(
 		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil, err
 	}
 	return release, projections, targets.Projections(), snapshot, retained, nil
+}
+
+func (m *Module) mediaExtensionSnapshot(ownerID string, state *State, mediaRef *api.MediaArtifactSetRef, now time.Time) (*api.MediaArtifactSet, any, error) {
+	workflow := state.Workflow
+	var snapshot *api.MediaArtifactSet
+	var retained any
+	switch {
+	case workflow.Media == nil && mediaRef != nil:
+		return nil, nil,
+			fmt.Errorf("%w: media revision is stale", ErrInvalidTransition)
+	case workflow.Media != nil:
+		if mediaRef == nil || *workflow.Media != *mediaRef {
+			return nil, nil,
+				fmt.Errorf("%w: media revision is stale", ErrInvalidTransition)
+		}
+		media, mediaOK := state.Media[workflow.Media.ID]
+		if !mediaOK || media.Revision != workflow.Media.Revision {
+			return nil, nil,
+				fmt.Errorf("%w: media revision is unavailable", ErrInvalidTransition)
+		}
+		value, loadErr := m.private.Get(ownerID, workflow.ID, mediaPrivateResourceID(media.ID), now)
+		if loadErr != nil {
+			return nil, nil,
+				fmt.Errorf("release workflow load media extension resource: %w", loadErr)
+		}
+		snapshot = &media
+		retained = value
+	}
+	return snapshot, retained, nil
 }
 
 func validateMediaRequirementsFingerprint(snapshot api.MediaArtifactSet, projections api.TrackerReleaseProjectionSet) error {
@@ -6848,6 +6864,11 @@ func (m *Module) publishMediaMutation(
 	eligible := targets.Projections()
 	refreshMutatedMediaStatus(&snapshot, eligible.Projections, projections.Projections)
 	snapshot.TrackerApproval = targets.TrackerApproval()
+	return m.publishRetainedMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
+}
+
+func (m *Module) publishRetainedMediaMutation(ownerID string, state *State, nextRevision api.WorkflowRevision, now time.Time,
+	snapshot api.MediaArtifactSet, resource RetainedMediaResource) (CommandResult, error) {
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Prior                        api.WorkflowFingerprint
 		Artifacts                    []api.MediaArtifact

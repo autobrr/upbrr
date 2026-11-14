@@ -106,6 +106,7 @@ func decodeWorkflowDupePrivateEvidence(payload []byte) (any, error) {
 type persistedWorkflowMediaArtifacts struct {
 	HostedAccountScopes map[api.PublicResourceID]string                `json:"hostedAccountScopes,omitempty"`
 	ComparisonSources   map[string]workflowComparisonSource            `json:"comparisonSources,omitempty"`
+	ComparisonCaptions  map[api.PublicResourceID]int                   `json:"comparisonCaptions,omitempty"`
 	Screenshots         []api.ScreenshotImage                          `json:"screenshots,omitempty"`
 	DVDMenus            []api.DVDMenuCaptureImage                      `json:"dvdMenus,omitempty"`
 	ArtifactImages      map[api.PublicResourceID]api.ScreenshotImage   `json:"artifactImages,omitempty"`
@@ -147,6 +148,7 @@ func (a workflowMediaPrivateArtifacts) MarshalPrivateResource() (string, []byte,
 	payload, err := json.Marshal(persistedWorkflowMediaArtifacts{
 		HostedAccountScopes: accountScopes,
 		ComparisonSources:   a.ComparisonSources,
+		ComparisonCaptions:  a.ComparisonCaptions,
 		Screenshots:         append([]api.ScreenshotImage(nil), a.Screenshots...),
 		DVDMenus:            append([]api.DVDMenuCaptureImage(nil), a.DVDMenus...),
 		ArtifactImages:      cloneScreenshotImageMap(a.ArtifactImages),
@@ -210,19 +212,20 @@ func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload [
 		commitState = &workflowMediaCommitState{pending: pending}
 	}
 	return workflowMediaPrivateArtifacts{
-		ComparisonSources: persisted.ComparisonSources,
-		Screenshots:       append([]api.ScreenshotImage(nil), persisted.Screenshots...),
-		DVDMenus:          append([]api.DVDMenuCaptureImage(nil), persisted.DVDMenus...),
-		ArtifactImages:    cloneScreenshotImageMap(persisted.ArtifactImages),
-		HostedImages:      cloneUploadedImageMap(persisted.HostedImages),
-		HostedSources:     cloneHostedSourceMap(persisted.HostedSources),
-		screenshotService: builder.screenshots,
-		screenshotSubject: persisted.ScreenshotSubject,
-		dvdMenuService:    builder.dvdMenus,
-		dvdMenuSubject:    persisted.DVDMenuSubject,
-		hostedRepository:  builder.media.repo,
-		mediaReuse:        builder.media.mediaReuse,
-		commitState:       commitState,
+		ComparisonSources:  persisted.ComparisonSources,
+		ComparisonCaptions: persisted.ComparisonCaptions,
+		Screenshots:        append([]api.ScreenshotImage(nil), persisted.Screenshots...),
+		DVDMenus:           append([]api.DVDMenuCaptureImage(nil), persisted.DVDMenus...),
+		ArtifactImages:     cloneScreenshotImageMap(persisted.ArtifactImages),
+		HostedImages:       cloneUploadedImageMap(persisted.HostedImages),
+		HostedSources:      cloneHostedSourceMap(persisted.HostedSources),
+		screenshotService:  builder.screenshots,
+		screenshotSubject:  persisted.ScreenshotSubject,
+		dvdMenuService:     builder.dvdMenus,
+		dvdMenuSubject:     persisted.DVDMenuSubject,
+		hostedRepository:   builder.media.repo,
+		mediaReuse:         builder.media.mediaReuse,
+		commitState:        commitState,
 	}, nil
 }
 

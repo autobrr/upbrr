@@ -175,6 +175,23 @@ func TestComparisonCaptureRejectsBlackMissingAndChangedIdentity(t *testing.T) {
 	if _, err := service.ComparisonCapture(ctx, ComparisonCaptureRequest{Source: source}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation = %v", err)
 	}
+	runner := &scriptedRenderRunner{replies: []renderReply{
+		{payload: valid, stderr: comparisonDiagnostics(5800, "P")},
+		{payload: valid, stderr: comparisonDiagnostics(5800, "P")},
+	}}
+	if _, err := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner).ComparisonCapture(t.Context(),
+		ComparisonCaptureRequest{
+			Source:           source,
+			TimestampSeconds: 0.75,
+			OverlayLabel:     "Source B",
+		}); err != nil {
+		t.Fatal(err)
+	}
+	filter := ffmpegValueAfter(runner.args[len(runner.args)-1], "-vf")
+	frameLine, typeLine, labelLine := strings.Index(filter, "text='Frame unknown of unknown'"), strings.Index(filter, `text='Picture type\: P'`), strings.Index(filter, "text='Source B'")
+	if strings.Count(filter, "drawtext=") != 3 || frameLine < 0 || typeLine <= frameLine || labelLine <= typeLine {
+		t.Fatalf("comparison caption must contain exactly the three requested lines in order: %s", filter)
+	}
 }
 
 func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {

@@ -243,6 +243,14 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
       {view.blockedReason && <p role="status">{view.blockedReason}</p>}
       {!enabled ? (
         <div className="flex flex-wrap gap-2">
+          {view.restorePending && (
+            <Button
+              disabled={blocked}
+              onClick={() => void facet.edit({ action: "restore", plan: emptyPlan(true) })}
+            >
+              Restore retained comparisons
+            </Button>
+          )}
           <Button
             disabled={blocked}
             onClick={() => {
@@ -477,7 +485,8 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                         </p>
                       )}
                       <p className="text-muted-foreground">
-                        Comparison captures include the column label, observed PTS and picture type.
+                        Captions show frame position, picture type, then your column label.
+                        Unverified frame numbers and totals remain unknown.
                       </p>
                       <label className="grid gap-1">
                         <span>Tone mapping · {source.label}</span>

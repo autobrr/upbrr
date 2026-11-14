@@ -32,6 +32,7 @@ export const routeAccess = (
   };
   const trackerAssessment = goal("trackers_assessed");
   const media = goal("media_ready");
+  const comparisons = goal("trackers_projected");
   const descriptions = goal("descriptions_ready");
   return {
     input: { available: true, reason: "" },
@@ -56,7 +57,7 @@ export const routeAccess = (
               "Complete the required facts on Input and refresh metadata before opening Dupe Check.",
           }
         : trackerAssessment,
-    screenshots: media,
+    screenshots: media.available || !comparisons.available ? media : comparisons,
     menuImages: media,
     uploadedImages: {
       available: media.available && requirements.needsImages,

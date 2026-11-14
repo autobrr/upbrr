@@ -170,6 +170,7 @@ type workflowLegacyImageFormat struct {
 
 type workflowMediaPrivateArtifacts struct {
 	ComparisonSources  map[string]workflowComparisonSource
+	ComparisonCaptions map[api.PublicResourceID]int
 	Screenshots        []api.ScreenshotImage
 	DVDMenus           []api.DVDMenuCaptureImage
 	ArtifactImages     map[api.PublicResourceID]api.ScreenshotImage
@@ -257,6 +258,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 	}
 	result := workflowMediaPrivateArtifacts{
 		ComparisonSources:  maps.Clone(a.ComparisonSources),
+		ComparisonCaptions: maps.Clone(a.ComparisonCaptions),
 		screenshotService:  a.screenshotService,
 		screenshotSubject:  a.screenshotSubject,
 		dvdMenuService:     a.dvdMenuService,
@@ -306,6 +308,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 				binding: workflowMediaBindingForKind(a, artifact.Kind),
 			})
 			delete(result.ArtifactImages, artifact.ID)
+			delete(result.ComparisonCaptions, artifact.ID)
 			delete(result.DVDMenuImages, artifact.ID)
 			continue
 		}
@@ -489,6 +492,7 @@ func cloneHostedSourceMap(values map[api.PublicResourceID]api.PublicResourceID) 
 func cloneWorkflowMediaPrivateArtifacts(value workflowMediaPrivateArtifacts) workflowMediaPrivateArtifacts {
 	return workflowMediaPrivateArtifacts{
 		ComparisonSources:  maps.Clone(value.ComparisonSources),
+		ComparisonCaptions: maps.Clone(value.ComparisonCaptions),
 		Screenshots:        append([]api.ScreenshotImage(nil), value.Screenshots...),
 		DVDMenus:           append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),
 		ArtifactImages:     cloneScreenshotImageMap(value.ArtifactImages),

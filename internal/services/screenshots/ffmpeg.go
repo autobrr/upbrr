@@ -509,8 +509,8 @@ func overlayFilters(req captureRequest) []string {
 }
 
 // overlayTextFilters shares the scaled, stacked screenshot presentation. Callers
-// supply escaped, validated text; comparison callers use observed PTS instead of
-// an estimated frame ordinal.
+// supply escaped, validated text; comparison callers keep unverified global
+// frame numbers and totals unknown instead of estimating them from average FPS.
 func overlayTextFilters(lines []string, textSize, resolution int) []string {
 	if textSize <= 0 {
 		textSize = 18

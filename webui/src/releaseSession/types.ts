@@ -336,6 +336,7 @@ export type ScreenshotsFacet = Readonly<{
 export type ComparisonsFacet = Readonly<{
   view: Readonly<{
     workflowID: string;
+    restorePending?: boolean;
     plan: ComparisonPlan | null;
     artifacts: MediaArtifactSet | null;
     previews: Readonly<Record<string, FramePreview>>;

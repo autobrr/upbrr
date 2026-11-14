@@ -217,7 +217,7 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
       await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
       await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
-      await runDuplicateCheck(page);
+      expect((await snapshot()).current?.dupes).toBeUndefined();
       await page.getByRole("button", { name: "Screenshots", exact: true }).click();
       const comparison = page.getByRole("region", { name: "Comparisons", exact: true });
       await comparison.getByRole("button", { name: "Create from videos" }).click();
@@ -327,6 +327,18 @@ test("embedded video comparisons match three native sources and retain reviewed 
         page.getByRole("dialog", { name: "Encode, row 1, image 2", exact: true }),
       ).toBeVisible();
       await page.getByRole("button", { name: "Close image preview", exact: true }).click();
+      expect((await snapshot()).current?.dupes).toBeUndefined();
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+      await runDuplicateCheck(page);
+      await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+      await expect(
+        comparison.getByRole("img", { name: "Encode, row 1, image 2", exact: true }),
+      ).toBeVisible();
+      expect(
+        (await snapshot()).current!.media!.comparisons!.rows[0]!.cells.map(
+          (cell) => cell.contentSha256,
+        ),
+      ).toEqual(cells.map((cell) => cell.contentSha256));
       await approve.click();
       await expect(
         comparison.getByText("These captured comparison images are approved.", { exact: true }),
@@ -376,6 +388,15 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
       await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
       await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+      await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+      await comparison
+        .getByRole("button", { name: "Restore retained comparisons", exact: true })
+        .click();
+      await expect(
+        comparison.getByRole("img", { name: "Encode, row 1, image 2", exact: true }),
+      ).toBeVisible();
+      expect((await snapshot()).current?.dupes).toBeUndefined();
+      await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
       await runDuplicateCheck(page);
       await page.getByRole("button", { name: "Screenshots", exact: true }).click();
       await expect(
@@ -3825,7 +3846,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     const checked = await runDuplicateCheck(page);
     const workflowID = checked.workflow.id;
     await expect(page.getByText("Example.Release.2026.1080p-GRP")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Screenshots", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Screenshots", exact: true })).toBeEnabled();
     const restored = waitForAppMethod(page, "GetActiveInput");
     await page.goto(new URL("screenshots", app.url).toString());
     const current = await activeCurrentFromResponse(await restored);
@@ -3833,8 +3854,15 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     expect(
       current.continuation?.availableGoals.find((goal) => goal.goal === "media_ready"),
     ).toMatchObject({ available: false, reasonCode: "duplicates_required" });
-    await expect(page.getByRole("heading", { name: "View unavailable" })).toBeVisible();
-    await page.getByRole("button", { name: "Open Dupe Checking" }).click();
+    await expect(page.getByRole("heading", { name: "Comparisons", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Load suggestions", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Generate screenshots", exact: true }),
+    ).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Descriptions", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
     await page.getByLabel("Ignore dupes for HDS").click();
     await expect(page.getByText("1 potential dupe · acknowledged")).toBeVisible();
     const accepted = await page

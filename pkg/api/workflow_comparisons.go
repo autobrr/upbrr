@@ -20,7 +20,7 @@ type ComparisonVideoSelection struct {
 	Path string `json:"path"`
 }
 
-// ComparisonInstructions edits, matches, captures or approves a comparison plan.
+// ComparisonInstructions restores, edits, matches, captures or approves a comparison plan.
 // Approval uses only ExpectedFingerprint and cannot apply pending source edits.
 // An empty configure request removes comparison intent and its own artifacts.
 type ComparisonInstructions struct {
@@ -36,6 +36,10 @@ type ComparisonInstructions struct {
 func (i ComparisonInstructions) Validate() error {
 	switch i.Action {
 	case "configure", "match", "capture":
+	case "restore":
+		if len(i.VideoSources) != 0 || len(i.Attachments) != 0 || len(i.Plan.Sources) != 0 || len(i.Plan.Rows) != 0 {
+			return errors.New("comparison restoration uses only retained workflow intent")
+		}
 	case "approve":
 		if i.ExpectedFingerprint == "" {
 			return errors.New("comparison approval requires the reviewed fingerprint")

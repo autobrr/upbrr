@@ -163,6 +163,54 @@ func reviewedComparisonFixture(t *testing.T) api.ComparisonPlan {
 	return plan
 }
 
+func TestComparisonsBeforeDuplicateChecksRetainRowsWithoutHostingAuthority(t *testing.T) {
+	module, repository, dupes, current := newDuplicateReuseWorkflow(t)
+	builder := &comparisonMediaFake{host: "synthetic"}
+	module.mediaBuilder = builder
+	state, err := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Workflow.Dupes = nil
+	state.Workflow.Revision++
+	if err := repository.Save(t.Context(), testOwnerID, current.Workflow.Revision, state); err != nil {
+		t.Fatal(err)
+	}
+	current.Workflow = state.Workflow
+	before := dupes.full
+	current = executeCommand(t, module, EditComparisonsCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Instructions:     api.ComparisonInstructions{Action: "configure", Plan: reviewedComparisonFixture(t)},
+	})
+	if current.Workflow.Dupes != nil || dupes.full != before || current.Media == nil || current.Media.TrackerApproval != nil {
+		t.Fatal("local comparison preparation ran checks or inherited tracker authority")
+	}
+	current = executeCommand(t, module, EditComparisonsCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Media:            current.Workflow.Media,
+		Instructions:     api.ComparisonInstructions{Action: "approve", ExpectedFingerprint: current.Media.Comparisons.Fingerprint},
+	})
+	if current.Media.Status == api.StageStatusCompleted || !ComparisonReviewSatisfied(current.Media.Comparisons) {
+		t.Fatal("local review completed tracker-dependent media or was discarded")
+	}
+	if _, err := module.execute(t.Context(), testOwnerID, UploadMediaImagesCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Media:            *current.Workflow.Media,
+		Host:             "synthetic",
+		IdempotencyKey:   "before-dupes-hosting",
+	}); !errors.Is(err, ErrInvalidTransition) || builder.uploads != 0 {
+		t.Fatalf("pre-dupe comparison reached hosting: %v calls=%d", err, builder.uploads)
+	}
+	current = executeCommand(t, module, CheckDuplicatesCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
+	current = executeCommand(t, module, RestoreComparisonsCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
+	if current.Media == nil || current.Media.Comparisons.Rows[0].Cells[0].ArtifactID != "source-image" || ComparisonReviewSatisfied(current.Media.Comparisons) {
+		t.Fatal("fresh checks discarded captured rows or inherited prior review")
+	}
+}
+
 func TestComparisonReviewBlocksHostingAndCannotApplyUnreviewedEdits(t *testing.T) {
 	module, _, _, current := newDuplicateReuseWorkflow(t)
 	builder := &comparisonMediaFake{host: "synthetic"}

@@ -71,6 +71,10 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
 	}
+	snapshot.RequirementsFingerprint, err = workflowMediaRequirementsFingerprint(projections.Projections)
+	if err != nil {
+		return api.MediaArtifactSet{}, nil, err
+	}
 	pruneComparisonSources(&retained, snapshot.Comparisons)
 	if instructions.Action == "approve" {
 		if snapshot.Comparisons == nil {
@@ -107,6 +111,7 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 		return api.MediaArtifactSet{}, nil, fmt.Errorf("validate comparison scene targets: %w", err)
 	}
 	retainComparisonCellFacts(&plan, prior)
+	invalidateOutdatedComparisonCaptions(&plan, retained)
 	plan.ApprovedFingerprint = ""
 	pruneComparisonSources(&retained, &plan)
 	if instructions.Action == "configure" && len(plan.Sources) == 0 && len(plan.Rows) == 0 && len(attachments) == 0 && len(instructions.VideoSources) == 0 {
@@ -153,6 +158,23 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	snapshot.ImageRequirementsPrepared = false
 	snapshot.ImageHostUploadSkipped = false
 	return snapshot, retained, nil
+}
+
+// invalidateOutdatedComparisonCaptions retains decoded identity for recapture,
+// while refusing to reuse generated pixels with the previous caption layout.
+func invalidateOutdatedComparisonCaptions(plan *api.ComparisonPlan, retained workflowMediaPrivateArtifacts) {
+	if plan.Imported {
+		return
+	}
+	for r := range plan.Rows {
+		for c := range plan.Rows[r].Cells {
+			cell := &plan.Rows[r].Cells[c]
+			if cell.ArtifactID != "" && retained.ComparisonCaptions[cell.ArtifactID] != screenshots.ComparisonCaptionVersion &&
+				slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool { return source.ID == cell.SourceID && !source.Imported }) {
+				cell.ArtifactID, cell.ContentSHA256 = "", ""
+			}
+		}
+	}
 }
 
 // pruneComparisonSources prevents removed columns from supplying a retained
@@ -739,19 +761,20 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 		return plan, err
 	}
 	// Unchanged rows retain their images; only explicitly changed cells recapture.
-	captureRow := func(row api.ComparisonRow) bool {
-		return !row.Excluded && (!skipUnresolved || !slices.ContainsFunc(row.Cells, func(cell api.ComparisonCell) bool { return cell.TimestampSeconds == nil }))
-	}
 	total, completed := 0, 0
 	for _, row := range plan.Rows {
-		if captureRow(row) {
-			total += len(row.Cells)
+		if !row.Excluded {
+			for _, cell := range row.Cells {
+				if !skipUnresolved || cell.TimestampSeconds != nil {
+					total++
+				}
+			}
 		}
 	}
 	progress.begin("capture", total)
 	for r := range plan.Rows {
 		row := &plan.Rows[r]
-		if !captureRow(*row) {
+		if row.Excluded {
 			continue
 		}
 		if len(row.Cells) != len(plan.Sources) {
@@ -759,6 +782,9 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 		}
 		for c := range row.Cells {
 			cell := &row.Cells[c]
+			if cell.TimestampSeconds == nil && skipUnresolved {
+				continue
+			}
 			progressID := row.ID + "/" + cell.SourceID
 			label := fmt.Sprintf("Row %d / column %d", r+1, c+1)
 			progress.item(completed, total, progressID, "comparison_cell", label, api.StageStatusRunning, 0)
@@ -823,6 +849,10 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 				SizeBytes:        int64(len(captured.ImageBytes)),
 			}
 			retained.ArtifactImages[id] = image
+			if retained.ComparisonCaptions == nil {
+				retained.ComparisonCaptions = make(map[api.PublicResourceID]int)
+			}
+			retained.ComparisonCaptions[id] = screenshots.ComparisonCaptionVersion
 			artifact := comparisonMediaArtifact(id, image, len(snapshot.Artifacts))
 			existingIndex := slices.IndexFunc(snapshot.Artifacts, func(a api.MediaArtifact) bool { return a.ID == id })
 			if existingIndex >= 0 {
@@ -838,7 +868,7 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 			cell.TimeBaseNumerator, cell.TimeBaseDenominator = captured.TimeBaseNumerator, captured.TimeBaseDenominator
 			cell.PictureType = captured.PictureType
 			for _, configured := range plan.Sources {
-				if configured.ID == cell.SourceID && len(configured.AllowedFrameTypes) > 0 &&
+				if configured.ID == cell.SourceID && !configured.PreferBFrames && len(configured.AllowedFrameTypes) > 0 &&
 					!slices.Contains(configured.AllowedFrameTypes, captured.PictureType) {
 					cell.Warning = "Requested picture types " + strings.Join(
 						configured.AllowedFrameTypes,
@@ -867,6 +897,7 @@ func removeComparisonArtifactsExcept(snapshot *api.MediaArtifactSet, retained *w
 		if artifact.Kind == api.MediaArtifactComparison && !keep[artifact.ID] {
 			removed[artifact.ID] = true
 			delete(retained.ArtifactImages, artifact.ID)
+			delete(retained.ComparisonCaptions, artifact.ID)
 		}
 	}
 	snapshot.Artifacts = slices.DeleteFunc(snapshot.Artifacts, func(artifact api.MediaArtifact) bool {
@@ -918,6 +949,10 @@ func verifyComparisonCells(plan api.ComparisonPlan, retained workflowMediaPrivat
 			image, ok := retained.ArtifactImages[cell.ArtifactID]
 			if !ok {
 				return errors.New("comparison image identity is unavailable")
+			}
+			if !plan.Imported && retained.ComparisonCaptions[cell.ArtifactID] != screenshots.ComparisonCaptionVersion &&
+				slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool { return source.ID == cell.SourceID && !source.Imported }) {
+				return errors.New("comparison caption changed; recapture and review the images")
 			}
 			data, err := os.ReadFile(image.Path)
 			if err != nil {
@@ -1277,6 +1312,7 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 	}
 	plan.ApprovedFingerprint = ""
 	retained.ComparisonSources = maps.Clone(old.ComparisonSources)
+	retained.ComparisonCaptions = maps.Clone(old.ComparisonCaptions)
 	mainChanged := previous.ReleaseRef.SourcePath != "" && !pathing.SamePath(previous.ReleaseRef.SourcePath, release.SourcePath)
 	if b.resolver != nil {
 		subject, err := b.resolver.ResolveScreenshotSubject(ctx, api.MediaPlanInput{Release: release, Purpose: api.ScreenshotPurposeFinal})
@@ -1338,6 +1374,7 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 			plan.Anchors = slices.DeleteFunc(plan.Anchors, func(a api.ComparisonAnchor) bool { return a.SourceID == source.ID })
 		}
 	}
+	invalidateOutdatedComparisonCaptions(&plan, retained)
 	kept := map[api.PublicResourceID]bool{}
 	for _, row := range plan.Rows {
 		for _, cell := range row.Cells {

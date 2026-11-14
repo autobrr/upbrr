@@ -26,6 +26,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// ComparisonCaptionVersion identifies the generated caption layout for retained pixels.
+const ComparisonCaptionVersion = 1
+
 // ComparisonSource describes one local video. Missing timing stays zero; callers
 // own source fingerprint verification and alignment with other inputs.
 type ComparisonSource struct {
@@ -72,8 +75,9 @@ type ComparisonFrameObservation struct {
 }
 
 // ComparisonCaptureRequest selects a seek relative to the file's start time.
-// OverlayLabel optionally adds a comparison-only label, observed PTS and picture
-// type. Labels accept at most 80 ASCII letters, digits, spaces, dots, dashes and
+// OverlayLabel optionally adds the three-line comparison caption: frame position,
+// picture type, then label. Unverified global frame numbers/totals stay unknown.
+// Labels accept at most 80 ASCII letters, digits, spaces, dots, dashes and
 // underscores. Overlay enablement is comparison-local; text size follows the
 // ordinary screenshot setting and scales with the source height.
 type ComparisonCaptureRequest struct {
@@ -484,9 +488,9 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 		pictureType = "Unknown"
 	}
 	lines := []string{
-		"Column\\: " + r.label,
-		fmt.Sprintf("PTS\\: %d x %d/%d", r.observed.PTS, r.observed.TimeBaseNumerator, r.observed.TimeBaseDenominator),
-		"Frame Type\\: " + pictureType,
+		"Frame unknown of unknown",
+		"Picture type\\: " + pictureType,
+		r.label,
 	}
 	for i := range args {
 		if args[i] == "-vf" && i+1 < len(args) {

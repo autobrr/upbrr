@@ -155,10 +155,13 @@ func (m *Module) retainedComparisons(ctx context.Context, owner string, state *S
 func (m *Module) restoreComparisons(ctx context.Context, owner string, state *State,
 	revision api.WorkflowRevision, now time.Time,
 ) (CommandResult, error) {
+	if err := requireReconciledExternalEffects(state.Workflow); err != nil {
+		return CommandResult{}, err
+	}
 	if state.Workflow.Media != nil || state.ComparisonMedia == nil {
 		return CommandResult{}, fmt.Errorf("%w: comparison restoration is not pending", ErrInvalidTransition)
 	}
-	release, _, eligible, _, _, err := m.mediaExtensionContext(ctx, owner, state, nil, now)
+	release, eligible, _, _, local, err := m.comparisonExtensionContext(ctx, owner, state, nil, now)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -166,7 +169,7 @@ func (m *Module) restoreComparisons(ctx context.Context, owner string, state *St
 	if err != nil {
 		return CommandResult{}, err
 	}
-	return m.publishMediaMutation(owner, state, revision, now, *snapshot, private)
+	return m.publishComparisonMutation(owner, state, revision, now, *snapshot, private, local)
 }
 
 func rejectLegacyCompositeComparisons(session *compositeUploadSession) error {
@@ -352,11 +355,17 @@ func invalidateDeletedComparisonCells(snapshot *api.MediaArtifactSet, deleted ma
 
 func (m *Module) editComparisons(ctx context.Context, owner string, state *State, revision api.WorkflowRevision,
 	now time.Time, command EditComparisonsCommand) (CommandResult, error) {
+	if command.Instructions.Action == "restore" {
+		return m.restoreComparisons(ctx, owner, state, revision, now)
+	}
+	if err := requireReconciledExternalEffects(state.Workflow); err != nil {
+		return CommandResult{}, err
+	}
 	builder, ok := m.mediaBuilder.(ComparisonMediaBuilder)
 	if !ok {
 		return CommandResult{}, fmt.Errorf("%w: comparison media service is unavailable", ErrInvalidTransition)
 	}
-	release, _, eligible, prior, private, err := m.mediaExtensionContext(ctx, owner, state, command.Media, now)
+	release, eligible, prior, private, local, err := m.comparisonExtensionContext(ctx, owner, state, command.Media, now)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -419,7 +428,49 @@ func (m *Module) editComparisons(ctx context.Context, owner string, state *State
 	if clearComparisons {
 		state.ComparisonMedia = nil
 	}
-	return m.publishMediaMutation(owner, state, revision, now, updated, retained)
+	return m.publishComparisonMutation(owner, state, revision, now, updated, retained, local)
+}
+
+// comparisonExtensionContext permits local image work on exact prepared/projected
+// facts without granting the fresh tracker authority required by hosting.
+func (m *Module) comparisonExtensionContext(ctx context.Context, owner string, state *State, media *api.MediaArtifactSetRef, now time.Time,
+) (api.ReleaseRef, api.TrackerReleaseProjectionSet, *api.MediaArtifactSet, any, bool, error) {
+	release, _, eligible, snapshot, private, err := m.mediaExtensionContext(ctx, owner, state, media, now)
+	if err == nil || !errors.Is(err, ErrInvalidTransition) {
+		return release, eligible, snapshot, private, false, err
+	}
+	prepared, err := currentReleaseSnapshot(state)
+	if err != nil {
+		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, nil, nil, true, err
+	}
+	release = api.ReleaseRef{SourcePath: prepared.Release.Source.SourcePath, Generation: prepared.Release.Generation}
+	ref := state.Workflow.TrackerProjections
+	if ref == nil {
+		return release, api.TrackerReleaseProjectionSet{}, nil, nil, true, fmt.Errorf(
+			"%w: select trackers and project their settings before comparison setup",
+			ErrInvalidTransition,
+		)
+	}
+	projections, exists := state.Projections[ref.ID]
+	if !exists || projections.Revision != ref.Revision || projections.Release != *state.Workflow.Release || projections.ReleaseRef != release {
+		return release, projections, nil, nil, true, fmt.Errorf("%w: comparison preparation is stale", ErrInvalidTransition)
+	}
+	snapshot, private, err = m.mediaExtensionSnapshot(owner, state, media, now)
+	return release, projections, snapshot, private, true, err
+}
+
+func (m *Module) publishComparisonMutation(owner string, state *State, revision api.WorkflowRevision, now time.Time,
+	snapshot api.MediaArtifactSet, private RetainedMediaResource, local bool) (CommandResult, error) {
+	if !local {
+		return m.publishMediaMutation(owner, state, revision, now, snapshot, private)
+	}
+	// Local review never establishes readiness for tracker-dependent media work.
+	snapshot.TrackerApproval = nil
+	refreshMutatedMediaStatus(&snapshot, nil, nil)
+	if snapshot.Status == api.StageStatusCompleted {
+		snapshot.Status = api.StageStatusPending
+	}
+	return m.publishRetainedMediaMutation(owner, state, revision, now, snapshot, private)
 }
 
 // PreviewComparisonFrame inspects one retained source without changing the main
@@ -458,7 +509,7 @@ func (m *Module) PreviewComparisonFrame(ctx context.Context, owner string, workf
 		return api.FramePreview{}, ErrInvalidTransition
 	}
 	now := m.clock.Now().UTC()
-	release, _, _, snapshot, private, err := m.mediaExtensionContext(ctx, owner, &state, state.Workflow.Media, now)
+	release, _, snapshot, private, _, err := m.comparisonExtensionContext(ctx, owner, &state, state.Workflow.Media, now)
 	if err != nil {
 		return api.FramePreview{}, err
 	}
