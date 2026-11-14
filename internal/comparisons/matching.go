@@ -42,8 +42,9 @@ type SampledSource struct {
 }
 
 // MatchOptions selects automatic scenes or explicit main-source moments.
-// MainMoments overrides Count. Scene targets count complete rows independently;
-// a row qualifying as both dark and motion contributes to both targets.
+// MainMoments overrides the generated rows, not the requested scene targets.
+// Targets fit within Count or the supplied moments, whichever is larger; unmet
+// targets produce warnings. A row qualifying as dark and motion counts for both.
 type MatchOptions struct {
 	Count       int
 	MainMoments []float64
@@ -177,10 +178,7 @@ type matchingColumn struct {
 }
 
 func prepareMatching(sources []SampledSource, mainID string, options MatchOptions) ([]matchingColumn, int, error) {
-	count := options.Count
-	if len(options.MainMoments) > 0 {
-		count = len(options.MainMoments)
-	}
+	count := max(options.Count, len(options.MainMoments))
 	if len(sources) < 2 || count < 1 || options.DarkCount < 0 || options.DarkCount > count || options.MotionCount < 0 || options.MotionCount > count {
 		return nil, 0, errors.New("comparison matching requires multiple sources, a positive row count and scene targets within that count")
 	}

@@ -290,4 +290,21 @@ func TestMatchingSceneMixExcludesBlankAndReportsUnmet(t *testing.T) {
 	if _, err := Match([]SampledSource{source, other}, "main", MatchOptions{Count: 1, DarkCount: 2}); err == nil {
 		t.Fatal("scene target greater than total rows accepted")
 	}
+	result, err = Match([]SampledSource{source, other}, "main", MatchOptions{
+		Count:       3,
+		MainMoments: []float64{3},
+		DarkCount:   2,
+		MotionCount: 2,
+	})
+	if err != nil || len(result.Rows) != 1 || result.Rows[0].MainSeconds != 3 || result.RequestedDark != 2 || result.RequestedMotion != 2 ||
+		result.AchievedDark != 1 || result.AchievedMotion != 1 || len(result.Warnings) == 0 {
+		t.Fatalf("manual moment lost configured scene targets or unmet guidance: %+v err=%v", result, err)
+	}
+	if _, err := Match([]SampledSource{source, other}, "main", MatchOptions{
+		Count:       3,
+		MainMoments: []float64{3},
+		DarkCount:   4,
+	}); err == nil {
+		t.Fatal("manual moment allowed a scene target beyond the requested row count")
+	}
 }

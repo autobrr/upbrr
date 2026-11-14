@@ -491,11 +491,7 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 			}
 		}
 	}
-	requestedRows := options.Count
-	if len(options.MainMoments) > 0 {
-		requestedRows = len(options.MainMoments)
-	}
-	options.DarkCount, options.MotionCount, err = comparisons.SceneCounts(plan.Preferences, requestedRows)
+	options.DarkCount, options.MotionCount, err = comparisons.SceneCounts(plan.Preferences, options.Count)
 	if err != nil {
 		return plan, fmt.Errorf("resolve comparison scene targets: %w", err)
 	}

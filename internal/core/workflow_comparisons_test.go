@@ -359,6 +359,20 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if err != nil || len(automatic.Rows) != 3 {
 		t.Fatalf("automatic rows ignored changed selection preferences: rows=%d err=%v", len(automatic.Rows), err)
 	}
+	corrected, err := automatic.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrected.Preferences.DarkCount, corrected.Preferences.MotionCount = new(2), new(2)
+	corrected.Rows[0].Cells[0].TimestampSeconds, corrected.Rows[0].Cells[0].Confidence = new(1.0), nil
+	corrected, err = b.matchWorkflowComparisons(t.Context(), retained, corrected, b.comparisonProgress(t.Context(), 5))
+	if err != nil || len(corrected.Rows) != 1 || corrected.SceneMix == nil || corrected.SceneMix.RequestedDark != 2 ||
+		corrected.SceneMix.RequestedMotion != 2 || len(corrected.Warnings) == 0 {
+		t.Fatalf("corrected main moment could not rematch with unmet scene targets: plan=%+v err=%v", corrected, err)
+	}
+	if cell := corrected.Rows[0].Cells[0]; cell.TimestampSeconds == nil || math.Abs(*cell.TimestampSeconds-1) > 1e-7 || cell.Confidence != nil {
+		t.Fatalf("rematching changed the manual main moment: %+v", cell)
+	}
 	snapshot := api.MediaArtifactSet{}
 	captured, err := b.captureWorkflowComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, &snapshot, &retained, matched, b.comparisonProgress(t.Context(), 1), false)
 	if err != nil {
