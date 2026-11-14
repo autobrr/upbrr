@@ -221,6 +221,31 @@ func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 	if _, err := service.SampleComparisonSource(t.Context(), source, 0, 1, 0.5); err == nil {
 		t.Fatal("unmatched sample pixels were accepted")
 	}
+	for _, tc := range []struct {
+		name   string
+		reply  renderReply
+		cancel bool
+	}{
+		{name: "empty timestamp window"},
+		{name: "decoder failure", reply: renderReply{err: errors.New("synthetic decoder failure")}},
+		{name: "corrupt frames", reply: renderReply{stderr: "error while decoding"}},
+		{name: "cancellation", cancel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			runner := &scriptedRenderRunner{replies: []renderReply{tc.reply}}
+			if tc.cancel {
+				runner.cancel = cancel
+			}
+			service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+			samples, err := service.SampleComparisonSource(ctx, source, 0, 1, 0.5)
+			wantError := tc.reply.err != nil || tc.reply.stderr != "" || tc.cancel
+			if len(samples) != 0 || (err != nil) != wantError || tc.cancel && !errors.Is(err, context.Canceled) {
+				t.Fatalf("empty sampling result=%+v err=%v", samples, err)
+			}
+		})
+	}
 }
 
 // Synthetic native media verifies decoded identity and time origin, not HDR fidelity.
@@ -366,28 +391,28 @@ func TestComparisonDisplayCountersUseMetadataWithoutIndexClaims(t *testing.T) {
 		number, total string
 	}{
 		{"nonzero origin and reported count", ComparisonSource{
-StartTimeSeconds: 5,
- FrameRate: 10,
- FrameCount: 20,
- DurationSeconds: 6.9,
-}, 5.8, "8", "20"},
+			StartTimeSeconds: 5,
+			FrameRate:        10,
+			FrameCount:       20,
+			DurationSeconds:  6.9,
+		}, 5.8, "8", "20"},
 		{"VFR metadata is a nominal display position", ComparisonSource{
-StartTimeSeconds: 5,
- FrameRate: 4,
- FrameCount: 4,
- VideoDurationSeconds: .9,
-}, 5.4, "1", "4"},
+			StartTimeSeconds:     5,
+			FrameRate:            4,
+			FrameCount:           4,
+			VideoDurationSeconds: .9,
+		}, 5.4, "1", "4"},
 		{"video duration fallback excludes general origin", ComparisonSource{
-StartTimeSeconds: 5,
- FrameRate: 10,
- VideoDurationSeconds: 2,
- DurationSeconds: 7,
-}, 5.8, "8", "20"},
+			StartTimeSeconds:     5,
+			FrameRate:            10,
+			VideoDurationSeconds: 2,
+			DurationSeconds:      7,
+		}, 5.8, "8", "20"},
 		{"unqualified general duration is not a count", ComparisonSource{
-StartTimeSeconds: 5,
- FrameRate: 10,
- DurationSeconds: 7,
-}, 5.8, "8", "unknown"},
+			StartTimeSeconds: 5,
+			FrameRate:        10,
+			DurationSeconds:  7,
+		}, 5.8, "8", "unknown"},
 		{"missing rate preserves reported total", ComparisonSource{FrameCount: 20}, .8, "unknown", "20"},
 		{"inconsistent nominal rate cannot exceed total", ComparisonSource{FrameRate: 10, FrameCount: 4}, .9, "unknown", "4"},
 	} {

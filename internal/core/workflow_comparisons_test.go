@@ -664,7 +664,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			}
 			continue
 		}
-		if update.Total != 5000 || update.Completed < previous || update.Completed == 5000 && captureCount < 4 {
+		if update.Total != 1000 || update.Completed < previous || update.Completed == 1000 && captureCount < 4 {
 			t.Fatalf("comparison progress finished early or regressed: update=%+v captures=%d previous=%d", update, captureCount, previous)
 		}
 		previous = update.Completed
@@ -675,7 +675,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			t.Fatalf("finished comparison window remains active: %s status=%s", id, status)
 		}
 	}
-	if previous != 5000 || len(phases) != 5 || captureCount != 4 {
+	if previous != 1000 || len(phases) != 5 || captureCount != 4 {
 		t.Fatalf("incomplete comparison progress: phases=%v captures=%d completed=%d", phases, captureCount, previous)
 	}
 	replacedArtifacts, ok := replacedPrivate.(workflowMediaPrivateArtifacts)
@@ -823,12 +823,30 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		comparisonRenderer: renderer,
 	}
 	var phases []string
+	var updates []api.WorkflowProgressUpdate
 	ctx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) {
 		if update.Phase != "" {
 			phases = append(phases, update.Phase)
 		}
+		if !update.ItemOnly {
+			updates = append(updates, update)
+		}
 	})
-	matched, err := b.matchWorkflowComparisons(ctx, private, plan, b.comparisonProgress(ctx, 5))
+	checkProgress := func(t *testing.T, complete bool) {
+		t.Helper()
+		previous := 0
+		for _, update := range updates {
+			if update.Total != 1000 || update.Completed < previous || update.Completed > update.Total {
+				t.Fatalf("inconsistent command progress after %d: %+v", previous, update)
+			}
+			previous = update.Completed
+		}
+		if (previous == 1000) != complete {
+			t.Fatalf("command completion=%d, want complete=%t", previous, complete)
+		}
+	}
+	progress := b.comparisonProgress(ctx, 5)
+	matched, err := b.matchWorkflowComparisons(ctx, private, plan, progress)
 	if err != nil || len(matched.Rows) != 2 {
 		t.Fatalf("bounded match rows=%+v err=%v", matched.Rows, err)
 	}
@@ -855,7 +873,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		t.Fatal("independent offset validation did not report progress")
 	}
 	media := api.MediaArtifactSet{}
-	captured, err := b.captureWorkflowComparisons(ctx, api.ReleaseRef{SourcePath: paths[0], Generation: 1}, &media, &private, matched, b.comparisonProgress(ctx, 1), false)
+	captured, err := b.captureWorkflowComparisons(ctx, api.ReleaseRef{SourcePath: paths[0], Generation: 1}, &media, &private, matched, progress, false)
 	if err != nil || len(media.Artifacts) != 6 {
 		t.Fatalf("bounded captures=%d err=%v", len(media.Artifacts), err)
 	}
@@ -866,6 +884,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 			}
 		}
 	}
+	t.Run("bounded command progress", func(t *testing.T) { checkProgress(t, true) })
 	_, payload, err := private.MarshalPrivateResource()
 	if err != nil {
 		t.Fatal(err)
@@ -884,27 +903,34 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		t.Fatalf("scene quota bypassed full sampling: %v", renderer.durations)
 	}
 	plan.Preferences.DarkCount = nil
-	for _, tc := range []struct{ name, filter string }{
-		{"varying cadence", "select='not(eq(mod(n,10),5))',setpts=PTS-STARTPTS"},
-		{"contradictory offset", "select='not(between(t,45,46))',setpts=N/(10*TB)"},
+	for _, tc := range []struct {
+		name, filter string
+		sourceIndex  int
+	}{
+		{"varying cadence", "select='not(eq(mod(n,10),5))',setpts=PTS-STARTPTS", 1},
+		{"contradictory offset", "select='not(between(t,45,46))',setpts=N/(10*TB)", 1},
+		{"empty calibration window", "select='not(between(t,19,27))'", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(root, "Example.Variant.mkv")
 			run("-y", "-copyts", "-i", paths[0], "-vf", tc.filter, "-fps_mode", "vfr", "-c:v", "ffv1", path)
-			source, err := renderer.InspectComparisonSource(t.Context(), path)
+			source, err := renderer.InspectComparisonSource(ctx, path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
+			fingerprint, err := comparisonVideoFingerprint(ctx, path)
 			if err != nil {
 				t.Fatal(err)
 			}
 			changed := cloneWorkflowMediaPrivateArtifacts(private)
-			changed.ComparisonSources["positive"] = workflowComparisonSource{Source: source, Fingerprint: fingerprint}
+			changed.ComparisonSources[plan.Sources[tc.sourceIndex].ID] = workflowComparisonSource{Source: source, Fingerprint: fingerprint}
 			choices, _ := plan.Clone()
-			choices.Sources[1].Fingerprint = fingerprint
+			choices.Sources[tc.sourceIndex].Fingerprint = fingerprint
 			renderer.durations = nil
-			if _, err := b.matchWorkflowComparisons(t.Context(), changed, choices, b.comparisonProgress(t.Context(), 5)); err != nil {
+			updates = nil
+			progress := b.comparisonProgress(ctx, 5)
+			matched, err := b.matchWorkflowComparisons(ctx, changed, choices, progress)
+			if err != nil {
 				t.Fatal(err)
 			}
 			full := false
@@ -916,13 +942,23 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 			if !full {
 				t.Fatalf("unsupported evidence bypassed full scan: %v", renderer.durations)
 			}
+			checkProgress(t, false)
+			if tc.sourceIndex == 0 {
+				media := api.MediaArtifactSet{}
+				if _, err := b.captureWorkflowComparisons(ctx, api.ReleaseRef{SourcePath: path, Generation: 1}, &media, &changed, matched, progress, true); err != nil || len(media.Artifacts) == 0 {
+					t.Fatalf("full-scan fallback captures=%d err=%v", len(media.Artifacts), err)
+				}
+				checkProgress(t, true)
+			}
 		})
 	}
-	canceled, cancel := context.WithCancel(t.Context())
+	updates = nil
+	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	if _, err := b.matchWorkflowComparisons(canceled, private, plan, b.comparisonProgress(canceled, 5)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation=%v", err)
 	}
+	checkProgress(t, false)
 	if err := os.WriteFile(paths[2], []byte("changed synthetic source"), 0o600); err != nil {
 		t.Fatal(err)
 	}

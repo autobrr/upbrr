@@ -13,6 +13,7 @@ import (
 )
 
 // comparisonProgress reports completion of known phases, not estimated runtime.
+// Overall updates use fixed normalized units as the selected path changes phases.
 // Child decoder progress is source-clock progress within one phase item.
 type comparisonProgress struct {
 	ctx           context.Context
@@ -54,12 +55,13 @@ func (p *comparisonProgress) begin(phase string, items int) {
 }
 
 func (p *comparisonProgress) update(completed, total int) {
-	p.completed = max(p.completed, p.stage*1000+1000*completed/max(1, total))
+	completed = (p.stage*1000 + 1000*completed/max(1, total)) / max(1, p.stages)
+	p.completed = max(p.completed, min(1000, completed))
 	api.EmitWorkflowProgress(p.ctx, api.WorkflowProgressUpdate{
 		Phase:     "comparisons_" + p.phase,
 		Status:    api.StageStatusRunning,
 		Completed: p.completed,
-		Total:     p.stages * 1000,
+		Total:     1000,
 		Message:   p.message,
 	})
 }

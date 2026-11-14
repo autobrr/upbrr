@@ -281,6 +281,7 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 // rendering overlays. Start and duration are input-relative seconds; spacing is
 // measured on actual frame timestamps. At most 50,000 samples may be requested.
 // Returned PTS remains in the original source clock, including a nonzero start.
+// A successfully decoded window containing no frames returns an empty result.
 func (s *Service) SampleComparisonSource(ctx context.Context, source ComparisonSource, start, duration, strideSeconds float64) ([]ComparisonSample, error) {
 	logger := logging.FromContext(ctx, s.logger)
 	logger.Debugf("comparisons: phase=sampling decision=decode window_seconds=%.3f stride_seconds=%.4f", duration, strideSeconds)
@@ -331,7 +332,7 @@ func (s *Service) SampleComparisonSource(ctx context.Context, source ComparisonS
 		return nil, errors.New("screenshots: comparison sampling failed")
 	}
 	observations, err := comparisonObservations(result.Stderr)
-	if err != nil || len(observations) == 0 || len(observations) > 50000 || len(result.Stdout) != len(observations)*256 {
+	if err != nil || len(observations) > 50000 || len(result.Stdout) != len(observations)*256 {
 		return nil, errors.New("screenshots: comparison samples lack matching decoded frame identities")
 	}
 	samples := make([]ComparisonSample, 0, len(observations))
