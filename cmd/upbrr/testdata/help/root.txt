@@ -235,7 +235,9 @@ Screenshots and Images:
   -comparison, --comparison, -comps string
       Comparison folder path or comma-separated paths
   -comparison_index, --comparison_index, -comps_index int
-      Primary comparison index
+      Main source group number from comparison image names
+  -comparison-use-main-screenshots, --comparison-use-main-screenshots
+      Use the main comparison column as normal screenshots
   -menu-images, --menu-images string
       Path to manually captured disc menu screenshots (Disc releases only)
   -get-dvd-menus, --get-dvd-menus

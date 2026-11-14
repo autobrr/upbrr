@@ -193,7 +193,7 @@ func (b workflowUploadPlanBuilder) Build(
 	if !ok {
 		return api.UploadPlan{}, nil, errors.New("workflow upload plan: duplicate evidence is incompatible")
 	}
-	exactMedia, err := resolveWorkflowExactMedia(privateMedia, media)
+	exactMedia, err := resolveWorkflowExactMedia(ctx, privateMedia, media)
 	if err != nil {
 		return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: %w", err)
 	}

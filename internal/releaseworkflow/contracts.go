@@ -33,8 +33,13 @@ type MediaArtifactContent struct {
 // MediaPreviewContent retains one non-authoritative frame preview without
 // exposing image bytes or filesystem identity in workflow snapshots.
 type MediaPreviewContent struct {
-	Processing       api.ScreenshotProcessing
-	TimestampSeconds float64
+	ComparisonSourceID  string
+	PictureType         string
+	ObservedPTS         *int64
+	TimeBaseNumerator   int
+	TimeBaseDenominator int
+	Processing          api.ScreenshotProcessing
+	TimestampSeconds    float64
 	// DiscID identifies the prepared disc used for this preview.
 	DiscID string
 	// DiscName is the safe page-facing label for DiscID.
@@ -671,21 +676,24 @@ type State struct {
 	InputReview *inputReviewReferences `json:",omitempty"`
 	// PreparationDemand retains normalized metadata requirements separately because
 	// PrepareInput omits its internal-only requirements from persisted JSON used for hydration.
-	PreparationDemand            api.MetadataRequirementSet
-	TrackerInputAnswers          map[api.TrackerID]map[string]string
-	FactInstructions             map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot
-	Releases                     map[api.ReleaseSnapshotID]api.ReleaseSnapshot
-	InputReadiness               map[api.InputReadinessSnapshotID]api.InputReadinessSnapshot
-	Catalogs                     map[api.TrackerCatalogSnapshotID]api.TrackerCatalogSnapshot
-	Runtimes                     map[api.TrackerRuntimeSnapshotID]api.TrackerRuntimeSnapshot
-	Selections                   map[api.TrackerSelectionID]api.TrackerSelection
-	ProjectionInstructions       map[api.TrackerProjectionInstructionSnapshotID]api.TrackerProjectionInstructionSnapshot
-	Projections                  map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet
-	Preflights                   map[api.TrackerPreflightAssessmentID]api.TrackerPreflightAssessment
-	Dupes                        map[api.DupeAssessmentID]api.DupeAssessment
-	PendingDuplicateReuse        *PendingDuplicateReuse
-	TrackerApprovals             map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot
-	Media                        map[api.MediaArtifactSetID]api.MediaArtifactSet
+	PreparationDemand      api.MetadataRequirementSet
+	TrackerInputAnswers    map[api.TrackerID]map[string]string
+	FactInstructions       map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot
+	Releases               map[api.ReleaseSnapshotID]api.ReleaseSnapshot
+	InputReadiness         map[api.InputReadinessSnapshotID]api.InputReadinessSnapshot
+	Catalogs               map[api.TrackerCatalogSnapshotID]api.TrackerCatalogSnapshot
+	Runtimes               map[api.TrackerRuntimeSnapshotID]api.TrackerRuntimeSnapshot
+	Selections             map[api.TrackerSelectionID]api.TrackerSelection
+	ProjectionInstructions map[api.TrackerProjectionInstructionSnapshotID]api.TrackerProjectionInstructionSnapshot
+	Projections            map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet
+	Preflights             map[api.TrackerPreflightAssessmentID]api.TrackerPreflightAssessment
+	Dupes                  map[api.DupeAssessmentID]api.DupeAssessment
+	PendingDuplicateReuse  *PendingDuplicateReuse
+	TrackerApprovals       map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot
+	Media                  map[api.MediaArtifactSetID]api.MediaArtifactSet
+	// ComparisonMedia retains comparison intent and private inputs across metadata
+	// invalidation. It grants no current-generation capture or upload authority.
+	ComparisonMedia              *api.MediaArtifactSetRef `json:",omitempty"`
 	HDRAnalyses                  map[api.HDRAnalysisResultID]api.HDRAnalysisResult
 	HDRExtractions               map[api.HDRExtractionID]HDRExtractionRecord
 	HDRMeasurements              map[string]HDRMeasurementRecord
@@ -1199,8 +1207,10 @@ type UploadMediaImagesCommand struct {
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	Media            api.MediaArtifactSetRef
-	// ArtifactIDs defaults to selected local screenshots and DVD menus. With an
-	// empty Host, explicit IDs replace local selection without changing hosted selection.
+	// ArtifactIDs defaults to selected local screenshots, menus and comparison
+	// images. With an empty Host, explicit IDs replace ordinary local selection
+	// while retaining selected comparisons. A named Host keeps the explicit
+	// subset and does not change selection state, including for partial retries.
 	ArtifactIDs []api.PublicResourceID
 	// Host selects one host; an empty value prepares all required image hosts.
 	Host string

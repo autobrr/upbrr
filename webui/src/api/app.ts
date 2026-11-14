@@ -23,6 +23,7 @@ import type {
   ContinueReleaseWorkflowRequest,
   DeleteReleaseWorkflowMediaRequest,
   FramePreview,
+  EditReleaseWorkflowComparisonsRequest,
   InvalidateReleaseWorkflowTrackersRequest,
   MediaPlan,
   OpenActiveInputRequest,
@@ -232,6 +233,8 @@ export const releaseWorkflowClient = {
     requestApp<MediaPlan>("GetReleaseWorkflowMediaPlan", { workflowId: workflowID }, { signal }),
   previewFrame: (command: PreviewReleaseWorkflowFrameRequest, signal?: AbortSignal) =>
     requestApp<FramePreview>("PreviewReleaseWorkflowFrame", command, { signal }),
+  editComparisons: (command: EditReleaseWorkflowComparisonsRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("EditReleaseWorkflowComparisons", command, { signal }),
   stageMedia: (workflowID: string, expectedRevision: number, file: File, signal?: AbortSignal) => {
     const body = new FormData();
     body.set("workflowId", workflowID);

@@ -455,6 +455,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 
 	priorWorkflow := state.Workflow
+	priorComparisonMedia := state.ComparisonMedia
 	priorHDRExtractions := maps.Clone(state.HDRExtractions)
 	priorHDRMeasurements := cloneHDRMeasurements(state.HDRMeasurements)
 	priorDuplicateReuse := state.PendingDuplicateReuse
@@ -464,7 +465,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if result.Dupes != nil || result.TrackerApproval != nil {
+	if (result.Dupes != nil || result.TrackerApproval != nil) && (state.ComparisonMedia == nil || state.Workflow.Media != nil) {
 		if err := m.restoreReusableMedia(ctx, ownerID, &state, priorWorkflow.Media, nextRevision, now, &result); err != nil {
 			m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 			return CommandResult{}, err
@@ -517,6 +518,10 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if priorWorkflow.HDRComparison != nil && (state.Workflow.HDRComparison == nil || state.Workflow.HDRComparison.ID != priorWorkflow.HDRComparison.ID) {
 		m.private.Delete(ownerID, state.Workflow.ID, hdrComparisonPrivateResourceID(priorWorkflow.HDRComparison.ID))
 	}
+	if priorComparisonMedia != nil && (state.ComparisonMedia == nil || *state.ComparisonMedia != *priorComparisonMedia) &&
+		(state.Workflow.Media == nil || *state.Workflow.Media != *priorComparisonMedia) {
+		m.private.Delete(ownerID, state.Workflow.ID, mediaPrivateResourceID(priorComparisonMedia.ID))
+	}
 	for id := range priorHDRExtractions {
 		if _, retained := state.HDRExtractions[id]; !retained {
 			m.private.Delete(ownerID, state.Workflow.ID, hdrExtractionPrivateResourceID(id))
@@ -528,14 +533,14 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		}
 	}
 	if result.Dupes != nil {
-		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
+		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow, state.ComparisonMedia)
 	}
 	if priorDuplicateReuse != nil && (state.PendingDuplicateReuse == nil ||
 		priorDuplicateReuse.Assessment != state.PendingDuplicateReuse.Assessment) {
 		m.private.Delete(ownerID, state.Workflow.ID, dupePrivateResourceID(priorDuplicateReuse.Assessment.ID))
 	}
 	if result.Media != nil || result.Descriptions != nil {
-		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
+		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow, state.ComparisonMedia)
 	}
 	if result.HDRAnalysis != nil {
 		for _, prior := range state.HDRAnalyses {
@@ -655,11 +660,13 @@ func (m *Module) cleanupSupersededDupeResources(
 	workflowID api.WorkflowID,
 	prior api.ReleaseWorkflow,
 	current api.ReleaseWorkflow,
+	comparisonMedia *api.MediaArtifactSetRef,
 ) {
 	if prior.Dupes != nil && (current.Dupes == nil || *prior.Dupes != *current.Dupes) {
 		m.private.Delete(ownerID, workflowID, dupePrivateResourceID(prior.Dupes.ID))
 	}
-	if prior.Media != nil && (current.Media == nil || *prior.Media != *current.Media) {
+	if prior.Media != nil && (current.Media == nil || *prior.Media != *current.Media) &&
+		(comparisonMedia == nil || *prior.Media != *comparisonMedia) {
 		m.private.Delete(ownerID, workflowID, mediaPrivateResourceID(prior.Media.ID))
 	}
 	if prior.Descriptions != nil && (current.Descriptions == nil || *prior.Descriptions != *current.Descriptions) {
@@ -672,8 +679,10 @@ func (m *Module) cleanupSupersededMediaResources(
 	workflowID api.WorkflowID,
 	prior api.ReleaseWorkflow,
 	current api.ReleaseWorkflow,
+	comparisonMedia *api.MediaArtifactSetRef,
 ) {
-	if prior.Media != nil && (current.Media == nil || *prior.Media != *current.Media) {
+	if prior.Media != nil && (current.Media == nil || *prior.Media != *current.Media) &&
+		(comparisonMedia == nil || *prior.Media != *comparisonMedia) {
 		m.private.Delete(ownerID, workflowID, mediaPrivateResourceID(prior.Media.ID))
 	}
 	if prior.Descriptions != nil && (current.Descriptions == nil || *prior.Descriptions != *current.Descriptions) {
@@ -1538,7 +1547,7 @@ func operationResultForCommand(command Command, result CommandResult) (*api.Work
 		if result.Dupes != nil {
 			refID, revision = string(result.Dupes.ID), result.Dupes.Revision
 		}
-	case CaptureMediaCommand, UploadMediaImagesCommand:
+	case CaptureMediaCommand, UploadMediaImagesCommand, EditComparisonsCommand, RestoreComparisonsCommand:
 		kind = api.WorkflowOperationResultMedia
 		if result.Media != nil {
 			refID, revision = string(result.Media.ID), result.Media.Revision
@@ -1612,7 +1621,7 @@ func terminalOperationStatus(command Command, result CommandResult) api.StageSta
 		if result.Dupes != nil {
 			stageStatus = result.Dupes.Status
 		}
-	case CaptureMediaCommand:
+	case CaptureMediaCommand, EditComparisonsCommand, RestoreComparisonsCommand:
 		if result.Media != nil {
 			stageStatus = result.Media.Status
 		}
@@ -3390,6 +3399,8 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 			return true
 		case api.RequiredActionReviewDuplicates:
 			return workflow.Dupes == nil
+		case api.RequiredActionReviewComparisons:
+			return workflow.Media == nil
 		case api.RequiredActionApproveTrackers:
 			return true
 		//nolint:staticcheck // Remove retained v1 action during restart.
@@ -3792,6 +3803,10 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case CaptureMediaCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case EditComparisonsCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case RestoreComparisonsCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case AnalyzeHDRCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case SelectHDRComparisonCommand:
@@ -3893,6 +3908,10 @@ func (m *Module) apply(
 		return m.refreshPersistedMediaStatus(ctx, ownerID, state, nextRevision, now, typed)
 	case CaptureMediaCommand:
 		return m.captureMedia(ctx, ownerID, state, nextRevision, now, typed)
+	case EditComparisonsCommand:
+		return m.editComparisons(ctx, ownerID, state, nextRevision, now, typed)
+	case RestoreComparisonsCommand:
+		return m.restoreComparisons(ctx, ownerID, state, nextRevision, now)
 	case AnalyzeHDRCommand:
 		return m.analyzeHDR(ctx, ownerID, state, nextRevision, now, typed, nil, nil)
 	case SelectHDRComparisonCommand:
@@ -3949,13 +3968,29 @@ func (m *Module) apply(
 }
 
 // invalidateWorkflowPrivateResources clears stale stage authority while
-// retaining the current audio result and active operation command capsule.
+// retaining current analysis, pending composite imports and the active command.
 func (m *Module) invalidateWorkflowPrivateResources(
 	ctx context.Context,
 	ownerID string,
 	state *State,
 ) error {
 	var preserved []string
+	if state.ComparisonMedia != nil && state.Workflow.Status != api.WorkflowStatusCanceled && state.Workflow.Status != api.WorkflowStatusCompleted {
+		preserved = append(preserved, mediaPrivateResourceID(state.ComparisonMedia.ID))
+	}
+	if session := state.Composite; session != nil && state.Workflow.Status != api.WorkflowStatusCanceled &&
+		state.Workflow.Status != api.WorkflowStatusCompleted {
+		var attachments []api.MediaAttachment
+		if !session.ManualMedia.Attached {
+			attachments = append(attachments, session.ManualMedia.Attachments...)
+		}
+		if !session.ManualMedia.ComparisonsConfigured && session.ManualMedia.Comparisons != nil {
+			attachments = append(attachments, session.ManualMedia.Comparisons.Attachments...)
+		}
+		for _, attachment := range attachments {
+			preserved = append(preserved, stagedMediaPrivateResourceID(attachment.Resource.ID))
+		}
+	}
 	if ref := state.Workflow.HDRComparison; ref != nil {
 		preserved = append(preserved, hdrComparisonPrivateResourceID(ref.ID))
 	}
@@ -4035,6 +4070,7 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 	state.Workflow.RequiredActions = nil
 	state.Workflow.Failures = nil
 	state.Workflow.Status = api.WorkflowStatusCanceled
+	state.ComparisonMedia = nil
 	state.PendingCorrectionConfirmation = nil
 	if err := m.invalidateWorkflowPrivateResources(ctx, ownerID, state); err != nil {
 		return CommandResult{}, err
@@ -5985,6 +6021,15 @@ func (m *Module) publishDupes(
 	return CommandResult{Dupes: &snapshot}, nil
 }
 
+func requireReconciledExternalEffects(workflow api.ReleaseWorkflow) error {
+	if slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
+	}) {
+		return fmt.Errorf("%w: reconcile the pending external effect before changing media", ErrInvalidTransition)
+	}
+	return nil
+}
+
 // captureMedia publishes local media for the current authorized tracker set.
 // Retained captures clear skip mode so continuation can prepare images again;
 // pending external-effect reconciliation prevents capture from replacing its evidence.
@@ -6006,16 +6051,16 @@ func (m *Module) captureMedia(
 	case "", api.ScreenshotPurposeFinal, api.ScreenshotPurposeMenu:
 	case api.ScreenshotPurposePreview:
 		return CommandResult{}, fmt.Errorf("%w: preview images cannot satisfy retained media requirements", ErrInvalidTransition)
+	case api.ScreenshotPurposeComparison:
+		return CommandResult{}, fmt.Errorf("%w: capture comparisons through the aligned-row comparison workflow", ErrInvalidTransition)
 	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
 		return CommandResult{}, fmt.Errorf("%w: analysis images cannot satisfy retained media requirements", ErrInvalidTransition)
 	default:
 		return CommandResult{}, fmt.Errorf("%w: invalid media capture purpose", ErrInvalidTransition)
 	}
 	workflow := state.Workflow
-	if slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
-		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
-	}) {
-		return CommandResult{}, fmt.Errorf("%w: reconcile the pending external effect before capturing media", ErrInvalidTransition)
+	if err := requireReconciledExternalEffects(workflow); err != nil {
+		return CommandResult{}, err
 	}
 	if workflow.Release == nil || workflow.TrackerProjections == nil || workflow.Dupes == nil {
 		return CommandResult{}, fmt.Errorf("%w: media dependencies are incomplete", ErrInvalidTransition)
@@ -6046,6 +6091,14 @@ func (m *Module) captureMedia(
 	}
 	var snapshot api.MediaArtifactSet
 	var privateArtifacts any
+	if priorMedia == nil && state.ComparisonMedia != nil {
+		var retained RetainedMediaResource
+		priorMedia, retained, err = m.retainedComparisons(ctx, ownerID, state, projections.ReleaseRef, eligibleProjections, now)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		priorPrivate = retained
+	}
 	if priorMedia == nil {
 		if restorer, ok := m.mediaBuilder.(CompatibleMediaRestorer); ok {
 			restored, retained, restoreErr := restorer.RestoreCompatible(ctx, projections.ReleaseRef, eligibleProjections, nil, nil, now)
@@ -6284,6 +6337,9 @@ func (m *Module) setMediaSelection(
 	if err != nil {
 		return CommandResult{}, err
 	}
+	if comparisonCellMutation(snapshot, command.ArtifactIDs) {
+		return CommandResult{}, fmt.Errorf("%w: select or exclude complete comparison rows through comparison settings", ErrInvalidTransition)
+	}
 	selected := make(map[api.PublicResourceID]struct{}, len(command.ArtifactIDs))
 	for _, artifactID := range command.ArtifactIDs {
 		selected[artifactID] = struct{}{}
@@ -6312,6 +6368,9 @@ func (m *Module) reorderMediaArtifacts(
 	snapshot, resource, err := m.currentMutableMedia(ctx, ownerID, state, command.Media, command.ArtifactIDs, now)
 	if err != nil {
 		return CommandResult{}, err
+	}
+	if comparisonCellMutation(snapshot, command.ArtifactIDs) {
+		return CommandResult{}, fmt.Errorf("%w: reorder comparison rows or columns through comparison settings", ErrInvalidTransition)
 	}
 	order := make(map[api.PublicResourceID]int, len(command.ArtifactIDs))
 	for index, artifactID := range command.ArtifactIDs {
@@ -6349,6 +6408,11 @@ func (m *Module) attachMediaArtifacts(
 	}
 	if len(command.Attachments) == 0 {
 		return CommandResult{}, fmt.Errorf("%w: at least one media attachment is required", ErrInvalidTransition)
+	}
+	if slices.ContainsFunc(command.Attachments, func(attachment api.MediaAttachment) bool {
+		return attachment.Kind == api.MediaArtifactComparison || attachment.Purpose == api.ScreenshotPurposeComparison
+	}) {
+		return CommandResult{}, fmt.Errorf("%w: import comparison images through comparison settings so rows can be reviewed", ErrInvalidTransition)
 	}
 	release, projections, eligible, snapshot, privateMedia, err := m.mediaExtensionContext(
 		ctx,
@@ -6428,7 +6492,15 @@ func (m *Module) uploadMediaImages(
 	if err != nil {
 		return CommandResult{}, err
 	}
+	if !ComparisonMediaReviewSatisfied(snapshot) {
+		return CommandResult{}, fmt.Errorf("%w: review and approve the current comparison rows before image upload", ErrInvalidTransition)
+	}
 	if strings.TrimSpace(command.Host) == "" && len(command.ArtifactIDs) > 0 {
+		for _, artifact := range snapshot.Artifacts {
+			if artifact.Kind == api.MediaArtifactComparison && artifact.Selected && !slices.Contains(artifactIDs, artifact.ID) {
+				artifactIDs = append(artifactIDs, artifact.ID)
+			}
+		}
 		selectExplicitMediaArtifacts(&snapshot, artifactIDs)
 		markExplicitScreenshotSelection(&snapshot, artifactIDs)
 	}
@@ -6522,7 +6594,8 @@ func selectedLocalMediaArtifactIDs(state *State, mediaRef api.MediaArtifactSetRe
 	}
 	artifactIDs := make([]api.PublicResourceID, 0, len(snapshot.Artifacts))
 	for _, artifact := range snapshot.Artifacts {
-		if !artifact.Selected || (artifact.Kind != api.MediaArtifactScreenshot && artifact.Kind != api.MediaArtifactDVDMenu) {
+		if !artifact.Selected ||
+			(artifact.Kind != api.MediaArtifactScreenshot && artifact.Kind != api.MediaArtifactDVDMenu && artifact.Kind != api.MediaArtifactComparison) {
 			continue
 		}
 		artifactIDs = append(artifactIDs, artifact.ID)
@@ -6617,29 +6690,9 @@ func (m *Module) mediaExtensionContext(
 		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
 			fmt.Errorf("%w: media dependencies are stale or unresolved", ErrInvalidTransition)
 	}
-	var snapshot *api.MediaArtifactSet
-	var retained any
-	switch {
-	case workflow.Media == nil && mediaRef != nil:
-		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
-			fmt.Errorf("%w: media revision is stale", ErrInvalidTransition)
-	case workflow.Media != nil:
-		if mediaRef == nil || *workflow.Media != *mediaRef {
-			return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
-				fmt.Errorf("%w: media revision is stale", ErrInvalidTransition)
-		}
-		media, mediaOK := state.Media[workflow.Media.ID]
-		if !mediaOK || media.Revision != workflow.Media.Revision {
-			return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
-				fmt.Errorf("%w: media revision is unavailable", ErrInvalidTransition)
-		}
-		value, loadErr := m.private.Get(ownerID, workflow.ID, mediaPrivateResourceID(media.ID), now)
-		if loadErr != nil {
-			return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
-				fmt.Errorf("release workflow load media extension resource: %w", loadErr)
-		}
-		snapshot = &media
-		retained = value
+	snapshot, retained, err := m.mediaExtensionSnapshot(ownerID, state, mediaRef, now)
+	if err != nil {
+		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil, err
 	}
 	release := api.ReleaseRef{
 		SourcePath: releaseSnapshot.Release.Source.SourcePath,
@@ -6650,6 +6703,35 @@ func (m *Module) mediaExtensionContext(
 		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil, err
 	}
 	return release, projections, targets.Projections(), snapshot, retained, nil
+}
+
+func (m *Module) mediaExtensionSnapshot(ownerID string, state *State, mediaRef *api.MediaArtifactSetRef, now time.Time) (*api.MediaArtifactSet, any, error) {
+	workflow := state.Workflow
+	var snapshot *api.MediaArtifactSet
+	var retained any
+	switch {
+	case workflow.Media == nil && mediaRef != nil:
+		return nil, nil,
+			fmt.Errorf("%w: media revision is stale", ErrInvalidTransition)
+	case workflow.Media != nil:
+		if mediaRef == nil || *workflow.Media != *mediaRef {
+			return nil, nil,
+				fmt.Errorf("%w: media revision is stale", ErrInvalidTransition)
+		}
+		media, mediaOK := state.Media[workflow.Media.ID]
+		if !mediaOK || media.Revision != workflow.Media.Revision {
+			return nil, nil,
+				fmt.Errorf("%w: media revision is unavailable", ErrInvalidTransition)
+		}
+		value, loadErr := m.private.Get(ownerID, workflow.ID, mediaPrivateResourceID(media.ID), now)
+		if loadErr != nil {
+			return nil, nil,
+				fmt.Errorf("release workflow load media extension resource: %w", loadErr)
+		}
+		snapshot = &media
+		retained = value
+	}
+	return snapshot, retained, nil
 }
 
 func validateMediaRequirementsFingerprint(snapshot api.MediaArtifactSet, projections api.TrackerReleaseProjectionSet) error {
@@ -6699,6 +6781,9 @@ func (m *Module) deleteMediaArtifacts(
 		artifacts = append(artifacts, artifact)
 	}
 	snapshot.Artifacts = artifacts
+	if err := invalidateDeletedComparisonCells(&snapshot, deleted); err != nil {
+		return CommandResult{}, err
+	}
 	snapshot.ImageRequirementsPrepared = false
 	snapshot.ImageHostUploadSkipped = false
 	return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
@@ -6779,6 +6864,11 @@ func (m *Module) publishMediaMutation(
 	eligible := targets.Projections()
 	refreshMutatedMediaStatus(&snapshot, eligible.Projections, projections.Projections)
 	snapshot.TrackerApproval = targets.TrackerApproval()
+	return m.publishRetainedMediaMutation(ownerID, state, nextRevision, now, snapshot, resource)
+}
+
+func (m *Module) publishRetainedMediaMutation(ownerID string, state *State, nextRevision api.WorkflowRevision, now time.Time,
+	snapshot api.MediaArtifactSet, resource RetainedMediaResource) (CommandResult, error) {
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Prior                        api.WorkflowFingerprint
 		Artifacts                    []api.MediaArtifact
@@ -6787,7 +6877,8 @@ func (m *Module) publishMediaMutation(
 		ImageRequirementsPrepared    bool
 		ImageHostUploadSkipped       bool
 		AutomaticScreenshotSelection bool
-		ImageHostPreference          *string `json:",omitempty"`
+		ImageHostPreference          *string             `json:",omitempty"`
+		Comparisons                  *api.ComparisonPlan `json:",omitempty"`
 	}{
 		snapshot.CaptureFingerprint,
 		snapshot.Artifacts,
@@ -6797,6 +6888,7 @@ func (m *Module) publishMediaMutation(
 		snapshot.ImageHostUploadSkipped,
 		snapshot.AutomaticScreenshotSelection,
 		snapshot.ImageHostPreference,
+		snapshot.Comparisons,
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint media mutation: %w", err)
@@ -6942,6 +7034,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		requiredMenus = max(requiredMenus, projection.Artifacts.DVDMenuCount)
 	}
 	selectedScreenshots, selectedMenus := 0, 0
+	comparisonScreenshots := ComparisonMainScreenshotIDs(snapshot.Comparisons)
 	for _, artifact := range snapshot.Artifacts {
 		if !artifact.Selected {
 			continue
@@ -6949,6 +7042,10 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot:
 			selectedScreenshots++
+		case api.MediaArtifactComparison:
+			if _, reused := comparisonScreenshots[artifact.ID]; reused {
+				selectedScreenshots++
+			}
 		case api.MediaArtifactDVDMenu:
 			selectedMenus++
 		case api.MediaArtifactHostedImage:
@@ -6956,10 +7053,18 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	}
 	snapshot.Failures = hostFailures
 	snapshot.RequiredActions = reconcileActions
+	if !ComparisonMediaReviewSatisfied(*snapshot) {
+		snapshot.Status = api.StageStatusBlocked
+		snapshot.RequiredActions = append(snapshot.RequiredActions, api.RequiredAction{
+			Kind:   api.RequiredActionReviewComparisons,
+			Prompt: "Capture or import complete comparison rows, inspect every source image, and explicitly approve the current images before upload.",
+		})
+		return
+	}
 	screenshotsReady := selectedScreenshots >= requiredScreenshots
 	if snapshot.ImageRequirementsPrepared && !snapshot.ImageHostUploadSkipped {
 		screenshotsReady = !allTrackerHostsFailed && !unmatchedTrackerHostFailure &&
-			hostedScreenshotRequirementsMet(*snapshot, readinessProjections)
+			HostedScreenshotRequirementsMet(*snapshot, readinessProjections)
 	}
 	if !screenshotsReady || selectedMenus < requiredMenus {
 		snapshot.Status = api.StageStatusBlocked
@@ -6994,35 +7099,73 @@ func mediaHasUnscopedOrUnknownImageHostFailure(media api.MediaArtifactSet, proje
 	})
 }
 
-// hostedScreenshotRequirementsMet reports whether every projection has enough
-// unique selected final-screenshot sources in applicable host attempts. Multiple
-// hosted variants of the same local screenshot count once; DVD menus do not count.
-func hostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections []api.TrackerReleaseProjection) bool {
+// HostedScreenshotRequirementsMet checks screenshot minimums and complete
+// comparison coverage for each tracker. A comparison set must share one host
+// and usage scope, including when the tracker requires no ordinary screenshots.
+func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections []api.TrackerReleaseProjection) bool {
+	comparisonScreenshots := ComparisonMainScreenshotIDs(snapshot.Comparisons)
+	comparisonCells := make(map[api.PublicResourceID]struct{})
+	if snapshot.Comparisons != nil {
+		for _, row := range snapshot.Comparisons.Rows {
+			if !row.Excluded {
+				for _, cell := range row.Cells {
+					comparisonCells[cell.ArtifactID] = struct{}{}
+				}
+			}
+		}
+	}
 	artifacts := make(map[api.PublicResourceID]api.MediaArtifact, len(snapshot.Artifacts))
 	for _, artifact := range snapshot.Artifacts {
 		artifacts[artifact.ID] = artifact
 	}
 	for _, projection := range projections {
-		if projection.Artifacts.ScreenshotCount <= 0 {
+		if projection.Artifacts.ScreenshotCount <= 0 && len(comparisonCells) == 0 {
 			continue
 		}
 		trackerID := normalizeDownstreamTrackerID(projection.TrackerID)
 		sources := make(map[api.PublicResourceID]struct{}, projection.Artifacts.ScreenshotCount)
+		comparisonCoverage := make(map[string]map[api.PublicResourceID]struct{})
 		for _, attempt := range snapshot.HostAttempts {
 			if !hostedAttemptAppliesToTracker(attempt, trackerID) {
 				continue
 			}
+			host := strings.ToLower(strings.TrimSpace(attempt.Host))
+			scope := strings.ToLower(strings.TrimSpace(attempt.UsageScope))
+			if scope == "" {
+				scope = "global"
+			}
+			group := host + "\x00" + scope
 			for _, result := range attempt.Results {
 				hosted := artifacts[result.ID]
 				source := artifacts[api.PublicResourceID(strings.TrimSpace(hosted.Source))]
-				if hosted.Selected && hosted.Kind == api.MediaArtifactHostedImage && hosted.Purpose == api.ScreenshotPurposeFinal &&
-					source.Selected && source.Kind == api.MediaArtifactScreenshot && source.Purpose == api.ScreenshotPurposeFinal {
+				if _, comparison := comparisonCells[source.ID]; comparison && hosted.Selected && source.Selected &&
+					hosted.Kind == api.MediaArtifactHostedImage && hosted.Purpose == api.ScreenshotPurposeComparison &&
+					source.Kind == api.MediaArtifactComparison && source.Purpose == api.ScreenshotPurposeComparison {
+					if comparisonCoverage[group] == nil {
+						comparisonCoverage[group] = make(map[api.PublicResourceID]struct{})
+					}
+					comparisonCoverage[group][source.ID] = struct{}{}
+				}
+				_, reusedComparison := comparisonScreenshots[source.ID]
+				ordinaryScreenshot := source.Kind == api.MediaArtifactScreenshot && source.Purpose == api.ScreenshotPurposeFinal &&
+					hosted.Purpose == api.ScreenshotPurposeFinal
+				if hosted.Selected && hosted.Kind == api.MediaArtifactHostedImage && source.Selected &&
+					(ordinaryScreenshot || source.Kind == api.MediaArtifactComparison && reusedComparison) {
 					sources[source.ID] = struct{}{}
 				}
 			}
 		}
 		if len(sources) < projection.Artifacts.ScreenshotCount {
 			return false
+		}
+		if len(comparisonCells) > 0 {
+			complete := false
+			for _, covered := range comparisonCoverage {
+				complete = complete || len(covered) == len(comparisonCells)
+			}
+			if !complete {
+				return false
+			}
 		}
 	}
 	return true
@@ -7051,6 +7194,9 @@ func (m *Module) publishMedia(
 	workflow := state.Workflow
 	if workflow.Release == nil || workflow.TrackerProjections == nil {
 		return CommandResult{}, fmt.Errorf("%w: media dependencies are incomplete", ErrInvalidTransition)
+	}
+	if state.ComparisonMedia != nil && command.Snapshot.Comparisons == nil {
+		return CommandResult{}, fmt.Errorf("%w: media publication must retain comparisons or explicitly clear their setup", ErrInvalidTransition)
 	}
 	id, err := m.newID("media")
 	if err != nil {
@@ -7081,6 +7227,9 @@ func (m *Module) publishMedia(
 	}
 	state.Media[snapshot.ID] = snapshot
 	state.Workflow.Media = &api.MediaArtifactSetRef{ID: snapshot.ID, Revision: snapshot.Revision}
+	if snapshot.Comparisons != nil {
+		state.ComparisonMedia = new(*state.Workflow.Media)
+	}
 	state.Workflow.Descriptions = nil
 	invalidateUploadPlan(&state.Workflow)
 	setWorkflowStageStatus(&state.Workflow, snapshot.Status, snapshot.RequiredActions, snapshot.Failures)
@@ -7165,6 +7314,9 @@ func (m *Module) generateDescriptions(
 	projections, projectionsOK := state.Projections[workflow.TrackerProjections.ID]
 	dupes, dupesOK := state.Dupes[workflow.Dupes.ID]
 	media, mediaOK := state.Media[workflow.Media.ID]
+	if mediaOK && !ComparisonMediaReviewSatisfied(media) {
+		return CommandResult{}, fmt.Errorf("%w: review and approve the current comparison rows before generating descriptions", ErrInvalidTransition)
+	}
 	if !projectionsOK || !dupesOK || !mediaOK || projections.Revision != workflow.TrackerProjections.Revision ||
 		dupes.Revision != workflow.Dupes.Revision || dupes.ProjectionSet != *workflow.TrackerProjections ||
 		media.Revision != workflow.Media.Revision || media.ProjectionSet != *workflow.TrackerProjections ||

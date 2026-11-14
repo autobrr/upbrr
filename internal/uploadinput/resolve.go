@@ -14,12 +14,24 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/comparisons"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// ComparisonMainRequiredError exposes parsed columns so interactive adapters can
+// resolve the missing main-column choice before starting any upload workflow.
+type ComparisonMainRequiredError struct {
+	Sources []api.ComparisonSource
+}
+
+func (*ComparisonMainRequiredError) Error() string {
+	return "select the main comparison source group with --comparison_index before uploading"
+}
 
 const (
 	descriptionMaxBytes = 1 << 20
@@ -41,52 +53,78 @@ func Resolve(
 	if err != nil {
 		return ctx, api.CreateReleaseWorkflowUploadRequest{}, err
 	}
-	comparisons, err := readMediaPaths(
+	comparisonImages, _, err := readComparisonPaths(
 		resolved.Media.Screenshots.ComparisonPaths,
 		resolved.Media.Screenshots.ComparisonPrimaryIndex,
 	)
 	if err != nil {
 		return ctx, api.CreateReleaseWorkflowUploadRequest{}, fmt.Errorf("comparison images: %w", err)
 	}
-	menus, err := readMediaPaths(resolved.Media.DVDMenus.MenuPaths, nil)
+	menus, err := readMediaPaths(resolved.Media.DVDMenus.MenuPaths, false)
 	if err != nil {
 		return ctx, api.CreateReleaseWorkflowUploadRequest{}, fmt.Errorf("DVD menu images: %w", err)
 	}
-	if len(comparisons)+len(menus) > mediaMaxResources {
+	if len(comparisonImages)+len(menus) > mediaMaxResources {
 		return ctx, api.CreateReleaseWorkflowUploadRequest{}, errors.New("manual media exceeds the resource count limit")
 	}
 	total := 0
-	for _, content := range append(append([]releaseworkflow.StagedMediaContent(nil), comparisons...), menus...) {
+	for _, content := range append(append([]releaseworkflow.StagedMediaContent(nil), comparisonImages...), menus...) {
 		total += len(content.Bytes)
 	}
 	if total > mediaMaxTotal {
 		return ctx, api.CreateReleaseWorkflowUploadRequest{}, errors.New("manual media exceeds the total size limit")
 	}
-	if len(comparisons) > 0 || len(menus) > 0 {
+	if len(comparisonImages) > 0 || len(menus) > 0 {
 		ctx = releaseworkflow.WithCompositeUploadMediaInputs(ctx, releaseworkflow.CompositeUploadMediaInputs{
-			Comparisons: comparisons,
+			Comparisons: comparisonImages,
 			DVDMenus:    menus,
 		})
 	}
 	return ctx, resolved, nil
 }
 
+func readComparisonPaths(values []string, primary *int) ([]releaseworkflow.StagedMediaContent, api.ComparisonPlan, error) {
+	images, err := readMediaPaths(values, true)
+	if err != nil || len(images) == 0 {
+		return images, api.ComparisonPlan{}, err
+	}
+	main := ""
+	if primary != nil {
+		main = strconv.Itoa(*primary)
+	}
+	inputs := make([]comparisons.ImportedImage, len(images))
+	for i, image := range images {
+		inputs[i] = comparisons.ImportedImage{
+			ID:    strconv.Itoa(i + 1),
+			Name:  image.Name,
+			Bytes: image.Bytes,
+		}
+	}
+	plan, _ := comparisons.Import(inputs, main)
+	// Validate the complete mapping first; a missing main choice must not hide
+	// malformed rows. This temporary choice is never returned as user intent.
+	validation := plan
+	if main == "" && len(plan.Sources) > 0 {
+		validation.MainSourceID = plan.Sources[0].ID
+	}
+	if problems := comparisons.Validate(validation); len(problems) > 0 {
+		first := problems[0]
+		return nil, plan, fmt.Errorf("comparison row %q source %q: %s", first.RowID, first.SourceID, first.Message)
+	}
+	if main == "" {
+		return nil, plan, &ComparisonMainRequiredError{Sources: plan.Sources}
+	}
+	return images, plan, nil
+}
+
 func readMediaPaths(
 	values []string,
-	primaryIndex *int,
+	strict bool,
 ) ([]releaseworkflow.StagedMediaContent, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
-	ordered := append([]string(nil), values...)
-	if primaryIndex != nil {
-		index := *primaryIndex - 1
-		if index < 0 || index >= len(ordered) {
-			return nil, errors.New("manual media primary index is out of range")
-		}
-		ordered = append([]string{ordered[index]}, append(ordered[:index], ordered[index+1:]...)...)
-	}
-	result := make([]releaseworkflow.StagedMediaContent, 0, len(ordered))
+	result := make([]releaseworkflow.StagedMediaContent, 0, len(values))
 	total := 0
 	appendContent := func(content releaseworkflow.StagedMediaContent) error {
 		if len(result) >= mediaMaxResources {
@@ -99,7 +137,7 @@ func readMediaPaths(
 		result = append(result, content)
 		return nil
 	}
-	for _, value := range ordered {
+	for _, value := range values {
 		path, err := filepath.Abs(filepath.Clean(strings.TrimSpace(value)))
 		if err != nil || path == "" {
 			return nil, errors.New("manual media path is invalid")
@@ -125,10 +163,16 @@ func readMediaPaths(
 		added := 0
 		for _, entry := range entries {
 			if !entry.Type().IsRegular() {
+				if strict {
+					return nil, errors.New("comparison directory must contain regular image files only; supply images directly for other layouts")
+				}
 				continue
 			}
 			content, readErr := readMediaFile(filepath.Join(path, entry.Name()))
 			if readErr != nil {
+				if strict {
+					return nil, fmt.Errorf("comparison directory contains an unreadable or unsupported image: %w", readErr)
+				}
 				continue
 			}
 			if appendErr := appendContent(content); appendErr != nil {

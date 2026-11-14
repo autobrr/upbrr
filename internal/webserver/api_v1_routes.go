@@ -331,6 +331,8 @@ func (s *Server) handleAPIV1WorkflowResource(w http.ResponseWriter, r *http.Requ
 			revision,
 			request.DiscID,
 			request.TimestampSeconds,
+			request.ComparisonSourceID,
+			request.ComparisonStepDirection,
 		)
 		if err != nil {
 			writeAPIV1WorkflowError(w, err)
@@ -538,6 +540,13 @@ func (s *Server) apiV1WorkflowCommand(
 		return mapAPIV1WorkflowRequest(w, request)
 	case len(segments) == 2 && segments[1] == "audio-analysis":
 		var request api.AnalyzeReleaseWorkflowAudioRequest
+		if !decodeAPIV1JSON(w, r, &request) {
+			return nil, false
+		}
+		request.ReleaseWorkflowCommandContext = commandContext
+		return mapAPIV1WorkflowRequest(w, request)
+	case len(segments) == 3 && segments[1] == "media" && segments[2] == "comparisons":
+		var request api.EditReleaseWorkflowComparisonsRequest
 		if !decodeAPIV1JSON(w, r, &request) {
 			return nil, false
 		}

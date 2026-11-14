@@ -60,6 +60,11 @@ func exactMediaForTrackerHost(
 		exact.DVDMenuUploads = slices.DeleteFunc(exact.DVDMenuUploads, func(upload api.UploadedImageLink) bool {
 			return sourceOnlyUploadedImage(upload) || hostInList(upload.Host, failedHosts)
 		})
+		if exact.Comparisons != nil {
+			if err := comparisonMediaForTrackerHost(tracker, meta, exact, appCfg, trackerCfg, registry, preferredHosts); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if exact == nil || len(exact.Screenshots) == 0 || len(exact.ScreenshotUploads) == 0 {
 		return exact, nil

@@ -8,6 +8,57 @@ import { WorkflowOperationProgress } from "./WorkflowOperationProgress";
 
 afterEach(cleanup);
 
+it("shows the active comparison phase and percentages instead of internal work-unit counts", () => {
+  const operation = {
+    id: "comparison-1",
+    workflowId: "workflow-1",
+    operation: "media",
+    status: "running",
+    phase: "comparisons_sampling",
+    completed: 500,
+    total: 5000,
+    progress: 10,
+    message: "Scanning comparison videos",
+    items: [
+      {
+        id: "source-2",
+        kind: "comparison_source",
+        label: "Column 2",
+        status: "running",
+        completed: 500,
+        total: 1000,
+        message: "running — 50%",
+      },
+    ],
+    events: [
+      {
+        sequence: 1,
+        scope: "workflow",
+        scopeId: "workflow-1",
+        lifecycle: "running",
+        message: "Comparisons",
+      },
+    ],
+  } as unknown as Operation;
+  const { rerender } = render(<WorkflowOperationProgress operation={operation} />);
+  expect(screen.getByText("Scanning comparison videos")).toBeVisible();
+  expect(screen.getByText("10%")).toBeVisible();
+  expect(screen.getByText("running — 50%")).toBeVisible();
+  expect(screen.queryByText("500/5000 complete")).not.toBeInTheDocument();
+  rerender(
+    <WorkflowOperationProgress
+      operation={{
+        ...operation,
+        phase: "comparisons_refinement",
+        message: "Refining comparison frames",
+        progress: 55,
+      }}
+    />,
+  );
+  expect(screen.getByText("Refining comparison frames")).toBeVisible();
+  expect(screen.getByText("55%")).toBeVisible();
+});
+
 it("updates metadata detail in place, keeps stage-order percentages out of fetch counts, and retains partial and canceled outcomes", () => {
   let operation = {
     id: "metadata-1",

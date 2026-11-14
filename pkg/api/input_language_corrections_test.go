@@ -49,8 +49,7 @@ func TestInputLanguageReviewPatchRetainsOtherTracksAndRevisionAuthority(t *testi
 	}
 	snapshot.Revision++
 	_, err = ApplyReleaseCorrectionUpdate(snapshot, update)
-	var conflict *CorrectionRevisionConflictError
-	if !errors.As(err, &conflict) {
+	if _, ok := errors.AsType[*CorrectionRevisionConflictError](err); !ok {
 		t.Fatalf("stale source review did not conflict: %v", err)
 	}
 }

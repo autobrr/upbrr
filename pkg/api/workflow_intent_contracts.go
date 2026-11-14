@@ -90,11 +90,16 @@ type MediaDiscPlan struct {
 
 // FramePreview is one non-authoritative opaque frame preview.
 type FramePreview struct {
-	Processing       *ScreenshotProcessing `json:"processing,omitempty"`
-	ID               PublicResourceID      `json:"id"`
-	WorkflowID       WorkflowID            `json:"workflowId"`
-	WorkflowRevision WorkflowRevision      `json:"workflowRevision"`
-	Release          ReleaseSnapshotRef    `json:"release"`
+	ComparisonSourceID  string                `json:"comparisonSourceId,omitempty"`
+	PictureType         string                `json:"pictureType,omitempty"`
+	ObservedPTS         *int64                `json:"observedPts,omitempty"`
+	TimeBaseNumerator   int                   `json:"timeBaseNumerator,omitempty"`
+	TimeBaseDenominator int                   `json:"timeBaseDenominator,omitempty"`
+	Processing          *ScreenshotProcessing `json:"processing,omitempty"`
+	ID                  PublicResourceID      `json:"id"`
+	WorkflowID          WorkflowID            `json:"workflowId"`
+	WorkflowRevision    WorkflowRevision      `json:"workflowRevision"`
+	Release             ReleaseSnapshotRef    `json:"release"`
 	// DiscID identifies the prepared disc used for the preview.
 	DiscID string `json:"discId,omitempty"`
 	// DiscName is the safe page-facing label for DiscID.

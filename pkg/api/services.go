@@ -213,26 +213,31 @@ const (
 )
 
 // ExactMediaAssets is one authoritative workflow-owned media revision.
-// Screenshots, DVD menus, and audio analysis are independent channels, as are
+// Screenshots, comparisons, DVD menus, and audio analysis are independent channels, as are
 // their hosted variants. Audio tracks, uploads, and host choices require an
 // AudioAnalysis reference to the exact revision used for a description.
 type ExactMediaAssets struct {
 	// ImageHostUploadSkipped preserves the workflow's explicit upload opt-out.
 	// Compatible cached links remain usable, but missing variants must not trigger uploads.
 	ImageHostUploadSkipped bool
-	HDRAnalysis            *HDRAnalysisRef
-	HDRPlots               []HDRDescriptionPlot
-	HDRStats               []HDRDescriptionStats
-	HDRUploads             []UploadedImageLink
-	HDRUploadHosts         map[string]string
-	Screenshots            []ScreenshotImage
-	DVDMenus               []DVDMenuCaptureImage
-	ScreenshotUploads      []UploadedImageLink
-	DVDMenuUploads         []UploadedImageLink
-	AudioAnalysis          *AudioAnalysisRef
-	AudioTracks            []AudioDescriptionTrack
-	AudioUploads           []UploadedImageLink
-	AudioUploadHosts       map[string]string
+	// Comparisons keeps reviewed rows separate from ordinary screenshots. Map
+	// keys are the retained cell artifact identities, not slice positions.
+	Comparisons       *ComparisonPlan
+	ComparisonImages  map[PublicResourceID]ScreenshotImage
+	ComparisonUploads map[PublicResourceID][]UploadedImageLink
+	HDRAnalysis       *HDRAnalysisRef
+	HDRPlots          []HDRDescriptionPlot
+	HDRStats          []HDRDescriptionStats
+	HDRUploads        []UploadedImageLink
+	HDRUploadHosts    map[string]string
+	Screenshots       []ScreenshotImage
+	DVDMenus          []DVDMenuCaptureImage
+	ScreenshotUploads []UploadedImageLink
+	DVDMenuUploads    []UploadedImageLink
+	AudioAnalysis     *AudioAnalysisRef
+	AudioTracks       []AudioDescriptionTrack
+	AudioUploads      []UploadedImageLink
+	AudioUploadHosts  map[string]string
 }
 
 type HDRDescriptionPlot struct {
@@ -275,6 +280,8 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	}
 	cloned := &ExactMediaAssets{
 		ImageHostUploadSkipped: a.ImageHostUploadSkipped,
+		Comparisons:            cloneTrackerValidationValue(a.Comparisons),
+		ComparisonImages:       cloneTrackerValidationValue(a.ComparisonImages),
 		HDRPlots:               cloneOptionalSlice(a.HDRPlots),
 		HDRStats:               cloneOptionalSlice(a.HDRStats),
 		HDRUploads:             cloneOptionalSlice(a.HDRUploads),
@@ -286,6 +293,12 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 		AudioTracks:            cloneOptionalSlice(a.AudioTracks),
 		AudioUploads:           cloneOptionalSlice(a.AudioUploads),
 		AudioUploadHosts:       maps.Clone(a.AudioUploadHosts),
+	}
+	if a.ComparisonUploads != nil {
+		cloned.ComparisonUploads = make(map[PublicResourceID][]UploadedImageLink, len(a.ComparisonUploads))
+		for id, uploads := range a.ComparisonUploads {
+			cloned.ComparisonUploads[id] = cloneOptionalSlice(uploads)
+		}
 	}
 	if a.HDRAnalysis != nil {
 		ref := *a.HDRAnalysis
@@ -301,7 +314,7 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	return cloned
 }
 
-// Validate enforces the normal-screenshot and DVD-menu channel boundary.
+// Validate enforces media channel boundaries and retained image/upload identity.
 func (a *ExactMediaAssets) Validate() error {
 	if a == nil {
 		return nil
@@ -366,7 +379,45 @@ func (a *ExactMediaAssets) Validate() error {
 	if err := validateExactMediaUploads("audio analysis", a.AudioUploads, audioPaths); err != nil {
 		return err
 	}
+	if err := a.validateComparisonAssets(); err != nil {
+		return err
+	}
 	return a.validateHDRAssets()
+}
+
+func (a *ExactMediaAssets) validateComparisonAssets() error {
+	if a.Comparisons == nil {
+		if len(a.ComparisonImages) != 0 || len(a.ComparisonUploads) != 0 {
+			return errors.New("exact media comparison images require their reviewed row mapping")
+		}
+		return nil
+	}
+	for id, image := range a.ComparisonImages {
+		if id == "" || image.Purpose != ScreenshotPurposeComparison || strings.TrimSpace(image.Path) == "" {
+			return errors.New("exact media comparison image has invalid identity, purpose or path")
+		}
+	}
+	for _, row := range a.Comparisons.Rows {
+		if row.Excluded {
+			continue
+		}
+		for _, cell := range row.Cells {
+			image, exists := a.ComparisonImages[cell.ArtifactID]
+			if !exists || image.ContentSHA256 == "" || image.ContentSHA256 != cell.ContentSHA256 {
+				return errors.New("exact media comparison cell does not match its retained image")
+			}
+		}
+	}
+	for id, uploads := range a.ComparisonUploads {
+		image, exists := a.ComparisonImages[id]
+		for _, upload := range uploads {
+			if !exists || upload.Purpose != ScreenshotPurposeComparison || upload.ImagePath != image.Path ||
+				upload.ContentSHA256 == "" || upload.ContentSHA256 != image.ContentSHA256 {
+				return errors.New("exact media comparison upload does not match its retained cell")
+			}
+		}
+	}
+	return nil
 }
 
 func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allowedPaths map[string]struct{}) error {

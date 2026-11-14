@@ -313,6 +313,11 @@ export type SessionAction =
       finalSelectionArtifactIDs?: readonly string[];
     }>
   | Readonly<{
+      type: "comparison_previewed";
+      sessionRevision: number;
+      revision: number;
+    }>
+  | Readonly<{
       type: "screenshot_previewed";
       processing?: ScreenshotProcessing;
       timestampSeconds?: number;
@@ -1913,6 +1918,10 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
               : state.screenshots.finalSelectionArtifactIDs),
         },
       };
+    case "comparison_previewed":
+      if (!workflowMatches(state, "screenshots", action.sessionRevision, action.revision))
+        return state;
+      return { ...state, screenshots: readyWorkflow(state.screenshots) };
     case "screenshot_previewed":
       if (!workflowMatches(state, "screenshots", action.sessionRevision, action.revision))
         return state;

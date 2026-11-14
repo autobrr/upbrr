@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Select } from "../../components/ui/select";
 import type { ScreenshotsFacet } from "../../releaseSession/types";
 import type { ScreenshotSelection } from "../../types";
+import ComparisonPanel from "./ComparisonPanel";
 
 type Props = Readonly<{
   facet: ScreenshotsFacet;
@@ -31,12 +32,20 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
       view.status !== "error" &&
       view.status !== "cancelled" &&
       !view.mutationBlockedReason &&
+      view.autoLoadPlan !== false &&
       !view.plan &&
       (view.workflowMode || Boolean(view.staleReason))
     ) {
       void loadRef.current();
     }
-  }, [view.mutationBlockedReason, view.plan, view.staleReason, view.status, view.workflowMode]);
+  }, [
+    view.autoLoadPlan,
+    view.mutationBlockedReason,
+    view.plan,
+    view.staleReason,
+    view.status,
+    view.workflowMode,
+  ]);
 
   const plan = view.plan;
   const busy = view.status === "running";
@@ -151,6 +160,13 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
         </p>
       </header>
 
+      <ComparisonPanel
+        key={`${facet.comparisons.view.workflowID}:${facet.comparisons.view.plan?.fingerprint || "none"}`}
+        facet={facet.comparisons}
+        setLightboxImage={setLightboxImage}
+        setLightboxAlt={setLightboxAlt}
+      />
+
       {view.artifacts ? (
         <section className={`${pageStyle.panel} grid gap-1`} role="status">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -166,7 +182,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
 
       <section
         className={`${pageStyle.panel} flex flex-wrap items-start justify-between gap-3`}
-        aria-busy={busy}
+        aria-busy={busy && view.activeAction !== "comparison" && view.activeAction !== "edit"}
       >
         <div>
           <p className={pageStyle.label}>Source path</p>
@@ -193,7 +209,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
             onClick={() => void facet.load()}
             disabled={mutationsBlocked}
           >
-            {busy ? "Loading..." : "Load suggestions"}
+            {busy && view.activeAction === "plan" ? "Loading..." : "Load suggestions"}
           </button>
           <button
             className="primary"
@@ -201,7 +217,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
             onClick={() => void facet.generate("final")}
             disabled={mutationsBlocked || selections.length === 0}
           >
-            {busy ? "Working..." : "Generate screenshots"}
+            {busy && view.activeAction === "capture" ? "Working..." : "Generate screenshots"}
           </button>
         </div>
       </section>
@@ -291,7 +307,10 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
       </section>
 
       {workflowImages.length ? (
-        <section className={`${pageStyle.panel} grid gap-3`} aria-busy={busy}>
+        <section
+          className={`${pageStyle.panel} grid gap-3`}
+          aria-busy={busy && view.activeAction !== "comparison" && view.activeAction !== "edit"}
+        >
           <div className="flex flex-wrap items-baseline justify-between gap-[9px]">
             <h2>Generated Screenshots</h2>
             <p className="text-muted-foreground">
@@ -531,7 +550,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                   onClick={() => void runLivePreviewAt(livePreviewSeconds)}
                   disabled={previewTimingDisabled || mutationsBlocked}
                 >
-                  {busy ? "Loading..." : "Run preview"}
+                  {busy && view.activeAction === "preview" ? "Loading..." : "Run preview"}
                 </button>
                 <button
                   className="primary"
@@ -539,7 +558,9 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                   onClick={captureLivePreview}
                   disabled={previewTimingDisabled || mutationsBlocked}
                 >
-                  {busy ? "Capturing..." : "Capture preview"}
+                  {busy && view.activeAction === "preview_capture"
+                    ? "Capturing..."
+                    : "Capture preview"}
                 </button>
               </div>
             </div>

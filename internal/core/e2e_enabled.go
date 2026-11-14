@@ -2020,15 +2020,16 @@ func (s e2eImageService) Upload(
 		}
 		base := fmt.Sprintf("%s/image/%d", strings.TrimRight(s.endpoint, "/"), idx+1)
 		links = append(links, api.UploadedImageLink{
-			DiscID:     image.DiscID,
-			ImagePath:  image.Path,
-			Purpose:    image.Purpose,
-			Host:       strings.ToLower(strings.TrimSpace(host)),
-			ImgURL:     base + ".jpg",
-			RawURL:     base + ".jpg",
-			WebURL:     base,
-			UsageScope: usageScope,
-			UploadedAt: time.Now().UTC(),
+			ContentSHA256: image.ContentSHA256,
+			DiscID:        image.DiscID,
+			ImagePath:     image.Path,
+			Purpose:       image.Purpose,
+			Host:          strings.ToLower(strings.TrimSpace(host)),
+			ImgURL:        base + ".jpg",
+			RawURL:        base + ".jpg",
+			WebURL:        base,
+			UsageScope:    usageScope,
+			UploadedAt:    time.Now().UTC(),
 		})
 	}
 	if s.repo != nil && len(links) > 0 {

@@ -31,7 +31,7 @@ func TestScreenshotEvidenceFingerprintScopesCurrentHostedSelection(t *testing.T)
 			before = validationScreenshotFingerprint(exact, "LST")
 			exact.ScreenshotUploads[0].UploadedAt = time.Now()
 			exact.Screenshots[0].UploadedAt = time.Now()
-			exact.DVDMenus = []DVDMenuCaptureImage{{ScreenshotImage: ScreenshotImage{Path: "menu.png"}}}
+			exact.DVDMenus = []DVDMenuCaptureImage{{Path: "menu.png"}}
 			exact.HDRPlots = []HDRDescriptionPlot{{ArtifactID: "plot"}}
 			exact.ScreenshotUploads = append(exact.ScreenshotUploads, UploadedImageLink{
 				ImagePath:  "selected.png",

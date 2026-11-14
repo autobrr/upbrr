@@ -130,7 +130,7 @@ func TestHDRDescriptionReuseRejectsLegacyV1Records(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exact, err := resolveWorkflowExactMedia(fixture.oldPrivate, fixture.oldMedia)
+	exact, err := resolveWorkflowExactMedia(t.Context(), fixture.oldPrivate, fixture.oldMedia)
 	if err != nil {
 		t.Fatal(err)
 	}

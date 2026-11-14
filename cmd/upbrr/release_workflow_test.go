@@ -976,6 +976,11 @@ func (f *cliWorkflowCoreFake) ReleaseWorkflowAudioAnalysisArtifactPath(
 	return filepath.Join("test-output", string(artifactID)+".png"), nil
 }
 
+func (*cliWorkflowCoreFake) ReleaseWorkflowMediaArtifactPath(_ context.Context, _ string, _ api.WorkflowID,
+	_ api.MediaArtifactSetRef, artifactID api.PublicResourceID) (string, error) {
+	return filepath.Join("test-output", string(artifactID)+".png"), nil
+}
+
 func TestCLIWorkflowBlockedOperationPublishesResult(t *testing.T) {
 	session := &cliWorkflowSession{core: &cliWorkflowCoreFake{}}
 	operation := api.WorkflowOperationStatus{

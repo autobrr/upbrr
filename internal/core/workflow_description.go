@@ -20,7 +20,7 @@ import (
 )
 
 // workflowDescriptionRendererVersion invalidates generated output when composition changes.
-const workflowDescriptionRendererVersion = "description-renderer-v5"
+const workflowDescriptionRendererVersion = "description-renderer-v6-comparisons"
 
 type workflowDescriptionSubjectResolver interface {
 	ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
@@ -385,6 +385,7 @@ type workflowExactLocalMedia struct {
 // retained resources or purpose boundaries return an error; completed audio
 // analysis resources are included when supplied through DescriptionResources.
 func resolveWorkflowExactMedia(
+	ctx context.Context,
 	privateMedia any,
 	media api.MediaArtifactSet,
 ) (*api.ExactMediaAssets, error) {
@@ -396,6 +397,9 @@ func resolveWorkflowExactMedia(
 	privateArtifacts, ok := privateMedia.(workflowMediaPrivateArtifacts)
 	if !ok {
 		return nil, errors.New("workflow exact media: retained artifacts are incompatible")
+	}
+	if err := verifyWorkflowComparisons(ctx, media, privateArtifacts); err != nil {
+		return nil, fmt.Errorf("workflow exact media: comparison review: %w", err)
 	}
 	screenshots := make([]workflowExactLocalMedia, 0, len(privateArtifacts.Screenshots))
 	menus := make([]workflowExactLocalMedia, 0, len(privateArtifacts.DVDMenus))
@@ -435,6 +439,16 @@ func resolveWorkflowExactMedia(
 				selectedSources[artifact.ID] = struct{}{}
 				menus = append(menus, workflowExactLocalMedia{artifact: artifact, menu: menu})
 			}
+		case api.MediaArtifactComparison:
+			image, exists := privateArtifacts.ArtifactImages[artifact.ID]
+			if !exists || artifact.Purpose != api.ScreenshotPurposeComparison || image.Purpose != api.ScreenshotPurposeComparison {
+				return nil, errors.New("workflow exact media: comparison image has invalid purpose or content")
+			}
+			sourceKinds[artifact.ID] = artifact.Kind
+			sourceOrders[artifact.ID] = artifact.Order
+			if artifact.Selected {
+				selectedSources[artifact.ID] = struct{}{}
+			}
 		case api.MediaArtifactHostedImage:
 		}
 	}
@@ -445,8 +459,28 @@ func resolveWorkflowExactMedia(
 	slices.SortStableFunc(menus, compareLocalMediaOrder)
 	exact := &api.ExactMediaAssets{
 		ImageHostUploadSkipped: media.ImageHostUploadSkipped,
+		Comparisons:            media.Comparisons,
 		Screenshots:            make([]api.ScreenshotImage, 0, len(screenshots)),
 		DVDMenus:               make([]api.DVDMenuCaptureImage, 0, len(menus)),
+	}
+	mainComparisonImages := make(map[api.PublicResourceID]bool)
+	if media.Comparisons != nil {
+		exact.ComparisonImages = make(map[api.PublicResourceID]api.ScreenshotImage)
+		exact.ComparisonUploads = make(map[api.PublicResourceID][]api.UploadedImageLink)
+		for _, row := range media.Comparisons.Rows {
+			if row.Excluded {
+				continue
+			}
+			for _, cell := range row.Cells {
+				image := privateArtifacts.ArtifactImages[cell.ArtifactID]
+				exact.ComparisonImages[cell.ArtifactID] = image
+				if media.Comparisons.ReuseMainScreenshots && cell.SourceID == media.Comparisons.MainSourceID {
+					mainComparisonImages[cell.ArtifactID] = true
+					image.Purpose = api.ScreenshotPurposeFinal
+					exact.Screenshots = append(exact.Screenshots, image)
+				}
+			}
+		}
 	}
 	for _, item := range screenshots {
 		image := item.screenshot
@@ -490,8 +524,12 @@ func resolveWorkflowExactMedia(
 			return nil, errors.New("workflow exact media: hosted artifact source is not local media")
 		}
 		expectedPurpose := api.ScreenshotPurposeFinal
-		if kind == api.MediaArtifactDVDMenu {
+		switch kind {
+		case api.MediaArtifactDVDMenu:
 			expectedPurpose = api.ScreenshotPurposeMenu
+		case api.MediaArtifactComparison:
+			expectedPurpose = api.ScreenshotPurposeComparison
+		case api.MediaArtifactScreenshot, api.MediaArtifactHostedImage:
 		}
 		if artifact.Purpose != expectedPurpose {
 			return nil, errors.New("workflow exact media: hosted artifact purpose does not match its source channel")
@@ -518,6 +556,16 @@ func resolveWorkflowExactMedia(
 			exact.ScreenshotUploads = append(exact.ScreenshotUploads, item.upload)
 		case api.MediaArtifactDVDMenu:
 			exact.DVDMenuUploads = append(exact.DVDMenuUploads, item.upload)
+		case api.MediaArtifactComparison:
+			id := privateArtifacts.HostedSources[item.artifact.ID]
+			if _, exists := exact.ComparisonImages[id]; !exists {
+				continue
+			}
+			exact.ComparisonUploads[id] = append(exact.ComparisonUploads[id], item.upload)
+			if mainComparisonImages[id] {
+				item.upload.Purpose = api.ScreenshotPurposeFinal
+				exact.ScreenshotUploads = append(exact.ScreenshotUploads, item.upload)
+			}
 		case api.MediaArtifactHostedImage:
 			return nil, errors.New("workflow exact media: hosted artifact cannot source another hosted artifact")
 		}
@@ -557,7 +605,7 @@ func resolveWorkflowExactMedia(
 	if err := exact.Validate(); err != nil {
 		return nil, fmt.Errorf("workflow exact media: %w", err)
 	}
-	return exact, nil
+	return exact.Clone(), nil
 }
 
 func sourceOnlyScreenshotImage(image api.ScreenshotImage) bool {

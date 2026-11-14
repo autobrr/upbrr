@@ -280,13 +280,14 @@ func (m *Module) Continue(
 		}
 		return m.Current(ctx, ownerID, result.Workflow.ID)
 	}
-	if !duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) &&
+	assessmentsCurrent := continuationAssessmentGoalCurrent(current, request.Goal, m.clock.Now().UTC())
+	if assessmentsCurrent && !duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) &&
 		slices.ContainsFunc(current.Continuation.RequiredActions, func(action api.RequiredAction) bool {
 			return action.Kind == api.RequiredActionApproveTrackers && action.Status == api.RequiredActionStatusPending
 		}) {
 		return current, nil
 	}
-	if continuationGoalReached(current, request) {
+	if assessmentsCurrent && continuationGoalReached(current, request) {
 		return current, nil
 	}
 	if refreshed, handled, _, refreshErr := m.recoverPersistedMediaForContinuation(
@@ -598,6 +599,10 @@ func (m *Module) resolveContinuationAnswer(
 		if action.Status != api.RequiredActionStatusPending {
 			continue
 		}
+		if action.Kind == api.RequiredActionReviewComparisons && workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalDuplicatesDecided) {
+			// Image review gates hosting, not refresh of earlier tracker evidence.
+			continue
+		}
 		if action.Kind == api.RequiredActionReviewDuplicates && duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) {
 			continue
 		}
@@ -710,6 +715,7 @@ func continuationIntentResolvesAction(intent api.WorkflowIntent, current Command
 		legacyTrackerAuthActionKind, legacyTrackerTwoFactorActionKind, api.RequiredActionAuthorizeRules,
 		api.RequiredActionResolveTrackerPreparation,
 		api.RequiredActionApproveTrackers,
+		api.RequiredActionReviewComparisons,
 		api.RequiredActionApproveUpload, //nolint:staticcheck // Retained v1 actions cannot be satisfied by desired intent.
 		api.RequiredActionReprepare,
 		api.RequiredActionReconcileSubmission:
@@ -1036,6 +1042,16 @@ func planContinuationCommandWithReadiness(
 	if !dupesAllowContinuation(current.Projections, current.Dupes) {
 		return nil, ""
 	}
+	if current.Media == nil && current.Continuation.ComparisonRestorePending {
+		return RestoreComparisonsCommand{
+			WorkflowID:       workflowID,
+			ExpectedRevision: revision,
+			IdempotencyKey:   key("restore-comparisons"),
+		}, "restore-comparisons"
+	}
+	if current.Media != nil && !ComparisonMediaReviewSatisfied(*current.Media) {
+		return nil, "comparison-review-required"
+	}
 	if current.Media == nil || !continuationMediaCaptureSatisfied(current, request.Intent.Media) {
 		if request.Intent.Media == nil {
 			return nil, "capture-media"
@@ -1148,6 +1164,21 @@ func continuationPreflightCurrent(current CommandResult, now time.Time) bool {
 		current.Preflight.ProjectionSet.Revision == current.Projections.Revision
 }
 
+// continuationAssessmentGoalCurrent lets explicit check requests reach the
+// refresh planner instead of treating expired completed assessments as success.
+// Later submission goals keep their separate exact-authority validation.
+func continuationAssessmentGoalCurrent(current CommandResult, goal api.WorkflowGoal, now time.Time) bool {
+	if goal != api.WorkflowGoalTrackersAssessed && goal != api.WorkflowGoalDuplicatesDecided {
+		return true
+	}
+	if !continuationPreflightCurrent(current, now) {
+		return false
+	}
+	return goal != api.WorkflowGoalDuplicatesDecided || current.Dupes != nil &&
+		current.Dupes.ProjectionSet.ID == current.Projections.ID && current.Dupes.ProjectionSet.Revision == current.Projections.Revision &&
+		current.Dupes.ExpiresAt.After(now)
+}
+
 // continuationMediaCaptureSatisfied recognizes retained capture results and
 // completed imports. Overall media readiness is checked separately by the planner.
 func continuationMediaCaptureSatisfied(current CommandResult, desired *api.MediaCaptureInstructions) bool {
@@ -1209,6 +1240,7 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		return true
 	}
 	var screenshots, automaticMenus int
+	comparisonScreenshots := ComparisonMainScreenshotIDs(current.Media.Comparisons)
 	for _, artifact := range current.Media.Artifacts {
 		if !artifact.Selected {
 			continue
@@ -1216,6 +1248,10 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot:
 			screenshots++
+		case api.MediaArtifactComparison:
+			if _, reused := comparisonScreenshots[artifact.ID]; reused {
+				screenshots++
+			}
 		case api.MediaArtifactDVDMenu:
 			if artifact.Source == api.ScreenshotSelectionSourceDVDMenu {
 				automaticMenus++
@@ -1240,7 +1276,7 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		return stageSucceeded(current.Media.Status)
 	case api.ScreenshotPurposePreview:
 		return false
-	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
+	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis, api.ScreenshotPurposeComparison:
 		return false
 	}
 	return false
@@ -1362,6 +1398,7 @@ func continuationUnattendedSkipsTrackerAction(intent api.WorkflowIntent, action 
 		api.RequiredActionConfirmRescan,
 		api.RequiredActionConfirmCorrections,
 		api.RequiredActionReviewDuplicates,
+		api.RequiredActionReviewComparisons,
 		api.RequiredActionApproveTrackers,
 		api.RequiredActionApproveUpload, //nolint:staticcheck // Retained v1 action remains a global blocker.
 		api.RequiredActionReprepare,
@@ -1404,6 +1441,10 @@ func normalizeContinuationTrackerIDs(values []api.TrackerID) []api.TrackerID {
 // continuationGoalReached checks retained results against the requested intent.
 // Goals after media capture also require preparation for the requested hosting mode.
 func continuationGoalReached(current CommandResult, request api.ContinueReleaseWorkflowRequest) bool {
+	if workflowGoalRank(request.Goal) > workflowGoalRank(api.WorkflowGoalMediaReady) && current.Media != nil &&
+		!ComparisonMediaReviewSatisfied(*current.Media) {
+		return false
+	}
 	if request.Intent.HDRAnalysis != nil && workflowGoalRank(request.Goal) > workflowGoalRank(api.WorkflowGoalMediaReady) {
 		instructions, err := requestedHDRInstructions(current, request.Intent.HDRAnalysis)
 		if err != nil || !requestedHDRMatches(current, instructions) || !requestedHDRUsable(current.HDRAnalysis) ||
@@ -1630,7 +1671,8 @@ func mediaRequirementsPreparedForIntent(media *api.MediaArtifactSet, skipImageHo
 // need image preparation; hosted variants do not count.
 func mediaHasSelectedLocalImages(media *api.MediaArtifactSet) bool {
 	return media != nil && slices.ContainsFunc(media.Artifacts, func(artifact api.MediaArtifact) bool {
-		return artifact.Selected && (artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu)
+		return artifact.Selected &&
+			(artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu || artifact.Kind == api.MediaArtifactComparison)
 	})
 }
 

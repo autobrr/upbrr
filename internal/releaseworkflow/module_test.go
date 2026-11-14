@@ -2819,12 +2819,14 @@ func TestModuleDurableOperationProgressDoesNotAdvanceWorkflowRevision(t *testing
 		t.Fatalf("substep replaced aggregate stage order: %#v", progress)
 	}
 	if !slices.ContainsFunc(progress.Items, func(item api.WorkflowOperationItem) bool {
-		return item.Kind == "preparation_substep" && item.Phase == "media_facts" && item.Completed == 7 && item.Total == 100 && strings.Contains(item.Message, "10s elapsed")
+		return item.Kind == "preparation_substep" && item.Phase == "media_facts" && item.Completed == 7 && item.Total == 100 &&
+			strings.Contains(item.Message, "10s elapsed")
 	}) {
 		t.Fatalf("substep lost in durable operation: %#v", progress.Items)
 	}
 	if !slices.ContainsFunc(progress.Items, func(item api.WorkflowOperationItem) bool {
-		return item.Kind == "bluray_detail" && item.BlurayCandidate != nil && item.BlurayCandidate.ReleaseID == "101" && item.BlurayCandidate.ReleaseDate == "2026-01-02"
+		return item.Kind == "bluray_detail" && item.BlurayCandidate != nil && item.BlurayCandidate.ReleaseID == "101" &&
+			item.BlurayCandidate.ReleaseDate == "2026-01-02"
 	}) {
 		t.Fatal("progressive candidate details were not retained with the operation")
 	}
@@ -3970,7 +3972,16 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 	if _, err := module.MediaArtifact(context.Background(), testOwnerID, mutated.Workflow.ID, mediaRef, "artifact-1"); !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("stale media read error = %v, want revision conflict", err)
 	}
-	if _, err := module.MediaArtifact(context.Background(), "different-owner", mutated.Workflow.ID, *mutated.Workflow.Media, "artifact-1"); !errors.Is(err, ErrWorkflowNotFound) {
+	if _, err := module.MediaArtifact(
+		context.Background(),
+		"different-owner",
+		mutated.Workflow.ID,
+		*mutated.Workflow.Media,
+		"artifact-1",
+	); !errors.Is(
+		err,
+		ErrWorkflowNotFound,
+	) {
 		t.Fatalf("foreign-owner media read error = %v, want not found", err)
 	}
 
@@ -4727,14 +4738,30 @@ func TestModuleCancelWorkflowClearsAuthorityAndIsIdempotent(t *testing.T) {
 		ExpectedRevision: created.Workflow.Revision,
 		Input:            api.PrepareInput{SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP"},
 	})
-	if err := module.private.Put(
-		testOwnerID,
-		prepared.Workflow.ID,
-		"retained-authority",
-		"private",
-		time.Date(2026, time.July, 20, 13, 0, 0, 0, time.UTC),
-	); err != nil {
-		t.Fatalf("retain private authority: %v", err)
+	state, err := module.repository.Load(t.Context(), testOwnerID, prepared.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingImport := api.WorkflowResourceRef{ID: "pending-comparison-import"}
+	state.Composite = &compositeUploadSession{ManualMedia: compositeUploadManualMedia{
+		Comparisons: &api.ComparisonInstructions{Attachments: []api.MediaAttachment{{Resource: pendingImport}}},
+	}}
+	state.ComparisonMedia = &api.MediaArtifactSetRef{ID: "retained-comparison", Revision: 1}
+	if err := module.saveCompositeMetadata(t.Context(), testOwnerID, &state); err != nil {
+		t.Fatal(err)
+	}
+	prepared.Workflow.Revision = state.Workflow.Revision
+	retainedIDs := []string{"retained-authority", stagedMediaPrivateResourceID(pendingImport.ID), mediaPrivateResourceID(state.ComparisonMedia.ID)}
+	for _, resourceID := range retainedIDs {
+		if err := module.private.Put(
+			testOwnerID,
+			prepared.Workflow.ID,
+			resourceID,
+			"private",
+			time.Date(2026, time.July, 20, 13, 0, 0, 0, time.UTC),
+		); err != nil {
+			t.Fatalf("retain private authority: %v", err)
+		}
 	}
 	command := CancelWorkflowCommand{
 		WorkflowID:       prepared.Workflow.ID,
@@ -4746,19 +4773,25 @@ func TestModuleCancelWorkflowClearsAuthorityAndIsIdempotent(t *testing.T) {
 	if canceled.Workflow.Status != api.WorkflowStatusCanceled || canceled.Workflow.Release != nil {
 		t.Fatalf("canceled workflow = %#v", canceled.Workflow)
 	}
-	if _, err := module.private.Get(
-		testOwnerID,
-		prepared.Workflow.ID,
-		"retained-authority",
-		time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC),
-	); !errors.Is(err, ErrPrivateResourceUnavailable) {
-		t.Fatalf("canceled private authority error = %v, want %v", err, ErrPrivateResourceUnavailable)
+	state, err = module.repository.Load(t.Context(), testOwnerID, canceled.Workflow.ID)
+	if err != nil || state.ComparisonMedia != nil {
+		t.Fatalf("cancellation retained comparison intent: %v", err)
+	}
+	for _, resourceID := range retainedIDs {
+		if _, err := module.private.Get(
+			testOwnerID,
+			prepared.Workflow.ID,
+			resourceID,
+			time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC),
+		); !errors.Is(err, ErrPrivateResourceUnavailable) {
+			t.Fatalf("canceled private authority error = %v, want %v", err, ErrPrivateResourceUnavailable)
+		}
 	}
 	retried := executeCommand(t, module, command)
 	if retried.Workflow.Revision != canceled.Workflow.Revision || retried.Workflow.Status != api.WorkflowStatusCanceled {
 		t.Fatalf("cancel retry = %#v, want revision %d", retried.Workflow, canceled.Workflow.Revision)
 	}
-	_, err := module.Execute(context.Background(), testOwnerID, CancelWorkflowCommand{
+	_, err = module.Execute(context.Background(), testOwnerID, CancelWorkflowCommand{
 		WorkflowID:       canceled.Workflow.ID,
 		ExpectedRevision: canceled.Workflow.Revision,
 		Reason:           "second cancellation",
@@ -4781,7 +4814,12 @@ func TestModuleCancelWorkflowRetriesFailedPrivateResourceInvalidation(t *testing
 		Reason:           "operator request",
 		IdempotencyKey:   "cancel-invalidation-retry",
 	}
-	if _, err := module.execute(t.Context(), testOwnerID, command); err == nil || !strings.Contains(err.Error(), "synthetic private resource invalidation failure") {
+	if _, err := module.execute(
+		t.Context(),
+		testOwnerID,
+		command,
+	); err == nil ||
+		!strings.Contains(err.Error(), "synthetic private resource invalidation failure") {
 		t.Fatalf("cancel invalidation error = %v", err)
 	}
 	state, err := repository.Load(t.Context(), testOwnerID, created.Workflow.ID)
@@ -5139,7 +5177,8 @@ func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t 
 	})
 	projection := result.Projections.Projections[0]
 	if result.Workflow.Status != api.WorkflowStatusBlocked || len(result.Workflow.RequiredActions) != 2 || result.Workflow.RequiredActions[0].Status != api.RequiredActionStatusResolved ||
-		projection.Readiness != api.ReadinessStatusReady || !projection.UploadReady ||
+		projection.Readiness != api.ReadinessStatusReady ||
+		!projection.UploadReady ||
 		projection.RuleAuthorizationFingerprint != waivableFingerprint {
 		t.Fatalf(
 			"resolved rule authorization: status=%s actions=%#v projection=%#v",
@@ -5568,7 +5607,13 @@ func TestResolveImageHostingReconciliationInvalidatesMissingPrivateMedia(t *test
 				}
 			}
 			if tc.available {
-				if err := module.private.Put(testOwnerID, workflowID, dupePrivateResourceID(state.Workflow.Dupes.ID), "current evidence", now.Add(time.Hour)); err != nil {
+				if err := module.private.Put(
+					testOwnerID,
+					workflowID,
+					dupePrivateResourceID(state.Workflow.Dupes.ID),
+					"current evidence",
+					now.Add(time.Hour),
+				); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -5933,8 +5978,13 @@ func TestUploadDryRunReportsPreserveLateQuestionnaireAndRecoveryAction(t *testin
 		t.Fatal("report shares questionnaire options")
 	}
 	module, _ := newTestModule(t, testPreparer())
-	actions, err := module.stampUploadPlanActions(api.UploadPlan{Trackers: []api.UploadPlanTracker{tracker}, ExpiresAt: time.Now().Add(time.Hour)}, 2, time.Now())
-	if err != nil || len(actions) != 1 || actions[0].Kind != api.RequiredActionAnswerQuestionnaire || actions[0].TrackerID != "SPD" || actions[0].Status != api.RequiredActionStatusPending {
+	actions, err := module.stampUploadPlanActions(
+		api.UploadPlan{Trackers: []api.UploadPlanTracker{tracker}, ExpiresAt: time.Now().Add(time.Hour)},
+		2,
+		time.Now(),
+	)
+	if err != nil || len(actions) != 1 || actions[0].Kind != api.RequiredActionAnswerQuestionnaire || actions[0].TrackerID != "SPD" ||
+		actions[0].Status != api.RequiredActionStatusPending {
 		t.Fatalf("late questionnaire recovery action=%+v error=%v", actions, err)
 	}
 }

@@ -1305,6 +1305,375 @@
           "Skip"
         ]
       },
+      "ComparisonAnchor": {
+        "type": "object",
+        "properties": {
+          "mainSeconds": {
+            "type": "number"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "sourceSeconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "mainSeconds",
+          "sourceId",
+          "sourceSeconds"
+        ]
+      },
+      "ComparisonCell": {
+        "type": "object",
+        "properties": {
+          "artifactId": {
+            "$ref": "#/components/schemas/PublicResourceID"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contentSha256": {
+            "type": "string"
+          },
+          "frameNumber": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observedPts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pictureType": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "timeBaseDenominator": {
+            "type": "integer"
+          },
+          "timeBaseNumerator": {
+            "type": "integer"
+          },
+          "timestampSeconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "warning": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId"
+        ]
+      },
+      "ComparisonInstructions": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MediaAttachment"
+            }
+          },
+          "expectedFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/ComparisonPlan"
+          },
+          "videoSources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonVideoSelection"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "plan"
+        ]
+      },
+      "ComparisonPlan": {
+        "type": "object",
+        "properties": {
+          "anchors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonAnchor"
+            }
+          },
+          "approvedFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "fingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "imported": {
+            "type": "boolean"
+          },
+          "mainSourceId": {
+            "type": "string"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/ComparisonPreferences"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonProblem"
+            }
+          },
+          "reuseMainScreenshots": {
+            "type": "boolean"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonRow"
+            }
+          },
+          "sceneMix": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonSceneMix"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sizeReferenceSourceId": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonSource"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "fingerprint",
+          "imported",
+          "mainSourceId",
+          "preferences",
+          "reuseMainScreenshots",
+          "rows",
+          "sources"
+        ]
+      },
+      "ComparisonPreferences": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "darkCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "darkPercent": {
+            "type": "integer"
+          },
+          "motionCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "motionPercent": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "darkPercent",
+          "motionPercent"
+        ]
+      },
+      "ComparisonProblem": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "rowId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ]
+      },
+      "ComparisonRow": {
+        "type": "object",
+        "properties": {
+          "cells": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonCell"
+            }
+          },
+          "excluded": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cells",
+          "excluded",
+          "id"
+        ]
+      },
+      "ComparisonSceneMix": {
+        "type": "object",
+        "properties": {
+          "achievedDark": {
+            "type": "integer"
+          },
+          "achievedMotion": {
+            "type": "integer"
+          },
+          "requestedDark": {
+            "type": "integer"
+          },
+          "requestedMotion": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "achievedDark",
+          "achievedMotion",
+          "requestedDark",
+          "requestedMotion"
+        ]
+      },
+      "ComparisonSource": {
+        "type": "object",
+        "properties": {
+          "allowedFrameTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "frameRate": {
+            "type": "number"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "imported": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "overlay": {
+            "type": "boolean"
+          },
+          "preferBFrames": {
+            "type": "boolean"
+          },
+          "toneMap": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "imported",
+          "label",
+          "overlay"
+        ]
+      },
+      "ComparisonVideoSelection": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path"
+        ]
+      },
       "ContentBinding": {
         "type": "object",
         "properties": {
@@ -2176,6 +2545,39 @@
           "pages"
         ]
       },
+      "EditReleaseWorkflowComparisonsRequest": {
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "instructions": {
+            "$ref": "#/components/schemas/ComparisonInstructions"
+          },
+          "media": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MediaArtifactSetRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "idempotencyKey",
+          "instructions",
+          "workflowId"
+        ]
+      },
       "EditionDisplayPart": {
         "type": "object",
         "properties": {
@@ -2576,6 +2978,9 @@
       "FramePreview": {
         "type": "object",
         "properties": {
+          "comparisonSourceId": {
+            "type": "string"
+          },
           "contentUrl": {
             "type": "string"
           },
@@ -2591,6 +2996,19 @@
           "id": {
             "$ref": "#/components/schemas/PublicResourceID"
           },
+          "observedPts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pictureType": {
+            "type": "string"
+          },
           "processing": {
             "anyOf": [
               {
@@ -2603,6 +3021,12 @@
           },
           "release": {
             "$ref": "#/components/schemas/ReleaseSnapshotRef"
+          },
+          "timeBaseDenominator": {
+            "type": "integer"
+          },
+          "timeBaseNumerator": {
+            "type": "integer"
           },
           "timestampSeconds": {
             "type": "number"
@@ -4568,6 +4992,16 @@
           "captureFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
+          "comparisons": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "createdAt": {
             "type": "string"
           },
@@ -6337,6 +6771,12 @@
       "PreviewReleaseWorkflowFrameRequest": {
         "type": "object",
         "properties": {
+          "comparisonSourceId": {
+            "type": "string"
+          },
+          "comparisonStepDirection": {
+            "type": "integer"
+          },
           "discId": {
             "type": "string"
           },
@@ -8085,6 +8525,21 @@
           }
         }
       },
+      "ReleaseWorkflowUploadComparisonApproval": {
+        "type": "object",
+        "properties": {
+          "confirmed": {
+            "type": "boolean"
+          },
+          "expectedFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          }
+        },
+        "required": [
+          "confirmed",
+          "expectedFingerprint"
+        ]
+      },
       "ReleaseWorkflowUploadConfirmation": {
         "type": "object",
         "properties": {
@@ -8399,6 +8854,7 @@
           "trackerPreparation",
           "duplicateReview",
           "trackerApproval",
+          "comparisonApproval",
           "uploadApproval",
           "reprepare",
           "reconciliation"
@@ -8407,6 +8863,16 @@
       "ReleaseWorkflowUploadFeedbackResponse": {
         "type": "object",
         "properties": {
+          "comparisonApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadComparisonApproval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "duplicateReview": {
             "anyOf": [
               {
@@ -9145,6 +9611,9 @@
                 "type": "null"
               }
             ]
+          },
+          "comparisonReuseMain": {
+            "type": "boolean"
           },
           "count": {
             "anyOf": [
@@ -13519,6 +13988,9 @@
               "$ref": "#/components/schemas/GoalAvailability"
             }
           },
+          "comparisonRestorePending": {
+            "type": "boolean"
+          },
           "disposition": {
             "$ref": "#/components/schemas/WorkflowDisposition"
           },
@@ -16023,6 +16495,125 @@
         ]
       }
     },
+    "/workflows/{workflowId}/media/comparisons": {
+      "post": {
+        "description": "Retains ordered source columns and complete comparison rows. Upload requires explicit approval of the exact retained image and settings fingerprint.",
+        "operationId": "editWorkflowComparisons",
+        "parameters": [
+          {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
+            "in": "path",
+            "name": "workflowId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "instructions": {
+                    "$ref": "#/components/schemas/ComparisonInstructions"
+                  },
+                  "media": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/MediaArtifactSetRef"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "instructions"
+                ]
+              }
+            }
+          },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "Workflow state with the comparison operation attached.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Configure, match, capture or approve comparisons",
+        "tags": [
+          "Media"
+        ]
+      }
+    },
     "/workflows/{workflowId}/media/plan": {
       "get": {
         "description": "Returns the safe media capture and artifact plan for the workflow.",
@@ -16114,6 +16705,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "comparisonSourceId": {
+                    "type": "string"
+                  },
+                  "comparisonStepDirection": {
+                    "type": "integer"
+                  },
                   "discId": {
                     "type": "string"
                   },
