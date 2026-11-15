@@ -478,6 +478,43 @@ func TestPlaybackAlignmentPreservesDuplicateNativeFrames(t *testing.T) {
 	}
 }
 
+func TestAlignedMatchingPreservesNativeIntervalsWhenFilteringMainFrames(t *testing.T) {
+	main := SampledSource{ID: "main", PreferBFrames: true}
+	for i, seconds := range []float64{1, 1.04, 2} {
+		frame := sampleFrame(uint64(i+1), seconds, "B")
+		frame.FrameID = fmt.Sprint("main-", i)
+		if i == 2 {
+			frame.Luma = make([]byte, len(frame.Luma))
+		}
+		main.Frames = append(main.Frames, frame)
+	}
+	point := main
+	point.ID = "point"
+	interval := SampledSource{ID: "interval", PreferBFrames: true}
+	for i, seconds := range []float64{1.02, 1.5, 2.1} {
+		frame := sampleFrame(1, seconds, "B")
+		frame.FrameID = fmt.Sprint("interval-", i)
+		if i == 0 {
+			frame.FrameType = "P"
+		}
+		interval.Frames = append(interval.Frames, frame)
+	}
+	result, err := AlignedMatch([]SampledSource{main, point, interval}, "main", MatchOptions{Count: 1}, map[string]ConstantAlignment{
+		"point":    {ToleranceSeconds: .001, ReferenceFrameIDs: []string{"main-0", "main-2"}},
+		"interval": {ToleranceSeconds: .001, IntervalProof: true},
+	}, nil)
+	if err != nil || len(result.Rows) != 1 || !result.Rows[0].Complete {
+		t.Fatalf("matching native interval failed: %+v err=%v", result, err)
+	}
+	row := result.Rows[0]
+	if row.MainSeconds != 1 || row.Frames[2].FrameID != "interval-0" || row.Frames[2].FrameType != "P" {
+		t.Fatalf("a filtered gap authorized a later B picture: %+v", row)
+	}
+	if main.Frames[0].DisplayEndSeconds != 0 || len(main.Frames) != 3 {
+		t.Fatal("matching mutated the caller's native samples")
+	}
+}
+
 func TestAlignedMatchingKeepsStaticPredictionAndRejectsReuse(t *testing.T) {
 	main := SampledSource{
 		ID:            "main",

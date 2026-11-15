@@ -111,9 +111,9 @@ func InspectFeatures(root string) (FeatureDisc, error) {
 		if err := title.resolve(data); err != nil {
 			return FeatureDisc{}, err
 		}
-		if prior, exists := indexes[title.VTS]; exists {
+		if prior := indexes[title.VTS]; len(prior) > 0 {
 			title.VOBU = prior
-		} else {
+		} else if len(title.VOBU) > 0 {
 			indexes[title.VTS] = title.VOBU
 			indexEntries += len(title.VOBU)
 		}
@@ -238,17 +238,16 @@ func (title *FeatureTitle) resolve(data []byte) error {
 			title.Unsupported = "cell_navigation"
 			return nil
 		}
-		duration, durationErr := cell.PlaybackTime.Duration()
-		if durationErr != nil || duration <= 0 {
-			return ErrInvalidIFO
-		}
 		ticks, tickErr := cell.PlaybackTime.Ticks90()
 		if tickErr != nil {
 			return tickErr
 		}
+		if ticks <= 0 {
+			return ErrInvalidIFO
+		}
 		title.Duration90 += ticks
-		title.Duration += duration
 	}
+	title.Duration = time.Duration(title.Duration90/90000)*time.Second + time.Duration(title.Duration90%90000)*time.Second/90000
 	pgcTicks, err := title.Chain.PlaybackTime.Ticks90()
 	if err != nil || title.Duration90 != pgcTicks {
 		title.Unsupported = "contradictory_cell_duration"
@@ -331,12 +330,14 @@ func (value DVDTime) Ticks90() (int64, error) {
 	minute, _ := decodeBCD(value.Minute)
 	second, _ := decodeBCD(value.Second)
 	frames, _ := decodeBCD(value.Frame & 0x3f)
-	ticks := int64(hour*3600+minute*60+second) * 90000
+	seconds := int64(hour*3600 + minute*60 + second)
+	ticks := seconds * 90000
 	if value.Frame&0xc0 == 0x40 {
 		ticks += int64(frames) * 3600
 	}
 	if value.Frame&0xc0 == 0xc0 {
-		ticks += int64(frames) * 3003
+		// NTSC BCD seconds contain 30 nominal frames, each lasting 3003 ticks.
+		ticks = seconds*90090 + int64(frames)*3003
 	}
 	return ticks, nil
 }

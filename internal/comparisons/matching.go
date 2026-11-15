@@ -105,6 +105,18 @@ func match(sources []SampledSource, mainID string, options MatchOptions, alignme
 	if err != nil {
 		return MatchResult{}, err
 	}
+	// Establish native display intervals before filtering eligible main pictures.
+	// A transition proof cannot extend a picture across omitted native frames.
+	for _, alignment := range alignments {
+		if len(alignment.ReferenceFrameIDs) > 0 {
+			columns[main].frames = slices.DeleteFunc(columns[main].frames, func(frame matchingFrame) bool {
+				return !slices.Contains(alignment.ReferenceFrameIDs, frame.frame.FrameID)
+			})
+		}
+	}
+	if len(columns[main].frames) == 0 {
+		return MatchResult{}, nil
+	}
 	for i := range columns {
 		if alignment, ok := alignments[columns[i].source.ID]; ok && i != main {
 			columns[i].alignment = &alignment

@@ -324,6 +324,8 @@ func comparisonCodecInitialization(payload []byte, codec byte) bool {
 				sps = true
 			case 34:
 				pps = true
+			// CRA (21) starts remain unsupported: this window path neither validates
+			// leading-picture dependencies nor discards RASL pictures before replay.
 			case 16, 17, 18, 19, 20:
 				return vps && sps && pps
 			default:

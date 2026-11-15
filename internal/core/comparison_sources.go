@@ -87,6 +87,16 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 		}
 		source.Witnesses[string(key)] = cloneComparisonWitness(witness)
 		retained.ComparisonSources[selection.SourceID] = source
+		previous := plan.Rows[row].Cells[column]
+		if selection.SourceID == plan.MainSourceID &&
+			(previous.TimestampSeconds == nil || *previous.TimestampSeconds != content.TimestampSeconds ||
+				previous.ObservedIdentity == nil || *previous.ObservedIdentity != witness.Identity) {
+			plan.Rows[row].Scene = ""
+			plan.SceneMix = nil
+			for c := range plan.Rows[row].Cells {
+				plan.Rows[row].Cells[c].Confidence = nil
+			}
+		}
 		plan.Rows[row].Cells[column] = api.ComparisonCell{
 			SourceID:            selection.SourceID,
 			TimestampSeconds:    new(content.TimestampSeconds),
@@ -344,7 +354,13 @@ func sampleWholeComparisonSource(
 		window := request
 		window.StartSeconds = start
 		window.DurationSeconds = min(64, end-start)
-		frames, err := renderer.SampleComparisonSource(ctx, window)
+		windowCtx := api.WithWorkflowProgressReporter(ctx, func(update api.WorkflowProgressUpdate) {
+			fraction := float64(max(0, min(update.Completed, update.Total))) / float64(max(1, update.Total))
+			update.Completed = int(1000 * (start - request.StartSeconds + window.DurationSeconds*fraction) / request.DurationSeconds)
+			update.Total = 1000
+			api.EmitWorkflowProgress(ctx, update)
+		})
+		frames, err := renderer.SampleComparisonSource(windowCtx, window)
 		if err != nil {
 			return nil, fmt.Errorf("comparison source: %w", err)
 		}

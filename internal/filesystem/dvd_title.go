@@ -71,7 +71,7 @@ func OpenDVDTitle(root string, vts int) (*DVDTitleReader, error) {
 		path := filepath.Join(root, name)
 		// Entries are single directory names; the contained open below rejects links.
 		info, err := os.Lstat(path) // #nosec G703 -- path is confined to the selected DVD root.
-		if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size()%nav.SectorSize != 0 || !pathing.IsWithinRoot(root, path) {
+		if err != nil || !info.Mode().IsRegular() || !pathing.IsWithinRoot(root, path) {
 			return nil, ErrComparisonIndex
 		}
 		file, err := pathing.OpenFileWithinRoot(root, path, os.O_RDONLY, 0)
@@ -79,12 +79,16 @@ func OpenDVDTitle(root string, vts int) (*DVDTitleReader, error) {
 			return nil, fmt.Errorf("DVD title input: %w", err)
 		}
 		reader.files = append(reader.files, file)
-		reader.paths = append(reader.paths, path)
-		reader.starts = append(reader.starts, reader.Size)
-		if info.Size() > 1<<40-reader.Size {
+		opened, err := file.Stat()
+		if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() || opened.Size() <= 0 || opened.Size()%nav.SectorSize != 0 {
 			return nil, ErrComparisonIndex
 		}
-		reader.Size += info.Size()
+		reader.paths = append(reader.paths, path)
+		reader.starts = append(reader.starts, reader.Size)
+		if opened.Size() > 1<<40-reader.Size {
+			return nil, ErrComparisonIndex
+		}
+		reader.Size += opened.Size()
 	}
 	if len(reader.files) == 0 {
 		return nil, ErrComparisonIndex

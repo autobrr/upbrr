@@ -165,24 +165,6 @@ func AlignedMatch(
 	alignments map[string]ConstantAlignment,
 	previous []MatchedRow,
 ) (MatchResult, error) {
-	// A frame-accurate transition proof authorizes its observed pictures, not
-	// arbitrary extrapolation across another cut in the decoded neighborhood.
-	for i, source := range sources {
-		if source.ID != mainID {
-			continue
-		}
-		filtered := slices.Clone(source.Frames)
-		for _, alignment := range alignments {
-			if len(alignment.ReferenceFrameIDs) > 0 {
-				filtered = slices.DeleteFunc(filtered, func(frame FrameSample) bool { return !slices.Contains(alignment.ReferenceFrameIDs, frame.FrameID) })
-			}
-		}
-		if len(filtered) == 0 {
-			return MatchResult{}, nil
-		}
-		sources = slices.Clone(sources)
-		sources[i].Frames = filtered
-	}
 	if len(options.MainMoments) != 0 || options.DarkCount != 0 || options.MotionCount != 0 {
 		return MatchResult{}, errors.New("aligned matching requires automatic scenes without quotas")
 	}

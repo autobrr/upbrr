@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 )
 
 func TestFeatureTitlesRemainIndependentWithinOneVTS(t *testing.T) {
@@ -80,6 +82,65 @@ func TestFeatureRejectsCellsBeforeFirstProgramme(t *testing.T) {
 	}
 	if titles[0].Unsupported == "" {
 		t.Fatal("admitted cells before the selected programme")
+	}
+}
+
+func TestFeatureUnsupportedTitleDoesNotReplaceSharedVOBUIndex(t *testing.T) {
+	root := t.TempDir()
+	manager, vts := featureFixture()
+	manager[sectorSize+9] = 2 // The first title is multi-angle; the second is supported.
+	for name, data := range map[string][]byte{"VIDEO_TS.IFO": manager, "VTS_01_0.IFO": vts} {
+		if err := os.WriteFile(filepath.Join(root, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	disc, err := InspectFeatures(root)
+	if err != nil || len(disc.Titles) != 2 {
+		t.Fatalf("titles=%+v err=%v", disc.Titles, err)
+	}
+	if disc.Titles[0].Unsupported != "nonsequential_programme" {
+		t.Fatalf("first title unexpectedly supported: %+v", disc.Titles[0])
+	}
+	title := disc.Titles[1]
+	if title.Unsupported != "" || len(title.VOBU) != 10 || len(title.TimeMap) != 3 {
+		t.Fatalf("supported title lost seek evidence: %+v", title)
+	}
+	for _, sector := range title.TimeMap {
+		if !slices.Contains(title.VOBU, sector&0x7fffffff) {
+			t.Fatalf("time-map sector %d is missing from the VOBU index", sector)
+		}
+	}
+}
+
+func TestFeatureNTSCCellsAgreeWithPGCAcrossNominalSecond(t *testing.T) {
+	manager, data := featureFixture()
+	table := data[2*sectorSize : 3*sectorSize]
+	pgc := table[600:893]
+	copy(pgc, table[24:289])
+	binary.BigEndian.PutUint32(table[12:], 600)
+	binary.BigEndian.PutUint32(table[4:], 892)
+	pgc[3], pgc[6], pgc[7] = 2, 1, 0xc0 // One nominal NTSC second in the PGC.
+	binary.BigEndian.PutUint16(pgc[234:], 285)
+	copy(pgc[261:285], pgc[237:261])
+	for index := range 2 {
+		cell := pgc[237+index*24:]
+		cell[6], cell[7] = 0, 0xd5 // Fifteen NTSC frames per cell.
+		binary.BigEndian.PutUint32(cell[8:], uint32(10+index*50))
+		binary.BigEndian.PutUint32(cell[16:], uint32(50+index*50))
+		binary.BigEndian.PutUint32(cell[20:], uint32(59+index*50))
+		binary.BigEndian.PutUint16(pgc[285+index*4:], 1)
+		pgc[288+index*4] = 1
+	}
+	titles, err := featureTitles(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := titles[0]
+	if err := title.resolve(data); err != nil {
+		t.Fatal(err)
+	}
+	if title.Unsupported != "" || title.Duration90 != 90090 || title.Duration != 1001*time.Millisecond || len(title.VOBU) == 0 {
+		t.Fatalf("valid NTSC title rejected or mistimed: %+v", title)
 	}
 }
 
