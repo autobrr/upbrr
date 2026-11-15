@@ -11,6 +11,17 @@ import (
 	"github.com/autobrr/upbrr/internal/dvdvideo/ifo"
 )
 
+func TestComparisonDiscoveryForRegularVideoHasEmptyCandidates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Example.Video.mkv")
+	if err := os.WriteFile(path, []byte("synthetic video path"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := DiscoverComparisonProgrammes(t.Context(), path)
+	if err != nil || discovery.Candidates == nil || len(discovery.Candidates) != 0 || len(discovery.Inputs) != 0 {
+		t.Fatalf("regular-file discovery=%+v err=%v", discovery, err)
+	}
+}
+
 func TestComparisonCPIReconstructsCoarseFinePacketDomains(t *testing.T) {
 	data := make([]byte, 84)
 	copy(data, "HDMV0200")

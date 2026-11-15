@@ -106,11 +106,6 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	for i := range plan.Sources {
 		if !plan.Imported && !plan.Sources[i].Imported {
 			plan.Sources[i].Overlay = true
-			known := prior != nil && prior.Comparisons != nil && !prior.Comparisons.Imported && slices.ContainsFunc(prior.Comparisons.Sources,
-				func(source api.ComparisonSource) bool { return source.ID == plan.Sources[i].ID && !source.Imported })
-			if plan.Sources[i].ToneMap == nil && !known {
-				plan.Sources[i].ToneMap = new(false)
-			}
 		}
 	}
 	if plan.Preferences.Count == 0 {
@@ -312,6 +307,10 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 		}
 		source.Fingerprint = fingerprint
 		source.Programme = candidate
+		source.Capabilities = &api.ComparisonSourceCapabilities{
+			ProgrammeSelectionRequired: input != nil,
+			ToneMappingAvailable:       inspected.HDRFacts.SupportsToneMapping(),
+		}
 		source.Imported = false
 		source.DurationSeconds = inspected.DurationSeconds
 		source.FrameRate = inspected.FrameRate

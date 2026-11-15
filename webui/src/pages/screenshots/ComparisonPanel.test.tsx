@@ -3,11 +3,44 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { ComparisonPlan, FramePreview } from "../../api/generated/release-workflow";
+import type {
+  ComparisonPlan,
+  FramePreview,
+  ComparisonSourceDiscovery,
+} from "../../api/generated/release-workflow";
 import type { ComparisonsFacet } from "../../releaseSession/types";
 import ComparisonPanel from "./ComparisonPanel";
 
 afterEach(cleanup);
+
+it("only offers disc discovery for disc inputs and handles an empty legacy response", async () => {
+  const facet: ComparisonsFacet = {
+    ...comparisonFacet(comparisonPlan(false)),
+    discover: vi.fn(
+      async () =>
+        ({
+          sourceId: "2",
+          fingerprint: "regular-file",
+          candidates: null,
+        }) as unknown as ComparisonSourceDiscovery,
+    ),
+  };
+  render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  expect(screen.queryByRole("button", { name: "Discover titles and playlists" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: /Tone mapping/ })).toBeNull();
+  const column = within(screen.getByRole("group", { name: "Encode · column 2" }));
+  fireEvent.change(column.getByLabelText("Source type for Encode"), {
+    target: { value: "folder" },
+  });
+  fireEvent.change(column.getByLabelText("Video path for Encode"), {
+    target: { value: "Example.Input" },
+  });
+  fireEvent.click(column.getByRole("button", { name: "Discover titles and playlists" }));
+  await waitFor(() => expect(column.getByText(/No titles or playlists found/)).toBeVisible());
+  expect(screen.getByRole("button", { name: "Apply comparison setup" })).toBeVisible();
+  fireEvent.change(column.getByLabelText("Source type for Encode"), { target: { value: "file" } });
+  expect(screen.queryByRole("button", { name: "Discover titles and playlists" })).toBeNull();
+});
 
 it("applies displayed frame authority before matching or capturing, and clears replaced sources", async () => {
   const facet = observedComparisonFacet();
@@ -106,6 +139,9 @@ it("keeps discovered programmes local to a column until setup is applied", async
   };
   render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
   const column = within(screen.getByRole("group", { name: "Encode · column 2" }));
+  fireEvent.change(column.getByLabelText("Source type for Encode"), {
+    target: { value: "folder" },
+  });
   fireEvent.change(column.getByRole("textbox", { name: "Video path for Encode" }), {
     target: { value: "Example.DVD" },
   });
@@ -135,7 +171,9 @@ it("keeps discovered programmes local to a column until setup is applied", async
 });
 
 it("retains comparison render choices and defaults new videos without rewriting saved choices", async () => {
-  const facet = comparisonFacet(null);
+  const initial = comparisonFacet(null);
+  const hdr = { programmeSelectionRequired: false, toneMappingAvailable: true };
+  const facet = { ...initial, view: { ...initial.view, mainSourceCapabilities: hdr } };
   const { unmount } = render(
     <ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
   );
@@ -148,7 +186,9 @@ it("retains comparison render choices and defaults new videos without rewriting 
     expect(
       column.queryByRole("checkbox", { name: "Comparison-only frame overlay and label" }),
     ).toBeNull();
-    expect(column.getByRole("combobox", { name: /Tone mapping/ })).toHaveValue("off");
+    if (group.startsWith("Main input"))
+      expect(column.getByRole("combobox", { name: /Tone mapping/ })).toHaveValue("default");
+    else expect(column.queryByRole("combobox", { name: /Tone mapping/ })).toBeNull();
   }
   const main = within(screen.getByRole("group", { name: "Main input · column 1" }));
   fireEvent.click(main.getByRole("checkbox", { name: "B" }));
@@ -178,15 +218,18 @@ it("retains comparison render choices and defaults new videos without rewriting 
     preferBFrames: true,
     allowedFrameTypes: ["B"],
     overlay: true,
-    toneMap: false,
   });
+  expect(plan.sources[1]!.toneMap).toBeUndefined();
   expect(plan.sizeReferenceSourceId).toBe("column-2");
   expect(plan.resizeLargerOnly).toBe(true);
   expect(plan.resizeSmaller).toBe(true);
   unmount();
   render(
     <ComparisonPanel
-      facet={comparisonFacet(plan)}
+      facet={{
+        ...comparisonFacet(plan),
+        view: { ...comparisonFacet(plan).view, mainSourceCapabilities: hdr },
+      }}
       setLightboxImage={vi.fn()}
       setLightboxAlt={vi.fn()}
     />,
@@ -364,6 +407,7 @@ const observedComparisonFacet = (): ComparisonsFacet => {
     ...facet,
     view: {
       ...facet.view,
+      mainSourceCapabilities: { programmeSelectionRequired: true, toneMappingAvailable: false },
       previews: { "2": preview("2"), main: preview("main") },
     },
     discover: vi.fn(async (sourceId) => ({
@@ -563,8 +607,19 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
     preview: vi.fn(async () => preview("2", 20.13)),
   };
   render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
-  expect(screen.getByText("Renderer: software; tonemapping applied: yes.")).toBeVisible();
+  const processingHelp = screen.getByRole("button", {
+    name: "Help for Image processing · Encode, row 1, image 2",
+  });
+  processingHelp.focus();
+  await waitFor(() =>
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "Renderer: software; tonemapping applied: yes.",
+    ),
+  );
+  fireEvent.keyDown(processingHelp, { key: "Escape" });
   expect(screen.getAllByText("Renderer: libplacebo; tonemapping applied: no.")).toHaveLength(2);
+  const source = screen.getByRole("group", { name: "Encode · column 2" });
+  fireEvent.click(within(source).getByText("Preview & alignment"));
   fireEvent.change(screen.getByLabelText("Approximate frame seek · Encode"), {
     target: { value: "480" },
   });
@@ -574,7 +629,6 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
     expect(screen.getByLabelText("Preview seconds · Encode")).toHaveTextContent("20.130"),
   );
   expect(screen.queryByRole("spinbutton", { name: "Preview seconds · Encode" })).toBeNull();
-  const source = screen.getByRole("group", { name: "Encode · column 2" });
   fireEvent.click(within(source).getByRole("button", { name: "Next frame" }));
   expect(facet.preview).toHaveBeenLastCalledWith("2", 20.13, 1);
   fireEvent.click(within(source).getByRole("checkbox", { name: "I" }));

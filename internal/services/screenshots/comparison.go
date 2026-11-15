@@ -330,17 +330,15 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		toneMap = *request.ToneMap
 	}
 	frame, err := renderFrame(ctx, runner, executable, captureRequest{
-		InputPath:    path,
-		Timestamp:    request.TimestampSeconds,
-		InspectFrame: true,
-		HDRFacts:     request.Source.HDRFacts,
-		SourceWidth:  request.Source.Width,
-		SourceHeight: request.Source.Height,
-		WidthScale:   request.Source.WidthScale,
-		HeightScale:  request.Source.HeightScale,
-		ToneMap: toneMap && slices.ContainsFunc(request.Source.HDRFacts.Formats, func(format api.HDRFormat) bool {
-			return format != api.HDRFormatSDR && format != api.HDRFormatWCG
-		}),
+		InputPath:     path,
+		Timestamp:     request.TimestampSeconds,
+		InspectFrame:  true,
+		HDRFacts:      request.Source.HDRFacts,
+		SourceWidth:   request.Source.Width,
+		SourceHeight:  request.Source.Height,
+		WidthScale:    request.Source.WidthScale,
+		HeightScale:   request.Source.HeightScale,
+		ToneMap:       toneMap && request.Source.HDRFacts.SupportsToneMapping(),
 		UseLibplacebo: s.cfg.ScreenshotHandling.UseLibplacebo,
 		Algorithm:     s.cfg.ScreenshotHandling.TonemapAlgorithm,
 		Desat:         s.cfg.ScreenshotHandling.Desat,

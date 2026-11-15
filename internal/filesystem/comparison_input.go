@@ -63,7 +63,7 @@ func DiscoverComparisonProgrammes(ctx context.Context, path string) (ComparisonD
 	if err != nil {
 		return ComparisonDiscovery{}, fmt.Errorf("comparison programme metadata: %w", err)
 	}
-	result := ComparisonDiscovery{Inputs: map[string]ResolvedComparisonInput{}}
+	result := ComparisonDiscovery{Inputs: map[string]ResolvedComparisonInput{}, Candidates: []api.ComparisonProgrammeCandidate{}}
 	digest := sha256.New()
 	var bytesRead int64
 	for _, disc := range layout.Discs {

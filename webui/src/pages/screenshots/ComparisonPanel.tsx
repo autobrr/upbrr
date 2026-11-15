@@ -14,6 +14,7 @@ import type {
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Select } from "../../components/ui/select";
+import { FieldHelp } from "../../components/ui/field-help";
 import { pageStyle } from "../../components/ui/pageStyle";
 import { HostBrowserDialog } from "../../features/hostBrowser/HostBrowserDialog";
 import { ProgrammeCandidates } from "../../features/programmes/ProgrammeCandidates";
@@ -37,7 +38,6 @@ const emptyPlan = (imported: boolean): ComparisonPlan => ({
           overlay: true,
           allowedFrameTypes: ["B"],
           preferBFrames: true,
-          toneMap: false,
         },
       ],
   rows: [],
@@ -76,6 +76,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
   const [positions, setPositions] = useState<Readonly<Record<string, number>>>({});
   const [browseSource, setBrowseSource] = useState("");
   const [browseMode, setBrowseMode] = useState<"file" | "folder">("file");
+  const [sourceModes, setSourceModes] = useState<Record<string, "file" | "folder">>({});
   const [discoveries, setDiscoveries] = useState<Record<string, ComparisonSourceDiscovery>>({});
   const [programmes, setProgrammes] = useState<Record<string, ComparisonProgrammeSelection>>({});
   const [frameSelections, setFrameSelections] = useState<Record<string, ComparisonFrameSelection>>(
@@ -162,6 +163,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
     });
     if (applied) {
       setPaths({});
+      setSourceModes({});
       setProgrammes({});
       setFrameSelections({});
     }
@@ -183,7 +185,11 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
   };
   const discover = async (id: string) => {
     const discovery = await facet.discover(id, paths[id] || "");
-    if (discovery) setDiscoveries((previous) => ({ ...previous, [id]: discovery }));
+    if (discovery)
+      setDiscoveries((previous) => ({
+        ...previous,
+        [id]: { ...discovery, candidates: discovery.candidates ?? [] },
+      }));
   };
   const moveSource = (index: number, direction: number) => {
     const sources = [...draft.sources];
@@ -206,14 +212,17 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           label: `Source ${next}`,
           imported: draft.imported,
           overlay: !draft.imported,
-          ...(!draft.imported
-            ? { allowedFrameTypes: ["B"], preferBFrames: true, toneMap: false }
-            : {}),
+          ...(!draft.imported ? { allowedFrameTypes: ["B"], preferBFrames: true } : {}),
         },
       ],
     });
   };
   const removeSource = (id: string) => {
+    setSourceModes((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
     setDiscoveries((previous) => {
       const next = { ...previous };
       delete next[id];
@@ -298,12 +307,13 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
       className={`${pageStyle.panel} grid min-w-0 gap-3 [overflow-wrap:anywhere]`}
       aria-label="Comparisons"
     >
-      <div>
+      <div className="flex items-center gap-1">
         <h2>Comparisons</h2>
-        <p className="text-muted-foreground">
+        <FieldHelp label="Comparisons">
           Create matched images from videos or import prepared images. Every retained row needs
-          review before any comparison image is uploaded.
-        </p>
+          review before any comparison image is uploaded. Captions include the observed picture
+          type, position, column label and processing. Unverified frame numbers remain unknown.
+        </FieldHelp>
       </div>
       {view.error && <p role="alert">{view.error}</p>}
       {view.blockedReason && <p role="status">{view.blockedReason}</p>}
@@ -340,11 +350,13 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
         <fieldset disabled={blocked} className="grid min-w-0 gap-3">
           <legend className="sr-only">Comparison setup and review</legend>
           {draft.imported && (
-            <div className="grid gap-2">
-              <p>
+            <div className="flex flex-wrap items-center gap-3">
+              <FieldHelp label="Imported comparisons">
                 Imported pixels are retained unchanged. Their video timing, picture type, matching
-                confidence and processing provenance are unknown.
-              </p>
+                confidence and processing provenance are unknown. Names such as 01-02-encode.png
+                identify row 1, column 2. Other names can be mapped after import; incomplete rows
+                must be corrected or excluded.
+              </FieldHelp>
               <label className="grid gap-1">
                 <span>Prepared comparison images</span>
                 <input
@@ -354,10 +366,6 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   onChange={(event) => setFiles(Array.from(event.target.files || []))}
                 />
               </label>
-              <p className="text-muted-foreground">
-                Names such as 01-02-encode.png identify row 1, column 2. Other names can be mapped
-                after import; incomplete rows must be corrected or excluded.
-              </p>
               <Button
                 disabled={!files.length}
                 onClick={() => void facet.importImages(files, draft)}
@@ -367,15 +375,15 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
             </div>
           )}
 
-          <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-wrap items-end gap-x-5 gap-y-3 rounded-lg border border-border p-3 text-sm">
             <label className="grid gap-1">
               <span>Main-input column</span>
               <Select
                 value={draft.mainSourceId}
+                disabled={!draft.imported}
                 aria-describedby={
                   view.plan?.problems?.length ? "comparison-corrections" : undefined
                 }
-                disabled={!draft.imported}
                 onChange={(event) => change({ ...draft, mainSourceId: event.target.value })}
               >
                 <option value="">Choose the main-input column</option>
@@ -386,75 +394,137 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                 ))}
               </Select>
             </label>
-            <label className="flex items-center gap-2">
+            <label className="flex min-h-9 items-center gap-2">
               <Checkbox
                 checked={draft.reuseMainScreenshots}
                 onCheckedChange={(checked) => change({ ...draft, reuseMainScreenshots: checked })}
               />
               Use the main column as normal screenshots
             </label>
+            {!draft.imported && (
+              <>
+                <div className="grid w-64 max-w-full gap-1">
+                  <div className="flex items-center gap-1">
+                    <label htmlFor="comparison-frame-size">Frame size</label>
+                    <FieldHelp label="Comparison frame size" id="comparison-size-help">
+                      {draft.resizeLargerOnly
+                        ? `Match width for wide references or height for references narrower than 16:9, preserving aspect ratio. ${draft.resizeSmaller ? "Lower resolutions are resized too." : "Lower resolutions keep their size."} No padding or stretching.`
+                        : "Fit sources to the selected display size, centering with padding when aspect ratios differ. No cropping or stretching."}{" "}
+                      Apply setup before previewing.
+                    </FieldHelp>
+                  </div>
+                  <Select
+                    id="comparison-frame-size"
+                    aria-label="Comparison frame size"
+                    aria-describedby="comparison-size-help"
+                    value={draft.sizeReferenceSourceId || ""}
+                    onChange={(event) =>
+                      change({ ...draft, sizeReferenceSourceId: event.target.value })
+                    }
+                  >
+                    <option value="">Original source sizes</option>
+                    {draft.sources
+                      .filter((source) => !source.imported)
+                      .map((source) => (
+                        <option key={source.id} value={source.id}>
+                          Match {source.label || source.id}
+                          {source.width && source.height
+                            ? ` · ${source.width} × ${source.height}`
+                            : ""}
+                        </option>
+                      ))}
+                  </Select>
+                </div>
+                {draft.sizeReferenceSourceId && (
+                  <div className="grid min-h-9 content-center gap-1">
+                    <label className="flex items-center gap-2">
+                      <Checkbox
+                        checked={draft.resizeLargerOnly || false}
+                        onCheckedChange={(checked) =>
+                          change({ ...draft, resizeLargerOnly: checked })
+                        }
+                      />
+                      Resize resolutions proportionally, without padding
+                    </label>
+                    {draft.resizeLargerOnly && (
+                      <label className="flex items-center gap-2">
+                        <Checkbox
+                          checked={draft.resizeSmaller || false}
+                          onCheckedChange={(checked) =>
+                            change({ ...draft, resizeSmaller: checked })
+                          }
+                        />
+                        Also resize lower resolutions
+                      </label>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-end gap-2">
+                  {(
+                    [
+                      ["count", "Rows", "Comparison rows", 1],
+                      ["motionCount", "Motion", "Fast-motion scenes (rows)", 0],
+                      ["darkCount", "Dark", "Dark scenes (rows)", 0],
+                    ] as const
+                  ).map(([key, text, label, min]) => (
+                    <label className="grid w-16 gap-1" key={key}>
+                      <span>{text}</span>
+                      <input
+                        className={inputClass}
+                        type="number"
+                        min={min}
+                        step="1"
+                        aria-label={label}
+                        max={key === "count" ? undefined : preferences.count}
+                        aria-invalid={
+                          !Number.isInteger(preferences[key]) ||
+                          preferences[key] < min ||
+                          (key !== "count" && preferences[key] > preferences.count) ||
+                          undefined
+                        }
+                        aria-describedby="comparison-scene-help"
+                        value={preferences[key]}
+                        onChange={(event) =>
+                          change({
+                            ...draft,
+                            preferences: {
+                              ...preferences,
+                              [key]: Number(event.target.value) || 0,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                  <div className="mb-1">
+                    <FieldHelp label="Scene targets" id="comparison-scene-help">
+                      Scene targets are whole row counts from zero to the total rows. A row can
+                      count toward both dark and motion targets. Unavailable scenes are reported as
+                      unmet. Leave both targets at zero to allow bounded automatic alignment.
+                    </FieldHelp>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
-
-          {!draft.imported && (
-            <div className="grid gap-2">
-              <label className="grid gap-1">
-                <span>Comparison frame size</span>
-                <Select
-                  aria-label="Comparison frame size"
-                  aria-describedby="comparison-size-help"
-                  value={draft.sizeReferenceSourceId || ""}
-                  onChange={(event) =>
-                    change({ ...draft, sizeReferenceSourceId: event.target.value })
-                  }
-                >
-                  <option value="">Keep each source's original size</option>
-                  {draft.sources
-                    .filter((source) => !source.imported)
-                    .map((source) => (
-                      <option key={source.id} value={source.id}>
-                        Match {source.label || source.id}
-                        {source.width && source.height
-                          ? ` · ${source.width} × ${source.height}`
-                          : ""}
-                      </option>
-                    ))}
-                </Select>
-                <span id="comparison-size-help" className="text-muted-foreground">
-                  {draft.resizeLargerOnly ? (
-                    `Match width for wide references or height for references narrower than 16:9, preserving each source's aspect ratio. ${draft.resizeSmaller ? "Lower resolutions are resized too." : "Lower resolutions keep their original size."} No padding or stretching. Apply setup before previewing.`
-                  ) : (
-                    <>
-                      Fit videos to the selected source's display size, adding centered padding when
-                      aspect ratios differ. No cropping or stretching. Apply setup before
-                      previewing.
-                    </>
-                  )}
-                </span>
-              </label>
-              {draft.sizeReferenceSourceId && (
-                <label className="flex items-center gap-2">
-                  <Checkbox
-                    checked={draft.resizeLargerOnly || false}
-                    onCheckedChange={(checked) => change({ ...draft, resizeLargerOnly: checked })}
-                  />
-                  Resize resolutions proportionally, without padding
-                </label>
-              )}
-              {draft.sizeReferenceSourceId && draft.resizeLargerOnly && (
-                <label className="flex items-center gap-2">
-                  <Checkbox
-                    checked={draft.resizeSmaller || false}
-                    onCheckedChange={(checked) => change({ ...draft, resizeSmaller: checked })}
-                  />
-                  Also resize lower resolutions
-                </label>
-              )}
-            </div>
+          {!validScenes && (
+            <p role="alert">
+              Scene targets must be whole counts between zero and the number of rows.
+            </p>
           )}
-
-          <div className="grid gap-3 lg:grid-cols-2">
+          <div className="grid items-start gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))]">
             {draft.sources.map((source, index) => {
               const preview = view.previews[source.id];
+              const capabilities =
+                source.capabilities ??
+                (source.id === draft.mainSourceId ? view.mainSourceCapabilities : undefined);
+              const mode =
+                sourceModes[source.id] ??
+                (capabilities?.programmeSelectionRequired || source.programme ? "folder" : "file");
+              const toneMappingAvailable =
+                capabilities?.toneMappingAvailable &&
+                !paths[source.id]?.trim() &&
+                !sourceModes[source.id];
               const position = positionFor(source.id);
               const setPosition = (value: number) =>
                 setPositions((previous) => ({
@@ -466,7 +536,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                 }));
               return (
                 <fieldset
-                  className="grid min-w-0 gap-2 rounded border border-border p-3"
+                  className="grid min-w-0 content-start gap-2 rounded-lg border border-border p-3"
                   key={source.id}
                   aria-invalid={
                     view.plan?.problems?.some(
@@ -479,362 +549,378 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                       : undefined
                   }
                 >
-                  <legend>
+                  <legend className="px-1 text-sm font-semibold">
                     {source.label || source.id} · column {index + 1}
                   </legend>
-                  <label className="grid gap-1">
-                    <span>Column label</span>
-                    <input
-                      className={inputClass}
-                      value={source.label}
-                      onChange={(event) => sourceChange(source.id, { label: event.target.value })}
-                    />
-                  </label>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex min-w-0 items-center gap-1">
+                    <label className="min-w-0 flex-1">
+                      <span className="sr-only">Column label</span>
+                      <input
+                        className={`${inputClass} w-full`}
+                        value={source.label}
+                        onChange={(event) => sourceChange(source.id, { label: event.target.value })}
+                      />
+                    </label>
                     <Button
+                      className="px-2"
                       disabled={index === 0}
                       aria-label={`Move ${source.label || source.id} left`}
                       onClick={() => moveSource(index, -1)}
                     >
-                      Move left
+                      ←
                     </Button>
                     <Button
+                      className="px-2"
                       disabled={index === draft.sources.length - 1}
                       aria-label={`Move ${source.label || source.id} right`}
                       onClick={() => moveSource(index, 1)}
                     >
-                      Move right
+                      →
                     </Button>
                     <Button
+                      className="px-2"
                       disabled={source.id === draft.mainSourceId}
                       aria-label={`Remove ${source.label || source.id} column`}
                       onClick={() => removeSource(source.id)}
                     >
-                      Remove column
+                      ×
                     </Button>
                   </div>
                   {!source.imported && (
                     <>
                       {source.id !== draft.mainSourceId && (
-                        <div className="flex gap-2">
+                        <div className="grid min-w-0 grid-cols-[7rem_minmax(0,1fr)_auto] gap-1">
+                          <Select
+                            aria-label={`Source type for ${source.label}`}
+                            value={mode}
+                            onChange={(event) => {
+                              const nextMode = event.target.value === "folder" ? "folder" : "file";
+                              setSourceModes((previous) => ({
+                                ...previous,
+                                [source.id]: nextMode,
+                              }));
+                              changePath(source.id, "");
+                            }}
+                          >
+                            <option value="file">Video file</option>
+                            <option value="folder">Disc folder</option>
+                          </Select>
                           <input
-                            className={`${inputClass} flex-1`}
+                            className={inputClass}
                             aria-label={`Video path for ${source.label || source.id}`}
                             value={paths[source.id] || ""}
-                            placeholder={
-                              source.fingerprint
-                                ? "Registered video; enter a replacement path"
-                                : "Server-local video path"
-                            }
+                            placeholder={source.fingerprint ? "Replace source…" : "Server path…"}
                             onChange={(event) => changePath(source.id, event.target.value)}
                           />
                           <Button
+                            className="px-2"
+                            aria-label={mode === "folder" ? "Browse disc folder" : "Browse video"}
                             onClick={() => {
-                              setBrowseMode("file");
+                              setBrowseMode(mode);
                               setBrowseSource(source.id);
                             }}
                           >
-                            Browse video
-                          </Button>
-                          <Button
-                            onClick={() => {
-                              setBrowseMode("folder");
-                              setBrowseSource(source.id);
-                            }}
-                          >
-                            Browse disc folder
+                            Browse
                           </Button>
                         </div>
                       )}
-                      <Button
-                        disabled={
-                          blocked || (source.id !== draft.mainSourceId && !paths[source.id])
-                        }
-                        onClick={() => void discover(source.id)}
-                      >
-                        Discover titles and playlists
-                      </Button>
-                      {discoveries[source.id] && (
-                        <fieldset className="grid gap-1">
-                          <legend>Programme · {source.label}</legend>
-                          {discoveries[source.id]!.candidates.length ? (
-                            <ProgrammeCandidates
-                              name={`comparison-programme-${source.id}`}
-                              disabled={blocked}
-                              selected={
-                                programmes[source.id] ? [programmes[source.id]!.candidateId] : []
-                              }
-                              candidates={discoveries[source.id]!.candidates.map((candidate) => ({
-                                ...candidate,
-                                description: `${candidate.durationSeconds.toFixed(1)} seconds`,
-                                limitation: candidate.supported
-                                  ? undefined
-                                  : candidate.limitation || "Unavailable for comparisons",
-                              }))}
-                              onChoose={(id) => {
-                                clearFrameSelections(source.id);
-                                const discovery = discoveries[source.id]!;
-                                const candidate = discovery.candidates.find(
-                                  (entry) => entry.id === id,
-                                )!;
-                                setProgrammes((previous) => ({
-                                  ...previous,
-                                  [source.id]: {
-                                    kind: candidate.kind,
-                                    discId: candidate.discId,
-                                    candidateId: candidate.id,
-                                    discoveryFingerprint: discovery.fingerprint,
-                                    angle: 1,
-                                  },
-                                }));
-                              }}
-                            />
-                          ) : (
-                            <span>Regular video: no disc programme selection is needed.</span>
-                          )}
-                        </fieldset>
-                      )}
-                      {source.programme && (
-                        <p>
-                          Selected programme: {source.programme.discName} · {source.programme.label}
-                        </p>
-                      )}
-                      <p>
-                        {source.width || "?"} × {source.height || "?"} ·{" "}
-                        {source.frameRate?.toFixed(3) || "unknown"} FPS ·{" "}
-                        {source.durationSeconds?.toFixed(1) || "unknown"} seconds
-                      </p>
-                      <fieldset className="flex flex-wrap gap-3">
-                        <legend>Allowed picture types · unchecked means any</legend>
-                        <label className="flex items-center gap-1">
-                          <Checkbox
-                            checked={Boolean(source.preferBFrames)}
-                            onCheckedChange={(preferBFrames) =>
-                              sourceChange(source.id, {
-                                preferBFrames,
-                                ...(preferBFrames ? { allowedFrameTypes: ["B"] } : {}),
-                              })
+                      {mode === "folder" && (
+                        <>
+                          <Button
+                            className="justify-self-start"
+                            disabled={
+                              blocked || (source.id !== draft.mainSourceId && !paths[source.id])
                             }
-                          />
-                          Default B-frame preference
-                        </label>
-                        {["I", "P", "B"].map((type) => (
-                          <label className="flex items-center gap-1" key={type}>
+                            onClick={() => void discover(source.id)}
+                          >
+                            Discover titles and playlists
+                          </Button>
+                          {discoveries[source.id] && (
+                            <fieldset className="grid max-h-48 gap-1 overflow-y-auto text-sm">
+                              <legend>Programme · {source.label}</legend>
+                              {discoveries[source.id]!.candidates.length ? (
+                                <ProgrammeCandidates
+                                  name={`comparison-programme-${source.id}`}
+                                  disabled={blocked}
+                                  selected={
+                                    programmes[source.id]
+                                      ? [programmes[source.id]!.candidateId]
+                                      : []
+                                  }
+                                  candidates={discoveries[source.id]!.candidates.map(
+                                    (candidate) => ({
+                                      ...candidate,
+                                      description: `${candidate.durationSeconds.toFixed(1)} seconds`,
+                                      limitation: candidate.supported
+                                        ? undefined
+                                        : candidate.limitation || "Unavailable for comparisons",
+                                    }),
+                                  )}
+                                  onChoose={(id) => {
+                                    clearFrameSelections(source.id);
+                                    const discovery = discoveries[source.id]!;
+                                    const candidate = discovery.candidates.find(
+                                      (entry) => entry.id === id,
+                                    )!;
+                                    setProgrammes((previous) => ({
+                                      ...previous,
+                                      [source.id]: {
+                                        kind: candidate.kind,
+                                        discId: candidate.discId,
+                                        candidateId: candidate.id,
+                                        discoveryFingerprint: discovery.fingerprint,
+                                        angle: 1,
+                                      },
+                                    }));
+                                  }}
+                                />
+                              ) : (
+                                <p role="status">
+                                  No titles or playlists found. Choose an extracted disc folder.
+                                </p>
+                              )}
+                            </fieldset>
+                          )}
+                          {source.programme && (
+                            <p className="text-xs text-muted-foreground">
+                              Selected programme: {source.programme.discName} ·{" "}
+                              {source.programme.label}
+                            </p>
+                          )}
+                        </>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        {source.fingerprint ? (
+                          <>
+                            {source.width || "?"} × {source.height || "?"} ·{" "}
+                            {source.frameRate?.toFixed(3) || "?"} FPS ·{" "}
+                            {source.durationSeconds?.toFixed(1) || "?"}s
+                          </>
+                        ) : (
+                          "Apply setup to inspect this source"
+                        )}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <fieldset className="flex flex-wrap items-center gap-2 text-sm">
+                          <legend className="sr-only">Allowed picture types</legend>
+                          <label className="flex items-center gap-1">
                             <Checkbox
-                              checked={Boolean(source.allowedFrameTypes?.includes(type))}
-                              onCheckedChange={(checked) =>
+                              aria-label="Default B-frame preference"
+                              checked={Boolean(source.preferBFrames)}
+                              onCheckedChange={(preferBFrames) =>
                                 sourceChange(source.id, {
-                                  preferBFrames: false,
-                                  allowedFrameTypes: checked
-                                    ? [...(source.allowedFrameTypes || []), type]
-                                    : source.allowedFrameTypes?.filter((value) => value !== type),
+                                  preferBFrames,
+                                  ...(preferBFrames ? { allowedFrameTypes: ["B"] } : {}),
                                 })
                               }
                             />
-                            {type}
+                            Auto B
                           </label>
-                        ))}
-                      </fieldset>
-                      {source.preferBFrames && (
-                        <p className="text-muted-foreground">
-                          Prefer B frames. The main column can fall back to P, then I. Automatic
-                          matches for a non-I main frame can fall back only to P. Explicit picture
-                          types and manual correspondence stay as selected.
-                        </p>
-                      )}
-                      <p className="text-muted-foreground">
-                        Captions show frame position, picture type, your column label, any applied
-                        tone mapping, and resolutions when sources differ. Unverified frame numbers
-                        and totals remain unknown.
-                      </p>
-                      <label className="grid gap-1">
-                        <span>Tone mapping · {source.label}</span>
-                        <Select
-                          aria-label={`Tone mapping · ${source.label}`}
-                          aria-describedby={`comparison-tonemap-${index}`}
-                          value={source.toneMap == null ? "default" : source.toneMap ? "on" : "off"}
-                          onChange={(event) =>
-                            sourceChange(source.id, {
-                              toneMap:
-                                event.target.value === "default"
-                                  ? undefined
-                                  : event.target.value === "on",
-                            })
-                          }
-                        >
-                          <option value="off">Off</option>
-                          <option value="on">On for HDR</option>
-                          {source.toneMap == null && (
-                            <option value="default">Use screenshot setting</option>
-                          )}
-                        </Select>
-                        <span id={`comparison-tonemap-${index}`} className="text-muted-foreground">
-                          Uses the configured tone-mapping renderer. Inspect processing outcomes;
-                          renderer fallback may leave colours inaccurate.
-                        </span>
-                      </label>
-                      <label className="grid gap-1">
-                        <span>Approximate frame seek · {source.label}</span>
-                        <input
-                          className={inputClass}
-                          type="number"
-                          min="0"
-                          step="1"
-                          disabled={!source.frameRate}
-                          aria-describedby={`comparison-position-${index}`}
-                          value={source.frameRate ? Math.round(position * source.frameRate) : ""}
-                          onChange={(event) =>
-                            setPosition((Number(event.target.value) || 0) / (source.frameRate || 1))
-                          }
-                        />
-                      </label>
-                      <output
-                        id={`comparison-position-${index}`}
-                        aria-live="off"
-                        className="text-xs text-muted-foreground"
-                        aria-label={`Preview seconds · ${source.label}`}
-                      >
-                        Preview seconds: {position.toFixed(3)} · position from this source's start.
-                      </output>
-                      <p className="text-sm text-muted-foreground">
-                        Frame-number seeking estimates from average FPS. Previous and next use
-                        actual decoded frames.
-                      </p>
-                      <input
-                        aria-label={`Timeline for ${source.label}`}
-                        type="range"
-                        min="0"
-                        max={source.durationSeconds || 0}
-                        step={source.frameRate ? 1 / source.frameRate : 1}
-                        value={Math.min(position, source.durationSeconds || 0)}
-                        disabled={!source.durationSeconds}
-                        onChange={(event) => setPosition(Number(event.target.value))}
-                      />
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          disabled={dirty || !source.fingerprint}
-                          onClick={() => void previewSource(source.id, position, -1)}
-                        >
-                          Previous frame
-                        </Button>
-                        <Button
-                          disabled={dirty || !source.fingerprint}
-                          onClick={() => void previewSource(source.id, position, 1)}
-                        >
-                          Next frame
-                        </Button>
-                        <Button
-                          disabled={dirty || !source.fingerprint}
-                          onClick={() => void previewSource(source.id, position)}
-                        >
-                          Preview {source.label}
-                        </Button>
+                          {["I", "P", "B"].map((type) => (
+                            <label className="flex items-center gap-1" key={type}>
+                              <Checkbox
+                                checked={Boolean(source.allowedFrameTypes?.includes(type))}
+                                onCheckedChange={(checked) =>
+                                  sourceChange(source.id, {
+                                    preferBFrames: false,
+                                    allowedFrameTypes: checked
+                                      ? [...(source.allowedFrameTypes || []), type]
+                                      : source.allowedFrameTypes?.filter((value) => value !== type),
+                                  })
+                                }
+                              />
+                              {type}
+                            </label>
+                          ))}
+                          <FieldHelp label={`Picture types · ${source.label}`}>
+                            Unchecked means any picture type. Auto B prefers B frames; the main
+                            column can fall back to P, then I. Other automatic matches can fall back
+                            only to P for a non-I main frame. Explicit choices and manual
+                            correspondence are retained.
+                          </FieldHelp>
+                        </fieldset>
+                        {toneMappingAvailable && (
+                          <div className="flex items-center gap-1">
+                            <label className="flex min-w-0 items-center gap-1 text-sm">
+                              <span>Tone map</span>
+                              <Select
+                                className="max-w-40"
+                                aria-label={`Tone mapping · ${source.label}`}
+                                aria-describedby={`comparison-tonemap-${index}`}
+                                value={
+                                  source.toneMap == null ? "default" : source.toneMap ? "on" : "off"
+                                }
+                                onChange={(event) =>
+                                  sourceChange(source.id, {
+                                    toneMap:
+                                      event.target.value === "default"
+                                        ? undefined
+                                        : event.target.value === "on",
+                                  })
+                                }
+                              >
+                                <option value="default">Screenshot setting</option>
+                                <option value="on">Tone mapping on</option>
+                                <option value="off">Tone mapping off</option>
+                              </Select>
+                            </label>
+                            <FieldHelp
+                              label={`Tone mapping · ${source.label}`}
+                              id={`comparison-tonemap-${index}`}
+                            >
+                              Inherit the normal screenshot tone-mapping setting, or override it for
+                              this HDR source. Uses the configured renderer. Inspect any renderer
+                              fallback warning before approval.
+                            </FieldHelp>
+                          </div>
+                        )}
                       </div>
-                      {preview && (
-                        <div className="grid gap-1">
-                          <button
-                            type="button"
-                            className="justify-self-start"
-                            onClick={() =>
-                              showImage(preview.contentUrl, `${source.label} comparison preview`)
-                            }
+                      <details className="min-w-0 border-t border-border pt-2">
+                        <summary className="cursor-pointer rounded text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                          Preview &amp; alignment
+                          <span
+                            role="status"
+                            className="ml-2 text-xs font-normal text-muted-foreground"
+                            id={`comparison-position-${index}`}
+                            aria-live="off"
+                            aria-label={`Preview seconds · ${source.label}`}
                           >
-                            <img
-                              src={preview.contentUrl}
-                              className="max-h-40 max-w-full"
-                              alt={`${source.label} comparison preview`}
-                            />
-                          </button>
-                          <p>
-                            Actual preview: {preview.timestampSeconds.toFixed(3)}s ·{" "}
-                            {preview.pictureType || "unknown picture type"}
-                          </p>
-                          {preview.processing && (
-                            <p role="status">
-                              {preview.processing.warning ||
-                                `Renderer: ${preview.processing.renderer}; tonemapping applied: ${preview.processing.tonemapped ? "yes" : "no"}.`}
-                            </p>
+                            {position.toFixed(3)}s
+                          </span>
+                        </summary>
+                        <div className="mt-2 grid min-w-0 gap-2">
+                          <div className="flex items-center gap-1">
+                            <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                              <span>Frame</span>
+                              <input
+                                className={`${inputClass} w-full`}
+                                type="number"
+                                min="0"
+                                step="1"
+                                aria-label={`Approximate frame seek · ${source.label}`}
+                                aria-describedby={`comparison-seek-help-${index}`}
+                                disabled={!source.frameRate}
+                                value={
+                                  source.frameRate ? Math.round(position * source.frameRate) : ""
+                                }
+                                onChange={(event) =>
+                                  setPosition(
+                                    (Number(event.target.value) || 0) / (source.frameRate || 1),
+                                  )
+                                }
+                              />
+                            </label>
+                            <FieldHelp
+                              label={`Frame seek · ${source.label}`}
+                              id={`comparison-seek-help-${index}`}
+                            >
+                              Frame seeking estimates from average FPS; the position is measured
+                              from this source's start. Previous and next use actual decoded frames.
+                              Apply changes before previewing.
+                            </FieldHelp>
+                          </div>
+                          <input
+                            aria-label={`Timeline for ${source.label}`}
+                            type="range"
+                            min="0"
+                            max={source.durationSeconds || 0}
+                            step={source.frameRate ? 1 / source.frameRate : 1}
+                            value={Math.min(position, source.durationSeconds || 0)}
+                            disabled={!source.durationSeconds}
+                            onChange={(event) => setPosition(Number(event.target.value))}
+                          />
+                          <div className="flex flex-wrap gap-1">
+                            <Button
+                              className="px-2"
+                              disabled={dirty || !source.fingerprint}
+                              onClick={() => void previewSource(source.id, position, -1)}
+                            >
+                              Previous frame
+                            </Button>
+                            <Button
+                              className="px-2"
+                              disabled={dirty || !source.fingerprint}
+                              onClick={() => void previewSource(source.id, position, 1)}
+                            >
+                              Next frame
+                            </Button>
+                            <Button
+                              className="px-2"
+                              disabled={dirty || !source.fingerprint}
+                              onClick={() => void previewSource(source.id, position)}
+                            >
+                              Preview {source.label}
+                            </Button>
+                          </div>
+                          {preview && (
+                            <div className="grid gap-1">
+                              <button
+                                type="button"
+                                className="justify-self-start"
+                                onClick={() =>
+                                  showImage(
+                                    preview.contentUrl,
+                                    `${source.label} comparison preview`,
+                                  )
+                                }
+                              >
+                                <img
+                                  src={preview.contentUrl}
+                                  className="max-h-40 max-w-full"
+                                  alt={`${source.label} comparison preview`}
+                                />
+                              </button>
+                              <p className="text-xs">
+                                Actual preview: {preview.timestampSeconds.toFixed(3)}s ·{" "}
+                                {preview.pictureType || "unknown picture type"}
+                              </p>
+                              {preview.processing?.warning ? (
+                                <p role="status">{preview.processing.warning}</p>
+                              ) : (
+                                preview.processing && (
+                                  <FieldHelp label={`Preview processing · ${source.label}`}>
+                                    Renderer: {preview.processing.renderer}; tonemapping applied:{" "}
+                                    {preview.processing.tonemapped ? "yes" : "no"}.
+                                  </FieldHelp>
+                                )
+                              )}
+                            </div>
+                          )}
+                          {source.id !== draft.mainSourceId && (
+                            <Button
+                              disabled={!preview || !view.previews[draft.mainSourceId]}
+                              onClick={() =>
+                                change({
+                                  ...draft,
+                                  anchors: [
+                                    ...(draft.anchors || []),
+                                    {
+                                      sourceId: source.id,
+                                      mainSeconds:
+                                        view.previews[draft.mainSourceId]!.timestampSeconds,
+                                      sourceSeconds: preview!.timestampSeconds,
+                                    },
+                                  ],
+                                })
+                              }
+                            >
+                              Use displayed previews as an anchor
+                            </Button>
                           )}
                         </div>
-                      )}
-                      {source.id !== draft.mainSourceId && (
-                        <Button
-                          disabled={!preview || !view.previews[draft.mainSourceId]}
-                          onClick={() =>
-                            change({
-                              ...draft,
-                              anchors: [
-                                ...(draft.anchors || []),
-                                {
-                                  sourceId: source.id,
-                                  mainSeconds: view.previews[draft.mainSourceId]!.timestampSeconds,
-                                  sourceSeconds: preview!.timestampSeconds,
-                                },
-                              ],
-                            })
-                          }
-                        >
-                          Use displayed previews as an anchor
-                        </Button>
-                      )}
+                      </details>
                     </>
                   )}
                 </fieldset>
               );
             })}
           </div>
-          <Button onClick={addSource}>
+          <Button className="justify-self-start" onClick={addSource}>
             {draft.imported ? "Add mapped column" : "Add comparison video"}
           </Button>
 
           {!draft.imported && (
             <>
-              <div className="grid gap-2 sm:grid-cols-3">
-                {(
-                  [
-                    ["count", "Comparison rows", 1],
-                    ["motionCount", "Fast-motion scenes (rows)", 0],
-                    ["darkCount", "Dark scenes (rows)", 0],
-                  ] as const
-                ).map(([key, label, min]) => (
-                  <label className="grid gap-1" key={key}>
-                    <span>{label}</span>
-                    <input
-                      className={inputClass}
-                      type="number"
-                      min={min}
-                      max={key === "count" ? undefined : preferences.count}
-                      step={1}
-                      aria-invalid={
-                        !Number.isInteger(preferences[key]) ||
-                        preferences[key] < min ||
-                        (key !== "count" && preferences[key] > preferences.count) ||
-                        undefined
-                      }
-                      aria-describedby="comparison-scene-help"
-                      value={preferences[key]}
-                      onChange={(event) =>
-                        change({
-                          ...draft,
-                          preferences: {
-                            ...preferences,
-                            [key]: Number(event.target.value) || 0,
-                          },
-                        })
-                      }
-                    />
-                  </label>
-                ))}
-              </div>
-              <p
-                id="comparison-scene-help"
-                className="text-muted-foreground"
-                role={validScenes ? undefined : "alert"}
-              >
-                Scene targets must be whole row counts from 0 to the comparison row count. A row
-                qualifying as both dark and fast motion counts toward both targets. Unavailable
-                scenes remain reported as unmet.
-              </p>
               {(draft.anchors || []).map((anchor, index) => (
                 <div
                   className="flex flex-wrap items-center gap-2"
@@ -896,6 +982,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   setEnabled(false);
                   setDraft(emptyPlan(false));
                   setPaths({});
+                  setSourceModes({});
                   setProgrammes({});
                   setDiscoveries({});
                   setFrameSelections({});
@@ -999,7 +1086,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                     </Button>
                   )}
                 </div>
-                <div className="grid min-w-0 gap-3 lg:grid-cols-3">
+                <div className="grid min-w-0 gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr))]">
                   {row.cells
                     .map((cell, index) => ({ cell, index }))
                     .sort(
@@ -1029,19 +1116,21 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                             <p>Image missing or awaiting capture.</p>
                           )}
                           {draft.imported ? (
-                            <p>Externally supplied image · timing, type and processing unknown.</p>
+                            <FieldHelp label={`Imported image · ${label}`}>
+                              Externally supplied image · timing, type and processing unknown.
+                            </FieldHelp>
                           ) : (
                             <>
-                              <p>
+                              <p className="text-xs">
                                 Frame {cell.frameNumber ?? "unknown"} ·{" "}
                                 {cell.pictureType || "unknown type"} ·{" "}
                                 {cell.timestampSeconds?.toFixed(3) ?? "unknown"}s
                               </p>
-                              <p>
+                              <FieldHelp label={`Correspondence · ${label}`}>
                                 {cell.confidence == null
                                   ? "Manual or unresolved correspondence"
                                   : `Visual similarity score: ${cell.confidence.toFixed(3)}`}
-                              </p>
+                              </FieldHelp>
                               <label className="grid gap-1">
                                 <span>Frame time for {label}</span>
                                 <input
@@ -1104,11 +1193,15 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                             </>
                           )}
                           {cell.warning && <p role="status">{cell.warning}</p>}
-                          {image?.processing && (
-                            <p role="status">
-                              {image.processing.warning ||
-                                `Renderer: ${image.processing.renderer}; tonemapping applied: ${image.processing.tonemapped ? "yes" : "no"}.`}
-                            </p>
+                          {image?.processing?.warning ? (
+                            <p role="status">{image.processing.warning}</p>
+                          ) : (
+                            image?.processing && (
+                              <FieldHelp label={`Image processing · ${label}`}>
+                                Renderer: {image.processing.renderer}; tonemapping applied:{" "}
+                                {image.processing.tonemapped ? "yes" : "no"}.
+                              </FieldHelp>
+                            )
                           )}
                           {draft.imported && (
                             <>
@@ -1206,17 +1299,17 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
               </section>
             ))}
           </div>
-          <div className="grid gap-2 border-t border-border pt-3">
+          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
             <p role="status">
               {approved && !dirty
                 ? "These captured comparison images are approved."
                 : "Comparison images have not been approved for upload."}
             </p>
-            <p className="text-muted-foreground">
+            <FieldHelp label="Comparison image review">
               Inspect all retained images at full size before approval. Replacements, corrections
               and changed settings require another review. Normal tracker screenshot requirements
               still apply.
-            </p>
+            </FieldHelp>
             <Button
               variant="primary"
               disabled={
@@ -1239,7 +1332,13 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
         mode={browseSource ? browseMode : null}
         initialPath={paths[browseSource] || ""}
         onClose={() => setBrowseSource("")}
-        onSelect={(path) => changePath(browseSource, path)}
+        onSelect={(path, isDir) => {
+          setSourceModes((previous) => ({
+            ...previous,
+            [browseSource]: isDir ? "folder" : "file",
+          }));
+          changePath(browseSource, path);
+        }}
       />
     </section>
   );

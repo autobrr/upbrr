@@ -337,6 +337,7 @@ export type ComparisonsFacet = Readonly<{
   view: Readonly<{
     workflowID: string;
     restorePending?: boolean;
+    mainSourceCapabilities?: import("../api/generated/release-workflow").ComparisonSourceCapabilities;
     plan: ComparisonPlan | null;
     artifacts: MediaArtifactSet | null;
     previews: Readonly<Record<string, FramePreview>>;

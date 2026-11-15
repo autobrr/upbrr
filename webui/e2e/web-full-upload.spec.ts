@@ -11,6 +11,7 @@ import type {
   ActiveInputSnapshot,
   ContinueReleaseWorkflowRequest,
   ReleaseWorkflowCurrent,
+  FramePreview,
 } from "../src/api/generated/release-workflow";
 import {
   createAlternateSourceFixture,
@@ -29,6 +30,125 @@ import {
 
 const waitForAppMethod = (page: Page, method: string) =>
   page.waitForResponse((response) => response.url().endsWith(`/api/app/${method}`));
+
+test("embedded comparisons inherit screenshot tone mapping for HDR and keep five sources compact", async ({
+  page,
+}, testInfo) => {
+  const workspace = await createE2EWorkspace({ hdrAnalysis: "decoded" });
+  let app: AppServer | undefined;
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "upbrr:appearance:v1",
+        JSON.stringify({ version: 1, theme: "minimal", mode: "dark", accents: {} }),
+      );
+    });
+    await writeFile(
+      workspace.configPath,
+      (await readFile(workspace.configPath, "utf8")).replace(
+        "screenshot_handling:\n",
+        "screenshot_handling:\n  tone_map: true\n  use_libplacebo: false\n",
+      ),
+    );
+    const sdr = path.join(path.dirname(workspace.sourcePath), "Example.SDR.mkv");
+    await promisify(execFile)("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=160x90:rate=25:duration=2",
+      "-c:v",
+      "ffv1",
+      sdr,
+    ]);
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
+    await expect
+      .poll(async () => {
+        const active = await page.request.get(
+          new URL("api/app/GetActiveInput", app!.url).toString(),
+        );
+        return ((await active.json()) as ActiveInputSnapshot).current?.selection?.trackerIds;
+      })
+      .toEqual(["HDS"]);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    const comparison = page.getByRole("region", { name: "Comparisons", exact: true });
+    await comparison.getByRole("button", { name: "Create from videos" }).click();
+    const main = comparison.getByRole("group", { name: "Main input · column 1", exact: true });
+    const tone = main.getByRole("combobox", { name: "Tone mapping · Main input", exact: true });
+    // Fixture preparation has no inspected HDR facts; configuring comparisons inspects the PQ file.
+    await expect(tone).toHaveCount(0);
+    await expect(
+      comparison.getByRole("button", { name: "Discover titles and playlists" }),
+    ).toHaveCount(0);
+    for (let index = 2; index <= 5; index++) {
+      await comparison.getByRole("button", { name: "Add comparison video" }).click();
+      await comparison.getByLabel(`Video path for Source ${index}`, { exact: true }).fill(sdr);
+    }
+    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    await expect(tone).toHaveValue("default");
+    await expect(comparison.getByRole("combobox", { name: /Tone mapping/ })).toHaveCount(1);
+    await expect(
+      comparison.getByRole("button", { name: "Discover titles and playlists" }),
+    ).toHaveCount(0);
+    await page.setViewportSize({ width: 3840, height: 2160 });
+    const cards = [
+      main,
+      ...[2, 3, 4, 5].map((index) =>
+        comparison.getByRole("group", {
+          name: `Source ${index} · column ${index}`,
+          exact: true,
+        }),
+      ),
+    ];
+    const boxes = await Promise.all(cards.map((card) => card.boundingBox()));
+    expect(boxes.every(Boolean)).toBe(true);
+    expect(
+      Math.max(...boxes.map((box) => box!.y)) - Math.min(...boxes.map((box) => box!.y)),
+    ).toBeLessThan(20);
+    expect((await comparison.boundingBox())!.height).toBeLessThan(800);
+    await comparison.screenshot({ path: testInfo.outputPath("comparison-panel-4k.png") });
+    for (const setting of ["default", "off", "default"]) {
+      await tone.selectOption(setting);
+      const apply = waitForAppMethod(page, "EditReleaseWorkflowComparisons");
+      await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+      await apply;
+      await expect(
+        comparison.getByRole("button", { name: "Apply comparison setup" }),
+      ).toBeEnabled();
+      await main.locator("summary").click();
+      await main.getByLabel("Approximate frame seek · Main input", { exact: true }).fill("25");
+      const response = waitForAppMethod(page, "PreviewReleaseWorkflowFrame");
+      await main.getByRole("button", { name: "Preview Main input", exact: true }).click();
+      const preview = await response;
+      expect(preview.ok(), await preview.text()).toBe(true);
+      expect(((await preview.json()) as FramePreview).processing?.tonemapped).toBe(
+        setting !== "off",
+      );
+    }
+    await main.locator("summary").click();
+    for (const width of [1920, 390]) {
+      await page.setViewportSize({ width, height: 1080 });
+      expect(
+        await comparison.evaluate((element) => element.scrollWidth <= element.clientWidth),
+      ).toBe(true);
+      await comparison.screenshot({ path: testInfo.outputPath(`comparison-panel-${width}.png`) });
+    }
+    const help = comparison.getByRole("button", { name: "Help for Comparisons", exact: true });
+    await help.focus();
+    await expect(page.getByRole("tooltip")).toContainText("Create matched images");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
 
 test("embedded DVD comparison selection retains native manual frames after restart", async ({
   page,
@@ -101,6 +221,10 @@ test("embedded DVD comparison selection retains native manual frames after resta
     await comparison.getByRole("button", { name: "Create from videos" }).click();
     await comparison.getByRole("button", { name: "Add comparison video" }).click();
     const column = comparison.getByRole("group", { name: "Source 2 · column 2", exact: true });
+    await expect(
+      comparison.getByRole("button", { name: "Discover titles and playlists" }),
+    ).toHaveCount(0);
+    await column.getByLabel("Source type for Source 2", { exact: true }).selectOption("folder");
     await column.getByLabel("Video path for Source 2", { exact: true }).fill(dvd);
     const before = (await snapshot()).current!;
     await column.getByRole("button", { name: "Discover titles and playlists" }).click();
@@ -111,6 +235,16 @@ test("embedded DVD comparison selection retains native manual frames after resta
     expect((await snapshot()).current?.media?.comparisons).toEqual(before.media?.comparisons);
     await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
     await expect(column.getByText(/Selected programme:/)).toBeVisible();
+    const discover = column.getByRole("button", { name: "Discover titles and playlists" });
+    await expect(discover).toBeDisabled();
+    await column.getByLabel("Video path for Source 2", { exact: true }).fill(dvd);
+    await expect(discover).toBeEnabled();
+    await discover.click();
+    await expect(title).toBeVisible();
+    await title.check();
+    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    await expect(discover).toBeDisabled();
+    await column.locator("summary").click();
     await column.getByLabel("Approximate frame seek · Source 2", { exact: true }).fill("25");
     await column.getByRole("button", { name: "Preview Source 2", exact: true }).click();
     await expect(
@@ -144,6 +278,7 @@ test("embedded DVD comparison selection retains native manual frames after resta
     await comparison
       .getByRole("button", { name: "Restore retained comparisons", exact: true })
       .click();
+    await expect(discover).toBeDisabled();
     await comparison.getByRole("button", { name: "Capture comparison rows" }).click();
     await expect(
       comparison.getByRole("button", { name: "Approve reviewed comparison images" }),
@@ -384,7 +519,7 @@ test("embedded video comparisons match three native sources and retain reviewed 
         ).toHaveCount(0);
         await expect(
           source.getByRole("combobox", { name: `Tone mapping · ${label}`, exact: true }),
-        ).toHaveValue("off");
+        ).toHaveCount(0);
       }
       await comparison
         .getByRole("checkbox", { name: "Use the main column as normal screenshots" })
@@ -414,6 +549,11 @@ test("embedded video comparisons match three native sources and retain reviewed 
       ]);
       const seek = encode.getByLabel("Approximate frame seek · Encode", { exact: true });
       const seconds = encode.getByLabel("Preview seconds · Encode", { exact: true });
+      await expect(
+        comparison.getByRole("button", { name: "Apply comparison setup" }),
+      ).toBeEnabled();
+      await expect(seek).toBeEnabled();
+      await encode.locator("summary").click();
       await seek.fill("11");
       await encode.getByRole("button", { name: "Preview Encode", exact: true }).click();
       await expect(encode.getByText("Actual preview: 1.100s · I", { exact: true })).toBeVisible();
@@ -432,15 +572,16 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await comparison
         .getByRole("checkbox", { name: "Also resize lower resolutions", exact: true })
         .check();
-      await encode
-        .getByRole("combobox", { name: "Tone mapping · Encode", exact: true })
-        .selectOption("on");
       await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+      await expect(
+        comparison.getByRole("button", { name: "Apply comparison setup" }),
+      ).toBeEnabled();
       await expect(
         encode.getByRole("img", { name: "Encode comparison preview", exact: true }),
       ).toHaveCount(0);
       await expect(seek).toHaveValue("12");
       await expect(seconds).toContainText("1.200");
+      await encode.locator("summary").click();
       await encode.getByRole("button", { name: "Preview Encode", exact: true }).click();
       await expect(
         encode.getByRole("img", { name: "Encode comparison preview", exact: true }),
@@ -458,7 +599,7 @@ test("embedded video comparisons match three native sources and retain reviewed 
       expect(captured.sizeReferenceSourceId).toBe("main");
       expect(captured.resizeLargerOnly).toBe(true);
       expect(captured.resizeSmaller).toBe(true);
-      expect(captured.sources.map((source) => source.toneMap)).toEqual([false, true, false]);
+      expect(captured.sources.every((source) => source.toneMap == null)).toBe(true);
       const cells = captured.rows[0]!.cells;
       expect(cells).toHaveLength(3);
       expect(

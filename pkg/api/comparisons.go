@@ -6,6 +6,7 @@ package api
 // ComparisonSource is an ordered comparison column. Video paths remain private
 // workflow resources; imported columns have no inferred video or processing facts.
 type ComparisonSource struct {
+	Capabilities         *ComparisonSourceCapabilities `json:"capabilities,omitempty"`
 	Programme            *ComparisonProgrammeCandidate `json:"programme,omitempty"`
 	FrameRateNumerator   int64                         `json:"frameRateNumerator,omitempty"`
 	FrameRateDenominator int64                         `json:"frameRateDenominator,omitempty"`
@@ -24,8 +25,14 @@ type ComparisonSource struct {
 	// Overlay is retained for compatibility; video comparisons require true.
 	Overlay bool `json:"overlay"`
 	// ToneMap overrides the screenshot setting for this video. Nil preserves
-	// plans saved before comparison-local tone mapping; new plans use false.
+	// the user's normal screenshot tone-mapping setting.
 	ToneMap *bool `json:"toneMap,omitempty"`
+}
+
+// ComparisonSourceCapabilities contains inspected facts for source-specific controls.
+type ComparisonSourceCapabilities struct {
+	ProgrammeSelectionRequired bool `json:"programmeSelectionRequired"`
+	ToneMappingAvailable       bool `json:"toneMappingAvailable"`
 }
 
 // ComparisonCell binds one image to a row and source. Nil timing, frame and

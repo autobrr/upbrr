@@ -1768,6 +1768,16 @@
               "type": "string"
             }
           },
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonSourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "durationSeconds": {
             "type": "number"
           },
@@ -1830,6 +1840,21 @@
           "imported",
           "label",
           "overlay"
+        ]
+      },
+      "ComparisonSourceCapabilities": {
+        "type": "object",
+        "properties": {
+          "programmeSelectionRequired": {
+            "type": "boolean"
+          },
+          "toneMappingAvailable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "programmeSelectionRequired",
+          "toneMappingAvailable"
         ]
       },
       "ComparisonSourceDiscovery": {
@@ -7019,6 +7044,16 @@
             "items": {
               "$ref": "#/components/schemas/TrackerPreview"
             }
+          },
+          "comparisonSourceCapabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonSourceCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "hdrTargets": {
             "type": "array",

@@ -4334,6 +4334,8 @@ export function ReleaseSessionProvider({
         view: {
           workflowID: workflowView.current?.workflow.id || "",
           restorePending: workflowView.current?.continuation.comparisonRestorePending,
+          mainSourceCapabilities:
+            workflowView.current?.release?.display.comparisonSourceCapabilities ?? undefined,
           plan: workflowView.current?.media?.comparisons || null,
           artifacts: workflowView.current?.media
             ? {

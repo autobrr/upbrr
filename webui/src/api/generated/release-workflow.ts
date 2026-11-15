@@ -431,6 +431,7 @@ export type ComparisonSceneMix = Readonly<{
 
 export type ComparisonSource = Readonly<{
   allowedFrameTypes?: readonly string[];
+  capabilities?: ComparisonSourceCapabilities | null;
   durationSeconds?: number;
   fingerprint?: string;
   frameRate?: number;
@@ -445,6 +446,11 @@ export type ComparisonSource = Readonly<{
   programme?: ComparisonProgrammeCandidate | null;
   toneMap?: boolean | null;
   width?: number;
+}>;
+
+export type ComparisonSourceCapabilities = Readonly<{
+  programmeSelectionRequired: boolean;
+  toneMappingAvailable: boolean;
 }>;
 
 export type ComparisonSourceDiscovery = Readonly<{
@@ -1800,6 +1806,7 @@ export type PreparedReleaseDisplay = Readonly<{
   ReleaseName: string;
   TVDBNamingAvailable?: boolean;
   TrackerData: readonly TrackerPreview[];
+  comparisonSourceCapabilities?: ComparisonSourceCapabilities | null;
   hdrTargets?: readonly HDRAnalysisTarget[];
 }>;
 

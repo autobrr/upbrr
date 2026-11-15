@@ -316,7 +316,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 				t.Fatal("default row count was not retained with the scene target")
 			}
 			for _, source := range configured.Comparisons.Sources {
-				if !source.Overlay || legacy && source.ToneMap != nil || !legacy && (source.ToneMap == nil || *source.ToneMap) {
+				if !source.Overlay || source.ToneMap != nil || source.Capabilities == nil || source.Capabilities.ProgrammeSelectionRequired || source.Capabilities.ToneMappingAvailable {
 					t.Fatalf("legacy=%t video defaults changed intent: %+v", legacy, source)
 				}
 			}
