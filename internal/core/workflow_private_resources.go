@@ -107,6 +107,7 @@ type persistedWorkflowMediaArtifacts struct {
 	HostedAccountScopes map[api.PublicResourceID]string                `json:"hostedAccountScopes,omitempty"`
 	ComparisonSources   map[string]workflowComparisonSource            `json:"comparisonSources,omitempty"`
 	ComparisonCaptions  map[api.PublicResourceID]int                   `json:"comparisonCaptions,omitempty"`
+	ComparisonToneMaps  map[api.PublicResourceID]bool                  `json:"comparisonToneMaps,omitempty"`
 	Screenshots         []api.ScreenshotImage                          `json:"screenshots,omitempty"`
 	DVDMenus            []api.DVDMenuCaptureImage                      `json:"dvdMenus,omitempty"`
 	ArtifactImages      map[api.PublicResourceID]api.ScreenshotImage   `json:"artifactImages,omitempty"`
@@ -149,6 +150,7 @@ func (a workflowMediaPrivateArtifacts) MarshalPrivateResource() (string, []byte,
 		HostedAccountScopes: accountScopes,
 		ComparisonSources:   a.ComparisonSources,
 		ComparisonCaptions:  a.ComparisonCaptions,
+		ComparisonToneMaps:  a.ComparisonToneMaps,
 		Screenshots:         append([]api.ScreenshotImage(nil), a.Screenshots...),
 		DVDMenus:            append([]api.DVDMenuCaptureImage(nil), a.DVDMenus...),
 		ArtifactImages:      cloneScreenshotImageMap(a.ArtifactImages),
@@ -214,6 +216,7 @@ func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload [
 	return workflowMediaPrivateArtifacts{
 		ComparisonSources:  persisted.ComparisonSources,
 		ComparisonCaptions: persisted.ComparisonCaptions,
+		ComparisonToneMaps: persisted.ComparisonToneMaps,
 		Screenshots:        append([]api.ScreenshotImage(nil), persisted.Screenshots...),
 		DVDMenus:           append([]api.DVDMenuCaptureImage(nil), persisted.DVDMenus...),
 		ArtifactImages:     cloneScreenshotImageMap(persisted.ArtifactImages),

@@ -398,7 +398,7 @@ func resolveWorkflowExactMedia(
 	if !ok {
 		return nil, errors.New("workflow exact media: retained artifacts are incompatible")
 	}
-	if err := verifyWorkflowComparisons(ctx, media, privateArtifacts); err != nil {
+	if err := verifyWorkflowComparisons(ctx, media, privateArtifacts, nil); err != nil {
 		return nil, fmt.Errorf("workflow exact media: comparison review: %w", err)
 	}
 	screenshots := make([]workflowExactLocalMedia, 0, len(privateArtifacts.Screenshots))

@@ -171,6 +171,7 @@ type workflowLegacyImageFormat struct {
 type workflowMediaPrivateArtifacts struct {
 	ComparisonSources  map[string]workflowComparisonSource
 	ComparisonCaptions map[api.PublicResourceID]int
+	ComparisonToneMaps map[api.PublicResourceID]bool
 	Screenshots        []api.ScreenshotImage
 	DVDMenus           []api.DVDMenuCaptureImage
 	ArtifactImages     map[api.PublicResourceID]api.ScreenshotImage
@@ -259,6 +260,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 	result := workflowMediaPrivateArtifacts{
 		ComparisonSources:  cloneComparisonSources(a.ComparisonSources),
 		ComparisonCaptions: maps.Clone(a.ComparisonCaptions),
+		ComparisonToneMaps: maps.Clone(a.ComparisonToneMaps),
 		screenshotService:  a.screenshotService,
 		screenshotSubject:  a.screenshotSubject,
 		dvdMenuService:     a.dvdMenuService,
@@ -309,6 +311,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 			})
 			delete(result.ArtifactImages, artifact.ID)
 			delete(result.ComparisonCaptions, artifact.ID)
+			delete(result.ComparisonToneMaps, artifact.ID)
 			delete(result.DVDMenuImages, artifact.ID)
 			continue
 		}
@@ -493,6 +496,7 @@ func cloneWorkflowMediaPrivateArtifacts(value workflowMediaPrivateArtifacts) wor
 	return workflowMediaPrivateArtifacts{
 		ComparisonSources:  cloneComparisonSources(value.ComparisonSources),
 		ComparisonCaptions: maps.Clone(value.ComparisonCaptions),
+		ComparisonToneMaps: maps.Clone(value.ComparisonToneMaps),
 		Screenshots:        append([]api.ScreenshotImage(nil), value.Screenshots...),
 		DVDMenus:           append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),
 		ArtifactImages:     cloneScreenshotImageMap(value.ArtifactImages),
@@ -2353,7 +2357,7 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	retained = cloneWorkflowMediaPrivateArtifacts(retained)
 	host = strings.ToLower(strings.TrimSpace(host))
-	if err := verifyWorkflowComparisons(ctx, snapshot, retained); err != nil {
+	if err := verifyWorkflowComparisons(ctx, snapshot, retained, &b.config.ScreenshotHandling.ToneMap); err != nil {
 		return api.MediaArtifactSet{}, nil, nil, err
 	}
 	failedHost := slices.Contains(snapshot.FailedHosts, host)

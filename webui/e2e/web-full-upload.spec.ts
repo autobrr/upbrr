@@ -132,11 +132,27 @@ test("embedded comparisons inherit screenshot tone mapping for HDR and keep five
       );
     }
     await main.locator("summary").click();
-    for (const width of [1920, 390]) {
+    for (const width of [1920, 390, 360]) {
       await page.setViewportSize({ width, height: 1080 });
-      expect(
-        await comparison.evaluate((element) => element.scrollWidth <= element.clientWidth),
-      ).toBe(true);
+      await page.evaluate((narrow) => {
+        document.documentElement.style.fontSize = narrow ? "20px" : "16px";
+      }, width === 360);
+      const layout = await comparison.evaluate((element) => {
+        const right = element.getBoundingClientRect().right;
+        return {
+          width: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+          overflow: [...element.querySelectorAll("button, input, select")]
+            .filter((child) => child.getBoundingClientRect().right > right)
+            .map((child) => ({
+              tag: child.tagName,
+              text: child.textContent?.slice(0, 80),
+              right: child.getBoundingClientRect().right,
+            }))
+            .slice(0, 12),
+        };
+      });
+      expect(layout.scrollWidth, JSON.stringify(layout)).toBeLessThanOrEqual(layout.width);
       await comparison.screenshot({ path: testInfo.outputPath(`comparison-panel-${width}.png`) });
     }
     const help = comparison.getByRole("button", { name: "Help for Comparisons", exact: true });

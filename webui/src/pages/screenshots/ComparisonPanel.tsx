@@ -352,7 +352,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           </Button>
         </div>
       ) : (
-        <fieldset disabled={blocked} className="grid min-w-0 gap-3">
+        <fieldset disabled={blocked} className="grid min-w-0 grid-cols-1 gap-3">
           <legend className="sr-only">Comparison setup and review</legend>
           {draft.imported && (
             <div className="flex flex-wrap items-center gap-3">
@@ -464,7 +464,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                     )}
                   </div>
                 )}
-                <div className="flex items-end gap-2">
+                <div className="flex flex-wrap items-end gap-2">
                   {(
                     [
                       ["count", "Rows", "Comparison rows", 1],
@@ -965,7 +965,11 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                 >
                   Find matching scenes
                 </Button>
-                <Button disabled={draft.sources.length < 2} onClick={addManualRow}>
+                <Button
+                  className="max-w-full"
+                  disabled={draft.sources.length < 2}
+                  onClick={addManualRow}
+                >
                   Add manual row from timeline positions
                 </Button>
                 <Button
@@ -1304,7 +1308,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
               </section>
             ))}
           </div>
-          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
+          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3 [&>button]:max-w-full">
             <p role="status">
               {approved && !dirty
                 ? "These captured comparison images are approved."

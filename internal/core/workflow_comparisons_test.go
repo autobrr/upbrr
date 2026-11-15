@@ -49,7 +49,7 @@ func TestComparisonApprovalBindsRetainedPixelsAcrossRestart(t *testing.T) {
 	media, retained := testComparisonDescriptionMedia(t, false)
 	media.Comparisons.ApprovedFingerprint = ""
 	b := workflowMediaBuilder{media: &mediaModule{}}
-	if err := verifyWorkflowComparisons(t.Context(), media, retained); err == nil {
+	if err := verifyWorkflowComparisons(t.Context(), media, retained, nil); err == nil {
 		t.Fatal("unreviewed cells gained hosting authority")
 	}
 	updated, private, err := b.EditComparisons(t.Context(), api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, &media, retained,
@@ -69,7 +69,7 @@ func TestComparisonApprovalBindsRetainedPixelsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyWorkflowComparisons(t.Context(), updated, restored); err != nil {
+	if err := verifyWorkflowComparisons(t.Context(), updated, restored, nil); err != nil {
 		t.Fatalf("restart lost reviewed identity: %v", err)
 	}
 	rebound, reboundPrivate, err := b.RestoreComparisons(t.Context(), api.ReleaseRef{SourcePath: "Example.Movie.mkv", Generation: 2}, api.TrackerReleaseProjectionSet{}, updated, restored, time.Now())
@@ -104,6 +104,126 @@ func TestComparisonApprovalBindsRetainedPixelsAcrossRestart(t *testing.T) {
 	_, _, _, err = b.UploadImages(t.Context(), api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, updated, restored, []api.PublicResourceID{cell.ArtifactID}, "", false, nil, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("changed bytes reached hosting boundary: %v", err)
+	}
+}
+
+func TestComparisonInheritedToneMapChangeRetainsFramesForRecapture(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("native HDR comparison fixture requires ffmpeg")
+	}
+	root := t.TempDir()
+	video := filepath.Join(root, "Example.HDR.mkv")
+	content, err := os.ReadFile(filepath.Join("..", "services", "hdranalysis", "testdata", "decoded-pq-cuts-25.mkv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(video, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "app.sqlite")}}
+	cfg.ScreenshotHandling.TonemapAlgorithm = "hable"
+	b := workflowMediaBuilder{
+		config:             cfg,
+		media:              &mediaModule{},
+		comparisonRenderer: screenshots.NewService(cfg, api.NopLogger{}, root, nil),
+		resolver:           workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{VideoPath: video}},
+	}
+	release := api.ReleaseRef{SourcePath: video, Generation: 1}
+	projections := api.TrackerReleaseProjectionSet{}
+	plan := api.ComparisonPlan{
+		MainSourceID: "main",
+		Preferences:  api.ComparisonPreferences{Count: 1},
+		Sources: []api.ComparisonSource{
+			{ID: "main", Label: "Inherited"},
+			{
+				ID:      "other",
+				Label:   "Explicit off",
+				ToneMap: new(false),
+			},
+		},
+		Rows: []api.ComparisonRow{{ID: "1", Cells: []api.ComparisonCell{
+			{SourceID: "main", TimestampSeconds: new(1.0)},
+			{SourceID: "other", TimestampSeconds: new(1.0)},
+		}}},
+	}
+	configured, private, err := b.EditComparisons(t.Context(), release, projections, nil, nil,
+		api.ComparisonInstructions{
+			Action:       "configure",
+			Plan:         plan,
+			VideoSources: []api.ComparisonVideoSelection{{ID: "other", Path: video}},
+		}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, private, err := b.EditComparisons(t.Context(), release, projections, &configured, private,
+		api.ComparisonInstructions{Action: "capture", Plan: *configured.Comparisons}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, private, err := b.EditComparisons(t.Context(), release, projections, &captured, private,
+		api.ComparisonInstructions{Action: "approve", ExpectedFingerprint: captured.Comparisons.Fingerprint}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchanged, _, err := b.RestoreComparisons(t.Context(), release, projections, approved, private, time.Now())
+	if err != nil || unchanged.Comparisons.Fingerprint != approved.Comparisons.Fingerprint {
+		t.Fatalf("unchanged inherited settings discarded the reviewed captures: %v", err)
+	}
+	capturedPrivate, ok := private.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatal("comparison capture returned an incompatible private resource")
+	}
+	_, payload, err := capturedPrivate.MarshalPrivateResource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.config.ScreenshotHandling.ToneMap = true
+	b.comparisonRenderer = screenshots.NewService(b.config, api.NopLogger{}, root, nil)
+	restarted, err := decodeWorkflowMediaPrivateArtifacts(b, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyWorkflowComparisons(t.Context(), approved, restarted, &b.config.ScreenshotHandling.ToneMap); err == nil {
+		t.Fatal("changed inherited setting retained hosting authority after restart")
+	}
+	if _, _, err := b.EditComparisons(t.Context(), release, projections, &approved, restarted,
+		api.ComparisonInstructions{Action: "approve", ExpectedFingerprint: approved.Comparisons.Fingerprint}, nil, time.Now()); err == nil {
+		t.Fatal("stale inherited pixels could be approved again")
+	}
+	restored, private, err := b.RestoreComparisons(t.Context(), release, projections, approved, restarted, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := approved.Comparisons.Rows[0].Cells
+	after := restored.Comparisons.Rows[0].Cells
+	if after[0].ArtifactID != "" || after[0].ContentSHA256 != "" || after[0].ObservedPTS == nil ||
+		*after[0].ObservedPTS != *before[0].ObservedPTS || after[0].PictureType != before[0].PictureType || after[1].ArtifactID != before[1].ArtifactID {
+		t.Fatal("restoration kept stale pixels, lost decoded evidence or invalidated the explicit override")
+	}
+	configured, private, err = b.EditComparisons(t.Context(), release, projections, &restored, private,
+		api.ComparisonInstructions{Action: "configure", Plan: *restored.Comparisons}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recaptured, private, err := b.EditComparisons(t.Context(), release, projections, &configured, private,
+		api.ComparisonInstructions{Action: "capture", Plan: *configured.Comparisons}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	after = recaptured.Comparisons.Rows[0].Cells
+	recapturedPrivate, ok := private.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatal("comparison recapture returned an incompatible private resource")
+	}
+	images := recapturedPrivate.ArtifactImages
+	if after[0].ArtifactID == "" || after[0].ContentSHA256 == before[0].ContentSHA256 || *after[0].ObservedPTS != *before[0].ObservedPTS ||
+		!images[after[0].ArtifactID].Processing.Tonemapped || after[1].ArtifactID != before[1].ArtifactID || recaptured.Comparisons.Sources[0].ToneMap != nil ||
+		recaptured.Comparisons.ApprovedFingerprint != "" {
+		t.Fatal("capture skipped invalidated pixels, changed the selected frame or overwrote the inherited/explicit choices")
+	}
+	preview, err := b.PreviewComparisonFrame(t.Context(), release, recaptured, private, "main", *after[0].TimestampSeconds, 0)
+	if err != nil || !preview.Processing.Tonemapped || *preview.ObservedPTS != *after[0].ObservedPTS {
+		t.Fatalf("recaptured pixels and current preview disagree: %v", err)
 	}
 }
 
@@ -445,21 +565,21 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	captured.Fingerprint, captured.ApprovedFingerprint = fingerprint, fingerprint
 	snapshot.Comparisons = &captured
 	syncComparisonSelections(&snapshot, captured)
-	if err := verifyWorkflowComparisons(t.Context(), snapshot, retained); err != nil {
+	if err := verifyWorkflowComparisons(t.Context(), snapshot, retained, nil); err != nil {
 		t.Fatal(err)
 	}
 	t.Run("old captions require recapture without losing decoded identity", func(t *testing.T) {
 		old := cloneWorkflowMediaPrivateArtifacts(retained)
 		cell := captured.Rows[0].Cells[0]
 		delete(old.ComparisonCaptions, cell.ArtifactID)
-		if err := verifyWorkflowComparisons(t.Context(), snapshot, old); err == nil {
+		if err := verifyWorkflowComparisons(t.Context(), snapshot, old, nil); err == nil {
 			t.Fatal("old caption pixels retained upload authority")
 		}
 		updated, err := captured.Clone()
 		if err != nil {
 			t.Fatal(err)
 		}
-		invalidateOutdatedComparisonCaptions(&updated, old)
+		invalidateOutdatedComparisonRendering(&updated, old, b.config.ScreenshotHandling.ToneMap)
 		current := updated.Rows[0].Cells[0]
 		if current.ArtifactID != "" || current.ContentSHA256 != "" || current.ObservedPTS == nil || *current.ObservedPTS != *cell.ObservedPTS ||
 			updated.Rows[0].Cells[1].ArtifactID != captured.Rows[0].Cells[1].ArtifactID {
