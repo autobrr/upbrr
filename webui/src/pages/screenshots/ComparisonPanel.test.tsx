@@ -179,7 +179,14 @@ it("retains comparison render choices and defaults new videos without rewriting 
   );
   fireEvent.click(screen.getByRole("button", { name: "Create from videos" }));
   fireEvent.click(screen.getByRole("button", { name: "Add comparison video" }));
-  expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("");
+  expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("main");
+  expect(
+    screen.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
+  ).toBeChecked();
+  expect(
+    screen.getByRole("checkbox", { name: "Resize resolutions proportionally, without padding" }),
+  ).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Also resize lower resolutions" })).toBeChecked();
   for (const group of ["Main input · column 1", "Source 2 · column 2"]) {
     const column = within(screen.getByRole("group", { name: group }));
     expect(column.getByRole("checkbox", { name: "B" })).toBeChecked();
@@ -199,12 +206,15 @@ it("retains comparison render choices and defaults new videos without rewriting 
   fireEvent.change(screen.getByRole("combobox", { name: "Comparison frame size" }), {
     target: { value: "column-2" },
   });
+  fireEvent.click(screen.getByRole("checkbox", { name: "Also resize lower resolutions" }));
   fireEvent.click(
     screen.getByRole("checkbox", {
       name: "Resize resolutions proportionally, without padding",
     }),
   );
-  fireEvent.click(screen.getByRole("checkbox", { name: "Also resize lower resolutions" }));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
   await waitFor(() => expect(facet.edit).toHaveBeenCalledTimes(1));
   const plan = vi.mocked(facet.edit).mock.calls[0]![0].plan;
@@ -221,8 +231,9 @@ it("retains comparison render choices and defaults new videos without rewriting 
   });
   expect(plan.sources[1]!.toneMap).toBeUndefined();
   expect(plan.sizeReferenceSourceId).toBe("column-2");
-  expect(plan.resizeLargerOnly).toBe(true);
-  expect(plan.resizeSmaller).toBe(true);
+  expect(plan.resizeLargerOnly).toBe(false);
+  expect(plan.resizeSmaller).toBe(false);
+  expect(plan.reuseMainScreenshots).toBe(false);
   unmount();
   render(
     <ComparisonPanel
@@ -246,8 +257,14 @@ it("retains comparison render choices and defaults new videos without rewriting 
     screen.getByRole("checkbox", {
       name: "Resize resolutions proportionally, without padding",
     }),
-  ).toBeChecked();
-  expect(screen.getByRole("checkbox", { name: "Also resize lower resolutions" })).toBeChecked();
+  ).not.toBeChecked();
+  expect(
+    screen.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
+  ).not.toBeChecked();
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "Resize resolutions proportionally, without padding" }),
+  );
+  expect(screen.getByRole("checkbox", { name: "Also resize lower resolutions" })).not.toBeChecked();
   fireEvent.click(screen.getByRole("button", { name: "Remove Source 2 column" }));
   expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("");
 });
@@ -510,7 +527,13 @@ it("imports prepared files without guessing the main column or flattening them i
   fireEvent.click(screen.getByRole("button", { name: "Import images" }));
   expect(facet.importImages).toHaveBeenCalledWith(
     files,
-    expect.objectContaining({ imported: true, mainSourceId: "", rows: [], sources: [] }),
+    expect.objectContaining({
+      imported: true,
+      mainSourceId: "",
+      reuseMainScreenshots: true,
+      rows: [],
+      sources: [],
+    }),
   );
   expect(facet.edit).not.toHaveBeenCalled();
 });

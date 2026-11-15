@@ -336,6 +336,12 @@ test("embedded comparison imports retain complete rows and require review before
     const mainColumn = comparison.getByRole("combobox", { name: "Main-input column", exact: true });
     await expect(mainColumn).toBeEnabled();
     await mainColumn.selectOption("2");
+    await expect(
+      comparison.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
+    ).toBeChecked();
+    await comparison
+      .getByRole("checkbox", { name: "Use the main column as normal screenshots" })
+      .uncheck();
     await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
     const approve = comparison.getByRole("button", { name: "Approve reviewed comparison images" });
     await expect(
@@ -521,9 +527,21 @@ test("embedded video comparisons match three native sources and retain reviewed 
           source.getByRole("combobox", { name: `Tone mapping · ${label}`, exact: true }),
         ).toHaveCount(0);
       }
-      await comparison
-        .getByRole("checkbox", { name: "Use the main column as normal screenshots" })
-        .check();
+      await expect(
+        comparison.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
+      ).toBeChecked();
+      await expect(
+        comparison.getByRole("combobox", { name: "Comparison frame size", exact: true }),
+      ).toHaveValue("main");
+      await expect(
+        comparison.getByRole("checkbox", {
+          name: "Resize resolutions proportionally, without padding",
+          exact: true,
+        }),
+      ).toBeChecked();
+      await expect(
+        comparison.getByRole("checkbox", { name: "Also resize lower resolutions", exact: true }),
+      ).toBeChecked();
       const encode = comparison.getByRole("group", { name: "Encode · column 2", exact: true });
       await encode.getByRole("checkbox", { name: "I", exact: true }).check();
       await comparison.getByRole("button", { name: "Find matching scenes" }).click();
@@ -562,7 +580,7 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await expect(seconds).toContainText("1.200");
       await comparison
         .getByRole("combobox", { name: "Comparison frame size", exact: true })
-        .selectOption("main");
+        .selectOption("column-2");
       await comparison
         .getByRole("checkbox", {
           name: "Resize resolutions proportionally, without padding",
@@ -596,7 +614,7 @@ test("embedded video comparisons match three native sources and retain reviewed 
       });
       await expect(approve).toBeEnabled();
       const captured = (await snapshot()).current!.media!.comparisons!;
-      expect(captured.sizeReferenceSourceId).toBe("main");
+      expect(captured.sizeReferenceSourceId).toBe("column-2");
       expect(captured.resizeLargerOnly).toBe(true);
       expect(captured.resizeSmaller).toBe(true);
       expect(captured.sources.every((source) => source.toneMap == null)).toBe(true);
@@ -617,6 +635,10 @@ test("embedded video comparisons match three native sources and retain reviewed 
       ).toBeVisible();
       await page.getByRole("button", { name: "Close image preview", exact: true }).click();
       expect((await snapshot()).current?.dupes).toBeUndefined();
+      await approve.click();
+      await expect(
+        comparison.getByText("These captured comparison images are approved.", { exact: true }),
+      ).toBeVisible();
       await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
       await runDuplicateCheck(page);
       await page.getByRole("button", { name: "Screenshots", exact: true }).click();
@@ -628,7 +650,6 @@ test("embedded video comparisons match three native sources and retain reviewed 
           (cell) => cell.contentSha256,
         ),
       ).toEqual(cells.map((cell) => cell.contentSha256));
-      await approve.click();
       await expect(
         comparison.getByText("These captured comparison images are approved.", { exact: true }),
       ).toBeVisible();

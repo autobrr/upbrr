@@ -206,8 +206,8 @@ func TestComparisonsBeforeDuplicateChecksRetainRowsWithoutHostingAuthority(t *te
 	}
 	current = executeCommand(t, module, CheckDuplicatesCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
 	current = executeCommand(t, module, RestoreComparisonsCommand{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision})
-	if current.Media == nil || current.Media.Comparisons.Rows[0].Cells[0].ArtifactID != "source-image" || ComparisonReviewSatisfied(current.Media.Comparisons) {
-		t.Fatal("fresh checks discarded captured rows or inherited prior review")
+	if current.Media == nil || current.Media.Comparisons.Rows[0].Cells[0].ArtifactID != "source-image" || !ComparisonMediaReviewSatisfied(*current.Media) {
+		t.Fatal("fresh duplicate checks discarded captured rows or their approval")
 	}
 }
 

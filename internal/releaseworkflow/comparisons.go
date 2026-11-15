@@ -155,6 +155,16 @@ func (m *Module) retainedComparisons(ctx context.Context, owner string, state *S
 		return nil, nil, fmt.Errorf("%w: comparison restoration lost retained intent", ErrPrivateResourceIntegrity)
 	}
 	restored.Comparisons.ApprovedFingerprint = ""
+	// Duplicate and tracker checks do not change the reviewed comparison content.
+	// Keep its approval only within the same prepared generation after validation.
+	if state.Workflow.Release != nil && snapshot.Release == *state.Workflow.Release && snapshot.WorkflowID == state.Workflow.ID &&
+		snapshot.ReleaseRef == release && ComparisonMediaReviewSatisfied(snapshot) &&
+		restored.Comparisons.Fingerprint == snapshot.Comparisons.ApprovedFingerprint {
+		restored.Comparisons.ApprovedFingerprint = snapshot.Comparisons.ApprovedFingerprint
+		if !ComparisonMediaReviewSatisfied(restored) {
+			restored.Comparisons.ApprovedFingerprint = ""
+		}
+	}
 	restored.ImageRequirementsPrepared = false
 	restored.ImageHostUploadSkipped = false
 	if err := validateMediaRequirementsFingerprint(restored, eligible); err != nil {

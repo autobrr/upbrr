@@ -43,7 +43,12 @@ const emptyPlan = (imported: boolean): ComparisonPlan => ({
   rows: [],
   mainSourceId: imported ? "" : "main",
   imported,
-  reuseMainScreenshots: false,
+  reuseMainScreenshots: true,
+  ...(!imported && {
+    sizeReferenceSourceId: "main",
+    resizeLargerOnly: true,
+    resizeSmaller: true,
+  }),
   preferences: { count: 3, motionPercent: 0, darkPercent: 0, motionCount: 0, darkCount: 0 },
   fingerprint: "",
 });
