@@ -235,6 +235,8 @@ Where a tracker permits source-description references, an existing image link ma
 
 Some trackers accept the full description and screenshots in separate upload fields. Their generated description omits the ordinary screenshot gallery and its configured header, while keeping release notes and other supported content. Use **Descriptions** to review and save the tracker-ready text before upload.
 
+When a tracker has a separate technical-report field, the primary report can be sent there without repeating it in the generated description. Additional disc or playlist reports retain their labels in the description. Saved final description edits remain unchanged.
+
 Automatic tonemapping notices are not available for every tracker. Existing tonemapping notes remain in the description; review them for accuracy before upload.
 
 Capturing an additional frame keeps previously generated screenshots, including their selection and order, without adding those images again.
