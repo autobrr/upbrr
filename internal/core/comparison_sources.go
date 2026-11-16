@@ -375,6 +375,7 @@ func comparisonScratchDir(root, releasePath, id string) (string, error) {
 func cloneComparisonSources(sources map[string]workflowComparisonSource) map[string]workflowComparisonSource {
 	cloned := maps.Clone(sources)
 	for id, source := range cloned {
+		source.Calibration = source.Calibration.clone()
 		source.Source.HDRFacts.Formats = slices.Clone(source.Source.HDRFacts.Formats)
 		source.Source.HDRFacts.FallbackFormats = slices.Clone(source.Source.HDRFacts.FallbackFormats)
 		source.Source.HDRFacts.SourceFields = slices.Clone(source.Source.HDRFacts.SourceFields)

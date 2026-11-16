@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,8 @@ type localSceneAcceptanceManifest struct {
 	AllowUnderfill           bool
 	ReuseFrom                string
 	RequireMainReuse         bool
+	ReuseCalibration         bool
+	RequireCalibrationReuse  bool
 	UnrestrictedPictureTypes bool
 	DiagnosticMoments        []float64
 	Repeat                   int
@@ -294,6 +297,14 @@ func TestLocalComparisonSceneAcceptance(t *testing.T) {
 		}
 		retained.ComparisonInventory = cloneComparisonInventory(old.ComparisonInventory)
 		retained.ComparisonAnalysisExecutable = old.ComparisonAnalysisExecutable
+		if manifest.ReuseCalibration {
+			for id, source := range retained.ComparisonSources {
+				if previous, ok := old.ComparisonSources[id]; ok && previous.Fingerprint == source.Fingerprint {
+					source.Calibration = previous.Calibration.clone()
+					retained.ComparisonSources[id] = source
+				}
+			}
+		}
 	}
 	for id, source := range retained.ComparisonSources {
 		renderer.ids[source.Fingerprint] = id
@@ -391,6 +402,17 @@ func TestLocalComparisonSceneAcceptance(t *testing.T) {
 		}{MatchSeconds: matchSeconds})
 		if matchErr != nil {
 			t.Fatal(matchErr)
+		}
+		if manifest.RequireCalibrationReuse {
+			reused := 0
+			for _, entry := range logger.entries {
+				if strings.Contains(entry.message, "phase=alignment_calibration decision=reused column=") {
+					reused++
+				}
+			}
+			if reused != len(plan.Sources)-1 {
+				t.Fatalf("expected calibration reuse for %d sources; got %d", len(plan.Sources)-1, reused)
+			}
 		}
 		for id, work := range renderer.work {
 			if id != "main" && work.AnalysisWindows != 0 {

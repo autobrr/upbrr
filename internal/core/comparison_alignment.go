@@ -19,9 +19,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// tryAlignedComparisons owns bounded decoding, not matching policy. Evidence and
-// decoded windows live only for this attempt; no filename/duration implies an
-// offset. Unsupported or inconclusive evidence remains an explicit bounded outcome.
+// tryAlignedComparisons owns bounded decoding, not matching policy. Retained
+// calibration only predicts search windows; every row needs fresh native proof.
+// Decoded windows live only for this attempt.
 func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retained *workflowMediaPrivateArtifacts,
 	plan api.ComparisonPlan, options comparisons.MatchOptions, progress *comparisonProgress,
 ) (returned comparisons.MatchResult, returnedObservations map[string][]screenshots.ComparisonSample, accepted bool, returnedErr error) {
@@ -104,6 +104,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		start, duration float64
 	}
 	cache := map[windowKey][]screenshots.ComparisonSample{}
+	secondaryCache := comparisonWindowCache{}
 	var mainInventory *comparisonSceneInventory
 	var inventoryOwner string
 	analysisBytes := int64(0)
@@ -132,6 +133,8 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		}
 	}()
 	activePictures := map[int]*screenshots.ComparisonCrop{}
+	offsets := map[string]comparisons.ConstantAlignment{}
+	calibrationProfiles := make([]string, len(plan.Sources))
 	detector, canDetectPicture := renderer.(interface {
 		DetectComparisonActivePicture(context.Context, screenshots.ComparisonSource, float64, float64, *screenshots.ComparisonDecodeBudget) (*screenshots.ComparisonCrop, error)
 	})
@@ -155,6 +158,22 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	}
 	for i := range plan.Sources {
 		if i != main {
+			id := plan.Sources[i].ID
+			profile, err := b.comparisonCalibrationProfile(*retained, plan, id)
+			if err != nil {
+				return comparisons.MatchResult{}, nil, false, fmt.Errorf("identify comparison calibration: %w", err)
+			}
+			calibrationProfiles[i] = profile
+			private := retained.ComparisonSources[id]
+			if prediction, ok := private.Calibration.prediction(profile, private.Source); ok {
+				offsets[id] = prediction
+				calibration := private.Calibration.clone()
+				activePictures[i] = calibration.Crop
+				progress.logger.Debugf("comparisons: phase=alignment_calibration decision=reused column=%d", i+1)
+				continue
+			}
+			private.Calibration = nil
+			retained.ComparisonSources[id] = private
 			if err := detectPicture(ctx, i); err != nil {
 				return comparisons.MatchResult{}, nil, false, err
 			}
@@ -183,7 +202,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 				&api.ComparisonTimeInterval{Start: start, End: end},
 				func(frame screenshots.ComparisonSample) bool {
 					if frame.RelativeTimestampSeconds >= start && frame.RelativeTimestampSeconds < end {
-						if candidateBytes+retainedBytes+analysisBytes+int64(len(frames)+1)*4096 > (112 << 20) {
+						if candidateBytes+retainedBytes+analysisBytes+secondaryCache.bytes+int64(len(frames)+1)*4096 > (112 << 20) {
 							full = true
 							return false
 						}
@@ -201,68 +220,101 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			cache[key] = frames
 			return frames, nil
 		}
-		if end-start > 64+1e-9 || decodedSeconds[source]+windowDuration > decodeLimit(source, main, options.Count) {
+		if end-start > 64+1e-9 {
 			return nil, screenshots.ErrComparisonFastInconclusive
 		}
-		decodedSeconds[source] += windowDuration
 		id := fmt.Sprintf("%d/%d", source, item)
 		var frames []screenshots.ComparisonSample
-		for chunkStart := start; chunkStart < start+windowDuration-1e-9; {
-			available := (128 << 20) - candidateBytes - retainedBytes - analysisBytes - (16 << 20)
-			if available < 4096 {
+		reusedWindow := false
+		missing := []api.ComparisonTimeInterval{{Start: start, End: end}}
+		if matchingRows && source != main {
+			secondaryCache.trim(min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes))
+			frames, missing = secondaryCache.get(source, start, end, renderers[source].Mode)
+			reusedWindow = len(frames) > 0
+			retainedBytes += int64(len(frames)) * 4096
+			missingSeconds := 0.0
+			for _, gap := range missing {
+				missingSeconds += gap.End - gap.Start
+			}
+			if missingSeconds < windowDuration {
+				progress.logger.Tracef("comparisons: phase=alignment_cache decision=reused column=%d seconds=%.6f frames=%d",
+					source+1, windowDuration-missingSeconds, len(frames))
+			}
+		}
+		for _, gap := range missing {
+			if decodedSeconds[source]+gap.End-gap.Start > decodeLimit(source, main, options.Count) {
 				return nil, screenshots.ErrComparisonFastInconclusive
 			}
-			chunkDuration := min(sampleChunkSeconds[source], start+windowDuration-chunkStart)
-			request := screenshots.ComparisonSampleRequest{
-				RetentionLimitBytes: available,
-				MatchCrop:           activePictures[source],
-				Budget:              &budgets[source],
-				Renderer:            &renderers[source],
-				Source:              retained.ComparisonSources[plan.Sources[source].ID].Source,
-				StartSeconds:        chunkStart,
-				DurationSeconds:     chunkDuration,
-				StrideSeconds:       .002,
-				NativeFrames:        true,
-				NormalizeSDR:        true,
-				MatchAspectRatio:    matchAspect,
-			}
-			workIndex, workTotal := item, total
-			if matchingRows {
-				workIndex, workTotal = min(matchedRows, options.Count-1)*len(plan.Sources)+source, options.Count*len(plan.Sources)
-			}
-			workCtx := progress.child(ctx, workIndex, workTotal, id, "comparison_window", fmt.Sprintf("Column %d", source+1))
-			started := time.Now()
-			decoded, err := renderer.SampleComparisonSource(workCtx, request)
+			decodedSeconds[source] += gap.End - gap.Start
+			for chunkStart := gap.Start; chunkStart < gap.End-1e-9; {
+				secondaryCache.trim(min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes))
+				available := (128 << 20) - candidateBytes - retainedBytes - analysisBytes - secondaryCache.bytes - (16 << 20)
+				if available < 4096 {
+					return nil, screenshots.ErrComparisonFastInconclusive
+				}
+				chunkDuration := min(sampleChunkSeconds[source], gap.End-chunkStart)
+				request := screenshots.ComparisonSampleRequest{
+					RetentionLimitBytes: available,
+					MatchCrop:           activePictures[source],
+					Budget:              &budgets[source],
+					Renderer:            &renderers[source],
+					Source:              retained.ComparisonSources[plan.Sources[source].ID].Source,
+					StartSeconds:        chunkStart,
+					DurationSeconds:     chunkDuration,
+					StrideSeconds:       .002,
+					NativeFrames:        true,
+					NormalizeSDR:        true,
+					MatchAspectRatio:    matchAspect,
+				}
+				workIndex, workTotal := item, total
+				if matchingRows {
+					workIndex, workTotal = min(matchedRows, options.Count-1)*len(plan.Sources)+source, options.Count*len(plan.Sources)
+				}
+				workCtx := progress.child(ctx, workIndex, workTotal, id, "comparison_window", fmt.Sprintf("Column %d", source+1))
+				started := time.Now()
+				decoded, err := renderer.SampleComparisonSource(workCtx, request)
 
-			if err != nil {
-				return nil, fmt.Errorf("decode comparison alignment column %d: %w", source+1, err)
+				if err != nil {
+					return nil, fmt.Errorf("decode comparison alignment column %d: %w", source+1, err)
+				}
+				if matchingRows {
+					// Keep shared native boundary pictures for identity checking;
+					// trim only outside the complete requested window.
+					decoded = slices.DeleteFunc(decoded, func(frame screenshots.ComparisonSample) bool {
+						return frame.RelativeTimestampSeconds < start || frame.RelativeTimestampSeconds >= end
+					})
+				}
+				// Keep slow decoders on short windows. Measured real-time decoding
+				// allows sixteen-second batches; twice real time allows thirty-two.
+				// This avoids repeated seeks/preroll below the 60-second worker cap.
+				sampleChunkSeconds[source] = 8
+				elapsed := time.Since(started).Seconds()
+				if elapsed <= chunkDuration/2 {
+					sampleChunkSeconds[source] = 32
+				} else if elapsed <= chunkDuration {
+					sampleChunkSeconds[source] = 16
+				}
+				retainedBytes += int64(len(decoded)) * 4096
+				if candidateBytes+retainedBytes+analysisBytes+secondaryCache.bytes > 128<<20 {
+					return nil, screenshots.ErrComparisonFastInconclusive
+				}
+				frames = append(frames, decoded...)
+				chunkStart += chunkDuration
 			}
-			// Keep slow decoders on short windows. Measured real-time decoding
-			// allows sixteen-second batches; twice real time allows thirty-two.
-			// This avoids repeated seeks/preroll below the 60-second worker cap.
-			sampleChunkSeconds[source] = 8
-			elapsed := time.Since(started).Seconds()
-			if elapsed <= chunkDuration/2 {
-				sampleChunkSeconds[source] = 32
-			} else if elapsed <= chunkDuration {
-				sampleChunkSeconds[source] = 16
-			}
-			retainedBytes += int64(len(decoded)) * 4096
-			if candidateBytes+retainedBytes+analysisBytes > 128<<20 {
-				return nil, screenshots.ErrComparisonFastInconclusive
-			}
-			frames = append(frames, decoded...)
-			chunkStart += chunkDuration
 		}
 		original := len(frames)
 		frames, orderErr := orderedComparisonSamples(frames)
 		if orderErr != nil {
 			return nil, orderErr
 		}
-		if len(frames) != original {
+		if len(frames) != original && !reusedWindow {
 			frames = nil
 		}
 		cache[key] = frames
+		if matchingRows && source != main {
+			secondaryCache.put(source, start, end, renderers[source].Mode, frames,
+				min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes))
+		}
 		workIndex, workTotal := item, total
 		if matchingRows {
 			workIndex, workTotal = min(matchedRows, options.Count-1)*len(plan.Sources)+source, options.Count*len(plan.Sources)
@@ -304,7 +356,8 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			}
 			mainPictureReady = true
 		}
-		available := (128 << 20) - candidateBytes - retainedBytes - analysisBytes - (16 << 20)
+		secondaryCache.trim(min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes))
+		available := (128 << 20) - candidateBytes - retainedBytes - analysisBytes - secondaryCache.bytes - (16 << 20)
 		if available < 4096 {
 			return nil, screenshots.ErrComparisonFastInconclusive
 		}
@@ -401,12 +454,11 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		}
 		return unavailable(), nil, true, nil
 	}
-	offsets := map[string]comparisons.ConstantAlignment{}
 	hypotheses := map[string][]comparisons.PlaybackScale{}
 	proofs := map[string]map[comparisons.PlaybackScale][]comparisons.ConstantAlignment{}
 	mainRate := retained.ComparisonSources[plan.MainSourceID].Source
 	for i, source := range plan.Sources {
-		if i == main {
+		if _, reused := offsets[source.ID]; i == main || reused {
 			continue
 		}
 		rate := retained.ComparisonSources[source.ID].Source
@@ -420,171 +472,183 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	}
 	item, total = 0, 3*len(plan.Sources)
 	progress.begin("alignment_calibration", total)
-	referenceWindow, err := sample(main, duration*.5, 32)
-	if err != nil {
-		return failed(err, main+1)
-	}
-	centers, reason := comparisons.CalibrationCenters(comparisonSamples(referenceWindow))
-	if reason != "" {
-		if duration <= 32 {
-			centers = []float64{duration * .5}
-		} else {
-			noteInconclusive(reason, main+1)
-			return unavailable(), nil, true, nil
-		}
-	}
-	for i, source := range plan.Sources {
-		if i == main {
-			continue
-		}
-		target, err := sample(i, durations[i]*.5, 32)
+	if len(offsets) < len(plan.Sources)-1 {
+		referenceWindow, err := sample(main, duration*.5, 32)
 		if err != nil {
-			return failed(err, i+1)
+			return failed(err, main+1)
 		}
-		hypotheses[source.ID] = comparisons.NativePlaybackScales(comparisonSamples(referenceWindow), comparisonSamples(target), hypotheses[source.ID])
-		if len(hypotheses[source.ID]) == 0 {
-			noteInconclusive("rate_hypothesis_limit", i+1)
-			return unavailable(), nil, true, nil
-		}
-	}
-	for _, center := range centers {
-		var reference []screenshots.ComparisonSample
-		for _, frame := range referenceWindow {
-			if frame.RelativeTimestampSeconds >= center-2 && frame.RelativeTimestampSeconds < center+2 {
-				reference = append(reference, frame)
+		centers, reason := comparisons.CalibrationCenters(comparisonSamples(referenceWindow))
+		if reason != "" {
+			if duration <= 32 {
+				centers = []float64{duration * .5}
+			} else {
+				noteInconclusive(reason, main+1)
+				return unavailable(), nil, true, nil
 			}
 		}
 		for i, source := range plan.Sources {
-			if i == main {
+			if _, reused := offsets[source.ID]; i == main || reused {
 				continue
 			}
 			target, err := sample(i, durations[i]*.5, 32)
 			if err != nil {
 				return failed(err, i+1)
 			}
-			for _, scale := range hypotheses[source.ID] {
-				alignment, reason := comparisons.DiscoverPlaybackAlignment(comparisonSamples(reference), comparisonSamples(target), scale)
-				if reason != "" {
-					progress.logger.Debugf(
-						"comparisons: phase=alignment_calibration decision=inconclusive column=%d reason=%s scale=%d/%d",
-						i+1,
-						reason,
-						scale.Numerator,
-						scale.Denominator,
-					)
+			hypotheses[source.ID] = comparisons.NativePlaybackScales(comparisonSamples(referenceWindow), comparisonSamples(target), hypotheses[source.ID])
+			if len(hypotheses[source.ID]) == 0 {
+				noteInconclusive("rate_hypothesis_limit", i+1)
+				return unavailable(), nil, true, nil
+			}
+		}
+		for _, center := range centers {
+			var reference []screenshots.ComparisonSample
+			for _, frame := range referenceWindow {
+				if frame.RelativeTimestampSeconds >= center-2 && frame.RelativeTimestampSeconds < center+2 {
+					reference = append(reference, frame)
+				}
+			}
+			for i, source := range plan.Sources {
+				if _, reused := offsets[source.ID]; i == main || reused {
 					continue
 				}
-				proofs[source.ID][scale] = append(proofs[source.ID][scale], alignment)
-				progress.logger.Debugf(
-					"comparisons: phase=alignment_calibration decision=region_verified column=%d center_seconds=%.3f scale=%d/%d offset_seconds=%.9f tolerance_seconds=%.9f",
-					i+1,
-					center,
-					scale.Numerator,
-					scale.Denominator,
-					alignment.OffsetSeconds,
-					alignment.ToleranceSeconds,
-				)
-			}
-		}
-	}
-	// Native region proofs own their checked points, not the decoded rasters.
-	// Release those windows before admitting any additional calibration region.
-	clear(cache)
-	retainedBytes = 0
-	calibrationHypotheses := func(id string) []comparisons.ConstantAlignment {
-		var accepted []comparisons.ConstantAlignment
-		for scale, regions := range proofs[id] {
-			if scale.Numerator == scale.Denominator && len(hypotheses[id]) == 1 && len(regions) > 0 && !regions[0].IntervalProof {
-				accepted = append(accepted, regions[0])
-				continue
-			}
-			if fit, verified := comparisons.VerifyPlaybackCalibration(regions); verified {
-				accepted = append(accepted, fit)
-			} else if prediction, verified := comparisons.PlaybackSearchPrediction(regions, 2); verified {
-				accepted = append(accepted, prediction)
-			}
-		}
-		return accepted
-	}
-	// An ambiguous region is not a failed held-out proof. When fewer than
-	// three regions established correspondence, try regions from at most two
-	// additional main windows. Existing fits only locate bounded
-	// target windows; every new region must pass the same native proof, and
-	// the final three-region fit/held-out validation remains unchanged.
-	for i, source := range plan.Sources {
-		if i == main || len(calibrationHypotheses(source.ID)) > 0 {
-			continue
-		}
-		for _, scale := range hypotheses[source.ID] {
-			regions := proofs[source.ID][scale]
-			if len(regions) == 0 || len(regions) >= 3 {
-				continue
-			}
-			attemptedCenters := slices.Clone(centers)
-			for _, fraction := range []float64{.35, .65} {
-				mainWindow, err := sample(main, duration*fraction, 32)
+				target, err := sample(i, durations[i]*.5, 32)
 				if err != nil {
-					return failed(err, main+1)
+					return failed(err, i+1)
 				}
-				additional, reason := comparisons.CalibrationCenters(comparisonSamples(mainWindow))
-				if reason != "" {
-					continue
-				}
-				for _, center := range additional {
-					if slices.ContainsFunc(attemptedCenters, func(attempted float64) bool { return math.Abs(attempted-center) < 12 }) {
+				for _, scale := range hypotheses[source.ID] {
+					alignment, reason := comparisons.DiscoverPlaybackAlignment(comparisonSamples(reference), comparisonSamples(target), scale)
+					if reason != "" {
+						progress.logger.Debugf(
+							"comparisons: phase=alignment_calibration decision=inconclusive column=%d reason=%s scale=%d/%d",
+							i+1,
+							reason,
+							scale.Numerator,
+							scale.Denominator,
+						)
 						continue
 					}
-					attemptedCenters = append(attemptedCenters, center)
-					var reference []screenshots.ComparisonSample
-					for _, frame := range mainWindow {
-						if frame.RelativeTimestampSeconds >= center-2 && frame.RelativeTimestampSeconds < center+2 {
-							reference = append(reference, frame)
-						}
-					}
-					prediction := regions[0]
-					target, err := sample(i, prediction.Predict(center), max(4, 2*prediction.Scale()+2))
-					if err != nil {
-						return failed(err, i+1)
-					}
-					alignment, reason := comparisons.DiscoverPlaybackAlignment(comparisonSamples(reference), comparisonSamples(target), scale)
-					progress.logger.Tracef(
-						"comparisons: phase=alignment_calibration decision=additional_region column=%d center_seconds=%.3f scale=%d/%d reason=%s",
+					proofs[source.ID][scale] = append(proofs[source.ID][scale], alignment)
+					progress.logger.Debugf(
+						"comparisons: phase=alignment_calibration decision=region_verified column=%d center_seconds=%.3f scale=%d/%d offset_seconds=%.9f tolerance_seconds=%.9f",
 						i+1,
 						center,
 						scale.Numerator,
 						scale.Denominator,
-						reason,
+						alignment.OffsetSeconds,
+						alignment.ToleranceSeconds,
 					)
-					if reason == "" {
-						regions = append(regions, alignment)
-						proofs[source.ID][scale] = regions
-						if len(regions) == 3 {
-							break
-						}
-					}
-				}
-				if len(regions) == 3 {
-					break
 				}
 			}
 		}
-	}
-	for id := range proofs {
-		if prediction, unique := comparisons.SelectCalibrationHypothesis(calibrationHypotheses(id), duration); unique {
-			offsets[id] = prediction
-			progress.logger.Infof(
-				"comparisons: phase=alignment_calibration decision=verified source=%s scale=%d/%d offset_seconds=%.9f",
-				id,
-				prediction.ScaleNumerator,
-				prediction.ScaleDenominator,
-				prediction.OffsetSeconds,
-			)
+		// Native region proofs own their checked points, not the decoded rasters.
+		// Release those windows before admitting any additional calibration region.
+		clear(cache)
+		retainedBytes = 0
+		calibrationHypotheses := func(id string) []comparisons.ConstantAlignment {
+			var accepted []comparisons.ConstantAlignment
+			for scale, regions := range proofs[id] {
+				if scale.Numerator == scale.Denominator && len(hypotheses[id]) == 1 && len(regions) > 0 && !regions[0].IntervalProof {
+					accepted = append(accepted, regions[0])
+					continue
+				}
+				if fit, verified := comparisons.VerifyPlaybackCalibration(regions); verified {
+					accepted = append(accepted, fit)
+				} else if prediction, verified := comparisons.PlaybackSearchPrediction(regions, 2); verified {
+					accepted = append(accepted, prediction)
+				}
+			}
+			return accepted
+		}
+		// An ambiguous region is not a failed held-out proof. When fewer than
+		// three regions established correspondence, try regions from at most two
+		// additional main windows. Existing fits only locate bounded
+		// target windows; every new region must pass the same native proof, and
+		// the final three-region fit/held-out validation remains unchanged.
+		for i, source := range plan.Sources {
+			if _, reused := offsets[source.ID]; i == main || reused || len(calibrationHypotheses(source.ID)) > 0 {
+				continue
+			}
+			for _, scale := range hypotheses[source.ID] {
+				regions := proofs[source.ID][scale]
+				if len(regions) == 0 || len(regions) >= 3 {
+					continue
+				}
+				attemptedCenters := slices.Clone(centers)
+				for _, fraction := range []float64{.35, .65} {
+					mainWindow, err := sample(main, duration*fraction, 32)
+					if err != nil {
+						return failed(err, main+1)
+					}
+					additional, reason := comparisons.CalibrationCenters(comparisonSamples(mainWindow))
+					if reason != "" {
+						continue
+					}
+					for _, center := range additional {
+						if slices.ContainsFunc(attemptedCenters, func(attempted float64) bool { return math.Abs(attempted-center) < 12 }) {
+							continue
+						}
+						attemptedCenters = append(attemptedCenters, center)
+						var reference []screenshots.ComparisonSample
+						for _, frame := range mainWindow {
+							if frame.RelativeTimestampSeconds >= center-2 && frame.RelativeTimestampSeconds < center+2 {
+								reference = append(reference, frame)
+							}
+						}
+						prediction := regions[0]
+						target, err := sample(i, prediction.Predict(center), max(4, 2*prediction.Scale()+2))
+						if err != nil {
+							return failed(err, i+1)
+						}
+						alignment, reason := comparisons.DiscoverPlaybackAlignment(comparisonSamples(reference), comparisonSamples(target), scale)
+						progress.logger.Tracef(
+							"comparisons: phase=alignment_calibration decision=additional_region column=%d center_seconds=%.3f scale=%d/%d reason=%s",
+							i+1,
+							center,
+							scale.Numerator,
+							scale.Denominator,
+							reason,
+						)
+						if reason == "" {
+							regions = append(regions, alignment)
+							proofs[source.ID][scale] = regions
+							if len(regions) == 3 {
+								break
+							}
+						}
+					}
+					if len(regions) == 3 {
+						break
+					}
+				}
+			}
+		}
+		for id := range proofs {
+			if prediction, unique := comparisons.SelectCalibrationHypothesis(calibrationHypotheses(id), duration); unique {
+				offsets[id] = prediction
+				progress.logger.Infof(
+					"comparisons: phase=alignment_calibration decision=verified source=%s scale=%d/%d offset_seconds=%.9f",
+					id,
+					prediction.ScaleNumerator,
+					prediction.ScaleDenominator,
+					prediction.OffsetSeconds,
+				)
+			}
 		}
 	}
 	for i, source := range plan.Sources {
 		if _, found := offsets[source.ID]; i != main && !found {
 			noteInconclusive("calibration_exhausted", i+1)
 			return unavailable(), nil, true, nil
+		}
+		if prediction, found := offsets[source.ID]; i != main && found && calibrationProfiles[i] != "" && renderers[i].Mode != "" {
+			private := retained.ComparisonSources[source.ID]
+			private.Calibration = (&comparisonCalibration{
+				Profile:       calibrationProfiles[i],
+				Scale:         comparisons.PlaybackScale{Numerator: prediction.ScaleNumerator, Denominator: prediction.ScaleDenominator},
+				OffsetSeconds: prediction.OffsetSeconds,
+				Crop:          activePictures[i],
+			}).clone()
+			retained.ComparisonSources[source.ID] = private
 		}
 	}
 	progress.complete()

@@ -1086,11 +1086,15 @@ type comparisonWindowRecorder struct {
 	comparisonFrameRenderer
 	durations []float64
 	strides   []float64
+	firstMode string
 }
 
 func (r *comparisonWindowRecorder) SampleComparisonSource(ctx context.Context, request screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error) {
 	if r.durations == nil {
 		r.strides = nil
+		if request.Renderer != nil {
+			r.firstMode = request.Renderer.Mode
+		}
 	}
 	r.durations = append(r.durations, request.DurationSeconds)
 	r.strides = append(r.strides, request.StrideSeconds)
@@ -1102,6 +1106,20 @@ func (r *comparisonWindowRecorder) SampleComparisonSource(ctx context.Context, r
 }
 
 func (r *comparisonWindowRecorder) usedFullScan() bool { return slices.Contains(r.strides, .5) }
+
+func (r *comparisonWindowRecorder) ComparisonAnalysisExecutableIdentity(ctx context.Context) (string, error) {
+	inspector, ok := r.comparisonFrameRenderer.(interface {
+		ComparisonAnalysisExecutableIdentity(context.Context) (string, error)
+	})
+	if !ok {
+		return "", nil
+	}
+	identity, err := inspector.ComparisonAnalysisExecutableIdentity(ctx)
+	if err != nil {
+		return "", fmt.Errorf("record comparison executable: %w", err)
+	}
+	return identity, nil
+}
 
 func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
@@ -1140,6 +1158,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		source.InputFingerprint = fingerprint
 		private.ComparisonSources[id] = workflowComparisonSource{Source: source, Fingerprint: fingerprint}
 		plan.Sources = append(plan.Sources, api.ComparisonSource{
 			ID:                id,
@@ -1205,6 +1224,65 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	if !found {
 		t.Fatal("independent offset validation did not report progress")
 	}
+	t.Run("calibration survives restart without granting frame authority", func(t *testing.T) {
+		coldSeconds := 0.0
+		for _, seconds := range renderer.durations {
+			coldSeconds += seconds
+		}
+		_, payload, err := private.MarshalPrivateResource()
+		if err != nil {
+			t.Fatal(err)
+		}
+		restarted, err := decodeWorkflowMediaPrivateArtifacts(b, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for id, source := range restarted.ComparisonSources {
+			if id != plan.MainSourceID && source.Calibration == nil {
+				t.Fatalf("lost calibration for %s", id)
+			}
+		}
+		configured, err := plan.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		builder := b
+		builder.resolver = workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{SourcePath: paths[0], VideoPath: paths[0]}}
+		if err := builder.configureComparisonVideos(t.Context(), api.ReleaseRef{SourcePath: paths[0], Generation: 1}, &restarted, &configured, nil); err != nil {
+			t.Fatal(err)
+		}
+		renderer.durations = nil
+		reused, err := builder.matchWorkflowComparisons(t.Context(), &restarted, configured, builder.comparisonProgress(t.Context(), 5))
+		if err != nil || len(reused.Rows) != len(matched.Rows) || len(renderer.durations) == 0 {
+			t.Fatalf("restart did not perform fresh row matching: rows=%d err=%v", len(reused.Rows), err)
+		}
+		warmSeconds := 0.0
+		for _, seconds := range renderer.durations {
+			warmSeconds += seconds
+		}
+		if warmSeconds >= coldSeconds {
+			t.Fatalf("restart decoded calibration again: cold_seconds=%.3f warm_seconds=%.3f", coldSeconds, warmSeconds)
+		}
+		if renderer.firstMode != "" {
+			t.Fatal("calibration reuse pinned a previous attempt's renderer fallback")
+		}
+		for i, row := range reused.Rows {
+			for j, cell := range row.Cells {
+				if cell.ObservedPTS == nil || *cell.ObservedPTS != *matched.Rows[i].Cells[j].ObservedPTS {
+					t.Fatal("calibration reuse changed the selected native picture")
+				}
+			}
+		}
+		for _, source := range restarted.ComparisonSources {
+			if source.Calibration != nil {
+				source.Calibration.OffsetSeconds += 1000
+			}
+		}
+		wrong, err := b.matchWorkflowComparisons(t.Context(), &restarted, plan, b.comparisonProgress(t.Context(), 5))
+		if len(wrong.Rows) != 0 || err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("a cached prediction authorized unverified pictures: rows=%d err=%v", len(wrong.Rows), err)
+		}
+	})
 	media := api.MediaArtifactSet{}
 	captured, err := b.captureWorkflowComparisons(ctx, api.ReleaseRef{SourcePath: paths[0], Generation: 1}, &media, &private, matched, progress, false)
 	if err != nil || len(media.Artifacts) != 10 {

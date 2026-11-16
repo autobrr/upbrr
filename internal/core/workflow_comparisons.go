@@ -40,6 +40,7 @@ type workflowComparisonSource struct {
 	Path        string
 	Selection   *api.ComparisonProgrammeSelection
 	Witnesses   map[string]screenshots.ComparisonFrameReplay
+	Calibration *comparisonCalibration `json:",omitempty"`
 }
 
 type comparisonFrameRenderer interface {
@@ -421,8 +422,10 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 		source.Width, source.Height = inspected.DisplaySize()
 		inspected.InputFingerprint = fingerprint
 		witnesses := previous.Witnesses
+		calibration := previous.Calibration.clone()
 		if previous.Fingerprint != fingerprint {
 			witnesses = nil
+			calibration = nil
 		}
 		programme := selection.Programme
 		if programme != nil {
@@ -434,6 +437,7 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 			Path:        path,
 			Selection:   programme,
 			Witnesses:   witnesses,
+			Calibration: calibration,
 		}
 	}
 	if !mainFound {
@@ -868,6 +872,7 @@ func orderedComparisonSamples(samples []screenshots.ComparisonSample) ([]screens
 		key := comparisonObservationID(observation)
 		if previous, exists := seen[key]; exists {
 			if previous.RelativeTimestampSeconds != observation.RelativeTimestampSeconds || previous.PTS != observation.PTS ||
+				previous.PictureType != observation.PictureType || previous.PixelFormat != observation.PixelFormat ||
 				previous.TimeBaseNumerator != observation.TimeBaseNumerator ||
 				previous.TimeBaseDenominator != observation.TimeBaseDenominator ||
 				previous.PictureChecksum != observation.PictureChecksum {
