@@ -284,16 +284,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 						return frame.RelativeTimestampSeconds < start || frame.RelativeTimestampSeconds >= end
 					})
 				}
-				// Keep slow decoders on short windows. Measured real-time decoding
-				// allows sixteen-second batches; twice real time allows thirty-two.
-				// This avoids repeated seeks/preroll below the 60-second worker cap.
-				sampleChunkSeconds[source] = 8
-				elapsed := time.Since(started).Seconds()
-				if elapsed <= chunkDuration/2 {
-					sampleChunkSeconds[source] = 32
-				} else if elapsed <= chunkDuration {
-					sampleChunkSeconds[source] = 16
-				}
+				sampleChunkSeconds[source] = comparisonSampleChunkSeconds(sampleChunkSeconds[source], chunkDuration, time.Since(started))
 				retainedBytes += int64(len(decoded)) * 4096
 				if candidateBytes+retainedBytes+analysisBytes+secondaryCache.bytes > 128<<20 {
 					return nil, screenshots.ErrComparisonFastInconclusive
@@ -1010,6 +1001,25 @@ func decodeLimit(source, main, rows int) float64 {
 		return float64(min(900, 160+48*rows))
 	}
 	return float64(min(900, 64+40*rows))
+}
+
+func comparisonSampleChunkSeconds(current, seconds float64, elapsed time.Duration) float64 {
+	// Short tails mostly measure setup and seeking. Keep the learned size,
+	// while still reacting when even a short decode takes eight seconds.
+	if seconds < 8 && elapsed < 8*time.Second {
+		return current
+	}
+	// Keep slow decoders on short windows. Measured real-time decoding allows
+	// sixteen-second batches; twice real time allows thirty-two, below the
+	// decoder's existing 60-second worker cap.
+	switch {
+	case elapsed.Seconds() <= seconds/2:
+		return 32
+	case elapsed.Seconds() <= seconds:
+		return 16
+	default:
+		return 8
+	}
 }
 
 type comparisonOperationStartKey struct{}
