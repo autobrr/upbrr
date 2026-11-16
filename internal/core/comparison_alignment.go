@@ -369,7 +369,8 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	}
 	// Reserve half of the shared retention allowance for native windows. Larger
 	// ranking inventories use the full streaming selector without truncation.
-	candidates, candidateBytes, err := comparisonInventoryCandidates(ctx, inventory, owner, 64<<20)
+	candidates, candidateBytes, err := comparisonInventoryCandidates(ctx, inventory, owner, (64<<20)-comparisonInventoryIndexBytes(inventory))
+	candidateBytes += comparisonInventoryIndexBytes(inventory)
 	if err != nil {
 		return comparisons.MatchResult{}, nil, false, err
 	}
@@ -732,7 +733,8 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 				}
 				if expanded.QuickWindows > inventory.QuickWindows {
 					inventory = expanded
-					candidates, candidateBytes, err = comparisonInventoryCandidates(ctx, inventory, owner, 64<<20)
+					candidates, candidateBytes, err = comparisonInventoryCandidates(ctx, inventory, owner, (64<<20)-comparisonInventoryIndexBytes(inventory))
+					candidateBytes += comparisonInventoryIndexBytes(inventory)
 					if err != nil {
 						return comparisons.MatchResult{}, nil, false, err
 					}

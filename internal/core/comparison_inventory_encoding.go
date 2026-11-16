@@ -6,6 +6,7 @@ package core
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,7 @@ type comparisonInventoryEncoder struct {
 	writer      *gzip.Writer
 	frames      int
 	expanded    int64
+	block       comparisonInventoryBlock
 }
 
 type comparisonInventoryBuffer struct{ buffer bytes.Buffer }
@@ -52,12 +54,16 @@ func (e *comparisonInventoryEncoder) write(frame screenshots.ComparisonSample) e
 	}
 	if e.writer == nil {
 		e.writer = gzip.NewWriter(&e.buffer)
+		e.block = comparisonInventoryBlock{Start: frame.RelativeTimestampSeconds, End: frame.RelativeTimestampSeconds}
 	}
 	encoded = append(encoded, '\n')
 	if _, err := e.writer.Write(encoded); err != nil {
 		return fmt.Errorf("compress comparison inventory: %w", err)
 	}
 	e.expanded += int64(len(encoded))
+	e.block.Expanded += int64(len(encoded))
+	e.block.Start = min(e.block.Start, frame.RelativeTimestampSeconds)
+	e.block.End = max(e.block.End, frame.RelativeTimestampSeconds)
 	e.frames++
 	if e.frames == 256 {
 		return e.flush()
@@ -74,12 +80,15 @@ func (e *comparisonInventoryEncoder) flush() error {
 	if err != nil {
 		return fmt.Errorf("finish comparison inventory batch: %w", err)
 	}
-	if int64(e.buffer.buffer.Len()) > comparisonInventoryLimit-e.ref.Bytes {
+	if int64(e.buffer.buffer.Len()) > comparisonInventoryLimit-e.ref.Bytes || len(e.ref.Blocks) >= comparisonInventoryBlockLimit {
 		return errComparisonInventoryFull
 	}
 	if _, err := e.destination.Write(e.buffer.buffer.Bytes()); err != nil {
 		return fmt.Errorf("write comparison inventory batch: %w", err)
 	}
+	e.block.Offset, e.block.Bytes, e.block.Frames = e.ref.Bytes, int64(e.buffer.buffer.Len()), e.frames
+	e.block.SHA256 = fmt.Sprintf("%x", sha256.Sum256(e.buffer.buffer.Bytes()))
+	e.ref.Blocks = append(e.ref.Blocks, e.block)
 	e.ref.Bytes += int64(e.buffer.buffer.Len())
 	e.buffer.buffer.Reset()
 	e.frames = 0

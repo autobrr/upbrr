@@ -14,6 +14,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -24,6 +25,17 @@ import (
 	"github.com/autobrr/upbrr/internal/services/screenshots"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type comparisonInventoryReadCounter struct {
+	io.ReaderAt
+	bytes int64
+}
+
+func (r *comparisonInventoryReadCounter) ReadAt(data []byte, offset int64) (int, error) {
+	n, err := r.ReaderAt.ReadAt(data, offset)
+	r.bytes += int64(n)
+	return n, err //nolint:wrapcheck // This transparent counter preserves the io.ReaderAt EOF contract.
+}
 
 func TestComparisonInventoryLimitKeepsReadableCompletedFrames(t *testing.T) {
 	var output bytes.Buffer
@@ -156,6 +168,15 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 	if cloned.ComparisonInventory == decoded.ComparisonInventory || cloned.ComparisonInventory.Path != ref.Path {
 		t.Fatal("inventory reference clone is mutable or lost its file")
 	}
+	if len(ref.Blocks) != 3 || !slices.Equal(cloned.ComparisonInventory.Blocks, ref.Blocks) ||
+		cloned.ComparisonInventory.IndexSHA256 != ref.IndexSHA256 {
+		t.Fatal("restart lost the native batch directory")
+	}
+	indexClone := cloneComparisonInventory(ref)
+	indexClone.Blocks[0].SHA256 = "changed"
+	if ref.Blocks[0].SHA256 == "changed" {
+		t.Fatal("inventory clones share mutable batch metadata")
+	}
 	plan.Preferences.FlatCount = 0
 	// An earlier version attached a stopped matching attempt to complete scan
 	// facts. Reuse must report only discovery facts for the new attempt.
@@ -203,7 +224,7 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 		}
 	}
 	var windowFrames []screenshots.ComparisonSample
-	if err := readComparisonInventoryRange(t.Context(), ref, owner, &api.ComparisonTimeInterval{Start: 12, End: 13}, func(frame screenshots.ComparisonSample) bool {
+	if err := readComparisonInventoryRange(t.Context(), decoded.ComparisonInventory, owner, &api.ComparisonTimeInterval{Start: 12, End: 13}, func(frame screenshots.ComparisonSample) bool {
 		windowFrames = append(windowFrames, frame)
 		return true
 	}); err != nil {
@@ -213,6 +234,61 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 		windowFrames[0].Replay == nil || windowFrames[0].Replay.PictureChecksum != "12345678" || windowFrames[0].Identity.PTS != 12000 {
 		t.Fatal("bounded inventory read lost native pictures or their replay witnesses")
 	}
+	compressedInventory, err := os.ReadFile(ref.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookupWindow := api.ComparisonTimeInterval{Start: 12, End: 13}
+	counted := &comparisonInventoryReadCounter{ReaderAt: bytes.NewReader(compressedInventory)}
+	var directFrames []screenshots.ComparisonSample
+	if err := readIndexedComparisonInventory(t.Context(), counted, ref, lookupWindow, func(frame screenshots.ComparisonSample) bool {
+		directFrames = append(directFrames, frame)
+		return true
+	}); err != nil || counted.bytes != ref.Blocks[1].Bytes || counted.bytes >= ref.Bytes || !reflect.DeepEqual(directFrames, windowFrames) {
+		t.Fatalf("native window read escaped its one required batch: bytes=%d total=%d frames=%d err=%v", counted.bytes, ref.Bytes, len(directFrames), err)
+	}
+	t.Run("legacy inventory acquires indexed access without main decoding", func(t *testing.T) {
+		legacyPrivate := cloneWorkflowMediaPrivateArtifacts(cloned)
+		legacyPrivate.ComparisonInventory.Blocks = nil
+		legacyPrivate.ComparisonInventory.IndexSHA256 = ""
+		before := calls
+		indexed, err := b.discoverComparisonScenes(t.Context(), &legacyPrivate, plan, window, excluded, decode, b.comparisonProgress(t.Context(), 5))
+		if err != nil || calls != before || !slices.Equal(indexed.Blocks, ref.Blocks) || indexed.IndexSHA256 != ref.IndexSHA256 {
+			t.Fatalf("legacy index rebuild lost evidence or repeated main discovery: calls=%d err=%v", calls-before, err)
+		}
+	})
+	t.Run("batch and directory corruption remain rejected", func(t *testing.T) {
+		changedIndex := cloneComparisonInventory(ref)
+		changedIndex.Blocks[1].End++
+		if err := readComparisonInventoryRange(t.Context(), changedIndex, owner, &lookupWindow, func(screenshots.ComparisonSample) bool { return true }); err == nil {
+			t.Fatal("changed directory escaped its bound checksum")
+		}
+		sealComparisonInventoryIndex(changedIndex)
+		if err := readIndexedComparisonInventory(t.Context(), bytes.NewReader(compressedInventory), changedIndex, lookupWindow, func(screenshots.ComparisonSample) bool { return true }); err == nil {
+			t.Fatal("batch contents disagreed with declared native bounds")
+		}
+		changedBatch := slices.Clone(compressedInventory)
+		changedBatch[ref.Blocks[1].Offset+ref.Blocks[1].Bytes/2] ^= 1
+		if err := readIndexedComparisonInventory(t.Context(), bytes.NewReader(changedBatch), ref, lookupWindow, func(screenshots.ComparisonSample) bool { return true }); err == nil {
+			t.Fatal("changed selected native batch escaped verification")
+		}
+		// A section lookup never reads an unrelated batch. Full validation at
+		// reuse/publication still rejects corruption outside that section.
+		unrelated := slices.Clone(compressedInventory)
+		unrelated[0] ^= 1
+		if err := os.WriteFile(ref.Path, unrelated, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := readComparisonInventoryRange(t.Context(), ref, owner, &lookupWindow, func(screenshots.ComparisonSample) bool { return true }); err != nil {
+			t.Fatalf("section lookup traversed an unrelated batch: %v", err)
+		}
+		if err := readComparisonInventory(t.Context(), ref, owner, func(screenshots.ComparisonSample) bool { return true }); err == nil {
+			t.Fatal("whole inventory validation accepted unrelated corruption")
+		}
+		if err := os.WriteFile(ref.Path, compressedInventory, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
 	priorPlan, err := plan.Clone()
 	if err != nil {
 		t.Fatal(err)
@@ -397,6 +473,7 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 		t.Fatal(err)
 	}
 	plain := *ref
+	plain.Blocks, plain.IndexSHA256 = nil, ""
 	plain.Compressed = false
 	plain.Bytes = int64(len(decodedInventory))
 	plain.SHA256 = fmt.Sprintf("%x", sha256.Sum256(decodedInventory))

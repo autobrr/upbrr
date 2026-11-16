@@ -40,6 +40,8 @@ type comparisonSceneInventory struct {
 	Eligible                    []api.ComparisonTimeInterval
 	NativeFrames                int64
 	Summary                     api.ComparisonAnalysisSummary
+	Blocks                      []comparisonInventoryBlock `json:",omitempty"`
+	IndexSHA256                 string                     `json:",omitempty"`
 }
 
 func cloneComparisonInventory(value *comparisonSceneInventory) *comparisonSceneInventory {
@@ -47,6 +49,7 @@ func cloneComparisonInventory(value *comparisonSceneInventory) *comparisonSceneI
 		return nil
 	}
 	cloned := *value
+	cloned.Blocks = slices.Clone(value.Blocks)
 	cloned.Covered = slices.Clone(value.Covered)
 	cloned.Eligible = slices.Clone(value.Eligible)
 	cloned.Summary.Excluded = append([]api.ComparisonTimeInterval(nil), value.Summary.Excluded...)
@@ -114,9 +117,8 @@ func readComparisonInventory(ctx context.Context, ref *comparisonSceneInventory,
 	return readComparisonInventoryRange(ctx, ref, owner, nil, visit)
 }
 
-// A window read follows the complete witness validation used to build the
-// ranking index. It still hashes and bounds the entire stream against that
-// reference, but only materializes native witnesses inside the requested window.
+// Indexed window reads verify only the compressed batches they need. Full reads
+// retain whole-file validation for discovery reuse, ranking and publication.
 func readComparisonInventoryRange(
 	ctx context.Context,
 	ref *comparisonSceneInventory,
@@ -127,6 +129,9 @@ func readComparisonInventoryRange(
 	if ref == nil || ref.Bytes < 0 || ref.Bytes > comparisonInventoryLimit || !pathing.IsWithinRoot(owner, ref.Path) {
 		return errors.New("comparison inventory is unavailable")
 	}
+	if err := validateComparisonInventoryIndex(ref); err != nil {
+		return err
+	}
 	file, err := os.Open(ref.Path)
 	if err != nil {
 		return fmt.Errorf("comparison scene inventory: %w", err)
@@ -135,6 +140,9 @@ func readComparisonInventoryRange(
 	stat, err := file.Stat()
 	if err != nil || stat.Size() != ref.Bytes {
 		return errors.New("comparison inventory size changed")
+	}
+	if window != nil && len(ref.Blocks) > 0 {
+		return readIndexedComparisonInventory(ctx, file, ref, *window, visit)
 	}
 	hash := sha256.New()
 	input := io.TeeReader(io.LimitReader(file, comparisonInventoryLimit+1), hash)
@@ -167,14 +175,9 @@ func readComparisonInventoryRange(
 				continue
 			}
 		}
-		var frame screenshots.ComparisonSample
-		if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil {
-			return errors.New("comparison inventory is corrupt")
-		}
-		if frame.Evidence == nil || frame.Evidence.Profile != comparisons.SceneProfile || frame.Identity == nil || frame.Replay == nil ||
-			frame.Replay.Identity != *frame.Identity ||
-			frame.FrameID == "" {
-			return errors.New("comparison inventory witness is incomplete")
+		frame, err := decodeComparisonInventoryFrame(scanner.Bytes())
+		if err != nil {
+			return err
 		}
 		if active {
 			active = visit(frame)
@@ -187,6 +190,18 @@ func readComparisonInventoryRange(
 		return errors.New("comparison inventory content changed")
 	}
 	return nil
+}
+
+func decodeComparisonInventoryFrame(data []byte) (screenshots.ComparisonSample, error) {
+	var frame screenshots.ComparisonSample
+	if err := json.Unmarshal(data, &frame); err != nil {
+		return frame, errors.New("comparison inventory is corrupt")
+	}
+	if frame.Evidence == nil || frame.Evidence.Profile != comparisons.SceneProfile || frame.Identity == nil || frame.Replay == nil ||
+		frame.Replay.Identity != *frame.Identity || frame.FrameID == "" {
+		return frame, errors.New("comparison inventory witness is incomplete")
+	}
+	return frame, nil
 }
 
 type comparisonSceneRankCategory struct {
@@ -315,8 +330,8 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 	}
 	if old := retained.ComparisonInventory; old != nil && old.SourceProfile == profile && old.Summary.Complete && old.Summary.RankingComplete &&
 		plan.Preferences.ScanMode == "deep" {
-		if err := readComparisonInventory(ctx, old, owner, func(screenshots.ComparisonSample) bool { return true }); err == nil {
-			reused := comparisonInventoryForSelection(old, window, excluded)
+		reused := comparisonInventoryForSelection(old, window, excluded)
+		if err := ensureComparisonInventoryIndex(ctx, reused, owner); err == nil {
 			retained.ComparisonInventory = reused
 			progress.logger.Infof("comparisons: phase=main_discovery decision=reused mode=deep covered_seconds=%.3f", old.Summary.CoveredSeconds)
 			return reused, nil
@@ -589,6 +604,7 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 		return nil, fmt.Errorf("comparison scene inventory: %w", err)
 	}
 	ref.SHA256 = hex.EncodeToString(hash.Sum(nil))
+	sealComparisonInventoryIndex(ref)
 	destination := filepath.Join(owner, "scene-inventory-"+ref.SHA256+".jsonl.gz")
 	if _, err := os.Stat(destination); err == nil {
 		existing := *ref
