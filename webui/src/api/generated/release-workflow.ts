@@ -315,6 +315,21 @@ export type ClientSearchPolicy = Readonly<{
   Skip: boolean;
 }>;
 
+export type ComparisonAnalysisSummary = Readonly<{
+  complete: boolean;
+  coveredSeconds: number;
+  durationSeconds: number;
+  eligibleSeconds: number;
+  excluded?: readonly ComparisonTimeInterval[];
+  profile: string;
+  rankingComplete: boolean;
+  reasons?: readonly string[];
+  requestedSeconds: number;
+  scanMode: string;
+  selection: ComparisonTimeInterval;
+  version: number;
+}>;
+
 export type ComparisonAnchor = Readonly<{
   mainSeconds: number;
   sourceId: string;
@@ -363,6 +378,7 @@ export type ComparisonInstructions = Readonly<{
 }>;
 
 export type ComparisonPlan = Readonly<{
+  analysis?: ComparisonAnalysisSummary | null;
   anchors?: readonly ComparisonAnchor[];
   approvedFingerprint?: WorkflowFingerprint;
   fingerprint: WorkflowFingerprint;
@@ -370,6 +386,7 @@ export type ComparisonPlan = Readonly<{
   mainSourceId: string;
   preferences: ComparisonPreferences;
   problems?: readonly ComparisonProblem[];
+  renderPolicyVersion?: number;
   resizeLargerOnly?: boolean;
   resizeSmaller?: boolean;
   reuseMainScreenshots: boolean;
@@ -384,8 +401,11 @@ export type ComparisonPreferences = Readonly<{
   count: number;
   darkCount?: number | null;
   darkPercent: number;
+  flatCount?: number;
   motionCount?: number | null;
   motionPercent: number;
+  scanMode?: string;
+  selectionWindow?: ComparisonSelectionWindow | null;
 }>;
 
 export type ComparisonProblem = Readonly<{
@@ -417,16 +437,65 @@ export type ComparisonProgrammeSelection = Readonly<{
 
 export type ComparisonRow = Readonly<{
   cells: readonly ComparisonCell[];
+  evidence?: ComparisonSceneEvidence | null;
   excluded: boolean;
   id: string;
   scene?: string;
 }>;
 
+export type ComparisonSceneCategory = Readonly<{
+  reason?: string;
+  score: number;
+  state: string;
+  supportEndSeconds: number;
+  supportSeconds: number;
+  supportStartSeconds: number;
+}>;
+
+export type ComparisonSceneEvidence = Readonly<{
+  active: ComparisonSceneRegion;
+  blurredContrast: number;
+  dark: ComparisonSceneCategory;
+  darkFraction: number;
+  eligible: boolean;
+  flat: ComparisonSceneCategory;
+  flatArea: number;
+  flatDeviation: number;
+  height: number;
+  mean: number;
+  motion: ComparisonSceneCategory;
+  movingSupport: number;
+  nearBlackFraction: number;
+  originalContrast: number;
+  profile: string;
+  reason?: string;
+  regions?: readonly ComparisonSceneRegion[];
+  reliableSupport: number;
+  renderer: string;
+  width: number;
+}>;
+
 export type ComparisonSceneMix = Readonly<{
   achievedDark: number;
+  achievedFlat?: number;
   achievedMotion: number;
   requestedDark: number;
+  requestedFlat?: number;
   requestedMotion: number;
+}>;
+
+export type ComparisonSceneRegion = Readonly<{
+  area: number;
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+}>;
+
+export type ComparisonSelectionWindow = Readonly<{
+  end?: number | null;
+  excluded?: readonly ComparisonTimeInterval[];
+  start?: number | null;
 }>;
 
 export type ComparisonSource = Readonly<{
@@ -457,6 +526,11 @@ export type ComparisonSourceDiscovery = Readonly<{
   candidates: readonly ComparisonProgrammeCandidate[];
   fingerprint: string;
   sourceId: string;
+}>;
+
+export type ComparisonTimeInterval = Readonly<{
+  end: number;
+  start: number;
 }>;
 
 export type ComparisonVideoSelection = Readonly<{

@@ -274,6 +274,15 @@ func stageDiscWindow(ctx context.Context, source ComparisonSource, window *compa
 }
 
 func bindDiscObservation(source ComparisonSource, window comparisonDiscWindow, observation *ComparisonFrameObservation) error {
+	if source.NativePixelFormat != "" &&
+		(observation.PixelFormat != source.NativePixelFormat || observation.Width != source.Width || observation.Height != source.Height) {
+		return comparisonDiscFailure("changing_format")
+	}
+	if source.SARNumerator > 0 &&
+		(observation.SARNumerator != source.SARNumerator || observation.SARDenominator != source.SARDenominator) ||
+		source.NativeColour != "" && observation.Colour != source.NativeColour {
+		return comparisonDiscFailure("changing_display_format")
+	}
 	if observation.TimeBaseNumerator != 1 || observation.TimeBaseDenominator != 90000 || observation.PictureChecksum == "" {
 		return comparisonDiscFailure("original_clock_witness")
 	}
@@ -313,7 +322,7 @@ func bindDiscObservation(source ComparisonSource, window comparisonDiscWindow, o
 
 func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSampleRequest) ([]ComparisonSample, error) {
 	if request.DurationSeconds > 64 || request.DurationSeconds <= 0 || request.StrideSeconds <= 0 ||
-		math.Ceil(request.DurationSeconds/request.StrideSeconds)+1 > 50000 {
+		!request.NativeFrames && math.Ceil(request.DurationSeconds/request.StrideSeconds)+1 > 50000 {
 		return nil, comparisonDiscFailure("window_limit")
 	}
 	windows, err := discWindows(request.Source, request.StartSeconds, request.StartSeconds+request.DurationSeconds)
@@ -334,7 +343,9 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 				}
 				admitted += span.End - span.Start
 			}
-			request.Budget.RemainingEncodedBytes -= admitted
+			if err := request.Budget.admit(admitted); err != nil {
+				return nil, err
+			}
 		}
 		path, cleanup, err := stageDiscWindow(ctx, request.Source, &window)
 		if err != nil {
@@ -347,6 +358,7 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 		}
 		args := []string{
 			"-hide_banner",
+			"-threads", "4", "-filter_threads", "1",
 			"-loglevel",
 			"info",
 			"-copyts",
@@ -364,7 +376,11 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 		}
 		filter := comparisonDiscWindowFilter(window) + ",showinfo"
 		service := *s
-		service.runner = finiteComparisonRunner{base: s.runner, outputLimit: 50000 * 256}
+		service.runner = finiteComparisonRunner{
+			base:           s.runner,
+			outputLimit:    50000 * 256,
+			retentionLimit: request.RetentionLimitBytes,
+		}
 		windowContext := context.WithValue(ctx, comparisonSampleProgressKey{}, &comparisonSampleProgress{
 			ctx:      ctx,
 			start:    float64(window.Start90) / 90000,
@@ -374,6 +390,14 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 		cleanup()
 		if runErr != nil {
 			return nil, runErr
+		}
+		if request.analysis != nil {
+			analyzed, err := analysisSamples(result, request, &window)
+			if err != nil {
+				return nil, err
+			}
+			samples = append(samples, analyzed...)
+			continue
 		}
 		observations, err := comparisonObservations(result.Stderr)
 		if err != nil || len(observations) > 50000 {
@@ -403,15 +427,6 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 		}
 		seen := map[string]bool{}
 		for i, observation := range observations {
-			if request.Source.NativePixelFormat != "" &&
-				(observation.PixelFormat != request.Source.NativePixelFormat || observation.Width != request.Source.Width || observation.Height != request.Source.Height) {
-				return nil, comparisonDiscFailure("changing_format")
-			}
-			if request.Source.SARNumerator > 0 &&
-				(observation.SARNumerator != request.Source.SARNumerator || observation.SARDenominator != request.Source.SARDenominator) ||
-				request.Source.NativeColour != "" && observation.Colour != request.Source.NativeColour {
-				return nil, comparisonDiscFailure("changing_display_format")
-			}
 			if err := bindDiscObservation(request.Source, window, &observation); err != nil {
 				return nil, err
 			}
@@ -419,10 +434,15 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 				return nil, comparisonDiscFailure("ambiguous_native_pts")
 			}
 			seen[observation.FrameID] = true
-			if len(samples) > 0 && observation.RelativeTimestampSeconds-samples[len(samples)-1].RelativeTimestampSeconds < request.StrideSeconds-1e-9 {
+			if !request.NativeFrames && len(samples) > 0 &&
+				observation.RelativeTimestampSeconds-samples[len(samples)-1].RelativeTimestampSeconds < request.StrideSeconds-1e-9 {
 				continue
 			}
-			samples = append(samples, ComparisonSample{ComparisonFrameObservation: observation, Pixels: bytes.Clone(result.Stdout[i*256 : (i+1)*256])})
+			samples = append(samples, ComparisonSample{
+				ComparisonFrameObservation: observation,
+				Pixels:                     bytes.Clone(result.Stdout[i*256 : (i+1)*256]),
+				NativeSequence:             request.NativeFrames,
+			})
 		}
 	}
 	if len(samples) > 50000 {

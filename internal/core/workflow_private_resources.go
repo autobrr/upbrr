@@ -104,18 +104,20 @@ func decodeWorkflowDupePrivateEvidence(payload []byte) (any, error) {
 }
 
 type persistedWorkflowMediaArtifacts struct {
-	HostedAccountScopes map[api.PublicResourceID]string                `json:"hostedAccountScopes,omitempty"`
-	ComparisonSources   map[string]workflowComparisonSource            `json:"comparisonSources,omitempty"`
-	ComparisonCaptions  map[api.PublicResourceID]int                   `json:"comparisonCaptions,omitempty"`
-	ComparisonToneMaps  map[api.PublicResourceID]bool                  `json:"comparisonToneMaps,omitempty"`
-	Screenshots         []api.ScreenshotImage                          `json:"screenshots,omitempty"`
-	DVDMenus            []api.DVDMenuCaptureImage                      `json:"dvdMenus,omitempty"`
-	ArtifactImages      map[api.PublicResourceID]api.ScreenshotImage   `json:"artifactImages,omitempty"`
-	HostedImages        map[api.PublicResourceID]api.UploadedImageLink `json:"hostedImages,omitempty"`
-	HostedSources       map[api.PublicResourceID]api.PublicResourceID  `json:"hostedSources,omitempty"`
-	ScreenshotSubject   api.ScreenshotSubject                          `json:"screenshotSubject"`
-	DVDMenuSubject      api.DVDMenuSubject                             `json:"dvdMenuSubject"`
-	PendingDeletes      []persistedWorkflowMediaPendingDelete          `json:"pendingDeletes,omitempty"`
+	ComparisonAnalysisExecutable string                                         `json:"comparisonAnalysisExecutable,omitempty"`
+	ComparisonInventory          *comparisonSceneInventory                      `json:"comparisonInventory,omitempty"`
+	HostedAccountScopes          map[api.PublicResourceID]string                `json:"hostedAccountScopes,omitempty"`
+	ComparisonSources            map[string]workflowComparisonSource            `json:"comparisonSources,omitempty"`
+	ComparisonCaptions           map[api.PublicResourceID]int                   `json:"comparisonCaptions,omitempty"`
+	ComparisonToneMaps           map[api.PublicResourceID]bool                  `json:"comparisonToneMaps,omitempty"`
+	Screenshots                  []api.ScreenshotImage                          `json:"screenshots,omitempty"`
+	DVDMenus                     []api.DVDMenuCaptureImage                      `json:"dvdMenus,omitempty"`
+	ArtifactImages               map[api.PublicResourceID]api.ScreenshotImage   `json:"artifactImages,omitempty"`
+	HostedImages                 map[api.PublicResourceID]api.UploadedImageLink `json:"hostedImages,omitempty"`
+	HostedSources                map[api.PublicResourceID]api.PublicResourceID  `json:"hostedSources,omitempty"`
+	ScreenshotSubject            api.ScreenshotSubject                          `json:"screenshotSubject"`
+	DVDMenuSubject               api.DVDMenuSubject                             `json:"dvdMenuSubject"`
+	PendingDeletes               []persistedWorkflowMediaPendingDelete          `json:"pendingDeletes,omitempty"`
 }
 
 type persistedWorkflowMediaPendingDelete struct {
@@ -147,18 +149,20 @@ func (a workflowMediaPrivateArtifacts) MarshalPrivateResource() (string, []byte,
 		})
 	}
 	payload, err := json.Marshal(persistedWorkflowMediaArtifacts{
-		HostedAccountScopes: accountScopes,
-		ComparisonSources:   a.ComparisonSources,
-		ComparisonCaptions:  a.ComparisonCaptions,
-		ComparisonToneMaps:  a.ComparisonToneMaps,
-		Screenshots:         append([]api.ScreenshotImage(nil), a.Screenshots...),
-		DVDMenus:            append([]api.DVDMenuCaptureImage(nil), a.DVDMenus...),
-		ArtifactImages:      cloneScreenshotImageMap(a.ArtifactImages),
-		HostedImages:        cloneUploadedImageMap(a.HostedImages),
-		HostedSources:       cloneHostedSourceMap(a.HostedSources),
-		ScreenshotSubject:   a.screenshotSubject,
-		DVDMenuSubject:      a.dvdMenuSubject,
-		PendingDeletes:      persistedPending,
+		HostedAccountScopes:          accountScopes,
+		ComparisonSources:            a.ComparisonSources,
+		ComparisonCaptions:           a.ComparisonCaptions,
+		ComparisonInventory:          cloneComparisonInventory(a.ComparisonInventory),
+		ComparisonAnalysisExecutable: a.ComparisonAnalysisExecutable,
+		ComparisonToneMaps:           a.ComparisonToneMaps,
+		Screenshots:                  append([]api.ScreenshotImage(nil), a.Screenshots...),
+		DVDMenus:                     append([]api.DVDMenuCaptureImage(nil), a.DVDMenus...),
+		ArtifactImages:               cloneScreenshotImageMap(a.ArtifactImages),
+		HostedImages:                 cloneUploadedImageMap(a.HostedImages),
+		HostedSources:                cloneHostedSourceMap(a.HostedSources),
+		ScreenshotSubject:            a.screenshotSubject,
+		DVDMenuSubject:               a.dvdMenuSubject,
+		PendingDeletes:               persistedPending,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal workflow media artifacts: %w", err)
@@ -214,21 +218,23 @@ func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload [
 		commitState = &workflowMediaCommitState{pending: pending}
 	}
 	return workflowMediaPrivateArtifacts{
-		ComparisonSources:  persisted.ComparisonSources,
-		ComparisonCaptions: persisted.ComparisonCaptions,
-		ComparisonToneMaps: persisted.ComparisonToneMaps,
-		Screenshots:        append([]api.ScreenshotImage(nil), persisted.Screenshots...),
-		DVDMenus:           append([]api.DVDMenuCaptureImage(nil), persisted.DVDMenus...),
-		ArtifactImages:     cloneScreenshotImageMap(persisted.ArtifactImages),
-		HostedImages:       cloneUploadedImageMap(persisted.HostedImages),
-		HostedSources:      cloneHostedSourceMap(persisted.HostedSources),
-		screenshotService:  builder.screenshots,
-		screenshotSubject:  persisted.ScreenshotSubject,
-		dvdMenuService:     builder.dvdMenus,
-		dvdMenuSubject:     persisted.DVDMenuSubject,
-		hostedRepository:   builder.media.repo,
-		mediaReuse:         builder.media.mediaReuse,
-		commitState:        commitState,
+		ComparisonSources:            persisted.ComparisonSources,
+		ComparisonCaptions:           persisted.ComparisonCaptions,
+		ComparisonInventory:          cloneComparisonInventory(persisted.ComparisonInventory),
+		ComparisonAnalysisExecutable: persisted.ComparisonAnalysisExecutable,
+		ComparisonToneMaps:           persisted.ComparisonToneMaps,
+		Screenshots:                  append([]api.ScreenshotImage(nil), persisted.Screenshots...),
+		DVDMenus:                     append([]api.DVDMenuCaptureImage(nil), persisted.DVDMenus...),
+		ArtifactImages:               cloneScreenshotImageMap(persisted.ArtifactImages),
+		HostedImages:                 cloneUploadedImageMap(persisted.HostedImages),
+		HostedSources:                cloneHostedSourceMap(persisted.HostedSources),
+		screenshotService:            builder.screenshots,
+		screenshotSubject:            persisted.ScreenshotSubject,
+		dvdMenuService:               builder.dvdMenus,
+		dvdMenuSubject:               persisted.DVDMenuSubject,
+		hostedRepository:             builder.media.repo,
+		mediaReuse:                   builder.media.mediaReuse,
+		commitState:                  commitState,
 	}, nil
 }
 

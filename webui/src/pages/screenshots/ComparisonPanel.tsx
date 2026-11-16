@@ -46,13 +46,24 @@ const emptyPlan = (imported: boolean): ComparisonPlan => ({
   reuseMainScreenshots: true,
   ...(!imported && {
     sizeReferenceSourceId: "main",
-    resizeLargerOnly: true,
-    resizeSmaller: true,
+    resizeLargerOnly: false,
+    resizeSmaller: false,
   }),
-  preferences: { count: 3, motionPercent: 0, darkPercent: 0, motionCount: 0, darkCount: 0 },
+  preferences: {
+    scanMode: "fast",
+    flatCount: 0,
+    count: 3,
+    motionPercent: 0,
+    darkPercent: 0,
+    motionCount: 0,
+    darkCount: 0,
+  },
   fingerprint: "",
 });
 const editableChoices = (plan: ComparisonPlan) => ({
+  sizeReferenceSourceId: undefined,
+  resizeLargerOnly: false,
+  resizeSmaller: false,
   ...plan,
   fingerprint: "",
   approvedFingerprint: "",
@@ -63,6 +74,8 @@ const editableChoices = (plan: ComparisonPlan) => ({
 // Old plans retain their percentage meaning until edited; an edit fixes both
 // targets as the row counts shown here before changing the total row count.
 const scenePreferences = (preferences: ComparisonPreferences) => ({
+  flatCount: 0,
+  scanMode: "fast",
   ...preferences,
   motionCount:
     preferences.motionCount ?? Math.ceil((preferences.count * preferences.motionPercent) / 100),
@@ -76,7 +89,16 @@ const scenePreferences = (preferences: ComparisonPreferences) => ({
 export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAlt }: Props) {
   const { view } = facet;
   const [enabled, setEnabled] = useState(Boolean(view.plan));
-  const [draft, setDraft] = useState<ComparisonPlan>(view.plan || emptyPlan(false));
+  const [draft, setDraft] = useState<ComparisonPlan>(
+    view.plan && !view.plan.imported
+      ? {
+          ...view.plan,
+          sizeReferenceSourceId: view.plan.mainSourceId,
+          resizeLargerOnly: false,
+          resizeSmaller: false,
+        }
+      : view.plan || emptyPlan(false),
+  );
   const [paths, setPaths] = useState<Readonly<Record<string, string>>>({});
   const [positions, setPositions] = useState<Readonly<Record<string, number>>>({});
   const [browseSource, setBrowseSource] = useState("");
@@ -106,12 +128,22 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
     draft.imported ||
     (Number.isInteger(preferences.count) &&
       preferences.count > 0 &&
-      [preferences.motionCount, preferences.darkCount].every(
+      preferences.count <= 16 &&
+      [preferences.motionCount, preferences.darkCount, preferences.flatCount].every(
         (count) => Number.isInteger(count) && count >= 0 && count <= preferences.count,
       ));
   const sourceOrder = new Map(draft.sources.map((source, index) => [source.id, index]));
   const change = (next: ComparisonPlan) =>
-    setDraft({ ...next, fingerprint: "", approvedFingerprint: "" });
+    setDraft({
+      ...next,
+      ...(!next.imported && {
+        sizeReferenceSourceId: next.mainSourceId,
+        resizeLargerOnly: false,
+        resizeSmaller: false,
+      }),
+      fingerprint: "",
+      approvedFingerprint: "",
+    });
   const clearFrameSelections = (sourceID: string) =>
     setFrameSelections((previous) =>
       Object.fromEntries(
@@ -408,68 +440,41 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
             </label>
             {!draft.imported && (
               <>
+                <p>Every image fits the main input display size, with black padding when needed.</p>
                 <div className="grid w-64 max-w-full gap-1">
                   <div className="flex items-center gap-1">
-                    <label htmlFor="comparison-frame-size">Frame size</label>
-                    <FieldHelp label="Comparison frame size" id="comparison-size-help">
-                      {draft.resizeLargerOnly
-                        ? `Match width for wide references or height for references narrower than 16:9, preserving aspect ratio. ${draft.resizeSmaller ? "Lower resolutions are resized too." : "Lower resolutions keep their size."} No padding or stretching.`
-                        : "Fit sources to the selected display size, centering with padding when aspect ratios differ. No cropping or stretching."}{" "}
-                      Apply setup before previewing.
+                    <label htmlFor="comparison-scan-mode">Scene discovery</label>
+                    <FieldHelp label="Comparison scan mode" id="comparison-scan-help">
+                      Quick Scan checks a limited set of scenes and makes a best-effort selection.
+                      Deep Scan takes longer because it scans the entire main input and selects the
+                      best-scoring eligible candidates for each requested scene type. Other sources
+                      are still quick-matched. If suitable scenes are unavailable, both modes use
+                      best effort.
                     </FieldHelp>
                   </div>
                   <Select
-                    id="comparison-frame-size"
-                    aria-label="Comparison frame size"
-                    aria-describedby="comparison-size-help"
-                    value={draft.sizeReferenceSourceId || ""}
+                    id="comparison-scan-mode"
+                    aria-label="Comparison scan mode"
+                    aria-describedby="comparison-scan-help"
+                    value={preferences.scanMode || "fast"}
                     onChange={(event) =>
-                      change({ ...draft, sizeReferenceSourceId: event.target.value })
+                      change({
+                        ...draft,
+                        preferences: { ...preferences, scanMode: event.target.value },
+                      })
                     }
                   >
-                    <option value="">Original source sizes</option>
-                    {draft.sources
-                      .filter((source) => !source.imported)
-                      .map((source) => (
-                        <option key={source.id} value={source.id}>
-                          Match {source.label || source.id}
-                          {source.width && source.height
-                            ? ` · ${source.width} × ${source.height}`
-                            : ""}
-                        </option>
-                      ))}
+                    <option value="fast">Quick Scan</option>
+                    <option value="deep">Deep Scan</option>
                   </Select>
                 </div>
-                {draft.sizeReferenceSourceId && (
-                  <div className="grid min-h-9 content-center gap-1">
-                    <label className="flex items-center gap-2">
-                      <Checkbox
-                        checked={draft.resizeLargerOnly || false}
-                        onCheckedChange={(checked) =>
-                          change({ ...draft, resizeLargerOnly: checked })
-                        }
-                      />
-                      Resize resolutions proportionally, without padding
-                    </label>
-                    {draft.resizeLargerOnly && (
-                      <label className="flex items-center gap-2">
-                        <Checkbox
-                          checked={draft.resizeSmaller || false}
-                          onCheckedChange={(checked) =>
-                            change({ ...draft, resizeSmaller: checked })
-                          }
-                        />
-                        Also resize lower resolutions
-                      </label>
-                    )}
-                  </div>
-                )}
                 <div className="flex flex-wrap items-end gap-2">
                   {(
                     [
                       ["count", "Rows", "Comparison rows", 1],
                       ["motionCount", "Motion", "Fast-motion scenes (rows)", 0],
                       ["darkCount", "Dark", "Dark scenes (rows)", 0],
+                      ["flatCount", "Flat scenes", "Flat scenes (rows)", 0],
                     ] as const
                   ).map(([key, text, label, min]) => (
                     <label className="grid w-16 gap-1" key={key}>
@@ -480,7 +485,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                         min={min}
                         step="1"
                         aria-label={label}
-                        max={key === "count" ? undefined : preferences.count}
+                        max={key === "count" ? 16 : preferences.count}
                         aria-invalid={
                           !Number.isInteger(preferences[key]) ||
                           preferences[key] < min ||
@@ -504,11 +509,79 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   <div className="mb-1">
                     <FieldHelp label="Scene targets" id="comparison-scene-help">
                       Scene targets are whole row counts from zero to the total rows. A row can
-                      count toward both dark and motion targets. Unavailable scenes are reported as
-                      unmet. Leave both targets at zero to allow bounded automatic alignment.
+                      count toward all requested categories. Unavailable scenes are reported as
+                      unmet, with eligible alternatives selected using best effort.
                     </FieldHelp>
                   </div>
+                  <FieldHelp label="Flat scenes" id="comparison-flat-help">
+                    Prefer scenes containing smooth or low-texture areas, such as walls or sky. Only
+                    part of the frame needs to be smooth. Uses best effort when suitable scenes are
+                    unavailable.
+                  </FieldHelp>
                 </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="grid gap-1">
+                    Selection start (seconds)
+                    <input
+                      className={inputClass}
+                      type="number"
+                      min="0"
+                      step="any"
+                      aria-label="Comparison selection start"
+                      value={preferences.selectionWindow?.start ?? ""}
+                      onChange={(event) =>
+                        change({
+                          ...draft,
+                          preferences: {
+                            ...preferences,
+                            selectionWindow: {
+                              ...preferences.selectionWindow,
+                              start:
+                                event.target.value === "" ? undefined : Number(event.target.value),
+                            },
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    Selection end (seconds)
+                    <input
+                      className={inputClass}
+                      type="number"
+                      min="0"
+                      step="any"
+                      aria-label="Comparison selection end"
+                      value={preferences.selectionWindow?.end ?? ""}
+                      onChange={(event) =>
+                        change({
+                          ...draft,
+                          preferences: {
+                            ...preferences,
+                            selectionWindow: {
+                              ...preferences.selectionWindow,
+                              end:
+                                event.target.value === "" ? undefined : Number(event.target.value),
+                            },
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+                {view.plan?.analysis && (
+                  <p>
+                    Effective selection: {view.plan.analysis.selection.start.toFixed(2)}–
+                    {view.plan.analysis.selection.end.toFixed(2)} seconds
+                    {view.plan.analysis.excluded
+                      ?.map(
+                        (interval) =>
+                          `; exclude ${interval.start.toFixed(2)}–${interval.end.toFixed(2)}`,
+                      )
+                      .join("")}
+                    . Apply setup after changing the range.
+                  </p>
+                )}
               </>
             )}
           </div>
@@ -1014,7 +1087,17 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
             <p>
               Last measured scene mix: dark {view.plan.sceneMix.achievedDark}/
               {view.plan.sceneMix.requestedDark}; fast motion {view.plan.sceneMix.achievedMotion}/
-              {view.plan.sceneMix.requestedMotion} requested rows.
+              {view.plan.sceneMix.requestedMotion}; flat {view.plan.sceneMix.achievedFlat ?? 0}/
+              {view.plan.sceneMix.requestedFlat ?? 0} requested rows. Counts include verified
+              categories only.
+            </p>
+          )}
+          {view.plan?.analysis && (
+            <p role="status">
+              {view.plan.analysis.scanMode === "deep" ? "Deep Scan" : "Quick Scan"}:{" "}
+              {view.plan.analysis.complete ? "complete main coverage" : "partial main coverage"};{" "}
+              {view.plan.analysis.coveredSeconds.toFixed(1)} seconds visited. Other sources use
+              bounded matching.
             </p>
           )}
           {(view.plan?.warnings || []).map((warning, index) => (

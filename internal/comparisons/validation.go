@@ -27,6 +27,9 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 			Message:  message,
 		})
 	}
+	if !plan.Imported && plan.RenderPolicyVersion != 1 {
+		add("", "", "Rendering policy changed; recapture and review the main-size canvas.")
+	}
 	sources := make(map[string]api.ComparisonSource, len(plan.Sources))
 	for _, source := range plan.Sources {
 		if _, exists := sources[source.ID]; exists || strings.TrimSpace(source.ID) == "" {
@@ -82,6 +85,14 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 		if row.Excluded {
 			continue
 		}
+		if !plan.Imported && (row.Evidence != nil && row.Evidence.Profile != SceneProfile || row.Scene != "" && row.Evidence == nil) {
+			add(row.ID, "", "Rematch the legacy scene classifications before review.")
+		}
+		if !plan.Imported && row.Evidence == nil && slices.ContainsFunc(row.Cells, func(cell api.ComparisonCell) bool {
+			return cell.SourceID == plan.MainSourceID && cell.Confidence != nil
+		}) {
+			add(row.ID, "", "Rematch automatic rows to restore verified main-input scene evidence before review.")
+		}
 		activeRows++
 		cells := make(map[string]bool, len(row.Cells))
 		for _, cell := range row.Cells {
@@ -128,6 +139,9 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 // SceneCounts resolves explicit row targets or legacy percentages for the
 // requested row count. Overlap is allowed; each target must fit independently.
 func SceneCounts(preferences api.ComparisonPreferences, count int) (dark, motion int, err error) {
+	if preferences.FlatCount < 0 || preferences.FlatCount > count {
+		return 0, 0, errors.New("flat target must be a whole row count from 0 to the comparison row count")
+	}
 	if count < 0 {
 		return 0, 0, errors.New("comparison row count must be nonnegative")
 	}

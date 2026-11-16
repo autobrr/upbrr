@@ -1305,6 +1305,65 @@
           "Skip"
         ]
       },
+      "ComparisonAnalysisSummary": {
+        "type": "object",
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "coveredSeconds": {
+            "type": "number"
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "eligibleSeconds": {
+            "type": "number"
+          },
+          "excluded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonTimeInterval"
+            }
+          },
+          "profile": {
+            "type": "string"
+          },
+          "rankingComplete": {
+            "type": "boolean"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requestedSeconds": {
+            "type": "number"
+          },
+          "scanMode": {
+            "type": "string"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/ComparisonTimeInterval"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "complete",
+          "coveredSeconds",
+          "durationSeconds",
+          "eligibleSeconds",
+          "profile",
+          "rankingComplete",
+          "requestedSeconds",
+          "scanMode",
+          "selection",
+          "version"
+        ]
+      },
       "ComparisonAnchor": {
         "type": "object",
         "properties": {
@@ -1506,6 +1565,16 @@
       "ComparisonPlan": {
         "type": "object",
         "properties": {
+          "analysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonAnalysisSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "anchors": {
             "type": "array",
             "items": {
@@ -1532,6 +1601,9 @@
             "items": {
               "$ref": "#/components/schemas/ComparisonProblem"
             }
+          },
+          "renderPolicyVersion": {
+            "type": "integer"
           },
           "resizeLargerOnly": {
             "type": "boolean"
@@ -1603,6 +1675,9 @@
           "darkPercent": {
             "type": "integer"
           },
+          "flatCount": {
+            "type": "integer"
+          },
           "motionCount": {
             "anyOf": [
               {
@@ -1615,6 +1690,19 @@
           },
           "motionPercent": {
             "type": "integer"
+          },
+          "scanMode": {
+            "type": "string"
+          },
+          "selectionWindow": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonSelectionWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1720,6 +1808,16 @@
               "$ref": "#/components/schemas/ComparisonCell"
             }
           },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonSceneEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "excluded": {
             "type": "boolean"
           },
@@ -1736,16 +1834,140 @@
           "id"
         ]
       },
+      "ComparisonSceneCategory": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string"
+          },
+          "supportEndSeconds": {
+            "type": "number"
+          },
+          "supportSeconds": {
+            "type": "number"
+          },
+          "supportStartSeconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "score",
+          "state",
+          "supportEndSeconds",
+          "supportSeconds",
+          "supportStartSeconds"
+        ]
+      },
+      "ComparisonSceneEvidence": {
+        "type": "object",
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/ComparisonSceneRegion"
+          },
+          "blurredContrast": {
+            "type": "number"
+          },
+          "dark": {
+            "$ref": "#/components/schemas/ComparisonSceneCategory"
+          },
+          "darkFraction": {
+            "type": "number"
+          },
+          "eligible": {
+            "type": "boolean"
+          },
+          "flat": {
+            "$ref": "#/components/schemas/ComparisonSceneCategory"
+          },
+          "flatArea": {
+            "type": "integer"
+          },
+          "flatDeviation": {
+            "type": "number"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "mean": {
+            "type": "number"
+          },
+          "motion": {
+            "$ref": "#/components/schemas/ComparisonSceneCategory"
+          },
+          "movingSupport": {
+            "type": "number"
+          },
+          "nearBlackFraction": {
+            "type": "number"
+          },
+          "originalContrast": {
+            "type": "number"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonSceneRegion"
+            }
+          },
+          "reliableSupport": {
+            "type": "number"
+          },
+          "renderer": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active",
+          "blurredContrast",
+          "dark",
+          "darkFraction",
+          "eligible",
+          "flat",
+          "flatArea",
+          "flatDeviation",
+          "height",
+          "mean",
+          "motion",
+          "movingSupport",
+          "nearBlackFraction",
+          "originalContrast",
+          "profile",
+          "reliableSupport",
+          "renderer",
+          "width"
+        ]
+      },
       "ComparisonSceneMix": {
         "type": "object",
         "properties": {
           "achievedDark": {
             "type": "integer"
           },
+          "achievedFlat": {
+            "type": "integer"
+          },
           "achievedMotion": {
             "type": "integer"
           },
           "requestedDark": {
+            "type": "integer"
+          },
+          "requestedFlat": {
             "type": "integer"
           },
           "requestedMotion": {
@@ -1758,6 +1980,64 @@
           "requestedDark",
           "requestedMotion"
         ]
+      },
+      "ComparisonSceneRegion": {
+        "type": "object",
+        "properties": {
+          "area": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "area",
+          "height",
+          "width",
+          "x",
+          "y"
+        ]
+      },
+      "ComparisonSelectionWindow": {
+        "type": "object",
+        "properties": {
+          "end": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "excluded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonTimeInterval"
+            }
+          },
+          "start": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
       },
       "ComparisonSource": {
         "type": "object",
@@ -1877,6 +2157,21 @@
           "candidates",
           "fingerprint",
           "sourceId"
+        ]
+      },
+      "ComparisonTimeInterval": {
+        "type": "object",
+        "properties": {
+          "end": {
+            "type": "number"
+          },
+          "start": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "end",
+          "start"
         ]
       },
       "ComparisonVideoSelection": {

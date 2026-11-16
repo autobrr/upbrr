@@ -29,10 +29,10 @@ import (
 )
 
 // ComparisonCaptionVersion identifies the generated caption layout for retained pixels.
-const ComparisonCaptionVersion = 3
+const ComparisonCaptionVersion = 5
 
 // ComparisonDiscCaptionVersion uses authored title-relative display positions.
-const ComparisonDiscCaptionVersion = 4
+const ComparisonDiscCaptionVersion = 6
 
 // ComparisonSource describes one local video. Missing timing stays zero; callers
 // own source fingerprint verification and alignment with other inputs.
@@ -87,6 +87,7 @@ type ComparisonFrameObservation struct {
 	Identity            *api.ComparisonFrameIdentity
 	Replay              *ComparisonFrameReplay
 	PTS                 int64
+	DurationTicks       int64
 	TimeBaseNumerator   int64
 	TimeBaseDenominator int64
 	TimestampSeconds    float64
@@ -140,6 +141,9 @@ type ComparisonFrame struct {
 // ComparisonSample contains one 16-by-16, row-major grayscale picture and its
 // observed identity. Values are normalized to an 8-bit full-range gray raster.
 type ComparisonSample struct {
+	NativeSequence bool `json:",omitempty"`
+	AnalysisAnchor bool `json:",omitempty"`
+	Evidence       *api.ComparisonSceneEvidence
 	ComparisonFrameObservation
 	Pixels []byte
 }
@@ -148,34 +152,60 @@ type ComparisonSample struct {
 // requests matching-only colour conversion, independently of capture preferences.
 // DVD matching always deinterlaces and corrects display geometry in either path.
 type ComparisonSampleRequest struct {
-	MatchCrop       *ComparisonCrop
-	Budget          *ComparisonDecodeBudget
-	Source          ComparisonSource
-	StartSeconds    float64
-	DurationSeconds float64
-	StrideSeconds   float64
-	NormalizeSDR    bool
+	// RetentionLimitBytes shares the caller's remaining parent budget. Zero uses
+	// the standalone decoder cap; supplied limits reserve 4096 bytes per picture.
+	RetentionLimitBytes int64
+	NativeFrames        bool
+	Renderer            *ComparisonAnalysisRenderer
+	analysis            *comparisonRasterStream
+	MatchCrop           *ComparisonCrop
+	Budget              *ComparisonDecodeBudget
+	Source              ComparisonSource
+	StartSeconds        float64
+	DurationSeconds     float64
+	StrideSeconds       float64
+	NormalizeSDR        bool
 	// MatchAspectRatio selects the shared central picture area for normalized
 	// matching only. Captures retain the source's own framing.
 	MatchAspectRatio float64
 }
 
-// ErrComparisonNormalizationUnavailable permits matching to use its existing
-// full scan when inspected colour facts or a compatible converter are unavailable.
+// ComparisonAnalysisRenderer pins a successful colour conversion for one
+// source/attempt. A later failure is explicit rather than mixing signatures.
+type ComparisonAnalysisRenderer struct{ Mode string }
+
+// ErrComparisonNormalizationUnavailable reports unavailable inspected colour
+// facts or compatible conversion without authorizing another scan mode.
 // Cancellation, corruption and invalid frame identities never use this fallback.
 var ErrComparisonNormalizationUnavailable = errors.New("screenshots: comparison SDR normalization unavailable")
 
-// ErrComparisonFastInconclusive preserves explicit full-scan/manual fallback.
+// ErrComparisonFastInconclusive preserves an explicit bounded/manual outcome.
 var ErrComparisonFastInconclusive = errors.New("comparison fast attempt exhausted its bounded work budget")
 
 // ComparisonDecodeBudget is attempt-local encoded input admission, including
 // repeated spans unless the caller actually reuses their decoded results.
-type ComparisonDecodeBudget struct{ RemainingEncodedBytes int64 }
+type ComparisonDecodeBudget struct {
+	RemainingEncodedBytes int64
+	AttemptRemaining      *int64
+}
+
+func (b *ComparisonDecodeBudget) admit(count int64) error {
+	if count < 0 || count > b.RemainingEncodedBytes || b.AttemptRemaining != nil && count > *b.AttemptRemaining {
+		return ErrComparisonFastInconclusive
+	}
+	b.RemainingEncodedBytes -= count
+	if b.AttemptRemaining != nil {
+		*b.AttemptRemaining -= count
+	}
+	return nil
+}
 
 // InspectComparisonSource probes one regular local file using the existing
 // native MediaInfo reader. It rejects ambiguous video selection and does not
 // substitute guessed frame rates or infer HDR from a filename.
 func (s *Service) InspectComparisonSource(ctx context.Context, path string) (ComparisonSource, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 	path, err := comparisonLocalPath(path)
 	if err != nil {
 		return ComparisonSource{}, err
@@ -210,18 +240,25 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 	if err != nil {
 		return ComparisonSource{}, err
 	}
-	probe, err := s.runner.Run(ctx, executable, []string{
+	probe, err := (finiteComparisonRunner{
+		base:           s.runner,
+		outputLimit:    64 << 10,
+		retentionLimit: 16 << 10,
+	}).Run(ctx, executable, []string{
 		"-hide_banner", "-loglevel", "info", "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
 		"-frames:v", "1", "-vf", "showinfo", "-f", "null", "-",
 	}, "")
 	if ctx.Err() != nil {
 		return ComparisonSource{}, fmt.Errorf("screenshots: comparison inspection canceled: %w", ctx.Err())
 	}
+	if err != nil {
+		return ComparisonSource{}, fmt.Errorf("screenshots: inspect comparison timestamp: %w", err)
+	}
 	if corruption := ffmpegFrameCorruptionError(probe.Stderr); corruption != nil {
 		return ComparisonSource{}, corruption
 	}
 	start := comparisonInputStart.FindSubmatch(probe.Stderr)
-	if err != nil || probe.ExitCode != 0 || len(start) != 2 {
+	if probe.ExitCode != 0 || len(start) != 2 {
 		return ComparisonSource{}, errors.New("screenshots: comparison input start time unavailable")
 	}
 	startSeconds, err := strconv.ParseFloat(string(start[1]), 64)
@@ -389,7 +426,7 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 	windowEnd := windowStart + duration
 	if !comparisonFinite(start) || !comparisonFinite(duration) || !comparisonFinite(strideSeconds) || !comparisonFinite(source.StartTimeSeconds) ||
 		!comparisonFinite(windowEnd) || !comparisonFinite(request.MatchAspectRatio) || request.MatchAspectRatio < 0 ||
-		start < 0 || duration <= 0 || duration > 64 || strideSeconds <= 0 || math.Ceil(duration/strideSeconds)+1 > 50000 {
+		start < 0 || duration <= 0 || duration > 64 || strideSeconds <= 0 || !request.NativeFrames && math.Ceil(duration/strideSeconds)+1 > 50000 {
 		logger.Warnf("comparisons: phase=sampling state=blocked reason=invalid_window")
 		return nil, errors.New("screenshots: comparison sampling window exceeds its bounds")
 	}
@@ -397,6 +434,12 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 	if err != nil {
 		return nil, err
 	}
+	ctx, input, err := s.openComparisonFileInput(ctx, path, request.Budget)
+	if err != nil {
+		return nil, err
+	}
+	defer input.close()
+	path = input.url
 	executable, err := resolveFFmpeg()
 	if err != nil {
 		return nil, err
@@ -407,6 +450,9 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 		windowEnd,
 		strideSeconds,
 	)
+	if request.NativeFrames {
+		filter = fmt.Sprintf("trim=start=%.9f:end=%.9f,showinfo", windowStart, windowEnd)
+	}
 	started := time.Now()
 	succeeded := false
 	defer func() {
@@ -419,14 +465,24 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 		duration: duration,
 	})
 	args := []string{
-		"-hide_banner", "-loglevel", "info", "-copyts", "-ss", strconv.FormatFloat(start, 'f', 9, 64), "-i", path,
+		"-hide_banner", "-loglevel", "info", "-threads", "4", "-filter_threads", "4", "-copyts", "-ss", strconv.FormatFloat(start, 'f', 9, 64), "-i", path,
 		"-map", "0:V:0", "-an", "-sn", "-dn",
 	}
 	service := *s
-	service.runner = finiteComparisonRunner{base: s.runner, outputLimit: 50000 * 256}
+	service.runner = finiteComparisonRunner{
+		base:           s.runner,
+		outputLimit:    50000 * 256,
+		retentionLimit: request.RetentionLimitBytes,
+	}
 	result, err := service.runComparisonSamples(ctx, executable, args, filter, request)
+	if inputErr := input.failure(); inputErr != nil {
+		return nil, inputErr
+	}
 	if err != nil {
 		return nil, err
+	}
+	if request.analysis != nil {
+		return analysisSamples(result, request, nil)
 	}
 	observations, err := comparisonObservations(result.Stderr)
 	if err != nil || len(observations) > 50000 || len(result.Stdout) != len(observations)*256 {
@@ -450,6 +506,7 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 		observation.RelativeTimestampSeconds = observation.TimestampSeconds - source.StartTimeSeconds
 		bindFileObservation(source, &observation)
 		samples = append(samples, ComparisonSample{
+			NativeSequence:             request.NativeFrames,
 			ComparisonFrameObservation: observation,
 			Pixels:                     bytes.Clone(result.Stdout[i*256 : (i+1)*256]),
 		})
@@ -493,65 +550,89 @@ func (s *Service) runComparisonSamples(ctx context.Context, executable string, a
 			}
 		}
 	}
+	if request.Renderer != nil && request.Renderer.Mode != "" {
+		modes = []string{request.Renderer.Mode}
+	}
 	for _, mode := range modes {
+		requestCtx := ctx
 		if err := ctx.Err(); err != nil {
 			return CommandResult{}, fmt.Errorf("screenshots: comparison sampling canceled: %w", err)
 		}
 		if mode == "software" && !softwareTonemappingCompatible(request.Source.HDRFacts) {
 			continue
 		}
-		normalized := filter
-		if comparisonDeinterlaceForMatching(request) {
-			normalized += ",bwdif=mode=send_frame:parity=auto:deint=interlaced"
+		normalization, err := s.comparisonNormalizationFilter(request, mode)
+		if err != nil {
+			return CommandResult{}, err
 		}
-		if mode != "none" {
-			normalized += "," + strings.Join(toneMappingFilters(captureRequest{
-				ToneMap:   true,
-				Algorithm: s.cfg.ScreenshotHandling.TonemapAlgorithm,
-				Desat:     s.cfg.ScreenshotHandling.Desat,
-			}, mode == "libplacebo"), ",")
-		}
-		if comparisonNormalizesPicture(request) {
-			geometry := request.Source
-			if crop := request.MatchCrop; crop != nil {
-				if !crop.ValidFor(geometry.Width, geometry.Height) {
-					return CommandResult{}, comparisonDiscFailure("matching_crop")
-				}
-				normalized += fmt.Sprintf(",crop=%d:%d:%d:%d:exact=1", crop.Width, crop.Height, crop.X, crop.Y)
-				geometry.Width, geometry.Height = crop.Width, crop.Height
-			}
-			if scale := buildPARScaleFilter(captureRequest{
-				SourceWidth:  geometry.Width,
-				SourceHeight: geometry.Height,
-				WidthScale:   geometry.WidthScale,
-				HeightScale:  geometry.HeightScale,
-			}); scale != "" {
-				normalized += "," + scale
-			}
-			width, height := geometry.DisplaySize()
-			if request.MatchAspectRatio > 0 && width > 0 && height > 0 && math.Abs(float64(width)/float64(height)-request.MatchAspectRatio) > 1e-6 {
-				normalized += fmt.Sprintf(
-					",crop=w='min(iw,round(ih*%.9f/2)*2)':h='min(ih,round(iw/%.9f/2)*2)':exact=1",
-					request.MatchAspectRatio,
-					request.MatchAspectRatio,
-				)
-			}
-			// Area averaging keeps small matching rasters stable across resolutions.
-			normalized += ",scale=16:16:flags=area:out_range=full,format=gray"
-		} else {
-			normalized += ",scale=16:16:out_range=full,format=gray"
-		}
-		if comparisonNormalizesPicture(request) {
+		normalized := filter + normalization
+		if comparisonNormalizesPicture(request) && request.analysis == nil {
 			normalized += ",showinfo@comparison_output"
 		}
 		command := slices.Clone(args)
 		if mode == "libplacebo" {
 			command = append([]string{"-init_hw_device", "vulkan=upbrr", "-filter_hw_device", "upbrr"}, command...)
 		}
-		command = append(command, "-vf", normalized, "-fps_mode", "passthrough",
-			"-frames:v", "50000", "-pix_fmt", "gray", "-f", "rawvideo", "-")
-		result, err := s.runner.Run(ctx, executable, command, "")
-		if errors.Is(err, internalerrors.ErrFrameCorruption) || errors.Is(err, errComparisonDecoderLimit) || errors.Is(err, context.Canceled) ||
+		if stream := request.analysis; stream != nil {
+			stream.reset(ctx)
+			requestCtx = context.WithValue(ctx, comparisonRasterStreamKey{}, stream)
+			input := "0:V:0"
+			for i, arg := range command {
+				if arg == "-map" && i+1 < len(command) {
+					input = command[i+1]
+					command[i+1] = "[analysis]"
+				}
+			}
+			matchingRequest := request
+			matchingRequest.analysis = nil
+			matchingRequest.MatchCrop = stream.matchCrop
+			matchingRequest.MatchAspectRatio = stream.matchAspect
+			matching, err := s.comparisonNormalizationFilter(matchingRequest, mode)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			graph := "[" + input + "]" + filter + ",split=2[scenein][matchin];[scenein]null" + normalization + ",split=2[motionin][statsin];" +
+				fmt.Sprintf("[motionin]scale=256:%d:flags=area:out_range=full,format=gray,scdet=threshold=10,metadata@comparison_cut=mode=print,"+
+					"scale=iw:ih:in_range=full:out_range=full,format=yuv420p,pad=256:%d:0:0:color=black[motion];", stream.motionHeight, stream.height) +
+				fmt.Sprintf(
+					"[matchin]null%sscale=iw:ih:in_range=full:out_range=full,format=yuv420p,pad=768:%d:0:0:color=black[matching];",
+					matching+",",
+					stream.height,
+				) +
+				"[motion][matching]hstack=inputs=2,setsar=1,showinfo@comparison_motion,setpts=2*PTS[motionpacket];" +
+				fmt.Sprintf(
+					"[statsin]select='isnan(prev_selected_pts)+gte(pts-prev_selected_pts,ceil(0.25/TB))',scale=512:%d:flags=area:out_range=full,format=yuv420p,split=2[original][blurin];",
+					stream.height,
+				) +
+				"[blurin]gblur=sigma=1.2:steps=2[blur];[original][blur]hstack=inputs=2,setsar=1,showinfo@comparison_stats,setpts=2*PTS+1[stats];" +
+				"[motionpacket][stats]interleave=nb_inputs=2:duration=longest,showinfo@comparison_output[analysis]"
+
+			// A private doubled clock puts each sparse packet one native tick
+			// after its motion packet. This avoids duplicate muxer DTS warnings
+			// interleaving showinfo records. The stream verifies this transform
+			// and restores branch/native clocks before publishing observations.
+			command = append(
+				command,
+				"-filter_complex_threads",
+				"1",
+				"-filter_complex",
+				graph,
+				"-fps_mode",
+				"passthrough",
+				"-frames:v",
+				"100000",
+				"-pix_fmt",
+				"yuv420p",
+				"-f",
+				"rawvideo",
+				"-",
+			)
+		} else {
+			command = append(command, "-vf", normalized, "-fps_mode", "passthrough", "-frames:v", "50000", "-pix_fmt", "gray", "-f", "rawvideo", "-")
+		}
+		result, err := s.runner.Run(requestCtx, executable, command, "")
+		if errors.Is(err, internalerrors.ErrFrameCorruption) || errors.Is(err, errComparisonDecoderLimit) || errors.Is(err, ErrComparisonFastInconclusive) ||
+			errors.Is(err, context.Canceled) ||
 			errors.Is(err, context.DeadlineExceeded) {
 			return CommandResult{}, fmt.Errorf("comparison sampling: %w", err)
 		}
@@ -562,6 +643,9 @@ func (s *Service) runComparisonSamples(ctx context.Context, executable string, a
 			return CommandResult{}, corruption
 		}
 		if err == nil && result.ExitCode == 0 {
+			if request.Renderer != nil {
+				request.Renderer.Mode = mode
+			}
 			profile, _, _ := strings.Cut(request.Source.HDRFacts.DolbyVisionProfile, ".")
 			if mode == "libplacebo" && profile == "5" && !showInfoDOVIMetadata.Match(result.Stderr) {
 				return CommandResult{}, fmt.Errorf("%w: decoded Dolby Vision metadata missing", ErrComparisonNormalizationUnavailable)
@@ -575,6 +659,62 @@ func (s *Service) runComparisonSamples(ctx context.Context, executable string, a
 		logging.FromContext(ctx, s.logger).Debugf("comparisons: phase=sampling renderer=%s state=failed reason=%s", mode, renderFailureStage(result, err))
 	}
 	return CommandResult{}, fmt.Errorf("%w: compatible tone-mapping renderers failed", ErrComparisonNormalizationUnavailable)
+}
+
+func (s *Service) comparisonNormalizationFilter(request ComparisonSampleRequest, mode string) (string, error) {
+	normalized := ""
+	if comparisonDeinterlaceForMatching(request) {
+		normalized += ",bwdif=mode=send_frame:parity=auto:deint=interlaced"
+	}
+	if mode == "software" {
+		filters, filterErr := s.softwareComparisonAnalysisFilters(request)
+		if filterErr != nil {
+			return "", filterErr
+		}
+		normalized += "," + strings.Join(filters, ",")
+	} else if mode != "none" {
+		normalized += "," + strings.Join(toneMappingFilters(captureRequest{
+			ToneMap:   true,
+			Algorithm: s.cfg.ScreenshotHandling.TonemapAlgorithm,
+			Desat:     s.cfg.ScreenshotHandling.Desat,
+		}, mode == "libplacebo"), ",")
+	}
+	switch {
+	case comparisonNormalizesPicture(request) && mode != "software":
+		geometry := request.Source
+		if crop := request.MatchCrop; crop != nil {
+			if !crop.ValidFor(geometry.Width, geometry.Height) {
+				return "", comparisonDiscFailure("matching_crop")
+			}
+			normalized += fmt.Sprintf(",crop=%d:%d:%d:%d:exact=1", crop.Width, crop.Height, crop.X, crop.Y)
+			geometry.Width, geometry.Height = crop.Width, crop.Height
+		}
+		if scale := buildPARScaleFilter(captureRequest{
+			SourceWidth:  geometry.Width,
+			SourceHeight: geometry.Height,
+			WidthScale:   geometry.WidthScale,
+			HeightScale:  geometry.HeightScale,
+		}); scale != "" {
+			normalized += "," + scale
+		}
+		width, height := geometry.DisplaySize()
+		if request.MatchAspectRatio > 0 && width > 0 && height > 0 && math.Abs(float64(width)/float64(height)-request.MatchAspectRatio) > 1e-6 {
+			normalized += fmt.Sprintf(
+				",crop=w='min(iw,round(ih*%.9f/2)*2)':h='min(ih,round(iw/%.9f/2)*2)':exact=1",
+				request.MatchAspectRatio,
+				request.MatchAspectRatio,
+			)
+		}
+		// Area averaging keeps small matching rasters stable across resolutions.
+		if request.analysis == nil {
+			normalized += ",scale=16:16:flags=area:out_range=full,format=gray"
+		}
+	case mode == "software" && request.analysis == nil:
+		normalized += ",scale=16:16:flags=area:out_range=full,format=gray"
+	case request.analysis == nil:
+		normalized += ",scale=16:16:out_range=full,format=gray"
+	}
+	return normalized, nil
 }
 
 func comparisonDeinterlaceForMatching(request ComparisonSampleRequest) bool {
@@ -648,6 +788,7 @@ func (p *comparisonSampleProgress) report() {
 }
 
 var (
+	comparisonAnyShowInfoLine    = regexp.MustCompile(`(?m)^\[(?:Parsed_showinfo_\d+|showinfo@comparison_\w+) @ [^\]\r\n]+\]\s+([^\r\n]+)`)
 	comparisonLabel              = regexp.MustCompile(`^[A-Za-z0-9 ._-]{0,80}$`)
 	comparisonShowInfoLine       = regexp.MustCompile(`(?m)^\[Parsed_showinfo_\d+ @ [^\]\r\n]+\]\s+([^\r\n]+)`)
 	comparisonOutputShowInfoLine = regexp.MustCompile(`(?m)^\[showinfo@comparison_output @ [^\]\r\n]+\]\s+([^\r\n]+)`)
@@ -661,6 +802,7 @@ var (
 var comparisonNativePixelFormat = regexp.MustCompile(`^[a-zA-Z0-9_]{1,32}$`)
 
 var comparisonColourFacts = regexp.MustCompile(`^color_range:(\w+)\s+color_space:(\w+)\s+color_primaries:(\w+)\s+color_trc:(\w+)`)
+var comparisonDuration = regexp.MustCompile(`\bduration:\s*(-?\d+)\b`)
 
 func comparisonColour(body string) string {
 	if fields := comparisonColourFacts.FindStringSubmatch(body); len(fields) == 5 {
@@ -719,6 +861,9 @@ func comparisonObservationsFor(stderr []byte, pattern *regexp.Regexp) ([]Compari
 			TimeBaseDenominator:  denominator,
 			TimestampSeconds:     float64(pts) * float64(numerator) / float64(denominator),
 			PictureType:          pictureType,
+		}
+		if duration := comparisonDuration.FindStringSubmatch(body); len(duration) == 2 {
+			observation.DurationTicks, _ = strconv.ParseInt(duration[1], 10, 64)
 		}
 		if facts := comparisonPictureFacts.FindStringSubmatch(body); len(facts) == 8 {
 			observation.PixelFormat = facts[1]
@@ -783,6 +928,17 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 				seek = max(0, seek-1)
 			}
 			args[i+1] = strconv.FormatFloat(seek, 'f', 9, 64)
+		}
+	}
+	if r.expected != nil {
+		// A selected frame can leave buffered GPU filters waiting for input EOF.
+		// Bound the physical read around the exact replay instead of scanning the
+		// remaining title; the original PTS and checksum still authorize output.
+		for i, arg := range args {
+			if arg == "-i" {
+				args = slices.Insert(args, i, "-t", "4")
+				break
+			}
 		}
 	}
 	result, err := r.run(ctx, executable, args, dir)
@@ -937,7 +1093,7 @@ func comparisonLocalPath(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("screenshots: resolve comparison source: %w", err)
 	}
-	info, err := os.Stat(abs)
+	info, err := os.Stat(abs) // #nosec G703 -- Explicit local media selection permits files outside application storage.
 	if err != nil || !info.Mode().IsRegular() {
 		return "", errors.New("screenshots: comparison requires an accessible regular local file")
 	}

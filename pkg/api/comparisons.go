@@ -67,10 +67,11 @@ type ComparisonFrameIdentity struct {
 // ComparisonRow is one common visual moment. Exclusion is explicit and retained;
 // complete rows are never inferred by zipping independent source-image lists.
 type ComparisonRow struct {
-	ID       string           `json:"id"`
-	Excluded bool             `json:"excluded"`
-	Scene    string           `json:"scene,omitempty"`
-	Cells    []ComparisonCell `json:"cells"`
+	Evidence *ComparisonSceneEvidence `json:"evidence,omitempty"`
+	ID       string                   `json:"id"`
+	Excluded bool                     `json:"excluded"`
+	Scene    string                   `json:"scene,omitempty"`
+	Cells    []ComparisonCell         `json:"cells"`
 }
 
 // ComparisonAnchor records an inspected manual correspondence. Anchors are hints
@@ -83,7 +84,10 @@ type ComparisonAnchor struct {
 
 // ComparisonPreferences requests common scenes; unmet preferences are reported.
 type ComparisonPreferences struct {
-	Count int `json:"count"`
+	ScanMode        string                     `json:"scanMode,omitempty"`
+	SelectionWindow *ComparisonSelectionWindow `json:"selectionWindow,omitempty"`
+	FlatCount       int                        `json:"flatCount,omitempty"`
+	Count           int                        `json:"count"`
 	// Percent fields decode older plans only; explicit counts take precedence.
 	MotionPercent int `json:"motionPercent"`
 	DarkPercent   int `json:"darkPercent"`
@@ -96,6 +100,8 @@ type ComparisonPreferences struct {
 // ComparisonSceneMix reports measured thumbnail selection outcomes. It does not
 // establish whole-video scene coverage or calibrated luminance.
 type ComparisonSceneMix struct {
+	RequestedFlat   int `json:"requestedFlat,omitempty"`
+	AchievedFlat    int `json:"achievedFlat,omitempty"`
 	RequestedDark   int `json:"requestedDark"`
 	RequestedMotion int `json:"requestedMotion"`
 	AchievedDark    int `json:"achievedDark"`
@@ -113,10 +119,12 @@ type ComparisonProblem struct {
 // Fingerprint binds the reviewed mapping, settings and image content. Approval
 // must match that fingerprint and verified current bytes before any host call.
 type ComparisonPlan struct {
-	SceneMix     *ComparisonSceneMix `json:"sceneMix,omitempty"`
-	Sources      []ComparisonSource  `json:"sources"`
-	Rows         []ComparisonRow     `json:"rows"`
-	MainSourceID string              `json:"mainSourceId"`
+	RenderPolicyVersion int                        `json:"renderPolicyVersion,omitempty"`
+	Analysis            *ComparisonAnalysisSummary `json:"analysis,omitempty"`
+	SceneMix            *ComparisonSceneMix        `json:"sceneMix,omitempty"`
+	Sources             []ComparisonSource         `json:"sources"`
+	Rows                []ComparisonRow            `json:"rows"`
+	MainSourceID        string                     `json:"mainSourceId"`
 	// SizeReferenceSourceID fits video captures within this column's inspected
 	// display size, padding without cropping. Empty retains each video's size.
 	SizeReferenceSourceID string `json:"sizeReferenceSourceId,omitempty"`

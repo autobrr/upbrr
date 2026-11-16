@@ -89,7 +89,7 @@ const comparisonPreviewRendering = (
   source: ComparisonSource,
   plan: ComparisonPlan | null | undefined,
 ) => {
-  const reference = plan?.sources.find((candidate) => candidate.id === plan.sizeReferenceSourceId);
+  const reference = plan?.sources.find((candidate) => candidate.id === plan.mainSourceId);
   const mixedResolution =
     new Set(
       plan?.sources
@@ -99,7 +99,10 @@ const comparisonPreviewRendering = (
   return JSON.stringify([
     source.label,
     source.toneMap,
-    plan?.sizeReferenceSourceId || "",
+    plan?.mainSourceId || "",
+    "main-canvas-v1",
+    plan?.preferences.scanMode || "fast",
+    plan?.preferences.selectionWindow,
     plan?.resizeLargerOnly || false,
     plan?.resizeSmaller || false,
     mixedResolution,

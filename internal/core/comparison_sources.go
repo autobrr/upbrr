@@ -87,11 +87,27 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 		}
 		source.Witnesses[string(key)] = cloneComparisonWitness(witness)
 		retained.ComparisonSources[selection.SourceID] = source
+		var guard *api.ComparisonSceneEvidence
+		if selection.SourceID == plan.MainSourceID {
+			inspected, err := b.inspectManualMainScene(ctx, plan, retained, content.TimestampSeconds, nil, 0)
+			if err != nil {
+				return snapshot, private, err
+			}
+			if inspected.Identity == nil || *inspected.Identity != witness.Identity {
+				return snapshot, private, comparisonSelectionFailure(
+					api.OperationFailureStaleResult,
+					"changed_main_picture",
+					"Inspect the main picture again before selecting it.",
+				)
+			}
+			guard = inspected.Evidence
+		}
 		previous := plan.Rows[row].Cells[column]
 		if selection.SourceID == plan.MainSourceID &&
 			(previous.TimestampSeconds == nil || *previous.TimestampSeconds != content.TimestampSeconds ||
 				previous.ObservedIdentity == nil || *previous.ObservedIdentity != witness.Identity) {
 			plan.Rows[row].Scene = ""
+			plan.Rows[row].Evidence = guard
 			plan.SceneMix = nil
 			for c := range plan.Rows[row].Cells {
 				plan.Rows[row].Cells[c].Confidence = nil
@@ -341,36 +357,6 @@ func resolveComparisonVideo(
 		Input     filesystem.ResolvedComparisonInput
 	}{discovery.Fingerprint, input})
 	return string(fingerprint), &input, &candidate, err
-}
-
-func sampleWholeComparisonSource(
-	ctx context.Context,
-	renderer comparisonFrameRenderer,
-	request screenshots.ComparisonSampleRequest,
-) ([]screenshots.ComparisonSample, error) {
-	var samples []screenshots.ComparisonSample
-	end := request.StartSeconds + request.DurationSeconds
-	for start := request.StartSeconds; start < end; {
-		window := request
-		window.StartSeconds = start
-		window.DurationSeconds = min(64, end-start)
-		windowCtx := api.WithWorkflowProgressReporter(ctx, func(update api.WorkflowProgressUpdate) {
-			fraction := float64(max(0, min(update.Completed, update.Total))) / float64(max(1, update.Total))
-			update.Completed = int(1000 * (start - request.StartSeconds + window.DurationSeconds*fraction) / request.DurationSeconds)
-			update.Total = 1000
-			api.EmitWorkflowProgress(ctx, update)
-		})
-		frames, err := renderer.SampleComparisonSource(windowCtx, window)
-		if err != nil {
-			return nil, fmt.Errorf("comparison source: %w", err)
-		}
-		samples = append(samples, frames...)
-		if len(samples) > 50000 {
-			return nil, errors.New("comparison scan exceeds its sample limit")
-		}
-		start += window.DurationSeconds
-	}
-	return orderedComparisonSamples(samples)
 }
 
 func comparisonScratchDir(root, releasePath, id string) (string, error) {

@@ -155,8 +155,9 @@ func DiscoverAlignment(reference, target []FrameSample) (ConstantAlignment, stri
 	return ConstantAlignment{OffsetSeconds: best, ToleranceSeconds: min(step, targetStep) / 4}, ""
 }
 
-// AlignedMatch uses caller-verified constant offsets only for automatic default
-// picture preferences without scene quotas. Manual/explicit choices keep Match.
+// AlignedMatch consumes checked offsets and an optional exact main identity.
+// Scene discovery and quotas stay with the main selector. Exact manual anchors
+// authorize only their observed moment; explicit picture preferences are retained.
 // Target reuse is still rejected; static scenes cannot drift for a higher score.
 func AlignedMatch(
 	sources []SampledSource,
@@ -170,8 +171,8 @@ func AlignedMatch(
 	}
 	for _, source := range sources {
 		alignment, ok := alignments[source.ID]
-		if !source.PreferBFrames || len(source.Anchors) != 0 ||
-			source.ID != mainID &&
+		if len(source.Anchors) != 0 && options.MainFrameID == "" ||
+			source.ID != mainID && len(source.Anchors) == 0 &&
 				(!ok || !matchingUnit(alignment.ToleranceSeconds) || alignment.ToleranceSeconds == 0 || math.IsNaN(alignment.OffsetSeconds) || math.IsInf(alignment.OffsetSeconds, 0)) {
 			return MatchResult{}, errors.New("aligned matching requires checked offsets and default picture preferences")
 		}
@@ -207,7 +208,14 @@ func matchAlignedFrame(main matchingFrame, column matchingColumn) FrameMatch {
 			best = max(best, visualScore(main, frame))
 		}
 	}
-	for _, kind := range preferredPictureTypes(main.frame.FrameType) {
+	types := preferredPictureTypes(main.frame.FrameType)
+	if !column.source.PreferBFrames {
+		types = column.source.AllowedTypes
+		if len(types) == 0 {
+			types = []string{"B", "P", "I", ""}
+		}
+	}
+	for _, kind := range types {
 		chosen, distance := -1, math.Inf(1)
 		for i, frame := range column.frames {
 			delta := math.Abs(frame.frame.TimestampSeconds - predicted)
@@ -224,4 +232,62 @@ func matchAlignedFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		Reason:   "no_compatible_picture_type",
 		Method:   "aligned",
 	}
+}
+
+// VerifyAlignedMomentContext verifies an interior native picture against the
+// complete local sequence. The local temporal search must independently resolve
+// the same offset without a repeated alternative; every native pair then has to
+// agree, with consecutive identities, cadence and occurrence continuity. This
+// admits quiet interiors without extrapolating a point proof outside its window.
+func VerifyAlignedMomentContext(reference, target []FrameSample, frameID string, alignment ConstantAlignment) bool {
+	index := slices.IndexFunc(reference, func(f FrameSample) bool { return f.FrameID == frameID })
+	if index < 0 || alignment.IntervalProof || !matchingUnit(alignment.ToleranceSeconds) || alignment.ToleranceSeconds == 0 ||
+		math.IsNaN(alignment.Predict(0)) ||
+		math.IsInf(alignment.Predict(0), 0) ||
+		math.IsNaN(alignment.Scale()) {
+		return false
+	}
+	transformed := slices.Clone(reference)
+	for i := range transformed {
+		transformed[i].TimestampSeconds *= alignment.Scale()
+	}
+	checked, reason := DiscoverAlignment(transformed, target)
+	if reason != "" || !alignment.validatesOffset(checked.OffsetSeconds) {
+		return false
+	}
+	columns, _, err := prepareMatching([]SampledSource{{ID: "main", Frames: reference}, {ID: "target", Frames: target}}, "main", MatchOptions{Count: 1})
+	if err != nil {
+		return false
+	}
+	previous := -1
+	occurrence := ""
+	for i := range reference {
+		frame := reference[i]
+		if !frame.NativeSequence || frame.FrameID == "" || frame.Occurrence != reference[index].Occurrence {
+			return false
+		}
+		predicted := alignment.Predict(frame.TimestampSeconds)
+		chosen := -1
+		for j, f := range target {
+			if math.Abs(f.TimestampSeconds-predicted) <= alignment.ToleranceSeconds {
+				if chosen >= 0 {
+					return false
+				}
+				chosen = j
+			}
+		}
+		if chosen < 0 || previous >= 0 && chosen != previous+1 || !target[chosen].NativeSequence || target[chosen].FrameID == "" {
+			return false
+		}
+		if previous < 0 {
+			occurrence = target[chosen].Occurrence
+		} else if target[chosen].Occurrence != occurrence {
+			return false
+		}
+		if visualScore(columns[0].frames[i], columns[1].frames[chosen]) < .92 {
+			return false
+		}
+		previous = chosen
+	}
+	return true
 }

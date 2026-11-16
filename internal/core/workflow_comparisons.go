@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/screenshots"
@@ -42,6 +43,7 @@ type workflowComparisonSource struct {
 }
 
 type comparisonFrameRenderer interface {
+	AnalyzeComparisonSource(context.Context, screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error)
 	InspectComparisonSource(context.Context, string) (screenshots.ComparisonSource, error)
 	SampleComparisonSource(context.Context, screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error)
 	ComparisonPreview(context.Context, screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error)
@@ -108,6 +110,23 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 			plan.Sources[i].Overlay = true
 		}
 	}
+	if err := plan.Preferences.Validate(); !plan.Imported && err != nil {
+		return api.MediaArtifactSet{}, nil, fmt.Errorf("comparison scene analysis: %w", err)
+	}
+	if plan.Preferences.ScanMode == "" {
+		plan.Preferences.ScanMode = "fast"
+	}
+	if !plan.Imported {
+		plan.RenderPolicyVersion = 1
+		if plan.ResizeLargerOnly || plan.ResizeSmaller || plan.SizeReferenceSourceID != "" && plan.SizeReferenceSourceID != plan.MainSourceID {
+			return api.MediaArtifactSet{}, nil, comparisonSelectionFailure(
+				api.OperationFailureInvalidInput,
+				"main_canvas_required",
+				"Generated comparisons use the main input display size with proportional fitting and black padding. Apply the main canvas setting.",
+			)
+		}
+		plan.SizeReferenceSourceID = plan.MainSourceID
+	}
 	if plan.Preferences.Count == 0 {
 		plan.Preferences.Count = 4
 	}
@@ -144,12 +163,21 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 			}
 		}
 	}
+	if instructions.Action == "capture" || instructions.Action == "match" {
+		snapshot.Failures = slices.DeleteFunc(snapshot.Failures, func(f api.WorkflowFailure) bool {
+			return f.Failure.ComparisonReason == "capture_cancelled" || f.Failure.ComparisonReason == "capture_deadline" ||
+				instructions.Action == "match" &&
+					(f.Failure.ComparisonReason == "match_cancelled" || f.Failure.ComparisonReason == "match_deadline" || f.Failure.ComparisonReason == "discovery_incomplete")
+		})
+	}
+	activeAction := instructions.Action
 	switch instructions.Action {
 	case "match":
 		progress := b.comparisonProgress(ctx, 5)
 		defer progress.close()
-		plan, err = b.matchWorkflowComparisons(ctx, retained, plan, progress)
+		plan, err = b.matchWorkflowComparisons(ctx, &retained, plan, progress)
 		if err == nil && (instructions.CaptureAfterMatch == nil || *instructions.CaptureAfterMatch) {
+			activeAction = "capture"
 			plan, err = b.captureWorkflowComparisons(ctx, release, &snapshot, &retained, plan, progress, true)
 		}
 	case "capture":
@@ -158,13 +186,63 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 		plan, err = b.captureWorkflowComparisons(ctx, release, &snapshot, &retained, plan, progress, false)
 	}
 
-	if err != nil {
+	incomplete, partial := errors.AsType[*releaseworkflow.ComparisonIncompleteError](err)
+	if !partial && (activeAction == "match" || activeAction == "capture") &&
+		(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		reason := activeAction + "_deadline"
+		if errors.Is(err, context.Canceled) {
+			reason = activeAction + "_cancelled"
+		}
+		incomplete = &releaseworkflow.ComparisonIncompleteError{Cause: err, Reason: reason}
+		partial = true
+	}
+	if err != nil && !partial {
 		return api.MediaArtifactSet{}, nil, err
 	}
+	if partial {
+		verificationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if verifyErr := verifyComparisonVideos(verificationCtx, plan, retained); verifyErr != nil {
+			return api.MediaArtifactSet{}, nil, verifyErr
+		}
+		snapshot.Failures = append(snapshot.Failures, api.WorkflowFailure{Failure: api.OperationFailure{
+			Code:             api.OperationFailureMissingPrerequisite,
+			Operation:        api.OperationKindMedia,
+			Recovery:         api.OperationRecoveryRetry,
+			ComparisonReason: incomplete.Reason,
+			Message:          redaction.RedactValue(incomplete.Error(), nil),
+		}})
+	}
+
 	// Public mapping edits cannot replace the private bytes or invent processing.
 	retainMatchedComparisonWitnesses(plan, nil, retained)
 	if err = verifyComparisonCells(plan, retained, false, &b.config.ScreenshotHandling.ToneMap); err != nil {
 		return api.MediaArtifactSet{}, nil, err
+	}
+	if !plan.Imported && plan.Analysis == nil && retained.ComparisonSources[plan.MainSourceID].Source.DurationSeconds > 0 {
+		source := retained.ComparisonSources[plan.MainSourceID].Source
+		duration := source.VideoDurationSeconds
+		if duration <= 0 {
+			duration = source.DurationSeconds
+		}
+		window, excluded, rangeErr := comparisons.SelectionRange(plan.Preferences, duration, comparisonTelevision(retained))
+		if rangeErr != nil {
+			return api.MediaArtifactSet{}, nil, fmt.Errorf("comparison scene analysis: %w", rangeErr)
+		}
+		plan.Analysis = &api.ComparisonAnalysisSummary{
+			Version:         1,
+			Profile:         comparisons.SceneProfile,
+			ScanMode:        plan.Preferences.ScanMode,
+			DurationSeconds: duration,
+			Selection:       window,
+			Excluded:        excluded,
+			Reasons:         []string{"not_scanned"},
+		}
+	}
+	if !plan.Imported && plan.Analysis != nil && plan.Preferences.SelectionWindow != nil {
+		normalized := *plan.Preferences.SelectionWindow
+		normalized.Excluded = slices.Clone(plan.Analysis.Excluded)
+		plan.Preferences.SelectionWindow = &normalized
 	}
 	plan.Problems = comparisons.Validate(plan)
 	plan.Fingerprint, err = comparisons.ReviewFingerprint(plan)
@@ -175,6 +253,9 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	syncComparisonSelections(&snapshot, plan)
 	snapshot.ImageRequirementsPrepared = false
 	snapshot.ImageHostUploadSkipped = false
+	if partial {
+		return snapshot, retained, incomplete
+	}
 	return snapshot, retained, nil
 }
 
@@ -308,7 +389,15 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 				})
 				plan.SceneMix = nil
 			}
+			if mainChanged {
+				plan.Analysis = nil
+				retained.ComparisonInventory = nil
+			}
 			for r := range plan.Rows {
+				if mainChanged {
+					plan.Rows[r].Scene = ""
+					plan.Rows[r].Evidence = nil
+				}
 				for c := range plan.Rows[r].Cells {
 					cell := &plan.Rows[r].Cells[c]
 					if changed && (mainChanged || cell.SourceID == source.ID) {
@@ -583,24 +672,51 @@ func (b workflowMediaBuilder) writeComparisonImage(release api.ReleaseRef, cell 
 
 func (b workflowMediaBuilder) matchWorkflowComparisons(
 	ctx context.Context,
-	retained workflowMediaPrivateArtifacts,
-	plan api.ComparisonPlan, progress *comparisonProgress,
+	retained *workflowMediaPrivateArtifacts,
+	plan api.ComparisonPlan,
+	progress *comparisonProgress,
 ) (api.ComparisonPlan, error) {
-	if err := verifyComparisonVideos(ctx, plan, retained); err != nil {
-		return plan, fmt.Errorf("match comparison sources: %w", err)
+	started := time.Now()
+	plan.RenderPolicyVersion = 1
+	if plan.Preferences.ScanMode == "" {
+		plan.Preferences.ScanMode = "fast"
 	}
-	renderer, err := b.comparisonService()
-	if err != nil {
-		return plan, fmt.Errorf("match comparison sources: %w", err)
+	plan.SizeReferenceSourceID = plan.MainSourceID
+	plan.ResizeLargerOnly, plan.ResizeSmaller = false, false
+	for i := range plan.Sources {
+		source := retained.ComparisonSources[plan.Sources[i].ID]
+		plan.Sources[i].Width, plan.Sources[i].Height = source.Source.DisplaySize()
 	}
-	options := comparisons.MatchOptions{
-		Count: plan.Preferences.Count,
+	for id, source := range retained.ComparisonSources {
+		if source.Source.InputFingerprint == "" {
+			source.Source.InputFingerprint = source.Fingerprint
+			retained.ComparisonSources[id] = source
+		}
 	}
+
+	duration := retained.ComparisonSources[plan.MainSourceID].Source.VideoDurationSeconds
+	if duration <= 0 {
+		duration = retained.ComparisonSources[plan.MainSourceID].Source.DurationSeconds
+	}
+	allowance := 300 * time.Second
+	if plan.Preferences.ScanMode == "deep" {
+		allowance += comparisonDiscoveryAllowance(duration)
+	}
+	ctx = context.WithValue(ctx, comparisonOperationStartKey{}, started)
+	ctx, cancel := context.WithTimeout(ctx, allowance)
+	defer cancel()
+	if err := verifyComparisonVideos(ctx, plan, *retained); err != nil {
+		return plan, err
+	}
+	options := comparisons.MatchOptions{Count: plan.Preferences.Count, FlatCount: plan.Preferences.FlatCount}
 	if options.Count <= 0 {
 		options.Count = 4
 	}
-	// Manually selected row moments remain explicit; each other source is still
-	// matched visually unless an exact inspected anchor confirms correspondence.
+	var err error
+	options.DarkCount, options.MotionCount, err = comparisons.SceneCounts(plan.Preferences, options.Count)
+	if err != nil {
+		return plan, fmt.Errorf("comparison scene analysis: %w", err)
+	}
 	for _, row := range plan.Rows {
 		if row.Excluded {
 			continue
@@ -611,194 +727,111 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 			}
 		}
 	}
-	options.DarkCount, options.MotionCount, err = comparisons.SceneCounts(plan.Preferences, options.Count)
+	if len(options.MainMoments) > 0 {
+		matched, err := b.matchManualComparisonMoments(ctx, *retained, plan, options, progress)
+		if err != nil {
+			return matched, err
+		}
+		if err := verifyComparisonVideos(ctx, matched, *retained); err != nil {
+			return matched, err
+		}
+		return matched, nil
+	}
+	result, observations, accepted, err := b.tryAlignedComparisons(ctx, retained, plan, options, progress)
+	if err == nil && accepted {
+		err = verifyComparisonVideos(ctx, plan, *retained)
+	}
 	if err != nil {
-		return plan, fmt.Errorf("resolve comparison scene targets: %w", err)
-	}
-	if result, observations, accepted, matchErr := b.tryAlignedComparisons(ctx, retained, plan, options, progress); matchErr != nil {
-		return plan, matchErr
-	} else if accepted {
-		plan = applyComparisonMatches(plan, result, observations, options)
-		retainMatchedComparisonWitnesses(plan, observations, retained)
-		if err := verifyComparisonVideos(ctx, plan, retained); err != nil {
-			return plan, err
+		incomplete, stopped := errors.AsType[*releaseworkflow.ComparisonIncompleteError](err)
+		if (stopped || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && retained.ComparisonInventory != nil {
+			verificationCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer stop()
+			profile, profileErr := b.comparisonSceneProfile(*retained, plan)
+			owner, ownerErr := b.comparisonInventoryOwner(*retained, plan)
+			ref := retained.ComparisonInventory
+			if profileErr != nil || ownerErr != nil || ref.SourceProfile != profile {
+				return plan, err
+			}
+			if verifyErr := verifyComparisonVideos(verificationCtx, plan, *retained); verifyErr != nil {
+				return plan, verifyErr
+			}
+			if inventoryErr := readComparisonInventory(
+				verificationCtx,
+				ref,
+				owner,
+				func(screenshots.ComparisonSample) bool { return true },
+			); inventoryErr != nil {
+				return plan, inventoryErr
+			}
+			if result.Analysis == nil {
+				window, excluded, rangeErr := comparisons.SelectionRange(plan.Preferences, duration, comparisonTelevision(*retained))
+				if rangeErr != nil {
+					return plan, fmt.Errorf("project interrupted comparison selection: %w", rangeErr)
+				}
+				retained.ComparisonInventory = comparisonInventoryForSelection(ref, window, excluded)
+				result = comparisons.MatchResult{
+					RequestedDark:   options.DarkCount,
+					RequestedMotion: options.MotionCount,
+					RequestedFlat:   options.FlatCount,
+					Analysis:        &retained.ComparisonInventory.Summary,
+				}
+			}
+			plan = applyComparisonMatches(plan, result, observations, options)
+			retainMatchedComparisonWitnesses(plan, observations, *retained)
+			reason := "match_deadline"
+			if errors.Is(err, context.Canceled) {
+				reason = "match_cancelled"
+			}
+			if stopped {
+				reason = incomplete.Reason
+			}
+			if !slices.Contains(plan.Analysis.Reasons, reason) {
+				plan.Analysis.Reasons = append(plan.Analysis.Reasons, reason)
+			}
+			if stopped {
+				return plan, incomplete
+			}
+			return plan, &releaseworkflow.ComparisonIncompleteError{Cause: err, Reason: reason}
 		}
-		return plan, nil
+		return plan, err
 	}
-	sampled := make([]comparisons.SampledSource, 0, len(plan.Sources))
-	observations := map[string][]screenshots.ComparisonSample{}
-	progress.begin("sampling", len(plan.Sources))
-	for sourceIndex, source := range plan.Sources {
-		private, ok := retained.ComparisonSources[source.ID]
-		if !ok {
-			return plan, errors.New("comparison video source is unavailable")
-		}
-		label := fmt.Sprintf("Column %d", sourceIndex+1)
-		progress.item(sourceIndex, len(plan.Sources), source.ID, "comparison_source", label, api.StageStatusRunning, 0)
-		frames, err := sampleWholeComparisonSource(
-			progress.child(ctx, sourceIndex, len(plan.Sources), source.ID, "comparison_source", label),
-			renderer,
-			screenshots.ComparisonSampleRequest{
-				Source:          private.Source,
-				DurationSeconds: private.Source.DurationSeconds,
-				StrideSeconds:   0.5,
-			},
+	if !accepted {
+		return plan, comparisonSelectionFailure(
+			api.OperationFailureInvalidSource,
+			"bounded_matching_inconclusive",
+			"Bounded comparison matching was inconclusive. Inspect correspondence or revise the selection range before rematching.",
 		)
-		if err != nil {
-			return plan, fmt.Errorf("sample comparison column %d: %w", sourceIndex+1, err)
-		}
-
-		observations[source.ID] = frames
-		samples := comparisons.SampledSource{
-			ID:            source.ID,
-			AllowedTypes:  slices.Clone(source.AllowedFrameTypes),
-			PreferBFrames: source.PreferBFrames,
-		}
-		for _, anchor := range plan.Anchors {
-			if anchor.SourceID == source.ID {
-				samples.Anchors = append(samples.Anchors, comparisons.MatchAnchor{MainSeconds: anchor.MainSeconds, SourceSeconds: anchor.SourceSeconds})
-			}
-		}
-		// Explicitly inspected moments may fall between coarse samples. Decode
-		// their neighborhoods before matching, including otherwise ambiguous scenes.
-		var manualMoments []float64
-		for _, anchor := range plan.Anchors {
-			if source.ID == plan.MainSourceID {
-				manualMoments = append(manualMoments, anchor.MainSeconds)
-			} else if anchor.SourceID == source.ID {
-				manualMoments = append(manualMoments, anchor.SourceSeconds)
-			}
-		}
-		if source.ID == plan.MainSourceID {
-			for _, row := range plan.Rows {
-				for _, cell := range row.Cells {
-					if !row.Excluded && cell.SourceID == source.ID && cell.TimestampSeconds != nil && cell.Confidence == nil {
-						manualMoments = append(manualMoments, *cell.TimestampSeconds)
-					}
-				}
-			}
-		}
-		for momentIndex, moment := range manualMoments {
-			id := source.ID + "/manual-" + strconv.Itoa(momentIndex+1)
-			windowLabel := label + " manual moment"
-			dense, err := renderer.SampleComparisonSource(
-				progress.child(
-					ctx,
-					sourceIndex,
-					len(plan.Sources),
-					id,
-					"comparison_window",
-					windowLabel,
-				),
-				screenshots.ComparisonSampleRequest{
-					Source:          private.Source,
-					StartSeconds:    max(0, moment-1),
-					DurationSeconds: 2,
-					StrideSeconds:   0.0001,
-				},
-			)
-			if err != nil {
-				return plan, fmt.Errorf("decode manual comparison moment: %w", err)
-			}
-			frames = append(frames, dense...)
-			progress.item(sourceIndex, len(plan.Sources), id, "comparison_window", windowLabel, api.StageStatusCompleted, 1000)
-		}
-		frames, err = orderedComparisonSamples(frames)
-		if err != nil {
-			return plan, err
-		}
-		observations[source.ID] = frames
-		samples.Frames = comparisonSamples(frames)
-		sampled = append(sampled, samples)
-		progress.item(sourceIndex, len(plan.Sources), source.ID, "comparison_source", label, api.StageStatusCompleted, 1000)
 	}
-	progress.complete()
-	progress.begin("matching", 1)
-	result, err := comparisons.Match(sampled, plan.MainSourceID, options)
-	if err != nil {
-		return plan, fmt.Errorf("match comparison sources: %w", err)
-	}
-	progress.complete()
-	// A coarse I picture can establish an unambiguous visual neighborhood even
-	// when the default policy requires a nearby B/P frame. Refine that candidate
-	// without accepting it; the final match still enforces the picture policy.
-	canRefine := func(frame comparisons.FrameMatch) bool {
-		return frame.Resolved || frame.Reason == "no_compatible_picture_type"
-	}
-	windows := 0
-	for _, row := range result.Rows {
-		for _, frame := range row.Frames {
-			if canRefine(frame) {
-				windows++
-			}
-		}
-	}
-	progress.begin("refinement", windows)
-	window := 0
-	// Refine near every proposed scene with actual decoded frames. A picture-type
-	// preference can choose a nearby match, never an unrelated distant scene.
-	for i := range sampled {
-		source := retained.ComparisonSources[sampled[i].ID]
-		refined := slices.Clone(observations[sampled[i].ID])
-		for rowIndex, row := range result.Rows {
-			for _, frame := range row.Frames {
-				if frame.SourceID != sampled[i].ID || !canRefine(frame) {
-					continue
-				}
-				start := max(0, frame.TimestampSeconds-1)
-				id := strconv.Itoa(rowIndex+1) + "/" + frame.SourceID
-				label := fmt.Sprintf("Row %d / column %d", rowIndex+1, i+1)
-				dense, err := renderer.SampleComparisonSource(
-					progress.child(ctx, window, windows, id, "comparison_window", label),
-					screenshots.ComparisonSampleRequest{
-						Source:          source.Source,
-						StartSeconds:    start,
-						DurationSeconds: 2,
-						StrideSeconds:   0.0001,
-					},
-				)
-				if err != nil {
-					return plan, fmt.Errorf("match comparison sources: %w", err)
-				}
-				refined = append(refined, dense...)
-				progress.item(window, windows, id, "comparison_window", label, api.StageStatusCompleted, 1000)
-				window++
-			}
-		}
-		refined, err = orderedComparisonSamples(refined)
-		if err != nil {
-			return plan, err
-		}
-		observations[sampled[i].ID] = refined
-		sampled[i].Frames = comparisonSamples(refined)
-	}
-	progress.complete()
-	progress.begin("matching_refined", 1)
-	result, err = comparisons.Match(sampled, plan.MainSourceID, options)
-	if err != nil {
-		return plan, fmt.Errorf("match comparison sources: %w", err)
-	}
-	progress.complete()
 	plan = applyComparisonMatches(plan, result, observations, options)
-	retainMatchedComparisonWitnesses(plan, observations, retained)
-	if err := verifyComparisonVideos(ctx, plan, retained); err != nil {
-		return plan, fmt.Errorf("match comparison sources: %w", err)
-	}
+	retainMatchedComparisonWitnesses(plan, observations, *retained)
 	return plan, nil
 }
 
 func applyComparisonMatches(plan api.ComparisonPlan, result comparisons.MatchResult,
 	observations map[string][]screenshots.ComparisonSample, options comparisons.MatchOptions) api.ComparisonPlan {
 	plan.Rows = nil
+	plan.Analysis = nil
+	if result.Analysis != nil {
+		analysis := *result.Analysis
+		analysis.Reasons = slices.Clone(analysis.Reasons)
+		analysis.Excluded = slices.Clone(analysis.Excluded)
+		plan.Analysis = &analysis
+	}
 	plan.SceneMix = &api.ComparisonSceneMix{
 		RequestedDark:   result.RequestedDark,
+		RequestedFlat:   result.RequestedFlat,
+		AchievedFlat:    result.AchievedFlat,
 		RequestedMotion: result.RequestedMotion,
 		AchievedDark:    result.AchievedDark,
 		AchievedMotion:  result.AchievedMotion,
 	}
 	plan.Warnings = slices.Clone(result.Warnings)
 	for i, row := range result.Rows {
-		mapped := api.ComparisonRow{ID: strconv.Itoa(i + 1), Scene: row.Scene}
+		mapped := api.ComparisonRow{
+			ID:       strconv.Itoa(i + 1),
+			Scene:    row.Scene,
+			Evidence: row.Evidence,
+		}
 		for _, frame := range row.Frames {
 			cell := api.ComparisonCell{SourceID: frame.SourceID, Warning: frame.Reason}
 			if frame.Resolved {
@@ -866,11 +899,19 @@ func comparisonSamples(frames []screenshots.ComparisonSample) []comparisons.Fram
 	var previous []byte
 	for _, frame := range frames {
 		sample := comparisons.FrameSample{
+			NativeSequence:      frame.NativeSequence,
 			TimebaseTickSeconds: float64(frame.TimeBaseNumerator) / float64(frame.TimeBaseDenominator),
 			FrameID:             comparisonObservationID(frame.ComparisonFrameObservation),
 			TimestampSeconds:    frame.RelativeTimestampSeconds,
 			FrameType:           frame.PictureType,
+			Evidence:            frame.Evidence,
 			Luma:                frame.Pixels,
+		}
+		if frame.Identity != nil {
+			sample.Occurrence = frame.Identity.Occurrence
+		}
+		if frame.DurationTicks > 0 {
+			sample.DisplayEndSeconds = sample.TimestampSeconds + float64(frame.DurationTicks)*sample.TimebaseTickSeconds
 		}
 		var brightness, motion float64
 		for i, pixel := range frame.Pixels {
@@ -898,6 +939,18 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 	progress *comparisonProgress,
 	skipUnresolved bool,
 ) (api.ComparisonPlan, error) {
+	cells := 0
+	for _, row := range plan.Rows {
+		if !row.Excluded {
+			for _, cell := range row.Cells {
+				if cell.ArtifactID == "" && cell.TimestampSeconds != nil {
+					cells++
+				}
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(min(900, 30+15*cells))*time.Second)
+	defer cancel()
 	if retained.ArtifactImages == nil {
 		retained.ArtifactImages = map[api.PublicResourceID]api.ScreenshotImage{}
 	}
@@ -927,6 +980,54 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 		row := &plan.Rows[r]
 		if row.Excluded {
 			continue
+		}
+		for cellIndex := range row.Cells {
+			cell := &row.Cells[cellIndex]
+			if cell.SourceID == plan.MainSourceID && cell.TimestampSeconds != nil {
+				if err := comparisonMainTimeAllowed(plan, *retained, *cell.TimestampSeconds); err != nil {
+					return plan, err
+				}
+				if row.Evidence != nil && (!row.Evidence.Eligible || row.Evidence.Profile != comparisons.SceneProfile) {
+					return plan, comparisonSelectionFailure(
+						api.OperationFailureInvalidInput,
+						"scene_ineligible",
+						"Rematch this ineligible main picture before capture.",
+					)
+				}
+				if row.Evidence == nil {
+					if cell.Confidence != nil {
+						return plan, comparisonSelectionFailure(
+							api.OperationFailureInvalidInput,
+							"analysis_policy_changed",
+							"Rematch this automatic row using the current scene analysis before capture.",
+						)
+					}
+					guard, err := b.inspectManualMainScene(ctx, plan, *retained, *cell.TimestampSeconds, nil, 0)
+					if err != nil {
+						return plan, err
+					}
+					if guard.Identity == nil || guard.Replay == nil || cell.ObservedIdentity != nil && *cell.ObservedIdentity != *guard.Identity {
+						return plan, comparisonSelectionFailure(
+							api.OperationFailureStaleResult,
+							"changed_main_picture",
+							"Inspect the main picture again before capture.",
+						)
+					}
+					row.Evidence = guard.Evidence
+					row.Scene = ""
+					cell.TimestampSeconds = new(guard.RelativeTimestampSeconds)
+					cell.ObservedIdentity = guard.Identity
+					cell.ObservedPTS = new(guard.PTS)
+					cell.TimeBaseNumerator = guard.TimeBaseNumerator
+					cell.TimeBaseDenominator = guard.TimeBaseDenominator
+					source := retained.ComparisonSources[cell.SourceID]
+					if source.Witnesses == nil {
+						source.Witnesses = map[string]screenshots.ComparisonFrameReplay{}
+					}
+					source.Witnesses[guard.FrameID] = cloneComparisonWitness(*guard.Replay)
+					retained.ComparisonSources[cell.SourceID] = source
+				}
+			}
 		}
 		if len(row.Cells) != len(plan.Sources) {
 			return plan, errors.New("match every comparison column before capture")
@@ -966,6 +1067,13 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 			}
 			captured, err := renderer.ComparisonCapture(ctx, request)
 			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					reason := "capture_deadline"
+					if errors.Is(err, context.Canceled) {
+						reason = "capture_cancelled"
+					}
+					return plan, &releaseworkflow.ComparisonIncompleteError{Cause: err, Reason: reason}
+				}
 				return plan, fmt.Errorf("capture comparison row %s column %s: %w", row.ID, cell.SourceID, err)
 			}
 			if cell.ObservedPTS != nil &&
@@ -1064,6 +1172,13 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 		}
 	}
 	if err := verifyComparisonVideos(ctx, plan, *retained); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			reason := "capture_deadline"
+			if errors.Is(err, context.Canceled) {
+				reason = "capture_cancelled"
+			}
+			return plan, &releaseworkflow.ComparisonIncompleteError{Cause: err, Reason: reason}
+		}
 		return plan, err
 	}
 	progress.complete()
@@ -1126,6 +1241,11 @@ func verifyComparisonCells(plan api.ComparisonPlan, retained workflowMediaPrivat
 			continue
 		}
 		for _, cell := range row.Cells {
+			if requireComplete && !plan.Imported && cell.SourceID == plan.MainSourceID && cell.TimestampSeconds != nil {
+				if err := comparisonMainTimeAllowed(plan, retained, *cell.TimestampSeconds); err != nil {
+					return err
+				}
+			}
 			if cell.ArtifactID == "" {
 				if requireComplete {
 					return errors.New("comparison images must be captured before approval")
@@ -1314,31 +1434,13 @@ func comparisonCaptureRequest(plan api.ComparisonPlan, retained workflowMediaPri
 			request.ToneMap = configured.ToneMap
 		}
 	}
-	if plan.SizeReferenceSourceID != "" {
-		reference, exists := retained.ComparisonSources[plan.SizeReferenceSourceID]
-		if !exists || !slices.ContainsFunc(plan.Sources, func(s api.ComparisonSource) bool { return s.ID == plan.SizeReferenceSourceID && !s.Imported }) {
-			return request, errors.New("choose an available video column as the comparison size reference")
-		}
-		request.OutputWidth, request.OutputHeight = reference.Source.DisplaySize()
-		if request.OutputWidth <= 0 || request.OutputHeight <= 0 {
-			return request, errors.New("the comparison size-reference video has no inspected dimensions")
-		}
-		if plan.ResizeLargerOnly {
-			width, height := source.Source.DisplaySize()
-			if width <= 0 || height <= 0 {
-				return request, errors.New("the comparison video has no inspected dimensions")
-			}
-			scale := float64(request.OutputWidth) / float64(width)
-			if float64(request.OutputWidth)/float64(request.OutputHeight) < 16.0/9 {
-				scale = float64(request.OutputHeight) / float64(height)
-			}
-			request.OutputWidth, request.OutputHeight = 0, 0
-			if scale < 1 || plan.ResizeSmaller && scale > 1 {
-				request.OutputWidth = max(2, int(math.Round(float64(width)*scale/2))*2)
-				request.OutputHeight = max(2, int(math.Round(float64(height)*scale/2))*2)
-				request.ResizeOnly = true
-			}
-		}
+	reference, exists := retained.ComparisonSources[plan.MainSourceID]
+	if !exists || !slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool { return source.ID == plan.MainSourceID && !source.Imported }) {
+		return request, errors.New("the main comparison source is unavailable")
+	}
+	request.OutputWidth, request.OutputHeight = reference.Source.DisplaySize()
+	if request.OutputWidth <= 0 || request.OutputHeight <= 0 {
+		return request, errors.New("the main comparison source has no inspected display dimensions")
 	}
 	return request, nil
 }
@@ -1363,10 +1465,13 @@ func comparisonMixedResolution(plan api.ComparisonPlan, retained workflowMediaPr
 // allowing a client edit to relabel old video pixels as a different decoded frame.
 func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifactSet) {
 	plan.SceneMix = nil
-	sameScenes := prior != nil && prior.Comparisons != nil && !plan.Imported
+	plan.Analysis = nil
+	sameIntent := prior != nil && prior.Comparisons != nil && !plan.Imported &&
+		prior.Comparisons.MainSourceID == plan.MainSourceID && sameComparisonAnalysisIntent(prior.Comparisons.Preferences, plan.Preferences)
+	sameScenes := sameIntent
 	priorRows := map[string]api.ComparisonRow{}
 	unchangedMain := map[string]bool{}
-	if sameScenes {
+	if prior != nil && prior.Comparisons != nil {
 		for _, row := range prior.Comparisons.Rows {
 			priorRows[row.ID] = row
 		}
@@ -1374,7 +1479,7 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 	for r := range plan.Rows {
 		row := &plan.Rows[r]
 		previous, ok := priorRows[row.ID]
-		same := ok && prior.Comparisons.MainSourceID == plan.MainSourceID
+		same := ok && sameIntent
 		var before, after *float64
 		for _, cell := range previous.Cells {
 			if cell.SourceID == plan.MainSourceID {
@@ -1390,28 +1495,43 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 		unchangedMain[row.ID] = same
 		if same {
 			row.Scene = previous.Scene
+			row.Evidence = previous.Evidence
 		} else {
 			row.Scene = ""
+			row.Evidence = nil
 			sameScenes = false
+			if !plan.Imported && !sameIntent && slices.ContainsFunc(previous.Cells, func(cell api.ComparisonCell) bool {
+				return cell.SourceID == plan.MainSourceID && cell.Confidence != nil
+			}) {
+				// These automatic moments must be selected again under the new
+				// analysis intent. Keeping timestamps without confidence would
+				// silently turn them into explicit manual selections.
+				row.Cells = nil
+			}
 		}
 	}
 	if sameScenes && prior.Comparisons.SceneMix != nil {
 		summary := *prior.Comparisons.SceneMix
 		summary.RequestedDark, summary.RequestedMotion, _ = comparisons.SceneCounts(plan.Preferences, plan.Preferences.Count)
-		summary.AchievedDark, summary.AchievedMotion = 0, 0
+		summary.AchievedDark, summary.AchievedMotion, summary.AchievedFlat = 0, 0, 0
+		summary.RequestedFlat = plan.Preferences.FlatCount
+		plan.Analysis = prior.Comparisons.Analysis
 		for _, row := range plan.Rows {
 			if row.Excluded {
 				continue
 			}
-			if strings.Contains(row.Scene, "dark") {
+			if comparisons.SceneQualified(row.Evidence, 1) {
 				summary.AchievedDark++
 			}
-			if strings.Contains(row.Scene, "motion") {
+			if comparisons.SceneQualified(row.Evidence, 0) {
 				summary.AchievedMotion++
+			}
+			if comparisons.SceneQualified(row.Evidence, 2) {
+				summary.AchievedFlat++
 			}
 		}
 		plan.SceneMix = &summary
-		if summary.AchievedDark < summary.RequestedDark || summary.AchievedMotion < summary.RequestedMotion {
+		if summary.AchievedDark < summary.RequestedDark || summary.AchievedMotion < summary.RequestedMotion || summary.AchievedFlat < summary.RequestedFlat {
 			plan.Warnings = append(plan.Warnings, "The current rows do not meet the requested dark or motion scene mix.")
 		}
 	}
@@ -1555,7 +1675,21 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 		return api.MediaArtifactSet{}, nil, fmt.Errorf("restore comparison setup: %w", err)
 	}
 	plan.ApprovedFingerprint = ""
+	if !plan.Imported {
+		plan.RenderPolicyVersion = 1
+		if plan.SizeReferenceSourceID != plan.MainSourceID || plan.ResizeLargerOnly || plan.ResizeSmaller {
+			plan.Warnings = append(plan.Warnings, "Rendering policy changed; recapture and review the main-size canvas.")
+		}
+		plan.SizeReferenceSourceID = plan.MainSourceID
+		plan.ResizeLargerOnly = false
+		plan.ResizeSmaller = false
+		if plan.Preferences.ScanMode == "" {
+			plan.Preferences.ScanMode = "fast"
+		}
+	}
 	retained.ComparisonSources = cloneComparisonSources(old.ComparisonSources)
+	retained.ComparisonInventory = cloneComparisonInventory(old.ComparisonInventory)
+	retained.ComparisonAnalysisExecutable = old.ComparisonAnalysisExecutable
 	retained.ComparisonCaptions = maps.Clone(old.ComparisonCaptions)
 	retained.ComparisonToneMaps = maps.Clone(old.ComparisonToneMaps)
 	mainChanged := previous.ReleaseRef.SourcePath != "" && !pathing.SamePath(previous.ReleaseRef.SourcePath, release.SourcePath)
@@ -1601,6 +1735,12 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 	mainChanged = mainChanged || changed[plan.MainSourceID]
 	if mainChanged {
 		delete(retained.ComparisonSources, plan.MainSourceID)
+		retained.ComparisonInventory = nil
+		plan.Analysis = nil
+		for i := range plan.Rows {
+			plan.Rows[i].Scene = ""
+			plan.Rows[i].Evidence = nil
+		}
 		plan.Anchors = nil
 		plan.SceneMix = nil
 	}
@@ -1633,6 +1773,46 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 			plan.Anchors = slices.DeleteFunc(plan.Anchors, func(a api.ComparisonAnchor) bool { return a.SourceID == source.ID })
 		}
 	}
+	if inventory := retained.ComparisonInventory; inventory != nil {
+		owner, ownerErr := b.comparisonInventoryOwner(retained, plan)
+		profile, profileErr := b.comparisonSceneProfile(retained, plan)
+		if retained.ComparisonAnalysisExecutable != "" {
+			renderer, rendererErr := b.comparisonService()
+			if rendererErr != nil {
+				profileErr = rendererErr
+			} else if inspector, ok := renderer.(interface {
+				ComparisonAnalysisExecutableIdentity(context.Context) (string, error)
+			}); ok {
+				identity, identityErr := inspector.ComparisonAnalysisExecutableIdentity(ctx)
+				if identityErr != nil || identity != retained.ComparisonAnalysisExecutable {
+					profileErr = errors.New("comparison analysis executable changed")
+				}
+			} else {
+				profileErr = errors.New("comparison analysis executable is unavailable")
+			}
+		}
+		var inventoryErr error
+		if ownerErr == nil && profileErr == nil && profile == inventory.SourceProfile {
+			inventoryErr = readComparisonInventory(ctx, inventory, owner, func(screenshots.ComparisonSample) bool { return true })
+		} else {
+			inventoryErr = errors.New("comparison inventory profile changed")
+		}
+		if inventoryErr != nil {
+			retained.ComparisonInventory = nil
+			if profileErr != nil || profile != inventory.SourceProfile {
+				for i := range plan.Rows {
+					plan.Rows[i].Scene = ""
+					plan.Rows[i].Evidence = nil
+				}
+				plan.SceneMix = nil
+			}
+			if plan.Analysis != nil {
+				plan.Analysis.Complete = false
+				plan.Analysis.RankingComplete = false
+				plan.Analysis.Reasons = append(plan.Analysis.Reasons, "inventory_unavailable")
+			}
+		}
+	}
 	invalidateOutdatedComparisonRendering(&plan, retained, b.config.ScreenshotHandling.ToneMap)
 	kept := map[api.PublicResourceID]bool{}
 	for _, row := range plan.Rows {
@@ -1663,4 +1843,22 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 	snapshot.Comparisons = &plan
 	syncComparisonSelections(&snapshot, plan)
 	return snapshot, retained, nil
+}
+
+func sameComparisonAnalysisIntent(a, b api.ComparisonPreferences) bool {
+	if a.ScanMode == "" {
+		a.ScanMode = "fast"
+	}
+	if b.ScanMode == "" {
+		b.ScanMode = "fast"
+	}
+	before, _ := api.CanonicalWorkflowFingerprint(struct {
+		Mode      string
+		Selection *api.ComparisonSelectionWindow
+	}{a.ScanMode, a.SelectionWindow})
+	after, _ := api.CanonicalWorkflowFingerprint(struct {
+		Mode      string
+		Selection *api.ComparisonSelectionWindow
+	}{b.ScanMode, b.SelectionWindow})
+	return before == after
 }

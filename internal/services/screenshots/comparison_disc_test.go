@@ -25,6 +25,11 @@ func TestComparisonDiscIdentitySeparatesOccurrencesAndOriginalClockWrap(t *testi
 		TimeBaseDenominator: 90000,
 		PictureChecksum:     "1234ABCD",
 		PixelFormat:         "yuv420p",
+		Width:               720,
+		Height:              576,
+		SARNumerator:        16,
+		SARDenominator:      15,
+		Colour:              "bt470bg",
 	}
 	if err := bindDiscObservation(source, window, &observation); err != nil {
 		t.Fatal(err)
@@ -54,6 +59,41 @@ func TestComparisonDiscIdentitySeparatesOccurrencesAndOriginalClockWrap(t *testi
 	}
 	if repeated.FrameID == observation.FrameID || repeated.PTS != observation.PTS || repeated.RelativeTimestampSeconds != 2.5 {
 		t.Fatal("repeated physical picture aliased its earlier occurrence")
+	}
+	established := ComparisonSource{
+		InputFingerprint:  source.InputFingerprint,
+		NativePixelFormat: "yuv420p",
+		Width:             720,
+		Height:            576,
+		SARNumerator:      16,
+		SARDenominator:    15,
+		NativeColour:      "bt470bg",
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*ComparisonFrameObservation)
+	}{
+		{name: "unchanged"},
+		{name: "pixel format", change: func(o *ComparisonFrameObservation) { o.PixelFormat = "yuv420p10le" }},
+		{name: "geometry", change: func(o *ComparisonFrameObservation) { o.Width = 704 }},
+		{name: "sample aspect ratio", change: func(o *ComparisonFrameObservation) { o.SARNumerator = 64 }},
+		{name: "colour", change: func(o *ComparisonFrameObservation) { o.Colour = "bt709" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			native := observation
+			native.PTS, native.Identity, native.Replay = -45000, nil, nil
+			if test.change != nil {
+				test.change(&native)
+			}
+			err := bindDiscObservation(established, window, &native)
+			if test.change != nil {
+				if err == nil || native.Identity != nil || native.Replay != nil {
+					t.Fatalf("changed native format acquired replay authority: %+v err=%v", native, err)
+				}
+			} else if err != nil || native.Replay == nil || native.Replay.PictureChecksum != observation.PictureChecksum {
+				t.Fatalf("unchanged native format lost original replay: %+v err=%v", native, err)
+			}
+		})
 	}
 }
 

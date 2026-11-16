@@ -25,6 +25,40 @@ type ComparisonMediaBuilder interface {
 	PreviewComparisonFrame(context.Context, api.ReleaseRef, api.MediaArtifactSet, any, string, float64, int) (MediaPreviewContent, error)
 }
 
+// ComparisonIncompleteError permits publication only of validated matched
+// witnesses, partial discovery inventory and completed cells after bounded
+// discovery exhaustion, a deadline or cancellation.
+// Other failures cannot use this publication path.
+type ComparisonIncompleteError struct {
+	Cause  error
+	Reason string
+}
+
+func (e *ComparisonIncompleteError) Error() string {
+	if e.Reason == "discovery_incomplete" {
+		return "Deep Scan is incomplete; partial main-input discovery was retained. Retry before selecting comparison rows."
+	}
+	if e.Reason == "match_cancelled" || e.Reason == "match_deadline" {
+		return "Comparison matching is incomplete; verified discovery evidence was retained."
+	}
+	return "Comparison capture is incomplete; completed cells were retained."
+}
+func (e *ComparisonIncompleteError) Unwrap() error { return e.Cause }
+
+func incompleteComparisonFailure(f api.WorkflowFailure) bool {
+	return f.Failure.Operation == api.OperationKindMedia &&
+		(f.Failure.ComparisonReason == "capture_cancelled" || f.Failure.ComparisonReason == "capture_deadline" || f.Failure.ComparisonReason == "match_cancelled" || f.Failure.ComparisonReason == "match_deadline" || f.Failure.ComparisonReason == "discovery_incomplete")
+}
+
+func retainsStoppedComparisons(command mutation, result CommandResult, err error) bool {
+	edit, ok := command.(EditComparisonsCommand)
+	stopped, incomplete := errors.AsType[*ComparisonIncompleteError](err)
+	return ok && (edit.Instructions.Action == "match" || edit.Instructions.Action == "capture") && incomplete && result.Media != nil &&
+		slices.ContainsFunc(result.Media.Failures, func(failure api.WorkflowFailure) bool {
+			return incompleteComparisonFailure(failure) && failure.Failure.ComparisonReason == stopped.Reason
+		})
+}
+
 // ComparisonMediaRestorer validates retained comparison sources against a new
 // prepared release without restoring ordinary media or prior upload authority.
 type ComparisonMediaRestorer interface {
@@ -430,7 +464,8 @@ func (m *Module) editComparisons(ctx context.Context, owner string, state *State
 		attachments = append(attachments, StagedMediaAttachment{Attachment: attachment, Content: content})
 	}
 	updated, retained, err := builder.EditComparisons(ctx, release, eligible, prior, private, instructions, attachments, now)
-	if err != nil {
+	incompleteErr, incomplete := errors.AsType[*ComparisonIncompleteError](err)
+	if err != nil && !incomplete {
 		return CommandResult{}, fmt.Errorf("edit comparisons: %w", err)
 	}
 	if len(instructions.FrameSelections) > 0 {
@@ -483,7 +518,14 @@ func (m *Module) editComparisons(ctx context.Context, owner string, state *State
 	if clearComparisons {
 		state.ComparisonMedia = nil
 	}
-	return m.publishComparisonMutation(owner, state, revision, now, updated, retained, local)
+	result, publishErr := m.publishComparisonMutation(owner, state, revision, now, updated, retained, local)
+	if publishErr != nil {
+		return CommandResult{}, publishErr
+	}
+	if incomplete {
+		return result, incompleteErr
+	}
+	return result, nil
 }
 
 // comparisonExtensionContext permits local image work on exact prepared/projected

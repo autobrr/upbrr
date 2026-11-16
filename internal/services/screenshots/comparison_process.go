@@ -31,36 +31,41 @@ func comparisonDecoderLimit(reason string) error {
 // finiteComparisonRunner retains parsed provenance independently of its bounded
 // diagnostic tail. A noisy decoder cannot evict observations or grow buffers.
 type finiteComparisonRunner struct {
-	base        Runner
-	outputLimit int
+	base           Runner
+	outputLimit    int
+	retentionLimit int64
 }
 
 type comparisonOutputBuffer struct {
-	bytes.Buffer
+	buffer bytes.Buffer
 	limit  int
 	err    error
 	cancel context.CancelFunc
 }
 
 func (b *comparisonOutputBuffer) Write(data []byte) (int, error) {
-	if len(data) > b.limit-b.Len() {
+	if len(data) > b.limit-b.buffer.Len() {
 		b.err = comparisonDecoderLimit("decoder_output_limit")
 		if b.cancel != nil {
 			b.cancel()
 		}
 		return 0, b.err
 	}
-	_, _ = b.Buffer.Write(data)
+	_, _ = b.buffer.Write(data)
 	return len(data), nil
 }
 
 type comparisonDiagnosticStream struct {
-	buffer, tail []byte
-	config       map[string]string
-	records      map[string][]ComparisonFrameObservation
-	count        int
-	err          error
-	cancel       context.CancelFunc
+	retentionLimit int64
+	stream         *comparisonRasterStream
+	inputURL       string
+	buffer, tail   []byte
+	config         map[string]string
+	records        map[string][]ComparisonFrameObservation
+	counts         map[string]int
+	count          int
+	err            error
+	cancel         context.CancelFunc
 }
 
 func (d *comparisonDiagnosticStream) Write(data []byte) (int, error) {
@@ -96,6 +101,9 @@ func (d *comparisonDiagnosticStream) Write(data []byte) (int, error) {
 }
 
 func (d *comparisonDiagnosticStream) line(line string) {
+	if d.inputURL != "" {
+		line = strings.ReplaceAll(line, d.inputURL, "comparison-input")
+	}
 	if line == "" {
 		return
 	}
@@ -103,7 +111,7 @@ func (d *comparisonDiagnosticStream) line(line string) {
 		d.err = err
 		return
 	}
-	if comparisonShowInfoLine.MatchString(line) || comparisonOutputShowInfoLine.MatchString(line) {
+	if comparisonAnyShowInfoLine.MatchString(line) {
 		prefix, body, ok := strings.Cut(line, "]")
 		if ok {
 			body = strings.TrimSpace(body)
@@ -111,13 +119,18 @@ func (d *comparisonDiagnosticStream) line(line string) {
 			if d.config == nil {
 				d.config = map[string]string{}
 				d.records = map[string][]ComparisonFrameObservation{}
+				d.counts = map[string]int{}
 			}
 			if strings.HasPrefix(body, "config in time_base:") {
 				d.config[name] = body
 				return
 			}
 			if strings.HasPrefix(body, "n:") {
-				if len(d.records[name]) >= 50000 {
+				if d.retentionLimit > 0 && !strings.HasPrefix(name, "showinfo@") && int64(d.counts[name]+1)*4096 > d.retentionLimit {
+					d.err = ErrComparisonFastInconclusive
+					return
+				}
+				if d.counts[name] >= 50000 {
 					d.err = comparisonDecoderLimit("decoder_observation_limit")
 					return
 				}
@@ -127,9 +140,21 @@ func (d *comparisonDiagnosticStream) line(line string) {
 					d.err = errors.New("comparison decoder provenance is incomplete")
 					return
 				}
-				d.records[name] = append(d.records[name], observed[0])
+				if d.stream != nil {
+					if err := d.stream.observe(name, observed[0]); err != nil {
+						d.err = err
+						return
+					}
+				}
+				// Streamed branch/output records have already bound their raster.
+				// Retain only native provenance for publication, avoiding a second
+				// movie-sized collection and diagnostic reconstruction of branches.
+				if d.stream == nil || !strings.HasPrefix(name, "showinfo@") {
+					d.records[name] = append(d.records[name], observed[0])
+				}
+				d.counts[name]++
 				d.count++
-				if d.count > 100000 {
+				if d.count > 200000 {
 					d.err = comparisonDecoderLimit("decoder_observation_limit")
 				}
 				return
@@ -141,6 +166,12 @@ func (d *comparisonDiagnosticStream) line(line string) {
 			}
 			// Side-data records remain in the bounded diagnostic tail.
 		}
+	}
+	if d.stream != nil && strings.Contains(line, "[metadata@comparison_cut @") {
+		if err := d.stream.metric(line); err != nil {
+			d.err = err
+		}
+		return
 	}
 	if len(d.tail)+len(line)+1 > 64<<10 {
 		keep := (64 << 10) - len(line) - 1
@@ -163,18 +194,19 @@ func (d *comparisonDiagnosticStream) result() ([]byte, error) {
 	_, _ = out.Write(d.tail)
 	for name, records := range d.records {
 		prefix := "[Parsed_showinfo_1 @ bounded] "
-		if name == "showinfo@comparison_output" {
-			prefix = "[showinfo@comparison_output @ bounded] "
+		if strings.HasPrefix(name, "showinfo@") {
+			prefix = "[" + name + " @ bounded] "
 		}
 		_, _ = fmt.Fprintln(&out, prefix+d.config[name])
 		for i, record := range records {
 			_, _ = fmt.Fprintf(
 				&out,
-				"%sn: %d pts: %d pts_time:%.9f fmt:%s sar:%d/%d s:%dx%d i:%s type:%s checksum:%s\n",
+				"%sn: %d pts: %d pts_time:%.9f duration:%d fmt:%s sar:%d/%d s:%dx%d i:%s type:%s checksum:%s\n",
 				prefix,
 				i,
 				record.PTS,
 				record.TimestampSeconds,
+				record.DurationTicks,
 				record.PixelFormat,
 				record.SARNumerator,
 				record.SARDenominator,
@@ -203,31 +235,60 @@ func (d *comparisonDiagnosticStream) result() ([]byte, error) {
 func (r finiteComparisonRunner) Run(ctx context.Context, name string, args []string, dir string) (CommandResult, error) {
 	runCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	stream, _ := ctx.Value(comparisonRasterStreamKey{}).(*comparisonRasterStream)
+	if stream != nil {
+		stream.ctx = runCtx
+	}
 	// Preserve existing injected runners for deterministic decoder-failure tests.
 	if _, native := r.base.(commandRunner); !native {
 		result, err := r.base.Run(runCtx, name, args, dir)
 		if len(result.Stdout) > r.outputLimit {
 			return CommandResult{}, comparisonDecoderLimit("decoder_output_limit")
 		}
-		diagnostic := &comparisonDiagnosticStream{}
+		diagnostic := &comparisonDiagnosticStream{stream: stream, retentionLimit: r.retentionLimit}
+		if stream != nil {
+			if streamErr := consumeInjectedAnalysis(runCtx, stream, result.Stdout, diagnostic, result.Stderr); streamErr != nil {
+				return CommandResult{}, streamErr
+			}
+			result.Stdout = nil
+			result.Stderr, err = diagnosticResult(diagnostic, err)
+			return result, err
+		}
 		if _, parseErr := diagnostic.Write(result.Stderr); parseErr != nil {
 			return CommandResult{}, parseErr
 		}
 		result.Stderr, err = diagnosticResult(diagnostic, err)
 		return result, err
 	}
-	// The resolved executable and argument vector are server-owned; no shell is used.
-	cmd := exec.CommandContext(runCtx, name, append([]string{"-nostdin", "-nostats"}, args...)...) // #nosec G204
+	// #nosec G204 G702 -- Resolved decoder and structured arguments; no shell.
+	cmd := exec.CommandContext(runCtx, name, append([]string{"-nostdin", "-nostats"}, args...)...)
 	cmd.Dir = dir
 	cmd.WaitDelay = 5 * time.Second
 	output := &comparisonOutputBuffer{limit: r.outputLimit, cancel: cancel}
-	diagnostic := &comparisonDiagnosticStream{cancel: cancel}
+	inputURL, _ := ctx.Value(comparisonInputURLKey{}).(string)
+	diagnostic := &comparisonDiagnosticStream{
+		retentionLimit: r.retentionLimit,
+		cancel:         cancel,
+		stream:         stream,
+		inputURL:       inputURL,
+	}
 	cmd.Stdout = output
+	if stream != nil {
+		cmd.Stdout = stream
+	}
 	cmd.Stderr = diagnostic
 	if progress, ok := ctx.Value(comparisonSampleProgressKey{}).(*comparisonSampleProgress); ok {
 		cmd.Stderr = io.MultiWriter(diagnostic, progress)
 	}
 	err := cmd.Run()
+	// A diagnostic limit can cancel the raster writer. Preserve that original
+	// cause rather than reporting the cancellation used to stop this decoder.
+	if diagnostic.err != nil && !errors.Is(diagnostic.err, context.Canceled) && !errors.Is(diagnostic.err, context.DeadlineExceeded) {
+		return CommandResult{}, diagnostic.err
+	}
+	if stream != nil && stream.err != nil {
+		return CommandResult{}, stream.err
+	}
 	if output.err != nil {
 		return CommandResult{}, output.err
 	}
@@ -238,7 +299,7 @@ func (r finiteComparisonRunner) Run(ctx context.Context, name string, args []str
 	if runCtx.Err() != nil {
 		return CommandResult{}, fmt.Errorf("comparison decoder deadline or cancellation: %w", runCtx.Err())
 	}
-	result := CommandResult{Stdout: output.Bytes(), Stderr: stderr}
+	result := CommandResult{Stdout: output.buffer.Bytes(), Stderr: stderr}
 	if err != nil {
 		result.ExitCode = 1
 		return result, fmt.Errorf("run comparison decoder: %w", err)

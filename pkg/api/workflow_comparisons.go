@@ -102,6 +102,11 @@ type ComparisonFrameSelection struct {
 // Validate checks operation syntax; complete-row and content authority are
 // checked against retained workflow resources before approval or upload.
 func (i ComparisonInstructions) Validate() error {
+	if i.Action != "restore" && i.Action != "approve" && !i.Plan.Imported {
+		if err := i.Plan.Preferences.Validate(); err != nil {
+			return err
+		}
+	}
 	if len(i.FrameSelections) > 0 && i.Action != "configure" {
 		return errors.New("comparison frame selections require configuration")
 	}

@@ -169,23 +169,25 @@ type workflowLegacyImageFormat struct {
 }
 
 type workflowMediaPrivateArtifacts struct {
-	ComparisonSources  map[string]workflowComparisonSource
-	ComparisonCaptions map[api.PublicResourceID]int
-	ComparisonToneMaps map[api.PublicResourceID]bool
-	Screenshots        []api.ScreenshotImage
-	DVDMenus           []api.DVDMenuCaptureImage
-	ArtifactImages     map[api.PublicResourceID]api.ScreenshotImage
-	DVDMenuImages      map[api.PublicResourceID]api.DVDMenuCaptureImage
-	HostedImages       map[api.PublicResourceID]api.UploadedImageLink
-	HostedSources      map[api.PublicResourceID]api.PublicResourceID
-	screenshotService  mediaScreenshotService
-	screenshotSubject  api.ScreenshotSubject
-	dvdMenuService     mediaDVDMenuService
-	dvdMenuSubject     api.DVDMenuSubject
-	hostedRepository   mediaRepository
-	mediaReuse         api.MediaReuseRepository
-	legacyImageFormats map[string]workflowLegacyImageFormat
-	commitState        *workflowMediaCommitState
+	ComparisonAnalysisExecutable string `json:"comparisonAnalysisExecutable,omitempty"`
+	ComparisonInventory          *comparisonSceneInventory
+	ComparisonSources            map[string]workflowComparisonSource
+	ComparisonCaptions           map[api.PublicResourceID]int
+	ComparisonToneMaps           map[api.PublicResourceID]bool
+	Screenshots                  []api.ScreenshotImage
+	DVDMenus                     []api.DVDMenuCaptureImage
+	ArtifactImages               map[api.PublicResourceID]api.ScreenshotImage
+	DVDMenuImages                map[api.PublicResourceID]api.DVDMenuCaptureImage
+	HostedImages                 map[api.PublicResourceID]api.UploadedImageLink
+	HostedSources                map[api.PublicResourceID]api.PublicResourceID
+	screenshotService            mediaScreenshotService
+	screenshotSubject            api.ScreenshotSubject
+	dvdMenuService               mediaDVDMenuService
+	dvdMenuSubject               api.DVDMenuSubject
+	hostedRepository             mediaRepository
+	mediaReuse                   api.MediaReuseRepository
+	legacyImageFormats           map[string]workflowLegacyImageFormat
+	commitState                  *workflowMediaCommitState
 }
 
 // recordLegacyImageFormat retains exact old labels only for description compatibility.
@@ -258,20 +260,22 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		deleted[artifactID] = struct{}{}
 	}
 	result := workflowMediaPrivateArtifacts{
-		ComparisonSources:  cloneComparisonSources(a.ComparisonSources),
-		ComparisonCaptions: maps.Clone(a.ComparisonCaptions),
-		ComparisonToneMaps: maps.Clone(a.ComparisonToneMaps),
-		screenshotService:  a.screenshotService,
-		screenshotSubject:  a.screenshotSubject,
-		dvdMenuService:     a.dvdMenuService,
-		dvdMenuSubject:     a.dvdMenuSubject,
-		hostedRepository:   a.hostedRepository,
-		mediaReuse:         a.mediaReuse,
-		ArtifactImages:     cloneScreenshotImageMap(a.ArtifactImages),
-		DVDMenuImages:      cloneDVDMenuImageMap(a.DVDMenuImages),
-		HostedImages:       cloneUploadedImageMap(a.HostedImages),
-		HostedSources:      cloneHostedSourceMap(a.HostedSources),
-		legacyImageFormats: maps.Clone(a.legacyImageFormats),
+		ComparisonSources:            cloneComparisonSources(a.ComparisonSources),
+		ComparisonCaptions:           maps.Clone(a.ComparisonCaptions),
+		ComparisonInventory:          cloneComparisonInventory(a.ComparisonInventory),
+		ComparisonAnalysisExecutable: a.ComparisonAnalysisExecutable,
+		ComparisonToneMaps:           maps.Clone(a.ComparisonToneMaps),
+		screenshotService:            a.screenshotService,
+		screenshotSubject:            a.screenshotSubject,
+		dvdMenuService:               a.dvdMenuService,
+		dvdMenuSubject:               a.dvdMenuSubject,
+		hostedRepository:             a.hostedRepository,
+		mediaReuse:                   a.mediaReuse,
+		ArtifactImages:               cloneScreenshotImageMap(a.ArtifactImages),
+		DVDMenuImages:                cloneDVDMenuImageMap(a.DVDMenuImages),
+		HostedImages:                 cloneUploadedImageMap(a.HostedImages),
+		HostedSources:                cloneHostedSourceMap(a.HostedSources),
+		legacyImageFormats:           maps.Clone(a.legacyImageFormats),
 	}
 	pending := a.pendingDeletes()
 	screenshotIndex, menuIndex := 0, 0
@@ -494,23 +498,25 @@ func cloneHostedSourceMap(values map[api.PublicResourceID]api.PublicResourceID) 
 
 func cloneWorkflowMediaPrivateArtifacts(value workflowMediaPrivateArtifacts) workflowMediaPrivateArtifacts {
 	return workflowMediaPrivateArtifacts{
-		ComparisonSources:  cloneComparisonSources(value.ComparisonSources),
-		ComparisonCaptions: maps.Clone(value.ComparisonCaptions),
-		ComparisonToneMaps: maps.Clone(value.ComparisonToneMaps),
-		Screenshots:        append([]api.ScreenshotImage(nil), value.Screenshots...),
-		DVDMenus:           append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),
-		ArtifactImages:     cloneScreenshotImageMap(value.ArtifactImages),
-		DVDMenuImages:      cloneDVDMenuImageMap(value.DVDMenuImages),
-		HostedImages:       cloneUploadedImageMap(value.HostedImages),
-		HostedSources:      cloneHostedSourceMap(value.HostedSources),
-		legacyImageFormats: maps.Clone(value.legacyImageFormats),
-		screenshotService:  value.screenshotService,
-		screenshotSubject:  value.screenshotSubject,
-		dvdMenuService:     value.dvdMenuService,
-		dvdMenuSubject:     value.dvdMenuSubject,
-		hostedRepository:   value.hostedRepository,
-		mediaReuse:         value.mediaReuse,
-		commitState:        &workflowMediaCommitState{pending: value.pendingDeletes()},
+		ComparisonSources:            cloneComparisonSources(value.ComparisonSources),
+		ComparisonCaptions:           maps.Clone(value.ComparisonCaptions),
+		ComparisonInventory:          cloneComparisonInventory(value.ComparisonInventory),
+		ComparisonAnalysisExecutable: value.ComparisonAnalysisExecutable,
+		ComparisonToneMaps:           maps.Clone(value.ComparisonToneMaps),
+		Screenshots:                  append([]api.ScreenshotImage(nil), value.Screenshots...),
+		DVDMenus:                     append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),
+		ArtifactImages:               cloneScreenshotImageMap(value.ArtifactImages),
+		DVDMenuImages:                cloneDVDMenuImageMap(value.DVDMenuImages),
+		HostedImages:                 cloneUploadedImageMap(value.HostedImages),
+		HostedSources:                cloneHostedSourceMap(value.HostedSources),
+		legacyImageFormats:           maps.Clone(value.legacyImageFormats),
+		screenshotService:            value.screenshotService,
+		screenshotSubject:            value.screenshotSubject,
+		dvdMenuService:               value.dvdMenuService,
+		dvdMenuSubject:               value.dvdMenuSubject,
+		hostedRepository:             value.hostedRepository,
+		mediaReuse:                   value.mediaReuse,
+		commitState:                  &workflowMediaCommitState{pending: value.pendingDeletes()},
 	}
 }
 

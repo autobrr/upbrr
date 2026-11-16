@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -29,6 +30,12 @@ import (
 func comparisonDiagnostics(pts int, picture string) string {
 	return fmt.Sprintf("[Parsed_showinfo_1 @ 0x123] config in time_base: 1/1000, frame_rate: 10/1\n"+
 		"[Parsed_showinfo_1 @ 0x123] n: 0 pts: %d pts_time:5.8 fmt:yuv420p i:P iskey:0 type:%s\n", pts, picture)
+}
+
+type comparisonInspectionRunner func(context.Context, string, []string, string) (CommandResult, error)
+
+func (run comparisonInspectionRunner) Run(ctx context.Context, name string, args []string, dir string) (CommandResult, error) {
+	return run(ctx, name, args, dir)
 }
 
 func TestComparisonDiagnosticBoundsPreserveProvenance(t *testing.T) {
@@ -63,7 +70,7 @@ func TestComparisonDiagnosticBoundsPreserveProvenance(t *testing.T) {
 	if _, err := output.Write([]byte("1234")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := output.Write([]byte("5")); err == nil || output.Len() != 4 {
+	if _, err := io.Copy(output, io.LimitReader(strings.NewReader("5"), 1)); err == nil || output.buffer.Len() != 4 {
 		t.Fatal("decoder output limit was not enforced")
 	}
 }
@@ -76,7 +83,9 @@ func TestComparisonDecoderLimitTerminatesNativeProcess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	runner := finiteComparisonRunner{base: commandRunner{}, outputLimit: 256}
-	_, err = runner.Run(ctx, executable, []string{"-hide_banner", "-loglevel", "info", "-filter_threads", "1", "-f", "lavfi", "-i", "testsrc2=size=16x16:rate=100", "-threads", "1", "-vf", "showinfo", "-pix_fmt", "gray", "-flush_packets", "1", "-f", "rawvideo", "-"}, "")
+	// The first native frame exceeds both the admitted output and the pipe's
+	// normal write buffer. Termination cannot depend on tiny-frame batching.
+	_, err = runner.Run(ctx, executable, []string{"-hide_banner", "-loglevel", "info", "-filter_threads", "1", "-f", "lavfi", "-i", "testsrc2=size=256x256:rate=100", "-threads", "1", "-vf", "showinfo", "-pix_fmt", "gray", "-flush_packets", "1", "-f", "rawvideo", "-"}, "")
 	if !errors.Is(err, errComparisonDecoderLimit) || ctx.Err() != nil {
 		t.Fatalf("output overflow did not terminate the owned decoder promptly: %v context=%v", err, ctx.Err())
 	}
@@ -358,6 +367,7 @@ func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 
 func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 	source := comparisonTestSource(t)
+	source.Width, source.Height = 1920, 1080
 	source.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatHDR10}}
 	source.StartTimeSeconds = 5
 	identity := comparisonDiagnostics(5800, "B")
@@ -396,6 +406,12 @@ func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 			},
 			want:  ErrComparisonNormalizationUnavailable,
 			calls: 1,
+		},
+		{
+			name:    "Dolby Vision profile 5 retains GPU native matching",
+			profile: "5",
+			replies: []renderReply{{payload: pixels, stderr: identity + output + "[Parsed_showinfo_1 @ synthetic] side data - Dolby Vision Metadata:\n"}},
+			calls:   1,
 		},
 		{
 			name: "changed output timestamp",
@@ -448,7 +464,13 @@ func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 			}
 			source := source
 			source.HDRFacts.DolbyVisionProfile = tc.profile
-			samples, err := NewService(cfg, api.NopLogger{}, t.TempDir(), runner).SampleComparisonSource(ctx, ComparisonSampleRequest{
+			service := NewService(cfg, api.NopLogger{}, t.TempDir(), runner)
+			if tc.profile == "5" {
+				if crop, err := service.DetectComparisonActivePicture(ctx, source, 0, 4, nil); err != nil || crop != nil {
+					t.Fatalf("optional border detection blocked metadata-aware matching: %v", err)
+				}
+			}
+			samples, err := service.SampleComparisonSource(ctx, ComparisonSampleRequest{
 				Source:          source,
 				StartSeconds:    .75,
 				DurationSeconds: .22,
@@ -466,10 +488,12 @@ func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 					samples[0].PictureType != "B" || math.Abs(samples[0].RelativeTimestampSeconds-.8) > 1e-9 || !bytes.Equal(samples[0].Pixels, pixels) {
 					t.Fatalf("normalization changed source identity or pixels: %+v", samples)
 				}
-				filter := ffmpegValueAfter(runner.args[1], "-vf")
-				if !strings.Contains(filter, "zscale=transfer=linear") || !strings.Contains(filter, "tonemap=tonemap=mobius") ||
-					strings.Index(filter, "showinfo,") > strings.Index(filter, "tonemap=") || strings.Contains(filter, "setpts") {
-					t.Fatalf("normalization bypassed the existing pipeline or changed the source clock: %s", filter)
+				if tc.profile != "5" {
+					filter := ffmpegValueAfter(runner.args[1], "-vf")
+					if !strings.Contains(filter, "zscale=transfer=linear") || !strings.Contains(filter, "tonemap=tonemap=mobius") ||
+						strings.Index(filter, "showinfo,") > strings.Index(filter, "tonemap=") || strings.Contains(filter, "setpts") {
+						t.Fatalf("normalization bypassed the existing pipeline or changed the source clock: %s", filter)
+					}
 				}
 			}
 			for _, args := range runner.args {
@@ -490,7 +514,7 @@ func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "Example.Offset.Movie.mkv")
 	if _, err := (commandRunner{}).Run(t.Context(), executable, []string{
-		"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10:duration=2",
+		"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10:duration=12",
 		"-vf", "setpts=PTS+5/TB", "-c:v", "ffv1", path,
 	}, ""); err != nil {
 		t.Fatal(err)
@@ -500,8 +524,51 @@ func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.Width != 64 || source.Height != 48 || source.FrameRate != 10 || source.DurationSeconds <= 0 || source.StartTimeSeconds != 5 || source.FrameCount != 20 {
+	if source.Width != 64 || source.Height != 48 || source.FrameRate != 10 || source.DurationSeconds <= 0 || source.StartTimeSeconds != 5 || source.FrameCount != 120 {
 		t.Fatalf("source facts = %+v", source)
+	}
+	for _, boundary := range []string{"bounded context", "caller cancellation", "output limit", "diagnostic limit"} {
+		t.Run("inspection "+boundary, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			called := false
+			runner := comparisonInspectionRunner(func(ctx context.Context, name string, args []string, dir string) (CommandResult, error) {
+				called = true
+				deadline, bounded := ctx.Deadline()
+				if !bounded || time.Until(deadline) > time.Minute {
+					t.Fatal("file inspection started an unbounded decoder")
+				}
+				switch boundary {
+				case "caller cancellation":
+					cancel()
+					return CommandResult{}, fmt.Errorf("stop inspection fixture: %w", ctx.Err())
+				case "output limit":
+					return CommandResult{Stdout: make([]byte, 65537)}, nil
+				case "diagnostic limit":
+					return CommandResult{Stderr: []byte(strings.Repeat("x", 8193))}, nil
+				default:
+					return (commandRunner{}).Run(ctx, name, args, dir)
+				}
+			})
+			inspected, err := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner).InspectComparisonSource(ctx, path)
+			if !called {
+				t.Fatal("inspection did not reach the bounded native probe")
+			}
+			switch boundary {
+			case "caller cancellation":
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("inspection lost caller cancellation: %v", err)
+				}
+			case "output limit", "diagnostic limit":
+				if !errors.Is(err, errComparisonDecoderLimit) {
+					t.Fatalf("inspection accepted unbounded decoder output: %v", err)
+				}
+			default:
+				if err != nil || inspected.StartTimeSeconds != source.StartTimeSeconds || inspected.NativePixelFormat != source.NativePixelFormat {
+					t.Fatalf("bounded inspection changed source facts: %+v %v", inspected, err)
+				}
+			}
+		})
 	}
 	request := ComparisonCaptureRequest{Source: source, TimestampSeconds: 0.75}
 	preview, err := service.ComparisonPreview(t.Context(), request)
@@ -586,6 +653,30 @@ func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
 			t.Fatalf("sample escaped window or lost picture type: %+v", sample.ComparisonFrameObservation)
 		}
 	}
+	boundSource := source
+	boundSource.InputFingerprint = "native-clock-replay"
+	later, err := service.SampleComparisonSource(t.Context(), ComparisonSampleRequest{
+		Source:          boundSource,
+		StartSeconds:    8,
+		DurationSeconds: .25,
+		StrideSeconds:   .01,
+	})
+	if err != nil || len(later) == 0 || later[0].Replay == nil {
+		t.Fatalf("missing later native witness: %v", err)
+	}
+	replay := ComparisonCaptureRequest{
+		Source:           boundSource,
+		TimestampSeconds: later[0].RelativeTimestampSeconds,
+		Replay:           later[0].Replay,
+	}
+	actual, err := service.ComparisonCapture(t.Context(), replay)
+	if err != nil || actual.PictureChecksum != later[0].PictureChecksum || actual.PTS != later[0].PTS {
+		t.Fatalf("bounded replay changed the selected picture: %v", err)
+	}
+	replay.TimestampSeconds = 0
+	if frame, err := service.ComparisonCapture(t.Context(), replay); err == nil || len(frame.ImageBytes) != 0 {
+		t.Fatal("a stale file locator scanned beyond its bounded replay window")
+	}
 }
 
 func TestComparisonNativeFractionalFrameRoundTrip(t *testing.T) {
@@ -629,6 +720,53 @@ func TestComparisonNativeFractionalFrameRoundTrip(t *testing.T) {
 			t.Fatalf("sampled picture changed after seeking to %.12f: sampled=%+v captured=%+v",
 				sample.RelativeTimestampSeconds, sample.ComparisonFrameObservation, captured.ComparisonFrameObservation)
 		}
+	}
+}
+
+func TestLocalComparisonHDRCaptureReplay(t *testing.T) {
+	path := os.Getenv("UPBRR_COMPARISON_HDR_REPLAY_SOURCE")
+	if path == "" {
+		t.Skip("opt-in local GPU HDR replay acceptance")
+	}
+	moment, err := strconv.ParseFloat(os.Getenv("UPBRR_COMPARISON_HDR_REPLAY_SECONDS"), 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{ToneMap: true, UseLibplacebo: true}}
+	service := NewService(cfg, api.NopLogger{}, t.TempDir(), nil)
+	source, err := service.InspectComparisonSource(t.Context(), path)
+	if err != nil || !source.HDRFacts.SupportsToneMapping() {
+		t.Fatalf("HDR source inspection unavailable: %v", err)
+	}
+	source.InputFingerprint = "local-hdr-replay"
+	samples, err := service.SampleComparisonSource(t.Context(), ComparisonSampleRequest{
+		Source:          source,
+		StartSeconds:    max(0, moment-.3),
+		DurationSeconds: 1,
+		NativeFrames:    true,
+		StrideSeconds:   .002,
+		NormalizeSDR:    true,
+	})
+	if err != nil || len(samples) == 0 {
+		t.Fatalf("native HDR sampling failed: %v", err)
+	}
+	selected := samples[0]
+	for _, sample := range samples {
+		if math.Abs(sample.RelativeTimestampSeconds-moment) < math.Abs(selected.RelativeTimestampSeconds-moment) {
+			selected = sample
+		}
+	}
+	frame, err := service.ComparisonCapture(t.Context(), ComparisonCaptureRequest{
+		Source:           source,
+		TimestampSeconds: selected.RelativeTimestampSeconds,
+		Replay:           selected.Replay,
+		OverlayLabel:     "HDR source",
+		OutputWidth:      1920,
+		OutputHeight:     1080,
+	})
+	if err != nil || frame.PictureChecksum != selected.PictureChecksum || frame.PTS != selected.PTS || frame.TimeBaseDenominator != selected.TimeBaseDenominator ||
+		frame.Processing.Renderer != "libplacebo" || !frame.Processing.Tonemapped || frame.Width != 1920 || frame.Height != 1080 {
+		t.Fatalf("GPU replay lost its original picture, renderer or canvas: %v", err)
 	}
 }
 

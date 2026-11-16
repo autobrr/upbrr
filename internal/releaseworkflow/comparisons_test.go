@@ -20,6 +20,148 @@ type comparisonMediaFake struct {
 	edits, uploads, restores int
 }
 
+type interruptedComparisonMediaFake struct {
+	comparisonMediaFake
+	cancel             context.CancelFunc
+	typed              bool
+	reason             string
+	complete, ordinary bool
+}
+
+func (b *interruptedComparisonMediaFake) EditComparisons(ctx context.Context, release api.ReleaseRef, projections api.TrackerReleaseProjectionSet, prior *api.MediaArtifactSet, private any, instructions api.ComparisonInstructions, attachments []StagedMediaAttachment, now time.Time) (api.MediaArtifactSet, RetainedMediaResource, error) {
+	snapshot, retained, err := b.comparisonMediaFake.EditComparisons(ctx, release, projections, prior, private, instructions, attachments, now)
+	if err != nil {
+		return snapshot, retained, err
+	}
+	if b.ordinary {
+		b.cancel()
+		return snapshot, retained, nil
+	}
+	if !b.complete {
+		snapshot.Comparisons.Rows[0].Cells[1].ArtifactID = ""
+		snapshot.Comparisons.Rows[0].Cells[1].ContentSHA256 = ""
+		snapshot.Artifacts = snapshot.Artifacts[:1]
+	}
+	snapshot.Comparisons.ApprovedFingerprint = ""
+	reason := b.reason
+	if reason == "" || reason == "untyped" {
+		reason = "capture_cancelled"
+	}
+	snapshot.Failures = append(snapshot.Failures, api.WorkflowFailure{Failure: api.OperationFailure{
+		Code:             api.OperationFailureMissingPrerequisite,
+		Operation:        api.OperationKindMedia,
+		ComparisonReason: reason,
+		Recovery:         api.OperationRecoveryRetry,
+		Message:          "Capture interrupted; completed cells retained.",
+	}})
+	if b.reason != "discovery_incomplete" {
+		b.cancel()
+	}
+	if !b.typed {
+		return snapshot, retained, context.Canceled
+	}
+	if b.reason == "discovery_incomplete" {
+		return snapshot, retained, &ComparisonIncompleteError{Cause: context.DeadlineExceeded, Reason: b.reason}
+	}
+	return snapshot, retained, &ComparisonIncompleteError{Cause: context.Canceled, Reason: reason}
+}
+
+func TestComparisonCapturePublishesOnlyTypedIncompleteResults(t *testing.T) {
+	for _, reason := range []string{"untyped", "capture_cancelled", "discovery_incomplete"} {
+		t.Run(reason, func(t *testing.T) {
+			typed := reason != "untyped"
+			module, repository, _, current := newDuplicateReuseWorkflow(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			module.mediaBuilder = &interruptedComparisonMediaFake{
+				cancel: cancel,
+				typed:  typed,
+				reason: reason,
+			}
+			before := current.Workflow.Revision
+			result, err := module.execute(ctx, testOwnerID, EditComparisonsCommand{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: before,
+				Instructions:     api.ComparisonInstructions{Action: "capture", Plan: reviewedComparisonFixture(t)},
+			})
+			state, loadErr := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if !typed {
+				if err == nil || state.Workflow.Revision != before {
+					t.Fatal("an arbitrary failed operation published partial media")
+				}
+				return
+			}
+			if err != nil || result.Media == nil || state.Workflow.Revision <= before || ComparisonReviewSatisfied(result.Media.Comparisons) || len(result.Media.Failures) != 1 {
+				t.Fatalf("typed stopped result was lost or approved: %v", err)
+			}
+			ref := state.Workflow.Media
+			if ref == nil {
+				t.Fatal("stopped result was not retained in workflow state")
+			}
+			stored := state.Media[ref.ID]
+			if stored.Comparisons.Rows[0].Cells[0].ArtifactID == "" || stored.Comparisons.Rows[0].Cells[1].ArtifactID != "" {
+				t.Fatal("stored partial result changed completed cells")
+			}
+		})
+	}
+	for _, action := range []string{"configure", "capture", "approve"} {
+		t.Run("historical failure does not authorize cancelled "+action, func(t *testing.T) {
+			module, repository, _, current := newDuplicateReuseWorkflow(t)
+			seedCtx, stopSeed := context.WithCancel(t.Context())
+			defer stopSeed()
+			module.mediaBuilder = &interruptedComparisonMediaFake{
+				cancel:   stopSeed,
+				typed:    true,
+				complete: true,
+				reason:   "match_cancelled",
+			}
+			seeded, err := module.execute(seedCtx, testOwnerID, EditComparisonsCommand{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+				Instructions:     api.ComparisonInstructions{Action: "capture", Plan: reviewedComparisonFixture(t)},
+			})
+			if err != nil || seeded.Media == nil || len(seeded.Media.Failures) != 1 {
+				t.Fatalf("could not retain the earlier stopped operation: %v", err)
+			}
+			plan, err := seeded.Media.Comparisons.Clone()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action == "configure" {
+				plan.Sources[0].Label = "Changed"
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			module.mediaBuilder = &interruptedComparisonMediaFake{cancel: cancel, ordinary: true}
+			_, err = module.execute(ctx, testOwnerID, EditComparisonsCommand{
+				WorkflowID:       seeded.Workflow.ID,
+				ExpectedRevision: seeded.Workflow.Revision,
+				Media:            seeded.Workflow.Media,
+				Instructions: api.ComparisonInstructions{
+					Action:              action,
+					Plan:                plan,
+					ExpectedFingerprint: seeded.Media.Comparisons.Fingerprint,
+				},
+			})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("ordinary cancelled edit inherited detached-publication authority: %v", err)
+			}
+			state, err := repository.Load(t.Context(), testOwnerID, seeded.Workflow.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored := state.Media[state.Workflow.Media.ID]
+			if state.Workflow.Revision != seeded.Workflow.Revision || stored.Comparisons.ApprovedFingerprint != "" ||
+				stored.Comparisons.Fingerprint != seeded.Media.Comparisons.Fingerprint {
+				t.Fatal("cancelled ordinary edit changed durable images, settings or approval")
+			}
+		})
+	}
+}
+
 func (b *comparisonMediaFake) RestoreComparisons(_ context.Context, _ api.ReleaseRef, projections api.TrackerReleaseProjectionSet,
 	previous api.MediaArtifactSet, private any, _ time.Time,
 ) (api.MediaArtifactSet, RetainedMediaResource, error) {

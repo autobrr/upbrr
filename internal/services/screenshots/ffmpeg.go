@@ -43,7 +43,7 @@ type CommandResult struct {
 type commandRunner struct{}
 
 func (commandRunner) Run(ctx context.Context, name string, args []string, dir string) (CommandResult, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G702 -- Resolved media executable and structured arguments; no shell.
 	if strings.TrimSpace(dir) != "" {
 		cmd.Dir = dir
 	}

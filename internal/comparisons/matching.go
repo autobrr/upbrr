@@ -10,12 +10,17 @@ import (
 	"math"
 	"slices"
 	"strings"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // FrameSample describes one actually decoded frame. Luma grids must share their
 // dimensions and aspect treatment across sources. Brightness and Motion are
 // normalized thumbnail measurements in [0,1], not physical luminance claims.
 type FrameSample struct {
+	NativeSequence      bool
+	Occurrence          string
+	Evidence            *api.ComparisonSceneEvidence
 	DisplayEndSeconds   float64
 	TimebaseTickSeconds float64
 	FrameID             string
@@ -49,6 +54,8 @@ type SampledSource struct {
 // Targets fit within Count or the supplied moments, whichever is larger; unmet
 // targets produce warnings. A row qualifying as dark and motion counts for both.
 type MatchOptions struct {
+	MainFrameID string
+	FlatCount   int
 	Count       int
 	MainMoments []float64
 	DarkCount   int
@@ -73,6 +80,7 @@ type FrameMatch struct {
 
 // MatchedRow preserves source order for one common visual moment.
 type MatchedRow struct {
+	Evidence    *api.ComparisonSceneEvidence
 	MainSeconds float64
 	Frames      []FrameMatch
 	Complete    bool
@@ -82,6 +90,9 @@ type MatchedRow struct {
 // MatchResult reports established rows separately from unmet scene preferences.
 // Every row still requires the workflow's explicit image review before upload.
 type MatchResult struct {
+	Analysis        *api.ComparisonAnalysisSummary
+	RequestedFlat   int
+	AchievedFlat    int
 	Rows            []MatchedRow
 	RequestedDark   int
 	RequestedMotion int
@@ -114,6 +125,9 @@ func match(sources []SampledSource, mainID string, options MatchOptions, alignme
 			})
 		}
 	}
+	if options.MainFrameID != "" {
+		columns[main].frames = slices.DeleteFunc(columns[main].frames, func(f matchingFrame) bool { return f.frame.FrameID != options.MainFrameID })
+	}
 	if len(columns[main].frames) == 0 {
 		return MatchResult{}, nil
 	}
@@ -127,17 +141,21 @@ func match(sources []SampledSource, mainID string, options MatchOptions, alignme
 		count = len(options.MainMoments)
 	}
 	result := MatchResult{
+		RequestedFlat:   options.FlatCount,
 		RequestedDark:   options.DarkCount,
 		RequestedMotion: options.MotionCount,
 	}
 	appendRow := func(row MatchedRow, frame FrameSample) {
 		result.Rows = append(result.Rows, row)
 		if row.Complete {
-			if frame.Brightness <= .25 {
+			if SceneQualified(frame.Evidence, 1) {
 				result.AchievedDark++
 			}
-			if frame.Motion >= .15 {
+			if SceneQualified(frame.Evidence, 0) {
 				result.AchievedMotion++
+			}
+			if SceneQualified(frame.Evidence, 2) {
+				result.AchievedFlat++
 			}
 		}
 	}
@@ -192,8 +210,11 @@ func match(sources []SampledSource, mainID string, options MatchOptions, alignme
 	if slices.ContainsFunc(result.Rows, func(row MatchedRow) bool { return !row.Complete }) {
 		result.Warnings = append(result.Warnings, "Some comparison moments need manual correspondence or replacement.")
 	}
-	if result.AchievedDark < result.RequestedDark || result.AchievedMotion < result.RequestedMotion {
-		result.Warnings = append(result.Warnings, "The requested dark or motion scene mix was not fully established in complete comparison rows.")
+	if result.AchievedDark < result.RequestedDark || result.AchievedMotion < result.RequestedMotion || result.AchievedFlat < result.RequestedFlat {
+		result.Warnings = append(
+			result.Warnings,
+			"The requested dark, motion or flat scene mix was not fully established; other eligible rows use best effort.",
+		)
 	}
 	return result, nil
 }
@@ -211,7 +232,9 @@ type matchingColumn struct {
 
 func prepareMatching(sources []SampledSource, mainID string, options MatchOptions) ([]matchingColumn, int, error) {
 	count := max(options.Count, len(options.MainMoments))
-	if len(sources) < 2 || count < 1 || options.DarkCount < 0 || options.DarkCount > count || options.MotionCount < 0 || options.MotionCount > count {
+	if len(sources) < 2 || count < 1 || options.DarkCount < 0 || options.DarkCount > count || options.MotionCount < 0 || options.MotionCount > count ||
+		options.FlatCount < 0 ||
+		options.FlatCount > count {
 		return nil, 0, errors.New("comparison matching requires multiple sources, a positive row count and scene targets within that count")
 	}
 	columns := make([]matchingColumn, len(sources))
@@ -242,7 +265,7 @@ func prepareMatching(sources []SampledSource, mainID string, options MatchOption
 			if len(frame.Luma) != pixels {
 				return nil, 0, errors.New("comparison luminance samples must have the same grid dimensions")
 			}
-			if j+1 < len(source.Frames) {
+			if frame.DisplayEndSeconds <= frame.TimestampSeconds && j+1 < len(source.Frames) {
 				frame.DisplayEndSeconds = source.Frames[j+1].TimestampSeconds
 			}
 			column.frames[j] = matchingFrame{frame: frame, signature: matchingSignature(frame.Luma)}
@@ -311,18 +334,25 @@ func visualScore(a, b matchingFrame) float64 {
 func matchRow(columns []matchingColumn, main, index int, selected []MatchedRow) MatchedRow {
 	frame := columns[main].frames[index]
 	row := MatchedRow{
+		Evidence:    frame.frame.Evidence,
 		MainSeconds: frame.frame.TimestampSeconds,
 		Complete:    true,
 		Frames:      make([]FrameMatch, len(columns)),
 	}
-	if frame.frame.Brightness <= .25 {
+	if SceneQualified(frame.frame.Evidence, 1) {
 		row.Scene = "dark"
 	}
-	if frame.frame.Motion >= .15 {
+	if SceneQualified(frame.frame.Evidence, 0) {
 		if row.Scene != "" {
 			row.Scene += ","
 		}
 		row.Scene += "motion"
+	}
+	if SceneQualified(frame.frame.Evidence, 2) {
+		if row.Scene != "" {
+			row.Scene += ","
+		}
+		row.Scene += "flat"
 	}
 	for i, column := range columns {
 		if i == main {
@@ -346,9 +376,6 @@ func matchRow(columns []matchingColumn, main, index int, selected []MatchedRow) 
 }
 
 func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
-	if column.alignment != nil {
-		return matchAlignedFrame(main, column)
-	}
 	expected := main.frame.TimestampSeconds
 	distance := math.Inf(1)
 	for _, anchor := range column.source.Anchors {
@@ -367,6 +394,9 @@ func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
 			distance = delta
 			expected = main.frame.TimestampSeconds + anchor.SourceSeconds - anchor.MainSeconds
 		}
+	}
+	if column.alignment != nil {
+		return matchAlignedFrame(main, column)
 	}
 	best, bestScore := -1, 0.0
 	for i, candidate := range column.frames {
@@ -486,17 +516,18 @@ func chooseScene(main matchingColumn, used map[int]bool, result MatchResult, cou
 	best, bestScore := -1, math.Inf(-1)
 	duration := main.frames[len(main.frames)-1].frame.TimestampSeconds - main.frames[0].frame.TimestampSeconds
 	for i, candidate := range main.frames {
-		if used[i] || len(candidate.signature) == 0 || kind != "" && candidate.frame.FrameType != kind {
+		if used[i] || len(candidate.signature) == 0 || kind != "" && candidate.frame.FrameType != kind ||
+			candidate.frame.Evidence != nil && !candidate.frame.Evidence.Eligible {
 			continue
 		}
 		score := 0.0
 		if allowedPicture(main.source, candidate.frame.FrameType) {
 			score += 2
 		}
-		if result.AchievedDark < result.RequestedDark && candidate.frame.Brightness <= .25 {
+		if result.AchievedDark < result.RequestedDark && SceneQualified(candidate.frame.Evidence, 1) {
 			score += 4 + 1 - candidate.frame.Brightness
 		}
-		if result.AchievedMotion < result.RequestedMotion && candidate.frame.Motion >= .15 {
+		if result.AchievedMotion < result.RequestedMotion && SceneQualified(candidate.frame.Evidence, 0) {
 			score += 4 + candidate.frame.Motion
 		}
 		distance := duration

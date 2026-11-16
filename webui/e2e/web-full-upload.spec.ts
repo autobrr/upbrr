@@ -184,7 +184,7 @@ test("embedded DVD comparison selection retains native manual frames after resta
       "-f",
       "lavfi",
       "-i",
-      "testsrc2=size=160x120:rate=25:duration=4",
+      "nullsrc=size=160x120:rate=25:duration=4,geq=lum='96+40*sin((X+Y+2*N)*0.13)+24*cos((X-2*Y+N)*0.11)':cb=128:cr=128",
       "-c:v",
       "ffv1",
       workspace.sourcePath,
@@ -267,6 +267,9 @@ test("embedded DVD comparison selection retains native manual frames after resta
       column.getByRole("img", { name: "Source 2 comparison preview", exact: true }),
     ).toBeVisible();
     await column.getByRole("button", { name: "Next frame", exact: true }).click();
+    const mainInput = comparison.getByRole("group", { name: "Main input · column 1", exact: true });
+    await mainInput.locator("summary").click();
+    await mainInput.getByLabel("Approximate frame seek · Main input", { exact: true }).fill("50");
     await comparison
       .getByRole("button", { name: "Add manual row from timeline positions" })
       .click();
@@ -547,17 +550,20 @@ test("embedded video comparisons match three native sources and retain reviewed 
         comparison.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
       ).toBeChecked();
       await expect(
-        comparison.getByRole("combobox", { name: "Comparison frame size", exact: true }),
-      ).toHaveValue("main");
+        comparison.getByRole("combobox", { name: "Comparison scan mode", exact: true }),
+      ).toHaveValue("fast");
       await expect(
-        comparison.getByRole("checkbox", {
-          name: "Resize resolutions proportionally, without padding",
-          exact: true,
-        }),
-      ).toBeChecked();
-      await expect(
-        comparison.getByRole("checkbox", { name: "Also resize lower resolutions", exact: true }),
-      ).toBeChecked();
+        comparison.getByRole("spinbutton", { name: "Flat scenes (rows)", exact: true }),
+      ).toHaveValue("0");
+      const scanHelp = comparison.getByRole("button", {
+        name: "Help for Comparison scan mode",
+        exact: true,
+      });
+      await scanHelp.focus();
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Tab");
+      await expect(scanHelp).toHaveAttribute("aria-expanded", "true");
+      await page.keyboard.press("Escape");
       const encode = comparison.getByRole("group", { name: "Encode · column 2", exact: true });
       await encode.getByRole("checkbox", { name: "I", exact: true }).check();
       await comparison.getByRole("button", { name: "Find matching scenes" }).click();
@@ -595,17 +601,8 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await expect(seek).toHaveValue("12");
       await expect(seconds).toContainText("1.200");
       await comparison
-        .getByRole("combobox", { name: "Comparison frame size", exact: true })
-        .selectOption("column-2");
-      await comparison
-        .getByRole("checkbox", {
-          name: "Resize resolutions proportionally, without padding",
-          exact: true,
-        })
-        .check();
-      await comparison
-        .getByRole("checkbox", { name: "Also resize lower resolutions", exact: true })
-        .check();
+        .getByRole("spinbutton", { name: "Flat scenes (rows)", exact: true })
+        .fill("1");
       await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
       await expect(
         comparison.getByRole("button", { name: "Apply comparison setup" }),
@@ -630,9 +627,11 @@ test("embedded video comparisons match three native sources and retain reviewed 
       });
       await expect(approve).toBeEnabled();
       const captured = (await snapshot()).current!.media!.comparisons!;
-      expect(captured.sizeReferenceSourceId).toBe("column-2");
-      expect(captured.resizeLargerOnly).toBe(true);
-      expect(captured.resizeSmaller).toBe(true);
+      expect(captured.sizeReferenceSourceId).toBe("main");
+      expect(captured.resizeLargerOnly).toBeFalsy();
+      expect(captured.resizeSmaller).toBeFalsy();
+      expect(captured.preferences.flatCount).toBe(1);
+      expect(captured.preferences.scanMode).toBe("fast");
       expect(captured.sources.every((source) => source.toneMap == null)).toBe(true);
       const cells = captured.rows[0]!.cells;
       expect(cells).toHaveLength(3);

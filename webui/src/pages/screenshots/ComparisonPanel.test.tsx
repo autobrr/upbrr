@@ -170,7 +170,7 @@ it("keeps discovered programmes local to a column until setup is applied", async
   );
 });
 
-it("retains comparison render choices and defaults new videos without rewriting saved choices", async () => {
+it("retains scene mode and flat targets with the main canvas and independent source preferences", async () => {
   const initial = comparisonFacet(null);
   const hdr = { programmeSelectionRequired: false, toneMappingAvailable: true };
   const facet = { ...initial, view: { ...initial.view, mainSourceCapabilities: hdr } };
@@ -179,14 +179,11 @@ it("retains comparison render choices and defaults new videos without rewriting 
   );
   fireEvent.click(screen.getByRole("button", { name: "Create from videos" }));
   fireEvent.click(screen.getByRole("button", { name: "Add comparison video" }));
-  expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("main");
+  expect(screen.getByRole("combobox", { name: "Comparison scan mode" })).toHaveValue("fast");
+  expect(screen.getByRole("spinbutton", { name: "Flat scenes (rows)" })).toHaveValue(0);
   expect(
     screen.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
   ).toBeChecked();
-  expect(
-    screen.getByRole("checkbox", { name: "Resize resolutions proportionally, without padding" }),
-  ).toBeChecked();
-  expect(screen.getByRole("checkbox", { name: "Also resize lower resolutions" })).toBeChecked();
   for (const group of ["Main input · column 1", "Source 2 · column 2"]) {
     const column = within(screen.getByRole("group", { name: group }));
     expect(column.getByRole("checkbox", { name: "B" })).toBeChecked();
@@ -203,15 +200,12 @@ it("retains comparison render choices and defaults new videos without rewriting 
   fireEvent.change(main.getByRole("combobox", { name: /Tone mapping/ }), {
     target: { value: "on" },
   });
-  fireEvent.change(screen.getByRole("combobox", { name: "Comparison frame size" }), {
-    target: { value: "column-2" },
+  fireEvent.change(screen.getByRole("combobox", { name: "Comparison scan mode" }), {
+    target: { value: "deep" },
   });
-  fireEvent.click(screen.getByRole("checkbox", { name: "Also resize lower resolutions" }));
-  fireEvent.click(
-    screen.getByRole("checkbox", {
-      name: "Resize resolutions proportionally, without padding",
-    }),
-  );
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Flat scenes (rows)" }), {
+    target: { value: "1" },
+  });
   fireEvent.click(
     screen.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
   );
@@ -230,7 +224,8 @@ it("retains comparison render choices and defaults new videos without rewriting 
     overlay: true,
   });
   expect(plan.sources[1]!.toneMap).toBeUndefined();
-  expect(plan.sizeReferenceSourceId).toBe("column-2");
+  expect(plan.sizeReferenceSourceId).toBe("main");
+  expect(plan.preferences).toMatchObject({ scanMode: "deep", flatCount: 1 });
   expect(plan.resizeLargerOnly).toBe(false);
   expect(plan.resizeSmaller).toBe(false);
   expect(plan.reuseMainScreenshots).toBe(false);
@@ -252,21 +247,13 @@ it("retains comparison render choices and defaults new videos without rewriting 
     saved.queryByRole("checkbox", { name: "Comparison-only frame overlay and label" }),
   ).toBeNull();
   expect(saved.getByRole("combobox", { name: /Tone mapping/ })).toHaveValue("on");
-  expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("column-2");
-  expect(
-    screen.getByRole("checkbox", {
-      name: "Resize resolutions proportionally, without padding",
-    }),
-  ).not.toBeChecked();
+  expect(screen.getByRole("combobox", { name: "Comparison scan mode" })).toHaveValue("deep");
+  expect(screen.getByRole("spinbutton", { name: "Flat scenes (rows)" })).toHaveValue(1);
   expect(
     screen.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
   ).not.toBeChecked();
-  fireEvent.click(
-    screen.getByRole("checkbox", { name: "Resize resolutions proportionally, without padding" }),
-  );
-  expect(screen.getByRole("checkbox", { name: "Also resize lower resolutions" })).not.toBeChecked();
   fireEvent.click(screen.getByRole("button", { name: "Remove Source 2 column" }));
-  expect(screen.getByRole("combobox", { name: "Comparison frame size" })).toHaveValue("");
+  expect(screen.getByRole("combobox", { name: "Comparison scan mode" })).toHaveValue("deep");
 });
 
 it("converts saved scene percentages into fixed row targets and rejects invalid counts", async () => {
@@ -299,6 +286,8 @@ it("converts saved scene percentages into fixed row targets and rejects invalid 
     motionCount: 3,
     darkPercent: 0,
     motionPercent: 0,
+    flatCount: 0,
+    scanMode: "fast",
   });
 });
 
@@ -337,6 +326,11 @@ const comparisonPlan = (imported = true): ComparisonPlan => ({
         }),
   })),
   mainSourceId: imported ? "2" : "main",
+  ...(!imported && {
+    sizeReferenceSourceId: "main",
+    resizeLargerOnly: false,
+    resizeSmaller: false,
+  }),
   reuseMainScreenshots: false,
   preferences: { count: 1, darkPercent: 0, motionPercent: 0 },
   fingerprint: "review-1",

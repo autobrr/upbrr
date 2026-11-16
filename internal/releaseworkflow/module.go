@@ -462,7 +462,8 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	now := m.clock.Now().UTC()
 	nextRevision := state.Workflow.Revision + 1
 	result, err := m.apply(ctx, ownerID, &state, nextRevision, now, command)
-	if err != nil {
+	stoppedComparisons := retainsStoppedComparisons(command, result, err)
+	if err != nil && !stoppedComparisons {
 		return CommandResult{}, err
 	}
 	if (result.Dupes != nil || result.TrackerApproval != nil) && (state.ComparisonMedia == nil || state.Workflow.Media != nil) {
@@ -487,8 +488,13 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 	state.Receipts[receiptKey] = commandReceipt{Fingerprint: fingerprint, Result: result}
 	commitCtx := ctx
-	if retainsStoppedAudioAnalysis(command, result) || hdrStoppedResult(command, result) {
+	if retainsStoppedAudioAnalysis(command, result) || hdrStoppedResult(command, result) || stoppedComparisons {
 		commitCtx = context.WithoutCancel(ctx)
+		if stoppedComparisons {
+			var cancel context.CancelFunc
+			commitCtx, cancel = context.WithTimeout(commitCtx, 30*time.Second)
+			defer cancel()
+		}
 	} else if err := ctx.Err(); err != nil {
 		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, fmt.Errorf("release workflow command canceled before commit: %w", err)
@@ -557,11 +563,11 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		}
 	}
 	if commandFinalizesMedia(command) && !commandCommitsMediaBeforeSave(command) {
-		if err := m.finalizeRetainedMedia(ctx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
+		if err := m.finalizeRetainedMedia(commitCtx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
 			return CommandResult{}, err
 		}
 	}
-	if err := m.recordReusableMedia(ctx, ownerID, state.Workflow.ID, result.Media, now); err != nil {
+	if err := m.recordReusableMedia(commitCtx, ownerID, state.Workflow.ID, result.Media, now); err != nil {
 		return CommandResult{}, err
 	}
 	return cloneCommandResult(result)
@@ -7003,10 +7009,10 @@ func (m *Module) refreshPersistedMediaStatus(
 // The full known projection set distinguishes an excluded tracker's retained
 // failure from an unscoped or unknown-tracker failure that must still block.
 func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, knownProjections []api.TrackerReleaseProjection) {
-	hostFailures := make([]api.WorkflowFailure, 0, len(snapshot.Failures))
+	retainedFailures := make([]api.WorkflowFailure, 0, len(snapshot.Failures))
 	for _, failure := range snapshot.Failures {
-		if failure.Failure.Operation == api.OperationKindImageHosting {
-			hostFailures = append(hostFailures, failure)
+		if failure.Failure.Operation == api.OperationKindImageHosting || incompleteComparisonFailure(failure) {
+			retainedFailures = append(retainedFailures, failure)
 		}
 	}
 	readinessProjections := projections
@@ -7051,7 +7057,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		case api.MediaArtifactHostedImage:
 		}
 	}
-	snapshot.Failures = hostFailures
+	snapshot.Failures = retainedFailures
 	snapshot.RequiredActions = reconcileActions
 	if !ComparisonMediaReviewSatisfied(*snapshot) {
 		snapshot.Status = api.StageStatusBlocked

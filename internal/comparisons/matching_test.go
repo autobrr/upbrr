@@ -6,6 +6,7 @@ package comparisons
 import (
 	"cmp"
 	"fmt"
+	"github.com/autobrr/upbrr/pkg/api"
 	"math"
 	"math/rand/v2"
 	"slices"
@@ -257,7 +258,17 @@ func TestMatchingSceneMixExcludesBlankAndReportsUnmet(t *testing.T) {
 	source.Frames[1].Luma = make([]byte, 64)
 	source.Frames[1].Brightness = 0
 	source.Frames[3].Brightness = .15
+	source.Frames[3].Evidence = &api.ComparisonSceneEvidence{
+		Profile:  SceneProfile,
+		Eligible: true,
+		Dark:     api.ComparisonSceneCategory{State: "verified"},
+	}
 	source.Frames[5].Motion = .8
+	source.Frames[5].Evidence = &api.ComparisonSceneEvidence{
+		Profile:  SceneProfile,
+		Eligible: true,
+		Motion:   api.ComparisonSceneCategory{State: "verified"},
+	}
 	other := source
 	other.ID = "other"
 	result, err := Match([]SampledSource{source, other}, "main", MatchOptions{
@@ -278,6 +289,7 @@ func TestMatchingSceneMixExcludesBlankAndReportsUnmet(t *testing.T) {
 		t.Fatalf("unmet mix not reported: %+v %v", result, err)
 	}
 	source.Frames[3].Motion = .8
+	source.Frames[3].Evidence.Motion.State = "verified"
 	other = source
 	other.ID = "other"
 	result, err = Match([]SampledSource{source, other}, "main", MatchOptions{
@@ -382,6 +394,29 @@ func TestConstantAlignmentRequiresTemporalEvidence(t *testing.T) {
 				t.Fatalf("%s established offset %+v", kind, fitted)
 			}
 		})
+	}
+}
+
+func TestCalibrationCentersSelectSeparatedInformativeMainContent(t *testing.T) {
+	reference := make([]FrameSample, 0, 65)
+	for second := range 65 {
+		picture := uint64(1)
+		for _, transition := range []int{10, 30, 50} {
+			if second >= transition {
+				picture++
+			}
+		}
+		reference = append(reference, sampleFrame(picture, float64(second), "B"))
+	}
+	centers, reason := CalibrationCenters(reference)
+	if reason != "" || !slices.Equal(centers, []float64{10, 30, 50}) {
+		t.Fatalf("separated main regions: %v %s", centers, reason)
+	}
+	if _, reason := CalibrationCenters(reference[24:37]); reason == "" {
+		t.Fatal("one informative region supplied three independent proofs")
+	}
+	if _, reason := CalibrationCenters(reference[:14]); reason == "" {
+		t.Fatal("region without complete context was selected")
 	}
 }
 

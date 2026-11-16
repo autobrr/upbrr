@@ -193,7 +193,7 @@ func assertDiscComparisonFastAcceptance(t *testing.T, mainPath, dvdPath, bdPath 
 		}
 		logStart := len(logger.entries)
 		progress := b.comparisonProgress(t.Context(), 5)
-		result, observations, accepted, err := b.tryAlignedComparisons(t.Context(), retained, candidate, comparisons.MatchOptions{Count: 3}, progress)
+		result, observations, accepted, err := b.tryAlignedComparisons(t.Context(), &retained, candidate, comparisons.MatchOptions{Count: 3}, progress)
 		progress.close()
 		if err != nil || !accepted {
 			if evidence := os.Getenv("UPBRR_COMPARISON_EVIDENCE"); evidence != "" {
@@ -422,11 +422,34 @@ func assertOriginalProgrammePicture(t *testing.T, source screenshots.ComparisonS
 	mapStream, count := "0:V:0", "1"
 	filter := fmt.Sprintf("select=eq(pts\\,%d)", observed.PTS)
 	switch {
+	case source.Input != nil && source.Input.Kind == "dvd" && observed.Replay != nil && len(observed.Replay.Window.Spans) == 1:
+		// Read the original VOB independently, without the production byte span
+		// or dvdvideo's seek-adjusted title clock. Probe its first native PTS so
+		// FFmpeg's relative file seek cannot add the VOB's nonzero clock twice.
+		path := observed.Replay.Window.Spans[0].Path
+		probe := exec.CommandContext(t.Context(), executable, "-hide_banner", "-nostats", "-copyts", "-loglevel", "info", "-f", "mpeg", "-i", path,
+			"-map", "0:i:0x1e0", "-an", "-sn", "-dn", "-vf", "showinfo", "-frames:v", "1", "-f", "null", "-")
+		probe.WaitDelay = 5 * time.Second
+		output, err := probe.CombinedOutput()
+		first := regexp.MustCompile(`\bpts_time:([0-9.]+)`).FindSubmatch(output)
+		if err != nil || len(first) != 2 {
+			t.Fatalf("independent original VOB clock: %v", err)
+		}
+		origin, err := strconv.ParseFloat(string(first[1]), 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		args = append(args, "-ss", fmt.Sprintf("%.9f", max(0, observed.TimestampSeconds-origin-10)), "-f", "mpeg", "-i", path)
+		mapStream = "0:i:0x1e0"
 	case source.Input != nil && source.Input.Kind == "dvd":
 		// Independently locate pixels with dvdvideo's own seek/navigation. Its
 		// seek-adjusted timestamps never supply identity or the expected witness.
-		args = append(args, "-ss", fmt.Sprintf("%.9f", max(0, observed.RelativeTimestampSeconds-2)), "-f", "dvdvideo", "-title", strconv.Itoa(source.Input.DVD.Number), "-i", source.Input.Root)
-		filter, count = "null", strconv.Itoa(min(50000, int(math.Ceil(source.FrameRate*8))))
+		args = append(args, "-ss", fmt.Sprintf("%.9f", max(0, observed.RelativeTimestampSeconds-10)), "-f", "dvdvideo", "-title", strconv.Itoa(source.Input.DVD.Number), "-i", source.Input.Root)
+		// dvdvideo's coarse title seek can begin well before the requested
+		// time on real time maps. Search a finite 64-second original window;
+		// the expected picture checksum still comes exclusively from the
+		// native production witness, never the seek-adjusted clock.
+		filter, count = "trim=duration=64", strconv.Itoa(min(50000, int(math.Ceil(source.FrameRate*64))))
 	case source.Input != nil:
 		path, seek := "", 0.0
 		for _, item := range source.Input.Occurrences {
