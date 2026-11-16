@@ -731,6 +731,13 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 			}
 		}
 	}
+	if len(options.MainMoments) == 0 {
+		for _, anchor := range plan.Anchors {
+			if !slices.Contains(options.MainMoments, anchor.MainSeconds) {
+				options.MainMoments = append(options.MainMoments, anchor.MainSeconds)
+			}
+		}
+	}
 	if len(options.MainMoments) > 0 {
 		matched, err := b.matchManualComparisonMoments(ctx, *retained, plan, options, progress)
 		if err != nil {
@@ -813,7 +820,7 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 
 func applyComparisonMatches(plan api.ComparisonPlan, result comparisons.MatchResult,
 	observations map[string][]screenshots.ComparisonSample, options comparisons.MatchOptions) api.ComparisonPlan {
-	plan.Rows = nil
+	plan.Rows = []api.ComparisonRow{}
 	plan.Analysis = nil
 	if result.Analysis != nil {
 		analysis := *result.Analysis
@@ -835,6 +842,7 @@ func applyComparisonMatches(plan api.ComparisonPlan, result comparisons.MatchRes
 			ID:       strconv.Itoa(i + 1),
 			Scene:    row.Scene,
 			Evidence: row.Evidence,
+			Cells:    []api.ComparisonCell{},
 		}
 		for _, frame := range row.Frames {
 			cell := api.ComparisonCell{SourceID: frame.SourceID, Warning: frame.Reason}
@@ -1511,7 +1519,7 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 				// These automatic moments must be selected again under the new
 				// analysis intent. Keeping timestamps without confidence would
 				// silently turn them into explicit manual selections.
-				row.Cells = nil
+				row.Cells = []api.ComparisonCell{}
 			}
 		}
 	}

@@ -81,6 +81,9 @@ func (b workflowMediaBuilder) inspectManualMainScene(
 		)
 	}
 	selected := frames[nearest]
+	if err := comparisonMainTimeAllowed(plan, retained, selected.RelativeTimestampSeconds); err != nil {
+		return screenshots.ComparisonSample{}, err
+	}
 	cloned := *selected.Evidence
 	cloned.Dark = api.ComparisonSceneCategory{State: "inconclusive", Reason: "manual_selection"}
 	cloned.Motion = cloned.Dark
@@ -172,19 +175,20 @@ func (b workflowMediaBuilder) matchManualComparisonMoments(
 		if err != nil {
 			return plan, err
 		}
-		reference, err := sample(plan.MainSourceID, moment, 2)
+		reference, err := sample(plan.MainSourceID, guard.RelativeTimestampSeconds, 2)
 		if err != nil {
 			return plan, err
 		}
-		selected := ""
+		selected := comparisonObservationID(guard.ComparisonFrameObservation)
+		found := false
 		for i, f := range reference {
-			if math.Abs(f.RelativeTimestampSeconds-moment) < 1e-6 {
-				selected = comparisonObservationID(f.ComparisonFrameObservation)
+			if comparisonObservationID(f.ComparisonFrameObservation) == selected {
+				found = true
 				reference[i].Evidence = guard.Evidence
 				break
 			}
 		}
-		if selected == "" {
+		if !found {
 			return plan, errors.New("the inspected main picture is unavailable; inspect its native timestamp again")
 		}
 		columns := make([]comparisons.SampledSource, len(plan.Sources))
@@ -200,11 +204,15 @@ func (b workflowMediaBuilder) matchManualComparisonMoments(
 				observations[source.ID] = append(observations[source.ID], reference...)
 				continue
 			}
-			center := moment
+			center := guard.RelativeTimestampSeconds
 			for _, anchor := range plan.Anchors {
-				if anchor.SourceID == source.ID && math.Abs(anchor.MainSeconds-moment) < 1e-6 {
+				if anchor.SourceID == source.ID &&
+					(math.Abs(anchor.MainSeconds-moment) < 1e-6 || math.Abs(anchor.MainSeconds-guard.RelativeTimestampSeconds) < 1e-6) {
 					center = anchor.SourceSeconds
-					columns[i].Anchors = append(columns[i].Anchors, comparisons.MatchAnchor{MainSeconds: moment, SourceSeconds: anchor.SourceSeconds})
+					columns[i].Anchors = append(
+						columns[i].Anchors,
+						comparisons.MatchAnchor{MainSeconds: guard.RelativeTimestampSeconds, SourceSeconds: anchor.SourceSeconds},
+					)
 				}
 			}
 			target, err := sample(source.ID, center, 6)

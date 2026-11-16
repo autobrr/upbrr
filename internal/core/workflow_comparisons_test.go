@@ -460,6 +460,44 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("manual time between native pictures", func(t *testing.T) {
+		requested, err := plan.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		requested.Rows = requested.Rows[:1]
+		requested.Rows[0].Cells[0].TimestampSeconds = new(1.05)
+		resolved, err := b.matchWorkflowComparisons(t.Context(), &retained, requested, b.comparisonProgress(t.Context(), 5))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cell := resolved.Rows[0].Cells[0]
+		if cell.TimestampSeconds == nil || math.Abs(*cell.TimestampSeconds-1.1) > 1e-6 || cell.ObservedIdentity == nil || cell.ObservedPTS == nil ||
+			cell.ObservedIdentity.PTS != *cell.ObservedPTS || cell.Confidence != nil {
+			t.Fatalf("manual time did not retain the inspected native picture: %+v", cell)
+		}
+		requested.Anchors = []api.ComparisonAnchor{{
+			SourceID:      "other",
+			MainSeconds:   1.1,
+			SourceSeconds: 1.2,
+		}}
+		anchored, err := b.matchWorkflowComparisons(t.Context(), &retained, requested, b.comparisonProgress(t.Context(), 5))
+		if err != nil || len(anchored.Rows) != 1 {
+			t.Fatalf("native anchor duplicated the requested manual moment: rows=%d err=%v", len(anchored.Rows), err)
+		}
+		other := anchored.Rows[0].Cells[1]
+		if other.TimestampSeconds == nil || *other.TimestampSeconds != 1.2 || other.Confidence != nil {
+			t.Fatalf("manual time ignored its inspected native correspondence: %+v", other)
+		}
+		requested.Preferences.SelectionWindow = &api.ComparisonSelectionWindow{
+			Excluded: []api.ComparisonTimeInterval{{Start: 1.075, End: 1.125}},
+		}
+		_, err = b.matchWorkflowComparisons(t.Context(), &retained, requested, b.comparisonProgress(t.Context(), 5))
+		failure, ok := api.AsOperationFailure(err)
+		if !ok || failure.ComparisonReason != "protected_time" {
+			t.Fatalf("manual time bypassed the exclusion of its actual native picture: %v", err)
+		}
+	})
 	for _, stopAfter := range []int{1, 2} {
 		t.Run(fmt.Sprintf("manual matching cancellation after row %d retains native work", stopAfter), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -995,6 +1033,23 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if cell := anchored.Rows[0].Cells[1]; cell.TimestampSeconds == nil || *cell.TimestampSeconds != 1.1 {
 		t.Fatal("manual anchor between coarse samples was not resolved")
 	}
+	t.Run("saved anchor without a manual row", func(t *testing.T) {
+		requested, err := plan.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		requested.Rows[0].Cells[0].Confidence = new(.99)
+		requested.Rows[0].Cells[0].TimestampSeconds = new(2.0)
+		resolved, err := b.matchWorkflowComparisons(t.Context(), &retained, requested, b.comparisonProgress(t.Context(), 5))
+		if err != nil || len(resolved.Rows) != 1 {
+			t.Fatalf("saved anchor was ignored: rows=%d err=%v", len(resolved.Rows), err)
+		}
+		main, other := resolved.Rows[0].Cells[0], resolved.Rows[0].Cells[1]
+		if main.TimestampSeconds == nil || *main.TimestampSeconds != 1 || main.Confidence != nil ||
+			other.TimestampSeconds == nil || *other.TimestampSeconds != 1.1 || other.Confidence != nil {
+			t.Fatalf("saved correspondence lost its explicit moments: %+v", resolved.Rows[0])
+		}
+	})
 	removed, err := captured.Clone()
 	if err != nil {
 		t.Fatal(err)
@@ -1278,9 +1333,35 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 				source.Calibration.OffsetSeconds += 1000
 			}
 		}
-		wrong, err := b.matchWorkflowComparisons(t.Context(), &restarted, plan, b.comparisonProgress(t.Context(), 5))
+		var wrongUpdates []api.WorkflowProgressUpdate
+		wrongCtx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) {
+			wrongUpdates = append(wrongUpdates, update)
+		})
+		wrong, err := b.matchWorkflowComparisons(wrongCtx, &restarted, plan, b.comparisonProgress(wrongCtx, 5))
 		if len(wrong.Rows) != 0 || err != nil && !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("a cached prediction authorized unverified pictures: rows=%d err=%v", len(wrong.Rows), err)
+		}
+		wire, err := wrong.Clone()
+		if err != nil || wire.Rows == nil {
+			t.Fatalf("zero matches must serialize as an empty row array: %v", err)
+		}
+		discoveries, previous := 0, 0
+		previousPhase := ""
+		for _, update := range wrongUpdates {
+			if update.ItemOnly {
+				continue
+			}
+			if update.Phase == "comparisons_main_discovery" && update.Phase != previousPhase {
+				discoveries++
+			}
+			if update.Completed < previous || update.Completed >= update.Total {
+				t.Fatalf("expanded Quick Scan completed before capture: %+v", update)
+			}
+			previous = update.Completed
+			previousPhase = update.Phase
+		}
+		if discoveries < 3 {
+			t.Fatal("fixture did not exercise repeated Quick Scan expansion")
 		}
 	})
 	media := api.MediaArtifactSet{}
@@ -1329,6 +1410,15 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 					t.Fatal(err)
 				}
 				if change == "mode" || change == "range" {
+					wire, err := updated.Comparisons.Clone()
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, row := range wire.Rows {
+						if row.Cells == nil {
+							t.Fatal("cleared cells must serialize as an empty array")
+						}
+					}
 					for _, row := range updated.Comparisons.Rows {
 						if len(row.Cells) != 0 || row.Evidence != nil || row.Scene != "" {
 							t.Fatal("changed analysis retained automatic moments as captures or manual pins")

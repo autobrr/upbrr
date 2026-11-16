@@ -99,6 +99,11 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		retained.ComparisonAnalysisExecutable = identity
 	}
 	progress.stages = progress.stage + 4
+	if plan.Preferences.ScanMode != "deep" {
+		// Quick Scan can append up to twelve discovery windows while matching.
+		// Reserve their phases now so capture retains the final progress unit.
+		progress.stages += 12
+	}
 	type windowKey struct {
 		source          int
 		start, duration float64
