@@ -134,25 +134,27 @@ upstream declarations resolve patched versions or drop unused edges. Keep frozen
 installs, cache-free documentation checks, affected consumer validation and
 unignored scans; no advisory is excluded from scanning.
 
-#### Blu-ray collector development pin
+#### Blu-ray collector compatibility baseline
 
-The go-bdinfo collector API baseline follows the reviewed head of
-[upstream PR #46](https://github.com/autobrr/go-bdinfo/pull/46), currently
-`42be7cb0c64c29cec8c7abf8ab9e12c77ea5bf95`. ISO support additionally pins
-[the fork ISO fix](https://github.com/Audionut/go-bdinfo/pull/1) at
-`d14ed9d1f24ddfa8e172d09c5062ac09e7e7a228`; preserve that fix when reconciling
-subsequent upstream updates. The HDR bridge and native consumers use
-the first entry in each nonempty `Angles` list, the scanner's supported default;
-this does not provide configurable angle selection or separate Dolby Vision
-base/enhancement-layer support. Preserve strict clock, packet, range and completion
-validation when updating these dependencies.
+Native HDR analysis uses upstream `github.com/autobrr/go-bdinfo`
+`v0.4.3-0.20261116065354-69b06c7c9f7d`, containing the merged collector API
+from [PR #46](https://github.com/autobrr/go-bdinfo/pull/46) and the selected-SSIF
+MVC/reporting and scan-progress fixes from
+[PR #59](https://github.com/autobrr/go-bdinfo/pull/59). The go-bdinfo development-fork
+replacement is no longer needed.
 
-[Issue #829](https://github.com/autobrr/upbrr/issues/829) tracks subsequent PR-head
-changes and their compatibility tests. Review the full change from the previous
-pin, consume a compatible published bridge revision, and test the actual module
-graph without local replacement overlays. Reconcile dependent stacked work before
-advancing it. Eventual merged upstream adoption remains separate in
-[issue #754](https://github.com/autobrr/upbrr/issues/754).
+The HDR bridge remains at `2fff01f2f5bc`, the root HDR10+ library at
+`34d94903fa8c`, and go-dovi-extract at `2f59342e05cb`. The bridge and native
+consumers use the first entry in each nonempty `Angles` list, the scanner's
+supported default. This does not provide configurable angle selection or separate
+Dolby Vision base/enhancement-layer support. Preserve strict clock, packet, range
+and completion validation when updating these dependencies.
+
+[Issue #829](https://github.com/autobrr/upbrr/issues/829) records the pre-merge
+compatibility foundation; [issue #754](https://github.com/autobrr/upbrr/issues/754)
+tracks merged upstream adoption. Review the full change from the previous pin and
+test the actual module graph, including the companion bridge, without local
+replacement overlays. Reconcile dependent stacked work before advancing it.
 
 #### Vulnerability workflow history
 
