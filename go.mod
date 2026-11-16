@@ -15,7 +15,7 @@ require (
 	github.com/autobrr/go-qbittorrent v1.19.0
 	github.com/autobrr/go-torrent v1.1.1
 	github.com/autobrr/mkbrr v1.27.1-0.20261111220256-2322f032f936
-	github.com/autobrr/rls v0.10.0
+	github.com/autobrr/rls v0.11.0
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/bluenviron/mediacommon/v2 v2.9.6
 	github.com/charmbracelet/colorprofile v0.4.3
