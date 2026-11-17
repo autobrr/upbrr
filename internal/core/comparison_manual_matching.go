@@ -124,6 +124,27 @@ func (b workflowMediaBuilder) matchManualComparisonMoments(
 	for _, source := range plan.Sources {
 		budgets[source.ID] = &screenshots.ComparisonDecodeBudget{RemainingEncodedBytes: 8 << 30, AttemptRemaining: &totalBytes}
 	}
+	matchAspect := comparisonMatchAspect(retained, plan)
+	activePictures := map[string]*screenshots.ComparisonCrop{}
+	if detector, ok := renderer.(interface {
+		DetectComparisonActivePicture(context.Context, screenshots.ComparisonSource, float64, float64, *screenshots.ComparisonDecodeBudget) (*screenshots.ComparisonCrop, error)
+	}); ok {
+		for _, column := range plan.Sources {
+			source := retained.ComparisonSources[column.ID].Source
+			duration := source.VideoDurationSeconds
+			if duration <= 0 {
+				duration = source.DurationSeconds
+			}
+			start := max(0, duration*.2-2)
+			span := min(4, duration-start)
+			crop, err := detector.DetectComparisonActivePicture(ctx, source, start, span, budgets[column.ID])
+			if err != nil {
+				return plan, fmt.Errorf("inspect manual comparison picture area: %w", err)
+			}
+			seconds[column.ID] += span
+			activePictures[column.ID] = crop
+		}
+	}
 	sample := func(id string, center, radius float64) ([]screenshots.ComparisonSample, error) {
 		source := retained.ComparisonSources[id].Source
 		duration := source.VideoDurationSeconds
@@ -151,6 +172,8 @@ func (b workflowMediaBuilder) matchManualComparisonMoments(
 			StrideSeconds:       .002,
 			NativeFrames:        true,
 			NormalizeSDR:        true,
+			MatchCrop:           activePictures[id],
+			MatchAspectRatio:    matchAspect,
 			Budget:              budgets[id],
 		})
 		retainedBytes += int64(len(frames)) * 4096

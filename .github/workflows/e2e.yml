@@ -80,11 +80,35 @@ jobs:
           # Azure's mirror intermittently stalls downloads (actions/runner-images#12949).
           sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg dvdauthor
+          sudo apt-get install --yes --no-install-recommends dvdauthor
+
+      - name: Cache FFmpeg 9.0.2
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ffmpeg-9.0.2
+          key: ffmpeg-linux-x64-n9.0.2-39-g7adfbe40dc
+
+      - name: Install pinned FFmpeg 9.0.2
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          # shortcut: month-end archives last two years; refresh this pin before November 2028.
+          # Versioned upstream build and checksum keep all shards reproducible.
+          curl --fail --location --retry 3 \
+            'https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n9.0.2-39-g7adfbe40dc-linux64-gpl-9.0.tar.xz' \
+            --output "$RUNNER_TEMP/ffmpeg.tar.xz"
+          echo "73e29a56974ae5a651133a04584c7483b21afe941e17dc91d79814a758b608d3  $RUNNER_TEMP/ffmpeg.tar.xz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/ffmpeg-9.0.2"
+          tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/ffmpeg-9.0.2"
+
+      - name: Select FFmpeg 9.0.2
+        run: echo "$RUNNER_TEMP/ffmpeg-9.0.2/bin" >> "$GITHUB_PATH"
 
       - name: Verify E2E prerequisites and runner capacity
         run: |
-          ffmpeg -version
+          ffmpeg_version="$(ffmpeg -version)"
+          printf '%s\n' "$ffmpeg_version"
+          [[ "$ffmpeg_version" == 'ffmpeg version n9.0.2-'* ]]
           printf 'Runner capacity: %s logical CPUs\n' "$(nproc)"
           free --human
 

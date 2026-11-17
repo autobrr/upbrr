@@ -257,6 +257,30 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 			t.Fatalf("legacy index rebuild lost evidence or repeated main discovery: calls=%d err=%v", calls-before, err)
 		}
 	})
+	t.Run("cancelled reuse preserves complete inventory", func(t *testing.T) {
+		for _, deadline := range []bool{false, true} {
+			private := cloneWorkflowMediaPrivateArtifacts(cloned)
+			private.ComparisonInventory.Blocks = nil
+			private.ComparisonInventory.IndexSHA256 = ""
+			original := private.ComparisonInventory
+			ctx, cancel := context.WithCancel(t.Context())
+			if deadline {
+				cancel()
+				ctx, cancel = context.WithDeadline(t.Context(), time.Time{})
+			} else {
+				cancel()
+			}
+			before := calls
+			_, err := b.discoverComparisonScenes(ctx, &private, plan, window, excluded, decode, b.comparisonProgress(t.Context(), 5))
+			cancel()
+			if (!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)) || private.ComparisonInventory != original || calls != before {
+				t.Fatalf("cancelled reuse replaced complete scan: deadline=%t err=%v", deadline, err)
+			}
+			if _, err := b.discoverComparisonScenes(t.Context(), &private, plan, window, excluded, decode, b.comparisonProgress(t.Context(), 5)); err != nil || calls != before {
+				t.Fatalf("retry repeated complete main discovery: %v", err)
+			}
+		}
+	})
 	t.Run("batch and directory corruption remain rejected", func(t *testing.T) {
 		changedIndex := cloneComparisonInventory(ref)
 		changedIndex.Blocks[1].End++

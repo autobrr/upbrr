@@ -166,13 +166,27 @@ func AlignedMatch(
 	alignments map[string]ConstantAlignment,
 	previous []MatchedRow,
 ) (MatchResult, error) {
-	if len(options.MainMoments) != 0 || options.DarkCount != 0 || options.MotionCount != 0 {
+	if len(options.MainMoments) != 0 || options.DarkCount != 0 || options.MotionCount != 0 || options.FlatCount != 0 {
 		return MatchResult{}, errors.New("aligned matching requires automatic scenes without quotas")
+	}
+	var selected *FrameSample
+	for _, source := range sources {
+		if source.ID == mainID && options.MainFrameID != "" {
+			for i := range source.Frames {
+				if source.Frames[i].FrameID == options.MainFrameID {
+					selected = &source.Frames[i]
+					break
+				}
+			}
+		}
 	}
 	for _, source := range sources {
 		alignment, ok := alignments[source.ID]
+		exactAnchor := selected != nil && slices.ContainsFunc(source.Anchors, func(anchor MatchAnchor) bool {
+			return math.Abs(anchor.MainSeconds-selected.TimestampSeconds) < 1e-6
+		})
 		if len(source.Anchors) != 0 && options.MainFrameID == "" ||
-			source.ID != mainID && len(source.Anchors) == 0 &&
+			source.ID != mainID && !exactAnchor &&
 				(!ok || !matchingUnit(alignment.ToleranceSeconds) || alignment.ToleranceSeconds == 0 || math.IsNaN(alignment.OffsetSeconds) || math.IsInf(alignment.OffsetSeconds, 0)) {
 			return MatchResult{}, errors.New("aligned matching requires checked offsets and default picture preferences")
 		}

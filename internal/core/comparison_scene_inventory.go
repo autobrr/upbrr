@@ -336,6 +336,8 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 			retained.ComparisonInventory = reused
 			progress.logger.Infof("comparisons: phase=main_discovery decision=reused mode=deep covered_seconds=%.3f", old.Summary.CoveredSeconds)
 			return reused, nil
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
 		}
 	}
 	if err := os.MkdirAll(owner, 0o700); err != nil {

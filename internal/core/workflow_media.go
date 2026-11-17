@@ -173,7 +173,7 @@ type workflowMediaPrivateArtifacts struct {
 	ComparisonInventory          *comparisonSceneInventory
 	ComparisonSources            map[string]workflowComparisonSource
 	ComparisonCaptions           map[api.PublicResourceID]int
-	ComparisonToneMaps           map[api.PublicResourceID]bool
+	ComparisonRenderSettings     map[api.PublicResourceID]api.WorkflowFingerprint
 	Screenshots                  []api.ScreenshotImage
 	DVDMenus                     []api.DVDMenuCaptureImage
 	ArtifactImages               map[api.PublicResourceID]api.ScreenshotImage
@@ -264,7 +264,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		ComparisonCaptions:           maps.Clone(a.ComparisonCaptions),
 		ComparisonInventory:          cloneComparisonInventory(a.ComparisonInventory),
 		ComparisonAnalysisExecutable: a.ComparisonAnalysisExecutable,
-		ComparisonToneMaps:           maps.Clone(a.ComparisonToneMaps),
+		ComparisonRenderSettings:     maps.Clone(a.ComparisonRenderSettings),
 		screenshotService:            a.screenshotService,
 		screenshotSubject:            a.screenshotSubject,
 		dvdMenuService:               a.dvdMenuService,
@@ -315,7 +315,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 			})
 			delete(result.ArtifactImages, artifact.ID)
 			delete(result.ComparisonCaptions, artifact.ID)
-			delete(result.ComparisonToneMaps, artifact.ID)
+			delete(result.ComparisonRenderSettings, artifact.ID)
 			delete(result.DVDMenuImages, artifact.ID)
 			continue
 		}
@@ -502,7 +502,7 @@ func cloneWorkflowMediaPrivateArtifacts(value workflowMediaPrivateArtifacts) wor
 		ComparisonCaptions:           maps.Clone(value.ComparisonCaptions),
 		ComparisonInventory:          cloneComparisonInventory(value.ComparisonInventory),
 		ComparisonAnalysisExecutable: value.ComparisonAnalysisExecutable,
-		ComparisonToneMaps:           maps.Clone(value.ComparisonToneMaps),
+		ComparisonRenderSettings:     maps.Clone(value.ComparisonRenderSettings),
 		Screenshots:                  append([]api.ScreenshotImage(nil), value.Screenshots...),
 		DVDMenus:                     append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),
 		ArtifactImages:               cloneScreenshotImageMap(value.ArtifactImages),
@@ -2363,7 +2363,7 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	retained = cloneWorkflowMediaPrivateArtifacts(retained)
 	host = strings.ToLower(strings.TrimSpace(host))
-	if err := verifyWorkflowComparisons(ctx, snapshot, retained, &b.config.ScreenshotHandling.ToneMap); err != nil {
+	if err := verifyWorkflowComparisons(ctx, snapshot, retained, &b.config.ScreenshotHandling); err != nil {
 		return api.MediaArtifactSet{}, nil, nil, err
 	}
 	failedHost := slices.Contains(snapshot.FailedHosts, host)

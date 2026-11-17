@@ -220,7 +220,7 @@ func (s *comparisonRasterStream) consume(record comparisonRasterRecord) error {
 			copy(right[destOffset+y*w:destOffset+(y+1)*w], s.buffer[sourceOffset+y*w*2+w:sourceOffset+(y+1)*w*2])
 		}
 	}
-	spatial, err := measureSceneRasters(left, right, s.height)
+	spatial, err := measureSceneRasters(s.ctx, left, right, s.height)
 	if err != nil {
 		return err
 	}

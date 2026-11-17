@@ -135,7 +135,7 @@ func TestComparisonSharedRasterMeasurements(t *testing.T) {
 			original[y*width+x] = levels[(y*width+x)%5]
 		}
 	}
-	measurement, err := measureSceneRasters(original, original, height)
+	measurement, err := measureSceneRasters(t.Context(), original, original, height)
 	if err != nil || measurement.DarkFraction != .6 || measurement.NearBlackFraction != .2 || measurement.OriginalContrast != 193 || measurement.BlurredContrast != 193 {
 		t.Fatalf("histogram boundary mismatch: %+v %v", measurement, err)
 	}
@@ -154,7 +154,7 @@ func TestComparisonSharedRasterMeasurements(t *testing.T) {
 	for i := range width * height {
 		blurred[i] = 32
 	}
-	measurement, err = measureSceneRasters(original, blurred, height)
+	measurement, err = measureSceneRasters(t.Context(), original, blurred, height)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestComparisonSharedRasterMeasurements(t *testing.T) {
 	// Partial edge tiles retain their actual area in a non-16:9 analysis raster.
 	const partialHeight = 302
 	original = bytes.Repeat([]byte{128}, width*partialHeight*3/2)
-	measurement, err = measureSceneRasters(original, original, partialHeight)
+	measurement, err = measureSceneRasters(t.Context(), original, original, partialHeight)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,6 +176,45 @@ func TestComparisonSharedRasterMeasurements(t *testing.T) {
 	}
 	if area != width*partialHeight || measurement.Tiles[len(measurement.Tiles)-1].Region.Height != 14 {
 		t.Fatalf("partial tile area=%d", area)
+	}
+}
+
+func sceneGlyphGrid() ([]byte, api.ComparisonSceneRegion) {
+	const width, height = 512, 2048
+	pixels := bytes.Repeat([]byte{128}, width*height)
+	for y := 0; y+5 <= height; y += 8 {
+		for x := 0; x+2 <= width; x += 4 {
+			for dy := range 5 {
+				pixels[(y+dy)*width+x], pixels[(y+dy)*width+x+1] = 255, 255
+			}
+		}
+	}
+	return pixels, api.ComparisonSceneRegion{
+		Width:  width,
+		Height: height,
+		Area:   width * height,
+	}
+}
+
+func TestComparisonTextGroupingBoundsDenseComponentsAndCancellation(t *testing.T) {
+	pixels, active := sceneGlyphGrid()
+	rows, err := sceneTextRows(t.Context(), pixels, active.Width, active)
+	if err != nil || len(rows) == 0 {
+		t.Fatalf("dense glyph lines were lost: rows=%d err=%v", len(rows), err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := sceneTextRows(ctx, pixels, active.Width, active); !errors.Is(err, context.Canceled) {
+		t.Fatalf("text grouping ignored cancellation: %v", err)
+	}
+}
+
+func BenchmarkComparisonTextDenseComponents(b *testing.B) {
+	pixels, active := sceneGlyphGrid()
+	for b.Loop() {
+		if _, err := sceneTextRows(b.Context(), pixels, active.Width, active); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

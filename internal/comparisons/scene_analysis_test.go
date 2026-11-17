@@ -79,6 +79,37 @@ func TestSceneSparseSupportAndFlatArea(t *testing.T) {
 	}
 }
 
+func TestSceneTransitionNeighborhoodIncludesExactBoundaries(t *testing.T) {
+	for _, kind := range []string{"cut", "text", "sparse text"} {
+		t.Run(kind, func(t *testing.T) {
+			points := []SceneMeasurement{{Time: .749999}, {Time: .75}, {Time: 1}, {Time: 1.25}, {Time: 1.250001}}
+			switch kind {
+			case "cut":
+				points[2].CutScore = 10
+			case "text":
+				points[2].Text = true
+			default:
+				points[2].Sparse = &SceneSpatialMeasurement{TextRows: []int{10}}
+			}
+			for i, evidence := range ClassifyScenes(points, "sdr") {
+				if (evidence.Reason == "title_or_transition") != (i >= 1 && i <= 3) {
+					t.Fatalf("transition boundary changed at %.6f: %s", points[i].Time, evidence.Reason)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkClassifyScenesHighFrameRateWindow(b *testing.B) {
+	points := make([]SceneMeasurement, 64*120)
+	for i := range points {
+		points[i].Time = float64(i) / 120
+	}
+	for b.Loop() {
+		ClassifyScenes(points, "sdr")
+	}
+}
+
 func TestSceneInventoryRankingAndBestEffort(t *testing.T) {
 	frame := func(id string, t, score float64, state string) FrameSample {
 		return FrameSample{

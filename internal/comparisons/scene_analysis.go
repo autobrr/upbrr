@@ -42,17 +42,23 @@ type SceneSpatialMeasurement struct {
 func ClassifyScenes(points []SceneMeasurement, renderer string) []*api.ComparisonSceneEvidence {
 	out := make([]*api.ComparisonSceneEvidence, len(points))
 	blocked := make([]bool, len(points))
-	for i, p := range points {
-		blocked[i] = p.Text
-		if p.Sparse != nil && len(p.Sparse.TextRows) > 0 {
-			blocked[i] = true
+	// Decoder observations are chronological. Visit each transition's inclusive
+	// neighborhood once, retaining the original subtraction at both boundaries.
+	left, right := 0, 0
+	for _, p := range points {
+		if p.CutScore < 10 && !p.Text && (p.Sparse == nil || len(p.Sparse.TextRows) == 0) {
+			continue
 		}
-		for _, q := range points {
-			if (q.CutScore >= 10 || q.Text || q.Sparse != nil && len(q.Sparse.TextRows) > 0) && math.Abs(q.Time-p.Time) <= .25 {
-				blocked[i] = true
-			}
+		for left < len(points) && p.Time-points[left].Time > .25 {
+			left++
+		}
+		right = max(right, left)
+		for right < len(points) && points[right].Time-p.Time <= .25 {
+			blocked[right] = true
+			right++
 		}
 	}
+	nearStart, nearEnd := 0, 0
 	for i, p := range points {
 		e := &api.ComparisonSceneEvidence{
 			Profile:  SceneProfile,
@@ -122,9 +128,17 @@ func ClassifyScenes(points []SceneMeasurement, renderer string) []*api.Compariso
 			continue
 		}
 		// Fade/exposure detection uses observed sparse means over both sides.
+		for nearStart < len(points) && p.Time-points[nearStart].Time > 1+1e-9 {
+			nearStart++
+		}
+		nearEnd = max(nearEnd, nearStart)
+		for nearEnd < len(points) && points[nearEnd].Time-p.Time <= 1+1e-9 {
+			nearEnd++
+		}
 		var times, means []float64
-		for j, q := range points {
-			if math.Abs(q.Time-p.Time) <= 1+1e-9 && q.Sparse != nil && !blocked[j] {
+		for j := nearStart; j < nearEnd; j++ {
+			q := points[j]
+			if q.Sparse != nil && !blocked[j] {
 				times = append(times, q.Time)
 				means = append(means, q.Sparse.Mean)
 			}
@@ -136,7 +150,8 @@ func ClassifyScenes(points []SceneMeasurement, renderer string) []*api.Compariso
 		}
 		neighbors := func(radius float64) []int {
 			var indices []int
-			for j, q := range points {
+			for j := nearStart; j < nearEnd; j++ {
+				q := points[j]
 				if q.Sparse != nil && math.Abs(q.Time-p.Time) <= radius+1e-9 && !blocked[j] && q.Sparse.CropCertain && q.Sparse.Active == s.Active {
 					indices = append(indices, j)
 				}

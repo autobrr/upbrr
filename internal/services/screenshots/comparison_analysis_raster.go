@@ -4,7 +4,9 @@
 package screenshots
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 
@@ -14,7 +16,7 @@ import (
 
 // measureSceneRasters consumes two full-range planar 4:2:0 rasters. All sums
 // fit int64 at admitted geometry. No pixels are retained in returned evidence.
-func measureSceneRasters(original, blurred []byte, height int) (*comparisons.SceneSpatialMeasurement, error) {
+func measureSceneRasters(ctx context.Context, original, blurred []byte, height int) (*comparisons.SceneSpatialMeasurement, error) {
 	const width = 512
 	if height < 32 || height > 2048 || height%2 != 0 || len(original) != width*height*3/2 || len(blurred) != len(original) {
 		return nil, errors.New("invalid comparison analysis raster geometry")
@@ -29,7 +31,11 @@ func measureSceneRasters(original, blurred []byte, height int) (*comparisons.Sce
 	if !certain {
 		return s, nil
 	}
-	s.TextRows = sceneTextRows(original[:width*height], width, active)
+	var err error
+	s.TextRows, err = sceneTextRows(ctx, original[:width*height], width, active)
+	if err != nil {
+		return nil, err
+	}
 	var histogram, blurHistogram [256]int
 	sum, dark, black := int64(0), 0, 0
 	for y := active.Y; y < active.Y+active.Height; y++ {
@@ -108,11 +114,14 @@ func measureSceneRasters(original, blurred []byte, height int) (*comparisons.Sce
 // sceneTextRows finds aligned, small bright glyph-like components over either
 // black or live-action backgrounds. A suspected text line is inconclusive for
 // automatic selection; temporal blocking covers static and scrolling credits.
-func sceneTextRows(p []byte, stride int, active api.ComparisonSceneRegion) []int {
+func sceneTextRows(ctx context.Context, p []byte, stride int, active api.ComparisonSceneRegion) ([]int, error) {
 	type glyph struct{ x, y, w, h int }
 	var glyphs []glyph
 	visited := make([]bool, len(p))
 	for y := active.Y; y < active.Y+active.Height; y++ {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("comparison text analysis canceled: %w", err)
+		}
 		for x := active.X; x < active.X+active.Width; x++ {
 			index := y*stride + x
 			if visited[index] || p[index] < 180 {
@@ -122,6 +131,11 @@ func sceneTextRows(p []byte, stride int, active api.ComparisonSceneRegion) []int
 			visited[index] = true
 			left, right, top, bottom := x, x, y, y
 			for i := 0; i < len(queue); i++ {
+				if i%1024 == 0 {
+					if err := ctx.Err(); err != nil {
+						return nil, fmt.Errorf("comparison text analysis canceled: %w", err)
+					}
+				}
 				position := queue[i]
 				px, py := position%stride, position/stride
 				left = min(left, px)
@@ -149,13 +163,49 @@ func sceneTextRows(p []byte, stride int, active api.ComparisonSceneRegion) []int
 		}
 	}
 	slices.SortFunc(glyphs, func(a, b glyph) int { return a.x - b.x })
+	// Exact row/height compatibility is checked below; coarse buckets exclude
+	// unrelated components before any pair work. Indices retain horizontal order.
+	buckets := map[[2]int][]int{}
+	for i, g := range glyphs {
+		key := [2]int{g.y / 6, g.h / 9}
+		buckets[key] = append(buckets[key], i)
+	}
 	var rows []int
+	work := 0
 	for _, anchor := range glyphs {
-		count, left, right, last := 0, anchor.x, anchor.x, anchor.x
-		for _, g := range glyphs {
-			if math.Abs(float64(g.y-anchor.y)) > 5 || math.Abs(float64(g.h-anchor.h)) > 8 || g.x < anchor.x {
-				continue
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("comparison text analysis canceled: %w", err)
+		}
+		center := anchor.y + anchor.h/2
+		if slices.ContainsFunc(rows, func(y int) bool { return math.Abs(float64(y-center)) < 12 }) {
+			continue
+		}
+		var candidates []int
+		for y := max(0, anchor.y-5) / 6; y <= (anchor.y+5)/6; y++ {
+			for h := max(0, anchor.h-8) / 9; h <= (anchor.h+8)/9; h++ {
+				bucket := buckets[[2]int{y, h}]
+				start, _ := slices.BinarySearchFunc(bucket, anchor.x, func(i, x int) int { return glyphs[i].x - x })
+				for _, i := range bucket[start:] {
+					work++
+					if work%1024 == 0 {
+						if err := ctx.Err(); err != nil {
+							return nil, fmt.Errorf("comparison text analysis canceled: %w", err)
+						}
+					}
+					if work > 1<<20 {
+						return nil, comparisonDecoderLimit("analysis_text_work_limit")
+					}
+					g := glyphs[i]
+					if math.Abs(float64(g.y-anchor.y)) <= 5 && math.Abs(float64(g.h-anchor.h)) <= 8 {
+						candidates = append(candidates, i)
+					}
+				}
 			}
+		}
+		slices.Sort(candidates)
+		count, left, right, last := 0, anchor.x, anchor.x, anchor.x
+		for _, i := range candidates {
+			g := glyphs[i]
 			if g.x-last > 40 {
 				break
 			}
@@ -164,13 +214,10 @@ func sceneTextRows(p []byte, stride int, active api.ComparisonSceneRegion) []int
 			last = right
 		}
 		if count >= 6 && right-left >= active.Width/4 {
-			center := anchor.y + anchor.h/2
-			if !slices.ContainsFunc(rows, func(y int) bool { return math.Abs(float64(y-center)) < 12 }) {
-				rows = append(rows, center)
-			}
+			rows = append(rows, center)
 		}
 	}
-	return rows
+	return rows, nil
 }
 
 func sceneTileStats(p []byte, stride, x, y, width, height int) (float64, float64) {

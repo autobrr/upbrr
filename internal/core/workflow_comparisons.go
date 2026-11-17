@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/comparisons"
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -89,7 +90,7 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 		if snapshot.Comparisons == nil {
 			return api.MediaArtifactSet{}, nil, errors.New("comparison setup is unavailable")
 		}
-		if err := verifyComparisonCells(*snapshot.Comparisons, retained, true, &b.config.ScreenshotHandling.ToneMap); err != nil {
+		if err := verifyComparisonCells(*snapshot.Comparisons, retained, true, &b.config.ScreenshotHandling); err != nil {
 			return api.MediaArtifactSet{}, nil, err
 		}
 		fingerprint, fingerprintErr := comparisons.ReviewFingerprint(*snapshot.Comparisons)
@@ -135,7 +136,6 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 		return api.MediaArtifactSet{}, nil, fmt.Errorf("validate comparison scene targets: %w", err)
 	}
 	retainComparisonCellFacts(&plan, prior)
-	invalidateOutdatedComparisonRendering(&plan, retained, b.config.ScreenshotHandling.ToneMap)
 	plan.ApprovedFingerprint = ""
 	pruneComparisonSources(&retained, &plan)
 	if instructions.Action == "configure" && len(plan.Sources) == 0 && len(plan.Rows) == 0 && len(attachments) == 0 && len(instructions.VideoSources) == 0 {
@@ -151,6 +151,7 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
 	}
+	invalidateOutdatedComparisonRendering(&plan, retained, b.config.ScreenshotHandling)
 	if !plan.Imported && priorMixedResolution != comparisonMixedResolution(plan, retained) {
 		for r := range plan.Rows {
 			for c := range plan.Rows[r].Cells {
@@ -217,7 +218,7 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 
 	// Public mapping edits cannot replace the private bytes or invent processing.
 	retainMatchedComparisonWitnesses(plan, nil, retained)
-	if err = verifyComparisonCells(plan, retained, false, &b.config.ScreenshotHandling.ToneMap); err != nil {
+	if err = verifyComparisonCells(plan, retained, false, &b.config.ScreenshotHandling); err != nil {
 		return api.MediaArtifactSet{}, nil, err
 	}
 	if !plan.Imported && plan.Analysis == nil && retained.ComparisonSources[plan.MainSourceID].Source.DurationSeconds > 0 {
@@ -261,35 +262,66 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 }
 
 // invalidateOutdatedComparisonRendering retains decoded identity for recapture,
-// while refusing to reuse pixels with stale captions or tone-mapping settings.
-func invalidateOutdatedComparisonRendering(plan *api.ComparisonPlan, retained workflowMediaPrivateArtifacts, inheritedToneMap bool) {
+// while refusing to reuse pixels with stale captions or renderer settings.
+func invalidateOutdatedComparisonRendering(plan *api.ComparisonPlan, retained workflowMediaPrivateArtifacts, settings config.ScreenshotHandlingConfig) {
 	if plan.Imported {
 		return
+	}
+	expected := make(map[string]api.WorkflowFingerprint, len(plan.Sources))
+	for _, source := range plan.Sources {
+		if !source.Imported {
+			expected[source.ID], _ = comparisonRenderingFingerprint(*plan, retained, source.ID, settings)
+		}
 	}
 	for r := range plan.Rows {
 		for c := range plan.Rows[r].Cells {
 			cell := &plan.Rows[r].Cells[c]
-			for _, source := range plan.Sources {
-				if source.ID == cell.SourceID && !source.Imported && cell.ArtifactID != "" &&
-					(retained.ComparisonCaptions[cell.ArtifactID] != comparisonSourceCaptionVersion(retained.ComparisonSources[cell.SourceID]) ||
-						!comparisonToneMapMatches(source, cell.ArtifactID, retained, inheritedToneMap)) {
-					cell.ArtifactID, cell.ContentSHA256 = "", ""
-				}
+			if fingerprint, video := expected[cell.SourceID]; video && cell.ArtifactID != "" &&
+				(fingerprint == "" || retained.ComparisonRenderSettings[cell.ArtifactID] != fingerprint ||
+					retained.ComparisonCaptions[cell.ArtifactID] != comparisonSourceCaptionVersion(retained.ComparisonSources[cell.SourceID])) {
+				cell.ArtifactID, cell.ContentSHA256 = "", ""
 			}
 		}
 	}
 }
 
-func comparisonToneMapMatches(source api.ComparisonSource, id api.PublicResourceID, retained workflowMediaPrivateArtifacts, inherited bool) bool {
-	if !retained.ComparisonSources[source.ID].Source.HDRFacts.SupportsToneMapping() {
-		return true
+func comparisonRenderingFingerprint(plan api.ComparisonPlan, retained workflowMediaPrivateArtifacts, sourceID string,
+	settings config.ScreenshotHandlingConfig) (api.WorkflowFingerprint, error) {
+	request, err := comparisonCaptureRequest(plan, retained, sourceID, 0)
+	if err != nil {
+		return "", err
 	}
-	expected := inherited
-	if source.ToneMap != nil {
-		expected = *source.ToneMap
+	toneMap := settings.ToneMap
+	if request.ToneMap != nil {
+		toneMap = *request.ToneMap
 	}
-	captured, known := retained.ComparisonToneMaps[id]
-	return known && captured == expected
+	toneMap = toneMap && request.Source.HDRFacts.SupportsToneMapping()
+	algorithm, desat := "", 0.0
+	if toneMap {
+		algorithm, desat = settings.TonemapAlgorithm, settings.Desat
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+		CaptionVersion, OverlayTextSize, Width, Height, Compression int
+		Label, Algorithm                                            string
+		ShowResolution, ToneMap, UseLibplacebo                      bool
+		Desat                                                       float64
+	}{
+		CaptionVersion:  comparisonSourceCaptionVersion(retained.ComparisonSources[sourceID]),
+		OverlayTextSize: settings.OverlayTextSize,
+		Width:           request.OutputWidth,
+		Height:          request.OutputHeight,
+		Compression:     settings.FFmpegCompression,
+		Label:           request.OverlayLabel,
+		ShowResolution:  request.ShowResolution,
+		ToneMap:         toneMap,
+		UseLibplacebo:   toneMap && settings.UseLibplacebo,
+		Algorithm:       algorithm,
+		Desat:           desat,
+	})
+	if err != nil {
+		return "", fmt.Errorf("fingerprint comparison rendering settings: %w", err)
+	}
+	return fingerprint, nil
 }
 
 // pruneComparisonSources prevents removed columns from supplying a retained
@@ -952,6 +984,7 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 	progress *comparisonProgress,
 	skipUnresolved bool,
 ) (api.ComparisonPlan, error) {
+	invalidateOutdatedComparisonRendering(&plan, *retained, b.config.ScreenshotHandling)
 	cells := 0
 	for _, row := range plan.Rows {
 		if !row.Excluded {
@@ -1148,14 +1181,14 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 				retained.ComparisonCaptions = make(map[api.PublicResourceID]int)
 			}
 			retained.ComparisonCaptions[id] = comparisonSourceCaptionVersion(source)
-			if retained.ComparisonToneMaps == nil {
-				retained.ComparisonToneMaps = make(map[api.PublicResourceID]bool)
+			if retained.ComparisonRenderSettings == nil {
+				retained.ComparisonRenderSettings = make(map[api.PublicResourceID]api.WorkflowFingerprint)
 			}
-			toneMap := b.config.ScreenshotHandling.ToneMap
-			if request.ToneMap != nil {
-				toneMap = *request.ToneMap
+			fingerprint, err := comparisonRenderingFingerprint(plan, *retained, cell.SourceID, b.config.ScreenshotHandling)
+			if err != nil {
+				return plan, err
 			}
-			retained.ComparisonToneMaps[id] = toneMap
+			retained.ComparisonRenderSettings[id] = fingerprint
 			artifact := comparisonMediaArtifact(id, image, len(snapshot.Artifacts))
 			existingIndex := slices.IndexFunc(snapshot.Artifacts, func(a api.MediaArtifact) bool { return a.ID == id })
 			if existingIndex >= 0 {
@@ -1209,7 +1242,7 @@ func removeComparisonArtifactsExcept(snapshot *api.MediaArtifactSet, retained *w
 			removed[artifact.ID] = true
 			delete(retained.ArtifactImages, artifact.ID)
 			delete(retained.ComparisonCaptions, artifact.ID)
-			delete(retained.ComparisonToneMaps, artifact.ID)
+			delete(retained.ComparisonRenderSettings, artifact.ID)
 		}
 	}
 	snapshot.Artifacts = slices.DeleteFunc(snapshot.Artifacts, func(artifact api.MediaArtifact) bool {
@@ -1243,12 +1276,18 @@ func syncComparisonSelections(snapshot *api.MediaArtifactSet, plan api.Compariso
 	}
 }
 
-// A nil inheritedToneMap permits byte-only reads without a renderer configuration.
+// Nil settings permit byte-only reads without a renderer configuration.
 // Approval and hosting supply the current setting to reject stale rendered pixels.
-func verifyComparisonCells(plan api.ComparisonPlan, retained workflowMediaPrivateArtifacts, requireComplete bool, inheritedToneMap *bool) error {
+func verifyComparisonCells(
+	plan api.ComparisonPlan,
+	retained workflowMediaPrivateArtifacts,
+	requireComplete bool,
+	settings *config.ScreenshotHandlingConfig,
+) error {
 	if requireComplete && len(comparisons.Validate(plan)) > 0 {
 		return errors.New("correct or exclude incomplete comparison rows before approval")
 	}
+	expected := map[string]api.WorkflowFingerprint{}
 	for _, row := range plan.Rows {
 		if row.Excluded {
 			continue
@@ -1273,11 +1312,19 @@ func verifyComparisonCells(plan api.ComparisonPlan, retained workflowMediaPrivat
 				slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool { return source.ID == cell.SourceID && !source.Imported }) {
 				return errors.New("comparison caption changed; recapture and review the images")
 			}
-			if !plan.Imported && inheritedToneMap != nil {
-				for _, source := range plan.Sources {
-					if source.ID == cell.SourceID && !source.Imported && !comparisonToneMapMatches(source, cell.ArtifactID, retained, *inheritedToneMap) {
-						return errors.New("comparison tone-mapping setting changed; recapture and review the images")
+			if !plan.Imported && settings != nil &&
+				slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool { return source.ID == cell.SourceID && !source.Imported }) {
+				fingerprint, known := expected[cell.SourceID]
+				if !known {
+					var err error
+					fingerprint, err = comparisonRenderingFingerprint(plan, retained, cell.SourceID, *settings)
+					if err != nil {
+						return err
 					}
+					expected[cell.SourceID] = fingerprint
+				}
+				if retained.ComparisonRenderSettings[cell.ArtifactID] != fingerprint {
+					return errors.New("comparison rendering settings changed; recapture and review the images")
 				}
 			}
 			data, err := os.ReadFile(image.Path)
@@ -1299,14 +1346,19 @@ func verifyComparisonCells(plan api.ComparisonPlan, retained workflowMediaPrivat
 
 // verifyWorkflowComparisons is the last shared gate before hosting or projecting
 // any retained comparison images, including indirect description preparation.
-func verifyWorkflowComparisons(ctx context.Context, snapshot api.MediaArtifactSet, retained workflowMediaPrivateArtifacts, inheritedToneMap *bool) error {
+func verifyWorkflowComparisons(
+	ctx context.Context,
+	snapshot api.MediaArtifactSet,
+	retained workflowMediaPrivateArtifacts,
+	settings *config.ScreenshotHandlingConfig,
+) error {
 	if !releaseworkflow.ComparisonMediaReviewSatisfied(snapshot) {
 		return errors.New("review and explicitly approve the current complete comparison rows before image upload")
 	}
 	if snapshot.Comparisons == nil {
 		return nil
 	}
-	if err := verifyComparisonCells(*snapshot.Comparisons, retained, true, inheritedToneMap); err != nil {
+	if err := verifyComparisonCells(*snapshot.Comparisons, retained, true, settings); err != nil {
 		return err
 	}
 	return verifyComparisonVideos(ctx, *snapshot.Comparisons, retained)
@@ -1692,6 +1744,14 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 		plan.RenderPolicyVersion = 1
 		if plan.SizeReferenceSourceID != plan.MainSourceID || plan.ResizeLargerOnly || plan.ResizeSmaller {
 			plan.Warnings = append(plan.Warnings, "Rendering policy changed; recapture and review the main-size canvas.")
+			for r := range plan.Rows {
+				for c := range plan.Rows[r].Cells {
+					cell := &plan.Rows[r].Cells[c]
+					if slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool { return source.ID == cell.SourceID && !source.Imported }) {
+						cell.ArtifactID, cell.ContentSHA256 = "", ""
+					}
+				}
+			}
 		}
 		plan.SizeReferenceSourceID = plan.MainSourceID
 		plan.ResizeLargerOnly = false
@@ -1704,7 +1764,7 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 	retained.ComparisonInventory = cloneComparisonInventory(old.ComparisonInventory)
 	retained.ComparisonAnalysisExecutable = old.ComparisonAnalysisExecutable
 	retained.ComparisonCaptions = maps.Clone(old.ComparisonCaptions)
-	retained.ComparisonToneMaps = maps.Clone(old.ComparisonToneMaps)
+	retained.ComparisonRenderSettings = maps.Clone(old.ComparisonRenderSettings)
 	mainChanged := previous.ReleaseRef.SourcePath != "" && !pathing.SamePath(previous.ReleaseRef.SourcePath, release.SourcePath)
 	if b.resolver != nil {
 		subject, err := b.resolver.ResolveScreenshotSubject(ctx, api.MediaPlanInput{Release: release, Purpose: api.ScreenshotPurposeFinal})
@@ -1826,7 +1886,7 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 			}
 		}
 	}
-	invalidateOutdatedComparisonRendering(&plan, retained, b.config.ScreenshotHandling.ToneMap)
+	invalidateOutdatedComparisonRendering(&plan, retained, b.config.ScreenshotHandling)
 	kept := map[api.PublicResourceID]bool{}
 	for _, row := range plan.Rows {
 		for _, cell := range row.Cells {

@@ -533,6 +533,9 @@ func chooseScene(main matchingColumn, used map[int]bool, result MatchResult, cou
 		if result.AchievedMotion < result.RequestedMotion && SceneQualified(candidate.frame.Evidence, 0) {
 			score += 4 + candidate.frame.Motion
 		}
+		if result.AchievedFlat < result.RequestedFlat && SceneQualified(candidate.frame.Evidence, 2) {
+			score += 4 + candidate.frame.Evidence.Flat.Score
+		}
 		distance := duration
 		for _, row := range result.Rows {
 			distance = min(distance, math.Abs(candidate.frame.TimestampSeconds-row.MainSeconds))

@@ -107,6 +107,20 @@ func comparisonTestSource(t *testing.T) ComparisonSource {
 	return ComparisonSource{Path: path}
 }
 
+func TestComparisonInspectionRetainsFirstDecodedPictureFacts(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("native comparison inspection requires FFmpeg")
+	}
+	// This shared synthetic PQ fixture has reordered pictures. FFmpeg 6 feeds
+	// ahead of its output limit unless inspection also bounds the filter input.
+	path := filepath.Join("..", "hdranalysis", "testdata", "decoded-pq-cuts-25.mkv")
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil)
+	source, err := service.InspectComparisonSource(t.Context(), path)
+	if err != nil || source.NativePixelFormat != "yuv420p10le" || source.Interlace != "P" || source.StartTimeSeconds != 0 || source.FrameRate != 25 {
+		t.Fatalf("first native picture facts were lost during bounded inspection: %+v %v", source, err)
+	}
+}
+
 func TestComparisonCapturePreservesObservedIdentityAcrossRendererFallback(t *testing.T) {
 	source := comparisonTestSource(t)
 	source.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatHDR10}}

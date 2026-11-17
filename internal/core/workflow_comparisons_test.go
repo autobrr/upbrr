@@ -191,13 +191,74 @@ func TestComparisonInheritedToneMapChangeRetainsFramesForRecapture(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("renderer settings invalidate pixels across restart and direct capture", func(t *testing.T) {
+		changed := b
+		changed.config.ScreenshotHandling.OverlayTextSize = 32
+		changed.comparisonRenderer = screenshots.NewService(changed.config, api.NopLogger{}, root, nil)
+		restarted, err := decodeWorkflowMediaPrivateArtifacts(changed, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyWorkflowComparisons(t.Context(), approved, restarted, &changed.config.ScreenshotHandling); err == nil {
+			t.Fatal("changed renderer settings retained hosting authority")
+		}
+		if _, _, err := changed.EditComparisons(t.Context(), release, projections, &approved, restarted,
+			api.ComparisonInstructions{Action: "approve", ExpectedFingerprint: approved.Comparisons.Fingerprint}, nil, time.Now()); err == nil {
+			t.Fatal("changed renderer settings permitted approval")
+		}
+		restored, _, err := changed.RestoreComparisons(t.Context(), release, projections, approved, restarted, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for c, cell := range restored.Comparisons.Rows[0].Cells {
+			before := approved.Comparisons.Rows[0].Cells[c]
+			if cell.ArtifactID != "" || cell.ContentSHA256 != "" || cell.ObservedIdentity == nil || *cell.ObservedIdentity != *before.ObservedIdentity {
+				t.Fatal("renderer settings invalidation retained pixels or lost native identity")
+			}
+		}
+		// Exercise capture's own reuse boundary, without restoring first.
+		media := approved
+		capturePlan, err := approved.Comparisons.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := changed.captureWorkflowComparisons(t.Context(), release, &media, &restarted, capturePlan, changed.comparisonProgress(t.Context(), 1), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for c, cell := range plan.Rows[0].Cells {
+			before := approved.Comparisons.Rows[0].Cells[c]
+			if cell.ArtifactID == "" || cell.ContentSHA256 == before.ContentSHA256 || *cell.ObservedIdentity != *before.ObservedIdentity || restarted.ComparisonRenderSettings[cell.ArtifactID] == "" {
+				t.Fatal("capture reused old renderer settings or changed native identity")
+			}
+		}
+	})
+	t.Run("restored canvas policy requires recapture", func(t *testing.T) {
+		legacy := approved
+		plan, err := approved.Comparisons.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan.SizeReferenceSourceID, plan.ResizeSmaller = "other", true
+		legacy.Comparisons = &plan
+		restored, _, err := b.RestoreComparisons(t.Context(), release, projections, legacy, private, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for c, cell := range restored.Comparisons.Rows[0].Cells {
+			before := approved.Comparisons.Rows[0].Cells[c]
+			if cell.ArtifactID != "" || cell.ContentSHA256 != "" || cell.ObservedIdentity == nil || *cell.ObservedIdentity != *before.ObservedIdentity {
+				t.Fatal("canvas policy reset accepted old pixels or lost native identity")
+			}
+		}
+	})
 	b.config.ScreenshotHandling.ToneMap = true
 	b.comparisonRenderer = screenshots.NewService(b.config, api.NopLogger{}, root, nil)
 	restarted, err := decodeWorkflowMediaPrivateArtifacts(b, payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyWorkflowComparisons(t.Context(), approved, restarted, &b.config.ScreenshotHandling.ToneMap); err == nil {
+	if err := verifyWorkflowComparisons(t.Context(), approved, restarted, &b.config.ScreenshotHandling); err == nil {
 		t.Fatal("changed inherited setting retained hosting authority after restart")
 	}
 	if _, _, err := b.EditComparisons(t.Context(), release, projections, &approved, restarted,
@@ -522,7 +583,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			if !ok {
 				t.Fatal("manual matching discarded private replay")
 			}
-			if err := verifyComparisonCells(*updated.Comparisons, private, false, &cfg.ScreenshotHandling.ToneMap); err != nil {
+			if err := verifyComparisonCells(*updated.Comparisons, private, false, &cfg.ScreenshotHandling); err != nil {
 				t.Fatal(err)
 			}
 			for r, row := range updated.Comparisons.Rows {
@@ -669,7 +730,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		invalidateOutdatedComparisonRendering(&updated, old, b.config.ScreenshotHandling.ToneMap)
+		invalidateOutdatedComparisonRendering(&updated, old, b.config.ScreenshotHandling)
 		current := updated.Rows[0].Cells[0]
 		if current.ArtifactID != "" || current.ContentSHA256 != "" || current.ObservedPTS == nil || *current.ObservedPTS != *cell.ObservedPTS ||
 			updated.Rows[0].Cells[1].ArtifactID != captured.Rows[0].Cells[1].ArtifactID {
@@ -1134,6 +1195,61 @@ func TestComparisonMainCanvasUsesPrivateDimensions(t *testing.T) {
 				t.Fatalf("incorrect main canvas request: %+v %v", request, err)
 			}
 		})
+	}
+}
+
+func TestComparisonManualMatchingSharesLetterboxedPictureArea(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("native manual matching requires FFmpeg")
+	}
+	root := t.TempDir()
+	paths := []string{filepath.Join(root, "Example.Letterboxed.mkv"), filepath.Join(root, "Example.Cropped.mkv")}
+	for i, path := range paths {
+		filter := "geq=lum='96+40*sin((X+Y+3*N)*0.13)+24*cos((X-2*Y+2*N)*0.11)':cb=128:cr=128"
+		if i == 0 {
+			filter += ",pad=160:120:0:20:black"
+		}
+		command := exec.CommandContext(t.Context(), ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "nullsrc=size=160x80:rate=25:duration=4", "-vf", filter, "-c:v", "ffv1", path)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("author manual picture-area fixture: %v %s", err, output)
+		}
+	}
+	cfg := config.Config{}
+	renderer := screenshots.NewService(cfg, api.NopLogger{}, root, nil)
+	b := workflowMediaBuilder{
+		config:             cfg,
+		media:              &mediaModule{},
+		comparisonRenderer: renderer,
+	}
+	private := workflowMediaPrivateArtifacts{ComparisonSources: map[string]workflowComparisonSource{}}
+	plan := api.ComparisonPlan{MainSourceID: "main", Preferences: api.ComparisonPreferences{Count: 1}}
+	for i, path := range paths {
+		id := []string{"main", "other"}[i]
+		source, err := renderer.InspectComparisonSource(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.InputFingerprint = fingerprint
+		private.ComparisonSources[id] = workflowComparisonSource{Source: source, Fingerprint: fingerprint}
+		plan.Sources = append(plan.Sources, api.ComparisonSource{
+			ID:          id,
+			Label:       id,
+			Fingerprint: fingerprint,
+		})
+	}
+	matched, err := b.matchManualComparisonMoments(t.Context(), private, plan, comparisons.MatchOptions{Count: 1, MainMoments: []float64{2}}, b.comparisonProgress(t.Context(), 2))
+	if err != nil || len(matched.Rows) != 1 || len(matched.Rows[0].Cells) != 2 {
+		t.Fatalf("manual common-picture matching failed: %+v %v", matched.Rows, err)
+	}
+	for _, cell := range matched.Rows[0].Cells {
+		if cell.TimestampSeconds == nil || math.Abs(*cell.TimestampSeconds-2) > 1e-6 || cell.ObservedIdentity == nil {
+			t.Fatal("manual geometry normalization lost the corresponding native moment")
+		}
 	}
 }
 

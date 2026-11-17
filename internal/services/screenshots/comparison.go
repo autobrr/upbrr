@@ -250,7 +250,9 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 		retentionLimit: 16 << 10,
 	}).Run(ctx, executable, []string{
 		"-hide_banner", "-loglevel", "info", "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
-		"-frames:v", "1", "-vf", "showinfo", "-f", "null", "-",
+		// Older FFmpeg versions can feed several pictures through a filter before
+		// the output frame limit takes effect. Bound provenance at the filter too.
+		"-frames:v", "1", "-vf", "trim=end_frame=1,showinfo", "-f", "null", "-",
 	}, "")
 	if ctx.Err() != nil {
 		return ComparisonSource{}, fmt.Errorf("screenshots: comparison inspection canceled: %w", ctx.Err())

@@ -606,3 +606,52 @@ func TestAlignedMatchingKeepsStaticPredictionAndRejectsReuse(t *testing.T) {
 		t.Fatalf("non-I main gained I fallback: %+v err=%v", result, err)
 	}
 }
+
+func TestAlignedMatchingRequiresAnchorAtSelectedMainFrame(t *testing.T) {
+	main := SampledSource{ID: "main", Frames: []FrameSample{sampleFrame(1, 1, "B"), sampleFrame(2, 2, "B")}}
+	main.Frames[0].FrameID, main.Frames[1].FrameID = "first", "selected"
+	other := SampledSource{ID: "other", Frames: []FrameSample{sampleFrame(2, 12, "B")}}
+	options := MatchOptions{Count: 1, MainFrameID: "selected"}
+	for _, tc := range []struct {
+		name           string
+		anchor         float64
+		aligned, valid bool
+	}{
+		{"unrelated anchor", 1, false, false},
+		{"exact anchor", 2, false, true},
+		{"checked alignment with unrelated anchor", 1, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			other.Anchors = []MatchAnchor{{MainSeconds: tc.anchor, SourceSeconds: 12}}
+			alignments := map[string]ConstantAlignment{}
+			if tc.aligned {
+				alignments["other"] = ConstantAlignment{OffsetSeconds: 10, ToleranceSeconds: .01}
+			}
+			result, err := AlignedMatch([]SampledSource{main, other}, "main", options, alignments, nil)
+			if !tc.valid {
+				if err == nil && len(result.Rows) > 0 && result.Rows[0].Complete {
+					t.Fatal("an unrelated anchor authorized a selected frame")
+				}
+				return
+			}
+			if err != nil || len(result.Rows) != 1 || !result.Rows[0].Complete || result.Rows[0].Frames[1].TimestampSeconds != 12 {
+				t.Fatalf("checked correspondence was lost: %+v %v", result, err)
+			}
+		})
+	}
+}
+
+func TestMatchingPrioritizesRequestedFlatScene(t *testing.T) {
+	main := SampledSource{ID: "main", Frames: []FrameSample{sampleFrame(1, 1, "B"), sampleFrame(2, 5, "B")}}
+	main.Frames[1].Evidence = &api.ComparisonSceneEvidence{
+		Profile:  SceneProfile,
+		Eligible: true,
+		Flat:     api.ComparisonSceneCategory{State: "verified", Score: .5},
+	}
+	other := main
+	other.ID = "other"
+	result, err := Match([]SampledSource{main, other}, "main", MatchOptions{Count: 1, FlatCount: 1})
+	if err != nil || len(result.Rows) != 1 || !result.Rows[0].Complete || result.Rows[0].MainSeconds != 5 || result.AchievedFlat != 1 {
+		t.Fatalf("available flat evidence was not selected: %+v %v", result, err)
+	}
+}

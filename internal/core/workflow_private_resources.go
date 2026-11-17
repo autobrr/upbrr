@@ -104,20 +104,20 @@ func decodeWorkflowDupePrivateEvidence(payload []byte) (any, error) {
 }
 
 type persistedWorkflowMediaArtifacts struct {
-	ComparisonAnalysisExecutable string                                         `json:"comparisonAnalysisExecutable,omitempty"`
-	ComparisonInventory          *comparisonSceneInventory                      `json:"comparisonInventory,omitempty"`
-	HostedAccountScopes          map[api.PublicResourceID]string                `json:"hostedAccountScopes,omitempty"`
-	ComparisonSources            map[string]workflowComparisonSource            `json:"comparisonSources,omitempty"`
-	ComparisonCaptions           map[api.PublicResourceID]int                   `json:"comparisonCaptions,omitempty"`
-	ComparisonToneMaps           map[api.PublicResourceID]bool                  `json:"comparisonToneMaps,omitempty"`
-	Screenshots                  []api.ScreenshotImage                          `json:"screenshots,omitempty"`
-	DVDMenus                     []api.DVDMenuCaptureImage                      `json:"dvdMenus,omitempty"`
-	ArtifactImages               map[api.PublicResourceID]api.ScreenshotImage   `json:"artifactImages,omitempty"`
-	HostedImages                 map[api.PublicResourceID]api.UploadedImageLink `json:"hostedImages,omitempty"`
-	HostedSources                map[api.PublicResourceID]api.PublicResourceID  `json:"hostedSources,omitempty"`
-	ScreenshotSubject            api.ScreenshotSubject                          `json:"screenshotSubject"`
-	DVDMenuSubject               api.DVDMenuSubject                             `json:"dvdMenuSubject"`
-	PendingDeletes               []persistedWorkflowMediaPendingDelete          `json:"pendingDeletes,omitempty"`
+	ComparisonAnalysisExecutable string                                           `json:"comparisonAnalysisExecutable,omitempty"`
+	ComparisonInventory          *comparisonSceneInventory                        `json:"comparisonInventory,omitempty"`
+	HostedAccountScopes          map[api.PublicResourceID]string                  `json:"hostedAccountScopes,omitempty"`
+	ComparisonSources            map[string]workflowComparisonSource              `json:"comparisonSources,omitempty"`
+	ComparisonCaptions           map[api.PublicResourceID]int                     `json:"comparisonCaptions,omitempty"`
+	ComparisonRenderSettings     map[api.PublicResourceID]api.WorkflowFingerprint `json:"comparisonRenderSettings,omitempty"`
+	Screenshots                  []api.ScreenshotImage                            `json:"screenshots,omitempty"`
+	DVDMenus                     []api.DVDMenuCaptureImage                        `json:"dvdMenus,omitempty"`
+	ArtifactImages               map[api.PublicResourceID]api.ScreenshotImage     `json:"artifactImages,omitempty"`
+	HostedImages                 map[api.PublicResourceID]api.UploadedImageLink   `json:"hostedImages,omitempty"`
+	HostedSources                map[api.PublicResourceID]api.PublicResourceID    `json:"hostedSources,omitempty"`
+	ScreenshotSubject            api.ScreenshotSubject                            `json:"screenshotSubject"`
+	DVDMenuSubject               api.DVDMenuSubject                               `json:"dvdMenuSubject"`
+	PendingDeletes               []persistedWorkflowMediaPendingDelete            `json:"pendingDeletes,omitempty"`
 }
 
 type persistedWorkflowMediaPendingDelete struct {
@@ -154,7 +154,7 @@ func (a workflowMediaPrivateArtifacts) MarshalPrivateResource() (string, []byte,
 		ComparisonCaptions:           a.ComparisonCaptions,
 		ComparisonInventory:          cloneComparisonInventory(a.ComparisonInventory),
 		ComparisonAnalysisExecutable: a.ComparisonAnalysisExecutable,
-		ComparisonToneMaps:           a.ComparisonToneMaps,
+		ComparisonRenderSettings:     a.ComparisonRenderSettings,
 		Screenshots:                  append([]api.ScreenshotImage(nil), a.Screenshots...),
 		DVDMenus:                     append([]api.DVDMenuCaptureImage(nil), a.DVDMenus...),
 		ArtifactImages:               cloneScreenshotImageMap(a.ArtifactImages),
@@ -222,7 +222,7 @@ func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload [
 		ComparisonCaptions:           persisted.ComparisonCaptions,
 		ComparisonInventory:          cloneComparisonInventory(persisted.ComparisonInventory),
 		ComparisonAnalysisExecutable: persisted.ComparisonAnalysisExecutable,
-		ComparisonToneMaps:           persisted.ComparisonToneMaps,
+		ComparisonRenderSettings:     persisted.ComparisonRenderSettings,
 		Screenshots:                  append([]api.ScreenshotImage(nil), persisted.Screenshots...),
 		DVDMenus:                     append([]api.DVDMenuCaptureImage(nil), persisted.DVDMenus...),
 		ArtifactImages:               cloneScreenshotImageMap(persisted.ArtifactImages),
