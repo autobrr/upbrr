@@ -463,8 +463,10 @@ node --test scripts/ci/logpolicy-report.test.cjs
 
 The analyzer uses Go's type information to recognize the project logger
 contract, including narrower logging-only interfaces, rather than
-matching arbitrary `Infof`/`Errorf` methods. Changed Go sources must type-check in
-a supported Linux, Windows or macOS build context, with the repository’s `e2e`
+matching arbitrary `Infof`/`Errorf` methods. Shared files remain available in each
+matching build context; a call recognized in any context counts once. Changed Go
+sources must type-check in a supported Linux, Windows or macOS build context,
+with the repository’s `e2e`
 tag included. A changed file excluded by every analyzed context (including
 unsupported-platform and other custom-tag-only files) makes the entire report
 unavailable; it is never silently dropped from a supposedly complete total.

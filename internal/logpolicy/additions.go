@@ -9,6 +9,7 @@ import (
 	"go/scanner"
 	"go/token"
 	"go/types"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,7 +36,7 @@ var addedHunk = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 // diff. root must be checked out at head. Parsing or type errors fail analysis;
 // a partial count is never returned. Platform-specific files are checked under
 // the project's Linux, Windows and Darwin build contexts, including e2e, without
-// running code.
+// running code. Calls recognized in any matching context are counted once.
 func CountAdded(ctx context.Context, root, base, head string) (AddedCounts, error) {
 	var counts AddedCounts
 	current, err := countGit(ctx, root, "rev-parse", "HEAD")
@@ -70,6 +71,7 @@ func CountAdded(ctx context.Context, root, base, head string) (AddedCounts, erro
 			added[filepath.Join(root, filepath.FromSlash(name))] = lines
 		}
 	}
+	uncompiled := maps.Clone(added)
 	seen := make(map[string]bool)
 	for _, tags := range [][]string{nil, {"e2e"}} {
 		for _, platform := range []string{"linux", "windows", "darwin"} {
@@ -163,15 +165,15 @@ func CountAdded(ctx context.Context, root, base, head string) (AddedCounts, erro
 					// Test variants can contain the same file more than once.
 				}
 			}
-			for name := range added {
+			for name := range uncompiled {
 				if slices.ContainsFunc(pkgs, func(pkg *packages.Package) bool { return slices.Contains(pkg.CompiledGoFiles, name) }) {
-					delete(added, name)
+					delete(uncompiled, name)
 				}
 			}
 		}
 	}
-	if len(added) > 0 {
-		return AddedCounts{}, countContextError("unsupported-context", "all", []string{"all"}, len(added))
+	if len(uncompiled) > 0 {
+		return AddedCounts{}, countContextError("unsupported-context", "all", []string{"all"}, len(uncompiled))
 	}
 	return counts, nil
 }

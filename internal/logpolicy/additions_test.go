@@ -76,12 +76,16 @@ func TestCountAddedPRDiff(t *testing.T) {
 	// Windows-only source is analyzed too, without counting shared files twice.
 	write("windows_windows.go", "package sample\nfunc windows(log logger) { log.Warnf(\"windows\") }\n")
 	write("tagged.go", "//go:build e2e\n\npackage sample\nfunc tagged(log logger) { log.Tracef(\"tagged\") }\n")
+	// The same call is unrelated on Linux/macOS and a real logger on Windows.
+	write("platform_other.go", "//go:build !windows\n\npackage sample\ntype platformLogger struct{}\nfunc (platformLogger) Warnf(string, ...any) {}\n")
+	write("platform_windows.go", "package sample\ntype platformLogger struct { logger }\nfunc (*platformLogger) Warnf(string, ...any) {}\n")
+	write("shared.go", "package sample\nfunc shared(log platformLogger) { log.Warnf(\"platform logger\") }\n")
 	head := commit()
 	want := AddedCounts{
 		Trace: 3,
 		Debug: 2,
 		Info:  1,
-		Warn:  2,
+		Warn:  3,
 		Error: 1,
 	}
 	got, err := CountAdded(t.Context(), root, base, head)
@@ -98,11 +102,10 @@ func TestCountAddedPRDiff(t *testing.T) {
 	}
 	// Removing all newly added calls must produce zero, not retain old counts.
 	write("renamed.go", strings.Replace(countFixture, "%s", "  // removed all calls", 1))
-	if err := os.Remove(filepath.Join(root, "windows_windows.go")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(filepath.Join(root, "tagged.go")); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"windows_windows.go", "tagged.go", "platform_other.go", "platform_windows.go", "shared.go"} {
+		if err := os.Remove(filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	head = commit()
 	got, err = CountAdded(t.Context(), root, base, head)
