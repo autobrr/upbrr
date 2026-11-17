@@ -1,6 +1,10 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { bodyFor, resolve, publish } = require('./logpolicy-report.cjs');
+const childProcess = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { analyze, bodyFor, resolve, publish } = require('./logpolicy-report.cjs');
 
 const head = 'a'.repeat(40);
 const base = 'b'.repeat(40);
@@ -128,4 +132,32 @@ test('malformed reports and uncertain writes fail visibly without retrying', asy
   h.github.rest.issues.createComment = async () => { calls++; throw new Error('unknown write outcome'); };
   await assert.rejects(publish(h.github, h.context, [{ ...target, status: 'ok', counts }]), /unknown write/);
   assert.equal(calls, 1);
+});
+
+
+test('analysis failures retain safe stage/context diagnostics without leaking subprocess output', t => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'logpolicy-failures-'));
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const messages = [];
+  t.mock.method(console, 'error', message => messages.push(message));
+  for (const failure of [
+    { at: 'fetch', error: { status: 128, stderr: 'private_fixture_marker' }, expected: 'stage=fetch category=command-exit' },
+    { at: 'analyzer', error: { code: 'ETIMEDOUT', stderr: 'private_fixture_marker' }, expected: 'stage=analyze category=timeout' },
+    { at: 'analyzer', error: { status: 1, stderr: 'logging count: category=type os=windows tags=e2e count=2\n' }, expected: 'analyzer=type os=windows tags=e2e count=2' },
+    { at: 'analyzer', error: { status: 1, stderr: 'logging count: category=type os=windows tags=e2e count=2\nprivate_fixture_marker' }, expected: 'stage=analyze category=command-exit.' },
+    { at: 'json', expected: 'stage=validate category=invalid-result' },
+  ]) {
+    const execute = t.mock.method(childProcess, 'execFileSync', (program, args) => {
+      if (program === 'git') {
+        if (args[2] === failure.at) throw Object.assign(new Error('private_fixture_marker'), failure.error);
+        return args[2] === 'rev-parse' ? head : '';
+      }
+      if (failure.at === 'analyzer') throw Object.assign(new Error('private_fixture_marker'), failure.error);
+      return 'private_fixture_marker';
+    });
+    assert.deepEqual(analyze([target], 'synthetic-analyzer', 'example/project', temporary), [{ ...target, status: 'failed' }]);
+    assert(messages.at(-1).includes(failure.expected), messages.at(-1));
+    execute.mock.restore();
+  }
+  assert(messages.every(message => !message.includes('private_fixture_marker')));
 });

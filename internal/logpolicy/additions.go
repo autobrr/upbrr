@@ -100,11 +100,22 @@ func CountAdded(ctx context.Context, root, base, head string) (AddedCounts, erro
 				Mode:       packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports,
 			}, patterns...)
 			if err != nil {
-				return AddedCounts{}, fmt.Errorf("logging count: load packages: %w", err)
+				return AddedCounts{}, countContextError("load", platform, tags, 1)
 			}
 			for _, pkg := range pkgs {
 				if len(pkg.Errors) > 0 {
-					return AddedCounts{}, fmt.Errorf("logging count: cannot type-check package %s", pkg.PkgPath)
+					category := "list"
+					for _, problem := range pkg.Errors {
+						switch problem.Kind {
+						case packages.ParseError:
+							category = "parse"
+						case packages.TypeError:
+							category = "type"
+						case packages.UnknownError, packages.ListError:
+							continue
+						}
+					}
+					return AddedCounts{}, countContextError(category, platform, tags, len(pkg.Errors))
 				}
 				for _, file := range pkg.Syntax {
 					name := pkg.Fset.Position(file.Pos()).Filename
@@ -118,7 +129,11 @@ func CountAdded(ctx context.Context, root, base, head string) (AddedCounts, erro
 					}
 					ast.Inspect(file, func(node ast.Node) bool {
 						call, ok := node.(*ast.CallExpr)
-						if !ok || !slices.ContainsFunc(tokens, func(pos token.Pos) bool { return pos >= call.Pos() && pos < call.End() }) {
+						if !ok {
+							return true
+						}
+						i, _ := slices.BinarySearch(tokens, call.Pos())
+						if i == len(tokens) || tokens[i] >= call.End() {
 							return true
 						}
 						selector, ok := call.Fun.(*ast.SelectorExpr)
@@ -156,9 +171,19 @@ func CountAdded(ctx context.Context, root, base, head string) (AddedCounts, erro
 		}
 	}
 	if len(added) > 0 {
-		return AddedCounts{}, errors.New("logging count: changed Go files could not be analyzed in supported build contexts")
+		return AddedCounts{}, countContextError("unsupported-context", "all", []string{"all"}, len(added))
 	}
 	return counts, nil
+}
+
+// countContextError exposes only fixed classifications and numeric counts;
+// package diagnostics can contain source text, private paths or credentials.
+func countContextError(category, platform string, tags []string, count int) error {
+	tag := "default"
+	if len(tags) > 0 {
+		tag = tags[0]
+	}
+	return fmt.Errorf("logging count: category=%s os=%s tags=%s count=%d", category, platform, tag, count)
 }
 
 func countGit(ctx context.Context, root string, args ...string) ([]byte, error) {
@@ -228,7 +253,14 @@ func typedLoggerCall(info *types.Info, call *ast.CallExpr) bool {
 	if selection == nil {
 		return false
 	}
-	methods := types.NewMethodSet(selection.Recv())
+	receiver := selection.Recv()
+	switch types.Unalias(receiver).Underlying().(type) {
+	case *types.Pointer, *types.Interface:
+	default:
+		// The type-checked call already establishes addressability when needed.
+		receiver = types.NewPointer(receiver)
+	}
+	methods := types.NewMethodSet(receiver)
 	required := make([]string, 0, len(loggerMethods))
 	for name := range loggerMethods {
 		required = append(required, name)

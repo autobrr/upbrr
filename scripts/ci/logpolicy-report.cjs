@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
+const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -66,26 +66,43 @@ function analyze(targets, binary, repository, temporary) {
   return targets.map(target => {
     validateTarget(target);
     const root = fs.mkdtempSync(path.join(temporary, 'log-count-source-'));
-    const git = args => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 600000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const git = args => childProcess.execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', timeout: 600000, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stage = 'initialize';
     try {
       git(['init', '--quiet']);
       git(['remote', 'add', 'origin', `https://github.com/${repository}.git`]);
+      stage = 'fetch';
       git(['fetch', '--quiet', '--no-tags', 'origin', target.head, target.base]);
+      stage = 'checkout';
       git(['checkout', '--quiet', '--detach', target.head]);
+      stage = 'verify-head';
       assert.equal(git(['rev-parse', 'HEAD']).trim(), target.head);
-      const counts = JSON.parse(execFileSync(binary, [
+      stage = 'analyze';
+      const output = childProcess.execFileSync(binary, [
         '--added-base', target.base, '--added-head', target.head, '--source', root,
       ], {
         encoding: 'utf8', timeout: 600000, maxBuffer: 1024 * 1024,
         env: { ...process.env, CGO_ENABLED: '0', GOTOOLCHAIN: 'local', GOWORK: 'off', GOFLAGS: '', GOPACKAGESDRIVER: 'off' },
         stdio: ['ignore', 'pipe', 'pipe'],
-      }));
+      });
+      stage = 'validate';
+      const counts = JSON.parse(output);
       const report = { ...target, status: 'ok', counts };
       validateReport(report);
       return report;
-    } catch {
-      // Never publish arbitrary subprocess output (or fabricated zero counts).
-      console.error(`Logging count analysis failed for PR #${target.number}.`);
+    } catch (error) {
+      // Classify failures without exposing PR-controlled output, source or paths.
+      let category = 'execution';
+      if (error.code === 'ETIMEDOUT') category = 'timeout';
+      else if (error.code === 'ENOBUFS') category = 'output-limit';
+      else if (error.code === 'ENOENT') category = 'missing-tool';
+      else if (stage === 'validate') category = 'invalid-result';
+      else if (Number.isInteger(error.status)) category = 'command-exit';
+      const detail = stage === 'analyze' && typeof error.stderr === 'string'
+        ? /^logging count: category=(load|list|parse|type|unsupported-context) os=(linux|windows|darwin|all) tags=(default|e2e|all) count=(\d{1,9})\n?$/.exec(error.stderr)
+        : null;
+      const context = detail ? ` analyzer=${detail[1]} os=${detail[2]} tags=${detail[3]} count=${detail[4]}` : '';
+      console.error(`Logging count analysis failed for PR #${target.number}: stage=${stage} category=${category}${context}.`);
       return { ...target, status: 'failed' };
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -101,7 +118,7 @@ function bodyFor(report) {
   }
   const rows = levels.map(level => `| ${level} | ${report.counts[level]} |`).join('\n');
   const total = levels.reduce((sum, level) => sum + report.counts[level], 0);
-  return header + `Go logging source statements on the added side of the full PR diff; not runtime log volume. Edits count once per affected call, removals do not subtract, and comment-only edits do not count.\n\n| Level | Added |\n| --- | ---: |\n${rows}\n| **Total** | **${total}** |\n\nLogging-policy validation is reported separately.`;
+  return header + `Go logging source statements on the added side of the full PR diff; not runtime log volume. Edits count once per affected call, removals do not subtract, and comments or strings alone do not count. Editing a trailing comment re-adds its code line, so an actual logging call on that line counts.\n\n| Level | Added |\n| --- | ---: |\n${rows}\n| **Total** | **${total}** |\n\nLogging-policy validation is reported separately.`;
 }
 
 function newerComment(body, report) {

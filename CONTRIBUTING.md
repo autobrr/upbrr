@@ -438,8 +438,9 @@ Keep log levels purposeful.
 The logging CI also maintains one `github-actions[bot]` PR comment with added
 Go logging statements by level and the analyzed head/base commits. It counts
 the added side of the complete merge-base diff, including edited multiline
-calls once; removals never subtract and comment-only edits do not count. These
-are source-statement counts, not runtime volume. The existing policy check
+calls once; removals never subtract. Comments and string contents alone do not
+count. A trailing-comment edit re-adds its code line, so an actual logging call
+on that line counts. These are source-statement counts, not runtime volume. The existing policy check
 remains authoritative for logging-policy failures. An analysis error is reported
 as unavailable, never as zero.
 
@@ -464,8 +465,13 @@ The analyzer uses Go's type information to recognize the project logger
 contract, including narrower logging-only interfaces, rather than
 matching arbitrary `Infof`/`Errorf` methods. Changed Go sources must type-check in
 a supported Linux, Windows or macOS build context, with the repository’s `e2e`
-tag included; other custom-tag-only files or
-unavailable dependencies leave analysis unavailable rather than guessed.
+tag included. A changed file excluded by every analyzed context (including
+unsupported-platform and other custom-tag-only files) makes the entire report
+unavailable; it is never silently dropped from a supposedly complete total.
+Unavailable dependencies and type errors also fail analysis. Workflow logs
+identify the failed stage and a safe error category. Analyzer failures include
+the build OS/tag and error count where available; raw subprocess diagnostics
+and source text are deliberately withheld.
 
 ### Sensitive information
 

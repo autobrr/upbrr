@@ -17,6 +17,8 @@ func (logger) Debugf(string, ...any) {}
 func (logger) Infof(string, ...any) {}
 func (logger) Warnf(string, ...any) {}
 func (logger) Errorf(string, ...any) {}
+type pointerLogger struct { logger }
+func (*pointerLogger) Warnf(string, ...any) {}
 type unrelated struct{}
 func (unrelated) Infof(string, ...any) {}
 func example(log logger, other unrelated) {
@@ -54,14 +56,17 @@ func TestCountAddedPRDiff(t *testing.T) {
 	}
 	git("init", "-q")
 	write("go.mod", "module example.invalid/counts\n\ngo 1.26.0\n")
-	write("sample.go", strings.Replace(countFixture, "%s", "  log.Infof(\"old\")\n  log.Warnf(\n    \"unchanged\",\n  )", 1))
+	write("sample.go", strings.Replace(countFixture, "%s", "  log.Infof(\"old\")\n  log.Warnf(\n    \"unchanged\",\n  )\n  log.Tracef(\"trailing\") // old", 1))
 	base := commit()
 	write("sample.go", strings.Replace(countFixture, "%s", `  log.Errorf("changed level")
   log.Warnf(
     // added comment alone is not a logging statement
     "unchanged",
   )
+  log.Tracef("trailing") // updated comment on an added code line
   log.Tracef("first"); log.Debugf("second")
+  var holder struct { logger pointerLogger }
+  holder.logger.Warnf("addressable value field")
   var sink interface { Debugf(string, ...any) } = log
   sink.Debugf("narrow logger")
   log.Infof(
@@ -73,10 +78,10 @@ func TestCountAddedPRDiff(t *testing.T) {
 	write("tagged.go", "//go:build e2e\n\npackage sample\nfunc tagged(log logger) { log.Tracef(\"tagged\") }\n")
 	head := commit()
 	want := AddedCounts{
-		Trace: 2,
+		Trace: 3,
 		Debug: 2,
 		Info:  1,
-		Warn:  1,
+		Warn:  2,
 		Error: 1,
 	}
 	got, err := CountAdded(t.Context(), root, base, head)
@@ -103,6 +108,22 @@ func TestCountAddedPRDiff(t *testing.T) {
 	got, err = CountAdded(t.Context(), root, base, head)
 	if err != nil || got != (AddedCounts{}) {
 		t.Fatalf("removals = %+v, %v; want zero", got, err)
+	}
+	// No supported build context selects this file. Fail closed rather than
+	// present a partial total as the complete PR diff.
+	write("unsupported.go", "//go:build !linux && !darwin && !windows\n\npackage sample\nfunc unsupported(log logger) { log.Errorf(\"unsupported\") }\n")
+	head = commit()
+	if got, err := CountAdded(t.Context(), root, base, head); err == nil || got != (AddedCounts{}) || !strings.Contains(err.Error(), "category=unsupported-context") {
+		t.Fatalf("unsupported context must fail without partial counts: %+v, %v", got, err)
+	}
+	if err := os.Remove(filepath.Join(root, "unsupported.go")); err != nil {
+		t.Fatal(err)
+	}
+	write("renamed.go", "package sample\nfunc invalid() { private_fixture_marker() }\n")
+	head = commit()
+	if got, err := CountAdded(t.Context(), root, base, head); err == nil || got != (AddedCounts{}) ||
+		!strings.Contains(err.Error(), "category=type os=linux tags=default") || strings.Contains(err.Error(), "private_fixture_marker") {
+		t.Fatalf("type errors must have safe build context, without source text: %+v, %v", got, err)
 	}
 	write("renamed.go", "package sample\nfunc invalid(\n")
 	head = commit()
