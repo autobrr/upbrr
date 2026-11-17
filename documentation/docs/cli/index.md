@@ -85,6 +85,12 @@ Membership stays unchanged until explicitly refreshed:
 
 Refresh adds newly discovered members and preserves existing progress, including missing sources and failed items. It does not reset completed items, remove old members, or change the saved root. Missing members fail when processed while other entries continue. A queue with no remaining work reports completion; retained failed, interrupted or skipped items remain inspectable and require `--retry-queue`. Queue processing never starts automatically when the application or Web UI starts. Saved queues cannot be combined with `--cleanup` or `--delete-tmp`; perform stored-release maintenance separately, preserving any unresolved remote effects.
 
+### Blu-ray playlist selection
+
+For Blu-ray inputs, the CLI playlist selector shows each candidate's disc, MPLS filename, duration, referenced file count, total referenced size and score. Candidates retain their best-score-first order within each disc. Select one or more playlists, with at least one for every disc; identical MPLS filenames on different discs remain separate choices.
+
+To select automatically when a choice is required, enable **Settings → Metadata → Automatically select best Blu-ray playlist per disc**, or set `use_largest_playlist: true` under `metadata` in YAML. The existing key is retained for compatibility and defaults to `false`. It chooses the first highest-scoring candidate per disc, not simply the longest playlist. Explicit and compatible remembered selections remain in effect. With this setting off, unattended preparation still requires a prior playlist selection or `--unattended_confirm` / `--uac` to allow the prompt.
+
 ### Multi-disc folders
 
 Pass the collection parent, not each disc separately:
