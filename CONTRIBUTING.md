@@ -435,6 +435,38 @@ Keep log levels purposeful.
 - `DEBUG` should include richer decision-making context useful for developer troubleshooting.
 - `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
 
+The logging CI also maintains one `github-actions[bot]` PR comment with added
+Go logging statements by level and the analyzed head/base commits. It counts
+the added side of the complete merge-base diff, including edited multiline
+calls once; removals never subtract and comment-only edits do not count. These
+are source-statement counts, not runtime volume. The existing policy check
+remains authoritative for logging-policy failures. An analysis error is reported
+as unavailable, never as zero.
+
+The separate `workflow_run` reporter builds its analyzer from the trusted
+default-branch revision and type-checks PR source in a read-only job without
+running PR tests or binaries. Only a separate serialized publisher has comment
+write access; it consumes validated numeric results, not PR artifacts or code.
+Both fork and repository PRs use the same path. Head/base and rerun checks stop
+older results replacing newer reports. GitHub has no atomic head condition for
+comment updates, so a concurrent push can briefly stale a report; a post-write
+check marks it outdated and removes its counts. The report starts operating once
+its workflow is on the default branch. Rerunning `logpolicy` recomputes it.
+
+For a local added-statement report, check out the head and run:
+
+```sh
+go run ./cmd/logpolicy --source . --added-base <full-base-sha> --added-head <full-head-sha>
+node --test scripts/ci/logpolicy-report.test.cjs
+```
+
+The analyzer uses Go's type information to recognize the project logger
+contract, including narrower logging-only interfaces, rather than
+matching arbitrary `Infof`/`Errorf` methods. Changed Go sources must type-check in
+a supported Linux, Windows or macOS build context, with the repository’s `e2e`
+tag included; other custom-tag-only files or
+unavailable dependencies leave analysis unavailable rather than guessed.
+
 ### Sensitive information
 
 - Redact credentials at the logging boundary. Before sharing logs or failure artifacts, inspect them and remove remaining credentials, cookies, tokens, private URLs and unrelated personal information; automatic redaction is not a guarantee.
