@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -242,6 +243,7 @@ func (r finiteComparisonRunner) Run(ctx context.Context, name string, args []str
 	// Preserve existing injected runners for deterministic decoder-failure tests.
 	if _, native := r.base.(commandRunner); !native {
 		result, err := r.base.Run(runCtx, name, args, dir)
+		err = comparisonProcessFailure(err, result.ExitCode)
 		if len(result.Stdout) > r.outputLimit {
 			return CommandResult{}, comparisonDecoderLimit("decoder_output_limit")
 		}
@@ -302,9 +304,29 @@ func (r finiteComparisonRunner) Run(ctx context.Context, name string, args []str
 	result := CommandResult{Stdout: output.buffer.Bytes(), Stderr: stderr}
 	if err != nil {
 		result.ExitCode = 1
-		return result, fmt.Errorf("run comparison decoder: %w", err)
+		return result, fmt.Errorf("run comparison decoder: %w", comparisonProcessFailure(err, result.ExitCode))
 	}
 	return result, nil
+}
+
+// Only process errors receive the worker classification. Diagnostic and raster
+// validation above return their original errors, even when they stop the child.
+func comparisonProcessFailure(err error, exitCode int) error {
+	if err == nil {
+		if exitCode != 0 {
+			return ErrComparisonWorkerFailed
+		}
+		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, internalerrors.ErrFrameCorruption) ||
+		errors.Is(err, errComparisonDecoderLimit) || errors.Is(err, ErrComparisonFastInconclusive) ||
+		errors.Is(err, ErrComparisonNormalizationUnavailable) || errors.Is(err, ErrComparisonWorkerFailed) {
+		return err
+	}
+	if _, invalid := api.AsOperationFailure(err); invalid {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrComparisonWorkerFailed, err)
 }
 
 func diagnosticResult(diagnostic *comparisonDiagnosticStream, runErr error) ([]byte, error) {

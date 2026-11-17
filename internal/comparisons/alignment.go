@@ -209,6 +209,9 @@ func matchAlignedFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		}
 	}
 	types := preferredPictureTypes(main.frame.FrameType)
+	if column.source.IntraOnly && !slices.Contains(types, "I") {
+		types = append(types, "I")
+	}
 	if !column.source.PreferBFrames {
 		types = column.source.AllowedTypes
 		if len(types) == 0 {

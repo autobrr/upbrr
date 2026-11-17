@@ -1139,17 +1139,76 @@ func TestComparisonMainCanvasUsesPrivateDimensions(t *testing.T) {
 
 type comparisonWindowRecorder struct {
 	comparisonFrameRenderer
-	durations []float64
-	strides   []float64
-	firstMode string
+	durations        []float64
+	strides          []float64
+	firstModes       map[string]string
+	matchingRows     bool
+	rowAnalysis      int
+	failFingerprint  string
+	failErr          error
+	preferExcluded   *api.ComparisonTimeInterval
+	flatPeak         *float64
+	emptyFingerprint string
+	analysisFailure  error
+	analysisFailures int
+}
+
+func (r *comparisonWindowRecorder) AnalyzeComparisonSource(ctx context.Context, request screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error) {
+	if r.analysisFailure != nil {
+		r.analysisFailures++
+		return nil, r.analysisFailure
+	}
+	if r.matchingRows {
+		r.rowAnalysis++
+	}
+	analyzer, ok := r.comparisonFrameRenderer.(interface {
+		AnalyzeComparisonSource(context.Context, screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error)
+	})
+	if !ok {
+		return nil, errors.New("recorded renderer cannot analyze scenes")
+	}
+	frames, err := analyzer.AnalyzeComparisonSource(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("record comparison analysis: %w", err)
+	}
+	if r.preferExcluded != nil {
+		for i := range frames {
+			evidence := *frames[i].Evidence
+			evidence.Eligible = true
+			evidence.Dark = api.ComparisonSceneCategory{State: "verified", Score: .8}
+			if seconds := frames[i].RelativeTimestampSeconds; seconds >= r.preferExcluded.Start && seconds <= r.preferExcluded.End {
+				evidence.Dark.Score = 1
+			}
+			frames[i].Evidence = &evidence
+		}
+	}
+	if r.flatPeak != nil {
+		for i := range frames {
+			evidence := *frames[i].Evidence
+			evidence.Eligible = true
+			evidence.Flat = api.ComparisonSceneCategory{State: "rejected", Score: 1 - math.Abs(frames[i].RelativeTimestampSeconds-*r.flatPeak)/120}
+			frames[i].Evidence = &evidence
+		}
+	}
+	return frames, nil
 }
 
 func (r *comparisonWindowRecorder) SampleComparisonSource(ctx context.Context, request screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error) {
+	if r.emptyFingerprint != "" && request.Source.InputFingerprint == r.emptyFingerprint {
+		return nil, nil
+	}
+	if r.failFingerprint != "" && request.Source.InputFingerprint == r.failFingerprint {
+		if r.failErr != nil {
+			return nil, r.failErr
+		}
+		return nil, screenshots.ErrComparisonFastInconclusive
+	}
 	if r.durations == nil {
 		r.strides = nil
-		if request.Renderer != nil {
-			r.firstMode = request.Renderer.Mode
-		}
+		r.firstModes = map[string]string{}
+	}
+	if _, seen := r.firstModes[request.Source.InputFingerprint]; !seen && request.Renderer != nil {
+		r.firstModes[request.Source.InputFingerprint] = request.Renderer.Mode
 	}
 	r.durations = append(r.durations, request.DurationSeconds)
 	r.strides = append(r.strides, request.StrideSeconds)
@@ -1234,6 +1293,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	ctx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) {
 		if update.Phase != "" {
 			phases = append(phases, update.Phase)
+			renderer.matchingRows = update.Phase == "comparisons_alignment_rows"
 		}
 		if !update.ItemOnly {
 			updates = append(updates, update)
@@ -1257,6 +1317,9 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	if err != nil || len(matched.Rows) != 2 {
 		t.Fatalf("bounded match rows=%+v err=%v", matched.Rows, err)
 	}
+	if renderer.rowAnalysis != 0 {
+		t.Fatal("general native rows repeated main scene analysis")
+	}
 	for _, duration := range renderer.durations {
 		if duration > 65 {
 			t.Fatalf("eligible sources triggered a full scan: windows=%v facts=%+v", renderer.durations, private.ComparisonSources)
@@ -1269,6 +1332,156 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 				t.Fatalf("wrong source-relative correspondence: %+v", row)
 			}
 		}
+	}
+	t.Run("Deep native refinement honors protected times over scene scores", func(t *testing.T) {
+		before := *renderer
+		t.Cleanup(func() { *renderer = before })
+		guarded := cloneWorkflowMediaPrivateArtifacts(private)
+		boundaryPlan, err := plan.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		excluded := api.ComparisonTimeInterval{Start: 40, End: 50}
+		renderer.preferExcluded = &excluded
+		t.Cleanup(func() { renderer.preferExcluded = nil })
+		boundaryPlan.Preferences = api.ComparisonPreferences{
+			Count:     1,
+			DarkCount: new(1),
+			ScanMode:  "deep",
+			SelectionWindow: &api.ComparisonSelectionWindow{
+				Start:    new(30.0),
+				End:      new(60.0),
+				Excluded: []api.ComparisonTimeInterval{excluded},
+			},
+		}
+		protected, err := b.matchWorkflowComparisons(t.Context(), &guarded, boundaryPlan, b.comparisonProgress(t.Context(), 5))
+		if err != nil || len(protected.Rows) != 1 {
+			t.Fatalf("protected native selection: rows=%d err=%v", len(protected.Rows), err)
+		}
+		for _, row := range protected.Rows {
+			seconds := *row.Cells[0].TimestampSeconds
+			if seconds < 30 || seconds > 60 || seconds >= excluded.Start && seconds <= excluded.End {
+				t.Fatalf("native refinement escaped protected selection: %.6f", seconds)
+			}
+		}
+		media := api.MediaArtifactSet{}
+		if _, err := b.captureWorkflowComparisons(t.Context(), api.ReleaseRef{SourcePath: paths[0], Generation: 1}, &media, &guarded, protected, b.comparisonProgress(t.Context(), 1), false); err != nil || len(media.Artifacts) != len(paths) {
+			t.Fatalf("protected native rows could not capture: images=%d err=%v", len(media.Artifacts), err)
+		}
+	})
+	nativePreferences := api.ComparisonPreferences{
+		Count:     2,
+		FlatCount: 1,
+		SelectionWindow: &api.ComparisonSelectionWindow{
+			Start:    new(6.0),
+			End:      new(108.0),
+			Excluded: []api.ComparisonTimeInterval{{Start: 0, End: 7.2}, {Start: 9.5, End: 58.7}, {Start: 61.3, End: 120}},
+		},
+	}
+	for _, test := range []struct {
+		name          string
+		intra, budget bool
+		preferences   api.ComparisonPreferences
+	}{
+		{
+			name:        "automatic I-only sources remain usable near programme start",
+			intra:       true,
+			preferences: api.ComparisonPreferences{Count: 1, SelectionWindow: &api.ComparisonSelectionWindow{Start: new(.5), End: new(3.3)}},
+		},
+		{name: "B P native references span Quick discovery passes", preferences: nativePreferences},
+		{
+			name:        "wider Quick scoring exhaustion retains verified rows",
+			budget:      true,
+			preferences: nativePreferences,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			before := *renderer
+			t.Cleanup(func() { *renderer = before })
+			shortPaths := []string{filepath.Join(t.TempDir(), "Example.Native.mkv"), filepath.Join(t.TempDir(), "Example.Native.Copy.mkv")}
+			if test.intra {
+				run("-i", paths[0], "-vf", "trim=duration=9,setpts=PTS-STARTPTS", "-c:v", "ffv1", shortPaths[0])
+			} else {
+				run("-f", "lavfi", "-i", "nullsrc=size=64x48:rate=10:duration=120", "-vf", "geq=lum='48+mod((X+N)*13+Y*7+mod((X+N)*Y,123),160)':cb=128:cr=128", "-c:v", "mpeg4", "-bf", "2", "-g", "50", "-q:v", "2", shortPaths[0])
+				renderer.flatPeak = new(60.0)
+			}
+			run("-i", shortPaths[0], "-c:v", "copy", shortPaths[1])
+			shortPrivate := workflowMediaPrivateArtifacts{
+				ComparisonSources: map[string]workflowComparisonSource{},
+				ArtifactImages:    map[api.PublicResourceID]api.ScreenshotImage{},
+				screenshotSubject: api.ScreenshotSubject{SourcePath: shortPaths[0]},
+			}
+			shortPlan := api.ComparisonPlan{MainSourceID: "main", Preferences: test.preferences}
+			if test.budget {
+				shortPlan.Preferences.FlatCount = 2
+			}
+			for i, path := range shortPaths {
+				source, err := renderer.InspectComparisonSource(t.Context(), path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				source.InputFingerprint = fingerprint
+				id := []string{"main", "copy"}[i]
+				shortPrivate.ComparisonSources[id] = workflowComparisonSource{
+					Source:      source,
+					Path:        path,
+					Fingerprint: fingerprint,
+				}
+				shortPlan.Sources = append(shortPlan.Sources, api.ComparisonSource{
+					ID:                id,
+					Label:             id,
+					Overlay:           true,
+					PreferBFrames:     true,
+					AllowedFrameTypes: []string{"B"},
+					Fingerprint:       fingerprint,
+				})
+			}
+			workCtx := t.Context()
+			wantRows := test.preferences.Count
+			if test.budget {
+				wantRows = 1
+				workCtx = api.WithWorkflowProgressReporter(workCtx, func(update api.WorkflowProgressUpdate) {
+					if update.Kind == "comparison_row" && update.Status == api.StageStatusCompleted {
+						renderer.emptyFingerprint = shortPrivate.ComparisonSources["copy"].Fingerprint
+						renderer.analysisFailure = screenshots.ErrComparisonFastInconclusive
+					}
+				})
+			}
+			selected, err := b.matchWorkflowComparisons(workCtx, &shortPrivate, shortPlan, b.comparisonProgress(workCtx, 5))
+			if err != nil || len(selected.Rows) != wantRows {
+				t.Fatalf("native region selection: rows=%d err=%v", len(selected.Rows), err)
+			}
+			for _, row := range selected.Rows {
+				for _, cell := range row.Cells {
+					permitted := cell.PictureType == "I" && test.intra || !test.intra && (cell.PictureType == "B" || cell.PictureType == "P")
+					if !permitted || cell.ObservedIdentity == nil {
+						t.Fatal("native source lost picture-type permission or identity")
+					}
+				}
+			}
+			if test.budget {
+				if selected.Analysis == nil || selected.Analysis.RankingComplete || renderer.analysisFailures != 1 || !slices.Contains(selected.Analysis.Reasons, "native_decode_budget_exhausted") {
+					t.Fatalf("wider scoring did not stop with truthful partial state: analysis=%+v failures=%d", selected.Analysis, renderer.analysisFailures)
+				}
+				_, payload, err := shortPrivate.MarshalPrivateResource()
+				if err != nil {
+					t.Fatal(err)
+				}
+				shortPrivate, err = decodeWorkflowMediaPrivateArtifacts(b, payload)
+				if err != nil || shortPrivate.ComparisonInventory == nil || shortPrivate.ComparisonInventory.Summary.RankingComplete {
+					t.Fatalf("restart lost incomplete scoring state: %v", err)
+				}
+				renderer.emptyFingerprint, renderer.analysisFailure = "", nil
+			}
+			media := api.MediaArtifactSet{}
+			if _, err := b.captureWorkflowComparisons(t.Context(), api.ReleaseRef{SourcePath: shortPaths[0], Generation: 1}, &media, &shortPrivate, selected, b.comparisonProgress(t.Context(), 1), false); err != nil || len(media.Artifacts) != 2*wantRows {
+				t.Fatalf("native region capture: images=%d err=%v", len(media.Artifacts), err)
+			}
+		})
 	}
 	found := false
 	for _, phase := range phases {
@@ -1318,8 +1531,10 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		if warmSeconds >= coldSeconds {
 			t.Fatalf("restart decoded calibration again: cold_seconds=%.3f warm_seconds=%.3f", coldSeconds, warmSeconds)
 		}
-		if renderer.firstMode != "" {
-			t.Fatal("calibration reuse pinned a previous attempt's renderer fallback")
+		for id, source := range restarted.ComparisonSources {
+			if id != plan.MainSourceID && renderer.firstModes[source.Fingerprint] != "" {
+				t.Fatal("calibration reuse pinned a previous attempt's renderer fallback")
+			}
 		}
 		for i, row := range reused.Rows {
 			for j, cell := range row.Cells {
@@ -1480,8 +1695,22 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 			}
 		}
 	})
-	for _, stopAfter := range []int{1, 2} {
-		t.Run(fmt.Sprintf("matching cancellation after row %d retains verified rows across restart", stopAfter), func(t *testing.T) {
+	for _, stop := range []struct {
+		after   int
+		budget  bool
+		failure error
+		reason  string
+	}{
+		{1, false, nil, "match_cancelled"},
+		{2, false, nil, "match_cancelled"},
+		{1, true, nil, "native_decode_budget_exhausted"},
+		{1, false, screenshots.ErrComparisonWorkerFailed, "match_worker_failed"},
+		{1, false, screenshots.ErrComparisonNormalizationUnavailable, "match_worker_failed"},
+		{1, false, errors.New("invalid native picture identity"), ""},
+	} {
+		t.Run(fmt.Sprintf("matching stop after row %d budget %t failure %v", stop.after, stop.budget, stop.failure), func(t *testing.T) {
+			stopAfter := stop.after
+			t.Cleanup(func() { renderer.failFingerprint, renderer.failErr = "", nil })
 			interrupted := cloneWorkflowMediaPrivateArtifacts(private)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -1490,13 +1719,54 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 				if update.Kind == "comparison_row" && update.Status == api.StageStatusCompleted {
 					completed++
 					if completed == stopAfter {
-						cancel()
+						if stop.budget || stop.failure != nil {
+							renderer.failFingerprint = interrupted.ComparisonSources[plan.MainSourceID].Fingerprint
+							renderer.failErr = stop.failure
+						} else {
+							cancel()
+						}
 					}
 				}
 			})
-			partial, err := b.matchWorkflowComparisons(ctx, &interrupted, plan, b.comparisonProgress(ctx, 5))
+			var partial api.ComparisonPlan
+			var workerSnapshot api.MediaArtifactSet
+			var err error
+			if errors.Is(stop.failure, screenshots.ErrComparisonWorkerFailed) {
+				prior := api.MediaArtifactSet{Comparisons: &plan, Failures: []api.WorkflowFailure{{Failure: api.OperationFailure{
+					Code:             api.OperationFailureMissingPrerequisite,
+					Operation:        api.OperationKindMedia,
+					Recovery:         api.OperationRecoveryRetry,
+					ComparisonReason: "unrelated_media_issue",
+					Message:          "A separate issue remains.",
+				}}}}
+				next, resource, workerErr := b.EditComparisons(ctx, api.ReleaseRef{SourcePath: paths[0], Generation: 1}, api.TrackerReleaseProjectionSet{}, &prior, interrupted,
+					api.ComparisonInstructions{
+						Action:            "match",
+						Plan:              plan,
+						CaptureAfterMatch: new(false),
+					}, nil, time.Now())
+				workerSnapshot, err = next, workerErr
+				if next.Comparisons != nil {
+					partial = *next.Comparisons
+				}
+				if saved, ok := resource.(workflowMediaPrivateArtifacts); ok {
+					interrupted = saved
+				}
+			} else {
+				partial, err = b.matchWorkflowComparisons(ctx, &interrupted, plan, b.comparisonProgress(ctx, 5))
+			}
 			incomplete, ok := errors.AsType[*releaseworkflow.ComparisonIncompleteError](err)
-			if completed != stopAfter || !ok || incomplete.Reason != "match_cancelled" || len(partial.Rows) != stopAfter || partial.ApprovedFingerprint != "" {
+			if stop.reason == "" {
+				if err == nil || ok || len(partial.Rows) != 0 {
+					t.Fatalf("invalid native evidence published partial rows: rows=%d err=%v", len(partial.Rows), err)
+				}
+				return
+			}
+			stoppedCorrectly := ok && incomplete.Reason == stop.reason
+			if stop.budget {
+				stoppedCorrectly = err == nil && partial.Analysis != nil && slices.Contains(partial.Analysis.Reasons, "native_decode_budget_exhausted")
+			}
+			if completed != stopAfter || !stoppedCorrectly || len(partial.Rows) != stopAfter || partial.ApprovedFingerprint != "" {
 				t.Fatalf("matching cancellation discarded verified work: rows=%d err=%v", len(partial.Rows), err)
 			}
 			_, payload, err := interrupted.MarshalPrivateResource()
@@ -1508,6 +1778,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 				t.Fatal(err)
 			}
 			renderer.durations = nil
+			renderer.failFingerprint, renderer.failErr = "", nil
 			media := api.MediaArtifactSet{}
 			captured, err := b.captureWorkflowComparisons(t.Context(), api.ReleaseRef{SourcePath: paths[0], Generation: 1}, &media, &restored, partial, b.comparisonProgress(t.Context(), 1), false)
 			if err != nil || len(media.Artifacts) != stopAfter*len(paths) || len(renderer.durations) != 0 {
@@ -1518,6 +1789,19 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 					if cell.ObservedIdentity == nil || partial.Rows[r].Cells[i].ObservedIdentity == nil || *cell.ObservedIdentity != *partial.Rows[r].Cells[i].ObservedIdentity {
 						t.Fatal("restart changed the retained native picture")
 					}
+				}
+			}
+			if errors.Is(stop.failure, screenshots.ErrComparisonWorkerFailed) {
+				workerSnapshot.Comparisons, workerSnapshot.Artifacts = &captured, media.Artifacts
+				retried, _, retryErr := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: paths[0], Generation: 1}, api.TrackerReleaseProjectionSet{}, &workerSnapshot, restored,
+					api.ComparisonInstructions{
+						Action:            "match",
+						Plan:              captured,
+						CaptureAfterMatch: new(false),
+					}, nil, time.Now())
+				if retryErr != nil || retried.Comparisons == nil || len(retried.Comparisons.Rows) != plan.Preferences.Count ||
+					len(retried.Failures) != 1 || retried.Failures[0].Failure.ComparisonReason != "unrelated_media_issue" {
+					t.Fatalf("successful worker retry retained its failure or lost another issue: failures=%+v err=%v", retried.Failures, retryErr)
 				}
 			}
 		})

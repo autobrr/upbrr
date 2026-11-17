@@ -6,7 +6,9 @@ package comparisons
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"iter"
 	"math"
 	"slices"
 )
@@ -33,36 +35,86 @@ func MatchSceneSection(
 	if main < 0 {
 		return MatchResult{}, nil
 	}
-	start, end := SceneSectionBounds(sources[main].Frames, anchor.FrameID)
-	section := sources[main].Frames[start:end]
-	onlyI := make([]bool, len(sources))
+	matcher := NewSceneSectionMatcher(sources[main], anchor, category)
+	order := make([]string, len(sources))
 	for i, source := range sources {
-		onlyI[i] = len(source.Frames) > 0 && !slices.ContainsFunc(source.Frames, func(frame FrameSample) bool { return frame.FrameType != "I" })
-	}
-	permitted := func(frame FrameSample) bool {
-		if sources[main].PreferBFrames {
-			return frame.FrameType == "B" || frame.FrameType == "P" || frame.FrameType == "I" && onlyI[main]
-		}
-		return allowedPicture(sources[main], frame.FrameType)
-	}
-	qualified := category >= 0 && slices.ContainsFunc(section, func(frame FrameSample) bool {
-		return permitted(frame) && SceneQualified(frame.Evidence, category)
-	})
-	var candidates []FrameSample
-	for _, frame := range section {
-		if !permitted(frame) {
+		order[i] = source.ID
+		if i == main {
 			continue
 		}
-		if qualified && !SceneQualified(frame.Evidence, category) {
+		viable, err := matcher.AddSource(ctx, source, scales[source.ID])
+		if err != nil || !viable {
+			return MatchResult{}, err
+		}
+	}
+	return matcher.Match(ctx, order, previous)
+}
+
+// SceneSectionMatcher owns attempt-local native proofs. Adding each decoded
+// source rejects an impossible row before the caller opens later inputs. The
+// same proofs authorize the final intersection; none survive this native window.
+type SceneSectionMatcher struct {
+	mainID              string
+	anchor              FrameSample
+	category            int
+	section, candidates []FrameSample
+	sources             map[string]SampledSource
+	proofs              map[string][]sceneSectionProof
+	order               []string
+}
+
+// NewSceneSectionMatcher binds immutable decoded main pictures and scene intent.
+func NewSceneSectionMatcher(reference SampledSource, anchor FrameSample, category int) *SceneSectionMatcher {
+	matcher := &SceneSectionMatcher{
+		mainID:   reference.ID,
+		anchor:   anchor,
+		category: category,
+		sources:  map[string]SampledSource{reference.ID: reference},
+		proofs:   map[string][]sceneSectionProof{},
+		order:    []string{reference.ID},
+	}
+	start, end := 0, len(reference.Frames)
+	if category >= 0 {
+		start, end = SceneSectionBounds(reference.Frames, anchor.FrameID)
+	}
+	section := reference.Frames[start:end]
+	permitted := func(frame FrameSample) bool {
+		if reference.PreferBFrames {
+			return frame.FrameType == "B" || frame.FrameType == "P" || frame.FrameType == "I" && reference.IntraOnly
+		}
+		return allowedPicture(reference, frame.FrameType)
+	}
+	var candidates []FrameSample
+	for _, frame := range section {
+		if !permitted(frame) || frame.Evidence == nil || !frame.Evidence.Eligible {
 			continue
 		}
 		candidates = append(candidates, frame)
 	}
 	if len(candidates) == 0 {
-		return MatchResult{}, nil
+		return matcher
+	}
+	// The connected score band around the main seed is the first source of
+	// truth. Other eligible moments in this same observed scene remain best
+	// effort alternatives when the band cannot supply a complete native row.
+	bandStart, bandEnd := sceneScoreBand(section, anchor, category)
+	inBand := func(frame FrameSample) bool {
+		return bandStart <= frame.TimestampSeconds && frame.TimestampSeconds <= bandEnd
 	}
 	slices.SortStableFunc(candidates, func(a, b FrameSample) int {
 		if category >= 0 {
+			if inBand(a) != inBand(b) {
+				if inBand(a) {
+					return -1
+				}
+				return 1
+			}
+			if SceneQualified(a.Evidence, category) != SceneQualified(b.Evidence, category) {
+				if SceneQualified(a.Evidence, category) {
+					return -1
+				}
+				return 1
+			}
 			if sceneLess(a, b, category) {
 				return -1
 			}
@@ -78,20 +130,45 @@ func MatchSceneSection(
 		}
 		return cmp.Compare(a.FrameID, b.FrameID)
 	})
-	proofs := make(map[string][]ConstantAlignment, len(sources)-1)
-	for i, source := range sources {
-		if i == main {
-			continue
-		}
-		var err error
-		proofs[source.ID], err = sectionProofs(ctx, section, source.Frames, scales[source.ID], anchor.TimestampSeconds, candidates)
-		if err != nil {
-			return MatchResult{}, err
-		}
-		if len(proofs[source.ID]) == 0 {
-			return MatchResult{}, nil
-		}
+	matcher.section, matcher.candidates = section, candidates
+	return matcher
+}
+
+// AddSource checks fresh native correspondence before any later input is decoded.
+func (m *SceneSectionMatcher) AddSource(ctx context.Context, source SampledSource, scale PlaybackScale) (bool, error) {
+	if _, exists := m.sources[source.ID]; exists {
+		return false, fmt.Errorf("native comparison section repeats source %q", source.ID)
 	}
+	if len(m.candidates) == 0 {
+		return false, nil
+	}
+	proofs, err := sectionProofs(ctx, m.section, source.Frames, scale, m.anchor.TimestampSeconds, m.candidates)
+	if err != nil || len(proofs) == 0 {
+		return false, err
+	}
+	m.sources[source.ID], m.proofs[source.ID] = source, proofs
+	m.order = append(m.order, source.ID)
+	matched, err := m.Match(ctx, m.order, nil)
+	return len(matched.Rows) == 1 && matched.Rows[0].Complete, err
+}
+
+// Match intersects retained proofs in the workflow's original column order,
+// preserving previous-row identity reuse checks without another proof search.
+func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previous []MatchedRow) (MatchResult, error) {
+	if len(order) != len(m.sources) {
+		return MatchResult{}, errors.New("native comparison section source order changed")
+	}
+	sources := make([]SampledSource, 0, len(order))
+	seen := map[string]bool{}
+	for _, id := range order {
+		source, ok := m.sources[id]
+		if !ok || seen[id] {
+			return MatchResult{}, errors.New("native comparison section source order changed")
+		}
+		seen[id] = true
+		sources = append(sources, source)
+	}
+	mainID, category, proofs, candidates := m.mainID, m.category, m.proofs, m.candidates
 	var preferred, fallback *MatchedRow
 	bestScore := math.Inf(-1)
 	for _, candidate := range candidates {
@@ -99,15 +176,22 @@ func MatchSceneSection(
 			return MatchResult{}, fmt.Errorf("match native section: %w", err)
 		}
 		local := make(map[string]ConstantAlignment, len(proofs))
-		for id, alternatives := range proofs {
-			if alignment, ok := momentProof(alternatives, candidate.FrameID); ok {
-				local[id] = alignment
+		scoped := slices.Clone(sources)
+		for i, source := range sources {
+			if source.ID == mainID {
+				continue
+			}
+			if proof, ok := momentProof(proofs[source.ID], candidate.FrameID); ok {
+				local[source.ID] = proof.ConstantAlignment
+				scoped[i].Frames = slices.DeleteFunc(slices.Clone(source.Frames), func(frame FrameSample) bool {
+					return frame.Occurrence != proof.targetOccurrence
+				})
 			}
 		}
 		if len(local) != len(sources)-1 {
 			continue
 		}
-		matched, err := AlignedMatch(sources, mainID, MatchOptions{Count: 1, MainFrameID: candidate.FrameID}, local, previous)
+		matched, err := AlignedMatch(scoped, mainID, MatchOptions{Count: 1, MainFrameID: candidate.FrameID}, local, previous)
 		if err != nil {
 			return MatchResult{}, err
 		}
@@ -118,12 +202,13 @@ func MatchSceneSection(
 		agreed, permitsFallback := true, true
 		for i, frame := range row.Frames {
 			agreed = agreed && frame.FrameType != "" && frame.FrameType == candidate.FrameType
-			if frame.FrameType == "I" && sources[i].PreferBFrames && !onlyI[i] {
+			if frame.FrameType == "I" && sources[i].PreferBFrames && !sources[i].IntraOnly {
 				agreed = false
 			}
 			if frame.FrameType != "B" && frame.FrameType != "P" {
 				// Explicit choices can permit I alongside other picture types.
-				permitsFallback = permitsFallback && frame.FrameType == "I" && !sources[i].PreferBFrames && allowedPicture(sources[i], frame.FrameType)
+				permitsFallback = permitsFallback && frame.FrameType == "I" &&
+					(sources[i].PreferBFrames && sources[i].IntraOnly || !sources[i].PreferBFrames && allowedPicture(sources[i], frame.FrameType))
 			}
 		}
 		if (agreed || permitsFallback) && math.IsInf(bestScore, -1) {
@@ -160,6 +245,25 @@ func MatchSceneSection(
 		result.Warnings = []string{"Some rows use mixed permitted picture types because comparable matching-type pictures were unavailable."}
 	}
 	return result, nil
+}
+
+func sceneScoreBand(section []FrameSample, anchor FrameSample, category int) (float64, float64) {
+	index := slices.IndexFunc(section, func(frame FrameSample) bool { return frame.FrameID == anchor.FrameID })
+	if category < 0 || index < 0 {
+		return math.Inf(-1), math.Inf(1)
+	}
+	floor := SceneScore(MatchedRow{Evidence: section[index].Evidence}, category) - .1
+	eligible := func(frame FrameSample) bool {
+		return frame.Evidence != nil && frame.Evidence.Eligible && SceneScore(MatchedRow{Evidence: frame.Evidence}, category) >= floor
+	}
+	start, end := index, index
+	for start > 0 && eligible(section[start-1]) {
+		start--
+	}
+	for end+1 < len(section) && eligible(section[end+1]) {
+		end++
+	}
+	return section[start].TimestampSeconds, section[end].TimestampSeconds
 }
 
 // SceneSectionBounds retains the observed, eligible native run containing the
@@ -230,13 +334,82 @@ func picturePreferenceRank(row MatchedRow) int {
 	return rank
 }
 
+// A temporal proof binds a target occurrence as well as its offset. Type
+// evidence may be broader; it never widens this correspondence authority.
+type sceneSectionProof struct {
+	ConstantAlignment
+	targetOccurrence string
+}
+
+func occurrenceRuns(frames []FrameSample) iter.Seq[[]FrameSample] {
+	return func(yield func([]FrameSample) bool) {
+		for start := 0; start < len(frames); {
+			end := start + 1
+			for end < len(frames) && frames[end].Occurrence == frames[start].Occurrence {
+				end++
+			}
+			if !yield(frames[start:end]) {
+				return
+			}
+			start = end
+		}
+	}
+}
+
 func sectionProofs(
 	ctx context.Context,
 	reference, target []FrameSample,
 	scale PlaybackScale,
 	center float64,
 	candidates []FrameSample,
-) ([]ConstantAlignment, error) {
+) ([]sceneSectionProof, error) {
+	var result []sceneSectionProof
+	for region := range occurrenceRuns(reference) {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("verify native occurrences: %w", err)
+		}
+		if len(region) < 4 {
+			continue
+		}
+		identities := make(map[string]bool, len(region))
+		for _, frame := range region {
+			identities[frame.FrameID] = true
+		}
+		var eligible []FrameSample
+		for _, frame := range candidates {
+			if identities[frame.FrameID] {
+				eligible = append(eligible, frame)
+			}
+		}
+		if len(eligible) == 0 {
+			continue
+		}
+		// Every target occurrence is checked. An early success in one cannot
+		// hide another authored occurrence supporting the same main picture.
+		for observed := range occurrenceRuns(target) {
+			if err := ctx.Err(); err != nil {
+				return nil, fmt.Errorf("verify native occurrences: %w", err)
+			}
+			if len(observed) < 4 {
+				continue
+			}
+			proofs, err := occurrenceSectionProofs(ctx, region, observed, scale, center, eligible)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, proofs...)
+		}
+	}
+	return result, nil
+}
+
+func occurrenceSectionProofs(
+	ctx context.Context,
+	reference, target []FrameSample,
+	scale PlaybackScale,
+	center float64,
+	candidates []FrameSample,
+) ([]sceneSectionProof, error) {
 	if len(reference) < 4 || len(target) < 4 {
 		return nil, nil
 	}
@@ -250,7 +423,7 @@ func sectionProofs(
 			windows = append(windows, span{point - duration/2, point + duration/2})
 		}
 	}
-	var result []ConstantAlignment
+	var result []sceneSectionProof
 	for _, window := range windows {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("verify native section: %w", err)
@@ -274,7 +447,7 @@ func sectionProofs(
 				alignment.ReferenceFrameIDs[i] = frames[i].FrameID
 			}
 		}
-		result = append(result, alignment)
+		result = append(result, sceneSectionProof{ConstantAlignment: alignment, targetOccurrence: target[0].Occurrence})
 		if !slices.ContainsFunc(candidates, func(frame FrameSample) bool {
 			_, verified := momentProof(result, frame.FrameID)
 			return !verified
@@ -285,8 +458,8 @@ func sectionProofs(
 	return result, nil
 }
 
-func momentProof(alternatives []ConstantAlignment, id string) (ConstantAlignment, bool) {
-	var result ConstantAlignment
+func momentProof(alternatives []sceneSectionProof, id string) (sceneSectionProof, bool) {
+	var result sceneSectionProof
 	found := false
 	for _, alignment := range alternatives {
 		if !slices.Contains(alignment.ReferenceFrameIDs, id) {
@@ -296,18 +469,18 @@ func momentProof(alternatives []ConstantAlignment, id string) (ConstantAlignment
 			result, found = alignment, true
 			continue
 		}
-		if result.Scale() != alignment.Scale() || result.IntervalProof != alignment.IntervalProof {
-			return ConstantAlignment{}, false
+		if result.targetOccurrence != alignment.targetOccurrence || result.Scale() != alignment.Scale() || result.IntervalProof != alignment.IntervalProof {
+			return sceneSectionProof{}, false
 		}
 		if result.IntervalProof {
 			lower := max(result.OffsetSeconds-result.ToleranceSeconds, alignment.OffsetSeconds-alignment.ToleranceSeconds)
 			upper := min(result.OffsetSeconds+result.ToleranceSeconds, alignment.OffsetSeconds+alignment.ToleranceSeconds)
 			if lower > upper {
-				return ConstantAlignment{}, false
+				return sceneSectionProof{}, false
 			}
 			result.OffsetSeconds, result.ToleranceSeconds = (lower+upper)/2, max(1e-9, (upper-lower)/2)
-		} else if !result.Consistent(alignment) {
-			return ConstantAlignment{}, false
+		} else if !result.Consistent(alignment.ConstantAlignment) {
+			return sceneSectionProof{}, false
 		}
 	}
 	return result, found

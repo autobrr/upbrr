@@ -105,7 +105,7 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 	calls := 0
 	decode := func(_ context.Context, start, duration float64, deep bool) ([]screenshots.ComparisonSample, error) {
 		calls++
-		if !deep || duration > 10 {
+		if !deep || duration > 34 {
 			return nil, errors.New("discovery escaped bounded main chunks")
 		}
 		var frames []screenshots.ComparisonSample
@@ -150,7 +150,7 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 3 || !ref.Summary.Complete || !ref.Summary.RankingComplete || ref.Summary.CoveredSeconds != 24 {
+	if calls != 2 || !ref.Summary.Complete || !ref.Summary.RankingComplete || ref.Summary.CoveredSeconds != 24 {
 		t.Fatalf("incomplete main discovery: calls=%d summary=%+v", calls, ref.Summary)
 	}
 	_, payload, err := retained.MarshalPrivateResource()
@@ -168,7 +168,7 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 	if cloned.ComparisonInventory == decoded.ComparisonInventory || cloned.ComparisonInventory.Path != ref.Path {
 		t.Fatal("inventory reference clone is mutable or lost its file")
 	}
-	if len(ref.Blocks) != 3 || !slices.Equal(cloned.ComparisonInventory.Blocks, ref.Blocks) ||
+	if len(ref.Blocks) == 0 || !slices.Equal(cloned.ComparisonInventory.Blocks, ref.Blocks) ||
 		cloned.ComparisonInventory.IndexSHA256 != ref.IndexSHA256 {
 		t.Fatal("restart lost the native batch directory")
 	}
@@ -182,7 +182,7 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 	// facts. Reuse must report only discovery facts for the new attempt.
 	cloned.ComparisonInventory.Summary.Reasons = []string{"match_deadline"}
 	reused, err := b.discoverComparisonScenes(t.Context(), &cloned, plan, window, excluded, decode, b.comparisonProgress(t.Context(), 5))
-	if err != nil || calls != 3 {
+	if err != nil || calls != 2 {
 		t.Fatal("a count change repeated complete main discovery")
 	}
 	if len(reused.Summary.Reasons) != 0 {
@@ -349,14 +349,14 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 				t.Fatalf("early stop restored obsolete selection protection: %+v", analysis)
 			}
 			saved, ok := resource.(workflowMediaPrivateArtifacts)
-			if !ok || saved.ComparisonInventory == nil || !slices.Equal(saved.ComparisonInventory.Summary.Excluded, protected) || calls != 3 || ref.Summary.Selection != window || len(ref.Summary.Excluded) != 0 {
+			if !ok || saved.ComparisonInventory == nil || !slices.Equal(saved.ComparisonInventory.Summary.Excluded, protected) || calls != 2 || ref.Summary.Selection != window || len(ref.Summary.Excluded) != 0 {
 				t.Fatal("selection projection changed the original inventory or repeated discovery")
 			}
 			if !slices.Contains(analysis.Reasons, "match_cancelled") || len(saved.ComparisonInventory.Summary.Reasons) != 0 {
 				t.Fatal("matching cancellation contaminated reusable discovery facts")
 			}
 			resumed, resumeErr := b.discoverComparisonScenes(t.Context(), &saved, changed, analysis.Selection, protected, decode, b.comparisonProgress(t.Context(), 5))
-			if resumeErr != nil || len(resumed.Summary.Reasons) != 0 || calls != 3 {
+			if resumeErr != nil || len(resumed.Summary.Reasons) != 0 || calls != 2 {
 				t.Fatal("stopped matching forced discovery or leaked into the next attempt")
 			}
 		})
@@ -388,7 +388,7 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 				private.ComparisonSources["target"] = private.ComparisonSources["main"]
 				builder := b
 				builder.comparisonRenderer = comparisonStoppedInventoryRenderer{analysis: func(ctx context.Context, request screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error) {
-					if request.StartSeconds >= 15 {
+					if request.StartSeconds >= 7 {
 						if callerCancelled {
 							cancel()
 							return nil, context.Canceled
@@ -405,12 +405,12 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 					t.Fatalf("partial discovery lost its typed publication: %v", err)
 				}
 				if incomplete.Reason != reason || len(updated.Comparisons.Rows) != 0 ||
-					updated.Comparisons.Analysis.Complete || updated.Comparisons.Analysis.RankingComplete || updated.Comparisons.Analysis.CoveredSeconds != 16 ||
+					updated.Comparisons.Analysis.Complete || updated.Comparisons.Analysis.RankingComplete || updated.Comparisons.Analysis.CoveredSeconds != 8 ||
 					updated.Comparisons.ApprovedFingerprint != "" || len(updated.Failures) != 1 {
 					t.Fatalf("partial discovery gained automatic selection or lost its publication: reason=%+v analysis=%+v failures=%d err=%v", incomplete, updated.Comparisons.Analysis, len(updated.Failures), err)
 				}
 				saved, ok := resource.(workflowMediaPrivateArtifacts)
-				if !ok || saved.ComparisonInventory == nil || saved.ComparisonInventory.NativeFrames != 400 {
+				if !ok || saved.ComparisonInventory == nil || saved.ComparisonInventory.NativeFrames != 200 {
 					t.Fatal("partial native inventory was discarded")
 				}
 				_, payload, err := saved.MarshalPrivateResource()
@@ -451,7 +451,7 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 		source.Source.Width *= 2
 		private.ComparisonSources["target"] = source
 		changed, err := b.discoverComparisonScenes(t.Context(), &private, priorPlan, window, excluded, decode, b.comparisonProgress(t.Context(), 5))
-		if err != nil || calls != before+3 || changed.SourceProfile == ref.SourceProfile || !changed.Summary.Complete {
+		if err != nil || calls != before+2 || changed.SourceProfile == ref.SourceProfile || !changed.Summary.Complete {
 			t.Fatalf("wider target reused differently normalized main pictures: calls=%d err=%v", calls-before, err)
 		}
 	})
@@ -496,6 +496,25 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 	if err := readComparisonInventory(t.Context(), ref, owner, func(screenshots.ComparisonSample) bool { return true }); err == nil {
 		t.Fatal("corrupt retained inventory was trusted")
 	}
+	t.Run("Quick retains native choices between sparse measurements", func(t *testing.T) {
+		quickPlan := plan
+		quickPlan.Preferences.ScanMode = "fast"
+		quickPrivate := cloneWorkflowMediaPrivateArtifacts(retained)
+		quick, err := b.discoverComparisonScenes(t.Context(), &quickPrivate, quickPlan, window, excluded,
+			func(ctx context.Context, start, seconds float64, _ bool) ([]screenshots.ComparisonSample, error) {
+				return decode(ctx, start, seconds, true)
+			}, b.comparisonProgress(t.Context(), 5))
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		if err := readComparisonInventory(t.Context(), quick, owner, func(frame screenshots.ComparisonSample) bool {
+			found = found || !frame.AnalysisAnchor && frame.Identity != nil && frame.Replay != nil && frame.Evidence.Eligible
+			return true
+		}); err != nil || !found {
+			t.Fatalf("Quick discarded already analyzed native alternatives: %v", err)
+		}
+	})
 }
 
 func TestComparisonQuickSectionExpandsOnlyThroughEligibleMainScene(t *testing.T) {

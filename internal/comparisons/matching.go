@@ -42,6 +42,9 @@ type MatchAnchor struct {
 // Empty AllowedTypes accepts any picture type unless PreferBFrames enables the
 // default policy. An empty FrameType stays unknown. Manual anchors stay explicit.
 type SampledSource struct {
+	// IntraOnly authorizes automatic I pictures only for an observed substantial
+	// I-only native region containing this row. Predictions cannot set it.
+	IntraOnly     bool
 	ID            string
 	Frames        []FrameSample
 	AllowedTypes  []string

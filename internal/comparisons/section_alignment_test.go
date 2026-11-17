@@ -13,15 +13,35 @@ import (
 
 func TestSceneSectionPrefersTypeAgreementWithoutRelaxingPictureProof(t *testing.T) {
 	for _, test := range []struct {
-		name               string
-		preferredScore     float64
-		corrupt, fallbackI bool
-		wantSeconds        float64
-		allI               bool
-		staged             bool
-		wide               bool
-		commonI, explicitI bool
+		name                          string
+		preferredScore                float64
+		corrupt, fallbackI            bool
+		wantSeconds                   float64
+		allI                          bool
+		staged                        bool
+		wide                          bool
+		commonI, explicitI            bool
+		belowQualification            bool
+		unprovenAllI                  bool
+		reversed                      bool
+		splitTarget, shortOccurrences bool
 	}{
+		{
+			name:           "a later authored occurrence retains its own native match",
+			preferredScore: .90,
+			wantSeconds:    3.4,
+			splitTarget:    true,
+		},
+		{
+			name:             "short authored runs cannot manufacture temporal proof",
+			shortOccurrences: true,
+		},
+		{
+			name:           "main column follows another input",
+			preferredScore: .90,
+			wantSeconds:    3.4,
+			reversed:       true,
+		},
 		{
 			name:           "within score band",
 			preferredScore: .90,
@@ -43,6 +63,18 @@ func TestSceneSectionPrefersTypeAgreementWithoutRelaxingPictureProof(t *testing.
 			preferredScore: .90,
 			fallbackI:      true,
 			wantSeconds:    3.4,
+		},
+		{
+			name:               "unmatchable qualifier permits native best effort",
+			preferredScore:     .90,
+			fallbackI:          true,
+			belowQualification: true,
+			wantSeconds:        3.4,
+		},
+		{
+			name:         "short all I window cannot authorize fallback",
+			allI:         true,
+			unprovenAllI: true,
 		},
 		{
 			name:           "all I codec retains type agreement",
@@ -79,6 +111,7 @@ func TestSceneSectionPrefersTypeAgreementWithoutRelaxingPictureProof(t *testing.
 		t.Run(test.name, func(t *testing.T) {
 			main := SampledSource{ID: "main", PreferBFrames: true}
 			target := SampledSource{ID: "target", PreferBFrames: true}
+			main.IntraOnly, target.IntraOnly = test.allI && !test.unprovenAllI, test.allI && !test.unprovenAllI
 			if test.explicitI {
 				main.PreferBFrames, target.PreferBFrames = false, false
 				main.AllowedTypes, target.AllowedTypes = []string{"B", "I", "P"}, []string{"B", "I", "P"}
@@ -101,9 +134,18 @@ func TestSceneSectionPrefersTypeAgreementWithoutRelaxingPictureProof(t *testing.
 				if i == preferredIndex {
 					frame.Evidence.Dark.Score = test.preferredScore
 				}
+				if test.belowQualification && i != 30 {
+					frame.Evidence.Dark.State = "rejected"
+				}
 				main.Frames = append(main.Frames, frame)
 				other := frame
 				other.FrameID, other.Occurrence, other.TimestampSeconds, other.FrameType = fmt.Sprintf("target-%d", i), "file-target", frame.TimestampSeconds+10, "P"
+				if test.splitTarget && i >= 30 {
+					other.Occurrence = "target-next-cell"
+				}
+				if test.shortOccurrences {
+					other.Occurrence = fmt.Sprintf("target-cell-%d", i/2)
+				}
 				// Secondary scene metadata cannot rank or veto a native picture.
 				other.Evidence = &api.ComparisonSceneEvidence{Eligible: false, Dark: api.ComparisonSceneCategory{State: "verified", Score: 1000}}
 				if i == preferredIndex {
@@ -134,7 +176,18 @@ func TestSceneSectionPrefersTypeAgreementWithoutRelaxingPictureProof(t *testing.
 				}
 				target.Frames = append(target.Frames, other)
 			}
-			result, err := MatchSceneSection(t.Context(), []SampledSource{main, target}, "main", main.Frames[30], 1, map[string]PlaybackScale{"target": {1, 1}}, nil)
+			sources := []SampledSource{main, target}
+			targetColumn := 1
+			if test.reversed {
+				sources[0], sources[1], targetColumn = target, main, 0
+			}
+			result, err := MatchSceneSection(t.Context(), sources, "main", main.Frames[30], 1, map[string]PlaybackScale{"target": {1, 1}}, nil)
+			if test.unprovenAllI || test.shortOccurrences {
+				if err != nil || len(result.Rows) != 0 {
+					t.Fatalf("short I-only window authorized a row: %+v %v", result, err)
+				}
+				return
+			}
 			if err != nil || len(result.Rows) != 1 || !result.Rows[0].Complete {
 				t.Fatalf("native section failed: %+v %v", result, err)
 			}
@@ -142,13 +195,36 @@ func TestSceneSectionPrefersTypeAgreementWithoutRelaxingPictureProof(t *testing.
 			if math.Abs(row.MainSeconds-test.wantSeconds) > 1e-9 {
 				t.Fatalf("wrong quality/type trade-off: %+v", row)
 			}
-			if math.Abs(row.Frames[1].TimestampSeconds-row.MainSeconds-10) > 1e-9 || result.AchievedDark != 1 {
+			wantDark := 1
+			if test.belowQualification {
+				wantDark = 0
+			}
+			if row.Frames[targetColumn].SourceID != "target" || math.Abs(row.Frames[targetColumn].TimestampSeconds-row.MainSeconds-10) > 1e-9 || result.AchievedDark != wantDark {
 				t.Fatal("scene selection changed the verified native mapping or lost the main qualifier")
 			}
-			if test.fallbackI && row.Frames[1].FrameType == "I" {
+			if test.fallbackI && row.Frames[targetColumn].FrameType == "I" {
 				t.Fatal("an I picture became the automatic mixed-type fallback")
 			}
 		})
+	}
+}
+
+func TestSceneSectionRejectsCompetingAuthoredProofs(t *testing.T) {
+	first := sceneSectionProof{
+		ReferenceFrameIDs: []string{"main-1"},
+		IntervalProof:     true,
+		OffsetSeconds:     10,
+		ToleranceSeconds:  .1,
+		targetOccurrence:  "cell-a",
+	}
+	second := first
+	second.OffsetSeconds, second.targetOccurrence = 10.05, "cell-b"
+	if _, ok := momentProof([]sceneSectionProof{first, second}, "main-1"); ok {
+		t.Fatal("overlapping numeric offsets merged different authored occurrences")
+	}
+	second.targetOccurrence = first.targetOccurrence
+	if proof, ok := momentProof([]sceneSectionProof{first, second}, "main-1"); !ok || proof.targetOccurrence != "cell-a" {
+		t.Fatal("consistent occurrence-local interval proofs could not intersect")
 	}
 }
 

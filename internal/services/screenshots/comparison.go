@@ -179,6 +179,10 @@ type ComparisonAnalysisRenderer struct{ Mode string }
 // Cancellation, corruption and invalid frame identities never use this fallback.
 var ErrComparisonNormalizationUnavailable = errors.New("screenshots: comparison SDR normalization unavailable")
 
+// ErrComparisonWorkerFailed identifies a decoder process failure. Source and
+// decoded-identity validation failures do not use this partial-result boundary.
+var ErrComparisonWorkerFailed = errors.New("screenshots: comparison sampling failed")
+
 // ErrComparisonFastInconclusive preserves an explicit bounded/manual outcome.
 var ErrComparisonFastInconclusive = errors.New("comparison fast attempt exhausted its bounded work budget")
 
@@ -642,6 +646,9 @@ func (s *Service) runComparisonSamples(ctx context.Context, executable string, a
 		if corruption := ffmpegFrameCorruptionError(result.Stderr); corruption != nil {
 			return CommandResult{}, corruption
 		}
+		if err != nil && !errors.Is(err, ErrComparisonWorkerFailed) {
+			return CommandResult{}, fmt.Errorf("comparison decoder evidence: %w", err)
+		}
 		if err == nil && result.ExitCode == 0 {
 			if request.Renderer != nil {
 				request.Renderer.Mode = mode
@@ -654,7 +661,7 @@ func (s *Service) runComparisonSamples(ctx context.Context, executable string, a
 			return result, nil
 		}
 		if mode == "none" {
-			return CommandResult{}, errors.New("screenshots: comparison sampling failed")
+			return CommandResult{}, fmt.Errorf("comparison decoder process: %w", err)
 		}
 		logging.FromContext(ctx, s.logger).Debugf("comparisons: phase=sampling renderer=%s state=failed reason=%s", mode, renderFailureStage(result, err))
 	}

@@ -28,6 +28,7 @@ import (
 )
 
 const comparisonInventoryLimit int64 = 128 << 20
+const comparisonQuickWindows = 96
 
 // comparisonSceneInventory is an immutable private reference. Clones cloned only
 // this small manifest; selected-only witness pruning never touches the file.
@@ -386,9 +387,9 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 	} else {
 		// The second distributed pass expands discovery within the same shared
 		// main allowance. It never expands protected selection bounds.
-		for pass := range 2 {
+		for _, fraction := range []float64{.5, .25, .75, .125, .375, .625, .875, .0625} {
 			for i := range 12 {
-				center := window.Start + (window.End-window.Start)*(float64(i)+.5+float64(pass)*.5)/12
+				center := window.Start + (window.End-window.Start)*(float64(i)+fraction)/12
 				start, end := max(window.Start, center-2), min(window.End, center+2)
 				intervals = append(intervals, interval{start, end, start, end})
 			}
@@ -405,6 +406,9 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 		ref.Summary = old.Summary
 		ref.Summary.Reasons = nil
 		ref.Summary.CoveredSeconds, ref.Summary.EligibleSeconds = 0, 0
+	}
+	if !deep && !expanding {
+		intervals = intervals[:24]
 	}
 	total := len(intervals)
 	if deep {
@@ -436,11 +440,12 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 		}
 	}
 	var visitedCandidates []comparisons.FrameSample
-	for index := 0; index < total; index++ {
+	payloadStart, payloadSeconds := 0.0, 8.0
+	for index := 0; !deep && index < total || deep && payloadStart < duration; index++ {
 		var region interval
 		if deep {
-			start := float64(index) * 8
-			end := min(duration, start+8)
+			start := payloadStart
+			end := min(duration, start+payloadSeconds)
 			region = interval{max(0, start-1), min(duration, end+1), start, end}
 		} else {
 			region = intervals[index]
@@ -451,6 +456,7 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 		}
 		seconds := region.end - region.start
 		ref.Summary.RequestedSeconds += seconds
+		started := time.Now()
 		frames, err := decode(ctx, region.start, seconds, deep)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, screenshots.ErrComparisonFastInconclusive) ||
@@ -492,11 +498,8 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 		}
 		for _, frame := range frames {
 			t := frame.RelativeTimestampSeconds
-			if t < region.payloadStart || t >= region.payloadEnd || frame.Evidence == nil || !deep && !frame.AnalysisAnchor {
+			if t < region.payloadStart || t >= region.payloadEnd || frame.Evidence == nil {
 				continue
-			}
-			if !deep {
-				frame = refineComparisonSceneAnchor(frame, frames, plan)
 			}
 			if frame.RelativeTimestampSeconds < region.payloadStart || frame.RelativeTimestampSeconds >= region.payloadEnd {
 				continue
@@ -518,7 +521,13 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 				visitedCandidates = append(visitedCandidates, comparisonSamples([]screenshots.ComparisonSample{frame})[0])
 			}
 		}
-		progress.update(index+1, total)
+		if deep {
+			payloadStart = region.payloadEnd
+			payloadSeconds = comparisonSampleChunkSeconds(payloadSeconds, region.payloadEnd-region.payloadStart, time.Since(started))
+			progress.update(int(1000*payloadStart/duration), 1000)
+		} else {
+			progress.update(index+1, total)
+		}
 		if len(ref.Summary.Reasons) > 0 {
 			break
 		}
@@ -675,48 +684,4 @@ func comparisonEligibleCoverage(intervals []api.ComparisonTimeInterval, window a
 
 func comparisonDiscoveryAllowance(duration float64) time.Duration {
 	return time.Duration(min(28800.0, max(1800.0, 4*duration)) * float64(time.Second))
-}
-
-// Refine while the original native measurements and replay witnesses are still
-// present. This avoids decoding again merely to select a neighbouring B picture.
-func refineComparisonSceneAnchor(
-	anchor screenshots.ComparisonSample,
-	frames []screenshots.ComparisonSample,
-	plan api.ComparisonPlan,
-) screenshots.ComparisonSample {
-	if anchor.Evidence == nil || !anchor.Evidence.Eligible {
-		return anchor
-	}
-	var types []string
-	for _, source := range plan.Sources {
-		if source.ID != plan.MainSourceID {
-			continue
-		}
-		types = source.AllowedFrameTypes
-		if source.PreferBFrames {
-			types = []string{"B", "P", "I"}
-		}
-	}
-	if len(types) == 0 {
-		return anchor
-	}
-	best, distance := len(types), math.Inf(1)
-	chosen := anchor
-	for _, frame := range frames {
-		delta := math.Abs(frame.RelativeTimestampSeconds - anchor.RelativeTimestampSeconds)
-		rank := slices.Index(types, frame.PictureType)
-		if rank < 0 || rank > best || rank == best && delta >= distance || delta > .15 || frame.Evidence == nil || !frame.Evidence.Eligible {
-			continue
-		}
-		compatible := true
-		for category := range 3 {
-			if comparisons.SceneQualified(anchor.Evidence, category) && !comparisons.SceneQualified(frame.Evidence, category) {
-				compatible = false
-			}
-		}
-		if compatible {
-			chosen, best, distance = frame, rank, delta
-		}
-	}
-	return chosen
 }

@@ -54,7 +54,7 @@ func (b *interruptedComparisonMediaFake) EditComparisons(ctx context.Context, re
 		Recovery:         api.OperationRecoveryRetry,
 		Message:          "Capture interrupted; completed cells retained.",
 	}})
-	if b.reason != "discovery_incomplete" {
+	if b.reason != "discovery_incomplete" && b.reason != "match_worker_failed" {
 		b.cancel()
 	}
 	if !b.typed {
@@ -63,11 +63,14 @@ func (b *interruptedComparisonMediaFake) EditComparisons(ctx context.Context, re
 	if b.reason == "discovery_incomplete" {
 		return snapshot, retained, &ComparisonIncompleteError{Cause: context.DeadlineExceeded, Reason: b.reason}
 	}
+	if b.reason == "match_worker_failed" {
+		return snapshot, retained, &ComparisonIncompleteError{Cause: errors.New("native decoder failed"), Reason: b.reason}
+	}
 	return snapshot, retained, &ComparisonIncompleteError{Cause: context.Canceled, Reason: reason}
 }
 
 func TestComparisonCapturePublishesOnlyTypedIncompleteResults(t *testing.T) {
-	for _, reason := range []string{"untyped", "capture_cancelled", "discovery_incomplete"} {
+	for _, reason := range []string{"untyped", "capture_cancelled", "discovery_incomplete", "match_worker_failed"} {
 		t.Run(reason, func(t *testing.T) {
 			typed := reason != "untyped"
 			module, repository, _, current := newDuplicateReuseWorkflow(t)
@@ -79,10 +82,14 @@ func TestComparisonCapturePublishesOnlyTypedIncompleteResults(t *testing.T) {
 				reason: reason,
 			}
 			before := current.Workflow.Revision
+			action := "capture"
+			if reason == "match_worker_failed" {
+				action = "match"
+			}
 			result, err := module.execute(ctx, testOwnerID, EditComparisonsCommand{
 				WorkflowID:       current.Workflow.ID,
 				ExpectedRevision: before,
-				Instructions:     api.ComparisonInstructions{Action: "capture", Plan: reviewedComparisonFixture(t)},
+				Instructions:     api.ComparisonInstructions{Action: action, Plan: reviewedComparisonFixture(t)},
 			})
 			state, loadErr := repository.Load(t.Context(), testOwnerID, current.Workflow.ID)
 			if loadErr != nil {

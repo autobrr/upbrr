@@ -27,7 +27,7 @@ type ComparisonMediaBuilder interface {
 
 // ComparisonIncompleteError permits publication only of validated matched
 // witnesses, partial discovery inventory and completed cells after bounded
-// discovery exhaustion, a deadline or cancellation.
+// discovery exhaustion, a classified decoder stop, a deadline or cancellation.
 // Other failures cannot use this publication path.
 type ComparisonIncompleteError struct {
 	Cause  error
@@ -38,7 +38,7 @@ func (e *ComparisonIncompleteError) Error() string {
 	if e.Reason == "discovery_incomplete" {
 		return "Deep Scan is incomplete; partial main-input discovery was retained. Retry before selecting comparison rows."
 	}
-	if e.Reason == "match_cancelled" || e.Reason == "match_deadline" {
+	if e.Reason == "match_cancelled" || e.Reason == "match_deadline" || e.Reason == "match_worker_failed" {
 		return "Comparison matching is incomplete; verified discovery evidence was retained."
 	}
 	return "Comparison capture is incomplete; completed cells were retained."
@@ -47,7 +47,7 @@ func (e *ComparisonIncompleteError) Unwrap() error { return e.Cause }
 
 func incompleteComparisonFailure(f api.WorkflowFailure) bool {
 	return f.Failure.Operation == api.OperationKindMedia &&
-		(f.Failure.ComparisonReason == "capture_cancelled" || f.Failure.ComparisonReason == "capture_deadline" || f.Failure.ComparisonReason == "match_cancelled" || f.Failure.ComparisonReason == "match_deadline" || f.Failure.ComparisonReason == "discovery_incomplete")
+		(f.Failure.ComparisonReason == "capture_cancelled" || f.Failure.ComparisonReason == "capture_deadline" || f.Failure.ComparisonReason == "match_cancelled" || f.Failure.ComparisonReason == "match_deadline" || f.Failure.ComparisonReason == "match_worker_failed" || f.Failure.ComparisonReason == "discovery_incomplete")
 }
 
 func retainsStoppedComparisons(command mutation, result CommandResult, err error) bool {

@@ -331,7 +331,7 @@ func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 		Source:          source,
 		DurationSeconds: 1,
 		StrideSeconds:   0.5,
-	}); err == nil {
+	}); err == nil || errors.Is(err, ErrComparisonWorkerFailed) {
 		t.Fatal("unmatched sample pixels were accepted")
 	}
 	for _, tc := range []struct {
@@ -342,6 +342,7 @@ func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 		{name: "empty timestamp window"},
 		{name: "decoder failure", reply: renderReply{err: errors.New("synthetic decoder failure")}},
 		{name: "corrupt frames", reply: renderReply{stderr: "error while decoding"}},
+		{name: "malformed native provenance", reply: renderReply{stderr: strings.ReplaceAll(comparisonDiagnostics(0, "B"), "time_base: 1/1000", "time_base: 0/0")}},
 		{name: "cancellation", cancel: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -360,6 +361,9 @@ func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 			wantError := tc.reply.err != nil || tc.reply.stderr != "" || tc.cancel
 			if len(samples) != 0 || (err != nil) != wantError || tc.cancel && !errors.Is(err, context.Canceled) {
 				t.Fatalf("empty sampling result=%+v err=%v", samples, err)
+			}
+			if errors.Is(err, ErrComparisonWorkerFailed) != (tc.reply.err != nil && !tc.cancel) {
+				t.Fatalf("decoder stop and invalid evidence lost their distinct publication boundaries: %v", err)
 			}
 		})
 	}
@@ -430,6 +434,12 @@ func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 			calls:     1,
 		},
 		{
+			name:      "malformed native provenance never falls back",
+			replies:   []renderReply{{payload: pixels, stderr: strings.ReplaceAll(identity, "time_base: 1/1000", "time_base: 0/0") + output}},
+			wantError: true,
+			calls:     1,
+		},
+		{
 			name:    "diagnostic overflow never falls back",
 			replies: []renderReply{{stderr: strings.Repeat("x", 8193)}},
 			want:    errComparisonDecoderLimit,
@@ -480,8 +490,8 @@ func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 			if len(runner.args) != tc.calls || (err != nil) != (tc.want != nil || tc.wantError) || tc.want != nil && !errors.Is(err, tc.want) {
 				t.Fatalf("samples=%+v calls=%d err=%v", samples, len(runner.args), err)
 			}
-			if tc.wantError && errors.Is(err, ErrComparisonNormalizationUnavailable) {
-				t.Fatal("invalid frame identity permitted a full-scan fallback")
+			if tc.wantError && (errors.Is(err, ErrComparisonNormalizationUnavailable) || errors.Is(err, ErrComparisonWorkerFailed)) {
+				t.Fatal("invalid frame identity permitted a fallback or partial publication")
 			}
 			if err == nil {
 				if len(samples) != 1 || samples[0].PTS != 5800 || samples[0].TimeBaseDenominator != 1000 ||

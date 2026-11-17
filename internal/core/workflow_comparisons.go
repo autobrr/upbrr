@@ -168,7 +168,7 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 		snapshot.Failures = slices.DeleteFunc(snapshot.Failures, func(f api.WorkflowFailure) bool {
 			return f.Failure.ComparisonReason == "capture_cancelled" || f.Failure.ComparisonReason == "capture_deadline" ||
 				instructions.Action == "match" &&
-					(f.Failure.ComparisonReason == "match_cancelled" || f.Failure.ComparisonReason == "match_deadline" || f.Failure.ComparisonReason == "discovery_incomplete")
+					(f.Failure.ComparisonReason == "match_cancelled" || f.Failure.ComparisonReason == "match_deadline" || f.Failure.ComparisonReason == "match_worker_failed" || f.Failure.ComparisonReason == "discovery_incomplete")
 		})
 	}
 	activeAction := instructions.Action
@@ -702,7 +702,7 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 	if duration <= 0 {
 		duration = retained.ComparisonSources[plan.MainSourceID].Source.DurationSeconds
 	}
-	allowance := 300 * time.Second
+	allowance := time.Duration(comparisonMatchingAllowance(plan.Preferences.Count, len(plan.Sources))) * time.Second
 	if plan.Preferences.ScanMode == "deep" {
 		allowance += comparisonDiscoveryAllowance(duration)
 	}
