@@ -24,25 +24,47 @@ import (
 
 var errComparisonDecoderLimit = errors.New("comparison decoder limit exceeded")
 var errComparisonHardwareUnavailable = errors.New("comparison hardware decoder unavailable")
+var errComparisonHardwareUnsupported = errors.New("comparison hardware decoder unsupported")
 
 var comparisonHardwareDiagnostic = regexp.MustCompile(
-	`(?i)^\[(?:AVHW(?:Device|Frames)Context|CUDA|(?:h264|hevc|av1|vp[89]|mpeg[124]video|mpeg4|vc1)(?:_[a-z0-9]+)?|(?:Parsed_)?hwdownload(?:_\d+)?) @ [^\]]+\] `,
+	`(?i)^\[(?:AVHW(?:Device|Frames)Context|CUDA|(?:vist|dec)#\d+:\d+/[a-z0-9_]+|(?:h264|hevc|av1|vp[89]|mpeg[124]video|mpeg4|vc1)(?:_[a-z0-9]+)?|(?:Parsed_)?hwdownload(?:_\d+)?) @ [^\]]+\] `,
 )
 
 var comparisonHardwareFailureCode = regexp.MustCompile(
 	`(?i)\b(?:CUDA_ERROR_(?:NO_DEVICE|DEVICE_UNAVAILABLE|OUT_OF_MEMORY|CONTEXT_IS_DESTROYED|INVALID_CONTEXT)|DXGI_ERROR_DEVICE_(?:REMOVED|RESET|HUNG)|(?:0x)?887a000[567]|VA_STATUS_ERROR_(?:INVALID_DISPLAY|UNSUPPORTED_PROFILE)|kVT(?:VideoDecoder(?:MalfunctionErr|NotAvailableNowErr)|CouldNotFindVideoDecoderErr))\b`,
 )
+var comparisonHardwareUnsupportedDiagnostic = regexp.MustCompile(
+	`(?i)\b(?:cannot load (?:libcuda\.so(?:\.1)?|nvcuda\.dll)|hardware is lacking required capabilities|video (?:width|height|macroblock count) .* (?:not within range|exceeds maximum)|invalid output format .* for hwframe download)\b`,
+)
+var comparisonHardwareSetupFailure = regexp.MustCompile(
+	`(?i)\b(?:no device available for decoder|failed setup for format (?:cuda|d3d11|vaapi|videotoolbox_vld): hwaccel initialisation returned error)\b`,
+)
+
 var comparisonVideoToolboxFailure = regexp.MustCompile(`Failed to decode frame \((?:decoder malfunction|invalid session), -?\d+\)`)
 
 var comparisonVAAPITransferFailure = regexp.MustCompile(
 	`Failed to (?:sync surface|read image from surface|map image from surface) (?:0x)?[0-9a-fA-F]+: (\d+) \(`,
 )
 
+var comparisonHardwareDeviceCreationFailure = regexp.MustCompile(`^Device creation failed: -\d+\.?$`)
+
+// A codec/profile can accept -hwaccel but produce a software surface. An
+// initial negotiation failure at the graph input cannot feed hwdownload.
+var comparisonHardwareInputFormatFailure = regexp.MustCompile(
+	`^Impossible to convert between the formats supported by the filter 'graph -?\d+ input from stream \d+:\d+' and the filter 'auto_scale_\d+'$`,
+)
+
 func comparisonHardwareStageFailure(line string) error {
+	if comparisonHardwareDeviceCreationFailure.MatchString(line) {
+		return errComparisonHardwareUnavailable
+	}
 	if !comparisonHardwareDiagnostic.MatchString(line) {
 		return nil
 	}
-	if comparisonHardwareFailureCode.MatchString(line) || comparisonVideoToolboxFailure.MatchString(line) {
+	if comparisonHardwareUnsupportedDiagnostic.MatchString(line) {
+		return errComparisonHardwareUnsupported
+	}
+	if comparisonHardwareFailureCode.MatchString(line) || comparisonHardwareSetupFailure.MatchString(line) || comparisonVideoToolboxFailure.MatchString(line) {
 		return errComparisonHardwareUnavailable
 	}
 	if match := comparisonVAAPITransferFailure.FindStringSubmatch(line); len(match) == 2 {
@@ -125,6 +147,7 @@ type comparisonDiagnosticStream struct {
 	sideData       map[string]hash.Hash
 	firstNative    func()
 	hardwareDecode bool
+	nativeStarted  bool
 	count          int
 	err            error
 	cancel         context.CancelFunc
@@ -177,6 +200,10 @@ func (d *comparisonDiagnosticStream) line(line string) {
 		return
 	}
 	if d.hardwareDecode {
+		if !d.nativeStarted && comparisonHardwareInputFormatFailure.MatchString(line) {
+			d.err = errComparisonHardwareUnsupported
+			return
+		}
 		if err := comparisonHardwareStageFailure(line); err != nil {
 			d.err = err
 			return
@@ -187,6 +214,16 @@ func (d *comparisonDiagnosticStream) line(line string) {
 		if ok {
 			body = strings.TrimSpace(body)
 			name := strings.Fields(strings.TrimPrefix(prefix, "["))[0]
+			if strings.HasPrefix(body, "n:") && (name == "showinfo@comparison_decoder_init" || !strings.HasPrefix(name, "showinfo@")) {
+				d.nativeStarted = true
+			}
+			if name == "showinfo@comparison_decoder_init" {
+				if d.firstNative != nil && strings.HasPrefix(body, "n:") {
+					d.firstNative()
+					d.firstNative = nil
+				}
+				return
+			}
 			if d.config == nil {
 				d.config = map[string]string{}
 				d.records = map[string][]ComparisonFrameObservation{}
@@ -221,15 +258,9 @@ func (d *comparisonDiagnosticStream) line(line string) {
 				// Streamed branch/output records have already bound their raster.
 				// Retain only native provenance for publication, avoiding a second
 				// movie-sized collection and diagnostic reconstruction of branches.
-				if name != "showinfo@comparison_decoder_init" && (d.stream == nil || !strings.HasPrefix(name, "showinfo@")) {
+				if d.stream == nil || !strings.HasPrefix(name, "showinfo@") {
 					d.records[name] = append(d.records[name], observed[0])
 					d.sideData[name] = sha256.New()
-				}
-				if !strings.HasPrefix(name, "showinfo@") || name == "showinfo@comparison_decoder_init" {
-					if d.firstNative != nil {
-						d.firstNative()
-						d.firstNative = nil
-					}
 				}
 				d.counts[name]++
 				d.count++
@@ -419,13 +450,13 @@ func (r finiteComparisonRunner) Run(ctx context.Context, name string, args []str
 func comparisonTerminalFailure(err error) bool {
 	return err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
 		!errors.Is(err, ErrComparisonWorkerFailed) && !errors.Is(err, errComparisonHardwareUnavailable) &&
-		!errors.Is(err, errComparisonHardwareInitialization)
+		!errors.Is(err, errComparisonHardwareInitialization) && !errors.Is(err, errComparisonHardwareUnsupported)
 }
 
 // Only process errors receive the worker classification. Diagnostic and raster
 // validation above return their original errors, even when they stop the child.
 func comparisonProcessFailure(err error, exitCode int) error {
-	if errors.Is(err, errComparisonHardwareUnavailable) {
+	if errors.Is(err, errComparisonHardwareUnavailable) || errors.Is(err, errComparisonHardwareUnsupported) {
 		return err
 	}
 	if err == nil {

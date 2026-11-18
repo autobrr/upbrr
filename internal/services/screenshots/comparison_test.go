@@ -162,6 +162,73 @@ func TestComparisonCancelledCapturePreservesNativeFailures(t *testing.T) {
 	}
 }
 
+func TestComparisonSoftwareReplayRevalidatesHardwareWitness(t *testing.T) {
+	source := comparisonTestSource(t)
+	source.InputFingerprint = "synthetic-input"
+	identity := api.ComparisonFrameIdentity{
+		Version:             1,
+		InputFingerprint:    source.InputFingerprint,
+		Occurrence:          "file-0",
+		StreamID:            "video-0",
+		PTS:                 5800,
+		TimeBaseNumerator:   1,
+		TimeBaseDenominator: 1000,
+	}
+	png := testPNGBytes(t, color.RGBA{R: 200, A: 255})
+	for _, tc := range []struct {
+		name, checksum string
+		pts            int
+		allowed        bool
+	}{
+		{
+			name:     "exact native picture",
+			checksum: "12345678",
+			pts:      5800,
+			allowed:  true,
+		},
+		{
+			name:     "same timestamp different picture",
+			checksum: "87654321",
+			pts:      5800,
+		},
+		{
+			name:     "same pixels different timestamp",
+			checksum: "12345678",
+			pts:      5840,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stderr := fmt.Sprintf("[Parsed_showinfo_1 @ synthetic] config in time_base: 1/1000, frame_rate: 25/1\n"+
+				"[Parsed_showinfo_1 @ synthetic] n: 0 pts: %d pts_time:5.8 fmt:yuv420p sar:1/1 s:2x2 i:P type:B checksum:%s\n", tc.pts, tc.checksum)
+			runner := comparisonInspectionRunner(func(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
+				if slices.Contains(args, "-hwaccel") {
+					t.Fatal("selected backend is unavailable to the injected runner")
+				}
+				return CommandResult{Stdout: png, Stderr: []byte(stderr)}, nil
+			})
+			s := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+			frame, err := s.ComparisonCapture(t.Context(), ComparisonCaptureRequest{
+				Source:           source,
+				TimestampSeconds: 5.8,
+				Replay: &ComparisonFrameReplay{
+					Identity:        identity,
+					Decoder:         "cuda",
+					PictureChecksum: "12345678",
+				},
+			})
+			if !tc.allowed {
+				if err == nil || len(frame.ImageBytes) != 0 {
+					t.Fatal("software published an unverified fallback picture")
+				}
+				return
+			}
+			if err != nil || !bytes.Equal(frame.ImageBytes, png) || frame.Replay == nil || frame.Replay.Decoder != "software" || *frame.Identity != identity {
+				t.Fatalf("software lost the matched frame during revalidation: %v", err)
+			}
+		})
+	}
+}
+
 func TestComparisonCapturePreservesObservedIdentityAcrossRendererFallback(t *testing.T) {
 	source := comparisonTestSource(t)
 	source.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatHDR10}}

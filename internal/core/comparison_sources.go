@@ -82,6 +82,17 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 		if err != nil {
 			return snapshot, private, fmt.Errorf("comparison source: %w", err)
 		}
+		previousWitness := source.Witnesses[string(key)]
+		pictureChanged := previousWitness.PictureChecksum != "" && previousWitness.PictureChecksum != witness.PictureChecksum
+		if pictureChanged {
+			for other, active := range plan.Rows {
+				if other != row && slices.ContainsFunc(active.Cells, func(cell api.ComparisonCell) bool {
+					return cell.SourceID == selection.SourceID && cell.ObservedIdentity != nil && *cell.ObservedIdentity == witness.Identity
+				}) {
+					return snapshot, private, comparisonWitnessConflict()
+				}
+			}
+		}
 		if source.Witnesses == nil {
 			source.Witnesses = map[string]screenshots.ComparisonFrameReplay{}
 		}
@@ -89,11 +100,12 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 		retained.ComparisonSources[selection.SourceID] = source
 		var guard *api.ComparisonSceneEvidence
 		if selection.SourceID == plan.MainSourceID {
-			inspected, err := b.inspectManualMainScene(ctx, plan, retained, content.TimestampSeconds, nil, 0)
+			inspected, err := b.inspectManualMainScene(ctx, plan, retained, content.TimestampSeconds, witness.PreferredDecoder(), nil, 0)
 			if err != nil {
 				return snapshot, private, err
 			}
-			if inspected.Identity == nil || *inspected.Identity != witness.Identity {
+			if inspected.Identity == nil || *inspected.Identity != witness.Identity ||
+				witness.PictureChecksum != "" && witness.PictureChecksum != inspected.PictureChecksum {
 				return snapshot, private, comparisonSelectionFailure(
 					api.OperationFailureStaleResult,
 					"changed_main_picture",
@@ -104,7 +116,7 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 		}
 		previous := plan.Rows[row].Cells[column]
 		if selection.SourceID == plan.MainSourceID &&
-			(previous.TimestampSeconds == nil || *previous.TimestampSeconds != content.TimestampSeconds ||
+			(pictureChanged || previous.TimestampSeconds == nil || *previous.TimestampSeconds != content.TimestampSeconds ||
 				previous.ObservedIdentity == nil || *previous.ObservedIdentity != witness.Identity) {
 			plan.Rows[row].Scene = ""
 			plan.Rows[row].Evidence = guard
@@ -149,6 +161,30 @@ func (c *Core) DiscoverReleaseWorkflowComparisonSource(
 		return result, classifyOperationError(api.OperationKindMedia, err)
 	}
 	return result, nil
+}
+
+func comparisonWitnessConflict() error {
+	return comparisonSelectionFailure(
+		api.OperationFailureStaleResult,
+		"conflicting_frame_witness",
+		"The decoded picture changed. Rematch the conflicting comparison row.",
+	)
+}
+
+// Save each selected frame from the window that authorized its row. Another
+// row's overlapping decode can observe the same timestamp with different pixels.
+func retainComparisonRowSamples(observations, windows map[string][]screenshots.ComparisonSample, row comparisons.MatchedRow) {
+	for _, cell := range row.Frames {
+		if !cell.Resolved {
+			continue
+		}
+		for _, sample := range windows[cell.SourceID] {
+			if comparisonObservationID(sample.ComparisonFrameObservation) == cell.FrameID {
+				observations[cell.SourceID] = append(observations[cell.SourceID], sample)
+				break
+			}
+		}
+	}
 }
 
 func comparisonObservationID(observation screenshots.ComparisonFrameObservation) string {

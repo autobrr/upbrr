@@ -113,6 +113,7 @@ func analysisSamples(result CommandResult, request ComparisonSampleRequest, wind
 		if nativeErr != nil || outputErr != nil || nativeClock != outputClock {
 			return nil, errors.New("comparison analysis normalization changed native identity")
 		}
+		o.decoder = result.comparisonBackend
 		o.RelativeTimestampSeconds = o.TimestampSeconds - request.Source.StartTimeSeconds
 		if window == nil {
 			if err := bindFileObservation(request.Source, &o); err != nil {

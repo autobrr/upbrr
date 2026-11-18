@@ -750,15 +750,8 @@ search:
 	for attempt := 0; attempt < options.Count*30 && len(result.Rows) < options.Count; attempt++ {
 		clear(cache)
 		retainedBytes, analysisBytes = 0, 0
-		for id, decoded := range observations {
-			observations[id] = slices.Clone(slices.DeleteFunc(decoded, func(frame screenshots.ComparisonSample) bool {
-				return !slices.ContainsFunc(result.Rows, func(row comparisons.MatchedRow) bool {
-					return slices.ContainsFunc(row.Frames, func(chosen comparisons.FrameMatch) bool {
-						return chosen.SourceID == id && chosen.FrameID == comparisonObservationID(frame.ComparisonFrameObservation)
-					})
-				})
-			}))
-			retainedBytes += int64(len(observations[id])) * 4096
+		for _, decoded := range observations {
+			retainedBytes += int64(len(decoded)) * 4096
 		}
 		requestedCategory := comparisonSceneCategory(targets, [3]int{result.AchievedMotion, result.AchievedDark, result.AchievedFlat}, categoryAttempts)
 		if requestedCategory < 0 {
@@ -979,14 +972,9 @@ search:
 			}
 			// Keep exact main evidence when an I-only evidence probe widened the
 			// native reference. The extra pictures prove cadence, not scene facts.
-			for j := range sampled[main].Frames {
+			for j, decoded := range frames[plan.MainSourceID] {
 				frame := &sampled[main].Frames[j]
-				for _, original := range reference {
-					if frame.FrameID == original.FrameID {
-						frame.Evidence = original.Evidence
-						break
-					}
-				}
+				frame.Evidence = comparisonSectionFrameEvidence(reference, decoded.ComparisonFrameObservation)
 				if frame.Evidence != nil && !comparisons.EligibleTime(frame.TimestampSeconds, window, excluded) {
 					evidence := *frame.Evidence
 					evidence.Eligible, evidence.Reason = false, "protected_selection"
@@ -1061,20 +1049,10 @@ search:
 			}
 		}
 		if selectedFrames != nil {
-			section := matchedSection{match: matched, frames: selectedFrames}
+			section := matchedSection{match: matched, frames: map[string][]screenshots.ComparisonSample{}}
+			retainComparisonRowSamples(section.frames, selectedFrames, matched.Rows[0])
 			if category >= 0 && !usingFallback && !comparisons.SceneQualified(matched.Rows[0].Evidence, category) {
 				if pendingRows[category] == nil || comparisons.PreferSceneRow(matched.Rows[0], pendingRows[category].match.Rows[0], category) {
-					// At most three pending native rows fit in the reserved scratch
-					// allowance. Retain chosen witnesses, never their dense windows.
-					section.frames = map[string][]screenshots.ComparisonSample{}
-					for _, cell := range matched.Rows[0].Frames {
-						for _, frame := range selectedFrames[cell.SourceID] {
-							if comparisonObservationID(frame.ComparisonFrameObservation) == cell.FrameID {
-								section.frames[cell.SourceID] = []screenshots.ComparisonSample{frame}
-								break
-							}
-						}
-					}
 					pendingRows[category] = &section
 				}
 			} else {
@@ -1115,6 +1093,16 @@ search:
 	progress.stages = progress.stage + 1
 	progress.logger.Infof("comparisons: phase=alignment_rows decision=bounded_local rows=%d sources=%d", len(result.Rows), len(plan.Sources))
 	return result, observations, true, nil
+}
+
+func comparisonSectionFrameEvidence(reference []screenshots.ComparisonSample, decoded screenshots.ComparisonFrameObservation) *api.ComparisonSceneEvidence {
+	id := comparisonObservationID(decoded)
+	for _, original := range reference {
+		if comparisonObservationID(original.ComparisonFrameObservation) == id && original.PictureChecksum == decoded.PictureChecksum {
+			return original.Evidence
+		}
+	}
+	return nil
 }
 
 func decodeLimit(source, main, rows int) float64 {

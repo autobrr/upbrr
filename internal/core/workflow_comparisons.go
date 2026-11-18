@@ -143,9 +143,12 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 		snapshot.Comparisons = nil
 		return snapshot, retained, nil
 	}
+	refreshCodec := instructions.Action == "match" && slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool {
+		return comparisonCodecFactsMissing(retained.ComparisonSources[source.ID].Source)
+	})
 	if instructions.Action == "configure" && len(attachments) > 0 {
 		plan, err = b.importWorkflowComparisons(ctx, release, &snapshot, &retained, plan, attachments)
-	} else if !plan.Imported && (instructions.Action == "configure" || len(instructions.VideoSources) > 0) {
+	} else if !plan.Imported && (instructions.Action == "configure" || len(instructions.VideoSources) > 0 || refreshCodec) {
 		err = b.configureComparisonVideos(ctx, release, &retained, &plan, instructions.VideoSources)
 	}
 	if err != nil {
@@ -332,6 +335,10 @@ func pruneComparisonSources(retained *workflowMediaPrivateArtifacts, plan *api.C
 	})
 }
 
+func comparisonCodecFactsMissing(source screenshots.ComparisonSource) bool {
+	return source.NativeCodec == "" && source.NativePixelFormat != ""
+}
+
 func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, release api.ReleaseRef,
 	retained *workflowMediaPrivateArtifacts, plan *api.ComparisonPlan, selections []api.ComparisonVideoSelection) error {
 	renderer, err := b.comparisonService()
@@ -387,7 +394,8 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 			return fmt.Errorf("resolve main comparison source: %w", err)
 		}
 		inspected := previous.Source
-		if !exists || previous.Fingerprint != fingerprint || inspected.FrameCount == 0 && inspected.VideoDurationSeconds == 0 {
+		if !exists || previous.Fingerprint != fingerprint || comparisonCodecFactsMissing(inspected) ||
+			inspected.FrameCount == 0 && inspected.VideoDurationSeconds == 0 {
 			if input != nil {
 				discRenderer, ok := renderer.(interface {
 					InspectResolvedComparisonSource(context.Context, filesystem.ResolvedComparisonInput, string, string) (screenshots.ComparisonSource, error)
@@ -1073,7 +1081,12 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 							"Rematch this automatic row using the current scene analysis before capture.",
 						)
 					}
-					guard, err := b.inspectManualMainScene(ctx, plan, *retained, *cell.TimestampSeconds, nil, 0)
+					source := retained.ComparisonSources[cell.SourceID]
+					replay, err := comparisonSavedPreviewReplay(plan, source, cell.SourceID, *cell.TimestampSeconds)
+					if err != nil {
+						return plan, err
+					}
+					guard, err := b.inspectManualMainScene(ctx, plan, *retained, *cell.TimestampSeconds, replay.PreferredDecoder(), nil, 0)
 					if err != nil {
 						return plan, err
 					}
@@ -1084,6 +1097,9 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 							"Inspect the main picture again before capture.",
 						)
 					}
+					if previous := source.Witnesses[guard.FrameID]; previous.PictureChecksum != "" && previous.PictureChecksum != guard.PictureChecksum {
+						return plan, comparisonWitnessConflict()
+					}
 					row.Evidence = guard.Evidence
 					row.Scene = ""
 					cell.TimestampSeconds = new(guard.RelativeTimestampSeconds)
@@ -1091,7 +1107,6 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 					cell.ObservedPTS = new(guard.PTS)
 					cell.TimeBaseNumerator = guard.TimeBaseNumerator
 					cell.TimeBaseDenominator = guard.TimeBaseDenominator
-					source := retained.ComparisonSources[cell.SourceID]
 					if source.Witnesses == nil {
 						source.Witnesses = map[string]screenshots.ComparisonFrameReplay{}
 					}
@@ -1164,6 +1179,9 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 			)
 		}
 		if captured.Replay != nil {
+			if previous := source.Witnesses[captured.FrameID]; previous.PictureChecksum != "" && previous.PictureChecksum != captured.Replay.PictureChecksum {
+				return comparisonWitnessConflict()
+			}
 			if source.Witnesses == nil {
 				source.Witnesses = map[string]screenshots.ComparisonFrameReplay{}
 			}
@@ -1411,6 +1429,43 @@ func verifyWorkflowComparisons(
 	return verifyComparisonVideos(ctx, *snapshot.Comparisons, retained)
 }
 
+func comparisonSavedPreviewReplay(
+	plan api.ComparisonPlan,
+	source workflowComparisonSource,
+	sourceID string,
+	timestamp float64,
+) (*screenshots.ComparisonFrameReplay, error) {
+	var identity *api.ComparisonFrameIdentity
+	for _, row := range plan.Rows {
+		for _, cell := range row.Cells {
+			if cell.SourceID != sourceID || cell.TimestampSeconds == nil || *cell.TimestampSeconds != timestamp || cell.ObservedIdentity == nil {
+				continue
+			}
+			if identity != nil && *identity != *cell.ObservedIdentity {
+				return nil, comparisonWitnessConflict()
+			}
+			identity = cell.ObservedIdentity
+		}
+	}
+	if identity == nil {
+		return nil, nil
+	}
+	key, err := api.CanonicalWorkflowFingerprint(*identity)
+	if err != nil {
+		return nil, fmt.Errorf("identify comparison preview picture: %w", err)
+	}
+	if witness, ok := source.Witnesses[string(key)]; ok {
+		if witness.Identity != *identity {
+			return nil, comparisonWitnessConflict()
+		}
+		return new(cloneComparisonWitness(witness)), nil
+	}
+	if source.Source.Input != nil {
+		return nil, errors.New("inspect or rematch this comparison frame before preview")
+	}
+	return &screenshots.ComparisonFrameReplay{Identity: *identity}, nil
+}
+
 // PreviewComparisonFrame renders one independent source without changing the
 // active release, matching rows, captured images or their approval.
 func (b workflowMediaBuilder) PreviewComparisonFrame(ctx context.Context, _ api.ReleaseRef,
@@ -1430,13 +1485,18 @@ func (b workflowMediaBuilder) PreviewComparisonFrame(ctx context.Context, _ api.
 	if err != nil {
 		return releaseworkflow.MediaPreviewContent{}, fmt.Errorf("preview comparison source: %w", err)
 	}
+	request, err := comparisonCaptureRequest(*snapshot.Comparisons, retained, sourceID, timestamp)
+	if err != nil {
+		return releaseworkflow.MediaPreviewContent{}, err
+	}
 	var selected *screenshots.ComparisonFrameObservation
 	if step != 0 {
 		frames, err := renderer.SampleComparisonSource(ctx, screenshots.ComparisonSampleRequest{
-			Source:          source.Source,
-			StartSeconds:    max(0, timestamp-1),
-			DurationSeconds: 2,
-			StrideSeconds:   0.0001,
+			Source:           source.Source,
+			PreferredDecoder: request.PreferredDecoder(b.config.ScreenshotHandling),
+			StartSeconds:     max(0, timestamp-1),
+			DurationSeconds:  2,
+			StrideSeconds:    0.0001,
 		})
 		if err != nil {
 			return releaseworkflow.MediaPreviewContent{}, fmt.Errorf("decode comparison frame step: %w", err)
@@ -1453,14 +1513,15 @@ func (b workflowMediaBuilder) PreviewComparisonFrame(ctx context.Context, _ api.
 		if !found {
 			return releaseworkflow.MediaPreviewContent{}, errors.New("no adjacent decoded frame in this preview window; scrub to another timestamp")
 		}
-		timestamp = nearest
-	}
-	request, err := comparisonCaptureRequest(*snapshot.Comparisons, retained, sourceID, timestamp)
-	if err != nil {
-		return releaseworkflow.MediaPreviewContent{}, err
+		request.TimestampSeconds = nearest
 	}
 	if selected != nil {
 		request.Replay = selected.Replay
+	} else {
+		request.Replay, err = comparisonSavedPreviewReplay(*snapshot.Comparisons, source, sourceID, timestamp)
+		if err != nil {
+			return releaseworkflow.MediaPreviewContent{}, err
+		}
 	}
 	preview, err := renderer.ComparisonPreview(ctx, request)
 	if err != nil {
@@ -1469,6 +1530,10 @@ func (b workflowMediaBuilder) PreviewComparisonFrame(ctx context.Context, _ api.
 	if selected != nil && (selected.PTS != preview.PTS || selected.TimeBaseNumerator != preview.TimeBaseNumerator ||
 		selected.TimeBaseDenominator != preview.TimeBaseDenominator) {
 		return releaseworkflow.MediaPreviewContent{}, errors.New("the decoded preview frame changed while stepping; scrub and inspect the source again")
+	}
+	if request.Replay != nil && (preview.Identity == nil || *preview.Identity != request.Replay.Identity ||
+		request.Replay.PictureChecksum != "" && preview.PictureChecksum != request.Replay.PictureChecksum) {
+		return releaseworkflow.MediaPreviewContent{}, comparisonWitnessConflict()
 	}
 	witness, err := json.Marshal(preview.Replay)
 	if err != nil {

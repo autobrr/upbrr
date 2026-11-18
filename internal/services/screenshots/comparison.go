@@ -21,6 +21,7 @@ import (
 
 	gomediainfo "github.com/autobrr/go-mediainfo"
 
+	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -37,7 +38,7 @@ const ComparisonDiscCaptionVersion = 6
 // ComparisonSource describes one local video. Missing timing stays zero; callers
 // own source fingerprint verification and alignment with other inputs.
 type ComparisonSource struct {
-	Codec, CodecProfile                      string
+	Codec, CodecProfile, NativeCodec         string
 	NativePixelFormat                        string
 	NativeColour                             string
 	NativeChromaLocation                     string
@@ -104,6 +105,7 @@ type ComparisonFrameObservation struct {
 	PixelFormat, Interlace                           string
 	Colour                                           string
 	ChromaLocation, PlaneChecksums, SideDataChecksum string
+	decoder                                          string
 }
 
 // ComparisonCaptureRequest selects a seek relative to the file's start time.
@@ -157,22 +159,19 @@ type ComparisonSample struct {
 type ComparisonSampleRequest struct {
 	// RetentionLimitBytes shares the caller's remaining parent budget. Zero uses
 	// the standalone decoder cap; supplied limits reserve 4096 bytes per picture.
-	RetentionLimitBytes  int64
-	NativeFrames         bool
-	Renderer             *ComparisonAnalysisRenderer
-	analysis             *comparisonRasterStream
-	encodedAttemptBytes  int64
-	decodePrerollSeconds float64
-	decodeOccurrence     string
-	decodeCodec          uint8
-	softwareDecodeOnly   bool
-	MatchCrop            *ComparisonCrop
-	Budget               *ComparisonDecodeBudget
-	Source               ComparisonSource
-	StartSeconds         float64
-	DurationSeconds      float64
-	StrideSeconds        float64
-	NormalizeSDR         bool
+	RetentionLimitBytes int64
+	NativeFrames        bool
+	Renderer            *ComparisonAnalysisRenderer
+	analysis            *comparisonRasterStream
+	encodedAttemptBytes int64
+	PreferredDecoder    string
+	MatchCrop           *ComparisonCrop
+	Budget              *ComparisonDecodeBudget
+	Source              ComparisonSource
+	StartSeconds        float64
+	DurationSeconds     float64
+	StrideSeconds       float64
+	NormalizeSDR        bool
 	// MatchAspectRatio selects the shared central picture area for normalized
 	// matching only. Captures retain the source's own framing.
 	MatchAspectRatio float64
@@ -323,7 +322,12 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 			frameRate = numerator / denominator
 		}
 	}
+	nativeCodec := ""
+	if match := comparisonMappedCodec.FindSubmatch(probe.Stderr); len(match) == 2 {
+		nativeCodec = string(match[1])
+	}
 	return ComparisonSource{
+		NativeCodec:          nativeCodec,
 		Codec:                codec,
 		CodecProfile:         codecProfile,
 		NativePixelFormat:    nativeFormat,
@@ -348,20 +352,29 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 	}, nil
 }
 
+// PreferredDecoder selects the saved backend unless the capture renderer
+// requires software decoding. Unbound previews can choose automatically.
+func (r ComparisonCaptureRequest) PreferredDecoder(settings config.ScreenshotHandlingConfig) string {
+	toneMap := settings.ToneMap
+	if r.ToneMap != nil {
+		toneMap = *r.ToneMap
+	}
+	if toneMap && r.Source.HDRFacts.SupportsToneMapping() && settings.UseLibplacebo {
+		return comparisonSoftwareDecoder
+	}
+	return r.Replay.PreferredDecoder()
+}
+
 // ComparisonPreview uses the strict comparison capture path. It never applies
 // black-frame timestamp offsets or disc-segment recovery.
 func (s *Service) ComparisonPreview(ctx context.Context, request ComparisonCaptureRequest) (ComparisonFrame, error) {
 	if request.Source.Input != nil && request.Replay == nil {
-		toneMap := s.cfg.ScreenshotHandling.ToneMap
-		if request.ToneMap != nil {
-			toneMap = *request.ToneMap
-		}
 		frames, err := s.sampleDiscComparison(ctx, ComparisonSampleRequest{
-			softwareDecodeOnly: toneMap && request.Source.HDRFacts.SupportsToneMapping() && s.cfg.ScreenshotHandling.UseLibplacebo,
-			Source:             request.Source,
-			StartSeconds:       request.TimestampSeconds,
-			DurationSeconds:    min(.5, request.Source.DurationSeconds-request.TimestampSeconds),
-			StrideSeconds:      .002,
+			PreferredDecoder: request.PreferredDecoder(s.cfg.ScreenshotHandling),
+			Source:           request.Source,
+			StartSeconds:     request.TimestampSeconds,
+			DurationSeconds:  min(.5, request.Source.DurationSeconds-request.TimestampSeconds),
+			StrideSeconds:    .002,
 		})
 		if err != nil {
 			return ComparisonFrame{}, err
@@ -412,6 +425,9 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 	if err != nil {
 		return ComparisonFrame{}, err
 	}
+	if request.Replay != nil && request.Replay.Identity.InputFingerprint != request.Source.InputFingerprint {
+		return ComparisonFrame{}, errors.New("comparison file replay refers to a different input")
+	}
 	runner := &comparisonRunner{
 		service:        s,
 		expected:       request.Replay,
@@ -433,7 +449,7 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 	if request.ToneMap != nil {
 		toneMap = *request.ToneMap
 	}
-	runner.softwareOnly = toneMap && request.Source.HDRFacts.SupportsToneMapping() && s.cfg.ScreenshotHandling.UseLibplacebo
+	runner.softwareOnly = request.PreferredDecoder(s.cfg.ScreenshotHandling) == comparisonSoftwareDecoder
 	frame, err := renderFrame(ctx, runner, executable, captureRequest{
 		InputPath:     path,
 		Timestamp:     request.TimestampSeconds,
@@ -578,6 +594,7 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 	}
 	samples := make([]ComparisonSample, 0, len(observations))
 	for i, observation := range observations {
+		observation.decoder = result.comparisonBackend
 		observation.RelativeTimestampSeconds = observation.TimestampSeconds - source.StartTimeSeconds
 		if err := bindFileObservation(source, &observation); err != nil {
 			return nil, err
@@ -644,7 +661,7 @@ func (s *Service) runComparisonSamples(ctx context.Context, executable string, a
 	if err != nil {
 		return CommandResult{}, err
 	}
-	decoder, err := s.comparisonDecoder(ctx, executable, args, filter, request, mode)
+	decoders, err := comparisonDecoders(ctx, s.runner, executable, request.Source, mode == "libplacebo", request.PreferredDecoder)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -729,8 +746,7 @@ func (s *Service) runComparisonSamples(ctx context.Context, executable string, a
 	} else {
 		command = append(command, "-vf", normalized, "-fps_mode", "passthrough", "-frames:v", "50000", "-pix_fmt", "gray", "-f", "rawvideo", "-")
 	}
-	result, effective, err := s.runComparisonDecode(requestCtx, s.runner, executable, command, "", decoder, &request)
-	decoder = effective
+	result, err := s.runComparisonDecode(requestCtx, s.runner, executable, command, "", decoders, &request)
 	if errors.Is(err, internalerrors.ErrFrameCorruption) || errors.Is(err, errComparisonDecoderLimit) || errors.Is(err, ErrComparisonFastInconclusive) ||
 		errors.Is(err, context.Canceled) ||
 		errors.Is(err, context.DeadlineExceeded) {
@@ -753,16 +769,12 @@ func (s *Service) runComparisonSamples(ctx context.Context, executable string, a
 		if mode == "libplacebo" && profile == "5" && !showInfoDOVIMetadata.Match(result.Stderr) {
 			return CommandResult{}, fmt.Errorf("%w: decoded Dolby Vision metadata missing", ErrComparisonNormalizationUnavailable)
 		}
-		backend := decoder.backend
-		if backend == "" {
-			backend = "software"
-		}
 		logging.FromContext(
 			ctx,
 			s.logger,
 		).Debugf(
 			"comparisons: phase=sampling decoder=%s normalization=%s normalized_sdr=%t",
-			backend,
+			result.comparisonBackend,
 			mode,
 			request.NormalizeSDR,
 		)
@@ -908,6 +920,7 @@ var (
 	comparisonOutputShowInfoLine = regexp.MustCompile(`(?m)^\[showinfo@comparison_output @ [^\]\r\n]+\]\s+([^\r\n]+)`)
 	comparisonTimeBase           = regexp.MustCompile(`^config in time_base:\s*(\d+)/(\d+),`)
 	comparisonPTS                = regexp.MustCompile(`^n:\s*\d+\s+pts:\s*(-?\d+)\s`)
+	comparisonMappedCodec        = regexp.MustCompile(`(?m)^[ \t]*Stream #\d+:\d+[^\r\n]*? -> #\d+:\d+ \(([a-zA-Z0-9_]+) \(`)
 	comparisonInputStart         = regexp.MustCompile(`(?m)^  Duration: [^\r\n]*, start: ([+-]?[0-9.]+), bitrate:`)
 	comparisonFrameRate          = regexp.MustCompile(`(?m)^\[Parsed_showinfo_\d+ @ [^\]\r\n]+\]\s+config in time_base: [^\r\n]*frame_rate:\s*(\d+)/(\d+)`)
 	comparisonPictureFacts       = regexp.MustCompile(`fmt:(\S+).*?sar:(\d+)[/:](\d+).*?s:(\d+)x(\d+).*?i:(\S+).*?checksum:([0-9A-Fa-f]+)`)
@@ -1165,7 +1178,13 @@ func (r *comparisonRunner) run(ctx context.Context, executable string, args []st
 	var result CommandResult
 	var runErr error
 	if _, authored := r.runner.(exactDiscCaptureRunner); !authored && r.service != nil {
-		result, runErr = r.service.runComparisonCaptureDecoder(ctx, r.runner, executable, args, dir, r.source, r.softwareOnly, "capture-file")
+		preferred := ""
+		if r.observed != nil {
+			preferred = r.observed.decoder
+		} else if r.expected != nil {
+			preferred = r.expected.PreferredDecoder()
+		}
+		result, runErr = r.service.runComparisonCaptureDecoder(ctx, r.runner, executable, args, dir, r.source, r.softwareOnly, preferred, "capture-file")
 	} else {
 		result, runErr = r.runner.Run(ctx, executable, args, dir)
 	}
@@ -1180,10 +1199,12 @@ func (r *comparisonRunner) run(ctx context.Context, executable string, args []st
 		return result, runErr
 	}
 	if r.observed != nil && (r.observed.PTS != observed[0].PTS || r.observed.TimeBaseNumerator != observed[0].TimeBaseNumerator ||
-		r.observed.TimeBaseDenominator != observed[0].TimeBaseDenominator) {
+		r.observed.TimeBaseDenominator != observed[0].TimeBaseDenominator ||
+		r.observed.PictureChecksum != observed[0].PictureChecksum) {
 		r.changed = true
 		return result, errors.New("screenshots: comparison renderer changed decoded frame identity")
 	}
+	observed[0].decoder = result.comparisonBackend
 	r.observed = &observed[0]
 	if r.expected != nil &&
 		(r.observed.PTS != r.expected.Identity.PTS || r.observed.TimeBaseNumerator != r.expected.Identity.TimeBaseNumerator || r.observed.TimeBaseDenominator != r.expected.Identity.TimeBaseDenominator) {
@@ -1236,6 +1257,7 @@ func bindFileObservation(source ComparisonSource, observation *ComparisonFrameOb
 		Identity:        identity,
 		PictureChecksum: observation.PictureChecksum,
 		PixelFormat:     observation.PixelFormat,
+		Decoder:         observation.decoder,
 	}
 	return nil
 }

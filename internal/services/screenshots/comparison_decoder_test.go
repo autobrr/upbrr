@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -24,15 +22,49 @@ import (
 func TestComparisonHardwareRetryPreservesWindowAdmissionAndFatalOutcomes(t *testing.T) {
 	mutation := api.NewOperationError(api.OperationFailure{Code: api.OperationFailureInvalidSource, ComparisonReason: "source_changed"}, api.ErrActiveInputChanged)
 	for _, test := range []struct {
-		name, stderr  string
-		failure, want error
-		limit         float64
-		calls         int
-		cancel        bool
+		name, stderr, later string
+		failure, want       error
+		limit               float64
+		calls               int
+		cancel              bool
 	}{
+		{
+			name:  "hardware success completes the original window on the first process",
+			limit: 1,
+			calls: 1,
+		},
+		{
+			name:   "unavailable device initialization retries",
+			stderr: "Device creation failed: -1313558101.",
+			limit:  2,
+			calls:  2,
+		},
+		{
+			name:   "unsupported format retries",
+			stderr: "[av1 @ synthetic] Hardware is lacking required capabilities",
+			later:  "software",
+			limit:  2,
+			calls:  2,
+		},
+		{
+			name:   "software surface at a hardware graph input retries",
+			stderr: "Impossible to convert between the formats supported by the filter 'graph 0 input from stream 0:0' and the filter 'auto_scale_1'",
+			later:  "software",
+			limit:  2,
+			calls:  2,
+		},
+		{
+			name:    "graph failure after native frames remains fatal",
+			stderr:  comparisonDiagnostics(5800, "B") + "Impossible to convert between the formats supported by the filter 'graph 0 input from stream 0:0' and the filter 'auto_scale_1'",
+			failure: ErrComparisonWorkerFailed,
+			want:    ErrComparisonWorkerFailed,
+			limit:   2,
+			calls:   1,
+		},
 		{
 			name:   "typed device loss retries",
 			stderr: "[hevc @ synthetic] CUDA_ERROR_CONTEXT_IS_DESTROYED",
+			later:  "cuda",
 			limit:  2,
 			calls:  2,
 		},
@@ -127,6 +159,9 @@ func TestComparisonHardwareRetryPreservesWindowAdmissionAndFatalOutcomes(t *test
 			runner := finiteComparisonRunner{outputLimit: 1024, base: comparisonInspectionRunner(func(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
 				commands = append(commands, slices.Clone(args))
 				if len(commands) == 1 {
+					if test.failure == nil && test.stderr == "" {
+						return CommandResult{Stdout: []byte("complete hardware output")}, nil
+					}
 					if test.cancel {
 						cancel()
 					}
@@ -146,109 +181,46 @@ func TestComparisonHardwareRetryPreservesWindowAdmissionAndFatalOutcomes(t *test
 				encodedAttemptBytes: 128,
 			}
 			args := []string{"-ss", "12.250000000", "-i", "Example.Native.mkv", "-vf", "trim=start=12.25:end=13.25,showinfo", "-f", "rawvideo", "-"}
-			result, _, err := s.runComparisonDecode(ctx, runner, "synthetic", args, "", comparisonDecoder{
+			decoders := []comparisonDecoder{{
 				backend:  "cuda",
 				download: "hwdownload,format=nv12,",
-				key:      t.Name(),
-			}, &request)
+				key:      t.TempDir(),
+			}}
+			result, err := s.runComparisonDecode(ctx, runner, "synthetic", args, "", decoders, &request)
 			if !errors.Is(err, test.want) || len(commands) != test.calls {
 				t.Fatalf("error=%v calls=%d", err, len(commands))
 			}
 			if budget.ConsumedMovieSeconds != float64(test.calls) || budget.RemainingEncodedBytes != 1024-int64(test.calls)*128 {
 				t.Fatalf("physical decode was charged incorrectly: %+v", budget)
 			}
-			if test.calls == 2 && (!slices.Equal(commands[1], args) || string(result.Stdout) != "complete software output") {
+			if !slices.Contains(commands[0], "cuda") {
+				t.Fatal("first attempt did not use hardware")
+			}
+			if test.calls == 2 && (!slices.Equal(commands[1], args) || string(result.Stdout) != "complete software output" || result.comparisonBackend != "software") {
 				t.Fatal("software retry changed the original window or retained partial hardware output")
+			}
+			if test.want == nil && test.calls == 1 && result.comparisonBackend != "cuda" {
+				t.Fatal("successful hardware attempt lost its backend")
+			}
+			if test.later != "" {
+				result, err := s.runComparisonDecode(ctx, runner, "synthetic", args, "", decoders, nil)
+				if err != nil || result.comparisonBackend != test.later {
+					t.Fatalf("later operation chose %s, want %s: %v", result.comparisonBackend, test.later, err)
+				}
 			}
 		})
 	}
 }
 
-func TestComparisonDecoderProbeDeduplicationAndFailureScopes(t *testing.T) {
-	s := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil)
-	key := t.Name()
-	started, release := make(chan struct{}), make(chan struct{})
-	var calls atomic.Int32
-	probe := func() (comparisonDecoder, error) {
-		calls.Add(1)
-		close(started)
-		<-release
-		return comparisonDecoder{key: key}, context.Cause(t.Context())
+func TestComparisonLibplaceboDoesNotInspectHardware(t *testing.T) {
+	source := ComparisonSource{NativePixelFormat: "yuv420p", NativeCodec: "h264"}
+	if decoders, err := comparisonDecoders(t.Context(), commandRunner{}, "", source, true, "cuda"); err != nil || len(decoders) != 0 {
+		t.Fatalf("software-only decoding attempted hardware selection: %v", err)
 	}
-	var workers sync.WaitGroup
-	for range 4 {
-		workers.Go(func() {
-			if _, err := s.admitComparisonDecoder(t.Context(), key, probe); err != nil {
-				t.Error(err)
-			}
-		})
-	}
-	<-started
-	close(release)
-	workers.Wait()
-	if calls.Load() != 1 {
-		t.Fatal("concurrent first requests repeated decoder admission")
-	}
-	if _, err := s.admitComparisonDecoder(t.Context(), key, func() (comparisonDecoder, error) {
-		t.Fatal("negative hardware decision was not cached")
-		return comparisonDecoder{}, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	for _, failure := range []error{context.Canceled, ErrComparisonFastInconclusive, errors.New("synthetic provenance failure")} {
-		failedKey := key + failure.Error()
-		_, err := s.admitComparisonDecoder(t.Context(), failedKey, func() (comparisonDecoder, error) { return comparisonDecoder{}, failure })
-		if !errors.Is(err, failure) {
-			t.Fatal("decoder admission changed the original failure")
-		}
-		retried := false
-		_, err = s.admitComparisonDecoder(t.Context(), failedKey, func() (comparisonDecoder, error) { retried = true; return comparisonDecoder{}, nil })
-		if err != nil || !retried {
-			t.Fatal("an attempt failure became a hardware capability receipt")
-		}
-	}
-	for _, failure := range []error{context.Canceled, context.DeadlineExceeded, ErrComparisonFastInconclusive, internalerrors.ErrFrameCorruption} {
-		t.Run("concurrent owner failure "+failure.Error(), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				failedKey := t.Name()
-				started, release := make(chan struct{}), make(chan struct{})
-				ownerDone, waiterDone := make(chan error, 1), make(chan error, 1)
-				go func() {
-					_, err := s.admitComparisonDecoder(t.Context(), failedKey, func() (comparisonDecoder, error) {
-						close(started)
-						<-release
-						return comparisonDecoder{}, failure
-					})
-					ownerDone <- err
-				}()
-				<-started
-				retried := false
-				go func() {
-					_, err := s.admitComparisonDecoder(t.Context(), failedKey, func() (comparisonDecoder, error) {
-						retried = true
-						return comparisonDecoder{}, nil
-					})
-					waiterDone <- err
-				}()
-				synctest.Wait()
-				close(release)
-				if err := <-ownerDone; !errors.Is(err, failure) {
-					t.Fatalf("owner lost its own failure: %v", err)
-				}
-				err := <-waiterDone
-				if errors.Is(failure, internalerrors.ErrFrameCorruption) {
-					if retried || !errors.Is(err, failure) {
-						t.Fatalf("waiter bypassed terminal evidence: retried=%t err=%v", retried, err)
-					}
-				} else if err != nil || !retried {
-					t.Fatalf("active waiter inherited the owner's attempt failure: retried=%t err=%v", retried, err)
-				}
-			})
-		})
-	}
-	// A required libplacebo operation must not inspect any executable or device.
-	if decoder, err := s.comparisonDecoder(t.Context(), "", nil, "", ComparisonSampleRequest{}, "libplacebo"); err != nil || decoder.backend != "" {
-		t.Fatalf("libplacebo attempted hardware admission: %v", err)
+	request := ComparisonCaptureRequest{Source: source}
+	request.Source.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatHDR10}}
+	if decoder := request.PreferredDecoder(config.ScreenshotHandlingConfig{ToneMap: true, UseLibplacebo: true}); decoder != "software" {
+		t.Fatalf("an unbound libplacebo preview did not select software: %s", decoder)
 	}
 }
 
@@ -262,14 +234,18 @@ func TestComparisonHardwareInitializationDeadline(t *testing.T) {
 					if !ok {
 						t.Fatal("hardware initialization has no native observer")
 					}
-					first()
+					diagnostic := &comparisonDiagnosticStream{firstNative: first}
+					if _, err := diagnostic.Write([]byte("[showinfo@comparison_decoder_init @ synthetic] n: 0 pts: 0 checksum:0\n")); err != nil {
+						t.Fatal(err)
+					}
+					// The selected picture can follow several seconds of preroll.
 					time.Sleep(6 * time.Second)
 					return CommandResult{}, context.Cause(ctx)
 				}
 				<-ctx.Done()
 				return CommandResult{}, context.Cause(ctx)
 			})}
-			_, err := runComparisonHardwareProbe(t.Context(), runner, "synthetic", nil, "")
+			_, err := runComparisonHardwareDecode(t.Context(), runner, "synthetic", nil, "")
 			if firstPicture {
 				if err != nil || time.Since(started) != 6*time.Second {
 					t.Fatalf("native progress kept the initialization timer active: %v", err)
@@ -281,7 +257,7 @@ func TestComparisonHardwareInitializationDeadline(t *testing.T) {
 	}
 }
 
-func TestComparisonNativeHardwareRequiresSoftwareWitnessEquality(t *testing.T) {
+func TestComparisonNativeDecoderReplaysMatchedPicture(t *testing.T) {
 	executable, err := resolveFFmpeg()
 	if err != nil {
 		t.Skip("FFmpeg unavailable")
@@ -289,11 +265,11 @@ func TestComparisonNativeHardwareRequiresSoftwareWitnessEquality(t *testing.T) {
 	for _, fixture := range []struct {
 		codec, format string
 		hdr           bool
-	}{{"libx264", "yuv420p", false}, {"libx265", "yuv420p10le", true}} {
-		t.Run(fixture.codec, func(t *testing.T) {
+	}{{"libx264", "yuv420p", false}, {"libx264", "yuv420p10le", false}, {"libx265", "yuv420p10le", true}, {"mpeg2video", "yuv420p", false}} {
+		t.Run(fixture.codec+"_"+fixture.format, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "Example.Native.mkv")
-			args := []string{"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=256x144:rate=25:duration=2", "-vf", "format=" + fixture.format, "-c:v", fixture.codec, "-threads", "2", "-preset", "fast", "-pix_fmt", fixture.format, "-color_range", "tv", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"}
+			args := []string{"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=256x144:rate=25:duration=2", "-vf", "format=" + fixture.format, "-c:v", fixture.codec, "-threads", "2", "-pix_fmt", fixture.format, "-color_range", "tv", "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"}
 			if fixture.hdr {
 				args = append(args, "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-x265-params", "log-level=error:pools=1:frame-threads=1")
 			}
@@ -308,6 +284,9 @@ func TestComparisonNativeHardwareRequiresSoftwareWitnessEquality(t *testing.T) {
 			}
 			fingerprint, _ := api.CanonicalWorkflowFingerprint(path)
 			source.InputFingerprint = string(fingerprint)
+			if _, err := comparisonDecoders(t.Context(), commandRunner{}, executable, source, false, ""); err != nil {
+				t.Fatal(err)
+			}
 			request := ComparisonSampleRequest{
 				Source:          source,
 				StartSeconds:    .37,
@@ -316,32 +295,21 @@ func TestComparisonNativeHardwareRequiresSoftwareWitnessEquality(t *testing.T) {
 				NativeFrames:    true,
 				NormalizeSDR:    true,
 			}
-			hardware, err := s.SampleComparisonSource(t.Context(), request)
+			budget := &ComparisonDecodeBudget{MovieSecondsLimit: 8, RemainingEncodedBytes: 128 << 20}
+			request.Budget = budget
+			samples, err := s.SampleComparisonSource(t.Context(), request)
 			if err != nil {
 				t.Fatal(err)
 			}
-			key, candidates, err := comparisonDecoderInputs(t.Context(), executable, source, "sampling-file")
-			if err != nil {
-				t.Fatal(err)
+			if len(samples) <= 25 || samples[25].Replay == nil || samples[25].Replay.Decoder == "" {
+				t.Fatal("matching did not retain the actual decoder")
 			}
-			comparisonDecoderDecisions.Lock()
-			entry := comparisonDecoderDecisions.values[key]
-			comparisonDecoderDecisions.Unlock()
-			if entry == nil && len(candidates) > 0 {
-				t.Fatal("native decoder admission produced no scoped decision")
+			selected := samples[25]
+			if selected.Replay.Decoder == "cuda" && (budget.ProcessStarts != 1 || budget.ConsumedMovieSeconds != request.DurationSeconds) {
+				t.Fatalf("CUDA sampling started %d processes for a single supported window", budget.ProcessStarts)
 			}
-			if entry != nil {
-				t.Logf("sampling decoder=%s format=%s", entry.decoder.backend, source.NativePixelFormat)
-			} else {
-				t.Log("software host/device identity unavailable")
-			}
-			if key != "" {
-				pinComparisonSoftware(comparisonDecoder{key: key})
-			}
-			software, err := s.SampleComparisonSource(t.Context(), request)
-			if err != nil || !reflect.DeepEqual(hardware, software) {
-				t.Fatalf("hardware/default output differs from canonical software pictures: %v", err)
-			}
+			t.Logf("decoder=%s processes=%d", selected.Replay.Decoder, budget.ProcessStarts)
+			request.Budget = nil
 			settings := s.cfg
 			settings.ScreenshotHandling.UseLibplacebo = true
 			settings.ScreenshotHandling.ToneMap = true
@@ -349,55 +317,32 @@ func TestComparisonNativeHardwareRequiresSoftwareWitnessEquality(t *testing.T) {
 			settings.ScreenshotHandling.Desat = 0
 			changedSettings := NewService(settings, api.NopLogger{}, dir, nil)
 			unchanged, err := changedSettings.SampleComparisonSource(t.Context(), request)
-			if err != nil || !reflect.DeepEqual(software, unchanged) {
+			if err != nil || !reflect.DeepEqual(samples, unchanged) {
 				t.Fatalf("final capture settings changed analysis pixels: %v", err)
 			}
 			analysis, err := s.AnalyzeComparisonSource(t.Context(), request)
 			if err != nil {
 				t.Fatal(err)
 			}
-			key, _, err = comparisonDecoderInputs(t.Context(), executable, source, "analysis-file")
-			if err != nil {
-				t.Fatal(err)
-			}
-			comparisonDecoderDecisions.Lock()
-			entry = comparisonDecoderDecisions.values[key]
-			comparisonDecoderDecisions.Unlock()
-			if entry != nil {
-				t.Logf("analysis decoder=%s", entry.decoder.backend)
-			}
-			pinComparisonSoftware(comparisonDecoder{key: key})
-			control, err := s.AnalyzeComparisonSource(t.Context(), request)
-			if err != nil || !reflect.DeepEqual(analysis, control) {
-				t.Fatalf("hardware analysis changed native pixels or scene evidence: %v", err)
+			if len(analysis) <= 25 || analysis[25].Replay == nil || analysis[25].Replay.Decoder != selected.Replay.Decoder {
+				t.Fatal("deep analysis did not retain the actual decoder")
 			}
 			unchanged, err = changedSettings.AnalyzeComparisonSource(t.Context(), request)
-			if err != nil || !reflect.DeepEqual(control, unchanged) {
+			if err != nil || !reflect.DeepEqual(analysis, unchanged) {
 				t.Fatalf("final capture settings changed scene evidence: %v", err)
 			}
 			capture := ComparisonCaptureRequest{
 				Source:           source,
-				TimestampSeconds: hardware[25].RelativeTimestampSeconds,
-				Replay:           hardware[25].Replay,
+				TimestampSeconds: selected.RelativeTimestampSeconds,
+				Replay:           selected.Replay,
 			}
 			frame, err := s.ComparisonCapture(t.Context(), capture)
 			if err != nil {
 				t.Fatal(err)
 			}
-			key, _, err = comparisonDecoderInputs(t.Context(), executable, source, "capture-file")
-			if err != nil {
-				t.Fatal(err)
-			}
-			comparisonDecoderDecisions.Lock()
-			entry = comparisonDecoderDecisions.values[key]
-			comparisonDecoderDecisions.Unlock()
-			if entry != nil {
-				t.Logf("capture decoder=%s", entry.decoder.backend)
-			}
-			pinComparisonSoftware(comparisonDecoder{key: key})
-			controlFrame, err := s.ComparisonCapture(t.Context(), capture)
-			if err != nil || !reflect.DeepEqual(frame, controlFrame) {
-				t.Fatalf("hardware capture changed exact replay: %v", err)
+			if frame.FrameID != selected.FrameID || frame.PictureChecksum != selected.PictureChecksum || frame.Replay == nil ||
+				frame.Replay.Decoder != selected.Replay.Decoder {
+				t.Fatal("capture did not replay the retained native picture using its decoder")
 			}
 		})
 	}

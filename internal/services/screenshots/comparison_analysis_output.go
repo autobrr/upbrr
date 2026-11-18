@@ -150,6 +150,7 @@ func (r finiteComparisonRunner) runAnalysis(
 		outputURL:      sink.url,
 		hardwareDecode: slices.Contains(args, "-hwaccel"),
 	}
+	diagnostic.firstNative, _ = ctx.Value(comparisonFirstNativeKey{}).(func())
 	diagnostic.cancel = func() { cancel(diagnostic.err) }
 	// #nosec G204 G702 -- Resolved media decoder, structured arguments, no shell.
 	cmd := exec.CommandContext(workCtx, name, append([]string{"-nostdin", "-nostats"}, command...)...)

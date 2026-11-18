@@ -4,14 +4,12 @@
 package screenshots
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,16 +27,17 @@ type comparisonDecoder struct {
 
 type comparisonDeviceGeneration struct{ fingerprint, d3dVendor, vaapiDevice string }
 
-type comparisonDecoderDecision struct {
-	done    chan struct{}
-	decoder comparisonDecoder
-	err     error
-}
+var comparisonDecoderStates sync.Map // comparisonDecoderKey -> comparisonDecoderState
 
-var comparisonDecoderDecisions = struct {
-	sync.Mutex
-	values map[string]*comparisonDecoderDecision
-}{values: map[string]*comparisonDecoderDecision{}}
+type comparisonDecoderKey struct{ source, backend string }
+type comparisonDecoderState uint8
+
+const (
+	comparisonDecoderReady comparisonDecoderState = iota + 1
+	comparisonDecoderUnsupported
+)
+
+const comparisonSoftwareDecoder = "software"
 
 func nativeComparisonRunner(r Runner) bool {
 	if finite, ok := r.(finiteComparisonRunner); ok {
@@ -107,9 +106,9 @@ func comparisonHardwareSurface(backend string) string {
 	return backend
 }
 
-func comparisonHardwareDownload(reference ComparisonFrameObservation) string {
+func comparisonHardwareDownload(source ComparisonSource) string {
 	var surface string
-	switch reference.PixelFormat {
+	switch source.NativePixelFormat {
 	case "yuv420p":
 		surface = "nv12"
 	case "yuv420p10le":
@@ -117,11 +116,10 @@ func comparisonHardwareDownload(reference ComparisonFrameObservation) string {
 	default:
 		return ""
 	}
-	filter := "hwdownload,format=" + surface + ",format=" + reference.PixelFormat + ","
-	// Restore only a positively observed source fact, then require both native
-	// planes and normalized witnesses to equal the software reference.
-	if slices.Contains([]string{"left", "center", "topleft", "top", "bottomleft", "bottom"}, reference.ChromaLocation) {
-		filter += "setparams=chroma_location=" + reference.ChromaLocation + ","
+	filter := "hwdownload,format=" + surface + ",format=" + source.NativePixelFormat + ","
+	// Download to the inspected native layout and restore known chroma siting.
+	if slices.Contains([]string{"left", "center", "topleft", "top", "bottomleft", "bottom"}, source.NativeChromaLocation) {
+		filter += "setparams=chroma_location=" + source.NativeChromaLocation + ","
 	}
 	return filter
 }
@@ -136,191 +134,86 @@ func (r ComparisonSampleRequest) admitDecode(seconds float64) error {
 	return nil
 }
 
-func (s *Service) comparisonDecoder(
-	ctx context.Context,
-	executable string,
-	args []string,
-	filter string,
-	request ComparisonSampleRequest,
-	mode string,
-) (comparisonDecoder, error) {
-	if mode == "libplacebo" || request.softwareDecodeOnly || !nativeComparisonRunner(s.runner) || request.Source.NativePixelFormat == "" {
-		return comparisonDecoder{}, nil
+var comparisonCodecHardware sync.Map // comparisonCodecHardwareKey -> []string
+
+type comparisonCodecHardwareKey struct{ executable, codec string }
+
+// FFmpeg may silently run a software decoder when the codec has no matching
+// hardware implementation. Query the decoder's advertised input devices once.
+func comparisonCodecHardwareDevices(ctx context.Context, executable string, key comparisonCodecHardwareKey) ([]string, error) {
+	if value, ok := comparisonCodecHardware.Load(key); ok {
+		if devices, valid := value.([]string); valid {
+			return devices, nil
+		}
 	}
-	if comparisonHardwareDownload(ComparisonFrameObservation{PixelFormat: request.Source.NativePixelFormat}) == "" {
-		return comparisonDecoder{}, nil
-	}
-	surface := "sampling-file"
-	if request.analysis != nil {
-		surface = "analysis-file"
-	}
-	if request.Source.Input != nil {
-		surface += fmt.Sprintf("-authored/%s/%d", request.decodeOccurrence, request.decodeCodec)
-	}
-	key, candidates, err := comparisonDecoderInputs(ctx, executable, request.Source, surface)
+	runner := finiteComparisonRunner{base: commandRunner{}, outputLimit: 256 << 10}
+	result, err := runner.Run(ctx, executable, []string{"-hide_banner", "-h", "decoder=" + key.codec}, "")
 	if err != nil {
-		return comparisonDecoder{}, err
+		return nil, err
 	}
-	if len(candidates) == 0 {
-		return comparisonDecoder{}, nil
+	var devices []string
+	for line := range strings.SplitSeq(string(result.Stdout), "\n") {
+		if names, ok := strings.CutPrefix(strings.TrimSpace(line), "Supported hardware devices:"); ok {
+			devices = strings.Fields(names)
+			break
+		}
 	}
-	return s.admitComparisonDecoder(ctx, key, func() (comparisonDecoder, error) {
-		probeRequest := request
-		probeRequest.analysis = nil
-		probeRequest.DurationSeconds = min(request.DurationSeconds, .5+request.decodePrerollSeconds)
-		normalization, err := s.comparisonNormalizationFilter(probeRequest, mode)
-		if err != nil {
-			return comparisonDecoder{}, err
-		}
-		probe := slices.Clone(args)
-		probeFilter := filter
-		if request.Source.Input == nil {
-			// Bound both references by the same native clock. Input -t is
-			// relative to the preceding keyframe with noaccurate_seek and can
-			// otherwise truncate hardware's copy of this exact neighborhood.
-			_, tail, ok := strings.Cut(filter, ",")
-			if !ok || !strings.HasPrefix(filter, "trim=") {
-				return comparisonDecoder{}, errors.New("comparison decoder probe lacks a bounded file window")
-			}
-			start := request.Source.StartTimeSeconds + request.StartSeconds
-			probeFilter = fmt.Sprintf("trim=start=%.9f:end=%.9f,%s", start, start+probeRequest.DurationSeconds, tail)
-		} else {
-			for i, arg := range probe {
-				if arg == "-i" {
-					probe = slices.Insert(probe, i, "-t", strconv.FormatFloat(probeRequest.DurationSeconds, 'f', 9, 64))
-					break
-				}
-			}
-		}
-		probe = append(
-			probe,
-			"-vf",
-			probeFilter+normalization+",showinfo@comparison_output",
-			"-fps_mode",
-			"passthrough",
-			"-frames:v",
-			"50000",
-			"-pix_fmt",
-			"gray",
-			"-f",
-			"rawvideo",
-			"-",
-		)
-		if err := request.admitDecode(probeRequest.DurationSeconds); err != nil {
-			return comparisonDecoder{}, err
-		}
-		runner := finiteComparisonRunner{
-			base:           commandRunner{},
-			outputLimit:    50000 * 256,
-			retentionLimit: request.RetentionLimitBytes,
-		}
-		reference, err := runner.Run(ctx, executable, probe, "")
-		if err != nil {
-			return comparisonDecoder{}, err
-		}
-		observed, err := comparisonObservations(reference.Stderr)
-		if err != nil || len(observed) == 0 {
-			return comparisonDecoder{}, errors.New("comparison decoder reference lacks native provenance")
-		}
-		for _, frame := range observed {
-			if err := validateComparisonNativeFacts(request.Source, frame); err != nil {
-				return comparisonDecoder{}, err
-			}
-		}
-		download := comparisonHardwareDownload(observed[0])
-		if download == "" {
-			return comparisonDecoder{}, nil
-		}
-		for _, candidate := range candidates {
-			if err := request.admitDecode(probeRequest.DurationSeconds); err != nil {
-				return comparisonDecoder{}, err
-			}
-			started := time.Now()
-			candidate.download = download
-			backend := candidate.backend
-			hardwareProbe := comparisonHardwareProbeCommand(probe, candidate)
-			if request.Source.Input == nil {
-				for i, arg := range hardwareProbe {
-					if arg == "-ss" {
-						hardwareProbe = slices.Insert(hardwareProbe, i, "-noaccurate_seek")
-						break
-					}
-				}
-			}
-			result, err := runComparisonHardwareProbe(ctx, runner, executable, hardwareProbe, "")
-			if err != nil {
-				if comparisonTerminalFailure(err) {
-					return comparisonDecoder{}, err
-				}
-				if ctx.Err() != nil {
-					return comparisonDecoder{}, context.Cause(ctx)
-				}
-				if !errors.Is(err, errComparisonHardwareInitialization) && !errors.Is(err, ErrComparisonWorkerFailed) &&
-					!errors.Is(err, errComparisonHardwareUnavailable) {
-					return comparisonDecoder{}, err
-				}
-				logging.FromContext(
-					ctx,
-					s.logger,
-				).Debugf(
-					"comparisons: phase=decoder backend=%s decision=unavailable probe_seconds=%.3f",
-					backend,
-					time.Since(started).Seconds(),
-				)
-				continue
-			}
-			if !comparisonDecoderEquivalent(reference, result) {
-				logging.FromContext(
-					ctx,
-					s.logger,
-				).Debugf(
-					"comparisons: phase=decoder backend=%s decision=ineligible reason=canonical_output_mismatch probe_seconds=%.3f",
-					backend,
-					time.Since(started).Seconds(),
-				)
-				continue
-			}
-			logging.FromContext(
-				ctx,
-				s.logger,
-			).Debugf(
-				"comparisons: phase=decoder backend=%s decision=admitted probe_seconds=%.3f",
-				backend,
-				time.Since(started).Seconds(),
-			)
-			return candidate, nil
-		}
-		return comparisonDecoder{}, nil
-	})
+	comparisonCodecHardware.Store(key, devices)
+	return devices, nil
 }
 
-func comparisonDecoderInputs(ctx context.Context, executable string, source ComparisonSource, surface string) (string, []comparisonDecoder, error) {
+func comparisonDecoders(
+	ctx context.Context,
+	runner Runner,
+	executable string,
+	source ComparisonSource,
+	softwareOnly bool,
+	preferred string,
+) ([]comparisonDecoder, error) {
+	if softwareOnly || preferred == comparisonSoftwareDecoder || !nativeComparisonRunner(runner) || source.NativeCodec == "" {
+		return nil, nil
+	}
+	download := comparisonHardwareDownload(source)
+	if download == "" {
+		return nil, nil
+	}
 	if err := comparisonAnalysisCapabilityFor(ctx, executable); err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	stat, err := os.Stat(executable) // #nosec G703 -- Resolved local FFmpeg executable, independent of the source media path.
 	if err != nil {
-		return "", nil, fmt.Errorf("identify comparison decoder executable: %w", err)
+		return nil, fmt.Errorf("identify comparison decoder executable: %w", err)
 	}
 	value, _ := comparisonAnalysisCapabilities.Load(comparisonCapabilityIdentity{executable, stat.Size(), stat.ModTime().UnixNano()})
 	capability, ok := value.(comparisonAnalysisCapability)
 	if !ok {
-		return "", nil, errors.New("comparison executable changed during decoder admission")
+		return nil, errors.New("comparison executable changed during decoder selection")
 	}
 	backends := comparisonHardwareCandidates(runtime.GOOS, capability.hardware)
 	if len(backends) == 0 {
-		return "", nil, nil
+		return nil, nil
+	}
+	advertised, err := comparisonCodecHardwareDevices(ctx, executable, comparisonCodecHardwareKey{capability.hash, source.NativeCodec})
+	if err != nil {
+		return nil, err
+	}
+	backends = slices.DeleteFunc(backends, func(backend string) bool { return !slices.Contains(advertised, backend) })
+	if len(backends) == 0 {
+		return nil, nil
 	}
 	device, err := comparisonDeviceIdentity(ctx)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	if device.fingerprint == "" {
-		return "", nil, nil
+		return nil, nil
 	}
 	var candidates []comparisonDecoder
 	for _, backend := range backends {
-		candidate := comparisonDecoder{backend: backend}
+		if preferred != "" && backend != preferred {
+			continue
+		}
+		candidate := comparisonDecoder{backend: backend, download: download}
 		switch backend {
 		case "cuda":
 			candidate.device = "0"
@@ -338,121 +231,48 @@ func comparisonDecoderInputs(ctx context.Context, executable string, source Comp
 		}
 		candidates = append(candidates, candidate)
 	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
 	signature := source.InputFingerprint
 	if signature == "" {
 		stat, err := os.Stat(source.Path)
 		if err != nil {
-			return "", nil, fmt.Errorf("identify comparison decoder source: %w", err)
+			return nil, fmt.Errorf("identify comparison decoder source: %w", err)
 		}
 		fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 			Path           string
 			Size, Modified int64
 		}{source.Path, stat.Size(), stat.ModTime().UnixNano()})
 		if err != nil {
-			return "", nil, fmt.Errorf("fingerprint comparison decoder source: %w", err)
+			return nil, fmt.Errorf("fingerprint comparison decoder source: %w", err)
 		}
 		signature = string(fingerprint)
 	}
 	key, err := api.CanonicalWorkflowFingerprint(struct {
-		Executable, Device, Surface, Policy, Source, Codec, Profile, Format, Colour, Chroma, Interlace string
-		Width, Height                                                                                  int
-		HDR                                                                                            api.HDRFacts
-	}{capability.hash, device.fingerprint, surface, ComparisonAnalysisPolicyVersion, signature, source.Codec, source.CodecProfile, source.NativePixelFormat, source.NativeColour, source.NativeChromaLocation, source.Interlace, source.Width, source.Height, source.HDRFacts})
+		Executable, Device, Source, Codec, Profile, Format string
+		Width, Height                                      int
+	}{capability.hash, device.fingerprint, signature, source.NativeCodec, source.CodecProfile, source.NativePixelFormat, source.Width, source.Height})
 	if err != nil {
-		return "", nil, fmt.Errorf("fingerprint comparison decoder capability: %w", err)
+		return nil, fmt.Errorf("fingerprint comparison decoder capability: %w", err)
 	}
-	return string(key), candidates, nil
+	for i := range candidates {
+		candidates[i].key = string(key)
+	}
+	return candidates, nil
 }
 
-func (s *Service) admitComparisonDecoder(ctx context.Context, key string, probe func() (comparisonDecoder, error)) (comparisonDecoder, error) {
-	for {
-		comparisonDecoderDecisions.Lock()
-		if entry, ok := comparisonDecoderDecisions.values[key]; ok {
-			comparisonDecoderDecisions.Unlock()
-			select {
-			case <-entry.done:
-				// A failed owner's attempt is not a receipt for an active waiter.
-				// Its own probe must use its own context and work allowance.
-				if ctx.Err() == nil && (errors.Is(entry.err, context.Canceled) || errors.Is(entry.err, context.DeadlineExceeded) ||
-					errors.Is(entry.err, ErrComparisonFastInconclusive)) {
-					continue
-				}
-				return entry.decoder, entry.err
-			case <-ctx.Done():
-				select {
-				case <-entry.done:
-					if comparisonTerminalFailure(entry.err) {
-						return comparisonDecoder{}, entry.err
-					}
-				default:
-				}
-				return comparisonDecoder{}, fmt.Errorf("wait for comparison decoder admission: %w", context.Cause(ctx))
-			}
-		}
-		entry := &comparisonDecoderDecision{done: make(chan struct{})}
-		comparisonDecoderDecisions.values[key] = entry
-		comparisonDecoderDecisions.Unlock()
-		decoder, err := probe()
-		decoder.key = key
-		comparisonDecoderDecisions.Lock()
-		entry.decoder, entry.err = decoder, err
-		// Cancellation, exhaustion and integrity errors never become a negative
-		// hardware capability receipt for an unrelated later operation.
-		if err != nil {
-			delete(comparisonDecoderDecisions.values, key)
-		}
-		close(entry.done)
-		comparisonDecoderDecisions.Unlock()
-		return decoder, err
-	}
-}
-
-func pinComparisonSoftware(decoder comparisonDecoder) {
-	if decoder.key == "" {
-		return
-	}
-	comparisonDecoderDecisions.Lock()
-	defer comparisonDecoderDecisions.Unlock()
-	entry := &comparisonDecoderDecision{done: make(chan struct{})}
-	close(entry.done)
-	comparisonDecoderDecisions.values[decoder.key] = entry
-}
-
-func runComparisonHardwareProbe(ctx context.Context, runner Runner, executable string, args []string, dir string) (CommandResult, error) {
-	probeCtx, cancel := context.WithCancelCause(ctx)
+func runComparisonHardwareDecode(ctx context.Context, runner Runner, executable string, args []string, dir string) (CommandResult, error) {
+	decodeCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	timer := time.AfterFunc(3*time.Second, func() { cancel(errComparisonHardwareInitialization) })
 	defer timer.Stop()
-	probeCtx = context.WithValue(probeCtx, comparisonFirstNativeKey{}, func() { timer.Stop() })
-	result, err := runner.Run(probeCtx, executable, args, dir)
+	decodeCtx = context.WithValue(decodeCtx, comparisonFirstNativeKey{}, func() { timer.Stop() })
+	result, err := runner.Run(decodeCtx, executable, args, dir)
 	if err != nil {
-		return result, fmt.Errorf("initialize comparison decoder: %w", err)
+		return result, fmt.Errorf("run hardware comparison decoder: %w", err)
 	}
 	return result, nil
-}
-
-func comparisonHardwareProbeCommand(args []string, decoder comparisonDecoder) []string {
-	command := comparisonHardwareCommand(args, decoder)
-	for i, arg := range command {
-		if arg == "-vf" && i+1 < len(command) {
-			command[i+1] = strings.Replace(command[i+1], decoder.download, decoder.download+"showinfo@comparison_decoder_init,", 1)
-		}
-	}
-	return command
-}
-
-func comparisonDecoderEquivalent(reference, candidate CommandResult) bool {
-	a, aErr := comparisonObservations(reference.Stderr)
-	b, bErr := comparisonObservations(candidate.Stderr)
-	if aErr != nil || bErr != nil || len(a) == 0 || len(a) != len(b) || !bytes.Equal(reference.Stdout, candidate.Stdout) {
-		return false
-	}
-	for i := range a {
-		if a[i].PictureChecksum == "" || a[i].PlaneChecksums == "" || a[i].PixelFormat == "" || a[i].Colour == "" || a[i].ChromaLocation == "" || a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func (s *Service) runComparisonCaptureDecoder(
@@ -463,81 +283,32 @@ func (s *Service) runComparisonCaptureDecoder(
 	dir string,
 	source ComparisonSource,
 	softwareOnly bool,
+	preferred string,
 	surface string,
 ) (CommandResult, error) {
-	var decoder comparisonDecoder
-	if !softwareOnly && nativeComparisonRunner(runner) && source.NativePixelFormat != "" &&
-		comparisonHardwareDownload(ComparisonFrameObservation{PixelFormat: source.NativePixelFormat}) != "" {
-		key, candidates, err := comparisonDecoderInputs(ctx, executable, source, surface)
-		if err != nil {
-			return CommandResult{}, err
-		}
-		if len(candidates) > 0 {
-			decoder, err = s.admitComparisonDecoder(ctx, key, func() (comparisonDecoder, error) {
-				reference, err := runner.Run(ctx, executable, args, dir)
-				if err != nil {
-					return comparisonDecoder{}, fmt.Errorf("comparison capture reference: %w", err)
-				}
-				observed, err := comparisonObservations(reference.Stderr)
-				if err != nil || len(observed) != 1 {
-					return comparisonDecoder{}, errors.New("comparison capture reference lacks native provenance")
-				}
-				if err := validateComparisonNativeFacts(source, observed[0]); err != nil {
-					return comparisonDecoder{}, err
-				}
-				download := comparisonHardwareDownload(observed[0])
-				if download == "" {
-					return comparisonDecoder{}, nil
-				}
-				for _, candidate := range candidates {
-					candidate.download = download
-					result, probeErr := runComparisonHardwareProbe(ctx, runner, executable, comparisonHardwareProbeCommand(args, candidate), dir)
-					if probeErr != nil {
-						if comparisonTerminalFailure(probeErr) {
-							return comparisonDecoder{}, fmt.Errorf("comparison capture hardware probe: %w", probeErr)
-						}
-						if ctx.Err() != nil {
-							return comparisonDecoder{}, context.Cause(ctx)
-						}
-						if errors.Is(probeErr, errComparisonHardwareInitialization) || errors.Is(probeErr, ErrComparisonWorkerFailed) ||
-							errors.Is(probeErr, errComparisonHardwareUnavailable) {
-							continue
-						}
-						return comparisonDecoder{}, fmt.Errorf("comparison capture hardware probe: %w", probeErr)
-					}
-					if comparisonDecoderEquivalent(reference, result) {
-						return candidate, nil
-					}
-				}
-				return comparisonDecoder{}, nil
-			})
-			if err != nil {
-				return CommandResult{}, err
-			}
-		}
+	decoders, err := comparisonDecoders(ctx, runner, executable, source, softwareOnly, preferred)
+	if err != nil {
+		return CommandResult{}, err
 	}
-	result, effective, err := s.runComparisonDecode(ctx, runner, executable, args, dir, decoder, nil)
-	backend := effective.backend
-	if backend == "" {
-		backend = "software"
+	result, err := s.runComparisonDecode(ctx, runner, executable, args, dir, decoders, nil)
+	if err == nil {
+		logging.FromContext(ctx, s.logger).Debugf("comparisons: phase=capture_decode decoder=%s surface=%s", result.comparisonBackend, surface)
 	}
-	logging.FromContext(ctx, s.logger).Debugf("comparisons: phase=capture_decode decoder=%s surface=%s", backend, surface)
 	return result, err
 }
 
-// Both comparison sampling and exact capture share this fallback boundary.
-// Only a typed device outcome permits a same-command software retry; process,
-// source, provenance, corruption, cancellation and admission failures stay closed.
+// Only a hardware availability failure permits another decoder to try the
+// same command. The caller verifies native evidence before using the result.
 func (s *Service) runComparisonDecode(
 	ctx context.Context,
 	runner Runner,
 	executable string,
 	args []string,
 	dir string,
-	decoder comparisonDecoder,
+	decoders []comparisonDecoder,
 	request *ComparisonSampleRequest,
-) (CommandResult, comparisonDecoder, error) {
-	run := func(command []string) (CommandResult, error) {
+) (CommandResult, error) {
+	run := func(decoder comparisonDecoder, initialize bool) (CommandResult, error) {
 		if ctx.Err() != nil {
 			return CommandResult{}, context.Cause(ctx)
 		}
@@ -546,7 +317,23 @@ func (s *Service) runComparisonDecode(
 				return CommandResult{}, err
 			}
 		}
-		result, err := runner.Run(ctx, executable, command, dir)
+		if initialize {
+			// Native decode can begin long before trim or exact-frame selection yields output.
+			decoder.download += "showinfo@comparison_decoder_init=checksum=0,"
+		}
+		command := comparisonHardwareCommand(args, decoder)
+		var result CommandResult
+		var err error
+		if initialize {
+			result, err = runComparisonHardwareDecode(ctx, runner, executable, command, dir)
+		} else {
+			result, err = runner.Run(ctx, executable, command, dir)
+		}
+		backend := decoder.backend
+		if backend == "" {
+			backend = comparisonSoftwareDecoder
+		}
+		result.comparisonBackend = backend
 		if request != nil && request.analysis != nil {
 			request.analysis.totalMotionBytes += request.analysis.motion.bytes
 			request.analysis.totalSparseBytes += request.analysis.sparse.bytes
@@ -565,19 +352,33 @@ func (s *Service) runComparisonDecode(
 		}
 		return result, nil
 	}
-	result, err := run(comparisonHardwareCommand(args, decoder))
-	if decoder.backend == "" || !errors.Is(err, errComparisonHardwareUnavailable) || ctx.Err() != nil {
-		return result, decoder, err
+	for _, decoder := range decoders {
+		key := comparisonDecoderKey{decoder.key, decoder.backend}
+		state, _ := comparisonDecoderStates.Load(key)
+		if state == comparisonDecoderUnsupported {
+			continue
+		}
+		result, err := run(decoder, state != comparisonDecoderReady)
+		if err == nil {
+			comparisonDecoderStates.LoadOrStore(key, comparisonDecoderReady)
+			return result, nil
+		}
+		unsupported := errors.Is(err, errComparisonHardwareUnsupported)
+		if !unsupported && !errors.Is(err, errComparisonHardwareUnavailable) && !errors.Is(err, errComparisonHardwareInitialization) {
+			return result, err
+		}
+		if ctx.Err() != nil {
+			return CommandResult{}, fmt.Errorf("comparison decoder fallback canceled: %w", context.Cause(ctx))
+		}
+		if unsupported {
+			comparisonDecoderStates.Store(key, comparisonDecoderUnsupported)
+		} else {
+			comparisonDecoderStates.CompareAndDelete(key, comparisonDecoderReady)
+		}
+		if request != nil && request.analysis != nil {
+			request.analysis.reset(ctx)
+		}
+		logging.FromContext(ctx, s.logger).Debugf("comparisons: phase=decoder backend=%s decision=fallback reason=hardware_unavailable", decoder.backend)
 	}
-	pinComparisonSoftware(decoder)
-	if request != nil && request.analysis != nil {
-		request.analysis.reset(ctx)
-	}
-	logger := logging.FromContext(ctx, s.logger)
-	logger.Debugf("comparisons: phase=decoder backend=%s decision=software_retry reason=device_unavailable", decoder.backend)
-	started := time.Now()
-	result, err = run(args)
-	logger.Debugf("comparisons: phase=decoder backend=software decision=retry_completed elapsed_seconds=%.3f", time.Since(started).Seconds())
-	decoder.backend = ""
-	return result, decoder, err
+	return run(comparisonDecoder{}, false)
 }

@@ -41,6 +41,8 @@ type CommandResult struct {
 	// native execution streams this output separately from stdout.
 	SparseOutput []byte
 	ExitCode     int
+
+	comparisonBackend string
 }
 
 type commandRunner struct{}

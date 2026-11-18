@@ -6,6 +6,9 @@ package core
 import (
 	"testing"
 	"time"
+
+	"github.com/autobrr/upbrr/internal/services/screenshots"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestComparisonSampleChunksPreserveUsefulTiming(t *testing.T) {
@@ -63,5 +66,18 @@ func TestComparisonSampleChunksPreserveUsefulTiming(t *testing.T) {
 				t.Fatalf("next %.3fs section needs %d decoder calls, want %d (chunk %.3fs)", test.nextWindow, calls, test.wantCalls, chunk)
 			}
 		})
+	}
+}
+
+func TestComparisonWidenedWindowRequiresTheSamePictureForSceneEvidence(t *testing.T) {
+	evidence := &api.ComparisonSceneEvidence{Eligible: true}
+	original := screenshots.ComparisonFrameObservation{FrameID: "native-picture", PictureChecksum: "12345678"}
+	reference := []screenshots.ComparisonSample{{ComparisonFrameObservation: original, Evidence: evidence}}
+	if comparisonSectionFrameEvidence(reference, original) != evidence {
+		t.Fatal("same native picture lost its measured scene eligibility")
+	}
+	original.PictureChecksum = "87654321"
+	if comparisonSectionFrameEvidence(reference, original) != nil {
+		t.Fatal("different native picture inherited eligibility from the same timestamp")
 	}
 }

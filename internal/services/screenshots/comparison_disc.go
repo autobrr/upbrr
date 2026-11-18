@@ -30,6 +30,16 @@ type ComparisonFrameReplay struct {
 	Window          comparisonDiscWindow
 	PictureChecksum string
 	PixelFormat     string
+	Decoder         string `json:",omitempty"`
+}
+
+// PreferredDecoder selects the original backend when revalidating a witness.
+func (r *ComparisonFrameReplay) PreferredDecoder() string {
+	if r == nil || r.Decoder == "" && r.PictureChecksum == "" {
+		return ""
+	}
+	// Older witnesses used software as the comparison reference.
+	return cmp.Or(r.Decoder, comparisonSoftwareDecoder)
 }
 
 type comparisonDiscWindow struct {
@@ -42,6 +52,19 @@ type comparisonDiscWindow struct {
 	SourceBase90, TitleBase90, Start90, End90 int64
 	PrerollSeconds                            float64
 	ProbeBytes                                int64
+}
+
+func (w comparisonDiscWindow) nativeCodec(inspected string) string {
+	switch w.Codec {
+	case 0x02:
+		return "mpeg2video"
+	case 0x1b:
+		return "h264"
+	case 0x24:
+		return "hevc"
+	default:
+		return inspected
+	}
 }
 
 func comparisonDiscFailure(reason string) error {
@@ -310,6 +333,7 @@ func bindDiscObservation(source ComparisonSource, window comparisonDiscWindow, o
 		Window:          window,
 		PictureChecksum: observation.PictureChecksum,
 		PixelFormat:     observation.PixelFormat,
+		Decoder:         observation.decoder,
 	}
 	return nil
 }
@@ -381,10 +405,8 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 			duration: float64(window.End90-window.Start90) / 90000,
 		})
 		physicalRequest := request
+		physicalRequest.Source.NativeCodec = window.nativeCodec(request.Source.NativeCodec)
 		physicalRequest.DurationSeconds = float64(window.End90-window.Start90)/90000 + window.PrerollSeconds
-		physicalRequest.decodePrerollSeconds = window.PrerollSeconds
-		physicalRequest.decodeOccurrence = window.Occurrence
-		physicalRequest.decodeCodec = window.Codec
 		for _, span := range window.Spans {
 			physicalRequest.encodedAttemptBytes += span.End - span.Start
 		}
@@ -429,6 +451,7 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 		}
 		seen := map[string]bool{}
 		for i, observation := range observations {
+			observation.decoder = result.comparisonBackend
 			if err := bindDiscObservation(request.Source, window, &observation); err != nil {
 				return nil, err
 			}
@@ -520,6 +543,7 @@ func (s *Service) InspectResolvedComparisonSource(
 		return source, inspectErr
 	}
 	source.HDRFacts = inspected.HDRFacts
+	source.NativeCodec = inspected.NativeCodec
 	// Nominal rate is decoder-header evidence; native display intervals remain
 	// authoritative for matching and may alternate in a 90 kHz clock.
 	if first.FrameRateNumerator > 0 && first.FrameRateDenominator > 0 {
@@ -584,14 +608,17 @@ func (r exactDiscCaptureRunner) Run(ctx context.Context, name string, args []str
 	var result CommandResult
 	var err error
 	if r.service != nil {
+		source := r.source
+		source.NativeCodec = r.window.nativeCodec(source.NativeCodec)
 		result, err = r.service.runComparisonCaptureDecoder(
 			ctx,
 			runner,
 			name,
 			command,
 			dir,
-			r.source,
+			source,
 			r.softwareOnly,
+			r.replay.PreferredDecoder(),
 			fmt.Sprintf("capture-authored/%s/%d", r.window.Occurrence, r.window.Codec),
 		)
 	} else {
@@ -623,14 +650,10 @@ func (s *Service) captureDiscComparison(ctx context.Context, request ComparisonC
 	}
 	defer cleanup()
 	service := *s
-	toneMap := s.cfg.ScreenshotHandling.ToneMap
-	if request.ToneMap != nil {
-		toneMap = *request.ToneMap
-	}
 	service.runner = exactDiscCaptureRunner{
 		service:      s,
 		source:       request.Source,
-		softwareOnly: toneMap && request.Source.HDRFacts.SupportsToneMapping() && s.cfg.ScreenshotHandling.UseLibplacebo,
+		softwareOnly: request.PreferredDecoder(s.cfg.ScreenshotHandling) == comparisonSoftwareDecoder,
 		base:         s.runner,
 		window:       replay.Window,
 		replay:       *replay,

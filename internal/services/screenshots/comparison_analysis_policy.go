@@ -11,9 +11,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// ComparisonAnalysisPolicyVersion binds evidence to analysis conversion rather
-// than the user's independent screenshot rendering preferences.
-const ComparisonAnalysisPolicyVersion = "native-analysis-mobius10-linear1024-libplacebo-hable-v1"
+// ComparisonAnalysisPolicyVersion binds evidence to decoder selection and
+// analysis conversion, independently of screenshot rendering preferences.
+const ComparisonAnalysisPolicyVersion = "native-analysis-mobius10-linear1024-libplacebo-hable-v2"
 const comparisonAnalysisAlgorithm = "mobius"
 const comparisonAnalysisDesat = 10
 
