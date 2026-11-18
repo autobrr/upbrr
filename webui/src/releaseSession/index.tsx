@@ -2747,6 +2747,7 @@ export function ReleaseSessionProvider({
     sourceID: string,
     timestampSeconds: number,
     stepDirection?: -1 | 0 | 1,
+    startingPreviewID?: string,
   ): Promise<FramePreview | null> => {
     const current = workflowView.current;
     const source = current?.media?.comparisons?.sources.find(
@@ -2758,14 +2759,16 @@ export function ReleaseSessionProvider({
     if (!command) return null;
     setScreenshotLocalAction("comparison");
     try {
+      const key = `comparison-preview-${current.workflow.id}-${current.workflow.revision}-${sourceID}-${timestampSeconds}`;
       const preview = await activePorts.workflow.previewFrame(
         current,
         "",
         timestampSeconds,
-        `comparison-preview-${current.workflow.id}-${current.workflow.revision}-${sourceID}-${timestampSeconds}-${stepDirection || 0}`,
+        stepDirection ? key + "-" + stepDirection + "-" + (startingPreviewID ?? "") : key,
         command.controller.signal,
         sourceID,
         stepDirection,
+        startingPreviewID,
       );
       if (command.controller.signal.aborted) return null;
       if (preview.comparisonSourceId !== sourceID)

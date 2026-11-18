@@ -93,6 +93,11 @@ func renderFrame(ctx context.Context, runner Runner, executable string, req capt
 				errors.Is(err, internalerrors.ErrFrameCorruption) || errors.Is(err, errComparisonDecoderLimit) {
 				return frame, err
 			}
+			if _, comparison := runner.(*comparisonRunner); comparison {
+				if failure, ok := api.AsOperationFailure(err); ok && failure.Code == api.OperationFailureInvalidSource {
+					return frame, err
+				}
+			}
 			stage := renderFailureStage(result, err)
 			frame.Processing.Steps = append(frame.Processing.Steps, api.ScreenshotRenderStep{
 				Renderer: mode,

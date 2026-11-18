@@ -145,8 +145,9 @@ func (r finiteComparisonRunner) runAnalysis(
 	inputURL, _ := ctx.Value(comparisonInputURLKey{}).(string)
 	diagnostic := &comparisonDiagnosticStream{
 		stream:         stream,
-		retentionLimit: r.retentionLimit,
+		retain:         r.retain,
 		inputURL:       inputURL,
+		packets:        packetTraceFor(args),
 		outputURL:      sink.url,
 		hardwareDecode: slices.Contains(args, "-hwaccel"),
 	}
@@ -229,7 +230,7 @@ func (r finiteComparisonRunner) runAnalysis(
 	if parseErr != nil {
 		return CommandResult{}, parseErr
 	}
-	result := CommandResult{Stderr: data}
+	result := CommandResult{bounds: diagnostic.bounds, Stderr: data}
 	if runErr != nil {
 		result.ExitCode = 1
 		return result, comparisonProcessFailure(runErr, 1)

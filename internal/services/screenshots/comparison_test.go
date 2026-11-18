@@ -39,6 +39,9 @@ func (run comparisonInspectionRunner) Run(ctx context.Context, name string, args
 }
 
 func TestComparisonDiagnosticBoundsPreserveProvenance(t *testing.T) {
+	if got := comparisonColour("color_range:tv color_space:unknown color_primaries:unknown color_trc:unknownNew subtitle stream"); got != "tv/unknown/unknown/unknown" {
+		t.Fatalf("demux notice altered the colour facts: %q", got)
+	}
 	diagnostic := &comparisonDiagnosticStream{}
 	if _, err := diagnostic.Write([]byte(comparisonDiagnostics(5800, "B"))); err != nil {
 		t.Fatal(err)
@@ -187,7 +190,8 @@ func TestComparisonSoftwareReplayRevalidatesHardwareWitness(t *testing.T) {
 			allowed:  true,
 		},
 		{
-			name:     "same timestamp different picture",
+			name:     "same address different decoded bytes",
+			allowed:  true,
 			checksum: "87654321",
 			pts:      5800,
 		},
@@ -201,7 +205,7 @@ func TestComparisonSoftwareReplayRevalidatesHardwareWitness(t *testing.T) {
 			stderr := fmt.Sprintf("[Parsed_showinfo_1 @ synthetic] config in time_base: 1/1000, frame_rate: 25/1\n"+
 				"[Parsed_showinfo_1 @ synthetic] n: 0 pts: %d pts_time:5.8 fmt:yuv420p sar:1/1 s:2x2 i:P type:B checksum:%s\n", tc.pts, tc.checksum)
 			runner := comparisonInspectionRunner(func(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
-				if slices.Contains(args, "-hwaccel") {
+				if !strings.Contains(ffmpegValueAfter(args, "-vf"), "eq(n,20)*eq(pts,5800)") || ffmpegValueAfter(args, "-ss") != "5.000000000" || slices.Contains(args, "-hwaccel") {
 					t.Fatal("selected backend is unavailable to the injected runner")
 				}
 				return CommandResult{Stdout: png, Stderr: []byte(stderr)}, nil
@@ -211,9 +215,16 @@ func TestComparisonSoftwareReplayRevalidatesHardwareWitness(t *testing.T) {
 				Source:           source,
 				TimestampSeconds: 5.8,
 				Replay: &ComparisonFrameReplay{
-					Identity:        identity,
-					Decoder:         "cuda",
-					PictureChecksum: "12345678",
+					Identity: identity,
+					Version:  2,
+					File: &ComparisonFileInterval{
+						Seek:     5,
+						Start:    5,
+						Duration: 1,
+						Slot:     20,
+						FirstPTS: 5000,
+						LastPTS:  5960,
+					},
 				},
 			})
 			if !tc.allowed {
@@ -222,11 +233,50 @@ func TestComparisonSoftwareReplayRevalidatesHardwareWitness(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || !bytes.Equal(frame.ImageBytes, png) || frame.Replay == nil || frame.Replay.Decoder != "software" || *frame.Identity != identity {
+			if err != nil || !bytes.Equal(frame.ImageBytes, png) || frame.Replay == nil || frame.Replay.File.Slot != 20 || *frame.Identity != identity {
 				t.Fatalf("software lost the matched frame during revalidation: %v", err)
 			}
 		})
 	}
+	t.Run("clock reset and overlap", func(t *testing.T) {
+		bind := func(start float64, position int64, ticks ...int64) ([]ComparisonFrameObservation, error) {
+			frames := make([]ComparisonFrameObservation, len(ticks))
+			for i, tick := range ticks {
+				frames[i] = ComparisonFrameObservation{
+					PTS:                 tick,
+					TimestampSeconds:    float64(tick) / 1000,
+					TimeBaseNumerator:   1,
+					TimeBaseDenominator: 1000,
+					packetPosition:      new(position + tick),
+				}
+			}
+			err := bindComparisonSequence(ComparisonSampleRequest{
+				Source:          source,
+				StartSeconds:    start,
+				DurationSeconds: 1,
+				seek:            start,
+			}, frames, nil, nil)
+			return frames, err
+		}
+		first, err := bind(5, 100, 5720, 5760, 5800, 5840)
+		if err != nil {
+			t.Fatal(err)
+		}
+		overlap, err := bind(5.7, 100, 5760, 5800, 5840)
+		if err != nil || !first[2].Replay.SamePicture(overlap[1].Replay) {
+			t.Fatal("one physical picture lost its overlapping address")
+		}
+		second, err := bind(5.7, 90000, 5760, 5800, 5840)
+		if err != nil || first[2].FrameID != second[1].FrameID || first[2].Replay.SamePicture(second[1].Replay) {
+			t.Fatal("colliding public ID aliased a different physical interval")
+		}
+		if _, err = bind(5, 100, 5760, 5800, 5800, 5840); err == nil {
+			t.Fatal("two native pictures within a decode acquired the same address")
+		}
+		if _, err = bind(5, 100, 5760, 5800, 5720); err == nil {
+			t.Fatal("regressing native clock acquired a locator")
+		}
+	})
 }
 
 func TestComparisonCapturePreservesObservedIdentityAcrossRendererFallback(t *testing.T) {
@@ -352,11 +402,11 @@ func TestComparisonCaptureRejectsBlackMissingAndChangedIdentity(t *testing.T) {
 			calls:   1,
 		},
 		{
-			name:  "overlay cannot change decoded picture",
+			name:  "invalid caption image",
 			label: "Source B",
 			replies: []renderReply{
 				{payload: valid, stderr: comparisonDiagnostics(5800, "P")},
-				{payload: valid, stderr: comparisonDiagnostics(5900, "P")},
+				{payload: []byte("invalid")},
 			},
 			calls: 2,
 		},
@@ -386,7 +436,7 @@ func TestComparisonCaptureRejectsBlackMissingAndChangedIdentity(t *testing.T) {
 				t.Fatalf("capture error = %v, want %v", err, test.want)
 			}
 			for _, args := range runner.args {
-				if ffmpegValueAfter(args, "-ss") != "0.750000000" {
+				if ffmpegValueAfter(args, "-i") != "pipe:0" && ffmpegValueAfter(args, "-ss") != "0.750000000" {
 					t.Fatalf("independent time recovery: %v", args)
 				}
 			}
@@ -432,7 +482,7 @@ func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 	samples, err := service.SampleComparisonSource(t.Context(), ComparisonSampleRequest{
 		Source:          source,
 		DurationSeconds: 1,
-		StrideSeconds:   0.5,
+		StrideSeconds:   0.1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -819,12 +869,109 @@ func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
 		Replay:           later[0].Replay,
 	}
 	actual, err := service.ComparisonCapture(t.Context(), replay)
-	if err != nil || actual.PictureChecksum != later[0].PictureChecksum || actual.PTS != later[0].PTS {
+	if err != nil || !actual.Replay.SamePicture(later[0].Replay) || actual.PTS != later[0].PTS {
 		t.Fatalf("bounded replay changed the selected picture: %v", err)
 	}
 	replay.TimestampSeconds = 0
 	if frame, err := service.ComparisonCapture(t.Context(), replay); err == nil || len(frame.ImageBytes) != 0 {
 		t.Fatal("a stale file locator scanned beyond its bounded replay window")
+	}
+}
+
+// Both authored stretches have the same native ticks but visibly different
+// pictures. The packet offset is independently known from their byte boundary.
+func TestComparisonNativeFileClockReset(t *testing.T) {
+	executable, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("native reset fixture requires FFmpeg")
+	}
+	var movie []byte
+	boundary := 0
+	for _, colour := range []string{"red", "blue"} {
+		segment, err := exec.CommandContext(t.Context(), executable, "-v", "error", "-f", "lavfi", "-i", "color=c="+colour+":s=64x64:r=10:d=2", "-c:v", "mpeg2video", "-threads", "1", "-g", "1", "-muxdelay", "0", "-f", "mpegts", "pipe:1").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if colour == "blue" {
+			boundary = len(movie)
+		}
+		movie = append(movie, segment...)
+	}
+	path := filepath.Join(t.TempDir(), "clock-reset.ts")
+	if err := os.WriteFile(path, movie, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil)
+	source := ComparisonSource{
+		Path:             path,
+		InputFingerprint: "reset-fixture",
+		Width:            64,
+		Height:           64,
+		DurationSeconds:  4,
+	}
+	blue := source
+	blue.Path = filepath.Join(filepath.Dir(path), "blue.ts")
+	blue.DurationSeconds = 2
+	if err := os.WriteFile(blue.Path, movie[boundary:], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	native, err := service.ComparisonPreview(t.Context(), ComparisonCaptureRequest{Source: blue, TimestampSeconds: .6})
+	if err != nil || native.Replay == nil || native.Replay.File == nil || native.Replay.File.PacketPosition == nil {
+		t.Fatalf("could not measure the blue picture in the independently authored segment: %v", err)
+	}
+	assertBlue := func(t *testing.T, frame ComparisonFrame) {
+		t.Helper()
+		img, _, err := image.Decode(bytes.NewReader(frame.ImageBytes))
+		if err != nil {
+			t.Fatal(err)
+		}
+		red, _, blue, _ := img.At(32, 32).RGBA()
+		if blue <= red {
+			t.Fatal("replay substituted the red stretch for the known blue picture")
+		}
+	}
+	assertBlue(t, native)
+	// Both byte streams begin at the same native tick. Translate the known
+	// blue packet into the combined file before asking the renderer to seek.
+	interval := native.Replay.File
+	bluePacket := int64(boundary) + *interval.PacketPosition
+	interval.PacketPosition = &bluePacket
+	for _, neighbor := range []*ComparisonFileNeighbor{interval.Previous, interval.Next} {
+		if neighbor != nil {
+			neighbor.Position += int64(boundary)
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		seconds float64
+		replay  *ComparisonFrameReplay
+	}{
+		{"fresh cursor inside the second stretch", 2.6, nil},
+		{"stored second-stretch picture at the repeated tick", native.RelativeTimestampSeconds, native.Replay},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame, err := service.ComparisonPreview(t.Context(), ComparisonCaptureRequest{
+				Source:           source,
+				TimestampSeconds: tc.seconds,
+				Replay:           tc.replay,
+			})
+			if err != nil {
+				failure, ok := api.AsOperationFailure(err)
+				if errors.Is(err, internalerrors.ErrFrameCorruption) || ok && slices.Contains([]string{"inspect_frame_required", "ambiguous_native_pts", "ambiguous_packet_address", "replay_packet_changed", "replay_picture_changed"}, failure.ComparisonReason) {
+					if len(frame.ImageBytes) != 0 {
+						t.Fatal("an ambiguous reset still published a picture")
+					}
+					t.Logf("refused second-stretch replay: %v", err)
+					return
+				}
+				t.Fatal(err)
+			}
+			if frame.Replay == nil || frame.Replay.File == nil || frame.Replay.File.PacketPosition == nil ||
+				*frame.Replay.File.PacketPosition < int64(boundary) || tc.replay != nil && (*frame.Replay.File.PacketPosition != bluePacket || frame.PTS != native.PTS) {
+				t.Fatal("the second physical stretch was not selected")
+			}
+			assertBlue(t, frame)
+		})
 	}
 }
 
@@ -913,7 +1060,7 @@ func TestLocalComparisonHDRCaptureReplay(t *testing.T) {
 		OutputWidth:      1920,
 		OutputHeight:     1080,
 	})
-	if err != nil || frame.PictureChecksum != selected.PictureChecksum || frame.PTS != selected.PTS || frame.TimeBaseDenominator != selected.TimeBaseDenominator ||
+	if err != nil || !frame.Replay.SamePicture(selected.Replay) || frame.PTS != selected.PTS || frame.TimeBaseDenominator != selected.TimeBaseDenominator ||
 		frame.Processing.Renderer != "libplacebo" || !frame.Processing.Tonemapped || frame.Width != 1920 || frame.Height != 1080 {
 		t.Fatalf("GPU replay lost its original picture, renderer or canvas: %v", err)
 	}

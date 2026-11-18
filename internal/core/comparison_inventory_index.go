@@ -32,14 +32,15 @@ type comparisonInventoryBlock struct {
 }
 
 func comparisonInventoryIndexBytes(ref *comparisonSceneInventory) int64 {
-	return int64(len(ref.Blocks)) * 160
+	return int64(len(ref.Blocks))*160 + int64(len(ref.Enclosed))*256
 }
 
 func comparisonInventoryIndexDigest(ref *comparisonSceneInventory) string {
 	data, err := json.Marshal(struct {
 		FileSHA256 string
 		Blocks     []comparisonInventoryBlock
-	}{ref.SHA256, ref.Blocks})
+		Enclosed   map[string]screenshots.ComparisonFileInterval `json:",omitempty"`
+	}{ref.SHA256, ref.Blocks, ref.Enclosed})
 	if err != nil {
 		return ""
 	}
@@ -47,16 +48,16 @@ func comparisonInventoryIndexDigest(ref *comparisonSceneInventory) string {
 }
 
 func sealComparisonInventoryIndex(ref *comparisonSceneInventory) {
-	if len(ref.Blocks) > 0 {
+	if len(ref.Blocks) > 0 || len(ref.Enclosed) > 0 {
 		ref.IndexSHA256 = comparisonInventoryIndexDigest(ref)
 	}
 }
 
 func validateComparisonInventoryIndex(ref *comparisonSceneInventory) error {
-	if len(ref.Blocks) == 0 && ref.IndexSHA256 == "" {
+	if len(ref.Blocks) == 0 && len(ref.Enclosed) == 0 && ref.IndexSHA256 == "" {
 		return nil // Legacy inventories gain their index during verified reuse.
 	}
-	if !ref.Compressed || len(ref.Blocks) == 0 || len(ref.Blocks) > comparisonInventoryBlockLimit ||
+	if !ref.Compressed || (len(ref.Blocks) == 0 && (ref.Bytes != 0 || len(ref.Enclosed) == 0)) || len(ref.Blocks) > comparisonInventoryBlockLimit ||
 		ref.IndexSHA256 == "" || comparisonInventoryIndexDigest(ref) != ref.IndexSHA256 {
 		return errors.New("comparison inventory index changed")
 	}

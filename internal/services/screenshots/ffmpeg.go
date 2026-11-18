@@ -35,6 +35,7 @@ type Runner interface {
 // CommandResult preserves command output and the observed process exit code
 // for fallback decisions and bounded diagnostics.
 type CommandResult struct {
+	bounds *comparisonSequenceBounds
 	Stdout []byte
 	Stderr []byte
 	// SparseOutput supplies secondary comparison rasters from injected runners;

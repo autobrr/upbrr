@@ -32,7 +32,7 @@ type comparisonCaptureEvent struct {
 // One input owns one worker batch. Only this coordinator invokes publication or
 // mutable progress, and every worker is joined before returning to the caller.
 func captureComparisonBatch(ctx context.Context, renderer comparisonFrameRenderer, jobs []comparisonCaptureJob, concurrency int,
-	progress func(comparisonCaptureJob, api.WorkflowProgressUpdate), publish func(comparisonCaptureJob, screenshots.ComparisonFrame) error,
+	progress func(comparisonCaptureJob, api.WorkflowProgressUpdate), publish func(comparisonCaptureJob, screenshots.ComparisonFrame, bool) error,
 ) error {
 	workCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -97,25 +97,23 @@ func captureComparisonBatch(ctx context.Context, renderer comparisonFrameRendere
 				events = nil
 				continue
 			}
-			if firstErr != nil {
-				// Cancellation permits partial publication; an integrity failure
-				// returned by a worker must still fail closed while we drain.
-				if event.err != nil && !errors.Is(event.err, context.Canceled) && !errors.Is(event.err, context.DeadlineExceeded) &&
-					(errors.Is(firstErr, context.Canceled) || errors.Is(firstErr, context.DeadlineExceeded)) {
-					firstErr = event.err
-				}
-				if event.done != nil {
-					close(event.done)
-				}
-				continue
-			}
 			if event.update != nil {
-				progress(event.job, *event.update)
+				if firstErr == nil && workCtx.Err() == nil {
+					progress(event.job, *event.update)
+				}
 				continue
 			}
-			firstErr = event.err
-			if firstErr == nil {
-				firstErr = publish(event.job, event.frame)
+			if firstErr == nil || comparisonCancellationOnly(firstErr) {
+				switch {
+				case event.err != nil:
+					if firstErr == nil || !comparisonCancellationOnly(event.err) {
+						firstErr = event.err
+					}
+				default:
+					if err := publish(event.job, event.frame, workCtx.Err() == nil); err != nil {
+						firstErr = &comparisonPublicationError{err}
+					}
+				}
 			}
 			close(event.done)
 			if firstErr != nil {
@@ -138,6 +136,30 @@ func captureComparisonBatch(ctx context.Context, renderer comparisonFrameRendere
 		return fmt.Errorf("capture comparison input batch: %w", firstErr)
 	}
 	return nil
+}
+
+// Publication failure always invalidates the attempted snapshot.
+type comparisonPublicationError struct{ error }
+
+func (e *comparisonPublicationError) Unwrap() error { return e.error }
+
+func comparisonCancellationOnly(err error) bool {
+	if _, fatal := errors.AsType[*comparisonPublicationError](err); fatal {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		for _, cause := range causes {
+			if !comparisonCancellationOnly(cause) {
+				return false
+			}
+		}
+		return len(causes) > 0
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return comparisonCancellationOnly(cause)
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func validateComparisonCapture(job comparisonCaptureJob, frame screenshots.ComparisonFrame) error {

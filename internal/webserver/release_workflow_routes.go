@@ -233,7 +233,7 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 			request.DiscID,
 			request.TimestampSeconds,
 			request.ComparisonSourceID,
-			request.ComparisonStepDirection,
+			request.ComparisonStepDirection, api.PublicResourceID(r.URL.Query().Get("previewId")),
 		)
 		if err != nil {
 			writeAppError(w, err)

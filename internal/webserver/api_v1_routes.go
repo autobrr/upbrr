@@ -354,7 +354,7 @@ func (s *Server) handleAPIV1WorkflowResource(w http.ResponseWriter, r *http.Requ
 			request.DiscID,
 			request.TimestampSeconds,
 			request.ComparisonSourceID,
-			request.ComparisonStepDirection,
+			request.ComparisonStepDirection, api.PublicResourceID(r.URL.Query().Get("previewId")),
 		)
 		if err != nil {
 			writeAPIV1WorkflowError(w, err)

@@ -22,7 +22,7 @@ import (
 type ComparisonMediaBuilder interface {
 	EditComparisons(context.Context, api.ReleaseRef, api.TrackerReleaseProjectionSet, *api.MediaArtifactSet, any,
 		api.ComparisonInstructions, []StagedMediaAttachment, time.Time) (api.MediaArtifactSet, RetainedMediaResource, error)
-	PreviewComparisonFrame(context.Context, api.ReleaseRef, api.MediaArtifactSet, any, string, float64, int) (MediaPreviewContent, error)
+	PreviewComparisonFrame(context.Context, api.ReleaseRef, api.MediaArtifactSet, any, string, float64, int, *MediaPreviewContent) (MediaPreviewContent, error)
 }
 
 // ComparisonIncompleteError permits publication only of validated matched
@@ -475,25 +475,9 @@ func (m *Module) editComparisons(ctx context.Context, owner string, state *State
 		}
 		contents := make([]MediaPreviewContent, 0, len(instructions.FrameSelections))
 		for _, selection := range instructions.FrameSelections {
-			value, loadErr := m.private.Get(owner, state.Workflow.ID, previewPrivateResourceID(selection.PreviewID), now)
-			if loadErr != nil {
-				return CommandResult{}, api.NewOperationError(api.OperationFailure{
-					Code:             api.OperationFailureStaleResult,
-					Operation:        api.OperationKindMedia,
-					Recovery:         api.OperationRecoveryReviewAgain,
-					ComparisonReason: "expired_preview",
-					Message:          "Inspect this comparison frame again before applying it.",
-				}, loadErr)
-			}
-			content, ok := value.(MediaPreviewContent)
-			if !ok || content.WorkflowID != state.Workflow.ID || content.WorkflowRevision != state.Workflow.Revision ||
-				content.ComparisonSourceID != selection.SourceID ||
-				content.ObservedIdentity == nil ||
-				content.Media == nil ||
-				prior == nil ||
-				content.Media.ID != prior.ID ||
-				content.Media.Revision != prior.Revision {
-				return CommandResult{}, ErrPrivateResourceIntegrity
+			content, err := m.comparisonPreviewContent(owner, state.Workflow, prior, selection.SourceID, selection.PreviewID, now)
+			if err != nil {
+				return CommandResult{}, err
 			}
 			contents = append(contents, content)
 		}
@@ -570,10 +554,40 @@ func (m *Module) publishComparisonMutation(owner string, state *State, revision 
 	return m.publishRetainedMediaMutation(owner, state, revision, now, snapshot, private)
 }
 
+func (m *Module) comparisonPreviewContent(
+	owner string,
+	workflow api.ReleaseWorkflow,
+	media *api.MediaArtifactSet,
+	sourceID string,
+	id api.PublicResourceID,
+	now time.Time,
+) (MediaPreviewContent, error) {
+	value, err := m.private.Get(owner, workflow.ID, previewPrivateResourceID(id), now)
+	if err != nil {
+		return MediaPreviewContent{}, api.NewOperationError(api.OperationFailure{
+			Code:             api.OperationFailureStaleResult,
+			Operation:        api.OperationKindMedia,
+			Recovery:         api.OperationRecoveryReviewAgain,
+			ComparisonReason: "expired_preview",
+			Message:          "Inspect this comparison frame again.",
+		}, err)
+	}
+	content, ok := value.(MediaPreviewContent)
+	if !ok || content.WorkflowID != workflow.ID || content.WorkflowRevision != workflow.Revision || content.ComparisonSourceID != sourceID ||
+		content.ObservedIdentity == nil ||
+		content.Media == nil ||
+		media == nil ||
+		content.Media.ID != media.ID ||
+		content.Media.Revision != media.Revision {
+		return MediaPreviewContent{}, ErrPrivateResourceIntegrity
+	}
+	return content, nil
+}
+
 // PreviewComparisonFrame inspects one retained source without changing the main
 // input, captured rows or approval. The preview expires with ordinary previews.
 func (m *Module) PreviewComparisonFrame(ctx context.Context, owner string, workflow api.WorkflowID,
-	revision api.WorkflowRevision, sourceID string, timestamp float64, step int) (api.FramePreview, error) {
+	revision api.WorkflowRevision, sourceID string, timestamp float64, step int, from api.PublicResourceID) (api.FramePreview, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" || workflow == "" || revision == 0 {
 		return api.FramePreview{}, ErrWorkflowNotFound
@@ -613,7 +627,18 @@ func (m *Module) PreviewComparisonFrame(ctx context.Context, owner string, workf
 	if snapshot == nil || snapshot.Comparisons == nil {
 		return api.FramePreview{}, ErrInvalidTransition
 	}
-	content, err := builder.PreviewComparisonFrame(ctx, release, *snapshot, private, sourceID, timestamp, step)
+	var starting *MediaPreviewContent
+	if from != "" {
+		content, err := m.comparisonPreviewContent(owner, state.Workflow, snapshot, sourceID, from, now)
+		if err != nil {
+			return api.FramePreview{}, err
+		}
+		if step == 0 || content.TimestampSeconds != timestamp {
+			return api.FramePreview{}, ErrPrivateResourceIntegrity
+		}
+		starting = &content
+	}
+	content, err := builder.PreviewComparisonFrame(ctx, release, *snapshot, private, sourceID, timestamp, step, starting)
 	if err != nil {
 		return api.FramePreview{}, fmt.Errorf("preview comparison frame: %w", err)
 	}

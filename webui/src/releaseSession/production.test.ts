@@ -127,6 +127,7 @@ describe("productionReleaseSessionPorts", () => {
       new AbortController().signal,
       "source-2",
       -1,
+      "selected-preview",
     );
     await ports.workflow.discoverComparisonSource(
       current,
@@ -147,7 +148,7 @@ describe("productionReleaseSessionPorts", () => {
         },
       },
       {
-        method: "PreviewReleaseWorkflowFrame",
+        method: "PreviewReleaseWorkflowFrame?previewId=selected-preview",
         body: {
           workflowId: "workflow-1",
           expectedRevision: 7,

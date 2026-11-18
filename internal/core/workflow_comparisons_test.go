@@ -297,7 +297,7 @@ func TestComparisonInheritedToneMapChangeRetainsFramesForRecapture(t *testing.T)
 		recaptured.Comparisons.ApprovedFingerprint != "" {
 		t.Fatal("capture skipped invalidated pixels, changed the selected frame or overwrote the inherited/explicit choices")
 	}
-	preview, err := b.PreviewComparisonFrame(t.Context(), release, recaptured, private, "main", *after[0].TimestampSeconds, 0)
+	preview, err := b.PreviewComparisonFrame(t.Context(), release, recaptured, private, "main", *after[0].TimestampSeconds, 0, nil)
 	if err != nil || !preview.Processing.Tonemapped || *preview.ObservedPTS != *after[0].ObservedPTS {
 		t.Fatalf("recaptured pixels and current preview disagree: %v", err)
 	}
@@ -522,7 +522,100 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	matchedPrivate := cloneWorkflowMediaPrivateArtifacts(retained)
+	t.Run("both applied preview handles retain their correspondence after row renumbering", func(t *testing.T) {
+		private := cloneWorkflowMediaPrivateArtifacts(matchedPrivate)
+		request, err := plan.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Rows = []api.ComparisonRow{{ID: "row-explicit", Cells: []api.ComparisonCell{{SourceID: "main", TimestampSeconds: new(1.0)}, {SourceID: "other", TimestampSeconds: new(1.2)}}}}
+		request.Anchors = []api.ComparisonAnchor{{
+			SourceID:      "other",
+			MainSeconds:   1,
+			SourceSeconds: 1.2,
+		}}
+		snapshot := api.MediaArtifactSet{Comparisons: &request}
+		selections := make([]api.ComparisonFrameSelection, 0, len(request.Rows[0].Cells))
+		previews := make([]releaseworkflow.MediaPreviewContent, 0, len(request.Rows[0].Cells))
+		for _, cell := range request.Rows[0].Cells {
+			preview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, private, cell.SourceID, *cell.TimestampSeconds, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			previews = append(previews, preview)
+			selections = append(selections, api.ComparisonFrameSelection{RowID: "row-explicit", SourceID: cell.SourceID})
+		}
+		configured, resource, err := b.ApplyComparisonFrames(t.Context(), snapshot, private, selections, previews)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ok bool
+		private, ok = resource.(workflowMediaPrivateArtifacts)
+		if !ok {
+			t.Fatal("missing applied comparison sources")
+		}
+		result := *configured.Comparisons
+		for range 2 {
+			result, err = b.matchWorkflowComparisons(t.Context(), &private, result, b.comparisonProgress(t.Context(), 5))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cell := result.Rows[0].Cells[1]
+			if cell.ObservedIdentity == nil || *cell.ObservedIdentity != *previews[1].ObservedIdentity || cell.Confidence != nil {
+				t.Fatalf("explicit native pair lost after matching: %+v", cell)
+			}
+		}
+		// A capture between the timestamp edit and applying just the main
+		// preview cannot attach the old secondary pin to a different main.
+		release := api.ReleaseRef{SourcePath: mainPath, Generation: 1}
+		prior := api.MediaArtifactSet{Comparisons: &result}
+		edit, err := result.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		edit.Rows[0].Cells[0].TimestampSeconds = new(1.3)
+		edit.Anchors = []api.ComparisonAnchor{{
+			SourceID:      "other",
+			MainSeconds:   1.3,
+			SourceSeconds: 1.2,
+		}}
+		edited, resource, err := b.EditComparisons(t.Context(), release, api.TrackerReleaseProjectionSet{}, &prior, private, api.ComparisonInstructions{Action: "configure", Plan: edit}, nil, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		captured, resource, err := b.EditComparisons(t.Context(), release, api.TrackerReleaseProjectionSet{}, &edited, resource, api.ComparisonInstructions{Action: "capture", Plan: *edited.Comparisons}, nil, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		preview, err := b.PreviewComparisonFrame(t.Context(), release, captured, resource, "main", 1.3, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selected, resource, err := b.ApplyComparisonFrames(t.Context(), captured, resource, []api.ComparisonFrameSelection{{RowID: captured.Comparisons.Rows[0].ID, SourceID: "main"}}, []releaseworkflow.MediaPreviewContent{preview})
+		if err != nil {
+			t.Fatal(err)
+		}
+		oldImage := captured.Comparisons.Rows[0].Cells[0]
+		kept := selected.Comparisons.Rows[0].Cells[0]
+		if oldImage.ArtifactID == "" || kept.ArtifactID != oldImage.ArtifactID || kept.ContentSHA256 != oldImage.ContentSHA256 {
+			t.Fatal("applying the displayed main preview discarded its compatible captured PNG")
+		}
+		private, ok = resource.(workflowMediaPrivateArtifacts)
+		if !ok {
+			t.Fatal("missing comparison sources")
+		}
+		result, err = b.matchWorkflowComparisons(t.Context(), &private, *selected.Comparisons, b.comparisonProgress(t.Context(), 5))
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := result.Rows[0].Cells[1]
+		if other.Confidence == nil || other.TimestampSeconds == nil || *other.TimestampSeconds != 1.3 {
+			t.Fatalf("a captured main inherited the old secondary correspondence: %+v", other)
+		}
+	})
 	t.Run("manual time between native pictures", func(t *testing.T) {
+		retained := cloneWorkflowMediaPrivateArtifacts(matchedPrivate)
 		requested, err := plan.Clone()
 		if err != nil {
 			t.Fatal(err)
@@ -548,7 +641,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			t.Fatalf("native anchor duplicated the requested manual moment: rows=%d err=%v", len(anchored.Rows), err)
 		}
 		other := anchored.Rows[0].Cells[1]
-		if other.TimestampSeconds == nil || *other.TimestampSeconds != 1.2 || other.Confidence != nil {
+		if other.TimestampSeconds == nil || *other.TimestampSeconds != 1.1 || other.Confidence == nil {
 			t.Fatalf("manual time ignored its inspected native correspondence: %+v", other)
 		}
 		requested.Preferences.SelectionWindow = &api.ComparisonSelectionWindow{
@@ -691,6 +784,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	if cell := corrected.Rows[0].Cells[0]; cell.TimestampSeconds == nil || math.Abs(*cell.TimestampSeconds-1) > 1e-7 || cell.Confidence != nil {
 		t.Fatalf("rematching changed the manual main moment: %+v", cell)
 	}
+	retained = matchedPrivate
 	snapshot := api.MediaArtifactSet{}
 	parallel := b
 	parallel.config.ScreenshotHandling.FFmpegLimit = true
@@ -753,7 +847,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			t.Fatal("caption invalidation lost the decoded frame or discarded an unchanged image")
 		}
 	})
-	plainPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", 1, 0)
+	plainPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", 1, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -762,7 +856,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	overlaySnapshot.Comparisons.Sources[0].Overlay = false
-	overlayPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, overlaySnapshot, retained, "main", 1, 0)
+	overlayPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, overlaySnapshot, retained, "main", 1, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -783,6 +877,21 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		stopped := b
 		stopped.config.ScreenshotHandling.FFmpegLimit = true
 		stopped.config.ScreenshotHandling.ProcessLimit = 1
+		stopped.comparisonRenderer = &comparisonCaptureStopRenderer{comparisonFrameRenderer: renderer}
+		// A digest may already be referenced by an earlier approved snapshot.
+		// Reusing it before a sibling fails must not unlink the shared image.
+		fatal := errors.New("synthetic capture integrity failure")
+		stopped.comparisonRenderer = &comparisonCaptureStopRenderer{comparisonFrameRenderer: renderer, terminal: errors.Join(context.Canceled, fatal)}
+		oldImage := retained.ArtifactImages[captured.Rows[0].Cells[0].ArtifactID]
+		before, err := os.ReadFile(oldImage.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rejected, rejectedPrivate, err := stopped.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained, api.ComparisonInstructions{Action: "capture", Plan: pending}, nil, time.Now())
+		after, readErr := os.ReadFile(oldImage.Path)
+		if !errors.Is(err, fatal) || rejectedPrivate != nil || rejected.Comparisons != nil || readErr != nil || !bytes.Equal(before, after) {
+			t.Fatalf("fatal batch published a partial snapshot or lost a shared image: %v / %v", err, readErr)
+		}
 		stopped.comparisonRenderer = &comparisonCaptureStopRenderer{comparisonFrameRenderer: renderer}
 		partial, resource, err := stopped.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained, api.ComparisonInstructions{Action: "capture", Plan: pending}, nil, time.Now())
 		if _, ok := errors.AsType[*releaseworkflow.ComparisonIncompleteError](err); !ok || partial.Comparisons == nil {
@@ -885,7 +994,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 				}
 			}
 		}
-		preview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, updated, private, "main", 1, 0)
+		preview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, updated, private, "main", 1, 0, nil)
 		if err != nil || preview.Width != 96 || preview.Height != 64 || *preview.ObservedPTS != *plainPreview.ObservedPTS {
 			t.Fatalf("preview did not share capture choices: size=%dx%d err=%v", preview.Width, preview.Height, err)
 		}
@@ -904,7 +1013,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		}
 		proportionalSnapshot, _ := updated.Clone()
 		proportionalSnapshot.Comparisons = &proportional
-		proportionalPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, proportionalSnapshot, private, "main", 1, 0)
+		proportionalPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, proportionalSnapshot, private, "main", 1, 0, nil)
 		if err != nil || proportionalPreview.Width != 96 || proportionalPreview.Height != 64 || *proportionalPreview.ObservedPTS != *preview.ObservedPTS {
 			t.Fatalf("resize-only preview enlarged the smaller input or changed its frame: %+v err=%v", proportionalPreview, err)
 		}
@@ -920,7 +1029,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		preview, err = b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, wire, restored, "main", 1, 0)
+		preview, err = b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, wire, restored, "main", 1, 0, nil)
 		if err != nil || preview.Width != 96 || preview.Height != 64 || wire.Comparisons.SizeReferenceSourceID != "main" ||
 			wire.Comparisons.Sources[0].ToneMap == nil || *wire.Comparisons.Sources[0].ToneMap || !bytes.Equal(preview.Bytes, previewBeforeRestart.Bytes) {
 			t.Fatalf("restart lost comparison render settings: %v", err)
@@ -977,16 +1086,23 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			t.Fatal("a missing reference bypassed the main canvas policy")
 		}
 	})
-	nextPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", plainPreview.TimestampSeconds, 1)
+	nextPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", plainPreview.TimestampSeconds, 1, &plainPreview)
 	if err != nil {
 		t.Fatal(err)
 	}
-	previousPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", nextPreview.TimestampSeconds, -1)
+	previousPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", nextPreview.TimestampSeconds, -1, &nextPreview)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if nextPreview.TimestampSeconds <= plainPreview.TimestampSeconds || *previousPreview.ObservedPTS != *plainPreview.ObservedPTS {
 		t.Error("decoded frame stepping skipped or repeated its source clock")
+	}
+	cursor := (plainPreview.TimestampSeconds + nextPreview.TimestampSeconds) / 2
+	for direction, want := range map[int]*int64{-1: plainPreview.ObservedPTS, 1: nextPreview.ObservedPTS} {
+		stepped, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", cursor, direction, nil)
+		if err != nil || stepped.ObservedPTS == nil || *stepped.ObservedPTS != *want {
+			t.Fatalf("fresh step %d skipped its adjacent native picture: pts=%v err=%v", direction, stepped.ObservedPTS, err)
+		}
 	}
 	typed, err := captured.Clone()
 	if err != nil {
@@ -1105,12 +1221,13 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		MainSeconds:   1,
 		SourceSeconds: 1.1,
 	}}
-	anchored, err := b.matchWorkflowComparisons(t.Context(), &retained, plan, b.comparisonProgress(t.Context(), 5))
+	anchorPrivate := cloneWorkflowMediaPrivateArtifacts(retained)
+	anchored, err := b.matchWorkflowComparisons(t.Context(), &anchorPrivate, plan, b.comparisonProgress(t.Context(), 5))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cell := anchored.Rows[0].Cells[1]; cell.TimestampSeconds == nil || *cell.TimestampSeconds != 1.1 {
-		t.Fatal("manual anchor between coarse samples was not resolved")
+	if cell := anchored.Rows[0].Cells[1]; cell.TimestampSeconds == nil || *cell.TimestampSeconds != 1 || cell.Confidence == nil {
+		t.Fatalf("timestamp-only hint bypassed native correspondence: %+v", cell)
 	}
 	t.Run("saved anchor without a manual row", func(t *testing.T) {
 		requested, err := plan.Clone()
@@ -1119,13 +1236,13 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		}
 		requested.Rows[0].Cells[0].Confidence = new(.99)
 		requested.Rows[0].Cells[0].TimestampSeconds = new(2.0)
-		resolved, err := b.matchWorkflowComparisons(t.Context(), &retained, requested, b.comparisonProgress(t.Context(), 5))
+		resolved, err := b.matchWorkflowComparisons(t.Context(), &anchorPrivate, requested, b.comparisonProgress(t.Context(), 5))
 		if err != nil || len(resolved.Rows) != 1 {
 			t.Fatalf("saved anchor was ignored: rows=%d err=%v", len(resolved.Rows), err)
 		}
 		main, other := resolved.Rows[0].Cells[0], resolved.Rows[0].Cells[1]
 		if main.TimestampSeconds == nil || *main.TimestampSeconds != 1 || main.Confidence != nil ||
-			other.TimestampSeconds == nil || *other.TimestampSeconds != 1.1 || other.Confidence != nil {
+			other.TimestampSeconds == nil || *other.TimestampSeconds != 1 || other.Confidence == nil {
 			t.Fatalf("saved correspondence lost its explicit moments: %+v", resolved.Rows[0])
 		}
 	})
@@ -2214,6 +2331,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 }
 
 type comparisonCaptureStopRenderer struct {
+	terminal error
 	comparisonFrameRenderer
 	calls int
 }
@@ -2259,6 +2377,9 @@ func (r *comparisonConcurrentCaptureRenderer) ComparisonCapture(ctx context.Cont
 func (r *comparisonCaptureStopRenderer) ComparisonCapture(ctx context.Context, request screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error) {
 	r.calls++
 	if r.calls == 2 {
+		if r.terminal != nil {
+			return screenshots.ComparisonFrame{}, r.terminal
+		}
 		return screenshots.ComparisonFrame{}, context.DeadlineExceeded
 	}
 	frame, err := r.comparisonFrameRenderer.ComparisonCapture(ctx, request)

@@ -114,6 +114,7 @@ export type ReleaseWorkflowPorts = Readonly<{
     signal: AbortSignal,
     comparisonSourceID?: string,
     comparisonStepDirection?: -1 | 0 | 1,
+    startingPreviewID?: string,
   ): Promise<FramePreview>;
   editComparisons(
     current: ReleaseWorkflowCurrent,

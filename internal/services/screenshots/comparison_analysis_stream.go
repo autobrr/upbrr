@@ -39,7 +39,7 @@ type comparisonRasterFact struct {
 type comparisonRasterStream struct {
 	ctx                                context.Context
 	height, motionHeight, maxSparse    int
-	retentionLimit                     int64
+	retain                             func(int64) bool
 	matchAspect                        float64
 	matchCrop                          *ComparisonCrop
 	motionRecords, sparseRecords       chan ComparisonFrameObservation
@@ -55,7 +55,7 @@ type comparisonRasterStream struct {
 }
 
 func (s *comparisonRasterStream) reset(ctx context.Context) {
-	h, mh, aspect, crop, frames, limit := s.height, s.motionHeight, s.matchAspect, s.matchCrop, s.maxSparse, s.retentionLimit
+	h, mh, aspect, crop, frames, limit := s.height, s.motionHeight, s.matchAspect, s.matchCrop, s.maxSparse, s.retain
 	motionBytes, sparseBytes := s.totalMotionBytes, s.totalSparseBytes
 	*s = comparisonRasterStream{
 		ctx:              ctx,
@@ -64,7 +64,7 @@ func (s *comparisonRasterStream) reset(ctx context.Context) {
 		matchAspect:      aspect,
 		matchCrop:        crop,
 		maxSparse:        frames,
-		retentionLimit:   limit,
+		retain:           limit,
 		motionRecords:    make(chan ComparisonFrameObservation, 16),
 		sparseRecords:    make(chan ComparisonFrameObservation, 16),
 		facts:            make(chan comparisonRasterFact, 1),
@@ -105,7 +105,7 @@ func (s *comparisonRasterStream) observe(name string, o ComparisonFrameObservati
 	default:
 		return nil
 	}
-	if o.PictureChecksum == "" || o.Width <= 0 || o.Height <= 0 {
+	if o.transportChecksum == "" || o.Width <= 0 || o.Height <= 0 {
 		return errors.New("comparison analysis provenance is incomplete")
 	}
 	if _, err := comparisonClockKey(o); err != nil {
@@ -202,7 +202,7 @@ func (w *comparisonRasterWriter) Write(data []byte) (written int, returnedErr er
 			return 0, errors.New("comparison analysis reordered output provenance")
 		}
 		w.previous = o
-		checksum, err := strconv.ParseUint(o.PictureChecksum, 16, 32)
+		checksum, err := strconv.ParseUint(o.transportChecksum, 16, 32)
 		if err != nil || uint32(checksum) != comparisonRasterChecksum(w.buffer) {
 			return 0, errors.New("comparison analysis raster changed its output witness")
 		}
@@ -335,11 +335,8 @@ func (s *comparisonRasterStream) collect() error {
 				s.observations = append(s.observations, fact.observation)
 				s.pixels = append(s.pixels, fact.pixels)
 			}
-			limit := s.retentionLimit
-			if limit <= 0 {
-				limit = 112 << 20
-			}
-			if int64(len(s.measurements)+len(pending))*4096+spatialBytes > limit {
+			needed := int64(len(s.measurements)+len(pending))*4096 + spatialBytes
+			if s.retain != nil && !s.retain(needed) {
 				return ErrComparisonFastInconclusive
 			}
 		}

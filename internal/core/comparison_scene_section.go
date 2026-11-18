@@ -26,6 +26,7 @@ func scoreComparisonSection(
 	ctx context.Context,
 	inventory *comparisonSceneInventory,
 	anchor screenshots.ComparisonSample,
+	archived map[string]comparisonKnownPicture,
 	decode func(context.Context, float64, float64) ([]screenshots.ComparisonSample, error),
 ) ([]screenshots.ComparisonSample, error) {
 	window := inventory.Summary.Selection
@@ -33,6 +34,10 @@ func scoreComparisonSection(
 	start, end := max(window.Start, center-4), min(window.End, center+4)
 	var frames []screenshots.ComparisonSample
 	tick := 1e-9
+	if anchor.Replay == nil {
+		return nil, comparisonWitnessConflict()
+	}
+	observed := map[string]comparisonKnownPicture{anchor.FrameID: comparisonRecord(anchor.ComparisonFrameObservation)}
 	read := func(left, right float64) error {
 		from, to := max(0, left-1), min(inventory.Summary.DurationSeconds, right+1)
 		inventory.Summary.RequestedSeconds += to - from
@@ -42,7 +47,26 @@ func scoreComparisonSection(
 			inventory.Summary.Reasons = append(inventory.Summary.Reasons, "section_incomplete")
 			return fmt.Errorf("score surrounding main scene: %w", err)
 		}
+		// The first interval must contain the archive seed, and each additional
+		// halo must overlap a physical picture already inspected in this section.
+		joined := false
 		for _, frame := range decoded {
+			if prior, ok := archived[frame.FrameID]; ok && !prior.matches(frame.ComparisonFrameObservation) {
+				return comparisonWitnessConflict()
+			}
+			if prior, ok := observed[frame.FrameID]; ok {
+				if !prior.matches(frame.ComparisonFrameObservation) {
+					return comparisonWitnessConflict()
+				}
+				joined = true
+			}
+		}
+		if !joined {
+			frames = nil
+			return nil
+		}
+		for _, frame := range decoded {
+			observed[frame.FrameID] = comparisonRecord(frame.ComparisonFrameObservation)
 			time := frame.RelativeTimestampSeconds
 			if frame.DurationTicks > 0 && frame.TimeBaseDenominator > 0 {
 				tick = max(tick, float64(frame.TimeBaseNumerator)/float64(frame.TimeBaseDenominator))

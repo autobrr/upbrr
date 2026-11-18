@@ -40,6 +40,8 @@ func comparisonIntraOnlyRegion(frames []screenshots.ComparisonSample, center, du
 	seen := map[string]bool{}
 	fingerprint := ""
 	quantum := 0.0
+	firstTolerance, lastTolerance := 0.0, 0.0
+	var previous screenshots.ComparisonSample
 	for _, frame := range frames {
 		if !frame.NativeSequence || frame.FrameID == "" || frame.PictureType != "I" || frame.Identity == nil || frame.Replay == nil ||
 			frame.Replay.Identity != *frame.Identity ||
@@ -60,15 +62,24 @@ func comparisonIntraOnlyRegion(frames []screenshots.ComparisonSample, center, du
 		seen[frame.FrameID] = true
 		tick := float64(frame.TimeBaseNumerator) / float64(frame.TimeBaseDenominator)
 		quantum = max(quantum, tick)
+		lastTolerance = 0
+		if frame.DurationTicks > 1 {
+			lastTolerance = tick
+		}
+		if math.IsInf(start, 1) {
+			firstTolerance = lastTolerance
+		}
 		t := frame.RelativeTimestampSeconds
-		if !math.IsInf(end, -1) && t > end+tick+1e-9 {
+		if !math.IsInf(end, -1) &&
+			(!comparisonFileJoin(previous.ComparisonFrameObservation, frame.ComparisonFrameObservation) || t > end+1e-9 && (t > end+tick+1e-9 || !comparisonRoundedNativeBoundary(previous, frame))) {
 			return false
 		}
+		previous = frame
 		start = min(start, t)
 		end = max(end, t+float64(frame.DurationTicks)*tick)
 	}
 	return len(seen) >= minimumFrames && end-start >= minimumSeconds-quantum-1e-9 && center >= start && center < end &&
-		(!wholeSource || start <= quantum && end >= duration-quantum)
+		(!wholeSource || start <= firstTolerance+1e-9 && end >= duration-lastTolerance-1e-9)
 }
 
 func comparisonMatchingAllowance(rows, sources int) float64 {

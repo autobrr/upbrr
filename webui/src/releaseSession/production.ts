@@ -146,6 +146,7 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
       signal,
       comparisonSourceID,
       comparisonStepDirection,
+      startingPreviewID,
     ) =>
       releaseWorkflowClient.previewFrame(
         {
@@ -158,6 +159,7 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
           idempotencyKey,
         },
         signal,
+        startingPreviewID,
       ),
     editComparisons: (current, instructions, idempotencyKey, signal) =>
       releaseWorkflowClient.editComparisons(

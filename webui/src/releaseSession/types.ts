@@ -355,6 +355,7 @@ export type ComparisonsFacet = Readonly<{
     sourceID: string,
     timestampSeconds: number,
     stepDirection?: -1 | 0 | 1,
+    startingPreviewID?: string,
   ): Promise<FramePreview | null>;
   importImages(
     files: readonly File[],

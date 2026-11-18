@@ -43,7 +43,8 @@ it("only offers disc discovery for disc inputs and handles an empty legacy respo
 });
 
 it("applies displayed frame authority before matching or capturing, and clears replaced sources", async () => {
-  const facet = observedComparisonFacet();
+  const facet = observedComparisonFacet(12);
+  const cell = facet.view.plan!.rows[0]!.cells[1]!;
   render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
   const choose = screen.getByRole("button", {
     name: "Use displayed frame for Encode, row 1, image 2",
@@ -63,6 +64,10 @@ it("applies displayed frame authority before matching or capturing, and clears r
       frameSelections: [{ rowId: "1", sourceId: "2", previewId: "observed-2" }],
     }),
   );
+  expect(vi.mocked(facet.edit).mock.lastCall![0].plan.rows[0]!.cells[1]).toMatchObject({
+    artifactId: cell.artifactId,
+    contentSha256: cell.contentSha256,
+  });
   await waitFor(() => expect(capture).toBeEnabled());
   fireEvent.change(screen.getByLabelText("Frame time for Encode, row 1, image 2"), {
     target: { value: "12" },
@@ -92,6 +97,11 @@ it("applies displayed frame authority before matching or capturing, and clears r
   expect(mainChoice).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
   expect(vi.mocked(facet.edit).mock.lastCall![0].frameSelections).toEqual([]);
+  expect(vi.mocked(facet.edit).mock.lastCall![0].plan.rows[0]!.cells[0]).toMatchObject({
+    timestampSeconds: facet.view.previews.main!.timestampSeconds,
+    artifactId: "",
+    contentSha256: "",
+  });
 });
 
 it("removes draft programme and preview authority before recreating comparisons", async () => {
@@ -386,15 +396,15 @@ const comparisonFacet = (plan: ComparisonPlan | null = comparisonPlan()): Compar
   importImages: vi.fn(async () => true),
 });
 
-const observedComparisonFacet = (): ComparisonsFacet => {
+const observedComparisonFacet = (secondarySeconds = 11.25): ComparisonsFacet => {
   const facet = comparisonFacet(comparisonPlan(false));
-  const preview = (sourceId: string): FramePreview => ({
+  const preview = (sourceId: string, timestampSeconds: number): FramePreview => ({
     id: `observed-${sourceId}`,
     workflowId: "workflow-1",
     workflowRevision: 3,
     release: { id: "release-1", revision: 1 },
     comparisonSourceId: sourceId,
-    timestampSeconds: 11.25,
+    timestampSeconds,
     pictureType: "B",
     contentUrl: `/previews/${sourceId}`,
     expiresAt: "2027-01-01T00:00:00Z",
@@ -403,7 +413,7 @@ const observedComparisonFacet = (): ComparisonsFacet => {
       inputFingerprint: sourceId === "main" ? "video-0" : "video-1",
       occurrence: "file",
       streamId: "0",
-      pts: 11250,
+      pts: Math.round(timestampSeconds * 1000),
       timeBaseNumerator: 1,
       timeBaseDenominator: 1000,
     },
@@ -419,7 +429,7 @@ const observedComparisonFacet = (): ComparisonsFacet => {
     view: {
       ...facet.view,
       mainSourceCapabilities: { programmeSelectionRequired: true, toneMappingAvailable: false },
-      previews: { "2": preview("2"), main: preview("main") },
+      previews: { "2": preview("2", secondarySeconds), main: preview("main", 11.25) },
     },
     discover: vi.fn(async (sourceId) => ({
       sourceId,
@@ -587,6 +597,15 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
     workflowRevision: 3,
     release: { id: "release-1", revision: 1 },
     comparisonSourceId: sourceId,
+    observedIdentity: {
+      version: 1,
+      inputFingerprint: sourceId,
+      occurrence: "file",
+      streamId: "0",
+      pts: Math.round(timestampSeconds * 1000),
+      timeBaseNumerator: 1,
+      timeBaseDenominator: 1000,
+    },
     timestampSeconds,
     pictureType: "B",
     contentUrl: `/previews/${sourceId}`,
@@ -618,8 +637,8 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
             : image,
         ),
       },
-      previews: { main: preview("main", 10), "2": preview("2", 11.25) },
-      previewPositions: { main: 10, "2": 11.25 },
+      previews: { main: preview("main", 12), "2": preview("2", 11.25) },
+      previewPositions: { main: 12, "2": 11.25 },
     },
     preview: vi.fn(async () => preview("2", 20.13)),
   };
@@ -659,13 +678,24 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
     expect.objectContaining({ id: "2", allowedFrameTypes: ["I", "B"], overlay: true }),
   );
   expect(instructions.plan.sources[0]!.allowedFrameTypes).toBeUndefined();
+  const pair = instructions.frameSelections!;
+  expect(pair.map((item) => [item.sourceId, item.previewId])).toEqual([
+    ["main", "preview-main"],
+    ["2", "preview-2"],
+  ]);
+  expect(pair[0]!.rowId).toBe(pair[1]!.rowId);
+  expect(instructions.plan.rows.some((row) => row.id === pair[0]!.rowId)).toBe(true);
+  expect(pair[0]!.rowId).toBe("1");
+  expect(instructions.plan.rows[0]!.cells[0]!.artifactId).toBe("image-0");
+  expect(instructions.plan.rows[0]!.cells[1]!.artifactId).toBeUndefined();
   expect(instructions.plan.anchors).toEqual([
-    { sourceId: "2", mainSeconds: 10, sourceSeconds: 11.25 },
+    { sourceId: "2", mainSeconds: 12, sourceSeconds: 11.25 },
   ]);
   fireEvent.click(screen.getByRole("button", { name: "Add manual row from timeline positions" }));
   fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
-  expect(vi.mocked(facet.edit).mock.lastCall![0].plan.rows[1]!.cells).toEqual([
-    { sourceId: "main", timestampSeconds: 10 },
+  const rows = vi.mocked(facet.edit).mock.lastCall![0].plan.rows;
+  expect(rows[rows.length - 1]!.cells).toEqual([
+    { sourceId: "main", timestampSeconds: 12 },
     { sourceId: "2", timestampSeconds: 20.13 },
     { sourceId: "3", timestampSeconds: 0 },
   ]);

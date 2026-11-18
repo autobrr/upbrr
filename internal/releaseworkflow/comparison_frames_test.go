@@ -18,7 +18,10 @@ type comparisonFrameMediaFake struct {
 	applied int
 }
 
-func (*comparisonFrameMediaFake) PreviewComparisonFrame(_ context.Context, _ api.ReleaseRef, _ api.MediaArtifactSet, _ any, source string, timestamp float64, _ int) (MediaPreviewContent, error) {
+func (*comparisonFrameMediaFake) PreviewComparisonFrame(_ context.Context, _ api.ReleaseRef, _ api.MediaArtifactSet, _ any, source string, timestamp float64, step int, starting *MediaPreviewContent) (MediaPreviewContent, error) {
+	if step != 0 && (starting == nil || starting.ObservedIdentity == nil || starting.TimestampSeconds != timestamp) {
+		return MediaPreviewContent{}, ErrPrivateResourceIntegrity
+	}
 	return MediaPreviewContent{
 		ComparisonSourceID: source,
 		TimestampSeconds:   timestamp,
@@ -71,7 +74,7 @@ func TestComparisonPreviewSelectionRequiresCurrentScopedWitness(t *testing.T) {
 			})
 			plan := *current.Media.Comparisons
 			selection := api.ComparisonFrameSelection{RowID: plan.Rows[0].ID, SourceID: plan.Sources[0].ID}
-			preview, err := module.PreviewComparisonFrame(t.Context(), testOwnerID, current.Workflow.ID, current.Workflow.Revision, selection.SourceID, 10, 0)
+			preview, err := module.PreviewComparisonFrame(t.Context(), testOwnerID, current.Workflow.ID, current.Workflow.Revision, selection.SourceID, 10, 0, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -105,6 +108,10 @@ func TestComparisonPreviewSelectionRequiresCurrentScopedWitness(t *testing.T) {
 				if err := module.private.Put(owner, current.Workflow.ID, resourceID, content, expiry); err != nil {
 					t.Fatal(err)
 				}
+			}
+			_, stepErr := module.PreviewComparisonFrame(t.Context(), testOwnerID, current.Workflow.ID, current.Workflow.Revision, selection.SourceID, 10, 1, preview.ID)
+			if (stepErr == nil) != (scenario == "current") {
+				t.Fatalf("%s step bound the wrong preview: %v", scenario, stepErr)
 			}
 			result, err := module.execute(t.Context(), testOwnerID, EditComparisonsCommand{
 				WorkflowID:       current.Workflow.ID,

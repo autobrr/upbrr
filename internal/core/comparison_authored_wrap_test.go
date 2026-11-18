@@ -126,12 +126,20 @@ func assertAuthoredDVDClockWrap(t *testing.T, root string) {
 		if err != nil || len(normalized) != len(frames) {
 			t.Fatalf("normalized wrapped window %.0f: %v", start, err)
 		}
+		analyzed, err := service.AnalyzeComparisonSource(t.Context(), screenshots.ComparisonSampleRequest{
+			Source:          source,
+			StartSeconds:    start,
+			DurationSeconds: 4,
+		})
+		if err != nil || len(analyzed) != len(frames) {
+			t.Fatalf("scene analysis of wrapped window %.0f: %v", start, err)
+		}
 		for i, sample := range frames {
-			if sample.FrameID != normalized[i].FrameID || sample.PictureChecksum != normalized[i].PictureChecksum || !bytes.Equal(sample.Pixels, normalized[i].Pixels) {
+			if analyzed[i].Evidence == nil || analyzed[i].FrameID != sample.FrameID || sample.FrameID != normalized[i].FrameID || !bytes.Equal(sample.Pixels, normalized[i].Pixels) {
 				t.Fatal("full-scan DVD matching bypassed interlace/PAR normalization or changed native identity")
 			}
 		}
-		assertOriginalComparisonPicture(t, filepath.Join(root, "source.mpg"), int64(math.Round(frame.RelativeTimestampSeconds*25)), frame.PictureChecksum)
+		assertOriginalComparisonPicture(t, filepath.Join(root, "source.mpg"), int64(math.Round(frame.RelativeTimestampSeconds*25)), source, frame)
 		overlap, err := service.SampleComparisonSource(t.Context(), screenshots.ComparisonSampleRequest{
 			Source:          source,
 			StartSeconds:    start - .5,
@@ -149,7 +157,7 @@ func assertAuthoredDVDClockWrap(t *testing.T, root string) {
 			TimestampSeconds: frame.RelativeTimestampSeconds,
 			Replay:           frame.Replay,
 		})
-		if err != nil || captured.FrameID != frame.FrameID || captured.PictureChecksum != frame.PictureChecksum {
+		if err != nil || captured.FrameID != frame.FrameID || !captured.Replay.SamePicture(frame.Replay) {
 			t.Fatalf("wrapped native replay: %v", err)
 		}
 	}

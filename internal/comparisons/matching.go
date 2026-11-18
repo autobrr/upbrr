@@ -18,6 +18,8 @@ import (
 // dimensions and aspect treatment across sources. Brightness and Motion are
 // normalized thumbnail measurements in [0,1], not physical luminance claims.
 type FrameSample struct {
+	Unselectable        bool
+	signature           []float64
 	NativeSequence      bool
 	Occurrence          string
 	Evidence            *api.ComparisonSceneEvidence
@@ -275,7 +277,7 @@ func prepareMatching(sources []SampledSource, mainID string, options MatchOption
 			if frame.DisplayEndSeconds <= frame.TimestampSeconds && j+1 < len(source.Frames) {
 				frame.DisplayEndSeconds = source.Frames[j+1].TimestampSeconds
 			}
-			column.frames[j] = matchingFrame{frame: frame, signature: matchingSignature(frame.Luma)}
+			column.frames[j] = matchingFrame{frame: frame, signature: frame.visualSignature()}
 		}
 		anchorTimes := map[float64]bool{}
 		for _, anchor := range source.Anchors {
@@ -305,6 +307,24 @@ func matchingUnit(value float64) bool { return matchingTime(value) && value <= 1
 
 // Zero-mean unit vectors compare spatial structure despite brightness/contrast
 // changes. Flat thumbnails cannot establish correspondence, even when dark.
+func (f FrameSample) visualSignature() []float64 {
+	if f.signature != nil {
+		return f.signature
+	}
+	return matchingSignature(f.Luma)
+}
+
+// PrepareVisualSignatures caches spatial facts for a window whose pixels are immutable.
+// Temporal facts are still evaluated for each selected neighborhood and playback scale.
+func PrepareVisualSignatures(frames []FrameSample) {
+	for i := range frames {
+		frames[i].signature = matchingSignature(frames[i].Luma)
+		if frames[i].signature == nil {
+			frames[i].signature = []float64{}
+		}
+	}
+}
+
 func matchingSignature(luma []byte) []float64 {
 	mean := 0.0
 	for _, value := range luma {
@@ -366,7 +386,7 @@ func matchRow(columns []matchingColumn, main, index int, selected []MatchedRow) 
 			row.Frames[i] = matchedSample(column.source, frame.frame, "main", 1)
 			// Only exact observed anchors for this row can override automatic
 			// picture policy. A selected identity alone carries no manual authority.
-			if !row.Frames[i].Resolved && exactManualMain(columns, main, frame.frame.TimestampSeconds) {
+			if !frame.frame.Unselectable && !row.Frames[i].Resolved && exactManualMain(columns, main, frame.frame.TimestampSeconds) {
 				row.Frames[i].Resolved, row.Frames[i].Reason = true, ""
 			}
 		} else {
@@ -529,6 +549,10 @@ func matchedSample(source SampledSource, frame FrameSample, method string, confi
 		RequestedTypes:   slices.Clone(source.AllowedTypes),
 		TypeFallback:     !allowedPicture(source, frame.FrameType),
 	}
+	if frame.Unselectable {
+		match.Resolved, match.Reason = false, "uncertain_native_interval"
+		return match
+	}
 	if match.TypeFallback {
 		match.Reason = "requested_picture_type_unavailable_at_match"
 	}
@@ -559,7 +583,7 @@ func chooseScene(main matchingColumn, used map[int]bool, result MatchResult, cou
 	best, bestScore := -1, math.Inf(-1)
 	duration := main.frames[len(main.frames)-1].frame.TimestampSeconds - main.frames[0].frame.TimestampSeconds
 	for i, candidate := range main.frames {
-		if used[i] || len(candidate.signature) == 0 || kind != "" && candidate.frame.FrameType != kind ||
+		if candidate.frame.Unselectable || used[i] || len(candidate.signature) == 0 || kind != "" && candidate.frame.FrameType != kind ||
 			!main.manualMain && !slices.Contains(permittedPictureTypes(main.source), candidate.frame.FrameType) ||
 			candidate.frame.Evidence != nil && !candidate.frame.Evidence.Eligible {
 			continue

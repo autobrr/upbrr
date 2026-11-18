@@ -33,7 +33,16 @@ type ReleaseWorkflowCapability interface {
 	CancelReleaseWorkflowOperation(context.Context, string, api.WorkflowID, api.WorkflowOperationID) (api.WorkflowOperationStatus, error)
 	ReleaseWorkflowMediaPlan(context.Context, string, api.WorkflowID) (api.MediaPlan, error)
 	PreviewReleaseWorkflowFrame(context.Context, string, api.WorkflowID, api.WorkflowRevision, string, float64) (api.FramePreview, error)
-	PreviewReleaseWorkflowComparisonFrame(context.Context, string, api.WorkflowID, api.WorkflowRevision, string, float64, int) (api.FramePreview, error)
+	PreviewReleaseWorkflowComparisonFrame(
+		context.Context,
+		string,
+		api.WorkflowID,
+		api.WorkflowRevision,
+		string,
+		float64,
+		int,
+		api.PublicResourceID,
+	) (api.FramePreview, error)
 	OpenReleaseWorkflowPreview(context.Context, string, api.WorkflowID, api.PublicResourceID) (releaseworkflow.MediaArtifactContent, error)
 	StageReleaseWorkflowMediaResource(
 		context.Context,

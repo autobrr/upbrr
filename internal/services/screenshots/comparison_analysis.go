@@ -34,13 +34,16 @@ func (s *Service) AnalyzeComparisonSource(ctx context.Context, request Compariso
 	if height < 32 || height > 2048 || motionHeight < 32 || motionHeight > height {
 		return nil, ErrComparisonNormalizationUnavailable
 	}
+	if request.Retain == nil {
+		request.Retain = ComparisonRetentionLimit(112 << 20)
+	}
 	request.analysis = &comparisonRasterStream{
-		height:         height,
-		motionHeight:   motionHeight,
-		matchAspect:    request.MatchAspectRatio,
-		matchCrop:      request.MatchCrop,
-		maxSparse:      comparisonSparseFrameLimit(request.DurationSeconds),
-		retentionLimit: request.RetentionLimitBytes,
+		height:       height,
+		motionHeight: motionHeight,
+		matchAspect:  request.MatchAspectRatio,
+		matchCrop:    request.MatchCrop,
+		maxSparse:    comparisonSparseFrameLimit(request.DurationSeconds),
+		retain:       request.Retain,
 	}
 	request.NativeFrames = true
 	request.NormalizeSDR = true
@@ -98,8 +101,21 @@ func analysisSamples(result CommandResult, request ComparisonSampleRequest, wind
 		return nil, err
 	}
 	native, err := comparisonObservations(result.Stderr)
-	if err != nil || len(native) != len(s.measurements) {
+	if err != nil {
+		return nil, err
+	}
+	if len(native) != len(s.measurements) {
 		return nil, errors.New("comparison analysis lacks native frame identities")
+	}
+	// Both filter branches report the decoder clock. Compare it before an
+	// authored occurrence unwraps that clock onto its title timeline.
+	for i, o := range native {
+		if math.Abs(o.TimestampSeconds-s.observations[i].TimestampSeconds) > comparisonNormalizedClockTolerance {
+			return nil, errors.New("comparison analysis normalization changed native identity")
+		}
+	}
+	if err := bindComparisonSequence(request, native, window, result.bounds); err != nil {
+		return nil, err
 	}
 	renderer := "sdr"
 	if request.Renderer != nil && request.Renderer.Mode != "" {
@@ -108,18 +124,6 @@ func analysisSamples(result CommandResult, request ComparisonSampleRequest, wind
 	evidence := comparisons.ClassifyScenes(s.measurements, renderer)
 	var samples []ComparisonSample
 	for i, o := range native {
-		if math.Abs(o.TimestampSeconds-s.observations[i].TimestampSeconds) > comparisonNormalizedClockTolerance {
-			return nil, errors.New("comparison analysis normalization changed native identity")
-		}
-		o.decoder = result.comparisonBackend
-		o.RelativeTimestampSeconds = o.TimestampSeconds - request.Source.StartTimeSeconds
-		if window == nil {
-			if err := bindFileObservation(request.Source, &o); err != nil {
-				return nil, err
-			}
-		} else if err := bindDiscObservation(request.Source, *window, &o); err != nil {
-			return nil, err
-		}
 		samples = append(samples, ComparisonSample{
 			ComparisonFrameObservation: o,
 			Pixels:                     s.pixels[i],

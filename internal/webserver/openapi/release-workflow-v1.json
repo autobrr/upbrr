@@ -17406,6 +17406,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "The current comparison preview to step from. A retained comparison cell can also identify the starting picture.",
+            "in": "query",
+            "name": "previewId",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {

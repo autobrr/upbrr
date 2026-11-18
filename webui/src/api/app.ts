@@ -233,8 +233,17 @@ export const releaseWorkflowClient = {
     requestApp<ReleaseWorkflowCurrent>("ReorderReleaseWorkflowMedia", command, { signal }),
   mediaPlan: (workflowID: string, signal?: AbortSignal) =>
     requestApp<MediaPlan>("GetReleaseWorkflowMediaPlan", { workflowId: workflowID }, { signal }),
-  previewFrame: (command: PreviewReleaseWorkflowFrameRequest, signal?: AbortSignal) =>
-    requestApp<FramePreview>("PreviewReleaseWorkflowFrame", command, { signal }),
+  previewFrame: (
+    command: PreviewReleaseWorkflowFrameRequest,
+    signal?: AbortSignal,
+    startingPreviewID?: string,
+  ) =>
+    requestApp<FramePreview>(
+      "PreviewReleaseWorkflowFrame" +
+        (startingPreviewID ? "?" + new URLSearchParams({ previewId: startingPreviewID }) : ""),
+      command,
+      { signal },
+    ),
   editComparisons: (command: EditReleaseWorkflowComparisonsRequest, signal?: AbortSignal) =>
     requestApp<ReleaseWorkflowCurrent>("EditReleaseWorkflowComparisons", command, { signal }),
   discoverComparisonSource: (

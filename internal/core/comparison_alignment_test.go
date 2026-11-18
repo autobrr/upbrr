@@ -4,6 +4,8 @@
 package core
 
 import (
+	"github.com/autobrr/upbrr/internal/filesystem"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,13 +73,46 @@ func TestComparisonSampleChunksPreserveUsefulTiming(t *testing.T) {
 
 func TestComparisonWidenedWindowRequiresTheSamePictureForSceneEvidence(t *testing.T) {
 	evidence := &api.ComparisonSceneEvidence{Eligible: true}
-	original := screenshots.ComparisonFrameObservation{FrameID: "native-picture", PictureChecksum: "12345678"}
+	original := screenshots.ComparisonFrameObservation{FrameID: "native-picture"}
 	reference := []screenshots.ComparisonSample{{ComparisonFrameObservation: original, Evidence: evidence}}
-	if comparisonSectionFrameEvidence(reference, original) != evidence {
+	if got, err := comparisonSectionFrameEvidence(reference, original); err != nil || got != evidence {
 		t.Fatal("same native picture lost its measured scene eligibility")
 	}
-	original.PictureChecksum = "87654321"
-	if comparisonSectionFrameEvidence(reference, original) != nil {
+	legacy := screenshots.ComparisonFrameReplay{Identity: api.ComparisonFrameIdentity{
+		Version:    1,
+		Occurrence: "cell",
+		StreamID:   "video",
+	}, DecoderPTS: 90}
+	legacy.Window.Occurrence, legacy.Window.StreamID, legacy.Window.EncodedSHA256 = "cell", "video", strings.Repeat("a", 64)
+	legacy.Window.Spans = []filesystem.ComparisonSpan{{
+		Path:  "Example.VOB",
+		Start: 0,
+		End:   4096,
+	}}
+	fromArchive := original
+	fromArchive.Replay = &legacy
+	restored := cloneComparisonWitness(legacy)
+	decoded := fromArchive
+	decoded.Replay = &restored
+	archived := []screenshots.ComparisonSample{{ComparisonFrameObservation: fromArchive, Evidence: evidence}}
+	if got, err := comparisonSectionFrameEvidence(archived, decoded); err != nil || got != evidence || legacy.SamePicture(&restored) {
+		t.Fatalf("identical legacy records could not share archive evidence without granting capture authority: %v", err)
+	}
+	restored.Window.Spans[0].Start++
+	if got, err := comparisonSectionFrameEvidence(archived, decoded); err == nil || got != nil {
+		t.Fatal("different historical ranges shared scene evidence")
+	}
+	original.DurationTicks++
+	if got, err := comparisonSectionFrameEvidence(reference, original); err == nil || got != nil {
+		t.Fatal("a changed native interval inherited measured eligibility")
+	}
+	original.DurationTicks--
+	original.PictureType = "P"
+	if got, err := comparisonSectionFrameEvidence(reference, original); err == nil || got != nil {
+		t.Fatal("a changed native picture type inherited measured eligibility")
+	}
+	original.FrameID = "different-native-picture"
+	if got, err := comparisonSectionFrameEvidence(reference, original); err != nil || got != nil {
 		t.Fatal("different native picture inherited eligibility from the same timestamp")
 	}
 }

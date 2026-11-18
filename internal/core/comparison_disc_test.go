@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -30,7 +31,6 @@ func TestComparisonOrderingUsesTitleTimeAndRejectsOriginDisagreement(t *testing.
 		TimeBaseNumerator:        1,
 		TimeBaseDenominator:      1000,
 		RelativeTimestampSeconds: 1,
-		PictureChecksum:          "early-picture",
 	}
 	late := screenshots.ComparisonSample{
 		FrameID:                  "late",
@@ -38,14 +38,13 @@ func TestComparisonOrderingUsesTitleTimeAndRejectsOriginDisagreement(t *testing.
 		TimeBaseNumerator:        1,
 		TimeBaseDenominator:      1000,
 		RelativeTimestampSeconds: 10,
-		PictureChecksum:          "late-picture",
 	}
 	ordered, err := orderedComparisonSamples([]screenshots.ComparisonSample{late, early, early})
 	if err != nil || len(ordered) != 2 || ordered[0].FrameID != "early" {
 		t.Fatalf("title ordering=%+v err=%v", ordered, err)
 	}
 	contradiction := early
-	contradiction.PictureChecksum = "different-picture"
+	contradiction.PTS++
 	if _, err := orderedComparisonSamples([]screenshots.ComparisonSample{early, contradiction}); err == nil {
 		t.Fatal("different origin replaced an existing frame witness")
 	}
@@ -134,7 +133,12 @@ func assertDiscComparisonFastAcceptance(t *testing.T, mainPath, dvdPath, bdPath 
 		t.Fatal(err)
 	}
 	retained := workflowMediaPrivateArtifacts{ComparisonSources: map[string]workflowComparisonSource{}}
-	plan := api.ComparisonPlan{MainSourceID: "main", Preferences: api.ComparisonPreferences{Count: 3}}
+	plan := api.ComparisonPlan{
+		MainSourceID:          "main",
+		SizeReferenceSourceID: "main",
+		RenderPolicyVersion:   1,
+		Preferences:           api.ComparisonPreferences{Count: 3, ScanMode: "fast"},
+	}
 	selections := make([]api.ComparisonVideoSelection, 0, 3)
 	for index, path := range []string{mainPath, dvdPath, bdPath} {
 		id := []string{"main", "dvd", "bluray"}[index]
@@ -269,7 +273,9 @@ func assertDiscComparisonFastAcceptance(t *testing.T, mainPath, dvdPath, bdPath 
 				t.Log(entry.message)
 			}
 		}
-		retainMatchedComparisonWitnesses(candidate, observations, retained)
+		if err := retainMatchedComparisonWitnesses(candidate, observations, retained); err != nil {
+			t.Fatal(err)
+		}
 		for _, row := range candidate.Rows {
 			for _, cell := range row.Cells {
 				if cell.TimestampSeconds == nil || cell.ObservedIdentity == nil {
@@ -283,7 +289,7 @@ func assertDiscComparisonFastAcceptance(t *testing.T, mainPath, dvdPath, bdPath 
 							source := retained.ComparisonSources[cell.SourceID].Source
 							if original := originals[cell.SourceID]; original != "" {
 								ordinal := int64(math.Round(observed.RelativeTimestampSeconds * source.FrameRate))
-								assertOriginalComparisonPicture(t, original, ordinal, observed.PictureChecksum)
+								assertOriginalComparisonPicture(t, original, ordinal, source, observed)
 							} else {
 								assertOriginalProgrammePicture(t, source, observed)
 							}
@@ -299,13 +305,109 @@ func assertDiscComparisonFastAcceptance(t *testing.T, mainPath, dvdPath, bdPath 
 		t.Logf("columns=%d bounded_rows=%d", len(indices), len(candidate.Rows))
 		media := api.MediaArtifactSet{Comparisons: &candidate}
 		manualCell := candidate.Rows[0].Cells[1]
-		preview, err := b.PreviewComparisonFrame(t.Context(), release, media, retained, manualCell.SourceID, *manualCell.TimestampSeconds, 0)
+		preview, err := b.PreviewComparisonFrame(t.Context(), release, media, retained, manualCell.SourceID, *manualCell.TimestampSeconds, 0, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		previous, err := b.PreviewComparisonFrame(t.Context(), release, media, retained, manualCell.SourceID, preview.TimestampSeconds, -1)
+		previous, err := b.PreviewComparisonFrame(t.Context(), release, media, retained, manualCell.SourceID, preview.TimestampSeconds, -1, &preview)
 		if err != nil || previous.TimestampSeconds >= preview.TimestampSeconds || previous.ObservedIdentity == nil {
 			t.Fatalf("native previous-frame step failed: %+v %v", previous, err)
+		}
+		legacy := cloneWorkflowMediaPrivateArtifacts(retained)
+		source := legacy.ComparisonSources[manualCell.SourceID]
+		key, err := api.CanonicalWorkflowFingerprint(*manualCell.ObservedIdentity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old := source.Witnesses[string(key)]
+		old.Version = 0
+		source.Witnesses[string(key)] = old
+		if !old.CanReinspectDisc() {
+			t.Fatal("historical fixture lost its original authored span")
+		}
+		stepped, err := b.PreviewComparisonFrame(t.Context(), release, media, legacy, manualCell.SourceID, *manualCell.TimestampSeconds, -1, nil)
+		if err != nil || stepped.ObservedIdentity == nil || *stepped.ObservedIdentity != *previous.ObservedIdentity {
+			t.Fatalf("historical authored span did not restore a direct native step: %v", err)
+		}
+		if len(indices) == 2 && manualCell.SourceID == "dvd" && originals["dvd"] != "" {
+			var bytes int64
+			for _, span := range old.Window.Spans {
+				bytes += span.End - span.Start
+			}
+			seconds := float64(old.Window.End90-old.Window.Start90)/90000 + old.Window.PrerollSeconds
+			budget := screenshots.ComparisonDecodeBudget{
+				RemainingEncodedBytes: 2 * bytes,
+				AttemptRemaining:      new(2 * bytes),
+				MovieSecondsLimit:     seconds,
+			}
+			verified, err := service.ReinspectComparisonReplay(t.Context(), screenshots.ComparisonSampleRequest{Source: source.Source, Budget: &budget}, &old)
+			if err != nil || !old.SamePicture(verified) || budget.ProcessStarts != 1 || budget.RemainingEncodedBytes != 0 || *budget.AttemptRemaining != 0 || budget.ConsumedMovieSeconds != seconds {
+				t.Fatalf("historical span was not verified within its physical allowance: %+v %v", budget, err)
+			}
+			manual, err := candidate.Clone()
+			if err != nil {
+				t.Fatal(err)
+			}
+			manual.MainSourceID, manual.SizeReferenceSourceID = manualCell.SourceID, manualCell.SourceID
+			manual.Sources[0], manual.Sources[1] = manual.Sources[1], manual.Sources[0]
+			manualCell.Confidence = nil
+			manual.Rows = []api.ComparisonRow{{ID: "legacy", Cells: []api.ComparisonCell{manualCell, candidate.Rows[0].Cells[0]}}}
+			restored := cloneWorkflowMediaPrivateArtifacts(legacy)
+			guarded := api.MediaArtifactSet{Comparisons: &manual}
+			captured, err := b.captureWorkflowComparisons(t.Context(), release, &guarded, &restored, manual, b.comparisonProgress(t.Context(), 1), false)
+			if err != nil || captured.Rows[0].Cells[0].ArtifactID == "" {
+				t.Fatalf("capture could not reestablish the missing historical disc guard: %v", err)
+			}
+			// Automatic rows from a historical Deep inventory can select the
+			// same archived observation before and after capture verifies it.
+			automatic, err := manual.Clone()
+			if err != nil {
+				t.Fatal(err)
+			}
+			automatic.Rows[0].Evidence = captured.Rows[0].Evidence
+			automatic.Rows[0].Cells[0].Confidence = candidate.Rows[0].Cells[1].Confidence
+			archived := map[string][]screenshots.ComparisonSample{manualCell.SourceID: {{FrameID: string(key), Replay: &old}}}
+			repeated := cloneWorkflowMediaPrivateArtifacts(legacy)
+			if err := retainMatchedComparisonWitnesses(automatic, archived, repeated); err != nil {
+				t.Fatal(err)
+			}
+			media := api.MediaArtifactSet{Comparisons: &automatic}
+			completed, err := b.captureWorkflowComparisons(t.Context(), release, &media, &repeated, automatic, b.comparisonProgress(t.Context(), 1), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := retainMatchedComparisonWitnesses(completed, archived, repeated); err != nil ||
+				repeated.ComparisonSources[manualCell.SourceID].Witnesses[string(key)].Version != 2 {
+				t.Fatalf("rematching the historical authored picture lost its verified capture address: %v", err)
+			}
+			conflict := old
+			conflict.Window.EncodedSHA256 = strings.Repeat("0", 64)
+			archived[manualCell.SourceID][0].Replay = &conflict
+			if err := retainMatchedComparisonWitnesses(completed, archived, repeated); err == nil {
+				t.Fatal("a different historical authored span reused the captured address")
+			}
+			// Match the authored title to its original PAL file so this checks
+			// restoration independently of a new reverse playback calibration.
+			original := originals["dvd"]
+			facts, err := service.InspectComparisonSource(t.Context(), original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			facts.InputFingerprint, err = comparisonVideoFingerprint(t.Context(), original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			legacy.ComparisonSources["main"] = workflowComparisonSource{
+				Path:        original,
+				Source:      facts,
+				Fingerprint: facts.InputFingerprint,
+			}
+			manual.Sources[1].Fingerprint = facts.InputFingerprint
+			manual.Rows[0].Cells[1] = api.ComparisonCell{SourceID: "main"}
+			rematched, err := b.matchWorkflowComparisons(t.Context(), &legacy, manual, b.comparisonProgress(t.Context(), 5))
+			if err != nil || len(rematched.Rows) != 1 || rematched.Rows[0].Cells[0].ObservedIdentity == nil || *rematched.Rows[0].Cells[0].ObservedIdentity != *manualCell.ObservedIdentity {
+				t.Fatalf("manual rematch lost its historical disc selection: %v", err)
+			}
 		}
 		vaultRoot := filepath.Join(root, "vault")
 		vault, err := releaseworkflow.NewPrivateArtifactVault(vaultRoot, workflowPrivateResourceCodecs(b, workflowAudioAnalysisBuilder{root: scratchRoot})...)
@@ -447,8 +549,8 @@ func assertOriginalProgrammePicture(t *testing.T, source screenshots.ComparisonS
 		args = append(args, "-ss", fmt.Sprintf("%.9f", max(0, observed.RelativeTimestampSeconds-10)), "-f", "dvdvideo", "-title", strconv.Itoa(source.Input.DVD.Number), "-i", source.Input.Root)
 		// dvdvideo's coarse title seek can begin well before the requested
 		// time on real time maps. Search a finite 64-second original window;
-		// the expected picture checksum still comes exclusively from the
-		// native production witness, never the seek-adjusted clock.
+		// the independent visible-picture check never uses those timestamps
+		// to authorize or change the retained address.
 		filter, count = "trim=duration=64", strconv.Itoa(min(50000, int(math.Ceil(source.FrameRate*64))))
 	case source.Input != nil:
 		path, seek := "", 0.0
@@ -468,40 +570,66 @@ func assertOriginalProgrammePicture(t *testing.T, source screenshots.ComparisonS
 	default:
 		args = append(args, "-ss", fmt.Sprintf("%.9f", max(0, observed.RelativeTimestampSeconds-2)), "-i", source.Path)
 	}
-	if source.NativePixelFormat != "" {
-		filter += ",format=" + source.NativePixelFormat
-	}
-	args = append(args, "-map", mapStream, "-an", "-sn", "-dn", "-vf", filter+",showinfo", "-frames:v", count, "-f", "null", "-")
-	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, executable, args...)
-	command.WaitDelay = 5 * time.Second
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("independent original programme frame: %v\n%s", err, output)
-	}
-	checksums := regexp.MustCompile(`\bchecksum:([0-9A-F]+)`).FindAllSubmatch(output, -1)
-	for _, checksum := range checksums {
-		if string(checksum[1]) == observed.PictureChecksum {
-			return
-		}
-	}
-	t.Fatalf("native title picture at %.9f differs from independent original playback", observed.RelativeTimestampSeconds)
+	args = append(args, "-map", mapStream, "-an", "-sn", "-dn", "-vf", filter+",format=rgb24,scale=64:64:flags=area,format=gray", "-frames:v", count, "-threads", "1", "-fps_mode", "passthrough", "-f", "rawvideo", "-")
+	assertComparisonVisiblePicture(t, executable, args, source, observed)
 }
 
-func assertOriginalComparisonPicture(t *testing.T, path string, ordinal int64, checksum string) {
+func assertOriginalComparisonPicture(t *testing.T, path string, ordinal int64, source screenshots.ComparisonSource, observed screenshots.ComparisonSample) {
 	t.Helper()
 	executable, err := screenshots.ResolveFFmpegExecutable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := exec.CommandContext(t.Context(), executable, "-hide_banner", "-loglevel", "info", "-i", path,
-		"-map", "0:V:0", "-an", "-sn", "-dn", "-vf", fmt.Sprintf("select=eq(n\\,%d),showinfo", ordinal), "-frames:v", "1", "-f", "null", "-").CombinedOutput()
-	if err != nil {
-		t.Fatalf("independent original frame: %v\n%s", err, output)
+	args := []string{"-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
+		"-vf", fmt.Sprintf("select=eq(n\\,%d),format=rgb24,scale=64:64:flags=area,format=gray", ordinal), "-frames:v", "1", "-threads", "1", "-f", "rawvideo", "-"}
+	assertComparisonVisiblePicture(t, executable, args, source, observed)
+}
+
+func assertComparisonVisiblePicture(t *testing.T, executable string, args []string, source screenshots.ComparisonSource, observed screenshots.ComparisonSample) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+	frame, err := screenshots.NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil).ComparisonCapture(ctx, screenshots.ComparisonCaptureRequest{
+		Source:           source,
+		Replay:           observed.Replay,
+		TimestampSeconds: observed.RelativeTimestampSeconds,
+		ToneMap:          new(false),
+	})
+	if err != nil || frame.Identity == nil || *frame.Identity != *observed.Identity {
+		t.Fatalf("independent native capture: %v", err)
 	}
-	actual := regexp.MustCompile(`\bchecksum:([0-9A-F]+)`).FindSubmatch(output)
-	if len(actual) != 2 || string(actual[1]) != checksum {
-		t.Fatalf("indexed picture differs from independent frame %d: expected=%s actual=%s", ordinal, checksum, actual)
+	reduce := exec.CommandContext(ctx, executable, "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-vf", "format=rgb24,scale=64:64:flags=area,format=gray", "-threads", "1", "-f", "rawvideo", "-")
+	reduce.Stdin = bytes.NewReader(frame.ImageBytes)
+	got, err := reduce.Output()
+	if err != nil || len(got) != 4096 {
+		t.Fatalf("reduce captured picture: %v", err)
 	}
+	// Apply the source's display geometry before RGB conversion, as the PNG
+	// does. Comparing a reduced anamorphic raster directly changes edge pixels.
+	w, h := source.DisplaySize()
+	if w != source.Width || h != source.Height {
+		for i, arg := range args {
+			if arg == "-vf" {
+				args[i+1] = strings.Replace(args[i+1], ",format=rgb24", fmt.Sprintf(",scale=%d:%d,setsar=1,format=rgb24", w, h), 1)
+				break
+			}
+		}
+	}
+	want, err := exec.CommandContext(ctx, executable, args...).Output()
+	if err != nil || len(want)%len(got) != 0 {
+		t.Fatalf("independent source render: %v", err)
+	}
+	minimum := math.Inf(1)
+	for len(want) >= len(got) {
+		var delta int
+		for i, pixel := range got {
+			delta += int(math.Abs(float64(int(pixel) - int(want[i]))))
+		}
+		minimum = min(minimum, float64(delta)/float64(len(got)))
+		if delta <= len(got) {
+			return
+		}
+		want = want[len(got):]
+	}
+	t.Fatalf("native capture at %.9f differs from independent source rendering (mean pixel difference %.3f)", observed.RelativeTimestampSeconds, minimum)
 }

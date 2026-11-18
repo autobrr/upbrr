@@ -74,7 +74,7 @@ func CalibrationCenters(reference []FrameSample) ([]float64, string) {
 			i > 0 && frame.TimestampSeconds <= reference[i-1].TimestampSeconds {
 			return nil, "invalid_reference"
 		}
-		frames[i] = matchingFrame{frame: frame, signature: matchingSignature(frame.Luma)}
+		frames[i] = matchingFrame{frame: frame, signature: frame.visualSignature()}
 	}
 	type transition struct{ time, change float64 }
 	var candidates []transition

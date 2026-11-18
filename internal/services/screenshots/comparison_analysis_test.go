@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"image"
+	"io"
 	"math"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -105,7 +107,7 @@ func TestComparisonAnalysisMetricRetentionAndBinding(t *testing.T) {
 		TimeBaseNumerator:   1,
 		TimeBaseDenominator: 1000,
 		TimestampSeconds:    .04,
-		PictureChecksum:     "1234",
+		transportChecksum:   "1234",
 		Width:               272,
 		Height:              144,
 		PixelFormat:         "gray",
@@ -295,6 +297,36 @@ func TestComparisonAnalysisNativeStream(t *testing.T) {
 			t.Fatal("analysis returned before its output coordinator exited")
 		}
 	})
+	t.Run("standalone seeks share an encoded-byte allowance", func(t *testing.T) {
+		_, input, err := s.openComparisonFileInput(t.Context(), source.Path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(input.close)
+		initial := input.budget.RemainingEncodedBytes
+		for _, span := range []string{"bytes=0-31", "bytes=64-95"} {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, input.url, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Range", span)
+			response, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n, readErr := io.Copy(io.Discard, response.Body)
+			closeErr := response.Body.Close()
+			if response.StatusCode != http.StatusPartialContent || n != 32 || readErr != nil || closeErr != nil {
+				t.Fatalf("bounded seek returned %d bytes, HTTP %d: %v %v", n, response.StatusCode, readErr, closeErr)
+			}
+		}
+		input.mu.Lock()
+		remaining := input.budget.RemainingEncodedBytes
+		input.mu.Unlock()
+		if initial <= 0 || initial > 8<<30 || initial-remaining < 64 {
+			t.Fatal("standalone source reads escaped the shared default byte limit")
+		}
+	})
 	budget := &ComparisonDecodeBudget{RemainingEncodedBytes: 8 << 30}
 	bounded, err := s.AnalyzeComparisonSource(t.Context(), ComparisonSampleRequest{
 		Source:           source,
@@ -329,15 +361,15 @@ func TestComparisonAnalysisNativeStream(t *testing.T) {
 		t.Fatalf("independent matching reduction: %v", err)
 	}
 	for i := range frames {
-		if bounded[i].PTS != frames[i].PTS || bounded[i].PictureChecksum != frames[i].PictureChecksum || !bytes.Equal(bounded[i].Pixels, matching[i].Pixels) || bounded[i].Evidence.Motion != frames[i].Evidence.Motion || bounded[i].Evidence.Dark != frames[i].Evidence.Dark || bounded[i].Evidence.Flat != frames[i].Evidence.Flat {
+		if bounded[i].PTS != frames[i].PTS || !bytes.Equal(bounded[i].Pixels, matching[i].Pixels) || bounded[i].Evidence.Motion != frames[i].Evidence.Motion || bounded[i].Evidence.Dark != frames[i].Evidence.Dark || bounded[i].Evidence.Flat != frames[i].Evidence.Flat {
 			t.Fatal("file admission or the shared matching branch changed native identity or scene evidence")
 		}
 	}
 	limited := &ComparisonDecodeBudget{RemainingEncodedBytes: 64}
 	if _, err := s.AnalyzeComparisonSource(t.Context(), ComparisonSampleRequest{
-		Source:              source,
-		DurationSeconds:     4,
-		RetentionLimitBytes: 4096,
+		Source:          source,
+		DurationSeconds: 4,
+		Retain:          ComparisonRetentionLimit(4096),
 	}); !errors.Is(err, ErrComparisonFastInconclusive) {
 		t.Fatalf("analysis escaped the shared parent retention limit: %v", err)
 	}

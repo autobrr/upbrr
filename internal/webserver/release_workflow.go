@@ -281,6 +281,7 @@ func (b *Backend) previewReleaseWorkflowFrame(
 	timestampSeconds float64,
 	comparisonSourceID string,
 	comparisonStepDirection int,
+	from api.PublicResourceID,
 ) (api.FramePreview, error) {
 	runtime, err := b.requireRuntime()
 	if err != nil {
@@ -299,7 +300,7 @@ func (b *Backend) previewReleaseWorkflowFrame(
 			expectedRevision,
 			comparisonSourceID,
 			timestampSeconds,
-			comparisonStepDirection,
+			comparisonStepDirection, from,
 		)
 	} else {
 		preview, err = workflowCore.PreviewReleaseWorkflowFrame(ctx, ownerID, workflowID, expectedRevision, discID, timestampSeconds)

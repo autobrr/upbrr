@@ -41,6 +41,93 @@ func comparisonSelectionFailure(code api.OperationFailureCode, reason, message s
 	}, filesystem.ErrComparisonIndex)
 }
 
+// comparisonNativeTiming describes the display interval and picture policy
+// attached to one observed address. Neither can be borrowed from another read.
+type comparisonNativeTiming struct {
+	relative                              float64
+	pts, duration, numerator, denominator int64
+	pictureType                           string
+}
+
+func comparisonTimingOf(o screenshots.ComparisonFrameObservation) comparisonNativeTiming {
+	return comparisonNativeTiming{o.RelativeTimestampSeconds, o.PTS, o.DurationTicks, o.TimeBaseNumerator, o.TimeBaseDenominator, o.PictureType}
+}
+
+type comparisonKnownPicture struct {
+	timing comparisonNativeTiming
+	replay *screenshots.ComparisonFrameReplay
+}
+
+func comparisonRecord(o screenshots.ComparisonFrameObservation) comparisonKnownPicture {
+	return comparisonKnownPicture{timing: comparisonTimingOf(o), replay: o.Replay}
+}
+func (record comparisonKnownPicture) matches(o screenshots.ComparisonFrameObservation) bool {
+	if record.timing != comparisonTimingOf(o) {
+		return false
+	}
+	if record.replay == o.Replay {
+		return true
+	}
+	if !record.replay.SamePicture(o.Replay) {
+		return false
+	}
+	x, y := record.replay.File, o.Replay.File
+	return x == nil || y == nil ||
+		((x.Next == nil || y.Next == nil || *x.Next == *y.Next) && (x.Previous == nil || y.Previous == nil || *x.Previous == *y.Previous))
+}
+
+// An explicit correspondence binds two physical pictures inspected together.
+type comparisonAppliedPair struct {
+	Main, Secondary screenshots.ComparisonFrameReplay
+}
+
+// A public ID has one private address per source. Replacing one row's explicit
+// selection must not redirect an image, preview or retry in another row.
+func (b workflowMediaBuilder) storeComparisonWitness(
+	ctx context.Context,
+	plan api.ComparisonPlan,
+	row int,
+	id string,
+	source *workflowComparisonSource,
+	replay *screenshots.ComparisonFrameReplay,
+) (bool, error) {
+	key, err := api.CanonicalWorkflowFingerprint(replay.Identity)
+	if err != nil {
+		return false, fmt.Errorf("identify comparison picture: %w", err)
+	}
+	address := string(key)
+	previous := source.Witnesses[address]
+	same := previous.SamePicture(replay)
+	if !same {
+		for i, other := range plan.Rows {
+			if i != row && slices.ContainsFunc(other.Cells, func(cell api.ComparisonCell) bool {
+				return cell.SourceID == id && cell.ObservedIdentity != nil && *cell.ObservedIdentity == replay.Identity
+			}) {
+				if previous.CanReinspectDisc() {
+					renderer, err := b.comparisonService()
+					if err != nil {
+						return false, err
+					}
+					verified, err := renderer.ReinspectComparisonReplay(ctx, screenshots.ComparisonSampleRequest{Source: source.Source}, &previous)
+					if err != nil {
+						return false, fmt.Errorf("reinspect saved comparison span: %w", err)
+					}
+					same = verified.SamePicture(replay)
+				}
+				if !same {
+					return false, comparisonWitnessConflict()
+				}
+				break
+			}
+		}
+	}
+	if source.Witnesses == nil {
+		source.Witnesses = map[string]screenshots.ComparisonFrameReplay{}
+	}
+	source.Witnesses[address] = cloneComparisonWitness(*replay)
+	return same, nil
+}
+
 func (b workflowMediaBuilder) ApplyComparisonFrames(
 	ctx context.Context,
 	snapshot api.MediaArtifactSet,
@@ -57,12 +144,14 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 		return snapshot, private, fmt.Errorf("comparison source: %w", err)
 	}
 	retained.ComparisonSources = cloneComparisonSources(retained.ComparisonSources)
+	applied := map[string]map[string]screenshots.ComparisonFrameReplay{}
 	for i, selection := range selections {
 		content := contents[i]
 		source, ok := retained.ComparisonSources[selection.SourceID]
 		var witness screenshots.ComparisonFrameReplay
 		witnessErr := json.Unmarshal(content.ComparisonWitness, &witness)
-		if !ok || witnessErr != nil || content.ObservedIdentity == nil || witness.Identity != *content.ObservedIdentity ||
+		if !ok || witnessErr != nil || witness.Version != 2 || witness.MissingBoundary() || content.ObservedIdentity == nil ||
+			witness.Identity != *content.ObservedIdentity ||
 			witness.Identity.InputFingerprint != source.Fingerprint {
 			return snapshot, private, comparisonSelectionFailure(
 				api.OperationFailureStaleResult,
@@ -78,54 +167,57 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 		if column < 0 {
 			return snapshot, private, errors.New("choose an existing comparison column")
 		}
-		key, err := api.CanonicalWorkflowFingerprint(witness.Identity)
+		same, err := b.storeComparisonWitness(ctx, plan, row, selection.SourceID, &source, &witness)
 		if err != nil {
-			return snapshot, private, fmt.Errorf("comparison source: %w", err)
+			return snapshot, private, err
 		}
-		previousWitness := source.Witnesses[string(key)]
-		pictureChanged := previousWitness.PictureChecksum != "" && previousWitness.PictureChecksum != witness.PictureChecksum
-		if pictureChanged {
-			for other, active := range plan.Rows {
-				if other != row && slices.ContainsFunc(active.Cells, func(cell api.ComparisonCell) bool {
-					return cell.SourceID == selection.SourceID && cell.ObservedIdentity != nil && *cell.ObservedIdentity == witness.Identity
-				}) {
-					return snapshot, private, comparisonWitnessConflict()
-				}
-			}
+		if applied[selection.RowID] == nil {
+			applied[selection.RowID] = map[string]screenshots.ComparisonFrameReplay{}
 		}
-		if source.Witnesses == nil {
-			source.Witnesses = map[string]screenshots.ComparisonFrameReplay{}
+		address := witness
+		address.Window.Spans = nil
+		applied[selection.RowID][selection.SourceID] = address
+		if pair, ok := source.AppliedPairs[selection.RowID]; ok && !pair.Secondary.SamePicture(&address) {
+			delete(source.AppliedPairs, selection.RowID)
 		}
-		source.Witnesses[string(key)] = cloneComparisonWitness(witness)
 		retained.ComparisonSources[selection.SourceID] = source
-		var guard *api.ComparisonSceneEvidence
+		previous := plan.Rows[row].Cells[column]
+		unchanged := same && previous.ObservedIdentity != nil && *previous.ObservedIdentity == witness.Identity &&
+			previous.TimestampSeconds != nil && *previous.TimestampSeconds == content.TimestampSeconds
 		if selection.SourceID == plan.MainSourceID {
-			inspected, err := b.inspectManualMainScene(ctx, plan, retained, content.TimestampSeconds, witness.PreferredDecoder(), nil, 0)
-			if err != nil {
+			if err := comparisonMainTimeAllowed(plan, retained, content.TimestampSeconds); err != nil {
 				return snapshot, private, err
 			}
-			if inspected.Identity == nil || *inspected.Identity != witness.Identity ||
-				witness.PictureChecksum != "" && witness.PictureChecksum != inspected.PictureChecksum {
-				return snapshot, private, comparisonSelectionFailure(
-					api.OperationFailureStaleResult,
-					"changed_main_picture",
-					"Inspect the main picture again before selecting it.",
-				)
+			priorEvidence := plan.Rows[row].Evidence
+			if !unchanged || priorEvidence == nil || !priorEvidence.Eligible || priorEvidence.Profile != comparisons.SceneProfile {
+				inspected, _, err := b.inspectManualMainScene(ctx, plan, retained, content.TimestampSeconds, screenshots.ComparisonSampleRequest{})
+				if err != nil {
+					return snapshot, private, err
+				}
+				if inspected.Identity == nil || *inspected.Identity != witness.Identity ||
+					!witness.SamePicture(inspected.Replay) {
+					return snapshot, private, comparisonSelectionFailure(
+						api.OperationFailureStaleResult,
+						"changed_main_picture",
+						"Inspect the main picture again before selecting it.",
+					)
+				}
+				plan.Rows[row].Evidence = inspected.Evidence
+				plan.Rows[row].Scene = ""
+				plan.SceneMix = nil
 			}
-			guard = inspected.Evidence
 		}
-		previous := plan.Rows[row].Cells[column]
-		if selection.SourceID == plan.MainSourceID &&
-			(pictureChanged || previous.TimestampSeconds == nil || *previous.TimestampSeconds != content.TimestampSeconds ||
-				previous.ObservedIdentity == nil || *previous.ObservedIdentity != witness.Identity) {
-			plan.Rows[row].Scene = ""
-			plan.Rows[row].Evidence = guard
-			plan.SceneMix = nil
+		if selection.SourceID == plan.MainSourceID && !unchanged {
+			for _, other := range retained.ComparisonSources {
+				if pair, ok := other.AppliedPairs[selection.RowID]; ok && !pair.Main.SamePicture(&witness) {
+					delete(other.AppliedPairs, selection.RowID)
+				}
+			}
 			for c := range plan.Rows[row].Cells {
 				plan.Rows[row].Cells[c].Confidence = nil
 			}
 		}
-		plan.Rows[row].Cells[column] = api.ComparisonCell{
+		selected := api.ComparisonCell{
 			SourceID:            selection.SourceID,
 			TimestampSeconds:    new(content.TimestampSeconds),
 			ObservedIdentity:    new(witness.Identity),
@@ -133,6 +225,37 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 			TimeBaseNumerator:   witness.Identity.TimeBaseNumerator,
 			TimeBaseDenominator: witness.Identity.TimeBaseDenominator,
 			PictureType:         content.PictureType,
+		}
+		// Configure already verified these bytes against their private image.
+		// Apply reuses them only for the same qualified picture and rendering.
+		if unchanged && previous.ArtifactID != "" && previous.ContentSHA256 != "" && previous.PictureType == content.PictureType {
+			rendering, err := comparisonRenderingFingerprint(plan, retained, selection.SourceID, b.config.ScreenshotHandling)
+			if err != nil {
+				return snapshot, private, err
+			}
+			image, found := retained.ArtifactImages[previous.ArtifactID]
+			if found && image.Purpose == api.ScreenshotPurposeComparison && image.ContentSHA256 == previous.ContentSHA256 &&
+				comparisonImageRenderingCurrent(retained, selection.SourceID, previous.ArtifactID, rendering) {
+				selected.ArtifactID, selected.ContentSHA256, selected.FrameNumber = previous.ArtifactID, previous.ContentSHA256, previous.FrameNumber
+			}
+		}
+		plan.Rows[row].Cells[column] = selected
+	}
+	for row, frames := range applied {
+		main, ok := frames[plan.MainSourceID]
+		if !ok {
+			continue
+		}
+		for id, secondary := range frames {
+			if id == plan.MainSourceID {
+				continue
+			}
+			source := retained.ComparisonSources[id]
+			if source.AppliedPairs == nil {
+				source.AppliedPairs = map[string]comparisonAppliedPair{}
+			}
+			source.AppliedPairs[row] = comparisonAppliedPair{Main: main, Secondary: secondary}
+			retained.ComparisonSources[id] = source
 		}
 	}
 	if err := verifyComparisonVideos(ctx, plan, retained); err != nil {
@@ -201,14 +324,31 @@ func comparisonSourceCaptionVersion(source workflowComparisonSource) int {
 	return screenshots.ComparisonCaptionVersion
 }
 
-func retainMatchedComparisonWitnesses(plan api.ComparisonPlan, observations map[string][]screenshots.ComparisonSample, retained workflowMediaPrivateArtifacts) {
+func retainMatchedComparisonWitnesses(
+	plan api.ComparisonPlan,
+	observations map[string][]screenshots.ComparisonSample,
+	retained workflowMediaPrivateArtifacts,
+) error {
 	for id, source := range retained.ComparisonSources {
 		chosen := map[string]bool{}
+		var applied map[string]comparisonAppliedPair
 		for _, row := range plan.Rows {
 			for _, cell := range row.Cells {
 				if cell.SourceID == id && cell.ObservedIdentity != nil {
 					key, _ := api.CanonicalWorkflowFingerprint(*cell.ObservedIdentity)
 					chosen[string(key)] = true
+					pair, bound := source.AppliedPairs[row.ID]
+					if bound && cell.Confidence == nil && cell.TimestampSeconds != nil && *cell.ObservedIdentity == pair.Secondary.Identity &&
+						slices.ContainsFunc(row.Cells, func(main api.ComparisonCell) bool {
+							return main.SourceID == plan.MainSourceID && main.Confidence == nil && main.TimestampSeconds != nil &&
+								main.ObservedIdentity != nil &&
+								*main.ObservedIdentity == pair.Main.Identity
+						}) {
+						if applied == nil {
+							applied = map[string]comparisonAppliedPair{}
+						}
+						applied[row.ID] = pair
+					}
 				}
 			}
 		}
@@ -220,12 +360,24 @@ func retainMatchedComparisonWitnesses(plan api.ComparisonPlan, observations map[
 		}
 		for _, observation := range observations[id] {
 			if observation.Replay != nil && chosen[observation.FrameID] {
+				if prior, ok := witnesses[observation.FrameID]; ok && prior.Version == 2 {
+					if !observation.Replay.SamePicture(&prior) {
+						return comparisonWitnessConflict()
+					}
+					// A historical disc inventory can select a picture whose
+					// original span was already verified during capture.
+					if observation.Replay.Version != 2 {
+						continue
+					}
+				}
 				witnesses[observation.FrameID] = cloneComparisonWitness(*observation.Replay)
 			}
 		}
+		source.AppliedPairs = applied
 		source.Witnesses = witnesses
 		retained.ComparisonSources[id] = source
 	}
+	return nil
 }
 
 func comparisonDiscovery(ctx context.Context, path string) (api.ComparisonSourceDiscovery, filesystem.ComparisonDiscovery, error) {
@@ -439,6 +591,10 @@ func cloneComparisonSources(sources map[string]workflowComparisonSource) map[str
 			}
 			source.Source.Input = &input
 		}
+		source.AppliedPairs = maps.Clone(source.AppliedPairs)
+		for row, pair := range source.AppliedPairs {
+			source.AppliedPairs[row] = comparisonAppliedPair{Main: cloneComparisonWitness(pair.Main), Secondary: cloneComparisonWitness(pair.Secondary)}
+		}
 		source.Witnesses = maps.Clone(source.Witnesses)
 		for key, witness := range source.Witnesses {
 			source.Witnesses[key] = cloneComparisonWitness(witness)
@@ -450,5 +606,18 @@ func cloneComparisonSources(sources map[string]workflowComparisonSource) map[str
 
 func cloneComparisonWitness(witness screenshots.ComparisonFrameReplay) screenshots.ComparisonFrameReplay {
 	witness.Window.Spans = slices.Clone(witness.Window.Spans)
+	if witness.File != nil {
+		window := *witness.File
+		if window.PacketPosition != nil {
+			window.PacketPosition = new(*window.PacketPosition)
+		}
+		if window.Previous != nil {
+			window.Previous = new(*window.Previous)
+		}
+		if window.Next != nil {
+			window.Next = new(*window.Next)
+		}
+		witness.File = &window
+	}
 	return witness
 }

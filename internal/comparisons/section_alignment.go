@@ -59,8 +59,8 @@ type SceneSectionMatcher struct {
 	category            int
 	section, candidates []FrameSample
 	sources             map[string]SampledSource
-	proofs              map[string][]sceneSectionProof
-	order               []string
+	proofs              map[string]map[string]sceneSectionProof
+	surviving           []FrameSample
 	reason              string
 }
 
@@ -71,8 +71,7 @@ func NewSceneSectionMatcher(reference SampledSource, anchor FrameSample, categor
 		anchor:   anchor,
 		category: category,
 		sources:  map[string]SampledSource{reference.ID: reference},
-		proofs:   map[string][]sceneSectionProof{},
-		order:    []string{reference.ID},
+		proofs:   map[string]map[string]sceneSectionProof{},
 	}
 	start, end := 0, len(reference.Frames)
 	if category >= 0 {
@@ -81,7 +80,7 @@ func NewSceneSectionMatcher(reference SampledSource, anchor FrameSample, categor
 	section := reference.Frames[start:end]
 	var candidates []FrameSample
 	for _, frame := range section {
-		if !slices.Contains(permittedPictureTypes(reference), frame.FrameType) || frame.Evidence == nil || !frame.Evidence.Eligible {
+		if frame.Unselectable || !slices.Contains(permittedPictureTypes(reference), frame.FrameType) || frame.Evidence == nil || !frame.Evidence.Eligible {
 			continue
 		}
 		candidates = append(candidates, frame)
@@ -130,6 +129,7 @@ func NewSceneSectionMatcher(reference SampledSource, anchor FrameSample, categor
 		return cmp.Compare(a.FrameID, b.FrameID)
 	})
 	matcher.section, matcher.candidates = section, candidates
+	matcher.surviving = slices.Clone(candidates)
 	return matcher
 }
 
@@ -146,10 +146,26 @@ func (m *SceneSectionMatcher) AddSource(ctx context.Context, source SampledSourc
 		m.reason = "native_correspondence_unavailable"
 		return false, err
 	}
-	m.sources[source.ID], m.proofs[source.ID] = source, proofs
-	m.order = append(m.order, source.ID)
-	matched, err := m.Match(ctx, m.order, nil)
-	return len(matched.Rows) == 1 && matched.Rows[0].Complete, err
+	column := make(map[string]sceneSectionProof)
+	for _, candidate := range m.candidates {
+		if proof, ok := momentProof(proofs, candidate.FrameID); ok {
+			column[candidate.FrameID] = proof
+		}
+	}
+	if len(column) == 0 {
+		m.reason = "native_correspondence_unavailable"
+		return false, nil
+	}
+	m.sources[source.ID], m.proofs[source.ID] = source, column
+	m.surviving = slices.DeleteFunc(m.surviving, func(frame FrameSample) bool {
+		_, ok := column[frame.FrameID]
+		return !ok
+	})
+	if len(m.surviving) == 0 {
+		m.reason = "native_intersection_unavailable"
+		return false, nil
+	}
+	return true, nil
 }
 
 // InconclusiveReason reports already observed proof/type/intersection outcomes;
@@ -172,7 +188,7 @@ func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previou
 		seen[id] = true
 		sources = append(sources, source)
 	}
-	mainID, category, proofs, candidates := m.mainID, m.category, m.proofs, m.candidates
+	mainID, category, proofs, candidates := m.mainID, m.category, m.proofs, m.surviving
 	var preferred, fallback *MatchedRow
 	bestScore := math.Inf(-1)
 	qualified := false
@@ -186,16 +202,11 @@ func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previou
 			if source.ID == mainID {
 				continue
 			}
-			if proof, ok := momentProof(proofs[source.ID], candidate.FrameID); ok {
-				local[source.ID] = proof.ConstantAlignment
-				scoped[i].Frames = slices.DeleteFunc(slices.Clone(source.Frames), func(frame FrameSample) bool {
-					return frame.Occurrence != proof.targetOccurrence
-				})
-			}
-		}
-		if len(local) != len(sources)-1 {
-			m.reason = "native_intersection_unavailable"
-			continue
+			proof := proofs[source.ID][candidate.FrameID]
+			local[source.ID] = proof.ConstantAlignment
+			scoped[i].Frames = slices.DeleteFunc(slices.Clone(source.Frames), func(frame FrameSample) bool {
+				return frame.Occurrence != proof.targetOccurrence
+			})
 		}
 		matched, err := AlignedMatch(scoped, mainID, MatchOptions{Count: 1, MainFrameID: candidate.FrameID}, local, previous)
 		if err != nil {

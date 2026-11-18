@@ -145,7 +145,7 @@ func SelectScene(
 		return d
 	}
 	for f := range frames {
-		picture := matchingFrame{frame: f, signature: matchingSignature(f.Luma)}
+		picture := matchingFrame{frame: f, signature: f.visualSignature()}
 		// Unchanged pictures cannot register native time. Prefer an observed
 		// main-picture change for general rows, then maximize temporal spread.
 		// This is a search hint; every target still needs its full local proof.
@@ -155,7 +155,7 @@ func SelectScene(
 		if len(picture.signature) > 0 {
 			previous = &picture
 		}
-		if used[f.FrameID] || f.Evidence == nil || !f.Evidence.Eligible || distance(f.TimestampSeconds) < separation {
+		if f.Unselectable || used[f.FrameID] || f.Evidence == nil || !f.Evidence.Eligible || distance(f.TimestampSeconds) < separation {
 			continue
 		}
 		for category := range 3 {

@@ -168,9 +168,8 @@ func comparisonDecoders(
 	executable string,
 	source ComparisonSource,
 	softwareOnly bool,
-	preferred string,
 ) ([]comparisonDecoder, error) {
-	if softwareOnly || preferred == comparisonSoftwareDecoder || !nativeComparisonRunner(runner) || source.NativeCodec == "" {
+	if softwareOnly || !nativeComparisonRunner(runner) || source.NativeCodec == "" {
 		return nil, nil
 	}
 	download := comparisonHardwareDownload(source)
@@ -210,9 +209,6 @@ func comparisonDecoders(
 	}
 	var candidates []comparisonDecoder
 	for _, backend := range backends {
-		if preferred != "" && backend != preferred {
-			continue
-		}
 		candidate := comparisonDecoder{backend: backend, download: download}
 		switch backend {
 		case "cuda":
@@ -282,11 +278,11 @@ func (s *Service) runComparisonCaptureDecoder(
 	args []string,
 	dir string,
 	source ComparisonSource,
-	softwareOnly bool,
-	preferred string,
 	surface string,
 ) (CommandResult, error) {
-	decoders, err := comparisonDecoders(ctx, runner, executable, source, softwareOnly, preferred)
+	filterIndex := slices.Index(args, "-vf")
+	useLibplacebo := filterIndex >= 0 && strings.Contains(args[filterIndex+1], "libplacebo=")
+	decoders, err := comparisonDecoders(ctx, runner, executable, source, useLibplacebo)
 	if err != nil {
 		return CommandResult{}, err
 	}

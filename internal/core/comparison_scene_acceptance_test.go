@@ -508,7 +508,6 @@ func TestLocalComparisonSceneAcceptance(t *testing.T) {
 					PTS:                      cell.ObservedIdentity.PTS,
 					TimestampSeconds:         float64(cell.ObservedIdentity.PTS) * float64(cell.ObservedIdentity.TimeBaseNumerator) / float64(cell.ObservedIdentity.TimeBaseDenominator),
 					RelativeTimestampSeconds: *cell.TimestampSeconds,
-					PictureChecksum:          witness.PictureChecksum,
 				})
 			}
 		}

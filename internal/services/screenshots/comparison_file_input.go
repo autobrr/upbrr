@@ -22,6 +22,7 @@ type comparisonInputURLKey struct{}
 // before serving it to the decoder. ServeContent owns HTTP range semantics;
 // no encoded payload is staged, and only this attempt's approved file is served.
 type comparisonFileInput struct {
+	budget   *ComparisonDecodeBudget
 	url      string
 	server   *http.Server
 	cancel   context.CancelFunc
@@ -33,8 +34,11 @@ type comparisonFileInput struct {
 }
 
 func (s *Service) openComparisonFileInput(ctx context.Context, path string, budget *ComparisonDecodeBudget) (context.Context, *comparisonFileInput, error) {
-	input := &comparisonFileInput{url: path}
-	if _, native := s.runner.(commandRunner); !native || budget == nil {
+	if budget == nil {
+		budget = &ComparisonDecodeBudget{RemainingEncodedBytes: 8 << 30}
+	}
+	input := &comparisonFileInput{url: path, budget: budget}
+	if _, native := s.runner.(commandRunner); !native {
 		return ctx, input, nil
 	}
 	stat, err := os.Stat(path)
@@ -75,9 +79,8 @@ func (s *Service) openComparisonFileInput(ctx context.Context, path string, budg
 			defer file.Close()
 			w.Header().Set("Content-Type", "application/octet-stream")
 			http.ServeContent(w, r, "input", stat.ModTime(), &comparisonBudgetReader{
-				file:   file,
-				input:  input,
-				budget: budget,
+				file:  file,
+				input: input,
 			})
 		}),
 	}
@@ -119,9 +122,8 @@ func (input *comparisonFileInput) close() {
 }
 
 type comparisonBudgetReader struct {
-	file   *os.File
-	input  *comparisonFileInput
-	budget *ComparisonDecodeBudget
+	file  *os.File
+	input *comparisonFileInput
 }
 
 func (r *comparisonBudgetReader) Read(p []byte) (int, error) {
@@ -129,7 +131,7 @@ func (r *comparisonBudgetReader) Read(p []byte) (int, error) {
 	// final read can conservatively charge unused bytes; read counts never
 	// understate the approved decoder input or assume a constant bitrate.
 	r.input.mu.Lock()
-	err := r.budget.admit(int64(len(p)))
+	err := r.input.budget.admit(int64(len(p)))
 	r.input.mu.Unlock()
 	if err != nil {
 		r.input.fail(err)

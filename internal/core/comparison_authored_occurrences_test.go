@@ -89,17 +89,17 @@ func assertAuthoredRepeatedPlaylist(t *testing.T, root string) {
 			continue
 		}
 		found = true
-		if repeated.PictureChecksum != first.PictureChecksum || repeated.Replay.TitleTime90-first.Replay.TitleTime90 != 5*90000 || repeated.Identity.Occurrence == first.Identity.Occurrence {
+		if repeated.Replay.TitleTime90-first.Replay.TitleTime90 != 5*90000 || repeated.Identity.Occurrence == first.Identity.Occurrence {
 			t.Fatal("trim/repeat aliased native clock domains")
 		}
 		for _, frame := range []screenshots.ComparisonSample{first, repeated} {
-			assertOriginalComparisonPicture(t, filepath.Join(root, "source.h264"), 72, frame.PictureChecksum)
+			assertOriginalComparisonPicture(t, filepath.Join(root, "source.h264"), 72, source, frame)
 			captured, err := service.ComparisonCapture(t.Context(), screenshots.ComparisonCaptureRequest{
 				Source:           source,
 				TimestampSeconds: frame.RelativeTimestampSeconds,
 				Replay:           frame.Replay,
 			})
-			if err != nil || captured.FrameID != frame.FrameID || captured.PictureChecksum != frame.PictureChecksum {
+			if err != nil || captured.FrameID != frame.FrameID || !captured.Replay.SamePicture(frame.Replay) {
 				t.Fatalf("repeated capture changed picture: %v", err)
 			}
 		}
@@ -239,13 +239,13 @@ func assertAuthoredSTCEpochs(t *testing.T, root, bdmv string, playlist []byte, r
 		t.Fatalf("later STC native decoding: %v", err)
 	}
 	frame := frames[0]
-	assertOriginalComparisonPicture(t, filepath.Join(root, "source.h264"), 1151, frame.PictureChecksum)
+	assertOriginalComparisonPicture(t, filepath.Join(root, "source.h264"), 1151, source, frame)
 	captured, err := service.ComparisonCapture(t.Context(), screenshots.ComparisonCaptureRequest{
 		Source:           source,
 		TimestampSeconds: frame.RelativeTimestampSeconds,
 		Replay:           frame.Replay,
 	})
-	if err != nil || captured.FrameID != frame.FrameID || captured.PictureChecksum != frame.PictureChecksum {
+	if err != nil || captured.FrameID != frame.FrameID || !captured.Replay.SamePicture(frame.Replay) {
 		t.Fatalf("later STC exact replay: %v", err)
 	}
 }

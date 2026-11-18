@@ -9727,6 +9727,7 @@ describe("saved-image plan authority", () => {
   });
 
   it("scopes comparison errors to the active command after a successful preview", async () => {
+    const previewRequest = vi.fn();
     const prepared = workflowCurrentFromPreview(
       workflowCurrent("comparison-preview", 8),
       preview("Example.mkv", 1),
@@ -9753,16 +9754,28 @@ describe("saved-image plan authority", () => {
               await pendingEdit.promise;
               throw { failure };
             },
-            previewFrame: async (value, _disc, timestampSeconds, _command, _signal, sourceID) => ({
-              id: "preview",
-              workflowId: value.workflow.id,
-              workflowRevision: value.workflow.revision,
-              release: value.workflow.release!,
-              timestampSeconds,
-              comparisonSourceId: sourceID,
-              contentUrl: "/preview.png",
-              expiresAt: "2026-11-13T01:00:00Z",
-            }),
+            previewFrame: async (
+              value,
+              _disc,
+              seconds,
+              _command,
+              _signal,
+              sourceID,
+              step,
+              from,
+            ) => {
+              previewRequest(seconds, step, from);
+              return {
+                id: "preview",
+                workflowId: value.workflow.id,
+                workflowRevision: value.workflow.revision,
+                release: value.workflow.release!,
+                timestampSeconds: 1.04,
+                comparisonSourceId: sourceID,
+                contentUrl: "/preview.png",
+                expiresAt: "2026-11-13T01:00:00Z",
+              };
+            },
           }),
         }),
       ),
@@ -9784,8 +9797,9 @@ describe("saved-image plan authority", () => {
     });
     expect(result.current.screenshots.comparisons.view.error).toBe(failure.Message);
     await act(async () => {
-      expect(await result.current.screenshots.comparisons.preview("1", 1)).not.toBeNull();
+      expect(await result.current.screenshots.comparisons.preview("1", 1.01, 1)).not.toBeNull();
     });
+    expect(previewRequest.mock.calls).toEqual([[1.01, 1, undefined]]);
     expect(result.current.screenshots.comparisons.view.error).toBe("");
   });
 

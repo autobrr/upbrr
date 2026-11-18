@@ -214,13 +214,8 @@ func TestComparisonHardwareRetryPreservesWindowAdmissionAndFatalOutcomes(t *test
 
 func TestComparisonLibplaceboDoesNotInspectHardware(t *testing.T) {
 	source := ComparisonSource{NativePixelFormat: "yuv420p", NativeCodec: "h264"}
-	if decoders, err := comparisonDecoders(t.Context(), commandRunner{}, "", source, true, "cuda"); err != nil || len(decoders) != 0 {
+	if decoders, err := comparisonDecoders(t.Context(), commandRunner{}, "", source, true); err != nil || len(decoders) != 0 {
 		t.Fatalf("software-only decoding attempted hardware selection: %v", err)
-	}
-	request := ComparisonCaptureRequest{Source: source}
-	request.Source.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatHDR10}}
-	if decoder := request.PreferredDecoder(config.ScreenshotHandlingConfig{ToneMap: true, UseLibplacebo: true}); decoder != "software" {
-		t.Fatalf("an unbound libplacebo preview did not select software: %s", decoder)
 	}
 }
 
@@ -284,7 +279,7 @@ func TestComparisonNativeDecoderReplaysMatchedPicture(t *testing.T) {
 			}
 			fingerprint, _ := api.CanonicalWorkflowFingerprint(path)
 			source.InputFingerprint = string(fingerprint)
-			if _, err := comparisonDecoders(t.Context(), commandRunner{}, executable, source, false, ""); err != nil {
+			if _, err := comparisonDecoders(t.Context(), commandRunner{}, executable, source, false); err != nil {
 				t.Fatal(err)
 			}
 			request := ComparisonSampleRequest{
@@ -301,14 +296,13 @@ func TestComparisonNativeDecoderReplaysMatchedPicture(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(samples) <= 25 || samples[25].Replay == nil || samples[25].Replay.Decoder == "" {
+			if len(samples) <= 25 || samples[25].Replay == nil || samples[25].Replay.File == nil {
 				t.Fatal("matching did not retain the actual decoder")
 			}
 			selected := samples[25]
-			if selected.Replay.Decoder == "cuda" && (budget.ProcessStarts != 1 || budget.ConsumedMovieSeconds != request.DurationSeconds) {
-				t.Fatalf("CUDA sampling started %d processes for a single supported window", budget.ProcessStarts)
+			if budget.ProcessStarts < 1 || budget.ConsumedMovieSeconds != float64(budget.ProcessStarts)*(request.DurationSeconds+.125) {
+				t.Fatalf("physical sampling work not accounted for: %+v", budget)
 			}
-			t.Logf("decoder=%s processes=%d", selected.Replay.Decoder, budget.ProcessStarts)
 			request.Budget = nil
 			settings := s.cfg
 			settings.ScreenshotHandling.UseLibplacebo = true
@@ -324,7 +318,7 @@ func TestComparisonNativeDecoderReplaysMatchedPicture(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(analysis) <= 25 || analysis[25].Replay == nil || analysis[25].Replay.Decoder != selected.Replay.Decoder {
+			if len(analysis) <= 25 || analysis[25].Replay == nil || !analysis[25].Replay.SamePicture(selected.Replay) {
 				t.Fatal("deep analysis did not retain the actual decoder")
 			}
 			unchanged, err = changedSettings.AnalyzeComparisonSource(t.Context(), request)
@@ -336,12 +330,13 @@ func TestComparisonNativeDecoderReplaysMatchedPicture(t *testing.T) {
 				TimestampSeconds: selected.RelativeTimestampSeconds,
 				Replay:           selected.Replay,
 			}
-			frame, err := s.ComparisonCapture(t.Context(), capture)
+			capture.OverlayLabel = "Native test"
+			ctx, starts := comparisonProcessCounter(t.Context(), nil)
+			frame, err := s.ComparisonCapture(ctx, capture)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if frame.FrameID != selected.FrameID || frame.PictureChecksum != selected.PictureChecksum || frame.Replay == nil ||
-				frame.Replay.Decoder != selected.Replay.Decoder {
+			if *starts != 1 || frame.FrameID != selected.FrameID || !frame.Replay.SamePicture(selected.Replay) {
 				t.Fatal("capture did not replay the retained native picture using its decoder")
 			}
 		})

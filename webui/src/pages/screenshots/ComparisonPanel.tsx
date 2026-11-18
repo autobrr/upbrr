@@ -292,15 +292,18 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
       return next;
     });
   };
-  const addManualRow = () => {
+  const newRowID = () => {
     let next = draft.rows.length + 1;
     while (draft.rows.some((row) => row.id === `row-${next}`)) next++;
+    return `row-${next}`;
+  };
+  const addManualRow = () => {
     change({
       ...draft,
       rows: [
         ...draft.rows,
         {
-          id: `row-${next}`,
+          id: newRowID(),
           excluded: false,
           cells: draft.sources.map((source) => ({
             sourceId: source.id,
@@ -308,6 +311,56 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           })),
         },
       ],
+    });
+  };
+  const applyPreviewAnchor = (sourceID: string) => {
+    const mainID = draft.mainSourceId;
+    const main = view.previews[mainID];
+    const target = view.previews[sourceID];
+    if (!main?.observedIdentity || !target?.observedIdentity) return;
+    const existing = draft.rows.find(
+      (row) =>
+        !row.excluded &&
+        row.cells.some(
+          (cell) => cell.sourceId === mainID && cell.timestampSeconds === main.timestampSeconds,
+        ),
+    );
+    const rowID = existing?.id ?? newRowID();
+    const selected = [
+      { sourceId: mainID, preview: main },
+      { sourceId: sourceID, preview: target },
+    ];
+    const cells = draft.sources.map((source) => {
+      const chosen = selected.find((item) => item.sourceId === source.id);
+      const prior = existing?.cells.find((cell) => cell.sourceId === source.id);
+      if (chosen && prior?.timestampSeconds !== chosen.preview.timestampSeconds) {
+        return { sourceId: source.id, timestampSeconds: chosen.preview.timestampSeconds };
+      }
+      return prior ?? { sourceId: source.id };
+    });
+    const row = { ...existing, id: rowID, excluded: false, cells };
+    change({
+      ...draft,
+      rows: existing
+        ? draft.rows.map((item) => (item.id === rowID ? row : item))
+        : [...draft.rows, row],
+      anchors: [
+        ...(draft.anchors ?? []).filter(
+          (anchor) => anchor.sourceId !== sourceID || anchor.mainSeconds !== main.timestampSeconds,
+        ),
+        {
+          sourceId: sourceID,
+          mainSeconds: main.timestampSeconds,
+          sourceSeconds: target.timestampSeconds,
+        },
+      ],
+    });
+    setFrameSelections((previous) => {
+      const next = { ...previous };
+      for (const { sourceId, preview } of selected) {
+        next[`${rowID}/${sourceId}`] = { rowId: rowID, sourceId, previewId: preview.id };
+      }
+      return next;
     });
   };
   const moveCell = (rowID: string, index: number, target: string) => {
@@ -334,7 +387,11 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
     timestampSeconds: number,
     stepDirection?: -1 | 0 | 1,
   ) => {
-    const preview = await facet.preview(sourceID, timestampSeconds, stepDirection);
+    const displayed = view.previews[sourceID];
+    const preview =
+      stepDirection && displayed?.timestampSeconds === timestampSeconds
+        ? await facet.preview(sourceID, timestampSeconds, stepDirection, displayed.id)
+        : await facet.preview(sourceID, timestampSeconds, stepDirection);
     if (preview)
       setPositions((previous) => ({ ...previous, [sourceID]: preview.timestampSeconds }));
   };
@@ -966,21 +1023,17 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                           )}
                           {source.id !== draft.mainSourceId && (
                             <Button
-                              disabled={!preview || !view.previews[draft.mainSourceId]}
-                              onClick={() =>
-                                change({
-                                  ...draft,
-                                  anchors: [
-                                    ...(draft.anchors || []),
-                                    {
-                                      sourceId: source.id,
-                                      mainSeconds:
-                                        view.previews[draft.mainSourceId]!.timestampSeconds,
-                                      sourceSeconds: preview!.timestampSeconds,
-                                    },
-                                  ],
-                                })
+                              disabled={
+                                !preview?.observedIdentity ||
+                                !view.previews[draft.mainSourceId]?.observedIdentity ||
+                                Boolean(
+                                  paths[source.id]?.trim() ||
+                                  paths[draft.mainSourceId]?.trim() ||
+                                  programmes[source.id] ||
+                                  programmes[draft.mainSourceId],
+                                )
                               }
+                              onClick={() => applyPreviewAnchor(source.id)}
                             >
                               Use displayed previews as an anchor
                             </Button>
@@ -1263,13 +1316,15 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                                 }
                                 onClick={() => {
                                   const preview = view.previews[cell.sourceId]!;
-                                  updateCell(row.id, index, {
-                                    timestampSeconds: preview.timestampSeconds,
-                                    artifactId: "",
-                                    contentSha256: "",
-                                    confidence: undefined,
-                                    observedIdentity: undefined,
-                                  });
+                                  if (cell.timestampSeconds !== preview.timestampSeconds) {
+                                    updateCell(row.id, index, {
+                                      timestampSeconds: preview.timestampSeconds,
+                                      artifactId: "",
+                                      contentSha256: "",
+                                      confidence: undefined,
+                                      observedIdentity: undefined,
+                                    });
+                                  }
                                   setFrameSelections((previous) => ({
                                     ...previous,
                                     [`${row.id}/${cell.sourceId}`]: {

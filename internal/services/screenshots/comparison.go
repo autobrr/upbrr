@@ -21,7 +21,6 @@ import (
 
 	gomediainfo "github.com/autobrr/go-mediainfo"
 
-	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -101,15 +100,15 @@ type ComparisonFrameObservation struct {
 	// RelativeTimestampSeconds is the observed PTS time minus the input start.
 	RelativeTimestampSeconds float64
 	PictureType              string
-	// PictureChecksum is FFmpeg's pre-normalization decoded-plane witness.
-	PictureChecksum                                  string
-	FrameRateNumerator, FrameRateDenominator         int64
-	Width, Height                                    int
-	SARNumerator, SARDenominator                     int64
-	PixelFormat, Interlace                           string
-	Colour                                           string
-	ChromaLocation, PlaneChecksums, SideDataChecksum string
-	decoder                                          string
+	// transportChecksum binds a named analysis output to its raw buffer.
+	transportChecksum                        string
+	FrameRateNumerator, FrameRateDenominator int64
+	Width, Height                            int
+	SARNumerator, SARDenominator             int64
+	PixelFormat, Interlace                   string
+	Colour                                   string
+	ChromaLocation                           string
+	packetPosition                           *int64
 }
 
 // ComparisonCaptureRequest selects a seek relative to the file's start time.
@@ -161,14 +160,14 @@ type ComparisonSample struct {
 // requests matching-only colour conversion, independently of capture preferences.
 // DVD matching always deinterlaces and corrects display geometry in either path.
 type ComparisonSampleRequest struct {
-	// RetentionLimitBytes shares the caller's remaining parent budget. Zero uses
-	// the standalone decoder cap; supplied limits reserve 4096 bytes per picture.
-	RetentionLimitBytes int64
+	// Retain admits the observed memory demand of this physical read.
+	// A nil function uses the standalone decoder limits.
+	Retain              func(int64) bool
 	NativeFrames        bool
 	Renderer            *ComparisonAnalysisRenderer
 	analysis            *comparisonRasterStream
 	encodedAttemptBytes int64
-	PreferredDecoder    string
+	seek                float64
 	MatchCrop           *ComparisonCrop
 	Budget              *ComparisonDecodeBudget
 	Source              ComparisonSource
@@ -179,6 +178,11 @@ type ComparisonSampleRequest struct {
 	// MatchAspectRatio selects the shared central picture area for normalized
 	// matching only. Captures retain the source's own framing.
 	MatchAspectRatio float64
+}
+
+// ComparisonRetentionLimit bounds a standalone read by its actual native observations.
+func ComparisonRetentionLimit(limit int64) func(int64) bool {
+	return func(needed int64) bool { return needed <= limit }
 }
 
 // ComparisonAnalysisRenderer pins a successful colour conversion for one
@@ -277,14 +281,14 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 		return ComparisonSource{}, err
 	}
 	probe, err := (finiteComparisonRunner{
-		base:           s.runner,
-		outputLimit:    64 << 10,
-		retentionLimit: 16 << 10,
+		base:        s.runner,
+		outputLimit: 64 << 10,
+		retain:      ComparisonRetentionLimit(16 << 10),
 	}).Run(ctx, executable, []string{
 		"-hide_banner", "-loglevel", "info", "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
 		// Older FFmpeg versions can feed several pictures through a filter before
 		// the output frame limit takes effect. Bound provenance at the filter too.
-		"-frames:v", "1", "-vf", "trim=end_frame=1,showinfo", "-f", "null", "-",
+		"-frames:v", "1", "-vf", "trim=end_frame=1,showinfo=checksum=0", "-f", "null", "-",
 	}, "")
 	if ctx.Err() != nil {
 		return ComparisonSource{}, fmt.Errorf("screenshots: comparison inspection canceled: %w", ctx.Err())
@@ -356,39 +360,48 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 	}, nil
 }
 
-// PreferredDecoder selects the saved backend unless the capture renderer
-// requires software decoding. Unbound previews can choose automatically.
-func (r ComparisonCaptureRequest) PreferredDecoder(settings config.ScreenshotHandlingConfig) string {
-	toneMap := settings.ToneMap
-	if r.ToneMap != nil {
-		toneMap = *r.ToneMap
-	}
-	if toneMap && r.Source.HDRFacts.SupportsToneMapping() && settings.UseLibplacebo {
-		return comparisonSoftwareDecoder
-	}
-	return r.Replay.PreferredDecoder()
-}
-
 // ComparisonPreview uses the strict comparison capture path. It never applies
 // black-frame timestamp offsets or disc-segment recovery.
 func (s *Service) ComparisonPreview(ctx context.Context, request ComparisonCaptureRequest) (ComparisonFrame, error) {
-	if request.Source.Input != nil && request.Replay == nil {
-		frames, err := s.sampleDiscComparison(ctx, ComparisonSampleRequest{
-			PreferredDecoder: request.PreferredDecoder(s.cfg.ScreenshotHandling),
-			Source:           request.Source,
-			StartSeconds:     request.TimestampSeconds,
-			DurationSeconds:  min(.5, request.Source.DurationSeconds-request.TimestampSeconds),
-			StrideSeconds:    .002,
-		})
+	if request.Source.InputFingerprint != "" && request.Replay == nil {
+		selected, err := InspectComparisonMoment(ctx, s, request.Source, request.TimestampSeconds)
 		if err != nil {
 			return ComparisonFrame{}, err
 		}
-		if len(frames) == 0 {
-			return ComparisonFrame{}, comparisonDiscFailure("missing_picture")
-		}
-		request.Replay = frames[0].Replay
+		request.Replay, request.TimestampSeconds = selected.Replay, selected.RelativeTimestampSeconds
 	}
 	return s.ComparisonCapture(ctx, request)
+}
+
+// InspectComparisonMoment binds a newly requested manual time to an observed
+// native picture before it can be applied, previewed or captured.
+func InspectComparisonMoment(ctx context.Context, sampler interface {
+	SampleComparisonSource(context.Context, ComparisonSampleRequest) ([]ComparisonSample, error)
+}, source ComparisonSource, seconds float64) (ComparisonSample, error) {
+	start := max(0, seconds-.5)
+	duration := source.VideoDurationSeconds
+	if duration <= 0 {
+		duration = source.DurationSeconds
+	}
+	frames, err := sampler.SampleComparisonSource(ctx, ComparisonSampleRequest{
+		Source:          source,
+		StartSeconds:    start,
+		DurationSeconds: min(1.5, duration-start),
+		StrideSeconds:   .002,
+		NativeFrames:    true,
+	})
+	if err != nil {
+		return ComparisonSample{}, fmt.Errorf("inspect comparison moment: %w", err)
+	}
+	for _, frame := range frames {
+		if frame.RelativeTimestampSeconds >= seconds-1e-9 {
+			if frame.Replay == nil || frame.Replay.Version != 2 || frame.Replay.MissingBoundary() {
+				break
+			}
+			return frame, nil
+		}
+	}
+	return ComparisonSample{}, comparisonDiscFailure("inspect_frame_required")
 }
 
 // ComparisonCapture returns one usable PNG with observed source PTS. Renderer
@@ -429,8 +442,18 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 	if err != nil {
 		return ComparisonFrame{}, err
 	}
-	if request.Replay != nil && request.Replay.Identity.InputFingerprint != request.Source.InputFingerprint {
-		return ComparisonFrame{}, errors.New("comparison file replay refers to a different input")
+	if request.Replay != nil &&
+		(!request.Replay.validFile(request.Source) || math.Abs(request.TimestampSeconds-(float64(request.Replay.Identity.PTS)*float64(request.Replay.Identity.TimeBaseNumerator)/float64(request.Replay.Identity.TimeBaseDenominator)-request.Source.StartTimeSeconds)) > 1e-6) {
+		return ComparisonFrame{}, comparisonDiscFailure("inspect_frame_required")
+	}
+	var input *comparisonFileInput
+	if request.Replay != nil {
+		ctx, input, err = s.openComparisonFileInput(ctx, path, nil)
+		if err != nil {
+			return ComparisonFrame{}, err
+		}
+		defer input.close()
+		path = input.url
 	}
 	runner := &comparisonRunner{
 		service:        s,
@@ -440,6 +463,8 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		seek:           request.TimestampSeconds,
 		label:          request.OverlayLabel,
 		showResolution: request.ShowResolution,
+		width:          request.OutputWidth,
+		height:         request.OutputHeight,
 		overlaySize:    s.cfg.ScreenshotHandling.OverlayTextSize,
 		overlayHeight:  request.Source.Height,
 	}
@@ -453,7 +478,6 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 	if request.ToneMap != nil {
 		toneMap = *request.ToneMap
 	}
-	runner.softwareOnly = request.PreferredDecoder(s.cfg.ScreenshotHandling) == comparisonSoftwareDecoder
 	frame, err := renderFrame(ctx, runner, executable, captureRequest{
 		InputPath:     path,
 		Timestamp:     request.TimestampSeconds,
@@ -472,6 +496,11 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		OutputHeight:  request.OutputHeight,
 		ResizeOnly:    request.ResizeOnly,
 	}, logging.FromContext(ctx, s.logger))
+	if input != nil {
+		if inputErr := input.failure(); inputErr != nil {
+			return ComparisonFrame{}, inputErr
+		}
+	}
 	if err != nil {
 		return ComparisonFrame{}, err
 	}
@@ -482,6 +511,7 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 	if err := bindFileObservation(request.Source, runner.observed); err != nil {
 		return ComparisonFrame{}, err
 	}
+	runner.observed.Replay = request.Replay
 	geometry, _, err := image.DecodeConfig(bytes.NewReader(frame.Payload))
 	if err != nil {
 		return ComparisonFrame{}, fmt.Errorf("screenshots: decode comparison PNG: %w", err)
@@ -537,14 +567,11 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 	if err != nil {
 		return nil, err
 	}
-	filter := fmt.Sprintf(
-		"trim=start=%.9f:end=%.9f,select='isnan(prev_selected_t)+gte(t-prev_selected_t,%.9f)',showinfo",
-		windowStart,
-		windowEnd,
-		strideSeconds,
-	)
-	if request.NativeFrames {
-		filter = fmt.Sprintf("trim=start=%.9f:end=%.9f,showinfo", windowStart, windowEnd)
+	filter := fmt.Sprintf("trim=start=%.9f:end=%.9f,showinfo=checksum=0", windowStart, windowEnd)
+	seek := start
+	if input.server != nil {
+		seek = max(0, start-.125)
+		filter = "showinfo@comparison_bounds=checksum=0," + filter
 	}
 	started := time.Now()
 	succeeded := false
@@ -558,30 +585,42 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 		duration: duration,
 	})
 	args := []string{
-		"-hide_banner", "-loglevel", "info", "-threads", "4", "-filter_threads", "4", "-copyts", "-ss", strconv.FormatFloat(start, 'f', 9, 64), "-i", path,
+		"-hide_banner", "-loglevel", "info", "-threads", "4", "-filter_threads", "4", "-copyts", "-ss", strconv.FormatFloat(seek, 'f', 9, 64), "-i", path,
 		"-map", "0:V:0", "-an", "-sn", "-dn",
+	}
+	if input.server != nil {
+		args = comparisonFileCommand(args)
 	}
 	service := *s
 	service.runner = finiteComparisonRunner{
-		base:           s.runner,
-		outputLimit:    50000 * 256,
-		retentionLimit: request.RetentionLimitBytes,
+		base:        s.runner,
+		outputLimit: 50000 * 256,
+		retain:      request.Retain,
 	}
-	result, err := service.runComparisonSamples(ctx, executable, args, filter, request)
+	physical := request
+	physical.DurationSeconds += start - seek
+	result, err := service.runComparisonSamples(ctx, executable, args, filter, physical)
 	if inputErr := input.failure(); inputErr != nil {
 		return nil, inputErr
 	}
 	if err != nil {
 		return nil, err
 	}
+	request.seek = seek
 	if request.analysis != nil {
 		samples, err := analysisSamples(result, request, nil)
 		succeeded = err == nil
 		return samples, err
 	}
 	observations, err := comparisonObservations(result.Stderr)
-	if err != nil || len(observations) > 50000 || len(result.Stdout) != len(observations)*256 {
+	if err != nil {
+		return nil, err
+	}
+	if len(observations) > 50000 || len(result.Stdout) != len(observations)*256 {
 		return nil, errors.New("screenshots: comparison samples lack matching decoded frame identities")
+	}
+	if err := bindComparisonSequence(request, observations, nil, result.bounds); err != nil {
+		return nil, err
 	}
 	if request.NormalizeSDR {
 		output, outputErr := comparisonObservationsFor(result.Stderr, comparisonOutputShowInfoLine)
@@ -596,10 +635,9 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 	}
 	samples := make([]ComparisonSample, 0, len(observations))
 	for i, observation := range observations {
-		observation.decoder = result.comparisonBackend
-		observation.RelativeTimestampSeconds = observation.TimestampSeconds - source.StartTimeSeconds
-		if err := bindFileObservation(source, &observation); err != nil {
-			return nil, err
+		if !request.NativeFrames && len(samples) > 0 &&
+			observation.RelativeTimestampSeconds-samples[len(samples)-1].RelativeTimestampSeconds < request.StrideSeconds-1e-9 {
+			continue
 		}
 		samples = append(samples, ComparisonSample{
 			NativeSequence:             request.NativeFrames,
@@ -663,13 +701,13 @@ func (s *Service) runComparisonSamples(ctx context.Context, executable string, a
 	if err != nil {
 		return CommandResult{}, err
 	}
-	decoders, err := comparisonDecoders(ctx, s.runner, executable, request.Source, mode == "libplacebo", request.PreferredDecoder)
+	decoders, err := comparisonDecoders(ctx, s.runner, executable, request.Source, mode == "libplacebo")
 	if err != nil {
 		return CommandResult{}, err
 	}
 	normalized := filter + normalization
 	if comparisonNormalizesPicture(request) && request.analysis == nil {
-		normalized += ",showinfo@comparison_output"
+		normalized += ",showinfo@comparison_output=checksum=0"
 	}
 	command := slices.Clone(args)
 	if mode == "libplacebo" {
@@ -928,17 +966,18 @@ var (
 	comparisonMappedCodec        = regexp.MustCompile(`(?m)^[ \t]*Stream #\d+:\d+[^\r\n]*? -> #\d+:\d+ \(([a-zA-Z0-9_]+) \(`)
 	comparisonInputStart         = regexp.MustCompile(`(?m)^  Duration: [^\r\n]*, start: ([+-]?[0-9.]+), bitrate:`)
 	comparisonFrameRate          = regexp.MustCompile(`(?m)^\[Parsed_showinfo_\d+ @ [^\]\r\n]+\]\s+config in time_base: [^\r\n]*frame_rate:\s*(\d+)/(\d+)`)
-	comparisonPictureFacts       = regexp.MustCompile(`fmt:(\S+).*?sar:(\d+)[/:](\d+).*?s:(\d+)x(\d+).*?i:(\S+).*?checksum:([0-9A-Fa-f]+)`)
+	comparisonPictureFacts       = regexp.MustCompile(`fmt:(\S+).*?sar:(\d+)[/:](\d+).*?s:(\d+)x(\d+).*?i:(\S+)`)
 )
 
-var comparisonNativePixelFormat = regexp.MustCompile(`^[a-zA-Z0-9_]{1,32}$`)
+var comparisonChecksum = regexp.MustCompile(`\bchecksum:([0-9A-Fa-f]+)`)
 
 var comparisonColourFacts = regexp.MustCompile(`^color_range:(\w+)\s+color_space:(\w+)\s+color_primaries:(\w+)\s+color_trc:(\w+)`)
 var comparisonDuration = regexp.MustCompile(`\bduration:\s*(-?\d+)\b`)
 var comparisonChromaLocation = regexp.MustCompile(`\bcl:(\w+)`)
-var comparisonPlaneChecksums = regexp.MustCompile(`\bplane_checksum:\[([A-Fa-f0-9 ]+)\]`)
 
 func comparisonColour(body string) string {
+	// FFmpeg can append an asynchronous "New ... stream" notice before showinfo writes its newline.
+	body, _, _ = strings.Cut(body, "New ")
 	if fields := comparisonColourFacts.FindStringSubmatch(body); len(fields) == 5 {
 		return strings.Join(fields[1:], "/")
 	}
@@ -970,11 +1009,15 @@ func comparisonObservationsFor(stderr []byte, pattern *regexp.Regexp) ([]Compari
 			continue
 		}
 		if !strings.HasPrefix(body, "n:") {
+			if value, ok := strings.CutPrefix(body, "comparison_packet_pos:"); ok && len(observations) > 0 {
+				pos, err := strconv.ParseInt(value, 10, 64)
+				if err != nil {
+					return nil, comparisonDiscFailure("packet_address")
+				}
+				observations[len(observations)-1].packetPosition = new(pos)
+			}
 			if colour := comparisonColour(body); colour != "" && len(observations) > 0 {
 				observations[len(observations)-1].Colour = colour
-			}
-			if checksum, ok := strings.CutPrefix(body, "comparison_side_data_sha256:"); ok && len(observations) > 0 {
-				observations[len(observations)-1].SideDataChecksum = checksum
 			}
 			continue
 		}
@@ -1005,17 +1048,13 @@ func comparisonObservationsFor(stderr []byte, pattern *regexp.Regexp) ([]Compari
 		if chroma := comparisonChromaLocation.FindStringSubmatch(body); len(chroma) == 2 {
 			observation.ChromaLocation = chroma[1]
 		}
-		if planes := comparisonPlaneChecksums.FindStringSubmatch(body); len(planes) == 2 {
-			observation.PlaneChecksums = strings.ToUpper(strings.Join(strings.Fields(planes[1]), " "))
-		}
-		if facts := comparisonPictureFacts.FindStringSubmatch(body); len(facts) == 8 {
+		if facts := comparisonPictureFacts.FindStringSubmatch(body); len(facts) == 7 {
 			observation.PixelFormat = facts[1]
 			observation.SARNumerator, _ = strconv.ParseInt(facts[2], 10, 64)
 			observation.SARDenominator, _ = strconv.ParseInt(facts[3], 10, 64)
 			observation.Width, _ = strconv.Atoi(facts[4])
 			observation.Height, _ = strconv.Atoi(facts[5])
 			observation.Interlace = facts[6]
-			observation.PictureChecksum = strings.ToUpper(facts[7])
 		}
 		observations = append(observations, observation)
 	}
@@ -1024,7 +1063,6 @@ func comparisonObservationsFor(stderr []byte, pattern *regexp.Regexp) ([]Compari
 
 type comparisonRunner struct {
 	service        *Service
-	softwareOnly   bool
 	expected       *ComparisonFrameReplay
 	runner         Runner
 	source         ComparisonSource
@@ -1033,6 +1071,7 @@ type comparisonRunner struct {
 	showResolution bool
 	overlaySize    int
 	overlayHeight  int
+	width, height  int
 	observed       *ComparisonFrameObservation
 	changed        bool
 }
@@ -1042,49 +1081,67 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 		return CommandResult{}, errors.New("screenshots: comparison renderer changed decoded frame identity")
 	}
 	args = append([]string{"-copyts"}, args...)
-	format := r.source.NativePixelFormat
-	if r.expected != nil && r.expected.PixelFormat != "" {
-		if format != "" && format != r.expected.PixelFormat {
-			return CommandResult{}, errors.New("comparison native pixel format changed")
-		}
-		format = r.expected.PixelFormat
-	}
-	if format != "" {
-		if !comparisonNativePixelFormat.MatchString(format) {
-			return CommandResult{}, errors.New("invalid comparison native pixel format")
-		}
-		for i, arg := range args {
-			if arg == "-vf" && i+1 < len(args) {
-				args[i+1] = "format=pix_fmts=" + format + "," + args[i+1]
-			}
-		}
-	}
-	if r.expected != nil {
-		for i, arg := range args {
-			if arg == "-vf" && i+1 < len(args) {
-				args[i+1] = fmt.Sprintf("select='eq(pts,%d)',", r.expected.Identity.PTS) + args[i+1]
-			}
-		}
-	}
-	for i := range args {
-		if args[i] == "-ss" && i+1 < len(args) {
-			seek := r.seek
+	for i, arg := range args {
+		switch arg {
+		case "-map":
+			args[i+1] = "0:V:0"
+		case "-ss":
+			start := r.seek
 			if r.expected != nil {
-				seek = max(0, seek-1)
+				start = r.expected.File.Seek
 			}
-			args[i+1] = strconv.FormatFloat(seek, 'f', 9, 64)
+			args[i+1] = strconv.FormatFloat(start, 'f', 9, 64)
+		case "-vf":
+			filter := strings.Replace(args[i+1], "showinfo", "showinfo=checksum=0", 1)
+			if r.expected != nil {
+				window := r.expected.File
+				start := window.InputStart + window.Start
+				filter = fmt.Sprintf(
+					"trim=start=%.9f:end=%.9f,select='eq(n,%d)*eq(pts,%d)',",
+					start,
+					start+window.Duration,
+					window.Slot,
+					r.expected.Identity.PTS,
+				) + filter
+			}
+			args[i+1] = filter
 		}
 	}
-	if r.expected != nil {
-		// A selected frame can leave buffered GPU filters waiting for input EOF.
-		// Bound the physical read around the exact replay instead of scanning the
-		// remaining title; the original PTS and checksum still authorize output.
-		for i, arg := range args {
-			if arg == "-i" {
-				args = slices.Insert(args, i, "-t", "4")
-				break
-			}
+	if _, ok := ctx.Value(comparisonInputURLKey{}).(string); ok {
+		args = comparisonFileCommand(args)
+	}
+	var labelFrame *ComparisonFrameObservation
+	if r.expected != nil && r.expected.PictureType != "" {
+		labelFrame = &ComparisonFrameObservation{
+			PictureType: r.expected.PictureType,
+			TimestampSeconds: float64(
+				r.expected.Identity.PTS,
+			) * float64(
+				r.expected.Identity.TimeBaseNumerator,
+			) / float64(
+				r.expected.Identity.TimeBaseDenominator,
+			),
 		}
+	} else if disc, ok := r.runner.(exactDiscCaptureRunner); ok && disc.replay.PictureType != "" {
+		labelFrame = &ComparisonFrameObservation{PictureType: disc.replay.PictureType, TimestampSeconds: float64(disc.replay.DecoderPTS) / 90000}
+	}
+	filterIndex := slices.Index(args, "-vf") + 1
+	boundLabel := r.label != "" && labelFrame != nil
+	if boundLabel {
+		width, height := r.width, r.height
+		if width == 0 {
+			width, height = r.source.DisplaySize()
+		}
+		caption := r.captionFilters(*labelFrame, width, height, args[filterIndex])
+		// Test the exact RGB threshold on the underlying picture before drawtext.
+		mask := fmt.Sprintf("if(gt(val,%d),255,0)", blackPixelThreshold)
+		args[filterIndex] += fmt.Sprintf(
+			",split=2[caption][probe];[probe]lutrgb=r='%s':g='%s':b='%s',scale=out_color_matrix=bt709:out_range=full,format=yuv444p,signalstats,metadata@comparison_black=print:key=lavfi.signalstats.YMAX,nullsink;[caption]%s",
+			mask,
+			mask,
+			mask,
+			caption,
+		)
 	}
 	result, err := r.run(ctx, executable, args, dir)
 	if comparisonTerminalFailure(err) {
@@ -1096,46 +1153,102 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 	if ctx.Err() != nil {
 		return result, fmt.Errorf("screenshots: comparison rendering canceled: %w", ctx.Err())
 	}
-	if err != nil || result.ExitCode != 0 || r.label == "" || validateImagePayload(result.Stdout) != nil {
+	if err != nil || result.ExitCode != 0 || r.label == "" {
 		return result, err
 	}
-	if r.observed == nil {
-		return result, errors.New("screenshots: comparison overlay lacks decoded frame identity")
+	if boundLabel {
+		if r.observed == nil || r.observed.PictureType != labelFrame.PictureType {
+			return result, comparisonDiscFailure("changed_picture_type")
+		}
+		match := comparisonBlackReport.FindSubmatch(result.Stderr)
+		if len(match) != 2 {
+			return result, errors.New("comparison caption lacks underlying picture verification")
+		}
+		if string(match[1]) == "0" {
+			return result, errFFmpegBlackImage
+		}
+		return result, nil
 	}
-	pictureType := r.observed.PictureType
+	if err := validateImagePayload(result.Stdout); err != nil {
+		return result, err
+	}
+	geometry, _, err := image.DecodeConfig(bytes.NewReader(result.Stdout))
+	if err != nil || r.observed == nil {
+		return result, errors.New("comparison caption lacks picture facts")
+	}
+	caption := r.captionFilters(*r.observed, geometry.Width, geometry.Height, args[filterIndex])
+	base := r.runner
+	if disc, ok := base.(exactDiscCaptureRunner); ok {
+		base = disc.base
+	}
+	if finite, ok := base.(finiteComparisonRunner); ok {
+		base = finite.base
+	}
+	imageRunner := finiteComparisonRunner{
+		base:        base,
+		outputLimit: 64 << 20,
+		input:       result.Stdout,
+	}
+	compression := args[slices.Index(args, "-compression_level")+1]
+	labeled, err := imageRunner.Run(
+		ctx,
+		executable,
+		[]string{
+			"-hide_banner",
+			"-loglevel",
+			"error",
+			"-f",
+			"image2pipe",
+			"-i",
+			"pipe:0",
+			"-frames:v",
+			"1",
+			"-vf",
+			caption,
+			"-c:v",
+			"png",
+			"-compression_level",
+			compression,
+			"-pred",
+			"mixed",
+			"-f",
+			"image2pipe",
+			"-",
+		},
+		dir,
+	)
+	if err != nil || labeled.ExitCode != 0 {
+		return labeled, err
+	}
+	result.Stdout = labeled.Stdout
+	return result, nil
+}
+
+var comparisonBlackReport = regexp.MustCompile(`(?m)^\[metadata@comparison_black @ [^\]]+\] lavfi\.signalstats\.YMAX=(\d+)\s*$`)
+
+func (r *comparisonRunner) captionFilters(observed ComparisonFrameObservation, width, height int, filter string) string {
+	pictureType := observed.PictureType
 	if pictureType == "" {
 		pictureType = "Unknown"
 	}
-	number, total := comparisonDisplayCounters(r.source, *r.observed)
+	number, total := comparisonDisplayCounters(r.source, observed)
 	lines := []string{
 		"Frame " + number + " of " + total,
 		"Picture type\\: " + pictureType,
 	}
 	if r.showResolution {
-		width, height := r.source.DisplaySize()
-		geometry, _, geometryErr := image.DecodeConfig(bytes.NewReader(result.Stdout))
-		if geometryErr != nil {
-			return result, errors.New("screenshots: comparison overlay output dimensions unavailable")
-		}
-		resolution := fmt.Sprintf("Resolution\\: %d x %d", width, height)
-		if width != geometry.Width || height != geometry.Height {
-			resolution += fmt.Sprintf(" -> %d x %d", geometry.Width, geometry.Height)
+		sourceWidth, sourceHeight := r.source.DisplaySize()
+		resolution := fmt.Sprintf("Resolution\\: %d x %d", sourceWidth, sourceHeight)
+		if sourceWidth != width || sourceHeight != height {
+			resolution += fmt.Sprintf(" -> %d x %d", width, height)
 		}
 		lines = append(lines, resolution)
 	}
-	for i := range args {
-		if args[i] == "-vf" && i+1 < len(args) && (strings.Contains(args[i+1], "tonemap=") || strings.Contains(args[i+1], "libplacebo=")) {
-			lines = append(lines, "Source\\: "+hdrOverlaySourceLabel(r.source.HDRFacts)+" - Tonemapped")
-		}
+	if strings.Contains(filter, "tonemap=") || strings.Contains(filter, "libplacebo=") {
+		lines = append(lines, "Source\\: "+hdrOverlaySourceLabel(r.source.HDRFacts)+" - Tonemapped")
 	}
 	lines = append(lines, r.label)
-	for i := range args {
-		if args[i] == "-vf" && i+1 < len(args) {
-			args[i+1] += "," + strings.Join(overlayTextFilters(lines, r.overlaySize, r.overlayHeight), ",")
-		}
-	}
-
-	return r.run(ctx, executable, args, dir)
+	return strings.Join(overlayTextFilters(lines, r.overlaySize, r.overlayHeight), ",")
 }
 
 // comparisonDisplayCounters uses the ordinary screenshot's zero-based nominal
@@ -1183,13 +1296,7 @@ func (r *comparisonRunner) run(ctx context.Context, executable string, args []st
 	var result CommandResult
 	var runErr error
 	if _, authored := r.runner.(exactDiscCaptureRunner); !authored && r.service != nil {
-		preferred := ""
-		if r.observed != nil {
-			preferred = r.observed.decoder
-		} else if r.expected != nil {
-			preferred = r.expected.PreferredDecoder()
-		}
-		result, runErr = r.service.runComparisonCaptureDecoder(ctx, r.runner, executable, args, dir, r.source, r.softwareOnly, preferred, "capture-file")
+		result, runErr = r.service.runComparisonCaptureDecoder(ctx, r.runner, executable, args, dir, r.source, "capture-file")
 	} else {
 		result, runErr = r.runner.Run(ctx, executable, args, dir)
 	}
@@ -1204,19 +1311,18 @@ func (r *comparisonRunner) run(ctx context.Context, executable string, args []st
 		return result, runErr
 	}
 	if r.observed != nil && (r.observed.PTS != observed[0].PTS || r.observed.TimeBaseNumerator != observed[0].TimeBaseNumerator ||
-		r.observed.TimeBaseDenominator != observed[0].TimeBaseDenominator ||
-		r.observed.PictureChecksum != observed[0].PictureChecksum) {
+		r.observed.TimeBaseDenominator != observed[0].TimeBaseDenominator) {
 		r.changed = true
 		return result, errors.New("screenshots: comparison renderer changed decoded frame identity")
 	}
-	observed[0].decoder = result.comparisonBackend
 	r.observed = &observed[0]
 	if r.expected != nil &&
 		(r.observed.PTS != r.expected.Identity.PTS || r.observed.TimeBaseNumerator != r.expected.Identity.TimeBaseNumerator || r.observed.TimeBaseDenominator != r.expected.Identity.TimeBaseDenominator) {
-		return result, errors.New("comparison replay changed the selected file frame")
+		return result, comparisonDiscFailure("replay_picture_changed")
 	}
-	if r.expected != nil && r.expected.PictureChecksum != "" && r.observed.PictureChecksum != r.expected.PictureChecksum {
-		return result, errors.New("comparison replay changed the decoded picture witness")
+	if r.expected != nil && r.expected.File.PacketPosition != nil &&
+		(r.observed.packetPosition == nil || *r.observed.packetPosition != *r.expected.File.PacketPosition) {
+		return result, comparisonDiscFailure("replay_packet_changed")
 	}
 	return result, runErr
 }
@@ -1237,8 +1343,8 @@ func validateComparisonNativeFacts(source ComparisonSource, observation Comparis
 }
 
 func bindFileObservation(source ComparisonSource, observation *ComparisonFrameObservation) error {
-	if err := validateComparisonNativeFacts(source, *observation); err != nil {
-		return err
+	if source.NativePixelFormat != "" && (observation.Width != source.Width || observation.Height != source.Height) {
+		return comparisonDiscFailure("changing_geometry")
 	}
 	if source.InputFingerprint == "" {
 		return nil
@@ -1258,11 +1364,99 @@ func bindFileObservation(source ComparisonSource, observation *ComparisonFrameOb
 	}
 	observation.Identity = &identity
 	observation.FrameID = string(key)
-	observation.Replay = &ComparisonFrameReplay{
-		Identity:        identity,
-		PictureChecksum: observation.PictureChecksum,
-		PixelFormat:     observation.PixelFormat,
-		Decoder:         observation.decoder,
+	return nil
+}
+
+func comparisonFileCommand(args []string) []string {
+	args[slices.Index(args, "-loglevel")+1] = "repeat+info"
+	return slices.Insert(args, slices.Index(args, "-i"), "-http_proxy", "", "-bsf:V:0", comparisonPacketFilter)
+}
+
+func (r *ComparisonFrameReplay) validFile(source ComparisonSource) bool {
+	w, id := r.File, r.Identity
+	return r.Version == 2 && w != nil && !w.Unenclosed && id.Version == 1 && id.InputFingerprint == source.InputFingerprint &&
+		id.Occurrence == "file-0" && id.StreamID == "video-0" && id.TimeBaseNumerator > 0 && id.TimeBaseDenominator > 0 &&
+		comparisonFinite(
+			w.Start,
+		) && w.Start >= 0 && w.Seek >= 0 && w.Seek <= w.Start && w.Start-w.Seek <= .125+1e-9 && w.Duration > 0 && w.Duration <= 64 && w.InputStart == source.StartTimeSeconds &&
+		w.Slot >= 0 && w.Slot < 50000 && w.FirstPTS <= id.PTS && id.PTS <= w.LastPTS
+}
+
+func validateComparisonSequence(frames []ComparisonFrameObservation, window *comparisonDiscWindow) error {
+	var last int64
+	for i, frame := range frames {
+		tick := frame.PTS
+		if window != nil {
+			tick = comparisonDiscClockNear(tick, window.Start90)
+		}
+		if i > 0 && (tick <= last || frame.TimeBaseNumerator != frames[0].TimeBaseNumerator || frame.TimeBaseDenominator != frames[0].TimeBaseDenominator) {
+			return comparisonDiscFailure("ambiguous_native_pts")
+		}
+		last = tick
+	}
+	return nil
+}
+
+func bindComparisonSequence(
+	request ComparisonSampleRequest,
+	frames []ComparisonFrameObservation,
+	window *comparisonDiscWindow,
+	bounds *comparisonSequenceBounds,
+) error {
+	if err := validateComparisonSequence(frames, window); err != nil {
+		return err
+	}
+	duration := request.Source.VideoDurationSeconds
+	if duration <= 0 {
+		duration = request.Source.DurationSeconds
+	}
+	if len(frames) > 0 && bounds != nil && (frames[0].TimeBaseNumerator != bounds.numerator || frames[0].TimeBaseDenominator != bounds.denominator) {
+		return comparisonDiscFailure("original_clock_witness")
+	}
+	for i := range frames {
+		frame := &frames[i]
+		if window != nil {
+			if err := bindDiscObservation(request.Source, *window, frame); err != nil {
+				return err
+			}
+			continue
+		}
+		frame.RelativeTimestampSeconds = frame.TimestampSeconds - request.Source.StartTimeSeconds
+		if err := validateComparisonNativeFacts(request.Source, *frame); err != nil {
+			return err
+		}
+		if err := bindFileObservation(request.Source, frame); err != nil {
+			return err
+		}
+		if frame.Identity != nil {
+			frame.Replay = &ComparisonFrameReplay{
+				Version:     2,
+				Identity:    *frame.Identity,
+				PictureType: frame.PictureType,
+				File: &ComparisonFileInterval{
+					Unenclosed: bounds != nil &&
+						(bounds.first >= frame.PTS && request.seek > 0 || bounds.last <= frame.PTS && request.StartSeconds+request.DurationSeconds < duration-1e-6),
+					PacketPosition: frame.packetPosition,
+					Seek:           request.seek,
+					Start:          request.StartSeconds,
+					Duration:       request.DurationSeconds,
+					InputStart:     request.Source.StartTimeSeconds,
+					FirstPTS:       frames[0].PTS,
+					LastPTS:        frames[len(frames)-1].PTS,
+					Slot:           i,
+				},
+			}
+			if i > 0 && frames[i-1].packetPosition != nil {
+				frame.Replay.File.Previous = &ComparisonFileNeighbor{PTS: frames[i-1].PTS, Position: *frames[i-1].packetPosition}
+			} else if i == 0 && bounds != nil {
+				frame.Replay.File.Previous = bounds.before
+			}
+			if i+1 < len(frames) && frames[i+1].packetPosition != nil {
+				frame.Replay.File.Next = &ComparisonFileNeighbor{PTS: frames[i+1].PTS, Position: *frames[i+1].packetPosition}
+			} else if i == len(frames)-1 && bounds != nil {
+				frame.Replay.File.Next = bounds.after
+			}
+		}
 	}
 	return nil
 }

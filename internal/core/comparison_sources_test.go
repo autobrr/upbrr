@@ -6,8 +6,10 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"github.com/autobrr/upbrr/internal/config"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/comparisons"
@@ -191,29 +193,57 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 	}
 	main := retained.ComparisonSources["main"]
 	main.Witnesses = map[string]screenshots.ComparisonFrameReplay{string(key): {
-		Identity:        identity,
-		PictureChecksum: "12345678",
-		Decoder:         "cuda",
+		Identity: identity,
+		Version:  2,
+		File: &screenshots.ComparisonFileInterval{
+			Start:    0,
+			Duration: 4,
+			Slot:     1,
+			FirstPTS: 0,
+			LastPTS:  270000,
+		},
 	}}
 	retained.ComparisonSources["main"] = main
+	cell := &snapshot.Comparisons.Rows[0].Cells[0]
+	cell.ArtifactID, cell.ContentSHA256 = "retained-main", strings.Repeat("a", 64)
+	rendering, err := comparisonRenderingFingerprint(*snapshot.Comparisons, retained, "main", config.ScreenshotHandlingConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained.ArtifactImages = map[api.PublicResourceID]api.ScreenshotImage{cell.ArtifactID: {ContentSHA256: cell.ContentSHA256, Purpose: api.ScreenshotPurposeComparison}}
+	retained.ComparisonRenderSettings = map[api.PublicResourceID]api.WorkflowFingerprint{cell.ArtifactID: rendering}
+	retained.ComparisonCaptions = map[api.PublicResourceID]int{cell.ArtifactID: comparisonSourceCaptionVersion(main)}
+
 	for _, tc := range []struct {
-		name, source, checksum string
-		seconds                float64
-		invalidated            bool
+		name, source string
+		slotDelta    int
+		seconds      float64
+		invalidated  bool
 	}{
-		{"changed main", "main", "12345678", 2, true},
-		{"same main", "main", "12345678", 1, false},
-		{"same timestamp changed picture", "main", "87654321", 1, true},
-		{"changed secondary", "other", "12345678", 2, false},
+		{"changed main", "main", 0, 2, true},
+		{"same main", "main", 0, 1, false},
+		{"reinspected different slot", "main", 1, 1, true},
+
+		{"changed secondary", "other", 0, 2, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			observed := identity
 			observed.PTS = int64(tc.seconds * 90000)
-			witness, err := json.Marshal(screenshots.ComparisonFrameReplay{Identity: observed, PictureChecksum: tc.checksum})
+			witness, err := json.Marshal(screenshots.ComparisonFrameReplay{
+				Identity: observed,
+				Version:  2,
+				File: &screenshots.ComparisonFileInterval{
+					Start:    0,
+					Duration: 4,
+					Slot:     int(tc.seconds) + tc.slotDelta,
+					FirstPTS: 0,
+					LastPTS:  270000,
+				},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			b := workflowMediaBuilder{comparisonRenderer: comparisonSelectionRenderer{checksum: tc.checksum}}
+			b := workflowMediaBuilder{comparisonRenderer: comparisonSelectionRenderer{mismatch: tc.slotDelta != 0}}
 			selected, _, err := b.ApplyComparisonFrames(t.Context(), snapshot, retained,
 				[]api.ComparisonFrameSelection{{RowID: "row", SourceID: tc.source}},
 				[]releaseworkflow.MediaPreviewContent{{
@@ -225,6 +255,9 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 				t.Fatal(err)
 			}
 			plan := selected.Comparisons
+			if tc.source == "main" && (plan.Rows[0].Cells[0].ArtifactID != "") == tc.invalidated {
+				t.Fatal("PNG reuse did not follow the verified physical main picture")
+			}
 			if tc.invalidated {
 				if plan.Rows[0].Scene != "" || plan.SceneMix != nil || plan.Rows[0].Cells[1].Confidence != nil {
 					t.Fatalf("new main picture retained old measurements: %+v", plan)
@@ -241,12 +274,96 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 			}
 		})
 	}
+	t.Run("reapplying the unchanged main retains its newly inspected guard", func(t *testing.T) {
+		updated, err := snapshot.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated.Comparisons.Rows[0].Evidence = nil
+		witness, err := json.Marshal(main.Witnesses[string(key)])
+		if err != nil {
+			t.Fatal(err)
+		}
+		selections := []api.ComparisonFrameSelection{{RowID: "row", SourceID: "main"}}
+		contents := []releaseworkflow.MediaPreviewContent{{
+			TimestampSeconds:  1,
+			ObservedIdentity:  &identity,
+			ComparisonWitness: witness,
+		}}
+		b := workflowMediaBuilder{comparisonRenderer: comparisonSelectionRenderer{}}
+		verified, resource, err := b.ApplyComparisonFrames(t.Context(), updated, retained, selections, contents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := verified.Comparisons.Rows[0]
+		if row.Scene != "" || verified.Comparisons.SceneMix != nil || row.Cells[1].Confidence == nil {
+			t.Fatal("fresh eligibility retained unverified scene categories or discarded the unchanged correspondence")
+		}
+		// The second apply must succeed even though a fresh decode would disagree.
+		b.comparisonRenderer = comparisonSelectionRenderer{mismatch: true}
+		_, _, err = b.ApplyComparisonFrames(t.Context(), verified, resource, selections, contents)
+		if err != nil {
+			t.Fatalf("the unchanged main picture lost its verified guard: %v", err)
+		}
+	})
+	t.Run("replacing the physical main clears old pairings independently of selection order", func(t *testing.T) {
+		plan, err := snapshot.Comparisons.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		third := plan.Sources[1]
+		third.ID = "third"
+		plan.Sources = append(plan.Sources, third)
+		plan.Rows[0].Cells = append(plan.Rows[0].Cells, api.ComparisonCell{SourceID: "third"})
+		private := cloneWorkflowMediaPrivateArtifacts(retained)
+		other := private.ComparisonSources["other"]
+		other.AppliedPairs = map[string]comparisonAppliedPair{"row": {Main: main.Witnesses[string(key)], Secondary: main.Witnesses[string(key)]}}
+		private.ComparisonSources["other"] = other
+		private.ComparisonSources["third"] = private.ComparisonSources["main"]
+		witness := cloneComparisonWitness(main.Witnesses[string(key)])
+		witness.File.Slot++
+		data, err := json.Marshal(witness)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := releaseworkflow.MediaPreviewContent{
+			TimestampSeconds:  1,
+			ObservedIdentity:  &identity,
+			ComparisonWitness: data,
+		}
+		builder := workflowMediaBuilder{comparisonRenderer: comparisonSelectionRenderer{mismatch: true}}
+		_, resource, err := builder.ApplyComparisonFrames(t.Context(), api.MediaArtifactSet{Comparisons: &plan}, private, []api.ComparisonFrameSelection{{RowID: "row", SourceID: "third"}, {RowID: "row", SourceID: "main"}}, []releaseworkflow.MediaPreviewContent{content, content})
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated, ok := resource.(workflowMediaPrivateArtifacts)
+		if !ok || len(updated.ComparisonSources["other"].AppliedPairs) != 0 || len(updated.ComparisonSources["third"].AppliedPairs) != 1 {
+			t.Fatal("main replacement retained a stale manual pair or discarded the pair selected together")
+		}
+	})
+	t.Run("historical witness referenced by a second row cannot be redirected", func(t *testing.T) {
+		plan, err := snapshot.Comparisons.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan.Rows = append(plan.Rows, api.ComparisonRow{ID: "another", Cells: []api.ComparisonCell{plan.Rows[0].Cells[0]}})
+		source := main
+		current := main.Witnesses[string(key)]
+		source.Witnesses = map[string]screenshots.ComparisonFrameReplay{string(key): {Identity: identity}}
+		_, err = (workflowMediaBuilder{}).storeComparisonWitness(t.Context(), plan, 0, "main", &source, &current)
+		if failure, ok := api.AsOperationFailure(err); !ok || failure.ComparisonReason != "conflicting_frame_witness" || source.Witnesses[string(key)].Version != 0 {
+			t.Fatalf("shared historical address was overwritten: %v", err)
+		}
+	})
+	t.Run("stepping verifies the physical saved anchor", func(t *testing.T) {
+		b := workflowMediaBuilder{comparisonRenderer: comparisonSelectionRenderer{mismatch: true}}
+		_, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", 1, 1, nil)
+		if failure, ok := api.AsOperationFailure(err); !ok || failure.ComparisonReason != "conflicting_frame_witness" {
+			t.Fatalf("stepped from the wrong native occurrence: %v", err)
+		}
+	})
 	t.Run("manual match revalidates the inspected picture", func(t *testing.T) {
-		b := workflowMediaBuilder{comparisonRenderer: comparisonSelectionRenderer{checksum: "87654321", checkDecoder: func(decoder string) {
-			if decoder != "cuda" {
-				t.Fatal("manual eligibility did not use the saved decoder")
-			}
-		}}}
+		b := workflowMediaBuilder{comparisonRenderer: comparisonSelectionRenderer{mismatch: true}}
 		options := comparisons.MatchOptions{Count: 1, MainMoments: []float64{1}}
 		_, err := b.matchManualComparisonMoments(t.Context(), retained, *snapshot.Comparisons, options, b.comparisonProgress(t.Context(), 2))
 		if failure, ok := api.AsOperationFailure(err); !ok || failure.ComparisonReason != "conflicting_frame_witness" {
@@ -273,9 +390,9 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 			t.Fatal(err)
 		}
 		plan.Rows[0].Cells[1] = secondary
-		observed := screenshots.ComparisonFrameObservation{Identity: &identity, PictureChecksum: "87654321"}
+		observed := screenshots.ComparisonFrameObservation{Identity: &identity}
 		expected, err := comparisonManualReplayAt(plan, main, "other", 1, 1)
-		if err != nil || expected.PreferredDecoder() != "cuda" || verifyManualComparisonWitness(expected, observed) == nil {
+		if err != nil || expected.File == nil || verifyManualComparisonWitness(expected, observed) == nil {
 			t.Fatalf("saved secondary anchor lost its decoder or accepted a differently decoded picture: %v", err)
 		}
 		expected, err = comparisonManualReplayAt(plan, main, "other", 1, 2)
@@ -285,13 +402,13 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 	})
 	t.Run("matched cell preview replays the retained picture", func(t *testing.T) {
 		renderer := comparisonSelectionRenderer{preview: func(req screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error) {
-			if req.Replay == nil || req.Replay.Decoder != "cuda" || req.Replay.PictureChecksum != "12345678" || req.Replay.Identity != identity {
+			if req.Replay == nil || req.Replay.File == nil || req.Replay.Identity != identity {
 				t.Fatal("matched cell preview did not receive its saved native witness")
 			}
-			return screenshots.ComparisonFrame{Identity: &identity, PictureChecksum: "87654321"}, nil
+			return screenshots.ComparisonFrame{Identity: &identity}, nil
 		}}
 		b := workflowMediaBuilder{comparisonRenderer: renderer}
-		_, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", 1, 0)
+		_, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, snapshot, retained, "main", 1, 0, nil)
 		if failure, ok := api.AsOperationFailure(err); !ok || failure.ComparisonReason != "conflicting_frame_witness" {
 			t.Fatalf("matched cell preview returned a different native picture: %v", err)
 		}
@@ -299,8 +416,8 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 }
 
 func TestComparisonSelectedRowsKeepTheirOwnReplayWitness(t *testing.T) {
-	sample := func(id, checksum string) screenshots.ComparisonSample {
-		return screenshots.ComparisonSample{FrameID: id, PictureChecksum: checksum}
+	sample := func(id string, slot int) screenshots.ComparisonSample {
+		return screenshots.ComparisonSample{FrameID: id, Replay: &screenshots.ComparisonFrameReplay{File: &screenshots.ComparisonFileInterval{Slot: slot}}}
 	}
 	observations := map[string][]screenshots.ComparisonSample{}
 	retain := func(id string, frames ...screenshots.ComparisonSample) {
@@ -311,10 +428,10 @@ func TestComparisonSelectedRowsKeepTheirOwnReplayWitness(t *testing.T) {
 		}}}
 		retainComparisonRowSamples(observations, map[string][]screenshots.ComparisonSample{"source": frames}, row)
 	}
-	retain("first", sample("first", "12345678"), sample("second", "11111111"))
-	retain("second", sample("first", "87654321"), sample("second", "22222222"))
+	retain("first", sample("first", 7), sample("second", 1))
+	retain("second", sample("first", 8), sample("second", 2))
 	kept := observations["source"]
-	if len(kept) != 2 || kept[0].PictureChecksum != "12345678" || kept[1].PictureChecksum != "22222222" {
+	if len(kept) != 2 || kept[0].Replay.File.Slot != 7 || kept[1].Replay.File.Slot != 2 {
 		t.Fatalf("an overlapping window replaced a selected picture: %+v", kept)
 	}
 }
@@ -323,20 +440,15 @@ func TestComparisonSelectedRowsKeepTheirOwnReplayWitness(t *testing.T) {
 // and title/transition rejection are exercised by the decoder integration cases.
 type comparisonSelectionRenderer struct {
 	comparisonFrameRenderer
-	checksum     string
-	preview      func(screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error)
-	checkDecoder func(string)
+	preview  func(screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error)
+	mismatch bool
 }
 
 func (rnr comparisonSelectionRenderer) AnalyzeComparisonSource(_ context.Context, r screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error) {
-	if rnr.checkDecoder != nil {
-		rnr.checkDecoder(r.PreferredDecoder)
-	}
 	frames := make([]screenshots.ComparisonSample, 0, 2)
 	for _, seconds := range []float64{1, 2} {
 		frames = append(frames, screenshots.ComparisonSample{
 			RelativeTimestampSeconds: seconds,
-			PictureChecksum:          rnr.checksum,
 			Identity: &api.ComparisonFrameIdentity{
 				Version:             1,
 				InputFingerprint:    r.Source.InputFingerprint,
@@ -347,7 +459,28 @@ func (rnr comparisonSelectionRenderer) AnalyzeComparisonSource(_ context.Context
 			Evidence: &api.ComparisonSceneEvidence{Profile: comparisons.SceneProfile, Eligible: true},
 		})
 	}
+	for i := range frames {
+		slot := i + 1
+		if rnr.mismatch {
+			slot++
+		}
+		frames[i].Replay = &screenshots.ComparisonFrameReplay{
+			Version:  2,
+			Identity: *frames[i].Identity,
+			File: &screenshots.ComparisonFileInterval{
+				Start:    0,
+				Duration: 4,
+				Slot:     slot,
+				FirstPTS: 0,
+				LastPTS:  270000,
+			},
+		}
+	}
 	return frames, nil
+}
+
+func (rnr comparisonSelectionRenderer) SampleComparisonSource(ctx context.Context, r screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error) {
+	return rnr.AnalyzeComparisonSource(ctx, r)
 }
 
 func (rnr comparisonSelectionRenderer) ComparisonPreview(_ context.Context, request screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error) {

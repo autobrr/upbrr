@@ -24,22 +24,68 @@ import (
 // ComparisonFrameReplay is durable private evidence for an observed picture.
 // Public identities select nothing unless this server-owned witness is retained.
 type ComparisonFrameReplay struct {
-	DecoderPTS      int64
-	Identity        api.ComparisonFrameIdentity
-	TitleTime90     int64
-	Window          comparisonDiscWindow
-	PictureChecksum string
-	PixelFormat     string
-	Decoder         string `json:",omitempty"`
+	DecoderPTS  int64
+	Identity    api.ComparisonFrameIdentity
+	TitleTime90 int64
+	Window      comparisonDiscWindow
+	Version     int
+	File        *ComparisonFileInterval `json:",omitempty"`
+	PictureType string                  `json:",omitempty"`
 }
 
-// PreferredDecoder selects the original backend when revalidating a witness.
-func (r *ComparisonFrameReplay) PreferredDecoder() string {
-	if r == nil || r.Decoder == "" && r.PictureChecksum == "" {
-		return ""
+// ComparisonFileNeighbor is an adjacent observed picture in the same native decode.
+type ComparisonFileNeighbor struct {
+	PTS, Position int64
+}
+
+// ComparisonFileInterval identifies the input-relative seek and presentation
+// slot after trimming in the original source clock.
+type ComparisonFileInterval struct {
+	Unenclosed                        bool                    `json:",omitempty"`
+	PacketPosition                    *int64                  `json:",omitempty"`
+	Previous                          *ComparisonFileNeighbor `json:",omitempty"`
+	Next                              *ComparisonFileNeighbor `json:",omitempty"`
+	Seek, Start, Duration, InputStart float64
+	Slot                              int
+	FirstPTS, LastPTS                 int64
+}
+
+// MissingBoundary marks a clipped observation that can supply temporal context
+// but cannot establish its own unique replay slot.
+func (r *ComparisonFrameReplay) MissingBoundary() bool {
+	return r != nil && r.File != nil && r.File.Unenclosed
+}
+
+// SamePicture compares qualified native addresses from verified access intervals.
+func (r *ComparisonFrameReplay) SamePicture(other *ComparisonFrameReplay) bool {
+	if r == nil || other == nil || r.Identity != other.Identity || other.Version != 2 {
+		return false
 	}
-	// Older witnesses used software as the comparison reference.
-	return cmp.Or(r.Decoder, comparisonSoftwareDecoder)
+	if r.Version != 2 && (!r.CanReinspectDisc() || r.Window.EncodedSHA256 != other.Window.EncodedSHA256 || r.DecoderPTS != other.DecoderPTS) {
+		return false
+	}
+	if r.File == nil || other.File == nil {
+		return r.File == nil && other.File == nil && r.TitleTime90 == other.TitleTime90 &&
+			r.Window.Occurrence == other.Window.Occurrence && r.Window.StreamID == other.Window.StreamID
+	}
+	a, b := r.File, other.File
+	if a.InputStart != b.InputStart || a.Start >= b.Start+b.Duration || b.Start >= a.Start+a.Duration {
+		return false
+	}
+	if a.PacketPosition != nil || b.PacketPosition != nil {
+		return a.PacketPosition != nil && b.PacketPosition != nil && *a.PacketPosition == *b.PacketPosition
+	}
+	if a.Start == b.Start {
+		return a.FirstPTS == b.FirstPTS && a.Slot == b.Slot
+	}
+	return false
+}
+
+// CanReinspectDisc reports whether a historical selection retained the exact
+// encoded range and authored clock needed to establish native uniqueness.
+func (r *ComparisonFrameReplay) CanReinspectDisc() bool {
+	return r != nil && r.Version == 0 && r.Identity.Version == 1 && r.Identity.Occurrence == r.Window.Occurrence &&
+		r.Identity.StreamID == r.Window.StreamID && len(r.Window.Spans) > 0 && len(r.Window.EncodedSHA256) == sha256.Size*2
 }
 
 type comparisonDiscWindow struct {
@@ -300,7 +346,11 @@ func bindDiscObservation(source ComparisonSource, window comparisonDiscWindow, o
 	if err := validateComparisonNativeFacts(source, *observation); err != nil {
 		return err
 	}
-	if observation.TimeBaseNumerator != 1 || observation.TimeBaseDenominator != 90000 || observation.PictureChecksum == "" {
+	return bindDiscClock(source, window, observation)
+}
+
+func bindDiscClock(source ComparisonSource, window comparisonDiscWindow, observation *ComparisonFrameObservation) error {
+	if observation.TimeBaseNumerator != 1 || observation.TimeBaseDenominator != 90000 {
 		return comparisonDiscFailure("original_clock_witness")
 	}
 	decoderPTS := observation.PTS
@@ -327,13 +377,12 @@ func bindDiscObservation(source ComparisonSource, window comparisonDiscWindow, o
 	observation.Identity = &identity
 	observation.RelativeTimestampSeconds = float64(titleTime) / 90000
 	observation.Replay = &ComparisonFrameReplay{
-		DecoderPTS:      decoderPTS,
-		Identity:        identity,
-		TitleTime90:     titleTime,
-		Window:          window,
-		PictureChecksum: observation.PictureChecksum,
-		PixelFormat:     observation.PixelFormat,
-		Decoder:         observation.decoder,
+		DecoderPTS:  decoderPTS,
+		Identity:    identity,
+		TitleTime90: titleTime,
+		Window:      window,
+		Version:     2,
+		PictureType: observation.PictureType,
 	}
 	return nil
 }
@@ -392,12 +441,19 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 			"-sn",
 			"-dn",
 		}
-		filter := comparisonDiscWindowFilter(window) + ",showinfo"
+		filter := comparisonDiscWindowFilter(window) + ",showinfo=checksum=0"
+		retain := request.Retain
+		if offset := int64(len(samples)) * 4096; offset != 0 && retain != nil {
+			retain = func(needed int64) bool { return request.Retain(offset + needed) }
+		}
+		if request.analysis != nil {
+			request.analysis.retain = retain
+		}
 		service := *s
 		service.runner = finiteComparisonRunner{
-			base:           s.runner,
-			outputLimit:    50000 * 256,
-			retentionLimit: request.RetentionLimitBytes,
+			base:        s.runner,
+			outputLimit: 50000 * 256,
+			retain:      retain,
 		}
 		windowContext := context.WithValue(ctx, comparisonSampleProgressKey{}, &comparisonSampleProgress{
 			ctx:      ctx,
@@ -427,6 +483,9 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 		if err != nil || len(observations) > 50000 {
 			return nil, comparisonDiscFailure("observation_count")
 		}
+		if err := validateComparisonSequence(observations, &window); err != nil {
+			return nil, err
+		}
 		if comparisonNormalizesPicture(request) {
 			output, err := comparisonObservationsFor(result.Stderr, comparisonOutputShowInfoLine)
 			if err != nil || len(output)*256 != len(result.Stdout) {
@@ -450,16 +509,10 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 		if len(result.Stdout) != len(observations)*256 {
 			return nil, comparisonDiscFailure("observation_count")
 		}
-		seen := map[string]bool{}
 		for i, observation := range observations {
-			observation.decoder = result.comparisonBackend
 			if err := bindDiscObservation(request.Source, window, &observation); err != nil {
 				return nil, err
 			}
-			if seen[observation.FrameID] {
-				return nil, comparisonDiscFailure("ambiguous_native_pts")
-			}
-			seen[observation.FrameID] = true
 			if !request.NativeFrames && len(samples) > 0 &&
 				observation.RelativeTimestampSeconds-samples[len(samples)-1].RelativeTimestampSeconds < request.StrideSeconds-1e-9 {
 				continue
@@ -562,12 +615,11 @@ func (s *Service) InspectResolvedComparisonSource(
 }
 
 type exactDiscCaptureRunner struct {
-	service      *Service
-	source       ComparisonSource
-	softwareOnly bool
-	base         Runner
-	window       comparisonDiscWindow
-	replay       ComparisonFrameReplay
+	service *Service
+	source  ComparisonSource
+	base    Runner
+	window  comparisonDiscWindow
+	replay  ComparisonFrameReplay
 }
 
 func (r exactDiscCaptureRunner) Run(ctx context.Context, name string, args []string, dir string) (CommandResult, error) {
@@ -602,7 +654,7 @@ func (r exactDiscCaptureRunner) Run(ctx context.Context, name string, args []str
 			command[i+1] = "0:i:" + r.window.StreamID
 		}
 		if arg == "-vf" && i+1 < len(command) {
-			command[i+1] = fmt.Sprintf("format=pix_fmts=%s,select='eq(pts,%d)',", r.replay.PixelFormat, r.replay.DecoderPTS) + command[i+1]
+			command[i+1] = fmt.Sprintf("select='eq(pts,%d)',", r.replay.DecoderPTS) + command[i+1]
 		}
 	}
 	runner := finiteComparisonRunner{base: r.base, outputLimit: 64 << 20}
@@ -618,8 +670,6 @@ func (r exactDiscCaptureRunner) Run(ctx context.Context, name string, args []str
 			command,
 			dir,
 			source,
-			r.softwareOnly,
-			r.replay.PreferredDecoder(),
 			fmt.Sprintf("capture-authored/%s/%d", r.window.Occurrence, r.window.Codec),
 		)
 	} else {
@@ -627,37 +677,141 @@ func (r exactDiscCaptureRunner) Run(ctx context.Context, name string, args []str
 	}
 	observed, parseErr := comparisonObservations(result.Stderr)
 	if err == nil &&
-		(parseErr != nil || len(observed) != 1 || observed[0].PTS != r.replay.DecoderPTS || observed[0].PictureChecksum != r.replay.PictureChecksum) {
+		(parseErr != nil || len(observed) != 1 || observed[0].PTS != r.replay.DecoderPTS) {
 		return CommandResult{}, comparisonDiscFailure("replay_picture_changed")
 	}
 	return result, err
 }
 
-func (s *Service) captureDiscComparison(ctx context.Context, request ComparisonCaptureRequest) (ComparisonFrame, error) {
-	ctx, _ = comparisonProcessCounter(ctx, nil)
-	if request.Replay == nil {
-		return ComparisonFrame{}, comparisonDiscFailure("inspect_frame_required")
+// ReinspectComparisonReplay validates the original authored span before a
+// historical selection is compared with observations from another window.
+func (s *Service) ReinspectComparisonReplay(ctx context.Context, work ComparisonSampleRequest, replay *ComparisonFrameReplay) (*ComparisonFrameReplay, error) {
+	if !replay.CanReinspectDisc() {
+		return nil, comparisonDiscFailure("inspect_frame_required")
 	}
-	replay := request.Replay
-	if replay.Identity.InputFingerprint != request.Source.InputFingerprint || replay.Identity.Version != 1 ||
+	_, cleanup, updated, err := s.stageComparisonReplay(ctx, work, replay)
+	if err != nil {
+		return nil, err
+	}
+	cleanup()
+	return updated, nil
+}
+
+func (s *Service) inspectStagedComparisonReplay(
+	ctx context.Context,
+	work ComparisonSampleRequest,
+	path string,
+	window comparisonDiscWindow,
+	replay *ComparisonFrameReplay,
+) (*ComparisonFrameReplay, error) {
+	executable, err := resolveFFmpeg()
+	if err != nil {
+		return nil, err
+	}
+	url, err := comparisonSubfileInput(path)
+	if err != nil {
+		return nil, err
+	}
+	ctx, _ = comparisonProcessCounter(ctx, work.Budget)
+	result, err := (finiteComparisonRunner{
+		base:        s.runner,
+		outputLimit: 64 << 10,
+		retain:      work.Retain,
+	}).Run(ctx, executable, []string{
+		"-hide_banner", "-loglevel", "info", "-copyts", "-protocol_whitelist", "file,subfile", "-f", window.Format, "-i", url,
+		"-map", "0:i:" + window.StreamID, "-an", "-sn", "-dn", "-vf", comparisonDiscWindowFilter(window) + ",showinfo=checksum=0", "-f", "null", "-",
+	}, "")
+	if err != nil {
+		return nil, err
+	}
+	native, err := comparisonObservations(result.Stderr)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateComparisonSequence(native, &window); err != nil {
+		return nil, err
+	}
+	i := slices.IndexFunc(native, func(f ComparisonFrameObservation) bool { return f.PTS == replay.DecoderPTS })
+	if i < 0 {
+		return nil, comparisonDiscFailure("inspect_frame_required")
+	}
+	if err := bindDiscClock(work.Source, window, &native[i]); err != nil {
+		return nil, err
+	}
+	if !replay.SamePicture(native[i].Replay) {
+		return nil, comparisonDiscFailure("stale_frame_witness")
+	}
+	return native[i].Replay, nil
+}
+
+func (s *Service) stageComparisonReplay(
+	ctx context.Context,
+	work ComparisonSampleRequest,
+	replay *ComparisonFrameReplay,
+) (string, func(), *ComparisonFrameReplay, error) {
+	if replay == nil {
+		return "", nil, nil, comparisonDiscFailure("inspect_frame_required")
+	}
+	if replay.Identity.InputFingerprint != work.Source.InputFingerprint || replay.Identity.Version != 1 ||
 		replay.Identity.Occurrence != replay.Window.Occurrence ||
-		replay.PictureChecksum == "" {
-		return ComparisonFrame{}, comparisonDiscFailure("stale_frame_witness")
+		replay.Version != 2 && !replay.CanReinspectDisc() || replay.Identity.StreamID != replay.Window.StreamID || len(replay.Window.Spans) == 0 {
+		return "", nil, nil, comparisonDiscFailure("stale_frame_witness")
 	}
 	window := replay.Window
-	path, cleanup, err := stageDiscWindow(ctx, request.Source, &window)
+	if replay.CanReinspectDisc() {
+		if work.Retain == nil {
+			work.Retain = ComparisonRetentionLimit(112 << 20)
+		}
+		if !work.Retain(4096) {
+			return "", nil, nil, ErrComparisonFastInconclusive
+		}
+		if budget := work.Budget; budget != nil {
+			// Staging reads the original span once. The verification process reads
+			// the staged copy once more, including its original authored preroll.
+			var size int64
+			for _, span := range window.Spans {
+				if span.Start < 0 || span.End <= span.Start || span.End-span.Start > 2<<30-size {
+					return "", nil, nil, comparisonDiscFailure("encoded_span_limit")
+				}
+				size += span.End - span.Start
+			}
+			if size > budget.RemainingEncodedBytes/2 || budget.AttemptRemaining != nil && size > *budget.AttemptRemaining/2 {
+				return "", nil, nil, ErrComparisonFastInconclusive
+			}
+			work.encodedAttemptBytes = 2 * size
+			if err := work.admitDecode(float64(window.End90-window.Start90)/90000 + window.PrerollSeconds); err != nil {
+				return "", nil, nil, err
+			}
+		}
+	}
+	path, cleanup, err := stageDiscWindow(ctx, work.Source, &window)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if replay.CanReinspectDisc() {
+		replay, err = s.inspectStagedComparisonReplay(ctx, work, path, window, replay)
+		if err != nil {
+			cleanup()
+			return "", nil, nil, err
+		}
+	}
+	return path, cleanup, replay, nil
+}
+
+func (s *Service) captureDiscComparison(ctx context.Context, request ComparisonCaptureRequest) (ComparisonFrame, error) {
+	ctx, _ = comparisonProcessCounter(ctx, nil)
+	path, cleanup, replay, err := s.stageComparisonReplay(ctx, ComparisonSampleRequest{Source: request.Source}, request.Replay)
 	if err != nil {
 		return ComparisonFrame{}, err
 	}
 	defer cleanup()
 	service := *s
 	service.runner = exactDiscCaptureRunner{
-		service:      s,
-		source:       request.Source,
-		softwareOnly: request.PreferredDecoder(s.cfg.ScreenshotHandling) == comparisonSoftwareDecoder,
-		base:         s.runner,
-		window:       replay.Window,
-		replay:       *replay,
+		service: s,
+		source:  request.Source,
+		base:    s.runner,
+		window:  replay.Window,
+		replay:  *replay,
 	}
 	fileRequest := request
 	fileRequest.Replay = nil
@@ -669,10 +823,10 @@ func (s *Service) captureDiscComparison(ctx context.Context, request ComparisonC
 	if err != nil {
 		return ComparisonFrame{}, err
 	}
-	if err := bindDiscObservation(request.Source, replay.Window, &frame.ComparisonFrameObservation); err != nil {
+	if err := bindDiscClock(request.Source, replay.Window, &frame.ComparisonFrameObservation); err != nil {
 		return ComparisonFrame{}, err
 	}
-	if frame.Replay.TitleTime90 != replay.TitleTime90 {
+	if !replay.SamePicture(frame.Replay) {
 		return ComparisonFrame{}, comparisonDiscFailure("replay_title_clock_changed")
 	}
 	frame.RequestedTimestampSeconds = request.TimestampSeconds

@@ -1,13 +1,58 @@
 package screenshots
 
 import (
+	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestComparisonHistoricalDiscReinspectionAdmitsBothReadsBeforeStaging(t *testing.T) {
+	root := t.TempDir()
+	source := ComparisonSource{
+		InputFingerprint: "disc",
+		ScratchDir:       filepath.Join(root, "staging"),
+		Input:            &filesystem.ResolvedComparisonInput{Root: root},
+	}
+	replay := &ComparisonFrameReplay{Identity: api.ComparisonFrameIdentity{
+		Version:          1,
+		InputFingerprint: "disc",
+		Occurrence:       "one",
+		StreamID:         "video",
+	}, Window: comparisonDiscWindow{
+		Occurrence:     "one",
+		StreamID:       "video",
+		End90:          90000,
+		PrerollSeconds: 2,
+		EncodedSHA256:  strings.Repeat("0", 64),
+		Spans:          []filesystem.ComparisonSpan{{Path: filepath.Join(root, "source.mpg"), End: 100}},
+	}}
+	for _, tc := range []struct {
+		name                    string
+		sourceBytes, totalBytes int64
+		seconds                 float64
+	}{{"staging and decode", 199, 200, 3}, {"shared allowance", 200, 199, 3}, {"preroll", 200, 200, 2}} {
+		t.Run(tc.name, func(t *testing.T) {
+			budget := ComparisonDecodeBudget{
+				RemainingEncodedBytes: tc.sourceBytes,
+				AttemptRemaining:      new(tc.totalBytes),
+				MovieSecondsLimit:     tc.seconds,
+			}
+			_, err := new(Service).ReinspectComparisonReplay(t.Context(), ComparisonSampleRequest{Source: source, Budget: &budget}, replay)
+			if !errors.Is(err, ErrComparisonFastInconclusive) || budget.ProcessStarts != 0 || budget.ConsumedMovieSeconds != 0 || budget.RemainingEncodedBytes != tc.sourceBytes || *budget.AttemptRemaining != tc.totalBytes {
+				t.Fatalf("unadmitted historical read: budget=%+v err=%v", budget, err)
+			}
+			if _, err := os.Stat(source.ScratchDir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("staging began before admission: %v", err)
+			}
+		})
+	}
+}
 
 func TestComparisonDiscIdentitySeparatesOccurrencesAndOriginalClockWrap(t *testing.T) {
 	const wrap = int64(1 << 33)
@@ -23,7 +68,6 @@ func TestComparisonDiscIdentitySeparatesOccurrencesAndOriginalClockWrap(t *testi
 		PTS:                 -45000,
 		TimeBaseNumerator:   1,
 		TimeBaseDenominator: 90000,
-		PictureChecksum:     "1234ABCD",
 		PixelFormat:         "yuv420p",
 		Width:               720,
 		Height:              576,
@@ -41,7 +85,6 @@ func TestComparisonDiscIdentitySeparatesOccurrencesAndOriginalClockWrap(t *testi
 		PTS:                 45000,
 		TimeBaseNumerator:   1,
 		TimeBaseDenominator: 90000,
-		PictureChecksum:     "ABCD1234",
 		PixelFormat:         "yuv420p",
 	}
 	if err := bindDiscObservation(source, window, &replayed); err != nil {
@@ -90,7 +133,7 @@ func TestComparisonDiscIdentitySeparatesOccurrencesAndOriginalClockWrap(t *testi
 				if err == nil || native.Identity != nil || native.Replay != nil {
 					t.Fatalf("changed native format acquired replay authority: %+v err=%v", native, err)
 				}
-			} else if err != nil || native.Replay == nil || native.Replay.PictureChecksum != observation.PictureChecksum {
+			} else if err != nil || native.Replay == nil || native.Replay.DecoderPTS != -45000 {
 				t.Fatalf("unchanged native format lost original replay: %+v err=%v", native, err)
 			}
 		})
@@ -147,7 +190,7 @@ func TestLocalComparisonDiscNativeClock(t *testing.T) {
 			t.Fatal("empty native window")
 		}
 		first := frames[0]
-		t.Logf("title_seconds=%.6f pts=%d occurrence=%s checksum=%s frames=%d", first.RelativeTimestampSeconds, first.PTS, first.Identity.Occurrence, first.PictureChecksum, len(frames))
+		t.Logf("title_seconds=%.6f pts=%d occurrence=%s frames=%d", first.RelativeTimestampSeconds, first.PTS, first.Identity.Occurrence, len(frames))
 		overlap, err := service.sampleDiscComparison(t.Context(), ComparisonSampleRequest{
 			Source:          source,
 			StartSeconds:    second - .5,
@@ -161,7 +204,7 @@ func TestLocalComparisonDiscNativeClock(t *testing.T) {
 		for _, other := range overlap {
 			if other.FrameID == first.FrameID {
 				found = true
-				if other.PictureChecksum != first.PictureChecksum || other.Replay.TitleTime90 != first.Replay.TitleTime90 {
+				if other.Replay.TitleTime90 != first.Replay.TitleTime90 {
 					t.Fatal("origin changed canonical picture")
 				}
 			}
@@ -177,7 +220,7 @@ func TestLocalComparisonDiscNativeClock(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if captured.FrameID != first.FrameID || captured.PictureChecksum != first.PictureChecksum {
+		if captured.FrameID != first.FrameID || !captured.Replay.SamePicture(first.Replay) {
 			t.Fatal("capture changed selected native picture")
 		}
 	}

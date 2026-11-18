@@ -918,6 +918,15 @@ func routeParameters(item route) []any {
 			},
 		})
 	}
+	if item.OperationID == "previewWorkflowMediaFrame" {
+		parameters = append(parameters, map[string]any{
+			"name":        "previewId",
+			"in":          "query",
+			"description": "The current comparison preview to step from. A retained comparison cell can also identify the starting picture.",
+			"required":    false,
+			"schema":      map[string]any{"type": "string"},
+		})
+	}
 	return parameters
 }
 

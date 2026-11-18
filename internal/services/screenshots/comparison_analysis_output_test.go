@@ -121,7 +121,9 @@ func TestComparisonCompactOutputsJoinNativeClocksAndRejectIncompleteData(t *test
 			if test.rational {
 				// Move the first native frame a third of a microsecond away
 				// from output zero, then beyond the rounding allowance.
-				diagnostic := strings.Replace(stderr, "time_base: 1/1000", "time_base: 1/3000000", 1)
+				diagnostic := strings.ReplaceAll(native.String(), "time_base: 1/1000", "time_base: 1/3000000")
+				diagnostic = strings.ReplaceAll(diagnostic, "pts: 300 ", "pts: 900000 ")
+				diagnostic = strings.ReplaceAll(diagnostic, "pts: 750 ", "pts: 2250000 ")
 				request := ComparisonSampleRequest{analysis: stream, Source: ComparisonSource{InputFingerprint: "synthetic"}}
 				result.Stderr = []byte(strings.Replace(diagnostic, "pts: 0 ", "pts: 1 ", 1))
 				samples, err := analysisSamples(result, request, nil)

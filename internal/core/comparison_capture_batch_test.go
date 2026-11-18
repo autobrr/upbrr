@@ -42,7 +42,7 @@ func TestComparisonCaptureBatchPreservesFailureAndJoinsSiblings(t *testing.T) {
 	for i := range jobs {
 		jobs[i].request.TimestampSeconds = float64(i)
 	}
-	err := captureComparisonBatch(t.Context(), renderer, jobs, 2, func(comparisonCaptureJob, api.WorkflowProgressUpdate) {}, func(comparisonCaptureJob, screenshots.ComparisonFrame) error {
+	err := captureComparisonBatch(t.Context(), renderer, jobs, 2, func(comparisonCaptureJob, api.WorkflowProgressUpdate) {}, func(comparisonCaptureJob, screenshots.ComparisonFrame, bool) error {
 		t.Fatal("a failed render was published")
 		return nil
 	})
@@ -54,32 +54,46 @@ func TestComparisonCaptureBatchPreservesFailureAndJoinsSiblings(t *testing.T) {
 	default:
 		t.Fatal("capture returned before its sibling exited")
 	}
-	t.Run("cancellation cannot hide a drained integrity failure", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			started, release := make(chan struct{}), make(chan struct{})
-			renderer := comparisonBatchRenderer{capture: func(context.Context, screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error) {
-				close(started)
-				<-release
-				return screenshots.ComparisonFrame{}, failure
-			}}
-			finished := make(chan error, 1)
-			go func() {
-				finished <- captureComparisonBatch(ctx, renderer, jobs[:1], 1, func(comparisonCaptureJob, api.WorkflowProgressUpdate) {}, func(comparisonCaptureJob, screenshots.ComparisonFrame) error {
-					t.Error("an integrity failure became a published capture")
-					return nil
-				})
-			}()
-			<-started
-			cancel()
-			// The coordinator has consumed cancellation and is waiting for the
-			// renderer to exit. Its terminal error must remain fatal afterward.
-			synctest.Wait()
-			close(release)
-			if err := <-finished; !errors.Is(err, failure) || errors.Is(err, context.Canceled) {
-				t.Fatalf("cancellation hid the worker's integrity failure: %v", err)
-			}
+	for _, terminal := range []error{nil, failure, errors.Join(context.Canceled, failure)} {
+		t.Run("drain", func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				started := make(chan struct{}, 2)
+				release := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+				renderer := comparisonBatchRenderer{capture: func(_ context.Context, request screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error) {
+					index := int(request.TimestampSeconds)
+					started <- struct{}{}
+					<-release[index]
+					if index == 1 {
+						return screenshots.ComparisonFrame{}, terminal
+					}
+					return screenshots.ComparisonFrame{}, nil
+				}}
+				finished := make(chan error, 1)
+				published := 0
+				go func() {
+					finished <- captureComparisonBatch(ctx, renderer, jobs, 2, func(comparisonCaptureJob, api.WorkflowProgressUpdate) {}, func(comparisonCaptureJob, screenshots.ComparisonFrame, bool) error {
+						published++
+						return nil
+					})
+				}()
+				<-started
+				<-started
+				cancel()
+				synctest.Wait()
+				close(release[0])
+				synctest.Wait()
+				close(release[1])
+				err := <-finished
+				if terminal == nil {
+					if !comparisonCancellationOnly(err) || published != 2 {
+						t.Fatalf("cancelled batch published %d successes: %v", published, err)
+					}
+				} else if !errors.Is(err, failure) || comparisonCancellationOnly(err) || published != 1 {
+					t.Fatalf("fatal batch published %d successes: %v", published, err)
+				}
+			})
 		})
-	})
+	}
 }

@@ -6,15 +6,13 @@ package screenshots
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"os/exec"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -111,9 +109,10 @@ func comparisonDecoderLimit(reason string) error {
 // finiteComparisonRunner retains parsed provenance independently of its bounded
 // diagnostic tail. A noisy decoder cannot evict observations or grow buffers.
 type finiteComparisonRunner struct {
-	base           Runner
-	outputLimit    int
-	retentionLimit int64
+	base        Runner
+	input       []byte
+	outputLimit int
+	retain      func(int64) bool
 }
 
 type comparisonOutputBuffer struct {
@@ -135,8 +134,83 @@ func (b *comparisonOutputBuffer) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
+// FFmpeg can interleave a demux-thread message with a partially printed
+// filter diagnostic. Recognize our two tagged integers even inside that line.
+// Binary-exact quarter fractions distinguish offsets from signed ticks. A
+// negative sign separates either value from an interrupted diagnostic field.
+const comparisonPacketFilter = "noise=amount=0:drop='print(-pos-1.25);print(-2*abs(pts)-lt(pts,0)-0.75);0'"
+
+var comparisonPacketMessage = regexp.MustCompile(`(?:\[Eval @ [^\]]+\] )?-(\d+)\.(250000|750000)$`)
+
+type comparisonPacketTrace struct {
+	positions map[int64]int64
+	position  *int64
+	fragments map[string]string
+}
+
+// consume removes only the private packet message. A diagnostic interrupted
+// before its newline is rejoined when FFmpeg resumes that filter's output.
+func (p *comparisonPacketTrace) consume(line string) (string, error) {
+	var token []int
+	if strings.HasSuffix(line, ".250000") || strings.HasSuffix(line, ".750000") {
+		token = comparisonPacketMessage.FindStringSubmatchIndex(line)
+	}
+	if token != nil {
+		v, err := strconv.ParseInt(line[token[2]:token[3]], 10, 64)
+		if err != nil {
+			return "", comparisonDiscFailure("packet_address")
+		}
+		if line[token[4]] == '2' {
+			if p.position != nil {
+				return "", comparisonDiscFailure("packet_address")
+			}
+			p.position = new(v - 1)
+		} else {
+			if p.position == nil || len(p.positions) >= 50000 {
+				return "", comparisonDiscFailure("packet_address")
+			}
+			z := v
+			pts := z / 2
+			if z%2 != 0 {
+				pts = -pts
+			}
+			pos := *p.position
+			if _, exists := p.positions[pts]; exists {
+				pos = -1
+			}
+			p.positions[pts] = pos
+			p.position = nil
+		}
+		line = line[:token[0]]
+		if prefix, body, ok := strings.Cut(line, "] "); ok {
+			if len(p.fragments[prefix])+len(body) > 8192 || len(p.fragments) > 64 {
+				return "", comparisonDecoderLimit("decoder_diagnostic_limit")
+			}
+			p.fragments[prefix] += body
+		}
+		return "", nil
+	}
+	if len(p.fragments) > 0 {
+		if prefix, body, ok := strings.Cut(line, "] "); ok {
+			if fragment, ok := p.fragments[prefix]; ok {
+				delete(p.fragments, prefix)
+				line = prefix + "] " + fragment + body
+			}
+		}
+	}
+	return line, nil
+}
+
+type comparisonSequenceBounds struct {
+	first, last, numerator, denominator int64
+	ticks                               []int64
+	before, after                       *ComparisonFileNeighbor
+}
+
 type comparisonDiagnosticStream struct {
-	retentionLimit int64
+	bounds         *comparisonSequenceBounds
+	packets        *comparisonPacketTrace
+	retain         func(int64) bool
 	stream         *comparisonRasterStream
 	inputURL       string
 	outputURL      string
@@ -144,13 +218,19 @@ type comparisonDiagnosticStream struct {
 	config         map[string]string
 	records        map[string][]ComparisonFrameObservation
 	counts         map[string]int
-	sideData       map[string]hash.Hash
 	firstNative    func()
 	hardwareDecode bool
 	nativeStarted  bool
 	count          int
 	err            error
 	cancel         context.CancelFunc
+}
+
+func packetTraceFor(args []string) *comparisonPacketTrace {
+	if !slices.Contains(args, comparisonPacketFilter) {
+		return nil
+	}
+	return &comparisonPacketTrace{positions: map[int64]int64{}, fragments: map[string]string{}}
 }
 
 func (d *comparisonDiagnosticStream) Write(data []byte) (int, error) {
@@ -186,6 +266,14 @@ func (d *comparisonDiagnosticStream) Write(data []byte) (int, error) {
 }
 
 func (d *comparisonDiagnosticStream) line(line string) {
+	if d.packets != nil {
+		var err error
+		line, err = d.packets.consume(line)
+		if err != nil {
+			d.err = err
+			return
+		}
+	}
 	if d.inputURL != "" {
 		line = strings.ReplaceAll(line, d.inputURL, "comparison-input")
 	}
@@ -228,14 +316,13 @@ func (d *comparisonDiagnosticStream) line(line string) {
 				d.config = map[string]string{}
 				d.records = map[string][]ComparisonFrameObservation{}
 				d.counts = map[string]int{}
-				d.sideData = map[string]hash.Hash{}
 			}
 			if strings.HasPrefix(body, "config in time_base:") {
 				d.config[name] = body
 				return
 			}
 			if strings.HasPrefix(body, "n:") {
-				if d.retentionLimit > 0 && !strings.HasPrefix(name, "showinfo@") && int64(d.counts[name]+1)*4096 > d.retentionLimit {
+				if d.retain != nil && !strings.HasPrefix(name, "showinfo@") && !d.retain(int64(d.counts[name]+1)*4096) {
 					d.err = ErrComparisonFastInconclusive
 					return
 				}
@@ -249,7 +336,29 @@ func (d *comparisonDiagnosticStream) line(line string) {
 					d.err = errors.New("comparison decoder provenance is incomplete")
 					return
 				}
+				if name == "showinfo@comparison_bounds" {
+					f := observed[0]
+					if d.bounds == nil {
+						d.bounds = &comparisonSequenceBounds{
+							first:       f.PTS,
+							numerator:   f.TimeBaseNumerator,
+							denominator: f.TimeBaseDenominator,
+						}
+					} else if f.PTS <= d.bounds.last || f.TimeBaseNumerator != d.bounds.numerator || f.TimeBaseDenominator != d.bounds.denominator {
+						d.err = comparisonDiscFailure("ambiguous_native_pts")
+						return
+					}
+					d.bounds.ticks = append(d.bounds.ticks, f.PTS)
+					d.bounds.last = f.PTS
+					d.counts[name]++
+					return
+				}
 				if d.stream != nil {
+					if name == "showinfo@comparison_motion" || name == "showinfo@comparison_stats" {
+						if fields := comparisonChecksum.FindStringSubmatch(body); len(fields) == 2 {
+							observed[0].transportChecksum = fields[1]
+						}
+					}
 					if err := d.stream.observe(name, observed[0]); err != nil {
 						d.err = err
 						return
@@ -260,7 +369,6 @@ func (d *comparisonDiagnosticStream) line(line string) {
 				// movie-sized collection and diagnostic reconstruction of branches.
 				if d.stream == nil || !strings.HasPrefix(name, "showinfo@") {
 					d.records[name] = append(d.records[name], observed[0])
-					d.sideData[name] = sha256.New()
 				}
 				d.counts[name]++
 				d.count++
@@ -273,12 +381,6 @@ func (d *comparisonDiagnosticStream) line(line string) {
 				index := len(d.records[name]) - 1
 				d.records[name][index].Colour = colour
 				return
-			}
-			if !strings.HasPrefix(name, "showinfo@") && len(d.records[name]) > 0 && !strings.HasPrefix(body, "config ") {
-				if digest := d.sideData[name]; digest != nil {
-					_, _ = digest.Write([]byte(body + "\n"))
-					d.records[name][len(d.records[name])-1].SideDataChecksum = hex.EncodeToString(digest.Sum(nil))
-				}
 			}
 			// Side-data records remain in the bounded diagnostic tail.
 		}
@@ -314,10 +416,28 @@ func (d *comparisonDiagnosticStream) result() ([]byte, error) {
 			prefix = "[" + name + " @ bounded] "
 		}
 		_, _ = fmt.Fprintln(&out, prefix+d.config[name])
+		if d.bounds != nil && d.packets != nil && !strings.HasPrefix(name, "showinfo@") && len(records) > 0 {
+			left, ok := slices.BinarySearch(d.bounds.ticks, records[0].PTS)
+			right, endOK := slices.BinarySearch(d.bounds.ticks, records[len(records)-1].PTS)
+			if !ok || !endOK {
+				return nil, comparisonDiscFailure("original_clock_witness")
+			}
+			neighbor := func(index int) *ComparisonFileNeighbor {
+				if index < 0 || index >= len(d.bounds.ticks) {
+					return nil
+				}
+				pts := d.bounds.ticks[index]
+				if pos, ok := d.packets.positions[pts]; ok && pos >= 0 {
+					return &ComparisonFileNeighbor{PTS: pts, Position: pos}
+				}
+				return nil
+			}
+			d.bounds.before, d.bounds.after = neighbor(left-1), neighbor(right+1)
+		}
 		for i, record := range records {
 			_, _ = fmt.Fprintf(
 				&out,
-				"%sn: %d pts: %d pts_time:%.9f duration:%d fmt:%s cl:%s sar:%d/%d s:%dx%d i:%s type:%s checksum:%s plane_checksum:[%s]\n",
+				"%sn: %d pts: %d pts_time:%.9f duration:%d fmt:%s cl:%s sar:%d/%d s:%dx%d i:%s type:%s\n",
 				prefix,
 				i,
 				record.PTS,
@@ -331,11 +451,13 @@ func (d *comparisonDiagnosticStream) result() ([]byte, error) {
 				record.Height,
 				record.Interlace,
 				record.PictureType,
-				record.PictureChecksum,
-				record.PlaneChecksums,
 			)
-			if record.SideDataChecksum != "" {
-				_, _ = fmt.Fprintln(&out, prefix+"comparison_side_data_sha256:"+record.SideDataChecksum)
+			if !strings.HasPrefix(name, "showinfo@") && d.packets != nil {
+				position, ok := d.packets.positions[record.PTS]
+				if !ok || position < 0 {
+					return nil, comparisonDiscFailure("ambiguous_packet_address")
+				}
+				_, _ = fmt.Fprintf(&out, "%scomparison_packet_pos:%d\n", prefix, position)
 			}
 			if colour := strings.Split(record.Colour, "/"); len(colour) == 4 {
 				_, _ = fmt.Fprintf(
@@ -368,7 +490,7 @@ func (r finiteComparisonRunner) Run(ctx context.Context, name string, args []str
 		}
 		diagnostic := &comparisonDiagnosticStream{
 			stream:         stream,
-			retentionLimit: r.retentionLimit,
+			retain:         r.retain,
 			hardwareDecode: slices.Contains(args, "-hwaccel"),
 		}
 		if stream != nil {
@@ -395,14 +517,18 @@ func (r finiteComparisonRunner) Run(ctx context.Context, name string, args []str
 	// #nosec G204 G702 -- Resolved decoder and structured arguments; no shell.
 	cmd := exec.CommandContext(runCtx, name, append([]string{"-nostdin", "-nostats"}, args...)...)
 	cmd.Dir = dir
+	if len(r.input) > 0 {
+		cmd.Stdin = bytes.NewReader(r.input)
+	}
 	cmd.WaitDelay = 5 * time.Second
 	output := &comparisonOutputBuffer{limit: r.outputLimit}
 	output.cancel = func() { cancelCause(output.err) }
 	inputURL, _ := ctx.Value(comparisonInputURLKey{}).(string)
 	diagnostic := &comparisonDiagnosticStream{
-		retentionLimit: r.retentionLimit,
+		retain:         r.retain,
 		stream:         stream,
 		inputURL:       inputURL,
+		packets:        packetTraceFor(args),
 		hardwareDecode: slices.Contains(args, "-hwaccel"),
 	}
 	diagnostic.cancel = func() { cancelCause(diagnostic.err) }
@@ -414,7 +540,9 @@ func (r finiteComparisonRunner) Run(ctx context.Context, name string, args []str
 	}
 	err := cmd.Start()
 	if err == nil {
-		recordComparisonProcessStart(ctx)
+		if len(r.input) == 0 {
+			recordComparisonProcessStart(ctx)
+		}
 		err = cmd.Wait()
 	}
 	cause := context.Cause(runCtx)
@@ -437,7 +565,11 @@ func (r finiteComparisonRunner) Run(ctx context.Context, name string, args []str
 	if runCtx.Err() != nil {
 		return CommandResult{}, fmt.Errorf("comparison decoder deadline or cancellation: %w", context.Cause(runCtx))
 	}
-	result := CommandResult{Stdout: output.buffer.Bytes(), Stderr: stderr}
+	result := CommandResult{
+		Stdout: output.buffer.Bytes(),
+		Stderr: stderr,
+		bounds: diagnostic.bounds,
+	}
 	if err != nil {
 		result.ExitCode = 1
 		return result, fmt.Errorf("run comparison decoder: %w", comparisonProcessFailure(err, result.ExitCode))
@@ -448,6 +580,12 @@ func (r finiteComparisonRunner) Run(ctx context.Context, name string, args []str
 // Observed evidence, source and admission failures fail closed even when the
 // caller also cancels. A killed worker or unavailable device can be teardown.
 func comparisonTerminalFailure(err error) bool {
+	if errors.Is(err, internalerrors.ErrFrameCorruption) || errors.Is(err, errComparisonDecoderLimit) {
+		return true
+	}
+	if _, invalid := api.AsOperationFailure(err); invalid {
+		return true
+	}
 	return err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
 		!errors.Is(err, ErrComparisonWorkerFailed) && !errors.Is(err, errComparisonHardwareUnavailable) &&
 		!errors.Is(err, errComparisonHardwareInitialization) && !errors.Is(err, errComparisonHardwareUnsupported)

@@ -239,7 +239,7 @@ func (b *comparisonMediaFake) EditComparisons(_ context.Context, _ api.ReleaseRe
 }
 
 func (b *comparisonMediaFake) PreviewComparisonFrame(context.Context, api.ReleaseRef, api.MediaArtifactSet, any,
-	string, float64, int) (MediaPreviewContent, error) {
+	string, float64, int, *MediaPreviewContent) (MediaPreviewContent, error) {
 	return MediaPreviewContent{}, errors.New("preview not used by review test")
 }
 

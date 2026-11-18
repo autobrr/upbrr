@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -110,11 +111,30 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	}
 	cache := map[windowKey][]screenshots.ComparisonSample{}
 	secondaryCache := comparisonWindowCache{}
-	var mainInventory *comparisonSceneInventory
+	defer func() {
+		progress.logger.Debugf("comparisons: phase=alignment_cache peak_bytes=%d evictions=%d", secondaryCache.peak, secondaryCache.evictions)
+	}()
+	var mainInventory, quickInventory *comparisonSceneInventory
 	var inventoryOwner string
 	analysisBytes := int64(0)
 	retainedBytes := int64(0)
 	candidateBytes := int64(0)
+	prepareWindow := func(frames []comparisons.FrameSample) (int64, error) {
+		// Signatures live alongside decoded samples and are shared by all scale
+		// and neighborhood trials. Reserve their backing storage only once.
+		var bytes int64
+		for _, frame := range frames {
+			bytes += int64(8*len(frame.Luma) + 192)
+		}
+		limit := (112 << 20) - candidateBytes - retainedBytes - analysisBytes - bytes
+		secondaryCache.trim(min(16<<20, limit))
+		if limit < 0 {
+			return 0, screenshots.ErrComparisonFastInconclusive
+		}
+		comparisons.PrepareVisualSignatures(frames)
+		analysisBytes += bytes
+		return bytes, nil
+	}
 	renderers := make([]screenshots.ComparisonAnalysisRenderer, len(plan.Sources))
 	sampleChunkSeconds := make([]float64, len(plan.Sources))
 	budgets := make([]screenshots.ComparisonDecodeBudget, len(plan.Sources))
@@ -205,17 +225,45 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	item, total := 0, 1
 	matchedRows := 0
 	matchingRows := false
+	type samplingWork struct {
+		wall              time.Duration
+		requested, reused float64
+	}
+	work := make([][2]samplingWork, len(plan.Sources))
+	defer func() {
+		for i, column := range work {
+			for phase, totals := range column {
+				progress.logger.Debugf(
+					"comparisons: phase=alignment_sampling column=%d rows=%t elapsed_seconds=%.3f requested_seconds=%.6f reused_seconds=%.6f",
+					i+1,
+					phase == 1,
+					totals.wall.Seconds(),
+					totals.requested,
+					totals.reused,
+				)
+			}
+		}
+	}()
+	var discoveryDecode func(context.Context, float64, float64, bool) ([]screenshots.ComparisonSample, error)
 	sample := func(source int, center, radius float64) ([]screenshots.ComparisonSample, error) {
 		start, end := max(0, center-radius), min(durations[source], center+radius)
 		windowDuration := min(64, end-start)
 		if end-start < 1.1 {
 			return nil, nil
 		}
+		phase := 0
+		if matchingRows {
+			phase = 1
+		}
+		stats := &work[source][phase]
+		stats.requested += windowDuration
 		key := windowKey{source, start, windowDuration}
 		if frames, ok := cache[key]; ok {
+			stats.reused += windowDuration
 			return frames, nil
 		}
 		if source == main && mainInventory != nil {
+			admit := secondaryCache.reserve((112 << 20) - candidateBytes - retainedBytes - analysisBytes)
 			var frames []screenshots.ComparisonSample
 			full := false
 			if err := readComparisonInventoryRange(
@@ -225,7 +273,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 				&api.ComparisonTimeInterval{Start: start, End: end},
 				func(frame screenshots.ComparisonSample) bool {
 					if frame.RelativeTimestampSeconds >= start && frame.RelativeTimestampSeconds < end {
-						if candidateBytes+retainedBytes+analysisBytes+secondaryCache.bytes+int64(len(frames)+1)*4096 > (112 << 20) {
+						if !admit(int64(len(frames)+1) * 4096) {
 							full = true
 							return false
 						}
@@ -239,7 +287,29 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			if full {
 				return nil, screenshots.ErrComparisonFastInconclusive
 			}
+			if matchingRows && slices.ContainsFunc(frames, func(f screenshots.ComparisonSample) bool {
+				return f.Replay == nil || f.Replay.Version != 2 && !f.Replay.CanReinspectDisc()
+			}) {
+				// Legacy archives still rank scenes and calibrate the search. A
+				// freshly observed neighborhood must authorize the actual row.
+				frames = nil
+				from, to := max(0, start-1), min(durations[main], end+1)
+				updated, err := discoveryDecode(ctx, from, to-from, false)
+				if err != nil {
+					return nil, err
+				}
+				for _, f := range updated {
+					if f.RelativeTimestampSeconds >= start && f.RelativeTimestampSeconds < end && f.Replay != nil && f.Replay.Version == 2 {
+						frames = append(frames, f)
+					}
+				}
+			} else {
+				stats.reused += windowDuration
+			}
 			retainedBytes += int64(len(frames)) * 4096
+			if err := verifyComparisonFileJoins(frames); err != nil {
+				return nil, err
+			}
 			cache[key] = frames
 			return frames, nil
 		}
@@ -248,12 +318,52 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		}
 		id := fmt.Sprintf("%d/%d", source, item)
 		var frames []screenshots.ComparisonSample
-		reusedWindow := false
 		missing := []api.ComparisonTimeInterval{{Start: start, End: end}}
-		if matchingRows && source != main {
+		if source == main && quickInventory != nil {
+			// Only archived native pixels can fill a calibration/probe gap.
+			// Section scoring also records coverage, without archiving its rasters.
+			var archived []screenshots.ComparisonSample
+			limit := min(int64(16<<20), (112<<20)-candidateBytes-retainedBytes-analysisBytes)
+			admit := secondaryCache.reserve((112 << 20) - candidateBytes - retainedBytes - analysisBytes)
+			full := false
+			err := readComparisonInventoryRange(
+				ctx,
+				quickInventory,
+				inventoryOwner,
+				&api.ComparisonTimeInterval{Start: start, End: end},
+				func(frame screenshots.ComparisonSample) bool {
+					if needed := int64(len(archived)+1) * 4096; needed > limit || !admit(needed) {
+						full = true
+						return false
+					}
+					archived = append(archived, frame)
+					return true
+				},
+			)
+			if err != nil {
+				return nil, err
+			}
+			if !full {
+				archived, err = orderedComparisonSamples(archived)
+				if err != nil {
+					return nil, err
+				}
+				var covered comparisonWindowCache
+				covered.put(main, start, end, renderers[main].Mode, archived, limit)
+				frames, missing, err = covered.get(main, start, end, renderers[main].Mode)
+				if err != nil {
+					return nil, err
+				}
+				retainedBytes += int64(len(frames)) * 4096
+			}
+		}
+		if source != main {
 			secondaryCache.trim(min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes))
-			frames, missing = secondaryCache.get(source, start, end, renderers[source].Mode)
-			reusedWindow = len(frames) > 0
+			var cacheErr error
+			frames, missing, cacheErr = secondaryCache.get(source, start, end, renderers[source].Mode)
+			if cacheErr != nil {
+				return nil, cacheErr
+			}
 			retainedBytes += int64(len(frames)) * 4096
 			missingSeconds := 0.0
 			for _, gap := range missing {
@@ -264,29 +374,33 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 					source+1, windowDuration-missingSeconds, len(frames))
 			}
 		}
+		unseen := 0.0
+		for _, gap := range missing {
+			unseen += gap.End - gap.Start
+		}
+		stats.reused += max(0, windowDuration-unseen)
 		for _, gap := range missing {
 			if budgets[source].ConsumedMovieSeconds+gap.End-gap.Start > budgets[source].MovieSecondsLimit {
 				return nil, screenshots.ErrComparisonFastInconclusive
 			}
 			for chunkStart := gap.Start; chunkStart < gap.End-1e-9; {
-				secondaryCache.trim(min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes))
-				available := (128 << 20) - candidateBytes - retainedBytes - analysisBytes - secondaryCache.bytes - (16 << 20)
+				chunkDuration := min(sampleChunkSeconds[source], gap.End-chunkStart)
+				available := int64(112<<20) - candidateBytes - retainedBytes - analysisBytes
 				if available < 4096 {
 					return nil, screenshots.ErrComparisonFastInconclusive
 				}
-				chunkDuration := min(sampleChunkSeconds[source], gap.End-chunkStart)
 				request := screenshots.ComparisonSampleRequest{
-					RetentionLimitBytes: available,
-					MatchCrop:           activePictures[source],
-					Budget:              &budgets[source],
-					Renderer:            &renderers[source],
-					Source:              retained.ComparisonSources[plan.Sources[source].ID].Source,
-					StartSeconds:        chunkStart,
-					DurationSeconds:     chunkDuration,
-					StrideSeconds:       .002,
-					NativeFrames:        true,
-					NormalizeSDR:        true,
-					MatchAspectRatio:    matchAspect,
+					Retain:           secondaryCache.reserve(available),
+					MatchCrop:        activePictures[source],
+					Budget:           &budgets[source],
+					Renderer:         &renderers[source],
+					Source:           retained.ComparisonSources[plan.Sources[source].ID].Source,
+					StartSeconds:     chunkStart,
+					DurationSeconds:  chunkDuration,
+					StrideSeconds:    .002,
+					NativeFrames:     true,
+					NormalizeSDR:     true,
+					MatchAspectRatio: matchAspect,
 				}
 				workIndex, workTotal := item, total
 				if matchingRows {
@@ -295,6 +409,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 				workCtx := progress.child(ctx, workIndex, workTotal, id, "comparison_window", fmt.Sprintf("Column %d", source+1))
 				started := time.Now()
 				decoded, err := renderer.SampleComparisonSource(workCtx, request)
+				stats.wall += time.Since(started)
 
 				if err != nil {
 					return nil, fmt.Errorf("decode comparison alignment column %d: %w", source+1, err)
@@ -311,23 +426,28 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 				if candidateBytes+retainedBytes+analysisBytes+secondaryCache.bytes > 128<<20 {
 					return nil, screenshots.ErrComparisonFastInconclusive
 				}
+				if source != main {
+					secondaryCache.put(
+						source,
+						chunkStart,
+						chunkStart+chunkDuration,
+						renderers[source].Mode,
+						decoded,
+						min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes),
+					)
+				}
 				frames = append(frames, decoded...)
 				chunkStart += chunkDuration
 			}
 		}
-		original := len(frames)
 		frames, orderErr := orderedComparisonSamples(frames)
 		if orderErr != nil {
 			return nil, orderErr
 		}
-		if len(frames) != original && !reusedWindow {
-			frames = nil
+		if err := verifyComparisonFileJoins(frames); err != nil {
+			return nil, err
 		}
 		cache[key] = frames
-		if matchingRows && source != main {
-			secondaryCache.put(source, start, end, renderers[source].Mode, frames,
-				min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes))
-		}
 		workIndex, workTotal := item, total
 		if matchingRows {
 			workIndex, workTotal = min(matchedRows, options.Count-1)*len(plan.Sources)+source, options.Count*len(plan.Sources)
@@ -360,7 +480,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		discoveryCtx, stopDiscovery = context.WithDeadline(ctx, start.Add(comparisonDiscoveryAllowance(duration)))
 	}
 	mainPictureReady := false
-	discoveryDecode := func(workCtx context.Context, start, seconds float64, deep bool) ([]screenshots.ComparisonSample, error) {
+	discoveryDecode = func(workCtx context.Context, start, seconds float64, deep bool) ([]screenshots.ComparisonSample, error) {
 		// A compatible complete Deep inventory already contains normalized main
 		// pixels. Probe the main crop only when fresh analysis actually starts.
 		if !mainPictureReady {
@@ -369,8 +489,12 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			}
 			mainPictureReady = true
 		}
-		secondaryCache.trim(min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes))
-		available := (128 << 20) - candidateBytes - retainedBytes - analysisBytes - secondaryCache.bytes - (16 << 20)
+		if !deep {
+			if frames := secondaryCache.classified(start, start+seconds, renderers[main].Mode); len(frames) > 0 {
+				return frames, nil
+			}
+		}
+		available := int64(112<<20) - candidateBytes - retainedBytes - analysisBytes
 		if available < 4096 {
 			return nil, screenshots.ErrComparisonFastInconclusive
 		}
@@ -379,24 +503,37 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			budget = &deepBudget
 		}
 		frames, err := analyzer.AnalyzeComparisonSource(workCtx, screenshots.ComparisonSampleRequest{
-			RetentionLimitBytes: available,
-			MatchCrop:           activePictures[main],
-			Source:              retained.ComparisonSources[plan.MainSourceID].Source,
-			StartSeconds:        start,
-			DurationSeconds:     seconds,
-			StrideSeconds:       .002,
-			NativeFrames:        true,
-			NormalizeSDR:        true,
-			MatchAspectRatio:    matchAspect,
-			Budget:              budget,
-			Renderer:            &renderers[main],
+			Retain:           secondaryCache.reserve(available),
+			MatchCrop:        activePictures[main],
+			Source:           retained.ComparisonSources[plan.MainSourceID].Source,
+			StartSeconds:     start,
+			DurationSeconds:  seconds,
+			StrideSeconds:    .002,
+			NativeFrames:     true,
+			NormalizeSDR:     true,
+			MatchAspectRatio: matchAspect,
+			Budget:           budget,
+			Renderer:         &renderers[main],
 		})
 		if err != nil {
 			return frames, fmt.Errorf("analyze main comparison section: %w", err)
 		}
+		if !deep {
+			secondaryCache.retain(comparisonCachedWindow{
+				classified: true,
+				source:     main,
+				start:      start,
+				end:        start + seconds,
+				renderer:   renderers[main].Mode,
+				frames:     frames,
+			},
+				min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes-int64(len(frames))*4096))
+		}
 		return frames, nil
 	}
-	inventory, discoveryErr := b.discoverComparisonScenes(discoveryCtx, retained, plan, window, excluded, discoveryDecode, progress)
+	priorInventory := retained.ComparisonInventory
+	quick := &comparisonQuickSearch{}
+	inventory, discoveryErr := b.discoverComparisonScenes(discoveryCtx, retained, plan, window, excluded, discoveryDecode, progress, quick)
 	stopDiscovery()
 	if discoveryErr != nil {
 		return comparisons.MatchResult{}, nil, false, discoveryErr
@@ -410,6 +547,20 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	if err != nil {
 		return comparisons.MatchResult{}, nil, false, err
 	}
+	if plan.Preferences.ScanMode != "deep" {
+		quickInventory, inventoryOwner = inventory, owner
+	}
+	defer func() {
+		_, incomplete := errors.AsType[*releaseworkflow.ComparisonIncompleteError](returnedErr)
+		if len(quick.parts) > 0 && returnedErr != nil && !incomplete && !comparisonCancellationOnly(returnedErr) {
+			quick.cleanup()
+			retained.ComparisonInventory = priorInventory
+			return
+		}
+		if err := quick.finish(ctx, owner, retained); err != nil {
+			returned, returnedObservations, accepted, returnedErr = comparisons.MatchResult{}, nil, false, &comparisonPublicationError{err}
+		}
+	}()
 	if plan.Preferences.ScanMode == "deep" {
 		mainInventory, inventoryOwner = inventory, owner
 		if !inventory.Summary.Complete || !inventory.Summary.RankingComplete {
@@ -431,7 +582,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	// Reserve half of the shared retention allowance for native windows. Larger
 	// ranking inventories use the full streaming selector without truncation.
 	candidates, candidateBytes, err := comparisonInventoryCandidates(ctx, inventory, owner, (64<<20)-comparisonInventoryIndexBytes(inventory))
-	candidateBytes += comparisonInventoryIndexBytes(inventory)
+	candidateBytes += comparisonInventoryIndexBytes(inventory) + quick.memoryBytes()
 	if err != nil {
 		return comparisons.MatchResult{}, nil, false, err
 	}
@@ -494,6 +645,19 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 				return unavailable(), nil, true, nil
 			}
 		}
+		references := make([][]comparisons.FrameSample, len(centers))
+		for index, center := range centers {
+			var region []screenshots.ComparisonSample
+			for _, frame := range referenceWindow {
+				if frame.RelativeTimestampSeconds >= center-2 && frame.RelativeTimestampSeconds < center+2 {
+					region = append(region, frame)
+				}
+			}
+			references[index] = comparisonSamples(region)
+			if _, err := prepareWindow(references[index]); err != nil {
+				return failed(err, main+1)
+			}
+		}
 		for i, source := range plan.Sources {
 			if _, reused := offsets[source.ID]; i == main || reused {
 				continue
@@ -502,29 +666,20 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			if err != nil {
 				return failed(err, i+1)
 			}
-			hypotheses[source.ID] = comparisons.NativePlaybackScales(comparisonSamples(referenceWindow), comparisonSamples(target), hypotheses[source.ID])
+			preparedTarget := comparisonSamples(target)
+			targetBytes, err := prepareWindow(preparedTarget)
+			if err != nil {
+				return failed(err, i+1)
+			}
+			hypotheses[source.ID] = comparisons.NativePlaybackScales(comparisonSamples(referenceWindow), preparedTarget, hypotheses[source.ID])
 			if len(hypotheses[source.ID]) == 0 {
 				noteInconclusive("rate_hypothesis_limit", i+1)
 				return unavailable(), nil, true, nil
 			}
-		}
-		for _, center := range centers {
-			var reference []screenshots.ComparisonSample
-			for _, frame := range referenceWindow {
-				if frame.RelativeTimestampSeconds >= center-2 && frame.RelativeTimestampSeconds < center+2 {
-					reference = append(reference, frame)
-				}
-			}
-			for i, source := range plan.Sources {
-				if _, reused := offsets[source.ID]; i == main || reused {
-					continue
-				}
-				target, err := sample(i, durations[i]*.5, 32)
-				if err != nil {
-					return failed(err, i+1)
-				}
+			for index, center := range centers {
+				preparedReference := references[index]
 				for _, scale := range hypotheses[source.ID] {
-					alignment, reason := comparisons.DiscoverPlaybackAlignment(comparisonSamples(reference), comparisonSamples(target), scale)
+					alignment, reason := comparisons.DiscoverPlaybackAlignment(preparedReference, preparedTarget, scale)
 					if reason != "" {
 						progress.logger.Debugf(
 							"comparisons: phase=alignment_calibration decision=inconclusive column=%d reason=%s scale=%d/%d",
@@ -547,11 +702,20 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 					)
 				}
 			}
+			analysisBytes -= targetBytes
+			// This column has finished every center and scale. Only the bounded
+			// secondary cache keeps decoded target intervals for later row work.
+			for key, frames := range cache {
+				if key.source == i {
+					retainedBytes -= int64(len(frames)) * 4096
+					delete(cache, key)
+				}
+			}
 		}
 		// Native region proofs own their checked points, not the decoded rasters.
 		// Release those windows before admitting any additional calibration region.
 		clear(cache)
-		retainedBytes = 0
+		retainedBytes, analysisBytes = 0, 0
 		calibrationHypotheses := func(id string) []comparisons.ConstantAlignment {
 			var accepted []comparisons.ConstantAlignment
 			for scale, regions := range proofs[id] {
@@ -732,7 +896,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	// Classified decoder stops preserve independently verified rows. Identity and
 	// source failures remain closed; publication revalidates retained bindings.
 	defer func() {
-		if errors.Is(returnedErr, context.Canceled) || errors.Is(returnedErr, context.DeadlineExceeded) ||
+		if comparisonCancellationOnly(returnedErr) ||
 			errors.Is(returnedErr, screenshots.ErrComparisonWorkerFailed) ||
 			errors.Is(returnedErr, screenshots.ErrComparisonNormalizationUnavailable) {
 			flushPending()
@@ -742,7 +906,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		if workerStopped {
 			returnedErr = &releaseworkflow.ComparisonIncompleteError{Cause: returnedErr, Reason: "match_worker_failed"}
 		}
-		if workerStopped || errors.Is(returnedErr, context.Canceled) || errors.Is(returnedErr, context.DeadlineExceeded) {
+		if workerStopped || comparisonCancellationOnly(returnedErr) {
 			returned, returnedObservations, accepted = result, observations, true
 		}
 	}()
@@ -778,10 +942,18 @@ search:
 			}
 			if candidates != nil {
 				for _, frame := range candidates {
+					if frame.Unenclosed {
+						_, ok := inventory.Enclosed[frame.FrameID]
+						frame.Unenclosed = !ok
+					}
 					if !visit(frame.sample()) {
 						break
 					}
 				}
+				return
+			}
+			if inventory.Summary.ScanMode != "deep" {
+				inventoryErr = streamQuickRanking(ctx, inventory, owner, func(candidate comparisonSceneCandidate) bool { return visit(candidate.sample()) })
 				return
 			}
 			inventoryErr = readComparisonInventory(ctx, inventory, owner, func(frame screenshots.ComparisonSample) bool {
@@ -821,19 +993,32 @@ search:
 			}
 			if plan.Preferences.ScanMode != "deep" && inventory.QuickWindows < comparisonQuickWindows &&
 				budgets[main].ConsumedMovieSeconds+4 <= budgets[main].MovieSecondsLimit {
-				candidates, candidateBytes = nil, 0
-				expanded, err := b.discoverComparisonScenes(ctx, retained, plan, window, excluded, discoveryDecode, progress, true)
+				expanded, err := b.discoverComparisonScenes(ctx, retained, plan, window, excluded, discoveryDecode, progress, quick)
 				if err != nil {
 					return comparisons.MatchResult{}, nil, false, err
 				}
-				if expanded.QuickWindows > inventory.QuickWindows {
-					inventory = expanded
-					candidates, candidateBytes, err = comparisonInventoryCandidates(ctx, inventory, owner, (64<<20)-comparisonInventoryIndexBytes(inventory))
-					candidateBytes += comparisonInventoryIndexBytes(inventory)
-					if err != nil {
-						return comparisons.MatchResult{}, nil, false, err
+				advanced := expanded.QuickWindows > inventory.QuickWindows
+				inventory = expanded
+				quickInventory = expanded
+				result.Analysis = &inventory.Summary
+				if advanced {
+					part := quick.parts[len(quick.parts)-1]
+					candidateBytes += comparisonInventoryIndexBytes(part) + 1024
+					for _, block := range part.Blocks {
+						candidateBytes += int64(block.Frames) * comparisonQuickKeyBytes
 					}
-					result.Analysis = &inventory.Summary
+					if candidates != nil {
+						more, size, err := comparisonInventoryCandidates(ctx, part, owner, (64<<20)-candidateBytes)
+						if err != nil {
+							return comparisons.MatchResult{}, nil, false, err
+						}
+						if more == nil && part.Bytes != 0 {
+							candidates, candidateBytes = nil, quick.memoryBytes()
+						} else {
+							candidates = mergeSceneCandidates(candidates, more)
+							candidateBytes += size
+						}
+					}
 					progress.begin("alignment_rows", options.Count*len(plan.Sources))
 					continue
 				}
@@ -895,12 +1080,15 @@ search:
 			center = (span.Start + span.End) / 2
 			widths = []float64{min(comparisonSectionSeconds, max(4, span.End-span.Start+.1))}
 		}
+		var signatures int64
 		for _, width := range widths {
+			analysisBytes -= signatures
+			signatures = 0
 			if mainInventory == nil && category >= 0 && width == 12 {
 				// Only a failed compact native match pays for wider scene scoring.
 				inventory = cloneComparisonInventory(inventory)
 				retained.ComparisonInventory, result.Analysis = inventory, &inventory.Summary
-				reference, err = scoreComparisonSection(ctx, inventory, quickAnchor,
+				reference, err = scoreComparisonSection(ctx, inventory, quickAnchor, quick.seen,
 					func(workCtx context.Context, start, seconds float64) ([]screenshots.ComparisonSample, error) {
 						frames, err := discoveryDecode(workCtx, start, seconds, false)
 						analysisBytes += int64(len(frames)) * 4096
@@ -974,12 +1162,20 @@ search:
 			// native reference. The extra pictures prove cadence, not scene facts.
 			for j, decoded := range frames[plan.MainSourceID] {
 				frame := &sampled[main].Frames[j]
-				frame.Evidence = comparisonSectionFrameEvidence(reference, decoded.ComparisonFrameObservation)
+				frame.Evidence, err = comparisonSectionFrameEvidence(reference, decoded.ComparisonFrameObservation)
+				if err != nil {
+					return comparisons.MatchResult{}, nil, false, err
+				}
 				if frame.Evidence != nil && !comparisons.EligibleTime(frame.TimestampSeconds, window, excluded) {
 					evidence := *frame.Evidence
 					evidence.Eligible, evidence.Reason = false, "protected_selection"
 					frame.Evidence = &evidence
 				}
+			}
+			signatures, err = prepareWindow(sampled[main].Frames)
+			if err != nil {
+				lastReason = "native_decode_budget_exhausted"
+				break search
 			}
 			matcher := comparisons.NewSceneSectionMatcher(sampled[main], candidate, category)
 			order := make([]string, len(plan.Sources))
@@ -1010,6 +1206,12 @@ search:
 					return comparisons.MatchResult{}, nil, false, sampleErr
 				}
 				frames[source.ID] = target
+				size, err := prepareWindow(sampled[i].Frames)
+				if err != nil {
+					exhausted = true
+					break
+				}
+				signatures += size
 				viable, matchErr := matcher.AddSource(
 					ctx,
 					sampled[i],
@@ -1095,14 +1297,25 @@ search:
 	return result, observations, true, nil
 }
 
-func comparisonSectionFrameEvidence(reference []screenshots.ComparisonSample, decoded screenshots.ComparisonFrameObservation) *api.ComparisonSceneEvidence {
+func comparisonSectionFrameEvidence(
+	reference []screenshots.ComparisonSample,
+	decoded screenshots.ComparisonFrameObservation,
+) (*api.ComparisonSceneEvidence, error) {
 	id := comparisonObservationID(decoded)
 	for _, original := range reference {
-		if comparisonObservationID(original.ComparisonFrameObservation) == id && original.PictureChecksum == decoded.PictureChecksum {
-			return original.Evidence
+		if comparisonObservationID(original.ComparisonFrameObservation) == id {
+			// Separate reads of a historical Deep archive deserialize its saved
+			// span twice. Exact stored equality transfers classification only.
+			stored := original.Replay.CanReinspectDisc() && decoded.Replay.CanReinspectDisc() &&
+				comparisonTimingOf(original.ComparisonFrameObservation) == comparisonTimingOf(decoded) &&
+				reflect.DeepEqual(original.Replay, decoded.Replay)
+			if comparisonRecord(original.ComparisonFrameObservation).matches(decoded) || stored {
+				return original.Evidence, nil
+			}
+			return nil, comparisonWitnessConflict()
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func decodeLimit(source, main, rows int) float64 {
