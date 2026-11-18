@@ -40,7 +40,7 @@ func TestMatchingDefaultPicturePolicy(t *testing.T) {
 	other.ID = "other"
 	for count := 1; count <= 3; count++ {
 		result, err := Match([]SampledSource{main, other}, "main", MatchOptions{Count: count})
-		if err != nil || len(result.Rows) != count {
+		if err != nil || len(result.Rows) != min(count, 2) {
 			t.Fatalf("count=%d rows=%+v error=%v", count, result.Rows, err)
 		}
 		types := make([]string, 0, len(result.Rows))
@@ -51,7 +51,7 @@ func TestMatchingDefaultPicturePolicy(t *testing.T) {
 			types = append(types, row.Frames[0].FrameType)
 		}
 		slices.Sort(types)
-		want := []string{"B", "P", "I"}[:count]
+		want := []string{"B", "P"}[:min(count, 2)]
 		want = slices.Clone(want)
 		slices.Sort(want)
 		if !slices.Equal(types, want) {
@@ -71,17 +71,21 @@ func TestMatchingDefaultPicturePolicy(t *testing.T) {
 		explicit  bool
 		manual    bool
 		resolved  bool
+		intraOnly bool
 	}{
-		{"B main permits P fallback", "B", "P", false, false, true},
-		{"B main rejects I fallback", "B", "I", false, false, false},
-		{"P main rejects I fallback", "P", "I", false, false, false},
-		{"I main permits I fallback", "I", "I", false, false, true},
-		{"explicit I remains selected", "B", "I", true, false, true},
-		{"manual I remains selected", "B", "I", false, true, true},
+		{"B main permits P fallback", "B", "P", false, false, true, false},
+		{"B main rejects I fallback", "B", "I", false, false, false, false},
+		{"P main rejects I fallback", "P", "I", false, false, false, false},
+		{"unknown type cannot complete", "B", "", false, false, false, false},
+		{"I main cannot authorize another source", "I", "I", false, false, false, false},
+		{"source-local intra proof permits I", "B", "I", false, false, true, true},
+		{"explicit I remains selected", "B", "I", true, false, true, false},
+		{"manual I remains selected", "B", "I", false, true, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			main := SampledSource{ID: "main", Frames: []FrameSample{sampleFrame(1, 1, tc.mainType)}}
 			other := SampledSource{
+				IntraOnly:     tc.intraOnly,
 				ID:            "other",
 				PreferBFrames: !tc.explicit,
 				AllowedTypes:  []string{"B"},
@@ -96,6 +100,36 @@ func TestMatchingDefaultPicturePolicy(t *testing.T) {
 			result, err := Match([]SampledSource{main, other}, "main", MatchOptions{MainMoments: []float64{1}})
 			if err != nil || len(result.Rows) != 1 || result.Rows[0].Complete != tc.resolved || result.Rows[0].Frames[1].Resolved != tc.resolved {
 				t.Fatalf("rows=%+v error=%v", result.Rows, err)
+			}
+		})
+	}
+}
+
+func TestAutomaticIsolatedIRejectedAcrossMatchingEntrypoints(t *testing.T) {
+	for _, entrypoint := range []string{"match", "aligned", "section"} {
+		t.Run(entrypoint, func(t *testing.T) {
+			main := SampledSource{ID: "main", PreferBFrames: true}
+			for i := range 6 {
+				frame := sampleFrame(uint64(i+1), float64(i), "I")
+				frame.FrameID = fmt.Sprintf("main-%d", i)
+				frame.Evidence = &api.ComparisonSceneEvidence{Eligible: true}
+				main.Frames = append(main.Frames, frame)
+			}
+			target := main
+			target.ID = "target"
+			sources := []SampledSource{main, target}
+			var result MatchResult
+			var err error
+			switch entrypoint {
+			case "match":
+				result, err = Match(sources, "main", MatchOptions{Count: 1})
+			case "aligned":
+				result, err = AlignedMatch(sources, "main", MatchOptions{Count: 1, MainFrameID: "main-2"}, map[string]ConstantAlignment{"target": {ToleranceSeconds: .001}}, nil)
+			case "section":
+				result, err = MatchSceneSection(t.Context(), sources, "main", main.Frames[2], -1, nil, nil)
+			}
+			if err != nil || slices.ContainsFunc(result.Rows, func(row MatchedRow) bool { return row.Complete }) {
+				t.Fatalf("isolated automatic I completed a row: %+v error=%v", result, err)
 			}
 		})
 	}
@@ -148,7 +182,7 @@ func TestMatchingAmbiguityAnchorsAndPictureTypes(t *testing.T) {
 		seconds  float64
 	}{
 		{"nearby allowed type", []FrameSample{sampleFrame(1, 4, "P"), sampleFrame(1, 4.04, "B")}, nil, true, false, 4.04},
-		{"type fallback", []FrameSample{sampleFrame(1, 4, "P"), sampleFrame(2, 4.04, "B")}, nil, true, true, 4},
+		{"explicit type unavailable", []FrameSample{sampleFrame(1, 4, "P"), sampleFrame(2, 4.04, "B")}, nil, false, true, 4},
 		{"distant repeated scene", []FrameSample{sampleFrame(1, 4, "P"), sampleFrame(1, 20, "B")}, nil, false, false, 4},
 		{"manual resolves ambiguity", []FrameSample{sampleFrame(1, 4, "P"), sampleFrame(1, 20, "B")}, []MatchAnchor{{MainSeconds: 1, SourceSeconds: 20}}, true, false, 20},
 	} {
@@ -166,8 +200,11 @@ func TestMatchingAmbiguityAnchorsAndPictureTypes(t *testing.T) {
 			if match.Resolved != tc.resolved || match.TypeFallback != tc.fallback || math.Abs(match.TimestampSeconds-tc.seconds) > 1e-6 {
 				t.Fatalf("match=%+v", match)
 			}
-			if !tc.resolved && match.Reason != "ambiguous_visual_match" {
+			if !tc.resolved && !tc.fallback && match.Reason != "ambiguous_visual_match" {
 				t.Fatalf("ambiguity lost: %+v", match)
+			}
+			if !tc.resolved && tc.fallback && match.Reason != "no_compatible_picture_type" {
+				t.Fatalf("explicit type restriction lost its failure boundary: %+v", match)
 			}
 			if len(tc.anchors) > 0 && (match.Method != "manual" || match.Confidence != 0) {
 				t.Fatalf("manual evidence invented confidence: %+v", match)

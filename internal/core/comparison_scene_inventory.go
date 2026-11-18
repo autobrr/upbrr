@@ -92,14 +92,17 @@ func (b workflowMediaBuilder) comparisonInventoryOwner(retained workflowMediaPri
 
 func (b workflowMediaBuilder) comparisonSceneProfile(retained workflowMediaPrivateArtifacts, plan api.ComparisonPlan) (string, error) {
 	source := retained.ComparisonSources[plan.MainSourceID]
+	normalization, err := screenshots.ComparisonAnalysisPolicy(source.Source)
+	if err != nil {
+		return "", fmt.Errorf("comparison inventory normalization: %w", err)
+	}
 	profile, err := api.CanonicalWorkflowFingerprint(struct {
 		Version, Mode, Source, Main, Executable string
 		Facts                                   screenshots.ComparisonSource
 		MatchAspect                             float64
-		Libplacebo                              bool
-		Algorithm                               string
-		Desat                                   float64
-	}{comparisons.SceneProfile, plan.Preferences.ScanMode, source.Fingerprint, plan.MainSourceID, retained.ComparisonAnalysisExecutable, source.Source, comparisonMatchAspect(retained, plan), b.config.ScreenshotHandling.UseLibplacebo, b.config.ScreenshotHandling.TonemapAlgorithm, b.config.ScreenshotHandling.Desat})
+		Policy                                  string
+		Normalization                           screenshots.ComparisonAnalysisRenderer
+	}{comparisons.SceneProfile, plan.Preferences.ScanMode, source.Fingerprint, plan.MainSourceID, retained.ComparisonAnalysisExecutable, source.Source, comparisonMatchAspect(retained, plan), screenshots.ComparisonAnalysisPolicyVersion, normalization})
 	return string(profile), err
 }
 
@@ -116,6 +119,41 @@ func comparisonMatchAspect(retained workflowMediaPrivateArtifacts, plan api.Comp
 
 func readComparisonInventory(ctx context.Context, ref *comparisonSceneInventory, owner string, visit func(screenshots.ComparisonSample) bool) error {
 	return readComparisonInventoryRange(ctx, ref, owner, nil, visit)
+}
+
+// Resolve the exact selected Quick anchor while reading its indexed native
+// neighborhood. Archive admission/publication still own whole-file validation.
+func comparisonInventoryAnchorWindow(
+	ctx context.Context,
+	ref *comparisonSceneInventory,
+	owner, id string,
+	center float64,
+) (screenshots.ComparisonSample, []screenshots.ComparisonSample, error) {
+	var anchor screenshots.ComparisonSample
+	var frames []screenshots.ComparisonSample
+	anchors := 0
+	err := readComparisonInventoryRange(
+		ctx,
+		ref,
+		owner,
+		&api.ComparisonTimeInterval{Start: center - 2, End: center + 2},
+		func(frame screenshots.ComparisonSample) bool {
+			if comparisonObservationID(frame.ComparisonFrameObservation) == id {
+				anchor = frame
+				anchors++
+			}
+			frames = append(frames, frame)
+			return true
+		},
+	)
+	if err != nil {
+		return anchor, nil, err
+	}
+	if anchors != 1 || anchor.Replay == nil {
+		return anchor, nil, errors.New("selected comparison anchor lost its unique original replay")
+	}
+	frames, err = orderedComparisonSamples(frames)
+	return anchor, frames, err
 }
 
 // Indexed window reads verify only the compressed batches they need. Full reads

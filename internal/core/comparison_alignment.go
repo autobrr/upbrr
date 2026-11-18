@@ -116,7 +116,6 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	retainedBytes := int64(0)
 	candidateBytes := int64(0)
 	renderers := make([]screenshots.ComparisonAnalysisRenderer, len(plan.Sources))
-	decodedSeconds := make([]float64, len(plan.Sources))
 	sampleChunkSeconds := make([]float64, len(plan.Sources))
 	budgets := make([]screenshots.ComparisonDecodeBudget, len(plan.Sources))
 	aggregateBytes := int64(24 << 30)
@@ -124,16 +123,32 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		sampleChunkSeconds[i] = 8
 		budgets[i].RemainingEncodedBytes = 8 << 30
 		budgets[i].AttemptRemaining = &aggregateBytes
+		budgets[i].MovieSecondsLimit = comparisonAutomaticDecodeLimit(options.Count)
 	}
+	// Complete Deep coverage includes one second of classifier context on each
+	// side of every minimum eight-second chunk, plus bounded decoder admission
+	// probes/retries. Keep this owner across every main window and crop probe.
+	deepBudget := screenshots.ComparisonDecodeBudget{RemainingEncodedBytes: 1 << 62, MovieSecondsLimit: 4 * (duration + 2*math.Ceil(duration/8) + 16)}
+	defer func() {
+		if plan.Preferences.ScanMode == "deep" {
+			progress.logger.Debugf(
+				"comparisons: phase=discovery_budget requested_seconds=%.6f encoded_span_bytes=%d process_starts=%d",
+				deepBudget.ConsumedMovieSeconds,
+				(1<<62)-deepBudget.RemainingEncodedBytes,
+				deepBudget.ProcessStarts,
+			)
+		}
+	}()
 	defer func() {
 		for i := range plan.Sources {
 			progress.logger.Debugf(
-				"comparisons: phase=alignment_budget column=%d requested_seconds=%.6f encoded_span_bytes=%d remaining_seconds=%.6f remaining_span_bytes=%d",
+				"comparisons: phase=alignment_budget column=%d requested_seconds=%.6f encoded_span_bytes=%d remaining_seconds=%.6f remaining_span_bytes=%d process_starts=%d",
 				i+1,
-				decodedSeconds[i],
+				budgets[i].ConsumedMovieSeconds,
 				(8<<30)-budgets[i].RemainingEncodedBytes,
-				comparisonAutomaticDecodeLimit(options.Count)-decodedSeconds[i],
+				budgets[i].MovieSecondsLimit-budgets[i].ConsumedMovieSeconds,
 				budgets[i].RemainingEncodedBytes,
+				budgets[i].ProcessStarts,
 			)
 		}
 	}()
@@ -150,8 +165,11 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		input := retained.ComparisonSources[plan.Sources[source].ID].Source
 		start := max(0, durations[source]*.2-2)
 		seconds := min(4, durations[source]-start)
-		crop, err := detector.DetectComparisonActivePicture(workCtx, input, start, seconds, &budgets[source])
-		decodedSeconds[source] += seconds
+		budget := &budgets[source]
+		if source == main && plan.Preferences.ScanMode == "deep" {
+			budget = &deepBudget
+		}
+		crop, err := detector.DetectComparisonActivePicture(workCtx, input, start, seconds, budget)
 		if err != nil {
 			return samplingFailure(err, source+1)
 		}
@@ -247,10 +265,9 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			}
 		}
 		for _, gap := range missing {
-			if decodedSeconds[source]+gap.End-gap.Start > comparisonAutomaticDecodeLimit(options.Count) {
+			if budgets[source].ConsumedMovieSeconds+gap.End-gap.Start > budgets[source].MovieSecondsLimit {
 				return nil, screenshots.ErrComparisonFastInconclusive
 			}
-			decodedSeconds[source] += gap.End - gap.Start
 			for chunkStart := gap.Start; chunkStart < gap.End-1e-9; {
 				secondaryCache.trim(min(16<<20, (112<<20)-candidateBytes-retainedBytes-analysisBytes))
 				available := (128 << 20) - candidateBytes - retainedBytes - analysisBytes - secondaryCache.bytes - (16 << 20)
@@ -359,12 +376,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		}
 		budget := &budgets[main]
 		if deep {
-			budget = &screenshots.ComparisonDecodeBudget{RemainingEncodedBytes: 1 << 62}
-		} else {
-			if decodedSeconds[main]+seconds > comparisonAutomaticDecodeLimit(options.Count) {
-				return nil, screenshots.ErrComparisonFastInconclusive
-			}
-			decodedSeconds[main] += seconds
+			budget = &deepBudget
 		}
 		frames, err := analyzer.AnalyzeComparisonSource(workCtx, screenshots.ComparisonSampleRequest{
 			RetentionLimitBytes: available,
@@ -650,6 +662,10 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	progress.complete()
 	item, total = 0, options.Count*len(plan.Sources)
 	progress.begin("alignment_rows", total)
+	rowsStarted := time.Now()
+	defer func() {
+		progress.logger.Debugf("comparisons: phase=alignment_rows_total elapsed_seconds=%.3f rows=%d", time.Since(rowsStarted).Seconds(), matchedRows)
+	}()
 	matchingRows = true
 	observations := map[string][]screenshots.ComparisonSample{}
 	result := comparisons.MatchResult{
@@ -659,14 +675,15 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		Analysis:        &inventory.Summary,
 	}
 	targets := [3]int{options.MotionCount, options.DarkCount, options.FlatCount}
-	schedule := comparisonSceneSlots(targets, options.Count)
-	slot, slotAttempts := 0, 0
+	categoryAttempts := [3]int{}
 	used := map[string]bool{}
 	var attemptedSections []api.ComparisonTimeInterval
 	type matchedSection struct {
 		match  comparisons.MatchResult
 		frames map[string][]screenshots.ComparisonSample
 	}
+	var deferredSeeds [3]*comparisons.FrameSample
+	var pendingRows [3]*matchedSection
 	commit := func(section matchedSection) {
 		result.Rows = append(result.Rows, section.match.Rows...)
 		matchedRows = len(result.Rows)
@@ -676,8 +693,6 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		for id, decoded := range section.frames {
 			observations[id] = append(observations[id], decoded...)
 		}
-		slot++
-		slotAttempts = 0
 		progress.item(
 			len(result.Rows)-1,
 			options.Count,
@@ -692,9 +707,36 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 	clear(cache)
 	retainedBytes = 0
 	separation := (window.End - window.Start) / float64(max(1, options.Count*3))
+	availablePending := func(section matchedSection) bool {
+		row := section.match.Rows[0]
+		return !slices.ContainsFunc(result.Rows, func(previous comparisons.MatchedRow) bool {
+			if math.Abs(previous.MainSeconds-row.MainSeconds) < separation {
+				return true
+			}
+			for i, frame := range row.Frames {
+				if math.Abs(previous.Frames[i].TimestampSeconds-frame.TimestampSeconds) < 1e-6 {
+					return true
+				}
+			}
+			return false
+		})
+	}
+	flushPending := func() {
+		for c, section := range pendingRows {
+			if section != nil && len(result.Rows) < options.Count && availablePending(*section) {
+				commit(*section)
+			}
+			pendingRows[c] = nil
+		}
+	}
 	// Classified decoder stops preserve independently verified rows. Identity and
 	// source failures remain closed; publication revalidates retained bindings.
 	defer func() {
+		if errors.Is(returnedErr, context.Canceled) || errors.Is(returnedErr, context.DeadlineExceeded) ||
+			errors.Is(returnedErr, screenshots.ErrComparisonWorkerFailed) ||
+			errors.Is(returnedErr, screenshots.ErrComparisonNormalizationUnavailable) {
+			flushPending()
+		}
 		workerStopped := len(result.Rows) > 0 && (errors.Is(returnedErr, screenshots.ErrComparisonWorkerFailed) ||
 			errors.Is(returnedErr, screenshots.ErrComparisonNormalizationUnavailable))
 		if workerStopped {
@@ -705,7 +747,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		}
 	}()
 search:
-	for attempt := 0; attempt < options.Count*30 && slot < len(schedule) && len(result.Rows) < options.Count; attempt++ {
+	for attempt := 0; attempt < options.Count*30 && len(result.Rows) < options.Count; attempt++ {
 		clear(cache)
 		retainedBytes, analysisBytes = 0, 0
 		for id, decoded := range observations {
@@ -718,24 +760,17 @@ search:
 			}))
 			retainedBytes += int64(len(observations[id])) * 4096
 		}
-		limit := 10
-		if schedule[slot] < 0 {
-			limit = 20
-		}
-		if slotAttempts == limit {
-			if schedule[slot] >= 0 {
-				// Give other requested slots their first pass before a failed
-				// quality preference gets one general native retry allowance.
-				schedule = append(schedule, -1)
+		requestedCategory := comparisonSceneCategory(targets, [3]int{result.AchievedMotion, result.AchievedDark, result.AchievedFlat}, categoryAttempts)
+		if requestedCategory < 0 {
+			before := len(result.Rows)
+			flushPending()
+			if len(result.Rows) > before {
+				continue
 			}
-			slot++
-			slotAttempts = 0
-			continue
 		}
-		slotAttempts++
 		searchTargets := [3]int{}
-		if schedule[slot] >= 0 {
-			searchTargets[schedule[slot]] = 1
+		if requestedCategory >= 0 {
+			searchTargets[requestedCategory] = 1
 		}
 		var inventoryErr error
 		sequence := func(yield func(comparisons.FrameSample) bool) {
@@ -760,17 +795,31 @@ search:
 				return visit(comparisonSamples([]screenshots.ComparisonSample{frame})[0])
 			})
 		}
-		candidate, category, found := comparisons.SelectScene(
-			sequence,
-			used,
-			result.Rows,
-			searchTargets,
-			[3]int{},
-			searchTargets,
-			separation,
-		)
+		var candidate comparisons.FrameSample
+		category, found, usingFallback := -1, false, false
+		if requestedCategory < 0 {
+			for c, seed := range deferredSeeds {
+				deferredSeeds[c] = nil
+				if seed != nil && !used[seed.FrameID] && !slices.ContainsFunc(result.Rows, func(row comparisons.MatchedRow) bool {
+					return math.Abs(row.MainSeconds-seed.TimestampSeconds) < separation
+				}) {
+					candidate, category, found, usingFallback = *seed, c, true, true
+					break
+				}
+			}
+		}
+		if !found {
+			candidate, category, found = comparisons.SelectScene(sequence, used, result.Rows, searchTargets, [3]int{}, searchTargets, separation)
+		}
 		if inventoryErr != nil {
 			return comparisons.MatchResult{}, nil, false, inventoryErr
+		}
+		if found && requestedCategory >= 0 && !comparisons.SceneQualified(candidate.Evidence, requestedCategory) {
+			// No qualified candidate remains in the admitted inventory. Give
+			// every other requested category its opportunity before general rows.
+			categoryAttempts[requestedCategory] = 10 * targets[requestedCategory]
+			deferredSeeds[requestedCategory] = new(candidate)
+			continue
 		}
 		if !found {
 			if !inventory.Summary.RankingComplete {
@@ -778,7 +827,7 @@ search:
 				break
 			}
 			if plan.Preferences.ScanMode != "deep" && inventory.QuickWindows < comparisonQuickWindows &&
-				decodedSeconds[main]+4 <= comparisonAutomaticDecodeLimit(options.Count) {
+				budgets[main].ConsumedMovieSeconds+4 <= budgets[main].MovieSecondsLimit {
 				candidates, candidateBytes = nil, 0
 				expanded, err := b.discoverComparisonScenes(ctx, retained, plan, window, excluded, discoveryDecode, progress, true)
 				if err != nil {
@@ -796,7 +845,14 @@ search:
 					continue
 				}
 			}
+			if requestedCategory >= 0 {
+				categoryAttempts[requestedCategory] = 10 * targets[requestedCategory]
+				continue
+			}
 			break
+		}
+		if requestedCategory >= 0 {
+			categoryAttempts[requestedCategory]++
 		}
 		used[candidate.FrameID] = true
 		center := candidate.TimestampSeconds
@@ -809,32 +865,10 @@ search:
 			}
 			reference, err = sample(main, center, radius)
 		} else {
-			var original screenshots.ComparisonSample
-			if err := readComparisonInventory(ctx, inventory, owner, func(frame screenshots.ComparisonSample) bool {
-				if comparisonObservationID(frame.ComparisonFrameObservation) == candidate.FrameID {
-					original = frame
-					return false
-				}
-				return true
-			}); err != nil {
-				return comparisons.MatchResult{}, nil, false, err
-			}
-			if original.Replay == nil {
-				return comparisons.MatchResult{}, nil, false, errors.New("selected comparison anchor lost its original replay")
-			}
-			quickAnchor = original
 			// Quick discovery already computed real evidence and native pixels
 			// for these pictures. Keep all of them instead of throwing away the
 			// native alternatives between sparse spatial measurements.
-			err = readComparisonInventoryRange(ctx, inventory, owner,
-				&api.ComparisonTimeInterval{Start: center - 2, End: center + 2},
-				func(frame screenshots.ComparisonSample) bool {
-					reference = append(reference, frame)
-					return true
-				})
-			if err == nil {
-				reference, err = orderedComparisonSamples(reference)
-			}
+			quickAnchor, reference, err = comparisonInventoryAnchorWindow(ctx, inventory, owner, candidate.FrameID, center)
 		}
 		if err != nil {
 			if errors.Is(err, screenshots.ErrComparisonFastInconclusive) {
@@ -935,8 +969,11 @@ search:
 					lastReason = "native_decode_budget_exhausted"
 					break search
 				}
-				if len(result.Rows) > 0 && errors.Is(err, screenshots.ErrComparisonNormalizationUnavailable) {
-					return result, observations, true, err
+				if errors.Is(err, screenshots.ErrComparisonNormalizationUnavailable) {
+					flushPending()
+					if len(result.Rows) > 0 {
+						return result, observations, true, err
+					}
 				}
 				return failed(err, main+1)
 			}
@@ -994,9 +1031,11 @@ search:
 					return comparisons.MatchResult{}, nil, false, fmt.Errorf("check native comparison source: %w", matchErr)
 				}
 				if !viable {
+					lastReason = matcher.InconclusiveReason()
 					progress.logger.Tracef(
-						"comparisons: phase=alignment_rows decision=retry column=%d reason=native_intersection_unavailable window_seconds=%.3f",
+						"comparisons: phase=alignment_rows decision=retry column=%d reason=%s window_seconds=%.3f",
 						i+1,
+						lastReason,
 						width,
 					)
 					unavailableWindow = true
@@ -1022,9 +1061,28 @@ search:
 			}
 		}
 		if selectedFrames != nil {
-			commit(matchedSection{match: matched, frames: selectedFrames})
+			section := matchedSection{match: matched, frames: selectedFrames}
+			if category >= 0 && !usingFallback && !comparisons.SceneQualified(matched.Rows[0].Evidence, category) {
+				if pendingRows[category] == nil || comparisons.PreferSceneRow(matched.Rows[0], pendingRows[category].match.Rows[0], category) {
+					// At most three pending native rows fit in the reserved scratch
+					// allowance. Retain chosen witnesses, never their dense windows.
+					section.frames = map[string][]screenshots.ComparisonSample{}
+					for _, cell := range matched.Rows[0].Frames {
+						for _, frame := range selectedFrames[cell.SourceID] {
+							if comparisonObservationID(frame.ComparisonFrameObservation) == cell.FrameID {
+								section.frames[cell.SourceID] = []screenshots.ComparisonSample{frame}
+								break
+							}
+						}
+					}
+					pendingRows[category] = &section
+				}
+			} else {
+				commit(section)
+			}
 		}
 	}
+	flushPending()
 	if slices.ContainsFunc(result.Rows, func(row comparisons.MatchedRow) bool { return !comparisons.MatchingPictureTypes(row) }) {
 		result.Warnings = append(
 			result.Warnings,

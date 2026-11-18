@@ -87,6 +87,7 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 			Height:               288,
 			DurationSeconds:      24,
 			VideoDurationSeconds: 24,
+			HDRFacts:             api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatSDR}},
 		},
 	}}, screenshotSubject: api.ScreenshotSubject{SourcePath: path}}
 	plan := api.ComparisonPlan{
@@ -303,8 +304,15 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 		if err := os.WriteFile(ref.Path, unrelated, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := readComparisonInventoryRange(t.Context(), ref, owner, &lookupWindow, func(screenshots.ComparisonSample) bool { return true }); err != nil {
+		selected := *windowFrames[0].Identity
+		selected.PTS = 14000
+		selectedID, _ := api.CanonicalWorkflowFingerprint(selected)
+		anchor, frames, err := comparisonInventoryAnchorWindow(t.Context(), ref, owner, string(selectedID), 14)
+		if err != nil || anchor.Replay == nil || anchor.Identity.PTS != 14000 || len(frames) != 100 {
 			t.Fatalf("section lookup traversed an unrelated batch: %v", err)
+		}
+		if _, _, err := comparisonInventoryAnchorWindow(t.Context(), ref, owner, "missing", 14); err == nil {
+			t.Fatal("missing selected identity acquired anchor authority")
 		}
 		if err := readComparisonInventory(t.Context(), ref, owner, func(screenshots.ComparisonSample) bool { return true }); err == nil {
 			t.Fatal("whole inventory validation accepted unrelated corruption")
@@ -634,6 +642,7 @@ func TestComparisonDeepInventoryPreservesPartialCoverage(t *testing.T) {
 			Width:           512,
 			Height:          288,
 			DurationSeconds: 24,
+			HDRFacts:        api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatSDR}},
 		},
 	}}, screenshotSubject: api.ScreenshotSubject{SourcePath: path}}
 	plan := api.ComparisonPlan{MainSourceID: "main", Preferences: api.ComparisonPreferences{Count: 1, ScanMode: "deep"}}

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -691,12 +692,27 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		t.Fatalf("rematching changed the manual main moment: %+v", cell)
 	}
 	snapshot := api.MediaArtifactSet{}
-	captured, err := b.captureWorkflowComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, &snapshot, &retained, matched, b.comparisonProgress(t.Context(), 1), false)
+	parallel := b
+	parallel.config.ScreenshotHandling.FFmpegLimit = true
+	parallel.config.ScreenshotHandling.ProcessLimit = 2
+	concurrent := &comparisonConcurrentCaptureRenderer{comparisonFrameRenderer: renderer, gate: make(chan struct{})}
+	parallel.comparisonRenderer = concurrent
+	captured, err := parallel.captureWorkflowComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, &snapshot, &retained, matched, b.comparisonProgress(t.Context(), 1), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(captured.Rows) != 2 {
 		t.Fatalf("rows=%d", len(captured.Rows))
+	}
+	if concurrent.peak != 2 || concurrent.interleaved {
+		t.Fatal("capture did not join concurrent rows before advancing inputs")
+	}
+	for r, row := range captured.Rows {
+		for c, cell := range row.Cells {
+			if snapshot.Artifacts[r*len(row.Cells)+c].ID != cell.ArtifactID {
+				t.Fatal("worker completion reordered public comparison artifacts")
+			}
+		}
 	}
 	for _, row := range captured.Rows {
 		for _, cell := range row.Cells {
@@ -765,6 +781,8 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			}
 		}
 		stopped := b
+		stopped.config.ScreenshotHandling.FFmpegLimit = true
+		stopped.config.ScreenshotHandling.ProcessLimit = 1
 		stopped.comparisonRenderer = &comparisonCaptureStopRenderer{comparisonFrameRenderer: renderer}
 		partial, resource, err := stopped.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained, api.ComparisonInstructions{Action: "capture", Plan: pending}, nil, time.Now())
 		if _, ok := errors.AsType[*releaseworkflow.ComparisonIncompleteError](err); !ok || partial.Comparisons == nil {
@@ -995,7 +1013,7 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	edited.Rows[0].Cells[0].FrameNumber = new(int64(999))
 	fresh, private, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained, api.ComparisonInstructions{Action: "capture", Plan: edited}, nil, time.Now())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("orphan recapture: %v; cause=%v", err, errors.Unwrap(err))
 	}
 	current := fresh.Comparisons.Rows[0].Cells[0]
 	if current.ArtifactID == "orphan" || current.ArtifactID == old.ArtifactID || current.FrameNumber != nil || fresh.Comparisons.ApprovedFingerprint != "" {
@@ -1204,13 +1222,13 @@ func TestComparisonManualMatchingSharesLetterboxedPictureArea(t *testing.T) {
 		t.Skip("native manual matching requires FFmpeg")
 	}
 	root := t.TempDir()
-	paths := []string{filepath.Join(root, "Example.Letterboxed.mkv"), filepath.Join(root, "Example.Cropped.mkv")}
+	paths := []string{filepath.Join(root, "Example.Letterboxed.mkv"), filepath.Join(root, "Example.Cropped.mkv"), filepath.Join(root, "Example.Other.Letterboxed.mkv")}
 	for i, path := range paths {
 		filter := "geq=lum='96+40*sin((X+Y+3*N)*0.13)+24*cos((X-2*Y+2*N)*0.11)':cb=128:cr=128"
-		if i == 0 {
+		if i != 1 {
 			filter += ",pad=160:120:0:20:black"
 		}
-		command := exec.CommandContext(t.Context(), ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "nullsrc=size=160x80:rate=25:duration=4", "-vf", filter, "-c:v", "ffv1", path)
+		command := exec.CommandContext(t.Context(), ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "nullsrc=size=160x80:rate=25:duration=12", "-vf", filter, "-c:v", "ffv1", path)
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("author manual picture-area fixture: %v %s", err, output)
 		}
@@ -1224,7 +1242,7 @@ func TestComparisonManualMatchingSharesLetterboxedPictureArea(t *testing.T) {
 	}
 	private := workflowMediaPrivateArtifacts{ComparisonSources: map[string]workflowComparisonSource{}}
 	plan := api.ComparisonPlan{MainSourceID: "main", Preferences: api.ComparisonPreferences{Count: 1}}
-	for i, path := range paths {
+	for i, path := range paths[:2] {
 		id := []string{"main", "other"}[i]
 		source, err := renderer.InspectComparisonSource(t.Context(), path)
 		if err != nil {
@@ -1242,15 +1260,126 @@ func TestComparisonManualMatchingSharesLetterboxedPictureArea(t *testing.T) {
 			Fingerprint: fingerprint,
 		})
 	}
-	matched, err := b.matchManualComparisonMoments(t.Context(), private, plan, comparisons.MatchOptions{Count: 1, MainMoments: []float64{2}}, b.comparisonProgress(t.Context(), 2))
+	matched, err := b.matchManualComparisonMoments(t.Context(), private, plan, comparisons.MatchOptions{Count: 1, MainMoments: []float64{9}}, b.comparisonProgress(t.Context(), 2))
 	if err != nil || len(matched.Rows) != 1 || len(matched.Rows[0].Cells) != 2 {
 		t.Fatalf("manual common-picture matching failed: %+v %v", matched.Rows, err)
 	}
 	for _, cell := range matched.Rows[0].Cells {
-		if cell.TimestampSeconds == nil || math.Abs(*cell.TimestampSeconds-2) > 1e-6 || cell.ObservedIdentity == nil {
+		if cell.TimestampSeconds == nil || math.Abs(*cell.TimestampSeconds-9) > 1e-6 || cell.ObservedIdentity == nil {
 			t.Fatal("manual geometry normalization lost the corresponding native moment")
 		}
 	}
+	t.Run("both sources letterboxed without a retained prediction", func(t *testing.T) {
+		both := cloneWorkflowMediaPrivateArtifacts(private)
+		selected, err := plan.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		source, err := renderer.InspectComparisonSource(t.Context(), paths[2])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fingerprint, err := comparisonVideoFingerprint(t.Context(), paths[2])
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.InputFingerprint = fingerprint
+		both.ComparisonSources["other"] = workflowComparisonSource{Source: source, Fingerprint: fingerprint}
+		selected.Sources[1].Fingerprint = fingerprint
+		matched, err := b.matchManualComparisonMoments(t.Context(), both, selected, comparisons.MatchOptions{Count: 1, MainMoments: []float64{9}}, b.comparisonProgress(t.Context(), 2))
+		if err != nil || len(matched.Rows) != 1 || len(matched.Rows[0].Cells) != 2 {
+			t.Fatalf("manual crop bootstrap failed: %+v %v", matched.Rows, err)
+		}
+		for _, cell := range matched.Rows[0].Cells {
+			if cell.TimestampSeconds == nil || math.Abs(*cell.TimestampSeconds-9) > 1e-6 || cell.ObservedIdentity == nil {
+				t.Fatal("crop bootstrap changed the verified native moment")
+			}
+		}
+		t.Run("selected no-crop fallback discards bootstrap pixels", func(t *testing.T) {
+			selectedProbe := false
+			wrapped := comparisonManualCropRenderer{comparisonFrameRenderer: renderer, detect: func(ctx context.Context, source screenshots.ComparisonSource, start, seconds float64, budget *screenshots.ComparisonDecodeBudget) (*screenshots.ComparisonCrop, error) {
+				if source.InputFingerprint == fingerprint && start >= 7 {
+					selectedProbe = true
+					return nil, api.NewOperationError(api.OperationFailure{Code: api.OperationFailureInvalidSource, ComparisonReason: "transport_initialization"}, nil)
+				}
+				return renderer.DetectComparisonActivePicture(ctx, source, start, seconds, budget)
+			}}
+			builder := b
+			builder.comparisonRenderer = wrapped
+			_, err := builder.matchManualComparisonMoments(t.Context(), cloneWorkflowMediaPrivateArtifacts(both), selected, comparisons.MatchOptions{Count: 1, MainMoments: []float64{9}}, builder.comparisonProgress(t.Context(), 2))
+			failure, ok := api.AsOperationFailure(err)
+			if !selectedProbe || !ok || failure.ComparisonReason != "manual_correspondence_inconclusive" {
+				t.Fatalf("bootstrap crop survived the selected no-crop fallback: selected=%t error=%v", selectedProbe, err)
+			}
+		})
+	})
+	for _, test := range []struct {
+		name, reason string
+		cause        error
+		optional     bool
+	}{
+		{name: "unrelated initialization is never inspected", optional: true},
+		{
+			name:     "optional DVD initialization",
+			reason:   "dvd_random_access_initialization",
+			optional: true,
+		},
+		{
+			name:     "optional transport initialization",
+			reason:   "transport_initialization",
+			optional: true,
+		},
+		{
+			name:   "source mutation remains fatal",
+			reason: "source_changed",
+			cause:  api.ErrActiveInputChanged,
+		},
+		{name: "cancellation remains fatal", cause: context.Canceled},
+		{
+			name:   "invalid geometry remains fatal",
+			reason: "matching_crop",
+			cause:  errors.New("synthetic invalid geometry"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			selected := plan
+			selected.Anchors = []api.ComparisonAnchor{{
+				SourceID:      "other",
+				MainSeconds:   9,
+				SourceSeconds: 9,
+			}}
+			calls := 0
+			wrapped := comparisonManualCropRenderer{comparisonFrameRenderer: renderer, detect: func(ctx context.Context, source screenshots.ComparisonSource, start, seconds float64, budget *screenshots.ComparisonDecodeBudget) (*screenshots.ComparisonCrop, error) {
+				calls++
+				if start < 7 || start > 9 {
+					t.Fatalf("inspected an unrelated manual neighborhood: start=%.3f", start)
+				}
+				if test.reason != "" || test.cause != nil {
+					return nil, api.NewOperationError(api.OperationFailure{Code: api.OperationFailureInvalidSource, ComparisonReason: test.reason}, test.cause)
+				}
+				return renderer.DetectComparisonActivePicture(ctx, source, start, seconds, budget)
+			}}
+			builder := b
+			builder.comparisonRenderer = wrapped
+			result, err := builder.matchManualComparisonMoments(t.Context(), cloneWorkflowMediaPrivateArtifacts(private), selected, comparisons.MatchOptions{Count: 1, MainMoments: []float64{9}}, builder.comparisonProgress(t.Context(), 2))
+			if test.optional {
+				if err != nil || len(result.Rows) != 1 || calls != 2 {
+					t.Fatalf("selected manual neighborhood could not match: rows=%d probes=%d error=%v", len(result.Rows), calls, err)
+				}
+			} else if err == nil || calls != 1 || test.cause != nil && !errors.Is(err, test.cause) {
+				t.Fatalf("manual crop hid an integrity failure: probes=%d error=%v", calls, err)
+			}
+		})
+	}
+}
+
+type comparisonManualCropRenderer struct {
+	comparisonFrameRenderer
+	detect func(context.Context, screenshots.ComparisonSource, float64, float64, *screenshots.ComparisonDecodeBudget) (*screenshots.ComparisonCrop, error)
+}
+
+func (r comparisonManualCropRenderer) DetectComparisonActivePicture(ctx context.Context, source screenshots.ComparisonSource, start, seconds float64, budget *screenshots.ComparisonDecodeBudget) (*screenshots.ComparisonCrop, error) {
+	return r.detect(ctx, source, start, seconds, budget)
 }
 
 type comparisonWindowRecorder struct {
@@ -1264,6 +1393,7 @@ type comparisonWindowRecorder struct {
 	failErr          error
 	preferExcluded   *api.ComparisonTimeInterval
 	flatPeak         *float64
+	flatVerified     bool
 	emptyFingerprint string
 	analysisFailure  error
 	analysisFailures int
@@ -1303,6 +1433,9 @@ func (r *comparisonWindowRecorder) AnalyzeComparisonSource(ctx context.Context, 
 			evidence := *frames[i].Evidence
 			evidence.Eligible = true
 			evidence.Flat = api.ComparisonSceneCategory{State: "rejected", Score: 1 - math.Abs(frames[i].RelativeTimestampSeconds-*r.flatPeak)/120}
+			if r.flatVerified {
+				evidence.Flat.State = "verified"
+			}
 			frames[i].Evidence = &evidence
 		}
 	}
@@ -1530,6 +1663,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 			shortPlan := api.ComparisonPlan{MainSourceID: "main", Preferences: test.preferences}
 			if test.budget {
 				shortPlan.Preferences.FlatCount = 2
+				renderer.flatVerified = true
 			}
 			for i, path := range shortPaths {
 				source, err := renderer.InspectComparisonSource(t.Context(), path)
@@ -1668,7 +1802,10 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		wrongCtx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) {
 			wrongUpdates = append(wrongUpdates, update)
 		})
-		wrong, err := b.matchWorkflowComparisons(wrongCtx, &restarted, plan, b.comparisonProgress(wrongCtx, 5))
+		wrongPlan := plan
+		// Leave decode allowance for repeated discovery after failed native proofs.
+		wrongPlan.Preferences.SelectionWindow = &api.ComparisonSelectionWindow{Start: new(20.0), End: new(50.0)}
+		wrong, err := b.matchWorkflowComparisons(wrongCtx, &restarted, wrongPlan, b.comparisonProgress(wrongCtx, 5))
 		if len(wrong.Rows) != 0 || err != nil && !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("a cached prediction authorized unverified pictures: rows=%d err=%v", len(wrong.Rows), err)
 		}
@@ -1692,7 +1829,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 			previousPhase = update.Phase
 		}
 		if discoveries < 3 {
-			t.Fatal("fixture did not exercise repeated Quick Scan expansion")
+			t.Fatalf("fixture did not exercise repeated Quick Scan expansion: discoveries=%d analysis=%+v", discoveries, wrong.Analysis)
 		}
 	})
 	media := api.MediaArtifactSet{}
@@ -2029,6 +2166,44 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 type comparisonCaptureStopRenderer struct {
 	comparisonFrameRenderer
 	calls int
+}
+
+type comparisonConcurrentCaptureRenderer struct {
+	comparisonFrameRenderer
+	mu           sync.Mutex
+	gate         chan struct{}
+	active, peak int
+	source       string
+	interleaved  bool
+}
+
+func (r *comparisonConcurrentCaptureRenderer) ComparisonCapture(ctx context.Context, request screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error) {
+	r.mu.Lock()
+	if r.active > 0 && r.source != request.Source.Path {
+		r.interleaved = true
+	}
+	r.source = request.Source.Path
+	r.active++
+	r.peak = max(r.peak, r.active)
+	if r.active == 2 && r.gate != nil {
+		close(r.gate)
+		r.gate = nil
+	}
+	gate := r.gate
+	r.mu.Unlock()
+	defer func() { r.mu.Lock(); r.active--; r.mu.Unlock() }()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return screenshots.ComparisonFrame{}, fmt.Errorf("capture overlap interrupted: %w", ctx.Err())
+		}
+	}
+	frame, err := r.comparisonFrameRenderer.ComparisonCapture(ctx, request)
+	if err != nil {
+		return screenshots.ComparisonFrame{}, fmt.Errorf("capture overlap fixture: %w", err)
+	}
+	return frame, nil
 }
 
 func (r *comparisonCaptureStopRenderer) ComparisonCapture(ctx context.Context, request screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error) {

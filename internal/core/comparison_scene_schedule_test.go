@@ -12,18 +12,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestComparisonSceneSlotsPreserveGeneralAndOverlappingRequests(t *testing.T) {
+func TestComparisonSceneScheduleUsesMeasuredOverlappingAchievements(t *testing.T) {
 	for _, test := range []struct {
-		targets [3]int
-		count   int
-		want    []int
+		targets, achieved, attempts [3]int
+		want                        int
 	}{
-		{[3]int{1, 2, 1}, 9, []int{0, 1, 2, 1, -1, -1, -1, -1, -1}},
-		{[3]int{3, 3, 3}, 4, []int{0, 1, 2, 0}},
-		{[3]int{}, 2, []int{-1, -1}},
+		{[3]int{1, 2, 1}, [3]int{}, [3]int{}, 0},
+		// One verified row satisfies motion and dark; the next slot retargets flat.
+		{[3]int{1, 2, 1}, [3]int{1, 1, 0}, [3]int{1, 0, 0}, 2},
+		{[3]int{1, 2, 1}, [3]int{1, 1, 1}, [3]int{1, 0, 1}, 1},
+		{[3]int{3, 3, 3}, [3]int{1, 1, 1}, [3]int{}, 0},
+		{[3]int{1, 2, 1}, [3]int{}, [3]int{10, 0, 0}, 1},
+		{[3]int{1, 2, 1}, [3]int{}, [3]int{10, 20, 0}, 2},
+		{[3]int{1, 2, 1}, [3]int{}, [3]int{10, 20, 10}, -1},
+		{[3]int{1, 2, 1}, [3]int{1, 2, 1}, [3]int{}, -1},
+		{[3]int{}, [3]int{}, [3]int{}, -1},
 	} {
-		if got := comparisonSceneSlots(test.targets, test.count); !slices.Equal(got, test.want) {
-			t.Fatalf("targets=%v count=%d slots=%v want=%v", test.targets, test.count, got, test.want)
+		if got := comparisonSceneCategory(test.targets, test.achieved, test.attempts); got != test.want {
+			t.Fatalf("targets=%v achieved=%v attempts=%v next=%d want=%d", test.targets, test.achieved, test.attempts, got, test.want)
 		}
 	}
 }

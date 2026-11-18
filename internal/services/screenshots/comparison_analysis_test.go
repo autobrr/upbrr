@@ -105,23 +105,19 @@ func TestComparisonAnalysisMetricRetentionAndBinding(t *testing.T) {
 		TimeBaseDenominator: 1000,
 		TimestampSeconds:    .04,
 		PictureChecksum:     "1234",
-		Width:               1024,
-		Height:              288,
+		Width:               272,
+		Height:              144,
+		PixelFormat:         "gray",
 	}
 	if err := stream.observe("showinfo@comparison_motion", branch); err != nil {
 		t.Fatal(err)
 	}
 	wrong := branch
-	wrong.TimestampSeconds = .081
-	if err := stream.observe("showinfo@comparison_output", wrong); err == nil {
-		t.Fatal("a changed output clock retained native authority")
+	wrong.TimeBaseDenominator = 0
+	if err := stream.observe("showinfo@comparison_motion", wrong); err == nil {
+		t.Fatal("an invalid output clock retained native authority")
 	}
-	output := branch
-	output.TimestampSeconds = .08
-	if err := stream.observe("showinfo@comparison_output", output); err != nil {
-		t.Fatal(err)
-	}
-	if record := <-stream.records; record.observation.PTS != 40 || record.observation.TimestampSeconds != .04 {
+	if record := <-stream.motionRecords; record.PTS != 40 || record.TimestampSeconds != .04 {
 		t.Fatal("transport clock escaped into native provenance")
 	}
 }
@@ -235,13 +231,61 @@ func TestComparisonAnalysisNativeStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	source.InputFingerprint = "synthetic-source"
-	frames, err := s.AnalyzeComparisonSource(t.Context(), ComparisonSampleRequest{Source: source, DurationSeconds: 4})
+	transport := &comparisonRasterStream{
+		height:       288,
+		motionHeight: 144,
+		maxSparse:    comparisonSparseFrameLimit(4),
+	}
+	frames, err := s.SampleComparisonSource(t.Context(), ComparisonSampleRequest{
+		Source:          source,
+		DurationSeconds: 4,
+		StrideSeconds:   .002,
+		NativeFrames:    true,
+		NormalizeSDR:    true,
+		analysis:        transport,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(frames) < 12 {
 		t.Fatalf("missing sparse observations: %d", len(frames))
 	}
+	rawBytes := transport.motion.bytes + transport.sparse.bytes
+	legacyBytes := int64(transport.motion.count+transport.sparse.count) * 1024 * 288 * 3 / 2
+	if rawBytes*10 > legacyBytes*3 {
+		t.Fatalf("compact analysis missed 70 percent transport reduction: compact=%d legacy=%d", rawBytes, legacyBytes)
+	}
+	t.Logf("raw transport compact=%d legacy=%d reduction=%.2f%%", rawBytes, legacyBytes, 100*(1-float64(rawBytes)/float64(legacyBytes)))
+	t.Run("cancellation joins both native outputs", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		ctx = api.WithWorkflowProgressReporter(ctx, func(update api.WorkflowProgressUpdate) {
+			if update.Completed >= 600 {
+				cancel()
+			}
+		})
+		stream := &comparisonRasterStream{
+			height:       288,
+			motionHeight: 144,
+			maxSparse:    comparisonSparseFrameLimit(4),
+		}
+		_, err := s.SampleComparisonSource(ctx, ComparisonSampleRequest{
+			Source:          source,
+			DurationSeconds: 4,
+			StrideSeconds:   .002,
+			NativeFrames:    true,
+			NormalizeSDR:    true,
+			analysis:        stream,
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("analysis cancellation lost its origin: %v", err)
+		}
+		select {
+		case <-stream.done:
+		default:
+			t.Fatal("analysis returned before its output coordinator exited")
+		}
+	})
 	budget := &ComparisonDecodeBudget{RemainingEncodedBytes: 8 << 30}
 	bounded, err := s.AnalyzeComparisonSource(t.Context(), ComparisonSampleRequest{
 		Source:           source,

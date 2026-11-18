@@ -4,6 +4,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/autobrr/upbrr/internal/comparisons"
@@ -53,18 +54,25 @@ func (b workflowMediaBuilder) comparisonCalibrationProfile(retained workflowMedi
 	if main.Fingerprint == "" || source.Fingerprint == "" || retained.ComparisonAnalysisExecutable == "" {
 		return "", nil
 	}
+	mainNormalizer, err := screenshots.ComparisonAnalysisPolicy(main.Source)
+	if err != nil {
+		return "", fmt.Errorf("comparison calibration main normalization: %w", err)
+	}
+	sourceNormalizer, err := screenshots.ComparisonAnalysisPolicy(source.Source)
+	if err != nil {
+		return "", fmt.Errorf("comparison calibration source normalization: %w", err)
+	}
 	profile, err := api.CanonicalWorkflowFingerprint(struct {
 		Version, SceneProfile, Main, Source, MainFingerprint, SourceFingerprint, Executable string
 		MainFacts, SourceFacts                                                              screenshots.ComparisonSource
 		MatchAspect                                                                         float64
-		Libplacebo                                                                          bool
-		Algorithm                                                                           string
-		Desat                                                                               float64
+		Policy                                                                              string
+		MainNormalizer, SourceNormalizer                                                    screenshots.ComparisonAnalysisRenderer
 	}{
-		"native-predictor-v1", comparisons.SceneProfile,
+		"native-predictor-v2", comparisons.SceneProfile,
 		plan.MainSourceID, id, main.Fingerprint, source.Fingerprint, retained.ComparisonAnalysisExecutable,
 		main.Source, source.Source, comparisonMatchAspect(retained, plan),
-		b.config.ScreenshotHandling.UseLibplacebo, b.config.ScreenshotHandling.TonemapAlgorithm, b.config.ScreenshotHandling.Desat,
+		screenshots.ComparisonAnalysisPolicyVersion, mainNormalizer, sourceNormalizer,
 	})
 	return string(profile), err
 }

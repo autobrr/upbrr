@@ -222,16 +222,14 @@ func matchAlignedFrame(main matchingFrame, column matchingColumn) FrameMatch {
 			best = max(best, visualScore(main, frame))
 		}
 	}
-	types := preferredPictureTypes(main.frame.FrameType)
-	if column.source.IntraOnly && !slices.Contains(types, "I") {
-		types = append(types, "I")
-	}
-	if !column.source.PreferBFrames {
-		types = column.source.AllowedTypes
-		if len(types) == 0 {
-			types = []string{"B", "P", "I", ""}
+	if best < .92 {
+		return FrameMatch{
+			SourceID: column.source.ID,
+			Reason:   "no_visual_match",
+			Method:   "aligned",
 		}
 	}
+	types := permittedPictureTypes(column.source)
 	for _, kind := range types {
 		chosen, distance := -1, math.Inf(1)
 		for i, frame := range column.frames {

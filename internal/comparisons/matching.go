@@ -39,7 +39,7 @@ type MatchAnchor struct {
 }
 
 // SampledSource carries ordered presentation-time samples for one column.
-// Empty AllowedTypes accepts any picture type unless PreferBFrames enables the
+// Empty AllowedTypes accepts observed I/P/B unless PreferBFrames enables the
 // default policy. An empty FrameType stays unknown. Manual anchors stay explicit.
 type SampledSource struct {
 	// IntraOnly authorizes automatic I pictures only for an observed substantial
@@ -134,6 +134,9 @@ func match(sources []SampledSource, mainID string, options MatchOptions, alignme
 	if len(columns[main].frames) == 0 {
 		return MatchResult{}, nil
 	}
+	if options.MainFrameID != "" {
+		columns[main].manualMain = exactManualMain(columns, main, columns[main].frames[0].frame.TimestampSeconds)
+	}
 	for i := range columns {
 		if alignment, ok := alignments[columns[i].source.ID]; ok && i != main {
 			columns[i].alignment = &alignment
@@ -181,8 +184,8 @@ func match(sources []SampledSource, mainID string, options MatchOptions, alignme
 	} else {
 		var unresolved []MatchedRow
 		tiers := []string{""}
-		if columns[main].source.PreferBFrames {
-			tiers = []string{"B", "P", "I"}
+		if columns[main].source.PreferBFrames && !columns[main].manualMain {
+			tiers = permittedPictureTypes(columns[main].source)
 		}
 		for _, kind := range tiers {
 			for range min(count, len(columns[main].frames)) + 64 {
@@ -228,9 +231,10 @@ type matchingFrame struct {
 }
 
 type matchingColumn struct {
-	source    SampledSource
-	frames    []matchingFrame
-	alignment *ConstantAlignment
+	source     SampledSource
+	frames     []matchingFrame
+	alignment  *ConstantAlignment
+	manualMain bool
 }
 
 func prepareMatching(sources []SampledSource, mainID string, options MatchOptions) ([]matchingColumn, int, error) {
@@ -360,6 +364,11 @@ func matchRow(columns []matchingColumn, main, index int, selected []MatchedRow) 
 	for i, column := range columns {
 		if i == main {
 			row.Frames[i] = matchedSample(column.source, frame.frame, "main", 1)
+			// Only exact observed anchors for this row can override automatic
+			// picture policy. A selected identity alone carries no manual authority.
+			if !row.Frames[i].Resolved && exactManualMain(columns, main, frame.frame.TimestampSeconds) {
+				row.Frames[i].Resolved, row.Frames[i].Reason = true, ""
+			}
 		} else {
 			matched := matchFrame(frame, column)
 			if matched.Resolved && (matched.Method == "visual" || matched.Method == "aligned") {
@@ -376,6 +385,27 @@ func matchRow(columns []matchingColumn, main, index int, selected []MatchedRow) 
 		row.Complete = row.Complete && row.Frames[i].Resolved
 	}
 	return row
+}
+
+func exactManualMain(columns []matchingColumn, main int, seconds float64) bool {
+	if slices.ContainsFunc(columns[main].source.Anchors, func(anchor MatchAnchor) bool {
+		return math.Abs(anchor.MainSeconds-seconds) < 1e-6 && math.Abs(anchor.SourceSeconds-seconds) < 1e-6
+	}) {
+		return true
+	}
+	for i, column := range columns {
+		if i == main {
+			continue
+		}
+		if !slices.ContainsFunc(column.source.Anchors, func(anchor MatchAnchor) bool {
+			return math.Abs(anchor.MainSeconds-seconds) < 1e-6 && slices.ContainsFunc(column.frames, func(frame matchingFrame) bool {
+				return math.Abs(frame.frame.TimestampSeconds-anchor.SourceSeconds) < 1e-6
+			})
+		}) {
+			return false
+		}
+	}
+	return true
 }
 
 func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
@@ -426,7 +456,7 @@ func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		return matched
 	}
 	if column.source.PreferBFrames {
-		for _, kind := range preferredPictureTypes(main.frame.FrameType) {
+		for _, kind := range permittedPictureTypes(column.source) {
 			selected, score := -1, 0.0
 			for i, candidate := range column.frames {
 				if candidate.frame.FrameType != kind || math.Abs(candidate.frame.TimestampSeconds-column.frames[best].frame.TimestampSeconds) > .25 {
@@ -472,12 +502,19 @@ func ambiguousVisualMatch(reference matchingFrame, frames []matchingFrame, secon
 	})
 }
 
-func preferredPictureTypes(mainType string) []string {
-	types := []string{"B", "P"}
-	if mainType == "I" {
-		types = append(types, "I")
+// permittedPictureTypes is the common automatic authority at every matching
+// entrypoint. A main I picture never proves that another source is intra-only.
+func permittedPictureTypes(source SampledSource) []string {
+	if !source.PreferBFrames {
+		if len(source.AllowedTypes) > 0 {
+			return source.AllowedTypes
+		}
+		return []string{"B", "P", "I"}
 	}
-	return types
+	if source.IntraOnly {
+		return []string{"B", "P", "I"}
+	}
+	return []string{"B", "P"}
 }
 
 func matchedSample(source SampledSource, frame FrameSample, method string, confidence float64) FrameMatch {
@@ -494,6 +531,9 @@ func matchedSample(source SampledSource, frame FrameSample, method string, confi
 	}
 	if match.TypeFallback {
 		match.Reason = "requested_picture_type_unavailable_at_match"
+	}
+	if method != "manual" && !slices.Contains(permittedPictureTypes(source), match.FrameType) {
+		match.Resolved, match.TypeFallback, match.Reason = false, !source.PreferBFrames, "no_compatible_picture_type"
 	}
 	return match
 }
@@ -520,6 +560,7 @@ func chooseScene(main matchingColumn, used map[int]bool, result MatchResult, cou
 	duration := main.frames[len(main.frames)-1].frame.TimestampSeconds - main.frames[0].frame.TimestampSeconds
 	for i, candidate := range main.frames {
 		if used[i] || len(candidate.signature) == 0 || kind != "" && candidate.frame.FrameType != kind ||
+			!main.manualMain && !slices.Contains(permittedPictureTypes(main.source), candidate.frame.FrameType) ||
 			candidate.frame.Evidence != nil && !candidate.frame.Evidence.Eligible {
 			continue
 		}

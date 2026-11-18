@@ -13,7 +13,11 @@ import (
 
 func TestComparisonCalibrationRejectsChangedBindings(t *testing.T) {
 	b := workflowMediaBuilder{media: &mediaModule{}}
-	facts := screenshots.ComparisonSource{Width: 1920, Height: 1080}
+	facts := screenshots.ComparisonSource{
+		Width:    1920,
+		Height:   1080,
+		HDRFacts: api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatSDR}},
+	}
 	private := workflowMediaPrivateArtifacts{
 		ComparisonAnalysisExecutable: "decoder-generation",
 		ComparisonSources: map[string]workflowComparisonSource{
@@ -41,7 +45,7 @@ func TestComparisonCalibrationRejectsChangedBindings(t *testing.T) {
 	if saved.OffsetSeconds != 2 || saved.Crop.X != 0 {
 		t.Fatal("cloning shared mutable calibration facts")
 	}
-	for _, change := range []string{"main", "programme", "clock", "framing", "decoder", "normalization"} {
+	for _, change := range []string{"main", "programme", "clock", "framing", "decoder", "main normalization", "secondary normalization", "capture settings"} {
 		t.Run(change, func(t *testing.T) {
 			changed, builder := cloneWorkflowMediaPrivateArtifacts(private), b
 			source := changed.ComparisonSources["other"]
@@ -58,16 +62,24 @@ func TestComparisonCalibrationRejectsChangedBindings(t *testing.T) {
 				source.Source.WidthScale = 2
 			case "decoder":
 				changed.ComparisonAnalysisExecutable += "-replacement"
-			case "normalization":
+			case "main normalization":
+				main := changed.ComparisonSources["main"]
+				main.Source.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatDolbyVision}, DolbyVisionProfile: "5"}
+				changed.ComparisonSources["main"] = main
+			case "secondary normalization":
+				source.Source.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatDolbyVision}, DolbyVisionProfile: "5"}
+			case "capture settings":
 				builder.config.ScreenshotHandling.UseLibplacebo = true
+				builder.config.ScreenshotHandling.Desat = 42
+				builder.config.ScreenshotHandling.TonemapAlgorithm = "hable"
 			}
 			changed.ComparisonSources["other"] = source
 			profile, err := builder.comparisonCalibrationProfile(changed, plan, "other")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, reused := saved.prediction(profile, source.Source); reused {
-				t.Fatal("incompatible calibration remained reusable")
+			if _, reused := saved.prediction(profile, source.Source); reused != (change == "capture settings") {
+				t.Fatal("calibration compatibility lost its effective analysis policy")
 			}
 		})
 	}

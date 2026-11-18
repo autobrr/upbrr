@@ -23,13 +23,14 @@ type comparisonCapabilityIdentity struct {
 }
 type comparisonAnalysisCapability struct {
 	hash, version string
+	hardware      []string
 	err           error
 }
 
 var comparisonAnalysisCapabilities sync.Map
 
 func comparisonAnalysisCapabilityFor(ctx context.Context, executable string) error {
-	stat, err := os.Stat(executable)
+	stat, err := os.Stat(executable) // #nosec G703 -- Resolved local FFmpeg executable; its contents identify the capability receipt.
 	if err != nil {
 		return fmt.Errorf("comparison scene analysis: %w", err)
 	}
@@ -39,7 +40,7 @@ func comparisonAnalysisCapabilityFor(ctx context.Context, executable string) err
 			return receipt.err
 		}
 	}
-	file, err := os.Open(executable)
+	file, err := os.Open(executable) // #nosec G703 -- Read the resolved FFmpeg executable to bind capabilities to its content hash.
 	if err != nil {
 		return fmt.Errorf("comparison scene analysis: %w", err)
 	}
@@ -65,7 +66,7 @@ func comparisonAnalysisCapabilityFor(ctx context.Context, executable string) err
 			available[fields[1]] = true
 		}
 	}
-	for _, name := range []string{"trim", "select", "showinfo", "scale", "format", "split", "pad", "setsar", "setpts", "scdet", "metadata", "gblur", "hstack", "interleave"} {
+	for _, name := range []string{"trim", "select", "showinfo", "scale", "format", "split", "pad", "setsar", "scdet", "metadata", "gblur", "hstack"} {
 		if !available[name] {
 			err = api.NewOperationError(api.OperationFailure{
 				Code:             api.OperationFailureInvalidSource,
@@ -77,10 +78,39 @@ func comparisonAnalysisCapabilityFor(ctx context.Context, executable string) err
 			break
 		}
 	}
+	for _, capability := range []struct {
+		option, name string
+		column       int
+	}{{"-protocols", "http", 0}, {"-muxers", "rawvideo", 1}, {"-pix_fmts", "gray", 1}} {
+		result, probeErr := runner.Run(ctx, executable, []string{"-hide_banner", capability.option}, "")
+		if probeErr != nil {
+			return probeErr
+		}
+		found := false
+		output := capability.option != "-protocols"
+		for line := range strings.SplitSeq(string(result.Stdout), "\n") {
+			if strings.TrimSpace(line) == "Output:" {
+				output = true
+				continue
+			}
+			fields := strings.Fields(line)
+			if output && len(fields) > capability.column && fields[capability.column] == capability.name {
+				found = true
+			}
+		}
+		if !found {
+			err = fmt.Errorf("%w: required analysis output capability unavailable", ErrComparisonNormalizationUnavailable)
+		}
+	}
+	hardware, hardwareErr := runner.Run(ctx, executable, []string{"-hide_banner", "-hwaccels"}, "")
+	if hardwareErr != nil {
+		return hardwareErr
+	}
 	receipt := comparisonAnalysisCapability{
-		hash:    hex.EncodeToString(hash.Sum(nil)),
-		version: strings.SplitN(string(version.Stdout), "\n", 2)[0],
-		err:     err,
+		hash:     hex.EncodeToString(hash.Sum(nil)),
+		version:  strings.SplitN(string(version.Stdout), "\n", 2)[0],
+		err:      err,
+		hardware: strings.Fields(string(hardware.Stdout)),
 	}
 	comparisonAnalysisCapabilities.Store(key, receipt)
 	if err != nil {

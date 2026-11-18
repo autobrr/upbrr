@@ -121,6 +121,47 @@ func TestComparisonInspectionRetainsFirstDecodedPictureFacts(t *testing.T) {
 	}
 }
 
+func TestComparisonCancelledCapturePreservesNativeFailures(t *testing.T) {
+	source := comparisonTestSource(t)
+	replayFailure := api.NewOperationError(api.OperationFailure{Code: api.OperationFailureInvalidSource, ComparisonReason: "replay_picture_changed"}, errors.New("synthetic replay mismatch"))
+	for _, test := range []struct {
+		name          string
+		failure, want error
+	}{
+		{
+			name:    "corruption",
+			failure: internalerrors.ErrFrameCorruption,
+			want:    internalerrors.ErrFrameCorruption,
+		},
+		{
+			name:    "replay provenance",
+			failure: replayFailure,
+			want:    replayFailure,
+		},
+		{
+			name:    "cancelled process",
+			failure: ErrComparisonWorkerFailed,
+			want:    context.Canceled,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			calls := 0
+			runner := comparisonInspectionRunner(func(context.Context, string, []string, string) (CommandResult, error) {
+				calls++
+				cancel()
+				return CommandResult{Stderr: []byte(comparisonDiagnostics(5800, "B")), ExitCode: 1}, test.failure
+			})
+			service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+			_, err := service.ComparisonCapture(ctx, ComparisonCaptureRequest{Source: source, TimestampSeconds: .75})
+			if !errors.Is(err, test.want) || calls != 1 {
+				t.Fatalf("capture failure=%v calls=%d", err, calls)
+			}
+		})
+	}
+}
+
 func TestComparisonCapturePreservesObservedIdentityAcrossRendererFallback(t *testing.T) {
 	source := comparisonTestSource(t)
 	source.HDRFacts = api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatHDR10}}
@@ -395,26 +436,32 @@ func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 		name      string
 		replies   []renderReply
 		profile   string
+		format    api.HDRFormat
 		cancel    bool
 		want      error
 		wantError bool
 		calls     int
 	}{
 		{
-			name: "GPU unavailable uses software",
+			name: "software-compatible HDR ignores final GPU preference",
 			replies: []renderReply{
-				{stderr: "No such filter: libplacebo", err: errors.New("unsupported")},
 				{payload: pixels, stderr: identity + output},
 			},
-			calls: 2,
+			calls: 1,
+		},
+		{
+			name:    "wide-gamut SDR remains untonemapped",
+			format:  api.HDRFormatWCG,
+			replies: []renderReply{{payload: pixels, stderr: identity + output}},
+			calls:   1,
 		},
 		{
 			name: "converters unavailable",
 			replies: []renderReply{
-				{err: errors.New("unsupported")}, {err: errors.New("unsupported")},
+				{err: errors.New("unsupported")},
 			},
 			want:  ErrComparisonNormalizationUnavailable,
-			calls: 2,
+			calls: 1,
 		},
 		{
 			name:    "Dolby Vision profile 5 needs decoded metadata",
@@ -487,7 +534,13 @@ func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 				runner.cancel = cancel
 			}
 			source := source
+			if tc.format != "" {
+				source.HDRFacts.Formats = []api.HDRFormat{tc.format}
+			}
 			source.HDRFacts.DolbyVisionProfile = tc.profile
+			if tc.profile != "" {
+				source.HDRFacts.Formats = []api.HDRFormat{api.HDRFormatDolbyVision}
+			}
 			service := NewService(cfg, api.NopLogger{}, t.TempDir(), runner)
 			if tc.profile == "5" {
 				if crop, err := service.DetectComparisonActivePicture(ctx, source, 0, 4, nil); err != nil || crop != nil {
@@ -512,8 +565,13 @@ func TestComparisonSamplingNormalizesHDRWithoutLosingIdentity(t *testing.T) {
 					samples[0].PictureType != "B" || math.Abs(samples[0].RelativeTimestampSeconds-.8) > 1e-9 || !bytes.Equal(samples[0].Pixels, pixels) {
 					t.Fatalf("normalization changed source identity or pixels: %+v", samples)
 				}
-				if tc.profile != "5" {
-					filter := ffmpegValueAfter(runner.args[1], "-vf")
+				if tc.format == api.HDRFormatWCG {
+					filter := ffmpegValueAfter(runner.args[0], "-vf")
+					if strings.Contains(filter, "tonemap=") || strings.Contains(filter, "libplacebo=") {
+						t.Fatalf("wide-gamut SDR received HDR tone mapping: %s", filter)
+					}
+				} else if tc.profile != "5" {
+					filter := ffmpegValueAfter(runner.args[0], "-vf")
 					if !strings.Contains(filter, "zscale=transfer=linear") || !strings.Contains(filter, "tonemap=tonemap=mobius") ||
 						strings.Index(filter, "showinfo,") > strings.Index(filter, "tonemap=") || strings.Contains(filter, "setpts") {
 						t.Fatalf("normalization bypassed the existing pipeline or changed the source clock: %s", filter)

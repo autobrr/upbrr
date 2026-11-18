@@ -15,7 +15,7 @@ import (
 )
 
 // SceneProfile freezes the adopted V9 and sparse shared dark/flat semantics.
-const SceneProfile = "v9-dark-flat5-sparse-yuv420-linear1024-3"
+const SceneProfile = "v9-dark-flat5-sparse-yuv420-linear1024-fixed-policy-4"
 
 // SelectionRange resolves protected programme times. Explicit inspected bounds
 // are authoritative; automatic discovery cannot expand this range.

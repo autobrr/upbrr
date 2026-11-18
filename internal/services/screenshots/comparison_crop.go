@@ -35,6 +35,7 @@ func (s *Service) DetectComparisonActivePicture(
 	start, duration float64,
 	budget *ComparisonDecodeBudget,
 ) (*ComparisonCrop, error) {
+	ctx, _ = comparisonProcessCounter(ctx, budget)
 	if source.Input == nil {
 		return s.detectFileComparisonActivePicture(ctx, source, start, duration, budget)
 	}
@@ -84,6 +85,10 @@ func (s *Service) DetectComparisonActivePicture(
 			"-f",
 			"null",
 			"-",
+		}
+		if err := budget.admitMovieSeconds(float64(window.End90-window.Start90)/90000 + window.PrerollSeconds); err != nil {
+			cleanup()
+			return nil, err
 		}
 		result, runErr := (finiteComparisonRunner{base: s.runner, outputLimit: 64 << 10}).Run(ctx, executable, args, "")
 		cleanup()
@@ -187,6 +192,9 @@ func (s *Service) detectFileComparisonActivePicture(
 		return nil, comparisonDiscFailure("matching_crop")
 	}
 	filter += fmt.Sprintf(",scale=512:%d:flags=area:out_range=full,format=gray,cropdetect=limit=8:round=2:skip=0:reset=0", height)
+	if err := budget.admitMovieSeconds(duration); err != nil {
+		return nil, err
+	}
 	result, err := (finiteComparisonRunner{base: s.runner, outputLimit: 64 << 10}).Run(ctx, executable, []string{
 		"-hide_banner", "-loglevel", "info", "-threads", "4", "-filter_threads", "4", "-copyts", "-ss", strconv.FormatFloat(start, 'f', 9, 64), "-i", path,
 		"-map", "0:V:0", "-an", "-sn", "-dn", "-vf", filter, "-frames:v", "50000", "-f", "null", "-",

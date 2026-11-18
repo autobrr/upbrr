@@ -9,33 +9,20 @@ import (
 	"github.com/autobrr/upbrr/internal/services/screenshots"
 )
 
-// Schedule dedicated slots independently of incidental measured qualifications.
-// Legacy overlapping requests retain their targets; only available slots are
-// apportioned. Unrequested slots use inexpensive native matching.
-func comparisonSceneSlots(targets [3]int, count int) []int {
-	completed := [3]int{}
-	slots := make([]int, 0, count)
-	for range count {
-		category := -1
-		var selected *int
-		bestUnmet, bestTarget := 0, 1
-		for c := range targets {
-			if completed[c] >= targets[c] {
-				continue
-			}
-			unmet := targets[c] - completed[c]
-			if category < 0 || unmet*bestTarget > bestUnmet*targets[c] {
-				category = c
-				selected = &completed[c]
-				bestUnmet, bestTarget = unmet, targets[c]
-			}
+// Retarget after each verified row, counting overlapping qualifications. Failed
+// searches and Quick discovery expansions never reset a category's allowance.
+func comparisonSceneCategory(targets, achieved, attempts [3]int) int {
+	category, bestUnmet, bestTarget := -1, 0, 1
+	for c, target := range targets {
+		if achieved[c] >= target || attempts[c] >= 10*target {
+			continue
 		}
-		slots = append(slots, category)
-		if selected != nil {
-			(*selected)++
+		unmet := target - achieved[c]
+		if category < 0 || unmet*bestTarget > bestUnmet*target {
+			category, bestUnmet, bestTarget = c, unmet, target
 		}
 	}
-	return slots
+	return category
 }
 
 // A local all-intra exception requires real, continuous display coverage around

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,10 @@ import (
 )
 
 type localSceneAcceptanceManifest struct {
+	CaptureFrom              string
+	CaptureRows              int
+	FFmpegLimit              *bool
+	ProcessLimit             *int
 	OutputDir                string
 	DiscoveryOnly, Capture   bool
 	RecordWindows            bool
@@ -172,6 +177,12 @@ func TestLocalComparisonSceneAcceptance(t *testing.T) {
 	cfg, err := config.LoadEmbeddedDefaultConfig()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if manifest.FFmpegLimit != nil {
+		cfg.ScreenshotHandling.FFmpegLimit = *manifest.FFmpegLimit
+	}
+	if manifest.ProcessLimit != nil {
+		cfg.ScreenshotHandling.ProcessLimit = *manifest.ProcessLimit
 	}
 	cfg.MainSettings.DBPath = filepath.Join(manifest.OutputDir, "app.sqlite")
 	repositoryPath := cfg.MainSettings.DBPath
@@ -377,9 +388,58 @@ func TestLocalComparisonSceneAcceptance(t *testing.T) {
 		}
 		start := time.Now()
 		progress := b.comparisonProgress(t.Context(), 5)
-		matched, matchErr := b.matchWorkflowComparisons(t.Context(), &retained, plan, progress)
+		var matched api.ComparisonPlan
+		var matchErr error
+		if manifest.CaptureFrom == "" {
+			matched, matchErr = b.matchWorkflowComparisons(t.Context(), &retained, plan, progress)
+		} else {
+			data, err := os.ReadFile(filepath.Join(manifest.CaptureFrom, "match.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(data, &matched); err != nil {
+				t.Fatal(err)
+			}
+			data, err = os.ReadFile(filepath.Join(manifest.CaptureFrom, "matched-private.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			old, err := decodeWorkflowMediaPrivateArtifacts(b, data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for id, source := range retained.ComparisonSources {
+				previous, found := old.ComparisonSources[id]
+				if !found || previous.Fingerprint != source.Fingerprint || previous.Source.InputFingerprint != source.Source.InputFingerprint {
+					t.Fatal("frozen capture jobs no longer identify the configured sources")
+				}
+				// Keep this invocation's release-owned staging directories. Only
+				// immutable native replay witnesses cross the receipt boundary.
+				source.Witnesses = cloneComparisonSources(map[string]workflowComparisonSource{id: previous})[id].Witnesses
+				retained.ComparisonSources[id] = source
+			}
+			if manifest.CaptureRows != 0 {
+				if manifest.CaptureRows < 1 || manifest.CaptureRows > 16 || len(matched.Rows) == 0 {
+					t.Fatal("capture-only acceptance requires one to sixteen frozen rows")
+				}
+				original := matched.Rows
+				matched.Rows = make([]api.ComparisonRow, manifest.CaptureRows)
+				for r := range matched.Rows {
+					row := original[r%len(original)]
+					row.ID = fmt.Sprintf("frozen-%d", r+1)
+					row.Cells = slices.Clone(row.Cells)
+					matched.Rows[r] = row
+				}
+				matched.Preferences.Count = manifest.CaptureRows
+				matched.SceneMix = nil
+			}
+			plan = matched
+		}
 		progress.close()
 		matchSeconds := time.Since(start).Seconds()
+		if manifest.CaptureFrom != "" {
+			matchSeconds = 0
+		}
 		write("match.json", matched)
 		write("work.json", renderer.work)
 		write("inventory-private.json", retained.ComparisonInventory)
@@ -483,6 +543,11 @@ func TestLocalComparisonSceneAcceptance(t *testing.T) {
 			}
 		}
 		write("images-private.json", hydrated.ArtifactImages)
+		logs = logs[:0]
+		for _, entry := range logger.entries {
+			logs = append(logs, struct{ Level, Message string }{entry.level, entry.message})
+		}
+		write("logs-private.json", logs)
 		retained = hydrated
 	}
 }

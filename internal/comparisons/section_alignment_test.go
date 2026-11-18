@@ -72,6 +72,12 @@ func TestSceneSectionPrefersTypeAgreementWithoutRelaxingPictureProof(t *testing.
 			wantSeconds:        3.4,
 		},
 		{
+			name:               "qualified mixed types beat best effort agreement",
+			preferredScore:     .90,
+			belowQualification: true,
+			wantSeconds:        3,
+		},
+		{
 			name:         "short all I window cannot authorize fallback",
 			allI:         true,
 			unprovenAllI: true,
@@ -196,7 +202,7 @@ func TestSceneSectionPrefersTypeAgreementWithoutRelaxingPictureProof(t *testing.
 				t.Fatalf("wrong quality/type trade-off: %+v", row)
 			}
 			wantDark := 1
-			if test.belowQualification {
+			if test.belowQualification && test.fallbackI {
 				wantDark = 0
 			}
 			if row.Frames[targetColumn].SourceID != "target" || math.Abs(row.Frames[targetColumn].TimestampSeconds-row.MainSeconds-10) > 1e-9 || result.AchievedDark != wantDark {

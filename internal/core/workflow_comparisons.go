@@ -989,7 +989,7 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 	for _, row := range plan.Rows {
 		if !row.Excluded {
 			for _, cell := range row.Cells {
-				if cell.ArtifactID == "" && cell.TimestampSeconds != nil {
+				if (cell.ArtifactID == "" || cell.ContentSHA256 == "") && cell.TimestampSeconds != nil {
 					cells++
 				}
 			}
@@ -1022,6 +1022,31 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 		}
 	}
 	progress.begin("capture", total)
+	settings := b.config.ScreenshotHandling
+	jobs := make(map[string][]comparisonCaptureJob, len(plan.Sources))
+	defer func() {
+		// Completion order is private to the workers. Public artifacts always
+		// follow stable row/column order, including allowed partial publication.
+		artifacts := slices.DeleteFunc(slices.Clone(snapshot.Artifacts), func(a api.MediaArtifact) bool { return a.Kind == api.MediaArtifactComparison })
+		nextOrder := 0
+		seen := map[api.PublicResourceID]bool{}
+		for _, artifact := range artifacts {
+			nextOrder = max(nextOrder, artifact.Order+1)
+			seen[artifact.ID] = true
+		}
+		for _, row := range plan.Rows {
+			for _, cell := range row.Cells {
+				if image, ok := retained.ArtifactImages[cell.ArtifactID]; ok {
+					if !seen[cell.ArtifactID] {
+						artifacts = append(artifacts, comparisonMediaArtifact(cell.ArtifactID, image, nextOrder))
+						nextOrder++
+						seen[cell.ArtifactID] = true
+					}
+				}
+			}
+		}
+		snapshot.Artifacts = artifacts
+	}()
 	for r := range plan.Rows {
 		row := &plan.Rows[r]
 		if row.Excluded {
@@ -1083,15 +1108,10 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 			if cell.TimestampSeconds == nil && skipUnresolved {
 				continue
 			}
-			progressID := row.ID + "/" + cell.SourceID
-			label := fmt.Sprintf("Row %d / column %d", r+1, c+1)
-			progress.item(completed, total, progressID, "comparison_cell", label, api.StageStatusRunning, 0)
-
 			if cell.TimestampSeconds == nil {
 				return plan, errors.New("resolve or exclude unmatched comparison rows before capture")
 			}
 			if cell.ArtifactID != "" && cell.ContentSHA256 != "" {
-				progress.item(completed, total, progressID, "comparison_cell", label, api.StageStatusCompleted, 1000)
 				completed++
 				continue
 			}
@@ -1106,117 +1126,144 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 			if cell.ObservedIdentity != nil {
 				key, _ := api.CanonicalWorkflowFingerprint(*cell.ObservedIdentity)
 				if witness, found := source.Witnesses[string(key)]; found {
-					request.Replay = new(witness)
+					request.Replay = new(cloneComparisonWitness(witness))
 				} else if source.Source.Input != nil {
 					return plan, errors.New("inspect or rematch this comparison frame before capture")
 				}
 			}
-			captured, err := renderer.ComparisonCapture(ctx, request)
-			if err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					reason := "capture_deadline"
-					if errors.Is(err, context.Canceled) {
-						reason = "capture_cancelled"
-					}
-					return plan, &releaseworkflow.ComparisonIncompleteError{Cause: err, Reason: reason}
-				}
-				return plan, fmt.Errorf("capture comparison row %s column %s: %w", row.ID, cell.SourceID, err)
-			}
-			if cell.ObservedPTS != nil &&
-				(*cell.ObservedPTS != captured.PTS || cell.TimeBaseNumerator != captured.TimeBaseNumerator || cell.TimeBaseDenominator != captured.TimeBaseDenominator) {
-				return plan, errors.New("the captured frame changed; rematch the comparison row before review")
-			}
-			if cell.ObservedIdentity != nil && (captured.Identity == nil || *cell.ObservedIdentity != *captured.Identity) {
-				return plan, comparisonSelectionFailure(
-					api.OperationFailureStaleReview,
-					"changed_frame_identity",
-					"The captured frame changed. Rematch and review this row again.",
-				)
-			}
-			if captured.Replay != nil {
-				if source.Witnesses == nil {
-					source.Witnesses = map[string]screenshots.ComparisonFrameReplay{}
-				}
-				source.Witnesses[captured.FrameID] = cloneComparisonWitness(*captured.Replay)
-				retained.ComparisonSources[cell.SourceID] = source
-			}
-			sum := sha256.Sum256(captured.ImageBytes)
-			identity := sha256.Sum256(
-				fmt.Appendf(
-					nil,
-					"%s\x00%s\x00%s\x00%s\x00%d/%d/%d\x00%s",
-					row.ID,
-					cell.SourceID,
-					source.Fingerprint,
-					hex.EncodeToString(sum[:]),
-					captured.PTS,
-					captured.TimeBaseNumerator,
-					captured.TimeBaseDenominator,
-					captured.FrameID,
-				),
-			)
-			id := api.PublicResourceID("comparison_" + hex.EncodeToString(identity[:16]))
-			path, err := b.writeComparisonImage(release, string(id), captured.ImageBytes, ".png")
+			rendering, err := comparisonRenderingFingerprint(plan, *retained, cell.SourceID, settings)
 			if err != nil {
 				return plan, err
 			}
-			tonemapping := api.ScreenshotNotTonemapped
-			if captured.Processing.Tonemapped {
-				tonemapping = api.ScreenshotTonemapped
-			}
-			image := api.ScreenshotImage{
-				Path:             path,
-				Purpose:          api.ScreenshotPurposeComparison,
-				ContentSHA256:    hex.EncodeToString(sum[:]),
-				Format:           "png",
-				Tonemapping:      tonemapping,
-				Processing:       &captured.Processing,
-				TimestampSeconds: captured.RelativeTimestampSeconds,
-				Width:            captured.Width,
-				Height:           captured.Height,
-				SizeBytes:        int64(len(captured.ImageBytes)),
-			}
-			retained.ArtifactImages[id] = image
-			if retained.ComparisonCaptions == nil {
-				retained.ComparisonCaptions = make(map[api.PublicResourceID]int)
-			}
-			retained.ComparisonCaptions[id] = comparisonSourceCaptionVersion(source)
-			if retained.ComparisonRenderSettings == nil {
-				retained.ComparisonRenderSettings = make(map[api.PublicResourceID]api.WorkflowFingerprint)
-			}
-			fingerprint, err := comparisonRenderingFingerprint(plan, *retained, cell.SourceID, b.config.ScreenshotHandling)
-			if err != nil {
-				return plan, err
-			}
-			retained.ComparisonRenderSettings[id] = fingerprint
-			artifact := comparisonMediaArtifact(id, image, len(snapshot.Artifacts))
-			existingIndex := slices.IndexFunc(snapshot.Artifacts, func(a api.MediaArtifact) bool { return a.ID == id })
-			if existingIndex >= 0 {
-				artifact.Order = snapshot.Artifacts[existingIndex].Order
-				snapshot.Artifacts[existingIndex] = artifact
-			} else {
-				snapshot.Artifacts = append(snapshot.Artifacts, artifact)
-			}
-			cell.ArtifactID = id
-			cell.ContentSHA256 = image.ContentSHA256
-			cell.TimestampSeconds = new(captured.RelativeTimestampSeconds)
-			cell.ObservedPTS = new(captured.PTS)
-			cell.ObservedIdentity = captured.Identity
-			cell.TimeBaseNumerator, cell.TimeBaseDenominator = captured.TimeBaseNumerator, captured.TimeBaseDenominator
-			cell.PictureType = captured.PictureType
-			for _, configured := range plan.Sources {
-				if configured.ID == cell.SourceID && !configured.PreferBFrames && len(configured.AllowedFrameTypes) > 0 &&
-					!slices.Contains(configured.AllowedFrameTypes, captured.PictureType) {
-					cell.Warning = "Requested picture types " + strings.Join(
-						configured.AllowedFrameTypes,
-						"/",
-					) + " do not include this selected matching frame; actual type is " + captured.PictureType + ". Rematch to search for a compatible frame."
-				}
-			}
-			progress.item(completed, total, progressID, "comparison_cell", label, api.StageStatusCompleted, 1000)
-			completed++
+			jobs[cell.SourceID] = append(jobs[cell.SourceID], comparisonCaptureJob{
+				row:       r,
+				cell:      c,
+				request:   request,
+				rendering: rendering,
+			})
 		}
 	}
+	publish := func(job comparisonCaptureJob, captured screenshots.ComparisonFrame) error {
+		row := &plan.Rows[job.row]
+		cell := &row.Cells[job.cell]
+		source := retained.ComparisonSources[cell.SourceID]
+		progressID := row.ID + "/" + cell.SourceID
+		label := fmt.Sprintf("Row %d / column %d", job.row+1, job.cell+1)
+		if err := validateComparisonCapture(job, captured); err != nil {
+			return err
+		}
+		if cell.ObservedPTS != nil &&
+			(*cell.ObservedPTS != captured.PTS || cell.TimeBaseNumerator != captured.TimeBaseNumerator || cell.TimeBaseDenominator != captured.TimeBaseDenominator) {
+			return errors.New("the captured frame changed; rematch the comparison row before review")
+		}
+		if cell.ObservedIdentity != nil && (captured.Identity == nil || *cell.ObservedIdentity != *captured.Identity) {
+			return comparisonSelectionFailure(
+				api.OperationFailureStaleReview,
+				"changed_frame_identity",
+				"The captured frame changed. Rematch and review this row again.",
+			)
+		}
+		if captured.Replay != nil {
+			if source.Witnesses == nil {
+				source.Witnesses = map[string]screenshots.ComparisonFrameReplay{}
+			}
+			source.Witnesses[captured.FrameID] = cloneComparisonWitness(*captured.Replay)
+			retained.ComparisonSources[cell.SourceID] = source
+		}
+		sum := sha256.Sum256(captured.ImageBytes)
+		identity := sha256.Sum256(
+			fmt.Appendf(
+				nil,
+				"%s\x00%s\x00%s\x00%s\x00%d/%d/%d\x00%s",
+				row.ID,
+				cell.SourceID,
+				source.Fingerprint,
+				hex.EncodeToString(sum[:]),
+				captured.PTS,
+				captured.TimeBaseNumerator,
+				captured.TimeBaseDenominator,
+				captured.FrameID,
+			),
+		)
+		id := api.PublicResourceID("comparison_" + hex.EncodeToString(identity[:16]))
+		path, err := b.writeComparisonImage(release, string(id), captured.ImageBytes, ".png")
+		if err != nil {
+			return err
+		}
+		tonemapping := api.ScreenshotNotTonemapped
+		if captured.Processing.Tonemapped {
+			tonemapping = api.ScreenshotTonemapped
+		}
+		image := api.ScreenshotImage{
+			Path:             path,
+			Purpose:          api.ScreenshotPurposeComparison,
+			ContentSHA256:    hex.EncodeToString(sum[:]),
+			Format:           "png",
+			Tonemapping:      tonemapping,
+			Processing:       &captured.Processing,
+			TimestampSeconds: captured.RelativeTimestampSeconds,
+			Width:            captured.Width,
+			Height:           captured.Height,
+			SizeBytes:        int64(len(captured.ImageBytes)),
+		}
+		retained.ArtifactImages[id] = image
+		if retained.ComparisonCaptions == nil {
+			retained.ComparisonCaptions = make(map[api.PublicResourceID]int)
+		}
+		retained.ComparisonCaptions[id] = comparisonSourceCaptionVersion(source)
+		if retained.ComparisonRenderSettings == nil {
+			retained.ComparisonRenderSettings = make(map[api.PublicResourceID]api.WorkflowFingerprint)
+		}
+		retained.ComparisonRenderSettings[id] = job.rendering
+		cell.ArtifactID = id
+		cell.ContentSHA256 = image.ContentSHA256
+		cell.TimestampSeconds = new(captured.RelativeTimestampSeconds)
+		cell.ObservedPTS = new(captured.PTS)
+		cell.ObservedIdentity = captured.Identity
+		cell.TimeBaseNumerator, cell.TimeBaseDenominator = captured.TimeBaseNumerator, captured.TimeBaseDenominator
+		cell.PictureType = captured.PictureType
+		for _, configured := range plan.Sources {
+			if configured.ID == cell.SourceID && !configured.PreferBFrames && len(configured.AllowedFrameTypes) > 0 &&
+				!slices.Contains(configured.AllowedFrameTypes, captured.PictureType) {
+				cell.Warning = "Requested picture types " + strings.Join(
+					configured.AllowedFrameTypes,
+					"/",
+				) + " do not include this selected matching frame; actual type is " + captured.PictureType + ". Rematch to search for a compatible frame."
+			}
+		}
+		progress.item(completed, total+1, progressID, "comparison_cell", label, api.StageStatusCompleted, 1000)
+		completed++
+		return nil
+	}
+	report := func(job comparisonCaptureJob, update api.WorkflowProgressUpdate) {
+		row, cell := plan.Rows[job.row], plan.Rows[job.row].Cells[job.cell]
+		fraction := min(999, max(0, 1000*update.Completed/max(1, update.Total)))
+		progress.item(
+			completed,
+			total+1,
+			row.ID+"/"+cell.SourceID,
+			"comparison_cell",
+			fmt.Sprintf("Row %d / column %d", job.row+1, job.cell+1),
+			api.StageStatusRunning,
+			fraction,
+		)
+	}
+	for column, source := range plan.Sources {
+		batch := jobs[source.ID]
+		concurrency := screenshots.CaptureProcessConcurrency(settings, len(batch))
+		progress.logger.Debugf("comparisons: phase=capture column=%d jobs=%d concurrency=%d", column+1, len(batch), concurrency)
+		if err := captureComparisonBatch(ctx, renderer, batch, concurrency, report, publish); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				reason := "capture_deadline"
+				if errors.Is(err, context.Canceled) {
+					reason = "capture_cancelled"
+				}
+				return plan, &releaseworkflow.ComparisonIncompleteError{Cause: err, Reason: reason}
+			}
+			return plan, fmt.Errorf("capture comparison column %d: %w", column+1, err)
+		}
+	}
+
 	if err := verifyComparisonVideos(ctx, plan, *retained); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			reason := "capture_deadline"

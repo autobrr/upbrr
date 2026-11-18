@@ -274,14 +274,8 @@ func stageDiscWindow(ctx context.Context, source ComparisonSource, window *compa
 }
 
 func bindDiscObservation(source ComparisonSource, window comparisonDiscWindow, observation *ComparisonFrameObservation) error {
-	if source.NativePixelFormat != "" &&
-		(observation.PixelFormat != source.NativePixelFormat || observation.Width != source.Width || observation.Height != source.Height) {
-		return comparisonDiscFailure("changing_format")
-	}
-	if source.SARNumerator > 0 &&
-		(observation.SARNumerator != source.SARNumerator || observation.SARDenominator != source.SARDenominator) ||
-		source.NativeColour != "" && observation.Colour != source.NativeColour {
-		return comparisonDiscFailure("changing_display_format")
+	if err := validateComparisonNativeFacts(source, *observation); err != nil {
+		return err
 	}
 	if observation.TimeBaseNumerator != 1 || observation.TimeBaseDenominator != 90000 || observation.PictureChecksum == "" {
 		return comparisonDiscFailure("original_clock_witness")
@@ -386,7 +380,15 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 			start:    float64(window.Start90) / 90000,
 			duration: float64(window.End90-window.Start90) / 90000,
 		})
-		result, runErr := service.runComparisonSamples(windowContext, executable, args, filter, request)
+		physicalRequest := request
+		physicalRequest.DurationSeconds = float64(window.End90-window.Start90)/90000 + window.PrerollSeconds
+		physicalRequest.decodePrerollSeconds = window.PrerollSeconds
+		physicalRequest.decodeOccurrence = window.Occurrence
+		physicalRequest.decodeCodec = window.Codec
+		for _, span := range window.Spans {
+			physicalRequest.encodedAttemptBytes += span.End - span.Start
+		}
+		result, runErr := service.runComparisonSamples(windowContext, executable, args, filter, physicalRequest)
 		cleanup()
 		if runErr != nil {
 			return nil, runErr
@@ -492,6 +494,7 @@ func (s *Service) InspectResolvedComparisonSource(
 	}
 	first := frames[0]
 	source.NativePixelFormat = first.PixelFormat
+	source.NativeChromaLocation = first.ChromaLocation
 	source.NativeColour = first.Colour
 	source.SARNumerator, source.SARDenominator = first.SARNumerator, first.SARDenominator
 	source.Interlace = first.Interlace
@@ -534,9 +537,12 @@ func (s *Service) InspectResolvedComparisonSource(
 }
 
 type exactDiscCaptureRunner struct {
-	base   Runner
-	window comparisonDiscWindow
-	replay ComparisonFrameReplay
+	service      *Service
+	source       ComparisonSource
+	softwareOnly bool
+	base         Runner
+	window       comparisonDiscWindow
+	replay       ComparisonFrameReplay
 }
 
 func (r exactDiscCaptureRunner) Run(ctx context.Context, name string, args []string, dir string) (CommandResult, error) {
@@ -574,7 +580,23 @@ func (r exactDiscCaptureRunner) Run(ctx context.Context, name string, args []str
 			command[i+1] = fmt.Sprintf("format=pix_fmts=%s,select='eq(pts,%d)',", r.replay.PixelFormat, r.replay.DecoderPTS) + command[i+1]
 		}
 	}
-	result, err := (finiteComparisonRunner{base: r.base, outputLimit: 64 << 20}).Run(ctx, name, command, dir)
+	runner := finiteComparisonRunner{base: r.base, outputLimit: 64 << 20}
+	var result CommandResult
+	var err error
+	if r.service != nil {
+		result, err = r.service.runComparisonCaptureDecoder(
+			ctx,
+			runner,
+			name,
+			command,
+			dir,
+			r.source,
+			r.softwareOnly,
+			fmt.Sprintf("capture-authored/%s/%d", r.window.Occurrence, r.window.Codec),
+		)
+	} else {
+		result, err = runner.Run(ctx, name, command, dir)
+	}
 	observed, parseErr := comparisonObservations(result.Stderr)
 	if err == nil &&
 		(parseErr != nil || len(observed) != 1 || observed[0].PTS != r.replay.DecoderPTS || observed[0].PictureChecksum != r.replay.PictureChecksum) {
@@ -584,6 +606,7 @@ func (r exactDiscCaptureRunner) Run(ctx context.Context, name string, args []str
 }
 
 func (s *Service) captureDiscComparison(ctx context.Context, request ComparisonCaptureRequest) (ComparisonFrame, error) {
+	ctx, _ = comparisonProcessCounter(ctx, nil)
 	if request.Replay == nil {
 		return ComparisonFrame{}, comparisonDiscFailure("inspect_frame_required")
 	}
@@ -600,10 +623,17 @@ func (s *Service) captureDiscComparison(ctx context.Context, request ComparisonC
 	}
 	defer cleanup()
 	service := *s
+	toneMap := s.cfg.ScreenshotHandling.ToneMap
+	if request.ToneMap != nil {
+		toneMap = *request.ToneMap
+	}
 	service.runner = exactDiscCaptureRunner{
-		base:   s.runner,
-		window: replay.Window,
-		replay: *replay,
+		service:      s,
+		source:       request.Source,
+		softwareOnly: toneMap && request.Source.HDRFacts.SupportsToneMapping() && s.cfg.ScreenshotHandling.UseLibplacebo,
+		base:         s.runner,
+		window:       replay.Window,
+		replay:       *replay,
 	}
 	fileRequest := request
 	fileRequest.Replay = nil

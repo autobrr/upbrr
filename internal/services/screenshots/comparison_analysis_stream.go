@@ -7,102 +7,115 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/adler32"
 	"math"
+	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/autobrr/upbrr/internal/comparisons"
 )
 
 type comparisonRasterStreamKey struct{}
-type comparisonRasterRecord struct {
-	kind        string
-	observation ComparisonFrameObservation
-}
+
+const comparisonSparseOutput = "comparison-statistics-output"
+
 type comparisonCutMetric struct {
 	pts   int64
 	score float64
 	seen  bool
 }
 
-// comparisonRasterStream joins named branch provenance to output provenance
-// before consuming a frame. Only one packed raster and the previous unblurred
-// motion raster are retained; metrics and 16x16 witnesses are bounded scalars.
+type comparisonRasterFact struct {
+	observation  ComparisonFrameObservation
+	luma, pixels []byte
+	spatial      *comparisons.SceneSpatialMeasurement
+}
+
+// Readers own one packet each; the coordinator alone accumulates measurements.
+// Branches join by rational PTS, independently of their arrival order.
 type comparisonRasterStream struct {
-	ctx                  context.Context
-	height, motionHeight int
-	matchAspect          float64
-	matchCrop            *ComparisonCrop
-	buffer, previous     []byte
-	previousTime         float64
-	records              chan comparisonRasterRecord
-	branches             map[string]comparisonRasterRecord
-	cuts                 []comparisonCutMetric
-	measurements         []comparisons.SceneMeasurement
-	observations         []ComparisonFrameObservation
-	pixels               [][]byte
-	err                  error
-	count                int
+	ctx                                context.Context
+	height, motionHeight, maxSparse    int
+	retentionLimit                     int64
+	matchAspect                        float64
+	matchCrop                          *ComparisonCrop
+	motionRecords, sparseRecords       chan ComparisonFrameObservation
+	facts                              chan comparisonRasterFact
+	done                               chan struct{}
+	motion, sparse                     *comparisonRasterWriter
+	cuts                               []comparisonCutMetric // diagnostic parser owns these until EOF
+	measurements                       []comparisons.SceneMeasurement
+	observations                       []ComparisonFrameObservation
+	pixels                             [][]byte
+	err                                error // coordinator-owned until done
+	totalMotionBytes, totalSparseBytes int64
 }
 
 func (s *comparisonRasterStream) reset(ctx context.Context) {
-	h, mh, aspect, crop := s.height, s.motionHeight, s.matchAspect, s.matchCrop
+	h, mh, aspect, crop, frames, limit := s.height, s.motionHeight, s.matchAspect, s.matchCrop, s.maxSparse, s.retentionLimit
+	motionBytes, sparseBytes := s.totalMotionBytes, s.totalSparseBytes
 	*s = comparisonRasterStream{
-		ctx:          ctx,
-		height:       h,
-		motionHeight: mh,
-		matchAspect:  aspect,
-		matchCrop:    crop,
-		records:      make(chan comparisonRasterRecord, 16),
-		branches:     map[string]comparisonRasterRecord{},
+		ctx:              ctx,
+		height:           h,
+		motionHeight:     mh,
+		matchAspect:      aspect,
+		matchCrop:        crop,
+		maxSparse:        frames,
+		retentionLimit:   limit,
+		motionRecords:    make(chan ComparisonFrameObservation, 16),
+		sparseRecords:    make(chan ComparisonFrameObservation, 16),
+		facts:            make(chan comparisonRasterFact, 1),
+		done:             make(chan struct{}),
+		totalMotionBytes: motionBytes,
+		totalSparseBytes: sparseBytes,
 	}
+	s.motion = &comparisonRasterWriter{stream: s}
+	s.sparse = &comparisonRasterWriter{stream: s, statistics: true}
 }
 
-func rasterRecordKey(o ComparisonFrameObservation) string {
-	return fmt.Sprintf("%.6f/%s", o.TimestampSeconds, o.PictureChecksum)
+func (s *comparisonRasterStream) start(ctx context.Context, cancel context.CancelCauseFunc) {
+	s.ctx = ctx
+	go func() {
+		defer close(s.done)
+		if err := s.collect(); err != nil {
+			s.err = err
+			cancel(err)
+		}
+	}()
+}
+
+func comparisonClockKey(o ComparisonFrameObservation) (string, error) {
+	if o.TimeBaseNumerator <= 0 || o.TimeBaseDenominator <= 0 {
+		return "", errors.New("comparison analysis lacks a rational clock")
+	}
+	n := new(big.Int).Mul(big.NewInt(o.PTS), big.NewInt(o.TimeBaseNumerator))
+	return new(big.Rat).SetFrac(n, big.NewInt(o.TimeBaseDenominator)).RatString(), nil
 }
 
 func (s *comparisonRasterStream) observe(name string, o ComparisonFrameObservation) error {
-	if strings.HasPrefix(name, "showinfo@") && (o.PictureChecksum == "" || o.Width <= 0 || o.Height <= 0) {
+	var records chan ComparisonFrameObservation
+	switch name {
+	case "showinfo@comparison_motion":
+		records = s.motionRecords
+	case "showinfo@comparison_stats":
+		records = s.sparseRecords
+	default:
+		return nil
+	}
+	if o.PictureChecksum == "" || o.Width <= 0 || o.Height <= 0 {
 		return errors.New("comparison analysis provenance is incomplete")
 	}
-	if name == "showinfo@comparison_motion" || name == "showinfo@comparison_stats" {
-		key := name + "/" + rasterRecordKey(o)
-		if _, exists := s.branches[key]; exists {
-			return errors.New("comparison analysis has conflicting branch identities")
-		}
-		s.branches[key] = comparisonRasterRecord{name, o}
-		if len(s.branches) > 128 {
-			return comparisonDecoderLimit("analysis_branch_limit")
-		}
+	if _, err := comparisonClockKey(o); err != nil {
+		return err
 	}
-	if name != "showinfo@comparison_output" {
-		return nil
-	}
-	key := ""
-	var record comparisonRasterRecord
-	for candidate, value := range s.branches {
-		expected := 2 * value.observation.TimestampSeconds
-		if value.kind == "showinfo@comparison_stats" {
-			expected += float64(value.observation.TimeBaseNumerator) / float64(value.observation.TimeBaseDenominator)
-		}
-		if value.observation.PictureChecksum == o.PictureChecksum && math.Abs(o.TimestampSeconds-expected) <= 1e-6 {
-			if key != "" {
-				return errors.New("comparison analysis has ambiguous output provenance")
-			}
-			key, record = candidate, value
-		}
-	}
-	if key == "" {
-		return errors.New("comparison analysis output has no matching branch identity")
-	}
-	delete(s.branches, key)
 	select {
-	case s.records <- record:
+	case records <- o:
 		return nil
 	case <-s.ctx.Done():
-		return fmt.Errorf("comparison scene analysis: %w", s.ctx.Err())
+		return fmt.Errorf("comparison analysis interrupted: %w", context.Cause(s.ctx))
 	}
 }
 
@@ -136,77 +149,120 @@ func (s *comparisonRasterStream) metric(line string) error {
 		if err != nil || !comparisonFinite(score) || score < 0 {
 			return errors.New("invalid comparison cut metric")
 		}
-		s.cuts[len(s.cuts)-1].score = score
-		s.cuts[len(s.cuts)-1].seen = true
+		s.cuts[len(s.cuts)-1].score, s.cuts[len(s.cuts)-1].seen = score, true
 	}
 	return nil
 }
 
-func (s *comparisonRasterStream) Write(data []byte) (int, error) {
+type comparisonRasterWriter struct {
+	stream     *comparisonRasterStream
+	statistics bool
+	buffer     []byte
+	count      int
+	bytes      int64
+	previous   ComparisonFrameObservation
+	err        error
+}
+
+func (w *comparisonRasterWriter) Write(data []byte) (written int, returnedErr error) {
+	defer func() {
+		if w.err == nil && comparisonTerminalFailure(returnedErr) {
+			w.err = returnedErr
+		}
+	}()
+	s := w.stream
+	size, records := 272*s.motionHeight, s.motionRecords
+	if w.statistics {
+		size, records = 1024*s.height*3/2, s.sparseRecords
+	}
 	count := len(data)
-	size := 1024 * s.height * 3 / 2
 	for len(data) > 0 {
-		n := min(size-len(s.buffer), len(data))
-		s.buffer = append(s.buffer, data[:n]...)
+		n := min(size-len(w.buffer), len(data))
+		w.buffer = append(w.buffer, data[:n]...)
+		w.bytes += int64(n)
 		data = data[n:]
-		if len(s.buffer) < size {
+		if len(w.buffer) < size {
 			continue
 		}
-		var record comparisonRasterRecord
+		var o ComparisonFrameObservation
 		select {
-		case record = <-s.records:
+		case record, ok := <-records:
+			if !ok {
+				if s.ctx.Err() != nil {
+					return 0, fmt.Errorf("comparison raster interrupted: %w", context.Cause(s.ctx))
+				}
+				return 0, errors.New("comparison analysis raster lacks output provenance")
+			}
+			o = record
 		case <-s.ctx.Done():
-			s.err = s.ctx.Err()
-			return 0, s.err
+			return 0, fmt.Errorf("comparison raster interrupted: %w", context.Cause(s.ctx))
 		}
-		if err := s.consume(record); err != nil {
-			s.err = err
-			return 0, err
+		if w.count > 0 &&
+			(o.TimeBaseNumerator != w.previous.TimeBaseNumerator || o.TimeBaseDenominator != w.previous.TimeBaseDenominator || o.PTS <= w.previous.PTS) {
+			return 0, errors.New("comparison analysis reordered output provenance")
 		}
-		s.buffer = s.buffer[:0]
-		s.count++
-		if s.count > 100000 {
-			s.err = comparisonDecoderLimit("analysis_picture_limit")
-			return 0, s.err
+		w.previous = o
+		checksum, err := strconv.ParseUint(o.PictureChecksum, 16, 32)
+		if err != nil || uint32(checksum) != comparisonRasterChecksum(w.buffer) {
+			return 0, errors.New("comparison analysis raster changed its output witness")
 		}
+		fact := comparisonRasterFact{observation: o}
+		if w.statistics {
+			if o.Width != 1024 || o.Height != s.height || o.PixelFormat != "yuv420p" || w.count >= s.maxSparse {
+				return 0, errors.New("comparison analysis changed sparse geometry or bounds")
+			}
+			fact.spatial, err = s.measureSparse(w.buffer)
+			if err != nil {
+				return 0, err
+			}
+		} else {
+			if o.Width != 272 || o.Height != s.motionHeight || o.PixelFormat != "gray" || w.count >= 50000 {
+				return 0, errors.New("comparison analysis changed motion geometry or bounds")
+			}
+			fact.luma, fact.pixels = make([]byte, 256*s.motionHeight), make([]byte, 256)
+			for y := range s.motionHeight {
+				copy(fact.luma[y*256:(y+1)*256], w.buffer[y*272:y*272+256])
+			}
+			for y := range 16 {
+				copy(fact.pixels[y*16:(y+1)*16], w.buffer[y*272+256:y*272+272])
+			}
+		}
+		select {
+		case s.facts <- fact:
+		case <-s.ctx.Done():
+			return 0, fmt.Errorf("comparison raster interrupted: %w", context.Cause(s.ctx))
+		}
+		w.count++
+		w.buffer = w.buffer[:0]
 	}
 	return count, nil
 }
 
-func (s *comparisonRasterStream) consume(record comparisonRasterRecord) error {
-	o := record.observation
-	if o.Width != 1024 || o.Height != s.height || o.PixelFormat != "yuv420p" {
-		return errors.New("comparison analysis changed output geometry")
+// Call only after both readers, the parser and the coordinator have joined.
+// Cancellation-related pipe closure is not evidence failure; retained parser,
+// raster and association errors must nevertheless survive parent cancellation.
+func (s *comparisonRasterStream) failure(cause, diagnostic error) error {
+	if comparisonTerminalFailure(cause) {
+		return cause
 	}
-	if record.kind == "showinfo@comparison_motion" {
-		luma := make([]byte, 256*s.motionHeight)
-		for y := range s.motionHeight {
-			copy(luma[y*256:(y+1)*256], s.buffer[y*1024:y*1024+256])
+	for _, err := range []error{diagnostic, s.err, s.motion.err, s.sparse.err} {
+		if comparisonTerminalFailure(err) {
+			return err
 		}
-		p := comparisons.SceneMeasurement{Time: o.TimestampSeconds, Tick: float64(o.TimeBaseNumerator) / float64(o.TimeBaseDenominator)}
-		if len(s.previous) > 0 {
-			p.Speed, p.Moving, p.Reliable, p.Text = comparisons.MeasureMotion(s.previous, luma, 256, s.motionHeight, p.Time-s.previousTime)
-		}
-		s.previous, s.previousTime = luma, p.Time
-		s.measurements = append(s.measurements, p)
-		if int64(len(s.measurements))*4096 > 112<<20 {
-			return comparisonDecoderLimit("analysis_retention_limit")
-		}
-		s.observations = append(s.observations, o)
-		// This independent FFmpeg reduction uses the same common-content
-		// geometry as bounded matching; it never feeds motion or scene statistics.
-		pixels := make([]byte, 256)
-		for y := range 16 {
-			copy(pixels[y*16:(y+1)*16], s.buffer[y*1024+256:y*1024+272])
-		}
-		s.pixels = append(s.pixels, pixels)
-		return nil
 	}
-	// interleave emits the full-rate motion branch first on a tied PTS.
-	i := len(s.measurements) - 1
-	if i < 0 || math.Abs(s.measurements[i].Time-o.TimestampSeconds) > 1e-6 || s.measurements[i].Sparse != nil {
-		return errors.New("unpaired comparison sparse raster")
-	}
+	return cause
+}
+
+// FFmpeg showinfo starts Adler-32 at zero rather than RFC 1950's one.
+func comparisonRasterChecksum(data []byte) uint32 {
+	const modulus = 65521
+	sum := adler32.Checksum(data)
+	a := (sum&0xffff + modulus - 1) % modulus
+	b := (sum>>16 + modulus - uint32(len(data)%modulus)) % modulus
+	return b<<16 | a
+}
+
+func (s *comparisonRasterStream) measureSparse(data []byte) (*comparisons.SceneSpatialMeasurement, error) {
 	left, right := make([]byte, 512*s.height*3/2), make([]byte, 512*s.height*3/2)
 	for plane := range 3 {
 		w, h, sourceOffset, destOffset := 512, s.height, 0, 0
@@ -216,80 +272,136 @@ func (s *comparisonRasterStream) consume(record comparisonRasterRecord) error {
 			destOffset = 512*s.height + (plane-1)*512*s.height/4
 		}
 		for y := range h {
-			copy(left[destOffset+y*w:destOffset+(y+1)*w], s.buffer[sourceOffset+y*w*2:sourceOffset+y*w*2+w])
-			copy(right[destOffset+y*w:destOffset+(y+1)*w], s.buffer[sourceOffset+y*w*2+w:sourceOffset+(y+1)*w*2])
+			copy(left[destOffset+y*w:destOffset+(y+1)*w], data[sourceOffset+y*w*2:sourceOffset+y*w*2+w])
+			copy(right[destOffset+y*w:destOffset+(y+1)*w], data[sourceOffset+y*w*2+w:sourceOffset+(y+1)*w*2])
 		}
 	}
-	spatial, err := measureSceneRasters(s.ctx, left, right, s.height)
-	if err != nil {
-		return err
-	}
-	s.measurements[i].Sparse = spatial
+	return measureSceneRasters(s.ctx, left, right, s.height)
+}
 
-	return nil
+func (s *comparisonRasterStream) collect() error {
+	indexes := map[string]int{}
+	pending := map[string]*comparisons.SceneSpatialMeasurement{}
+	var previous []byte
+	previousTime := 0.0
+	spatialBytes := int64(0)
+	for {
+		select {
+		case <-s.ctx.Done():
+			return fmt.Errorf("collect comparison rasters: %w", context.Cause(s.ctx))
+		case fact, ok := <-s.facts:
+			if !ok {
+				if s.ctx.Err() != nil {
+					return fmt.Errorf("collect comparison rasters: %w", context.Cause(s.ctx))
+				}
+				if len(pending) > 0 {
+					return errors.New("comparison sparse raster has no native motion picture")
+				}
+				return nil
+			}
+			key, err := comparisonClockKey(fact.observation)
+			if err != nil {
+				return err
+			}
+			if fact.spatial != nil {
+				spatialBytes += int64(len(fact.spatial.Tiles))*96 + int64(len(fact.spatial.TextRows))*8 + 512
+				if i, ok := indexes[key]; ok {
+					if s.measurements[i].Sparse != nil {
+						return errors.New("duplicate comparison sparse raster")
+					}
+					s.measurements[i].Sparse = fact.spatial
+				} else {
+					if _, exists := pending[key]; exists {
+						return errors.New("duplicate comparison sparse raster")
+					}
+					pending[key] = fact.spatial
+				}
+			} else {
+				if _, exists := indexes[key]; exists {
+					return errors.New("duplicate comparison motion raster")
+				}
+				p := comparisons.SceneMeasurement{
+					Time:   fact.observation.TimestampSeconds,
+					Tick:   float64(fact.observation.TimeBaseNumerator) / float64(fact.observation.TimeBaseDenominator),
+					Sparse: pending[key],
+				}
+				delete(pending, key)
+				if len(previous) > 0 {
+					p.Speed, p.Moving, p.Reliable, p.Text = comparisons.MeasureMotion(previous, fact.luma, 256, s.motionHeight, p.Time-previousTime)
+				}
+				previous, previousTime = fact.luma, p.Time
+				indexes[key] = len(s.measurements)
+				s.measurements = append(s.measurements, p)
+				s.observations = append(s.observations, fact.observation)
+				s.pixels = append(s.pixels, fact.pixels)
+			}
+			limit := s.retentionLimit
+			if limit <= 0 {
+				limit = 112 << 20
+			}
+			if int64(len(s.measurements)+len(pending))*4096+spatialBytes > limit {
+				return ErrComparisonFastInconclusive
+			}
+		}
+	}
 }
 
 func (s *comparisonRasterStream) validate() error {
-	if len(s.buffer) > 0 || len(s.branches) > 0 || len(s.records) > 0 || len(s.cuts) != len(s.measurements) {
+	if len(s.motion.buffer) > 0 || len(s.sparse.buffer) > 0 || len(s.motionRecords) > 0 || len(s.sparseRecords) > 0 || len(s.cuts) != len(s.measurements) {
 		return errors.New("comparison analysis stream is incomplete")
 	}
+	previous := -1
 	for i, m := range s.cuts {
 		if !m.seen || m.pts != s.observations[i].PTS {
 			return errors.New("comparison cut metrics changed native binding")
 		}
 		s.measurements[i].CutScore = m.score
-	}
-	// Actual native ticks verify sparse cadence, independently of FFmpeg's
-	// floating-point select evaluation. Tick-boundary mistakes fail closed.
-	previous := -1
-	for i, p := range s.measurements {
-		if p.Sparse != nil {
-			if previous >= 0 {
-				a, b := s.observations[previous], s.observations[i]
-				if a.TimeBaseNumerator != b.TimeBaseNumerator || a.TimeBaseDenominator != b.TimeBaseDenominator || b.PTS-a.PTS < 1 ||
-					float64(b.PTS-a.PTS)*float64(b.TimeBaseNumerator) < .25*float64(b.TimeBaseDenominator) {
-					return errors.New("comparison sparse cadence is below 0.25 seconds")
-				}
-			}
+		o := s.observations[i]
+		expected := previous < 0 || float64(o.PTS-s.observations[previous].PTS)*float64(o.TimeBaseNumerator) >= .25*float64(o.TimeBaseDenominator)
+		if expected != (s.measurements[i].Sparse != nil) {
+			return errors.New("comparison sparse cadence changed native binding")
+		}
+		if expected {
 			previous = i
 		}
 	}
 	return nil
 }
 
-// consumeInjectedAnalysis preserves deterministic Runner seams without letting
-// bounded stdout buffering become the native production transport.
-func consumeInjectedAnalysis(ctx context.Context, s *comparisonRasterStream, data []byte, d *comparisonDiagnosticStream, stderr []byte) error {
-	workCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	s.ctx = workCtx
-	d.cancel = cancel
-	parse := make(chan error, 1)
-	go func() {
-		_, err := d.Write(stderr)
-		if err == nil {
+// Injected finite runners supply both outputs without binding a test listener.
+func consumeInjectedAnalysis(ctx context.Context, s *comparisonRasterStream, result CommandResult, d *comparisonDiagnosticStream) error {
+	workCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	s.start(workCtx, cancel)
+	var readers sync.WaitGroup
+	readers.Go(func() {
+		_, err := d.Write(result.Stderr)
+		if err == nil && workCtx.Err() == nil {
 			_, err = d.result()
 		}
 		if err != nil {
-			cancel()
+			cancel(err)
 		}
-		parse <- err
-	}()
-	_, writeErr := s.Write(data)
-	cancel()
-	select {
-	case parseErr := <-parse:
-		if parseErr != nil && !errors.Is(parseErr, context.Canceled) {
-			return parseErr
-		}
-		if writeErr != nil {
-			return writeErr
-		}
-		return parseErr
-	case <-ctx.Done():
-		return fmt.Errorf("comparison scene analysis: %w", ctx.Err())
+		close(s.motionRecords)
+		close(s.sparseRecords)
+	})
+	for _, output := range []struct {
+		writer *comparisonRasterWriter
+		data   []byte
+	}{{s.motion, result.Stdout}, {s.sparse, result.SparseOutput}} {
+		readers.Go(func() {
+			if _, err := output.writer.Write(output.data); err != nil {
+				cancel(err)
+			}
+		})
 	}
+	readers.Wait()
+	close(s.facts)
+	<-s.done
+	if err := s.failure(context.Cause(workCtx), d.err); err != nil {
+		return fmt.Errorf("consume comparison analysis: %w", err)
+	}
+	return s.validate()
 }
 
-// Keep the compiler checking the intended streaming writer contract.
-var _ interface{ Write([]byte) (int, error) } = (*comparisonRasterStream)(nil)
+func comparisonSparseFrameLimit(seconds float64) int { return int(math.Ceil(seconds/.25)) + 1 }

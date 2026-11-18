@@ -35,10 +35,12 @@ func (s *Service) AnalyzeComparisonSource(ctx context.Context, request Compariso
 		return nil, ErrComparisonNormalizationUnavailable
 	}
 	request.analysis = &comparisonRasterStream{
-		height:       height,
-		motionHeight: motionHeight,
-		matchAspect:  request.MatchAspectRatio,
-		matchCrop:    request.MatchCrop,
+		height:         height,
+		motionHeight:   motionHeight,
+		matchAspect:    request.MatchAspectRatio,
+		matchCrop:      request.MatchCrop,
+		maxSparse:      comparisonSparseFrameLimit(request.DurationSeconds),
+		retentionLimit: request.RetentionLimitBytes,
 	}
 	request.NativeFrames = true
 	request.NormalizeSDR = true
@@ -74,8 +76,8 @@ func (s *Service) softwareComparisonAnalysisFilters(request ComparisonSampleRequ
 	}
 	conversion := toneMappingFilters(captureRequest{
 		ToneMap:   true,
-		Algorithm: s.cfg.ScreenshotHandling.TonemapAlgorithm,
-		Desat:     s.cfg.ScreenshotHandling.Desat,
+		Algorithm: comparisonAnalysisAlgorithm,
+		Desat:     comparisonAnalysisDesat,
 	}, false)
 	filters = append(filters, conversion[:2]...)
 	filters = append(filters, fmt.Sprintf("zscale=width=%d:height=%d:filter=bilinear", width, height))
@@ -106,12 +108,16 @@ func analysisSamples(result CommandResult, request ComparisonSampleRequest, wind
 	evidence := comparisons.ClassifyScenes(s.measurements, renderer)
 	var samples []ComparisonSample
 	for i, o := range native {
-		if math.Abs(o.TimestampSeconds-s.observations[i].TimestampSeconds) > 1e-6 {
+		nativeClock, nativeErr := comparisonClockKey(o)
+		outputClock, outputErr := comparisonClockKey(s.observations[i])
+		if nativeErr != nil || outputErr != nil || nativeClock != outputClock {
 			return nil, errors.New("comparison analysis normalization changed native identity")
 		}
 		o.RelativeTimestampSeconds = o.TimestampSeconds - request.Source.StartTimeSeconds
 		if window == nil {
-			bindFileObservation(request.Source, &o)
+			if err := bindFileObservation(request.Source, &o); err != nil {
+				return nil, err
+			}
 		} else if err := bindDiscObservation(request.Source, *window, &o); err != nil {
 			return nil, err
 		}

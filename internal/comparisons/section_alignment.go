@@ -61,6 +61,7 @@ type SceneSectionMatcher struct {
 	sources             map[string]SampledSource
 	proofs              map[string][]sceneSectionProof
 	order               []string
+	reason              string
 }
 
 // NewSceneSectionMatcher binds immutable decoded main pictures and scene intent.
@@ -78,20 +79,18 @@ func NewSceneSectionMatcher(reference SampledSource, anchor FrameSample, categor
 		start, end = SceneSectionBounds(reference.Frames, anchor.FrameID)
 	}
 	section := reference.Frames[start:end]
-	permitted := func(frame FrameSample) bool {
-		if reference.PreferBFrames {
-			return frame.FrameType == "B" || frame.FrameType == "P" || frame.FrameType == "I" && reference.IntraOnly
-		}
-		return allowedPicture(reference, frame.FrameType)
-	}
 	var candidates []FrameSample
 	for _, frame := range section {
-		if !permitted(frame) || frame.Evidence == nil || !frame.Evidence.Eligible {
+		if !slices.Contains(permittedPictureTypes(reference), frame.FrameType) || frame.Evidence == nil || !frame.Evidence.Eligible {
 			continue
 		}
 		candidates = append(candidates, frame)
 	}
 	if len(candidates) == 0 {
+		matcher.reason = "main_native_candidates_unavailable"
+		if slices.ContainsFunc(section, func(frame FrameSample) bool { return frame.Evidence != nil && frame.Evidence.Eligible }) {
+			matcher.reason = "permitted_picture_type_unavailable"
+		}
 		return matcher
 	}
 	// The connected score band around the main seed is the first source of
@@ -103,14 +102,14 @@ func NewSceneSectionMatcher(reference SampledSource, anchor FrameSample, categor
 	}
 	slices.SortStableFunc(candidates, func(a, b FrameSample) int {
 		if category >= 0 {
-			if inBand(a) != inBand(b) {
-				if inBand(a) {
+			if SceneQualified(a.Evidence, category) != SceneQualified(b.Evidence, category) {
+				if SceneQualified(a.Evidence, category) {
 					return -1
 				}
 				return 1
 			}
-			if SceneQualified(a.Evidence, category) != SceneQualified(b.Evidence, category) {
-				if SceneQualified(a.Evidence, category) {
+			if inBand(a) != inBand(b) {
+				if inBand(a) {
 					return -1
 				}
 				return 1
@@ -144,6 +143,7 @@ func (m *SceneSectionMatcher) AddSource(ctx context.Context, source SampledSourc
 	}
 	proofs, err := sectionProofs(ctx, m.section, source.Frames, scale, m.anchor.TimestampSeconds, m.candidates)
 	if err != nil || len(proofs) == 0 {
+		m.reason = "native_correspondence_unavailable"
 		return false, err
 	}
 	m.sources[source.ID], m.proofs[source.ID] = source, proofs
@@ -151,6 +151,10 @@ func (m *SceneSectionMatcher) AddSource(ctx context.Context, source SampledSourc
 	matched, err := m.Match(ctx, m.order, nil)
 	return len(matched.Rows) == 1 && matched.Rows[0].Complete, err
 }
+
+// InconclusiveReason reports already observed proof/type/intersection outcomes;
+// diagnostics never initiate another decode or temporal search.
+func (m *SceneSectionMatcher) InconclusiveReason() string { return m.reason }
 
 // Match intersects retained proofs in the workflow's original column order,
 // preserving previous-row identity reuse checks without another proof search.
@@ -171,6 +175,7 @@ func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previou
 	mainID, category, proofs, candidates := m.mainID, m.category, m.proofs, m.candidates
 	var preferred, fallback *MatchedRow
 	bestScore := math.Inf(-1)
+	qualified := false
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return MatchResult{}, fmt.Errorf("match native section: %w", err)
@@ -189,6 +194,7 @@ func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previou
 			}
 		}
 		if len(local) != len(sources)-1 {
+			m.reason = "native_intersection_unavailable"
 			continue
 		}
 		matched, err := AlignedMatch(scoped, mainID, MatchOptions{Count: 1, MainFrameID: candidate.FrameID}, local, previous)
@@ -196,6 +202,12 @@ func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previou
 			return MatchResult{}, err
 		}
 		if len(matched.Rows) != 1 || !matched.Rows[0].Complete {
+			m.reason = "native_correspondence_unavailable"
+			for _, row := range matched.Rows {
+				if slices.ContainsFunc(row.Frames, func(frame FrameMatch) bool { return frame.Reason == "no_compatible_picture_type" }) {
+					m.reason = "permitted_picture_type_unavailable"
+				}
+			}
 			continue
 		}
 		row := matched.Rows[0]
@@ -211,17 +223,22 @@ func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previou
 					(sources[i].PreferBFrames && sources[i].IntraOnly || !sources[i].PreferBFrames && allowedPicture(sources[i], frame.FrameType))
 			}
 		}
-		if (agreed || permitsFallback) && math.IsInf(bestScore, -1) {
-			bestScore = SceneScore(row, category)
+		if !agreed && !permitsFallback {
+			continue
 		}
+		rowQualified := category >= 0 && SceneQualified(row.Evidence, category)
+		if qualified && !rowQualified {
+			continue
+		}
+		if rowQualified && !qualified {
+			preferred, fallback, bestScore, qualified = nil, nil, math.Inf(-1), true
+		}
+		bestScore = max(bestScore, SceneScore(row, category))
 		if agreed && SceneScore(row, category) >= bestScore-.1 && (preferred == nil || PreferSceneRow(row, *preferred, category)) {
 			preferred = &row
 		}
-		if permitsFallback && fallback == nil {
+		if permitsFallback && (fallback == nil || SceneScore(row, category) > SceneScore(*fallback, category)) {
 			fallback = &row
-		}
-		if preferred != nil && fallback != nil && picturePreferenceRank(*preferred) == 0 {
-			break
 		}
 	}
 	chosen := fallback
@@ -229,8 +246,12 @@ func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previou
 		chosen = preferred
 	}
 	if chosen == nil {
+		if m.reason == "" {
+			m.reason = "native_intersection_unavailable"
+		}
 		return MatchResult{}, nil
 	}
+	m.reason = ""
 	result := MatchResult{Rows: []MatchedRow{*chosen}}
 	if SceneQualified(chosen.Evidence, 0) {
 		result.AchievedMotion = 1
@@ -241,7 +262,7 @@ func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previou
 	if SceneQualified(chosen.Evidence, 2) {
 		result.AchievedFlat = 1
 	}
-	if chosen == fallback && preferred != fallback {
+	if !MatchingPictureTypes(*chosen) {
 		result.Warnings = []string{"Some rows use mixed permitted picture types because comparable matching-type pictures were unavailable."}
 	}
 	return result, nil
@@ -304,6 +325,9 @@ func SceneScore(row MatchedRow, category int) float64 {
 // PreferSceneRow trades at most ten main-scene score points for type agreement.
 // Both rows must already have passed the unchanged native-picture checks.
 func PreferSceneRow(candidate, current MatchedRow, category int) bool {
+	if category >= 0 && SceneQualified(candidate.Evidence, category) != SceneQualified(current.Evidence, category) {
+		return SceneQualified(candidate.Evidence, category)
+	}
 	a, b := SceneScore(candidate, category), SceneScore(current, category)
 	if MatchingPictureTypes(candidate) != MatchingPictureTypes(current) {
 		if MatchingPictureTypes(candidate) {
