@@ -11,6 +11,7 @@ import (
 	"math"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -231,6 +232,14 @@ func TestComparisonAnalysisNativeStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	source.InputFingerprint = "synthetic-source"
+	t.Run("sparse output bypasses the ambient proxy", func(t *testing.T) {
+		t.Setenv("http_proxy", "http://127.0.0.1:0")
+		t.Setenv("no_proxy", "")
+		frames, err := s.AnalyzeComparisonSource(t.Context(), ComparisonSampleRequest{Source: source, DurationSeconds: 1})
+		if err != nil || !slices.ContainsFunc(frames, func(f ComparisonSample) bool { return f.AnalysisAnchor }) {
+			t.Fatalf("missing direct sparse output: %v", err)
+		}
+	})
 	transport := &comparisonRasterStream{
 		height:       288,
 		motionHeight: 144,

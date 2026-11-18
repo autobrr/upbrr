@@ -35,6 +35,10 @@ const ComparisonCaptionVersion = 5
 // ComparisonDiscCaptionVersion uses authored title-relative display positions.
 const ComparisonDiscCaptionVersion = 6
 
+// Normalizers can rescale the output clock to microseconds. Frame identities
+// and replay witnesses always retain the source PTS and timebase.
+const comparisonNormalizedClockTolerance = 1e-6
+
 // ComparisonSource describes one local video. Missing timing stays zero; callers
 // own source fingerprint verification and alignment with other inputs.
 type ComparisonSource struct {
@@ -585,9 +589,7 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 			return nil, errors.New("screenshots: normalized samples lack matching output frame identities")
 		}
 		for i, frame := range output {
-			// Some renderers rescale their output clock to microseconds. Retain
-			// the original PTS/timebase and allow only that rounding difference.
-			if math.Abs(frame.TimestampSeconds-observations[i].TimestampSeconds) > 1e-6 {
+			if math.Abs(frame.TimestampSeconds-observations[i].TimestampSeconds) > comparisonNormalizedClockTolerance {
 				return nil, errors.New("screenshots: normalization changed comparison frame identity")
 			}
 		}
@@ -741,6 +743,9 @@ func (s *Service) runComparisonSamples(ctx context.Context, executable string, a
 			"1",
 			"-content_type",
 			"application/octet-stream",
+			// Override the inherited proxy for this loopback output only.
+			"-http_proxy",
+			"",
 			comparisonSparseOutput,
 		)
 	} else {

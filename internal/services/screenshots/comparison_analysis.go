@@ -108,9 +108,7 @@ func analysisSamples(result CommandResult, request ComparisonSampleRequest, wind
 	evidence := comparisons.ClassifyScenes(s.measurements, renderer)
 	var samples []ComparisonSample
 	for i, o := range native {
-		nativeClock, nativeErr := comparisonClockKey(o)
-		outputClock, outputErr := comparisonClockKey(s.observations[i])
-		if nativeErr != nil || outputErr != nil || nativeClock != outputClock {
+		if math.Abs(o.TimestampSeconds-s.observations[i].TimestampSeconds) > comparisonNormalizedClockTolerance {
 			return nil, errors.New("comparison analysis normalization changed native identity")
 		}
 		o.decoder = result.comparisonBackend

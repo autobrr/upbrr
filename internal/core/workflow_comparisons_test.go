@@ -1222,9 +1222,10 @@ func TestComparisonManualMatchingSharesLetterboxedPictureArea(t *testing.T) {
 		t.Skip("native manual matching requires FFmpeg")
 	}
 	root := t.TempDir()
+	const movingPattern = "geq=lum='96+40*sin((X+Y+3*N+30*sin(N*0.05))*0.13)+24*cos((X-2*Y+2*N+60*cos(N*0.039))*0.11)':cb=128:cr=128"
 	paths := []string{filepath.Join(root, "Example.Letterboxed.mkv"), filepath.Join(root, "Example.Cropped.mkv"), filepath.Join(root, "Example.Other.Letterboxed.mkv")}
 	for i, path := range paths {
-		filter := "geq=lum='96+40*sin((X+Y+3*N)*0.13)+24*cos((X-2*Y+2*N)*0.11)':cb=128:cr=128"
+		filter := movingPattern
 		if i != 1 {
 			filter += ",pad=160:120:0:20:black"
 		}
@@ -1269,6 +1270,55 @@ func TestComparisonManualMatchingSharesLetterboxedPictureArea(t *testing.T) {
 			t.Fatal("manual geometry normalization lost the corresponding native moment")
 		}
 	}
+	t.Run("calibrated playback rate on an unanchored all-I secondary", func(t *testing.T) {
+		path := filepath.Join(root, "Example.Retimed.mkv")
+		cmd := exec.CommandContext(t.Context(), ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "nullsrc=size=160x80:rate=30:duration=10", "-vf", movingPattern, "-c:v", "ffv1", "-g", "1", path)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("author retimed secondary: %v %s", err, output)
+		}
+		source, err := renderer.InspectComparisonSource(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.InputFingerprint = "synthetic-retimed"
+		retained := cloneWorkflowMediaPrivateArtifacts(private)
+		retained.ComparisonAnalysisExecutable = "synthetic-executable"
+		secondary := workflowComparisonSource{Source: source, Fingerprint: source.InputFingerprint}
+		retained.ComparisonSources["other"] = secondary
+		selected, err := plan.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		selected.Sources[1].Fingerprint = source.InputFingerprint
+		selected.Sources[1].PreferBFrames = true
+		profile, err := b.comparisonCalibrationProfile(retained, selected, "other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The predicted center is past the secondary's end. Its search
+		// window still overlaps the independently verifiable row at 8.6s.
+		secondary.Calibration = &comparisonCalibration{
+			Profile:       profile,
+			Scale:         comparisons.PlaybackScale{Numerator: 5, Denominator: 6},
+			OffsetSeconds: 4,
+		}
+		retained.ComparisonSources["other"] = secondary
+		result, err := b.matchManualComparisonMoments(t.Context(), retained, selected, comparisons.MatchOptions{Count: 1, MainMoments: []float64{10.32}}, b.comparisonProgress(t.Context(), 2))
+		if err != nil || len(result.Rows) != 1 || len(result.Rows[0].Cells) != 2 {
+			t.Fatalf("retimed secondary did not match: %+v %v", result.Rows, err)
+		}
+		cell := result.Rows[0].Cells[1]
+		if cell.ObservedIdentity == nil || cell.TimestampSeconds == nil || math.Abs(*cell.TimestampSeconds-8.6) > 1e-6 || cell.PictureType != "I" {
+			t.Fatalf("wrong retimed secondary picture: %+v", cell)
+		}
+		// Now only the final 0.4 seconds overlap the search. The 8.6s
+		// picture cannot enter that search through the all-I evidence scan.
+		secondary.Calibration.OffsetSeconds = 7
+		_, err = b.matchManualComparisonMoments(t.Context(), retained, selected, comparisons.MatchOptions{Count: 1, MainMoments: []float64{10.32}}, b.comparisonProgress(t.Context(), 2))
+		if failure, ok := api.AsOperationFailure(err); !ok || failure.ComparisonReason != "manual_correspondence_inconclusive" {
+			t.Fatalf("correspondence escaped the search window: %v", err)
+		}
+	})
 	t.Run("both sources letterboxed without a retained prediction", func(t *testing.T) {
 		both := cloneWorkflowMediaPrivateArtifacts(private)
 		selected, err := plan.Clone()

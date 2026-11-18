@@ -198,18 +198,20 @@ func (b workflowMediaBuilder) matchManualComparisonMoments(
 	detector, canInspect := renderer.(interface {
 		DetectComparisonActivePicture(context.Context, screenshots.ComparisonSource, float64, float64, *screenshots.ComparisonDecodeBudget) (*screenshots.ComparisonCrop, error)
 	})
+	durationFor := func(id string) float64 {
+		source := retained.ComparisonSources[id].Source
+		if source.VideoDurationSeconds > 0 {
+			return source.VideoDurationSeconds
+		}
+		return source.DurationSeconds
+	}
 	inspectCrop := func(id string, center, radius float64) error {
 		if !canInspect {
 			return nil
 		}
-		source := retained.ComparisonSources[id].Source
-		duration := source.VideoDurationSeconds
-		if duration <= 0 {
-			duration = source.DurationSeconds
-		}
 		start := max(0, center-radius)
-		span := min(4, duration-start)
-		crop, err := detector.DetectComparisonActivePicture(ctx, source, start, span, budgets[id])
+		span := min(4, durationFor(id)-start)
+		crop, err := detector.DetectComparisonActivePicture(ctx, retained.ComparisonSources[id].Source, start, span, budgets[id])
 		if err != nil {
 			failure, optional := api.AsOperationFailure(err)
 			if !optional || failure.ComparisonReason != "dvd_random_access_initialization" && failure.ComparisonReason != "transport_initialization" {
@@ -222,11 +224,7 @@ func (b workflowMediaBuilder) matchManualComparisonMoments(
 	}
 	sample := func(id string, center, radius float64, crop *screenshots.ComparisonCrop, preferred string) ([]screenshots.ComparisonSample, error) {
 		source := retained.ComparisonSources[id].Source
-		duration := source.VideoDurationSeconds
-		if duration <= 0 {
-			duration = source.DurationSeconds
-		}
-		start, end := max(0, center-radius), min(duration, center+radius)
+		start, end := max(0, center-radius), min(durationFor(id), center+radius)
 		if end <= start || budgets[id].ConsumedMovieSeconds+end-start > budgets[id].MovieSecondsLimit {
 			return nil, screenshots.ErrComparisonFastInconclusive
 		}
@@ -314,14 +312,19 @@ func (b workflowMediaBuilder) matchManualComparisonMoments(
 				continue
 			}
 			center := guard.RelativeTimestampSeconds
+			duration := durationFor(source.ID)
+			scale := comparisons.PlaybackScale{Numerator: 1, Denominator: 1}
 			preferred := ""
 			knownNeighborhood := false
 			profile, err := b.comparisonCalibrationProfile(retained, plan, source.ID)
 			if err != nil {
 				return plan, err
 			}
-			if prediction, ok := retained.ComparisonSources[source.ID].Calibration.prediction(profile, retained.ComparisonSources[source.ID].Source); ok {
-				center, knownNeighborhood = prediction.Predict(center), true
+			secondary := retained.ComparisonSources[source.ID]
+			if prediction, ok := secondary.Calibration.prediction(profile, secondary.Source); ok {
+				center = prediction.Predict(center)
+				knownNeighborhood = center >= 0 && center < duration
+				scale = secondary.Calibration.Scale
 			}
 			for _, anchor := range plan.Anchors {
 				if anchor.SourceID == source.ID &&
@@ -354,15 +357,11 @@ func (b workflowMediaBuilder) matchManualComparisonMoments(
 			}
 			if len(columns[i].Anchors) == 0 {
 				discover := func(reference, target []screenshots.ComparisonSample) (comparisons.ConstantAlignment, string) {
-					alignment, reason := comparisons.DiscoverAlignment(comparisonSamples(reference), comparisonSamples(target))
-					if reason != "" {
-						return comparisons.DiscoverPlaybackAlignment(
-							comparisonSamples(reference),
-							comparisonSamples(target),
-							comparisons.PlaybackScale{Numerator: 1, Denominator: 1},
-						)
+					mainFrames, sourceFrames := comparisonSamples(reference), comparisonSamples(target)
+					if alignment, reason := comparisons.DiscoverAlignment(mainFrames, sourceFrames); reason == "" {
+						return alignment, ""
 					}
-					return alignment, reason
+					return comparisons.DiscoverPlaybackAlignment(mainFrames, sourceFrames, scale)
 				}
 				alignment, reason := discover(reference, target)
 				if reason != "" && !knownNeighborhood {
@@ -404,6 +403,24 @@ func (b workflowMediaBuilder) matchManualComparisonMoments(
 					)
 				}
 				alignments[source.ID] = alignment
+				if source.PreferBFrames && len(target) > 0 &&
+					!slices.ContainsFunc(target, func(f screenshots.ComparisonSample) bool { return f.PictureType != "I" }) {
+					at := alignment.Predict(guard.RelativeTimestampSeconds)
+					columns[i].IntraOnly = comparisonIntraOnlyRegion(target, at, duration)
+					if !columns[i].IntraOnly {
+						// The extra native frames establish picture policy only. Keep
+						// discovery and the chosen frame within the original window.
+						radius := min(9, duration) / 2
+						probeCenter := max(radius, min(at, duration-radius))
+						beforeProbe := retainedBytes
+						evidence, err := sample(source.ID, probeCenter, radius, activePictures[source.ID], preferred)
+						retainedBytes = beforeProbe
+						if err != nil && !errors.Is(err, screenshots.ErrComparisonFastInconclusive) {
+							return plan, err
+						}
+						columns[i].IntraOnly = comparisonIntraOnlyRegion(evidence, at, duration)
+					}
+				}
 			}
 			columns[i].Frames = comparisonSamples(target)
 			windows[source.ID] = target

@@ -435,10 +435,11 @@ func (s *Service) sampleDiscComparison(ctx context.Context, request ComparisonSa
 			var selected []ComparisonFrameObservation
 			position := 0
 			for _, frame := range output {
-				for position < len(observations) && observations[position].TimestampSeconds < frame.TimestampSeconds-1e-6 {
+				for position < len(observations) && observations[position].TimestampSeconds < frame.TimestampSeconds-comparisonNormalizedClockTolerance {
 					position++
 				}
-				if position >= len(observations) || math.Abs(observations[position].TimestampSeconds-frame.TimestampSeconds) > 1e-6 {
+				if position >= len(observations) ||
+					math.Abs(observations[position].TimestampSeconds-frame.TimestampSeconds) > comparisonNormalizedClockTolerance {
 					return nil, comparisonDiscFailure("normalization_changed_identity")
 				}
 				selected = append(selected, observations[position])

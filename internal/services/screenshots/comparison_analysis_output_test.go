@@ -118,6 +118,21 @@ func TestComparisonCompactOutputsJoinNativeClocksAndRejectIncompleteData(t *test
 			if err == nil && (len(stream.measurements) != 3 || stream.measurements[0].Sparse == nil || stream.measurements[1].Sparse == nil || stream.measurements[2].Time != .75) {
 				t.Fatal("independent output arrival changed native association")
 			}
+			if test.rational {
+				// Move the first native frame a third of a microsecond away
+				// from output zero, then beyond the rounding allowance.
+				diagnostic := strings.Replace(stderr, "time_base: 1/1000", "time_base: 1/3000000", 1)
+				request := ComparisonSampleRequest{analysis: stream, Source: ComparisonSource{InputFingerprint: "synthetic"}}
+				result.Stderr = []byte(strings.Replace(diagnostic, "pts: 0 ", "pts: 1 ", 1))
+				samples, err := analysisSamples(result, request, nil)
+				if err != nil || len(samples) != 3 || samples[0].Identity == nil || samples[0].Identity.PTS != 1 || samples[0].Identity.TimeBaseDenominator != 3000000 {
+					t.Fatalf("rounded output lost native identity: %v", err)
+				}
+				result.Stderr = []byte(strings.Replace(diagnostic, "pts: 0 ", "pts: 4 ", 1))
+				if _, err := analysisSamples(result, request, nil); err == nil {
+					t.Fatal("analysis accepted output beyond clock rounding tolerance")
+				}
+			}
 			select {
 			case <-stream.done:
 			default:
