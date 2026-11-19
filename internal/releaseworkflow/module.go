@@ -6953,7 +6953,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot:
 			selectedScreenshots++
-			if artifact.Purpose == api.ScreenshotPurposeFinal {
+			if artifact.Purpose == api.ScreenshotPurposeFinal && !artifact.SourceUnavailable {
 				selectedFinalScreenshots++
 			}
 		case api.MediaArtifactDVDMenu:

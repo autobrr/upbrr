@@ -4548,10 +4548,31 @@ func TestRefreshMutatedMediaStatusAcceptsLocalScreenshotsForLocalOnlyTrackers(t 
 	}
 	snapshot.ImageHostUploadSkipped = false
 	snapshot.Artifacts[1].Purpose = api.ScreenshotPurposeFinal
-	projections = append(projections, api.TrackerReleaseProjection{
+	snapshot.Artifacts[1].SourceUnavailable = true
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("missing local screenshot satisfied the minimum: %#v", snapshot)
+	}
+	hosted := api.MediaArtifact{
+		ID:       "hosted-screen",
+		Kind:     api.MediaArtifactHostedImage,
+		Purpose:  api.ScreenshotPurposeFinal,
+		Source:   string(snapshot.Artifacts[1].ID),
+		Selected: true,
+	}
+	hostedProjection := api.TrackerReleaseProjection{
 		TrackerID: "HOSTED",
 		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1},
-	})
+	}
+	snapshot.Artifacts = append(snapshot.Artifacts, hosted)
+	snapshot.HostAttempts = []api.HostedImageAttempt{{TrackerIDs: []api.TrackerID{"HOSTED"}, Results: []api.MediaArtifact{hosted}}}
+	refreshMutatedMediaStatus(&snapshot, []api.TrackerReleaseProjection{hostedProjection}, projections)
+	if snapshot.Status != api.StageStatusCompleted {
+		t.Fatalf("a usable hosted link was blocked by its missing local source: %#v", snapshot)
+	}
+	snapshot.Artifacts[1].SourceUnavailable = false
+	snapshot.HostAttempts = nil
+	projections = append(projections, hostedProjection)
 	refreshMutatedMediaStatus(&snapshot, projections, projections)
 	if snapshot.Status != api.StageStatusBlocked {
 		t.Fatalf("local-only selection waived another tracker's hosted minimum: %#v", snapshot)

@@ -513,6 +513,7 @@ func TestWorkflowMediaRestoreCompatibleRebindsRetainedSnapshotWithoutCacheLookup
 	for _, testCase := range []struct {
 		name                    string
 		usageScope              string
+		localScreenshotsOnly    bool
 		wantPreservedAttempts   int
 		wantSynthesizedAttempts int
 	}{
@@ -527,6 +528,13 @@ func TestWorkflowMediaRestoreCompatibleRebindsRetainedSnapshotWithoutCacheLookup
 			usageScope:            "tracker:ONE",
 			wantPreservedAttempts: 2,
 		},
+		{
+			name:                    "deleted local capture remains usable by hosted peers",
+			usageScope:              "global",
+			localScreenshotsOnly:    true,
+			wantPreservedAttempts:   1,
+			wantSynthesizedAttempts: 2,
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
@@ -534,12 +542,22 @@ func TestWorkflowMediaRestoreCompatibleRebindsRetainedSnapshotWithoutCacheLookup
 			link := private.HostedImages[hosted.ID]
 			link.UsageScope = testCase.usageScope
 			private.HostedImages[hosted.ID] = link
+			projections := projections
+			expectedArtifacts := slices.Clone(existing.Artifacts)
+			if testCase.localScreenshotsOnly {
+				projections.Projections = append(slices.Clone(projections.Projections), api.TrackerReleaseProjection{
+					TrackerID: "LOCAL",
+					Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1, LocalScreenshotsOnly: true},
+				})
+				expectedArtifacts[0].SourceUnavailable = true
+				expectedArtifacts[2].SourceUnavailable = true
+			}
 
 			rebound, reboundResource, restoreErr := builder.RestoreCompatible(ctx, release, projections, &existing, private, time.Now())
 			if restoreErr != nil {
 				t.Fatalf("rebind retained media: %v", restoreErr)
 			}
-			if !reflect.DeepEqual(rebound.Artifacts, existing.Artifacts) || rebound.Artifacts[2].Selected ||
+			if !reflect.DeepEqual(rebound.Artifacts, expectedArtifacts) || rebound.Artifacts[2].Selected ||
 				rebound.Artifacts[0].Order != 8 || rebound.Artifacts[2].Order != 1 {
 				t.Fatalf("rebind changed retained selection/order/artifacts: %#v", rebound.Artifacts)
 			}

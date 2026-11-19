@@ -580,8 +580,8 @@ type MediaArtifact struct {
 	SizeBytes        int64             `json:"sizeBytes,omitempty"`
 	Host             string            `json:"host,omitempty"`
 	URL              string            `json:"url,omitempty"`
-	// SourceUnavailable identifies a restored hosted link whose local image could
-	// not be verified. It remains removable without becoming an upload candidate.
+	// SourceUnavailable identifies missing local content on a restored screenshot
+	// or hosted link. Hosted links can still be reused without their local bytes.
 	SourceUnavailable bool `json:"sourceUnavailable,omitempty"`
 }
 

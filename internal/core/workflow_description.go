@@ -454,6 +454,7 @@ func resolveWorkflowExactMedia(
 	}
 	for _, item := range screenshots {
 		image := item.screenshot
+		image.SourceUnavailable = item.artifact.SourceUnavailable
 		exact.Screenshots = append(exact.Screenshots, image)
 	}
 	for _, item := range menus {

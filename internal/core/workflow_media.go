@@ -1380,6 +1380,11 @@ func (b workflowMediaBuilder) RestoreCompatible(
 		snapshot.RequirementsFingerprint = requirements
 		retained = cloneWorkflowMediaPrivateArtifacts(retained)
 		refreshMediaProcessing(&snapshot, retained)
+		if slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+			return projection.Artifacts.LocalScreenshotsOnly
+		}) {
+			refreshLocalScreenshotAvailability(&snapshot, retained)
+		}
 		if attempts, prepared := b.restoredHostedImageAttempts(ctx, release, snapshot, retained, projections.Projections); prepared {
 			snapshot.HostAttempts = slices.DeleteFunc(snapshot.HostAttempts, func(attempt api.HostedImageAttempt) bool {
 				return attempt.Status == api.StageStatusCompleted
@@ -3216,6 +3221,22 @@ func refreshMediaProcessing(snapshot *api.MediaArtifactSet, retained workflowMed
 		if artifact.Processing != nil {
 			artifact.Processing = verifiedScreenshotProcessing(retained.ArtifactImages[artifact.ID])
 		}
+	}
+}
+
+func refreshLocalScreenshotAvailability(snapshot *api.MediaArtifactSet, retained workflowMediaPrivateArtifacts) {
+	for index := range snapshot.Artifacts {
+		artifact := &snapshot.Artifacts[index]
+		if artifact.Kind != api.MediaArtifactScreenshot || artifact.Purpose != api.ScreenshotPurposeFinal {
+			continue
+		}
+		image, err := retained.imageForArtifact(*snapshot, artifact.ID)
+		if err != nil {
+			artifact.SourceUnavailable = true
+			continue
+		}
+		info, err := os.Stat(image.Path)
+		artifact.SourceUnavailable = err != nil || !info.Mode().IsRegular() || info.Size() == 0
 	}
 }
 

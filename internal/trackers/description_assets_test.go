@@ -2047,14 +2047,25 @@ func TestResolveDescriptionAssetsKeepsLocalCapturesAcrossMixedTrackerPreload(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	imagePath := filepath.Join(t.TempDir(), "screen.png")
+	root := t.TempDir()
+	imagePath := filepath.Join(root, "screen-1.png")
+	secondPath := filepath.Join(root, "screen-2.png")
+	missingPath := filepath.Join(root, "missing-screen.png")
 	const hostedURL = "https://img.example.invalid/screen.png"
 	meta := api.UploadSubject{
 		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv"),
 		ExactMedia: &api.ExactMediaAssets{
-			Screenshots: []api.ScreenshotImage{{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}},
+			Screenshots: []api.ScreenshotImage{
+				{
+					Path:              missingPath,
+					Purpose:           api.ScreenshotPurposeFinal,
+					SourceUnavailable: true,
+				},
+				{Path: imagePath, Purpose: api.ScreenshotPurposeFinal},
+				{Path: secondPath, Purpose: api.ScreenshotPurposeFinal},
+			},
 			ScreenshotUploads: []api.UploadedImageLink{{
-				ImagePath:  imagePath,
+				ImagePath:  missingPath,
 				Host:       "pixhost",
 				UsageScope: "tracker:HHD",
 				RawURL:     hostedURL,
@@ -2070,12 +2081,12 @@ func TestResolveDescriptionAssetsKeepsLocalCapturesAcrossMixedTrackerPreload(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if local.Description != repo.descriptionOverride || repo.overrideCalls != 1 || len(local.Screenshots) != 1 ||
-		local.Screenshots[0].Path != imagePath || screenshotURLKey(local.Screenshots[0]) != "" {
+	if local.Description != repo.descriptionOverride || repo.overrideCalls != 1 || len(local.Screenshots) != 2 ||
+		local.Screenshots[0].Path != imagePath || local.Screenshots[1].Path != secondPath {
 		t.Fatalf("local description assets = %#v", local)
 	}
 	hosted, err := resolveDescriptionAssets(t.Context(), "HHD", meta, repo, api.NopLogger{}, preloaded, registry)
-	if err != nil || len(hosted.Screenshots) != 1 || hosted.Screenshots[0].RawURL != hostedURL {
+	if err != nil || len(hosted.Screenshots) != 1 || hosted.Screenshots[0].RawURL != hostedURL || hosted.Screenshots[0].Path != missingPath {
 		t.Fatalf("hosted description assets = %#v, error = %v", hosted, err)
 	}
 }

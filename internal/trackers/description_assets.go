@@ -473,6 +473,9 @@ func localDescriptionMedia(exact *api.ExactMediaAssets) *api.ExactMediaAssets {
 		return nil
 	}
 	exact = exact.Clone()
+	exact.Screenshots = slices.DeleteFunc(exact.Screenshots, func(image api.ScreenshotImage) bool {
+		return image.SourceUnavailable
+	})
 	exact.ScreenshotUploads = nil
 	exact.DVDMenuUploads = nil
 	exact.AudioUploads = nil
