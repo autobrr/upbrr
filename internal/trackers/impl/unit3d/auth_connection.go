@@ -64,14 +64,20 @@ func (d *Definition) testConnection(ctx context.Context, input trackers.Connecti
 		_, hasNext := response.Links["next"]
 		_, hasPrev := response.Links["prev"]
 		linksValid := hasNext && hasPrev
-		for _, link := range response.Links {
-			if link != nil && !connectionPageLink(*link, endpoint) {
-				linksValid = false
+		metaPathValid := connectionPageLink(response.Meta.Path, endpoint)
+		for name, link := range response.Links {
+			if link == nil || connectionPageLink(*link, endpoint) {
+				continue
 			}
+			// Some cursor responses identify the collection in self and the filter in meta.path.
+			if name == "self" && metaPathValid && connectionPageLink(*link, strings.TrimSuffix(endpoint, "/filter")) {
+				continue
+			}
+			linksValid = false
 		}
 		self := response.Links["self"]
 		paginationValid = linksValid && (response.Meta.CurrentPage == nil || pageValid) &&
-			((pageValid && self != nil && connectionPageLink(*self, endpoint)) || connectionPageLink(response.Meta.Path, endpoint))
+			((pageValid && self != nil && connectionPageLink(*self, endpoint)) || metaPathValid)
 	}
 	if !paginationValid {
 		return connectiontest.UnexpectedResponse()

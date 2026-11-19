@@ -442,7 +442,7 @@ func TestSearchTorrentsWithEvidenceFollowsLinksAndIgnoresMeta(t *testing.T) {
 		switch r.URL.Query().Get("cursor") {
 		case "":
 			_, _ = w.Write([]byte(
-				`{"data":[{"id":1,"attributes":{"name":"Example.Release.2026.1080p.WEB-DL-GRP"}}],"links":{"next":"https://aither.example/api/torrents/filter?cursor=second"},"meta":{"current_page":99,"last_page":1,"total":999}}`,
+				`{"data":[{"id":1,"attributes":{"name":"Example.Release.2026.1080p.WEB-DL-GRP"}}],"links":{"self":"https://aither.example/api/torrents","next":"https://aither.example/api/torrents/filter?cursor=second"},"meta":{"current_page":99,"last_page":1,"total":999}}`,
 			))
 		case "second":
 			_, _ = w.Write([]byte(
