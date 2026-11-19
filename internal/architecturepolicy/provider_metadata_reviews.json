@@ -252,8 +252,8 @@
     "sha256": "6ed55541d2c3733d026f7929794576859886e92e3240edf76148ffa757fda99e"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildDescription": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "9d36eb71b8c179acbb74b60a4d858fb72586932d76b4c3d55d6198c39491bd9c"
+    "reason": "Read display layout from the existing cache without calling the legacy endpoint. Title and metadata selection follow the existing description helpers.",
+    "sha256": "809615baf69744aac489a8935cc835978d5e599a8afaed5d4802da8cbd912ace"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildProductionCompanies": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
@@ -272,12 +272,12 @@
     "sha256": "ef548baac570e012dc68169000ee63509250c93e718190107a62591d2ad1917d"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:buildASCSearchURL": {
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged.",
-    "sha256": "f830ae9440368026839c0f2df010fefebf460abe8b0a18d99bfd574cc6ca4040"
+    "reason": "Encodes the resolved query and page without selecting metadata or introducing fallbacks.",
+    "sha256": "c7021d6a3dede7db3607026b7581811e23f30205a0d67b8aaa895f69b1f21012"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:dupeSearcher.Search": {
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged. Operation-local logger binding leaves these selectors and search filters unchanged.",
-    "sha256": "9d980e208aca3b561e6a3a3050b96017f514e532b534bb7d14c9aba2bf8c8014"
+    "reason": "The migrated listing uses the resolved IMDb ID for non-anime and the existing effective title helper for anime. Manual title overrides and clears retain authority.",
+    "sha256": "493a4e9742cfa872bf44c63317ee9567295705335cb23b51f83d8a2acb1577f5"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:resolveASCTitle": {
     "reason": "Finalized/manual title precedence remains intact; missing titles never fall back to the local source path.",
@@ -332,8 +332,8 @@
     "sha256": "c31c114245d785d79ff5c2f0b1e48b2d51355ada74ac0dc51a183b6676834a0c"
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
-    "sha256": "e4d9601f70baf80257409a8cd5411ab2379e07199c21fa2aed624563f2492d8e"
+    "reason": "The site URL and session probe use the migrated origin. The release-name and metadata policies retain their existing selectors.",
+    "sha256": "2b779ccd68975a6c9b550fe793e65052ca8ab99c2177cd10c58c1defa95510e1"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks.",
@@ -364,8 +364,8 @@
     "sha256": "7876269547cf64d970a9a62c5bedff673618a9295caa690c96d314d3d9a05b99"
   },
   "internal/trackers/impl/standalone/asc/upload.go:prepareUploadState": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "070486d7f89d03140909ffaeb2a352b8d26af988cb0b8b033d1b2f2b1f4b2036"
+    "reason": "Blocks upload preparation on the migrated site. The dry-run payload retains the existing release-name and metadata selectors.",
+    "sha256": "782f949ba2b7ebb11e3a6ddf3c34488019b4a0ee3ce62e7d8f62bc471d628e3c"
   },
   "internal/trackers/impl/standalone/asc/validation.go:validatePayloadFields": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",

@@ -30,6 +30,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const uploadUnavailable = "upload is unavailable on the migrated ASC site"
+
 var ascIDPattern = regexp.MustCompile(`torrents-details\.php\?id=(\d+)`)
 
 type uploadState struct {
@@ -168,6 +170,9 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 }
 
 func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryRun bool) (uploadState, []*http.Cookie, error) {
+	if !dryRun {
+		return uploadState{}, nil, fmt.Errorf("trackers: %s", uploadUnavailable)
+	}
 	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
@@ -194,20 +199,11 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 		releaseName:   releaseName,
 		questionnaire: buildQuestionnaire(req.Meta),
 	}
-	if reason := authProblem(ctx, req.Runtime.DBPath); reason != "" {
-		state.blockedReason = reason
-	} else if reason := validatePayloadFields(req.Meta, fields); reason != "" {
-		state.blockedReason = reason
+	state.blockedReason = validatePayloadFields(req.Meta, fields)
+	if state.blockedReason == "" {
+		state.blockedReason = uploadUnavailable
 	}
-	if dryRun {
-		return state, nil, nil
-	}
-
-	cookies, _, err := LoadCookies(ctx, req.Runtime.DBPath)
-	if err != nil {
-		return uploadState{}, nil, fmt.Errorf("trackers: ASC load cookies: %w", err)
-	}
-	return state, cookies, nil
+	return state, nil, nil
 }
 
 func buildPayload(

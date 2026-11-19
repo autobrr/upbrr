@@ -15,11 +15,9 @@ import (
 // Profile returns ASC identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		ConnectionProbe: trackers.ConnectionProbe{
-			UnverifiedReason: "This ASC integration uses the legacy tracker host. A protected read matching that session contract has not been verified. No credentials were sent.",
-		},
+		ConnectionProbe:         trackers.ConnectionProbe{Test: testConnection, StoredCookies: true},
 		Name:                    "ASC",
-		BaseURL:                 baseURL,
+		BaseURL:                 siteURL,
 		DescriptionGroup:        "asc",
 		UploadContentMode:       trackers.UploadContentModeDescription,
 		LocalizedMetadataLocale: "pt-BR",

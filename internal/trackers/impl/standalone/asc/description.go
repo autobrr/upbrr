@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -18,11 +16,9 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/providerid"
-	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -219,7 +215,7 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	if assets.Override && strings.TrimSpace(assets.Description) != "" {
 		return strings.TrimSpace(assets.Description)
 	}
-	layout, _ := fetchLayout(ctx, cfg.MainSettings.DBPath, meta, layoutID)
+	layout, _ := readLayoutCache(cfg.MainSettings.DBPath, layoutID)
 	parts := []string{"[center]"}
 
 	for idx := 1; idx <= 3; idx++ {
@@ -395,53 +391,6 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	return strings.TrimSpace(strings.Join(filterEmpty(parts), "\n\n"))
 }
 
-func fetchLayout(ctx context.Context, dbPath string, meta api.UploadSubject, layoutID string) (layoutData, error) {
-	cached, err := readLayoutCache(dbPath, layoutID)
-	if err == nil {
-		return cached, nil
-	}
-	cookies, _, err := LoadCookies(ctx, dbPath)
-	if err != nil {
-		return layoutData{}, err
-	}
-	form := url.Values{
-		"imdb":   {metautil.FirstNonEmptyTrimmed(resolveIMDbIDText(meta), "tt0013442")},
-		"layout": {metautil.FirstNonEmptyTrimmed(strings.TrimSpace(layoutID), "2")},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/search.php", strings.NewReader(form.Encode()))
-	if err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC create layout request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", userAgent)
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
-	resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
-	if err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC fetch layout: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return layoutData{}, fmt.Errorf("layout fetch status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC read layout response: %w", err)
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout response: %s", redaction.RedactValue(err.Error(), nil))
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(payload["ASC"], &raw); err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout data: %s", redaction.RedactValue(err.Error(), nil))
-	}
-	layout := normalizeLayout(raw)
-	_ = writeLayoutCache(dbPath, layoutID, payload["ASC"])
-	return layout, nil
-}
-
 func normalizeLayout(raw map[string]any) layoutData {
 	layout := layoutData{Images: make(map[string]string)}
 	for key, value := range raw {
@@ -474,20 +423,6 @@ func readLayoutCache(dbPath string, layoutID string) (layoutData, error) {
 		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout cache: %w", err)
 	}
 	return normalizeLayout(raw), nil
-}
-
-func writeLayoutCache(dbPath string, layoutID string, payload []byte) error {
-	path := layoutCachePath(dbPath, layoutID)
-	if path == "" {
-		return errors.New("missing layout cache path")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("trackers: ASC create layout cache dir: %w", err)
-	}
-	if err := os.WriteFile(path, payload, 0o600); err != nil {
-		return fmt.Errorf("trackers: ASC write layout cache: %w", err)
-	}
-	return nil
 }
 
 func layoutCachePath(dbPath string, layoutID string) string {

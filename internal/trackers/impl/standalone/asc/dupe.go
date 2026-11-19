@@ -5,404 +5,110 @@ package asc
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
+	"regexp"
+	"strconv"
 	"strings"
-	"sync"
-
-	"golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const maxSearchPages = 5
+
+var episodeSuffix = regexp.MustCompile(`\s-\sS(\d{1,3})(?:E(\d{1,4}))?\s*$`)
+
 type dupeSearcher struct {
-	cfg    config.Config
-	http   *http.Client
-	logger api.Logger
+	cfg  config.Config
+	http *http.Client
 }
 
-// NewDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
 func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
-	cfg := deps.BoundConfig()
-	httpClient := deps.HTTPClient()
-	logger := deps.Logger()
-	_ = logger
-	return &dupeSearcher{
-		cfg:    cfg,
-		http:   httpClient,
-		logger: logger,
-	}
+	return &dupeSearcher{cfg: deps.BoundConfig(), http: deps.HTTPClient()}
 }
 
 func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
-	h.logger = logging.FromContext(ctx, h.logger)
-
 	if h.http == nil {
 		return dupe.Failed(dupe.FailureInternal, "ASC handler misconfigured: no HTTP client", nil)
 	}
-	if !meta.Anime && resolveASCIMDb(meta) == "" {
-		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing IMDb ID for ASC dupe search", nil)
-	}
-	if meta.Anime && resolveASCTitle(meta) == "" {
-		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for ASC anime dupe search", nil)
-	}
 
-	cookies, _, err := LoadCookies(ctx, h.cfg.MainSettings.DBPath)
+	query, scope := resolveASCIMDb(meta), dupe.WorkScopeProviderID
+	if meta.Anime {
+		query, scope = resolveASCTitle(meta), dupe.WorkScopeTitle
+	}
+	if query == "" {
+		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing IMDb ID or anime title for ASC dupe search", nil)
+	}
+	cookies, err := loadSessionCookies(ctx, h.cfg.MainSettings.DBPath)
 	if err != nil || len(cookies) == 0 {
-		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing valid ASC cookies", nil)
+		return dupe.NotRun(dupe.NotRunMissingCredentials, "import a current ASC session cookie", nil)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildASCSearchURL(meta), nil)
-	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "ASC request failed", fmt.Errorf("build ASC request: %w", err))
-	}
-	req.Header.Set("User-Agent", "upbrr")
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
-
-	resp, err := h.http.Do(req)
-	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "ASC request failed", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return dupe.Failed(dupe.FailureResponseStatus, "ASC search returned non-success status", nil)
-	}
-
-	doc, err := html.Parse(resp.Body)
-	if err != nil {
-		return dupe.Failed(dupe.FailureResponseParse, "ASC response parse failed", err)
-	}
-
+	evidence := dupe.SearchEvidence{WorkScope: scope, Scope: "broad_work_query"}
 	var entries []api.DupeEntry
-	var tasks []ascDetailTask
-	seen := make(map[string]struct{})
-	walkASCNodes(doc, &entries, &tasks, seen, resolveASCTitle(meta))
-
-	if len(tasks) > 0 {
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		sem := make(chan struct{}, 5)
-	taskLoop:
-		for _, t := range tasks {
-			select {
-			case <-ctx.Done():
-				break taskLoop
-			case sem <- struct{}{}:
+	seen := make(map[int]bool)
+	lastPage := 0
+	for page := 1; page <= maxSearchPages; page++ {
+		result, failure := readSearchPage(ctx, h.http, cookies, query, page)
+		switch failure.Code {
+		case "":
+		case "authentication_required":
+			return dupe.NotRun(dupe.NotRunMissingCredentials, failure.Message, nil)
+		case "unexpected_response":
+			return dupe.Failed(dupe.FailureResponseParse, failure.Message, nil)
+		default:
+			return dupe.Failed(dupe.FailureRequest, failure.Message, nil)
+		}
+		if page > 1 && result.LastPage != lastPage {
+			return dupe.Failed(dupe.FailureResponseParse, "ASC pagination changed during search", nil)
+		}
+		lastPage = result.LastPage
+		for _, row := range result.Rows {
+			if seen[row.ID] {
+				return dupe.Failed(dupe.FailureResponseParse, "ASC search repeated a torrent", nil)
 			}
-
-			wg.Add(1)
-			go func(t ascDetailTask) {
-				defer wg.Done()
-				defer func() { <-sem }()
-
-				name := "N/A"
-				reqFile, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://cliente.amigos-share.club/torrents-arquivos.php?id="+t.ID, nil)
-				if err != nil {
-					h.logger.Debugf("ASC filename request creation failed for ID %s: %v", t.ID, err)
-				} else {
-					reqFile.Header.Set("User-Agent", "upbrr")
-					for _, cookie := range cookies {
-						reqFile.AddCookie(cookie)
-					}
-					fileResp, err := h.http.Do(reqFile)
-					if err != nil {
-						h.logger.Debugf("ASC filename request failed for ID %s: %v", t.ID, err)
-					} else {
-						defer fileResp.Body.Close()
-						if fileResp.StatusCode < 200 || fileResp.StatusCode >= 300 {
-							h.logger.Debugf("ASC filename request returned non-success status %d for ID %s", fileResp.StatusCode, t.ID)
-						} else {
-							fileDoc, err := html.Parse(fileResp.Body)
-							if err != nil {
-								h.logger.Debugf("ASC filename parse failed for ID %s: %v", t.ID, err)
-							} else {
-								if parsedName := getASCFilenameFromFiles(fileDoc); parsedName != "" {
-									name = parsedName
-								} else {
-									h.logger.Debugf("ASC filename not found in response for ID %s", t.ID)
-								}
-							}
-						}
-					}
-				}
-
-				mu.Lock()
-				entries = append(entries, api.DupeEntry{
-					Name:     name,
-					ID:       t.ID,
-					Link:     t.Link,
-					SizeText: t.Size,
-				})
-				mu.Unlock()
-			}(t)
+			seen[row.ID] = true
+			entries = append(entries, row.entry())
 		}
-		wg.Wait()
-	}
-
-	if err := ctx.Err(); err != nil {
-		return dupe.Failed(dupe.FailureRequest, "ASC search canceled", err)
-	}
-	workScope := dupe.WorkScopeProviderID
-	if meta.Anime {
-		workScope = dupe.WorkScopeTitle
-	}
-	warnings := []string{"ASC search pagination completeness is not evidenced"}
-	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
-		WorkScope: workScope,
-		Pages:     1,
-		Scope:     "broad_work_query",
-		Warnings:  warnings,
-	})
-}
-
-func buildASCSearchURL(meta api.DuplicateSubject) string {
-	base := "https://cliente.amigos-share.club"
-	if meta.Anime {
-		return base + "/torrents-search.php?search=" + url.QueryEscape(resolveASCTitle(meta))
-	}
-	if strings.EqualFold(resolveASCCategory(meta), "TV") {
-		return base + "/busca-series.php?search=&imdb=" + url.QueryEscape(resolveASCIMDb(meta))
-	}
-	return base + "/busca-filmes.php?search=&imdb=" + url.QueryEscape(resolveASCIMDb(meta))
-}
-
-type ascDetailTask struct {
-	ID   string
-	Link string
-	Size string
-}
-
-func walkASCNodes(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDetailTask, seen map[string]struct{}, baseTitle string) {
-	if n.Type == html.ElementNode && strings.EqualFold(n.Data, "li") {
-		if ascHasClass(n, "list-group-item") && ascHasClass(n, "dark-gray") {
-			processASCListItem(n, entries, tasks, seen, baseTitle)
-			return
-		}
-	}
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		walkASCNodes(c, entries, tasks, seen, baseTitle)
-	}
-}
-
-func processASCListItem(n *html.Node, entries *[]api.DupeEntry, tasks *[]ascDetailTask, seen map[string]struct{}, baseTitle string) {
-	var detailsHref string
-	var sizeText string
-	var badges []string
-
-	var walk func(*html.Node)
-	walk = func(child *html.Node) {
-		if child.Type == html.ElementNode && strings.EqualFold(child.Data, "a") {
-			href := ascGetAttr(child, "href")
-			if strings.Contains(href, "torrents-details.php?id=") {
-				detailsHref = href
-			}
-		}
-		if child.Type == html.ElementNode && strings.EqualFold(child.Data, "span") {
-			if ascHasClass(child, "badge-info") {
-				txt := strings.ToUpper(ascGetText(child))
-				if strings.Contains(txt, "GB") || strings.Contains(txt, "MB") {
-					sizeText = strings.TrimSpace(ascGetText(child))
-				}
-			} else if ascHasClass(child, "badge") {
-				badges = append(badges, strings.TrimSpace(ascGetText(child)))
-			}
-		}
-		for c := child.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(n)
-
-	if detailsHref == "" {
-		return
-	}
-
-	id := parseASCTorrentID(detailsHref)
-	if id == "" {
-		return
-	}
-	if _, ok := seen[id]; ok {
-		return
-	}
-	seen[id] = struct{}{}
-
-	link := absolutizeASCLink(detailsHref)
-
-	discTypes := []string{"BD25", "BD50", "BD66", "BD100", "DVD5", "DVD9"}
-	isDisc := false
-	for _, b := range badges {
-		bUp := strings.ToUpper(b)
-		if ascContainsAny(bUp, discTypes) {
-			isDisc = true
+		evidence.Pages = page
+		if page == lastPage {
+			evidence.Complete = true
 			break
 		}
 	}
-
-	if isDisc {
-		year := "N/A"
-		resolution := "N/A"
-		diskType := "N/A"
-		videoCodec := "N/A"
-		audioCodec := "N/A"
-
-		codecTerms := []string{"MPEG-4", "AV1", "AVC", "H264", "H265", "HEVC", "MPEG-1", "MPEG-2", "VC-1", "VP6", "VP9"}
-		audioTerms := []string{"DTS", "AC3", "DDP", "E-AC-3", "TRUEHD", "ATMOS", "LPCM", "AAC", "FLAC"}
-		resTypes := []string{"4K", "2160P", "1080P", "720P", "480P"}
-
-		for _, b := range badges {
-			bUp := strings.ToUpper(b)
-			switch {
-			case len(bUp) == 4 && ascIsDigit(bUp):
-				year = bUp
-			case ascContainsAnyStrict(bUp, resTypes):
-				if bUp == "4K" {
-					resolution = "2160p"
-				} else {
-					resolution = bUp
-				}
-			case ascContainsAny(bUp, codecTerms):
-				videoCodec = strings.TrimSpace(b)
-			case ascContainsAny(bUp, audioTerms):
-				audioCodec = strings.TrimSpace(b)
-			case ascContainsAny(bUp, discTypes):
-				diskType = strings.TrimSpace(b)
-			}
-		}
-
-		name := fmt.Sprintf("%s %s %s %s %s %s", baseTitle, year, resolution, diskType, strings.ToUpper(videoCodec), strings.ToUpper(audioCodec))
-		*entries = append(*entries, api.DupeEntry{
-			Name:     strings.TrimSpace(name),
-			ID:       id,
-			Link:     link,
-			SizeText: sizeText,
-		})
-	} else {
-		*tasks = append(*tasks, ascDetailTask{
-			ID:   id,
-			Link: link,
-			Size: sizeText,
-		})
+	if !evidence.Complete {
+		evidence.Warnings = []string{"ASC search reached its page limit"}
 	}
+	return dupe.ResolvedWithSearch(entries, nil, evidence)
 }
 
-func ascContainsAnyStrict(s string, terms []string) bool {
-	return slices.Contains(terms, s)
+func buildASCSearchURL(query string, page int) string {
+	values := url.Values{"q": {query}}
+	if page > 1 {
+		values.Set("page", strconv.Itoa(page))
+	}
+	return siteURL + "/torrents?" + values.Encode()
 }
 
-func ascContainsAny(s string, terms []string) bool {
-	for _, t := range terms {
-		if strings.Contains(s, t) {
-			return true
-		}
+func (row searchRow) entry() api.DupeEntry {
+	id := strconv.Itoa(row.ID)
+	entry := api.DupeEntry{
+		ID:        id,
+		Name:      strings.TrimSpace(row.Name),
+		Link:      siteURL + "/torrents/" + id,
+		SizeBytes: row.Size,
+		SizeKnown: row.Size > 0,
+		Internal:  row.Internal,
 	}
-	return false
-}
-
-func ascIsDigit(s string) bool {
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
-		}
+	if match := episodeSuffix.FindStringSubmatch(row.Name); match != nil {
+		entry.Season, _ = strconv.Atoi(match[1])
+		entry.Episode, _ = strconv.Atoi(match[2])
+		entry.Pack = match[2] == ""
 	}
-	return true
-}
-
-func ascHasClass(n *html.Node, class string) bool {
-	for _, attr := range n.Attr {
-		if strings.EqualFold(attr.Key, "class") {
-			for c := range strings.FieldsSeq(attr.Val) {
-				if strings.EqualFold(c, class) {
-					return true
-				}
-			}
-			return false
-		}
-	}
-	return false
-}
-
-func ascGetAttr(n *html.Node, key string) string {
-	for _, attr := range n.Attr {
-		if strings.EqualFold(attr.Key, key) {
-			return strings.TrimSpace(attr.Val)
-		}
-	}
-	return ""
-}
-
-func ascGetText(n *html.Node) string {
-	var b strings.Builder
-	var walk func(*html.Node)
-	walk = func(child *html.Node) {
-		if child.Type == html.TextNode {
-			b.WriteString(child.Data)
-		}
-		for c := child.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(n)
-	return b.String()
-}
-
-func getASCFilenameFromFiles(n *html.Node) string {
-	var walk func(*html.Node) string
-	walk = func(child *html.Node) string {
-		if child.Type == html.ElementNode && strings.EqualFold(child.Data, "li") && ascHasClass(child, "list-group-item") {
-			for c := child.FirstChild; c != nil; c = c.NextSibling {
-				switch c.Type {
-				case html.TextNode:
-					txt := strings.TrimSpace(c.Data)
-					if txt != "" {
-						return txt
-					}
-				case html.ElementNode:
-					txt := strings.TrimSpace(ascGetText(c))
-					if txt != "" {
-						return txt
-					}
-				case html.ErrorNode, html.DocumentNode, html.CommentNode, html.DoctypeNode, html.RawNode:
-					// ignore
-				}
-			}
-		}
-		for c := child.FirstChild; c != nil; c = c.NextSibling {
-			if txt := walk(c); txt != "" {
-				return txt
-			}
-		}
-		return ""
-	}
-	return walk(n)
-}
-
-func parseASCTorrentID(href string) string {
-	parsed, err := url.Parse(href)
-	if err == nil {
-		if id := strings.TrimSpace(parsed.Query().Get("id")); id != "" {
-			return id
-		}
-	}
-	parts := strings.Split(href, "id=")
-	if len(parts) < 2 {
-		return ""
-	}
-	return strings.TrimSpace(strings.Split(parts[len(parts)-1], "&")[0])
-}
-
-func absolutizeASCLink(href string) string {
-	if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
-		return href
-	}
-	return "https://cliente.amigos-share.club/" + strings.TrimPrefix(href, "/")
+	return entry
 }
 
 func resolveASCIMDb(meta api.DuplicateSubject) string {
@@ -410,14 +116,6 @@ func resolveASCIMDb(meta api.DuplicateSubject) string {
 		return providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	}
 	return ""
-}
-
-func resolveASCCategory(meta api.DuplicateSubject) string {
-	category, err := meta.Identity.RequireCategory()
-	if err != nil {
-		return ""
-	}
-	return strings.ToUpper(string(category))
 }
 
 func resolveASCTitle(meta api.DuplicateSubject) string {
