@@ -137,30 +137,31 @@ func osFolder() string {
 }
 
 type captureRequest struct {
-	HDRFacts       api.HDRFacts
-	TimelineOffset float64
-	InspectFrame   bool
-	Playlist       string
-	InputPath      string
-	OutputPath     string
-	Timestamp      float64
-	FrameRate      float64
-	Resolution     string
-	UseLibplacebo  bool
-	ToneMap        bool
-	Algorithm      string
-	Desat          float64
-	Compression    int
-	FrameOverlay   bool
-	OverlaySize    int
-	FrameInfo      frameInfoResult
-	SourceWidth    int
-	SourceHeight   int
-	WidthScale     float64
-	HeightScale    float64
-	OutputWidth    int
-	OutputHeight   int
-	ResizeOnly     bool
+	HDRFacts         api.HDRFacts
+	TimelineOffset   float64
+	InspectFrame     bool
+	Playlist         string
+	InputPath        string
+	OutputPath       string
+	Timestamp        float64
+	FrameRate        float64
+	Resolution       string
+	UseLibplacebo    bool
+	ToneMap          bool
+	Algorithm        string
+	Desat            float64
+	Compression      int
+	FrameOverlay     bool
+	OverlaySize      int
+	FrameInfo        frameInfoResult
+	SourceWidth      int
+	SourceHeight     int
+	WidthScale       float64
+	HeightScale      float64
+	OutputWidth      int
+	OutputHeight     int
+	ResizeOnly       bool
+	ScreenshotSizing string
 }
 
 type frameInfoResult struct {
@@ -429,17 +430,33 @@ func buildFilterChain(req captureRequest, useLibplacebo bool) string {
 		filters = append(filters, "showinfo")
 	}
 
-	if scale := buildPARScaleFilter(req); scale != "" {
-		filters = append(filters, scale)
+	if req.ScreenshotSizing == "" {
+		if scale := buildPARScaleFilter(req); scale != "" {
+			filters = append(filters, scale)
+		}
 	}
 
 	filters = append(filters, toneMappingFilters(req, useLibplacebo)...)
 
 	filters = append(filters, "format=rgb24")
+	if req.ScreenshotSizing != "" {
+		// FFmpeg has already applied the display matrix. Normalize the decoded
+		// raster using its current pixel aspect ratio before fitting or cropping.
+		filters = append(filters, "scale=w='if(gt(sar,1),max(1,round(iw*sar)),iw)':h='if(gt(sar,0)*lt(sar,1),max(1,round(ih/sar)),ih)'", "setsar=1")
+	}
 	if req.OutputWidth > 0 && req.OutputHeight > 0 {
-		if req.ResizeOnly {
+		switch {
+		case req.ResizeOnly:
 			filters = append(filters, fmt.Sprintf("scale=%d:%d", req.OutputWidth, req.OutputHeight), "setsar=1")
-		} else {
+		case req.ScreenshotSizing == api.ComparisonSizingResize:
+			filters = append(filters, fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", req.OutputWidth, req.OutputHeight), "setsar=1")
+		case req.ScreenshotSizing == api.ComparisonSizingCrop:
+			filters = append(filters,
+				fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=increase", req.OutputWidth, req.OutputHeight),
+				fmt.Sprintf("crop=%d:%d", req.OutputWidth, req.OutputHeight),
+				"setsar=1",
+			)
+		default:
 			filters = append(filters,
 				fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", req.OutputWidth, req.OutputHeight),
 				fmt.Sprintf("pad=%d:%d:(ow-iw)/2:(oh-ih)/2", req.OutputWidth, req.OutputHeight),

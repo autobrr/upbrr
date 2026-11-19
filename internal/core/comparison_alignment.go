@@ -26,6 +26,13 @@ import (
 func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retained *workflowMediaPrivateArtifacts,
 	plan api.ComparisonPlan, options comparisons.MatchOptions, progress *comparisonProgress,
 ) (returned comparisons.MatchResult, returnedObservations map[string][]screenshots.ComparisonSample, accepted bool, returnedErr error) {
+	defer func() {
+		// Close an early, accepted result at the phase that owns it. Optional
+		// probe failures can still allow the current phase to continue.
+		if returnedErr == nil && accepted && progress.active {
+			progress.complete()
+		}
+	}()
 	lastReason := ""
 	noteInconclusive := func(reason string, column int) {
 		lastReason = reason
@@ -34,10 +41,6 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			phase = "alignment_eligibility"
 		}
 		progress.logger.Infof("comparisons: phase=%s decision=inconclusive reason=%s column=%d", phase, reason, column)
-		if progress.active {
-			progress.complete()
-		}
-		progress.stages = progress.stage + 5
 	}
 	samplingFailure := func(err error, column int) error {
 		if errors.Is(err, screenshots.ErrComparisonNormalizationUnavailable) {
@@ -99,12 +102,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		}
 		retained.ComparisonAnalysisExecutable = identity
 	}
-	progress.stages = progress.stage + 4
-	if plan.Preferences.ScanMode != "deep" {
-		// Quick Scan can append discovery windows while matching.
-		// Reserve their phases now so capture retains the final progress unit.
-		progress.stages += comparisonQuickWindows
-	}
+	progress.stages = 4
 	type windowKey struct {
 		source          int
 		start, duration float64
@@ -294,7 +292,9 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 				// freshly observed neighborhood must authorize the actual row.
 				frames = nil
 				from, to := max(0, start-1), min(durations[main], end+1)
-				updated, err := discoveryDecode(ctx, from, to-from, false)
+				workCtx, finishWindow := progress.decodeWindow(ctx, main+1, matchedRows+1)
+				updated, err := discoveryDecode(workCtx, from, to-from, false)
+				finishWindow(err)
 				if err != nil {
 					return nil, err
 				}
@@ -316,7 +316,23 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 		if end-start > 64+1e-9 {
 			return nil, screenshots.ErrComparisonFastInconclusive
 		}
-		id := fmt.Sprintf("%d/%d", source, item)
+		row := 0
+		if matchingRows {
+			row = matchedRows + 1
+		}
+		report := progress.window(source+1, row)
+		updateWindow := func(status api.StageStatus, fraction int) {
+			report(status, fraction)
+			if !matchingRows {
+				progress.update(item*1000+fraction, total*1000)
+			}
+		}
+		decoding := false
+		defer func() {
+			if decoding {
+				report(api.StageStatusSkipped, 0)
+			}
+		}()
 		var frames []screenshots.ComparisonSample
 		missing := []api.ComparisonTimeInterval{{Start: start, End: end}}
 		if source == main && quickInventory != nil {
@@ -379,6 +395,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			unseen += gap.End - gap.Start
 		}
 		stats.reused += max(0, windowDuration-unseen)
+		var decodedSeconds float64
 		for _, gap := range missing {
 			if budgets[source].ConsumedMovieSeconds+gap.End-gap.Start > budgets[source].MovieSecondsLimit {
 				return nil, screenshots.ErrComparisonFastInconclusive
@@ -402,11 +419,12 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 					NormalizeSDR:     true,
 					MatchAspectRatio: matchAspect,
 				}
-				workIndex, workTotal := item, total
-				if matchingRows {
-					workIndex, workTotal = min(matchedRows, options.Count-1)*len(plan.Sources)+source, options.Count*len(plan.Sources)
-				}
-				workCtx := progress.child(ctx, workIndex, workTotal, id, "comparison_window", fmt.Sprintf("Column %d", source+1))
+				workCtx := progress.child(ctx, func(completed int) {
+					fraction := (decodedSeconds + chunkDuration*float64(completed)/1000) / unseen
+					updateWindow(api.StageStatusRunning, min(999, int(fraction*1000)))
+				})
+				decoding = true
+				updateWindow(api.StageStatusRunning, min(999, int(1000*decodedSeconds/unseen)))
 				started := time.Now()
 				decoded, err := renderer.SampleComparisonSource(workCtx, request)
 				stats.wall += time.Since(started)
@@ -438,6 +456,7 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 				}
 				frames = append(frames, decoded...)
 				chunkStart += chunkDuration
+				decodedSeconds += chunkDuration
 			}
 		}
 		frames, orderErr := orderedComparisonSamples(frames)
@@ -448,11 +467,8 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			return nil, err
 		}
 		cache[key] = frames
-		workIndex, workTotal := item, total
-		if matchingRows {
-			workIndex, workTotal = min(matchedRows, options.Count-1)*len(plan.Sources)+source, options.Count*len(plan.Sources)
-		}
-		progress.item(workIndex, workTotal, id, "comparison_window", fmt.Sprintf("Column %d", source+1), api.StageStatusCompleted, 1000)
+		decoding = false
+		updateWindow(api.StageStatusCompleted, 1000)
 		item++
 		return frames, nil
 	}
@@ -858,14 +874,13 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			observations[id] = append(observations[id], decoded...)
 		}
 		progress.item(
-			len(result.Rows)-1,
-			options.Count,
 			strconv.Itoa(len(result.Rows)),
 			"comparison_row",
 			fmt.Sprintf("Row %d", len(result.Rows)),
 			api.StageStatusCompleted,
 			1000,
 		)
+		progress.update(len(result.Rows), options.Count)
 	}
 	// Calibration rasters are no longer needed once their checked predictors exist.
 	clear(cache)
@@ -910,8 +925,10 @@ func (b workflowMediaBuilder) tryAlignedComparisons(ctx context.Context, retaine
 			returned, returnedObservations, accepted = result, observations, true
 		}
 	}()
+	attemptLimit := options.Count * 30
 search:
-	for attempt := 0; attempt < options.Count*30 && len(result.Rows) < options.Count; attempt++ {
+	for attempt := 0; attempt < attemptLimit && len(result.Rows) < options.Count; attempt++ {
+		progress.update(attempt, attemptLimit)
 		clear(cache)
 		retainedBytes, analysisBytes = 0, 0
 		for _, decoded := range observations {
@@ -1001,6 +1018,7 @@ search:
 				inventory = expanded
 				quickInventory = expanded
 				result.Analysis = &inventory.Summary
+				progress.begin("alignment_rows", options.Count*len(plan.Sources))
 				if advanced {
 					part := quick.parts[len(quick.parts)-1]
 					candidateBytes += comparisonInventoryIndexBytes(part) + 1024
@@ -1019,7 +1037,6 @@ search:
 							candidateBytes += size
 						}
 					}
-					progress.begin("alignment_rows", options.Count*len(plan.Sources))
 					continue
 				}
 			}
@@ -1090,7 +1107,9 @@ search:
 				retained.ComparisonInventory, result.Analysis = inventory, &inventory.Summary
 				reference, err = scoreComparisonSection(ctx, inventory, quickAnchor, quick.seen,
 					func(workCtx context.Context, start, seconds float64) ([]screenshots.ComparisonSample, error) {
+						workCtx, finishWindow := progress.decodeWindow(workCtx, main+1, matchedRows+1)
 						frames, err := discoveryDecode(workCtx, start, seconds, false)
+						finishWindow(err)
 						analysisBytes += int64(len(frames)) * 4096
 						return frames, err
 					})
@@ -1292,7 +1311,6 @@ search:
 		}
 	}
 	progress.complete()
-	progress.stages = progress.stage + 1
 	progress.logger.Infof("comparisons: phase=alignment_rows decision=bounded_local rows=%d sources=%d", len(result.Rows), len(plan.Sources))
 	return result, observations, true, nil
 }

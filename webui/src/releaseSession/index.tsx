@@ -101,6 +101,7 @@ const comparisonPreviewRendering = (
     source.toneMap,
     plan?.mainSourceId || "",
     "main-canvas-v1",
+    plan?.screenshotSizing || "fit",
     plan?.preferences.scanMode || "fast",
     plan?.preferences.selectionWindow,
     plan?.resizeLargerOnly || false,

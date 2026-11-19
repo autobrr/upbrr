@@ -36,16 +36,9 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 			add("", source.ID, "Each source column needs a unique nonempty identity.")
 		}
 		sources[source.ID] = source
-		if strings.TrimSpace(source.Label) == "" {
-			add("", source.ID, "Choose a label for this source column.")
-		}
-		if strings.ContainsAny(html.UnescapeString(source.Label), ",[]\r\n") {
-			add("", source.ID, "Use a single-line source label without commas or BBCode brackets.")
-		}
-		if source.Overlay && (len(source.Label) > 80 || strings.IndexFunc(source.Label, func(r rune) bool {
-			return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune(" ._-", r)
-		}) >= 0) {
-			add("", source.ID, "Overlay labels support up to 80 ASCII letters, digits, spaces and ._-; change the column label.")
+		if message := SourceLabelProblem(source.Label, source.Overlay); message != "" {
+			add("", source.ID, message)
+			problems[len(problems)-1].Code = "source_label"
 		}
 		if !plan.Imported && !source.Imported && !source.Overlay {
 			add("", source.ID, "Video comparison overlays are required; apply the setup and recapture before review.")
@@ -122,6 +115,7 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 	}
 	if activeRows == 0 {
 		add("", "", "Retain at least one complete comparison row.")
+		problems[len(problems)-1].Code = "no_active_rows"
 	}
 	if _, _, err := SceneCounts(plan.Preferences, plan.Preferences.Count); err != nil {
 		add("", "", err.Error())
@@ -134,6 +128,22 @@ func Validate(plan api.ComparisonPlan) []api.ComparisonProblem {
 		}
 	}
 	return problems
+}
+
+// SourceLabelProblem returns the correction required for a column label.
+func SourceLabelProblem(label string, overlay bool) string {
+	if strings.TrimSpace(label) == "" {
+		return "Choose a label for this source column."
+	}
+	if overlay && (len(label) > 80 || strings.IndexFunc(label, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune(" ._-", r)
+	}) >= 0) {
+		return "Use up to 80 ASCII letters, digits, spaces, periods, underscores or hyphens for the column label."
+	}
+	if strings.ContainsAny(html.UnescapeString(label), ",[]\r\n") {
+		return "Use a single-line source label without commas or BBCode brackets."
+	}
+	return ""
 }
 
 // SceneCounts resolves explicit row targets or legacy percentages for the

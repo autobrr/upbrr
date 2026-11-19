@@ -392,6 +392,7 @@ export type ComparisonPlan = Readonly<{
   reuseMainScreenshots: boolean;
   rows: readonly ComparisonRow[];
   sceneMix?: ComparisonSceneMix | null;
+  screenshotSizing?: string;
   sizeReferenceSourceId?: string;
   sources: readonly ComparisonSource[];
   warnings?: readonly string[];
@@ -409,6 +410,7 @@ export type ComparisonPreferences = Readonly<{
 }>;
 
 export type ComparisonProblem = Readonly<{
+  code?: string;
   message: string;
   rowId?: string;
   sourceId?: string;

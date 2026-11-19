@@ -106,8 +106,14 @@ func (b workflowMediaBuilder) comparisonSceneProfile(retained workflowMediaPriva
 		MatchAspect                             float64
 		Policy                                  string
 		Normalization                           screenshots.ComparisonAnalysisRenderer
-	}{comparisons.SceneProfile, plan.Preferences.ScanMode, source.Fingerprint, plan.MainSourceID, retained.ComparisonAnalysisExecutable, source.Source, comparisonMatchAspect(retained, plan), screenshots.ComparisonAnalysisPolicyVersion, normalization})
+	}{comparisons.SceneProfile, plan.Preferences.ScanMode, source.Fingerprint, plan.MainSourceID, retained.ComparisonAnalysisExecutable, comparisonMatchFacts(source.Source), comparisonMatchAspect(retained, plan), screenshots.ComparisonAnalysisPolicyVersion, normalization})
 	return string(profile), err
+}
+
+func comparisonMatchFacts(source screenshots.ComparisonSource) screenshots.ComparisonSource {
+	source.ScreenshotWidth, source.ScreenshotHeight = 0, 0
+	source.ScreenshotMatrix = false
+	return source
 }
 
 func comparisonMatchAspect(retained workflowMediaPrivateArtifacts, plan api.ComparisonPlan) float64 {
@@ -436,6 +442,8 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 		plan.Preferences.ScanMode == "deep" {
 		reused := comparisonInventoryForSelection(old, window, excluded)
 		if err := ensureComparisonInventoryIndex(ctx, reused, owner); err == nil {
+			progress.begin("main_discovery", 0)
+			progress.complete()
 			retained.ComparisonInventory = reused
 			progress.logger.Infof("comparisons: phase=main_discovery decision=reused mode=deep covered_seconds=%.3f", old.Summary.CoveredSeconds)
 			return reused, nil
@@ -550,7 +558,18 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 		seconds := region.end - region.start
 		ref.Summary.RequestedSeconds += seconds
 		started := time.Now()
-		frames, err := decode(ctx, region.start, seconds, deep)
+		workCtx := api.WithWorkflowProgressReporter(ctx, func(update api.WorkflowProgressUpdate) {
+			if expanding {
+				return
+			}
+			fraction := float64(update.Completed) / float64(max(1, update.Total))
+			if deep {
+				progress.update(int(1000*(region.payloadStart+fraction*(region.payloadEnd-region.payloadStart))/duration), 1000)
+			} else {
+				progress.update(1000*index+int(1000*fraction), 1000*total)
+			}
+		})
+		frames, err := decode(workCtx, region.start, seconds, deep)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, screenshots.ErrComparisonFastInconclusive) ||
 				errors.Is(err, screenshots.ErrComparisonNormalizationUnavailable) {
@@ -666,7 +685,7 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 			payloadStart = region.payloadEnd
 			payloadSeconds = comparisonSampleChunkSeconds(payloadSeconds, region.payloadEnd-region.payloadStart, time.Since(started))
 			progress.update(int(1000*payloadStart/duration), 1000)
-		} else {
+		} else if !expanding {
 			progress.update(index+1, total)
 		}
 		if len(ref.Summary.Reasons) > 0 {
@@ -714,7 +733,12 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 			}
 		}
 	}
-	progress.complete()
+	if expanding {
+		// Extra Quick discovery is part of row matching's work allowance.
+		progress.finishPhase()
+	} else {
+		progress.complete()
+	}
 	// Requested work counts overlaps; coverage counts each visited interval once.
 	if err := encoder.flush(); errors.Is(err, errComparisonInventoryFull) {
 		ref.Summary.Reasons = append(ref.Summary.Reasons, "inventory_limit")

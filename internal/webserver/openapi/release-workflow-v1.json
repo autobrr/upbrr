@@ -1630,6 +1630,9 @@
               }
             ]
           },
+          "screenshotSizing": {
+            "type": "string"
+          },
           "sizeReferenceSourceId": {
             "type": "string"
           },
@@ -1714,6 +1717,9 @@
       "ComparisonProblem": {
         "type": "object",
         "properties": {
+          "code": {
+            "type": "string"
+          },
           "message": {
             "type": "string"
           },

@@ -65,6 +65,10 @@ type ComparisonSource struct {
 	Height               int
 	WidthScale           float64
 	HeightScale          float64
+	ScreenshotWidth      int  `json:",omitempty"`
+	ScreenshotHeight     int  `json:",omitempty"`
+	ScreenshotTurn       bool `json:",omitempty"`
+	ScreenshotMatrix     bool `json:",omitempty"`
 	HDRFacts             api.HDRFacts
 }
 
@@ -83,6 +87,17 @@ func (s ComparisonSource) DisplaySize() (int, int) {
 		height = roundToEven(float64(height) * heightScale)
 	}
 	return width, height
+}
+
+// ScreenshotDisplaySize includes the file's display transform for sizing modes.
+func (s ComparisonSource) ScreenshotDisplaySize() (int, int) {
+	if s.ScreenshotWidth > 0 && s.ScreenshotHeight > 0 {
+		return s.ScreenshotWidth, s.ScreenshotHeight
+	}
+	if s.Input != nil && s.SARNumerator > 0 && s.SARDenominator > 0 {
+		return screenshotRasterSize(s.Width, s.Height, s.SARNumerator, s.SARDenominator)
+	}
+	return s.DisplaySize()
 }
 
 // ComparisonFrameObservation identifies the decoded picture in the source clock.
@@ -127,12 +142,48 @@ type ComparisonCaptureRequest struct {
 	ShowResolution bool
 	// ToneMap overrides the ordinary screenshot setting; nil inherits it.
 	ToneMap *bool
-	// OutputWidth/OutputHeight select a square-pixel fit-and-pad canvas. Both
-	// zero retain the source size; both must be positive when scaling is enabled.
+	// OutputWidth/OutputHeight bound the canvas or the proportional fit.
+	// Both zero retain the source size.
 	OutputWidth  int
 	OutputHeight int
 	// ResizeOnly uses the caller's aspect-preserving dimensions without padding.
 	ResizeOnly bool
+	// ScreenshotSizing selects geometry based on the oriented decoder raster.
+	ScreenshotSizing string
+}
+
+// ValidOutputSize checks the decoded result against the requested geometry.
+func (r ComparisonCaptureRequest) ValidOutputSize(frame ComparisonFrame) bool {
+	width, height := r.OutputWidth, r.OutputHeight
+	switch r.ScreenshotSizing {
+	case api.ComparisonSizingResize:
+		return frame.Width > 0 && frame.Height > 0 && frame.Width <= width && frame.Height <= height &&
+			(frame.Width == width || frame.Height == height)
+	case api.ComparisonSizingSource:
+		width, height = frame.displaySize()
+	default:
+		if width == 0 && height == 0 {
+			width, height = r.Source.DisplaySize()
+		}
+	}
+	return width > 0 && height > 0 && frame.Width == width && frame.Height == height
+}
+
+func (frame ComparisonFrameObservation) displaySize() (int, int) {
+	return screenshotRasterSize(frame.Width, frame.Height, frame.SARNumerator, frame.SARDenominator)
+}
+
+func screenshotRasterSize(width, height int, sarNumerator, sarDenominator int64) (int, int) {
+	if sarNumerator > 0 && sarDenominator > 0 {
+		sar := float64(sarNumerator) / float64(sarDenominator)
+		switch {
+		case sar > 1:
+			width = max(1, int(math.Round(float64(width)*sar)))
+		case sar < 1:
+			height = max(1, int(math.Round(float64(height)/sar)))
+		}
+	}
+	return width, height
 }
 
 // ComparisonFrame retains a PNG and its observed identity without persisting or
@@ -285,7 +336,7 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 		outputLimit: 64 << 10,
 		retain:      ComparisonRetentionLimit(16 << 10),
 	}).Run(ctx, executable, []string{
-		"-hide_banner", "-loglevel", "info", "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
+		"-hide_banner", "-loglevel", "info", "-noautorotate", "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn",
 		// Older FFmpeg versions can feed several pictures through a filter before
 		// the output frame limit takes effect. Bound provenance at the filter too.
 		"-frames:v", "1", "-vf", "trim=end_frame=1,showinfo=checksum=0", "-f", "null", "-",
@@ -312,11 +363,17 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 	var nativeColour string
 	var nativeChroma string
 	var sarNumerator, sarDenominator int64
+	var screenshotWidth, screenshotHeight int
+	screenshotTurn := comparisonQuarterTurn(probe.Stderr)
 	if observed, observationErr := comparisonObservations(probe.Stderr); observationErr == nil && len(observed) == 1 {
 		nativeFormat, interlace = observed[0].PixelFormat, observed[0].Interlace
 		nativeColour = observed[0].Colour
 		nativeChroma = observed[0].ChromaLocation
 		sarNumerator, sarDenominator = observed[0].SARNumerator, observed[0].SARDenominator
+		screenshotWidth, screenshotHeight = observed[0].displaySize()
+		if screenshotTurn {
+			screenshotWidth, screenshotHeight = screenshotHeight, screenshotWidth
+		}
 	}
 	var rateNumerator, rateDenominator int64
 	if rate := comparisonFrameRate.FindSubmatch(probe.Stderr); len(rate) == 3 {
@@ -356,6 +413,10 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 		Height:               height,
 		WidthScale:           widthScale,
 		HeightScale:          heightScale,
+		ScreenshotWidth:      screenshotWidth,
+		ScreenshotHeight:     screenshotHeight,
+		ScreenshotTurn:       screenshotTurn,
+		ScreenshotMatrix:     comparisonDisplayMatrix.Match(probe.Stderr),
 		HDRFacts:             mediafacts.HDRFromMediaInfoDocument(mediafacts.MediaInfoDocument(doc)),
 	}, nil
 }
@@ -463,6 +524,7 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		seek:           request.TimestampSeconds,
 		label:          request.OverlayLabel,
 		showResolution: request.ShowResolution,
+		sizing:         request.ScreenshotSizing,
 		width:          request.OutputWidth,
 		height:         request.OutputHeight,
 		overlaySize:    s.cfg.ScreenshotHandling.OverlayTextSize,
@@ -479,22 +541,23 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		toneMap = *request.ToneMap
 	}
 	frame, err := renderFrame(ctx, runner, executable, captureRequest{
-		InputPath:     path,
-		Timestamp:     request.TimestampSeconds,
-		InspectFrame:  true,
-		HDRFacts:      request.Source.HDRFacts,
-		SourceWidth:   request.Source.Width,
-		SourceHeight:  request.Source.Height,
-		WidthScale:    request.Source.WidthScale,
-		HeightScale:   request.Source.HeightScale,
-		ToneMap:       toneMap && request.Source.HDRFacts.SupportsToneMapping(),
-		UseLibplacebo: s.cfg.ScreenshotHandling.UseLibplacebo,
-		Algorithm:     s.cfg.ScreenshotHandling.TonemapAlgorithm,
-		Desat:         s.cfg.ScreenshotHandling.Desat,
-		Compression:   s.cfg.ScreenshotHandling.FFmpegCompression,
-		OutputWidth:   request.OutputWidth,
-		OutputHeight:  request.OutputHeight,
-		ResizeOnly:    request.ResizeOnly,
+		InputPath:        path,
+		Timestamp:        request.TimestampSeconds,
+		InspectFrame:     true,
+		HDRFacts:         request.Source.HDRFacts,
+		SourceWidth:      request.Source.Width,
+		SourceHeight:     request.Source.Height,
+		WidthScale:       request.Source.WidthScale,
+		HeightScale:      request.Source.HeightScale,
+		ToneMap:          toneMap && request.Source.HDRFacts.SupportsToneMapping(),
+		UseLibplacebo:    s.cfg.ScreenshotHandling.UseLibplacebo,
+		Algorithm:        s.cfg.ScreenshotHandling.TonemapAlgorithm,
+		Desat:            s.cfg.ScreenshotHandling.Desat,
+		Compression:      s.cfg.ScreenshotHandling.FFmpegCompression,
+		OutputWidth:      request.OutputWidth,
+		OutputHeight:     request.OutputHeight,
+		ResizeOnly:       request.ResizeOnly,
+		ScreenshotSizing: request.ScreenshotSizing,
 	}, logging.FromContext(ctx, s.logger))
 	if input != nil {
 		if inputErr := input.failure(); inputErr != nil {
@@ -508,7 +571,11 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 		return ComparisonFrame{}, errors.New("screenshots: comparison decoded frame identity unavailable")
 	}
 	runner.observed.RelativeTimestampSeconds = runner.observed.TimestampSeconds - request.Source.StartTimeSeconds
-	if err := bindFileObservation(request.Source, runner.observed); err != nil {
+	expectedSource := request.Source
+	if runner.displayTurn {
+		expectedSource.Width, expectedSource.Height = expectedSource.Height, expectedSource.Width
+	}
+	if err := bindFileObservation(expectedSource, runner.observed, false); err != nil {
 		return ComparisonFrame{}, err
 	}
 	runner.observed.Replay = request.Replay
@@ -516,17 +583,18 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 	if err != nil {
 		return ComparisonFrame{}, fmt.Errorf("screenshots: decode comparison PNG: %w", err)
 	}
-	if request.OutputWidth > 0 && (geometry.Width != request.OutputWidth || geometry.Height != request.OutputHeight) {
-		return ComparisonFrame{}, errors.New("screenshots: comparison renderer did not produce the selected frame size")
-	}
-	return ComparisonFrame{
+	captured = ComparisonFrame{
 		ComparisonFrameObservation: *runner.observed,
 		RequestedTimestampSeconds:  request.TimestampSeconds,
 		ImageBytes:                 frame.Payload,
 		Processing:                 frame.Processing,
 		Width:                      geometry.Width,
 		Height:                     geometry.Height,
-	}, nil
+	}
+	if (request.OutputWidth > 0 || request.ScreenshotSizing == api.ComparisonSizingSource) && !request.ValidOutputSize(captured) {
+		return ComparisonFrame{}, errors.New("screenshots: comparison renderer did not produce the selected frame size")
+	}
+	return captured, nil
 }
 
 // SampleComparisonSource decodes a bounded window without image recovery or
@@ -585,9 +653,14 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 		duration: duration,
 	})
 	args := []string{
-		"-hide_banner", "-loglevel", "info", "-threads", "4", "-filter_threads", "4", "-copyts", "-ss", strconv.FormatFloat(seek, 'f', 9, 64), "-i", path,
-		"-map", "0:V:0", "-an", "-sn", "-dn",
+		"-hide_banner", "-loglevel", "info", "-threads", "4", "-filter_threads", "4", "-copyts", "-ss", strconv.FormatFloat(seek, 'f', 9, 64),
 	}
+	if !request.NormalizeSDR {
+		// Identity-only seeks use the coded raster. Visual matching uses the
+		// same display transform as its crop detector.
+		args = append(args, "-noautorotate")
+	}
+	args = append(args, "-i", path, "-map", "0:V:0", "-an", "-sn", "-dn")
 	if input.server != nil {
 		args = comparisonFileCommand(args)
 	}
@@ -1069,11 +1142,13 @@ type comparisonRunner struct {
 	seek           float64
 	label          string
 	showResolution bool
+	sizing         string
 	overlaySize    int
 	overlayHeight  int
 	width, height  int
 	observed       *ComparisonFrameObservation
 	changed        bool
+	displayTurn    bool
 }
 
 func (r *comparisonRunner) Run(ctx context.Context, executable string, args []string, dir string) (CommandResult, error) {
@@ -1096,12 +1171,17 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 			if r.expected != nil {
 				window := r.expected.File
 				start := window.InputStart + window.Start
+				selection := fmt.Sprintf("eq(n,%d)*eq(pts,%d)", window.Slot, r.expected.Identity.PTS)
+				if r.sizing != "" && window.PacketPosition != nil {
+					// Autorotation can reset the filter index without changing the
+					// native clock. Replay still checks the original packet address.
+					selection = fmt.Sprintf("eq(pts,%d)", r.expected.Identity.PTS)
+				}
 				filter = fmt.Sprintf(
-					"trim=start=%.9f:end=%.9f,select='eq(n,%d)*eq(pts,%d)',",
+					"trim=start=%.9f:end=%.9f,select='%s',",
 					start,
 					start+window.Duration,
-					window.Slot,
-					r.expected.Identity.PTS,
+					selection,
 				) + filter
 			}
 			args[i+1] = filter
@@ -1126,7 +1206,8 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 		labelFrame = &ComparisonFrameObservation{PictureType: disc.replay.PictureType, TimestampSeconds: float64(disc.replay.DecoderPTS) / 90000}
 	}
 	filterIndex := slices.Index(args, "-vf") + 1
-	boundLabel := r.label != "" && labelFrame != nil
+	// Decoder-sized outputs need their actual dimensions before captioning.
+	boundLabel := r.label != "" && labelFrame != nil && r.sizing == ""
 	if boundLabel {
 		width, height := r.width, r.height
 		if width == 0 {
@@ -1156,10 +1237,10 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 	if err != nil || result.ExitCode != 0 || r.label == "" {
 		return result, err
 	}
+	if labelFrame != nil && (r.observed == nil || r.observed.PictureType != labelFrame.PictureType) {
+		return result, comparisonDiscFailure("changed_picture_type")
+	}
 	if boundLabel {
-		if r.observed == nil || r.observed.PictureType != labelFrame.PictureType {
-			return result, comparisonDiscFailure("changed_picture_type")
-		}
 		match := comparisonBlackReport.FindSubmatch(result.Stderr)
 		if len(match) != 2 {
 			return result, errors.New("comparison caption lacks underlying picture verification")
@@ -1199,6 +1280,7 @@ func (r *comparisonRunner) Run(ctx context.Context, executable string, args []st
 			"error",
 			"-f",
 			"image2pipe",
+			"-noautorotate",
 			"-i",
 			"pipe:0",
 			"-frames:v",
@@ -1238,6 +1320,9 @@ func (r *comparisonRunner) captionFilters(observed ComparisonFrameObservation, w
 	}
 	if r.showResolution {
 		sourceWidth, sourceHeight := r.source.DisplaySize()
+		if r.sizing != "" {
+			sourceWidth, sourceHeight = observed.displaySize()
+		}
 		resolution := fmt.Sprintf("Resolution\\: %d x %d", sourceWidth, sourceHeight)
 		if sourceWidth != width || sourceHeight != height {
 			resolution += fmt.Sprintf(" -> %d x %d", width, height)
@@ -1248,7 +1333,11 @@ func (r *comparisonRunner) captionFilters(observed ComparisonFrameObservation, w
 		lines = append(lines, "Source\\: "+hdrOverlaySourceLabel(r.source.HDRFacts)+" - Tonemapped")
 	}
 	lines = append(lines, r.label)
-	return strings.Join(overlayTextFilters(lines, r.overlaySize, r.overlayHeight), ",")
+	overlayHeight := r.overlayHeight
+	if r.sizing != "" {
+		overlayHeight = height
+	}
+	return strings.Join(overlayTextFilters(lines, r.overlaySize, overlayHeight), ",")
 }
 
 // comparisonDisplayCounters uses the ordinary screenshot's zero-based nominal
@@ -1296,7 +1385,7 @@ func (r *comparisonRunner) run(ctx context.Context, executable string, args []st
 	var result CommandResult
 	var runErr error
 	if _, authored := r.runner.(exactDiscCaptureRunner); !authored && r.service != nil {
-		result, runErr = r.service.runComparisonCaptureDecoder(ctx, r.runner, executable, args, dir, r.source, "capture-file")
+		result, runErr = r.service.runComparisonCaptureDecoder(ctx, r.runner, executable, args, dir, r.source, "capture-file", r.sizing != "")
 	} else {
 		result, runErr = r.runner.Run(ctx, executable, args, dir)
 	}
@@ -1316,6 +1405,7 @@ func (r *comparisonRunner) run(ctx context.Context, executable string, args []st
 		return result, errors.New("screenshots: comparison renderer changed decoded frame identity")
 	}
 	r.observed = &observed[0]
+	r.displayTurn = r.sizing != "" && (r.source.ScreenshotTurn || comparisonQuarterTurn(result.Stderr))
 	if r.expected != nil &&
 		(r.observed.PTS != r.expected.Identity.PTS || r.observed.TimeBaseNumerator != r.expected.Identity.TimeBaseNumerator || r.observed.TimeBaseDenominator != r.expected.Identity.TimeBaseDenominator) {
 		return result, comparisonDiscFailure("replay_picture_changed")
@@ -1327,7 +1417,12 @@ func (r *comparisonRunner) run(ctx context.Context, executable string, args []st
 	return result, runErr
 }
 
-func validateComparisonNativeFacts(source ComparisonSource, observation ComparisonFrameObservation) error {
+func validateComparisonNativeFacts(source ComparisonSource, observation ComparisonFrameObservation, allowDisplayTurn bool) error {
+	if allowDisplayTurn && observation.Width == source.Height && observation.Height == source.Width &&
+		(observation.Width != source.Width || observation.SARNumerator != source.SARNumerator || observation.SARDenominator != source.SARDenominator) {
+		observation.Width, observation.Height = observation.Height, observation.Width
+		observation.SARNumerator, observation.SARDenominator = observation.SARDenominator, observation.SARNumerator
+	}
 	if source.NativePixelFormat != "" &&
 		(observation.PixelFormat != source.NativePixelFormat || observation.Width != source.Width || observation.Height != source.Height) {
 		return comparisonDiscFailure("changing_format")
@@ -1342,8 +1437,22 @@ func validateComparisonNativeFacts(source ComparisonSource, observation Comparis
 	return nil
 }
 
-func bindFileObservation(source ComparisonSource, observation *ComparisonFrameObservation) error {
-	if source.NativePixelFormat != "" && (observation.Width != source.Width || observation.Height != source.Height) {
+var comparisonDisplayMatrix = regexp.MustCompile(
+	`(?im)^[ \t]*(?:\[[^\r\n]+\][ \t]*)?(?:side data - 3x3 )?display ?matrix: rotation of (-?[0-9]+(?:\.[0-9]+)?) degrees`,
+)
+
+func comparisonQuarterTurn(diagnostics []byte) bool {
+	matrix := comparisonDisplayMatrix.FindSubmatch(diagnostics)
+	if matrix == nil {
+		return false
+	}
+	degrees, err := strconv.ParseFloat(string(matrix[1]), 64)
+	return err == nil && math.Abs(math.Mod(math.Abs(degrees), 180)-90) < 1
+}
+
+func bindFileObservation(source ComparisonSource, observation *ComparisonFrameObservation, displayTurn bool) error {
+	swapped := displayTurn && observation.Width == source.Height && observation.Height == source.Width
+	if source.NativePixelFormat != "" && !swapped && (observation.Width != source.Width || observation.Height != source.Height) {
 		return comparisonDiscFailure("changing_geometry")
 	}
 	if source.InputFingerprint == "" {
@@ -1422,10 +1531,11 @@ func bindComparisonSequence(
 			continue
 		}
 		frame.RelativeTimestampSeconds = frame.TimestampSeconds - request.Source.StartTimeSeconds
-		if err := validateComparisonNativeFacts(request.Source, *frame); err != nil {
+		displayTurn := request.NormalizeSDR && request.Source.ScreenshotTurn
+		if err := validateComparisonNativeFacts(request.Source, *frame, displayTurn); err != nil {
 			return err
 		}
-		if err := bindFileObservation(request.Source, frame); err != nil {
+		if err := bindFileObservation(request.Source, frame, displayTurn); err != nil {
 			return err
 		}
 		if frame.Identity != nil {

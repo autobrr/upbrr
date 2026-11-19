@@ -71,7 +71,7 @@ func (b workflowMediaBuilder) comparisonCalibrationProfile(retained workflowMedi
 	}{
 		"native-predictor-v2", comparisons.SceneProfile,
 		plan.MainSourceID, id, main.Fingerprint, source.Fingerprint, retained.ComparisonAnalysisExecutable,
-		main.Source, source.Source, comparisonMatchAspect(retained, plan),
+		comparisonMatchFacts(main.Source), comparisonMatchFacts(source.Source), comparisonMatchAspect(retained, plan),
 		screenshots.ComparisonAnalysisPolicyVersion, mainNormalizer, sourceNormalizer,
 	})
 	return string(profile), err

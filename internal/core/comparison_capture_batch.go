@@ -170,11 +170,7 @@ func validateComparisonCapture(job comparisonCaptureJob, frame screenshots.Compa
 	if err != nil || geometry.Width != frame.Width || geometry.Height != frame.Height {
 		return errors.New("comparison capture has invalid image geometry")
 	}
-	w, h := job.request.Source.DisplaySize()
-	if job.request.OutputWidth > 0 && job.request.OutputHeight > 0 {
-		w, h = job.request.OutputWidth, job.request.OutputHeight
-	}
-	if frame.Width != w || frame.Height != h {
+	if !job.request.ValidOutputSize(frame) {
 		return errors.New("comparison capture changed the requested image geometry")
 	}
 	return nil

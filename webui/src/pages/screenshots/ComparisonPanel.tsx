@@ -133,6 +133,23 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
         (count) => Number.isInteger(count) && count >= 0 && count <= preferences.count,
       ));
   const sourceOrder = new Map(draft.sources.map((source, index) => [source.id, index]));
+  const labelProblems = new Map<string, string>();
+  for (const source of draft.imported ? [] : draft.sources) {
+    if (!source.label.trim())
+      labelProblems.set(source.id, "Choose a label for this source column.");
+    else if (source.label.length > 80 || /[^A-Za-z0-9 ._-]/u.test(source.label))
+      labelProblems.set(
+        source.id,
+        "Use up to 80 ASCII letters, digits, spaces, periods, underscores or hyphens for the column label.",
+      );
+  }
+  const validSetup = validScenes && labelProblems.size === 0;
+  const problems = (view.plan?.problems ?? []).filter(
+    (problem) =>
+      problem.code !== "no_active_rows" &&
+      problem.message !== "Retain at least one complete comparison row." &&
+      (problem.code !== "source_label" || draft.imported),
+  );
   const change = (next: ComparisonPlan) =>
     setDraft({
       ...next,
@@ -180,7 +197,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
     });
   };
   const submit = async (action: "configure" | "match" | "capture", plan = draft) => {
-    if (action !== "configure" && pendingFrames) return false;
+    if (!validSetup || (action !== "configure" && pendingFrames)) return false;
     const applied = await facet.edit({
       action,
       plan: {
@@ -409,7 +426,11 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           type, position, column label and processing. Unverified frame numbers remain unknown.
         </FieldHelp>
       </div>
-      {view.error && <p role="alert">{view.error}</p>}
+      {view.error && (
+        <p className="font-bold text-destructive-text" role="alert">
+          {view.error}
+        </p>
+      )}
       {view.blockedReason && <p role="status">{view.blockedReason}</p>}
       {!enabled ? (
         <div className="flex flex-wrap gap-2">
@@ -475,9 +496,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
               <Select
                 value={draft.mainSourceId}
                 disabled={!draft.imported}
-                aria-describedby={
-                  view.plan?.problems?.length ? "comparison-corrections" : undefined
-                }
+                aria-describedby={problems.length ? "comparison-corrections" : undefined}
                 onChange={(event) => change({ ...draft, mainSourceId: event.target.value })}
               >
                 <option value="">Choose the main-input column</option>
@@ -497,7 +516,6 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
             </label>
             {!draft.imported && (
               <>
-                <p>Every image fits the main input display size, with black padding when needed.</p>
                 <div className="grid w-64 max-w-full gap-1">
                   <div className="flex items-center gap-1">
                     <label htmlFor="comparison-scan-mode">Scene discovery</label>
@@ -642,13 +660,40 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
               </>
             )}
           </div>
+          {!draft.imported && (
+            <details className="rounded-lg border border-border p-3 text-sm">
+              <summary className="cursor-pointer rounded font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                Advanced settings
+              </summary>
+              <label className="mt-3 grid w-64 max-w-full gap-1">
+                Screenshot sizing
+                <Select
+                  value={draft.screenshotSizing || "fit"}
+                  onChange={(event) =>
+                    change({
+                      ...draft,
+                      screenshotSizing:
+                        event.target.value === "fit" ? undefined : event.target.value,
+                    })
+                  }
+                >
+                  <option value="fit">Fit main size with black padding</option>
+                  <option value="resize">Resize to fit without padding</option>
+                  <option value="crop">Resize and center-crop to fill main size</option>
+                  <option value="source">Keep each source's display size</option>
+                </Select>
+              </label>
+            </details>
+          )}
           {!validScenes && (
-            <p role="alert">
+            <p className="font-bold text-destructive-text" role="alert">
               Scene targets must be whole counts between zero and the number of rows.
             </p>
           )}
           <div className="grid items-start gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))]">
             {draft.sources.map((source, index) => {
+              const labelProblem = labelProblems.get(source.id);
+              const labelProblemID = `comparison-column-label-${index}`;
               const preview = view.previews[source.id];
               const capabilities =
                 source.capabilities ??
@@ -674,12 +719,11 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   className="grid min-w-0 content-start gap-2 rounded-lg border border-border p-3"
                   key={source.id}
                   aria-invalid={
-                    view.plan?.problems?.some(
-                      (problem) => problem.sourceId === source.id && !problem.rowId,
-                    ) || undefined
+                    problems.some((problem) => problem.sourceId === source.id && !problem.rowId) ||
+                    undefined
                   }
                   aria-describedby={
-                    view.plan?.problems?.some((problem) => problem.sourceId === source.id)
+                    problems.some((problem) => problem.sourceId === source.id)
                       ? "comparison-corrections"
                       : undefined
                   }
@@ -692,6 +736,8 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                       <span className="sr-only">Column label</span>
                       <input
                         className={`${inputClass} w-full`}
+                        aria-invalid={Boolean(labelProblem) || undefined}
+                        aria-describedby={labelProblem ? labelProblemID : undefined}
                         value={source.label}
                         onChange={(event) => sourceChange(source.id, { label: event.target.value })}
                       />
@@ -721,6 +767,15 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                       ×
                     </Button>
                   </div>
+                  {labelProblem && (
+                    <p
+                      className="text-sm font-bold text-destructive-text"
+                      id={labelProblemID}
+                      role="alert"
+                    >
+                      {labelProblem}
+                    </p>
+                  )}
                   {!source.imported && (
                     <>
                       {source.id !== draft.mainSourceId && (
@@ -771,44 +826,46 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                             Discover titles and playlists
                           </Button>
                           {discoveries[source.id] && (
-                            <fieldset className="grid max-h-48 gap-1 overflow-y-auto text-sm">
+                            <fieldset className="min-w-0 text-sm">
                               <legend>Programme · {source.label}</legend>
                               {discoveries[source.id]!.candidates.length ? (
-                                <ProgrammeCandidates
-                                  name={`comparison-programme-${source.id}`}
-                                  disabled={blocked}
-                                  selected={
-                                    programmes[source.id]
-                                      ? [programmes[source.id]!.candidateId]
-                                      : []
-                                  }
-                                  candidates={discoveries[source.id]!.candidates.map(
-                                    (candidate) => ({
-                                      ...candidate,
-                                      description: `${candidate.durationSeconds.toFixed(1)} seconds`,
-                                      limitation: candidate.supported
-                                        ? undefined
-                                        : candidate.limitation || "Unavailable for comparisons",
-                                    }),
-                                  )}
-                                  onChoose={(id) => {
-                                    clearFrameSelections(source.id);
-                                    const discovery = discoveries[source.id]!;
-                                    const candidate = discovery.candidates.find(
-                                      (entry) => entry.id === id,
-                                    )!;
-                                    setProgrammes((previous) => ({
-                                      ...previous,
-                                      [source.id]: {
-                                        kind: candidate.kind,
-                                        discId: candidate.discId,
-                                        candidateId: candidate.id,
-                                        discoveryFingerprint: discovery.fingerprint,
-                                        angle: 1,
-                                      },
-                                    }));
-                                  }}
-                                />
+                                <div className="max-h-60 overflow-y-auto">
+                                  <ProgrammeCandidates
+                                    name={`comparison-programme-${source.id}`}
+                                    disabled={blocked}
+                                    selected={
+                                      programmes[source.id]
+                                        ? [programmes[source.id]!.candidateId]
+                                        : []
+                                    }
+                                    candidates={discoveries[source.id]!.candidates.map(
+                                      (candidate) => ({
+                                        ...candidate,
+                                        description: `${candidate.durationSeconds.toFixed(1)} seconds`,
+                                        limitation: candidate.supported
+                                          ? undefined
+                                          : candidate.limitation || "Unavailable for comparisons",
+                                      }),
+                                    )}
+                                    onChoose={(id) => {
+                                      clearFrameSelections(source.id);
+                                      const discovery = discoveries[source.id]!;
+                                      const candidate = discovery.candidates.find(
+                                        (entry) => entry.id === id,
+                                      )!;
+                                      setProgrammes((previous) => ({
+                                        ...previous,
+                                        [source.id]: {
+                                          kind: candidate.kind,
+                                          discId: candidate.discId,
+                                          candidateId: candidate.id,
+                                          discoveryFingerprint: discovery.fingerprint,
+                                          angle: 1,
+                                        },
+                                      }));
+                                    }}
+                                  />
+                                </div>
                               ) : (
                                 <p role="status">
                                   No titles or playlists found. Choose an extracted disc folder.
@@ -1080,13 +1137,13 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
           )}
 
           <div className="flex flex-wrap gap-2">
-            <Button disabled={!validScenes} onClick={() => void submit("configure")}>
+            <Button disabled={!validSetup} onClick={() => void submit("configure")}>
               Apply comparison setup
             </Button>
             {!draft.imported && (
               <>
                 <Button
-                  disabled={!validScenes || draft.sources.length < 2 || pendingFrames}
+                  disabled={!validSetup || draft.sources.length < 2 || pendingFrames}
                   onClick={() => void submit("match")}
                 >
                   Find matching scenes
@@ -1099,7 +1156,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   Add manual row from timeline positions
                 </Button>
                 <Button
-                  disabled={!validScenes || !draft.rows.length || pendingFrames}
+                  disabled={!validSetup || !draft.rows.length || pendingFrames}
                   onClick={() => void submit("capture")}
                 >
                   Capture comparison rows
@@ -1158,17 +1215,19 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
               {warning}
             </p>
           ))}
-          {Boolean(view.plan?.problems?.length) && (
+          {problems.length > 0 && (
             <ul
               id="comparison-corrections"
               aria-label="Comparison corrections"
-              className="list-disc pl-5"
+              className="list-disc pl-5 font-bold text-destructive-text"
               aria-live="polite"
             >
-              {view.plan!.problems!.map((problem, index) => (
+              {problems.map((problem, index) => (
                 <li key={index}>
-                  {problem.rowId ? `Row ${problem.rowId}: ` : ""}
-                  {problem.sourceId ? `Column ${problem.sourceId}: ` : ""}
+                  {problem.rowId ? `Row ${problem.rowId}. ` : ""}
+                  {problem.sourceId && sourceOrder.has(problem.sourceId)
+                    ? `Column ${sourceOrder.get(problem.sourceId)! + 1}. `
+                    : ""}
                   {problem.message}
                 </li>
               ))}
@@ -1182,7 +1241,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                 className="grid min-w-0 gap-2 rounded border border-border p-3"
                 aria-label={`Comparison row ${row.id}`}
                 aria-describedby={
-                  view.plan?.problems?.some((problem) => problem.rowId === row.id)
+                  problems.some((problem) => problem.rowId === row.id)
                     ? "comparison-corrections"
                     : undefined
                 }
@@ -1208,7 +1267,7 @@ export default function ComparisonPanel({ facet, setLightboxImage, setLightboxAl
                   </label>
                   {!draft.imported && (
                     <Button
-                      disabled={pendingFrames}
+                      disabled={!validSetup || pendingFrames}
                       onClick={() =>
                         void submit("capture", {
                           ...draft,

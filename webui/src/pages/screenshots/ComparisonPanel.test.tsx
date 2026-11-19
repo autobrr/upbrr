@@ -301,6 +301,32 @@ it("converts saved scene percentages into fixed row targets and rejects invalid 
   });
 });
 
+it("blocks matching and capturing until the column label is corrected", () => {
+  const plan = comparisonPlan(false);
+  const facet = comparisonFacet({
+    ...plan,
+    problems: [{ message: "Retain at least one complete comparison row." }],
+  });
+  render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  expect(
+    screen.queryByText("Retain at least one complete comparison row."),
+  ).not.toBeInTheDocument();
+  const column = screen.getByRole("group", { name: "Encode · column 2" });
+  const label = within(column).getByRole("textbox", { name: "Column label" });
+  fireEvent.change(label, { target: { value: "Encode [HDR]" } });
+  expect(label).toBeInvalid();
+  expect(screen.getByRole("alert")).toHaveTextContent(/up to 80 ASCII/);
+  const match = screen.getByRole("button", { name: "Find matching scenes" });
+  const capture = screen.getByRole("button", { name: "Capture comparison rows" });
+  expect(match).toBeDisabled();
+  expect(capture).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Recapture row 1" })).toBeDisabled();
+  fireEvent.change(label, { target: { value: "Encode HDR" } });
+  expect(label).toBeValid();
+  expect(match).toBeEnabled();
+  expect(capture).toBeEnabled();
+});
+
 it("returns to the entry actions after removing an unapplied setup", async () => {
   const facet = comparisonFacet(null);
   vi.mocked(facet.edit).mockResolvedValueOnce(false);

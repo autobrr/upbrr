@@ -279,14 +279,21 @@ func (s *Service) runComparisonCaptureDecoder(
 	dir string,
 	source ComparisonSource,
 	surface string,
+	displayGeometry bool,
 ) (CommandResult, error) {
 	filterIndex := slices.Index(args, "-vf")
 	useLibplacebo := filterIndex >= 0 && strings.Contains(args[filterIndex+1], "libplacebo=")
-	decoders, err := comparisonDecoders(ctx, runner, executable, source, useLibplacebo)
+	decoders, err := comparisonDecoders(ctx, runner, executable, source, useLibplacebo || displayGeometry && source.ScreenshotMatrix)
 	if err != nil {
 		return CommandResult{}, err
 	}
 	result, err := s.runComparisonDecode(ctx, runner, executable, args, dir, decoders, nil)
+	if err == nil && result.ExitCode == 0 && displayGeometry && result.comparisonBackend != comparisonSoftwareDecoder &&
+		comparisonDisplayMatrix.Match(result.Stderr) {
+		// Hardware frames can carry the rotation through to output metadata.
+		// Software decoding applies the display matrix before geometry filters.
+		result, err = s.runComparisonDecode(ctx, runner, executable, args, dir, nil, nil)
+	}
 	if err == nil {
 		logging.FromContext(ctx, s.logger).Debugf("comparisons: phase=capture_decode decoder=%s surface=%s", result.comparisonBackend, surface)
 	}

@@ -10,6 +10,7 @@ import { expect, type Locator, type Page, type Response } from "@playwright/test
 import type {
   ActiveInputSnapshot,
   ContinueReleaseWorkflowRequest,
+  ComparisonSourceDiscovery,
   ReleaseWorkflowCurrent,
   FramePreview,
 } from "../src/api/generated/release-workflow";
@@ -90,6 +91,38 @@ test("embedded comparisons inherit screenshot tone mapping for HDR and keep five
       await comparison.getByRole("button", { name: "Add comparison video" }).click();
       await comparison.getByLabel(`Video path for Source ${index}`, { exact: true }).fill(sdr);
     }
+    const second = comparison.getByRole("group", { name: "Source 2 · column 2", exact: true });
+    const sourceType = second.getByLabel("Source type for Source 2");
+    const discovery: ComparisonSourceDiscovery = {
+      sourceId: "column-2",
+      fingerprint: "synthetic-disc-discovery",
+      candidates: Array.from({ length: 10 }, (_, i) => ({
+        id: `playlist-${i + 1}`,
+        label: `Playlist ${i + 1}`,
+        discId: "disc-1",
+        discName: "Example Disc",
+        durationSeconds: 120,
+        kind: "bluray",
+        rank: i + 1,
+        supported: true,
+      })),
+    };
+    await page.route("**/api/app/DiscoverReleaseWorkflowComparisonSource", (route) =>
+      route.fulfill({ json: discovery }),
+    );
+    await sourceType.selectOption("folder");
+    await second.getByLabel("Video path for Source 2").fill(path.dirname(sdr));
+    await second.getByRole("button", { name: "Discover titles and playlists" }).click();
+    const firstPlaylist = second.getByRole("radio", { name: "Playlist 1", exact: true });
+    const lastPlaylist = second.getByRole("radio", { name: "Playlist 10", exact: true });
+    await firstPlaylist.hover();
+    await expect(lastPlaylist).not.toBeInViewport();
+    await page.mouse.wheel(0, 650);
+    await expect(lastPlaylist).toBeInViewport();
+    await lastPlaylist.check();
+    await expect(lastPlaylist).toBeChecked();
+    await sourceType.selectOption("file");
+    await second.getByLabel("Video path for Source 2").fill(sdr);
     await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
     await expect(tone).toHaveValue("default");
     await expect(comparison.getByRole("combobox", { name: /Tone mapping/ })).toHaveCount(1);
@@ -160,6 +193,25 @@ test("embedded comparisons inherit screenshot tone mapping for HDR and keep five
     await expect(page.getByRole("tooltip")).toContainText("Create matched images");
     await page.keyboard.press("Escape");
     await expect(page.getByRole("tooltip")).toHaveCount(0);
+
+    await comparison.getByText("Advanced settings", { exact: true }).click();
+    const sizing = comparison.getByRole("combobox", { name: "Screenshot sizing" });
+    await expect(sizing).toHaveValue("fit");
+    await sizing.selectOption("source");
+    const changesPending = comparison.getByText("Comparison choices changed.", { exact: false });
+    await expect(changesPending).toBeVisible();
+    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    await expect(changesPending).toHaveCount(0);
+    await second.locator("summary").click();
+    await second.getByLabel("Approximate frame seek · Source 2").fill("25");
+    await second.getByRole("button", { name: "Preview Source 2", exact: true }).click();
+    await expect
+      .poll(() =>
+        second
+          .getByRole("img", { name: "Source 2 comparison preview" })
+          .evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight]),
+      )
+      .toEqual([160, 90]);
   } finally {
     await app?.stop();
     await workspace.cleanup();

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image/png"
 	"math"
 	"os"
 	"os/exec"
@@ -657,7 +658,11 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		t.Run(fmt.Sprintf("manual matching cancellation after row %d retains native work", stopAfter), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
+			decoding := make(map[string]bool)
 			ctx = api.WithWorkflowProgressReporter(ctx, func(update api.WorkflowProgressUpdate) {
+				if update.Phase == "comparisons_manual_matching" && update.Kind == "comparison_window" && update.Status == api.StageStatusRunning {
+					decoding[update.Label] = true
+				}
 				if update.Phase == "comparisons_manual_matching" && !update.ItemOnly && update.Completed >= 250*stopAfter {
 					cancel()
 				}
@@ -672,6 +677,11 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			incomplete, ok := errors.AsType[*releaseworkflow.ComparisonIncompleteError](err)
 			if !ok || incomplete.Reason != "match_cancelled" || updated.Comparisons == nil || len(updated.Comparisons.Rows) != stopAfter || updated.Comparisons.ApprovedFingerprint != "" {
 				t.Fatalf("manual matching discarded completed native rows: %+v err=%v", updated.Comparisons, err)
+			}
+			for column := 1; column <= 2; column++ {
+				if !decoding[fmt.Sprintf("Column %d, row %d", column, stopAfter)] {
+					t.Fatalf("manual matching did not report the active row and column: %v", decoding)
+				}
 			}
 			private, ok := resource.(workflowMediaPrivateArtifacts)
 			if !ok {
@@ -933,6 +943,18 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			t.Fatal("an empty video label bypassed the mandatory comparison overlay")
 		}
 		request.Sources[0].Label = label
+		request.Sources[1].Label = "Encode [invalid]"
+		request.Sources[1].Imported, request.Sources[1].Overlay = true, false
+		for _, action := range []string{"match", "capture"} {
+			_, _, err := b.EditComparisons(t.Context(), api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, &snapshot, retained,
+				api.ComparisonInstructions{Action: action, Plan: request}, nil, time.Now())
+			failure, ok := api.AsOperationFailure(err)
+			if !ok || failure.ComparisonReason != "invalid_column_label" || !strings.Contains(failure.Message, "Column 2") {
+				t.Fatalf("%s did not reject the invalid label before video work: %v", action, err)
+			}
+		}
+		request.Sources[1].Label = captured.Sources[1].Label
+		request.Sources[1].Imported, request.Sources[1].Overlay = false, true
 		legacy, err := snapshot.Clone()
 		if err != nil {
 			t.Fatal(err)
@@ -999,23 +1021,35 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			t.Fatalf("preview did not share capture choices: size=%dx%d err=%v", preview.Width, preview.Height, err)
 		}
 		previewBeforeRestart := preview
-		// Changing only the sizing mode invalidates pixels while retaining the
-		// matched source frame, and the preview uses the same downscaling policy.
-		proportional, _ := updated.Comparisons.Clone()
-		proportional.ResizeLargerOnly = true
-		retainComparisonCellFacts(&proportional, &updated)
-		for _, row := range proportional.Rows {
-			for _, cell := range row.Cells {
-				if cell.ArtifactID != "" || cell.ObservedPTS == nil {
-					t.Fatal("sizing-mode change retained pixels or discarded decoded identity")
-				}
-			}
+		sourceSize := *updated.Comparisons
+		sourceSize.ScreenshotSizing = api.ComparisonSizingSource
+		release := api.ReleaseRef{SourcePath: mainPath, Generation: 1}
+		sizingSnapshot, sizingPrivate, err := b.EditComparisons(t.Context(), release, api.TrackerReleaseProjectionSet{}, &updated, private,
+			api.ComparisonInstructions{Action: "configure", Plan: sourceSize}, nil, time.Now())
+		if err != nil {
+			t.Fatal(err)
 		}
-		proportionalSnapshot, _ := updated.Clone()
-		proportionalSnapshot.Comparisons = &proportional
-		proportionalPreview, err := b.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, proportionalSnapshot, private, "main", 1, 0, nil)
-		if err != nil || proportionalPreview.Width != 96 || proportionalPreview.Height != 64 || *proportionalPreview.ObservedPTS != *preview.ObservedPTS {
-			t.Fatalf("resize-only preview enlarged the smaller input or changed its frame: %+v err=%v", proportionalPreview, err)
+		cell := sizingSnapshot.Comparisons.Rows[0].Cells[1]
+		if cell.ArtifactID != "" || cell.ObservedPTS == nil || *cell.ObservedPTS != *updated.Comparisons.Rows[0].Cells[1].ObservedPTS {
+			t.Fatal("sizing-mode change retained stale pixels or discarded the matched frame")
+		}
+		sizingPreview, err := b.PreviewComparisonFrame(t.Context(), release, sizingSnapshot, sizingPrivate, "other", *cell.TimestampSeconds, 0, nil)
+		if err != nil || sizingPreview.Width != 192 || sizingPreview.Height != 128 || *sizingPreview.ObservedPTS != *cell.ObservedPTS {
+			t.Fatalf("source-size preview changed geometry or frame: %+v err=%v", sizingPreview, err)
+		}
+		sized, sizingPrivate, err := b.EditComparisons(t.Context(), release, api.TrackerReleaseProjectionSet{}, &sizingSnapshot, sizingPrivate,
+			api.ComparisonInstructions{Action: "capture", Plan: *sizingSnapshot.Comparisons}, nil, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		sizedPrivate, ok := sizingPrivate.(workflowMediaPrivateArtifacts)
+		if !ok {
+			t.Fatal("missing private comparison resources after recapture")
+		}
+		newCell := sized.Comparisons.Rows[0].Cells[1]
+		image := sizedPrivate.ArtifactImages[newCell.ArtifactID]
+		if image.Width != sizingPreview.Width || image.Height != sizingPreview.Height || *newCell.ObservedPTS != *cell.ObservedPTS {
+			t.Fatalf("recapture changed preview geometry or frame: %dx%d %+v", image.Width, image.Height, newCell)
 		}
 		_, payload, err := kept.MarshalPrivateResource()
 		if err != nil {
@@ -1127,9 +1161,18 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 	edited.Rows[0].Cells[0].ArtifactID = "orphan"
 	edited.Rows[0].Cells[0].TimestampSeconds = new(*old.TimestampSeconds + 0.1)
 	edited.Rows[0].Cells[0].FrameNumber = new(int64(999))
-	fresh, private, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained, api.ComparisonInstructions{Action: "capture", Plan: edited}, nil, time.Now())
+	inspecting := false
+	captureCtx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) {
+		if update.Kind == "comparison_window" && update.Status == api.StageStatusRunning && update.Label == "Column 1, row 1" {
+			inspecting = true
+		}
+	})
+	fresh, private, err := b.EditComparisons(captureCtx, api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained, api.ComparisonInstructions{Action: "capture", Plan: edited}, nil, time.Now())
 	if err != nil {
 		t.Fatalf("orphan recapture: %v; cause=%v", err, errors.Unwrap(err))
+	}
+	if !inspecting {
+		t.Fatal("manual recapture did not report the row and column under inspection")
 	}
 	current := fresh.Comparisons.Rows[0].Cells[0]
 	if current.ArtifactID == "orphan" || current.ArtifactID == old.ArtifactID || current.FrameNumber != nil || fresh.Comparisons.ApprovedFingerprint != "" {
@@ -1328,6 +1371,199 @@ func TestComparisonMainCanvasUsesPrivateDimensions(t *testing.T) {
 			request, err := comparisonCaptureRequest(plan, private, "other", 1)
 			if err != nil || request.OutputWidth != tc.mainWidth || request.OutputHeight != tc.mainHeight || request.ResizeOnly || !request.ShowResolution {
 				t.Fatalf("incorrect main canvas request: %+v %v", request, err)
+			}
+		})
+	}
+}
+
+func TestComparisonRotatedSizingUsesDecodedGeometry(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("rotated comparison requires FFmpeg")
+	}
+	root := t.TempDir()
+	mainPath, rotatedPath := filepath.Join(root, "Main.mp4"), filepath.Join(root, "Rotated.mp4")
+	run := func(args ...string) {
+		t.Helper()
+		if output, err := exec.CommandContext(t.Context(), ffmpeg, append([]string{"-hide_banner", "-loglevel", "error"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("author rotated comparison source: %v %s", err, output)
+		}
+	}
+	run("-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10:duration=2", "-c:v", "mpeg4", mainPath)
+	run("-display_rotation", "90", "-i", mainPath, "-c", "copy", rotatedPath)
+	renderer := screenshots.NewService(config.Config{}, api.NopLogger{}, root, nil)
+	plan := api.ComparisonPlan{
+		MainSourceID: "main",
+		Sources: []api.ComparisonSource{{
+			ID:      "main",
+			Label:   "Source",
+			Overlay: true,
+		}, {
+			ID:      "other",
+			Label:   "Rotated",
+			Overlay: true,
+		}},
+	}
+	retained := workflowMediaPrivateArtifacts{ComparisonSources: make(map[string]workflowComparisonSource)}
+	for id, path := range map[string]string{"main": mainPath, "other": rotatedPath} {
+		source, err := renderer.InspectComparisonSource(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.InputFingerprint, err = comparisonVideoFingerprint(t.Context(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		retained.ComparisonSources[id] = workflowComparisonSource{Source: source, Fingerprint: source.InputFingerprint}
+	}
+	for _, tc := range []struct {
+		mainID        string
+		sizing        string
+		width, height int
+	}{
+		{"main", api.ComparisonSizingSource, 180, 320},
+		{"main", api.ComparisonSizingResize, 101, 180},
+		{"main", api.ComparisonSizingCrop, 320, 180},
+		{"other", api.ComparisonSizingResize, 180, 320},
+		{"other", api.ComparisonSizingCrop, 180, 320},
+	} {
+		t.Run(tc.mainID+"/"+tc.sizing, func(t *testing.T) {
+			plan.MainSourceID = tc.mainID
+			plan.ScreenshotSizing = tc.sizing
+			request, err := comparisonCaptureRequest(plan, retained, "other", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !request.ShowResolution {
+				t.Fatal("the different display dimensions did not enable the resolution caption")
+			}
+			preview, err := renderer.ComparisonPreview(t.Context(), request)
+			if err != nil || preview.Width != tc.width || preview.Height != tc.height {
+				t.Fatalf("rotated preview = %dx%d, want %dx%d: %v", preview.Width, preview.Height, tc.width, tc.height, err)
+			}
+			request.Replay, request.TimestampSeconds = preview.Replay, preview.RelativeTimestampSeconds
+			captured, err := renderer.ComparisonCapture(t.Context(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateComparisonCapture(comparisonCaptureJob{request: request}, captured); err != nil {
+				t.Fatal(err)
+			}
+			if !preview.Replay.SamePicture(captured.Replay) || !bytes.Equal(preview.ImageBytes, captured.ImageBytes) {
+				t.Fatal("rotated capture changed the exact preview picture")
+			}
+		})
+	}
+	t.Run("half-turn applies the display transform", func(t *testing.T) {
+		halfPath := filepath.Join(root, "HalfTurn.mp4")
+		run("-display_rotation", "180", "-i", mainPath, "-c", "copy", halfPath)
+		half, err := renderer.InspectComparisonSource(t.Context(), halfPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := screenshots.ComparisonCaptureRequest{
+			Source:           retained.ComparisonSources["main"].Source,
+			TimestampSeconds: 1,
+			ScreenshotSizing: api.ComparisonSizingSource,
+		}
+		plain, err := renderer.ComparisonPreview(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Source = half
+		turned, err := renderer.ComparisonPreview(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		original, err := png.Decode(bytes.NewReader(plain.ImageBytes))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rotated, err := png.Decode(bytes.NewReader(turned.ImageBytes))
+		if err != nil {
+			t.Fatal(err)
+		}
+		x, y := 32, 48
+		opposite := original.At(plain.Width-1-x, plain.Height-1-y)
+		r, g, b, _ := rotated.At(x, y).RGBA()
+		wantR, wantG, wantB, _ := opposite.RGBA()
+		delta := max(math.Abs(float64(r)-float64(wantR)), math.Abs(float64(g)-float64(wantG)), math.Abs(float64(b)-float64(wantB)))
+		if original.At(x, y) == opposite || delta > 4*257 {
+			t.Fatalf("the half-turn screenshot pixel = %v, want %v from the other corner, original = %v", rotated.At(x, y), opposite, original.At(x, y))
+		}
+	})
+	for _, tc := range []struct {
+		name, first, second string
+		width, height       int
+	}{
+		{"quarter-turn reversal", "insert:rotate=90", "insert:rotate=-90", 180, 320},
+		{"late half-turn", "remove", "insert:rotate=180", 320, 180},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixtureRoot := t.TempDir()
+			listPath, orientedPath := filepath.Join(fixtureRoot, "List.txt"), filepath.Join(fixtureRoot, "Oriented.mp4")
+			for i, orientation := range []string{tc.first, tc.second} {
+				part := filepath.Join(fixtureRoot, fmt.Sprintf("Part%d.mp4", i))
+				run("-f", "lavfi", "-i", "smptebars=size=320x180:rate=10:duration=0.5", "-c:v", "libx264", "-g", "1", "-bf", "0",
+					"-bsf:v", "h264_metadata=display_orientation="+orientation, part)
+			}
+			if err := os.WriteFile(listPath, []byte("file 'Part0.mp4'\nfile 'Part1.mp4'\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			run("-f", "concat", "-i", listPath, "-c", "copy", orientedPath)
+			inspected, err := renderer.InspectComparisonSource(t.Context(), orientedPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if inspected.ScreenshotMatrix != (tc.first != "remove") {
+				t.Fatal("the fixture did not establish the expected initial display metadata")
+			}
+			inspected.InputFingerprint, err = comparisonVideoFingerprint(t.Context(), orientedPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := screenshots.ComparisonCaptureRequest{
+				Source:           inspected,
+				TimestampSeconds: .3,
+				ScreenshotSizing: api.ComparisonSizingSource,
+			}
+			preview, err := renderer.ComparisonPreview(t.Context(), request)
+			if err != nil || preview.Width != tc.width || preview.Height != tc.height || math.Abs(preview.RelativeTimestampSeconds-.3) > 1e-9 {
+				t.Fatalf("frame-side preview changed geometry or time: %dx%d at %.3f seconds: %v", preview.Width, preview.Height, preview.RelativeTimestampSeconds, err)
+			}
+			request.Replay = preview.Replay
+			captured, err := renderer.ComparisonCapture(t.Context(), request)
+			if err != nil || !preview.Replay.SamePicture(captured.Replay) || !bytes.Equal(preview.ImageBytes, captured.ImageBytes) {
+				t.Fatalf("frame-side capture did not replay the preview: %v", err)
+			}
+			if request.Replay.File.PacketPosition == nil {
+				t.Fatal("frame-side replay lacks its original native packet address")
+			}
+			request.Replay.File.PacketPosition = new(*request.Replay.File.PacketPosition + 1)
+			_, err = renderer.ComparisonCapture(t.Context(), request)
+			if failure, ok := api.AsOperationFailure(err); !ok || failure.ComparisonReason != "replay_packet_changed" {
+				t.Fatalf("matching PTS accepted a different frame-side packet: %v", err)
+			}
+			request.TimestampSeconds, request.Replay = .6, nil
+			turned, err := renderer.ComparisonPreview(t.Context(), request)
+			if err != nil || turned.Width != tc.width || turned.Height != tc.height || math.Abs(turned.RelativeTimestampSeconds-.6) > 1e-9 {
+				t.Fatalf("second orientation changed frame geometry or time: %dx%d at %.3f seconds: %v", turned.Width, turned.Height, turned.RelativeTimestampSeconds, err)
+			}
+			firstImage, err := png.Decode(bytes.NewReader(preview.ImageBytes))
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondImage, err := png.Decode(bytes.NewReader(turned.ImageBytes))
+			if err != nil {
+				t.Fatal(err)
+			}
+			x, y := 32, 48
+			opposite := firstImage.At(preview.Width-1-x, preview.Height-1-y)
+			r, g, b, _ := secondImage.At(x, y).RGBA()
+			wantR, wantG, wantB, _ := opposite.RGBA()
+			delta := max(math.Abs(float64(r)-float64(wantR)), math.Abs(float64(g)-float64(wantG)), math.Abs(float64(b)-float64(wantB)))
+			if firstImage.At(x, y) == opposite || delta > 4*257 {
+				t.Fatal("the later screenshot did not use its own frame-side orientation")
 			}
 		})
 	}
@@ -1564,6 +1800,18 @@ type comparisonWindowRecorder struct {
 	emptyFingerprint string
 	analysisFailure  error
 	analysisFailures int
+	cropFailurePath  string
+	cropFailures     int
+}
+
+func (r *comparisonWindowRecorder) DetectComparisonActivePicture(
+	_ context.Context, source screenshots.ComparisonSource, _, _ float64, _ *screenshots.ComparisonDecodeBudget,
+) (*screenshots.ComparisonCrop, error) {
+	if r.cropFailurePath != "" && source.Path == r.cropFailurePath {
+		r.cropFailures++
+		return nil, screenshots.ErrComparisonNormalizationUnavailable
+	}
+	return nil, nil
 }
 
 func (r *comparisonWindowRecorder) AnalyzeComparisonSource(ctx context.Context, request screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error) {
@@ -1706,6 +1954,7 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 	}
 	var phases []string
 	var updates []api.WorkflowProgressUpdate
+	var windowLabels []string
 	ctx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) {
 		if update.Phase != "" {
 			phases = append(phases, update.Phase)
@@ -1713,6 +1962,9 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		}
 		if !update.ItemOnly {
 			updates = append(updates, update)
+		}
+		if update.Phase == "comparisons_alignment_rows" && update.Kind == "comparison_window" && update.Status == api.StageStatusRunning {
+			windowLabels = append(windowLabels, update.Label)
 		}
 	})
 	checkProgress := func(t *testing.T, complete bool) {
@@ -1729,9 +1981,22 @@ func TestComparisonBoundedAlignmentUsesNativeNonzeroClocks(t *testing.T) {
 		}
 	}
 	progress := b.comparisonProgress(ctx, 5)
+	renderer.cropFailurePath = paths[0]
 	matched, err := b.matchWorkflowComparisons(ctx, &private, plan, progress)
+	renderer.cropFailurePath = ""
 	if err != nil || len(matched.Rows) != 2 {
 		t.Fatalf("bounded match rows=%+v err=%v", matched.Rows, err)
+	}
+	if renderer.cropFailures != 1 {
+		t.Fatalf("expected one recoverable main crop probe, got %d", renderer.cropFailures)
+	}
+	if progress.completed < 700 || progress.completed >= 1000 {
+		t.Fatalf("Quick Scan matching left too much or no progress for capture: %d", progress.completed)
+	}
+	if !slices.ContainsFunc(windowLabels, func(label string) bool {
+		return strings.HasPrefix(label, "Column ") && strings.HasSuffix(label, ", row 2")
+	}) {
+		t.Fatalf("Quick Scan did not report a column and the active row: %v", windowLabels)
 	}
 	if renderer.rowAnalysis != 0 {
 		t.Fatal("general native rows repeated main scene analysis")

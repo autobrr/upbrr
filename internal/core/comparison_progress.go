@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/logging"
@@ -24,6 +25,7 @@ type comparisonProgress struct {
 	message       string
 	started       time.Time
 	active        bool
+	nextWindow    int
 }
 
 func (b workflowMediaBuilder) comparisonProgress(ctx context.Context, stages int) *comparisonProgress {
@@ -57,7 +59,8 @@ func (p *comparisonProgress) begin(phase string, items int) {
 }
 
 func (p *comparisonProgress) update(completed, total int) {
-	completed = (p.stage*1000 + 1000*completed/max(1, total)) / max(1, p.stages)
+	total = max(1, total)
+	completed = (p.stage*1000 + 1000*min(total, max(0, completed))/total) / max(1, p.stages)
 	p.completed = max(p.completed, min(1000, completed))
 	api.EmitWorkflowProgress(p.ctx, api.WorkflowProgressUpdate{
 		Phase:     "comparisons_" + p.phase,
@@ -70,8 +73,12 @@ func (p *comparisonProgress) update(completed, total int) {
 
 func (p *comparisonProgress) complete() {
 	p.update(1, 1)
-	p.logger.Infof("comparisons: phase=%s state=completed elapsed_seconds=%.3f", p.phase, time.Since(p.started).Seconds())
 	p.stage++
+	p.finishPhase()
+}
+
+func (p *comparisonProgress) finishPhase() {
+	p.logger.Infof("comparisons: phase=%s state=completed elapsed_seconds=%.3f", p.phase, time.Since(p.started).Seconds())
 	p.active = false
 }
 
@@ -86,10 +93,7 @@ func (p *comparisonProgress) close() {
 	p.logger.Warnf("comparisons: phase=%s state=%s elapsed_seconds=%.3f", p.phase, state, time.Since(p.started).Seconds())
 }
 
-func (p *comparisonProgress) item(index, total int, id, kind, label string, status api.StageStatus, completed int) {
-	if kind == "comparison_source" && (completed == 0 || status == api.StageStatusCompleted) {
-		p.logger.Infof("comparisons: phase=%s item=%d/%d state=%s", p.phase, index+1, total, status)
-	}
+func (p *comparisonProgress) item(id, kind, label string, status api.StageStatus, completed int) {
 	api.EmitWorkflowProgress(p.ctx, api.WorkflowProgressUpdate{
 		Phase:     "comparisons_" + p.phase,
 		ItemID:    p.phase + "/" + id,
@@ -101,21 +105,45 @@ func (p *comparisonProgress) item(index, total int, id, kind, label string, stat
 		ItemOnly:  true,
 		Message:   fmt.Sprintf("%s — %d%%", status, completed/10),
 	})
-	p.update(index*1000+completed, max(1, total)*1000)
 }
 
-func (p *comparisonProgress) child(ctx context.Context, index, total int, id, kind, label string) context.Context {
+func (p *comparisonProgress) window(column, row int) func(api.StageStatus, int) {
+	id := "window-" + strconv.Itoa(p.nextWindow)
+	p.nextWindow++
+	label := fmt.Sprintf("Column %d", column)
+	if row > 0 {
+		label += fmt.Sprintf(", row %d", row)
+	}
+	return func(status api.StageStatus, completed int) {
+		p.item(id, "comparison_window", label, status, completed)
+	}
+}
+
+func (p *comparisonProgress) decodeWindow(ctx context.Context, column, row int) (context.Context, func(error)) {
+	report := p.window(column, row)
+	report(api.StageStatusRunning, 0)
+	workCtx := p.child(ctx, func(completed int) {
+		report(api.StageStatusRunning, completed)
+	})
+	return workCtx, func(err error) {
+		if err != nil {
+			report(api.StageStatusSkipped, 0)
+		} else {
+			report(api.StageStatusCompleted, 1000)
+		}
+	}
+}
+
+func (p *comparisonProgress) child(ctx context.Context, report func(int)) context.Context {
 	logged := 0
 	return api.WithWorkflowProgressReporter(ctx, func(update api.WorkflowProgressUpdate) {
 		completed := max(0, min(999, 1000*update.Completed/max(1, update.Total)))
-		p.item(index, total, id, kind, label, api.StageStatusRunning, completed)
+		report(completed)
 		if completed >= logged+100 {
 			logged = completed
 			p.logger.Debugf(
-				"comparisons: phase=%s item=%d/%d progress=%d elapsed_seconds=%.3f",
+				"comparisons: phase=%s decoder_progress=%d elapsed_seconds=%.3f",
 				p.phase,
-				index+1,
-				total,
 				completed/10,
 				time.Since(p.started).Seconds(),
 			)

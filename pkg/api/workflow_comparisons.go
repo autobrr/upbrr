@@ -123,6 +123,14 @@ func (i ComparisonInstructions) Validate() error {
 	}
 	switch i.Action {
 	case "configure", "match", "capture":
+		if i.Plan.Imported && i.Plan.ScreenshotSizing != "" {
+			return errors.New("imported comparison images cannot change screenshot sizing")
+		}
+		switch i.Plan.ScreenshotSizing {
+		case "", ComparisonSizingFit, ComparisonSizingCrop, ComparisonSizingResize, ComparisonSizingSource:
+		default:
+			return errors.New("choose a supported comparison screenshot sizing mode")
+		}
 	case "restore":
 		if len(i.VideoSources) != 0 || len(i.Attachments) != 0 || len(i.Plan.Sources) != 0 || len(i.Plan.Rows) != 0 {
 			return errors.New("comparison restoration uses only retained workflow intent")

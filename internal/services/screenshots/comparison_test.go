@@ -469,6 +469,24 @@ func TestComparisonCaptureRejectsBlackMissingAndChangedIdentity(t *testing.T) {
 	}
 }
 
+func TestComparisonRejectsCodedGeometryChangesAcrossRotation(t *testing.T) {
+	source := comparisonTestSource(t)
+	source.NativePixelFormat = "yuv420p"
+	source.Width, source.Height = 160, 96
+	source.ScreenshotTurn, source.ScreenshotMatrix = true, true
+	source.InputFingerprint = "fixture"
+	observed := ComparisonFrameObservation{
+		Width:       96,
+		Height:      160,
+		PixelFormat: "yuv420p",
+	}
+	frames := []ComparisonFrameObservation{observed}
+	err := bindComparisonSequence(ComparisonSampleRequest{Source: source}, frames, nil, nil)
+	if failure, ok := api.AsOperationFailure(err); !ok || failure.ComparisonReason != "changing_format" {
+		t.Fatalf("identity-only seek accepted transposed coded dimensions: %v", err)
+	}
+}
+
 func TestComparisonSamplingRetainsSourceClockAndBounds(t *testing.T) {
 	source := comparisonTestSource(t)
 	source.StartTimeSeconds = -0.2
@@ -816,6 +834,22 @@ func TestComparisonNativeSourceClockAndSampling(t *testing.T) {
 			t.Fatal("scaling did not preserve aspect ratio with padding")
 		}
 	}
+	request.ScreenshotSizing = api.ComparisonSizingCrop
+	cropped, err := service.ComparisonCapture(t.Context(), request)
+	if err != nil || cropped.Width != 96 || cropped.Height != 64 || cropped.ComparisonFrameObservation != capture.ComparisonFrameObservation {
+		t.Fatalf("center crop changed output size or native frame: %dx%d err=%v", cropped.Width, cropped.Height, err)
+	}
+	croppedImage, _, err := image.Decode(bytes.NewReader(cropped.ImageBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range []int{0, 95} {
+		r, g, b, _ := croppedImage.At(x, 32).RGBA()
+		if r == 0 && g == 0 && b == 0 {
+			t.Fatal("crop-to-fill left padding on the image edge")
+		}
+	}
+	request.ScreenshotSizing = ""
 	request.OutputWidth, request.OutputHeight, request.ResizeOnly = 32, 24, true
 	resized, err := service.ComparisonCapture(t.Context(), request)
 	if err != nil || resized.Width != 32 || resized.Height != 24 || resized.ComparisonFrameObservation != capture.ComparisonFrameObservation {

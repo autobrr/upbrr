@@ -2506,8 +2506,10 @@ func applyWorkflowProgress(status *api.WorkflowOperationStatus, update api.Workf
 	if itemIndex >= 0 && isTerminalProgressStatus(status.Items[itemIndex].Status) && !isTerminalProgressStatus(update.Status) {
 		return
 	}
-	status.Phase = strings.TrimSpace(update.Phase)
-	status.Message = strings.TrimSpace(update.Message)
+	if !update.ItemOnly || !strings.HasPrefix(update.Phase, "comparisons_") {
+		status.Phase = strings.TrimSpace(update.Phase)
+		status.Message = strings.TrimSpace(update.Message)
+	}
 	if !update.ItemOnly {
 		status.Completed = max(status.Completed, max(0, update.Completed))
 		status.Total = max(status.Total, max(0, update.Total))

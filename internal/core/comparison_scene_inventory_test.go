@@ -348,7 +348,15 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	priorPlan.Sources = []api.ComparisonSource{{ID: "main", Fingerprint: fingerprint}, {ID: "target", Fingerprint: fingerprint}}
+	priorPlan.Sources = []api.ComparisonSource{{
+		ID:          "main",
+		Label:       "Source",
+		Fingerprint: fingerprint,
+	}, {
+		ID:          "target",
+		Label:       "Encode",
+		Fingerprint: fingerprint,
+	}}
 	priorPlan.Analysis, priorPlan.SceneMix = &ref.Summary, &api.ComparisonSceneMix{}
 	changed, err := priorPlan.Clone()
 	if err != nil {

@@ -112,8 +112,16 @@ type ComparisonSceneMix struct {
 type ComparisonProblem struct {
 	RowID    string `json:"rowId,omitempty"`
 	SourceID string `json:"sourceId,omitempty"`
+	Code     string `json:"code,omitempty"`
 	Message  string `json:"message"`
 }
+
+const (
+	ComparisonSizingFit    = "fit" // Fit and pad to the main display size. The empty setting also uses this default.
+	ComparisonSizingCrop   = "crop"
+	ComparisonSizingResize = "resize"
+	ComparisonSizingSource = "source"
+)
 
 // ComparisonPlan is workflow-owned comparison intent and captured row identity.
 // Fingerprint binds the reviewed mapping, settings and image content. Approval
@@ -125,14 +133,12 @@ type ComparisonPlan struct {
 	Sources             []ComparisonSource         `json:"sources"`
 	Rows                []ComparisonRow            `json:"rows"`
 	MainSourceID        string                     `json:"mainSourceId"`
-	// SizeReferenceSourceID fits video captures within this column's inspected
-	// display size, padding without cropping. Empty retains each video's size.
+	// ScreenshotSizing controls how generated images use the main display size.
+	ScreenshotSizing string `json:"screenshotSizing,omitempty"`
+	// SizeReferenceSourceID records the main display reference for compatibility.
 	SizeReferenceSourceID string `json:"sizeReferenceSourceId,omitempty"`
-	// ResizeLargerOnly replaces fit-and-pad with proportional resizing. Wide
-	// references match width; references narrower than 16:9 match height.
-	// Lower resolutions keep their size unless ResizeSmaller is also enabled.
-	ResizeLargerOnly bool `json:"resizeLargerOnly,omitempty"`
-	// ResizeSmaller also upscales lower-resolution sources in proportional mode.
+	// ResizeLargerOnly and ResizeSmaller decode superseded rendering choices.
+	ResizeLargerOnly     bool                  `json:"resizeLargerOnly,omitempty"`
 	ResizeSmaller        bool                  `json:"resizeSmaller,omitempty"`
 	ReuseMainScreenshots bool                  `json:"reuseMainScreenshots"`
 	Imported             bool                  `json:"imported"`

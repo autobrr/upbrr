@@ -343,7 +343,7 @@ func stageDiscWindow(ctx context.Context, source ComparisonSource, window *compa
 }
 
 func bindDiscObservation(source ComparisonSource, window comparisonDiscWindow, observation *ComparisonFrameObservation) error {
-	if err := validateComparisonNativeFacts(source, *observation); err != nil {
+	if err := validateComparisonNativeFacts(source, *observation, false); err != nil {
 		return err
 	}
 	return bindDiscClock(source, window, observation)
@@ -671,6 +671,7 @@ func (r exactDiscCaptureRunner) Run(ctx context.Context, name string, args []str
 			dir,
 			source,
 			fmt.Sprintf("capture-authored/%s/%d", r.window.Occurrence, r.window.Codec),
+			false,
 		)
 	} else {
 		result, err = runner.Run(ctx, name, command, dir)

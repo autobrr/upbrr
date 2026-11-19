@@ -12,6 +12,23 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestComparisonAuthoredSizingUsesDecodedPixelAspect(t *testing.T) {
+	retainedDVD := ComparisonSource{
+		Input:          &filesystem.ResolvedComparisonInput{Kind: "dvd"},
+		Width:          720,
+		Height:         480,
+		WidthScale:     8.0 / 9.0,
+		SARNumerator:   8,
+		SARDenominator: 9,
+	}
+	if width, height := retainedDVD.ScreenshotDisplaySize(); width != 720 || height != 540 {
+		t.Fatalf("retained DVD screenshot size = %dx%d, want 720x540", width, height)
+	}
+	if width, height := retainedDVD.DisplaySize(); width != 640 || height != 480 {
+		t.Fatalf("legacy fit-and-pad size = %dx%d, want 640x480", width, height)
+	}
+}
+
 func TestComparisonHistoricalDiscReinspectionAdmitsBothReadsBeforeStaging(t *testing.T) {
 	root := t.TempDir()
 	source := ComparisonSource{
