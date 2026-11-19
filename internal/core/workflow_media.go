@@ -2631,11 +2631,6 @@ func (b workflowMediaBuilder) UploadImages(
 			currentFailures = append(currentFailures, hostedImageFailure(api.TrackerID(tracker), failure.Host, failure.Message))
 		}
 	}
-	if retry {
-		reconcileRetriedImageHostFailures(&snapshot, projections.Projections, attempts, currentFailures)
-	} else {
-		snapshot.Failures = append(snapshot.Failures, currentFailures...)
-	}
 	failedHosts := make(map[string]struct{}, len(snapshot.FailedHosts)+len(result.FailedHosts))
 	for _, failed := range snapshot.FailedHosts {
 		failedHosts[strings.ToLower(strings.TrimSpace(failed))] = struct{}{}
@@ -2650,6 +2645,11 @@ func (b workflowMediaBuilder) UploadImages(
 		delete(failedHosts, host)
 	}
 	snapshot.FailedHosts = sortedMapKeys(failedHosts)
+	if retry {
+		reconcileRetriedImageHostFailures(&snapshot, projections.Projections, attempts, currentFailures)
+	} else {
+		snapshot.Failures = append(snapshot.Failures, currentFailures...)
+	}
 	snapshot.Artifacts = slices.Clone(snapshot.Artifacts)
 	refreshMediaProcessing(&snapshot, retained)
 	return snapshot, retained, attempts, nil

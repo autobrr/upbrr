@@ -285,6 +285,8 @@ type WorkflowStageFixtures = Readonly<{
 
 type TestWorkflowPorts = ReleaseSessionPorts["workflow"] & WorkflowStageFixtures;
 
+const unboundMediaPlanRevision = -1;
+
 const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflowPorts => {
   const currentByWorkflow = new Map<string, ReleaseWorkflowCurrent>();
   const continuationStep = new Map<string, number>();
@@ -603,8 +605,8 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
         id: `${workflowID}-media-plan`,
         workflowId: workflowID,
         revision: 1,
-        release: { id: `${workflowID}-release`, revision: 1 },
-        projectionSet: { id: `${workflowID}-projections`, revision: 1 },
+        release: { id: `${workflowID}-release`, revision: unboundMediaPlanRevision },
+        projectionSet: { id: `${workflowID}-projections`, revision: unboundMediaPlanRevision },
         durationSeconds: 120,
         frameRate: 24,
         suggestedSelections: [],
@@ -654,6 +656,21 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     continue: overrides.continue || continueWorkflow,
     create: async (...args) => remember(await configured.create(...args)),
     current: async (...args) => remember(await configured.current(...args)),
+    mediaPlan: async (workflowID, signal) => {
+      const authority = currentByWorkflow.get(workflowID)?.workflow;
+      const plan = await configured.mediaPlan(workflowID, signal);
+      return {
+        ...plan,
+        release:
+          plan.release.revision === unboundMediaPlanRevision && authority?.release
+            ? authority.release
+            : plan.release,
+        projectionSet:
+          plan.projectionSet.revision === unboundMediaPlanRevision && authority?.trackerProjections
+            ? authority.trackerProjections
+            : plan.projectionSet,
+      };
+    },
     prepare: async (...args) => remember(await configured.prepare(...args)),
     selectCandidate: async (...args) => remember(await configured.selectCandidate(...args)),
     replaceFacts: async (...args) => remember(await configured.replaceFacts(...args)),
@@ -1938,8 +1955,8 @@ describe("useReleaseSession", () => {
       id: `${workflowID}-media-plan`,
       workflowId: workflowID,
       revision: 1,
-      release: { id: `${workflowID}-release`, revision: 1 },
-      projectionSet: { id: `${workflowID}-projections`, revision: 1 },
+      release: { id: `${workflowID}-release`, revision: unboundMediaPlanRevision },
+      projectionSet: { id: `${workflowID}-projections`, revision: unboundMediaPlanRevision },
       durationSeconds: 120,
       frameRate: 24,
       suggestedSelections: [],
@@ -8109,6 +8126,103 @@ describe("useReleaseSession", () => {
     expect(result.current.screenshots.view.error).toBe("");
   });
 
+  it.each([
+    ["uses an adoption for the same tracker projection", "media"],
+    ["ignores a plan for an older tracker projection", "browser"],
+    ["ignores a plan for an older duplicate decision", "duplicates"],
+    ["ignores a plan for a newer projection the browser hasn't received", "server"],
+    ["ignores a plan for a newer workflow revision the browser hasn't received", "server revision"],
+  ])("%s when authority advances during the plan request", async (_, change) => {
+    const projectionChanged = change === "browser";
+    const serverChanged = change.startsWith("server");
+    const sourcePath = "C:\\media\\Example";
+    const plan = {
+      ...(await workflowPorts().mediaPlan("workflow-new", new AbortController().signal)),
+      autoAdoptSavedImages: true,
+      savedTrackerImages: [
+        { trackerId: "AITHER", host: "imgbb", url: "https://images.example.invalid/saved.png" },
+      ],
+    };
+    const pending = createDeferred<typeof plan>();
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const analyzeAudio = async (
+      current: ReleaseWorkflowCurrent,
+    ): Promise<ReleaseWorkflowCurrent> => {
+      const revision = current.workflow.revision + 1;
+      const media = { id: "adopted-media", revision };
+      const projectionSet = projectionChanged
+        ? { id: "new-projections", revision }
+        : current.workflow.trackerProjections!;
+      return {
+        ...current,
+        workflow: {
+          ...current.workflow,
+          revision,
+          media,
+          trackerProjections: projectionSet,
+          ...(change === "duplicates" && { dupes: { id: "new-dupes", revision } }),
+        },
+        media: {
+          ...media,
+          savedImagePlanId: change === "media" ? plan.id : undefined,
+          workflowId: current.workflow.id,
+          release: current.workflow.release!,
+          releaseRef: { SourcePath: sourcePath, Generation: 1 },
+          projectionSet,
+          captureFingerprint: "5".repeat(64),
+          requirementsFingerprint: "6".repeat(64),
+          imageRequirementsPrepared: false,
+          artifacts: [],
+          status: "completed",
+          createdAt: plan.createdAt,
+        },
+      };
+    };
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({ mediaPlan: () => pending.promise, analyzeAudio, captureMedia }),
+        }),
+      ),
+    });
+    await selectAndPrepare(result, sourcePath);
+    const browserRevision = result.current.workflow.view.current!.workflow.revision;
+    let load!: Promise<boolean>;
+    act(() => {
+      load = result.current.screenshots.load();
+    });
+    if (!serverChanged) {
+      await act(() =>
+        result.current.audioAnalysis.generate({
+          resourceID: "resource-one",
+          selection: "primary",
+          trackIDs: ["audio-main"],
+          variants: ["waveform"],
+        }),
+      );
+    }
+    expect(result.current.workflow.view.current?.media?.savedImagePlanId).toBe(
+      change === "media" ? plan.id : undefined,
+    );
+    pending.resolve({
+      ...plan,
+      revision: change === "server revision" ? browserRevision + 1 : browserRevision,
+      ...(change === "server" && {
+        projectionSet: { id: "server-new-projections", revision: browserRevision },
+      }),
+    });
+    await act(async () => expect(await load).toBe(change === "media"));
+    expect(captureMedia).not.toHaveBeenCalled();
+    expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe(
+      change === "media" ? plan.id : undefined,
+    );
+    expect(result.current.screenshots.view.error).toBe(
+      serverChanged
+        ? "The prepared release or eligible trackers changed. Load suggestions again."
+        : "",
+    );
+  });
+
   it.each(["initial", "externally observed", "newer cancellation"])(
     "restores %s cancellation after delayed image adoption is rejected",
     async (timing) => {
@@ -8561,8 +8675,8 @@ describe("useReleaseSession", () => {
               id: "media-plan-1",
               workflowId: workflowID,
               revision: 4,
-              release: { id: "release-1", revision: 1 },
-              projectionSet: { id: "projections-1", revision: 1 },
+              release: { id: "release-1", revision: unboundMediaPlanRevision },
+              projectionSet: { id: "projections-1", revision: unboundMediaPlanRevision },
               durationSeconds: 60,
               frameRate: 24,
               discType: "BDMV",
@@ -10023,8 +10137,14 @@ describe("saved-image plan authority", () => {
         id: planID,
         workflowId: workflowID,
         revision: 1,
-        release: { id: "release-one", revision: 1 },
-        projectionSet: { id: "projections-one", revision: 1 },
+        release: externalSnapshot.current?.workflow.release ?? {
+          id: "release-one",
+          revision: unboundMediaPlanRevision,
+        },
+        projectionSet: externalSnapshot.current?.workflow.trackerProjections ?? {
+          id: "projections-one",
+          revision: unboundMediaPlanRevision,
+        },
         durationSeconds: 120,
         frameRate: 24,
         suggestedSelections: [

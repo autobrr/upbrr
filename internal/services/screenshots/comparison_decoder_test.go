@@ -26,12 +26,19 @@ func TestComparisonHardwareRetryPreservesWindowAdmissionAndFatalOutcomes(t *test
 		failure, want       error
 		limit               float64
 		calls               int
-		cancel              bool
+		cancel, display     bool
 	}{
 		{
 			name:  "hardware success completes the original window on the first process",
 			limit: 1,
 			calls: 1,
+		},
+		{
+			name:    "late display matrix retries the same matching window in software",
+			stderr:  "[Parsed_showinfo_1 @ synthetic] side data - 3x3 displaymatrix: rotation of 180 degrees",
+			display: true,
+			limit:   2,
+			calls:   2,
 		},
 		{
 			name:   "unavailable device initialization retries",
@@ -159,6 +166,9 @@ func TestComparisonHardwareRetryPreservesWindowAdmissionAndFatalOutcomes(t *test
 			runner := finiteComparisonRunner{outputLimit: 1024, base: comparisonInspectionRunner(func(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
 				commands = append(commands, slices.Clone(args))
 				if len(commands) == 1 {
+					if test.display {
+						return CommandResult{Stdout: []byte("unoriented hardware output"), Stderr: []byte(test.stderr + "\n")}, nil
+					}
 					if test.failure == nil && test.stderr == "" {
 						return CommandResult{Stdout: []byte("complete hardware output")}, nil
 					}
@@ -186,7 +196,7 @@ func TestComparisonHardwareRetryPreservesWindowAdmissionAndFatalOutcomes(t *test
 				download: "hwdownload,format=nv12,",
 				key:      t.TempDir(),
 			}}
-			result, err := s.runComparisonDecode(ctx, runner, "synthetic", args, "", decoders, &request)
+			result, err := s.runComparisonDecode(ctx, runner, "synthetic", args, "", decoders, &request, test.display)
 			if !errors.Is(err, test.want) || len(commands) != test.calls {
 				t.Fatalf("error=%v calls=%d", err, len(commands))
 			}
@@ -203,7 +213,7 @@ func TestComparisonHardwareRetryPreservesWindowAdmissionAndFatalOutcomes(t *test
 				t.Fatal("successful hardware attempt lost its backend")
 			}
 			if test.later != "" {
-				result, err := s.runComparisonDecode(ctx, runner, "synthetic", args, "", decoders, nil)
+				result, err := s.runComparisonDecode(ctx, runner, "synthetic", args, "", decoders, nil, false)
 				if err != nil || result.comparisonBackend != test.later {
 					t.Fatalf("later operation chose %s, want %s: %v", result.comparisonBackend, test.later, err)
 				}

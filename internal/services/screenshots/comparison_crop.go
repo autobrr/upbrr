@@ -14,9 +14,16 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// ComparisonCrop is decoded black-border evidence used for matching only.
+// ComparisonCrop is decoded black-border evidence in the matching raster
+// before pixel-aspect correction. File inputs use the display orientation.
 // It never changes the native frame witness, display facts or captured pixels.
 type ComparisonCrop struct{ X, Y, Width, Height int }
+
+// ValidForMatchingSource checks the crop against the source's matching raster.
+func (c ComparisonCrop) ValidForMatchingSource(source ComparisonSource) bool {
+	geometry := source.matchingGeometry()
+	return c.ValidFor(geometry.Width, geometry.Height)
+}
 
 // ValidFor excludes out-of-bounds or small scene-content crops.
 func (c ComparisonCrop) ValidFor(width, height int) bool {
@@ -146,7 +153,7 @@ func (s *Service) detectFileComparisonActivePicture(
 	if err != nil {
 		return nil, err
 	}
-	ctx, input, err := s.openComparisonFileInput(ctx, path, budget)
+	ctx, input, err := s.openComparisonFileInput(ctx, path, budget, source.FileIdentity)
 	if err != nil {
 		return nil, err
 	}
@@ -178,15 +185,16 @@ func (s *Service) detectFileComparisonActivePicture(
 		}
 		filter += "," + strings.Join(filters, ",")
 	}
+	geometry := source.matchingGeometry()
 	if scale := buildPARScaleFilter(captureRequest{
-		SourceWidth:  source.Width,
-		SourceHeight: source.Height,
-		WidthScale:   source.WidthScale,
-		HeightScale:  source.HeightScale,
+		SourceWidth:  geometry.Width,
+		SourceHeight: geometry.Height,
+		WidthScale:   geometry.WidthScale,
+		HeightScale:  geometry.HeightScale,
 	}); scale != "" && !hdr {
 		filter += "," + scale
 	}
-	w, h := source.DisplaySize()
+	w, h := geometry.DisplaySize()
 	height := int(math.Round(float64(h)*512/float64(w)/2)) * 2
 	if height < 32 || height > 2048 {
 		return nil, comparisonDiscFailure("matching_crop")
@@ -199,11 +207,11 @@ func (s *Service) detectFileComparisonActivePicture(
 		"-hide_banner", "-loglevel", "info", "-threads", "4", "-filter_threads", "4", "-copyts", "-ss", strconv.FormatFloat(start, 'f', 9, 64), "-i", path,
 		"-map", "0:V:0", "-an", "-sn", "-dn", "-vf", filter, "-frames:v", "50000", "-f", "null", "-",
 	}, "")
-	if err != nil {
-		return nil, err
-	}
 	if inputErr := input.failure(); inputErr != nil {
 		return nil, inputErr
+	}
+	if err != nil {
+		return nil, err
 	}
 	matches := comparisonCropLine.FindAllSubmatch(result.Stderr, -1)
 	if len(matches) == 0 {
@@ -217,18 +225,17 @@ func (s *Service) detectFileComparisonActivePicture(
 			return nil, nil
 		}
 	}
-	// The analysis mask is in display coordinates; matching crops remain in
-	// the native coded raster before the existing PAR conversion.
-	left, top := values[2]*source.Width/512, values[3]*source.Height/height
-	right := min(source.Width, (values[2]+values[0])*source.Width/512)
-	bottom := min(source.Height, (values[3]+values[1])*source.Height/height)
+	// Map the downscaled mask back to the oriented raster before PAR conversion.
+	left, top := values[2]*geometry.Width/512, values[3]*geometry.Height/height
+	right := min(geometry.Width, (values[2]+values[0])*geometry.Width/512)
+	bottom := min(geometry.Height, (values[3]+values[1])*geometry.Height/height)
 	crop := &ComparisonCrop{
 		X:      left,
 		Y:      top,
 		Width:  right - left,
 		Height: bottom - top,
 	}
-	if !crop.ValidFor(source.Width, source.Height) || crop.X == 0 && crop.Y == 0 && crop.Width == source.Width && crop.Height == source.Height {
+	if !crop.ValidFor(geometry.Width, geometry.Height) || crop.X == 0 && crop.Y == 0 && crop.Width == geometry.Width && crop.Height == geometry.Height {
 		return nil, nil
 	}
 	return crop, nil

@@ -4373,7 +4373,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     expect(
       current.continuation?.availableGoals.find((goal) => goal.goal === "media_ready"),
     ).toMatchObject({ available: false, reasonCode: "duplicates_required" });
-    await expect(page.getByRole("heading", { name: "Comparisons", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Comparisons", exact: true })).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Load suggestions", exact: true }),
     ).toBeDisabled();

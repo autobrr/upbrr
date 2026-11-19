@@ -82,6 +82,12 @@ func SamePath(left string, right string) bool {
 	return leftRealOK && rightRealOK && sameCleanPath(leftReal, rightReal)
 }
 
+// SameFileVersion compares a file's filesystem identity, size and modification time.
+func SameFileVersion(expected, actual os.FileInfo) bool {
+	return expected != nil && actual != nil && os.SameFile(expected, actual) &&
+		expected.Size() == actual.Size() && expected.ModTime().Equal(actual.ModTime())
+}
+
 func sameCleanPath(left string, right string) bool {
 	left = normalizeCleanLocalPath(left)
 	right = normalizeCleanLocalPath(right)

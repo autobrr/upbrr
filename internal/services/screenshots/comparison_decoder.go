@@ -279,13 +279,7 @@ func (s *Service) runComparisonCaptureDecoder(
 	if err != nil {
 		return CommandResult{}, err
 	}
-	result, err := s.runComparisonDecode(ctx, runner, executable, args, dir, decoders, nil)
-	if err == nil && result.ExitCode == 0 && displayGeometry && result.comparisonBackend != comparisonSoftwareDecoder &&
-		comparisonDisplayMatrix.Match(result.Stderr) {
-		// Hardware frames can carry the rotation through to output metadata.
-		// Software decoding applies the display matrix before geometry filters.
-		result, err = s.runComparisonDecode(ctx, runner, executable, args, dir, nil, nil)
-	}
+	result, err := s.runComparisonDecode(ctx, runner, executable, args, dir, decoders, nil, displayGeometry)
 	if err == nil {
 		logging.FromContext(ctx, s.logger).Debugf("comparisons: phase=capture_decode decoder=%s surface=%s", result.comparisonBackend, surface)
 	}
@@ -302,6 +296,7 @@ func (s *Service) runComparisonDecode(
 	dir string,
 	decoders []comparisonDecoder,
 	request *ComparisonSampleRequest,
+	displayGeometry bool,
 ) (CommandResult, error) {
 	run := func(decoder comparisonDecoder, initialize bool) (CommandResult, error) {
 		if ctx.Err() != nil {
@@ -356,6 +351,14 @@ func (s *Service) runComparisonDecode(
 		result, err := run(decoder, state != comparisonDecoderReady)
 		if err == nil {
 			comparisonDecoderStates.LoadOrStore(key, comparisonDecoderReady)
+			if result.ExitCode == 0 && displayGeometry && comparisonDisplayMatrix.Match(result.Stderr) {
+				// Hardware frames can carry late orientation as side data.
+				// Repeat the bounded decode with software before using pixels.
+				if request != nil && request.analysis != nil {
+					request.analysis.reset(ctx)
+				}
+				return run(comparisonDecoder{}, false)
+			}
 			return result, nil
 		}
 		unsupported := errors.Is(err, errComparisonHardwareUnsupported)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/comparisons"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -29,7 +30,11 @@ func TestBoundedComparisonFileRejectsChangedInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil)
-	_, input, err := service.openComparisonFileInput(t.Context(), path, nil)
+	_, expected, err := preparedrelease.VerifyInputFileSource(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, input, err := service.openComparisonFileInput(t.Context(), path, nil, expected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +56,39 @@ func TestBoundedComparisonFileRejectsChangedInput(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusGone {
 		t.Fatalf("changed file remained available for range reads: HTTP %d", response.StatusCode)
+	}
+}
+
+func TestBoundedComparisonFileRejectsReplacementBeforeOpen(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "source.mkv")
+	content := []byte("synthetic input")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, expected, err := preparedrelease.VerifyInputFileSource(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path, filepath.Join(root, "original.mkv")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, expected.ModTime(), expected.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(config.Config{}, api.NopLogger{}, root, nil)
+	_, input, err := service.openComparisonFileInput(t.Context(), path, nil, expected)
+	if input != nil {
+		input.close()
+	}
+	if !errors.Is(err, api.ErrActiveInputChanged) {
+		t.Fatalf("replacement with the same bytes and timestamps passed decoder admission: %v", err)
+	}
+	if _, err := service.InspectComparisonSource(t.Context(), path, expected); !errors.Is(err, api.ErrActiveInputChanged) {
+		t.Fatalf("replacement passed metadata inspection with the same fingerprint sample: %v", err)
 	}
 }
 
@@ -330,7 +368,7 @@ func TestComparisonAnalysisNativeStream(t *testing.T) {
 		}
 	})
 	t.Run("standalone seeks share an encoded-byte allowance", func(t *testing.T) {
-		_, input, err := s.openComparisonFileInput(t.Context(), source.Path, nil)
+		_, input, err := s.openComparisonFileInput(t.Context(), source.Path, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

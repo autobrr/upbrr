@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -38,7 +39,9 @@ type comparisonFileInput struct {
 	err      error
 }
 
-func (s *Service) openComparisonFileInput(ctx context.Context, path string, budget *ComparisonDecodeBudget) (context.Context, *comparisonFileInput, error) {
+func (s *Service) openComparisonFileInput(
+	ctx context.Context, path string, budget *ComparisonDecodeBudget, expected os.FileInfo,
+) (context.Context, *comparisonFileInput, error) {
 	if budget == nil {
 		budget = &ComparisonDecodeBudget{RemainingEncodedBytes: 8 << 30}
 	}
@@ -51,7 +54,7 @@ func (s *Service) openComparisonFileInput(ctx context.Context, path string, budg
 		return ctx, nil, fmt.Errorf("open comparison file input: %w", err)
 	}
 	stat, err := file.Stat()
-	if err != nil || !stat.Mode().IsRegular() {
+	if err != nil || !stat.Mode().IsRegular() || expected != nil && !pathing.SameFileVersion(expected, stat) {
 		_ = file.Close()
 		return ctx, nil, comparisonFileInputChanged()
 	}
@@ -126,8 +129,7 @@ func (input *comparisonFileInput) verify() error {
 		return nil
 	}
 	atPath, err := os.Stat(input.path)
-	if err != nil || !os.SameFile(input.stat, atPath) || input.stat.Size() != atPath.Size() ||
-		!input.stat.ModTime().Equal(atPath.ModTime()) {
+	if err != nil || !pathing.SameFileVersion(input.stat, atPath) {
 		return comparisonFileInputChanged()
 	}
 	return nil

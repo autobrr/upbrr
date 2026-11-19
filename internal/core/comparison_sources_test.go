@@ -6,17 +6,250 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"github.com/autobrr/upbrr/internal/config"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/comparisons"
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/screenshots"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func comparisonVideoFingerprint(ctx context.Context, path string) (string, error) {
+	video, err := resolveComparisonFileVideo(ctx, path, nil)
+	return video.fingerprint, err
+}
+
+func TestComparisonPublicationRejectsMutationOutsideFingerprintSample(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Example.mkv")
+	const sampleSize = api.SourceContentIdentitySampleBytes
+	data := make([]byte, sampleSize+1)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := api.ComparisonPlan{Sources: []api.ComparisonSource{{ID: "main", Fingerprint: fingerprint}}, MainSourceID: "main"}
+	retained := workflowMediaPrivateArtifacts{ComparisonSources: map[string]workflowComparisonSource{"main": {Path: path, Fingerprint: fingerprint}}}
+	retained.ComparisonSources, err = verifiedComparisonVideos(t.Context(), plan, retained)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modified := retained.ComparisonSources["main"].Source.FileIdentity.ModTime().Add(time.Second)
+	data[sampleSize] = 1
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	after, err := comparisonVideoFingerprint(t.Context(), path)
+	if err != nil || after != fingerprint {
+		t.Fatalf("fixture changed the sampled fingerprint: %v", err)
+	}
+	if err := verifyComparisonVideos(t.Context(), plan, retained); !errors.Is(err, api.ErrActiveInputChanged) {
+		t.Fatalf("operation accepted a modified file with the same sampled fingerprint: %v", err)
+	}
+}
+
+func TestLegacyComparisonGeometryRejectsReplacementBeforePublication(t *testing.T) {
+	for _, action := range []string{"preview", "restore"} {
+		t.Run(action, func(t *testing.T) {
+			root := t.TempDir()
+			retained := workflowMediaPrivateArtifacts{ComparisonSources: make(map[string]workflowComparisonSource)}
+			plan := api.ComparisonPlan{MainSourceID: "main", ScreenshotSizing: api.ComparisonSizingFit}
+			contents := []byte("synthetic comparison source")
+			for _, id := range []string{"main", "other"} {
+				path := filepath.Join(root, id+".mkv")
+				if err := os.WriteFile(path, contents, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				retained.ComparisonSources[id] = workflowComparisonSource{
+					Path:        path,
+					Fingerprint: fingerprint,
+					Source:      screenshots.ComparisonSource{Path: path},
+				}
+				plan.Sources = append(plan.Sources, api.ComparisonSource{
+					ID:          id,
+					Label:       id,
+					Fingerprint: fingerprint,
+				})
+			}
+			main := retained.ComparisonSources["main"].Path
+			replaceMain := func() {
+				if err := os.Rename(main, filepath.Join(root, "original.mkv")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(main, contents, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			renderer := comparisonDisplayRenderer{}
+			if action == "preview" {
+				renderer.preview = func(req screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error) {
+					if req.OutputWidth != 180 || req.OutputHeight != 320 {
+						t.Fatalf("preview did not use the refreshed main canvas: %+v", req)
+					}
+					replaceMain()
+					return screenshots.ComparisonFrame{}, nil
+				}
+			} else {
+				renderer.onDisplay = func(source screenshots.ComparisonSource) {
+					if source.Path != main {
+						replaceMain()
+					}
+				}
+			}
+			builder := workflowMediaBuilder{media: &mediaModule{}, comparisonRenderer: renderer}
+			media := api.MediaArtifactSet{Comparisons: &plan}
+			var err error
+			if action == "preview" {
+				_, err = builder.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, media, retained, "other", 1, 0, nil)
+			} else {
+				_, _, err = builder.RestoreComparisons(t.Context(), api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, media, retained, time.Now())
+			}
+			if !errors.Is(err, api.ErrActiveInputChanged) {
+				t.Fatalf("%s accepted geometry from the replaced main file: %v", action, err)
+			}
+		})
+	}
+}
+
+type comparisonDisplayRenderer struct {
+	comparisonSelectionRenderer
+	onDisplay func(screenshots.ComparisonSource)
+}
+
+func (r comparisonDisplayRenderer) InspectComparisonDisplay(_ context.Context, source screenshots.ComparisonSource) (screenshots.ComparisonSource, error) {
+	if r.onDisplay != nil {
+		r.onDisplay(source)
+	}
+	source.ScreenshotWidth, source.ScreenshotHeight = 180, 320
+	return source, nil
+}
+
+func TestComparisonConfigureAndApplyShareFileAdmission(t *testing.T) {
+	root := t.TempDir()
+	main, other := filepath.Join(root, "Main.mkv"), filepath.Join(root, "Other.mkv")
+	content := []byte("synthetic comparison source")
+	for _, path := range []string{main, other} {
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := workflowMediaBuilder{
+		media:              &mediaModule{},
+		comparisonRenderer: comparisonConfigurationRenderer{},
+		resolver:           workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{VideoPath: main}},
+	}
+	release := api.ReleaseRef{SourcePath: main, Generation: 1}
+	selections := []api.ComparisonFrameSelection{{
+		RowID:     "row",
+		SourceID:  "main",
+		PreviewID: "preview",
+	}}
+	configured, private, err := b.EditComparisons(t.Context(), release, api.TrackerReleaseProjectionSet{}, nil, nil, api.ComparisonInstructions{
+		Action:          "configure",
+		VideoSources:    []api.ComparisonVideoSelection{{ID: "other", Path: other}},
+		FrameSelections: selections,
+		Plan: api.ComparisonPlan{
+			MainSourceID: "main",
+			Sources:      []api.ComparisonSource{{ID: "main", Label: "Main"}, {ID: "other", Label: "Other"}},
+			Rows:         []api.ComparisonRow{{ID: "row", Cells: []api.ComparisonCell{{SourceID: "main"}, {SourceID: "other"}}}},
+		},
+	}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(main, filepath.Join(root, "Original.mkv")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(main, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = b.ApplyComparisonFrames(t.Context(), configured, private, selections, []releaseworkflow.MediaPreviewContent{{}})
+	if !errors.Is(err, api.ErrActiveInputChanged) {
+		t.Fatalf("frame application accepted a replacement after configuration: %v", err)
+	}
+}
+
+func TestComparisonFrameEditsDiscardObsoleteMatchTypeWarnings(t *testing.T) {
+	matched := applyComparisonMatches(
+		api.ComparisonPlan{MainSourceID: "main", Sources: []api.ComparisonSource{{ID: "main"}, {ID: "other", PreferBFrames: true}}},
+		comparisons.MatchResult{Rows: []comparisons.MatchedRow{{Frames: []comparisons.FrameMatch{
+			{
+				SourceID:         "main",
+				Resolved:         true,
+				TimestampSeconds: 1,
+				FrameType:        "B",
+			},
+			{
+				SourceID:         "other",
+				Resolved:         true,
+				TimestampSeconds: 1,
+				FrameType:        "P",
+				TypeFallback:     true,
+				Reason:           "requested_picture_type_unavailable_at_match",
+			},
+		}}}}, nil, comparisons.MatchOptions{},
+	)
+	matchWarning := matched.Rows[0].Cells[1].Warning
+	const correspondence = "Review this correspondence."
+	matched.Rows[0].Cells[1].Warning = correspondence + " " + matchWarning
+	for _, change := range []string{"same moment", "timestamp", "picture preference"} {
+		t.Run(change, func(t *testing.T) {
+			edited, err := matched.Clone()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := correspondence
+			switch change {
+			case "timestamp":
+				edited.Rows[0].Cells[1].TimestampSeconds = new(2.0)
+			case "picture preference":
+				edited.Sources[1].PreferBFrames = false
+				edited.Sources[1].AllowedFrameTypes = []string{"I"}
+			default:
+				want = correspondence + " " + matchWarning
+			}
+			retainComparisonCellFacts(&edited, &api.MediaArtifactSet{Comparisons: &matched})
+			if got := edited.Rows[0].Cells[1].Warning; got != want {
+				t.Fatalf("retained warning = %q, want %q", got, want)
+			}
+		})
+	}
+	t.Run("manual correction after no compatible frame was found", func(t *testing.T) {
+		unresolved := applyComparisonMatches(matched, comparisons.MatchResult{Rows: []comparisons.MatchedRow{{Frames: []comparisons.FrameMatch{
+			{SourceID: "other", Reason: "no_compatible_picture_type"},
+		}}}}, nil, comparisons.MatchOptions{})
+		previous := &api.MediaArtifactSet{Comparisons: &unresolved}
+		unchanged, err := unresolved.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		retainComparisonCellFacts(&unchanged, previous)
+		cell := &unchanged.Rows[0].Cells[0]
+		if cell.Warning != "no_compatible_picture_type" {
+			t.Fatalf("unresolved frame discarded its diagnostic: %+v", cell)
+		}
+		cell.TimestampSeconds = new(2.0)
+		retainComparisonCellFacts(&unchanged, previous)
+		if cell.Warning != "" {
+			t.Fatalf("manual correction retained an obsolete incompatibility: %q", cell.Warning)
+		}
+	})
+}
 
 func TestComparisonReconfigurationInvalidatesChangedMainAnalysis(t *testing.T) {
 	for _, changed := range []string{"unchanged", "main", "other"} {
@@ -100,11 +333,13 @@ func TestComparisonReconfigurationInvalidatesChangedMainAnalysis(t *testing.T) {
 
 type comparisonConfigurationRenderer struct{ comparisonFrameRenderer }
 
-func (comparisonConfigurationRenderer) InspectComparisonSource(_ context.Context, path string) (screenshots.ComparisonSource, error) {
+func (comparisonConfigurationRenderer) InspectComparisonSource(_ context.Context, path string, _ ...os.FileInfo) (screenshots.ComparisonSource, error) {
 	return screenshots.ComparisonSource{
 		Path:                 path,
 		Width:                512,
 		Height:               288,
+		ScreenshotWidth:      512,
+		ScreenshotHeight:     288,
 		DurationSeconds:      24,
 		VideoDurationSeconds: 24,
 		FrameCount:           600,
@@ -184,6 +419,8 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 				DurationSeconds:      10,
 				Width:                1920,
 				Height:               1080,
+				ScreenshotWidth:      1920,
+				ScreenshotHeight:     1080,
 				VideoDurationSeconds: 10,
 			}, Fingerprint: fingerprint,
 		}

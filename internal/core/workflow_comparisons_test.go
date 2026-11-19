@@ -1143,13 +1143,27 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	typed.Sources[1].AllowedFrameTypes = []string{"B"}
-	typeChanged, _, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained,
+	typeChanged, typePrivate, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &snapshot, retained,
 		api.ComparisonInstructions{Action: "capture", Plan: typed}, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cell := typeChanged.Comparisons.Rows[0].Cells[1]; cell.PictureType != "I" || !strings.Contains(cell.Warning, "B") {
 		t.Error("changed type preference silently reused an incompatible frame")
+	}
+	typeChanged.Comparisons.Rows[0].Cells[1].Warning = "Review this correspondence. " + typeChanged.Comparisons.Rows[0].Cells[1].Warning
+	allowed, err := typeChanged.Comparisons.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed.Sources[1].AllowedFrameTypes = []string{"I"}
+	typeAllowed, _, err := b.EditComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &typeChanged, typePrivate,
+		api.ComparisonInstructions{Action: "capture", Plan: allowed}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cell := typeAllowed.Comparisons.Rows[0].Cells[1]; cell.PictureType != "I" || cell.ArtifactID == "" || cell.Warning != "Review this correspondence." {
+		t.Errorf("recaptured allowed frame retained a stale type warning or lost its correspondence warning: %+v", cell)
 	}
 	// A retained orphan image cannot be relabelled as another requested frame.
 	edited, err := captured.Clone()
@@ -1331,6 +1345,32 @@ func TestComparisonVideoPipelineUsesObservedSourceClock(t *testing.T) {
 			t.Errorf("%s retained a removed column handle", action)
 		}
 	}
+	t.Run("capture checks source version after final progress", func(t *testing.T) {
+		info, err := os.Stat(mainPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chtimes(mainPath, info.ModTime(), info.ModTime()); err != nil {
+				t.Error(err)
+			}
+		})
+		changed := false
+		ctx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) {
+			if !update.ItemOnly && update.Phase == "comparisons_capture" && update.Completed == update.Total {
+				modified := info.ModTime().Add(2 * time.Second)
+				if err := os.Chtimes(mainPath, modified, modified); err != nil {
+					t.Fatal(err)
+				}
+				changed = true
+			}
+		})
+		_, _, err = b.EditComparisons(ctx, api.ReleaseRef{SourcePath: mainPath, Generation: 1}, api.TrackerReleaseProjectionSet{}, &fresh, private,
+			api.ComparisonInstructions{Action: "capture", Plan: *fresh.Comparisons}, nil, time.Now())
+		if !changed || !errors.Is(err, api.ErrActiveInputChanged) {
+			t.Fatalf("capture published after late source mutation: changed=%t err=%v", changed, err)
+		}
+	})
 	b.resolver = workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{VideoPath: secondPath}}
 	restored, restoredPrivate, err := b.RestoreComparisons(t.Context(), api.ReleaseRef{SourcePath: mainPath, Generation: 2}, api.TrackerReleaseProjectionSet{}, snapshot, retained, time.Now())
 	if err != nil {
@@ -1377,9 +1417,21 @@ func TestComparisonMainCanvasUsesPrivateDimensions(t *testing.T) {
 }
 
 func TestComparisonRotatedSizingUsesDecodedGeometry(t *testing.T) {
-	ffmpeg, err := exec.LookPath("ffmpeg")
+	ffmpeg, err := screenshots.ResolveFFmpegExecutable()
 	if err != nil {
 		t.Skip("rotated comparison requires FFmpeg")
+	}
+	capabilities := func(args ...string) string {
+		t.Helper()
+		output, err := exec.CommandContext(t.Context(), ffmpeg, append([]string{"-hide_banner"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("read FFmpeg fixture capabilities: %v %s", err, output)
+		}
+		return string(output)
+	}
+	encoders := capabilities("-encoders")
+	if !strings.Contains(capabilities("-h", "full"), "-display_rotation") || !strings.Contains(encoders, " mpeg4 ") {
+		t.Skip("rotated comparison fixtures need FFmpeg display rotation and the MPEG-4 encoder")
 	}
 	root := t.TempDir()
 	mainPath, rotatedPath := filepath.Join(root, "Main.mp4"), filepath.Join(root, "Rotated.mp4")
@@ -1421,10 +1473,12 @@ func TestComparisonRotatedSizingUsesDecodedGeometry(t *testing.T) {
 		sizing        string
 		width, height int
 	}{
+		{"main", api.ComparisonSizingFit, 320, 180},
 		{"main", api.ComparisonSizingSource, 180, 320},
 		{"main", api.ComparisonSizingResize, 101, 180},
 		{"main", api.ComparisonSizingCrop, 320, 180},
 		{"other", api.ComparisonSizingResize, 180, 320},
+		{"other", api.ComparisonSizingFit, 180, 320},
 		{"other", api.ComparisonSizingCrop, 180, 320},
 	} {
 		t.Run(tc.mainID+"/"+tc.sizing, func(t *testing.T) {
@@ -1449,11 +1503,81 @@ func TestComparisonRotatedSizingUsesDecodedGeometry(t *testing.T) {
 			if err := validateComparisonCapture(comparisonCaptureJob{request: request}, captured); err != nil {
 				t.Fatal(err)
 			}
+			if tc.mainID == "main" && tc.sizing == api.ComparisonSizingResize {
+				stretched := captured
+				stretched.Width, stretched.Height = 320, 180
+				if request.ValidOutputSize(stretched) {
+					t.Fatal("resize accepted stretched pixels that only fit the main bounds")
+				}
+			}
+			if tc.mainID == "main" && tc.sizing == api.ComparisonSizingFit {
+				img, err := png.Decode(bytes.NewReader(captured.ImageBytes))
+				if err != nil {
+					t.Fatal(err)
+				}
+				r, g, b, _ := img.At(0, 90).RGBA()
+				if r|g|b != 0 {
+					t.Fatal("Fit did not pad the portrait image with black")
+				}
+			}
 			if !preview.Replay.SamePicture(captured.Replay) || !bytes.Equal(preview.ImageBytes, captured.ImageBytes) {
 				t.Fatal("rotated capture changed the exact preview picture")
 			}
 		})
 	}
+	t.Run("legacy preview refreshes the rotated main canvas", func(t *testing.T) {
+		legacy := cloneWorkflowMediaPrivateArtifacts(retained)
+		main := legacy.ComparisonSources["other"]
+		main.Source.ScreenshotWidth, main.Source.ScreenshotHeight = 0, 0
+		main.Source.NativePixelFormat = ""
+		main.Source.ScreenshotTurn, main.Source.ScreenshotMatrix = false, false
+		legacy.ComparisonSources["other"] = main
+		legacyPlan, err := plan.Clone()
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacyPlan.MainSourceID, legacyPlan.ScreenshotSizing = "other", ""
+		for i := range legacyPlan.Sources {
+			source := &legacyPlan.Sources[i]
+			source.Fingerprint = legacy.ComparisonSources[source.ID].Fingerprint
+		}
+		builder := workflowMediaBuilder{comparisonRenderer: renderer}
+		preview, err := builder.PreviewComparisonFrame(t.Context(), api.ReleaseRef{}, api.MediaArtifactSet{Comparisons: &legacyPlan}, legacy, "main", 1, 0, nil)
+		if err != nil || preview.Width != 180 || preview.Height != 320 {
+			t.Fatalf("legacy Fit preview = %dx%d, want the 180x320 display canvas: %v", preview.Width, preview.Height, err)
+		}
+	})
+	t.Run("rotated active picture is measured and cropped in display orientation", func(t *testing.T) {
+		codedPath, turnedPath := filepath.Join(root, "Bars.mp4"), filepath.Join(root, "TurnedBars.mp4")
+		run("-f", "lavfi", "-i", "testsrc2=size=320x140:rate=10:duration=2", "-vf", "pad=320:180:0:20", "-c:v", "mpeg4", codedPath)
+		run("-display_rotation", "90", "-i", codedPath, "-c", "copy", turnedPath)
+		source, err := renderer.InspectComparisonSource(t.Context(), turnedPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		budget := &screenshots.ComparisonDecodeBudget{RemainingEncodedBytes: 64 << 20, MovieSecondsLimit: 6}
+		crop, err := renderer.DetectComparisonActivePicture(t.Context(), source, 0, 1.5, budget)
+		if err != nil || crop == nil || !crop.ValidFor(180, 320) || crop.Height <= 180 || crop.Width >= 180 {
+			t.Fatalf("oriented crop = %+v, err = %v", crop, err)
+		}
+		frames, err := renderer.AnalyzeComparisonSource(t.Context(), screenshots.ComparisonSampleRequest{
+			Source:          source,
+			DurationSeconds: 1.5,
+			MatchCrop:       crop,
+			Budget:          budget,
+		})
+		if err != nil || len(frames) == 0 {
+			t.Fatalf("analyze using oriented crop: %d frames, %v", len(frames), err)
+		}
+		calibration := comparisonCalibration{
+			Profile: "rotated-source",
+			Scale:   comparisons.PlaybackScale{Numerator: 1, Denominator: 1},
+			Crop:    crop,
+		}
+		if _, reusable := calibration.prediction("rotated-source", source); !reusable {
+			t.Fatal("warm matching rejected its valid rotated crop")
+		}
+	})
 	t.Run("half-turn applies the display transform", func(t *testing.T) {
 		halfPath := filepath.Join(root, "HalfTurn.mp4")
 		run("-display_rotation", "180", "-i", mainPath, "-c", "copy", halfPath)
@@ -1500,6 +1624,10 @@ func TestComparisonRotatedSizingUsesDecodedGeometry(t *testing.T) {
 		{"late half-turn", "remove", "insert:rotate=180", 320, 180},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(encoders, " libx264 ") ||
+				!strings.Contains(capabilities("-h", "bsf=h264_metadata"), "display_orientation") {
+				t.Skip("frame-side orientation fixtures need libx264 and the h264_metadata bitstream filter")
+			}
 			fixtureRoot := t.TempDir()
 			listPath, orientedPath := filepath.Join(fixtureRoot, "List.txt"), filepath.Join(fixtureRoot, "Oriented.mp4")
 			for i, orientation := range []string{tc.first, tc.second} {

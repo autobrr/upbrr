@@ -13,7 +13,7 @@ import (
 
 // ComparisonAnalysisPolicyVersion binds evidence to decoder selection and
 // analysis conversion, independently of screenshot rendering preferences.
-const ComparisonAnalysisPolicyVersion = "native-analysis-mobius10-linear1024-libplacebo-hable-v2"
+const ComparisonAnalysisPolicyVersion = "native-analysis-mobius10-linear1024-libplacebo-hable-v3"
 const comparisonAnalysisAlgorithm = "mobius"
 const comparisonAnalysisDesat = 10
 

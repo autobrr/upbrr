@@ -144,6 +144,14 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 		return snapshot, private, fmt.Errorf("comparison source: %w", err)
 	}
 	retained.ComparisonSources = cloneComparisonSources(retained.ComparisonSources)
+	retained.ComparisonSources, err = verifiedComparisonVideos(ctx, plan, retained)
+	if err != nil {
+		return snapshot, private, err
+	}
+	defer clearComparisonFileIdentities(retained.ComparisonSources)
+	if err := b.refreshComparisonDisplays(ctx, retained.ComparisonSources); err != nil {
+		return snapshot, private, err
+	}
 	applied := map[string]map[string]screenshots.ComparisonFrameReplay{}
 	for i, selection := range selections {
 		content := contents[i]
@@ -259,14 +267,14 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 			retained.ComparisonSources[id] = source
 		}
 	}
-	if err := verifyComparisonVideos(ctx, plan, retained); err != nil {
-		return snapshot, private, err
-	}
 	plan.ApprovedFingerprint = ""
 	plan.Problems = comparisons.Validate(plan)
 	plan.Fingerprint, err = comparisons.ReviewFingerprint(plan)
 	if err != nil {
 		return snapshot, private, fmt.Errorf("comparison source: %w", err)
+	}
+	if err := verifyComparisonVideos(ctx, plan, retained); err != nil {
+		return snapshot, private, err
 	}
 	snapshot.Comparisons = &plan
 	syncComparisonSelections(&snapshot, plan)
@@ -470,50 +478,41 @@ func (b workflowMediaBuilder) DiscoverComparisonSource(
 	return discovery, nil
 }
 
+type resolvedComparisonVideo struct {
+	fingerprint string
+	input       *filesystem.ResolvedComparisonInput
+	candidate   *api.ComparisonProgrammeCandidate
+	file        os.FileInfo
+}
+
 func resolveComparisonVideo(
 	ctx context.Context,
 	path string,
 	selection *api.ComparisonProgrammeSelection,
 	subject *api.ScreenshotSubject,
-) (string, *filesystem.ResolvedComparisonInput, *api.ComparisonProgrammeCandidate, error) {
+) (resolvedComparisonVideo, error) {
 	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && !strings.EqualFold(filepath.Ext(path), ".iso") {
-		if selection != nil {
-			return "", nil, nil, comparisonSelectionFailure(
-				api.OperationFailureInvalidSource,
-				"unexpected_programme",
-				"A regular video does not accept a disc programme selection.",
-			)
-		}
-		fingerprint, err := comparisonVideoFingerprint(ctx, path)
-		return fingerprint, nil, nil, err
+		return resolveComparisonFileVideo(ctx, path, selection)
 	}
 	discovery, private, err := comparisonDiscovery(ctx, path)
 	if err != nil {
-		return "", nil, nil, err
+		return resolvedComparisonVideo{}, err
 	}
 	if len(private.Inputs) == 0 {
-		if selection != nil {
-			return "", nil, nil, comparisonSelectionFailure(
-				api.OperationFailureInvalidSource,
-				"unexpected_programme",
-				"A regular video does not accept a disc programme selection.",
-			)
-		}
-		fingerprint, err := comparisonVideoFingerprint(ctx, path)
-		return fingerprint, nil, nil, err
+		return resolveComparisonFileVideo(ctx, path, selection)
 	}
 	if subject != nil {
 		constrainMainComparisonDiscovery(&discovery, private, *subject)
 	}
 	if selection == nil {
-		return "", nil, nil, comparisonSelectionFailure(
+		return resolvedComparisonVideo{}, comparisonSelectionFailure(
 			api.OperationFailureMissingPrerequisite,
 			"programme_required",
 			"Discover and select one title or playlist for this comparison column.",
 		)
 	}
 	if selection.DiscoveryFingerprint != discovery.Fingerprint {
-		return "", nil, nil, comparisonSelectionFailure(
+		return resolvedComparisonVideo{}, comparisonSelectionFailure(
 			api.OperationFailureStaleResult,
 			"stale_discovery",
 			"The comparison source changed. Discover its programmes again.",
@@ -523,7 +522,7 @@ func resolveComparisonVideo(
 		return candidate.ID == selection.CandidateID && candidate.DiscID == selection.DiscID && candidate.Kind == selection.Kind
 	})
 	if index < 0 {
-		return "", nil, nil, comparisonSelectionFailure(
+		return resolvedComparisonVideo{}, comparisonSelectionFailure(
 			api.OperationFailureInvalidSource,
 			"invalid_programme",
 			"Select a programme authorized for this comparison source.",
@@ -531,7 +530,7 @@ func resolveComparisonVideo(
 	}
 	candidate := discovery.Candidates[index]
 	if !candidate.Supported {
-		return "", nil, nil, comparisonSelectionFailure(
+		return resolvedComparisonVideo{}, comparisonSelectionFailure(
 			api.OperationFailureInvalidSource,
 			candidate.Reason,
 			"The selected programme is outside the supported comparison capabilities.",
@@ -539,13 +538,64 @@ func resolveComparisonVideo(
 	}
 	input, err := filesystem.ResolveComparisonProgramme(ctx, private.Inputs[candidate.ID])
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("comparison source: %w", err)
+		return resolvedComparisonVideo{}, fmt.Errorf("comparison source: %w", err)
 	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Discovery string
 		Input     filesystem.ResolvedComparisonInput
 	}{discovery.Fingerprint, input})
-	return string(fingerprint), &input, &candidate, err
+	if err != nil {
+		return resolvedComparisonVideo{}, fmt.Errorf("fingerprint comparison programme: %w", err)
+	}
+	return resolvedComparisonVideo{
+		fingerprint: string(fingerprint),
+		input:       &input,
+		candidate:   &candidate,
+	}, nil
+}
+
+func resolveComparisonFileVideo(ctx context.Context, path string, selection *api.ComparisonProgrammeSelection) (resolvedComparisonVideo, error) {
+	if selection != nil {
+		return resolvedComparisonVideo{}, comparisonSelectionFailure(
+			api.OperationFailureInvalidSource,
+			"unexpected_programme",
+			"A regular video does not accept a disc programme selection.",
+		)
+	}
+	fingerprint, file, err := preparedrelease.VerifyInputFileSource(ctx, path)
+	if err != nil {
+		return resolvedComparisonVideo{}, fmt.Errorf("verify comparison source: %w", err)
+	}
+	return resolvedComparisonVideo{fingerprint: fingerprint, file: file}, nil
+}
+
+func (b workflowMediaBuilder) refreshComparisonDisplays(ctx context.Context, sources map[string]workflowComparisonSource) error {
+	for id, source := range sources {
+		if err := b.refreshComparisonDisplay(ctx, &source.Source); err != nil {
+			return err
+		}
+		sources[id] = source
+	}
+	return nil
+}
+
+func (b workflowMediaBuilder) refreshComparisonDisplay(ctx context.Context, source *screenshots.ComparisonSource) error {
+	if !comparisonSizingProbeNeeded(*source) {
+		return nil
+	}
+	renderer, err := b.comparisonService()
+	if err != nil {
+		return err
+	}
+	inspected, err := renderer.InspectComparisonDisplay(ctx, *source)
+	if err != nil {
+		return fmt.Errorf("refresh comparison display geometry: %w", err)
+	}
+	if comparisonSizingProbeNeeded(inspected) {
+		return errors.New("the comparison source has no inspected display dimensions")
+	}
+	*source = inspected
+	return nil
 }
 
 func comparisonScratchDir(root, releasePath, id string) (string, error) {

@@ -217,7 +217,15 @@ func TestComparisonSoftwareReplayRevalidatesHardwareWitness(t *testing.T) {
 			stderr := fmt.Sprintf("[Parsed_showinfo_1 @ synthetic] config in time_base: 1/1000, frame_rate: 25/1\n"+
 				"[Parsed_showinfo_1 @ synthetic] n: 0 pts: %d pts_time:5.8 fmt:yuv420p sar:1/1 s:2x2 i:P type:B checksum:%s\n", tc.pts, tc.checksum)
 			runner := comparisonInspectionRunner(func(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
-				if !strings.Contains(ffmpegValueAfter(args, "-vf"), "eq(n,20)*eq(pts,5800)") || ffmpegValueAfter(args, "-ss") != "5.000000000" || slices.Contains(args, "-hwaccel") {
+				filter := ffmpegValueAfter(args, "-vf")
+				if ffmpegValueAfter(args, "-i") == "pipe:0" {
+					if !strings.Contains(filter, `Resolution\: 2 x 2`) {
+						t.Fatalf("the Fit caption did not use the decoded display geometry: %s", filter)
+					}
+					return CommandResult{Stdout: png}, nil
+				}
+				if strings.Contains(filter, "drawtext") || !strings.Contains(filter, "eq(n,20)*eq(pts,5800)") ||
+					ffmpegValueAfter(args, "-ss") != "5.000000000" || slices.Contains(args, "-hwaccel") {
 					t.Fatal("selected backend is unavailable to the injected runner")
 				}
 				return CommandResult{Stdout: png, Stderr: []byte(stderr)}, nil
@@ -226,9 +234,15 @@ func TestComparisonSoftwareReplayRevalidatesHardwareWitness(t *testing.T) {
 			frame, err := s.ComparisonCapture(t.Context(), ComparisonCaptureRequest{
 				Source:           source,
 				TimestampSeconds: 5.8,
+				ScreenshotSizing: api.ComparisonSizingFit,
+				OverlayLabel:     "Source B",
+				ShowResolution:   true,
+				OutputWidth:      2,
+				OutputHeight:     2,
 				Replay: &ComparisonFrameReplay{
-					Identity: identity,
-					Version:  2,
+					Identity:    identity,
+					Version:     2,
+					PictureType: "B",
 					File: &ComparisonFileInterval{
 						Seek:     5,
 						Start:    5,

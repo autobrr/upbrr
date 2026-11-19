@@ -579,7 +579,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                 >
                   <img src={view.previewImage} alt="Live preview" />
                 </button>
-              ) : busy ? (
+              ) : busy && view.activeAction === "preview" ? (
                 <p className="text-muted-foreground">Loading preview...</p>
               ) : (
                 <p className="text-muted-foreground">No preview yet.</p>

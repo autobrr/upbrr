@@ -43,6 +43,7 @@ import { useProviderSearch } from "./providerSearch";
 import {
   initialSessionState,
   pendingCorrectionReview,
+  sameScreenshotPlanAuthority,
   sessionReducer,
   type SessionState,
 } from "./reducer";
@@ -2545,13 +2546,34 @@ export function ReleaseSessionProvider({
         current.workflow.id,
         command.controller.signal,
       );
-      if (command.controller.signal.aborted) return false;
-      const selectedArtifactIDs = (current.media?.artifacts || [])
+      const latest = stateRef.current.workflowView.current;
+      if (command.controller.signal.aborted || latest?.workflow.id !== current.workflow.id)
+        return false;
+      const applicable = latest.workflow.revision > current.workflow.revision ? latest : current;
+      if (!sameScreenshotPlanAuthority(current, applicable)) return false;
+      if (
+        workflowPlan.workflowId !== applicable.workflow.id ||
+        workflowPlan.revision > applicable.workflow.revision ||
+        workflowPlan.release.id !== applicable.workflow.release?.id ||
+        workflowPlan.release.revision !== applicable.workflow.release?.revision ||
+        workflowPlan.projectionSet.id !== applicable.workflow.trackerProjections?.id ||
+        workflowPlan.projectionSet.revision !== applicable.workflow.trackerProjections?.revision
+      ) {
+        dispatch({
+          type: "workflow_failed",
+          facet: "screenshots",
+          sessionRevision: command.sessionRevision,
+          revision: command.revision,
+          error: "The prepared release or eligible trackers changed. Load suggestions again.",
+        });
+        return false;
+      }
+      const selectedArtifactIDs = (applicable.media?.artifacts || [])
         .filter((artifact) => artifact.kind === "screenshot" && artifact.selected)
         .sort((left, right) => (left.order || 0) - (right.order || 0))
         .map((artifact) => artifact.id);
       const plan: ScreenshotPlan = {
-        SourcePath: current.release?.release.Source.SourcePath || "",
+        SourcePath: applicable.release?.release.Source.SourcePath || "",
         SavedImagePlanID: workflowPlan.id,
         DiscType: workflowPlan.discType || "",
         Discs: (workflowPlan.discs || []).map((disc) => ({
@@ -2591,7 +2613,7 @@ export function ReleaseSessionProvider({
       if (
         workflowPlan.autoAdoptSavedImages &&
         workflowPlan.savedTrackerImages?.length &&
-        current.media?.savedImagePlanId !== workflowPlan.id
+        applicable.media?.savedImagePlanId !== workflowPlan.id
       ) {
         // Another facet can acquire the workflow while the plan request is pending.
         if (controllers.current.workflow) {
@@ -2606,9 +2628,10 @@ export function ReleaseSessionProvider({
           return false;
         }
         return await runBackendWorkflow(
-          (current, commandID, signal) =>
-            continueBackendGoal(
-              current,
+          (_current, commandID, signal, updateAuthority) => {
+            updateAuthority(applicable);
+            return continueBackendGoal(
+              applicable,
               "media_ready",
               {
                 media: {
@@ -2622,7 +2645,8 @@ export function ReleaseSessionProvider({
               },
               commandID,
               signal,
-            ),
+            );
+          },
           screenshotCommandCallbacks(true, "plan"),
           command.controller,
         );

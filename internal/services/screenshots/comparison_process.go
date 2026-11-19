@@ -220,6 +220,7 @@ type comparisonDiagnosticStream struct {
 	firstNative    func()
 	hardwareDecode bool
 	nativeStarted  bool
+	displayMatrix  string
 	count          int
 	err            error
 	cancel         context.CancelFunc
@@ -287,6 +288,9 @@ func (d *comparisonDiagnosticStream) line(line string) {
 		return
 	}
 	if d.hardwareDecode {
+		if strings.Contains(line, "rotation of") && comparisonDisplayMatrix.MatchString(line) {
+			d.displayMatrix = line
+		}
 		if !d.nativeStarted && comparisonHardwareInputFormatFailure.MatchString(line) {
 			d.err = errComparisonHardwareUnsupported
 			return
@@ -409,6 +413,9 @@ func (d *comparisonDiagnosticStream) result() ([]byte, error) {
 	}
 	var out bytes.Buffer
 	_, _ = out.Write(d.tail)
+	if d.displayMatrix != "" && !comparisonDisplayMatrix.Match(d.tail) {
+		_, _ = fmt.Fprintln(&out, d.displayMatrix)
+	}
 	for name, records := range d.records {
 		prefix := "[Parsed_showinfo_1 @ bounded] "
 		if strings.HasPrefix(name, "showinfo@") {

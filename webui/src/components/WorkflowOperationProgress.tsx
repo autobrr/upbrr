@@ -23,7 +23,8 @@ export function WorkflowOperationProgress({
     (item) => !item.phase || item.phase === operation.phase,
   );
   const comparisonItem =
-    phaseItems.find((item) => item.status === "running" || item.status === "queued") ??
+    phaseItems.find((item) => item.status === "running") ??
+    phaseItems.find((item) => item.status === "queued") ??
     (phaseItems.length === 1 ? phaseItems[0] : undefined);
   const itemProgress =
     comparisonItem?.status === "skipped"
@@ -154,19 +155,21 @@ export function WorkflowOperationProgress({
               {comparisonItem?.message || comparisonItem?.status || "Overall progress only"}
             </span>
           </div>
-          <div
-            aria-label="Comparison task progress"
-            aria-valuemax={100}
-            aria-valuemin={0}
-            aria-valuenow={itemProgress}
-            className="h-1.5 w-full overflow-hidden rounded-full bg-secondary"
-            role="progressbar"
-          >
+          {comparisonItem && (
             <div
-              className="h-full bg-primary motion-safe:transition-[width]"
-              style={{ width: `${itemProgress ?? 0}%` }}
-            />
-          </div>
+              aria-label="Comparison task progress"
+              aria-valuemax={100}
+              aria-valuemin={0}
+              aria-valuenow={itemProgress}
+              className="h-1.5 w-full overflow-hidden rounded-full bg-secondary"
+              role="progressbar"
+            >
+              <div
+                className="h-full bg-primary motion-safe:transition-[width]"
+                style={{ width: `${itemProgress ?? 0}%` }}
+              />
+            </div>
+          )}
         </div>
       )}
       {recovery ? <p className="text-muted-foreground text-sm">{recovery}</p> : null}

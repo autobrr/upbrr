@@ -85,6 +85,8 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 			InputFingerprint:     fingerprint,
 			Width:                512,
 			Height:               288,
+			ScreenshotWidth:      512,
+			ScreenshotHeight:     288,
 			DurationSeconds:      24,
 			VideoDurationSeconds: 24,
 			HDRFacts:             api.HDRFacts{Formats: []api.HDRFormat{api.HDRFormatSDR}},
@@ -564,11 +566,17 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 		quickPlan.Preferences.ScanMode = "fast"
 		quickPrivate := cloneWorkflowMediaPrivateArtifacts(retained)
 		search := &comparisonQuickSearch{}
+		ctx := api.WithWorkflowProgressReporter(t.Context(), func(update api.WorkflowProgressUpdate) {
+			if !update.ItemOnly && update.Completed >= update.Total {
+				t.Error("Quick discovery or matching reported completion before capture")
+			}
+		})
+		progress := b.comparisonProgress(ctx, 4)
 		stronger, conflicting := false, false
 		clippedID := ""
 		var clippedTime float64
 		discover := func() (*comparisonSceneInventory, error) {
-			return b.discoverComparisonScenes(t.Context(), &quickPrivate, quickPlan, window, excluded,
+			return b.discoverComparisonScenes(ctx, &quickPrivate, quickPlan, window, excluded,
 				func(ctx context.Context, start, seconds float64, _ bool) ([]screenshots.ComparisonSample, error) {
 					frames, err := decode(ctx, start, seconds, true)
 					for i := range frames {
@@ -591,7 +599,7 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 					}
 					return frames, err
 				},
-				b.comparisonProgress(t.Context(), 5), search)
+				progress, search)
 		}
 		quick, err := discover()
 		if err != nil {
@@ -605,7 +613,10 @@ func TestComparisonDeepInventoryCompletesReranksAndRestores(t *testing.T) {
 			t.Fatalf("Quick discarded already analyzed native alternatives: %v", err)
 		}
 		stronger = true
+		progress.begin("alignment_calibration", 1)
+		progress.complete()
 		for range 3 {
+			progress.begin("alignment_rows", 1)
 			before := quick.QuickWindows
 			quick, err = discover()
 			if err != nil || quick.QuickWindows != before+1 {

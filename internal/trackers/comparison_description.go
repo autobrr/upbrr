@@ -49,12 +49,8 @@ func exactComparisonDescriptionBlock(tracker string, exact *api.ExactMediaAssets
 			cell := row.Cells[cellIndex] // Complete-row validation above establishes every column.
 			image := exact.ComparisonImages[cell.ArtifactID]
 			upload, ok := exactUploadedVariant(tracker, image.Path, exact.ComparisonUploads[cell.ArtifactID], "")
-			imageURL := strings.TrimSpace(upload.RawURL)
-			if imageURL == "" {
-				imageURL = strings.TrimSpace(upload.ImgURL)
-			}
-			if !ok || imageURL == "" || upload.Purpose != api.ScreenshotPurposeComparison ||
-				upload.ContentSHA256 != cell.ContentSHA256 || image.ContentSHA256 != cell.ContentSHA256 {
+			imageURL := comparisonHostedURL(cell, image, upload)
+			if !ok || imageURL == "" {
 				if !exact.ImageHostUploadSkipped {
 					return "", fmt.Errorf("hosted comparison row %s is incomplete for %s", row.ID, tracker)
 				}
@@ -70,6 +66,16 @@ func exactComparisonDescriptionBlock(tracker string, exact *api.ExactMediaAssets
 	}
 	return "[spoiler=source_comparisons]\n[comparison=" + strings.Join(labels, ", ") + "]\n" +
 		strings.Join(images, "\n") + "\n[/comparison]\n[/spoiler]", nil
+}
+
+func comparisonHostedURL(cell api.ComparisonCell, image api.ScreenshotImage, upload api.UploadedImageLink) string {
+	if upload.Purpose != api.ScreenshotPurposeComparison || upload.ContentSHA256 != cell.ContentSHA256 || image.ContentSHA256 != cell.ContentSHA256 {
+		return ""
+	}
+	if url := strings.TrimSpace(upload.RawURL); url != "" {
+		return url
+	}
+	return strings.TrimSpace(upload.ImgURL)
 }
 
 func replaceComparisonDescriptionBlock(description, block string) string {
@@ -99,14 +105,39 @@ func comparisonMediaForTrackerHost(
 	trackerCfg config.TrackerConfig, registry *Registry, preferredHosts []string,
 ) error {
 	view := &api.ExactMediaAssets{}
+	cells := make(map[api.PublicResourceID]struct{})
+	coverage := make(map[comparisonHostGroup]map[api.PublicResourceID]struct{})
 	for _, row := range exact.Comparisons.Rows {
 		if row.Excluded {
 			continue
 		}
 		for _, cell := range row.Cells {
-			view.Screenshots = append(view.Screenshots, exact.ComparisonImages[cell.ArtifactID])
-			view.ScreenshotUploads = append(view.ScreenshotUploads, exact.ComparisonUploads[cell.ArtifactID]...)
+			cells[cell.ArtifactID] = struct{}{}
+			image := exact.ComparisonImages[cell.ArtifactID]
+			view.Screenshots = append(view.Screenshots, image)
+			for _, upload := range exact.ComparisonUploads[cell.ArtifactID] {
+				if exact.ImageHostUploadSkipped {
+					view.ScreenshotUploads = append(view.ScreenshotUploads, upload)
+					continue
+				}
+				if _, ok := exactUploadedVariant(tracker, image.Path, []api.UploadedImageLink{upload}, ""); !ok ||
+					comparisonHostedURL(cell, image, upload) == "" {
+					continue
+				}
+				group := comparisonUploadGroup(upload)
+				if coverage[group] == nil {
+					coverage[group] = make(map[api.PublicResourceID]struct{})
+				}
+				coverage[group][cell.ArtifactID] = struct{}{}
+				view.ScreenshotUploads = append(view.ScreenshotUploads, upload)
+			}
 		}
+	}
+	if !exact.ImageHostUploadSkipped {
+		// Apply host preference only to groups that can render the entire set.
+		view.ScreenshotUploads = slices.DeleteFunc(view.ScreenshotUploads, func(upload api.UploadedImageLink) bool {
+			return len(coverage[comparisonUploadGroup(upload)]) != len(cells)
+		})
 	}
 	meta.ExactMedia = view // No comparison plan: the policy pass cannot recurse.
 	selected, err := exactMediaForTrackerHost(tracker, meta, appCfg, trackerCfg, registry, preferredHosts...)
@@ -114,10 +145,35 @@ func comparisonMediaForTrackerHost(
 		return err
 	}
 	failedHosts := normalizeImageHostNames(meta.ImageHostOverrides.FailedHosts)
+	selected.ScreenshotUploads = slices.DeleteFunc(selected.ScreenshotUploads, func(upload api.UploadedImageLink) bool {
+		return hostInList(upload.Host, failedHosts)
+	})
+	var group comparisonHostGroup
+	if len(selected.ScreenshotUploads) > 0 && !exact.ImageHostUploadSkipped {
+		group = comparisonUploadGroup(selected.ScreenshotUploads[0])
+		for _, upload := range selected.ScreenshotUploads {
+			if normalizeUsageScope(upload.UsageScope) == trackerImageUsageScope(tracker) {
+				group = comparisonUploadGroup(upload)
+				break
+			}
+		}
+	}
 	for id, uploads := range exact.ComparisonUploads {
 		exact.ComparisonUploads[id] = slices.DeleteFunc(uploads, func(upload api.UploadedImageLink) bool {
-			return hostInList(upload.Host, failedHosts) || !slices.Contains(selected.ScreenshotUploads, upload)
+			return !slices.Contains(selected.ScreenshotUploads, upload) ||
+				!exact.ImageHostUploadSkipped && comparisonUploadGroup(upload) != group
 		})
 	}
 	return nil
+}
+
+type comparisonHostGroup struct {
+	host, scope string
+}
+
+func comparisonUploadGroup(upload api.UploadedImageLink) comparisonHostGroup {
+	return comparisonHostGroup{
+		host:  strings.ToLower(strings.TrimSpace(upload.Host)),
+		scope: normalizeUsageScope(upload.UsageScope),
+	}
 }

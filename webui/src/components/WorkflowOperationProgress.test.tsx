@@ -21,6 +21,15 @@ it("shows the active comparison phase and percentages instead of internal work-u
     message: "Scanning comparison videos",
     items: [
       {
+        id: "source-1",
+        kind: "comparison_window",
+        label: "Column 1",
+        phase: "comparisons_sampling",
+        status: "queued",
+        completed: 0,
+        total: 1000,
+      },
+      {
         id: "source-2",
         kind: "comparison_window",
         label: "Column 2",
@@ -49,7 +58,7 @@ it("shows the active comparison phase and percentages instead of internal work-u
   const taskTrack = screen.getByRole("progressbar", { name: "Comparison task progress" });
   expect(taskTrack).toHaveAttribute("aria-valuenow", "50");
   const completedItem = {
-    ...operation.items![0],
+    ...operation.items![1],
     status: "completed" as const,
     completed: 1000,
     message: "completed — 100%",
@@ -79,7 +88,7 @@ it("shows the active comparison phase and percentages instead of internal work-u
     />,
   );
   expect(screen.getByText("Overall progress only")).toBeVisible();
-  expect(taskTrack).not.toHaveAttribute("aria-valuenow");
+  expect(screen.queryByRole("progressbar", { name: "Comparison task progress" })).toBeNull();
   rerender(
     <WorkflowOperationProgress
       operation={{
@@ -94,8 +103,7 @@ it("shows the active comparison phase and percentages instead of internal work-u
   expect(screen.getByText("Refining comparison frames")).toBeVisible();
   expect(screen.getByText("55%")).toBeVisible();
   expect(screen.getByText("Overall progress only")).toBeVisible();
-  expect(screen.getByRole("progressbar", { name: "Comparison task progress" })).toBe(taskTrack);
-  expect(taskTrack).not.toHaveAttribute("aria-valuenow");
+  expect(screen.queryByRole("progressbar", { name: "Comparison task progress" })).toBeNull();
 });
 
 it("updates metadata detail in place, keeps stage-order percentages out of fetch counts, and retains partial and canceled outcomes", () => {

@@ -7138,6 +7138,9 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 				continue
 			}
 			host := strings.ToLower(strings.TrimSpace(attempt.Host))
+			comparisonHostFailed := slices.ContainsFunc(snapshot.FailedHosts, func(failed string) bool {
+				return strings.EqualFold(strings.TrimSpace(failed), host)
+			})
 			scope := strings.ToLower(strings.TrimSpace(attempt.UsageScope))
 			if scope == "" {
 				scope = "global"
@@ -7146,7 +7149,7 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 			for _, result := range attempt.Results {
 				hosted := artifacts[result.ID]
 				source := artifacts[api.PublicResourceID(strings.TrimSpace(hosted.Source))]
-				if _, comparison := comparisonCells[source.ID]; comparison && hosted.Selected && source.Selected &&
+				if _, comparison := comparisonCells[source.ID]; comparison && !comparisonHostFailed && hosted.Selected && source.Selected &&
 					hosted.Kind == api.MediaArtifactHostedImage && hosted.Purpose == api.ScreenshotPurposeComparison &&
 					source.Kind == api.MediaArtifactComparison && source.Purpose == api.ScreenshotPurposeComparison {
 					if comparisonCoverage[group] == nil {
@@ -7158,7 +7161,7 @@ func HostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections 
 				ordinaryScreenshot := source.Kind == api.MediaArtifactScreenshot && source.Purpose == api.ScreenshotPurposeFinal &&
 					hosted.Purpose == api.ScreenshotPurposeFinal
 				if hosted.Selected && hosted.Kind == api.MediaArtifactHostedImage && source.Selected &&
-					(ordinaryScreenshot || source.Kind == api.MediaArtifactComparison && reusedComparison) {
+					(ordinaryScreenshot || source.Kind == api.MediaArtifactComparison && reusedComparison && !comparisonHostFailed) {
 					sources[source.ID] = struct{}{}
 				}
 			}

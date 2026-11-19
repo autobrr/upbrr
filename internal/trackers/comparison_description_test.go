@@ -127,14 +127,23 @@ func TestComparisonDescriptionUsesCompatibleHostedVariants(t *testing.T) {
 		exact.ComparisonUploads[id] = append(uploads, link)
 	}
 	for _, test := range []struct {
-		name   string
-		policy *ImageHostPolicy
-		failed []string
+		name, configured, wantDomain string
+		policy                       *ImageHostPolicy
+		failed                       []string
+		trackerScoped                bool
 	}{
-		{"required host", &ImageHostPolicy{AllowedHosts: []string{"pixhost"}}, nil},
-		{"failed optional host", nil, []string{" IMGBB "}},
+		{"required host", "", "pixhost", &ImageHostPolicy{AllowedHosts: []string{"pixhost"}}, nil, false},
+		{"failed optional host", "", "pixhost", nil, []string{" IMGBB "}, false},
+		{"configured host has no complete scope", "pixhost", "images", &ImageHostPolicy{AllowedHosts: []string{"pixhost", "imgbb"}}, nil, false},
+		{"complete tracker scope preferred to global", "", "pixhost", nil, nil, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			input := exact.Clone()
+			for id, uploads := range input.ComparisonUploads {
+				if test.trackerScoped || test.configured != "" && strings.HasPrefix(string(id), "row-1-") {
+					uploads[1].UsageScope = "tracker:ALPHA"
+				}
+			}
 			registry := NewRegistry()
 			if err := registry.RegisterDescriptor(Descriptor{
 				Name:       "ALPHA",
@@ -144,14 +153,14 @@ func TestComparisonDescriptionUsesCompatibleHostedVariants(t *testing.T) {
 				t.Fatal(err)
 			}
 			filtered, err := exactMediaForTrackerHost("ALPHA", api.UploadSubject{
-				ExactMedia:         exact,
+				ExactMedia:         input,
 				ImageHostOverrides: api.ImageHostOverrides{FailedHosts: test.failed},
-			}, config.Config{}, config.TrackerConfig{}, registry)
+			}, config.Config{}, config.TrackerConfig{ImageHost: test.configured}, registry)
 			if err != nil {
 				t.Fatal(err)
 			}
 			block, err := exactComparisonDescriptionBlock("ALPHA", filtered)
-			if err != nil || strings.Count(block, "https://pixhost.example.invalid/") != 6 || strings.Contains(block, "https://images.example.invalid/") {
+			if err != nil || strings.Count(block, "https://"+test.wantDomain+".example.invalid/") != 6 {
 				t.Fatalf("comparison host policy changed row coverage: %q, err=%v", block, err)
 			}
 			if len(exact.ComparisonUploads["row-1-source-1"]) != 2 {

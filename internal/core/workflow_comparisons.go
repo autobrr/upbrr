@@ -25,7 +25,6 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
-	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -52,7 +51,8 @@ type comparisonFrameRenderer interface {
 		*screenshots.ComparisonFrameReplay,
 	) (*screenshots.ComparisonFrameReplay, error)
 	AnalyzeComparisonSource(context.Context, screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error)
-	InspectComparisonSource(context.Context, string) (screenshots.ComparisonSource, error)
+	InspectComparisonSource(context.Context, string, ...os.FileInfo) (screenshots.ComparisonSource, error)
+	InspectComparisonDisplay(context.Context, screenshots.ComparisonSource) (screenshots.ComparisonSource, error)
 	SampleComparisonSource(context.Context, screenshots.ComparisonSampleRequest) ([]screenshots.ComparisonSample, error)
 	ComparisonPreview(context.Context, screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error)
 	ComparisonCapture(context.Context, screenshots.ComparisonCaptureRequest) (screenshots.ComparisonFrame, error)
@@ -85,6 +85,11 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	snapshot, retained, err := b.mediaMutationBase(release, projections, prior, private)
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
+	}
+	// Applying explicit frame selections is the second half of this edit.
+	// That path keeps these pins through its own final verification.
+	if len(instructions.FrameSelections) == 0 {
+		defer func() { clearComparisonFileIdentities(retained.ComparisonSources) }()
 	}
 	priorMixedResolution := snapshot.Comparisons != nil && comparisonMixedResolution(*snapshot.Comparisons, retained)
 	snapshot.RequirementsFingerprint, err = workflowMediaRequirementsFingerprint(projections.Projections)
@@ -180,9 +185,9 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	refreshCodec := instructions.Action == "match" && slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool {
 		return comparisonCodecFactsMissing(retained.ComparisonSources[source.ID].Source)
 	})
-	refreshSizing := plan.ScreenshotSizing != "" && slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool {
+	refreshSizing := slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool {
 		previous, exists := retained.ComparisonSources[source.ID]
-		return exists && comparisonSizingProbeNeeded(plan.ScreenshotSizing, previous.Source)
+		return exists && comparisonSizingProbeNeeded(previous.Source)
 	})
 	if instructions.Action == "configure" && len(attachments) > 0 {
 		plan, err = b.importWorkflowComparisons(ctx, release, &snapshot, &retained, plan, attachments)
@@ -195,7 +200,7 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	if !plan.Imported {
 		for i := range plan.Sources {
 			if private, ok := retained.ComparisonSources[plan.Sources[i].ID]; ok {
-				plan.Sources[i].Width, plan.Sources[i].Height = comparisonScreenshotDisplaySize(plan.ScreenshotSizing, private.Source)
+				plan.Sources[i].Width, plan.Sources[i].Height = private.Source.ScreenshotDisplaySize()
 			}
 		}
 	}
@@ -250,11 +255,6 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 		return api.MediaArtifactSet{}, nil, err
 	}
 	if partial {
-		verificationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		if verifyErr := verifyComparisonVideos(verificationCtx, plan, retained); verifyErr != nil {
-			return api.MediaArtifactSet{}, nil, verifyErr
-		}
 		snapshot.Failures = append(snapshot.Failures, api.WorkflowFailure{Failure: api.OperationFailure{
 			Code:             api.OperationFailureMissingPrerequisite,
 			Operation:        api.OperationKindMedia,
@@ -305,8 +305,24 @@ func (b workflowMediaBuilder) EditComparisons(ctx context.Context, release api.R
 	syncComparisonSelections(&snapshot, plan)
 	snapshot.ImageRequirementsPrepared = false
 	snapshot.ImageHostUploadSkipped = false
-	if partial {
+	switch {
+	case partial:
+		verificationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if err := verifyComparisonVideos(verificationCtx, plan, retained); err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
 		return snapshot, retained, incomplete
+	case instructions.Action == "configure" && len(instructions.FrameSelections) == 0:
+		if err := verifyComparisonVideos(ctx, plan, retained); err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
+	case renderVideo:
+		// The renderer verified the fingerprints. Check the original file pins
+		// again after callbacks and image validation have completed.
+		if err := verifyComparisonFileVersions(context.WithoutCancel(ctx), retained.ComparisonSources); err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
 	}
 	return snapshot, retained, nil
 }
@@ -442,15 +458,20 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 		if source.ID == plan.MainSourceID {
 			mainSubject = &subject
 		}
-		fingerprint, input, candidate, err := resolveComparisonVideo(ctx, path, selection.Programme, mainSubject)
+		resolved, err := resolveComparisonVideo(ctx, path, selection.Programme, mainSubject)
 		if err != nil {
 			return fmt.Errorf("resolve main comparison source: %w", err)
 		}
+		fingerprint, input := resolved.fingerprint, resolved.input
 		inspected := previous.Source
-		if !exists || previous.Fingerprint != fingerprint || comparisonCodecFactsMissing(inspected) ||
-			comparisonSizingProbeNeeded(plan.ScreenshotSizing, inspected) ||
-			inspected.FrameCount == 0 && inspected.VideoDurationSeconds == 0 {
-			if input != nil {
+		fullInspection := !exists || previous.Fingerprint != fingerprint || comparisonCodecFactsMissing(inspected) ||
+			inspected.FrameCount == 0 && inspected.VideoDurationSeconds == 0
+		if fullInspection || comparisonSizingProbeNeeded(inspected) {
+			switch {
+			case !fullInspection:
+				inspected.FileIdentity = resolved.file
+				err = b.refreshComparisonDisplay(ctx, &inspected)
+			case input != nil:
 				discRenderer, ok := renderer.(interface {
 					InspectResolvedComparisonSource(context.Context, filesystem.ResolvedComparisonInput, string, string) (screenshots.ComparisonSource, error)
 				})
@@ -466,14 +487,14 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 					return scratchErr
 				}
 				inspected, err = discRenderer.InspectResolvedComparisonSource(ctx, *input, fingerprint, scratch)
-			} else {
-				inspected, err = renderer.InspectComparisonSource(ctx, path)
+			default:
+				inspected, err = renderer.InspectComparisonSource(ctx, path, resolved.file)
 			}
 			if err != nil {
 				return fmt.Errorf("inspect comparison column %s: %w", source.Label, err)
 			}
-			checked, _, _, err := resolveComparisonVideo(ctx, path, selection.Programme, mainSubject)
-			if err != nil || checked != fingerprint {
+			checked, err := resolveComparisonVideo(ctx, path, selection.Programme, mainSubject)
+			if err != nil || checked.fingerprint != fingerprint || resolved.file != nil && !pathing.SameFileVersion(resolved.file, checked.file) {
 				return api.ErrActiveInputChanged
 			}
 			changed := exists && previous.Fingerprint != fingerprint
@@ -504,7 +525,7 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 			}
 		}
 		source.Fingerprint = fingerprint
-		source.Programme = candidate
+		source.Programme = resolved.candidate
 		source.Capabilities = &api.ComparisonSourceCapabilities{
 			ProgrammeSelectionRequired: input != nil,
 			ToneMappingAvailable:       inspected.HDRFacts.SupportsToneMapping(),
@@ -513,8 +534,9 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 		source.DurationSeconds = inspected.DurationSeconds
 		source.FrameRate = inspected.FrameRate
 		source.FrameRateNumerator, source.FrameRateDenominator = inspected.FrameRateNumerator, inspected.FrameRateDenominator
-		source.Width, source.Height = comparisonScreenshotDisplaySize(plan.ScreenshotSizing, inspected)
+		source.Width, source.Height = inspected.ScreenshotDisplaySize()
 		inspected.InputFingerprint = fingerprint
+		inspected.FileIdentity = resolved.file
 		applied := previous.AppliedPairs
 		witnesses := previous.Witnesses
 		calibration := previous.Calibration.clone()
@@ -543,26 +565,28 @@ func (b workflowMediaBuilder) configureComparisonVideos(ctx context.Context, rel
 	return nil
 }
 
-func comparisonVideoFingerprint(ctx context.Context, path string) (string, error) {
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return "", errors.New("comparison video is inaccessible or not a regular file")
-	}
-	verified, err := preparedrelease.VerifyInputSource(ctx, api.PrepareInput{SourcePath: path})
+// verifyComparisonVideos checks the current fingerprint for each configured input.
+func verifyComparisonVideos(ctx context.Context, plan api.ComparisonPlan, retained workflowMediaPrivateArtifacts) error {
+	sources, err := verifiedComparisonVideos(ctx, plan, retained)
 	if err != nil {
-		return "", fmt.Errorf("verify comparison source: %w", err)
+		return err
 	}
-	return verified.Identity.Digest, nil
+	return verifyComparisonFileVersions(ctx, sources)
 }
 
-func verifyComparisonVideos(ctx context.Context, plan api.ComparisonPlan, retained workflowMediaPrivateArtifacts) error {
+// verifiedComparisonVideos returns operation-local sources whose file opens
+// must match the same regular-file identity used to compute the fingerprint.
+func verifiedComparisonVideos(
+	ctx context.Context, plan api.ComparisonPlan, retained workflowMediaPrivateArtifacts,
+) (map[string]workflowComparisonSource, error) {
+	verified := maps.Clone(retained.ComparisonSources)
 	for _, source := range plan.Sources {
 		if source.Imported {
 			continue
 		}
-		private, ok := retained.ComparisonSources[source.ID]
+		private, ok := verified[source.ID]
 		if !ok || private.Fingerprint != source.Fingerprint {
-			return errors.New("comparison source identity is unavailable; configure this column again")
+			return nil, errors.New("comparison source identity is unavailable; configure this column again")
 		}
 		path := private.Path
 		if path == "" {
@@ -572,15 +596,49 @@ func verifyComparisonVideos(ctx context.Context, plan api.ComparisonPlan, retain
 		if source.ID == plan.MainSourceID {
 			main = &retained.screenshotSubject
 		}
-		current, _, _, err := resolveComparisonVideo(ctx, path, private.Selection, main)
+		current, err := resolveComparisonVideo(ctx, path, private.Selection, main)
 		if ctx.Err() != nil {
-			return fmt.Errorf("verify comparison source: %w", ctx.Err())
+			return nil, fmt.Errorf("verify comparison source: %w", ctx.Err())
 		}
-		if err != nil || current != private.Fingerprint {
-			return fmt.Errorf("%w: comparison video changed; rematch and recapture its rows", api.ErrActiveInputChanged)
+		if err != nil || current.fingerprint != private.Fingerprint {
+			return nil, fmt.Errorf("%w: comparison video changed; rematch and recapture its rows", api.ErrActiveInputChanged)
+		}
+		if private.Source.FileIdentity != nil && !pathing.SameFileVersion(private.Source.FileIdentity, current.file) {
+			return nil, fmt.Errorf("%w: comparison video changed during this operation", api.ErrActiveInputChanged)
+		}
+		private.Source.FileIdentity = current.file
+		verified[source.ID] = private
+	}
+	return verified, nil
+}
+
+func verifyComparisonFileVersions(ctx context.Context, sources map[string]workflowComparisonSource) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("verify comparison file versions: %w", err)
+	}
+	for _, source := range sources {
+		if source.Source.FileIdentity == nil {
+			continue
+		}
+		path := source.Path
+		if path == "" {
+			path = source.Source.Path
+		}
+		current, err := os.Stat(path)
+		if err != nil || !pathing.SameFileVersion(source.Source.FileIdentity, current) {
+			return fmt.Errorf("%w: comparison video changed during this operation", api.ErrActiveInputChanged)
 		}
 	}
 	return nil
+}
+
+// File pins are valid within an operation. Retained resources, including the
+// vault's in-memory copies, keep the portable sampled fingerprint.
+func clearComparisonFileIdentities(sources map[string]workflowComparisonSource) {
+	for id, source := range sources {
+		source.Source.FileIdentity = nil
+		sources[id] = source
+	}
 }
 
 func (b workflowMediaBuilder) importWorkflowComparisons(ctx context.Context, release api.ReleaseRef,
@@ -786,7 +844,7 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 	plan.ResizeLargerOnly, plan.ResizeSmaller = false, false
 	for i := range plan.Sources {
 		source := retained.ComparisonSources[plan.Sources[i].ID]
-		plan.Sources[i].Width, plan.Sources[i].Height = comparisonScreenshotDisplaySize(plan.ScreenshotSizing, source.Source)
+		plan.Sources[i].Width, plan.Sources[i].Height = source.Source.ScreenshotDisplaySize()
 	}
 	for id, source := range retained.ComparisonSources {
 		if source.Source.InputFingerprint == "" {
@@ -806,14 +864,15 @@ func (b workflowMediaBuilder) matchWorkflowComparisons(
 	ctx = context.WithValue(ctx, comparisonOperationStartKey{}, started)
 	ctx, cancel := context.WithTimeout(ctx, allowance)
 	defer cancel()
-	if err := verifyComparisonVideos(ctx, plan, *retained); err != nil {
+	verified, err := verifiedComparisonVideos(ctx, plan, *retained)
+	if err != nil {
 		return plan, err
 	}
+	retained.ComparisonSources = verified
 	options := comparisons.MatchOptions{Count: plan.Preferences.Count, FlatCount: plan.Preferences.FlatCount}
 	if options.Count <= 0 {
 		options.Count = 4
 	}
-	var err error
 	options.DarkCount, options.MotionCount, err = comparisons.SceneCounts(plan.Preferences, options.Count)
 	if err != nil {
 		return plan, fmt.Errorf("comparison scene analysis: %w", err)
@@ -964,7 +1023,7 @@ func applyComparisonMatches(plan api.ComparisonPlan, result comparisons.MatchRes
 			}
 			if frame.TypeFallback {
 				cell.Warning = strings.TrimSpace(
-					cell.Warning + " Requested picture types were unavailable at this matching moment; selected actual type " + frame.FrameType + ".",
+					cell.Warning + " " + comparisonMatchTypeWarningPrefix + frame.FrameType + ".",
 				)
 			}
 			mapped.Cells = append(mapped.Cells, cell)
@@ -1094,9 +1153,11 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 	if plan.Imported {
 		return plan, errors.New("imported comparison pixels are retained unchanged; replace an image instead of recapturing it")
 	}
-	if err := verifyComparisonVideos(ctx, plan, *retained); err != nil {
+	verified, err := verifiedComparisonVideos(ctx, plan, *retained)
+	if err != nil {
 		return plan, err
 	}
+	retained.ComparisonSources = verified
 	renderer, err := b.comparisonService()
 	if err != nil {
 		return plan, err
@@ -1361,12 +1422,12 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 		cell.ObservedIdentity = captured.Identity
 		cell.TimeBaseNumerator, cell.TimeBaseDenominator = captured.TimeBaseNumerator, captured.TimeBaseDenominator
 		cell.PictureType = captured.PictureType
-		if warning := comparisonCaptureTypeWarning(plan.Sources, *cell); warning != "" {
-			cell.Warning = warning
-		}
-		if notify {
+		cell.Warning = strings.TrimSpace(withoutComparisonCaptureTypeWarning(cell.Warning) + " " + comparisonCaptureTypeWarning(plan.Sources, *cell))
+		if notify && ctx.Err() == nil {
 			progress.item(progressID, "comparison_cell", label, api.StageStatusCompleted, 1000)
-			progress.update(completed+1, total+1)
+			if ctx.Err() == nil {
+				progress.update(completed+1, total+1)
+			}
 		}
 		completed++
 		return nil
@@ -1413,12 +1474,43 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 	return plan, nil
 }
 
+const (
+	comparisonMatchTypeWarningPrefix   = "Requested picture types were unavailable at this matching moment; selected actual type "
+	comparisonCaptureTypeWarningPrefix = "Requested picture types "
+	comparisonCaptureTypeWarningSuffix = ". Rematch to search for a compatible frame."
+)
+
+func withoutComparisonCaptureTypeWarning(warning string) string {
+	if strings.HasSuffix(warning, comparisonCaptureTypeWarningSuffix) {
+		if remaining, _, ok := strings.CutLast(warning, comparisonCaptureTypeWarningPrefix); ok {
+			return strings.TrimSpace(remaining)
+		}
+	}
+	return warning
+}
+
+func withoutComparisonMatchTypeWarning(warning string) string {
+	before, typeWarning, hasDetail := strings.Cut(warning, comparisonMatchTypeWarningPrefix)
+	after := ""
+	if hasDetail {
+		var complete bool
+		_, after, complete = strings.Cut(typeWarning, ".")
+		if !complete {
+			return warning
+		}
+	}
+	before = strings.TrimSpace(before)
+	before = strings.TrimSuffix(before, "requested_picture_type_unavailable_at_match")
+	before = strings.TrimSuffix(before, "no_compatible_picture_type")
+	return strings.TrimSpace(strings.TrimSpace(before) + " " + strings.TrimSpace(after))
+}
+
 func comparisonCaptureTypeWarning(sources []api.ComparisonSource, cell api.ComparisonCell) string {
 	for _, source := range sources {
 		if source.ID == cell.SourceID && !source.PreferBFrames && len(source.AllowedFrameTypes) > 0 &&
 			!slices.Contains(source.AllowedFrameTypes, cell.PictureType) {
-			return "Requested picture types " + strings.Join(source.AllowedFrameTypes, "/") +
-				" do not include this selected matching frame; actual type is " + cell.PictureType + ". Rematch to search for a compatible frame."
+			return comparisonCaptureTypeWarningPrefix + strings.Join(source.AllowedFrameTypes, "/") +
+				" do not include this selected matching frame; actual type is " + cell.PictureType + comparisonCaptureTypeWarningSuffix
 		}
 	}
 	return ""
@@ -1607,8 +1699,13 @@ func (b workflowMediaBuilder) PreviewComparisonFrame(
 	if !ok || snapshot.Comparisons == nil {
 		return releaseworkflow.MediaPreviewContent{}, errors.New("comparison setup is unavailable")
 	}
-	if err := verifyComparisonVideos(ctx, *snapshot.Comparisons, retained); err != nil {
+	verified, err := verifiedComparisonVideos(ctx, *snapshot.Comparisons, retained)
+	if err != nil {
 		return releaseworkflow.MediaPreviewContent{}, fmt.Errorf("preview comparison source: %w", err)
+	}
+	retained.ComparisonSources = verified
+	if err := b.refreshComparisonDisplays(ctx, retained.ComparisonSources); err != nil {
+		return releaseworkflow.MediaPreviewContent{}, err
 	}
 	source, ok := retained.ComparisonSources[sourceID]
 	if !ok {
@@ -1694,6 +1791,9 @@ func (b workflowMediaBuilder) PreviewComparisonFrame(
 	if err != nil {
 		return releaseworkflow.MediaPreviewContent{}, fmt.Errorf("retain comparison preview witness: %w", err)
 	}
+	if err := verifyComparisonFileVersions(ctx, retained.ComparisonSources); err != nil {
+		return releaseworkflow.MediaPreviewContent{}, fmt.Errorf("preview comparison source: %w", err)
+	}
 	return releaseworkflow.MediaPreviewContent{
 		ObservedIdentity:    preview.Identity,
 		ComparisonWitness:   witness,
@@ -1771,12 +1871,13 @@ func comparisonCaptureRequest(plan api.ComparisonPlan, retained workflowMediaPri
 	if !exists || !slices.ContainsFunc(plan.Sources, func(source api.ComparisonSource) bool { return source.ID == plan.MainSourceID && !source.Imported }) {
 		return request, errors.New("the main comparison source is unavailable")
 	}
-	request.OutputWidth, request.OutputHeight = comparisonScreenshotDisplaySize(plan.ScreenshotSizing, reference.Source)
+	request.OutputWidth, request.OutputHeight = reference.Source.ScreenshotDisplaySize()
 	if request.OutputWidth <= 0 || request.OutputHeight <= 0 {
 		return request, errors.New("the main comparison source has no inspected display dimensions")
 	}
 	switch plan.ScreenshotSizing {
 	case "", api.ComparisonSizingFit:
+		request.ScreenshotSizing = api.ComparisonSizingFit
 	case api.ComparisonSizingCrop, api.ComparisonSizingResize:
 		request.ScreenshotSizing = plan.ScreenshotSizing
 	case api.ComparisonSizingSource:
@@ -1788,15 +1889,8 @@ func comparisonCaptureRequest(plan api.ComparisonPlan, retained workflowMediaPri
 	return request, nil
 }
 
-func comparisonSizingProbeNeeded(sizing string, source screenshots.ComparisonSource) bool {
-	return sizing != "" && sizing != api.ComparisonSizingFit && source.Input == nil && (source.ScreenshotWidth <= 0 || source.ScreenshotHeight <= 0)
-}
-
-func comparisonScreenshotDisplaySize(sizing string, source screenshots.ComparisonSource) (int, int) {
-	if sizing == "" || sizing == api.ComparisonSizingFit {
-		return source.DisplaySize()
-	}
-	return source.ScreenshotDisplaySize()
+func comparisonSizingProbeNeeded(source screenshots.ComparisonSource) bool {
+	return source.Input == nil && (source.ScreenshotWidth <= 0 || source.ScreenshotHeight <= 0)
 }
 
 func comparisonMixedResolution(plan api.ComparisonPlan, retained workflowMediaPrivateArtifacts) bool {
@@ -1806,7 +1900,7 @@ func comparisonMixedResolution(plan api.ComparisonPlan, retained workflowMediaPr
 		if !ok || source.Imported {
 			continue
 		}
-		w, h := comparisonScreenshotDisplaySize(plan.ScreenshotSizing, private.Source)
+		w, h := private.Source.ScreenshotDisplaySize()
 		if width != 0 && (w != width || h != height) {
 			return true
 		}
@@ -1923,6 +2017,7 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 				*previous.TimestampSeconds == *cell.TimestampSeconds
 			changed := !sameMoment
 			renderChanged := false
+			typePreferenceChanged := false
 			if prior != nil && prior.Comparisons != nil {
 				renderChanged = prior.Comparisons.SizeReferenceSourceID != plan.SizeReferenceSourceID ||
 					prior.Comparisons.ResizeLargerOnly != plan.ResizeLargerOnly || prior.Comparisons.ResizeSmaller != plan.ResizeSmaller
@@ -1938,6 +2033,7 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 						if old.ID == source.ID && (old.PreferBFrames != source.PreferBFrames ||
 							!slices.Equal(old.AllowedFrameTypes, source.AllowedFrameTypes)) {
 							renderChanged = true
+							typePreferenceChanged = true
 						}
 					}
 				}
@@ -1947,6 +2043,9 @@ func retainComparisonCellFacts(plan *api.ComparisonPlan, prior *api.MediaArtifac
 				cell.ContentSHA256 = ""
 			}
 			cell.FrameNumber = nil
+			if typePreferenceChanged || changed && (previous.TimestampSeconds != nil || cell.TimestampSeconds != nil) {
+				cell.Warning = withoutComparisonMatchTypeWarning(withoutComparisonCaptureTypeWarning(cell.Warning))
+			}
 			if changed {
 				cell.ObservedIdentity = nil
 				cell.ObservedPTS = nil
@@ -2076,6 +2175,10 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 		if source.Imported {
 			continue
 		}
+		if mainChanged && source.ID == plan.MainSourceID {
+			changed[source.ID] = true
+			continue
+		}
 		original, ok := old.ComparisonSources[source.ID]
 		if !ok {
 			changed[source.ID] = true
@@ -2089,9 +2192,21 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 		if source.ID == plan.MainSourceID && b.resolver != nil {
 			subject = &retained.screenshotSubject
 		}
-		fingerprint, _, _, err := resolveComparisonVideo(ctx, path, original.Selection, subject)
-		if err != nil || fingerprint != original.Fingerprint {
+		resolved, err := resolveComparisonVideo(ctx, path, original.Selection, subject)
+		if err != nil || resolved.fingerprint != original.Fingerprint {
 			changed[source.ID] = true
+			continue
+		}
+		original.Source.FileIdentity = resolved.file
+		if err := b.refreshComparisonDisplay(ctx, &original.Source); err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
+		retained.ComparisonSources[source.ID] = original
+	}
+	for i := range plan.Sources {
+		source := &plan.Sources[i]
+		if !source.Imported && !changed[source.ID] {
+			source.Width, source.Height = retained.ComparisonSources[source.ID].Source.ScreenshotDisplaySize()
 		}
 	}
 	mainChanged = mainChanged || changed[plan.MainSourceID]
@@ -2204,6 +2319,10 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 	}
 	snapshot.Comparisons = &plan
 	syncComparisonSelections(&snapshot, plan)
+	if err := verifyComparisonFileVersions(ctx, retained.ComparisonSources); err != nil {
+		return api.MediaArtifactSet{}, nil, fmt.Errorf("restore comparison sources: %w", err)
+	}
+	clearComparisonFileIdentities(retained.ComparisonSources)
 	return snapshot, retained, nil
 }
 

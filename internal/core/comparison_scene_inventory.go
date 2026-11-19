@@ -119,7 +119,7 @@ func comparisonMatchFacts(source screenshots.ComparisonSource) screenshots.Compa
 func comparisonMatchAspect(retained workflowMediaPrivateArtifacts, plan api.ComparisonPlan) float64 {
 	aspect := 0.0
 	for _, source := range plan.Sources {
-		width, height := retained.ComparisonSources[source.ID].Source.DisplaySize()
+		width, height := retained.ComparisonSources[source.ID].Source.MatchingDisplaySize()
 		if width > 0 && height > 0 {
 			aspect = max(aspect, float64(width)/float64(height))
 		}

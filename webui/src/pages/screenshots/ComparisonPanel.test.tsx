@@ -149,7 +149,7 @@ it("removes draft programme and preview authority before recreating comparisons"
   );
 });
 
-it("keeps discovered programmes local to a column until setup is applied", async () => {
+it("applies only programmes from the current successful discovery", async () => {
   const discovery = {
     sourceId: "2",
     fingerprint: "discovery-2",
@@ -166,23 +166,49 @@ it("keeps discovered programmes local to a column until setup is applied", async
       },
     ],
   };
+  let finish!: (value: typeof discovery) => void;
+  const firstDiscovery = new Promise<typeof discovery>((resolve) => {
+    finish = resolve;
+  });
   const facet = {
     ...comparisonFacet(comparisonPlan(false)),
-    discover: vi.fn(async () => discovery),
+    discover: vi
+      .fn(async (): Promise<typeof discovery | null> => discovery)
+      .mockReturnValueOnce(firstDiscovery),
   };
   render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
   const column = openSource("Encode · column 2");
   fireEvent.change(column.getByLabelText("Source type for Encode"), {
     target: { value: "folder" },
   });
-  fireEvent.change(column.getByRole("textbox", { name: "Video path for Encode" }), {
-    target: { value: "Example.DVD" },
-  });
-  fireEvent.click(column.getByRole("button", { name: "Discover titles and playlists" }));
+  const path = column.getByRole("textbox", { name: "Video path for Encode" });
+  const discover = column.getByRole("button", { name: "Discover titles and playlists" });
+  fireEvent.change(path, { target: { value: "Old.DVD" } });
+  fireEvent.click(discover);
+  expect(facet.discover).toHaveBeenCalledWith("2", "Old.DVD");
+  fireEvent.change(path, { target: { value: "Example.DVD" } });
+  await act(async () => finish(discovery));
+  expect(column.queryByRole("radio", { name: "Title 1" })).toBeNull();
+  fireEvent.click(discover);
   await waitFor(() => expect(column.getByRole("radio", { name: "Title 1" })).toBeVisible());
   expect(facet.discover).toHaveBeenCalledWith("2", "Example.DVD");
   expect(facet.edit).not.toHaveBeenCalled();
   fireEvent.click(column.getByRole("radio", { name: "Title 1" }));
+  const updatedDiscovery = { ...discovery, fingerprint: "revised-discovery" };
+  facet.discover.mockResolvedValueOnce(updatedDiscovery);
+  fireEvent.click(discover);
+  await waitFor(() => expect(column.getByRole("radio", { name: "Title 1" })).not.toBeChecked());
+  fireEvent.click(column.getByRole("radio", { name: "Title 1" }));
+  facet.discover.mockResolvedValueOnce(null);
+  fireEvent.click(discover);
+  await waitFor(() =>
+    expect(column.queryByRole("radio", { name: "Title 1" })).not.toBeInTheDocument(),
+  );
+  facet.discover.mockResolvedValueOnce(updatedDiscovery);
+  fireEvent.click(discover);
+  const title = await column.findByRole("radio", { name: "Title 1" });
+  expect(title).not.toBeChecked();
+  fireEvent.click(title);
   fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
   expect(facet.edit).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -194,7 +220,7 @@ it("keeps discovered programmes local to a column until setup is applied", async
             kind: "dvd",
             discId: "disc-1",
             candidateId: "title-1",
-            discoveryFingerprint: "discovery-2",
+            discoveryFingerprint: "revised-discovery",
             angle: 1,
           },
         },
@@ -298,11 +324,14 @@ it("converts saved scene percentages into fixed row targets and rejects invalid 
   render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
   const motion = screen.getByRole("spinbutton", { name: "Fast-motion scenes (rows)" });
   const dark = screen.getByRole("spinbutton", { name: "Dark scenes (rows)" });
+  const rows = screen.getByRole("spinbutton", { name: "Comparison rows" });
   expect(motion).toHaveValue(2);
   expect(dark).toHaveValue(3);
-  fireEvent.change(screen.getByRole("spinbutton", { name: "Comparison rows" }), {
-    target: { value: "3" },
-  });
+  fireEvent.change(rows, { target: { value: "17" } });
+  expect(rows).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByRole("alert")).toHaveTextContent("Enter a total of 1–16 comparison rows.");
+  expect(screen.getByRole("button", { name: "Apply comparison setup" })).toBeDisabled();
+  fireEvent.change(rows, { target: { value: "3" } });
   expect(motion).toHaveValue(2);
   expect(dark).toHaveValue(3);
   fireEvent.change(motion, { target: { value: "1.5" } });
@@ -531,8 +560,9 @@ it("reviews exact retained images and invalidates approval when reuse choices ch
   expect(approve).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Hide comparison settings" }));
   expect(screen.queryByRole("complementary", { name: "Comparison settings" })).toBeNull();
+  openImage.mockClear();
   fireEvent.click(screen.getByRole("img", { name: "Encode, row 1, image 2" }));
-  expect(openImage).toHaveBeenLastCalledWith("/images/1");
+  expect(openImage).toHaveBeenCalledExactlyOnceWith("/images/1");
   fireEvent.click(screen.getByRole("button", { name: "Show comparison settings" }));
   fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
   expect(facet.edit).toHaveBeenLastCalledWith(
@@ -624,8 +654,12 @@ it("shows the applicable source preview after switching rows without replacing a
   );
   const { rerender } = render(panel({}));
   fireEvent.click(screen.getByRole("button", { name: "Hide comparison settings" }));
-  fireEvent.click(screen.getAllByText("Correct frame", { selector: "summary" })[1]!);
-  fireEvent.click(screen.getByRole("button", { name: "Preview Encode, row 1, image 2" }));
+  const first = within(screen.getByRole("region", { name: "Comparison row 1" }));
+  fireEvent.click(first.getByText("Row and image corrections", { selector: "summary" }));
+  fireEvent.click(first.getAllByText("Correct frame", { selector: "summary" })[1]!);
+  const previewButton = first.getByRole("button", { name: "Preview Encode, row 1, image 2" });
+  expect(previewButton).toBeVisible();
+  fireEvent.click(previewButton);
   fireEvent.click(screen.getByRole("button", { name: "Next comparison row" }));
   const row = within(screen.getByRole("region", { name: "Comparison row 2" }));
   fireEvent.click(row.getByRole("img", { name: "Filtered, row 2, image 3" }));
@@ -633,8 +667,11 @@ it("shows the applicable source preview after switching rows without replacing a
   await act(async () => finish(preview));
   rerender(panel({ "2": preview }));
   expect(openImage).toHaveBeenCalledExactlyOnceWith("/images/2");
+  fireEvent.click(row.getByText("Row and image corrections", { selector: "summary" }));
   fireEvent.click(row.getAllByText("Correct frame", { selector: "summary" })[1]!);
-  fireEvent.click(row.getByRole("img", { name: "Encode, row 2, image 2 preview at 11.250s" }));
+  const previewImage = row.getByRole("img", { name: "Encode, row 2, image 2 preview at 11.250s" });
+  expect(previewImage).toBeVisible();
+  fireEvent.click(previewImage);
   expect(openImage).toHaveBeenLastCalledWith("/previews/2");
   expect(
     row.getByRole("button", { name: "Use displayed frame for Encode, row 2, image 2" }),
@@ -827,7 +864,11 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
     { sourceId: "3", timestampSeconds: 0 },
   ]);
   fireEvent.click(screen.getByRole("button", { name: "Select comparison row 1" }));
-  const timestamp = screen.getByLabelText("Frame time for Source, row 1, image 1");
+  const row = within(screen.getByRole("region", { name: "Comparison row 1" }));
+  fireEvent.click(row.getByText("Row and image corrections", { selector: "summary" }));
+  fireEvent.click(row.getAllByText("Correct frame", { selector: "summary" })[0]!);
+  const timestamp = row.getByLabelText("Frame time for Source, row 1, image 1");
+  expect(timestamp).toBeVisible();
   timestamp.focus();
   fireEvent.change(timestamp, { target: { value: "12.3" } });
   expect(timestamp).toHaveFocus();

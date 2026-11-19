@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type {
   ComparisonCell,
   ComparisonPlan,
@@ -26,6 +26,7 @@ type Props = Readonly<{
 }>;
 
 const inputClass = "min-w-0 rounded border border-input bg-card p-2 text-card-foreground";
+const maxComparisonRows = 16;
 const imageButtonClass =
   "rounded-none border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 const settingsGroupClass = "min-w-0 border-t border-border px-3";
@@ -168,6 +169,7 @@ function ComparisonWorkspace({
   const [browseMode, setBrowseMode] = useState<"file" | "folder">("file");
   const [sourceModes, setSourceModes] = useState<Record<string, "file" | "folder">>({});
   const [discoveries, setDiscoveries] = useState<Record<string, ComparisonSourceDiscovery>>({});
+  const discoveryRequests = useRef(new Map<string, symbol>());
   const [programmes, setProgrammes] = useState<Record<string, ComparisonProgrammeSelection>>({});
   const [frameSelections, setFrameSelections] = useState<Record<string, ComparisonFrameSelection>>(
     {},
@@ -187,11 +189,13 @@ function ComparisonWorkspace({
     view.plan?.fingerprint && view.plan.approvedFingerprint === view.plan.fingerprint,
   );
   const preferences = scenePreferences(draft.preferences);
+  const validRowCount =
+    Number.isInteger(preferences.count) &&
+    preferences.count >= 1 &&
+    preferences.count <= maxComparisonRows;
   const validScenes =
     draft.imported ||
-    (Number.isInteger(preferences.count) &&
-      preferences.count > 0 &&
-      preferences.count <= 16 &&
+    (validRowCount &&
       [preferences.motionCount, preferences.darkCount, preferences.flatCount].every(
         (count) => Number.isInteger(count) && count >= 0 && count <= preferences.count,
       ));
@@ -304,6 +308,7 @@ function ComparisonWorkspace({
     return applied;
   };
   const changePath = (id: string, path: string) => {
+    discoveryRequests.current.delete(id);
     clearFrameSelections(id);
     setPaths((previous) => ({ ...previous, [id]: path }));
     setDiscoveries((previous) => {
@@ -318,12 +323,36 @@ function ComparisonWorkspace({
     });
   };
   const discover = async (id: string) => {
+    const request = Symbol();
+    discoveryRequests.current.set(id, request);
     const discovery = await facet.discover(id, paths[id] || "");
-    if (discovery)
-      setDiscoveries((previous) => ({
-        ...previous,
-        [id]: { ...discovery, candidates: discovery.candidates ?? [] },
-      }));
+    if (discoveryRequests.current.get(id) !== request) return;
+    discoveryRequests.current.delete(id);
+    const candidates = discovery?.candidates ?? [];
+    setDiscoveries((previous) => {
+      const next = { ...previous };
+      if (discovery) next[id] = { ...discovery, candidates };
+      else delete next[id];
+      return next;
+    });
+    setProgrammes((previous) => {
+      const selected = previous[id];
+      if (
+        !selected ||
+        (selected.discoveryFingerprint === discovery?.fingerprint &&
+          candidates.some(
+            (candidate) =>
+              candidate.id === selected.candidateId &&
+              candidate.discId === selected.discId &&
+              candidate.kind === selected.kind &&
+              candidate.supported,
+          ))
+      )
+        return previous;
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
   };
   const moveSource = (index: number, direction: number) => {
     const sources = [...draft.sources];
@@ -352,6 +381,7 @@ function ComparisonWorkspace({
     });
   };
   const removeSource = (id: string) => {
+    discoveryRequests.current.delete(id);
     setSourceModes((previous) => {
       const next = { ...previous };
       delete next[id];
@@ -519,11 +549,11 @@ function ComparisonWorkspace({
             aria-controls={settingsID}
             aria-expanded={settingsOpen}
             onClick={onToggleSettings}
-            className="gap-2 bg-background text-foreground"
+            className="min-w-0 max-w-full gap-2 bg-background whitespace-normal text-foreground"
           >
             <span
               aria-hidden="true"
-              className="relative size-4 rounded-xs border border-current before:absolute before:inset-y-0 before:left-1 before:border-l before:border-current"
+              className="relative size-4 shrink-0 rounded-xs border border-current before:absolute before:inset-y-0 before:left-1 before:border-l before:border-current"
             />
             {settingsOpen ? "Hide comparison settings" : "Show comparison settings"}
           </Button>
@@ -1017,12 +1047,13 @@ function ComparisonWorkspace({
                               min={min}
                               step="1"
                               aria-label={label}
-                              max={key === "count" ? 16 : preferences.count}
+                              max={key === "count" ? maxComparisonRows : preferences.count}
                               aria-invalid={
-                                !Number.isInteger(preferences[key]) ||
-                                preferences[key] < min ||
-                                (key !== "count" && preferences[key] > preferences.count) ||
-                                undefined
+                                (key === "count"
+                                  ? !validRowCount
+                                  : !Number.isInteger(preferences[key]) ||
+                                    preferences[key] < min ||
+                                    preferences[key] > preferences.count) || undefined
                               }
                               aria-describedby="comparison-scene-help"
                               value={preferences[key]}
@@ -1334,7 +1365,7 @@ function ComparisonWorkspace({
                       {(draft.anchors || []).map((anchor, index) => (
                         <div
                           className="flex flex-wrap items-center gap-2"
-                          key={`${anchor.sourceId}-${index}`}
+                          key={`${anchor.sourceId}-${anchor.mainSeconds}`}
                         >
                           <span>
                             Anchor: main {anchor.mainSeconds.toFixed(3)}s ↔{" "}
@@ -1401,6 +1432,7 @@ function ComparisonWorkspace({
                           setPaths({});
                           setSourceModes({});
                           setProgrammes({});
+                          discoveryRequests.current.clear();
                           setDiscoveries({});
                           setFrameSelections({});
                           setPositions({});
@@ -1518,7 +1550,9 @@ function ComparisonWorkspace({
                 )}
                 {!validScenes && (
                   <p className="font-bold text-destructive-text" role="alert">
-                    Scene targets must be whole counts between zero and the number of rows.
+                    {validRowCount
+                      ? "Scene targets must be whole counts between zero and the number of rows."
+                      : `Enter a total of 1–${maxComparisonRows} comparison rows.`}
                   </p>
                 )}
                 {invalidColumns.length > 0 && (

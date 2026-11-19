@@ -25,7 +25,7 @@ func (s *Service) AnalyzeComparisonSource(ctx context.Context, request Compariso
 			return nil, err
 		}
 	}
-	w, h := request.Source.DisplaySize()
+	w, h := request.Source.MatchingDisplaySize()
 	if w <= 0 || h <= 0 {
 		return nil, ErrComparisonNormalizationUnavailable
 	}
@@ -58,7 +58,7 @@ func (s *Service) AnalyzeComparisonSource(ctx context.Context, request Compariso
 // picture independently. Native showinfo/replay precede these filters; capture
 // continues to use the full-resolution renderer.
 func (s *Service) softwareComparisonAnalysisFilters(request ComparisonSampleRequest) ([]string, error) {
-	geometry := request.Source
+	geometry := request.Source.matchingGeometry()
 	var filters []string
 	if crop := request.MatchCrop; crop != nil {
 		if !crop.ValidFor(geometry.Width, geometry.Height) {

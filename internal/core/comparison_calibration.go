@@ -35,7 +35,7 @@ func (c *comparisonCalibration) clone() *comparisonCalibration {
 func (c *comparisonCalibration) prediction(profile string, source screenshots.ComparisonSource) (comparisons.ConstantAlignment, bool) {
 	if c == nil || profile == "" || c.Profile != profile || c.Scale.Numerator <= 0 || c.Scale.Denominator <= 0 ||
 		c.Scale.Numerator > 1_000_000 || c.Scale.Denominator > 1_000_000 || math.IsNaN(c.OffsetSeconds) || math.IsInf(c.OffsetSeconds, 0) ||
-		c.Crop != nil && !c.Crop.ValidFor(source.Width, source.Height) {
+		c.Crop != nil && !c.Crop.ValidForMatchingSource(source) {
 		return comparisons.ConstantAlignment{}, false
 	}
 	scale := float64(c.Scale.Numerator) / float64(c.Scale.Denominator)
