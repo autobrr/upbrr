@@ -30,10 +30,16 @@ type searchPage struct {
 }
 
 type searchRow struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Size     int64  `json:"size"`
-	Internal bool   `json:"internal"`
+	ID       int           `json:"id"`
+	Name     string        `json:"name"`
+	Size     int64         `json:"size"`
+	Internal bool          `json:"internal"`
+	Badges   []searchBadge `json:"badges"`
+}
+
+type searchBadge struct {
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
 }
 
 func loadSessionCookies(ctx context.Context, dbPath string) (map[string]string, error) {
@@ -53,9 +59,16 @@ func testConnection(ctx context.Context, input trackers.ConnectionProbeInput, cl
 	if failure.Code != "" {
 		return failure
 	}
-	// Jackett's ASC definition checks the signed-in user marker on this page:
-	// https://github.com/Jackett/Jackett/pull/17100
-	if !strings.Contains(page, `"user":{"id":`) {
+	var payload struct {
+		Props struct {
+			Auth struct {
+				User struct {
+					ID int `json:"id"`
+				} `json:"user"`
+			} `json:"auth"`
+		} `json:"props"`
+	}
+	if err := json.Unmarshal([]byte(page), &payload); err != nil || payload.Props.Auth.User.ID <= 0 {
 		return connectiontest.UnexpectedResponse()
 	}
 	return api.ConnectionTestResult{Code: "success", Message: "ASC returned its authenticated dashboard."}

@@ -277,7 +277,7 @@
   },
   "internal/trackers/impl/standalone/asc/dupe.go:dupeSearcher.Search": {
     "reason": "The migrated listing uses the resolved IMDb ID for non-anime and the existing effective title helper for anime. Manual title overrides and clears retain authority.",
-    "sha256": "493a4e9742cfa872bf44c63317ee9567295705335cb23b51f83d8a2acb1577f5"
+    "sha256": "85c9b2e10f05024d7cadbbe2b938b5ee728e5f8ee347b21ed5da53f7f04e195c"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:resolveASCTitle": {
     "reason": "Finalized/manual title precedence remains intact; missing titles never fall back to the local source path.",

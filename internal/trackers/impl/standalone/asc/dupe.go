@@ -7,7 +7,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -18,8 +17,6 @@ import (
 )
 
 const maxSearchPages = 5
-
-var episodeSuffix = regexp.MustCompile(`\s-\sS(\d{1,3})(?:E(\d{1,4}))?\s*$`)
 
 type dupeSearcher struct {
 	cfg  config.Config
@@ -43,6 +40,9 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing IMDb ID or anime title for ASC dupe search", nil)
 	}
 	cookies, err := loadSessionCookies(ctx, h.cfg.MainSettings.DBPath)
+	if cause := ctx.Err(); cause != nil {
+		return dupe.Failed(dupe.FailureRequest, "ASC search canceled", cause)
+	}
 	if err != nil || len(cookies) == 0 {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "import a current ASC session cookie", nil)
 	}
@@ -53,6 +53,9 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	lastPage := 0
 	for page := 1; page <= maxSearchPages; page++ {
 		result, failure := readSearchPage(ctx, h.http, cookies, query, page)
+		if cause := ctx.Err(); cause != nil {
+			return dupe.Failed(dupe.FailureRequest, "ASC search canceled", cause)
+		}
 		switch failure.Code {
 		case "":
 		case "authentication_required":
@@ -95,20 +98,37 @@ func buildASCSearchURL(query string, page int) string {
 
 func (row searchRow) entry() api.DupeEntry {
 	id := strconv.Itoa(row.ID)
-	entry := api.DupeEntry{
+	return api.DupeEntry{
 		ID:        id,
 		Name:      strings.TrimSpace(row.Name),
 		Link:      siteURL + "/torrents/" + id,
 		SizeBytes: row.Size,
 		SizeKnown: row.Size > 0,
 		Internal:  row.Internal,
+		Res:       resolutionBadge(row.Badges),
 	}
-	if match := episodeSuffix.FindStringSubmatch(row.Name); match != nil {
-		entry.Season, _ = strconv.Atoi(match[1])
-		entry.Episode, _ = strconv.Atoi(match[2])
-		entry.Pack = match[2] == ""
+}
+
+func resolutionBadge(badges []searchBadge) string {
+	resolution := ""
+	for _, badge := range badges {
+		if badge.Kind != "resolution" {
+			continue
+		}
+		label := strings.ToLower(strings.TrimSpace(badge.Label))
+		switch label {
+		case "4k":
+			label = "2160p"
+		case "2160p", "1080p", "1080i", "720p", "576p", "576i", "480p", "480i":
+		default:
+			continue
+		}
+		if resolution != "" && resolution != label {
+			return ""
+		}
+		resolution = label
 	}
-	return entry
+	return resolution
 }
 
 func resolveASCIMDb(meta api.DuplicateSubject) string {
