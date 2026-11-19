@@ -87,10 +87,14 @@ func resolveQualityID(meta api.UploadSubject) string {
 	return ""
 }
 
-// resolveDiscQualityID classifies full discs by size against nominal disc
-// capacities, which are decimal: DVD5 4.7 GB, BD25/50/66/100 25/50/66/100 GB.
+// resolveDiscQualityID picks the smallest Blu-ray class that fits the payload.
+// Blu-Disc Studio documents the usable capacities at https://blu-disc.net/help/toolbar.htm.
 func resolveDiscQualityID(meta api.UploadSubject) string {
-	const gigabyte = 1_000_000_000
+	const (
+		bd25Capacity = 25_025_314_816
+		bd50Capacity = 50_050_629_632
+		bd66Capacity = 66_735_570_944
+	)
 	if meta.SourceSize <= 0 {
 		return ""
 	}
@@ -107,11 +111,11 @@ func resolveDiscQualityID(meta api.UploadSubject) string {
 		return ""
 	}
 	switch size := meta.SourceSize; {
-	case size > 66*gigabyte:
+	case size > bd66Capacity:
 		return "78"
-	case size > 50*gigabyte:
+	case size > bd50Capacity:
 		return "77"
-	case size > 25*gigabyte:
+	case size > bd25Capacity:
 		return "76"
 	default:
 		return "75"

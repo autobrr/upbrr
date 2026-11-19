@@ -51,3 +51,24 @@ func TestASCMigratedUploadPayload(t *testing.T) {
 		t.Fatalf("missing repeated screenshot fields")
 	}
 }
+
+func TestResolveDiscQualityIDUsesUsableCapacity(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		size int64
+		want string
+	}{
+		{25_025_314_816, "75"},
+		{25_025_314_817, "76"},
+		{50_050_629_632, "76"},
+		{50_050_629_633, "77"},
+		{66_500_000_000, "77"},
+		{66_735_570_944, "77"},
+		{66_735_570_945, "78"},
+	} {
+		if got := resolveDiscQualityID(api.UploadSubject{DiscType: "BDMV", SourceSize: tc.size}); got != tc.want {
+			t.Errorf("disc class for %d bytes = %q, want %q", tc.size, got, tc.want)
+		}
+	}
+}

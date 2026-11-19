@@ -372,7 +372,7 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	appendSection(criticsKey, buildRatingsBBCode(meta, ratingsList))
 
 	// 9. MediaInfo/BDInfo
-	if media := buildMediaInfo(meta, cfg.MainSettings.DBPath); media != "" {
+	if media := ascUploadMediaInfo(buildMediaInfo(meta, cfg.MainSettings.DBPath)); media != "" {
 		parts = append(parts, "[spoiler=Informações do Arquivo]\n[left][font=Courier New]"+media+"[/font][/left][/spoiler]")
 	}
 	if notes := sanitizeDescriptionNotes(assets.Description); notes != "" {
@@ -602,27 +602,14 @@ func buildCastSection(meta api.UploadSubject, richCast []richCreditItem) string 
 }
 
 func buildRatingsBBCode(meta api.UploadSubject, ratingsList []map[string]any) string {
-	if len(ratingsList) == 0 {
-		return ""
-	}
-	ratingsMap := map[string]string{
-		"Internet Movie Database": "[img]https://i.postimg.cc/Pr8Gv4RQ/IMDB.png[/img]",
-		"Rotten Tomatoes":         "[img]https://i.postimg.cc/rppL76qC/rotten.png[/img]",
-		"Metacritic":              "[img]https://i.postimg.cc/SKkH5pNg/Metacritic45x45.png[/img]",
-		"TMDb":                    "[img]https://i.postimg.cc/T13yyzyY/tmdb.png[/img]",
-	}
 	var parts []string
 	for _, rating := range ratingsList {
 		source, _ := rating["Source"].(string)
 		valueRaw := rating["Value"]
-		if source == "" || valueRaw == nil {
+		if valueRaw == nil {
 			continue
 		}
-		value := strings.TrimSpace(fmt.Sprint(valueRaw))
-		imgTag, ok := ratingsMap[source]
-		if !ok {
-			continue
-		}
+		label := source
 		switch source {
 		case "Internet Movie Database":
 			imdbURL := ""
@@ -632,14 +619,19 @@ func buildRatingsBBCode(meta api.UploadSubject, ratingsList []map[string]any) st
 			if imdbURL == "" && meta.Identity.IMDBID > 0 {
 				imdbURL = providerid.IMDb(meta.Identity.IMDBID).URL()
 			}
-			parts = append(parts, fmt.Sprintf("\n[url=%s]%s[/url]\n[b]%s[/b]\n", imdbURL, imgTag, value))
+			if imdbURL != "" {
+				label = fmt.Sprintf("[url=%s]%s[/url]", imdbURL, source)
+			}
 		case "TMDb":
-			category := strings.ToLower(categoryOf(meta))
-			tmdbID := meta.Identity.TMDBID
-			parts = append(parts, fmt.Sprintf("[url=https://www.themoviedb.org/%s/%d]%s[/url]\n[b]%s[/b]\n", category, tmdbID, imgTag, value))
+			if tmdbID := meta.Identity.TMDBID; tmdbID > 0 {
+				category := strings.ToLower(categoryOf(meta))
+				label = fmt.Sprintf("[url=https://www.themoviedb.org/%s/%d]%s[/url]", category, tmdbID, source)
+			}
+		case "Rotten Tomatoes", "Metacritic":
 		default:
-			parts = append(parts, fmt.Sprintf("%s\n[b]%s[/b]\n", imgTag, value))
+			continue
 		}
+		parts = append(parts, fmt.Sprintf("%s [b]%s[/b]", label, strings.TrimSpace(fmt.Sprint(valueRaw))))
 	}
 	return strings.Join(parts, "\n")
 }

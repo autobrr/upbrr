@@ -69,6 +69,14 @@ func TestLocalScreenshotTrackerUsesSelectedCapturesWithoutHosting(t *testing.T) 
 	if err != nil || len(targets) != 0 {
 		t.Fatalf("explicit local-only targets = %#v, error = %v", targets, err)
 	}
+	targets, err = NeededImageUploadTargetsWithRegistry(registry, cfg, []string{"LOCAL", " "}, "imgbb")
+	if err != nil || len(targets) != 0 {
+		t.Fatalf("local-only targets with blank tracker = %#v, error = %v", targets, err)
+	}
+	targets, err = NeededImageUploadTargetsWithRegistry(registry, cfg, []string{" "}, "imgbb")
+	if err != nil || len(targets) != 1 || targets[0].Host != "imgbb" {
+		t.Fatalf("explicit host with empty tracker selection = %#v, error = %v", targets, err)
+	}
 
 	pathValue := filepath.Join(t.TempDir(), "capture.png")
 	subject := api.UploadSubject{ExactMedia: &api.ExactMediaAssets{Screenshots: []api.ScreenshotImage{{

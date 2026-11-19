@@ -46,6 +46,29 @@ func TestASCPreflightRequiresImportedSession(t *testing.T) {
 	}
 }
 
+func TestASCPreflightPreservesCookieStorageError(t *testing.T) {
+	t.Parallel()
+	blockedDir := filepath.Join(t.TempDir(), "blocked")
+	if err := os.WriteFile(blockedDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := resolveAuthSession(t.Context(), config.TrackerConfig{}, filepath.Join(blockedDir, "upbrr.db"), api.TrackerAuthLoginRequest{})
+	failure, ok := errors.AsType[*trackers.AuthResolutionError](err)
+	if !ok || !failure.Transient || failure.AuthRequired {
+		t.Fatalf("ASC storage failure returned %v", err)
+	}
+	joined, ok := errors.AsType[interface {
+		error
+		Unwrap() []error
+	}](err)
+	if !ok || len(joined.Unwrap()) != 2 {
+		t.Fatal("ASC resolution and storage errors must remain separately visible")
+	}
+	if _, ok := errors.AsType[*os.PathError](joined.Unwrap()[1]); !ok {
+		t.Fatal("ASC storage failure lost its filesystem cause")
+	}
+}
+
 func TestASCMigratedUploadDryRun(t *testing.T) {
 	t.Parallel()
 
@@ -138,6 +161,9 @@ func TestASCMigratedUploadDryRun(t *testing.T) {
 	if preview.Status != "ready" || preview.Endpoint != "https://amigos-share.club/torrents" ||
 		preview.Payload["category_id"] != "4" || len(preview.Files) != 4 || hasForeignImages(preview.Description) {
 		t.Fatalf("unexpected preview status=%s message=%s files=%d", preview.Status, preview.Message, len(preview.Files))
+	}
+	if !strings.Contains(preview.Description, "Complete name : "+stem+".mkv") || strings.Contains(preview.Description, dir) {
+		t.Fatal("generated description did not contain a basename-only MediaInfo report")
 	}
 	if _, err := plan.Submit(t.Context()); !errors.Is(err, trackers.ErrPlanNotSubmittable) {
 		t.Fatalf("dry-run plan was submittable: %v", err)

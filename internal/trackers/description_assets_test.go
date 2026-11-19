@@ -2035,6 +2035,51 @@ func TestResolveDescriptionAssetsFailsOnSelectedUploadMismatch(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsKeepsLocalCapturesAcrossMixedTrackerPreload(t *testing.T) {
+	t.Parallel()
+
+	registry := descriptionAssetsTestRegistry(t)
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:             "LOCAL",
+		Definition:       stubDefinition{name: "LOCAL"},
+		DescriptionGroup: "local",
+		WorkflowMedia:    &WorkflowMediaRequirements{LocalScreenshotCount: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	imagePath := filepath.Join(t.TempDir(), "screen.png")
+	const hostedURL = "https://img.example.invalid/screen.png"
+	meta := api.UploadSubject{
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv"),
+		ExactMedia: &api.ExactMediaAssets{
+			Screenshots: []api.ScreenshotImage{{Path: imagePath, Purpose: api.ScreenshotPurposeFinal}},
+			ScreenshotUploads: []api.UploadedImageLink{{
+				ImagePath:  imagePath,
+				Host:       "pixhost",
+				UsageScope: "tracker:HHD",
+				RawURL:     hostedURL,
+			}},
+		},
+	}
+	repo := &stubRepo{descriptionOverride: "Saved release description", overrideGroupKey: "local"}
+	preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := resolveDescriptionAssets(t.Context(), "LOCAL", meta, repo, api.NopLogger{}, preloaded, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local.Description != repo.descriptionOverride || repo.overrideCalls != 1 || len(local.Screenshots) != 1 ||
+		local.Screenshots[0].Path != imagePath || screenshotURLKey(local.Screenshots[0]) != "" {
+		t.Fatalf("local description assets = %#v", local)
+	}
+	hosted, err := resolveDescriptionAssets(t.Context(), "HHD", meta, repo, api.NopLogger{}, preloaded, registry)
+	if err != nil || len(hosted.Screenshots) != 1 || hosted.Screenshots[0].RawURL != hostedURL {
+		t.Fatalf("hosted description assets = %#v, error = %v", hosted, err)
+	}
+}
+
 func TestResolveDescriptionAssetsAttachesExactUploadedVariants(t *testing.T) {
 	t.Parallel()
 

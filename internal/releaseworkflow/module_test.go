@@ -4536,10 +4536,17 @@ func TestRefreshMutatedMediaStatusAcceptsLocalScreenshotsForLocalOnlyTrackers(t 
 	}
 	snapshot.Artifacts[1].Selected = true
 	snapshot.Artifacts[1].Purpose = api.ScreenshotPurposePreview
-	refreshMutatedMediaStatus(&snapshot, projections, projections)
-	if snapshot.Status != api.StageStatusBlocked {
-		t.Fatalf("a preview screenshot satisfied the local requirement: %#v", snapshot)
+	for _, prepared := range []bool{false, true} {
+		for _, skipped := range []bool{false, true} {
+			snapshot.ImageRequirementsPrepared = prepared
+			snapshot.ImageHostUploadSkipped = skipped
+			refreshMutatedMediaStatus(&snapshot, projections, projections)
+			if snapshot.Status != api.StageStatusBlocked {
+				t.Fatalf("preview satisfied local minimum with prepared=%t skipped=%t: %#v", prepared, skipped, snapshot)
+			}
+		}
 	}
+	snapshot.ImageHostUploadSkipped = false
 	snapshot.Artifacts[1].Purpose = api.ScreenshotPurposeFinal
 	projections = append(projections, api.TrackerReleaseProjection{
 		TrackerID: "HOSTED",

@@ -148,11 +148,20 @@ func TestHomepageURLFixLeavesOtherASCLinksUnchanged(t *testing.T) {
 	ratings := buildRatingsBBCode(meta, []map[string]any{
 		{"Source": "Internet Movie Database", "Value": "7.8/10"},
 		{"Source": "TMDb", "Value": "8.2/10"},
+		{"Source": "Rotten Tomatoes", "Value": "90%"},
+		{"Source": "Metacritic", "Value": "76/100"},
 	})
-	if !strings.Contains(ratings, "[url=https://www.imdb.com/title/tt7654321]") {
-		t.Fatalf("expected IMDb rating link to stay unchanged, got %q", ratings)
+	for _, want := range []string{
+		"[url=https://www.imdb.com/title/tt7654321]Internet Movie Database[/url] [b]7.8/10[/b]",
+		"[url=https://www.themoviedb.org/movie/123]TMDb[/url] [b]8.2/10[/b]",
+		"Rotten Tomatoes [b]90%[/b]",
+		"Metacritic [b]76/100[/b]",
+	} {
+		if !strings.Contains(ratings, want) {
+			t.Errorf("ratings = %q, want %q", ratings, want)
+		}
 	}
-	if !strings.Contains(ratings, "[url=https://www.themoviedb.org/movie/123]") {
-		t.Fatalf("expected TMDB rating link to stay unchanged, got %q", ratings)
+	if hasForeignImages(ratings) {
+		t.Fatalf("rating sources depend on foreign images: %q", ratings)
 	}
 }

@@ -6934,9 +6934,13 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	reconcileActions := slices.DeleteFunc(append([]api.RequiredAction(nil), snapshot.RequiredActions...), func(action api.RequiredAction) bool {
 		return action.Kind != api.RequiredActionReconcileSubmission
 	})
-	requiredScreenshots, requiredMenus := 0, 0
+	requiredScreenshots, requiredLocalScreenshots, requiredMenus := 0, 0, 0
 	for _, projection := range readinessProjections {
-		requiredScreenshots = max(requiredScreenshots, projection.Artifacts.ScreenshotCount)
+		if projection.Artifacts.LocalScreenshotsOnly {
+			requiredLocalScreenshots = max(requiredLocalScreenshots, projection.Artifacts.ScreenshotCount)
+		} else {
+			requiredScreenshots = max(requiredScreenshots, projection.Artifacts.ScreenshotCount)
+		}
 	}
 	for _, projection := range projections {
 		requiredMenus = max(requiredMenus, projection.Artifacts.DVDMenuCount)
@@ -6959,10 +6963,12 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	}
 	snapshot.Failures = hostFailures
 	snapshot.RequiredActions = reconcileActions
-	screenshotsReady := selectedScreenshots >= requiredScreenshots
+	screenshotsReady := selectedFinalScreenshots >= requiredLocalScreenshots
 	if snapshot.ImageRequirementsPrepared && !snapshot.ImageHostUploadSkipped {
-		screenshotsReady = !allTrackerHostsFailed && !unmatchedTrackerHostFailure &&
-			screenshotRequirementsMet(*snapshot, readinessProjections, selectedFinalScreenshots)
+		screenshotsReady = screenshotsReady && !allTrackerHostsFailed && !unmatchedTrackerHostFailure &&
+			hostedScreenshotRequirementsMet(*snapshot, readinessProjections)
+	} else {
+		screenshotsReady = screenshotsReady && selectedScreenshots >= requiredScreenshots
 	}
 	if !screenshotsReady || selectedMenus < requiredMenus {
 		snapshot.Status = api.StageStatusBlocked
@@ -6976,7 +6982,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		snapshot.Status = api.StageStatusBlocked
 		return
 	}
-	if requiredScreenshots == 0 && requiredMenus == 0 && len(snapshot.Artifacts) == 0 {
+	if requiredScreenshots == 0 && requiredLocalScreenshots == 0 && requiredMenus == 0 && len(snapshot.Artifacts) == 0 {
 		snapshot.Status = api.StageStatusSkipped
 		return
 	}
@@ -6997,21 +7003,15 @@ func mediaHasUnscopedOrUnknownImageHostFailure(media api.MediaArtifactSet, proje
 	})
 }
 
-// screenshotRequirementsMet checks local minimums and counts unique selected
-// final-screenshot sources in applicable host attempts for the other trackers.
-func screenshotRequirementsMet(snapshot api.MediaArtifactSet, projections []api.TrackerReleaseProjection, selectedScreenshots int) bool {
+// hostedScreenshotRequirementsMet counts unique selected final-screenshot
+// sources in applicable host attempts.
+func hostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections []api.TrackerReleaseProjection) bool {
 	artifacts := make(map[api.PublicResourceID]api.MediaArtifact, len(snapshot.Artifacts))
 	for _, artifact := range snapshot.Artifacts {
 		artifacts[artifact.ID] = artifact
 	}
 	for _, projection := range projections {
-		if projection.Artifacts.LocalScreenshotsOnly {
-			if selectedScreenshots < projection.Artifacts.ScreenshotCount {
-				return false
-			}
-			continue
-		}
-		if projection.Artifacts.ScreenshotCount <= 0 {
+		if projection.Artifacts.LocalScreenshotsOnly || projection.Artifacts.ScreenshotCount <= 0 {
 			continue
 		}
 		trackerID := normalizeDownstreamTrackerID(projection.TrackerID)

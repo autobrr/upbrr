@@ -252,16 +252,16 @@
     "sha256": "6ed55541d2c3733d026f7929794576859886e92e3240edf76148ffa757fda99e"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildDescription": {
-    "reason": "Filter foreign image tags from generated descriptions for the migrated upload site. Title, metadata and reviewed-description handling use the existing precedence.",
-    "sha256": "27b4a9d03100ab89405b36f2c29559329427b829620693c9299f17e00f9b04b1"
+    "reason": "Filter foreign image tags and local MediaInfo paths from generated descriptions. Title, metadata and reviewed-description handling use the existing precedence.",
+    "sha256": "e5ae2b9e994d9b535cad7ef0aa161dcbfe0c98b07b23418b03f934e973791fee"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildProductionCompanies": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
     "sha256": "f6c4bf12abd9155d8c0414b1f28490bf2e4dd0ade2a17322fd9b7970429d7e9c"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildRatingsBBCode": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "981fdb523546170574c1b9316a53e5c93fac63b86b0843aed4d99e125ccf7baf"
+    "reason": "Render provider rating sources as text with their existing provider identity links. This presentation does not select manually correctable metadata.",
+    "sha256": "1671160591f7eb7d7a0a34947b03e609a5189f06809063845b22181200550bbf"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildTechnicalSheet": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",

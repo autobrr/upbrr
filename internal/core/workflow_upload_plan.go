@@ -23,6 +23,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/logging"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -663,13 +664,13 @@ func workflowSubmissionTorrentSubjectWithSubtitles(subject api.UploadSubject, re
 
 	root := filepath.Clean(subject.SourcePath)
 	video := subject.FileList[0]
-	if filepath.Dir(video) != root {
+	if !pathutil.SamePath(filepath.Dir(video), root) {
 		return torrentSubject
 	}
 	stem := strings.TrimSuffix(filepath.Base(video), filepath.Ext(video))
 	var subtitles []string
 	for _, entry := range subject.SourceManifest.Entries {
-		if entry.Type != api.SourceEntryTypeFile || filepath.Dir(entry.Path) != root {
+		if entry.Type != api.SourceEntryTypeFile || !pathutil.SamePath(filepath.Dir(entry.Path), root) {
 			continue
 		}
 		ext := filepath.Ext(entry.Path)

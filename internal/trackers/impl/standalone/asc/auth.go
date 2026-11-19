@@ -63,7 +63,7 @@ func resolveAuthSession(ctx context.Context, _ config.TrackerConfig, dbPath stri
 		return &trackers.AuthResolutionError{Reason: "ASC cookies missing", AuthRequired: true}
 	}
 	if err != nil {
-		return &trackers.AuthResolutionError{Reason: "could not read ASC cookies", Transient: true}
+		return errors.Join(&trackers.AuthResolutionError{Reason: "could not read ASC cookies", Transient: true}, err)
 	}
 	result := connectiontest.Run(ctx, func(ctx context.Context, client *http.Client) api.ConnectionTestResult {
 		return testConnection(ctx, trackers.ConnectionProbeInput{Cookies: cookies}, client)

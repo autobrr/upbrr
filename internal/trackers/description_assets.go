@@ -211,7 +211,8 @@ func resolveDescriptionAssets(
 	if registry == nil {
 		registry = preloadedRegistry(preloaded)
 	}
-	if usesLocalScreenshots(registry, tracker) {
+	localOnly := meta.ExactMedia != nil && usesLocalScreenshots(registry, tracker)
+	if localOnly {
 		meta.ExactMedia = localDescriptionMedia(meta.ExactMedia)
 	}
 	if err := ctx.Err(); err != nil {
@@ -249,9 +250,17 @@ func resolveDescriptionAssets(
 	}
 
 	description, overridden, final := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded, registry)
-	slots, screenshots, err := resolveDescriptionScreenshots(ctx, tracker, meta, repo, logger, preloaded, registry)
-	if err != nil {
-		return DescriptionAssets{}, fmt.Errorf("trackers: resolve required description screenshots: %w", err)
+	var slots []api.ScreenshotSlot
+	var screenshots []api.ScreenshotImage
+	if localOnly {
+		// Shared preload slots can contain hosted variants for another tracker.
+		screenshots = meta.ExactMedia.Screenshots
+	} else {
+		var err error
+		slots, screenshots, err = resolveDescriptionScreenshots(ctx, tracker, meta, repo, logger, preloaded, registry)
+		if err != nil {
+			return DescriptionAssets{}, fmt.Errorf("trackers: resolve required description screenshots: %w", err)
+		}
 	}
 	if logger != nil {
 		logger.Tracef("trackers: description assets resolved desc_len=%d screenshots=%d", len(strings.TrimSpace(description)), len(screenshots))

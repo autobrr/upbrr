@@ -540,14 +540,17 @@ func neededImageUploadTargets(
 	}
 
 	flexibleTargets := make([]imageUploadPolicyTarget, 0, len(trackerNames))
-	localOnlySelection := len(trackerNames) > 0 && !slices.ContainsFunc(trackerNames, func(tracker string) bool {
-		return !usesLocalScreenshots(registry, tracker)
-	})
+	hasLocalTracker, hasHostedTracker := false, false
 	for _, tracker := range trackerNames {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
-		if name == "" || usesLocalScreenshots(registry, name) {
+		if name == "" {
 			continue
 		}
+		if usesLocalScreenshots(registry, name) {
+			hasLocalTracker = true
+			continue
+		}
+		hasHostedTracker = true
 		trackerCfg := trackerConfigForImageHostPolicy(appCfg, name)
 		if strings.TrimSpace(trackerCfg.ImageHost) != "" {
 			policy, err := resolveImageHostPolicyForTarget(registry, name, appCfg, trackerCfg, meta)
@@ -601,6 +604,7 @@ func neededImageUploadTargets(
 
 	assignFlexibleImageUploadTargets(registry, flexibleTargets, excludedHosts, targets, addTarget)
 
+	localOnlySelection := hasLocalTracker && !hasHostedTracker
 	if len(targets) == 0 && !localOnlySelection && selectedHost != "" && trackerForOwnedHost(registry, selectedHost) == "" &&
 		hostInList(selectedHost, userHosts) {
 		if _, excluded := excludedHosts[selectedHost]; excluded {

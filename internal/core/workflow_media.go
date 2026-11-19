@@ -2257,8 +2257,11 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	retained = cloneWorkflowMediaPrivateArtifacts(retained)
 	host = strings.ToLower(strings.TrimSpace(host))
+	localOnlySelection := len(projections.Projections) > 0 && !slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+		return !projection.Artifacts.LocalScreenshotsOnly
+	})
 	failedHost := slices.Contains(snapshot.FailedHosts, host)
-	if failedHost && !retry {
+	if !localOnlySelection && failedHost && !retry {
 		return api.MediaArtifactSet{}, nil, nil, errors.New("failed image host requires explicit retry")
 	}
 	selected := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
@@ -2292,9 +2295,7 @@ func (b workflowMediaBuilder) UploadImages(
 	if len(images) != len(artifactIDs) {
 		return api.MediaArtifactSet{}, nil, nil, errors.New("workflow media upload selection is incomplete")
 	}
-	if host == "" && len(projections.Projections) > 0 && !slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
-		return !projection.Artifacts.LocalScreenshotsOnly
-	}) {
+	if localOnlySelection {
 		return snapshot, retained, nil, nil
 	}
 	trackerNames := make([]string, 0, len(projections.Projections))
