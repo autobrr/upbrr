@@ -14,6 +14,23 @@ export function WorkflowOperationProgress({
 
   const metadataPreparation = operation.operation === "preparation";
   const comparisonProgress = Boolean(operation.phase?.startsWith("comparisons_"));
+  const showComparisonDetail = comparisonProgress && operation.status === "running";
+  const comparisonItems = showComparisonDetail
+    ? (operation.items || []).filter((item) => item.kind.startsWith("comparison_"))
+    : [];
+  const comparisonItemIDs = new Set(comparisonItems.map((item) => item.id));
+  const phaseItems = comparisonItems.filter(
+    (item) => !item.phase || item.phase === operation.phase,
+  );
+  const comparisonItem =
+    phaseItems.find((item) => item.status === "running" || item.status === "queued") ??
+    (phaseItems.length === 1 ? phaseItems[0] : undefined);
+  const itemProgress =
+    comparisonItem?.status === "skipped"
+      ? 0
+      : comparisonItem?.total
+        ? Math.max(0, Math.min(100, (100 * (comparisonItem.completed ?? 0)) / comparisonItem.total))
+        : undefined;
   const metadataItemIDs = new Set(
     (operation.items || [])
       .filter((item) => item.kind.startsWith("preparation_"))
@@ -29,7 +46,8 @@ export function WorkflowOperationProgress({
     (event) =>
       event.scopeId !== operation.workflowId &&
       !(metadataPreparation && metadataItemIDs.has(event.scopeId || "")) &&
-      (["queued", "running"].includes(event.lifecycle) ||
+      ((!comparisonItemIDs.has(event.scopeId || "") &&
+        ["queued", "running"].includes(event.lifecycle)) ||
         event.severity === "warn" ||
         event.severity === "error"),
   );
@@ -64,8 +82,7 @@ export function WorkflowOperationProgress({
   const eventScopeIds = new Set(scopedEvents.map((event) => event.scopeId));
   const activeItems = (operation.items || []).filter(
     (item) =>
-      (item.status === "queued" ||
-        item.status === "running" ||
+      ((["queued", "running"].includes(item.status) && !comparisonItemIDs.has(item.id)) ||
         item.status === "failed" ||
         item.status === "partial" ||
         (metadataPreparation && item.status === "canceled")) &&
@@ -74,10 +91,22 @@ export function WorkflowOperationProgress({
 
   return (
     <section className={`${pageStyle.panel} mb-3 grid gap-2 py-3`} role="status" aria-live="polite">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
+      <div
+        className={
+          showComparisonDetail
+            ? "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2"
+            : "flex flex-wrap items-center justify-between gap-2"
+        }
+      >
+        <div className="min-w-0">
           <p className={pageStyle.label}>Release workflow</p>
-          <p className="font-semibold text-foreground">
+          <p
+            className={
+              showComparisonDetail
+                ? "truncate font-semibold text-foreground"
+                : "font-semibold text-foreground"
+            }
+          >
             {(operation.operation === "analyze_hdr" ||
             (comparisonProgress && operation.status === "running")
               ? operation.message
@@ -89,7 +118,7 @@ export function WorkflowOperationProgress({
               operation.command}
           </p>
         </div>
-        <span className="text-muted-foreground text-sm">
+        <span className="text-muted-foreground text-sm tabular-nums">
           {metadataPreparation
             ? "Metadata stages"
             : operation.total > 0 && operation.operation !== "analyze_hdr" && !comparisonProgress
@@ -107,11 +136,39 @@ export function WorkflowOperationProgress({
           role="progressbar"
         >
           <div
-            className="h-full rounded-full bg-primary transition-[width]"
+            className="h-full rounded-full bg-primary motion-safe:transition-[width]"
             style={{ width: `${progress}%` }}
           />
         </div>
       ) : null}
+      {showComparisonDetail && (
+        <div className="grid gap-1.5 rounded border border-border bg-card px-2 py-1.5 text-sm">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2">
+            <span className="truncate font-semibold" title={comparisonItem?.label}>
+              {comparisonItem?.label || "Comparison tasks"}
+            </span>
+            <span
+              className="truncate text-right text-muted-foreground tabular-nums"
+              title={comparisonItem?.message}
+            >
+              {comparisonItem?.message || comparisonItem?.status || "Overall progress only"}
+            </span>
+          </div>
+          <div
+            aria-label="Comparison task progress"
+            aria-valuemax={100}
+            aria-valuemin={0}
+            aria-valuenow={itemProgress}
+            className="h-1.5 w-full overflow-hidden rounded-full bg-secondary"
+            role="progressbar"
+          >
+            <div
+              className="h-full bg-primary motion-safe:transition-[width]"
+              style={{ width: `${itemProgress ?? 0}%` }}
+            />
+          </div>
+        </div>
+      )}
       {recovery ? <p className="text-muted-foreground text-sm">{recovery}</p> : null}
       {scopedEvents.length ? (
         <div className="grid gap-1 text-sm">

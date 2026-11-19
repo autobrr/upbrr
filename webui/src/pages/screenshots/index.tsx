@@ -152,16 +152,8 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
 
   return (
     <section className="flex flex-col gap-2.5">
-      <header className="screens-header">
-        <p className={pageStyle.eyebrow}>Screenshots</p>
-        <h1>Plan &amp; Capture</h1>
-        <p className={pageStyle.subtitle}>
-          Review tracker images, adjust frame times, and generate screenshots.
-        </p>
-      </header>
-
       <ComparisonPanel
-        key={`${facet.comparisons.view.workflowID}:${facet.comparisons.view.plan?.fingerprint || "none"}`}
+        key={facet.comparisons.view.workflowID}
         facet={facet.comparisons}
         setLightboxImage={setLightboxImage}
         setLightboxAlt={setLightboxAlt}

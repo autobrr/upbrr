@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type {
   ComparisonPlan,
@@ -12,6 +12,29 @@ import type { ComparisonsFacet } from "../../releaseSession/types";
 import ComparisonPanel from "./ComparisonPanel";
 
 afterEach(cleanup);
+
+function openSource(name: string) {
+  const sources = screen.getByText("Sources", { exact: true });
+  if (!sources.closest("details")?.open) fireEvent.click(sources);
+  const summary = screen.getByText(name, { selector: "summary" });
+  if (!summary.closest("details")?.open) fireEvent.click(summary);
+  return within(screen.getByRole("group", { name }));
+}
+
+it("shows the review blocker when every saved row is excluded", () => {
+  const plan = comparisonPlan();
+  const facet = comparisonFacet({
+    ...plan,
+    rows: plan.rows.map((row) => ({ ...row, excluded: true })),
+    problems: [{ code: "no_active_rows", message: "Retain at least one complete comparison row." }],
+  });
+  render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+  expect(screen.getByText("All comparison rows are excluded")).toBeVisible();
+  expect(screen.getByRole("list", { name: "Comparison corrections" })).toHaveTextContent(
+    "Retain at least one complete comparison row.",
+  );
+  expect(screen.getByRole("button", { name: "Approve reviewed comparison images" })).toBeDisabled();
+});
 
 it("only offers disc discovery for disc inputs and handles an empty legacy response", async () => {
   const facet: ComparisonsFacet = {
@@ -28,7 +51,7 @@ it("only offers disc discovery for disc inputs and handles an empty legacy respo
   render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
   expect(screen.queryByRole("button", { name: "Discover titles and playlists" })).toBeNull();
   expect(screen.queryByRole("combobox", { name: /Tone mapping/ })).toBeNull();
-  const column = within(screen.getByRole("group", { name: "Encode · column 2" }));
+  const column = openSource("Encode · column 2");
   fireEvent.change(column.getByLabelText("Source type for Encode"), {
     target: { value: "folder" },
   });
@@ -89,7 +112,7 @@ it("applies displayed frame authority before matching or capturing, and clears r
     name: "Use displayed frame for Source, row 1, image 1",
   });
   fireEvent.click(mainChoice);
-  const column = within(screen.getByRole("group", { name: "Source · column 1" }));
+  const column = openSource("Source · column 1");
   fireEvent.click(column.getByRole("button", { name: "Discover titles and playlists" }));
   await waitFor(() => expect(column.getByRole("radio", { name: "Title 1" })).toBeVisible());
   fireEvent.click(column.getByRole("radio", { name: "Title 1" }));
@@ -110,7 +133,7 @@ it("removes draft programme and preview authority before recreating comparisons"
   fireEvent.click(
     screen.getByRole("button", { name: "Use displayed frame for Encode, row 1, image 2" }),
   );
-  const main = within(screen.getByRole("group", { name: "Source · column 1" }));
+  const main = openSource("Source · column 1");
   fireEvent.click(main.getByRole("button", { name: "Discover titles and playlists" }));
   await waitFor(() => expect(main.getByRole("radio", { name: "Title 1" })).toBeVisible());
   fireEvent.click(main.getByRole("radio", { name: "Title 1" }));
@@ -148,7 +171,7 @@ it("keeps discovered programmes local to a column until setup is applied", async
     discover: vi.fn(async () => discovery),
   };
   render(<ComparisonPanel facet={facet} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
-  const column = within(screen.getByRole("group", { name: "Encode · column 2" }));
+  const column = openSource("Encode · column 2");
   fireEvent.change(column.getByLabelText("Source type for Encode"), {
     target: { value: "folder" },
   });
@@ -341,7 +364,7 @@ it("returns to the entry actions after removing an unapplied setup", async () =>
     expect(screen.getByRole("button", { name: "Import existing comparisons" })).toBeVisible(),
   );
   fireEvent.click(screen.getByRole("button", { name: "Create from videos" }));
-  expect(screen.getByRole("group", { name: "Main input · column 1" })).toBeVisible();
+  expect(screen.getByText("Main input · column 1", { selector: "summary" })).toBeVisible();
 });
 
 const comparisonPlan = (imported = true): ComparisonPlan => ({
@@ -506,6 +529,11 @@ it("reviews exact retained images and invalidates approval when reuse choices ch
     screen.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
   );
   expect(approve).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Hide comparison settings" }));
+  expect(screen.queryByRole("complementary", { name: "Comparison settings" })).toBeNull();
+  fireEvent.click(screen.getByRole("img", { name: "Encode, row 1, image 2" }));
+  expect(openImage).toHaveBeenLastCalledWith("/images/1");
+  fireEvent.click(screen.getByRole("button", { name: "Show comparison settings" }));
   fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
   expect(facet.edit).toHaveBeenLastCalledWith(
     expect.objectContaining({
@@ -543,6 +571,74 @@ it("retains source order and supports explicit import mapping and duplicate-imag
   expect(instructions.plan.rows[0]!.excluded).toBe(true);
   expect(instructions.plan.rows[0]!.cells).toHaveLength(2);
   expect(screen.getByRole("button", { name: "Approve reviewed comparison images" })).toBeDisabled();
+});
+
+it("keeps retained rows and their full-size images available when editing is locked", () => {
+  const plan = comparisonPlan();
+  const facet = comparisonFacet({ ...plan, rows: [...plan.rows, { ...plan.rows[0]!, id: "2" }] });
+  const openImage = vi.fn();
+  render(
+    <ComparisonPanel
+      facet={{ ...facet, view: { ...facet.view, blockedReason: "Workflow is complete." } }}
+      setLightboxImage={openImage}
+      setLightboxAlt={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Apply comparison setup" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Approve reviewed comparison images" })).toBeDisabled();
+  const secondRow = screen.getByRole("button", { name: "Select comparison row 2" });
+  expect(secondRow).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Next comparison row" }));
+  expect(secondRow).toHaveAttribute("aria-current", "true");
+  expect(screen.getByRole("checkbox", { name: "Exclude row 2" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("img", { name: "Encode, row 2, image 2" }));
+  expect(openImage).toHaveBeenCalledWith("/images/1");
+  expect(facet.edit).not.toHaveBeenCalled();
+});
+
+it("shows the applicable source preview after switching rows without replacing an opened image", async () => {
+  const facet = observedComparisonFacet();
+  const plan = facet.view.plan!;
+  const firstRow = plan.rows[0]!;
+  const secondRow = {
+    ...firstRow,
+    id: "2",
+    cells: firstRow.cells.map((cell) => ({ ...cell, timestampSeconds: 20 })),
+  };
+  let finish!: (preview: FramePreview) => void;
+  const pending = new Promise<FramePreview>((resolve) => {
+    finish = resolve;
+  });
+  const openImage = vi.fn();
+  const requestPreview = vi.fn(() => pending);
+  const panel = (previews: ComparisonsFacet["view"]["previews"]) => (
+    <ComparisonPanel
+      facet={{
+        ...facet,
+        view: { ...facet.view, plan: { ...plan, rows: [firstRow, secondRow] }, previews },
+        preview: requestPreview,
+      }}
+      setLightboxImage={openImage}
+      setLightboxAlt={vi.fn()}
+    />
+  );
+  const { rerender } = render(panel({}));
+  fireEvent.click(screen.getByRole("button", { name: "Hide comparison settings" }));
+  fireEvent.click(screen.getAllByText("Correct frame", { selector: "summary" })[1]!);
+  fireEvent.click(screen.getByRole("button", { name: "Preview Encode, row 1, image 2" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next comparison row" }));
+  const row = within(screen.getByRole("region", { name: "Comparison row 2" }));
+  fireEvent.click(row.getByRole("img", { name: "Filtered, row 2, image 3" }));
+  const preview = facet.view.previews["2"]!;
+  await act(async () => finish(preview));
+  rerender(panel({ "2": preview }));
+  expect(openImage).toHaveBeenCalledExactlyOnceWith("/images/2");
+  fireEvent.click(row.getAllByText("Correct frame", { selector: "summary" })[1]!);
+  fireEvent.click(row.getByRole("img", { name: "Encode, row 2, image 2 preview at 11.250s" }));
+  expect(openImage).toHaveBeenLastCalledWith("/previews/2");
+  expect(
+    row.getByRole("button", { name: "Use displayed frame for Encode, row 2, image 2" }),
+  ).toBeEnabled();
 });
 
 it("imports prepared files without guessing the main column or flattening them into screenshots", () => {
@@ -603,6 +699,9 @@ it("keeps each duplicate-column image's row input attached to its own pixels", (
   expect(rows.find((row) => row.id === "new-row")!.cells.map((cell) => cell.artifactId)).toEqual([
     "image-0",
   ]);
+  const movedRow = screen.getByRole("button", { name: "Select comparison row 2" });
+  expect(movedRow).toHaveAccessibleDescription("Row ID: new-row");
+  fireEvent.click(movedRow);
   const moved = within(
     screen.getByRole("region", { name: "Comparison row new-row" }),
   ).getByLabelText("Row for Source, row new-row, image 1");
@@ -680,8 +779,9 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
   );
   fireEvent.keyDown(processingHelp, { key: "Escape" });
   expect(screen.getAllByText("Renderer: libplacebo; tonemapping applied: no.")).toHaveLength(2);
-  const source = screen.getByRole("group", { name: "Encode · column 2" });
-  fireEvent.click(within(source).getByText("Preview & alignment"));
+  fireEvent.click(screen.getByText("Preview & alignment", { exact: true }));
+  fireEvent.click(screen.getByLabelText("Preview seconds · Encode").closest("summary")!);
+  const previewControls = within(screen.getByRole("group", { name: "Preview for Encode" }));
   fireEvent.change(screen.getByLabelText("Approximate frame seek · Encode"), {
     target: { value: "480" },
   });
@@ -691,13 +791,14 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
     expect(screen.getByLabelText("Preview seconds · Encode")).toHaveTextContent("20.130"),
   );
   expect(screen.queryByRole("spinbutton", { name: "Preview seconds · Encode" })).toBeNull();
-  fireEvent.click(within(source).getByRole("button", { name: "Next frame" }));
+  fireEvent.click(previewControls.getByRole("button", { name: "Next frame" }));
   expect(facet.preview).toHaveBeenLastCalledWith("2", 20.13, 1);
-  fireEvent.click(within(source).getByRole("checkbox", { name: "I" }));
-  fireEvent.click(within(source).getByRole("checkbox", { name: "B" }));
   fireEvent.click(
-    within(source).getByRole("button", { name: "Use displayed previews as an anchor" }),
+    previewControls.getByRole("button", { name: "Use displayed previews as an anchor" }),
   );
+  const source = openSource("Encode · column 2");
+  fireEvent.click(source.getByRole("checkbox", { name: "I" }));
+  fireEvent.click(source.getByRole("checkbox", { name: "B" }));
   fireEvent.click(screen.getByRole("button", { name: "Apply comparison setup" }));
   const instructions = vi.mocked(facet.edit).mock.lastCall![0];
   expect(instructions.plan.sources[1]).toEqual(
@@ -725,6 +826,7 @@ it("keeps source previews independent, steps decoded frames and anchors displaye
     { sourceId: "2", timestampSeconds: 20.13 },
     { sourceId: "3", timestampSeconds: 0 },
   ]);
+  fireEvent.click(screen.getByRole("button", { name: "Select comparison row 1" }));
   const timestamp = screen.getByLabelText("Frame time for Source, row 1, image 1");
   timestamp.focus();
   fireEvent.change(timestamp, { target: { value: "12.3" } });

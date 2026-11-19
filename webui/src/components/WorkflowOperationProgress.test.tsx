@@ -22,8 +22,9 @@ it("shows the active comparison phase and percentages instead of internal work-u
     items: [
       {
         id: "source-2",
-        kind: "comparison_source",
+        kind: "comparison_window",
         label: "Column 2",
+        phase: "comparisons_sampling",
         status: "running",
         completed: 500,
         total: 1000,
@@ -45,6 +46,40 @@ it("shows the active comparison phase and percentages instead of internal work-u
   expect(screen.getByText("10%")).toBeVisible();
   expect(screen.getByText("running — 50%")).toBeVisible();
   expect(screen.queryByText("500/5000 complete")).not.toBeInTheDocument();
+  const taskTrack = screen.getByRole("progressbar", { name: "Comparison task progress" });
+  expect(taskTrack).toHaveAttribute("aria-valuenow", "50");
+  const completedItem = {
+    ...operation.items![0],
+    status: "completed" as const,
+    completed: 1000,
+    message: "completed — 100%",
+  };
+  rerender(<WorkflowOperationProgress operation={{ ...operation, items: [completedItem] }} />);
+  expect(screen.getByText("completed — 100%")).toBeVisible();
+  expect(taskTrack).toHaveAttribute("aria-valuenow", "100");
+  rerender(
+    <WorkflowOperationProgress
+      operation={{
+        ...operation,
+        items: [{ ...completedItem, status: "skipped", completed: 500, message: "skipped — 0%" }],
+      }}
+    />,
+  );
+  expect(screen.getByText("skipped — 0%")).toBeVisible();
+  expect(taskTrack).toHaveAttribute("aria-valuenow", "0");
+  rerender(
+    <WorkflowOperationProgress
+      operation={{
+        ...operation,
+        items: [
+          { ...completedItem, id: "cell-1", kind: "comparison_cell", label: "Column 2, row 1" },
+          { ...completedItem, status: "skipped", message: "skipped — 0%" },
+        ],
+      }}
+    />,
+  );
+  expect(screen.getByText("Overall progress only")).toBeVisible();
+  expect(taskTrack).not.toHaveAttribute("aria-valuenow");
   rerender(
     <WorkflowOperationProgress
       operation={{
@@ -52,11 +87,15 @@ it("shows the active comparison phase and percentages instead of internal work-u
         phase: "comparisons_refinement",
         message: "Refining comparison frames",
         progress: 55,
+        items: [completedItem],
       }}
     />,
   );
   expect(screen.getByText("Refining comparison frames")).toBeVisible();
   expect(screen.getByText("55%")).toBeVisible();
+  expect(screen.getByText("Overall progress only")).toBeVisible();
+  expect(screen.getByRole("progressbar", { name: "Comparison task progress" })).toBe(taskTrack);
+  expect(taskTrack).not.toHaveAttribute("aria-valuenow");
 });
 
 it("updates metadata detail in place, keeps stage-order percentages out of fetch counts, and retains partial and canceled outcomes", () => {

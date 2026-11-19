@@ -32,6 +32,34 @@ import {
 const waitForAppMethod = (page: Page, method: string) =>
   page.waitForResponse((response) => response.url().endsWith(`/api/app/${method}`));
 
+async function openComparisonDisclosure(scope: Locator, label: string) {
+  const summary = scope
+    .getByText(label, { exact: true })
+    .locator("xpath=ancestor-or-self::summary[1]");
+  if (!(await summary.evaluate((element) => element.closest("details")?.open))) {
+    await summary.click();
+  }
+}
+
+async function openComparisonSource(scope: Locator, label: string) {
+  await openComparisonDisclosure(scope, "Sources");
+  await openComparisonDisclosure(scope, label);
+}
+
+async function openComparisonPreview(scope: Locator, source: string) {
+  await openComparisonDisclosure(scope, "Preview & alignment");
+  await openComparisonDisclosure(scope, source);
+  return scope.getByRole("group", { name: `Preview for ${source}`, exact: true });
+}
+
+async function openComparisonCorrection(row: Locator, label: string) {
+  await openComparisonDisclosure(row, "Row and image corrections");
+  await openComparisonDisclosure(
+    row.getByRole("group", { name: `Corrections for ${label}`, exact: true }),
+    "Correct frame",
+  );
+}
+
 test("embedded comparisons inherit screenshot tone mapping for HDR and keep five sources compact", async ({
   page,
 }, testInfo) => {
@@ -80,6 +108,7 @@ test("embedded comparisons inherit screenshot tone mapping for HDR and keep five
     await page.getByRole("button", { name: "Screenshots", exact: true }).click();
     const comparison = page.getByRole("region", { name: "Comparisons", exact: true });
     await comparison.getByRole("button", { name: "Create from videos" }).click();
+    await comparison.screenshot({ path: testInfo.outputPath("comparison-setup.png") });
     const main = comparison.getByRole("group", { name: "Main input · column 1", exact: true });
     const tone = main.getByRole("combobox", { name: "Tone mapping · Main input", exact: true });
     // Fixture preparation has no inspected HDR facts; configuring comparisons inspects the PQ file.
@@ -124,29 +153,26 @@ test("embedded comparisons inherit screenshot tone mapping for HDR and keep five
     await sourceType.selectOption("file");
     await second.getByLabel("Video path for Source 2").fill(sdr);
     await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
-    await expect(tone).toHaveValue("default");
-    await expect(comparison.getByRole("combobox", { name: /Tone mapping/ })).toHaveCount(1);
+    await expect(comparison.getByRole("button", { name: "Apply comparison setup" })).toBeEnabled();
     await expect(
       comparison.getByRole("button", { name: "Discover titles and playlists" }),
     ).toHaveCount(0);
     await page.setViewportSize({ width: 3840, height: 2160 });
-    const cards = [
-      main,
-      ...[2, 3, 4, 5].map((index) =>
-        comparison.getByRole("group", {
-          name: `Source ${index} · column ${index}`,
-          exact: true,
-        }),
-      ),
-    ];
-    const boxes = await Promise.all(cards.map((card) => card.boundingBox()));
-    expect(boxes.every(Boolean)).toBe(true);
-    expect(
-      Math.max(...boxes.map((box) => box!.y)) - Math.min(...boxes.map((box) => box!.y)),
-    ).toBeLessThan(20);
-    expect((await comparison.boundingBox())!.height).toBeLessThan(800);
+    const settings = comparison.getByRole("complementary", { name: "Comparison settings" });
+    const review = comparison.getByRole("region", { name: "Review comparison images" });
+    await expect(settings.getByText("Source 5 · column 5", { exact: true })).toBeVisible();
+    const settingsBox = (await settings.boundingBox())!;
+    const reviewBox = (await review.boundingBox())!;
+    expect(settingsBox.x + settingsBox.width).toBeLessThan(reviewBox.x);
+    expect(settingsBox.width).toBeLessThan(320);
     await comparison.screenshot({ path: testInfo.outputPath("comparison-panel-4k.png") });
+    await openComparisonSource(settings, "Main input · column 1");
+    await expect(tone).toHaveValue("default");
+    await openComparisonSource(settings, "Source 2 · column 2");
+    await expect(second.getByLabel("Video path for Source 2")).toBeVisible();
+    await expect(second.getByRole("combobox", { name: /Tone mapping/ })).toHaveCount(0);
     for (const setting of ["default", "off", "default"]) {
+      await openComparisonSource(settings, "Main input · column 1");
       await tone.selectOption(setting);
       const apply = waitForAppMethod(page, "EditReleaseWorkflowComparisons");
       await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
@@ -154,17 +180,19 @@ test("embedded comparisons inherit screenshot tone mapping for HDR and keep five
       await expect(
         comparison.getByRole("button", { name: "Apply comparison setup" }),
       ).toBeEnabled();
-      await main.locator("summary").click();
-      await main.getByLabel("Approximate frame seek · Main input", { exact: true }).fill("25");
+      const mainPreview = await openComparisonPreview(settings, "Main input");
+      await mainPreview
+        .getByLabel("Approximate frame seek · Main input", { exact: true })
+        .fill("25");
       const response = waitForAppMethod(page, "PreviewReleaseWorkflowFrame");
-      await main.getByRole("button", { name: "Preview Main input", exact: true }).click();
+      await mainPreview.getByRole("button", { name: "Preview Main input", exact: true }).click();
       const preview = await response;
       expect(preview.ok(), await preview.text()).toBe(true);
       expect(((await preview.json()) as FramePreview).processing?.tonemapped).toBe(
         setting !== "off",
       );
     }
-    await main.locator("summary").click();
+    await openComparisonDisclosure(settings, "Sources");
     for (const width of [1920, 390, 360]) {
       await page.setViewportSize({ width, height: 1080 });
       await page.evaluate((narrow) => {
@@ -194,20 +222,22 @@ test("embedded comparisons inherit screenshot tone mapping for HDR and keep five
     await page.keyboard.press("Escape");
     await expect(page.getByRole("tooltip")).toHaveCount(0);
 
-    await comparison.getByText("Advanced settings", { exact: true }).click();
-    const sizing = comparison.getByRole("combobox", { name: "Screenshot sizing" });
+    const mainColumn = settings.getByLabel("Main-input column", { exact: true });
+    await openComparisonDisclosure(settings, "Screenshot sizing");
+    await expect(mainColumn).toBeHidden();
+    const sizing = comparison.getByRole("combobox", { name: "Output size" });
     await expect(sizing).toHaveValue("fit");
     await sizing.selectOption("source");
     const changesPending = comparison.getByText("Comparison choices changed.", { exact: false });
     await expect(changesPending).toBeVisible();
     await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
     await expect(changesPending).toHaveCount(0);
-    await second.locator("summary").click();
-    await second.getByLabel("Approximate frame seek · Source 2").fill("25");
-    await second.getByRole("button", { name: "Preview Source 2", exact: true }).click();
+    const secondPreview = await openComparisonPreview(settings, "Source 2");
+    await secondPreview.getByLabel("Approximate frame seek · Source 2").fill("25");
+    await secondPreview.getByRole("button", { name: "Preview Source 2", exact: true }).click();
     await expect
       .poll(() =>
-        second
+        secondPreview
           .getByRole("img", { name: "Source 2 comparison preview" })
           .evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight]),
       )
@@ -302,6 +332,8 @@ test("embedded DVD comparison selection retains native manual frames after resta
     expect((await snapshot()).current?.workflow.revision).toBe(before.workflow.revision);
     expect((await snapshot()).current?.media?.comparisons).toEqual(before.media?.comparisons);
     await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    await expect(comparison.getByRole("button", { name: "Apply comparison setup" })).toBeEnabled();
+    await openComparisonSource(comparison, "Source 2 · column 2");
     await expect(column.getByText(/Selected programme:/)).toBeVisible();
     const discover = column.getByRole("button", { name: "Discover titles and playlists" });
     await expect(discover).toBeDisabled();
@@ -311,20 +343,26 @@ test("embedded DVD comparison selection retains native manual frames after resta
     await expect(title).toBeVisible();
     await title.check();
     await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
+    await expect(comparison.getByRole("button", { name: "Apply comparison setup" })).toBeEnabled();
+    await openComparisonSource(comparison, "Source 2 · column 2");
     await expect(discover).toBeDisabled();
-    await column.locator("summary").click();
-    await column.getByLabel("Approximate frame seek · Source 2", { exact: true }).fill("25");
-    await column.getByRole("button", { name: "Preview Source 2", exact: true }).click();
+    const secondPreview = await openComparisonPreview(comparison, "Source 2");
+    await secondPreview.getByLabel("Approximate frame seek · Source 2", { exact: true }).fill("25");
+    await secondPreview.getByRole("button", { name: "Preview Source 2", exact: true }).click();
     await expect(
-      column.getByRole("img", { name: "Source 2 comparison preview", exact: true }),
+      secondPreview.getByRole("img", { name: "Source 2 comparison preview", exact: true }),
     ).toBeVisible();
-    await column.getByRole("button", { name: "Next frame", exact: true }).click();
-    const mainInput = comparison.getByRole("group", { name: "Main input · column 1", exact: true });
-    await mainInput.locator("summary").click();
+    await secondPreview.getByRole("button", { name: "Next frame", exact: true }).click();
+    const mainInput = await openComparisonPreview(comparison, "Main input");
     await mainInput.getByLabel("Approximate frame seek · Main input", { exact: true }).fill("50");
+    await openComparisonDisclosure(comparison, "Comparison actions");
     await comparison
       .getByRole("button", { name: "Add manual row from timeline positions" })
       .click();
+    await openComparisonCorrection(
+      comparison.getByRole("region", { name: "Comparison row row-1", exact: true }),
+      "Source 2, row row-1, image 2",
+    );
     await comparison.getByRole("button", { name: /^Use displayed frame for Source 2,/ }).click();
     await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
     await expect
@@ -349,7 +387,10 @@ test("embedded DVD comparison selection retains native manual frames after resta
     await comparison
       .getByRole("button", { name: "Restore retained comparisons", exact: true })
       .click();
+    await expect(comparison.getByRole("button", { name: "Apply comparison setup" })).toBeEnabled();
+    await openComparisonSource(comparison, "Source 2 · column 2");
     await expect(discover).toBeDisabled();
+    await openComparisonDisclosure(comparison, "Comparison actions");
     await comparison.getByRole("button", { name: "Capture comparison rows" }).click();
     await expect(
       comparison.getByRole("button", { name: "Approve reviewed comparison images" }),
@@ -366,7 +407,7 @@ test("embedded DVD comparison selection retains native manual frames after resta
 
 test("embedded comparison imports retain complete rows and require review before controlled hosting", async ({
   page,
-}) => {
+}, testInfo) => {
   const workspace = await createE2EWorkspace();
   // A valid stdlib-encoded PNG exercises full decoding, not only its header.
   const imageBytes = Buffer.from(
@@ -430,11 +471,38 @@ test("embedded comparison imports retain complete rows and require review before
     await expect(page.getByRole("button", { name: /^Prepare required hosts/ })).toBeEnabled();
     expect(workspace.fake.counters.imageUploads).toBe(0);
 
-    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await page.getByRole("button", { name: "Review comparison images", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Review required before upload" }),
+    ).toBeVisible();
+    const secondRow = comparison.getByRole("button", {
+      name: "Select comparison row 2",
+      exact: true,
+    });
+    await secondRow.click();
     await comparison
       .getByLabel("Supply filtered, row 2", { exact: true })
       .setInputFiles(images[5]!);
     await expect(approve).toBeEnabled();
+    await expect(secondRow).toHaveAttribute("aria-current", "true");
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const image = comparison.getByRole("img", { name: /encode, row 2/ });
+    const sidebar = comparison.getByRole("complementary", { name: "Comparison settings" });
+    const review = comparison.getByRole("region", { name: "Review comparison images" });
+    await comparison.screenshot({ path: testInfo.outputPath("comparison-review-open.png") });
+    const imageWidth = (await image.boundingBox())!.width;
+    const reviewWidth = (await review.boundingBox())!.width;
+    await comparison.getByRole("button", { name: "Hide comparison settings" }).press("Space");
+    await expect(sidebar).toBeHidden();
+    await expect(secondRow).toHaveAttribute("aria-current", "true");
+    expect((await review.boundingBox())!.width).toBeGreaterThan(reviewWidth);
+    expect((await image.boundingBox())!.width).toBeGreaterThan(imageWidth);
+    await comparison.screenshot({ path: testInfo.outputPath("comparison-review-expanded.png") });
+    await image.click();
+    await expect(page.getByRole("dialog", { name: /encode, row 2/ })).toBeVisible();
+    await page.getByRole("button", { name: "Close image preview" }).click();
+    await comparison.getByRole("button", { name: "Show comparison settings" }).click();
+    await openComparisonSource(comparison, "filtered · column 3");
     await comparison.getByRole("button", { name: "Move filtered left", exact: true }).click();
     await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
     await expect(approve).toBeEnabled();
@@ -445,6 +513,7 @@ test("embedded comparison imports retain complete rows and require review before
     const reviewed = (await snapshot()).current!.media!.comparisons!;
     expect(reviewed.sources.map((source) => source.id)).toEqual(["1", "3", "2"]);
     expect(reviewed.rows.map((row) => row.cells.length)).toEqual([3, 3]);
+    await comparison.getByRole("button", { name: "Select comparison row 1", exact: true }).click();
     await comparison.getByRole("img", { name: /encode, row 1/ }).click();
     await expect(page.getByRole("dialog", { name: /encode, row 1/ })).toBeVisible();
     await page.getByRole("button", { name: "Close image preview" }).click();
@@ -493,7 +562,8 @@ test("embedded comparison imports retain complete rows and require review before
 
 test("embedded video comparisons match three native sources and retain reviewed capture after restart", async ({
   page,
-}) => {
+}, testInfo) => {
+  await page.emulateMedia({ colorScheme: "dark" });
   const workspace = await createE2EWorkspace();
   try {
     const ffmpeg = promisify(execFile);
@@ -581,8 +651,10 @@ test("embedded video comparisons match three native sources and retain reviewed 
           .getByLabel(`Video path for ${label}`, { exact: true })
           .fill(alternatePaths[index]!);
       }
+      await openComparisonDisclosure(comparison, "Scene selection");
       await comparison.getByLabel("Comparison rows", { exact: true }).fill("1");
       for (const [index, label] of ["Main input", "Encode", "Filtered"].entries()) {
+        await openComparisonSource(comparison, `${label} · column ${index + 1}`);
         const source = comparison.getByRole("group", {
           name: `${label} · column ${index + 1}`,
           exact: true,
@@ -601,6 +673,8 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await expect(
         comparison.getByRole("checkbox", { name: "Use the main column as normal screenshots" }),
       ).toBeChecked();
+      await openComparisonDisclosure(comparison, "Scene selection");
+      await expect(comparison.getByLabel("Comparison rows", { exact: true })).toHaveValue("1");
       await expect(
         comparison.getByRole("combobox", { name: "Comparison scan mode", exact: true }),
       ).toHaveValue("fast");
@@ -616,9 +690,23 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await page.keyboard.press("Tab");
       await expect(scanHelp).toHaveAttribute("aria-expanded", "true");
       await page.keyboard.press("Escape");
+      await openComparisonSource(comparison, "Encode · column 2");
       const encode = comparison.getByRole("group", { name: "Encode · column 2", exact: true });
       await encode.getByRole("checkbox", { name: "I", exact: true }).check();
-      await comparison.getByRole("button", { name: "Find matching scenes" }).click();
+      await encode.getByLabel("Column label", { exact: true }).fill("Encode [HDR]");
+      await openComparisonDisclosure(comparison, "Comparison actions");
+      const findScenes = comparison.getByRole("button", { name: "Find matching scenes" });
+      await expect(findScenes).toBeDisabled();
+      const invalidLabel = comparison.getByText("Invalid label in column 2.", { exact: false });
+      await expect(invalidLabel).toBeVisible();
+      await openComparisonSource(comparison, "Encode [HDR] · column 2");
+      await comparison
+        .getByRole("group", { name: "Encode [HDR] · column 2", exact: true })
+        .getByLabel("Column label", { exact: true })
+        .fill("Encode");
+      await openComparisonDisclosure(comparison, "Comparison actions");
+      await expect(invalidLabel).toHaveCount(0);
+      await findScenes.click();
       await expect
         .poll(async () => {
           const plan = (await snapshot()).current?.media?.comparisons;
@@ -626,6 +714,16 @@ test("embedded video comparisons match three native sources and retain reviewed 
         })
         .toBe(3);
       const matched = (await snapshot()).current!.media!.comparisons!;
+      const encodeScore = matched.rows[0]!.cells.find(
+        (cell) => cell.sourceId === matched.sources[1]!.id,
+      )?.confidence;
+      expect(encodeScore).toBeDefined();
+      await expect(
+        comparison
+          .getByRole("heading", { name: "Encode", level: 4, exact: true })
+          .locator("..")
+          .getByText(`Visual similarity score: ${encodeScore!.toFixed(3)}`, { exact: true }),
+      ).toBeVisible();
       expect(
         matched.sources.map((source) => [
           source.label,
@@ -639,19 +737,26 @@ test("embedded video comparisons match three native sources and retain reviewed 
         ["Encode", 160, 120, false, true],
         ["Filtered", 160, 120, true, true],
       ]);
-      const seek = encode.getByLabel("Approximate frame seek · Encode", { exact: true });
-      const seconds = encode.getByLabel("Preview seconds · Encode", { exact: true });
+      const encodePreview = comparison.getByRole("group", {
+        name: "Preview for Encode",
+        exact: true,
+      });
+      const seek = encodePreview.getByLabel("Approximate frame seek · Encode", { exact: true });
+      const seconds = comparison.getByLabel("Preview seconds · Encode", { exact: true });
       await expect(
         comparison.getByRole("button", { name: "Apply comparison setup" }),
       ).toBeEnabled();
+      await openComparisonPreview(comparison, "Encode");
       await expect(seek).toBeEnabled();
-      await encode.locator("summary").click();
       await seek.fill("11");
-      await encode.getByRole("button", { name: "Preview Encode", exact: true }).click();
-      await expect(encode.getByText("Actual preview: 1.100s · I", { exact: true })).toBeVisible();
-      await encode.getByRole("button", { name: "Next frame", exact: true }).click();
+      await encodePreview.getByRole("button", { name: "Preview Encode", exact: true }).click();
+      await expect(
+        encodePreview.getByText("Actual preview: 1.100s · I", { exact: true }),
+      ).toBeVisible();
+      await encodePreview.getByRole("button", { name: "Next frame", exact: true }).click();
       await expect(seek).toHaveValue("12");
       await expect(seconds).toContainText("1.200");
+      await openComparisonDisclosure(comparison, "Scene selection");
       await comparison
         .getByRole("spinbutton", { name: "Flat scenes (rows)", exact: true })
         .fill("1");
@@ -659,20 +764,24 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await expect(
         comparison.getByRole("button", { name: "Apply comparison setup" }),
       ).toBeEnabled();
+      await openComparisonPreview(comparison, "Encode");
       await expect(
-        encode.getByRole("img", { name: "Encode comparison preview", exact: true }),
+        encodePreview.getByRole("img", { name: "Encode comparison preview", exact: true }),
       ).toHaveCount(0);
       await expect(seek).toHaveValue("12");
       await expect(seconds).toContainText("1.200");
-      await encode.locator("summary").click();
-      await encode.getByRole("button", { name: "Preview Encode", exact: true }).click();
+      await encodePreview.getByRole("button", { name: "Preview Encode", exact: true }).click();
       await expect(
-        encode.getByRole("img", { name: "Encode comparison preview", exact: true }),
+        encodePreview.getByRole("img", { name: "Encode comparison preview", exact: true }),
       ).toBeVisible();
-      for (const [index, label] of ["Main input", "Encode", "Filtered"].entries())
+      const row = comparison.getByRole("region", { name: "Comparison row 1", exact: true });
+      for (const [index, label] of ["Main input", "Encode", "Filtered"].entries()) {
+        await openComparisonCorrection(row, `${label}, row 1, image ${index + 1}`);
         await comparison
           .getByLabel(`Frame time for ${label}, row 1, image ${index + 1}`, { exact: true })
           .fill("1.2");
+      }
+      await openComparisonDisclosure(comparison, "Comparison actions");
       await comparison.getByRole("button", { name: "Capture comparison rows" }).click();
       const approve = comparison.getByRole("button", {
         name: "Approve reviewed comparison images",
@@ -696,10 +805,43 @@ test("embedded video comparisons match three native sources and retain reviewed 
       expect(new Set(cells.map((cell) => cell.contentSha256)).size).toBe(3);
       expect(captured.approvedFingerprint).toBeFalsy();
       expect(workspace.fake.counters.imageUploads).toBe(0);
-      await comparison.getByRole("img", { name: "Encode, row 1, image 2", exact: true }).click();
-      await expect(
-        page.getByRole("dialog", { name: "Encode, row 1, image 2", exact: true }),
-      ).toBeVisible();
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      const encodeImageName = "Encode, row 1, image 2";
+      const encodeImage = row.getByRole("img", { name: encodeImageName, exact: true });
+      await expect
+        .poll(() => encodeImage.evaluate((img: HTMLImageElement) => img.naturalWidth))
+        .toBeGreaterThan(0);
+      const imageLayout = await encodeImage.evaluate((img: HTMLImageElement) => {
+        const { width, height } = img.getBoundingClientRect();
+        const button = img.parentElement!.getBoundingClientRect();
+        return {
+          imageRatio: img.naturalWidth / img.naturalHeight,
+          displayedRatio: width / height,
+          extraWidth: button.width - width,
+          extraHeight: button.height - height,
+        };
+      });
+      expect(imageLayout.displayedRatio).toBeCloseTo(imageLayout.imageRatio);
+      expect(imageLayout.extraWidth).toBe(0);
+      expect(imageLayout.extraHeight).toBe(0);
+      await expect(row.getByText(/frame unknown/i)).toHaveCount(0);
+      await comparison.evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await comparison.screenshot({ path: testInfo.outputPath("captured-comparison.png") });
+      await row.getByRole("button", { name: encodeImageName, exact: true }).press("Enter");
+      await expect(page.getByRole("dialog", { name: encodeImageName, exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Close image preview", exact: true }).click();
+      await comparison.getByRole("button", { name: "Hide comparison settings" }).click();
+      await comparison.evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await comparison.screenshot({
+        path: testInfo.outputPath("captured-comparison-expanded.png"),
+      });
+      await openComparisonCorrection(row, "Encode, row 1, image 2");
+      await row
+        .getByRole("button", { name: "Preview Encode, row 1, image 2", exact: true })
+        .click();
+      const previewLabel = "Encode, row 1, image 2 preview at 1.200s";
+      await row.getByRole("img", { name: previewLabel, exact: true }).click();
+      await expect(page.getByRole("dialog", { name: previewLabel, exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Close image preview", exact: true }).click();
       expect((await snapshot()).current?.dupes).toBeUndefined();
       await approve.click();

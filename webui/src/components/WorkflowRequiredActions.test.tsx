@@ -51,6 +51,23 @@ describe("WorkflowRequiredActions", () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
+  it("shows comparison review on its page without a redundant link and keeps other actions", () => {
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([
+          action({ kind: "review_comparisons" }),
+          action({ id: "action-2", kind: "answer_questionnaire" }),
+        ])}
+        onScreenshotsPage
+        onConfirm={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Review required before upload" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Review comparison images" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Answer tracker questions" })).toBeVisible();
+  });
+
   it("keeps source evidence visible while showing Blu-ray playlist progress", () => {
     render(
       <WorkflowOperationProgress
