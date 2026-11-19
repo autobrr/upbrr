@@ -2729,6 +2729,7 @@ export type TrackerArtifactRequirements = Readonly<{
   description: boolean;
   dvdMenuCount: number;
   imageHosting: boolean;
+  localScreenshotsOnly?: boolean;
   mediaInfo: boolean;
   nfo: boolean;
   screenshotCount: number;

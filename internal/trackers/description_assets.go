@@ -211,6 +211,9 @@ func resolveDescriptionAssets(
 	if registry == nil {
 		registry = preloadedRegistry(preloaded)
 	}
+	if usesLocalScreenshots(registry, tracker) {
+		meta.ExactMedia = localDescriptionMedia(meta.ExactMedia)
+	}
 	if err := ctx.Err(); err != nil {
 		return DescriptionAssets{}, fmt.Errorf("trackers: resolve description assets canceled: %w", err)
 	}
@@ -454,6 +457,26 @@ func exactDescriptionMedia(
 		menuImages = append(menuImages, image)
 	}
 	return menuImages, screenshots
+}
+
+func localDescriptionMedia(exact *api.ExactMediaAssets) *api.ExactMediaAssets {
+	if exact == nil {
+		return nil
+	}
+	exact = exact.Clone()
+	exact.ScreenshotUploads = nil
+	exact.DVDMenuUploads = nil
+	exact.AudioUploads = nil
+	exact.AudioUploadHosts = nil
+	exact.HDRUploads = nil
+	exact.HDRUploadHosts = nil
+	exact.ImageHostUploadSkipped = true
+	for index := range exact.Screenshots {
+		image := &exact.Screenshots[index]
+		image.Host, image.ImgURL, image.RawURL, image.WebURL = "", "", "", ""
+		image.UploadedAt = time.Time{}
+	}
+	return exact
 }
 
 func exactUploadedVariant(tracker string, imagePath string, uploads []api.UploadedImageLink, selectedHost string) (api.UploadedImageLink, bool) {

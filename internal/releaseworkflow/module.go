@@ -6941,7 +6941,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	for _, projection := range projections {
 		requiredMenus = max(requiredMenus, projection.Artifacts.DVDMenuCount)
 	}
-	selectedScreenshots, selectedMenus := 0, 0
+	selectedScreenshots, selectedFinalScreenshots, selectedMenus := 0, 0, 0
 	for _, artifact := range snapshot.Artifacts {
 		if !artifact.Selected {
 			continue
@@ -6949,6 +6949,9 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot:
 			selectedScreenshots++
+			if artifact.Purpose == api.ScreenshotPurposeFinal {
+				selectedFinalScreenshots++
+			}
 		case api.MediaArtifactDVDMenu:
 			selectedMenus++
 		case api.MediaArtifactHostedImage:
@@ -6959,7 +6962,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, know
 	screenshotsReady := selectedScreenshots >= requiredScreenshots
 	if snapshot.ImageRequirementsPrepared && !snapshot.ImageHostUploadSkipped {
 		screenshotsReady = !allTrackerHostsFailed && !unmatchedTrackerHostFailure &&
-			hostedScreenshotRequirementsMet(*snapshot, readinessProjections)
+			screenshotRequirementsMet(*snapshot, readinessProjections, selectedFinalScreenshots)
 	}
 	if !screenshotsReady || selectedMenus < requiredMenus {
 		snapshot.Status = api.StageStatusBlocked
@@ -6994,15 +6997,20 @@ func mediaHasUnscopedOrUnknownImageHostFailure(media api.MediaArtifactSet, proje
 	})
 }
 
-// hostedScreenshotRequirementsMet reports whether every projection has enough
-// unique selected final-screenshot sources in applicable host attempts. Multiple
-// hosted variants of the same local screenshot count once; DVD menus do not count.
-func hostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections []api.TrackerReleaseProjection) bool {
+// screenshotRequirementsMet checks local minimums and counts unique selected
+// final-screenshot sources in applicable host attempts for the other trackers.
+func screenshotRequirementsMet(snapshot api.MediaArtifactSet, projections []api.TrackerReleaseProjection, selectedScreenshots int) bool {
 	artifacts := make(map[api.PublicResourceID]api.MediaArtifact, len(snapshot.Artifacts))
 	for _, artifact := range snapshot.Artifacts {
 		artifacts[artifact.ID] = artifact
 	}
 	for _, projection := range projections {
+		if projection.Artifacts.LocalScreenshotsOnly {
+			if selectedScreenshots < projection.Artifacts.ScreenshotCount {
+				return false
+			}
+			continue
+		}
 		if projection.Artifacts.ScreenshotCount <= 0 {
 			continue
 		}

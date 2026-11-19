@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -46,11 +47,14 @@ type searchBadge struct {
 
 func loadSessionCookies(ctx context.Context, dbPath string) (map[string]string, error) {
 	loaded, err := cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, sourceFlag, siteHost)
+	if err != nil {
+		return nil, fmt.Errorf("load ASC session cookies: %w", err)
+	}
 	cookies := make(map[string]string, len(loaded))
 	for _, cookie := range loaded {
 		cookies[cookie.Name] = cookie.Value
 	}
-	return cookies, err
+	return cookies, nil
 }
 
 func resolveAuthSession(ctx context.Context, _ config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {

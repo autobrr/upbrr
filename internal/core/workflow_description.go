@@ -166,10 +166,14 @@ func (b workflowDescriptionBuilder) Build(
 			Status:              api.StageStatusSkipped,
 		}, nil
 	}
-	if err := b.uploadAudioDescriptionImages(ctx, subject, trackerNames); err != nil {
+	hostedImageTargets := slices.DeleteFunc(slices.Clone(descriptionTargets), func(projection api.TrackerReleaseProjection) bool {
+		return projection.Artifacts.LocalScreenshotsOnly
+	})
+	hostedImageTrackers := workflowProjectionTrackerNames(hostedImageTargets)
+	if err := b.uploadAudioDescriptionImages(ctx, subject, hostedImageTrackers); err != nil {
 		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload audio analysis images: %w", err)
 	}
-	if err := b.uploadHDRDescriptionImages(ctx, subject, trackerNames); err != nil {
+	if err := b.uploadHDRDescriptionImages(ctx, subject, hostedImageTrackers); err != nil {
 		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload HDR analysis images: %w", err)
 	}
 	for _, projection := range descriptionTargets {
@@ -322,7 +326,7 @@ func (b workflowDescriptionBuilder) Build(
 // choices. Explicit skip permits missing hosts and reuses compatible cached links
 // without uploading; textual statistics remain available independently.
 func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Context, subject api.UploadSubject, trackerNames []string) error {
-	if subject.ExactMedia == nil {
+	if len(trackerNames) == 0 || subject.ExactMedia == nil {
 		return nil
 	}
 	images := make([]api.ScreenshotImage, 0)

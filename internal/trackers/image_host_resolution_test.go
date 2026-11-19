@@ -40,6 +40,52 @@ func TestDescriptionSlotImageNameUsesURLIdentity(t *testing.T) {
 	}
 }
 
+func TestLocalScreenshotTrackerUsesSelectedCapturesWithoutHosting(t *testing.T) {
+	t.Parallel()
+	registry := imageHostPolicyTestRegistry(t)
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:          "LOCAL",
+		Definition:    stubDefinition{name: "LOCAL"},
+		WorkflowMedia: &WorkflowMediaRequirements{LocalScreenshotCount: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"LOCAL": {ImageHost: "imgbb"},
+		}},
+	}
+	trackerNames := []string{"LOCAL", "AITHER"}
+	for _, requestedHost := range []string{"", "imgbb"} {
+		targets, err := NeededImageUploadTargetsWithRegistry(registry, cfg, trackerNames, requestedHost)
+		if err != nil || len(targets) != 1 || !reflect.DeepEqual(targets[0].Trackers, []string{"AITHER"}) {
+			t.Fatalf("host %q targets = %#v, error = %v", requestedHost, targets, err)
+		}
+	}
+	targets, err := ExplicitImageUploadTargetsForMetadataExcludingWithRegistry(
+		registry, cfg, []string{"LOCAL"}, "imgbb", nil, api.UploadSubject{},
+	)
+	if err != nil || len(targets) != 0 {
+		t.Fatalf("explicit local-only targets = %#v, error = %v", targets, err)
+	}
+
+	pathValue := filepath.Join(t.TempDir(), "capture.png")
+	subject := api.UploadSubject{ExactMedia: &api.ExactMediaAssets{Screenshots: []api.ScreenshotImage{{
+		Path:    pathValue,
+		Purpose: api.ScreenshotPurposeFinal,
+		RawURL:  "https://i.ibb.co/capture.png",
+	}}}}
+	resolution, err := ensureDescriptionImageHostWithRegistry(t.Context(), "LOCAL", subject, cfg, config.TrackerConfig{}, nil, nil, registry)
+	if err != nil || resolution.blocking || len(resolution.screenshots) != 1 ||
+		resolution.screenshots[0].Path != pathValue || resolution.screenshots[0].RawURL != "" {
+		t.Fatalf("local screenshot resolution = %#v, error = %v", resolution, err)
+	}
+	if subject.ExactMedia.Screenshots[0].RawURL == "" {
+		t.Fatal("local projection modified shared screenshot evidence")
+	}
+}
+
 func TestExactMediaForTrackerHostKeepsCompatibleSavedScreenshots(t *testing.T) {
 	t.Parallel()
 	registry := NewRegistry()

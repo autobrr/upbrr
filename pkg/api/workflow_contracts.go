@@ -235,6 +235,8 @@ type TrackerDuplicateTarget struct {
 type TrackerArtifactRequirements struct {
 	// ScreenshotCount is the minimum number of selected normal screenshots.
 	ScreenshotCount int `json:"screenshotCount"`
+	// LocalScreenshotsOnly requires selected captures without hosted variants.
+	LocalScreenshotsOnly bool `json:"localScreenshotsOnly,omitempty"`
 	// DVDMenuCount is a tracker-declared minimum, not an automatic-capture cap.
 	DVDMenuCount          int      `json:"dvdMenuCount"`
 	MediaInfo             bool     `json:"mediaInfo"`

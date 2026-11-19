@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -95,7 +96,7 @@ func TestASCSearchUsesNewSiteAndEnumeratesPages(t *testing.T) {
 					cancel()
 					return nil, r.Context().Err()
 				}
-				if calls > 1 && r.URL.Query().Get("page") != fmt.Sprint(calls) {
+				if calls > 1 && r.URL.Query().Get("page") != strconv.Itoa(calls) {
 					t.Errorf("unexpected page parameter for request %d", calls)
 				}
 				w := httptest.NewRecorder()

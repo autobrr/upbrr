@@ -53,6 +53,9 @@ func exactMediaForTrackerHost(
 	registry *Registry,
 	preferredHosts ...string,
 ) (*api.ExactMediaAssets, error) {
+	if usesLocalScreenshots(registry, tracker) {
+		return localDescriptionMedia(meta.ExactMedia), nil
+	}
 	exact := meta.ExactMedia.Clone()
 	if exact != nil {
 		failedHosts := normalizeImageHostNames(meta.ImageHostOverrides.FailedHosts)
@@ -218,6 +221,13 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	preloaded *preloadedDescriptionAssetData,
 	preferredHosts ...string,
 ) (descriptionImageHostResolution, error) {
+	if usesLocalScreenshots(registry, tracker) {
+		exact := localDescriptionMedia(meta.ExactMedia)
+		if exact == nil {
+			return descriptionImageHostResolution{}, nil
+		}
+		return descriptionImageHostResolution{screenshots: exact.Screenshots}, nil
+	}
 	policy, err := resolveImageHostPolicyForMetadataWithRegistry(registry, tracker, appCfg, trackerCfg, meta.ImageHostOverrides)
 	if err != nil {
 		return descriptionImageHostResolution{}, err

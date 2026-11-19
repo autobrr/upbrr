@@ -20,6 +20,7 @@ func Profile() standalone.Profile {
 		BaseURL:                 siteURL,
 		DescriptionGroup:        "asc",
 		UploadContentMode:       trackers.UploadContentModeDescription,
+		WorkflowMedia:           &trackers.WorkflowMediaRequirements{LocalScreenshotCount: minScreenshots},
 		LocalizedMetadataLocale: "pt-BR",
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
@@ -41,8 +42,12 @@ func Profile() standalone.Profile {
 			}
 			return trackers.ResolvedReleaseNames{Upload: uploadName, Duplicate: searchName}, nil
 		}),
-		NewDuplicateAdapter:   newDuplicateAdapter,
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
+		NewDuplicateAdapter: newDuplicateAdapter,
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
+			Source:                   sourceFlag,
+			RequireAnnounce:          true,
+			IncludeMatchingSubtitles: true,
+		},
 		AudioPolicy:           &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"amigos-share.club"}},
 		AuthCapability:        authcontract.CookieCapability("ASC"),

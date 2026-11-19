@@ -137,7 +137,7 @@ func TestASCMigratedUploadDryRun(t *testing.T) {
 	preview := plan.DryRun()
 	if preview.Status != "ready" || preview.Endpoint != "https://amigos-share.club/torrents" ||
 		preview.Payload["category_id"] != "4" || len(preview.Files) != 4 || hasForeignImages(preview.Description) {
-		t.Fatalf("unexpected preview status=%s message=%s endpoint=%s files=%d", preview.Status, preview.Message, preview.Endpoint, len(preview.Files))
+		t.Fatalf("unexpected preview status=%s message=%s files=%d", preview.Status, preview.Message, len(preview.Files))
 	}
 	if _, err := plan.Submit(t.Context()); !errors.Is(err, trackers.ErrPlanNotSubmittable) {
 		t.Fatalf("dry-run plan was submittable: %v", err)

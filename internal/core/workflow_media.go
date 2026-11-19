@@ -1579,7 +1579,7 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 	}
 	attempts := make([]api.HostedImageAttempt, 0, len(projections))
 	for _, projection := range projections {
-		if projection.Artifacts.ScreenshotCount <= 0 && projection.Artifacts.DVDMenuCount <= 0 {
+		if projection.Artifacts.LocalScreenshotsOnly || (projection.Artifacts.ScreenshotCount <= 0 && projection.Artifacts.DVDMenuCount <= 0) {
 			continue
 		}
 		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
@@ -1801,7 +1801,7 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 	assigned := make(map[string]struct{})
 	for _, projection := range projections {
 		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
-		if tracker == "" || projection.Artifacts.ScreenshotCount <= 0 {
+		if tracker == "" || projection.Artifacts.LocalScreenshotsOnly || projection.Artifacts.ScreenshotCount <= 0 {
 			continue
 		}
 		trackerConfig, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, tracker)
@@ -2291,6 +2291,11 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	if len(images) != len(artifactIDs) {
 		return api.MediaArtifactSet{}, nil, nil, errors.New("workflow media upload selection is incomplete")
+	}
+	if host == "" && len(projections.Projections) > 0 && !slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+		return !projection.Artifacts.LocalScreenshotsOnly
+	}) {
+		return snapshot, retained, nil, nil
 	}
 	trackerNames := make([]string, 0, len(projections.Projections))
 	for _, projection := range projections.Projections {

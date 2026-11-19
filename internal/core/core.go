@@ -525,7 +525,7 @@ func newCoreWithHooks(
 			media:    workflowMedia,
 		}),
 		releaseworkflow.WithUploadPlanBuilder(
-			newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients, deps.LiveTest),
+			newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients, registry, deps.LiveTest),
 		),
 		releaseworkflow.WithOperationErrorClassifier(classifyOperationError),
 		releaseworkflow.WithLogger(logger),

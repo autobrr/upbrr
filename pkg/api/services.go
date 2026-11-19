@@ -408,8 +408,8 @@ type UploadSubject struct {
 	SourceIdentity SourceContentIdentity `json:"-"`
 	// SourceManifest retains the verified local state for final consumption checks.
 	SourceManifest SourceManifest `json:"-"`
-	// SubmissionContentIdentity is finalized from the exact torrent inclusion
-	// scope and freshly verified local bytes before tracker submission.
+	// SubmissionContentIdentity binds the verified base payload to the global
+	// submission fence before tracker-specific packaging.
 	SubmissionContentIdentity  SubmissionContentIdentity `json:"-"`
 	EffectiveMetadata          EffectiveMetadata
 	ManualLanguages            ManualLanguageFacts

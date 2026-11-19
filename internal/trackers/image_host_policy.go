@@ -42,6 +42,11 @@ type imageUploadPolicyTarget struct {
 	candidates []string
 }
 
+func usesLocalScreenshots(registry *Registry, tracker string) bool {
+	descriptor, ok := registry.LookupDescriptor(tracker)
+	return ok && descriptor.WorkflowMedia != nil && descriptor.WorkflowMedia.LocalScreenshotCount > 0
+}
+
 func policyForTrackerWithRegistry(registry *Registry, tracker string, trackerCfg config.TrackerConfig) imageHostPolicy {
 	if declared, ok := registry.LookupImageHostPolicy(tracker); ok {
 		if declared.DisableWithoutRehost && !trackerCfg.ImgRehost {
@@ -182,6 +187,9 @@ func PreferredImageUploadHostWithRegistry(
 	trackerCfg config.TrackerConfig,
 	overrides api.ImageHostOverrides,
 ) (string, error) {
+	if usesLocalScreenshots(registry, tracker) {
+		return "", nil
+	}
 	policy, err := resolveImageHostPolicyWithRegistry(registry, tracker, trackerCfg, overrides)
 	if err != nil {
 		return "", err
@@ -202,7 +210,7 @@ func RequiredImageUploadTargets(
 	seen := make(map[string]int, len(trackerNames))
 	for _, tracker := range trackerNames {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
-		if name == "" {
+		if name == "" || usesLocalScreenshots(registry, name) {
 			continue
 		}
 		trackerCfg := trackerConfigForImageHostPolicy(appCfg, name)
@@ -239,7 +247,7 @@ func ConfiguredImageUploadTargets(registry *Registry, appCfg config.Config, trac
 	seen := make(map[string]int, len(trackerNames))
 	for _, tracker := range trackerNames {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
-		if name == "" {
+		if name == "" || usesLocalScreenshots(registry, name) {
 			continue
 		}
 		trackerCfg := trackerConfigForImageHostPolicy(appCfg, name)
@@ -289,7 +297,7 @@ func ImageHostPolicySatisfiedWithRegistry(
 	overrides api.ImageHostOverrides,
 ) (bool, error) {
 	name := strings.ToUpper(strings.TrimSpace(tracker))
-	if name == "" {
+	if name == "" || usesLocalScreenshots(registry, name) {
 		return true, nil
 	}
 	trackerCfg := trackerConfigForImageHostPolicy(appCfg, name)
@@ -463,6 +471,9 @@ func ExplicitImageUploadTargetsForMetadataExcludingWithRegistry(
 			continue
 		}
 		seenTrackers[name] = struct{}{}
+		if usesLocalScreenshots(registry, name) {
+			continue
+		}
 		trackerCfg := trackerConfigForImageHostPolicy(appCfg, name)
 		policy, err := resolveImageHostPolicyForTarget(registry, name, appCfg, trackerCfg, &meta)
 		if err != nil {
@@ -529,9 +540,12 @@ func neededImageUploadTargets(
 	}
 
 	flexibleTargets := make([]imageUploadPolicyTarget, 0, len(trackerNames))
+	localOnlySelection := len(trackerNames) > 0 && !slices.ContainsFunc(trackerNames, func(tracker string) bool {
+		return !usesLocalScreenshots(registry, tracker)
+	})
 	for _, tracker := range trackerNames {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
-		if name == "" {
+		if name == "" || usesLocalScreenshots(registry, name) {
 			continue
 		}
 		trackerCfg := trackerConfigForImageHostPolicy(appCfg, name)
@@ -587,7 +601,8 @@ func neededImageUploadTargets(
 
 	assignFlexibleImageUploadTargets(registry, flexibleTargets, excludedHosts, targets, addTarget)
 
-	if len(targets) == 0 && selectedHost != "" && trackerForOwnedHost(registry, selectedHost) == "" && hostInList(selectedHost, userHosts) {
+	if len(targets) == 0 && !localOnlySelection && selectedHost != "" && trackerForOwnedHost(registry, selectedHost) == "" &&
+		hostInList(selectedHost, userHosts) {
 		if _, excluded := excludedHosts[selectedHost]; excluded {
 			return targets, nil
 		}

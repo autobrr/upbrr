@@ -4500,6 +4500,57 @@ func TestRefreshMutatedMediaStatusRequiresHostedScreenshotsPerTracker(t *testing
 	}
 }
 
+func TestRefreshMutatedMediaStatusAcceptsLocalScreenshotsForLocalOnlyTrackers(t *testing.T) {
+	t.Parallel()
+
+	projections := make([]api.TrackerReleaseProjection, 1, 2)
+	projections[0] = api.TrackerReleaseProjection{
+		TrackerID: "LOCAL",
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2, LocalScreenshotsOnly: true},
+	}
+	snapshot := api.MediaArtifactSet{
+		ImageRequirementsPrepared: true,
+		Artifacts: []api.MediaArtifact{
+			{
+				ID:       "screen-1",
+				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+			},
+			{
+				ID:       "screen-2",
+				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+			},
+		},
+	}
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {
+		t.Fatalf("local screenshots did not satisfy local-only requirements: %#v", snapshot)
+	}
+	snapshot.Artifacts[1].Selected = false
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("one selected screenshot satisfied the local minimum of two: %#v", snapshot)
+	}
+	snapshot.Artifacts[1].Selected = true
+	snapshot.Artifacts[1].Purpose = api.ScreenshotPurposePreview
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("a preview screenshot satisfied the local requirement: %#v", snapshot)
+	}
+	snapshot.Artifacts[1].Purpose = api.ScreenshotPurposeFinal
+	projections = append(projections, api.TrackerReleaseProjection{
+		TrackerID: "HOSTED",
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1},
+	})
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
+	if snapshot.Status != api.StageStatusBlocked {
+		t.Fatalf("local-only selection waived another tracker's hosted minimum: %#v", snapshot)
+	}
+}
+
 func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testing.T) {
 	t.Parallel()
 
