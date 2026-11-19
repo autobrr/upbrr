@@ -14,130 +14,219 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func resolveContainer(meta api.UploadSubject) string {
-	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
-	case "BDMV":
-		return "5"
-	case "DVD":
-		return "15"
+// Category IDs from the upload page `categories` prop. Anime uploads must use
+// the matching leaf category.
+const (
+	categoryMovie       = "4"
+	categorySeries      = "3"
+	categoryAnimeMovie  = "59"
+	categoryAnimeSeries = "61"
+)
+
+// Subtitle values from the upload page `subtitles` prop.
+const (
+	subtitleEmbedded = "embedded"
+	subtitleNone     = "none"
+)
+
+// Audio attribute IDs (`audio_channels` profile attribute).
+const (
+	audioDual      = "199"
+	audioDubbed    = "200"
+	audioSubtitled = "198"
+	audioNational  = "201"
+	audioOriginal  = "204"
+)
+
+const containerOther = "103"
+
+func resolveCategoryID(meta api.UploadSubject) string {
+	category := categoryOf(meta)
+	if category != "MOVIE" && category != "TV" {
+		return ""
 	}
-	ext := strings.ToLower(strings.TrimSpace(meta.Container))
-	ext = strings.TrimPrefix(ext, ".")
-	switch ext {
-	case "mkv":
-		return "6"
-	case "mp4":
-		return "8"
+	tv := category == "TV"
+	switch {
+	case meta.Anime && tv:
+		return categoryAnimeSeries
+	case meta.Anime:
+		return categoryAnimeMovie
+	case tv:
+		return categorySeries
+	default:
+		return categoryMovie
+	}
+}
+
+// resolveQualityID maps the resolved release type to the site `resolution`
+// attribute, which carries source/disc class rather than pixel height.
+func resolveQualityID(meta api.UploadSubject) string {
+	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
+	case "DISC":
+		return resolveDiscQualityID(meta)
+	case "REMUX":
+		return "74"
+	case "WEBDL":
+		return "59"
+	case "WEBRIP":
+		return "73"
+	case "HDTV":
+		return "53"
+	case "DVDRIP":
+		return "44"
+	case "BDRIP":
+		return "48"
+	case "ENCODE":
+		switch source := strings.ToUpper(strings.TrimSpace(meta.Source)); {
+		case strings.Contains(source, "DVD"):
+			return "44"
+		case strings.Contains(source, "BLURAY") || strings.Contains(source, "BLU-RAY"):
+			return "48"
+		}
+	}
+	return ""
+}
+
+// resolveDiscQualityID classifies full discs by size against nominal disc
+// capacities, which are decimal: DVD5 4.7 GB, BD25/50/66/100 25/50/66/100 GB.
+func resolveDiscQualityID(meta api.UploadSubject) string {
+	const gigabyte = 1_000_000_000
+	if meta.SourceSize <= 0 {
+		return ""
+	}
+	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
+	case "DVD":
+		if meta.SourceSize > 4_700_000_000 {
+			return "81"
+		}
+		return "80"
+	case "HDDVD":
+		return "52"
+	case "BDMV":
 	default:
 		return ""
 	}
-}
-
-func resolveQuality(meta api.UploadSubject) string {
-	if !strings.EqualFold(meta.Type, "DISC") {
-		switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
-		case "ENCODE":
-			return "9"
-		case "REMUX":
-			return "39"
-		case "WEBDL":
-			return "23"
-		case "WEBRIP":
-			return "38"
-		case "BDRIP":
-			return "8"
-		case "DVDRIP":
-			return "3"
-		default:
-			return "0"
-		}
-	}
-	if strings.EqualFold(meta.DiscType, "DVD") {
-		if meta.SourceSize > 7_500_000_000 {
-			return "46"
-		}
-		return "45"
-	}
-	if strings.EqualFold(meta.DiscType, "HDDVD") {
-		return "15"
-	}
 	switch size := meta.SourceSize; {
-	case size > 66<<30:
-		return "43"
-	case size > 50<<30:
-		return "42"
-	case size > 25<<30:
-		return "41"
+	case size > 66*gigabyte:
+		return "78"
+	case size > 50*gigabyte:
+		return "77"
+	case size > 25*gigabyte:
+		return "76"
 	default:
-		return "40"
+		return "75"
 	}
 }
 
-func resolveVideoCodec(meta api.UploadSubject) string {
+func resolveContainer(meta api.UploadSubject) string {
+	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
+	case "BDMV":
+		return "91"
+	case "DVD":
+		return "101"
+	case "HDDVD":
+		return containerOther
+	}
+	ext := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(meta.Container)), ".")
+	if ext == "" {
+		return ""
+	}
+	switch ext {
+	case "mkv":
+		return "92"
+	case "mp4":
+		return "94"
+	case "avi":
+		return "89"
+	case "m2ts":
+		return "91"
+	case "ts":
+		return "100"
+	case "iso":
+		return "105"
+	case "m4v":
+		return "136"
+	case "mov":
+		return "93"
+	case "wmv":
+		return "102"
+	case "vob":
+		return "101"
+	default:
+		return containerOther
+	}
+}
+
+func resolveVideoCodecID(meta api.UploadSubject) string {
 	codec := strings.ToUpper(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.VideoEncode, meta.VideoCodec)))
-	codecClean := codec
-	if strings.Contains(codec, "264") {
-		codecClean = "H264"
-	} else if strings.Contains(codec, "265") {
-		codecClean = "HEVC"
-	}
+	hdr := strings.ToUpper(strings.TrimSpace(meta.HDR))
+	isHEVC := strings.Contains(codec, "265") || strings.Contains(codec, "HEVC")
+	isAVC := strings.Contains(codec, "264") || strings.Contains(codec, "AVC")
 	switch {
-	case strings.Contains(strings.ToUpper(meta.HDR), "HDR") && (codecClean == "HEVC" || codecClean == "H265"):
-		return "28"
-	case strings.Contains(strings.ToUpper(meta.HDR), "HDR") && (codecClean == "AVC" || codecClean == "H264"):
-		return "32"
+	case isHEVC && strings.Contains(hdr, "HDR"):
+		return "191"
+	case isHEVC && hdr != "":
+		return "193"
+	case isAVC && hdr != "":
+		return "197"
 	case strings.Contains(codec, "AV1"):
-		return "29"
+		return "194"
 	case strings.Contains(codec, "HEVC"):
-		return "27"
-	case strings.Contains(codec, "H265"):
-		return "18"
+		return "192"
+	case strings.Contains(codec, "265"):
+		return "185"
 	case strings.Contains(codec, "AVC"):
-		return "30"
-	case strings.Contains(codec, "H264"):
-		return "17"
-	case strings.Contains(codec, "VC-1"):
-		return "21"
-	case strings.Contains(codec, "MPEG-2"):
-		return "11"
+		return "195"
+	case strings.Contains(codec, "264"):
+		return "184"
+	case strings.Contains(codec, "VC-1"), strings.Contains(codec, "VC1"):
+		return "187"
+	case strings.Contains(codec, "MPEG-2"), strings.Contains(codec, "MPEG2"):
+		return "178"
+	case strings.Contains(codec, "XVID"):
+		return "182"
+	case strings.Contains(codec, "DIVX"):
+		return "180"
+	case strings.Contains(codec, "VP9"):
+		return "189"
 	default:
-		return "16"
+		return "183"
 	}
 }
 
-func resolveAudioCodec(meta api.UploadSubject) string {
+func resolveAudioCodecID(meta api.UploadSubject) string {
 	audio := strings.ToUpper(strings.TrimSpace(meta.Audio))
 	switch {
-	case strings.Contains(audio, "ATMOS"):
-		return "43"
-	case strings.Contains(audio, "DTS:X"):
-		return "25"
-	case strings.Contains(audio, "DTS-HD MA"):
-		return "24"
+	case strings.Contains(audio, "DTS:X"), strings.Contains(audio, "DTS-X"):
+		return "160"
+	case strings.Contains(audio, "DTS-HD MA"), strings.Contains(audio, "DTS-HD-MA"):
+		return "159"
 	case strings.Contains(audio, "DTS-HD"):
-		return "23"
+		return "158"
 	case strings.Contains(audio, "TRUEHD"):
-		return "29"
-	case strings.Contains(audio, "DD+"), strings.Contains(audio, "E-AC-3"):
-		return "26"
-	case strings.Contains(audio, "DD"), strings.Contains(audio, "AC3"):
-		return "11"
+		return "164"
+	case strings.Contains(audio, "DD+"), strings.Contains(audio, "DDP"), strings.Contains(audio, "E-AC-3"), strings.Contains(audio, "EAC3"):
+		return "161"
+	case strings.Contains(audio, "DD"), strings.Contains(audio, "AC3"), strings.Contains(audio, "AC-3"):
+		return "150"
 	case strings.Contains(audio, "DTS"):
-		return "12"
+		return "149"
 	case strings.Contains(audio, "FLAC"):
-		return "13"
+		return "148"
 	case strings.Contains(audio, "LPCM"):
-		return "21"
+		return "156"
 	case strings.Contains(audio, "PCM"):
-		return "28"
+		return "163"
 	case strings.Contains(audio, "AAC"):
-		return "10"
+		return "151"
 	case strings.Contains(audio, "OPUS"):
-		return "27"
-	case strings.Contains(audio, "MPEG"):
-		return "17"
+		return "162"
+	case strings.Contains(audio, "MP3"), strings.Contains(audio, "MPEG"):
+		return "152"
+	case strings.Contains(audio, "VORBIS"):
+		return "165"
 	default:
-		return "20"
+		return "155"
 	}
 }
 
@@ -145,27 +234,35 @@ func resolveAudio(meta api.UploadSubject) string {
 	original := strings.ToLower(strings.TrimSpace(resolveOriginalLanguage(meta)))
 	audioLangs := lowerStrings(meta.AudioLanguages)
 	hasPTAudio := languageutil.ContainsLanguage(audioLangs, "pt") || containsAny(audioLangs, []string{"português"})
-	hasPTSubs := resolveSubtitle(meta) == "Embutida"
+	hasPTSubs := hasPortugueseSubtitles(meta)
 	isOriginalPT := languageutil.SameLanguage(original, "pt") || original == "português"
 	switch {
 	case hasPTAudio && isOriginalPT:
-		return "4"
+		return audioNational
 	case hasPTAudio && countNonPortuguese(audioLangs) > 0:
-		return "2"
+		return audioDual
 	case hasPTAudio:
-		return "3"
+		return audioDubbed
 	case hasPTSubs:
-		return "1"
+		return audioSubtitled
 	default:
-		return "7"
+		return audioOriginal
 	}
 }
 
-func resolveSubtitle(meta api.UploadSubject) string {
-	if languageutil.ContainsLanguage(meta.SubtitleLanguages, "pt") || containsAny(lowerStrings(meta.SubtitleLanguages), []string{"português"}) {
-		return "Embutida"
+func resolveSubtitle(meta api.UploadSubject, audioID string) string {
+	if audioID != audioDual && audioID != audioSubtitled {
+		return ""
 	}
-	return "S_legenda"
+	if hasPortugueseSubtitles(meta) {
+		return subtitleEmbedded
+	}
+	return subtitleNone
+}
+
+func hasPortugueseSubtitles(meta api.UploadSubject) bool {
+	return languageutil.ContainsLanguage(meta.SubtitleLanguages, "pt") ||
+		containsAny(lowerStrings(meta.SubtitleLanguages), []string{"português"})
 }
 
 func resolveLanguage(meta api.UploadSubject) string {
@@ -177,47 +274,112 @@ func resolveLanguage(meta api.UploadSubject) string {
 		"es": "6",
 		"fi": "14",
 		"fr": "2",
-		"hi": "23",
+		"hi": "22",
 		"it": "4",
 		"ja": "5",
-		"ko": "20",
+		"ko": "19",
 		"nl": "17",
 		"no": "16",
-		"pl": "19",
+		"pl": "18",
 		"pt": "8",
 		"ru": "7",
 		"sv": "13",
-		"th": "21",
-		"tr": "25",
+		"th": "20",
+		"tr": "23",
 		"zh": "10",
 	}, "11")
 }
 
-func resolveAnimeLanguage(meta api.UploadSubject) string {
-	return mapLanguage(resolveOriginalLanguage(meta), map[string]string{
-		"de": "3",
-		"en": "4",
-		"es": "1",
-		"ja": "8",
-		"ko": "11",
-		"pt": "5",
-		"ru": "2",
-		"zh": "9",
-	}, "6")
+// genreIDs maps lowercase Portuguese genre names to ASC genre option IDs, as
+// the upload profile lists them. ASC keeps near-duplicate sport and children's
+// options with separate IDs; each is mapped as listed.
+// `talk` covers the TMDB TV genre the shared translator does not.
+var genreIDs = map[string]string{
+	"animação":          "225",
+	"aventura":          "206",
+	"ação":              "205",
+	"biografia":         "226",
+	"comédia":           "227",
+	"crime":             "228",
+	"curta-metragem":    "229",
+	"documentário":      "230",
+	"drama":             "231",
+	"esporte":           "232",
+	"esportes":          "219", //nolint:misspell // Portuguese genre name.
+	"família":           "233",
+	"fantasia":          "234",
+	"faroeste":          "235",
+	"ficção científica": "236",
+	"filme de tv":       "237",
+	"cinema tv":         "237",
+	"telefilme":         "237",
+	"game show":         "238",
+	"guerra":            "210",
+	"história":          "239",
+	"humor":             "214",
+	"infantil":          "240",
+	"infantis":          "213", //nolint:misspell // Portuguese genre name.
+	"mistério":          "241",
+	"musical":           "220",
+	"música":            "242",
+	"novela":            "243",
+	"programa de tv":    "244",
+	"reality show":      "245",
+	"romance":           "246",
+	"seriados":          "247",
+	"suspense":          "248",
+	"talk show":         "249",
+	"talk":              "249",
+	"terror":            "250",
+	"thriller":          "251",
+	"tokusatsu":         "252",
 }
 
-func resolveAnimeAudioLanguage(meta api.UploadSubject) string {
-	if audio := resolveAudio(meta); audio == "2" || audio == "3" || audio == "4" {
-		return "8"
+// resolveGenreIDs maps comma-separated genre names to ASC genre IDs. Names
+// missing from genreIDs go through the shared English-to-Portuguese genre
+// translator, which covers TMDB TV genres that pt-BR leaves in English.
+// Compound genres ("Ação e Aventura", "Sci-Fi & Fantasy") map through their
+// parts; unknown genres are dropped.
+func resolveGenreIDs(genres string) []string {
+	var out []string
+	seen := make(map[string]struct{})
+	add := func(name string) bool {
+		id, ok := lookupGenreID(name)
+		if !ok {
+			return false
+		}
+		if _, dup := seen[id]; !dup {
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+		return true
 	}
-	return resolveLanguage(meta)
+	for raw := range strings.SplitSeq(genres, ",") {
+		key := strings.ToLower(strings.TrimSpace(raw))
+		if key == "" || add(key) {
+			continue
+		}
+		translated := strings.ToLower(metautil.TranslateGenreToPortugueseStrict(key))
+		if translated != "" && add(translated) {
+			continue
+		}
+		compound := metautil.FirstNonEmptyTrimmed(translated, key)
+		for part := range strings.SplitSeq(strings.ReplaceAll(compound, " e ", "&"), "&") {
+			add(strings.TrimSpace(part))
+		}
+	}
+	return out
 }
 
-func resolveAnimeType(meta api.UploadSubject) string {
-	if categoryOf(meta) == "TV" {
-		return "118"
+func lookupGenreID(name string) (string, bool) {
+	if id, ok := genreIDs[name]; ok {
+		return id, true
 	}
-	return "116"
+	if translated := strings.ToLower(metautil.TranslateGenreToPortugueseStrict(name)); translated != "" {
+		id, ok := genreIDs[translated]
+		return id, ok
+	}
+	return "", false
 }
 
 func categoryOf(meta api.UploadSubject) string {
@@ -226,13 +388,6 @@ func categoryOf(meta api.UploadSubject) string {
 		return ""
 	}
 	return strings.ToUpper(string(category))
-}
-
-func boolFlag(ok bool) string {
-	if ok {
-		return "1"
-	}
-	return "2"
 }
 
 func mapLanguage(value string, mappings map[string]string, fallback string) string {

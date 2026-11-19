@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -388,7 +389,37 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	}
 	parts = append(parts, "[/center]")
 	parts = append(parts, "[center][url=https://github.com/autobrr/upbrr]Upload realizado via upbrr[/url][/center]")
-	return strings.TrimSpace(strings.Join(filterEmpty(parts), "\n\n"))
+	return strings.TrimSpace(stripForeignDescriptionImages(strings.Join(filterEmpty(parts), "\n\n")))
+}
+
+var ascDescriptionImage = regexp.MustCompile(`(?is)\[img(?:=[^\]]*)?\]\s*(.*?)\s*\[/img\]`)
+var ascEmptyImageLink = regexp.MustCompile(`(?is)\[url=[^\]]*\]\s*\[/url\]`)
+
+func hasForeignImages(description string) bool {
+	for _, match := range ascDescriptionImage.FindAllStringSubmatch(description, -1) {
+		if !ascHostedImage(match[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func stripForeignDescriptionImages(description string) string {
+	return ascEmptyImageLink.ReplaceAllString(ascDescriptionImage.ReplaceAllStringFunc(description, func(tag string) string {
+		if ascHostedImage(ascDescriptionImage.FindStringSubmatch(tag)[1]) {
+			return tag
+		}
+		return ""
+	}), "")
+}
+
+func ascHostedImage(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == siteHost || strings.HasSuffix(host, "."+siteHost)
 }
 
 func normalizeLayout(raw map[string]any) layoutData {

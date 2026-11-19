@@ -4,17 +4,33 @@
 package asc
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+var ascReportedName = regexp.MustCompile(`(?m)^Complete name[ \t]*:[ \t]*(.+)$`)
+
+func ascUploadMediaInfo(report string) string {
+	return strings.TrimSpace(ascReportedName.ReplaceAllStringFunc(report, func(line string) string {
+		name := strings.TrimSpace(ascReportedName.FindStringSubmatch(line)[1])
+		return "Complete name : " + name[strings.LastIndexAny(name, `/\`)+1:]
+	}))
+}
 
 func resolveResolution(meta api.UploadSubject) map[string]string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
@@ -102,4 +118,99 @@ func readTextFileNoErr(path string) string {
 
 func parseDimensionStr(val any) string {
 	return metautil.ParseDimensionStr(val)
+}
+
+func screenshotPaths(assets trackers.DescriptionAssets) []string {
+	paths := make([]string, 0, maxScreenshots)
+	seen := make(map[string]bool, maxScreenshots)
+	for _, image := range assets.Screenshots {
+		path := strings.TrimSpace(image.Path)
+		if path == "" || image.Purpose == api.ScreenshotPurposeMenu || seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+		if len(paths) == maxScreenshots {
+			break
+		}
+	}
+	return paths
+}
+
+func readScreenshot(path string) (commonhttp.FileField, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return commonhttp.FileField{}, errors.New("cannot open local image")
+	}
+	defer f.Close()
+	contents, err := io.ReadAll(io.LimitReader(f, maxImageBytes+1))
+	if err != nil {
+		return commonhttp.FileField{}, errors.New("cannot read local image")
+	}
+	ext := imageExtension(contents)
+	if len(contents) > maxImageBytes || ext == "" {
+		return commonhttp.FileField{}, errors.New("use JPEG, PNG or WebP images up to 5 MiB")
+	}
+	return commonhttp.FileField{
+		FieldName: "image",
+		FileName:  "screenshot" + ext,
+		Content:   contents,
+	}, nil
+}
+
+func validCoverURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Hostname()) {
+	case "image.tmdb.org", "m.media-amazon.com", "artworks.thetvdb.com", "static.tvmaze.com":
+		return true
+	default:
+		return false
+	}
+}
+
+func fetchCover(ctx context.Context, client *http.Client, raw string) (commonhttp.FileField, error) {
+	if !validCoverURL(raw) {
+		return commonhttp.FileField{}, errors.New("trackers: ASC invalid cover URL")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return commonhttp.FileField{}, errors.New("trackers: ASC invalid cover request")
+	}
+	coverClient := *client
+	coverClient.Jar = nil
+	coverClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := coverClient.Do(req)
+	if err != nil {
+		return commonhttp.FileField{}, errors.New("trackers: ASC cover download failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return commonhttp.FileField{}, fmt.Errorf("trackers: ASC cover download returned HTTP %d", resp.StatusCode)
+	}
+	contents, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
+	ext := imageExtension(contents)
+	if err != nil || len(contents) > maxImageBytes || ext == "" {
+		return commonhttp.FileField{}, errors.New("trackers: ASC cover must be a JPEG, PNG or WebP image up to 5 MiB")
+	}
+	return commonhttp.FileField{
+		FieldName: "cover",
+		FileName:  "cover" + ext,
+		Content:   contents,
+	}, nil
+}
+
+func imageExtension(contents []byte) string {
+	switch http.DetectContentType(contents) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ""
+	}
 }

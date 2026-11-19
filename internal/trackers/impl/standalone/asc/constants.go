@@ -4,7 +4,6 @@
 package asc
 
 const (
-	baseURL    = "https://cliente.amigos-share.club"
 	userAgent  = "upbrr"
 	sourceFlag = "ASC"
 )

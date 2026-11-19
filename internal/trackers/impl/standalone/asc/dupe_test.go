@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -217,13 +216,5 @@ func TestASCConnectionChecksImportedSession(t *testing.T) {
 				t.Fatalf("connection check = %q (%s), want %q", got.Code, got.Message, tc.want)
 			}
 		})
-	}
-}
-
-func TestASCRejectsLegacyUploadPreparation(t *testing.T) {
-	t.Parallel()
-	_, _, err := prepareUploadState(t.Context(), trackers.PreparationInput{}, false)
-	if err == nil || !strings.Contains(err.Error(), uploadUnavailable) {
-		t.Fatalf("upload preparation = %v, want migration block", err)
 	}
 }
