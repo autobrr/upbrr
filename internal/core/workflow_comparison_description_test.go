@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/comparisons"
 	"github.com/autobrr/upbrr/internal/config"
@@ -177,6 +178,86 @@ func TestComparisonDescriptionReuseTracksRowsPixelsAndLinks(t *testing.T) {
 	}
 	if _, available, _ := normalizeReusableDescriptionMedia(t.Context(), exact); available {
 		t.Fatal("changed comparison bytes remained reusable")
+	}
+}
+
+func TestComparisonDescriptionReuseRejectsChangedHostedLinkAssignment(t *testing.T) {
+	fixture := newWorkflowDescriptionReuseFixture(t)
+	media, retained := testComparisonDescriptionMedia(t, false)
+	retained.screenshotSubject.MediaBinding = fixture.resolver.subject.MediaBinding
+	left, right := &media.Comparisons.Rows[0].Cells[0], &media.Comparisons.Rows[0].Cells[1]
+	pixels, err := os.ReadFile(retained.ArtifactImages[left.ArtifactID].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightImage := retained.ArtifactImages[right.ArtifactID]
+	if err := os.WriteFile(rightImage.Path, pixels, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	right.ContentSHA256, rightImage.ContentSHA256 = left.ContentSHA256, left.ContentSHA256
+	retained.ArtifactImages[right.ArtifactID] = rightImage
+	fingerprint, err := comparisons.ReviewFingerprint(*media.Comparisons)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media.Comparisons.Fingerprint, media.Comparisons.ApprovedFingerprint = fingerprint, fingerprint
+	for i := range media.Artifacts {
+		if media.Artifacts[i].Kind == api.MediaArtifactHostedImage {
+			media.Artifacts[i].Order = 1
+		}
+	}
+	var variants [2]api.PublicResourceID
+	for i, cell := range []*api.ComparisonCell{left, right} {
+		originalID := api.PublicResourceID("hosted-" + string(cell.ArtifactID))
+		link := retained.HostedImages[originalID]
+		link.ContentSHA256 = cell.ContentSHA256
+		retained.HostedImages[originalID] = link
+		// A host may return the same URL for uploads of the same PNG.
+		link.RawURL = "https://images.example.invalid/shared.png"
+		id := api.PublicResourceID("variant-" + string(cell.ArtifactID))
+		variants[i] = id
+		retained.HostedImages[id], retained.HostedSources[id] = link, cell.ArtifactID
+		media.Artifacts = append(media.Artifacts, api.MediaArtifact{
+			ID:       id,
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeComparison,
+			Selected: true,
+			Order:    2 - 2*i,
+			Source:   string(cell.ArtifactID),
+		})
+	}
+	// Removing either variant leaves the same ordered URLs when flattened,
+	// but changes which URL the renderer selects for the right-hand cell.
+	remove := func(id api.PublicResourceID) (api.MediaArtifactSet, any) {
+		t.Helper()
+		selected, private, err := (workflowMediaBuilder{}).RemoveHostedImages(
+			t.Context(), fixture.oldRelease, media, retained, []api.PublicResourceID{id}, time.Now(),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return selected, private
+	}
+	before, beforePrivate := remove(variants[1])
+	if err := fixture.recordReusableDescriptions(t, fixture.oldRelease, before, beforePrivate, fixture.snapshot); err != nil {
+		t.Fatal(err)
+	}
+	instructions := fixture.instructions
+	instructions.Overrides = nil
+	restore := func(candidate api.MediaArtifactSet, private any) api.DescriptionSet {
+		t.Helper()
+		snapshot, _, err := fixture.builder.RestoreCompatibleDescriptions(t.Context(), fixture.oldRelease, fixture.projections, candidate, private, instructions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	if got := restore(before, beforePrivate); got.Status != api.StageStatusCompleted {
+		t.Fatal("unchanged link assignments did not reuse the saved descriptions")
+	}
+	after, afterPrivate := remove(variants[0])
+	if got := restore(after, afterPrivate); len(got.Descriptions) != 0 {
+		t.Fatal("moving a hosted link between equal-content cells reused the saved descriptions")
 	}
 }
 

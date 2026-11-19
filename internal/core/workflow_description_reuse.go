@@ -191,7 +191,7 @@ type workflowReusableDescriptionHostedImage struct {
 
 type workflowReusableDescriptionMedia struct {
 	ComparisonFingerprint api.WorkflowFingerprint
-	ComparisonUploads     []workflowReusableDescriptionHostedImage
+	ComparisonUploads     [][]workflowReusableDescriptionHostedImage
 	Screenshots           []workflowReusableDescriptionImage
 	DVDMenus              []workflowReusableDescriptionDVDMenu
 	ScreenshotUploads     []workflowReusableDescriptionHostedImage
@@ -448,7 +448,9 @@ func normalizeReusableDescriptionMedia(
 				if err != nil {
 					return workflowReusableDescriptionMedia{}, false, err
 				}
-				normalized.ComparisonUploads = append(normalized.ComparisonUploads, links...)
+				// The review fingerprint binds cell order. Retain one list per cell,
+				// including empty lists, so equal-content cells keep separate links.
+				normalized.ComparisonUploads = append(normalized.ComparisonUploads, links)
 			}
 		}
 	}
