@@ -331,6 +331,9 @@ func (s *Service) InspectComparisonSource(ctx context.Context, path string) (Com
 	if err != nil {
 		return ComparisonSource{}, err
 	}
+	if err := requireComparisonFileCapability(ctx, s.runner, executable); err != nil {
+		return ComparisonSource{}, err
+	}
 	probe, err := (finiteComparisonRunner{
 		base:        s.runner,
 		outputLimit: 64 << 10,
@@ -509,6 +512,9 @@ func (s *Service) ComparisonCapture(ctx context.Context, request ComparisonCaptu
 	}
 	var input *comparisonFileInput
 	if request.Replay != nil {
+		if err := requireComparisonFileCapability(ctx, s.runner, executable); err != nil {
+			return ComparisonFrame{}, err
+		}
 		ctx, input, err = s.openComparisonFileInput(ctx, path, nil)
 		if err != nil {
 			return ComparisonFrame{}, err
@@ -625,16 +631,19 @@ func (s *Service) SampleComparisonSource(ctx context.Context, request Comparison
 	if err != nil {
 		return nil, err
 	}
+	executable, err := resolveFFmpeg()
+	if err != nil {
+		return nil, err
+	}
+	if err := requireComparisonFileCapability(ctx, s.runner, executable); err != nil {
+		return nil, err
+	}
 	ctx, input, err := s.openComparisonFileInput(ctx, path, request.Budget)
 	if err != nil {
 		return nil, err
 	}
 	defer input.close()
 	path = input.url
-	executable, err := resolveFFmpeg()
-	if err != nil {
-		return nil, err
-	}
 	filter := fmt.Sprintf("trim=start=%.9f:end=%.9f,showinfo=checksum=0", windowStart, windowEnd)
 	seek := start
 	if input.server != nil {

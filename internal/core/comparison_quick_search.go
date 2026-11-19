@@ -99,14 +99,8 @@ func (q *comparisonQuickSearch) finish(ctx context.Context, owner string, retain
 	if err := validateComparisonInventoryIndex(&final); err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("seal final inventory: %w", err)
-	}
 	if err := publishComparisonInventory(ctx, &final, owner); err != nil {
 		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("verify final comparison inventory: %w", err)
 	}
 	keep = true
 	retained.ComparisonInventory = &final

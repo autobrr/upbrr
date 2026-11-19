@@ -92,6 +92,7 @@ func TestComparisonSecondaryWindowCacheRetainsNativeFramesWithinBudget(t *testin
 	t.Run("fractional cadence across a shared physical boundary", func(t *testing.T) {
 		a, b := native[0], native[1]
 		a.PTS, b.PTS = 1000, 1042
+		a.RelativeTimestampSeconds, b.RelativeTimestampSeconds = 1, 1.042
 		a.DurationTicks, b.DurationTicks = 41, 41
 		a.Replay = &screenshots.ComparisonFrameReplay{Version: 2, File: &screenshots.ComparisonFileInterval{
 			Start:          0,
@@ -109,6 +110,23 @@ func TestComparisonSecondaryWindowCacheRetainsNativeFramesWithinBudget(t *testin
 		b.Replay.File.Previous = &screenshots.ComparisonFileNeighbor{PTS: a.PTS, Position: 80}
 		if !comparisonRoundedNativeBoundary(a, b) {
 			t.Fatal("a shared packet lost native cadence at the window boundary")
+		}
+		for _, frame := range []*screenshots.ComparisonSample{&a, &b} {
+			frame.Evidence = &api.ComparisonSceneEvidence{Eligible: true}
+		}
+		c := comparisonWindowCache{}
+		c.put(0, 1, 1.083, "none", []screenshots.ComparisonSample{a}, 16<<20)
+		c.put(0, 1, 1.083, "none", []screenshots.ComparisonSample{b}, 16<<20)
+		frames, gaps, err := c.get(0, 1, 1.083, "none")
+		if err != nil || len(frames) != 2 || len(gaps) != 0 {
+			t.Fatalf("verified rounding scheduled an extra decode: frames=%d gaps=%v err=%v", len(frames), gaps, err)
+		}
+		if section := comparisonEligibleSection(frames, a.FrameID); len(section) != 2 {
+			t.Fatal("verified rounding ended the observed scene")
+		}
+		b.PTS, b.RelativeTimestampSeconds = 1083, 1.083
+		if section := comparisonEligibleSection([]screenshots.ComparisonSample{a, b}, a.FrameID); len(section) != 1 {
+			t.Fatal("scene continued across a missing native picture")
 		}
 	})
 	t.Run("merge keeps the enclosed address and the first classification", func(t *testing.T) {

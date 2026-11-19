@@ -815,7 +815,10 @@ func (b workflowMediaBuilder) discoverComparisonScenes(
 		retained.ComparisonInventory = &logical
 		return &logical, nil
 	}
-	if err := publishComparisonInventory(ctx, ref, owner); err != nil {
+	// The sealed prefix is resumable even when discovery was interrupted.
+	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := publishComparisonInventory(publishCtx, ref, owner); err != nil {
 		return nil, err
 	}
 	keep = true
@@ -832,16 +835,18 @@ func publishComparisonInventory(ctx context.Context, ref *comparisonSceneInvento
 		existing := *ref
 		existing.Path = destination
 		if err := readComparisonInventory(ctx, &existing, owner, func(screenshots.ComparisonSample) bool { return true }); err != nil {
-			if comparisonCancellationOnly(err) {
-				return nil
-			}
 			return err
 		}
 		if err := os.Remove(ref.Path); err != nil {
 			return fmt.Errorf("discard duplicate inventory: %w", err)
 		}
-	} else if err := os.Rename(ref.Path, destination); err != nil {
-		return fmt.Errorf("publish comparison inventory: %w", err)
+	} else {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("publish comparison inventory: %w", err)
+		}
+		if err := os.Rename(ref.Path, destination); err != nil {
+			return fmt.Errorf("publish comparison inventory: %w", err)
+		}
 	}
 	ref.Path = destination
 	return nil

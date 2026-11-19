@@ -111,7 +111,13 @@ func captureComparisonBatch(ctx context.Context, renderer comparisonFrameRendere
 					}
 				default:
 					if err := publish(event.job, event.frame, workCtx.Err() == nil); err != nil {
-						firstErr = &comparisonPublicationError{err}
+						if _, interrupted := errors.AsType[*comparisonPublicationInterruptedError](err); interrupted && comparisonCancellationOnly(err) {
+							if firstErr == nil {
+								firstErr = err
+							}
+						} else {
+							firstErr = &comparisonPublicationError{err}
+						}
 					}
 				}
 			}
@@ -142,6 +148,11 @@ func captureComparisonBatch(ctx context.Context, renderer comparisonFrameRendere
 type comparisonPublicationError struct{ error }
 
 func (e *comparisonPublicationError) Unwrap() error { return e.error }
+
+// Interrupted witness verification leaves the current cell unpublished.
+type comparisonPublicationInterruptedError struct{ error }
+
+func (e *comparisonPublicationInterruptedError) Unwrap() error { return e.error }
 
 func comparisonCancellationOnly(err error) bool {
 	if _, fatal := errors.AsType[*comparisonPublicationError](err); fatal {

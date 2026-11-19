@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -54,8 +55,45 @@ func TestComparisonCaptureBatchPreservesFailureAndJoinsSiblings(t *testing.T) {
 	default:
 		t.Fatal("capture returned before its sibling exited")
 	}
-	for _, terminal := range []error{nil, failure, errors.Join(context.Canceled, failure)} {
-		t.Run("drain", func(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		renderErr  error
+		publishErr error
+		want       []float64
+		fatal      bool
+	}{
+		{name: "completed captures", want: []float64{0, 1}},
+		{
+			name:      "render failure",
+			renderErr: failure,
+			want:      []float64{0},
+			fatal:     true,
+		},
+		{
+			name:      "mixed render failure",
+			renderErr: errors.Join(context.Canceled, failure),
+			want:      []float64{0},
+			fatal:     true,
+		},
+		{
+			name:       "interrupted reinspection",
+			publishErr: &comparisonPublicationInterruptedError{context.Canceled},
+			want:       []float64{0},
+		},
+		{
+			name:       "witness conflict",
+			publishErr: comparisonWitnessConflict(),
+			want:       []float64{0},
+			fatal:      true,
+		},
+		{
+			name:       "unclassified publication failure",
+			publishErr: context.Canceled,
+			want:       []float64{0},
+			fatal:      true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
@@ -66,15 +104,21 @@ func TestComparisonCaptureBatchPreservesFailureAndJoinsSiblings(t *testing.T) {
 					started <- struct{}{}
 					<-release[index]
 					if index == 1 {
-						return screenshots.ComparisonFrame{}, terminal
+						return screenshots.ComparisonFrame{}, tc.renderErr
 					}
 					return screenshots.ComparisonFrame{}, nil
 				}}
 				finished := make(chan error, 1)
-				published := 0
+				var published []float64
 				go func() {
-					finished <- captureComparisonBatch(ctx, renderer, jobs, 2, func(comparisonCaptureJob, api.WorkflowProgressUpdate) {}, func(comparisonCaptureJob, screenshots.ComparisonFrame, bool) error {
-						published++
+					finished <- captureComparisonBatch(ctx, renderer, jobs, 2, func(comparisonCaptureJob, api.WorkflowProgressUpdate) {}, func(job comparisonCaptureJob, _ screenshots.ComparisonFrame, notify bool) error {
+						if notify {
+							t.Error("drained capture emitted progress")
+						}
+						if job.request.TimestampSeconds == 1 && tc.publishErr != nil {
+							return tc.publishErr
+						}
+						published = append(published, job.request.TimestampSeconds)
 						return nil
 					})
 				}()
@@ -86,12 +130,9 @@ func TestComparisonCaptureBatchPreservesFailureAndJoinsSiblings(t *testing.T) {
 				synctest.Wait()
 				close(release[1])
 				err := <-finished
-				if terminal == nil {
-					if !comparisonCancellationOnly(err) || published != 2 {
-						t.Fatalf("cancelled batch published %d successes: %v", published, err)
-					}
-				} else if !errors.Is(err, failure) || comparisonCancellationOnly(err) || published != 1 {
-					t.Fatalf("fatal batch published %d successes: %v", published, err)
+				if err == nil || comparisonCancellationOnly(err) == tc.fatal || !reflect.DeepEqual(published, tc.want) ||
+					tc.fatal && !errors.Is(err, tc.renderErr) && !errors.Is(err, tc.publishErr) {
+					t.Fatalf("published %v, expected %v: %v", published, tc.want, err)
 				}
 			})
 		})

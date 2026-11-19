@@ -68,6 +68,7 @@ func (c *comparisonWindowCache) get(source int, start, end float64, renderer str
 	var frames []screenshots.ComparisonSample
 	var gaps []api.ComparisonTimeInterval
 	covered, boundary := start, start
+	var lastCovered screenshots.ComparisonSample
 	for _, w := range hits {
 		before := len(frames)
 		for _, f := range w.frames {
@@ -78,7 +79,7 @@ func (c *comparisonWindowCache) get(source int, start, end float64, renderer str
 		if len(frames) == before {
 			continue
 		}
-		if w.start > covered+1e-9 {
+		if w.start > covered+1e-9 && !comparisonRoundedNativeBoundary(lastCovered, frames[before]) {
 			right := frames[before].RelativeTimestampSeconds
 			if f := frames[before]; f.Replay != nil && f.Replay.File != nil {
 				right = min(end, right+float64(f.TimeBaseNumerator)/float64(f.TimeBaseDenominator))
@@ -87,7 +88,8 @@ func (c *comparisonWindowCache) get(source int, start, end float64, renderer str
 		}
 		if w.end > covered {
 			covered = w.end
-			boundary = frames[len(frames)-1].RelativeTimestampSeconds
+			lastCovered = frames[len(frames)-1]
+			boundary = lastCovered.RelativeTimestampSeconds
 		}
 	}
 	if covered < end-1e-9 {
@@ -197,6 +199,12 @@ func comparisonRoundedNativeBoundary(a, b screenshots.ComparisonSample) bool {
 	return left == nil && right == nil && x.EncodedSHA256 != "" && x.EncodedSHA256 == y.EncodedSHA256 && x.Start90 == y.Start90 && x.End90 == y.End90
 }
 
+func comparisonNativeClockAdjacent(a, b screenshots.ComparisonSample) bool {
+	return a.DurationTicks > 0 && a.TimeBaseNumerator > 0 && a.TimeBaseDenominator > 0 &&
+		a.TimeBaseNumerator == b.TimeBaseNumerator && a.TimeBaseDenominator == b.TimeBaseDenominator &&
+		b.PTS > a.PTS && (b.PTS-a.PTS <= a.DurationTicks || comparisonRoundedNativeBoundary(a, b))
+}
+
 func (c *comparisonWindowCache) put(source int, start, end float64, renderer string, frames []screenshots.ComparisonSample, limit int64) {
 	for i := 0; i < len(frames); {
 		first := frames[i]
@@ -208,12 +216,9 @@ func (c *comparisonWindowCache) put(source int, start, end float64, renderer str
 		// Split at actual native clock gaps and authored occurrence boundaries.
 		for i < len(frames) {
 			a, b := frames[i-1], frames[i]
-			if !b.NativeSequence || b.DurationTicks <= 0 || a.TimeBaseNumerator != b.TimeBaseNumerator || a.TimeBaseDenominator != b.TimeBaseDenominator ||
+			if !b.NativeSequence || b.DurationTicks <= 0 || !comparisonNativeClockAdjacent(a, b) ||
 				a.Identity != nil && (b.Identity == nil || a.Identity.Occurrence != b.Identity.Occurrence) ||
-				!comparisonFileJoin(
-					a.ComparisonFrameObservation,
-					b.ComparisonFrameObservation,
-				) || b.PTS <= a.PTS || b.PTS-a.PTS > a.DurationTicks && !comparisonRoundedNativeBoundary(a, b) {
+				!comparisonFileJoin(a.ComparisonFrameObservation, b.ComparisonFrameObservation) {
 				break
 			}
 			i++

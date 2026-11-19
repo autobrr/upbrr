@@ -1248,7 +1248,7 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 					return plan, errors.New("inspect or rematch this comparison frame before capture")
 				}
 			}
-			if cell.ObservedIdentity == nil && cell.Confidence == nil && source.Source.Input == nil {
+			if cell.ObservedIdentity == nil && cell.Confidence == nil {
 				workCtx, finishWindow := progress.decodeWindow(ctx, columns[cell.SourceID], r+1)
 				frame, err := screenshots.InspectComparisonMoment(workCtx, renderer, source.Source, *cell.TimestampSeconds)
 				finishWindow(err)
@@ -1296,7 +1296,16 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 		if !job.request.Replay.SamePicture(captured.Replay) {
 			return comparisonWitnessConflict()
 		}
-		if _, err := b.storeComparisonWitness(ctx, plan, job.row, cell.SourceID, &source, captured.Replay); err != nil {
+		witnessCtx := ctx
+		if ctx.Err() != nil {
+			var cancel context.CancelFunc
+			witnessCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+		}
+		if _, err := b.storeComparisonWitness(witnessCtx, plan, job.row, cell.SourceID, &source, captured.Replay); err != nil {
+			if comparisonCancellationOnly(err) {
+				return &comparisonPublicationInterruptedError{err}
+			}
 			return err
 		}
 		retained.ComparisonSources[cell.SourceID] = source
@@ -1352,14 +1361,8 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 		cell.ObservedIdentity = captured.Identity
 		cell.TimeBaseNumerator, cell.TimeBaseDenominator = captured.TimeBaseNumerator, captured.TimeBaseDenominator
 		cell.PictureType = captured.PictureType
-		for _, configured := range plan.Sources {
-			if configured.ID == cell.SourceID && !configured.PreferBFrames && len(configured.AllowedFrameTypes) > 0 &&
-				!slices.Contains(configured.AllowedFrameTypes, captured.PictureType) {
-				cell.Warning = "Requested picture types " + strings.Join(
-					configured.AllowedFrameTypes,
-					"/",
-				) + " do not include this selected matching frame; actual type is " + captured.PictureType + ". Rematch to search for a compatible frame."
-			}
+		if warning := comparisonCaptureTypeWarning(plan.Sources, *cell); warning != "" {
+			cell.Warning = warning
 		}
 		if notify {
 			progress.item(progressID, "comparison_cell", label, api.StageStatusCompleted, 1000)
@@ -1408,6 +1411,17 @@ func (b workflowMediaBuilder) captureWorkflowComparisons(
 	}
 	progress.complete()
 	return plan, nil
+}
+
+func comparisonCaptureTypeWarning(sources []api.ComparisonSource, cell api.ComparisonCell) string {
+	for _, source := range sources {
+		if source.ID == cell.SourceID && !source.PreferBFrames && len(source.AllowedFrameTypes) > 0 &&
+			!slices.Contains(source.AllowedFrameTypes, cell.PictureType) {
+			return "Requested picture types " + strings.Join(source.AllowedFrameTypes, "/") +
+				" do not include this selected matching frame; actual type is " + cell.PictureType + ". Rematch to search for a compatible frame."
+		}
+	}
+	return ""
 }
 
 func removeComparisonArtifacts(snapshot *api.MediaArtifactSet, retained *workflowMediaPrivateArtifacts) {

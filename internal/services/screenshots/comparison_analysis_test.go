@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -21,6 +22,37 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestBoundedComparisonFileRejectsChangedInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.mkv")
+	if err := os.WriteFile(path, []byte("synthetic input"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil)
+	_, input, err := service.openComparisonFileInput(t.Context(), path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.close()
+	if err := os.WriteFile(path, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := input.failure(); !errors.Is(err, api.ErrActiveInputChanged) {
+		t.Fatalf("changed file passed the publication check: %v", err)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, input.url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusGone {
+		t.Fatalf("changed file remained available for range reads: HTTP %d", response.StatusCode)
+	}
+}
 
 func TestComparisonMainCanvasPadsWithoutChangingNativeInterior(t *testing.T) {
 	executable, err := resolveFFmpeg()
@@ -361,7 +393,7 @@ func TestComparisonAnalysisNativeStream(t *testing.T) {
 		t.Fatalf("independent matching reduction: %v", err)
 	}
 	for i := range frames {
-		if bounded[i].PTS != frames[i].PTS || !bytes.Equal(bounded[i].Pixels, matching[i].Pixels) || bounded[i].Evidence.Motion != frames[i].Evidence.Motion || bounded[i].Evidence.Dark != frames[i].Evidence.Dark || bounded[i].Evidence.Flat != frames[i].Evidence.Flat {
+		if bounded[i].PTS != frames[i].PTS || !bounded[i].Replay.SamePicture(matching[i].Replay) || !bytes.Equal(bounded[i].Pixels, matching[i].Pixels) || bounded[i].Evidence.Motion != frames[i].Evidence.Motion || bounded[i].Evidence.Dark != frames[i].Evidence.Dark || bounded[i].Evidence.Flat != frames[i].Evidence.Flat {
 			t.Fatal("file admission or the shared matching branch changed native identity or scene evidence")
 		}
 	}

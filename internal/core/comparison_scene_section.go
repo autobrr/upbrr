@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/autobrr/upbrr/internal/comparisons"
 	"github.com/autobrr/upbrr/internal/services/screenshots"
@@ -16,6 +17,24 @@ const comparisonSectionSeconds = 32.0
 
 func comparisonEligibleSection(frames []screenshots.ComparisonSample, anchor string) []screenshots.ComparisonSample {
 	start, end := comparisons.SceneSectionBounds(comparisonSamples(frames), anchor)
+	if start == end {
+		return nil
+	}
+	index := start + slices.IndexFunc(frames[start:end], func(frame screenshots.ComparisonSample) bool {
+		return comparisonObservationID(frame.ComparisonFrameObservation) == anchor
+	})
+	for i := index; i > start; i-- {
+		if !comparisonNativeClockAdjacent(frames[i-1], frames[i]) {
+			start = i
+			break
+		}
+	}
+	for i := index + 1; i < end; i++ {
+		if !comparisonNativeClockAdjacent(frames[i-1], frames[i]) {
+			end = i
+			break
+		}
+	}
 	return frames[start:end]
 }
 

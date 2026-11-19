@@ -138,7 +138,7 @@ func (b *comparisonOutputBuffer) Write(data []byte) (int, error) {
 // filter diagnostic. Recognize our two tagged integers even inside that line.
 // Binary-exact quarter fractions distinguish offsets from signed ticks. A
 // negative sign separates either value from an interrupted diagnostic field.
-const comparisonPacketFilter = "noise=amount=0:drop='print(-pos-1.25);print(-2*abs(pts)-lt(pts,0)-0.75);0'"
+const comparisonPacketFilter = "noise=amount=0:drop='if(eq(pts,nopts),0,print(-pos-1.25);print(-2*abs(pts)-lt(pts,0)-0.75));0'"
 
 var comparisonPacketMessage = regexp.MustCompile(`(?:\[Eval @ [^\]]+\] )?-(\d+)\.(250000|750000)$`)
 
@@ -161,9 +161,8 @@ func (p *comparisonPacketTrace) consume(line string) (string, error) {
 			return "", comparisonDiscFailure("packet_address")
 		}
 		if line[token[4]] == '2' {
-			if p.position != nil {
-				return "", comparisonDiscFailure("packet_address")
-			}
+			// An unset packet PTS emits no tagged integer. A fresh position
+			// supersedes the incomplete address without binding it to a picture.
 			p.position = new(v - 1)
 		} else {
 			if p.position == nil || len(p.positions) >= 50000 {

@@ -234,7 +234,8 @@ func matchAlignedFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		chosen, distance := -1, math.Inf(1)
 		for i, frame := range column.frames {
 			delta := math.Abs(frame.frame.TimestampSeconds - predicted)
-			if frame.frame.FrameType == kind && within(frame.frame) && delta < distance && visualScore(main, frame) >= max(.92, best-.03) {
+			if !frame.frame.Unselectable && frame.frame.FrameType == kind && within(frame.frame) &&
+				delta < distance && visualScore(main, frame) >= max(.92, best-.03) {
 				chosen, distance = i, delta
 			}
 		}

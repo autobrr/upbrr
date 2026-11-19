@@ -79,19 +79,22 @@ func NewSceneSectionMatcher(reference SampledSource, anchor FrameSample, categor
 	}
 	section := reference.Frames[start:end]
 	var candidates []FrameSample
+	matcher.reason = "main_native_candidates_unavailable"
+	types := permittedPictureTypes(reference)
 	for _, frame := range section {
-		if frame.Unselectable || !slices.Contains(permittedPictureTypes(reference), frame.FrameType) || frame.Evidence == nil || !frame.Evidence.Eligible {
+		if frame.Unselectable || frame.Evidence == nil || !frame.Evidence.Eligible {
+			continue
+		}
+		if !slices.Contains(types, frame.FrameType) {
+			matcher.reason = "permitted_picture_type_unavailable"
 			continue
 		}
 		candidates = append(candidates, frame)
 	}
 	if len(candidates) == 0 {
-		matcher.reason = "main_native_candidates_unavailable"
-		if slices.ContainsFunc(section, func(frame FrameSample) bool { return frame.Evidence != nil && frame.Evidence.Eligible }) {
-			matcher.reason = "permitted_picture_type_unavailable"
-		}
 		return matcher
 	}
+	matcher.reason = ""
 	// The connected score band around the main seed is the first source of
 	// truth. Other eligible moments in this same observed scene remain best
 	// effort alternatives when the band cannot supply a complete native row.
@@ -189,6 +192,19 @@ func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previou
 		sources = append(sources, source)
 	}
 	mainID, category, proofs, candidates := m.mainID, m.category, m.proofs, m.surviving
+	occurrences := make([]map[string][]FrameSample, len(sources))
+	for i, source := range sources {
+		if source.ID == mainID || len(source.Frames) == 0 {
+			continue
+		}
+		first := source.Frames[0].Occurrence
+		if slices.ContainsFunc(source.Frames, func(frame FrameSample) bool { return frame.Occurrence != first }) {
+			occurrences[i] = make(map[string][]FrameSample)
+			for _, frame := range source.Frames {
+				occurrences[i][frame.Occurrence] = append(occurrences[i][frame.Occurrence], frame)
+			}
+		}
+	}
 	var preferred, fallback *MatchedRow
 	bestScore := math.Inf(-1)
 	qualified := false
@@ -204,9 +220,9 @@ func (m *SceneSectionMatcher) Match(ctx context.Context, order []string, previou
 			}
 			proof := proofs[source.ID][candidate.FrameID]
 			local[source.ID] = proof.ConstantAlignment
-			scoped[i].Frames = slices.DeleteFunc(slices.Clone(source.Frames), func(frame FrameSample) bool {
-				return frame.Occurrence != proof.targetOccurrence
-			})
+			if occurrences[i] != nil {
+				scoped[i].Frames = occurrences[i][proof.targetOccurrence]
+			}
 		}
 		matched, err := AlignedMatch(scoped, mainID, MatchOptions{Count: 1, MainFrameID: candidate.FrameID}, local, previous)
 		if err != nil {

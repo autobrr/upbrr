@@ -237,6 +237,7 @@ func (b workflowMediaBuilder) ApplyComparisonFrames(
 			if found && image.Purpose == api.ScreenshotPurposeComparison && image.ContentSHA256 == previous.ContentSHA256 &&
 				comparisonImageRenderingCurrent(retained, selection.SourceID, previous.ArtifactID, rendering) {
 				selected.ArtifactID, selected.ContentSHA256, selected.FrameNumber = previous.ArtifactID, previous.ContentSHA256, previous.FrameNumber
+				selected.Warning = comparisonCaptureTypeWarning(plan.Sources, selected)
 			}
 		}
 		plan.Rows[row].Cells[column] = selected

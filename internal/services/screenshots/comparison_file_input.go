@@ -14,6 +14,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type comparisonInputURLKey struct{}
@@ -22,6 +24,9 @@ type comparisonInputURLKey struct{}
 // before serving it to the decoder. ServeContent owns HTTP range semantics;
 // no encoded payload is staged, and only this attempt's approved file is served.
 type comparisonFileInput struct {
+	file     *os.File
+	path     string
+	stat     os.FileInfo
 	budget   *ComparisonDecodeBudget
 	url      string
 	server   *http.Server
@@ -41,13 +46,20 @@ func (s *Service) openComparisonFileInput(ctx context.Context, path string, budg
 	if _, native := s.runner.(commandRunner); !native {
 		return ctx, input, nil
 	}
-	stat, err := os.Stat(path)
+	file, err := os.Open(path) // #nosec G304 -- The caller validates the selected local comparison source.
 	if err != nil {
-		return ctx, nil, fmt.Errorf("inspect comparison file input: %w", err)
+		return ctx, nil, fmt.Errorf("open comparison file input: %w", err)
 	}
+	stat, err := file.Stat()
+	if err != nil || !stat.Mode().IsRegular() {
+		_ = file.Close()
+		return ctx, nil, comparisonFileInputChanged()
+	}
+	input.file, input.path, input.stat = file, path, stat
 	var listenerConfig net.ListenConfig
 	listener, err := listenerConfig.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
+		_ = file.Close()
 		return ctx, nil, fmt.Errorf("open bounded comparison input: %w", err)
 	}
 	endpoint := "/" + rand.Text()
@@ -70,16 +82,14 @@ func (s *Service) openComparisonFileInput(ctx context.Context, path string, budg
 			input.handlers.Add(1)
 			input.mu.Unlock()
 			defer input.handlers.Done()
-			file, err := os.Open(path)
-			if err != nil {
-				input.fail(fmt.Errorf("open comparison file input: %w", err))
+			if err := input.verify(); err != nil {
+				input.fail(err)
 				http.Error(w, "Input unavailable", http.StatusGone)
 				return
 			}
-			defer file.Close()
 			w.Header().Set("Content-Type", "application/octet-stream")
 			http.ServeContent(w, r, "input", stat.ModTime(), &comparisonBudgetReader{
-				file:  file,
+				file:  io.NewSectionReader(file, 0, stat.Size()),
 				input: input,
 			})
 		}),
@@ -103,9 +113,34 @@ func (input *comparisonFileInput) fail(err error) {
 }
 
 func (input *comparisonFileInput) failure() error {
+	if err := input.verify(); err != nil {
+		input.fail(err)
+	}
 	input.mu.Lock()
 	defer input.mu.Unlock()
 	return input.err
+}
+
+func (input *comparisonFileInput) verify() error {
+	if input.file == nil {
+		return nil
+	}
+	atPath, err := os.Stat(input.path)
+	if err != nil || !os.SameFile(input.stat, atPath) || input.stat.Size() != atPath.Size() ||
+		!input.stat.ModTime().Equal(atPath.ModTime()) {
+		return comparisonFileInputChanged()
+	}
+	return nil
+}
+
+func comparisonFileInputChanged() error {
+	return api.NewOperationError(api.OperationFailure{
+		Code:             api.OperationFailureInvalidSource,
+		Operation:        api.OperationKindMedia,
+		Recovery:         api.OperationRecoveryEditInput,
+		ComparisonReason: "source_changed",
+		Message:          "The video file changed while it was being read. Select it again before comparing.",
+	}, api.ErrActiveInputChanged)
 }
 
 func (input *comparisonFileInput) close() {
@@ -119,10 +154,11 @@ func (input *comparisonFileInput) close() {
 	_ = input.server.Close()
 	<-input.done
 	input.handlers.Wait()
+	_ = input.file.Close()
 }
 
 type comparisonBudgetReader struct {
-	file  *os.File
+	file  *io.SectionReader
 	input *comparisonFileInput
 }
 

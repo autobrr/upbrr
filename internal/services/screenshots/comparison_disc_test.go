@@ -190,8 +190,15 @@ func TestLocalComparisonDiscNativeClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("kind=%s duration=%.3f native_rate=%d/%d geometry=%dx%d sar_scale=%.6f interlace=%s", input.Kind, source.DurationSeconds, source.FrameRateNumerator, source.FrameRateDenominator, source.Width, source.Height, source.WidthScale, source.Interlace)
-	for _, second := range []float64{20, 600, 2500, 5000} {
-		if second+4 > source.DurationSeconds {
+	if source.DurationSeconds < 5 {
+		t.Skip("programme is shorter than the five-second overlap needed for the replay check")
+	}
+	starts := []float64{20, 600, 2500, 5000}
+	if source.DurationSeconds < starts[0]+4.5 {
+		starts = []float64{.5}
+	}
+	for _, second := range starts {
+		if second+4.5 > source.DurationSeconds {
 			continue
 		}
 		frames, err := service.sampleDiscComparison(t.Context(), ComparisonSampleRequest{

@@ -223,6 +223,36 @@ func TestMatchingAmbiguityAnchorsAndPictureTypes(t *testing.T) {
 	}
 }
 
+func TestAutomaticMatchingSelectsReplayablePicture(t *testing.T) {
+	main := sampleFrame(1, 1, "B")
+	main.FrameID, main.DisplayEndSeconds = "main", 1.08
+	clipped := sampleFrame(1, 1, "B")
+	clipped.FrameID, clipped.Unselectable = "clipped", true
+	replayable := sampleFrame(1, 1.04, "B")
+	replayable.FrameID, replayable.DisplayEndSeconds = "replayable", 1.08
+	for _, preferB := range []bool{false, true} {
+		sources := []SampledSource{
+			{ID: "main", Frames: []FrameSample{main}},
+			{
+				ID:            "target",
+				Frames:        []FrameSample{clipped, replayable},
+				PreferBFrames: preferB,
+			},
+		}
+		options := MatchOptions{Count: 1, MainFrameID: main.FrameID}
+		visual, err := Match(sources, "main", options)
+		if err != nil || len(visual.Rows) != 1 || !visual.Rows[0].Complete || visual.Rows[0].Frames[1].FrameID != replayable.FrameID {
+			t.Fatalf("visual match with PreferBFrames=%t lost replayable picture: %v, %v", preferB, visual.Rows, err)
+		}
+		aligned, err := AlignedMatch(sources, "main", options, map[string]ConstantAlignment{
+			"target": {ToleranceSeconds: .001, IntervalProof: true},
+		}, nil)
+		if err != nil || len(aligned.Rows) != 1 || !aligned.Rows[0].Complete || aligned.Rows[0].Frames[1].FrameID != replayable.FrameID {
+			t.Fatalf("aligned match with PreferBFrames=%t lost replayable picture: %v, %v", preferB, aligned.Rows, err)
+		}
+	}
+}
+
 func TestMatchingDoesNotReuseAnAutomaticTargetFrame(t *testing.T) {
 	main := SampledSource{ID: "main", Frames: []FrameSample{sampleFrame(1, 1, "I"), sampleFrame(1, 20, "I")}}
 	other := SampledSource{ID: "other", Frames: []FrameSample{sampleFrame(1, 4, "I")}}

@@ -176,17 +176,9 @@ func comparisonDecoders(
 	if download == "" {
 		return nil, nil
 	}
-	if err := comparisonAnalysisCapabilityFor(ctx, executable); err != nil {
-		return nil, err
-	}
-	stat, err := os.Stat(executable) // #nosec G703 -- Resolved local FFmpeg executable, independent of the source media path.
+	capability, err := inspectComparisonCapabilities(ctx, executable)
 	if err != nil {
-		return nil, fmt.Errorf("identify comparison decoder executable: %w", err)
-	}
-	value, _ := comparisonAnalysisCapabilities.Load(comparisonCapabilityIdentity{executable, stat.Size(), stat.ModTime().UnixNano()})
-	capability, ok := value.(comparisonAnalysisCapability)
-	if !ok {
-		return nil, errors.New("comparison executable changed during decoder selection")
+		return nil, err
 	}
 	backends := comparisonHardwareCandidates(runtime.GOOS, capability.hardware)
 	if len(backends) == 0 {

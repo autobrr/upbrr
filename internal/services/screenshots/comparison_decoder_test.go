@@ -331,13 +331,18 @@ func TestComparisonNativeDecoderReplaysMatchedPicture(t *testing.T) {
 				Replay:           selected.Replay,
 			}
 			capture.OverlayLabel = "Native test"
-			ctx, starts := comparisonProcessCounter(t.Context(), nil)
-			frame, err := s.ComparisonCapture(ctx, capture)
+			frame, err := s.ComparisonCapture(t.Context(), capture)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if *starts != 1 || frame.FrameID != selected.FrameID || !frame.Replay.SamePicture(selected.Replay) {
-				t.Fatal("capture did not replay the retained native picture using its decoder")
+			if frame.FrameID != selected.FrameID || !frame.Replay.SamePicture(selected.Replay) {
+				t.Fatal("capture changed the retained native picture")
+			}
+			capture.Source.NativeCodec = "" // Exercise the same overlay with software decoding only.
+			ctx, starts := comparisonProcessCounter(t.Context(), nil)
+			frame, err = s.ComparisonCapture(ctx, capture)
+			if err != nil || *starts != 1 || !frame.Replay.SamePicture(selected.Replay) {
+				t.Fatalf("software overlay did not replay the picture in one process: starts=%d err=%v", *starts, err)
 			}
 		})
 	}

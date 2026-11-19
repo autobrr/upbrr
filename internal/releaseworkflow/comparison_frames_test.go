@@ -15,10 +15,12 @@ import (
 
 type comparisonFrameMediaFake struct {
 	comparisonMediaFake
-	applied int
+	applied  int
+	previews int
 }
 
-func (*comparisonFrameMediaFake) PreviewComparisonFrame(_ context.Context, _ api.ReleaseRef, _ api.MediaArtifactSet, _ any, source string, timestamp float64, step int, starting *MediaPreviewContent) (MediaPreviewContent, error) {
+func (b *comparisonFrameMediaFake) PreviewComparisonFrame(_ context.Context, _ api.ReleaseRef, _ api.MediaArtifactSet, _ any, source string, timestamp float64, step int, starting *MediaPreviewContent) (MediaPreviewContent, error) {
+	b.previews++
 	if step != 0 && (starting == nil || starting.ObservedIdentity == nil || starting.TimestampSeconds != timestamp) {
 		return MediaPreviewContent{}, ErrPrivateResourceIntegrity
 	}
@@ -79,6 +81,17 @@ func TestComparisonPreviewSelectionRequiresCurrentScopedWitness(t *testing.T) {
 				t.Fatal(err)
 			}
 			selection.PreviewID = preview.ID
+			if scenario == "current" {
+				for _, invalid := range []struct {
+					timestamp float64
+					step      int
+				}{{timestamp: 11, step: 1}, {timestamp: 10, step: 0}} {
+					_, err := module.PreviewComparisonFrame(t.Context(), testOwnerID, current.Workflow.ID, current.Workflow.Revision, selection.SourceID, invalid.timestamp, invalid.step, preview.ID)
+					if err == nil || builder.previews != 1 {
+						t.Fatalf("invalid preview continuation reached the renderer: calls=%d err=%v", builder.previews, err)
+					}
+				}
+			}
 			if scenario != "current" {
 				resourceID := previewPrivateResourceID(preview.ID)
 				value, err := module.private.Get(testOwnerID, current.Workflow.ID, resourceID, module.clock.Now())

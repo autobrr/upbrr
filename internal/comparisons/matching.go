@@ -479,7 +479,8 @@ func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		for _, kind := range permittedPictureTypes(column.source) {
 			selected, score := -1, 0.0
 			for i, candidate := range column.frames {
-				if candidate.frame.FrameType != kind || math.Abs(candidate.frame.TimestampSeconds-column.frames[best].frame.TimestampSeconds) > .25 {
+				if candidate.frame.Unselectable || candidate.frame.FrameType != kind ||
+					math.Abs(candidate.frame.TimestampSeconds-column.frames[best].frame.TimestampSeconds) > .25 {
 					continue
 				}
 				candidateScore := visualScore(main, candidate)
@@ -498,9 +499,12 @@ func matchFrame(main matchingFrame, column matchingColumn) FrameMatch {
 		matched.Resolved, matched.TypeFallback, matched.Reason = false, false, "no_compatible_picture_type"
 		return matched
 	}
-	if matched.TypeFallback {
+	if matched.TypeFallback || column.frames[best].frame.Unselectable {
 		allowedScore := 0.0
 		for _, candidate := range column.frames {
+			if candidate.frame.Unselectable {
+				continue
+			}
 			score := visualScore(main, candidate)
 			if math.Abs(candidate.frame.TimestampSeconds-column.frames[best].frame.TimestampSeconds) <= .25 &&
 				score >= max(.92, bestScore-.03) && score > allowedScore && allowedPicture(column.source, candidate.frame.FrameType) {

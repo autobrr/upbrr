@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -30,34 +31,45 @@ type comparisonAnalysisCapability struct {
 var comparisonAnalysisCapabilities sync.Map
 
 func comparisonAnalysisCapabilityFor(ctx context.Context, executable string) error {
+	receipt, err := inspectComparisonCapabilities(ctx, executable)
+	if err != nil {
+		return err
+	}
+	return receipt.err
+}
+
+func inspectComparisonCapabilities(ctx context.Context, executable string) (comparisonAnalysisCapability, error) {
+	if err := ctx.Err(); err != nil {
+		return comparisonAnalysisCapability{}, fmt.Errorf("inspect comparison capabilities: %w", err)
+	}
 	stat, err := os.Stat(executable) // #nosec G703 -- Resolved local FFmpeg executable; its contents identify the capability receipt.
 	if err != nil {
-		return fmt.Errorf("comparison scene analysis: %w", err)
+		return comparisonAnalysisCapability{}, fmt.Errorf("comparison scene analysis: %w", err)
 	}
 	key := comparisonCapabilityIdentity{executable, stat.Size(), stat.ModTime().UnixNano()}
 	if value, ok := comparisonAnalysisCapabilities.Load(key); ok {
 		if receipt, valid := value.(comparisonAnalysisCapability); valid {
-			return receipt.err
+			return receipt, nil
 		}
 	}
 	file, err := os.Open(executable) // #nosec G703 -- Read the resolved FFmpeg executable to bind capabilities to its content hash.
 	if err != nil {
-		return fmt.Errorf("comparison scene analysis: %w", err)
+		return comparisonAnalysisCapability{}, fmt.Errorf("comparison scene analysis: %w", err)
 	}
 	hash := sha256.New()
 	_, hashErr := io.Copy(hash, file)
 	closeErr := file.Close()
 	if err := errors.Join(hashErr, closeErr); err != nil {
-		return err
+		return comparisonAnalysisCapability{}, err
 	}
 	runner := finiteComparisonRunner{base: commandRunner{}, outputLimit: 256 << 10}
 	version, err := runner.Run(ctx, executable, []string{"-version"}, "")
 	if err != nil {
-		return err
+		return comparisonAnalysisCapability{}, err
 	}
 	filters, err := runner.Run(ctx, executable, []string{"-hide_banner", "-filters"}, "")
 	if err != nil {
-		return err
+		return comparisonAnalysisCapability{}, err
 	}
 	available := map[string]bool{}
 	for line := range strings.SplitSeq(string(filters.Stdout), "\n") {
@@ -84,7 +96,7 @@ func comparisonAnalysisCapabilityFor(ctx context.Context, executable string) err
 	}{{"-protocols", "http", 0}, {"-muxers", "rawvideo", 1}, {"-pix_fmts", "gray", 1}} {
 		result, probeErr := runner.Run(ctx, executable, []string{"-hide_banner", capability.option}, "")
 		if probeErr != nil {
-			return probeErr
+			return comparisonAnalysisCapability{}, probeErr
 		}
 		found := false
 		output := capability.option != "-protocols"
@@ -104,7 +116,7 @@ func comparisonAnalysisCapabilityFor(ctx context.Context, executable string) err
 	}
 	hardware, hardwareErr := runner.Run(ctx, executable, []string{"-hide_banner", "-hwaccels"}, "")
 	if hardwareErr != nil {
-		return hardwareErr
+		return comparisonAnalysisCapability{}, hardwareErr
 	}
 	receipt := comparisonAnalysisCapability{
 		hash:     hex.EncodeToString(hash.Sum(nil)),
@@ -113,10 +125,7 @@ func comparisonAnalysisCapabilityFor(ctx context.Context, executable string) err
 		hardware: strings.Fields(string(hardware.Stdout)),
 	}
 	comparisonAnalysisCapabilities.Store(key, receipt)
-	if err != nil {
-		return fmt.Errorf("comparison analysis capability: %w", err)
-	}
-	return nil
+	return receipt, nil
 }
 
 // ComparisonAnalysisExecutableIdentity binds retained analysis to the actual
@@ -129,20 +138,58 @@ func (s *Service) ComparisonAnalysisExecutableIdentity(ctx context.Context) (str
 	if err != nil {
 		return "", err
 	}
-	if err := comparisonAnalysisCapabilityFor(ctx, executable); err != nil {
+	receipt, err := inspectComparisonCapabilities(ctx, executable)
+	if err != nil {
 		return "", err
+	}
+	if receipt.err != nil {
+		return "", receipt.err
+	}
+	return receipt.hash + " " + receipt.version, nil
+}
+
+var comparisonFileCapabilities sync.Map
+
+func requireComparisonFileCapability(ctx context.Context, runner Runner, executable string) error {
+	if _, native := runner.(commandRunner); !native {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("inspect comparison file capability: %w", err)
 	}
 	stat, err := os.Stat(executable)
 	if err != nil {
-		return "", fmt.Errorf("identify comparison executable: %w", err)
+		return fmt.Errorf("identify comparison executable: %w", err)
 	}
-	value, ok := comparisonAnalysisCapabilities.Load(comparisonCapabilityIdentity{executable, stat.Size(), stat.ModTime().UnixNano()})
-	if !ok {
-		return "", errors.New("comparison executable changed during capability inspection")
+	key := comparisonCapabilityIdentity{executable, stat.Size(), stat.ModTime().UnixNano()}
+	if value, ok := comparisonFileCapabilities.Load(key); ok {
+		err, _ := value.(error)
+		return err
 	}
-	receipt, ok := value.(comparisonAnalysisCapability)
-	if !ok {
-		return "", errors.New("comparison executable capability receipt is unavailable")
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	// One synthetic raw frame exercises the exact input filter without opening media.
+	probe := finiteComparisonRunner{
+		base:        commandRunner{},
+		input:       make([]byte, 4),
+		outputLimit: 16 << 10,
 	}
-	return receipt.hash + " " + receipt.version, nil
+	result, err := probe.Run(probeCtx, executable, []string{
+		"-hide_banner", "-loglevel", "error", "-f", "rawvideo", "-pixel_format", "gray", "-video_size", "2x2",
+		"-bsf:V:0", comparisonPacketFilter, "-i", "pipe:0", "-map", "0:V:0", "-c", "copy", "-f", "null", "-",
+	}, "")
+	if err != nil {
+		if result.ExitCode == 0 {
+			return err
+		}
+		err = fmt.Errorf("inspect comparison file capability: %w", api.NewOperationError(api.OperationFailure{
+			Code:             api.OperationFailureInvalidSource,
+			Operation:        api.OperationKindMedia,
+			Recovery:         api.OperationRecoveryEditInput,
+			ComparisonReason: "file_packet_filter_unavailable",
+			Message:          "Update FFmpeg to a build with input bitstream filtering (the noise filter) to compare video files.",
+		}, ErrComparisonNormalizationUnavailable))
+	}
+	comparisonFileCapabilities.Store(key, err)
+	return err
 }

@@ -134,9 +134,10 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 		MainSourceID: "main",
 		Sources: []api.ComparisonSource{
 			{
-				ID:          "main",
-				Label:       "Main",
-				Fingerprint: fingerprint,
+				ID:                "main",
+				Label:             "Main",
+				Fingerprint:       fingerprint,
+				AllowedFrameTypes: []string{"B"},
 			},
 			{
 				ID:          "other",
@@ -206,6 +207,7 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 	retained.ComparisonSources["main"] = main
 	cell := &snapshot.Comparisons.Rows[0].Cells[0]
 	cell.ArtifactID, cell.ContentSHA256 = "retained-main", strings.Repeat("a", 64)
+	cell.PictureType = "I"
 	rendering, err := comparisonRenderingFingerprint(*snapshot.Comparisons, retained, "main", config.ScreenshotHandlingConfig{})
 	if err != nil {
 		t.Fatal(err)
@@ -250,6 +252,7 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 					TimestampSeconds:  tc.seconds,
 					ObservedIdentity:  &observed,
 					ComparisonWitness: witness,
+					PictureType:       "I",
 				}})
 			if err != nil {
 				t.Fatal(err)
@@ -257,6 +260,9 @@ func TestComparisonFrameSelectionInvalidatesOnlyChangedMainMeasurements(t *testi
 			plan := selected.Comparisons
 			if tc.source == "main" && (plan.Rows[0].Cells[0].ArtifactID != "") == tc.invalidated {
 				t.Fatal("PNG reuse did not follow the verified physical main picture")
+			}
+			if tc.source == "main" && !tc.invalidated && !strings.Contains(plan.Rows[0].Cells[0].Warning, "actual type is I") {
+				t.Fatal("PNG reuse lost the incompatible picture-type warning")
 			}
 			if tc.invalidated {
 				if plan.Rows[0].Scene != "" || plan.SceneMix != nil || plan.Rows[0].Cells[1].Confidence != nil {

@@ -32,6 +32,18 @@ func comparisonDiagnostics(pts int, picture string) string {
 		"[Parsed_showinfo_1 @ 0x123] n: 0 pts: %d pts_time:5.8 fmt:yuv420p i:P iskey:0 type:%s\n", pts, picture)
 }
 
+func TestComparisonPacketTraceSkipsMissingPTS(t *testing.T) {
+	trace := comparisonPacketTrace{positions: make(map[int64]int64)}
+	for _, line := range []string{"-101.250000", "nan", "-501.250000", "-42.750000"} {
+		if _, err := trace.consume(line); err != nil {
+			t.Fatalf("parse packet trace: %v", err)
+		}
+	}
+	if len(trace.positions) != 1 || trace.positions[21] != 500 || trace.position != nil {
+		t.Fatalf("incomplete packet changed the next address: %+v", trace)
+	}
+}
+
 type comparisonInspectionRunner func(context.Context, string, []string, string) (CommandResult, error)
 
 func (run comparisonInspectionRunner) Run(ctx context.Context, name string, args []string, dir string) (CommandResult, error) {
