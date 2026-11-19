@@ -337,7 +337,7 @@
   },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
     "reason": "The site URL and session probe use the migrated origin. The release-name and metadata policies retain their existing selectors.",
-    "sha256": "2b779ccd68975a6c9b550fe793e65052ca8ab99c2177cd10c58c1defa95510e1"
+    "sha256": "44ab058c01cfcd19e3b8c6827dd289ab59d36fff3dcbec896587b69c82231c76"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks.",

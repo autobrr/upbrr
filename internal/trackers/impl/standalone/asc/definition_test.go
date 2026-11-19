@@ -33,6 +33,19 @@ func prepareDryRun(ctx context.Context, input trackers.PreparationInput) (api.Tr
 
 const testCookieFileName = "ASC.txt"
 
+func TestASCPreflightRequiresImportedSession(t *testing.T) {
+	t.Parallel()
+	resolver := Profile().AuthResolver
+	if resolver == nil {
+		t.Fatal("ASC upload preflight has no session resolver")
+	}
+	err := resolver(t.Context(), config.TrackerConfig{}, filepath.Join(t.TempDir(), "upbrr.db"), api.TrackerAuthLoginRequest{})
+	failure, ok := errors.AsType[*trackers.AuthResolutionError](err)
+	if !ok || !failure.AuthRequired || failure.ConfirmedInvalid {
+		t.Fatalf("missing ASC cookies returned %v", err)
+	}
+}
+
 func TestASCMigratedUploadDryRun(t *testing.T) {
 	t.Parallel()
 

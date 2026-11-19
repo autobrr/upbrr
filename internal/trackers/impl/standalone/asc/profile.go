@@ -46,6 +46,7 @@ func Profile() standalone.Profile {
 		AudioPolicy:           &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"amigos-share.club"}},
 		AuthCapability:        authcontract.CookieCapability("ASC"),
+		AuthResolver:          resolveAuthSession,
 	}
 }
 

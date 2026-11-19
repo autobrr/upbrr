@@ -6,11 +6,13 @@ package asc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"golang.org/x/net/html"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/connectiontest"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -49,6 +51,27 @@ func loadSessionCookies(ctx context.Context, dbPath string) (map[string]string, 
 		cookies[cookie.Name] = cookie.Value
 	}
 	return cookies, err
+}
+
+func resolveAuthSession(ctx context.Context, _ config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
+	cookies, err := loadSessionCookies(ctx, dbPath)
+	if errors.Is(err, cookiepkg.ErrTrackerCookiesNotFound) || (err == nil && len(cookies) == 0) {
+		return &trackers.AuthResolutionError{Reason: "ASC cookies missing", AuthRequired: true}
+	}
+	if err != nil {
+		return &trackers.AuthResolutionError{Reason: "could not read ASC cookies", Transient: true}
+	}
+	result := connectiontest.Run(ctx, func(ctx context.Context, client *http.Client) api.ConnectionTestResult {
+		return testConnection(ctx, trackers.ConnectionProbeInput{Cookies: cookies}, client)
+	})
+	switch result.Code {
+	case "success":
+		return nil
+	case "authentication_required":
+		return &trackers.AuthResolutionError{Reason: result.Message, AuthRequired: true}
+	default:
+		return &trackers.AuthResolutionError{Reason: result.Message, Transient: true}
+	}
 }
 
 func testConnection(ctx context.Context, input trackers.ConnectionProbeInput, client *http.Client) api.ConnectionTestResult {
