@@ -52,7 +52,7 @@ func (b workflowDescriptionBuilder) Fingerprints(
 	}
 	retainWorkflowScreenshotSelection(&subject, privateMedia)
 	retainWorkflowHDRDescriptionEvidence(&subject, privateMedia)
-	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
+	exactMedia, err := b.resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
 		return "", "", err
 	}
@@ -137,7 +137,7 @@ func (b workflowDescriptionBuilder) Build(
 	}
 	retainWorkflowScreenshotSelection(&subject, privateMedia)
 	retainWorkflowHDRDescriptionEvidence(&subject, privateMedia)
-	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
+	exactMedia, err := b.resolveWorkflowDescriptionMedia(ctx, subject, privateMedia, media)
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
@@ -388,6 +388,7 @@ func resolveWorkflowExactMedia(
 	ctx context.Context,
 	privateMedia any,
 	media api.MediaArtifactSet,
+	settings config.ScreenshotHandlingConfig,
 ) (*api.ExactMediaAssets, error) {
 	var audio *releaseworkflow.DescriptionResources
 	if resources, ok := privateMedia.(releaseworkflow.DescriptionResources); ok {
@@ -398,7 +399,7 @@ func resolveWorkflowExactMedia(
 	if !ok {
 		return nil, errors.New("workflow exact media: retained artifacts are incompatible")
 	}
-	if err := verifyWorkflowComparisons(ctx, media, privateArtifacts, nil); err != nil {
+	if err := verifyWorkflowComparisons(ctx, media, privateArtifacts, &settings); err != nil {
 		return nil, fmt.Errorf("workflow exact media: comparison review: %w", err)
 	}
 	screenshots := make([]workflowExactLocalMedia, 0, len(privateArtifacts.Screenshots))

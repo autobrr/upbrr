@@ -49,12 +49,14 @@ func (s *Service) openComparisonFileInput(
 	if _, native := s.runner.(commandRunner); !native {
 		return ctx, input, nil
 	}
-	file, err := os.Open(path) // #nosec G304 -- The caller validates the selected local comparison source.
+	file, stat, err := pathing.OpenRegularFile(path)
+	if errors.Is(err, pathing.ErrNotRegular) {
+		return ctx, nil, comparisonFileInputChanged()
+	}
 	if err != nil {
 		return ctx, nil, fmt.Errorf("open comparison file input: %w", err)
 	}
-	stat, err := file.Stat()
-	if err != nil || !stat.Mode().IsRegular() || expected != nil && !pathing.SameFileVersion(expected, stat) {
+	if expected != nil && !pathing.SameFileVersion(expected, stat) {
 		_ = file.Close()
 		return ctx, nil, comparisonFileInputChanged()
 	}
@@ -128,7 +130,7 @@ func (input *comparisonFileInput) verify() error {
 	if input.file == nil {
 		return nil
 	}
-	atPath, err := os.Stat(input.path)
+	atPath, err := pathing.RegularFileInfo(input.path)
 	if err != nil || !pathing.SameFileVersion(input.stat, atPath) {
 		return comparisonFileInputChanged()
 	}

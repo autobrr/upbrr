@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/comparisons"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -479,10 +480,15 @@ func (b workflowMediaBuilder) DiscoverComparisonSource(
 }
 
 type resolvedComparisonVideo struct {
-	fingerprint string
-	input       *filesystem.ResolvedComparisonInput
-	candidate   *api.ComparisonProgrammeCandidate
-	file        os.FileInfo
+	fingerprint       string
+	legacyFingerprint string
+	input             *filesystem.ResolvedComparisonInput
+	candidate         *api.ComparisonProgrammeCandidate
+	file              os.FileInfo
+}
+
+func (video resolvedComparisonVideo) matchesFingerprint(expected string) bool {
+	return expected != "" && (expected == video.fingerprint || expected == video.legacyFingerprint)
 }
 
 func resolveComparisonVideo(
@@ -566,7 +572,19 @@ func resolveComparisonFileVideo(ctx context.Context, path string, selection *api
 	if err != nil {
 		return resolvedComparisonVideo{}, fmt.Errorf("verify comparison source: %w", err)
 	}
-	return resolvedComparisonVideo{fingerprint: fingerprint, file: file}, nil
+	version, err := api.CanonicalWorkflowFingerprint(struct {
+		SampledContent string
+		ModifiedAt     time.Time
+	}{fingerprint, file.ModTime().UTC()})
+	if err != nil {
+		return resolvedComparisonVideo{}, fmt.Errorf("fingerprint comparison file version: %w", err)
+	}
+	// Older comparisons retain their sampled fingerprint until reconfigured.
+	return resolvedComparisonVideo{
+		fingerprint:       string(version),
+		legacyFingerprint: fingerprint,
+		file:              file,
+	}, nil
 }
 
 func (b workflowMediaBuilder) refreshComparisonDisplays(ctx context.Context, sources map[string]workflowComparisonSource) error {

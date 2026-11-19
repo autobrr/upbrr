@@ -132,9 +132,17 @@ func TestComparisonInheritedToneMapChangeRetainsFramesForRecapture(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.CommandContext(t.Context(), executable, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "nullsrc=size=128x72:rate=25:duration=4", "-vf", "geq=lum='96+35*sin(X/9+N/9)+25*cos(Y/11)':cb=128:cr=128,zscale=primariesin=bt709:transferin=bt709:matrixin=bt709:rangein=limited:primaries=bt2020:transfer=smpte2084:matrix=bt2020nc:range=limited,format=yuv420p10le", "-c:v", "ffv1", video)
+	command := exec.CommandContext(t.Context(), executable, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "nullsrc=size=128x72:rate=25:duration=16", "-vf", "geq=lum='96+35*sin(X/9+N/9)+25*cos(Y/11)':cb=128:cr=128,zscale=primariesin=bt709:transferin=bt709:matrixin=bt709:rangein=limited:primaries=bt2020:transfer=smpte2084:matrix=bt2020nc:range=limited,format=yuv420p10le", "-c:v", "ffv1", video)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("author textured HDR fixture: %v %s", err, output)
+	}
+	encode := filepath.Join(root, "Example.HDR.Encode.mkv")
+	contents, err := os.ReadFile(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(encode, contents, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(root, "app.sqlite")}}
 	cfg.ScreenshotHandling.TonemapAlgorithm = "hable"
@@ -166,7 +174,7 @@ func TestComparisonInheritedToneMapChangeRetainsFramesForRecapture(t *testing.T)
 		api.ComparisonInstructions{
 			Action:       "configure",
 			Plan:         plan,
-			VideoSources: []api.ComparisonVideoSelection{{ID: "other", Path: video}},
+			VideoSources: []api.ComparisonVideoSelection{{ID: "other", Path: encode}},
 		}, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -203,6 +211,15 @@ func TestComparisonInheritedToneMapChangeRetainsFramesForRecapture(t *testing.T)
 		}
 		if err := verifyWorkflowComparisons(t.Context(), approved, restarted, &changed.config.ScreenshotHandling); err == nil {
 			t.Fatal("changed renderer settings retained hosting authority")
+		}
+		descriptionBuilder := workflowDescriptionBuilder{config: cfg}
+		if _, err := descriptionBuilder.resolveWorkflowDescriptionMedia(t.Context(), api.UploadSubject{}, restarted, approved); err != nil {
+			t.Fatalf("compatible comparisons could not reach description preparation: %v", err)
+		}
+		descriptionBuilder.config = changed.config
+		if _, err := descriptionBuilder.resolveWorkflowDescriptionMedia(t.Context(), api.UploadSubject{}, restarted, approved); err == nil ||
+			!strings.Contains(err.Error(), "comparison rendering settings changed") {
+			t.Fatalf("changed renderer settings retained description authority: %v", err)
 		}
 		if _, _, err := changed.EditComparisons(t.Context(), release, projections, &approved, restarted,
 			api.ComparisonInstructions{Action: "approve", ExpectedFingerprint: approved.Comparisons.Fingerprint}, nil, time.Now()); err == nil {
@@ -302,6 +319,37 @@ func TestComparisonInheritedToneMapChangeRetainsFramesForRecapture(t *testing.T)
 	if err != nil || !preview.Processing.Tonemapped || *preview.ObservedPTS != *after[0].ObservedPTS {
 		t.Fatalf("recaptured pixels and current preview disagree: %v", err)
 	}
+	t.Run("saved approval rejects same-size edit beyond content sample", func(t *testing.T) {
+		reloaded, err := decodeWorkflowMediaPrivateArtifacts(b, payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := verifyWorkflowComparisons(t.Context(), approved, reloaded, &cfg.ScreenshotHandling); err != nil {
+			t.Fatalf("unchanged approved comparison lost authority after reload: %v", err)
+		}
+		before, err := resolveComparisonFileVideo(t.Context(), encode, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(contents) <= int(api.SourceContentIdentitySampleBytes) {
+			t.Fatal("fixture must contain a byte beyond the sample")
+		}
+		contents[len(contents)-1] ^= 1
+		if err := os.WriteFile(encode, contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		mtime := before.file.ModTime().Add(2 * time.Second)
+		if err := os.Chtimes(encode, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+		changed, err := resolveComparisonFileVideo(t.Context(), encode, nil)
+		if err != nil || before.legacyFingerprint != changed.legacyFingerprint {
+			t.Fatalf("fixture changed the prefix fingerprint: %v", err)
+		}
+		if err := verifyWorkflowComparisons(t.Context(), approved, reloaded, &cfg.ScreenshotHandling); !errors.Is(err, api.ErrActiveInputChanged) {
+			t.Fatalf("reloaded approval accepted changed secondary video: %v", err)
+		}
+	})
 }
 
 func TestComparisonImportReplacementRetainsMappingAndPixels(t *testing.T) {

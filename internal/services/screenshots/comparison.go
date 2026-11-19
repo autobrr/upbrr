@@ -382,7 +382,7 @@ func comparisonInspectionPathCurrent(path string, expected os.FileInfo) bool {
 	if expected == nil {
 		return true
 	}
-	current, err := os.Stat(path) // #nosec G703 -- The caller already validated this explicitly selected local file.
+	current, err := pathing.RegularFileInfo(path)
 	return err == nil && pathing.SameFileVersion(expected, current)
 }
 

@@ -140,7 +140,7 @@ func TestWorkflowDescriptionUsesExactAudioAnalysisWithoutAddingScreenshots(t *te
 		Media:         workflowMediaPrivateArtifacts{},
 		AudioAnalysis: analysis,
 		AudioPaths:    descriptionAudioPathsFake{path: graphPath},
-	}, api.MediaArtifactSet{})
+	}, api.MediaArtifactSet{}, config.ScreenshotHandlingConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestWorkflowDescriptionUsesExactAudioAnalysisWithoutAddingScreenshots(t *te
 		Media:         workflowMediaPrivateArtifacts{},
 		AudioAnalysis: analysis,
 		AudioPaths:    descriptionAudioPathsFake{path: graphPath},
-	}, api.MediaArtifactSet{})
+	}, api.MediaArtifactSet{}, config.ScreenshotHandlingConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +487,7 @@ func TestResolveWorkflowExactMediaKeepsChannelsAndHostedVariantsSeparate(t *test
 		},
 	}
 
-	exact, err := resolveWorkflowExactMedia(t.Context(), private, media)
+	exact, err := resolveWorkflowExactMedia(t.Context(), private, media, config.ScreenshotHandlingConfig{})
 	if err != nil {
 		t.Fatalf("resolve exact media: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestResolveWorkflowExactMediaKeepsChannelsAndHostedVariantsSeparate(t *test
 			media.Artifacts[index].Selected = false
 		}
 	}
-	exact, err = resolveWorkflowExactMedia(t.Context(), private, media)
+	exact, err = resolveWorkflowExactMedia(t.Context(), private, media, config.ScreenshotHandlingConfig{})
 	if err != nil {
 		t.Fatalf("resolve deselected media: %v", err)
 	}

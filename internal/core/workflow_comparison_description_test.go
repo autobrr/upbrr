@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/comparisons"
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -106,7 +107,7 @@ func TestComparisonDescriptionProjectionRetainsCellIdentity(t *testing.T) {
 	for _, reuse := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reuse=%t", reuse), func(t *testing.T) {
 			media, retained := testComparisonDescriptionMedia(t, reuse)
-			exact, err := resolveWorkflowExactMedia(t.Context(), retained, media)
+			exact, err := resolveWorkflowExactMedia(t.Context(), retained, media, config.ScreenshotHandlingConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -134,7 +135,7 @@ func TestComparisonDescriptionProjectionRetainsCellIdentity(t *testing.T) {
 				t.Fatal("description projection changed retained comparison settings")
 			}
 			media.Comparisons.ApprovedFingerprint = ""
-			if _, err := resolveWorkflowExactMedia(t.Context(), retained, media); err == nil {
+			if _, err := resolveWorkflowExactMedia(t.Context(), retained, media, config.ScreenshotHandlingConfig{}); err == nil {
 				t.Fatal("unreviewed comparison reached description projection")
 			}
 		})
@@ -143,7 +144,7 @@ func TestComparisonDescriptionProjectionRetainsCellIdentity(t *testing.T) {
 
 func TestComparisonDescriptionReuseTracksRowsPixelsAndLinks(t *testing.T) {
 	media, retained := testComparisonDescriptionMedia(t, false)
-	exact, err := resolveWorkflowExactMedia(t.Context(), retained, media)
+	exact, err := resolveWorkflowExactMedia(t.Context(), retained, media, config.ScreenshotHandlingConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

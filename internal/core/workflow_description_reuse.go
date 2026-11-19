@@ -148,7 +148,7 @@ func (b workflowDescriptionBuilder) reusableDescriptionInputs(
 			return "", "", "", false, err
 		}
 	}
-	exactMedia, err := resolveWorkflowDescriptionMedia(ctx, resourceSubject, privateMedia, media)
+	exactMedia, err := b.resolveWorkflowDescriptionMedia(ctx, resourceSubject, privateMedia, media)
 	if err != nil {
 		return "", "", "", false, err
 	}

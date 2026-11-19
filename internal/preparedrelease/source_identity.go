@@ -58,20 +58,19 @@ func VerifyInputSourceWithProgress(
 // VerifyInputFileSource returns a regular file's content fingerprint and the
 // identity of the open file that supplied its sample.
 func VerifyInputFileSource(ctx context.Context, path string) (string, os.FileInfo, error) {
-	file, err := os.Open(path)
+	file, info, err := pathutil.OpenRegularFile(path)
+	if errors.Is(err, pathutil.ErrNotRegular) {
+		return "", nil, fmt.Errorf("%w: source is not a regular file", ErrSourceChanged)
+	}
 	if err != nil {
 		return "", nil, fmt.Errorf("prepared release: open source identity file: %w", err)
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return "", nil, fmt.Errorf("%w: source is not an accessible regular file", ErrSourceChanged)
-	}
 	verified, err := verifyInputSource(ctx, api.PrepareInput{SourcePath: path}, nil, file)
 	if err != nil {
 		return "", nil, err
 	}
-	current, err := os.Stat(path)
+	current, err := pathutil.RegularFileInfo(path)
 	if err != nil || !pathutil.SameFileVersion(info, current) {
 		return "", nil, fmt.Errorf("%w: sampled file changed", ErrSourceChanged)
 	}

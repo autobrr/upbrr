@@ -1461,7 +1461,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		t.Fatalf("published reusable media = %#v", publishedAssets)
 	}
 	// Questionnaire-only projection changes must preserve exact screenshot review identity.
-	beforeExact, err := resolveWorkflowExactMedia(t.Context(), retainedResource, snapshot)
+	beforeExact, err := resolveWorkflowExactMedia(t.Context(), retainedResource, snapshot, config.ScreenshotHandlingConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1472,7 +1472,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterExact, err := resolveWorkflowExactMedia(t.Context(), answerResource, answerMedia)
+	afterExact, err := resolveWorkflowExactMedia(t.Context(), answerResource, answerMedia, config.ScreenshotHandlingConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1678,7 +1678,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		!refreshed.Artifacts[2].Selected || refreshed.Artifacts[2].URL != host.rawURL {
 		t.Fatalf("account mismatch did not replace stale hosted media: %#v", refreshed.Artifacts)
 	}
-	exact, exactErr := resolveWorkflowExactMedia(t.Context(), refreshedResource, refreshed)
+	exact, exactErr := resolveWorkflowExactMedia(t.Context(), refreshedResource, refreshed, config.ScreenshotHandlingConfig{})
 	if exactErr != nil || len(exact.ScreenshotUploads) != 1 || exact.ScreenshotUploads[0].RawURL != host.rawURL {
 		t.Fatalf("account mismatch exact media err=%v media=%#v", exactErr, exact)
 	}
@@ -1744,7 +1744,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		retriedAttempts[0].Status != api.StageStatusCompleted || slices.Contains(retried.FailedHosts, "imgbb") {
 		t.Fatalf("retried account refresh err=%v attempts=%#v snapshot=%#v calls=%#v", err, retriedAttempts, retried, host.calls)
 	}
-	retriedExact, exactErr := resolveWorkflowExactMedia(t.Context(), retriedResource, retried)
+	retriedExact, exactErr := resolveWorkflowExactMedia(t.Context(), retriedResource, retried, config.ScreenshotHandlingConfig{})
 	if exactErr != nil || len(retriedExact.ScreenshotUploads) != 1 || retriedExact.ScreenshotUploads[0].RawURL != host.rawURL {
 		t.Fatalf("retried account refresh exact media err=%v media=%#v", exactErr, retriedExact)
 	}
@@ -1771,7 +1771,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	if err != nil {
 		t.Fatalf("reopen refreshed account media: %v", err)
 	}
-	reopenedExact, exactErr := resolveWorkflowExactMedia(t.Context(), reopenedResource, reopened)
+	reopenedExact, exactErr := resolveWorkflowExactMedia(t.Context(), reopenedResource, reopened, config.ScreenshotHandlingConfig{})
 	if exactErr != nil || len(reopenedExact.ScreenshotUploads) != 1 ||
 		reopenedExact.ScreenshotUploads[0].RawURL != refreshedAssets[0].HostedLinks[0].RawURL {
 		t.Fatalf("reopened exact media err=%v media=%#v", exactErr, reopenedExact)
@@ -3578,7 +3578,7 @@ func TestWorkflowMediaBuilderRetainsImportedScreenshotsAndSourceURLs(t *testing.
 	if !ok {
 		t.Fatalf("private imported media = %#v", private)
 	}
-	exact, err := resolveWorkflowExactMedia(t.Context(), retained, snapshot)
+	exact, err := resolveWorkflowExactMedia(t.Context(), retained, snapshot, config.ScreenshotHandlingConfig{})
 	if err != nil || len(exact.Screenshots) != 2 || len(exact.ScreenshotUploads) != 2 || len(retained.HostedImages) != 2 {
 		t.Fatalf("exact imported media = %#v err=%v", exact, err)
 	}
@@ -3669,7 +3669,7 @@ func TestWorkflowMediaBuilderKeepsSourceOnlyImagesLocal(t *testing.T) {
 	if !ok {
 		t.Fatalf("private imported media = %#v", private)
 	}
-	exact, err := resolveWorkflowExactMedia(t.Context(), retained, snapshot)
+	exact, err := resolveWorkflowExactMedia(t.Context(), retained, snapshot, config.ScreenshotHandlingConfig{})
 	if err != nil || len(exact.Screenshots) != 2 || len(exact.ScreenshotUploads) != 0 || len(retained.HostedImages) != 0 ||
 		countMediaArtifacts(snapshot.Artifacts, api.MediaArtifactHostedImage) != 0 {
 		t.Fatalf("source-only images were treated as hosted: snapshot=%#v exact=%#v err=%v", snapshot, exact, err)
@@ -3944,7 +3944,7 @@ func TestWorkflowMediaRecordsImportedHostedImagesInReusableRepository(t *testing
 		if !ok {
 			t.Fatalf("incremental imported media = %T", privateCombined)
 		}
-		exact, exactErr := resolveWorkflowExactMedia(t.Context(), privateArtifacts, combined)
+		exact, exactErr := resolveWorkflowExactMedia(t.Context(), privateArtifacts, combined, config.ScreenshotHandlingConfig{})
 		if exactErr != nil || countMediaArtifacts(combined.Artifacts, api.MediaArtifactScreenshot) != 1 ||
 			countMediaArtifacts(combined.Artifacts, api.MediaArtifactHostedImage) != 1 ||
 			len(exact.ScreenshotUploads) != 1 || exact.ScreenshotUploads[0].RawURL != candidateURL ||
@@ -4093,7 +4093,7 @@ func TestWorkflowMediaRestoreKeepsEqualContentImageURLsDistinct(t *testing.T) {
 	if !ok {
 		t.Fatalf("combined equal-content media = %T", privateCombined)
 	}
-	exact, err := resolveWorkflowExactMedia(t.Context(), privateArtifacts, combined)
+	exact, err := resolveWorkflowExactMedia(t.Context(), privateArtifacts, combined, config.ScreenshotHandlingConfig{})
 	if err != nil || countMediaArtifacts(combined.Artifacts, api.MediaArtifactScreenshot) != 2 ||
 		countMediaArtifacts(combined.Artifacts, api.MediaArtifactHostedImage) != 2 || len(exact.ScreenshotUploads) != 2 {
 		t.Fatalf("equal-content images after URL change = %#v uploads=%#v err=%v", combined.Artifacts, exact.ScreenshotUploads, err)
@@ -4123,7 +4123,7 @@ func TestWorkflowMediaRestoreKeepsEqualContentImageURLsDistinct(t *testing.T) {
 	if !ok {
 		t.Fatalf("removed source media = %T", removedPrivate)
 	}
-	removedExact, err := resolveWorkflowExactMedia(t.Context(), privateRemoved, withRemovedSource)
+	removedExact, err := resolveWorkflowExactMedia(t.Context(), privateRemoved, withRemovedSource, config.ScreenshotHandlingConfig{})
 	if err != nil || countMediaArtifacts(withRemovedSource.Artifacts, api.MediaArtifactScreenshot) != 3 ||
 		len(removedExact.ScreenshotUploads) != 3 {
 		t.Fatalf("removed source media = %#v uploads=%#v err=%v", withRemovedSource.Artifacts, removedExact.ScreenshotUploads, err)
@@ -4186,7 +4186,7 @@ func TestWorkflowMediaIncrementalCaptureRetainsImportedHostedLinks(t *testing.T)
 	if !ok {
 		t.Fatalf("private imported media = %T", private)
 	}
-	exact, err := resolveWorkflowExactMedia(t.Context(), privateArtifacts, combined)
+	exact, err := resolveWorkflowExactMedia(t.Context(), privateArtifacts, combined, config.ScreenshotHandlingConfig{})
 	if err != nil || len(exact.ScreenshotUploads) != 1 || exact.ScreenshotUploads[0].RawURL != url {
 		t.Fatalf("incremental imported links = %#v err=%v", exact.ScreenshotUploads, err)
 	}
@@ -4246,7 +4246,7 @@ func TestWorkflowMediaIncrementalRefreshesChangedSavedURL(t *testing.T) {
 	if !ok {
 		t.Fatalf("private media = %T", privateSecond)
 	}
-	exact, err := resolveWorkflowExactMedia(t.Context(), retained, second)
+	exact, err := resolveWorkflowExactMedia(t.Context(), retained, second, config.ScreenshotHandlingConfig{})
 	if err != nil || second.SavedImagePlanID != planID || countMediaArtifacts(second.Artifacts, api.MediaArtifactScreenshot) != 1 ||
 		countMediaArtifacts(second.Artifacts, api.MediaArtifactHostedImage) != 1 ||
 		len(exact.ScreenshotUploads) != 1 || exact.ScreenshotUploads[0].RawURL != plan.TrackerImageLinks[0].URL ||
@@ -4298,7 +4298,7 @@ func TestWorkflowMediaIncrementalLinksExistingLocalScreenshot(t *testing.T) {
 	if !ok {
 		t.Fatalf("private media = %T", privateCombined)
 	}
-	exact, err := resolveWorkflowExactMedia(t.Context(), private, combined)
+	exact, err := resolveWorkflowExactMedia(t.Context(), private, combined, config.ScreenshotHandlingConfig{})
 	if err != nil || countMediaArtifacts(combined.Artifacts, api.MediaArtifactScreenshot) != 1 ||
 		countMediaArtifacts(combined.Artifacts, api.MediaArtifactHostedImage) != 1 ||
 		len(exact.ScreenshotUploads) != 1 || exact.ScreenshotUploads[0].RawURL != plan.TrackerImageLinks[0].URL ||
@@ -4359,7 +4359,7 @@ func TestWorkflowMediaIncrementalCaptureAddsFrameWithoutDuplicatingImportedImage
 	if !ok {
 		t.Fatalf("private media = %T", privateSecond)
 	}
-	exact, err := resolveWorkflowExactMedia(t.Context(), privateArtifacts, second)
+	exact, err := resolveWorkflowExactMedia(t.Context(), privateArtifacts, second, config.ScreenshotHandlingConfig{})
 	if err != nil || len(exact.ScreenshotUploads) != 1 || exact.ScreenshotUploads[0].RawURL != url {
 		t.Fatalf("incremental exact uploads = %#v err=%v", exact.ScreenshotUploads, err)
 	}

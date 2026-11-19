@@ -600,7 +600,7 @@ func verifiedComparisonVideos(
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("verify comparison source: %w", ctx.Err())
 		}
-		if err != nil || current.fingerprint != private.Fingerprint {
+		if err != nil || !current.matchesFingerprint(private.Fingerprint) {
 			return nil, fmt.Errorf("%w: comparison video changed; rematch and recapture its rows", api.ErrActiveInputChanged)
 		}
 		if private.Source.FileIdentity != nil && !pathing.SameFileVersion(private.Source.FileIdentity, current.file) {
@@ -624,7 +624,7 @@ func verifyComparisonFileVersions(ctx context.Context, sources map[string]workfl
 		if path == "" {
 			path = source.Source.Path
 		}
-		current, err := os.Stat(path)
+		current, err := pathing.RegularFileInfo(path)
 		if err != nil || !pathing.SameFileVersion(source.Source.FileIdentity, current) {
 			return fmt.Errorf("%w: comparison video changed during this operation", api.ErrActiveInputChanged)
 		}
@@ -633,7 +633,7 @@ func verifyComparisonFileVersions(ctx context.Context, sources map[string]workfl
 }
 
 // File pins are valid within an operation. Retained resources, including the
-// vault's in-memory copies, keep the portable sampled fingerprint.
+// vault's in-memory copies, keep the serialized comparison fingerprint.
 func clearComparisonFileIdentities(sources map[string]workflowComparisonSource) {
 	for id, source := range sources {
 		source.Source.FileIdentity = nil
@@ -2193,7 +2193,7 @@ func (b workflowMediaBuilder) RestoreComparisons(ctx context.Context, release ap
 			subject = &retained.screenshotSubject
 		}
 		resolved, err := resolveComparisonVideo(ctx, path, original.Selection, subject)
-		if err != nil || resolved.fingerprint != original.Fingerprint {
+		if err != nil || !resolved.matchesFingerprint(original.Fingerprint) {
 			changed[source.ID] = true
 			continue
 		}

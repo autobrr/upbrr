@@ -32,10 +32,12 @@ func TestComparisonPublicationRejectsMutationOutsideFingerprintSample(t *testing
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	fingerprint, err := comparisonVideoFingerprint(t.Context(), path)
+	before, err := resolveComparisonFileVideo(t.Context(), path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Use the legacy digest to exercise the operation-local pin independently.
+	fingerprint := before.legacyFingerprint
 	plan := api.ComparisonPlan{Sources: []api.ComparisonSource{{ID: "main", Fingerprint: fingerprint}}, MainSourceID: "main"}
 	retained := workflowMediaPrivateArtifacts{ComparisonSources: map[string]workflowComparisonSource{"main": {Path: path, Fingerprint: fingerprint}}}
 	retained.ComparisonSources, err = verifiedComparisonVideos(t.Context(), plan, retained)
@@ -50,8 +52,8 @@ func TestComparisonPublicationRejectsMutationOutsideFingerprintSample(t *testing
 	if err := os.Chtimes(path, modified, modified); err != nil {
 		t.Fatal(err)
 	}
-	after, err := comparisonVideoFingerprint(t.Context(), path)
-	if err != nil || after != fingerprint {
+	after, err := resolveComparisonFileVideo(t.Context(), path, nil)
+	if err != nil || after.legacyFingerprint != fingerprint {
 		t.Fatalf("fixture changed the sampled fingerprint: %v", err)
 	}
 	if err := verifyComparisonVideos(t.Context(), plan, retained); !errors.Is(err, api.ErrActiveInputChanged) {

@@ -132,13 +132,13 @@ func hdrDescriptionTrackers(subject api.UploadSubject, trackerNames []string) []
 	return generated
 }
 
-func resolveWorkflowDescriptionMedia(
+func (b workflowDescriptionBuilder) resolveWorkflowDescriptionMedia(
 	ctx context.Context,
 	subject api.UploadSubject,
 	privateMedia any,
 	media api.MediaArtifactSet,
 ) (*api.ExactMediaAssets, error) {
-	exact, err := resolveWorkflowExactMedia(ctx, privateMedia, media)
+	exact, err := resolveWorkflowExactMedia(ctx, privateMedia, media, b.config.ScreenshotHandling)
 	if err != nil {
 		return nil, err
 	}
