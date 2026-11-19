@@ -637,6 +637,47 @@ func TestSearchTorrentsWithEvidenceRejectsMissingContinuationLink(t *testing.T) 
 	}
 }
 
+func TestSearchTorrentsWithEvidenceDecodesInternalFlags(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[
+			{"id":1,"attributes":{"name":"Example.Release.A-GRP","internal":0}},
+			{"id":2,"attributes":{"name":"Example.Release.B-GRP","internal":1}},
+			{"id":3,"attributes":{"name":"Example.Release.C-GRP","internal":false}},
+			{"id":4,"attributes":{"name":"Example.Release.D-GRP","internal":true}},
+			{"id":5,"attributes":{"name":"Example.Release.E-GRP","internal":null}},
+			{"id":6,"attributes":{"name":"Example.Release.F-GRP"}}
+		],"links":{"next":null}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := newUnit3DSearchTestClient(t, server)
+	result, err := client.SearchTorrentsWithEvidenceBound(t.Context(), "AITHER", nil, false, 1)
+	if err != nil {
+		t.Fatalf("search torrents: %v", err)
+	}
+	want := []string{"non_internal", "internal", "non_internal", "internal", "", ""}
+	if !result.Complete || len(result.Entries) != len(want) {
+		t.Fatalf("complete = %t, entries = %d", result.Complete, len(result.Entries))
+	}
+	for i, entry := range result.Entries {
+		if entry.Evidence.InternalStatus != want[i] || entry.Internal != (want[i] == "internal") {
+			t.Errorf("entry %d internal = %t, evidence = %q, want %q", i, entry.Internal, entry.Evidence.InternalStatus, want[i])
+		}
+	}
+}
+
+func TestUnit3DSearchRejectsInvalidInternalFlag(t *testing.T) {
+	t.Parallel()
+
+	var attrs unit3dSearchAttrs
+	if err := json.Unmarshal([]byte(`{"internal":2}`), &attrs); err == nil {
+		t.Fatal("accepted an invalid internal flag")
+	}
+}
+
 func newUnit3DSearchTestClient(t *testing.T, server *httptest.Server) *Client {
 	t.Helper()
 	const tracker = "AITHER"
