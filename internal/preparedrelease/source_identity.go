@@ -52,6 +52,34 @@ func VerifyInputSourceWithProgress(
 	input api.PrepareInput,
 	report SourceIdentityProgressReporter,
 ) (api.VerifiedInputSource, error) {
+	return verifyInputSource(ctx, input, report, nil)
+}
+
+// VerifyInputFileSource returns a regular file's content fingerprint and the
+// identity of the open file that supplied its sample.
+func VerifyInputFileSource(ctx context.Context, path string) (string, os.FileInfo, error) {
+	file, info, err := pathutil.OpenRegularFile(path)
+	if errors.Is(err, pathutil.ErrNotRegular) {
+		return "", nil, fmt.Errorf("%w: source is not a regular file", ErrSourceChanged)
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("prepared release: open source identity file: %w", err)
+	}
+	defer file.Close()
+	verified, err := verifyInputSource(ctx, api.PrepareInput{SourcePath: path}, nil, file)
+	if err != nil {
+		return "", nil, err
+	}
+	current, err := pathutil.RegularFileInfo(path)
+	if err != nil || !pathutil.SameFileVersion(info, current) {
+		return "", nil, fmt.Errorf("%w: sampled file changed", ErrSourceChanged)
+	}
+	return verified.Identity.Digest, info, nil
+}
+
+func verifyInputSource(
+	ctx context.Context, input api.PrepareInput, report SourceIdentityProgressReporter, file *os.File,
+) (api.VerifiedInputSource, error) {
 	if ctx == nil {
 		return api.VerifiedInputSource{}, errors.New("prepared release: source identity context is required")
 	}
@@ -67,7 +95,14 @@ func VerifyInputSourceWithProgress(
 	if err != nil {
 		return api.VerifiedInputSource{}, err
 	}
-	identity, err := VerifySourceContentIdentity(ctx, manifest, report)
+	if file != nil {
+		info, statErr := file.Stat()
+		if statErr != nil || len(manifest.Entries) != 1 || manifest.Entries[0].Size != info.Size() ||
+			!manifest.Entries[0].ModifiedAt.Equal(info.ModTime()) {
+			return api.VerifiedInputSource{}, fmt.Errorf("%w: file does not match its manifest", ErrSourceChanged)
+		}
+	}
+	identity, err := verifySourceContentIdentity(ctx, manifest, report, file)
 	if err != nil {
 		return api.VerifiedInputSource{}, err
 	}
@@ -84,6 +119,12 @@ func VerifySourceContentIdentity(
 	manifest api.SourceManifest,
 	report SourceIdentityProgressReporter,
 ) (api.SourceContentIdentity, error) {
+	return verifySourceContentIdentity(ctx, manifest, report, nil)
+}
+
+func verifySourceContentIdentity(
+	ctx context.Context, manifest api.SourceManifest, report SourceIdentityProgressReporter, opened *os.File,
+) (api.SourceContentIdentity, error) {
 	if ctx == nil {
 		return api.SourceContentIdentity{}, errors.New("prepared release: source identity context is required")
 	}
@@ -93,6 +134,9 @@ func VerifySourceContentIdentity(
 	}
 	if err := VerifySourceManifestStability(ctx, manifest); err != nil {
 		return api.SourceContentIdentity{}, err
+	}
+	if opened != nil && len(files) != 1 {
+		return api.SourceContentIdentity{}, fmt.Errorf("%w: expected one file to sample", ErrSourceChanged)
 	}
 
 	verified := make([]api.VerifiedSourceFile, 0, len(files))
@@ -109,7 +153,7 @@ func VerifySourceContentIdentity(
 			})
 		}
 		sampleBytes := min(file.size, api.SourceContentIdentitySampleBytes)
-		digest, bytesRead, err := hashSourceFileSample(ctx, file.localPath, sampleBytes, completed, total, report)
+		digest, bytesRead, err := hashSourceFileSample(ctx, file.localPath, sampleBytes, completed, total, report, opened)
 		if err != nil {
 			return api.SourceContentIdentity{}, err
 		}
@@ -353,12 +397,16 @@ func hashSourceFileSample(
 	completed int64,
 	total int64,
 	report SourceIdentityProgressReporter,
+	file *os.File,
 ) (string, int64, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", 0, fmt.Errorf("prepared release: open source identity file %q: %w", path, err)
+	if file == nil {
+		var err error
+		file, err = os.Open(path)
+		if err != nil {
+			return "", 0, fmt.Errorf("prepared release: open source identity file %q: %w", path, err)
+		}
+		defer file.Close()
 	}
-	defer file.Close()
 
 	hash := sha256.New()
 	buffer := make([]byte, 256*1024)

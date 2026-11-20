@@ -6,6 +6,7 @@ package api
 // PreparedReleaseDisplay is the canonical presentation projection for one
 // exact prepared generation.
 type PreparedReleaseDisplay struct {
+	ComparisonSourceCapabilities *ComparisonSourceCapabilities `json:"comparisonSourceCapabilities,omitempty"`
 	// TVDBNamingAvailable distinguishes usable TVDB naming data (even without a
 	// year qualifier) from missing data where manual TV-year correction is allowed.
 	TVDBNamingAvailable bool `json:",omitempty"`

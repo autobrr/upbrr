@@ -30,6 +30,22 @@ const plan = (): ScreenshotPlan => ({
 const facet = (): ScreenshotsFacet => {
   const screenshotPlan = plan();
   return {
+    comparisons: {
+      view: {
+        workflowID: "workflow-1",
+        plan: null,
+        artifacts: null,
+        previews: {},
+        previewPositions: {},
+        busy: false,
+        blockedReason: "",
+        error: "",
+      },
+      edit: vi.fn(async () => true),
+      discover: vi.fn(async () => null),
+      preview: vi.fn(async () => null),
+      importImages: vi.fn(async () => true),
+    },
     view: {
       revision: 1,
       status: "ready",
@@ -88,6 +104,38 @@ const facet = (): ScreenshotsFacet => {
 };
 
 describe("ScreenshotsPage", () => {
+  it("blocks ordinary screenshot actions without claiming they run during comparison work", () => {
+    const value = facet();
+    const props = {
+      facet: {
+        ...value,
+        view: { ...value.view, status: "running" as const, activeAction: "comparison" as const },
+      },
+      setLightboxImage: vi.fn(),
+      setLightboxAlt: vi.fn(),
+    };
+    const { rerender } = render(<ScreenshotsPage {...props} />);
+    for (const name of [
+      "Load suggestions",
+      "Generate screenshots",
+      "Run preview",
+      "Capture preview",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(
+      screen.queryByRole("button", { name: /Loading|Working|Capturing/ }),
+    ).not.toBeInTheDocument();
+    rerender(
+      <ScreenshotsPage
+        {...props}
+        facet={{ ...props.facet, view: { ...props.facet.view, activeAction: "preview" } }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Loading..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Generate screenshots" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Capture preview" })).toBeDisabled();
+  });
   it.each([
     { renderer: "libplacebo", tonemapped: true, applied: "yes" },
     { renderer: "none", tonemapped: false, applied: "no" },
@@ -246,25 +294,30 @@ describe("ScreenshotsPage", () => {
     expect(screen.getByAltText("Screenshot 1")).toBeVisible();
   });
 
-  it("loads frame suggestions when an authoritative workflow first opens the page", async () => {
-    const base = facet();
-    const screenshots: ScreenshotsFacet = {
-      ...base,
-      view: {
-        ...base.view,
-        status: "idle",
-        workflowMode: true,
-        plan: null,
-        selections: [],
-      },
-    };
+  it.each([true, false])(
+    "loads ordinary suggestions only when automatic planning is enabled (%s)",
+    async (autoLoadPlan) => {
+      const base = facet();
+      const screenshots: ScreenshotsFacet = {
+        ...base,
+        view: {
+          ...base.view,
+          status: "idle",
+          workflowMode: true,
+          autoLoadPlan,
+          plan: null,
+          selections: [],
+        },
+      };
 
-    render(
-      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
-    );
+      render(
+        <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+      );
 
-    await waitFor(() => expect(screenshots.load).toHaveBeenCalledOnce());
-  });
+      if (autoLoadPlan) await waitFor(() => expect(screenshots.load).toHaveBeenCalledOnce());
+      else expect(screenshots.load).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not retry a failed automatic frame suggestion load", () => {
     const base = facet();

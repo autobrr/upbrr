@@ -825,26 +825,54 @@ func TestUploadImagesSeparatesHDBMenuGalleryWithoutDuplicates(t *testing.T) {
 	}
 }
 
-func TestListCandidatesExcludesHostedAudioAnalysis(t *testing.T) {
-	t.Parallel()
-	pathValue := filepath.Join(t.TempDir(), "audio.png")
-	if err := os.WriteFile(pathValue, []byte("image"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	repo := &recordingRepo{uploads: []api.UploadedImageLink{{
-		ImagePath: pathValue,
-		Purpose:   api.ScreenshotPurposeAudioAnalysis,
-		ImgURL:    "https://img.example/audio.png",
-	}}}
-	service := &Service{repo: repo, logger: &recordingImageHostLogger{}}
-	candidates, err := service.ListCandidates(t.Context(), api.ImageHostingSubject{
-		MediaBinding: imageHostingTestBinding(filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv")),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(candidates) != 0 {
-		t.Fatalf("audio image became screenshot candidate: %#v", candidates)
+func TestListCandidatesExcludesScopedMedia(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		purpose api.ScreenshotPurpose
+		stored  bool
+		alias   bool
+	}{
+		{"hosted audio", api.ScreenshotPurposeAudioAnalysis, false, false},
+		{"hosted comparison", api.ScreenshotPurposeComparison, false, false},
+		{"stored comparison", api.ScreenshotPurposeComparison, true, false},
+		{"hosted comparison alias", api.ScreenshotPurposeComparison, false, true},
+		{"stored comparison alias", api.ScreenshotPurposeComparison, true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pathValue := filepath.Join(t.TempDir(), "image.png")
+			if err := os.WriteFile(pathValue, []byte("image"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			repo := &recordingRepo{}
+			if test.stored {
+				repo.screens = []api.Screenshot{{ImagePath: pathValue, Purpose: test.purpose}}
+				repo.selections = []api.ScreenshotFinalSelection{{ImagePath: pathValue}}
+				repo.uploads = []api.UploadedImageLink{{ImagePath: pathValue, ImgURL: "https://images.example.invalid/image.png"}}
+			} else {
+				repo.uploads = []api.UploadedImageLink{{
+					ImagePath: pathValue,
+					Purpose:   test.purpose,
+					ImgURL:    "https://images.example.invalid/image.png",
+				}}
+			}
+			if test.alias {
+				t.Chdir(filepath.Dir(pathValue))
+				alias := filepath.Base(pathValue)
+				repo.screens = append(repo.screens, api.Screenshot{ImagePath: alias})
+				repo.selections = []api.ScreenshotFinalSelection{{ImagePath: alias}}
+				repo.uploads = append(repo.uploads, api.UploadedImageLink{ImagePath: alias, ImgURL: "https://images.example.invalid/image.png"})
+			}
+			service := &Service{repo: repo, logger: &recordingImageHostLogger{}}
+			candidates, err := service.ListCandidates(t.Context(), api.ImageHostingSubject{
+				MediaBinding: imageHostingTestBinding(filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv")),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(candidates) != 0 {
+				t.Fatalf("scoped image became ordinary screenshot candidate: %#v", candidates)
+			}
+		})
 	}
 }
 

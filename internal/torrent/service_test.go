@@ -7,12 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	slashpath "path" //nolint:depguard // Joins torrent-internal slash-delimited metainfo paths.
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/autobrr/go-torrent/metainfo"
@@ -1672,6 +1674,59 @@ func TestReusableTorrentCandidatesUseLiteralRetainedDirectory(t *testing.T) {
 			}
 			if _, err := reusableTorrentCandidates(root, meta); err == nil {
 				t.Fatal("non-directory retained path error suppressed")
+			}
+		})
+	}
+}
+
+// retainedDirectoryReadFS forces an entry to appear after the directory read
+// has observed absence, before the caller's stat. No scheduler timing is needed.
+type retainedDirectoryReadFS struct {
+	fstest.MapFS
+	appear  *fstest.MapFile
+	readErr error
+}
+
+func (f retainedDirectoryReadFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	entries, err := f.MapFS.ReadDir(name)
+	if f.appear != nil {
+		f.MapFS[name] = f.appear
+	}
+	if f.readErr != nil {
+		err = f.readErr
+	}
+	return entries, err
+}
+
+func TestReadRetainedTorrentEntries(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		appear  *fstest.MapFile
+		readErr error
+		wantErr error
+	}{
+		{name: "directory appears after missing read", appear: &fstest.MapFile{Mode: fs.ModeDir | 0o700}},
+		{
+			name:    "file appears after missing read",
+			appear:  &fstest.MapFile{Mode: 0o600},
+			wantErr: fs.ErrNotExist,
+		},
+		{
+			name:    "permission error",
+			readErr: fs.ErrPermission,
+			wantErr: fs.ErrPermission,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := retainedDirectoryReadFS{
+				MapFS:   fstest.MapFS{},
+				appear:  tc.appear,
+				readErr: tc.readErr,
+			}
+			entries, err := readRetainedTorrentEntries(root)
+			if len(entries) != 0 || !errors.Is(err, tc.wantErr) {
+				t.Fatalf("retained entries=%v error=%v, want error %v", entries, err, tc.wantErr)
 			}
 		})
 	}

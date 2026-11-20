@@ -33,17 +33,39 @@ const continuation = (requiredActions: readonly RequiredAction[]): WorkflowConti
 });
 
 describe("WorkflowRequiredActions", () => {
-  it("routes tracker questions to Dupe Checking", () => {
+  it.each([
+    { kind: "answer_questionnaire", label: "Answer tracker questions", route: "duplicates" },
+    { kind: "review_comparisons", label: "Review comparison images", route: "screenshots" },
+  ])("routes $kind to its owner without approving it", ({ kind, label, route }) => {
     const navigate = vi.fn();
+    const confirm = vi.fn();
     render(
       <WorkflowRequiredActions
-        continuation={continuation([action({ kind: "answer_questionnaire" })])}
-        onConfirm={vi.fn()}
+        continuation={continuation([action({ kind })])}
+        onConfirm={confirm}
         onNavigate={navigate}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Answer tracker questions" }));
-    expect(navigate).toHaveBeenCalledWith("duplicates");
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    expect(navigate).toHaveBeenCalledWith(route);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("shows comparison review on its page without a redundant link and keeps other actions", () => {
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([
+          action({ kind: "review_comparisons" }),
+          action({ id: "action-2", kind: "answer_questionnaire" }),
+        ])}
+        onScreenshotsPage
+        onConfirm={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Review required before upload" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Review comparison images" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Answer tracker questions" })).toBeVisible();
   });
 
   it("keeps source evidence visible while showing Blu-ray playlist progress", () => {

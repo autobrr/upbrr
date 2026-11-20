@@ -153,3 +153,26 @@ Release-name corrections keep `Edition` separate from `Presentation` and `Releas
 Presentation accepts `IMAX`, `Open Matte`, or `IMAX Open Matte`. Release features accept multiple supported feature IDs; see [the CLI reference](../cli/index.md) for the vocabulary. Unknown values are rejected. Editing Edition preserves independent corrections. Complete recognized legacy compounds such as `Director's Cut / Hybrid` are separated into those fields, while opaque custom wording is preserved. Explicit independent values take precedence over compound-derived values.
 
 Generated annotations appear immediately after Edition, or in its position when Edition is absent, subject to tracker-specific naming rules. Complete release-name overrides retain the existing optional and mandatory tracker-name policy behavior, including rejection or rebuilding where required.
+
+### Comparison programme discovery
+
+`POST /api/v1/workflows/{workflowId}/media/comparisons/sources/discover` accepts the current workflow context, `sourceId`, optional current `media` reference and a server-local `path`. It requires workflow write access and the current revision. For the main column, an empty path uses the exact prepared input. Discovery returns path-free candidates and a fingerprint without changing the workflow or media revision.
+
+Configure comparisons with `videoSources`: retain `id` and `path` for regular files; disc selections also require `programme.kind` (`dvd` or `bluray`), `discId`, `candidateId`, `discoveryFingerprint` and the default `angle` (`1`, or omitted). Every disc column needs an explicit candidate. Configuration independently checks the discovery fingerprint; stale or unsupported selections leave the applied plan intact. Candidate ranking does not select a programme automatically.
+
+Manual `frameSelections` contain `rowId`, `sourceId` and an unexpired `previewId` from the same owner, workflow, revision and media set. Only configuration accepts these selections; approval cannot apply pending preview choices. Canonical observed identities in responses identify native frame occurrences and are never client replay authority. `captureAfterMatch: false` retains selected observations before image capture; omitted or true preserves match-and-capture behavior. Applied observations survive restart without recalibration. Existing CLI comparison options still import prepared images.
+
+Comparison `preferences.scanMode` accepts `fast` (the default Quick Scan) or `deep`. `count` selects 1�16 rows; omitted or zero retains the four-row default before target validation. `motionCount`, `darkCount` and `flatCount` are independent whole-row targets from zero to the row count, and one qualified row can satisfy several targets. `selectionWindow` accepts optional main-programme `start`, `end` and `excluded` intervals in seconds. Scene ranking belongs to the main input in both modes; secondaries receive bounded native-picture and picture-type checks. Responses include coverage, selected-row evidence and qualified deficits.
+
+The comparison plan's `screenshotSizing` controls generated video captures and previews.
+
+| Value                                 | Output                                                                                                                        |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `fit` (default when omitted or empty) | Scale proportionally to fit the main input's display dimensions, with centered black padding as needed.                       |
+| `resize`                              | Scale proportionally to fit within the main input's display dimensions without padding. Output dimensions can vary by column. |
+| `crop`                                | Scale proportionally to fill the main input's display dimensions, then center-crop any excess.                                |
+| `source`                              | Use each source picture's own display dimensions.                                                                             |
+
+If supplied, `sizeReferenceSourceId` must identify the main source. Leave `resizeLargerOnly` and `resizeSmaller` unset or `false`. Imported pixels remain unchanged.
+
+Prepared display `comparisonSourceCapabilities` and configured source `capabilities` expose `programmeSelectionRequired` and `toneMappingAvailable` from backend source facts. Regular-file discovery returns an empty candidate array. Omitting a comparison source’s `toneMap` inherits the normal screenshot setting; explicit `true` or `false` overrides it, and omission restores inheritance. Tone mapping applies only to HDR video.
