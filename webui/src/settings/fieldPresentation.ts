@@ -81,8 +81,8 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
       "Do not use the source filename for tracker-data lookup. Known tracker IDs can still be looked up.",
     ),
     UseLargestPlaylist: field(
-      "Automatically select largest Blu-ray playlist",
-      "Lets CLI preparation select the largest Blu-ray playlist instead of asking. This does not replace Web UI playlist selection.",
+      "Automatically select best Blu-ray playlist per disc",
+      "Lets CLI preparation select the highest-scoring playlist for each disc instead of asking. This does not replace Web UI playlist selection.",
     ),
     KeepImages: field(
       "Collect existing tracker images",

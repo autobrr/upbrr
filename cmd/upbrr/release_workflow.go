@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
@@ -579,11 +581,11 @@ func pendingCLIWorkflowAction(actions []api.RequiredAction, kind api.RequiredAct
 	return nil
 }
 
-func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action api.RequiredAction, useLargest bool) ([]string, error) {
+func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action api.RequiredAction, useBest bool) ([]string, error) {
 	if len(action.Options) == 0 {
 		return nil, errors.New("upbrr: Blu-ray playlist action has no candidates")
 	}
-	if useLargest {
+	if useBest {
 		selected := make([]string, 0)
 		seenDiscs := make(map[string]struct{})
 		for _, option := range action.Options {
@@ -601,12 +603,18 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 	}
 	options := make([]cliPromptOption, len(action.Options))
 	for index, option := range action.Options {
-		options[index] = cliPromptOption{Label: option.Label, Value: strconv.Itoa(index + 1)}
+		options[index] = cliPromptOption{Label: cliPlaylistOptionLabel(option), Value: strconv.Itoa(index + 1)}
+	}
+	evidence := action.Prompt
+	if writer, ok := output.(*cliPresentationWriter); ok && writer.terminal {
+		// List rows can be truncated in narrow terminals; retain every detail in
+		// the existing scrollable, soft-wrapped evidence panel as well.
+		evidence += "\n" + cliPlainPromptText(cliPrompt{Options: options})
 	}
 	answer, err := askCLIField(reader, output, cliPrompt{
 		Kind:     cliPromptMultiSelect,
 		Question: "Playlist number(s), comma-separated: ",
-		Evidence: action.Prompt,
+		Evidence: evidence,
 		Help: "Choose at least one playlist for every disc. The selection controls which disc content is inspected and prepared. " +
 			"Enter the listed numbers separated by commas. If this is the wrong source, stop and rerun with the intended source.",
 		Options:  options,
@@ -646,6 +654,36 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 		}
 	}
 	return selected, nil
+}
+
+func cliPlaylistOptionLabel(option api.RequiredActionOption) string {
+	playlist := option.Playlist
+	if playlist == nil {
+		return option.Label
+	}
+	seconds := int(playlist.Duration)
+	duration := fmt.Sprintf("%ds", seconds%60)
+	if seconds >= 60 {
+		duration = fmt.Sprintf("%dm %s", seconds/60%60, duration)
+	}
+	if seconds >= 3600 {
+		duration = fmt.Sprintf("%dh %s", seconds/3600, duration)
+	}
+	var total int64
+	for _, item := range playlist.Items {
+		total += item.Size
+	}
+	size := float64(total)
+	units := [...]string{"B", "KB", "MB", "GB"}
+	unit := 0
+	for size >= 1024 && unit < len(units)-1 {
+		size /= 1024
+		unit++
+	}
+	sizeText := strconv.FormatFloat(math.Round(size*100)/100, 'f', -1, 64)
+	// Match the WebUI's Number.toFixed rounding, including exact halfway scores.
+	score := new(big.Rat).SetFloat64(playlist.Score).FloatString(2)
+	return fmt.Sprintf("%s | %s | %d files | %s %s | Score: %s", option.Label, duration, len(playlist.Items), sizeText, units[unit], score)
 }
 
 func playlistOptionDiscID(option api.RequiredActionOption) string {
