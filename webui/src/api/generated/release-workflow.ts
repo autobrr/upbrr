@@ -717,6 +717,12 @@ export type DupeAssessmentRef = Readonly<{
   revision: WorkflowRevision;
 }>;
 
+export type DupeAudioTrack = Readonly<{
+  channels?: number;
+  codec?: string;
+  language: string;
+}>;
+
 export type DupeComparisonEvidence = Readonly<{
   candidate: DupeReleaseEvidence;
   candidateFingerprint?: WorkflowFingerprint;
@@ -780,6 +786,7 @@ export type DupeReleaseEvidence = Readonly<{
   hdrLayerSource?: string;
   internalStatus?: string;
   personalRelease?: boolean;
+  programmeAudio?: readonly DupeAudioTrack[];
 }>;
 
 export type DupeSearchEvidence = Readonly<{
@@ -1971,6 +1978,7 @@ export type ReleaseActiveInputRequest = Readonly<{
 }>;
 
 export type ReleaseAssessments = Readonly<{
+  CaptureSource?: string;
   MediaInfoEncodeSettings: EncodeSettingsStatus;
   MediaInfoUniqueID: UniqueIDStatus;
   Naming: NamingAssessment;

@@ -119,6 +119,7 @@ func (s State) ReleaseAssessments() api.ReleaseAssessments {
 	}
 
 	return api.ReleaseAssessments{
+		CaptureSource:           s.CaptureSource,
 		MediaInfoUniqueID:       uniqueID,
 		MediaInfoEncodeSettings: encodeSettings,
 		VideoBitrate:            s.VideoBitrate,
@@ -277,6 +278,7 @@ type State struct {
 	HasCommentary                        bool
 	Is3D                                 string
 	Source                               string
+	CaptureSource                        string
 	Type                                 string
 	UHD                                  string
 	HDR                                  string

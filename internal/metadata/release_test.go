@@ -6,7 +6,43 @@ package metadata
 import (
 	"slices"
 	"testing"
+
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestReleaseAssessmentPreservesCaptureSourceThroughNormalization(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		disc string
+		file string
+		want string
+	}{
+		{"Example.2026.R5.HDTC.x264-GRP.mkv", "", "", "R5"},
+		{"Example.2026.R5.HDTC.x264-GRP", "BDMV", "", "R5"},
+		{"Example.2026.R5.DVD.x264-GRP", "DVD", "", ""},
+		{"Example.2026.HDTC.x264-GRP.mkv", "", "", ""},
+		{"Example.2026.1080p.HDCAM.x264-GRP", "BDMV", "", "CAM"},
+		{"Example.2026.1080p.x264-GRP", "", "Example.2026.1080p.HDCAM.x264-GRP.mkv", "CAM"},
+		{"Example.2026.1080p.x264-GRP", "", "Example.2026.R5.HDTC.x264-GRP.mkv", "R5"},
+		{"Example.2026.1080p.x264-GRP", "", "Example.2026.1080p.HDCAM.x264-GRP.srt", ""},
+	} {
+		release := ParseReleaseInfo(test.name)
+		meta := preparationstate.State{DiscType: test.disc}
+		if test.file != "" {
+			meta.PackageInventory = api.PackageInventory{Status: api.MetadataEvidenceStatusComplete, Files: []string{test.file}}
+		}
+		bindParsedRelease(&meta, release)
+		meta.Release.Source, _ = sourceAndType(meta, mediaInfoDoc{})
+		if test.disc == "BDMV" && meta.Release.Source != "BluRay" {
+			t.Fatalf("expected Blu-ray normalization of source, got %q", meta.Release.Source)
+		}
+		if got := meta.ReleaseAssessments().CaptureSource; got != test.want {
+			t.Errorf("%s: capture source = %q for (%q, %q), want %q", test.name, got, release.Source, release.Region, test.want)
+		}
+	}
+}
 
 func TestParseReleaseInfoPreservesHybridOther(t *testing.T) {
 	release := ParseReleaseInfo("Example.Release.2026.2160p.WEB-DL.HYBRiD.DDP5.1.Atmos.DV.H.265-GRP.mkv")

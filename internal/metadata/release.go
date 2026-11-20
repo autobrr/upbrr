@@ -39,6 +39,26 @@ var releaseMarkerOther = map[string]struct{}{
 	"AI Remaster": {},
 }
 
+func bindParsedRelease(meta *preparationstate.State, release api.ReleaseInfo) {
+	meta.Release = release
+	// Preserve capture evidence before disc naming normalizes Source.
+	meta.CaptureSource = metautil.ReleaseCaptureSource(release.Source, release.Region)
+	if meta.CaptureSource != "" || meta.DiscType != "" {
+		return
+	}
+	// A containing folder can omit technical details present on the submitted video.
+	for _, file := range meta.PackageInventory.Files {
+		if !seasonep.IsVideoFile(file) {
+			continue
+		}
+		member := ParseReleaseInfo(file)
+		if capture := metautil.ReleaseCaptureSource(member.Source, member.Region); capture != "" {
+			meta.CaptureSource = capture
+			return
+		}
+	}
+}
+
 // ParseReleaseInfo parses the host-path basename into detached release fields.
 // It derives the release format separately from the movie/TV category and fills
 // missing season or episode values from the basename fallback parser. Season

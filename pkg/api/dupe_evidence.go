@@ -13,6 +13,15 @@ type DupeReleaseEvidence struct {
 	HDRLayerSource  string `json:"hdrLayerSource,omitempty"`
 	DiscIdentity    string `json:"discIdentity,omitempty"`
 	DiscForm        string `json:"discForm,omitempty"`
+	// ProgrammeAudio is populated only when the relevant soundtrack inventory is known.
+	ProgrammeAudio []DupeAudioTrack `json:"programmeAudio,omitempty"`
+}
+
+// DupeAudioTrack holds comparable programme language and format evidence.
+type DupeAudioTrack struct {
+	Language string `json:"language"`
+	Codec    string `json:"codec,omitempty"`
+	Channels int    `json:"channels,omitempty"`
 }
 
 // DupeComparisonEvidence binds an explicitly reviewed comparison to the exact existing candidate.
@@ -40,6 +49,8 @@ type DupeEvidenceDecision struct {
 type DupeEvidenceContext struct {
 	// SlotEvidenceComplete requires authoritative work, content, resolution, media kind and HDR facts.
 	SlotEvidenceComplete bool
+	// SameWorkAndContent requires a provider or tracker group match and the same known content scope.
+	SameWorkAndContent   bool
 	Target               TrackerDuplicateTarget
 	Candidate            TrackerDuplicateTarget
 	CandidateID          string

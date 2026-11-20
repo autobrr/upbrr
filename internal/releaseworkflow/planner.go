@@ -388,6 +388,7 @@ func (m *Module) planSelectionDemandRefresh(
 		return PrepareReleaseCommand{}, "", false, fmt.Errorf("release workflow normalize selected input requirements: %w", err)
 	}
 	if state.PreparationDemand.Version == normalized.Version &&
+		state.PreparationDemand.InspectProgrammeTracks == normalized.InspectProgrammeTracks &&
 		slices.EqualFunc(state.PreparationDemand.Requirements, normalized.Requirements, func(left, right api.MetadataRequirement) bool {
 			return left.Scope == right.Scope && left.Disposition == right.Disposition && slices.Equal(left.AnyOf, right.AnyOf)
 		}) {

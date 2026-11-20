@@ -11,10 +11,46 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sam"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestSAMDuplicateEvidenceUsesMeasuredDTSProfiles(t *testing.T) {
+	t.Parallel()
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"DTS","Format_AdditionalFeatures":"XLL","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"ja","StreamOrder":"1"}]}}`)
+	tracks, _, _, _, err := mediaTrackFacts(preparationstate.State{SourcePath: "Example.mkv"}, doc)
+	if err != nil || len(tracks) != 1 {
+		t.Fatalf("measured tracks = %+v, err = %v", tracks, err)
+	}
+	policy := sam.Profile().DupePolicy
+	target, _ := policy.TargetEvidence(api.UploadSubject{
+		LanguageFacts:  mediafacts.ResolveLanguages(api.MediaFacts{TrackCoverageComplete: true, Tracks: tracks}),
+		MediaFileFacts: api.MediaFileFacts{ExpectedFileCount: 1, Files: []api.MediaFileFact{{ResourceID: tracks[0].ResourceID}}},
+	})
+	for _, test := range []struct {
+		format string
+		want   api.DupeRelation
+	}{
+		{"DTS XBR", api.DupeRelationCoexists},
+		{"DTS\nCommercial name : DTS-HD High Resolution Audio", api.DupeRelationCoexists},
+		{"DTS XLL", ""},
+		{"DTS", ""},
+	} {
+		report := "General\nVideo\nFormat : AVC\nAudio\nLanguage : Japanese\nChannel(s) : 6 channels\nFormat : " + test.format
+		decision := policy.CompareEvidence(api.DupeEvidenceContext{
+			Target:             api.TrackerDuplicateTarget{Evidence: target},
+			Candidate:          api.TrackerDuplicateTarget{Evidence: policy.CandidateEvidence(api.DupeEntry{MediaInfo: report})},
+			Relation:           api.DupeRelationSameSlot,
+			SameWorkAndContent: true,
+		})
+		if decision.Relation != test.want {
+			t.Errorf("%q: decision = %+v, want relation %q", test.format, decision, test.want)
+		}
+	}
+}
 
 func TestMediaTrackFactsMeasuredStreamOrder(t *testing.T) {
 	t.Parallel()

@@ -160,6 +160,10 @@ type MediaTrackFacts struct {
 
 // ManualLanguageFacts contains the resolved manual lists used in generated descriptions.
 type ManualLanguageFacts struct {
+	// AggregateAudio and AggregateSubtitles distinguish primary-resource lists
+	// from the summary of individual track corrections.
+	AggregateAudio     bool `json:",omitempty"`
+	AggregateSubtitles bool `json:",omitempty"`
 	Audio              []string
 	Subtitles          []string
 	HardcodedSubtitles []string
@@ -182,9 +186,11 @@ func (m MediaFacts) ManualLanguages() ManualLanguageFacts {
 		}
 	}
 	if m.AudioLanguagesProvenance.IsManual() {
+		result.AggregateAudio = true
 		result.Audio = slices.Clone(m.AudioLanguages)
 	}
 	if m.SubtitleLanguagesProvenance.IsManual() {
+		result.AggregateSubtitles = true
 		result.Subtitles = slices.Clone(m.SubtitleLanguages)
 	}
 	if m.HardcodedSubtitleLanguagesProvenance.IsManual() {

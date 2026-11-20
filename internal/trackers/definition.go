@@ -533,6 +533,8 @@ type DupePolicy struct {
 	Questionnaire func(PreparationInput) []api.TrackerQuestionnaireField `json:"-"`
 	// TargetEvidence resolves generation-bound source and comparison evidence.
 	TargetEvidence func(api.UploadSubject) (api.DupeReleaseEvidence, []api.DupeComparisonEvidence) `json:"-"`
+	// CandidateEvidence augments normalized adapter evidence with site-specific technical facts.
+	CandidateEvidence func(api.DupeEntry) api.DupeReleaseEvidence `json:"-"`
 	// CompareEvidence applies tracker-owned replacement safeguards after exact identity and disjoint content.
 	CompareEvidence func(api.DupeEvidenceContext) api.DupeEvidenceDecision `json:"-"`
 

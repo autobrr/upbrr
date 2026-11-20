@@ -64,6 +64,22 @@ func ParseReleaseTokens(name string) rls.Release {
 	return releaseTagBuilder.Build(tags, end)
 }
 
+// ReleaseCaptureSource identifies camera captures and corroborated R5 transfers.
+// A DVD region on its own is ordinary disc metadata.
+func ReleaseCaptureSource(source, region string) string {
+	switch strings.ToUpper(strings.TrimSpace(source)) {
+	case "CAM", "CAMRIP", "HDCAM", "HD-CAM":
+		return "CAM"
+	case "R5":
+		return "R5"
+	case "TC", "TELECINE", "HDTC":
+		if strings.EqualFold(strings.TrimSpace(region), "R5") {
+			return "R5"
+		}
+	}
+	return ""
+}
+
 // NormalizeIMDbID adds the tt prefix and seven-digit padding to numeric IDs.
 // Empty and zero values become empty; non-numeric input is preserved verbatim
 // after trimming.

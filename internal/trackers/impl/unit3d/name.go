@@ -101,8 +101,8 @@ func LocalizedReleaseNamePolicy(id string) trackers.ReleaseNamePolicyBinding {
 }
 
 func applyLocalizedNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig) error {
-	if err := normalizeLocalizedGroup(editor, meta); err != nil {
-		return fmt.Errorf("normalize localized group: %w", err)
+	if err := ApplyLocalizedNameFormatting(editor, meta); err != nil {
+		return err
 	}
 	if (resolveUnit3DCategory(meta) == "TV" || meta.Anime) && meta.Release.Year > 0 {
 		if err := editor.Omit(api.NameRoleYear); err != nil {
@@ -112,11 +112,6 @@ func applyLocalizedNameDefaults(editor *trackers.NameEditor, meta api.UploadSubj
 	if err := applyLocalizedAlternateTitle(editor, meta); err != nil {
 		return fmt.Errorf("apply localized alternate title: %w", err)
 	}
-	if audio, ok := editor.Component(api.NameRoleAudio); ok && audio.Present {
-		if err := editor.Set(api.NameRoleAudio, localizedCodecReplacer.Replace(audio.Value)); err != nil {
-			return fmt.Errorf("normalize localized audio: %w", err)
-		}
-	}
 	if IsDiscType(meta.DiscType) {
 		return nil
 	}
@@ -125,6 +120,24 @@ func applyLocalizedNameDefaults(editor *trackers.NameEditor, meta api.UploadSubj
 	if label == "" {
 		return nil
 	}
+	return ApplyLocalizedAudioMarker(editor, meta, cfg, label)
+}
+
+// ApplyLocalizedNameFormatting formats group and audio components for localized Unit3D names.
+func ApplyLocalizedNameFormatting(editor *trackers.NameEditor, meta api.UploadSubject) error {
+	if err := normalizeLocalizedGroup(editor, meta); err != nil {
+		return fmt.Errorf("normalize localized group: %w", err)
+	}
+	if audio, ok := editor.Component(api.NameRoleAudio); ok && audio.Present {
+		if err := editor.Set(api.NameRoleAudio, localizedCodecReplacer.Replace(audio.Value)); err != nil {
+			return fmt.Errorf("normalize localized audio: %w", err)
+		}
+	}
+	return nil
+}
+
+// ApplyLocalizedAudioMarker inserts the site's selected language marker before the group.
+func ApplyLocalizedAudioMarker(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig, label string) error {
 	if err := editor.Omit(api.NameRoleDubbed); err != nil {
 		return fmt.Errorf("omit localized dubbed marker: %w", err)
 	}

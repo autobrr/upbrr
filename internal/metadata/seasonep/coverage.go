@@ -20,7 +20,33 @@ var (
 		`(?i)(?:^|[^a-z0-9])(?:S(\d+)[ ._-]*)?E(\d+)(?:v\d+)?((?:[ ._-]*E\d+(?:v\d+)?|\s*[-+&]\s*(?:S\d+[ ._-]*)?E?\d+(?:v\d+)?)*)(?:\b|_)`,
 	)
 	coverageMemberPattern = regexp.MustCompile(`(?i)([ ._-]*E|\s*[-+&]\s*(?:S(\d+)[ ._-]*)?E?)(\d+)(?:v\d+)?`)
+	seasonLabelSeparators = strings.NewReplacer(".", " ", "_", " ", "-", " ")
+	seasonLabelWords      = regexp.MustCompile(`(?i)\b(?:season|series)\s*(\d{1,4})\b`)
 )
+
+// SeasonLabelStatus checks explicit season labels in a filename against one
+// selected season. Unlabeled filenames can still supply episode-only evidence.
+func SeasonLabelStatus(file string, season int) api.MetadataEvidenceStatus {
+	name := seasonLabelSeparators.Replace(filepath.Base(file))
+	status := api.MetadataEvidenceStatusUnavailable
+	compact := false
+	for _, pattern := range []*regexp.Regexp{seasonEpisodePattern, seasonOnlyPattern, seasonLabelWords} {
+		for _, match := range pattern.FindAllStringSubmatch(name, -1) {
+			value := parseInt(match[1])
+			if pattern == seasonLabelWords && compact && value >= 1900 && value <= 2099 {
+				// With an explicit compact season, a title such as "Example Series 2025"
+				// supplies no independent evidence of a year-numbered season.
+				continue
+			}
+			if value != season {
+				return api.MetadataEvidenceStatusContradictory
+			}
+			compact = compact || pattern != seasonLabelWords
+			status = api.MetadataEvidenceStatusComplete
+		}
+	}
+	return status
+}
 
 // Coverage reads explicit part and episode membership without inspecting media.
 // seasonKnown distinguishes a selected S00 from an unspecified season value.

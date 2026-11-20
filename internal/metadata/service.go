@@ -512,9 +512,6 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		}
 		logger.Debugf("metadata: TV pack media source selected path=%s season=%d episode=%d", meta.VideoPath, first.Season, first.Episode)
 	}
-	release := ParseReleaseInfo(primary)
-	meta.Release = release
-
 	size, err := filesystem.SourceSize(ctx, primary, meta.DiscType, meta.FileList, meta.VideoPath)
 	if err != nil {
 		return preparationstate.State{}, fmt.Errorf("metadata: source size: %w", err)
@@ -529,6 +526,8 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	if err != nil {
 		return preparationstate.State{}, fmt.Errorf("metadata: package inventory: %w", err)
 	}
+	release := ParseReleaseInfo(primary)
+	bindParsedRelease(&meta, release)
 	if meta.TVPack {
 		meta.EpisodeCoverage = seasonep.Coverage(
 			meta.SeasonInt,

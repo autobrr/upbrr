@@ -65,16 +65,16 @@ func appendEvidenceFinding(target api.TrackerDuplicateTarget, targetFacts normal
 		Edition:    facts.Edition.Value,
 		Region:     facts.Region.Value,
 		ThreeD:     facts.ThreeD.Value,
+		Pack:       candidate.Pack,
 	}
 	if candidate.Internal {
 		existing.Evidence.InternalStatus = "internal"
 	}
+	sameWorkAndContent := (workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup) &&
+		sameKnownContentScope(targetFacts.Content, facts.Content)
 	decision := policy.CompareEvidence(api.DupeEvidenceContext{
-		SlotEvidenceComplete: slotComplete && (workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup) &&
-			sameKnownContentScope(
-				targetFacts.Content,
-				facts.Content,
-			) && targetFacts.Resolution.Status == FactComplete && facts.Resolution.Status == FactComplete &&
+		SameWorkAndContent: sameWorkAndContent,
+		SlotEvidenceComplete: slotComplete && sameWorkAndContent && targetFacts.Resolution.Status == FactComplete && facts.Resolution.Status == FactComplete &&
 			dimensionFact(
 				targetFacts,
 				trackers.DupeDimensionMediaKind,
