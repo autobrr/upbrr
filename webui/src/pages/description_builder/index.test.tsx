@@ -210,6 +210,24 @@ describe("DescriptionBuilderPage", () => {
     expect(descriptions.saveMain).toHaveBeenCalledWith(wrapped);
   });
 
+  it.each([
+    ["Bulleted list", "list"],
+    ["Numbered list", "list=1"],
+  ])("formats selected lines as a %s", async (label, tag) => {
+    const user = userEvent.setup();
+    render(<DescriptionBuilderPage facet={facet()} sourcePath="Example" />);
+    const panel = within(screen.getByRole("region", { name: "Main Description" }));
+    const input = panel.getByRole<HTMLTextAreaElement>("textbox", { name: "Raw main description" });
+    fireEvent.change(input, { target: { value: "Before first\n\nsecond after" } });
+    input.setSelectionRange(7, 20, "backward");
+
+    await user.click(panel.getByRole("button", { name: label }));
+    expect(input).toHaveValue(`Before [${tag}][*]first[*]second[/list] after`);
+    expect(input).toHaveFocus();
+    expect(input.value.slice(input.selectionStart, input.selectionEnd)).toBe("[*]first[*]second");
+    expect(input.selectionDirection).toBe("backward");
+  });
+
   it("keeps a failed save's draft but does not apply stale preview or reuse it in a different workflow", async () => {
     let resolvePreview!: (html: string) => void;
     const preview = new Promise<string>((resolve) => {

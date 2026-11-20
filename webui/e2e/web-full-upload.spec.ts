@@ -4132,12 +4132,19 @@ test("embedded shared description saves all selected groups and retains their sc
       [...trackers].sort(),
     );
     const hosted = initial.media!.artifacts.find((artifact) => artifact.kind === "hosted_image")!;
-    const shared = "[quote]Before[/quote] [b]shared\nnotes[/b] after";
-    await editor.fill("Before shared\nnotes after");
+    const formatted = "[quote]Before[/quote] [b]shared\nnotes[/b] after";
+    const shared = formatted + "\n[list=1][*]First[*]Second[/list]";
+    await editor.fill("Before shared\nnotes after\nFirst\nSecond");
     await editor.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(7, 19));
     await main.getByRole("button", { name: "Bold", exact: true }).click();
     await editor.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(0, 6));
     await main.getByRole("button", { name: "Quote", exact: true }).click();
+    await editor.evaluate(
+      (element: HTMLTextAreaElement, start) =>
+        element.setSelectionRange(start, element.value.length),
+      formatted.length + 1,
+    );
+    await main.getByRole("button", { name: "Numbered list", exact: true }).click();
     await expect(editor).toHaveValue(shared);
     const preview = main.locator("details");
     const toggle = preview.getByText("Rendered Main Preview", { exact: true });
@@ -4147,6 +4154,7 @@ test("embedded shared description saves all selected groups and retains their sc
     await expect(main.locator(".tracker-description b")).toHaveText("shared notes", {
       useInnerText: true,
     });
+    await expect(main.locator(".tracker-description ol > li")).toHaveText(["First", "Second"]);
     await toggle.click();
     await expect(main.locator(".tracker-description b")).toBeHidden();
     await toggle.press("Enter");

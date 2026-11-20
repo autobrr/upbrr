@@ -49,6 +49,29 @@ func TestRenderBBCode(t *testing.T) {
 	}
 }
 
+func TestRenderSharedDescriptionToolbarBBCode(t *testing.T) {
+	rendered := Render(`[s]Old[/s]
+[url]https://example.invalid/[/url]
+[left]Left[/left]
+[right]Right[/right]
+[spoiler]More[/spoiler]
+[list][*]First[*]Second[/list]
+[list=1][*]Third[*]Fourth[/list]`)
+	for _, expected := range []string{
+		"<s>Old</s>",
+		`<a href="https://example.invalid/">https://example.invalid/</a>`,
+		`<div style="text-align: left">Left</div>`,
+		`<div style="text-align: right">Right</div>`,
+		"<details><summary>Spoiler</summary>More</details>",
+		"<ul><li>First</li><li>Second</li></ul>",
+		"<ol><li>Third</li><li>Fourth</li></ol>",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Errorf("rendered markup should contain %q, got %q", expected, rendered)
+		}
+	}
+}
+
 func TestRenderHTMLSanitizes(t *testing.T) {
 	rendered := Render("<script>alert(1)</script><b>Safe</b>")
 	if strings.Contains(rendered, "script") {

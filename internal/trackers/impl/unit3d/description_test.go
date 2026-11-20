@@ -397,6 +397,20 @@ func TestBuildUnit3DDescriptionFinalizesUnit3DBBCode(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DDescriptionPreservesSharedToolbarBBCode(t *testing.T) {
+	const source = `[s]Old[/s]
+[url]https://example.invalid/[/url]
+[left]Left[/left]
+[right]Right[/right]
+[spoiler]More[/spoiler]
+[list][*]First[*]Second[/list]
+[list=1][*]Third[*]Fourth[/list]`
+	result, err := buildUnit3DDescription(t.Context(), "AITHER", api.UploadSubject{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, source, nil, nil)
+	if err != nil || !strings.Contains(result, source) {
+		t.Fatalf("shared toolbar BBCode was not preserved: %v, %q", err, result)
+	}
+}
+
 func TestBuildUnit3DDescriptionSkipsDuplicateTemplateAndKeptContent(t *testing.T) {
 	block := `[center]
 [url=https://pixhost.to/8ca234.png][img=350]https://pixhost.to/8ca234.png[/img][/url]

@@ -10,7 +10,14 @@ const formats = [
   { label: "Bold", tag: "b" },
   { label: "Italic", tag: "i" },
   { label: "Underline", tag: "u" },
+  { label: "Strikethrough", tag: "s" },
+  { label: "Link", tag: "url" },
+  { label: "Left", tag: "left" },
   { label: "Center", tag: "center" },
+  { label: "Right", tag: "right" },
+  { label: "Bulleted list", tag: "list" },
+  { label: "Numbered list", tag: "list=1" },
+  { label: "Spoiler", tag: "spoiler" },
   { label: "Quote", tag: "quote" },
   { label: "Code", tag: "code" },
 ] as const;
@@ -71,9 +78,20 @@ export default function MainDescriptionEditor({ facet, savedSource, canSave, onI
       value,
     } = input;
     if (start === end) return;
+    const list = tag === "list" || tag === "list=1";
     const open = `[${tag}]`;
-    pendingSelection.current = [start + open.length, end + open.length, direction];
-    edit(value.slice(0, start) + open + value.slice(start, end) + `[/${tag}]` + value.slice(end));
+    const close = list ? "[/list]" : `[/${tag}]`;
+    const selected = value.slice(start, end);
+    const body = list
+      ? selected
+          .split("\n")
+          .filter((line) => line.trim())
+          .map((line) => `[*]${line}`)
+          .join("")
+      : selected;
+    if (list && !body) return;
+    pendingSelection.current = [start + open.length, start + open.length + body.length, direction];
+    edit(value.slice(0, start) + open + body + close + value.slice(end));
   };
 
   const renderPreview = async () => {
