@@ -206,20 +206,6 @@
   display: none;
 }
 
-.tracker-description.rendered .comparison--open .comparison__screenshots {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: 100vw;
-  height: 100vh;
-  overflow-y: auto;
-  z-index: 1100;
-  background-color: #000;
-}
-
 .tracker-description.rendered .comparison__details[open] .comparison__screenshots {
   display: flex;
   flex-direction: column;
@@ -234,24 +220,24 @@
   background-color: #000;
 }
 
+.tracker-description.rendered .comparison__screenshots > li {
+  max-width: 100%;
+}
+
 .tracker-description.rendered .comparison__row {
   margin: 0;
   padding: 0;
   list-style: none;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  margin-left: max(0px, 50% - 50vw);
+  display: grid;
 }
 
 .tracker-description.rendered .comparison__image-container {
+  grid-area: 1 / 1;
   margin: 0;
 }
 
-.tracker-description.rendered .comparison__image--hidden,
 .tracker-description.rendered .comparison__image-container--hidden {
   visibility: hidden;
-  width: 0;
 }
 
 .tracker-description.rendered .comparison__figure {
@@ -260,8 +246,7 @@
 
 .tracker-description.rendered .comparison__image {
   image-rendering: crisp-edges;
-  max-width: max-content;
-  max-height: max-content;
+  max-width: 100%;
 }
 
 .tracker-description.rendered .comparison__figcaption {

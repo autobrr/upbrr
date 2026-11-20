@@ -4021,7 +4021,7 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
   }
 });
 
-test("embedded HDR description opens a full-size lightbox without a saved preview map", async ({
+test("embedded rendered descriptions open HDR images and switch comparison sources", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
@@ -4089,6 +4089,61 @@ test("embedded HDR description opens a full-size lightbox without a saved previe
         await expect(dialog).toHaveCount(0);
       }
     }
+    // Reuse the prepared description group to exercise comparison rendering through its real endpoint.
+    await page.route("https://images.example.invalid/comp/**", (route) => {
+      const wide = route.request().url().includes("-2.png");
+      return route.fulfill({
+        contentType: "image/svg+xml",
+        body: `<svg xmlns="http://www.w3.org/2000/svg" width="${wide ? 600 : 400}" height="180"><rect width="100%" height="100%" fill="#5975a9"/></svg>`,
+      });
+    });
+    await page.setViewportSize({ width: 1000, height: 900 });
+    const sources = ["Main input", "Source 2", "Source 3"];
+    const images = Array.from({ length: 5 }, (_, row) =>
+      sources.map((_, source) => `https://images.example.invalid/comp/${row}-${source}.png`),
+    ).flat();
+    const raw = `[comparison=${sources.join(", ")}]\n${images.join("\n")}\n[/comparison]`;
+    const rawEditor = page.getByRole("textbox");
+    await rawEditor.fill(raw);
+    await page.getByRole("button", { name: "Render HDS", exact: true }).click();
+    const comparison = preview.locator("details.comparison__details");
+    const disclosure = comparison.getByText("Show", { exact: true });
+    await disclosure.click();
+    const close = comparison.getByText("Close", { exact: true });
+    await close.focus();
+    const activeImages = (source: string) => comparison.getByRole("img", { name: source });
+    await expect(activeImages("Main input")).toHaveCount(5);
+    await expect
+      .poll(() =>
+        comparison
+          .locator("img")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
+          ),
+      )
+      .toBe(true);
+    const origins = (source: string) =>
+      activeImages(source).evaluateAll((images) =>
+        images.map((image) => {
+          const { x, y } = image.getBoundingClientRect();
+          return { x, y };
+        }),
+      );
+    const initial = await origins("Main input");
+    await page.mouse.move(500, 200);
+    await expect(activeImages("Source 2")).toHaveCount(5);
+    await expect(comparison.locator("figcaption:visible")).toHaveText("Source 2");
+    expect(await origins("Source 2")).toEqual(initial);
+    await close.press("ArrowRight");
+    await expect(activeImages("Source 3")).toHaveCount(5);
+    expect(await origins("Source 3")).toEqual(initial);
+    await close.press("ArrowRight");
+    await expect(activeImages("Main input")).toHaveCount(5);
+    await close.press("ArrowLeft");
+    await expect(activeImages("Source 3")).toHaveCount(5);
+    await close.press("Escape");
+    await expect(comparison.getByText("Show", { exact: true })).toBeFocused();
+    await expect(rawEditor).toHaveValue(raw);
   } finally {
     await app?.stop();
     await workspace.cleanup();

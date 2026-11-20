@@ -19,8 +19,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// workflowDescriptionRendererVersion invalidates generated output when composition changes.
-const workflowDescriptionRendererVersion = "description-renderer-v8-bhd-primary-bdinfo"
+// workflowDescriptionRendererVersion invalidates generated output when composition or preview rendering changes.
+const workflowDescriptionRendererVersion = "description-renderer-v9-comparison-previews"
 
 type workflowDescriptionSubjectResolver interface {
 	ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)

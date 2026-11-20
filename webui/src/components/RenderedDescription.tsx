@@ -68,7 +68,15 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
         if (generatedButton) generatedButton.replaceWith(image);
         delete image.dataset.fullImage;
         const source = image.getAttribute("src") || "";
-        const full = fullByPreview.get(source) || source;
+        const anchor = image.closest("a[href]")?.getAttribute("href");
+        const linkedComparisonImage =
+          anchor &&
+          image.matches(".comparison .comparison__image") &&
+          /^https?:\/\/[^/?#]+\/[^?#]*\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(anchor);
+        const full =
+          anchor && (imagePreviews?.[anchor] === source || linkedComparisonImage)
+            ? anchor
+            : fullByPreview.get(source) || source;
         if (!full) return;
         let parsed: URL;
         try {
@@ -91,15 +99,21 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
       });
     }
     configureRenderedLinks(root);
+  }, [html, imagePreviews, onImageOpen]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
 
     const comparisons = Array.from(root.querySelectorAll<HTMLElement>(".comparison"));
     const cleanups: Array<() => void> = [];
 
     comparisons.forEach((comparison) => {
       const details = comparison.querySelector<HTMLDetailsElement>(".comparison__details");
-      const summary = comparison.querySelector<HTMLElement>(".comparison__details > summary");
+      const summary = details?.querySelector<HTMLElement>(":scope > summary");
+      const screenshots = details?.querySelector<HTMLElement>(":scope > .comparison__screenshots");
       const rows = Array.from(comparison.querySelectorAll<HTMLElement>(".comparison__row"));
-      if (!details || rows.length === 0) {
+      if (!details || !summary || !screenshots || rows.length === 0) {
         return;
       }
 
@@ -117,20 +131,18 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
         }
         current = clamped;
         rows.forEach((row) => {
-          const columns = Array.from(row.children) as HTMLElement[];
+          const columns = Array.from(row.children);
           columns.forEach((cell, index) => {
             const isActive = index + 1 === current;
             cell.classList.toggle("comparison__image-container--hidden", !isActive);
-            const image = cell.querySelector<HTMLElement>(".comparison__image");
-            if (image) {
-              image.classList.toggle("comparison__image--hidden", !isActive);
-            }
+            cell.setAttribute("aria-hidden", String(!isActive));
+            if (!isActive && cell.contains(document.activeElement)) summary.focus();
           });
         });
       };
 
       const handleKeyDown = (event: KeyboardEvent) => {
-        if (!details.open && !comparison.classList.contains("comparison--open")) {
+        if (!details.open) {
           return;
         }
         if (event.key === "ArrowLeft") {
@@ -146,8 +158,7 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
         if (event.key === "Escape") {
           event.preventDefault();
           details.open = false;
-          comparison.classList.remove("comparison--open");
-          if (summary) summary.textContent = "Show";
+          summary.focus();
           return;
         }
         const digit = Number.parseInt(event.key, 10);
@@ -158,46 +169,36 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
       };
 
       const handleMouseMove = (event: MouseEvent) => {
-        if (
-          (!details.open && !comparison.classList.contains("comparison--open")) ||
-          maxColumns <= 1
-        ) {
-          return;
-        }
+        if (!details.open) return;
         const width = globalThis.innerWidth || 1;
         const ratio = event.clientX / width;
         applyColumn(Math.min(maxColumns, Math.max(1, Math.ceil(ratio * maxColumns))));
       };
 
-      const handleSummaryClick = (event: MouseEvent) => {
-        event.preventDefault();
-        details.open = !details.open;
-        comparison.classList.toggle("comparison--open", details.open);
-        if (summary) summary.textContent = details.open ? "Close" : "Show";
-        if (details.open) applyColumn(current);
+      const syncDisclosure = () => {
+        summary.textContent = details.open ? "Close" : "Show";
       };
 
-      if (summary) {
-        summary.addEventListener("click", handleSummaryClick);
-        summary.textContent = details.open ? "Close" : "Show";
-      }
-      globalThis.addEventListener("keydown", handleKeyDown);
-      globalThis.addEventListener("mousemove", handleMouseMove);
+      // Native details grouping keeps a single comparison overlay open, even across previews.
+      details.name = "rendered-description-comparison";
+
+      details.addEventListener("toggle", syncDisclosure);
+      details.addEventListener("keydown", handleKeyDown);
+      screenshots.addEventListener("mousemove", handleMouseMove);
+      syncDisclosure();
       applyColumn(1);
 
       cleanups.push(() => {
-        if (summary) {
-          summary.removeEventListener("click", handleSummaryClick);
-        }
-        globalThis.removeEventListener("keydown", handleKeyDown);
-        globalThis.removeEventListener("mousemove", handleMouseMove);
+        details.removeEventListener("toggle", syncDisclosure);
+        details.removeEventListener("keydown", handleKeyDown);
+        screenshots.removeEventListener("mousemove", handleMouseMove);
       });
     });
 
     return () => {
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [html, imagePreviews, onImageOpen]);
+  }, [html]);
 
   return (
     <div

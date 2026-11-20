@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RenderedDescription from "./RenderedDescription";
 
@@ -127,6 +127,30 @@ describe("RenderedDescription external links", () => {
     expect(openImage).toHaveBeenCalledWith(full, "HDR10+ plot");
   });
 
+  it.each([
+    [
+      "https://images.example.invalid/full.png?size=original",
+      "https://images.example.invalid/full.png?size=original",
+    ],
+    [
+      "https://images.example.invalid/gallery/card?name=full.png",
+      "https://images.example.invalid/thumb.png",
+    ],
+  ])("uses a direct comparison link, not a gallery URL or query suffix (%s)", (href, expected) => {
+    const onImageOpen = vi.fn();
+    render(
+      <RenderedDescription
+        html={`<div class="comparison"><a href="${href}"><img class="comparison__image" src="https://images.example.invalid/thumb.png" alt="Source"></a></div>`}
+        onImageOpen={onImageOpen}
+      />,
+    );
+    fireEvent(
+      screen.getByRole("img", { name: "Source" }),
+      new MouseEvent("auxclick", { bubbles: true, cancelable: true }),
+    );
+    expect(onImageOpen).toHaveBeenCalledWith(expected, "Source");
+  });
+
   it.each(["/relative.png", "data:image/png;base64,AAAA", "javascript:alert(1)"])(
     "does not grant lightbox authority to an unmapped unsafe image (%s)",
     (source) => {
@@ -139,4 +163,70 @@ describe("RenderedDescription external links", () => {
       expect(screen.queryByRole("button")).toBeNull();
     },
   );
+});
+
+it("switches every row together, wraps on arrows, and opens the selected full image", () => {
+  const labels = ["Main input", "Source 2", "Source 3"];
+  const preview = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs";
+  const full = (row: number, source: number) =>
+    `https://images.example.invalid/${row}-${source}.png`;
+  const rows = Array.from(
+    { length: 5 },
+    (_, row) =>
+      `<li><ul class="comparison__row">${labels
+        .map(
+          (label, source) =>
+            `<li class="comparison__image-container"><figure>${row === 0 ? `<figcaption>${label}</figcaption>` : ""}<a href="${full(row, source)}"><img class="comparison__image" alt="${label}, row ${row + 1}" src="${preview}"></a></figure></li>`,
+        )
+        .join("")}</ul></li>`,
+  ).join("");
+  const comparison = `<div class="comparison"><details class="comparison__details"><summary>Show</summary><ul class="comparison__screenshots">${rows}</ul></details></div>`;
+  const imagePreviews = Object.fromEntries(
+    Array.from({ length: 5 }, (_, row) =>
+      labels.map((_, source) => [full(row, source), preview]),
+    ).flat(),
+  );
+  const onImageOpen = vi.fn();
+  const { container, unmount } = render(
+    <RenderedDescription
+      html={comparison.repeat(2)}
+      imagePreviews={imagePreviews}
+      onImageOpen={onImageOpen}
+    />,
+  );
+  const [first, second] = container.querySelectorAll("details");
+  const summary = within(first).getByText("Show");
+  first.open = true;
+  summary.focus();
+
+  const visible = (details = first) =>
+    within(details)
+      .getAllByRole("img")
+      .map((image) => image.getAttribute("alt"));
+  expect(visible()).toEqual(labelsFor("Main input"));
+  fireEvent.mouseMove(first.querySelector(".comparison__screenshots")!, {
+    clientX: window.innerWidth / 2,
+  });
+  expect(visible()).toEqual(labelsFor("Source 2"));
+  fireEvent.keyDown(summary, { key: "ArrowRight" });
+  expect(visible()).toEqual(labelsFor("Source 3"));
+  fireEvent.keyDown(summary, { key: "ArrowRight" });
+  expect(visible()).toEqual(labelsFor("Main input"));
+  fireEvent.keyDown(summary, { key: "ArrowLeft" });
+  expect(visible()).toEqual(labelsFor("Source 3"));
+  const activeImage = within(first).getByRole("img", { name: "Source 3, row 1" });
+  expect(
+    activeImage.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true })),
+  ).toBe(false);
+  expect(onImageOpen).toHaveBeenCalledWith(full(0, 2), "Source 3, row 1");
+  fireEvent.keyDown(summary, { key: "Escape" });
+  expect(first.open).toBe(false);
+  expect(summary).toHaveFocus();
+  second.open = true;
+  expect(visible(second)).toEqual(labelsFor("Main input"));
+  unmount();
+
+  function labelsFor(source: string) {
+    return Array.from({ length: 5 }, (_, row) => `${source}, row ${row + 1}`);
+  }
 });
