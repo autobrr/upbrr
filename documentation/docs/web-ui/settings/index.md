@@ -22,7 +22,7 @@ Display names may differ from imported configuration keys. Keys, saved values an
 | **Import** | Replaces persisted settings with an imported Python, YAML, or JSON configuration after warning. |
 | **Save**   | Validates edits and activates them when current operations have safely finished.                |
 
-Invalid configuration is rejected without replacing the active runtime. If an environment variable overrides a field, the stored value can save successfully while the environment value remains active.
+Save results appear below the configuration actions, above the settings sections. Invalid configuration is rejected without replacing the active runtime. If an environment variable overrides a field, the stored value can save successfully while the environment value remains active.
 
 A **Pending** save is not active yet. The Settings page checks for activation when opened and keeps checking while the save is pending. Another save while activation is pending returns busy and preserves your draft. If activation fails, the previous settings remain active; correct the settings and save again. Pending and failed status survive a restart.
 

@@ -426,6 +426,27 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
     await expect(page.getByText("Unsupported tracker entries")).toBeVisible();
     await expect(page.getByText("OLD", { exact: true })).toBeVisible();
 
+    const save = page.getByRole("button", { name: "Save", exact: true });
+    const expectSaveFeedback = async (width: number) => {
+      await page.setViewportSize({ width, height: 844 });
+      const rejectedMessage = "The settings could not be saved.";
+      await page.route(
+        "**/api/app/SaveConfig",
+        (route) => route.fulfill({ status: 400, json: { error: rejectedMessage } }),
+        { times: 1 },
+      );
+      await save.click();
+      const error = page.getByRole("alert").filter({ hasText: rejectedMessage });
+      await expect(error).toBeInViewport();
+      await expect(save).toBeEnabled();
+
+      await save.click();
+      await expect(error).toHaveCount(0);
+      await expect(
+        page.getByRole("status").filter({ hasText: "Settings saved and applied." }),
+      ).toBeInViewport();
+    };
+
     const entryControls = page.locator(".settings-map__header .settings-map__controls");
     const trackerSelector = entryControls.locator("select");
     await expect(trackerSelector.locator('option[value="OLD"]')).toHaveCount(0);
@@ -448,8 +469,7 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
     }
     await bluCard.getByLabel("API key", { exact: true }).fill("e2e-blu-activation");
 
-    await page.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(page.getByText("Settings saved and applied.")).toBeVisible();
+    await expectSaveFeedback(1280);
     await page.getByRole("button", { name: "Reload", exact: true }).click();
 
     bluCard = page
@@ -460,7 +480,7 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
     await expect(bluCard).toHaveCount(0);
     await expect(trackerSelector.locator('option[value="BLU"]')).toHaveCount(1);
 
-    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expectSaveFeedback(390);
     await page.getByRole("button", { name: "Reload", exact: true }).click();
     await expect(
       page.locator("details.settings-card").filter({
