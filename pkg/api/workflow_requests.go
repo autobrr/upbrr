@@ -455,7 +455,8 @@ func (r GenerateReleaseWorkflowDescriptionsRequest) Validate() error {
 type SaveReleaseWorkflowMainDescriptionRequest struct {
 	ReleaseWorkflowCommandContext
 	Descriptions DescriptionSetRef `json:"descriptions"`
-	Source       *string           `json:"source" ts_type:"string"`
+	// Source is required; an empty string clears the shared content.
+	Source *string `json:"source" ts_type:"string"`
 }
 
 // Validate verifies the bound description revision and an explicitly supplied source.

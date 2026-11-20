@@ -5178,18 +5178,19 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("saves one revision-bound main description and clears group drafts only on success", async () => {
+  it("saves one revision-bound main description without discarding later group drafts", async () => {
     const workflowID = "workflow-main-description";
     const original = workflowCurrentWithDescriptions(workflowID, 7, "original");
     const updated = workflowCurrentWithDescriptions(workflowID, 8, "group one", "group two");
     const source = "[b]Shared[/b]";
     const settled = { ...updated, descriptions: { ...updated.descriptions!, mainSource: source } };
+    const response = createDeferred<ReleaseWorkflowCurrent>();
     const requests: unknown[] = [];
     setAppRequestHandlerForTests(async (method, body) => {
       expect(method).toBe("SaveReleaseWorkflowMainDescription");
       requests.push(body);
       if (requests.length === 1) throw new Error("Synthetic request failure");
-      return settled;
+      return response.promise;
     });
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
@@ -5212,7 +5213,17 @@ describe("useReleaseSession", () => {
     );
     expect(result.current.descriptions.view.rawByGroup.unit3d).toBe("existing unsaved group edit");
 
-    await act(async () => expect(await result.current.descriptions.saveMain(source)).toBe(true));
+    act(() => result.current.descriptions.edit("standalone", "another pre-save group edit"));
+    let save!: Promise<boolean>;
+    act(() => {
+      save = result.current.descriptions.saveMain(source);
+    });
+    await waitFor(() => expect(requests).toHaveLength(2));
+    act(() => result.current.descriptions.edit("unit3d", "new unsaved group edit"));
+    await act(async () => {
+      response.resolve(settled);
+      expect(await save).toBe(true);
+    });
     const expectedRequest = {
       workflowId: workflowID,
       expectedRevision: 7,
@@ -5225,7 +5236,10 @@ describe("useReleaseSession", () => {
     expect(
       result.current.descriptions.view.artifact?.descriptions.map((group) => group.source),
     ).toEqual(["group one", "group two"]);
-    expect(result.current.descriptions.view.rawByGroup).toEqual({});
+    expect(result.current.descriptions.view.rawByGroup).toEqual({
+      unit3d: "new unsaved group edit",
+    });
+    expect(result.current.descriptions.view.dirtyGroups).toEqual(["unit3d"]);
     expect(result.current.descriptions.view.error).toBe("");
     expect(result.current.descriptions.view.notice).toBe(
       "Main description saved and applied to the selected trackers.",

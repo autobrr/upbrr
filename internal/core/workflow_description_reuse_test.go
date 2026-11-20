@@ -241,10 +241,18 @@ func TestWorkflowDescriptionMainSourcePreservesOnlyCompatibleInactiveEdits(t *te
 	}}
 	request := fixture.instructions
 	request.MainSource, request.Overrides = nil, nil
+	restoreResources := releaseworkflow.DescriptionResources{
+		Media: fixture.currentPrivate, RetainedMainSource: new("different current workflow text"),
+	}
 	restore := func() (api.DescriptionSet, api.DescriptionInstructions, error) {
 		return fixture.builder.RestoreCompatibleDescriptions(t.Context(), fixture.currentRelease, fixture.projections,
-			fixture.currentMedia, fixture.currentPrivate, request)
+			fixture.currentMedia, restoreResources, request)
 	}
+	stale, staleInputs, err := restore()
+	if err != nil || stale.Status != "" || staleInputs.MainSource != nil || len(staleInputs.Overrides) != 0 || fixture.service.builds != 0 {
+		t.Fatalf("a different cached main source must not even render: %#v %#v builds=%d err=%v", stale, staleInputs, fixture.service.builds, err)
+	}
+	restoreResources.RetainedMainSource = fixture.instructions.MainSource
 	compatible, inputs, err := restore()
 	if err != nil || compatible.Status != api.StageStatusCompleted || !reflect.DeepEqual(inputs.Overrides, fixture.instructions.Overrides) ||
 		inputs.MainSource == nil || *inputs.MainSource != *fixture.instructions.MainSource || fixture.service.builds != 1 {
@@ -959,6 +967,28 @@ func TestWorkflowDescriptionReusePreservesEditsAfterFormatReinspection(t *testin
 	if !reflect.DeepEqual(restored.Descriptions, fixture.snapshot.Descriptions) ||
 		!reflect.DeepEqual(instructions.Overrides, fixture.instructions.Overrides) || fixture.service.builds != 0 {
 		t.Fatalf("format reinspection lost saved edits: descriptions=%+v overrides=%+v builds=%d", restored.Descriptions, instructions.Overrides, fixture.service.builds)
+	}
+}
+
+func TestWorkflowDescriptionReuseKeepsPreMainDescriptionFingerprints(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "screenshot.png")
+	if err := os.WriteFile(path, reusableFormatEvidenceBytes(t, "png"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	subject := api.DescriptionSubject{
+		ReleaseName: "Example Release",
+		ExactMedia: &api.ExactMediaAssets{
+			Screenshots: []api.ScreenshotImage{{Path: path, Format: "png"}},
+		},
+	}
+	current, legacy, available, err := workflowReusableDescriptionFingerprint(
+		t.Context(), config.Config{}, "example-compatibility", api.TrackerReleaseProjectionSet{}, api.DescriptionInstructions{}, subject, nil,
+	)
+	// Captured from description-reuse-v4 before the main editor (855e5d15).
+	const wantCurrent = "f01f09b100db32d2debd7fd564496f7fd9d5172d9a0c3b7dad9d64f5494961f4"
+	const wantLegacy = "690f6820ed1c0df47a3b977f2276aa3850cec323ffe844e6ea249e1e600bdf81"
+	if err != nil || !available || current != wantCurrent || legacy != wantLegacy {
+		t.Fatalf("pre-main compatibility changed: current=%s, legacy=%s, available=%v, err=%v", current, legacy, available, err)
 	}
 }
 

@@ -135,6 +135,30 @@ func TestWorkflowPatchStringSchemaPreservesAbsentNullAndString(t *testing.T) {
 	}
 }
 
+func TestMainDescriptionSourceIsRequiredButMayBeEmpty(t *testing.T) {
+	t.Parallel()
+
+	definition := buildContractSchemaBuilder().schemas["SaveReleaseWorkflowMainDescriptionRequest"]
+	if definition == nil || !slices.Contains(definition.Required, "source") || definition.Properties["source"] == nil ||
+		definition.Properties["source"].Type != "string" {
+		t.Fatalf("main description must require a string source: %#v", definition)
+	}
+	if !strings.Contains(renderTypeScript(definition, 0), "source: string;") {
+		t.Fatal("generated TypeScript must require source")
+	}
+
+	const context = `{"workflowId":"example","expectedRevision":1,"idempotencyKey":"save-main","descriptions":{"id":"example","revision":1}`
+	for _, source := range []string{"", `,"source":null`, `,"source":""`} {
+		var request api.SaveReleaseWorkflowMainDescriptionRequest
+		if err := json.Unmarshal([]byte(context+source+"}"), &request); err != nil {
+			t.Fatal(err)
+		}
+		if err := request.Validate(); (err == nil) != (source == `,"source":""`) {
+			t.Fatalf("source %q: validation error = %v", source, err)
+		}
+	}
+}
+
 func TestLegacyUploadApprovalSchemasAreDeprecated(t *testing.T) {
 	t.Parallel()
 

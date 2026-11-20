@@ -1933,7 +1933,8 @@ type DescriptionSubject struct {
 	TrackerData                          []TrackerMetadata
 	ExactMedia                           *ExactMediaAssets
 	// DescriptionOverride is non-final shared input used when no tracker group overrides it.
-	DescriptionOverride string
+	// Omit empty input to preserve fingerprints for descriptions saved before shared input existed.
+	DescriptionOverride string `json:",omitempty"`
 	// ReuseImagesOnly is backend edit authority; it does not modify the retained upload policy.
 	ReuseImagesOnly bool `json:"-"`
 }

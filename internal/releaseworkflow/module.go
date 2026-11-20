@@ -7395,9 +7395,23 @@ func (m *Module) generateDescriptions(
 	if err != nil {
 		return CommandResult{}, err
 	}
+	requestedInstructions := command.Instructions
+	var retainedMainSource *string
+	fingerprintMedia, restoreMedia := privateMedia, privateMedia
 	if command.Instructions.MainSource == nil && workflow.Descriptions != nil {
 		if current, ok := state.Descriptions[workflow.Descriptions.ID]; ok && current.Release == *workflow.Release && current.MainSource != nil {
-			command.Instructions.MainSource = new(*current.MainSource)
+			retainedMainSource = new(*current.MainSource)
+			command.Instructions.MainSource = retainedMainSource
+			resources, wrapped := privateMedia.(DescriptionResources)
+			if !wrapped {
+				resources.Media = privateMedia
+			}
+			resources.RetainedMainSource = retainedMainSource
+			restoreMedia = resources
+			// Compare the current final groups with the same validated associations
+			// they used when saved. Never carry these into a changed build.
+			resources.HDRArtifacts = currentDescriptionHDRArtifacts(state)
+			fingerprintMedia = resources
 			if len(command.Instructions.Overrides) == 0 {
 				private, err := m.private.Get(ownerID, workflow.ID, descriptionPrivateResourceID(current.ID), now)
 				if err != nil {
@@ -7416,7 +7430,7 @@ func (m *Module) generateDescriptions(
 		projections.ReleaseRef,
 		descriptionProjections,
 		media,
-		privateMedia,
+		fingerprintMedia,
 		command.Instructions,
 	)
 	if err != nil {
@@ -7430,26 +7444,36 @@ func (m *Module) generateDescriptions(
 			return CommandResult{Descriptions: &current}, nil
 		}
 	}
+	// Carried group edits may prove an exact no-op above, but a changed
+	// build can recover them only through the reusable description check.
+	command.Instructions = requestedInstructions
+	refingerprint := retainedMainSource != nil
 	var snapshot api.DescriptionSet
 	if restorer, ok := m.descriptionBuilder.(ReusableDescriptionBuilder); ok {
 		var instructions api.DescriptionInstructions
 		snapshot, instructions, err = restorer.RestoreCompatibleDescriptions(
-			ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, command.Instructions,
+			ctx, projections.ReleaseRef, descriptionProjections, media, restoreMedia, command.Instructions,
 		)
 		if err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow restore descriptions: %w", err)
 		}
 		if snapshot.Status != "" || instructions.MainSource != command.Instructions.MainSource {
 			command.Instructions = instructions
-			inputFingerprint, templateFingerprint, err = m.descriptionBuilder.Fingerprints(
-				ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, instructions,
-			)
-			if err != nil {
-				return CommandResult{}, fmt.Errorf("release workflow fingerprint restored descriptions: %w", err)
-			}
+			refingerprint = true
 			if snapshot.Status != "" {
 				logging.FromContext(ctx, m.logger).Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
 			}
+		}
+	}
+	if command.Instructions.MainSource == nil {
+		command.Instructions.MainSource = retainedMainSource
+	}
+	if refingerprint {
+		inputFingerprint, templateFingerprint, err = m.descriptionBuilder.Fingerprints(
+			ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, command.Instructions,
+		)
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow fingerprint restored descriptions: %w", err)
 		}
 	}
 	if snapshot.Status == "" {

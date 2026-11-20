@@ -123,14 +123,72 @@ func TestSaveMainDescriptionPublishesOneCompleteRevision(t *testing.T) {
 	if repeated.Descriptions.ID != saved.Descriptions.ID {
 		t.Fatal("idempotent save published another revision")
 	}
-	regenerated := executeCommand(t, module, GenerateDescriptionsCommand{
+	group := saved.Descriptions.Descriptions[0]
+	const finalSource = "Final group edit"
+	groupSaved := executeCommand(t, module, SaveDescriptionOverrideCommand{
 		WorkflowID:       saved.Workflow.ID,
 		ExpectedRevision: saved.Workflow.Revision,
-		Instructions:     api.DescriptionInstructions{TemplateVersion: "regenerated"},
+		Descriptions:     *saved.Workflow.Descriptions,
+		GroupKey:         group.GroupKey,
+		Source:           finalSource,
+		IdempotencyKey:   "group-after-main",
+	})
+	retained, err := module.private.Get(testOwnerID, groupSaved.Workflow.ID, descriptionPrivateResourceID(groupSaved.Descriptions.ID), module.clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshInputs, ok := retained.(api.DescriptionInstructions)
+	if !ok {
+		t.Fatalf("saved description inputs have type %T", retained)
+	}
+	refreshInputs.MainSource, refreshInputs.Overrides = nil, nil
+	compatible := executeCommand(t, module, GenerateDescriptionsCommand{
+		WorkflowID:       groupSaved.Workflow.ID,
+		ExpectedRevision: groupSaved.Workflow.Revision,
+		Instructions:     refreshInputs,
+		IdempotencyKey:   "compatible-refresh",
+	})
+	if got := compatible.Descriptions.Descriptions[0].Source; got != finalSource {
+		t.Fatalf("compatible refresh did not keep the saved group edit: %q", got)
+	}
+	// Give the same saved group a validated current HDR association. A no-op
+	// refresh must compare that same evidence, not treat it as a dependency change.
+	withHDR, err := memory.Load(t.Context(), testOwnerID, compatible.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdrFixture := hdrQuestionnaireState()
+	analysisRef := hdrFixture.Workflow.HDRAnalysis
+	analysis := hdrFixture.HDRAnalyses[analysisRef.ID]
+	description := withHDR.Descriptions[compatible.Descriptions.ID]
+	analysis.Release = description.ReleaseRef
+	withHDR.Workflow.HDRAnalysisEnabled, withHDR.Workflow.HDRAnalysis = true, analysisRef
+	withHDR.HDRAnalyses = map[api.HDRAnalysisResultID]api.HDRAnalysisResult{analysisRef.ID: analysis}
+	description.HDRArtifacts = map[api.TrackerID][]api.HDRArtifactEvidence{
+		group.TrackerIDs[0]: hdrFixture.Descriptions[hdrFixture.Workflow.Descriptions.ID].HDRArtifacts["LST"],
+	}
+	description.InputFingerprint = testDescriptionFingerprintWithHDR(t, description.InputFingerprint, description.HDRArtifacts)
+	withHDR.Descriptions[description.ID] = description
+	if len(currentDescriptionHDRArtifacts(&withHDR)) != 1 {
+		t.Fatal("fixture lacks a current HDR association")
+	}
+	result, err := module.generateDescriptions(t.Context(), testOwnerID, &withHDR, withHDR.Workflow.Revision+1, module.clock.Now(),
+		GenerateDescriptionsCommand{Instructions: refreshInputs})
+	if err != nil || result.Descriptions == nil || result.Descriptions.ID != description.ID || result.Descriptions.Descriptions[0].Source != finalSource {
+		t.Fatalf("exact HDR refresh did not keep the saved group and its evidence: %#v, %v", result.Descriptions, err)
+	}
+	refreshInputs.TemplateVersion = "regenerated"
+	regenerated := executeCommand(t, module, GenerateDescriptionsCommand{
+		WorkflowID:       compatible.Workflow.ID,
+		ExpectedRevision: compatible.Workflow.Revision,
+		Instructions:     refreshInputs,
 		IdempotencyKey:   "main-retained-regenerate",
 	})
 	if regenerated.Descriptions.MainSource == nil || *regenerated.Descriptions.MainSource != request.Source {
 		t.Fatal("generating descriptions without a new source lost the saved main input")
+	}
+	if actual := regenerated.Descriptions.Descriptions[0].Source; actual != "Example description for "+group.GroupKey+".\n"+request.Source {
+		t.Fatalf("incompatible refresh did not rebuild the group from shared input: %q", actual)
 	}
 	request.ExpectedRevision = regenerated.Workflow.Revision
 	request.Descriptions = *regenerated.Workflow.Descriptions
@@ -138,6 +196,11 @@ func TestSaveMainDescriptionPublishesOneCompleteRevision(t *testing.T) {
 	cleared := executeCommand(t, module, request)
 	if cleared.Descriptions.MainSource == nil || *cleared.Descriptions.MainSource != "" {
 		t.Fatal("clearing source was not explicit in the saved description snapshot")
+	}
+	for _, output := range cleared.Descriptions.Descriptions {
+		if want := "Example description for " + output.GroupKey + "."; output.Source != want {
+			t.Fatalf("clearing the main source did not restore the default: %q, want %q", output.Source, want)
+		}
 	}
 }
 

@@ -186,6 +186,14 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 	if err != nil && !errorsIsNotFound(err) {
 		return err
 	}
+	var persistedErr error
+	if reuseOnly && meta.ExactMedia != nil && preloaded != nil {
+		// Exact preloads only retain screenshot uploads. Previously rehosted
+		// description images live in the repository under the same binding.
+		var persisted []api.UploadedImageLink
+		persisted, persistedErr = uploadedImagesFromSource(ctx, meta, s.repo, nil)
+		uploads = slices.Concat(persisted, uploads)
+	}
 	var lastErr error
 	for _, host := range hosts {
 		scope := usageScopeForHost(s.registry, host)
@@ -269,6 +277,9 @@ func (s *Service) rehostSourceOnlyDescriptionImages(
 		}
 		logger.Infof("trackers: source-only description images rehosted tracker=%s host=%s count=%d", tracker, host, len(images))
 		return nil
+	}
+	if persistedErr != nil && !errorsIsNotFound(persistedErr) {
+		return persistedErr
 	}
 	return fmt.Errorf("trackers: %s description images could not be rehosted: %w", tracker, lastErr)
 }

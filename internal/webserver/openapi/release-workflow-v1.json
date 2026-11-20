@@ -10983,6 +10983,7 @@
           "descriptions",
           "expectedRevision",
           "idempotencyKey",
+          "source",
           "workflowId"
         ]
       },

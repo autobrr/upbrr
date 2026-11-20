@@ -4141,6 +4141,7 @@ test("embedded shared description saves all selected groups and retains their sc
       useInnerText: true,
     });
 
+    const imageUploadsBeforeSave = workspace.fake.counters.imageUploads;
     const saveMain = async () => {
       const response = waitForAppMethod(page, "SaveReleaseWorkflowMainDescription");
       await save.click();
@@ -4151,6 +4152,7 @@ test("embedded shared description saves all selected groups and retains their sc
       const saved = await current();
       expect(saved.descriptions?.mainSource).toBe(shared);
       expect(saved.media?.artifacts.find((item) => item.id === hosted.id)?.url).toBe(hosted.url);
+      expect(workspace.fake.counters.imageUploads).toBe(imageUploadsBeforeSave);
       expect(saved.descriptions?.descriptions.flatMap((group) => group.trackerIds).sort()).toEqual(
         [...trackers].sort(),
       );

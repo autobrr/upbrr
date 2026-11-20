@@ -2629,7 +2629,7 @@ export type SaveReleaseWorkflowMainDescriptionRequest = Readonly<{
   descriptions: DescriptionSetRef;
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
-  source?: string;
+  source: string;
   workflowId: WorkflowID;
 }>;
 

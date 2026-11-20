@@ -140,6 +140,10 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 
 	restoredInstructions := instructions
 	sameSource := reusable.MainSource != nil && reusable.MainSourceIdentity == inputs.sourceIdentity
+	resources, _ := privateMedia.(releaseworkflow.DescriptionResources)
+	if resources.RetainedMainSource != nil && (!sameSource || *reusable.MainSource != *resources.RetainedMainSource) {
+		return api.DescriptionSet{}, instructions, nil
+	}
 	if restoredInstructions.MainSource == nil && sameSource {
 		restoredInstructions.MainSource = new(*reusable.MainSource)
 	}

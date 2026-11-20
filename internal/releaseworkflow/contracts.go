@@ -362,11 +362,13 @@ type DescriptionResources struct {
 	// SuppressImportedScreenshotReferences is derived afresh from exact retained selection intent.
 	SuppressImportedScreenshotReferences map[string]bool
 	// HDRArtifacts preserves validated current image associations for final editor overrides.
-	HDRArtifacts  map[api.TrackerID][]api.HDRArtifactEvidence
-	HDR           func(context.Context) (api.HDRAnalysisResult, RetainedHDRAnalysisResource, error)
-	Media         any
-	AudioAnalysis api.AudioAnalysisResult
-	AudioPaths    RetainedAudioAnalysisLocalPath
+	HDRArtifacts map[api.TrackerID][]api.HDRArtifactEvidence
+	// RetainedMainSource limits cache restoration to the current workflow's shared source.
+	RetainedMainSource *string
+	HDR                func(context.Context) (api.HDRAnalysisResult, RetainedHDRAnalysisResource, error)
+	Media              any
+	AudioAnalysis      api.AudioAnalysisResult
+	AudioPaths         RetainedAudioAnalysisLocalPath
 }
 
 // AudioAnalysisBuilder resolves one exact prepared source and streams selected

@@ -3046,12 +3046,13 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const saveMainDescription = (source: string): Promise<boolean> =>
-    runBackendWorkflow(
+  const saveMainDescription = (source: string): Promise<boolean> => {
+    const replacedDrafts = state.descriptions.rawByGroup;
+    return runBackendWorkflow(
       (current, commandID, signal) =>
         activePorts.workflow.saveMainDescription(current, source, commandID, signal),
       {
-        onSuccess: () => dispatch({ type: "description_main_saved" }),
+        onSuccess: () => dispatch({ type: "description_main_saved", replacedDrafts }),
         onError: (error) =>
           dispatch({
             type: "description_main_save_failed",
@@ -3061,6 +3062,7 @@ export function ReleaseSessionProvider({
           }),
       },
     );
+  };
 
   const saveDescription = async (groupKey: string, reset: boolean): Promise<boolean> => {
     const key = groupKey.trim();

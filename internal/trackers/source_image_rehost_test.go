@@ -40,6 +40,18 @@ func (d nativeSourceImageTestDefinition) SourceOnlyImageReusable(rawURL string, 
 	return rawURL == d.reusableURL
 }
 
+type boundRehostTestRepo struct {
+	stubRepo
+	binding api.PreparedMediaBinding
+}
+
+func (r *boundRehostTestRepo) ListUploadedImagesByPath(ctx context.Context, binding api.PreparedMediaBinding) ([]api.UploadedImageLink, error) {
+	if binding != r.binding {
+		return nil, nil
+	}
+	return r.stubRepo.ListUploadedImagesByPath(ctx, binding)
+}
+
 func TestRehostSourceOnlyComparisonImagesPreservesMarkupAndReusesUploads(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -78,8 +90,8 @@ func TestRehostSourceOnlyComparisonImagesPreservesMarkupAndReusesUploads(t *test
 			t.Fatal(err)
 		}
 	}
-	repo := &stubRepo{}
-	images := &stubImageService{repo: repo}
+	repo := &boundRehostTestRepo{binding: trackerTestMediaBinding(source)}
+	images := &stubImageService{repo: &repo.stubRepo}
 	registry := descriptionAssetsTestRegistry(t)
 	if err := registry.RegisterDescriptor(Descriptor{Name: "TL", Definition: stubDefinition{name: "TL"}}); err != nil {
 		t.Fatal(err)
@@ -87,7 +99,7 @@ func TestRehostSourceOnlyComparisonImagesPreservesMarkupAndReusesUploads(t *test
 	service := NewServiceWithRegistryAndImages(trackerTestConfig(t, cfg), api.NopLogger{}, repo, registry, images)
 	skipUpload := true
 	meta := api.UploadSubject{
-		MediaBinding:       trackerTestMediaBinding(source),
+		MediaBinding:       repo.binding,
 		SourcePath:         source,
 		Release:            api.ReleaseInfo{},
 		TrackerData:        []api.TrackerMetadata{{Tracker: "PTP", ImageURLs: urls}},
@@ -110,6 +122,29 @@ func TestRehostSourceOnlyComparisonImagesPreservesMarkupAndReusesUploads(t *test
 		if assets.Description != want {
 			t.Fatalf("attempt %d comparison markup changed:\n%s", attempt, assets.Description)
 		}
+	}
+	analysis := repo.uploads[0]
+	analysis.Purpose = api.ScreenshotPurposeHDRAnalysis
+	analysis.RawURL = "https://imgbox/analysis.png"
+	repo.uploads = append(repo.uploads, analysis)
+	fresh, err := preloadUploadAssetData(reuseOnly, meta, repo, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := &DescriptionAssets{Description: description}
+	if err := service.rehostSourceOnlyDescriptionImages(reuseOnly, "BTN", meta, config.TrackerConfig{}, saved, fresh); err != nil || saved.Description != want {
+		t.Fatalf("fresh preparation did not reuse persisted links: description=%q err=%v", saved.Description, err)
+	}
+	changed := meta
+	changed.MediaBinding.PreparedGeneration++
+	fresh, err = preloadUploadAssetData(reuseOnly, changed, repo, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unavailable := &DescriptionAssets{Description: description}
+	if err := service.rehostSourceOnlyDescriptionImages(reuseOnly, "BTN", changed, config.TrackerConfig{}, unavailable, fresh); err == nil ||
+		unavailable.Description != description {
+		t.Fatalf("other generation reused persisted links: description=%q err=%v", unavailable.Description, err)
 	}
 	optionalAssets := &DescriptionAssets{Description: description}
 	if err := service.rehostSourceOnlyDescriptionImages(t.Context(), "TL", meta, config.TrackerConfig{}, optionalAssets, preloaded); err != nil {
