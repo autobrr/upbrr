@@ -1,0 +1,199 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package description_test
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/autobrr/upbrr/internal/bbcode"
+	"github.com/autobrr/upbrr/internal/description"
+)
+
+func TestRenderComparisonPreviewFormats(t *testing.T) {
+	const labels = "Main input, Source 2, Source 3"
+	const urlPrefix = "https://images.example.invalid/"
+	urls := make([]string, 15)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("%s%d.png", urlPrefix, i)
+	}
+	native := "[comparison=" + labels + "]" + strings.Join(urls, "\n") + "[/comparison]"
+	collapse := bbcode.ConvertComparisonToCollapse(native, 1000)
+	centered := bbcode.ConvertComparisonToCentered(native, 1000)
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"native", native, "Main input"},
+		{"spoiler", collapse, "Maininput"},
+		{"hide", strings.NewReplacer("[spoiler=", "[hide=", "[/spoiler]", "[/hide]").Replace(collapse), "Maininput"},
+		{"center", centered, "Main input"},
+		{"align", strings.NewReplacer("[center]", "[align=center]", "[/center]", "[/align]").Replace(centered), "Main input"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const preview = urlPrefix + "thumb.png"
+			raw := tc.raw + "\n[img]" + urls[0] + "[/img]"
+			rendered := description.RenderWithImagePreviews(raw, map[string]string{urls[0]: preview})
+			if strings.Count(rendered, `class="comparison__row"`) != 5 ||
+				strings.Count(rendered, `class="comparison__image"`) != 15 ||
+				!strings.Contains(rendered, `class="comparison__figcaption">`+tc.want+`</figcaption>`) ||
+				strings.Count(rendered, `src="`+preview+`"`) != 1 {
+				t.Fatalf("expected five rows, three labelled alternatives and one ordinary thumbnail: %s", rendered)
+			}
+			last := -1
+			for _, u := range urls {
+				next := strings.Index(rendered, `href="`+u+`"><img`)
+				if next <= last {
+					t.Fatalf("comparison image %q was lost or reordered", u)
+				}
+				imageMarkup, _, _ := strings.Cut(rendered[next:], "</a>")
+				if !strings.Contains(imageMarkup, `src="`+u+`"`) {
+					t.Fatalf("comparison image %q must use its original source: %s", u, imageMarkup)
+				}
+				last = next
+			}
+		})
+	}
+}
+
+func TestRenderComparisonPreviewKeepsIncompleteAndUnrelatedContent(t *testing.T) {
+	const image = "[url=https://images.example.invalid/sample.png][img=300]https://images.example.invalid/sample.png[/img][/url]"
+	for _, raw := range []string{
+		"[center]" + image + image + "[/center]",
+		"[spoiler=A vs B][center]A | Other[/center]\n" + image + image + "[/spoiler]",
+		"[spoiler=A vs B][center]B | A\n" + image + image + "[/center][/spoiler]",
+		"[comparison=A,B][url=https://images.example.invalid/album align=center]" + image + image + "[/url][/comparison]",
+		"[center]A | B\n" + image + "\n" + image + image + "[/center]",
+		"[comparison=A,,B]" + image + image + "[/comparison]",
+		"[comparison=A,B][center]" + image + "\n" + image + image + image + "[/center][/comparison]",
+	} {
+		rendered := description.Render(raw)
+		if strings.Contains(rendered, `class="comparison"`) || strings.Count(rendered, "<img ") != strings.Count(raw, "[img=") {
+			t.Fatalf("ambiguous markup must keep ordinary images without guessing source assignments: %s", rendered)
+		}
+	}
+}
+
+func TestRenderComparisonPreviewPreservesNativeImageURLs(t *testing.T) {
+	const full = "https://images.example.invalid/by-id?x=1,2&v=3"
+	raw := "[comparison=Main, Encode, Other cut, Fourth source]" + full + "\n[img]https://images.example.invalid/encode.png?sig=abc[/img]" +
+		"\nhttps://images.example.invalid/third.webp, https://images.example.invalid/fourth.jpg[/comparison]"
+	rendered := description.Render(raw)
+	if strings.Count(rendered, `class="comparison__image"`) != 4 || !strings.Contains(rendered, `href="https://images.example.invalid/by-id?x=1,2&amp;v=3"`) ||
+		!strings.Contains(rendered, `src="https://images.example.invalid/encode.png?sig=abc"`) {
+		t.Fatalf("native image URLs lost query parameters or extensionless image: %s", rendered)
+	}
+}
+
+func TestRenderNativeComparisonSupportsPTPCenteredRows(t *testing.T) {
+	const base = "https://images.example.invalid/"
+	first := "[img]" + base + "first.png[/img]"
+	second := "[url=" + base + "full.png?token=one][img]" + base + "thumb.png[/img][/url]"
+	row := first + second
+	for _, body := range []string{
+		"[center]" + first + "\n" + second + "\n" + first + "\n" + second + "[/center]",
+		"[center]" + row + "[/center]\n[align=center]" + row + "[/align]",
+		"[center]" + base + "first.png\n" + second + "\n" + base + "first.png\n" + second + "[/center]",
+	} {
+		rendered := description.Render("[comparison=Source, Encode]\n" + body + "\n[/comparison]")
+		if strings.Count(rendered, `class="comparison__row"`) != 2 ||
+			strings.Count(rendered, `href="`+base+`full.png?token=one"`) != 2 ||
+			strings.Count(rendered, `src="`+base+`thumb.png"`) != 2 {
+			t.Fatalf("centered native rows lost comparison mappings: %s", rendered)
+		}
+	}
+}
+
+func TestRenderComparisonKeepsExplicitFullImageLink(t *testing.T) {
+	const host = "https://images.example.invalid/"
+	raw := "[comparison=Main, Encode][url=" + host + "by-id?image=42]\n[img]" + host + "thumb.png[/img]\n[/url]" +
+		"[img]" + host + "encode.png[/img][/comparison]"
+	rendered := description.Render(raw)
+	if !strings.Contains(rendered, `href="`+host+`by-id?image=42"`) ||
+		!strings.Contains(rendered, `class="comparison__image comparison__image--linked"`) {
+		t.Fatalf("comparison lost its explicit image link: %s", rendered)
+	}
+}
+
+func TestRenderNativeComparisonDoesNotSplitQueryURL(t *testing.T) {
+	const full = "https://images.example.invalid/frame?refs=one,https://images.example.invalid/ref.png"
+	const second = "https://images.example.invalid/second.png"
+	render := func(body string) string {
+		return description.Render("[comparison=A,B]" + body + "[/comparison]")
+	}
+	if got := render(full); strings.Contains(got, `class="comparison"`) || !strings.Contains(got, full) {
+		t.Fatalf("one URL must not produce two source images: %s", got)
+	}
+	if got := render(full + ", " + second); strings.Count(got, `class="comparison__image"`) != 2 ||
+		!strings.Contains(got, `href="`+full+`"`) || !strings.Contains(got, `href="`+second+`"`) {
+		t.Fatalf("comparison changed an intact query URL: %s", got)
+	}
+}
+
+func TestRenderNativeCenteredBareRowsPreserveBoundaries(t *testing.T) {
+	const host = "https://images.example.invalid/"
+	a, b, c, d := host+"a.png", host+"b.png", host+"c.png", host+"d.png"
+	for _, tc := range []struct {
+		name string
+		body string
+		rows int
+	}{
+		{"flat list", strings.Join([]string{a, b, c, d}, ", "), 2},
+		{"one per line", strings.Join([]string{a, b, c, d}, "\n"), 2},
+		{"one per line with comma delimiters", strings.Join([]string{a, b, c, d}, ",\n"), 2},
+		{"complete rows", a + " " + b + "\n" + c + " " + d, 2},
+		{"mixed rows", a + " " + b + "\n" + c + "\n" + d, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := description.Render("[comparison=A,B][center]" + tc.body + "[/center][/comparison]")
+			if count := strings.Count(got, `class="comparison__row"`); count != tc.rows {
+				t.Fatalf("comparison rows = %d, want %d: %s", count, tc.rows, got)
+			}
+			if tc.rows != 0 {
+				for _, url := range []string{a, b, c, d} {
+					if !strings.Contains(got, `href="`+url+`"`) || !strings.Contains(got, `src="`+url+`"`) {
+						t.Fatalf("comparison did not preserve %q as an image URL: %s", url, got)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRenderComparisonOuterLabelsPreventWrongSourceAssignments(t *testing.T) {
+	const img = "[img]https://images.example.invalid/frame.png[/img]"
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"conflicting centered source order", "[comparison=A,B][center]B | A\n" + img + img + "[/center][/comparison]"},
+		{"named spoiler argument is not its label", "[spoiler note=A vs B]" + img + img + "[/spoiler]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := description.Render(tc.raw)
+			if strings.Contains(rendered, `class="comparison"`) || strings.Count(rendered, "<img ") != 2 {
+				t.Fatalf("must keep ordinary images instead of inventing source assignments: %s", rendered)
+			}
+		})
+	}
+}
+
+func TestRenderCollapsedComparisonEntityLabels(t *testing.T) {
+	const source = "[img]https://images.example.invalid/frame.png[/img]"
+	for _, tc := range []struct {
+		header       string
+		isComparison bool
+	}{
+		{"A&amp;Z | B", true},
+		{"B | A&amp;Z", false},
+		{"A&amp;Y | B", false},
+	} {
+		got := description.Render("[spoiler=A&amp;Z vs B][center]" + tc.header + "[/center]\n" + source + source + "[/spoiler]")
+		if strings.Contains(got, `class="comparison"`) != tc.isComparison || !strings.Contains(got, "A&amp;") {
+			t.Fatalf("unexpected comparison for header %q: %s", tc.header, got)
+		}
+	}
+}

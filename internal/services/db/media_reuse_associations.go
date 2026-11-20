@@ -289,6 +289,23 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 	ctx context.Context,
 	compatibilityKey api.MediaCompatibilityKey,
 ) ([]api.ReusableMediaAsset, error) {
+	return r.loadReusableMediaAssets(ctx, compatibilityKey, api.PreparedMediaBinding{})
+}
+
+// LoadReusableMediaAssetsForBinding confines reuse to one prepared generation.
+func (r *SQLiteRepository) LoadReusableMediaAssetsForBinding(ctx context.Context, binding api.PreparedMediaBinding) ([]api.ReusableMediaAsset, error) {
+	bound, err := normalizePreparedMediaBinding(binding)
+	if err != nil {
+		return nil, err
+	}
+	return r.loadReusableMediaAssets(ctx, bound.CompatibilityKey, bound)
+}
+
+func (r *SQLiteRepository) loadReusableMediaAssets(
+	ctx context.Context,
+	compatibilityKey api.MediaCompatibilityKey,
+	binding api.PreparedMediaBinding,
+) ([]api.ReusableMediaAsset, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("db: repository not initialized")
 	}
@@ -300,14 +317,16 @@ func (r *SQLiteRepository) LoadReusableMediaAssets(
 			kind, purpose, disc_id, image_path, image_index, timestamp_seconds, width, height, size_bytes,
 			imported, selected, sort_order, tonemapping, processing_json
 		FROM media_reusable_assets AS asset
-		WHERE compatibility_key = ? AND NOT EXISTS (
+		WHERE compatibility_key = ?
+			AND (? = '' OR (source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?))
+			AND NOT EXISTS (
 			SELECT 1 FROM media_reusable_tombstones AS tombstone
 			WHERE tombstone.compatibility_key = asset.compatibility_key
 				AND tombstone.capture_fingerprint = asset.capture_fingerprint
 				AND tombstone.content_sha256 = asset.content_sha256
 		)
 		ORDER BY captured_at DESC, sort_order ASC
-	`, compatibilityKey)
+	`, compatibilityKey, binding.SourcePath, binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration)
 	if err != nil {
 		return nil, fmt.Errorf("db reusable media: list assets: %w", err)
 	}

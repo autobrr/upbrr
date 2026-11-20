@@ -406,6 +406,7 @@ func isAllowedComparisonClass(value string) bool {
 		"comparison__figure",
 		"comparison__image",
 		"comparison__image--hidden",
+		"comparison__image--linked",
 		"comparison__figcaption":
 		return true
 	default:

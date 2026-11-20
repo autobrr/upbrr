@@ -397,6 +397,50 @@ test("embedded comparison imports retain complete rows and require review before
         .filter((artifact) => artifact.kind === "screenshot")
         .map((artifact) => artifact.id),
     ).toEqual(normalIDs);
+
+    const publishedLinks = (media: typeof retained) =>
+      media.artifacts
+        .filter((artifact) => artifact.kind === "hosted_image" && artifact.selected)
+        .map((artifact) => artifact.url)
+        .toSorted();
+    const urls = publishedLinks(retained);
+    expect(urls).toHaveLength(cellIDs.length + normalIDs.length);
+    const imageUploads = workspace.fake.counters.imageUploads;
+    await page.getByRole("button", { name: "Unselect Screenshot 1", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Select Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    const continueRoute = "**/api/app/ContinueReleaseWorkflow";
+    await page.route(continueRoute, async (route) => {
+      const body = route.request().postDataJSON() as ContinueReleaseWorkflowRequest;
+      if (body.goal === "duplicates_decided") {
+        await route.continue({
+          postData: { ...body, intent: { ...body.intent, duplicateCheckCount: 2 } },
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    const rechecked = await runDuplicateCheck(page);
+    expect(rechecked.dupes?.checkOrdinal).toBe(2);
+    await page.unroute(continueRoute);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await expect
+      .poll(async () => (await snapshot()).current?.media?.comparisons?.approvedFingerprint)
+      .toBe(retained.comparisons!.fingerprint);
+    const restored = (await snapshot()).current!.media!;
+    expect(
+      restored.artifacts
+        .filter((artifact) => artifact.kind === "screenshot")
+        .map(({ id, selected }) => ({ id, selected })),
+    ).toEqual(normalIDs.map((id) => ({ id, selected: false })));
+    expect(publishedLinks(restored)).toEqual(urls);
+    await page.getByRole("button", { name: "Select Screenshot 1", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Unselect Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    expect(workspace.fake.counters.imageUploads).toBe(imageUploads);
   } finally {
     await app.stop();
     await workspace.cleanup();
@@ -3870,7 +3914,7 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
   }
 });
 
-test("embedded HDR description opens a full-size lightbox without a saved preview map", async ({
+test("embedded rendered descriptions open HDR images and switch comparison sources", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace();
@@ -3938,6 +3982,94 @@ test("embedded HDR description opens a full-size lightbox without a saved previe
         await expect(dialog).toHaveCount(0);
       }
     }
+    // Reuse the prepared description group to exercise comparison rendering through its real endpoint.
+    await page.route("https://images.example.invalid/comp/**", (route) => {
+      const wide = route.request().url().includes("-2.png");
+      return route.fulfill({
+        contentType: "image/svg+xml",
+        body: `<svg xmlns="http://www.w3.org/2000/svg" width="${wide ? 600 : 400}" height="180"><rect width="100%" height="100%" fill="#5975a9"/></svg>`,
+      });
+    });
+    await page.setViewportSize({ width: 1000, height: 600 });
+    const sources = ["Main input", "Source 2", "Source 3"];
+    const images = Array.from({ length: 5 }, (_, row) =>
+      sources.map((_, source) => `https://images.example.invalid/comp/${row}-${source}.png`),
+    ).flat();
+    const viewerURL = "https://images.example.invalid/viewer?id=synthetic";
+    await page.route(viewerURL, (route) =>
+      route.fulfill({ contentType: "text/html", body: "<p>Synthetic image-host page</p>" }),
+    );
+    images[1] = `[url=${viewerURL}][img]${images[1]}[/img][/url]`;
+    const raw = `[comparison=${sources.join(", ")}]\n${images.join("\n")}\n[/comparison]`;
+    const rawEditor = page.getByRole("textbox");
+    await rawEditor.fill(raw);
+    await page.getByRole("button", { name: "Render HDS", exact: true }).click();
+    const comparison = preview.locator("details.comparison__details");
+    const disclosure = comparison.getByText("Show", { exact: true });
+    await disclosure.click();
+    const close = comparison.getByText("Close", { exact: true });
+    await close.focus();
+    const activeImages = (source: string) => comparison.getByRole("img", { name: source });
+    await expect(activeImages("Main input")).toHaveCount(5);
+    await expect
+      .poll(() =>
+        comparison
+          .locator("img")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
+          ),
+      )
+      .toBe(true);
+    const origins = (source: string) =>
+      activeImages(source).evaluateAll((images) =>
+        images.map((image) => {
+          const { x, y } = image.getBoundingClientRect();
+          return { x, y };
+        }),
+      );
+    const initial = await origins("Main input");
+    await page.mouse.move(500, 200);
+    await expect(activeImages("Source 2")).toHaveCount(5);
+    await expect(comparison.locator("figcaption:visible")).toHaveText("Source 2");
+    expect(await origins("Source 2")).toEqual(initial);
+    await activeImages("Source 2").first().click();
+    const failedImage = page.getByRole("dialog", { name: "Source 2" });
+    await expect(failedImage.getByRole("status")).toHaveText("Image could not be loaded.");
+    await expect(failedImage.getByRole("link", { name: "Open original link" })).toHaveAttribute(
+      "href",
+      viewerURL,
+    );
+    await failedImage.getByRole("button", { name: "Close image preview" }).click();
+    await expect(failedImage).toHaveCount(0);
+    await close.focus();
+    await close.press("ArrowRight");
+    await expect(activeImages("Source 3")).toHaveCount(5);
+    expect(await origins("Source 3")).toEqual(initial);
+    await close.press("ArrowRight");
+    await expect(activeImages("Main input")).toHaveCount(5);
+    await close.press("ArrowLeft");
+    await expect(activeImages("Source 3")).toHaveCount(5);
+    const screenshots = comparison.locator(".comparison__screenshots");
+    await screenshots.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(activeImages("Source 3").first()).not.toBeInViewport();
+    await expect(comparison.locator("figcaption:visible")).toBeInViewport();
+    await expect(comparison.locator("figcaption:visible")).toHaveText("Source 3");
+    const gutter = { x: page.viewportSize()!.width - 45, y: 200 };
+    expect(
+      await screenshots.evaluate(
+        (element, { x, y }) => document.elementFromPoint(x, y) === element,
+        gutter,
+      ),
+    ).toBe(true);
+    await page.mouse.click(gutter.x, gutter.y);
+    await expect(screenshots).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(activeImages("Main input")).toHaveCount(5);
+    await page.keyboard.press("Escape");
+    await expect(comparison.getByText("Show", { exact: true })).toBeFocused();
+    await expect(rawEditor).toHaveValue(raw);
   } finally {
     await app?.stop();
     await workspace.cleanup();

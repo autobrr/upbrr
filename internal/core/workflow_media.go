@@ -180,6 +180,7 @@ type workflowMediaPrivateArtifacts struct {
 	DVDMenuImages                map[api.PublicResourceID]api.DVDMenuCaptureImage
 	HostedImages                 map[api.PublicResourceID]api.UploadedImageLink
 	HostedSources                map[api.PublicResourceID]api.PublicResourceID
+	imageHostingScope            string
 	screenshotService            mediaScreenshotService
 	screenshotSubject            api.ScreenshotSubject
 	dvdMenuService               mediaDVDMenuService
@@ -275,6 +276,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		DVDMenuImages:                cloneDVDMenuImageMap(a.DVDMenuImages),
 		HostedImages:                 cloneUploadedImageMap(a.HostedImages),
 		HostedSources:                cloneHostedSourceMap(a.HostedSources),
+		imageHostingScope:            a.imageHostingScope,
 		legacyImageFormats:           maps.Clone(a.legacyImageFormats),
 	}
 	pending := a.pendingDeletes()
@@ -509,6 +511,7 @@ func cloneWorkflowMediaPrivateArtifacts(value workflowMediaPrivateArtifacts) wor
 		DVDMenuImages:                cloneDVDMenuImageMap(value.DVDMenuImages),
 		HostedImages:                 cloneUploadedImageMap(value.HostedImages),
 		HostedSources:                cloneHostedSourceMap(value.HostedSources),
+		imageHostingScope:            value.imageHostingScope,
 		legacyImageFormats:           maps.Clone(value.legacyImageFormats),
 		screenshotService:            value.screenshotService,
 		screenshotSubject:            value.screenshotSubject,
@@ -1437,34 +1440,61 @@ func (b workflowMediaBuilder) RestoreCompatible(
 		}
 		return snapshot, retained, nil
 	}
+	snapshot, retained, err := b.restoreCachedMedia(ctx, release, projections, nil)
+	if err != nil || len(snapshot.Artifacts) == 0 {
+		return snapshot, nil, err
+	}
+	if attempts, prepared := b.restoredHostedImageAttempts(ctx, release, snapshot, retained, projections.Projections); prepared {
+		snapshot.HostAttempts = attempts
+		snapshot.ImageRequirementsPrepared = true
+	}
+	return snapshot, retained, nil
+}
+
+type retainedOrdinaryImage struct {
+	artifact api.MediaArtifact
+	image    api.ScreenshotImage
+}
+
+func (b workflowMediaBuilder) restoreCachedMedia(
+	ctx context.Context,
+	release api.ReleaseRef,
+	projections api.TrackerReleaseProjectionSet,
+	retainedOrdinary map[string]retainedOrdinaryImage,
+) (api.MediaArtifactSet, workflowMediaPrivateArtifacts, error) {
 	if b.media == nil || b.media.repo == nil || b.resolver == nil {
-		return api.MediaArtifactSet{}, nil, errors.New("workflow media restore service is unavailable")
+		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, errors.New("workflow media restore service is unavailable")
 	}
 	repository := b.media.mediaReuse
 	if repository == nil {
-		return api.MediaArtifactSet{}, nil, nil
+		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, nil
 	}
 	subject, err := b.resolver.ResolveScreenshotSubject(ctx, api.MediaPlanInput{
 		Release: release,
 		Purpose: api.ScreenshotPurposeFinal,
 	})
 	if err != nil {
-		return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media resolve restore subject: %w", err)
+		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media resolve restore subject: %w", err)
 	}
 	binding := subject.MediaBinding
 	if !binding.Valid() || !binding.CompatibilityKey.Valid() {
-		return api.MediaArtifactSet{}, nil, errors.New("workflow media restore requires a verified source compatibility key")
+		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, errors.New("workflow media restore requires a verified source compatibility key")
 	}
-	assets, err := repository.LoadReusableMediaAssets(ctx, binding.CompatibilityKey)
+	var assets []api.ReusableMediaAsset
+	if retainedOrdinary == nil {
+		assets, err = repository.LoadReusableMediaAssets(ctx, binding.CompatibilityKey)
+	} else {
+		assets, err = repository.LoadReusableMediaAssetsForBinding(ctx, binding)
+	}
 	if err != nil {
-		return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media load reusable assets: %w", err)
+		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media load reusable assets: %w", err)
 	}
 	if len(assets) == 0 {
-		return api.MediaArtifactSet{}, nil, nil
+		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, nil
 	}
 	snapshot, retained, err := b.mediaMutationBase(release, projections, nil, nil)
 	if err != nil {
-		return api.MediaArtifactSet{}, nil, err
+		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, err
 	}
 	retained.screenshotService = b.screenshots
 	retained.screenshotSubject = subject
@@ -1478,10 +1508,18 @@ func (b workflowMediaBuilder) RestoreCompatible(
 	originsLoaded := false
 	for _, asset := range assets {
 		if err := ctx.Err(); err != nil {
-			return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media restore canceled: %w", err)
+			return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media restore canceled: %w", err)
 		}
 		if !asset.Valid() || asset.CompatibilityKey != binding.CompatibilityKey {
 			continue
+		}
+		var prior retainedOrdinaryImage
+		if retainedOrdinary != nil {
+			var retained bool
+			prior, retained = retainedOrdinary[normalizedUploadImagePath(asset.Image.Path)]
+			if !retained || prior.artifact.Kind != asset.Kind {
+				continue
+			}
 		}
 		captureFingerprint, fingerprintErr := workflowMediaReuseCaptureFingerprint(b.config, binding.CompatibilityKey, asset.Kind, asset.Image)
 		if fingerprintErr != nil || captureFingerprint != asset.CaptureFingerprint {
@@ -1491,23 +1529,34 @@ func (b workflowMediaBuilder) RestoreCompatible(
 		image.DiscName = discNames[image.DiscID]
 		contentSHA256, hashErr := workflowMediaContentSHA256(ctx, image.Path)
 		localAvailable := hashErr == nil && strings.EqualFold(contentSHA256, asset.ContentSHA256)
-		if localAvailable && asset.Imported && asset.Kind == api.MediaArtifactScreenshot && image.RawURL == "" {
-			if !originsLoaded {
-				importedOrigins = b.reusableImportedImageOrigins(ctx, subject)
-				originsLoaded = true
-				if err := ctx.Err(); err != nil {
-					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media restore canceled: %w", err)
+		if localAvailable && retainedOrdinary != nil {
+			// The current workflow still owns this verified file and its
+			// original capture record, including for future removal.
+			localAvailable = prior.image.ContentSHA256 == "" || strings.EqualFold(prior.image.ContentSHA256, contentSHA256)
+			if localAvailable {
+				image = prior.image
+				image.ContentSHA256 = contentSHA256
+				image.Processing = asset.Image.Processing
+				image.Tonemapping = asset.Image.Tonemapping
+				image.Format = reusableMediaImageFormat(image.Path)
+			}
+		} else if localAvailable {
+			if asset.Imported && asset.Kind == api.MediaArtifactScreenshot && image.RawURL == "" {
+				if !originsLoaded {
+					importedOrigins = b.reusableImportedImageOrigins(ctx, subject)
+					originsLoaded = true
+					if err := ctx.Err(); err != nil {
+						return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media restore canceled: %w", err)
+					}
+				}
+				if origin, ok := importedOrigins[contentSHA256]; ok {
+					image.Host = origin.Host
+					image.ImgURL, image.RawURL, image.WebURL = origin.URL, origin.URL, origin.URL
 				}
 			}
-			if origin, ok := importedOrigins[contentSHA256]; ok {
-				image.Host = origin.Host
-				image.ImgURL, image.RawURL, image.WebURL = origin.URL, origin.URL, origin.URL
-			}
-		}
-		if localAvailable {
 			materialized, materializeErr := b.materializeReusableMediaImage(ctx, binding, image, captureFingerprint, asset.ContentSHA256)
 			if materializeErr != nil && !errors.Is(materializeErr, errReusableMediaUnavailable) {
-				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media materialize reusable artifact: %w", materializeErr)
+				return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media materialize reusable artifact: %w", materializeErr)
 			}
 			localAvailable = materializeErr == nil
 			if localAvailable {
@@ -1517,20 +1566,25 @@ func (b workflowMediaBuilder) RestoreCompatible(
 		}
 		sourceID := restoredUnavailableSourceID(snapshot.CaptureFingerprint, asset)
 		if localAvailable {
-			artifact := publicMediaArtifact(
-				snapshot.CaptureFingerprint,
-				"restored-"+string(asset.Kind),
-				len(snapshot.Artifacts),
-				asset.Kind,
-				image.Purpose,
-				image,
-			)
-			artifact.Order = asset.Order
-			artifact.Selected = asset.Selected
-			if asset.Kind == api.MediaArtifactDVDMenu {
-				artifact.Source = api.ScreenshotSelectionSourceDVDMenu
-			} else if asset.Imported {
-				artifact.Source = "tracker"
+			artifact := prior.artifact
+			if retainedOrdinary == nil {
+				artifact = publicMediaArtifact(
+					snapshot.CaptureFingerprint,
+					"restored-"+string(asset.Kind),
+					len(snapshot.Artifacts),
+					asset.Kind,
+					image.Purpose,
+					image,
+				)
+				artifact.Order = asset.Order
+				artifact.Selected = asset.Selected
+				if asset.Kind == api.MediaArtifactDVDMenu {
+					artifact.Source = api.ScreenshotSelectionSourceDVDMenu
+				} else if asset.Imported {
+					artifact.Source = "tracker"
+				}
+			} else if artifact.Processing != nil {
+				artifact.Processing = verifiedScreenshotProcessing(image)
 			}
 			snapshot.Artifacts = append(snapshot.Artifacts, artifact)
 			retained.ArtifactImages[artifact.ID] = image
@@ -1538,6 +1592,10 @@ func (b workflowMediaBuilder) RestoreCompatible(
 				retained.DVDMenuImages[artifact.ID] = api.DVDMenuCaptureImage{ScreenshotImage: image}
 			}
 			sourceID = artifact.ID
+		}
+		if retainedOrdinary != nil {
+			// The comparison restore preserves the workflow's own hosted variants.
+			continue
 		}
 		for linkIndex, link := range asset.HostedLinks {
 			if sourceOnlyHostedImageLink(link) {
@@ -1571,15 +1629,11 @@ func (b workflowMediaBuilder) RestoreCompatible(
 		}
 	}
 	if len(snapshot.Artifacts) == 0 {
-		return api.MediaArtifactSet{}, nil, nil
+		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, nil
 	}
 	rebuildWorkflowMediaLocalSlices(&retained, snapshot)
 	requiredScreenshots, requiredMenus := projectedMediaRequirements(projections.Projections)
 	applyWorkflowMediaMinimums(&snapshot, requiredScreenshots, requiredMenus)
-	if attempts, prepared := b.restoredHostedImageAttempts(ctx, release, snapshot, retained, projections.Projections); prepared {
-		snapshot.HostAttempts = attempts
-		snapshot.ImageRequirementsPrepared = true
-	}
 	return snapshot, retained, nil
 }
 
@@ -2411,6 +2465,11 @@ func (b workflowMediaBuilder) UploadImages(
 	if failedHost && !retry {
 		return api.MediaArtifactSet{}, nil, nil, errors.New("failed image host requires explicit retry")
 	}
+	hostingScope, err := workflowMediaHostAccountScope(b.config, "")
+	if err != nil {
+		return api.MediaArtifactSet{}, nil, nil, err
+	}
+	retained.imageHostingScope = hostingScope
 	selected := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
 	for _, artifactID := range artifactIDs {
 		selected[artifactID] = struct{}{}
