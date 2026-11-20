@@ -341,7 +341,7 @@ git ls-files --others --exclude-standard
 
 Skip local E2E for documentation-only or unrelated changes. Run the affected project or `--grep` for a narrow browser/test change; shared runtime, workflow/API, build, and dependency changes need all five projects. A unit-test-only edit needs its unit checks and E2E only when its behavior also warrants an integration check. Selector-only changes need `node --test scripts/ci/e2e-scope.test.mjs` and workflow validation. These are selection guidelines: an explicit `make e2e`, full validation request, or benchmark command still runs the complete requested suite, even with no diff.
 
-`make e2e` builds the embedded application and runs all five projects against isolated local fake services. Install FFmpeg and dvdauthor 0.7.2 on `PATH` for native media scenarios; on Windows, `UPBRR_TEST_DVDAUTHOR` can name the executable explicitly. No real service credentials are needed. Normal local runs default to eight fully parallel workers. CI distributes individual tests across four Ubuntu jobs using Playwright's `--shard=N/4`, each with two workers and its own embedded build. Developers on smaller or busy systems may need fewer workers: after `make e2e-build`, use `pnpm --dir webui exec playwright test --workers=2` or `--workers=1`. Rebuild when runtime, embedded assets, or build inputs change; test-only runs may reuse a matching build. The [E2E workflow](.github/workflows/e2e.yml) uploads JSON test timings from each completed shard, plus uniquely named reports and test results on failure. The separate visual suites retain their own configuration.
+`make e2e` builds the embedded application and runs all five projects against isolated local fake services. Install FFmpeg on `PATH` for media scenarios. No real service credentials are needed. Normal local runs default to eight fully parallel workers. CI distributes individual tests across four Ubuntu jobs using Playwright's `--shard=N/4`, each with two workers and its own embedded build. Developers on smaller or busy systems may need fewer workers: after `make e2e-build`, use `pnpm --dir webui exec playwright test --workers=2` or `--workers=1`. Rebuild when runtime, embedded assets, or build inputs change; test-only runs may reuse a matching build. The [E2E workflow](.github/workflows/e2e.yml) uploads JSON test timings from each completed shard, plus uniquely named reports and test results on failure. The separate visual suites retain their own configuration.
 
 ### Other checks
 
@@ -538,5 +538,5 @@ go test -count=1 -v ./internal/core -run TestComparisonAuthoredDiscFastAcceptanc
 With the opt-in enabled, missing prerequisites fail the test. It verifies both
 file/disc pairs and a three-column set with a 24000/1001-to-25 playback-rate
 relationship, independent original-frame checks and retained native replay.
-Ordinary tests do not require private media. The embedded DVD-selection scenario
-requires FFmpeg and dvdauthor; the E2E workflow installs both explicitly.
+Ordinary tests do not require private media. dvdauthor is only required for the
+opt-in authored-disc integration test.
