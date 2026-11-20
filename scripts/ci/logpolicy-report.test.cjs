@@ -10,6 +10,7 @@ const head = 'a'.repeat(40);
 const base = 'b'.repeat(40);
 const target = { number: 12, runId: 10, attempt: 1, headRepoId: 99, head, base };
 const counts = { TRACE: 1, DEBUG: 2, INFO: 3, WARN: 0, ERROR: 1 };
+const zero = Object.fromEntries(Object.keys(counts).map(level => [level, 0]));
 const bot = { id: 41898282, type: 'Bot' };
 
 function harness() {
@@ -65,7 +66,7 @@ test('fork resolution binds source workflow, head repository and revision even a
   await assert.rejects(resolve(h.github, h.context), /Unexpected source workflow/);
 });
 
-test('one owned comment is reused on reruns and cleared on zero or analysis failure', async () => {
+test('one owned comment is reused for positive reports and identical retries do not write', async () => {
   const h = harness();
   const report = { ...target, status: 'ok', counts };
   // Marker copies and unrelated bot comments must remain untouched.
@@ -79,15 +80,38 @@ test('one owned comment is reused on reruns and cleared on zero or analysis fail
   await publish(h.github, h.context, [report]);
   assert.equal(h.writes.length, 1, 'identical reruns need no write');
   h.run.run_attempt = h.context.payload.workflow_run.run_attempt = 2;
-  const zero = Object.fromEntries(Object.keys(counts).map(level => [level, 0]));
-  await publish(h.github, h.context, [{ ...target, attempt: 2, status: 'ok', counts: zero }]);
+  await publish(h.github, h.context, [{ ...target, attempt: 2, status: 'ok', counts }]);
+  assert.equal(h.writes.length, 2);
+  assert.equal(h.writes[1].comment_id, h.comments[2].id);
   assert.equal(h.comments.length, 3);
-  assert.match(h.comments[2].body, /\| \*\*Total\*\* \| \*\*0\*\* \|/);
-  await publish(h.github, h.context, [{ ...target, attempt: 2, status: 'failed' }]);
-  assert.match(h.comments[2].body, /Analysis unavailable/);
-  assert.doesNotMatch(h.comments[2].body, /\| INFO/);
   assert.equal(h.comments[0].body, bodyFor(report));
   assert.equal(h.comments[1].body, 'Another CI report');
+});
+
+test('zero updates an owned report without creating one; failures never write', async () => {
+  const h = harness();
+  for (const report of [{ status: 'ok', counts: zero }, { status: 'failed' }]) {
+    await publish(h.github, h.context, [{ ...target, ...report }]);
+  }
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.comments.length, 0);
+
+  const previous = bodyFor({ ...target, status: 'ok', counts });
+  h.comments.push({ id: 1, user: bot, body: previous });
+  const nextHead = 'c'.repeat(40);
+  h.run.head_sha = h.pr.head.sha = nextHead;
+  await publish(h.github, h.context, [{ ...target, head: nextHead, status: 'failed' }]);
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.comments[0].body, previous);
+
+  const report = { ...target, head: nextHead, status: 'ok', counts: zero };
+  await publish(h.github, h.context, [report]);
+  assert.equal(h.comments.length, 1);
+  assert.equal(h.writes[0].comment_id, 1);
+  assert.match(h.comments[0].body, /\| \*\*Total\*\* \| \*\*0\*\* \|/);
+  assert(h.comments[0].body.includes(nextHead));
+  await publish(h.github, h.context, [report]);
+  assert.equal(h.writes.length, 1, 'identical zero retry needs no write');
 });
 
 test('stale heads, bases and attempts cannot replace a newer report', async () => {
@@ -98,7 +122,7 @@ test('stale heads, bases and attempts cannot replace a newer report', async () =
     if (change === 'head') h.pr.head.sha = 'c'.repeat(40);
     if (change === 'base') h.pr.base.sha = 'c'.repeat(40);
     if (change === 'attempt') h.run.run_attempt = 2;
-    await publish(h.github, h.context, [{ ...target, status: 'failed' }]);
+    await publish(h.github, h.context, [{ ...target, status: 'ok', counts }]);
     assert.equal(h.writes.length, 0, change);
   }
 });
