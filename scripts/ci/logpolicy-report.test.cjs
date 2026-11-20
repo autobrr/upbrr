@@ -88,7 +88,7 @@ test('one owned comment is reused for positive reports and identical retries do 
   assert.equal(h.comments[1].body, 'Another CI report');
 });
 
-test('zero and failed reports do not create or replace comments', async () => {
+test('zero updates an owned report without creating one; failures never write', async () => {
   const h = harness();
   for (const report of [{ status: 'ok', counts: zero }, { status: 'failed' }]) {
     await publish(h.github, h.context, [{ ...target, ...report }]);
@@ -100,11 +100,18 @@ test('zero and failed reports do not create or replace comments', async () => {
   h.comments.push({ id: 1, user: bot, body: previous });
   const nextHead = 'c'.repeat(40);
   h.run.head_sha = h.pr.head.sha = nextHead;
-  for (const report of [{ status: 'ok', counts: zero }, { status: 'failed' }]) {
-    await publish(h.github, h.context, [{ ...target, head: nextHead, ...report }]);
-  }
+  await publish(h.github, h.context, [{ ...target, head: nextHead, status: 'failed' }]);
   assert.equal(h.writes.length, 0);
   assert.equal(h.comments[0].body, previous);
+
+  const report = { ...target, head: nextHead, status: 'ok', counts: zero };
+  await publish(h.github, h.context, [report]);
+  assert.equal(h.comments.length, 1);
+  assert.equal(h.writes[0].comment_id, 1);
+  assert.match(h.comments[0].body, /\| \*\*Total\*\* \| \*\*0\*\* \|/);
+  assert(h.comments[0].body.includes(nextHead));
+  await publish(h.github, h.context, [report]);
+  assert.equal(h.writes.length, 1, 'identical zero retry needs no write');
 });
 
 test('stale heads, bases and attempts cannot replace a newer report', async () => {

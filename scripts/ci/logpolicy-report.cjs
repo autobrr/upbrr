@@ -143,10 +143,12 @@ async function publish(github, context, reports) {
     validateReport(report);
     assert(report.runId === run.id && report.head === run.head_sha && report.attempt === context.payload.workflow_run.run_attempt,
       'Report is not bound to the triggering run');
-    // Leave previous reports tied to their original revisions. Failures are reported in CI.
-    if (report.status !== 'ok' || !levels.some(level => report.counts[level] > 0)) continue;
+    // Analysis failures remain visible in CI and are never reported as zero.
+    if (report.status !== 'ok') continue;
     const comments = await github.paginate(github.rest.issues.listComments, { ...context.repo, issue_number: report.number, per_page: 100 });
     const owned = comments.find(comment => comment.user?.id === botId && comment.user.type === 'Bot' && comment.body?.startsWith(marker + '\n'));
+    // Zero results can clear stale counts, but never start a new comment.
+    if (!owned && !levels.some(level => report.counts[level] > 0)) continue;
     if (owned && newerComment(owned.body, report)) continue;
     // GitHub has no atomic PR-head precondition for comment writes. Serialize
     // writers and check both revisions just before writing, then check again.
