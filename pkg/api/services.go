@@ -1932,6 +1932,10 @@ type DescriptionSubject struct {
 	ImageHost                            ImageHostOverrides
 	TrackerData                          []TrackerMetadata
 	ExactMedia                           *ExactMediaAssets
+	// DescriptionOverride is non-final shared input used when no tracker group overrides it.
+	DescriptionOverride string
+	// ReuseImagesOnly is backend edit authority; it does not modify the retained upload policy.
+	ReuseImagesOnly bool `json:"-"`
 }
 
 // NewDescriptionSubject projects upload state into the description builder's
@@ -1954,6 +1958,7 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		DVDVOBMediaInfoText:         subject.DVDVOBMediaInfoText,
 		DescriptionTemplate:         subject.DescriptionTemplate,
 		DescriptionGroups:           CloneDescriptionBuilderGroups(subject.DescriptionGroups),
+		DescriptionOverride:         subject.DescriptionOverride,
 		EpisodeOverview:             subject.EpisodeOverview,
 		Options:                     subject.Options,
 		Release:                     subject.Release,

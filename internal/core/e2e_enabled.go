@@ -1874,6 +1874,9 @@ func (s e2eTrackerService) BuildPreparation(ctx context.Context, meta api.Descri
 				source += "\n[img]" + hostedImageURL(link) + "[/img]"
 			}
 		}
+		if meta.DescriptionOverride != "" {
+			source += "\n\n[b]" + name + "[/b]\n" + meta.DescriptionOverride
+		}
 		for _, group := range meta.DescriptionGroups {
 			if group.HasOverride && (strings.EqualFold(group.GroupKey, name) || slices.Contains(group.Trackers, name)) {
 				source = group.RawDescription

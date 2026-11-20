@@ -237,6 +237,7 @@ func contractRoots() []reflect.Type {
 		api.UploadReleaseWorkflowImagesRequest{},
 		api.RemoveReleaseWorkflowHostedImagesRequest{},
 		api.RetryReleaseWorkflowImageHostRequest{},
+		api.SaveReleaseWorkflowMainDescriptionRequest{},
 		api.SaveReleaseWorkflowDescriptionOverrideRequest{},
 		api.ResetReleaseWorkflowDescriptionOverrideRequest{},
 		api.RetryReleaseWorkflowUploadRequest{},

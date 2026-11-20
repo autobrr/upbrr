@@ -82,6 +82,7 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 	registerReleaseWorkflowCommand[api.AnalyzeReleaseWorkflowHDRRequest](s, mux, "AnalyzeReleaseWorkflowHDR", true)
 	registerReleaseWorkflowCommand[api.SetReleaseWorkflowAudioAnalysisEnabledRequest](s, mux, "SetReleaseWorkflowAudioAnalysisEnabled", false)
 	registerReleaseWorkflowCommand[api.SetReleaseWorkflowHDRAnalysisEnabledRequest](s, mux, "SetReleaseWorkflowHDRAnalysisEnabled", false)
+	registerReleaseWorkflowCommand[api.SaveReleaseWorkflowMainDescriptionRequest](s, mux, "SaveReleaseWorkflowMainDescription", false)
 	registerReleaseWorkflowCommand[api.SaveReleaseWorkflowDescriptionOverrideRequest](s, mux, "SaveReleaseWorkflowDescriptionOverride", false)
 	registerReleaseWorkflowCommand[api.ResetReleaseWorkflowDescriptionOverrideRequest](s, mux, "ResetReleaseWorkflowDescriptionOverride", false)
 	registerReleaseWorkflowCommand[api.RetryReleaseWorkflowUploadRequest](s, mux, "RetryReleaseWorkflowUpload", true)

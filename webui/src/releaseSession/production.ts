@@ -302,6 +302,19 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
         artifactID,
       );
     },
+    saveMainDescription: (current, source, idempotencyKey, signal) => {
+      if (!current.descriptions) throw new Error("Workflow descriptions are unavailable.");
+      return releaseWorkflowClient.saveMainDescription(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          idempotencyKey,
+          descriptions: { id: current.descriptions.id, revision: current.descriptions.revision },
+          source,
+        },
+        signal,
+      );
+    },
     saveDescriptionOverride: (current, groupKey, source, idempotencyKey, signal) => {
       if (!current.descriptions) throw new Error("Workflow descriptions are unavailable.");
       return releaseWorkflowClient.saveDescriptionOverride(

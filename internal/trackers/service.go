@@ -285,6 +285,9 @@ func (s *Service) preloadUploadContentData(
 // variants; tracker-local content failures are returned in the preview while
 // cancellation and invalid top-level selection return errors.
 func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionSubject, trackersList []string) (api.PreparationPreview, error) {
+	if subject.ReuseImagesOnly {
+		ctx = context.WithValue(ctx, descriptionImageReuseOnlyKey{}, true)
+	}
 	logger := logging.FromContext(ctx, s.logger)
 
 	meta := uploadSubjectForDescription(subject)
@@ -551,6 +554,7 @@ func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubje
 		DVDVOBMediaInfoText:                  subject.DVDVOBMediaInfoText,
 		DescriptionTemplate:                  subject.DescriptionTemplate,
 		DescriptionGroups:                    api.CloneDescriptionBuilderGroups(subject.DescriptionGroups),
+		DescriptionOverride:                  subject.DescriptionOverride,
 		EpisodeOverview:                      subject.EpisodeOverview,
 		Options:                              subject.Options,
 		Release:                              subject.Release,

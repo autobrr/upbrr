@@ -355,6 +355,10 @@ type RetainedAudioAnalysisLocalPath interface {
 // DescriptionResources carries current owner-scoped analysis and derived selection
 // policy alongside retained media. HDR authority is resolved only for automatic assets.
 type DescriptionResources struct {
+	// ReuseImagesOnly forbids new image fetches and uploads for a description edit.
+	ReuseImagesOnly bool
+	// PreservePriorDescriptionOverrides distinguishes implicit regeneration from editor commands.
+	PreservePriorDescriptionOverrides bool
 	// SuppressImportedScreenshotReferences is derived afresh from exact retained selection intent.
 	SuppressImportedScreenshotReferences map[string]bool
 	// HDRArtifacts preserves validated current image associations for final editor overrides.
@@ -1295,6 +1299,26 @@ func (c GenerateDescriptionsCommand) commandFingerprint() (api.WorkflowFingerpri
 		ExpectedRevision api.WorkflowRevision
 		Instructions     api.DescriptionInstructions
 	}{c.ExpectedRevision, c.Instructions})
+}
+
+// SaveMainDescriptionCommand reapplies shared input to one exact retained description set.
+type SaveMainDescriptionCommand struct {
+	WorkflowID       api.WorkflowID
+	ExpectedRevision api.WorkflowRevision
+	Descriptions     api.DescriptionSetRef
+	Source           string
+	IdempotencyKey   string
+}
+
+func (SaveMainDescriptionCommand) commandName() string              { return "save_main_description" }
+func (SaveMainDescriptionCommand) userIntent()                      {}
+func (SaveMainDescriptionCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
+func (c SaveMainDescriptionCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	return canonicalCommandFingerprint(struct {
+		ExpectedRevision api.WorkflowRevision
+		Descriptions     api.DescriptionSetRef
+		Source           string
+	}{c.ExpectedRevision, c.Descriptions, c.Source})
 }
 
 // SaveDescriptionOverrideCommand changes one exact retained description group.

@@ -2444,6 +2444,16 @@
           "imageHost": {
             "$ref": "#/components/schemas/ImageHostOverrides"
           },
+          "mainSource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "options": {
             "$ref": "#/components/schemas/UploadOptions"
           },
@@ -2555,6 +2565,16 @@
           },
           "inputFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "mainSource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "media": {
             "anyOf": [
@@ -10937,6 +10957,32 @@
           "expectedRevision",
           "idempotencyKey",
           "override",
+          "workflowId"
+        ]
+      },
+      "SaveReleaseWorkflowMainDescriptionRequest": {
+        "type": "object",
+        "properties": {
+          "descriptions": {
+            "$ref": "#/components/schemas/DescriptionSetRef"
+          },
+          "expectedRevision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "descriptions",
+          "expectedRevision",
+          "idempotencyKey",
           "workflowId"
         ]
       },

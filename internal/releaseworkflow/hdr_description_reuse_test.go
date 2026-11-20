@@ -105,7 +105,7 @@ func TestHDRDescriptionRecorderUsesAuthorityAtAtomicSave(t *testing.T) {
 	state.Workflow.AudioAnalysisEnabled = true
 	state.Workflow.AudioAnalysis = &api.AudioAnalysisRef{ID: "audio-result", Revision: 1}
 	calls := builder.records
-	if err := module.prepareReusableDescriptions(t.Context(), testOwnerID, &state, current.Descriptions, module.clock.Now().UTC()); err != nil ||
+	if err := module.prepareReusableDescriptions(t.Context(), testOwnerID, &state, current.Descriptions, module.clock.Now().UTC(), false); err != nil ||
 		state.descriptionReuse != nil || builder.records != calls {
 		t.Fatalf("audio cache exclusion was lost: calls=%d error=%v", builder.records, err)
 	}

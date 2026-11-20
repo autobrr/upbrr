@@ -96,9 +96,15 @@ func TestRehostSourceOnlyComparisonImagesPreservesMarkupAndReusesUploads(t *test
 	}
 	preloaded := &preloadedDescriptionAssetData{trackerRecords: meta.TrackerData}
 	want := strings.ReplaceAll(strings.ReplaceAll(description, urls[0], "https://imgbox/0.png"), urls[1], "https://imgbox/1.png")
-	for attempt := range 2 {
+	reuseOnly := context.WithValue(t.Context(), descriptionImageReuseOnlyKey{}, true)
+	blocked := &DescriptionAssets{Description: description}
+	if err := service.rehostSourceOnlyDescriptionImages(reuseOnly, "BTN", meta, config.TrackerConfig{}, blocked, preloaded); err == nil ||
+		len(images.calls) != 0 || blocked.Description != description {
+		t.Fatalf("edit fetched, uploaded, or rewrote unavailable comparison images: calls=%v err=%v", images.calls, err)
+	}
+	for attempt, ctx := range []context.Context{t.Context(), reuseOnly} {
 		assets := &DescriptionAssets{Description: description}
-		if err := service.rehostSourceOnlyDescriptionImages(t.Context(), "BTN", meta, config.TrackerConfig{}, assets, preloaded); err != nil {
+		if err := service.rehostSourceOnlyDescriptionImages(ctx, "BTN", meta, config.TrackerConfig{}, assets, preloaded); err != nil {
 			t.Fatal(err)
 		}
 		if assets.Description != want {

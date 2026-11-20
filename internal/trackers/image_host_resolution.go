@@ -233,7 +233,8 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		Status:       "reused",
 		AllowedHosts: append([]string{}, policy.allowed...),
 	}
-	skipUpload := imageHostUploadSkipped(meta)
+	reuseOnly := descriptionImageReuseOnly(ctx)
+	skipUpload := imageHostUploadSkipped(meta) || reuseOnly
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
@@ -272,7 +273,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			needsLocalRehost = true
 		}
 	}
-	if (sourceOnlySlots || needsLocalRehost) && meta.ExactMedia != nil && !meta.ExactMedia.ImageHostUploadSkipped {
+	if (sourceOnlySlots || needsLocalRehost) && meta.ExactMedia != nil && !meta.ExactMedia.ImageHostUploadSkipped && !reuseOnly {
 		skipUpload = false
 	}
 	persistSlots := screenshotSlotsSourceWide(ctx, tracker, meta, repo, preloaded, registry)

@@ -201,6 +201,14 @@ func CommandFromRequest(request any) (Command, error) {
 			Instructions:     request.Instructions,
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
+	case api.SaveReleaseWorkflowMainDescriptionRequest:
+		return SaveMainDescriptionCommand{
+			WorkflowID:       request.WorkflowID,
+			ExpectedRevision: request.ExpectedRevision,
+			Descriptions:     request.Descriptions,
+			Source:           *request.Source,
+			IdempotencyKey:   request.IdempotencyKey,
+		}, nil
 	case api.SaveReleaseWorkflowDescriptionOverrideRequest:
 		return SaveDescriptionOverrideCommand{
 			WorkflowID:       request.WorkflowID,

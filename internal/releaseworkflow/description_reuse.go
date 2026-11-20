@@ -19,12 +19,13 @@ func (m *Module) prepareReusableDescriptions(
 	state *State,
 	snapshot *api.DescriptionSet,
 	now time.Time,
+	preservePriorOverrides bool,
 ) error {
 	recorder, ok := m.descriptionBuilder.(ReusableDescriptionBuilder)
 	if !ok || snapshot == nil || snapshot.Media == nil {
 		return nil
 	}
-	if state.Workflow.AudioAnalysisEnabled && state.Workflow.AudioAnalysis != nil {
+	if state.Workflow.AudioAnalysisEnabled && state.Workflow.AudioAnalysis != nil && snapshot.MainSource == nil {
 		state.descriptionReuse = nil
 		return nil
 	}
@@ -39,6 +40,14 @@ func (m *Module) prepareReusableDescriptions(
 	privateMedia, err = m.descriptionResources(ctx, ownerID, state, privateMedia, now)
 	if err != nil {
 		return fmt.Errorf("release workflow retain description resources: %w", err)
+	}
+	if preservePriorOverrides && snapshot.MainSource != nil {
+		resources, wrapped := privateMedia.(DescriptionResources)
+		if !wrapped {
+			resources.Media = privateMedia
+		}
+		resources.PreservePriorDescriptionOverrides = true
+		privateMedia = resources
 	}
 	privateInputs, err := m.private.Get(ownerID, state.Workflow.ID, descriptionPrivateResourceID(snapshot.ID), now)
 	if err != nil {

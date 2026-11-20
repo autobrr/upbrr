@@ -362,6 +362,8 @@ export type SessionAction =
   | Readonly<{ type: "upload_images_selected_all"; selected: boolean }>
   | Readonly<{ type: "description_edited"; groupKey: string; raw: string }>
   | Readonly<{ type: "description_dirty_cleared"; groupKey?: string; notice?: string }>
+  | Readonly<{ type: "description_main_saved" }>
+  | Readonly<{ type: "description_main_save_failed"; error: string }>
   | Readonly<{
       type: "description_rendered";
       sessionRevision: number;
@@ -2104,6 +2106,24 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         },
       };
     }
+    case "description_main_save_failed":
+      return {
+        ...state,
+        descriptions: { ...state.descriptions, notice: "", error: action.error },
+      };
+    case "description_main_saved":
+      return {
+        ...state,
+        descriptions: {
+          ...state.descriptions,
+          inputRevision: state.descriptions.inputRevision + 1,
+          rawByGroup: {},
+          renderedByGroup: {},
+          dirtyGroups: [],
+          notice: "Main description saved and applied to the selected trackers.",
+          error: "",
+        },
+      };
     case "description_rendered":
       if (
         !workflowMatches(state, "descriptions", action.sessionRevision, action.revision) ||

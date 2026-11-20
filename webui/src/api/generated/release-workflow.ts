@@ -600,6 +600,7 @@ export type DeleteReleaseWorkflowMediaRequest = Readonly<{
 export type DescriptionInstructions = Readonly<{
   client?: ClientOverrides;
   imageHost: ImageHostOverrides;
+  mainSource?: string | null;
   options: UploadOptions;
   overrides?: readonly DescriptionOverrideInput[];
   questionnaireAnswers?: Readonly<Record<string, Readonly<Record<string, string>>>>;
@@ -629,6 +630,7 @@ export type DescriptionSet = Readonly<{
   hdrArtifacts?: Readonly<Record<string, readonly HDRArtifactEvidence[]>>;
   id: DescriptionSetID;
   inputFingerprint: WorkflowFingerprint;
+  mainSource?: string | null;
   media?: MediaArtifactSetRef | null;
   projectionSet: TrackerReleaseProjectionSetRef;
   release: ReleaseSnapshotRef;
@@ -2620,6 +2622,14 @@ export type SaveReleaseWorkflowDescriptionOverrideRequest = Readonly<{
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
   override: DescriptionOverrideMutation;
+  workflowId: WorkflowID;
+}>;
+
+export type SaveReleaseWorkflowMainDescriptionRequest = Readonly<{
+  descriptions: DescriptionSetRef;
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  source?: string;
   workflowId: WorkflowID;
 }>;
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -153,6 +154,127 @@ func TestWorkflowDescriptionReuseRestoresCurrentGenerationWithoutBuilding(t *tes
 	}
 	if restored.InputFingerprint == fixture.snapshot.InputFingerprint {
 		t.Fatal("restored description retained prior workflow fingerprint")
+	}
+}
+
+func TestWorkflowDescriptionMainSourceSurvivesOutputChangesForTheSameSource(t *testing.T) {
+	t.Parallel()
+	fixture := newWorkflowDescriptionReuseFixture(t)
+	fixture.instructions.MainSource = new("  [b]Shared input[/b]\n")
+	sourceIdentity := api.SourceContentIdentity{
+		Version: api.SourceContentIdentityVersion, Digest: strings.Repeat("b", 64),
+	}
+	fixture.resolver.subject.SourceIdentity = sourceIdentity
+	if err := fixture.recordReusableDescriptions(t, fixture.oldRelease, fixture.oldMedia, fixture.oldPrivate, fixture.snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.repository.value.MainSource == nil || *fixture.repository.value.MainSource != *fixture.instructions.MainSource {
+		t.Fatalf("shared text not recorded exactly: %#v", fixture.repository.value.MainSource)
+	}
+	fixture.resolver.subject = reusableDescriptionSubjectForFixture(fixture.currentRelease, 2)
+	fixture.resolver.subject.SourceIdentity = sourceIdentity
+	fixture.resolver.subject.DescriptionTemplate = "Changed template"
+	request := api.DescriptionInstructions{}
+	restore := func() (api.DescriptionSet, api.DescriptionInstructions, error) {
+		return fixture.builder.RestoreCompatibleDescriptions(t.Context(), fixture.currentRelease, fixture.projections,
+			fixture.currentMedia, fixture.currentPrivate, request)
+	}
+	restored, inputs, err := restore()
+	if err != nil || restored.Status != "" || inputs.MainSource == nil || *inputs.MainSource != *fixture.instructions.MainSource {
+		t.Fatalf("output compatibility must not discard same-source text: %#v, %#v, %v", restored, inputs, err)
+	}
+	subject, err := fixture.builder.resolveSubject(t.Context(), fixture.currentRelease, fixture.projections, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fixture.resolver.inputs[len(fixture.resolver.inputs)-1].DescriptionOverride; got != *fixture.instructions.MainSource {
+		t.Fatalf("shared text not forwarded verbatim: %q", got)
+	}
+	if subject.DescriptionGroupsFinal {
+		t.Fatal("shared text was marked as final tracker output")
+	}
+
+	fixture.resolver.subject.SourceIdentity.Digest = strings.Repeat("c", 64)
+	restored, inputs, err = restore()
+	if err != nil || restored.Status != "" || inputs.MainSource != nil {
+		t.Fatalf("saved source crossed different content at the same path: %#v, %#v, %v", restored, inputs, err)
+	}
+}
+
+func TestWorkflowDescriptionMainSourcePreservesOnlyCompatibleInactiveEdits(t *testing.T) {
+	t.Parallel()
+	fixture := newWorkflowDescriptionReuseFixture(t)
+	sourceIdentity := api.SourceContentIdentity{Version: api.SourceContentIdentityVersion, Digest: strings.Repeat("b", 64)}
+	fixture.resolver.subject.SourceIdentity = sourceIdentity
+	fixture.instructions.Overrides[0].Final = true
+	fixture.instructions.Overrides[0].TrackerIDs = []api.TrackerID{"ALPHA", "BETA"}
+	if err := fixture.recordReusableDescriptions(t, fixture.oldRelease, fixture.oldMedia, fixture.oldPrivate, fixture.snapshot); err != nil {
+		t.Fatal(err)
+	}
+	prior := fixture.repository.value.CompatibilityFingerprint
+	fixture.instructions.MainSource = new("new main text")
+	fixture.instructions.Overrides[0].TrackerIDs = []api.TrackerID{"ALPHA"}
+	resources := releaseworkflow.DescriptionResources{
+		Media: fixture.oldPrivate, AudioAnalysis: api.AudioAnalysisResult{ID: "current-analysis"},
+	}
+	if err := fixture.recordReusableDescriptions(t, fixture.oldRelease, fixture.oldMedia, resources, fixture.snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.repository.value.CompatibilityFingerprint != prior || fixture.repository.value.MainSource == nil ||
+		!reflect.DeepEqual(fixture.repository.value.Overrides, fixture.instructions.Overrides) {
+		t.Fatalf("source-only save discarded prior exact compatible evidence or retained superseded members: %#v", fixture.repository.value)
+	}
+
+	fixture.resolver.subject = reusableDescriptionSubjectForFixture(fixture.currentRelease, 2)
+	fixture.resolver.subject.SourceIdentity = sourceIdentity
+	fixture.service.preview = &api.PreparationPreview{Descriptions: []api.PreparationDescription{
+		{
+			GroupKey:       "alpha",
+			Trackers:       []string{"ALPHA"},
+			RawDescription: "New alpha output",
+		},
+		{
+			GroupKey:       "beta",
+			Trackers:       []string{"BETA"},
+			RawDescription: "New beta output",
+		},
+	}}
+	request := fixture.instructions
+	request.MainSource, request.Overrides = nil, nil
+	restore := func() (api.DescriptionSet, api.DescriptionInstructions, error) {
+		return fixture.builder.RestoreCompatibleDescriptions(t.Context(), fixture.currentRelease, fixture.projections,
+			fixture.currentMedia, fixture.currentPrivate, request)
+	}
+	compatible, inputs, err := restore()
+	if err != nil || compatible.Status != api.StageStatusCompleted || !reflect.DeepEqual(inputs.Overrides, fixture.instructions.Overrides) ||
+		inputs.MainSource == nil || *inputs.MainSource != *fixture.instructions.MainSource || fixture.service.builds != 1 {
+		t.Fatalf("compatible inactive text was not rebuilt with the current main source: %#v builds=%d err=%v", inputs, fixture.service.builds, err)
+	}
+	fixture.resolver.subject.DescriptionTemplate = "new incompatible template"
+	snapshot, inputs, err := restore()
+	if err != nil || snapshot.Status != "" || len(inputs.Overrides) != 0 || inputs.MainSource == nil ||
+		*inputs.MainSource != *fixture.instructions.MainSource || fixture.service.builds != 1 {
+		t.Fatalf("stale exact-output edit crossed an incompatible fingerprint, or shared source lost: %#v %#v err=%v", snapshot, inputs, err)
+	}
+	// Follow a normal regeneration: Build succeeds and publishes its current
+	// outputs, but an implicit regeneration must not overwrite prior edit evidence.
+	fresh, err := fixture.builder.Build(t.Context(), fixture.currentRelease, fixture.projections,
+		fixture.currentMedia, fixture.currentPrivate, inputs, time.Now())
+	if err != nil || fresh.Status != api.StageStatusCompleted || len(fresh.Descriptions) != 2 {
+		t.Fatalf("incompatible current descriptions did not build cleanly: %#v %v", fresh, err)
+	}
+	record, err := fixture.builder.PrepareReusableDescriptions(t.Context(), fixture.currentRelease, fixture.projections,
+		fixture.currentMedia, releaseworkflow.DescriptionResources{
+			Media: fixture.currentPrivate, PreservePriorDescriptionOverrides: true,
+		}, inputs, fresh)
+	if err != nil || record != nil {
+		t.Fatalf("implicit regenerate would overwrite prior compatible edits: %#v %v", record, err)
+	}
+	fixture.resolver.subject.DescriptionTemplate = "Template v1"
+	restored, inputs, err := restore()
+	if err != nil || restored.Status != api.StageStatusCompleted || !reflect.DeepEqual(inputs.Overrides, fixture.instructions.Overrides) ||
+		fixture.service.builds != 3 {
+		t.Fatalf("return to compatible inputs lost prior exact-group source: %#v %#v builds=%d err=%v", restored, inputs, fixture.service.builds, err)
 	}
 }
 
@@ -872,14 +994,14 @@ func TestWorkflowDescriptionReuseMigratesExactLegacyFormatFingerprint(t *testing
 			if err := fixture.recordReusableDescriptions(t, fixture.oldRelease, fixture.oldMedia, fixture.oldPrivate, fixture.snapshot); err != nil {
 				t.Fatal(err)
 			}
-			_, currentFingerprint, legacyFingerprint, available, err := fixture.builder.reusableDescriptionInputs(
-				t.Context(), fixture.oldRelease, fixture.projections, fixture.oldMedia, fixture.oldPrivate, fixture.instructions,
+			inputs, err := fixture.builder.reusableDescriptionInputs(
+				t.Context(), fixture.oldRelease, fixture.projections, fixture.oldMedia, fixture.oldPrivate, fixture.instructions, true,
 			)
-			if err != nil || !available || currentFingerprint == legacyFingerprint || fixture.repository.value.CompatibilityFingerprint != currentFingerprint {
-				t.Fatalf("new record did not use format-independent compatibility: available=%v err=%v", available, err)
+			if err != nil || !inputs.available || inputs.fingerprint == inputs.legacyFingerprint || fixture.repository.value.CompatibilityFingerprint != inputs.fingerprint {
+				t.Fatalf("new record did not use format-independent compatibility: available=%v err=%v", inputs.available, err)
 			}
 			// Simulate a persisted pre-normalization record, retaining every other dependency.
-			fixture.repository.value.CompatibilityFingerprint = legacyFingerprint
+			fixture.repository.value.CompatibilityFingerprint = inputs.legacyFingerprint
 			fixture.resolver.subject = reusableDescriptionSubjectForFixture(fixture.currentRelease, 2)
 			switch change {
 			case "truncated", "mixed", "conflicting labels":
@@ -928,7 +1050,7 @@ func TestWorkflowDescriptionReuseMigratesExactLegacyFormatFingerprint(t *testing
 			}
 			record, err := fixture.builder.PrepareReusableDescriptions(t.Context(), fixture.currentRelease,
 				fixture.projections, fixture.currentMedia, fixture.currentPrivate, instructions, restored)
-			if err != nil || record == nil || record.Description.CompatibilityFingerprint != currentFingerprint {
+			if err != nil || record == nil || record.Description.CompatibilityFingerprint != inputs.fingerprint {
 				t.Fatalf("legacy record was not migrated to byte-bound compatibility: err=%v", err)
 			}
 		})

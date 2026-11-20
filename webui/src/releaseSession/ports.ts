@@ -179,6 +179,12 @@ export type ReleaseWorkflowPorts = Readonly<{
     signal: AbortSignal,
   ): Promise<ReleaseWorkflowCurrent>;
   mediaURL(current: ReleaseWorkflowCurrent, artifactID: string): string;
+  saveMainDescription(
+    current: ReleaseWorkflowCurrent,
+    source: string,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
   saveDescriptionOverride(
     current: ReleaseWorkflowCurrent,
     groupKey: string,

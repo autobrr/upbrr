@@ -642,6 +642,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     removeHostedImages: async (current) => current,
     mediaURL: (_current, artifactID) => `/media/${artifactID}`,
     generateDescriptions: async (current) => current,
+    saveMainDescription: async (current) => current,
     saveDescriptionOverride: async (current) => current,
     resetDescriptionOverride: async (current) => current,
     dryRunUploads: async (current) => current,
@@ -690,6 +691,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     uploadImages: async (...args) => remember(await configured.uploadImages(...args)),
     retryImageHost: async (...args) => remember(await configured.retryImageHost(...args)),
     removeHostedImages: async (...args) => remember(await configured.removeHostedImages(...args)),
+    saveMainDescription: async (...args) => remember(await configured.saveMainDescription(...args)),
     saveDescriptionOverride: async (...args) =>
       remember(await configured.saveDescriptionOverride(...args)),
     resetDescriptionOverride: async (...args) =>
@@ -5174,6 +5176,60 @@ describe("useReleaseSession", () => {
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("saves one revision-bound main description and clears group drafts only on success", async () => {
+    const workflowID = "workflow-main-description";
+    const original = workflowCurrentWithDescriptions(workflowID, 7, "original");
+    const updated = workflowCurrentWithDescriptions(workflowID, 8, "group one", "group two");
+    const source = "[b]Shared[/b]";
+    const settled = { ...updated, descriptions: { ...updated.descriptions!, mainSource: source } };
+    const requests: unknown[] = [];
+    setAppRequestHandlerForTests(async (method, body) => {
+      expect(method).toBe("SaveReleaseWorkflowMainDescription");
+      requests.push(body);
+      if (requests.length === 1) throw new Error("Synthetic request failure");
+      return settled;
+    });
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => original,
+            saveMainDescription: productionReleaseSessionPorts().workflow.saveMainDescription,
+          }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.descriptions.view.artifact?.revision).toBe(7));
+    act(() => result.current.descriptions.edit("unit3d", "existing unsaved group edit"));
+
+    await act(async () => expect(await result.current.descriptions.saveMain(source)).toBe(false));
+    expect(result.current.descriptions.view.notice).toBe("");
+    expect(result.current.descriptions.view.error).toBe(
+      "Main description was not saved. Retry the request.",
+    );
+    expect(result.current.descriptions.view.rawByGroup.unit3d).toBe("existing unsaved group edit");
+
+    await act(async () => expect(await result.current.descriptions.saveMain(source)).toBe(true));
+    const expectedRequest = {
+      workflowId: workflowID,
+      expectedRevision: 7,
+      descriptions: { id: original.descriptions!.id, revision: 7 },
+      source,
+      idempotencyKey: expect.any(String),
+    };
+    expect(requests).toEqual([expectedRequest, expectedRequest]);
+    expect(result.current.descriptions.view.artifact?.mainSource).toBe(source);
+    expect(
+      result.current.descriptions.view.artifact?.descriptions.map((group) => group.source),
+    ).toEqual(["group one", "group two"]);
+    expect(result.current.descriptions.view.rawByGroup).toEqual({});
+    expect(result.current.descriptions.view.error).toBe("");
+    expect(result.current.descriptions.view.notice).toBe(
+      "Main description saved and applied to the selected trackers.",
+    );
   });
 
   it("preserves edited source through Render then Save group", async () => {

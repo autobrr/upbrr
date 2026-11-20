@@ -19,6 +19,10 @@ type ReusableDescription struct {
 	Descriptions             []RenderedDescription      `json:"descriptions"`
 	TrackerResults           []DescriptionTrackerResult `json:"trackerResults,omitempty"`
 	Overrides                []DescriptionOverrideInput `json:"overrides,omitempty"`
+	// MainSource is user-authored input. Its identity binds it to verified source bytes,
+	// independently of whether rendered output still matches current dependencies.
+	MainSource         *string `json:"mainSource,omitempty"`
+	MainSourceIdentity string  `json:"mainSourceIdentity,omitempty"`
 }
 
 // ReusableDescriptionRecord binds safe reusable description output to its
@@ -38,6 +42,9 @@ func (r ReusableDescriptionRecord) Valid() bool {
 // Clone returns a detached reusable-description record.
 func (r ReusableDescriptionRecord) Clone() ReusableDescriptionRecord {
 	cloned := r
+	if r.Description.MainSource != nil {
+		cloned.Description.MainSource = new(*r.Description.MainSource)
+	}
 	cloned.Description.Descriptions = slices.Clone(r.Description.Descriptions)
 	for index := range cloned.Description.Descriptions {
 		cloned.Description.Descriptions[index].TrackerIDs = slices.Clone(r.Description.Descriptions[index].TrackerIDs)
@@ -54,7 +61,13 @@ func (r ReusableDescriptionRecord) Clone() ReusableDescriptionRecord {
 // explicit description text overrides. It validates fingerprints, group/tracker uniqueness,
 // and terminal tracker outcomes; it does not sanitize text or recompute content fingerprints.
 func (r ReusableDescription) Valid() bool {
-	if err := validateWorkflowFingerprint(r.CompatibilityFingerprint); err != nil || len(r.Descriptions) == 0 {
+	if (r.MainSource != nil && !validSHA256(r.MainSourceIdentity)) || (r.MainSource == nil && r.MainSourceIdentity != "") {
+		return false
+	}
+	if len(r.Descriptions) == 0 {
+		return r.MainSource != nil && r.CompatibilityFingerprint == "" && len(r.TrackerResults) == 0 && len(r.Overrides) == 0
+	}
+	if err := validateWorkflowFingerprint(r.CompatibilityFingerprint); err != nil {
 		return false
 	}
 	seenGroups := make(map[string]struct{}, len(r.Descriptions))

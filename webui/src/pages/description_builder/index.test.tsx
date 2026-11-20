@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DescriptionsFacet } from "../../releaseSession/types";
 import DescriptionBuilderPage from "./index";
@@ -12,6 +13,7 @@ const facet = (): DescriptionsFacet => ({
   view: {
     revision: 1,
     status: "ready",
+    mainContext: "workflow-1:1",
     artifact: {
       id: "descriptions-1",
       workflowId: "workflow-1",
@@ -43,6 +45,8 @@ const facet = (): DescriptionsFacet => ({
   },
   load: vi.fn(async () => true),
   edit: vi.fn(),
+  renderMain: vi.fn(async () => ""),
+  saveMain: vi.fn(async () => true),
   render: vi.fn(async () => true),
   save: vi.fn(async () => true),
   reset: vi.fn(async () => true),
@@ -100,7 +104,9 @@ describe("DescriptionBuilderPage", () => {
         trackerIconSrcByName={{}}
       />,
     );
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Raw description for EXAMPLE" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Expand EXAMPLE" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Raw description for EXAMPLE" }), {
       target: { value: "changed" },
@@ -150,7 +156,9 @@ describe("DescriptionBuilderPage", () => {
       />,
     );
 
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: "Raw description for EXAMPLE" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Expand EXAMPLE" }));
     expect(screen.getByRole("textbox", { name: "Raw description for EXAMPLE" })).toHaveValue(
       "authoritative raw",
@@ -158,5 +166,107 @@ describe("DescriptionBuilderPage", () => {
     expect(screen.getByText("authoritative rendered")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Reset group EXAMPLE" }));
     expect(descriptions.reset).toHaveBeenCalledWith("unit3d");
+  });
+
+  it("formats only the selected multiline text by pointer and keyboard", async () => {
+    const user = userEvent.setup();
+    const descriptions: DescriptionsFacet = {
+      ...facet(),
+      renderMain: vi.fn(async () => "<strong>Rendered shared text</strong>"),
+    };
+    render(<DescriptionBuilderPage facet={descriptions} sourcePath="Example" />);
+    const panel = within(screen.getByRole("region", { name: "Main Description" }));
+    const input = panel.getByRole<HTMLTextAreaElement>("textbox", { name: "Raw main description" });
+    fireEvent.change(input, { target: { value: "Before first\nsecond after" } });
+    input.focus();
+    input.setSelectionRange(7, 19, "backward");
+
+    await user.click(panel.getByRole("button", { name: "Bold" }));
+    expect(input).toHaveValue("Before [b]first\nsecond[/b] after");
+    expect(input).toHaveFocus();
+    expect([input.selectionStart, input.selectionEnd, input.selectionDirection]).toEqual([
+      10,
+      22,
+      "backward",
+    ]);
+
+    await user.tab({ shift: true });
+    expect(panel.getByRole("button", { name: "Underline" })).toHaveFocus();
+    await user.keyboard("[Space]");
+    expect(input).toHaveValue("Before [b][u]first\nsecond[/u][/b] after");
+    expect(input).toHaveFocus();
+    await user.click(panel.getByRole("button", { name: "Render main preview" }));
+    expect(await panel.findByText("Rendered shared text")).toBeVisible();
+    await user.click(panel.getByRole("button", { name: "Save main description" }));
+    expect(descriptions.saveMain).toHaveBeenCalledWith("Before [b][u]first\nsecond[/u][/b] after");
+  });
+
+  it("keeps a failed save's draft but does not apply stale preview or reuse it in a different workflow", async () => {
+    let resolvePreview!: (html: string) => void;
+    const preview = new Promise<string>((resolve) => {
+      resolvePreview = resolve;
+    });
+    let rejectPreview!: (error: Error) => void;
+    const pendingFailure = new Promise<string>((_resolve, reject) => {
+      rejectPreview = reject;
+    });
+    const base = facet();
+    const descriptions: DescriptionsFacet = {
+      ...base,
+      renderMain: vi
+        .fn()
+        .mockReturnValueOnce(preview)
+        .mockReturnValueOnce(pendingFailure)
+        .mockRejectedValue(new Error("Synthetic render failure")),
+      saveMain: vi.fn(async () => false),
+    };
+    const { rerender } = render(
+      <DescriptionBuilderPage facet={descriptions} sourcePath="Example" />,
+    );
+    const input = screen.getByRole("textbox", { name: "Raw main description" });
+    fireEvent.change(input, { target: { value: "First draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Render main preview" }));
+    fireEvent.change(input, { target: { value: "Changed draft" } });
+    await act(async () => resolvePreview("<p>Obsolete preview</p>"));
+    expect(screen.queryByText("Obsolete preview")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Render main preview" }));
+    fireEvent.change(input, { target: { value: "Changed again" } });
+    await act(async () => rejectPreview(new Error("Outdated preview request")));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Render main preview" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Main preview could not be rendered.",
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save main description" }));
+    });
+    expect(input).toHaveValue("Changed again");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    rerender(
+      <DescriptionBuilderPage
+        facet={{ ...descriptions, view: { ...descriptions.view, artifact: null } }}
+        sourcePath="Example"
+      />,
+    );
+    expect(input).toHaveValue("Changed again");
+    expect(screen.getByRole("button", { name: "Save main description" })).toBeDisabled();
+
+    const next: DescriptionsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        mainContext: "workflow-2:1",
+        artifact: {
+          ...base.view.artifact!,
+          workflowId: "workflow-2",
+          mainSource: "Persisted shared description",
+        },
+      },
+    };
+    rerender(<DescriptionBuilderPage facet={next} sourcePath="Example" />);
+    expect(screen.getByRole("textbox", { name: "Raw main description" })).toHaveValue(
+      "Persisted shared description",
+    );
   });
 });

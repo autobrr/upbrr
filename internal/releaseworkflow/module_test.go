@@ -979,6 +979,9 @@ func (f *descriptionBuilderFake) Build(
 	rendered := make([]api.RenderedDescription, 0, len(groups))
 	for _, group := range groups {
 		source := "Example description for " + group + "."
+		if instructions.MainSource != nil {
+			source += "\n" + *instructions.MainSource
+		}
 		if override, exists := overrides[strings.ToLower(group)]; exists {
 			source = override
 		}

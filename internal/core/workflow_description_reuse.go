@@ -18,8 +18,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// PrepareReusableDescriptions returns fully successful public output for the
-// workflow repository to commit atomically with its owning snapshot.
+// PrepareReusableDescriptions provides successful output and verified shared source
+// for the workflow repository to commit atomically with its owning snapshot.
 func (b workflowDescriptionBuilder) PrepareReusableDescriptions(
 	ctx context.Context,
 	release api.ReleaseRef,
@@ -29,29 +29,84 @@ func (b workflowDescriptionBuilder) PrepareReusableDescriptions(
 	instructions api.DescriptionInstructions,
 	snapshot api.DescriptionSet,
 ) (*api.ReusableDescriptionRecord, error) {
-	if b.reuse == nil || !workflowDescriptionSnapshotFullyCompleted(projections, snapshot) {
+	fullyCompleted := workflowDescriptionSnapshotFullyCompleted(projections, snapshot)
+	if b.reuse == nil || (!fullyCompleted && instructions.MainSource == nil) {
 		return nil, nil
 	}
-	sourcePath, compatibilityFingerprint, _, available, err := b.reusableDescriptionInputs(
-		ctx, release, projections, media, privateMedia, instructions,
-	)
+	inputs, err := b.reusableDescriptionInputs(ctx, release, projections, media, privateMedia, instructions,
+		instructions.MainSource == nil || descriptionOutputReuseAllowed(privateMedia))
 	if err != nil {
 		return nil, fmt.Errorf("workflow reusable descriptions: fingerprint: %w", err)
 	}
-	if !available {
-		return nil, nil
+	var reusable api.ReusableDescription
+	if fullyCompleted && inputs.available {
+		reusable = api.ReusableDescription{
+			RendererVersion:          workflowDescriptionRendererVersion,
+			CompatibilityFingerprint: inputs.fingerprint,
+			Descriptions:             cloneWorkflowRenderedDescriptions(snapshot.Descriptions),
+			TrackerResults:           slices.Clone(snapshot.TrackerResults),
+			Overrides:                slices.Clone(instructions.Overrides),
+		}
 	}
-	reusable := api.ReusableDescription{
-		RendererVersion:          workflowDescriptionRendererVersion,
-		CompatibilityFingerprint: compatibilityFingerprint,
-		Descriptions:             cloneWorkflowRenderedDescriptions(snapshot.Descriptions),
-		TrackerResults:           slices.Clone(snapshot.TrackerResults),
-		Overrides:                slices.Clone(instructions.Overrides),
+	if instructions.MainSource != nil && inputs.sourceIdentity != "" {
+		resources, _ := privateMedia.(releaseworkflow.DescriptionResources)
+		preservePrior := resources.PreservePriorDescriptionOverrides && len(instructions.Overrides) == 0
+		if preservePrior || (len(reusable.Descriptions) == 0 && len(instructions.Overrides) > 0) {
+			previous, found, err := b.reuse.LoadReusableDescription(ctx, inputs.sourcePath)
+			if err != nil {
+				return nil, fmt.Errorf("workflow reusable descriptions: retain prior override evidence: %w", err)
+			}
+			if found && previous.Valid() && (previous.MainSourceIdentity == "" || previous.MainSourceIdentity == inputs.sourceIdentity) {
+				if preservePrior && len(previous.Overrides) > 0 && previous.MainSource != nil &&
+					previous.MainSourceIdentity == inputs.sourceIdentity && *previous.MainSource == *instructions.MainSource &&
+					previous.CompatibilityFingerprint != reusable.CompatibilityFingerprint {
+					// This build did not load those final edits because they were
+					// incompatible, not because an editor superseded them.
+					return nil, nil
+				}
+				previous.Overrides = compatibleRetainedDescriptionOverrides(previous.Overrides, instructions.Overrides)
+				if len(previous.Overrides) > 0 {
+					// Its original full dependency fingerprint remains the only authority
+					// to use these inactive final edits; the rendered output is not reused.
+					reusable = previous
+				}
+			}
+		}
+		reusable.MainSource = new(*instructions.MainSource)
+		reusable.MainSourceIdentity = inputs.sourceIdentity
 	}
 	if !reusable.Valid() {
 		return nil, nil
 	}
-	return &api.ReusableDescriptionRecord{SourcePath: sourcePath, Description: reusable}, nil
+	return &api.ReusableDescriptionRecord{SourcePath: inputs.sourcePath, Description: reusable}, nil
+}
+
+// compatibleRetainedDescriptionOverrides keeps only unchanged text and exact
+// tracker memberships proved by the prior compatible record.
+func compatibleRetainedDescriptionOverrides(prior, current []api.DescriptionOverrideInput) []api.DescriptionOverrideInput {
+	var retained []api.DescriptionOverrideInput
+	for _, old := range prior {
+		for _, remaining := range current {
+			if !strings.EqualFold(old.GroupKey, remaining.GroupKey) || old.Source != remaining.Source || old.Final != remaining.Final {
+				continue
+			}
+			if len(old.TrackerIDs) > 0 {
+				old.TrackerIDs = slices.DeleteFunc(slices.Clone(old.TrackerIDs), func(id api.TrackerID) bool {
+					return !slices.ContainsFunc(remaining.TrackerIDs, func(candidate api.TrackerID) bool {
+						return strings.EqualFold(string(candidate), string(id))
+					})
+				})
+				if len(old.TrackerIDs) == 0 {
+					break
+				}
+			} else if len(remaining.TrackerIDs) > 0 {
+				break
+			}
+			retained = append(retained, old)
+			break
+		}
+	}
+	return retained
 }
 
 // RestoreCompatibleDescriptions materializes a fresh description snapshot
@@ -65,38 +120,38 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 	privateMedia any,
 	instructions api.DescriptionInstructions,
 ) (api.DescriptionSet, api.DescriptionInstructions, error) {
-	if resources, wrapped := privateMedia.(releaseworkflow.DescriptionResources); wrapped &&
-		(resources.AudioAnalysis.ID != "" || resources.AudioPaths != nil || resources.HDR != nil || len(resources.HDRArtifacts) > 0) {
+	if b.reuse == nil {
 		return api.DescriptionSet{}, instructions, nil
 	}
-	if err := ctx.Err(); err != nil {
-		return api.DescriptionSet{}, instructions, fmt.Errorf("workflow reusable descriptions: %w", err)
-	}
-	if b.reuse == nil || len(instructions.Overrides) > 0 {
-		return api.DescriptionSet{}, instructions, nil
-	}
-	sourcePath, compatibilityFingerprint, legacyFingerprint, available, err := b.reusableDescriptionInputs(
-		ctx, release, projections, media, privateMedia, instructions,
-	)
+	inputs, err := b.reusableDescriptionInputs(ctx, release, projections, media, privateMedia, instructions, descriptionOutputReuseAllowed(privateMedia))
 	if err != nil {
-		return api.DescriptionSet{}, instructions, fmt.Errorf("workflow reusable descriptions: fingerprint: %w", err)
+		return api.DescriptionSet{}, instructions, err
 	}
-	if !available {
+	if inputs.sourcePath == "" || (!inputs.available && inputs.sourceIdentity == "") {
 		return api.DescriptionSet{}, instructions, nil
 	}
-	reusable, found, err := b.reuse.LoadReusableDescription(ctx, sourcePath)
+	reusable, found, err := b.reuse.LoadReusableDescription(ctx, inputs.sourcePath)
 	if err != nil {
 		return api.DescriptionSet{}, instructions, fmt.Errorf("workflow reusable descriptions: load: %w", err)
 	}
-	if !found || !reusable.Valid() ||
-		reusable.CompatibilityFingerprint != compatibilityFingerprint && reusable.CompatibilityFingerprint != legacyFingerprint {
+	if !found || !reusable.Valid() {
 		return api.DescriptionSet{}, instructions, nil
 	}
 
 	restoredInstructions := instructions
+	sameSource := reusable.MainSource != nil && reusable.MainSourceIdentity == inputs.sourceIdentity
+	if restoredInstructions.MainSource == nil && sameSource {
+		restoredInstructions.MainSource = new(*reusable.MainSource)
+	}
+	if !inputs.available || len(instructions.Overrides) > 0 || instructions.MainSource != nil ||
+		(reusable.MainSource != nil && !sameSource) ||
+		(reusable.CompatibilityFingerprint != inputs.fingerprint && reusable.CompatibilityFingerprint != inputs.legacyFingerprint) {
+		return api.DescriptionSet{}, restoredInstructions, nil
+	}
 	restoredInstructions.Overrides = slices.Clone(reusable.Overrides)
-	if reusable.RendererVersion != workflowDescriptionRendererVersion {
-		// Keep compatible explicit edits while rebuilding output from an older renderer.
+	if restoredInstructions.MainSource != nil || reusable.RendererVersion != workflowDescriptionRendererVersion {
+		// Retained output can predate the shared edit or use an older renderer.
+		// Rebuild from the compatible input, never from preexisting output.
 		snapshot, buildErr := b.Build(ctx, release, projections, media, privateMedia, restoredInstructions, time.Time{})
 		return snapshot, restoredInstructions, buildErr
 	}
@@ -107,6 +162,7 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 		return api.DescriptionSet{}, instructions, fmt.Errorf("workflow reusable descriptions: current fingerprints: %w", err)
 	}
 	snapshot := api.DescriptionSet{
+		MainSource:          restoredInstructions.MainSource,
 		InputFingerprint:    inputFingerprint,
 		TemplateFingerprint: templateFingerprint,
 		Descriptions:        cloneWorkflowRenderedDescriptions(reusable.Descriptions),
@@ -114,9 +170,22 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 		Status:              api.StageStatusCompleted,
 	}
 	if !workflowDescriptionSnapshotFullyCompleted(projections, snapshot) {
-		return api.DescriptionSet{}, instructions, nil
+		return api.DescriptionSet{}, restoredInstructions, nil
 	}
 	return snapshot, restoredInstructions, nil
+}
+
+func descriptionOutputReuseAllowed(privateMedia any) bool {
+	resources, wrapped := privateMedia.(releaseworkflow.DescriptionResources)
+	return !wrapped || (resources.AudioAnalysis.ID == "" && resources.AudioPaths == nil && resources.HDR == nil && len(resources.HDRArtifacts) == 0)
+}
+
+type descriptionReuseInputs struct {
+	sourcePath        string
+	sourceIdentity    string
+	fingerprint       api.WorkflowFingerprint
+	legacyFingerprint api.WorkflowFingerprint
+	available         bool
 }
 
 func (b workflowDescriptionBuilder) reusableDescriptionInputs(
@@ -126,31 +195,40 @@ func (b workflowDescriptionBuilder) reusableDescriptionInputs(
 	media api.MediaArtifactSet,
 	privateMedia any,
 	instructions api.DescriptionInstructions,
-) (string, api.WorkflowFingerprint, api.WorkflowFingerprint, bool, error) {
+	includeOutput bool,
+) (descriptionReuseInputs, error) {
 	if err := ctx.Err(); err != nil {
-		return "", "", "", false, fmt.Errorf("workflow reusable descriptions: %w", err)
+		return descriptionReuseInputs{}, fmt.Errorf("workflow reusable descriptions: %w", err)
 	}
 	compatibilityInstructions := instructions
 	compatibilityInstructions.Overrides = nil
+	compatibilityInstructions.MainSource = nil
 	subject, err := b.resolveSubject(ctx, release, projections, compatibilityInstructions)
 	if err != nil {
-		return "", "", "", false, err
+		return descriptionReuseInputs{}, err
+	}
+	binding := subject.MediaBinding
+	if !binding.Valid() {
+		return descriptionReuseInputs{}, nil
+	}
+	inputs := descriptionReuseInputs{sourcePath: binding.SourcePath}
+	if subject.SourceIdentity.Version == api.SourceContentIdentityVersion {
+		inputs.sourceIdentity = strings.ToLower(subject.SourceIdentity.Digest)
+	}
+	if !includeOutput || !binding.CompatibilityKey.Valid() {
+		return inputs, nil
 	}
 	retainWorkflowScreenshotSelection(&subject, privateMedia)
-	binding := subject.MediaBinding
-	if !binding.Valid() || !binding.CompatibilityKey.Valid() {
-		return "", "", "", false, nil
-	}
 	resourceSubject := subject
 	if len(instructions.Overrides) > 0 {
 		resourceSubject, err = b.resolveSubject(ctx, release, projections, instructions)
 		if err != nil {
-			return "", "", "", false, err
+			return descriptionReuseInputs{}, err
 		}
 	}
 	exactMedia, err := b.resolveWorkflowDescriptionMedia(ctx, resourceSubject, privateMedia, media)
 	if err != nil {
-		return "", "", "", false, err
+		return descriptionReuseInputs{}, err
 	}
 	descriptionSubject := api.NewDescriptionSubject(subject)
 	descriptionSubject.ExactMedia = exactMedia
@@ -162,9 +240,10 @@ func (b workflowDescriptionBuilder) reusableDescriptionInputs(
 		ctx, b.config, binding.CompatibilityKey, projections, compatibilityInstructions, descriptionSubject, retained.legacyImageFormats,
 	)
 	if err != nil {
-		return "", "", "", false, err
+		return descriptionReuseInputs{}, err
 	}
-	return binding.SourcePath, fingerprint, legacyFingerprint, available, nil
+	inputs.fingerprint, inputs.legacyFingerprint, inputs.available = fingerprint, legacyFingerprint, available
+	return inputs, nil
 }
 
 type workflowReusableDescriptionImage struct {
