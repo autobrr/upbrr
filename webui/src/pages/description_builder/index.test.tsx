@@ -191,14 +191,23 @@ describe("DescriptionBuilderPage", () => {
     ]);
 
     await user.tab({ shift: true });
-    expect(panel.getByRole("button", { name: "Underline" })).toHaveFocus();
+    expect(panel.getByRole("button", { name: "Code" })).toHaveFocus();
     await user.keyboard("[Space]");
-    expect(input).toHaveValue("Before [b][u]first\nsecond[/u][/b] after");
+    const wrapped = "Before [b][code]first\nsecond[/code][/b] after";
+    expect(input).toHaveValue(wrapped);
     expect(input).toHaveFocus();
+
+    const disclosure = panel.getByText("Rendered Main Preview", { exact: true });
+    expect(panel.getByText("No rendered preview yet.")).not.toBeVisible();
     await user.click(panel.getByRole("button", { name: "Render main preview" }));
     expect(await panel.findByText("Rendered shared text")).toBeVisible();
+    await user.click(disclosure);
+    expect(panel.getByText("Rendered shared text")).not.toBeVisible();
+    await user.click(disclosure);
+    expect(panel.getByText("Rendered shared text")).toBeVisible();
+    expect(descriptions.renderMain).toHaveBeenCalledTimes(1);
     await user.click(panel.getByRole("button", { name: "Save main description" }));
-    expect(descriptions.saveMain).toHaveBeenCalledWith("Before [b][u]first\nsecond[/u][/b] after");
+    expect(descriptions.saveMain).toHaveBeenCalledWith(wrapped);
   });
 
   it("keeps a failed save's draft but does not apply stale preview or reuse it in a different workflow", async () => {

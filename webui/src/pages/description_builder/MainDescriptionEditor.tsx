@@ -10,6 +10,9 @@ const formats = [
   { label: "Bold", tag: "b" },
   { label: "Italic", tag: "i" },
   { label: "Underline", tag: "u" },
+  { label: "Center", tag: "center" },
+  { label: "Quote", tag: "quote" },
+  { label: "Code", tag: "code" },
 ] as const;
 
 type Props = {
@@ -23,6 +26,7 @@ type Props = {
 export default function MainDescriptionEditor({ facet, savedSource, canSave, onImageOpen }: Props) {
   const id = useId();
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const previewDisclosure = useRef<HTMLDetailsElement>(null);
   const pendingSelection = useRef<Parameters<HTMLTextAreaElement["setSelectionRange"]> | null>(
     null,
   );
@@ -73,6 +77,7 @@ export default function MainDescriptionEditor({ facet, savedSource, canSave, onI
   };
 
   const renderPreview = async () => {
+    if (previewDisclosure.current) previewDisclosure.current.open = true;
     clearPreview();
     const request = new AbortController();
     previewRequest.current = request;
@@ -140,21 +145,23 @@ export default function MainDescriptionEditor({ facet, savedSource, canSave, onI
           Save main description
         </button>
       </div>
-      <section className={pageStyle.panel}>
-        <h3>Rendered Main Preview</h3>
-        {previewErrorSource === source ? (
-          <p role="alert" className={pageStyle.error}>
-            Main preview could not be rendered. Try again.
-          </p>
-        ) : null}
-        {previewHTML ? (
-          <RenderedDescription html={previewHTML} onImageOpen={onImageOpen} />
-        ) : (
-          <p className="text-muted-foreground">
-            {previewHTML === "" ? "The main description is empty." : "No rendered preview yet."}
-          </p>
-        )}
-      </section>
+      <details ref={previewDisclosure} className={pageStyle.panel}>
+        <summary className="cursor-pointer font-semibold">Rendered Main Preview</summary>
+        <div className="mt-2">
+          {previewErrorSource === source ? (
+            <p role="alert" className={pageStyle.error}>
+              Main preview could not be rendered. Try again.
+            </p>
+          ) : null}
+          {previewHTML ? (
+            <RenderedDescription html={previewHTML} onImageOpen={onImageOpen} />
+          ) : (
+            <p className="text-muted-foreground">
+              {previewHTML === "" ? "The main description is empty." : "No rendered preview yet."}
+            </p>
+          )}
+        </div>
+      </details>
     </section>
   );
 }

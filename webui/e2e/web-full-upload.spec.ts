@@ -4126,20 +4126,31 @@ test("embedded shared description saves all selected groups and retains their sc
     const editor = main.getByRole("textbox", { name: "Raw main description" });
     const save = main.getByRole("button", { name: "Save main description" });
     await expect(save).toBeEnabled();
+    await expect(editor).toHaveValue("");
     const initial = await current();
     expect(initial.descriptions?.descriptions.flatMap((group) => group.trackerIds).sort()).toEqual(
       [...trackers].sort(),
     );
     const hosted = initial.media!.artifacts.find((artifact) => artifact.kind === "hosted_image")!;
-    const shared = "Before [b]shared\nnotes[/b] after";
+    const shared = "[quote]Before[/quote] [b]shared\nnotes[/b] after";
     await editor.fill("Before shared\nnotes after");
     await editor.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(7, 19));
     await main.getByRole("button", { name: "Bold", exact: true }).click();
+    await editor.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(0, 6));
+    await main.getByRole("button", { name: "Quote", exact: true }).click();
     await expect(editor).toHaveValue(shared);
+    const preview = main.locator("details");
+    const toggle = preview.getByText("Rendered Main Preview", { exact: true });
+    await expect(preview).not.toHaveAttribute("open", "");
     await main.getByRole("button", { name: "Render main preview" }).click();
+    await expect(preview).toHaveAttribute("open", "");
     await expect(main.locator(".tracker-description b")).toHaveText("shared notes", {
       useInnerText: true,
     });
+    await toggle.click();
+    await expect(main.locator(".tracker-description b")).toBeHidden();
+    await toggle.press("Enter");
+    await expect(main.locator(".tracker-description b")).toBeVisible();
 
     const imageUploadsBeforeSave = workspace.fake.counters.imageUploads;
     const saveMain = async () => {
@@ -4167,6 +4178,14 @@ test("embedded shared description saves all selected groups and retains their sc
     await page.reload();
     await page.getByRole("button", { name: "Descriptions", exact: true }).click();
     await expect(editor).toHaveValue(shared);
+    await editor.fill("");
+    const resetResponse = waitForAppMethod(page, "SaveReleaseWorkflowMainDescription");
+    await save.click();
+    expect((await resetResponse).ok()).toBe(true);
+    await expect.poll(async () => (await current()).descriptions?.mainSource).toBe("");
+    await page.reload();
+    await page.getByRole("button", { name: "Descriptions", exact: true }).click();
+    await expect(editor).toHaveValue("");
     expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {
     await app?.stop();
