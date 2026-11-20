@@ -134,25 +134,27 @@ upstream declarations resolve patched versions or drop unused edges. Keep frozen
 installs, cache-free documentation checks, affected consumer validation and
 unignored scans; no advisory is excluded from scanning.
 
-#### Blu-ray collector development pin
+#### Blu-ray collector compatibility baseline
 
-The go-bdinfo collector API baseline follows the reviewed head of
-[upstream PR #46](https://github.com/autobrr/go-bdinfo/pull/46), currently
-`42be7cb0c64c29cec8c7abf8ab9e12c77ea5bf95`. ISO support additionally pins
-[the fork ISO fix](https://github.com/Audionut/go-bdinfo/pull/1) at
-`d14ed9d1f24ddfa8e172d09c5062ac09e7e7a228`; preserve that fix when reconciling
-subsequent upstream updates. The HDR bridge and native consumers use
-the first entry in each nonempty `Angles` list, the scanner's supported default;
-this does not provide configurable angle selection or separate Dolby Vision
-base/enhancement-layer support. Preserve strict clock, packet, range and completion
-validation when updating these dependencies.
+Native HDR analysis uses upstream `github.com/autobrr/go-bdinfo`
+`v0.4.3-0.20261116065354-69b06c7c9f7d`, containing the merged collector API
+from [PR #46](https://github.com/autobrr/go-bdinfo/pull/46) and the selected-SSIF
+MVC/reporting and scan-progress fixes from
+[PR #59](https://github.com/autobrr/go-bdinfo/pull/59). The go-bdinfo development-fork
+replacement is no longer needed.
 
-[Issue #829](https://github.com/autobrr/upbrr/issues/829) tracks subsequent PR-head
-changes and their compatibility tests. Review the full change from the previous
-pin, consume a compatible published bridge revision, and test the actual module
-graph without local replacement overlays. Reconcile dependent stacked work before
-advancing it. Eventual merged upstream adoption remains separate in
-[issue #754](https://github.com/autobrr/upbrr/issues/754).
+The HDR bridge remains at `2fff01f2f5bc`, the root HDR10+ library at
+`34d94903fa8c`, and go-dovi-extract at `2f59342e05cb`. The bridge and native
+consumers use the first entry in each nonempty `Angles` list, the scanner's
+supported default. This does not provide configurable angle selection or separate
+Dolby Vision base/enhancement-layer support. Preserve strict clock, packet, range
+and completion validation when updating these dependencies.
+
+[Issue #829](https://github.com/autobrr/upbrr/issues/829) records the pre-merge
+compatibility foundation; [issue #754](https://github.com/autobrr/upbrr/issues/754)
+tracks merged upstream adoption. Review the full change from the previous pin and
+test the actual module graph, including the companion bridge, without local
+replacement overlays. Reconcile dependent stacked work before advancing it.
 
 #### Vulnerability workflow history
 
@@ -339,7 +341,7 @@ git ls-files --others --exclude-standard
 
 Skip local E2E for documentation-only or unrelated changes. Run the affected project or `--grep` for a narrow browser/test change; shared runtime, workflow/API, build, and dependency changes need all five projects. A unit-test-only edit needs its unit checks and E2E only when its behavior also warrants an integration check. Selector-only changes need `node --test scripts/ci/e2e-scope.test.mjs` and workflow validation. These are selection guidelines: an explicit `make e2e`, full validation request, or benchmark command still runs the complete requested suite, even with no diff.
 
-`make e2e` builds the embedded application and runs all five projects against isolated local fake services. Install FFmpeg on `PATH` for the audio-analysis scenarios; no real service credentials are needed. Normal local runs default to eight fully parallel workers. CI distributes individual tests across four Ubuntu jobs using Playwright's `--shard=N/4`, each with two workers and its own embedded build. Developers on smaller or busy systems may need fewer workers: after `make e2e-build`, use `pnpm --dir webui exec playwright test --workers=2` or `--workers=1`. Rebuild when runtime, embedded assets, or build inputs change; test-only runs may reuse a matching build. The [E2E workflow](.github/workflows/e2e.yml) uploads JSON test timings from each completed shard, plus uniquely named reports and test results on failure. The separate visual suites retain their own configuration.
+`make e2e` builds the embedded application and runs all five projects against isolated local fake services. Install FFmpeg and dvdauthor 0.7.2 on `PATH` for native media scenarios; on Windows, `UPBRR_TEST_DVDAUTHOR` can name the executable explicitly. No real service credentials are needed. Normal local runs default to eight fully parallel workers. CI distributes individual tests across four Ubuntu jobs using Playwright's `--shard=N/4`, each with two workers and its own embedded build. Developers on smaller or busy systems may need fewer workers: after `make e2e-build`, use `pnpm --dir webui exec playwright test --workers=2` or `--workers=1`. Rebuild when runtime, embedded assets, or build inputs change; test-only runs may reuse a matching build. The [E2E workflow](.github/workflows/e2e.yml) uploads JSON test timings from each completed shard, plus uniquely named reports and test results on failure. The separate visual suites retain their own configuration.
 
 ### Other checks
 
@@ -435,6 +437,46 @@ Keep log levels purposeful.
 - `DEBUG` should include richer decision-making context useful for developer troubleshooting.
 - `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
 
+The logging CI also maintains one `github-actions[bot]` PR comment with added
+Go logging statements by level and the analyzed head/base commits. It counts
+the added side of the complete merge-base diff, including edited multiline
+calls once; removals never subtract. Comments and string contents alone do not
+count. A trailing-comment edit re-adds its code line, so an actual logging call
+on that line counts. These are source-statement counts, not runtime volume. The existing policy check
+remains authoritative for logging-policy failures. An analysis error is reported
+as unavailable, never as zero.
+
+The separate `workflow_run` reporter builds its analyzer from the trusted
+default-branch revision and type-checks PR source in a read-only job without
+running PR tests or binaries. Only a separate serialized publisher has comment
+write access; it consumes validated numeric results, not PR artifacts or code.
+Both fork and repository PRs use the same path. Head/base and rerun checks stop
+older results replacing newer reports. GitHub has no atomic head condition for
+comment updates, so a concurrent push can briefly stale a report; a post-write
+check marks it outdated and removes its counts. The report starts operating once
+its workflow is on the default branch. Rerunning `logpolicy` recomputes it.
+
+For a local added-statement report, check out the head and run:
+
+```sh
+go run ./cmd/logpolicy --source . --added-base <full-base-sha> --added-head <full-head-sha>
+node --test scripts/ci/logpolicy-report.test.cjs
+```
+
+The analyzer uses Go's type information to recognize the project logger
+contract, including narrower logging-only interfaces, rather than
+matching arbitrary `Infof`/`Errorf` methods. Shared files remain available in each
+matching build context; a call recognized in any context counts once. Changed Go
+sources must type-check in a supported Linux, Windows or macOS build context,
+with the repository’s `e2e`
+tag included. A changed file excluded by every analyzed context (including
+unsupported-platform and other custom-tag-only files) makes the entire report
+unavailable; it is never silently dropped from a supposedly complete total.
+Unavailable dependencies and type errors also fail analysis. Workflow logs
+identify the failed stage and a safe error category. Analyzer failures include
+the build OS/tag and error count where available; raw subprocess diagnostics
+and source text are deliberately withheld.
+
 ### Sensitive information
 
 - Redact credentials at the logging boundary. Before sharing logs or failure artifacts, inspect them and remove remaining credentials, cookies, tokens, private URLs and unrelated personal information; automatic redaction is not a guarantee.
@@ -475,3 +517,24 @@ upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go
 Discovery depends on the agent. [Codex](https://developers.openai.com/codex/guides/agents-md) loads the root-to-working-directory chain at startup; cross-area references still need explicit reading. `GUIDANCE.md` is not a default Codex discovery name, and none exists here. Existing `CLAUDE.md` symlinks point to the corresponding guidance for Claude Code.
 
 When maintaining these files, keep the root small and route to scoped instructions or existing contributor documentation. Retain non-obvious repository invariants and verified commands rather than generic advice or copies of configuration. This follows [OpenAI's progressive-disclosure guidance](https://openai.com/index/harness-engineering/); it is not a line or token quota.
+
+### Native comparison authoring checks
+
+The reproducible DVD/Blu-ray comparison integration test authors synthetic media
+with FFmpeg, dvdauthor 0.7.2 and tsMuxeR 2.7.0. These are test-only prerequisites;
+they are not additional upbrr runtime dependencies. Install the authoring tools
+from their upstream distributions before opting in. Set executable paths when
+they are not on `PATH`:
+
+```powershell
+$env:UPBRR_TEST_DISC_AUTHORING = '1'
+$env:UPBRR_TEST_DVDAUTHOR = 'C:\Tools\dvdauthor\dvdauthor.exe'
+$env:UPBRR_TEST_TSMUXER = 'C:\Tools\tsMuxeR\tsMuxeR.exe'
+go test -count=1 -v ./internal/core -run TestComparisonAuthoredDiscFastAcceptance -timeout 20m
+```
+
+With the opt-in enabled, missing prerequisites fail the test. It verifies both
+file/disc pairs and a three-column set with a 24000/1001-to-25 playback-rate
+relationship, independent original-frame checks and retained native replay.
+Ordinary tests do not require private media. The embedded DVD-selection scenario
+requires FFmpeg and dvdauthor; the E2E workflow installs both explicitly.

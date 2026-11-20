@@ -508,12 +508,16 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 							pendingWorkflow = priorState.Workflow.ID
 						}
 					}
+					state, loadErr := m.repository.Load(ctx, owner, workflow)
+					if loadErr != nil {
+						return api.ActiveInputRecord{}, fmt.Errorf("release workflow load new input workflow: %w", loadErr)
+					}
+					adoptedComparisons, adoptErr := m.adoptInputComparisons(owner, &state, priorState, record.CanonicalPath, m.clock.Now())
+					if adoptErr != nil {
+						return api.ActiveInputRecord{}, adoptErr
+					}
 					if pending != nil || priorState.Workflow.HDRAnalysis != nil || association.HDRAnalysisID != "" || len(priorState.HDRExtractions) > 0 ||
-						priorState.PendingHDRAnalysisWorkflowID != "" {
-						state, loadErr := m.repository.Load(ctx, owner, workflow)
-						if loadErr != nil {
-							return api.ActiveInputRecord{}, fmt.Errorf("release workflow load new input workflow: %w", loadErr)
-						}
+						priorState.PendingHDRAnalysisWorkflowID != "" || adoptedComparisons {
 						state.PendingAudioAnalysis = pending
 						state.PendingAudioAnalysisWorkflowID = pendingWorkflow
 						state.PendingHDRAnalysis = priorState.Workflow.HDRAnalysis
@@ -612,6 +616,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			}
 			if prior.SourceVersion != record.SourceVersion {
 				// Old source checkpoints must not become pending authority on a later reverify.
+				state.ComparisonMedia = nil
 				clear(state.HDRExtractions)
 				state.HDRPendingRequest = nil
 				state.PendingCorrectionConfirmation = nil

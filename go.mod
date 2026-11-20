@@ -10,7 +10,8 @@ require (
 	github.com/Audionut/go-hdr10-plus v0.0.0
 	github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261028071522-2fff01f2f5bc
 	github.com/at-wat/ebml-go v0.19.4
-	github.com/autobrr/go-bdinfo v0.4.2
+	github.com/autobrr/go-bdinfo v0.4.3-0.20261116065354-69b06c7c9f7d
+	github.com/asticode/go-astits v1.16.0
 	github.com/autobrr/go-mediainfo v0.8.1-0.20261020113756-56fa5814c646
 	github.com/autobrr/go-qbittorrent v1.19.0
 	github.com/autobrr/go-torrent v1.1.1
@@ -33,6 +34,7 @@ require (
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
+	golang.org/x/tools v0.51.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.1
 )
@@ -41,7 +43,6 @@ require (
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/abema/go-mp4 v1.7.3 // indirect
 	github.com/asticode/go-astikit v0.30.0 // indirect
-	github.com/asticode/go-astits v1.16.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.10.2 // indirect
 	github.com/charmbracelet/harmonica v0.2.0 // indirect
@@ -69,11 +70,10 @@ require (
 	github.com/schollz/progressbar/v3 v3.19.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6 // indirect
+	golang.org/x/mod v0.41.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/autobrr/go-bdinfo => github.com/Audionut/go-bdinfo v0.2.1-0.20261102071325-7f70eb12438a
 
 replace github.com/Audionut/go-hdr10-plus => github.com/Audionut/go-hdr10-plus v0.0.0-20261012140645-34d94903fa8c

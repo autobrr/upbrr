@@ -54,6 +54,8 @@ const (
 	ScreenshotPurposeAudioAnalysis ScreenshotPurpose = "audio_analysis"
 	// ScreenshotPurposeHDRAnalysis keeps brightness plots separate from screenshots and audio graphs.
 	ScreenshotPurposeHDRAnalysis ScreenshotPurpose = "hdr_analysis"
+	// ScreenshotPurposeComparison keeps source columns separate from normal screenshots.
+	ScreenshotPurposeComparison ScreenshotPurpose = "comparison"
 
 	// ScreenshotSelectionSourceMenu identifies manually imported disc-menu selections.
 	ScreenshotSelectionSourceMenu = "menu"
@@ -90,7 +92,9 @@ type ScreenshotOverrides struct {
 	ManualFrames           []int
 	ComparisonPaths        []string
 	ComparisonPrimaryIndex *int
-	MenuPaths              []string
+	// ComparisonReuseMain is an explicit opt-in; other columns never become normal screenshots.
+	ComparisonReuseMain bool
+	MenuPaths           []string
 }
 
 // ScreenshotSubject contains only source facts required to plan and manage

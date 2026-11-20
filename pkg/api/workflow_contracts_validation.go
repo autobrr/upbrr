@@ -1040,7 +1040,7 @@ func (s MediaArtifactSet) Validate() error {
 		}
 		seen[artifact.ID] = struct{}{}
 		switch artifact.Kind {
-		case MediaArtifactScreenshot, MediaArtifactDVDMenu, MediaArtifactHostedImage:
+		case MediaArtifactScreenshot, MediaArtifactDVDMenu, MediaArtifactHostedImage, MediaArtifactComparison:
 		default:
 			return fmt.Errorf("media artifact %s has invalid kind %q", artifact.ID, artifact.Kind)
 		}

@@ -279,6 +279,9 @@ func (b *Backend) previewReleaseWorkflowFrame(
 	expectedRevision api.WorkflowRevision,
 	discID string,
 	timestampSeconds float64,
+	comparisonSourceID string,
+	comparisonStepDirection int,
+	from api.PublicResourceID,
 ) (api.FramePreview, error) {
 	runtime, err := b.requireRuntime()
 	if err != nil {
@@ -288,11 +291,44 @@ func (b *Backend) previewReleaseWorkflowFrame(
 	if err != nil {
 		return api.FramePreview{}, err
 	}
-	preview, err := workflowCore.PreviewReleaseWorkflowFrame(ctx, ownerID, workflowID, expectedRevision, discID, timestampSeconds)
+	var preview api.FramePreview
+	if comparisonSourceID != "" {
+		preview, err = workflowCore.PreviewReleaseWorkflowComparisonFrame(
+			ctx,
+			ownerID,
+			workflowID,
+			expectedRevision,
+			comparisonSourceID,
+			timestampSeconds,
+			comparisonStepDirection, from,
+		)
+	} else {
+		preview, err = workflowCore.PreviewReleaseWorkflowFrame(ctx, ownerID, workflowID, expectedRevision, discID, timestampSeconds)
+	}
 	if err != nil {
 		return api.FramePreview{}, classifyReleaseWorkflowError(err)
 	}
 	return preview, nil
+}
+
+func (b *Backend) discoverReleaseWorkflowComparisonSource(
+	ctx context.Context,
+	owner string,
+	request api.DiscoverReleaseWorkflowComparisonSourceRequest,
+) (api.ComparisonSourceDiscovery, error) {
+	runtime, err := b.requireRuntime()
+	if err != nil {
+		return api.ComparisonSourceDiscovery{}, err
+	}
+	workflowCore, err := runtime.releaseWorkflowCore()
+	if err != nil {
+		return api.ComparisonSourceDiscovery{}, err
+	}
+	result, err := workflowCore.DiscoverReleaseWorkflowComparisonSource(ctx, owner, request)
+	if err != nil {
+		return result, classifyReleaseWorkflowError(err)
+	}
+	return result, nil
 }
 
 func (b *Backend) openReleaseWorkflowPreview(

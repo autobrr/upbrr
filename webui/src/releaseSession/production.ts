@@ -138,13 +138,52 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
         artifactID,
       ),
     mediaPlan: (workflowID, signal) => releaseWorkflowClient.mediaPlan(workflowID, signal),
-    previewFrame: (current, discID, timestampSeconds, idempotencyKey, signal) =>
+    previewFrame: (
+      current,
+      discID,
+      timestampSeconds,
+      idempotencyKey,
+      signal,
+      comparisonSourceID,
+      comparisonStepDirection,
+      startingPreviewID,
+    ) =>
       releaseWorkflowClient.previewFrame(
         {
           workflowId: current.workflow.id,
           expectedRevision: current.workflow.revision,
           ...(discID ? { discId: discID } : {}),
+          ...(comparisonSourceID ? { comparisonSourceId: comparisonSourceID } : {}),
+          ...(comparisonStepDirection ? { comparisonStepDirection } : {}),
           timestampSeconds,
+          idempotencyKey,
+        },
+        signal,
+        startingPreviewID,
+      ),
+    editComparisons: (current, instructions, idempotencyKey, signal) =>
+      releaseWorkflowClient.editComparisons(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          ...(current.media
+            ? { media: { id: current.media.id, revision: current.media.revision } }
+            : {}),
+          instructions,
+          idempotencyKey,
+        },
+        signal,
+      ),
+    discoverComparisonSource: (current, sourceID, path, idempotencyKey, signal) =>
+      releaseWorkflowClient.discoverComparisonSource(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          ...(current.media
+            ? { media: { id: current.media.id, revision: current.media.revision } }
+            : {}),
+          sourceId: sourceID,
+          path,
           idempotencyKey,
         },
         signal,

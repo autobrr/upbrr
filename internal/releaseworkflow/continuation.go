@@ -44,13 +44,15 @@ func projectWorkflowContinuationForState(
 	}
 	return api.WorkflowContinuation{
 		DuplicateReusePending: state != nil && state.PendingDuplicateReuse != nil,
-		Lifecycle:             lifecycle,
-		Disposition:           disposition,
-		Refs:                  exactRefs(current.Workflow),
-		TrackerOutcomes:       lanes,
-		RequiredActions:       actions,
-		AvailableGoals:        projectAvailableGoals(current, now),
-		Events:                projectWorkflowEvents(current),
+		ComparisonRestorePending: state != nil && state.ComparisonMedia != nil && current.Media == nil &&
+			current.Workflow.Status != api.WorkflowStatusCanceled && current.Workflow.Status != api.WorkflowStatusCompleted,
+		Lifecycle:       lifecycle,
+		Disposition:     disposition,
+		Refs:            exactRefs(current.Workflow),
+		TrackerOutcomes: lanes,
+		RequiredActions: actions,
+		AvailableGoals:  projectAvailableGoals(current, now),
+		Events:          projectWorkflowEvents(current),
 	}
 }
 

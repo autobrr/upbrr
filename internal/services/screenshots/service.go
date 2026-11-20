@@ -569,20 +569,7 @@ func (s *Service) captureDisc(
 	captureCtx, cancelCapture := context.WithCancel(ctx)
 	defer cancelCapture()
 
-	limit := len(jobs)
-	if s.cfg.ScreenshotHandling.FFmpegLimit {
-		if s.cfg.ScreenshotHandling.ProcessLimit > 0 {
-			limit = s.cfg.ScreenshotHandling.ProcessLimit
-		} else {
-			limit = 1
-		}
-	}
-	if limit <= 0 {
-		limit = 1
-	}
-	if limit > len(jobs) {
-		limit = len(jobs)
-	}
+	limit := CaptureProcessConcurrency(s.cfg.ScreenshotHandling, len(jobs))
 	s.logger.Debugf(
 		"screenshots: capture setup kind=%s disc=%s purpose=%s selections=%d jobs=%d invalid=%d concurrency=%d frame_overlay=%t tonemap=%t libplacebo_requested=%t ffmpeg=%s",
 		screenshotSourceKind(meta),
@@ -752,7 +739,7 @@ func (s *Service) captureDisc(
 	}
 
 	wg.Add(limit)
-	for i := 0; i < limit; i++ {
+	for range limit {
 		go worker()
 	}
 

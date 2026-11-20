@@ -1386,9 +1386,14 @@ describe("sessionReducer active input snapshots", () => {
 });
 
 describe("screenshot plan authority", () => {
-  it.each(["publication", "active input"])(
-    "fences projection-only stale completions from %s and retains media drafts",
-    (receipt) => {
+  it.each([
+    ["publication", "trackerProjections"],
+    ["active input", "trackerProjections"],
+    ["publication", "dupes"],
+    ["active input", "trackerApproval"],
+  ] as const)(
+    "fences stale completions from %s when %s changes and retains media drafts",
+    (receipt, authority) => {
       const sourcePath = "C:\\media\\Example.Release.2026.mkv";
       const initial = initialSessionState();
       const workflow = {
@@ -1477,7 +1482,7 @@ describe("screenshot plan authority", () => {
           workflow: {
             ...workflow.workflow,
             revision: 6,
-            trackerProjections: { id: "projections-one", revision: 2 },
+            [authority]: { id: `${authority}-next`, revision: 2 },
           },
         }),
       );

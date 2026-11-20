@@ -6,7 +6,11 @@ import { pageStyle } from "../../components/ui/pageStyle";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
-import { Checkbox, PillCheckbox } from "../../components/ui/checkbox";
+import {
+  ProgrammeCandidates,
+  groupProgrammes,
+} from "../../features/programmes/ProgrammeCandidates";
+import { PillCheckbox } from "../../components/ui/checkbox";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import RenderedDescription from "../../components/RenderedDescription";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
@@ -1064,22 +1068,7 @@ export default function InputPage(props: Props) {
   const playlistSource = view.selectedSource || view.sourceDraft;
   const captureHDRMetadata =
     hdrCaptureDraft.sourcePath === playlistSource && hdrCaptureDraft.enabled;
-  const playlistGroups = playlist.candidates.reduce<
-    Array<{ discID: string; discName: string; candidates: typeof playlist.candidates }>
-  >((groups, candidate) => {
-    const discID = candidate.discId || "single-disc";
-    const existing = groups.find((group) => group.discID === discID);
-    if (existing) {
-      existing.candidates = [...existing.candidates, candidate];
-    } else {
-      groups.push({
-        discID,
-        discName: candidate.discName || "Blu-ray disc",
-        candidates: [candidate],
-      });
-    }
-    return groups;
-  }, []);
+  const playlistGroups = groupProgrammes(playlist.candidates);
   const selectedPlaylistIDs = new Set(playlist.selected);
   const playlistSelectionComplete =
     playlistGroups.length > 0 &&
@@ -1133,44 +1122,17 @@ export default function InputPage(props: Props) {
           </div>
           {playlist.error ? <p className={pageStyle.error}>{playlist.error}</p> : null}
           {playlist.candidates.length ? (
-            <div className="overflow-hidden rounded-md border border-border">
-              {playlistGroups.map((group) => (
-                <section key={group.discID} aria-label={group.discName}>
-                  <h3 className="border-b border-border bg-muted px-3 py-2 text-sm font-semibold text-foreground">
-                    {group.discName}
-                  </h3>
-                  {group.candidates.map((candidate) => {
-                    const totalSize = (candidate.items || []).reduce(
-                      (sum, item) => sum + item.size,
-                      0,
-                    );
-                    const checkboxID = `playlist-${encodeURIComponent(candidate.id)}`;
-                    return (
-                      <div
-                        key={candidate.id}
-                        className="grid gap-1 border-b border-border px-3 py-2 last:border-b-0 hover:bg-muted"
-                      >
-                        <div className="flex select-none items-center gap-2">
-                          <Checkbox
-                            id={checkboxID}
-                            checked={playlist.selected.includes(candidate.id)}
-                            onCheckedChange={() => togglePlaylist(candidate.id)}
-                          />
-                          <label className="cursor-pointer font-semibold" htmlFor={checkboxID}>
-                            {candidate.file}
-                          </label>
-                        </div>
-                        <span className="ml-6 text-xs text-muted-foreground">
-                          {formatPlaylistDuration(candidate.duration)} •{" "}
-                          {candidate.items?.length || 0} files • {formatPlaylistBytes(totalSize)} •
-                          Score: {candidate.score.toFixed(2)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </section>
-              ))}
-            </div>
+            <ProgrammeCandidates
+              name="playlist"
+              multiple
+              selected={playlist.selected}
+              onChoose={togglePlaylist}
+              candidates={playlist.candidates.map((candidate) => ({
+                ...candidate,
+                label: candidate.file,
+                description: `${formatPlaylistDuration(candidate.duration)} • ${candidate.items?.length || 0} files • ${formatPlaylistBytes((candidate.items || []).reduce((sum, item) => sum + item.size, 0))} • Score: ${candidate.score.toFixed(2)}`,
+              }))}
+            />
           ) : null}
           {playlist.candidates.length > 1 ? (
             <div className="flex flex-wrap gap-2">

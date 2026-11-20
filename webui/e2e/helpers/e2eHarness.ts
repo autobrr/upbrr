@@ -213,7 +213,7 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
     env,
     cleanup: async () => {
       await fake.close();
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },
   };
 }

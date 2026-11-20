@@ -967,6 +967,7 @@ export type ProviderDisplay =
   | (ProviderDisplayBase & { Provider: "mal"; Details: { AniList: AniListMetadata } });
 
 export type PreparedReleaseDisplay = {
+  comparisonSourceCapabilities?: import("./api/generated/release-workflow").ComparisonSourceCapabilities;
   /** Available TVDB naming data owns TV year even when no qualifier is selected. */
   TVDBNamingAvailable?: boolean;
   CanKeepFolder?: boolean;
@@ -1184,7 +1185,7 @@ export type ImageHostWarning = {
 };
 
 /** Image category shared by capture, selection, upload, and menu workflows. */
-export type ScreenshotPurpose = "preview" | "final" | "menu";
+export type ScreenshotPurpose = "preview" | "final" | "menu" | "comparison";
 
 export type ScreenshotSelection = {
   /** Prepared disc identity; omitted only by legacy single-disc callers. */

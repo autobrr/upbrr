@@ -266,6 +266,7 @@ function AppShell() {
         <WorkflowOperationProgress operation={releaseSession.workflow.view.current?.operation} />
         <WorkflowRequiredActions
           continuation={releaseSession.workflow.view.current?.continuation}
+          onScreenshotsPage={activeTab === "screenshots"}
           onConfirm={(action, confirmed) =>
             void releaseSession.workflow.confirmAction(action, confirmed)
           }
