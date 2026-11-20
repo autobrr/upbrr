@@ -10,6 +10,7 @@ require (
 	github.com/Audionut/go-hdr10-plus v0.0.0
 	github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261028071522-2fff01f2f5bc
 	github.com/at-wat/ebml-go v0.19.4
+	github.com/asticode/go-astits v1.16.0
 	github.com/autobrr/go-bdinfo v0.4.2
 	github.com/autobrr/go-mediainfo v0.8.1-0.20261020113756-56fa5814c646
 	github.com/autobrr/go-qbittorrent v1.19.0
@@ -41,7 +42,6 @@ require (
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/abema/go-mp4 v1.7.3 // indirect
 	github.com/asticode/go-astikit v0.30.0 // indirect
-	github.com/asticode/go-astits v1.16.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.10.2 // indirect
 	github.com/charmbracelet/harmonica v0.2.0 // indirect

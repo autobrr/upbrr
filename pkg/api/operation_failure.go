@@ -76,6 +76,7 @@ type OperationFailure struct {
 	Operation         OperationKind
 	HDRAnalysisCode   HDRAnalysisFailureCode   `json:"HDRAnalysisCode,omitempty"`
 	AudioAnalysisCode AudioAnalysisFailureCode `json:"AudioAnalysisCode,omitempty"`
+	ComparisonReason  string                   `json:"ComparisonReason,omitempty"`
 	Message           string
 	Recovery          OperationRecovery
 }

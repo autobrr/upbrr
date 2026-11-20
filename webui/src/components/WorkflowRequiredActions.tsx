@@ -12,6 +12,7 @@ const actionRoutes: Readonly<Record<string, ReleaseRoute>> = {
   reprepare: "input",
   select_metadata: "input",
   select_playlist: "input",
+  review_comparisons: "screenshots",
 };
 
 const actionLabels: Readonly<Record<string, string>> = {
@@ -21,6 +22,7 @@ const actionLabels: Readonly<Record<string, string>> = {
   reprepare: "Review source",
   select_metadata: "Review metadata",
   select_playlist: "Select playlist",
+  review_comparisons: "Review comparison images",
 };
 
 const actionOwnedByDupeCard = (action: RequiredAction) =>
@@ -39,10 +41,12 @@ function actionScope(action: RequiredAction): string {
 /** Shows pending non-dupe actions and lets users resolve confirmations or open the owning workflow step. */
 export function WorkflowRequiredActions({
   continuation,
+  onScreenshotsPage = false,
   onConfirm,
   onNavigate,
 }: Readonly<{
   continuation?: WorkflowContinuation | null;
+  onScreenshotsPage?: boolean;
   onConfirm: (action: RequiredAction, confirmed?: boolean) => void;
   onNavigate: (route: ReleaseRoute) => void;
 }>) {
@@ -50,15 +54,30 @@ export function WorkflowRequiredActions({
     (action) => action.status === "pending" && !actionOwnedByDupeCard(action),
   );
   if (!actions.length) return null;
+  const onlyComparisonReview =
+    onScreenshotsPage && actions.every((action) => action.kind === "review_comparisons");
 
   return (
     <section className={`${pageStyle.panel} mb-3 grid gap-3 py-3`} aria-live="polite">
-      <div>
-        <p className={pageStyle.label}>Action required</p>
-        <h2>Release workflow needs input</h2>
-      </div>
+      {!onlyComparisonReview && (
+        <div>
+          <p className={pageStyle.label}>Action required</p>
+          <h2>Release workflow needs input</h2>
+        </div>
+      )}
       <div className="grid gap-2">
         {actions.map((action) => {
+          if (onScreenshotsPage && action.kind === "review_comparisons") {
+            return (
+              <article
+                className="rounded border border-[var(--status-warning)] bg-card p-3 text-sm"
+                key={action.id}
+              >
+                <h2 className="font-semibold">Review required before upload</h2>
+                <p>{action.prompt}</p>
+              </article>
+            );
+          }
           const route = actionRoutes[action.kind];
           return (
             <article

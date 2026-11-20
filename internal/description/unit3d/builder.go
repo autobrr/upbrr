@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -36,6 +37,9 @@ var unit3DEmptyCenterTag = regexp.MustCompile(`(?is)\[center\]\s*\[/center\]`)
 var unit3DAlignBlockTag = regexp.MustCompile(`(?is)\[align=(center|left|right)\](.*?)\[/align\]`)
 var unit3DWrapperBlockTag = regexp.MustCompile(`(?is)\[(center|align=(?:center|left|right))\](.*?)\[/(center|align)\]`)
 var unit3DWidthImageTag = regexp.MustCompile(`(?i)\[img\s+width=(\d+)\]`)
+var unit3DSourceComparisonTag = regexp.MustCompile(
+	`(?is)\[spoiler=source_comparisons\]\s*(\[comparison=[^\]]*\].*?\[/comparison\])\s*\[/spoiler\]`,
+)
 
 var unit3DUASignatureTag = regexp.MustCompile(
 	`(?is)\[(?:right|align=right)\]\s*\[url=https://github\.com/(?:Audionut|autobrr)/upbrr\].*?\[/url\]\s*\[/(?:right|align)\]`,
@@ -647,6 +651,25 @@ func finalizeUnit3DDescription(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return ""
 	}
+	// Asset assembly retains the generated marker for replacement. Unit3D
+	// publishes the native comparison directly, preserving manual/literal blocks.
+	value = description.MapOutsideLiteralBlocks(value, func(fragment string) string {
+		protected := comparison.BlockRanges(fragment)
+		var result strings.Builder
+		last := 0
+		for _, section := range unit3DSourceComparisonTag.FindAllStringSubmatchIndex(fragment, -1) {
+			if slices.ContainsFunc(protected, func(span [2]int) bool {
+				return span[0] <= section[0] && span[1] >= section[1]
+			}) {
+				continue
+			}
+			result.WriteString(fragment[last:section[0]])
+			result.WriteString(fragment[section[2]:section[3]])
+			last = section[1]
+		}
+		result.WriteString(fragment[last:])
+		return result.String()
+	})
 	value = comparison.MapOutsideBlocks(value, func(fragment string) string {
 		fragment = strings.ReplaceAll(fragment, "[hide", "[spoiler")
 		fragment = strings.ReplaceAll(fragment, "[/hide]", "[/spoiler]")
