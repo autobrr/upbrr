@@ -437,14 +437,16 @@ Keep log levels purposeful.
 - `DEBUG` should include richer decision-making context useful for developer troubleshooting.
 - `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
 
-The logging CI also maintains one `github-actions[bot]` PR comment with added
-Go logging statements by level and the analyzed head/base commits. It counts
-the added side of the complete merge-base diff, including edited multiline
+When analysis finds added Go logging statements, logging CI posts or updates one
+`github-actions[bot]` PR comment with counts by level and the analyzed head/base
+commits. It counts the added side of the complete merge-base diff, including edited multiline
 calls once; removals never subtract. Comments and string contents alone do not
 count. A trailing-comment edit re-adds its code line, so an actual logging call
 on that line counts. These are source-statement counts, not runtime volume. The existing policy check
-remains authoritative for logging-policy failures. An analysis error is reported
-as unavailable, never as zero.
+remains authoritative for logging-policy failures. Zero counts and analysis
+errors do not create or change a comment. Any earlier comment still describes
+only its named commits. Analysis errors fail the reporting workflow, not the
+separate policy check.
 
 The separate `workflow_run` reporter builds its analyzer from the trusted
 default-branch revision and type-checks PR source in a read-only job without
