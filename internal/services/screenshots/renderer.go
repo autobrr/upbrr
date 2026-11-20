@@ -90,8 +90,13 @@ func renderFrame(ctx context.Context, runner Runner, executable string, req capt
 			}
 			lastErr = err
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-				errors.Is(err, internalerrors.ErrFrameCorruption) {
+				errors.Is(err, internalerrors.ErrFrameCorruption) || errors.Is(err, errComparisonDecoderLimit) {
 				return frame, err
+			}
+			if _, comparison := runner.(*comparisonRunner); comparison {
+				if failure, ok := api.AsOperationFailure(err); ok && failure.Code == api.OperationFailureInvalidSource {
+					return frame, err
+				}
 			}
 			stage := renderFailureStage(result, err)
 			frame.Processing.Steps = append(frame.Processing.Steps, api.ScreenshotRenderStep{
@@ -180,7 +185,10 @@ func renderAttempt(ctx context.Context, runner Runner, executable string, req ca
 		}
 	}
 	result, err := runner.Run(ctx, executable, buildFFmpegArgs(req, req.UseLibplacebo), "")
-	if ctx.Err() != nil {
+	// Comparison runners preserve observed native/evidence failures. Ordinary
+	// screenshot cancellation and renderer recovery retain their existing policy.
+	_, strictComparison := runner.(*comparisonRunner)
+	if ctx.Err() != nil && (!strictComparison || !comparisonTerminalFailure(err)) {
 		err = ctx.Err()
 	} else if corruption := ffmpegFrameCorruptionError(result.Stderr); corruption != nil {
 		err = corruption

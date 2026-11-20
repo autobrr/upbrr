@@ -58,6 +58,67 @@ func TestProjectPreparedReleaseDisplayCanonicalFixture(t *testing.T) {
 	}
 }
 
+func TestProjectDisplayComparisonCapabilities(t *testing.T) {
+	for _, test := range []struct {
+		name, disc string
+		formats    []api.HDRFormat
+		origin     api.HDREvidenceOrigin
+		wantTone   bool
+	}{
+		{
+			name:    "regular SDR",
+			formats: []api.HDRFormat{api.HDRFormatSDR},
+			origin:  api.HDREvidenceMediaInfo,
+		},
+		{
+			name:     "regular HDR",
+			formats:  []api.HDRFormat{api.HDRFormatHDR10},
+			origin:   api.HDREvidenceMediaInfo,
+			wantTone: true,
+		},
+		{
+			name:    "wide gamut without HDR",
+			formats: []api.HDRFormat{api.HDRFormatWCG},
+			origin:  api.HDREvidenceMediaInfo,
+		},
+		{
+			name:    "DVD",
+			disc:    "DVD",
+			formats: []api.HDRFormat{api.HDRFormatSDR},
+			origin:  api.HDREvidenceMediaInfo,
+		},
+		{
+			name:     "HDR Blu-ray",
+			disc:     "BDMV",
+			formats:  []api.HDRFormat{api.HDRFormatDolbyVision},
+			origin:   api.HDREvidenceBDInfo,
+			wantTone: true,
+		},
+		{
+			name:    "filename HDR hint without inspection",
+			formats: []api.HDRFormat{api.HDRFormatHDR10},
+			origin:  api.HDREvidenceContentFilename,
+		},
+		{
+			name:    "release-name HDR hint without inspection",
+			formats: []api.HDRFormat{api.HDRFormatDolbyVision},
+			origin:  api.HDREvidenceReleaseName,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			display, err := ProjectDisplay(api.PreparedRelease{
+				Source: api.SourceManifest{Classification: api.SourceClassification{DiscType: test.disc}},
+				Media:  api.MediaFacts{HDRFacts: api.HDRFacts{Formats: test.formats, Origin: test.origin}},
+			})
+			if err != nil || display.ComparisonSourceCapabilities == nil ||
+				display.ComparisonSourceCapabilities.ProgrammeSelectionRequired != (test.disc != "") ||
+				display.ComparisonSourceCapabilities.ToneMappingAvailable != test.wantTone {
+				t.Fatalf("capabilities=%+v err=%v", display.ComparisonSourceCapabilities, err)
+			}
+		})
+	}
+}
+
 func TestProjectPreparedReleaseDisplaySparseAndLocalFallbacks(t *testing.T) {
 	t.Parallel()
 

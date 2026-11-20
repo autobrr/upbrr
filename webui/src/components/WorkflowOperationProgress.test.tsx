@@ -8,6 +8,104 @@ import { WorkflowOperationProgress } from "./WorkflowOperationProgress";
 
 afterEach(cleanup);
 
+it("shows the active comparison phase and percentages instead of internal work-unit counts", () => {
+  const operation = {
+    id: "comparison-1",
+    workflowId: "workflow-1",
+    operation: "media",
+    status: "running",
+    phase: "comparisons_sampling",
+    completed: 500,
+    total: 5000,
+    progress: 10,
+    message: "Scanning comparison videos",
+    items: [
+      {
+        id: "source-1",
+        kind: "comparison_window",
+        label: "Column 1",
+        phase: "comparisons_sampling",
+        status: "queued",
+        completed: 0,
+        total: 1000,
+      },
+      {
+        id: "source-2",
+        kind: "comparison_window",
+        label: "Column 2",
+        phase: "comparisons_sampling",
+        status: "running",
+        completed: 500,
+        total: 1000,
+        message: "running — 50%",
+      },
+    ],
+    events: [
+      {
+        sequence: 1,
+        scope: "workflow",
+        scopeId: "workflow-1",
+        lifecycle: "running",
+        message: "Comparisons",
+      },
+    ],
+  } as unknown as Operation;
+  const { rerender } = render(<WorkflowOperationProgress operation={operation} />);
+  expect(screen.getByText("Scanning comparison videos")).toBeVisible();
+  expect(screen.getByText("10%")).toBeVisible();
+  expect(screen.getByText("running — 50%")).toBeVisible();
+  expect(screen.queryByText("500/5000 complete")).not.toBeInTheDocument();
+  const taskTrack = screen.getByRole("progressbar", { name: "Comparison task progress" });
+  expect(taskTrack).toHaveAttribute("aria-valuenow", "50");
+  const completedItem = {
+    ...operation.items![1],
+    status: "completed" as const,
+    completed: 1000,
+    message: "completed — 100%",
+  };
+  rerender(<WorkflowOperationProgress operation={{ ...operation, items: [completedItem] }} />);
+  expect(screen.getByText("completed — 100%")).toBeVisible();
+  expect(taskTrack).toHaveAttribute("aria-valuenow", "100");
+  rerender(
+    <WorkflowOperationProgress
+      operation={{
+        ...operation,
+        items: [{ ...completedItem, status: "skipped", completed: 500, message: "skipped — 0%" }],
+      }}
+    />,
+  );
+  expect(screen.getByText("skipped — 0%")).toBeVisible();
+  expect(taskTrack).toHaveAttribute("aria-valuenow", "0");
+  rerender(
+    <WorkflowOperationProgress
+      operation={{
+        ...operation,
+        items: [
+          { ...completedItem, id: "cell-1", kind: "comparison_cell", label: "Column 2, row 1" },
+          { ...completedItem, status: "skipped", message: "skipped — 0%" },
+        ],
+      }}
+    />,
+  );
+  expect(screen.getByText("Overall progress only")).toBeVisible();
+  expect(screen.queryByRole("progressbar", { name: "Comparison task progress" })).toBeNull();
+  rerender(
+    <WorkflowOperationProgress
+      operation={{
+        ...operation,
+        phase: "comparisons_refinement",
+        message: "Refining comparison frames",
+        progress: 55,
+        items: [completedItem],
+      }}
+    />,
+  );
+  expect(screen.getByText("Refining comparison frames")).toBeVisible();
+  expect(screen.getByText("55%")).toBeVisible();
+  expect(screen.getByText("Overall progress only")).toBeVisible();
+  expect(screen.queryByRole("progressbar", { name: "Comparison task progress" })).toBeNull();
+});
+
 it("updates metadata detail in place, keeps stage-order percentages out of fetch counts, and retains partial and canceled outcomes", () => {
   let operation = {
     id: "metadata-1",

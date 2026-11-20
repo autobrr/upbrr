@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/dvdvideo/vm"
+	"github.com/autobrr/upbrr/internal/pathing"
 )
 
 const (
@@ -323,7 +324,7 @@ func parseFile(path string, kind Kind, vts int) (File, error) {
 }
 
 func readBounded(path string) ([]byte, error) {
-	file, err := os.Open(path)
+	file, err := pathing.OpenFileWithinRoot(filepath.Dir(path), path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open DVD IFO: %w", err)
 	}

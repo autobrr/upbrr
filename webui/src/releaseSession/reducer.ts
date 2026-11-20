@@ -313,6 +313,11 @@ export type SessionAction =
       finalSelectionArtifactIDs?: readonly string[];
     }>
   | Readonly<{
+      type: "comparison_previewed" | "comparison_discovered";
+      sessionRevision: number;
+      revision: number;
+    }>
+  | Readonly<{
       type: "screenshot_previewed";
       processing?: ScreenshotProcessing;
       timestampSeconds?: number;
@@ -521,7 +526,26 @@ const invalidate = <T>(
   error: "",
 });
 
-// Saved-image plan IDs bind exact release/projection authority, unlike reusable media.
+export const sameScreenshotPlanAuthority = (
+  previous: ReleaseWorkflowCurrent | null,
+  current: ReleaseWorkflowCurrent,
+) =>
+  previous?.workflow.id === current.workflow.id &&
+  (
+    [
+      "release",
+      "selection",
+      "trackerProjections",
+      "trackerPreflight",
+      "dupes",
+      "trackerApproval",
+    ] as const
+  ).every(
+    (key) =>
+      previous.workflow[key]?.id === current.workflow[key]?.id &&
+      previous.workflow[key]?.revision === current.workflow[key]?.revision,
+  );
+
 const invalidateStaleScreenshotPlan = (state: SessionState, current: ReleaseWorkflowCurrent) => {
   if (
     !state.screenshots.value &&
@@ -532,12 +556,10 @@ const invalidateStaleScreenshotPlan = (state: SessionState, current: ReleaseWork
   const previous = state.workflowView.current;
   const release = workflowReleaseRef(current);
   const previousRelease = workflowReleaseRef(previous);
-  const projections = current.workflow.trackerProjections;
   if (
     previousRelease?.SourcePath === release?.SourcePath &&
     previousRelease?.Generation === release?.Generation &&
-    previous?.workflow.trackerProjections?.id === projections?.id &&
-    previous?.workflow.trackerProjections?.revision === projections?.revision
+    sameScreenshotPlanAuthority(previous, current)
   ) {
     return state.screenshots;
   }
@@ -1913,6 +1935,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
               : state.screenshots.finalSelectionArtifactIDs),
         },
       };
+    case "comparison_discovered":
+    case "comparison_previewed":
+      if (!workflowMatches(state, "screenshots", action.sessionRevision, action.revision))
+        return state;
+      return { ...state, screenshots: readyWorkflow(state.screenshots) };
     case "screenshot_previewed":
       if (!workflowMatches(state, "screenshots", action.sessionRevision, action.revision))
         return state;

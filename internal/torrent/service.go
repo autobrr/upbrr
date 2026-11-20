@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	slashpath "path" //nolint:depguard // Joins torrent-internal slash-delimited metainfo paths.
@@ -388,13 +389,7 @@ func reusableTorrentCandidates(tmpRoot string, meta api.TorrentSubject) ([]strin
 		}
 		candidates = appendUniqueTorrentCandidate(candidates, tmpTorrentPath)
 		retainedDir := filepath.Join(filepath.Dir(tmpTorrentPath), "base-torrents")
-		retained, err := os.ReadDir(retainedDir)
-		if errors.Is(err, os.ErrNotExist) {
-			// Windows can report a regular file as missing during directory reads.
-			if _, statErr := os.Stat(retainedDir); errors.Is(statErr, os.ErrNotExist) {
-				err = nil
-			}
-		}
+		retained, err := readRetainedTorrentEntries(os.DirFS(filepath.Dir(tmpTorrentPath)))
 		if err != nil {
 			return nil, fmt.Errorf("torrent: list retained bases: %w", err)
 		}
@@ -410,6 +405,20 @@ func reusableTorrentCandidates(tmpRoot string, meta api.TorrentSubject) ([]strin
 		candidates = appendUniqueTorrentCandidate(candidates, filepath.Join(filepath.Dir(meta.SourcePath), baseName+".torrent"))
 	}
 	return candidates, nil
+}
+
+// readRetainedTorrentEntries tolerates an absent retained directory while
+// preserving errors for a non-directory path or an unreadable directory.
+func readRetainedTorrentEntries(root fs.FS) ([]fs.DirEntry, error) {
+	entries, err := fs.ReadDir(root, "base-torrents")
+	if errors.Is(err, fs.ErrNotExist) {
+		// Windows can report a file as missing; only tolerate an absent path
+		// or a directory that appeared after the initial empty snapshot.
+		if info, statErr := fs.Stat(root, "base-torrents"); errors.Is(statErr, fs.ErrNotExist) || statErr == nil && info.IsDir() {
+			err = nil
+		}
+	}
+	return entries, err
 }
 
 func appendUniqueTorrentCandidate(candidates []string, candidate string) []string {

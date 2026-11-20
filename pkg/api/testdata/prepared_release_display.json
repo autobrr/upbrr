@@ -1,4 +1,8 @@
 {
+  "comparisonSourceCapabilities": {
+    "programmeSelectionRequired": false,
+    "toneMappingAvailable": false
+  },
   "ReleaseName": "Example.Release.2026.1080p-GRP",
   "Providers": [
     {

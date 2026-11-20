@@ -492,6 +492,10 @@ adapter consumes. Choose by protocol behavior, not tracker identity:
 Ready-empty content is valid and differs from failed content. Generic coordinators never infer a
 failure from empty text or zero selected images.
 
+Shared description assets also retain explicitly reviewed, complete comparison rows and source
+columns. Preserve their owned block when replacing ordinary screenshots; main-column screenshot
+reuse shares the same image/upload identity and never flattens the other columns into screenshots.
+
 All Unit3D and AvistaZ-family definitions currently declare `description` once at family level.
 Standalone profiles must set `UploadContentMode` explicitly. Current protocol examples are BTN/NBL
 for `none`, RTF for `screenshots`, and ANT and most other standalone trackers for `description`.

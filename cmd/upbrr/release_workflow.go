@@ -80,6 +80,7 @@ type cliReleaseWorkflowCore interface {
 		api.AudioAnalysisRef,
 		api.PublicResourceID,
 	) (string, error)
+	ReleaseWorkflowMediaArtifactPath(context.Context, string, api.WorkflowID, api.MediaArtifactSetRef, api.PublicResourceID) (string, error)
 }
 
 type cliWorkflowSession struct {
@@ -1641,7 +1642,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 		case api.RequiredActionApproveTrackers:
 			return nil, false, errors.New("upbrr: post-dupe tracker approval requires the composite upload flow")
 		case api.RequiredActionSelectPlaylist, api.RequiredActionSelectMetadata, api.RequiredActionConfirmRescan, api.RequiredActionReprepare,
-			api.RequiredActionConfirmCorrections:
+			api.RequiredActionConfirmCorrections, api.RequiredActionReviewComparisons:
 			return nil, false, fmt.Errorf("upbrr: release workflow requires action %s: %s", action.Kind, action.Prompt)
 		}
 	}
