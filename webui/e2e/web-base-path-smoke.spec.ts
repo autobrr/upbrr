@@ -808,9 +808,12 @@ test.describe("Contextual help outside Settings", () => {
       await expect(provider).toHaveAccessibleDescription(/numeric content ID/);
       await checkFloatingHelp("TMDB ID", provider);
       const providerHelp = page.getByRole("button", { name: "Help for TMDB ID", exact: true });
-      // Settle the scroll caused by the outside tap before testing keyboard focus.
-      await provider.scrollIntoViewIfNeeded();
-      await provider.focus();
+      await provider.tap();
+      await expect(provider).toBeFocused();
+      // Process pending scroll events in a rendering update before opening keyboard help.
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+      );
       await provider.press("Shift+Tab");
       await expect(providerHelp).toBeFocused();
       await expect(tooltip).toBeVisible();

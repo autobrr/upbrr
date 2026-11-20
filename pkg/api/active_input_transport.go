@@ -31,6 +31,20 @@ type OpenActiveInputRequest struct {
 	Request          ContinueReleaseWorkflowRequest `json:"request"`
 }
 
+// CancelActiveInputOpenRequest targets one caller-owned open before operation
+// acceptance. A successful response confirms verification and its rollback have
+// stopped; a missing request must be resolved through the original receipt.
+type CancelActiveInputOpenRequest struct {
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+func (r CancelActiveInputOpenRequest) Validate() error {
+	if strings.TrimSpace(r.IdempotencyKey) == "" {
+		return errors.New("input open cancellation requires its idempotency key")
+	}
+	return nil
+}
+
 // Validate requires source preparation without existing workflow authority and
 // applies the continuation request's desired-state validation.
 func (r OpenActiveInputRequest) Validate() error {

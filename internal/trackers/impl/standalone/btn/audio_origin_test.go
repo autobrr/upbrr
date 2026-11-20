@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -40,6 +41,57 @@ func TestDubFindingRequiresReviewedProgrammeOrigin(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMixedTitleReferenceDoesNotWaiveRequiredOriginReview(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		scalar     string
+		title      []string
+		manual     api.FactProvenance
+		wantReview bool
+	}{
+		{"known mixed dialogue reference", "en", []string{"en", "fr"}, "", true},
+		{"missing title evidence", "", nil, "", false},
+		{"explicitly cleared title evidence", "", []string{"en", "fr"}, api.FactProvenanceManualEmpty, false},
+	} {
+		for _, origin := range []api.TrackAudioOrigin{"", api.TrackAudioUnresolved} {
+			t.Run(tc.name+"/"+string(origin), func(t *testing.T) {
+				facts := mediafacts.ResolveLanguages(api.MediaFacts{
+					OriginalLanguage:           tc.scalar,
+					OriginalLanguageProvenance: tc.manual,
+					TitleLanguages:             tc.title,
+					PrimaryAudioTrackID:        "programme",
+					TrackCoverageComplete:      true,
+					Tracks: []api.MediaTrackFacts{{
+						ID:                  "programme",
+						ManifestFingerprint: "scan",
+						Kind:                api.MediaTrackAudio,
+						Role:                api.AudioRoleProgramme,
+						Languages:           []string{"German"},
+						AudioOrigin:         origin,
+					}},
+				})
+				subject := api.TrackerValidationSubject{
+					Tracker:           "BTN",
+					Type:              "ENCODE",
+					LanguageFacts:     facts,
+					EffectiveMetadata: api.EffectiveMetadata{OriginalLanguage: tc.scalar, OriginalLanguageProvenance: tc.manual},
+				}
+				subject.QuestionnaireAnswers = map[string]string{trackers.LanguageQuestionKey(subject, "primary_audio_country"): "Germany"}
+				failures := languageAssessment(subject)
+				review := slices.ContainsFunc(failures, func(f api.RuleFailure) bool {
+					return f.Rule == "language_origin" && api.IsStrictRuleFailure(f) && slices.Contains(f.AudioOriginCorrectionTrackIDs, "programme")
+				})
+				if review != tc.wantReview {
+					t.Fatalf("origin review=%t, want %t: %#v", review, tc.wantReview, failures)
+				}
+				if !tc.wantReview && slices.ContainsFunc(failures, api.IsStrictRuleFailure) {
+					t.Fatalf("unknown title reference gained an unrelated blocking comparison: %#v", failures)
+				}
+			})
+		}
 	}
 }
 

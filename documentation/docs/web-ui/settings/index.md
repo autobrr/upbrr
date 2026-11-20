@@ -11,7 +11,7 @@ The Web UI **Settings** page edits runtime configuration and manages related sec
 
 Use the information icon beside a setting’s label to read its effect, constraints and relevant defaults. Help floats near the icon without moving the form. Hover over the icon or focus it with the keyboard; on touch devices, tap to open or close it. You can move the pointer onto the help to read it. Press Escape, move away, or tap outside to dismiss it. Essential warnings remain visible beside the controls. Opening help does not change the setting.
 
-Display names may differ from imported configuration keys. Keys, saved values and API fields are unchanged. Compatibility-only preferences are identified individually; they remain stored but do not implement the named feature. Changing them can still invalidate derived configuration state.
+Display names may differ from imported configuration keys. Keys, saved values and API fields are unchanged. Compatibility-only preferences are identified individually; they remain stored but do not implement the named feature.
 
 ## Configuration actions
 
@@ -26,7 +26,7 @@ Invalid configuration is rejected without replacing the active runtime. If an en
 
 A **Pending** save is not active yet. The Settings page checks for activation when opened and keeps checking while the save is pending. Another save while activation is pending returns busy and preserves your draft. If activation fails, the previous settings remain active; correct the settings and save again. Pending and failed status survive a restart.
 
-Saving the same effective settings does not restart work. Changes invalidate the affected workflow stages, while compatible media and confirmed upload records remain available.
+Saving the same effective settings does not restart work. Documented compatibility-only controls still save and export, but changing only those controls does not rebuild the runtime or invalidate workflow stages. Active setting changes invalidate the affected stages, while compatible media and confirmed upload records remain available.
 
 :::warning Before importing
 
@@ -36,7 +36,7 @@ Export the current configuration first. Import replaces the configuration stored
 
 ## Test a connection
 
-Select **Test connection** beside an integration or configured instance to check the current form values without saving them. An unchanged `[REDACTED]` value uses its preserved secret; an edited credential is tested immediately. The request runs on the server with the integration's applicable proxy and TLS settings.
+Where offered, select **Test connection** beside an integration or configured instance to check the current form values without saving them. Torrent-client checks are available for qBittorrent/qui entries; watch-folder entries have no test button. An unchanged `[REDACTED]` value uses its preserved secret; an edited credential is tested immediately. The request runs on the server with the integration's applicable proxy and TLS settings.
 
 Wait for the result beside the button. Other instances can be tested independently. Editing the tested fields clears their result and cancels a pending test. Requests have a ten-second timeout; a denied response can also indicate account permissions, IP restrictions, or proxy access.
 

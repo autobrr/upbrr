@@ -51,7 +51,14 @@ func TestReuseOnlyImageTargetsKeepEachHostsSavedImages(t *testing.T) {
 		},
 	}
 	module := &mediaModule{logger: api.NopLogger{}}
-	result, err := module.uploadImagesToTargetsWithFallback(t.Context(), api.UploadSubject{}, "", nil,
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ctx = api.WithImageUploadProgressReporter(ctx, func(update api.ImageUploadProgressUpdate) {
+		if update.Status == api.ImageUploadProgressCompleted {
+			cancel()
+		}
+	})
+	result, err := module.uploadImagesToTargetsWithFallback(ctx, api.UploadSubject{}, "", nil,
 		[]trackers.ImageUploadTarget{
 			{
 				Host:       "pixhost",
@@ -341,7 +348,7 @@ func TestUploadImagesFallbackStartsBeforeUnrelatedPrimaryCompletes(t *testing.T)
 	}
 }
 
-func TestUploadImagesUnknownOutcomeStopsFallbackAndPartialAcceptance(t *testing.T) {
+func TestUploadImagesUnresolvedOutcomeStopsFallbackAndPartialAcceptance(t *testing.T) {
 	t.Parallel()
 
 	release := make(chan struct{})
@@ -352,42 +359,66 @@ func TestUploadImagesUnknownOutcomeStopsFallbackAndPartialAcceptance(t *testing.
 		Message:   "Synthetic uncertain image upload.",
 		Recovery:  api.OperationRecoveryConfirm,
 	}, errors.New("synthetic uncertain upload"))
-	service := &barrierImageHostingService{
-		entered: make(chan imageHostCall, 2),
-		behaviors: map[string]imageHostBehavior{
-			"pixhost": {release: release, err: unknown},
-			"imgbb":   {release: release},
-		},
-	}
-	module := &mediaModule{
-		cfg: config.Config{
-			ImageHosting:       config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"},
-			ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: 1},
-		},
-		images:   service,
-		logger:   &recordingMediaLogger{},
-		registry: mediaImageHostRegistry(t),
-	}
-	_, err := module.uploadImagesToTargetsWithFallback(
-		t.Context(),
-		api.UploadSubject{SourcePath: "Example.Release.2026.mkv"},
-		"pixhost",
-		nil,
-		[]trackers.ImageUploadTarget{{
-			Host:       "pixhost",
-			UsageScope: "global",
-			Trackers:   []string{"ONE"},
-		}},
-		[]api.ScreenshotImage{{Path: "screen.png"}},
-		nil,
-		nil,
-	)
-	failure, ok := api.AsOperationFailure(err)
-	if !ok || failure.Code != api.OperationFailureUnknownOutcome {
-		t.Fatalf("unknown upload outcome = %v, failure = %#v", err, failure)
-	}
-	if len(service.entered) != 1 {
-		t.Fatalf("uncertain upload launched fallback: calls=%d", len(service.entered))
+	for _, outcome := range []string{"unknown", "canceled", "operation deadline", "client timeout"} {
+		t.Run(outcome, func(t *testing.T) {
+			ctx := t.Context()
+			uploadErr := error(unknown)
+			minimum := 1
+			switch outcome {
+			case "canceled":
+				uploadErr = context.Canceled
+			case "operation deadline":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Hour))
+				defer cancel()
+				uploadErr = context.DeadlineExceeded
+			case "client timeout":
+				uploadErr = context.DeadlineExceeded
+				minimum = 0
+			}
+			service := &barrierImageHostingService{
+				entered: make(chan imageHostCall, 2),
+				behaviors: map[string]imageHostBehavior{
+					"pixhost": {release: release, err: uploadErr},
+					"imgbb":   {release: release},
+				},
+			}
+			module := &mediaModule{
+				cfg: config.Config{
+					ImageHosting:       config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"},
+					ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: minimum},
+				},
+				images:   service,
+				logger:   &recordingMediaLogger{},
+				registry: mediaImageHostRegistry(t),
+			}
+			_, err := module.uploadImagesToTargetsWithFallback(
+				ctx,
+				api.UploadSubject{SourcePath: "Example.Release.2026.mkv"},
+				"",
+				nil,
+				[]trackers.ImageUploadTarget{{
+					Host:       "pixhost",
+					UsageScope: "global",
+					Trackers:   []string{"ONE"},
+				}},
+				[]api.ScreenshotImage{{Path: "screen.png"}},
+				nil,
+				nil,
+			)
+			if outcome == "client timeout" {
+				if err != nil || len(service.entered) != 2 {
+					t.Fatalf("ordinary timeout fallback: error=%v calls=%d", err, len(service.entered))
+				}
+				return
+			}
+			if !errors.Is(err, uploadErr) {
+				t.Fatalf("unresolved upload outcome lost: error=%v want=%v", err, uploadErr)
+			}
+			if len(service.entered) != 1 {
+				t.Fatalf("unresolved upload launched fallback: calls=%d", len(service.entered))
+			}
+		})
 	}
 }
 

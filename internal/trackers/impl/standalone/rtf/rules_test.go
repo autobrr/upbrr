@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -46,6 +47,12 @@ func TestRTFAdultRuleUsesSharedProviderGenres(t *testing.T) {
 	if !hasRTFRule(failures, "block_adult") {
 		t.Fatalf("shared adult genre did not block RTF upload: %#v", failures)
 	}
+	for _, failure := range failures {
+		if !trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) ||
+			trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeDebug, false) {
+			t.Fatalf("adult eligibility must block upload while permitting debug preparation: %#v", failure)
+		}
+	}
 }
 
 func hasRTFRule(failures []api.RuleFailure, rule string) bool {
@@ -64,7 +71,7 @@ func TestMinimumContentAgeRuleIsStrict(t *testing.T) {
 	if policy.Check == nil {
 		t.Fatal("RTF minimum content age rule is not registered")
 	}
-	if policy.ID != "standalone-rtf-constructibility-v3" {
+	if policy.ID != "standalone-rtf-constructibility-v4" {
 		t.Fatalf("RTF validation policy ID = %q", policy.ID)
 	}
 	failures, err := policy.Check(context.Background(), api.TrackerValidationSubject{
@@ -79,6 +86,10 @@ func TestMinimumContentAgeRuleIsStrict(t *testing.T) {
 	failure := failures[0]
 	if failure.Rule != "minimum_content_age" || failure.Reason != minimumContentAgeReason || failure.Disposition != api.RuleDispositionStrict {
 		t.Fatalf("RTF age failure = %#v, want strict minimum_content_age", failure)
+	}
+	if !trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeNormal, false) ||
+		trackers.RuleFailureBlocksExecution(failure, api.WorkflowExecutionModeDebug, false) {
+		t.Fatalf("age eligibility must block upload while permitting debug preparation: %#v", failure)
 	}
 }
 

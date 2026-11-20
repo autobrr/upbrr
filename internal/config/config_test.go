@@ -1410,3 +1410,34 @@ func TestResolveTrackerDomain(t *testing.T) {
 		})
 	}
 }
+
+func TestRetiredTorrentPreferenceImport(t *testing.T) {
+	t.Parallel()
+	for name, decode := range map[string]func(*Config) error{
+		"json": func(cfg *Config) error {
+			return json.Unmarshal([]byte(`{"TorrentCreation":{"PreferMax16":true,"RehashCooldown":7}}`), cfg)
+		},
+		"yaml": func(cfg *Config) error {
+			return yaml.Unmarshal([]byte("torrent_creation:\n  prefer_max_16_torrent: true\n  rehash_cooldown: 7\n"), cfg)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var cfg Config
+			if err := decode(&cfg); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.TorrentCreation.RehashCooldown != 7 {
+				t.Fatal("retiring the preference changed an active sibling setting")
+			}
+			for _, encode := range []func(any) ([]byte, error){json.Marshal, yaml.Marshal} {
+				out, err := encode(cfg.TorrentCreation)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(out), "PreferMax16") || strings.Contains(string(out), "prefer_max_16_torrent") {
+					t.Fatal("retired preference remains in exported settings")
+				}
+			}
+		})
+	}
+}

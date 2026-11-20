@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v12"
+const ContractVersion = "external-identity-v16-tmdb-spoken-languages"
 
 // CompatibleStoredIdentity preserves manual pins and clears while discarding
 // automatic IDs and dependencies produced before the current identity contract.
@@ -347,7 +347,9 @@ func applyCandidateEvidence(
 			return err
 		}
 	}
-	if diagnostics := candidateDiagnostics(candidate.Candidates); len(diagnostics) > 0 {
+	result.ProviderMetadata.IdentityCandidates = nil
+	if diagnostics := CandidateDiagnostics(candidate.Candidates); len(diagnostics) > 0 {
+		result.ProviderMetadata.IdentityCandidates = diagnostics[0].Candidates
 		result.Diagnostics = append(result.Diagnostics, diagnostics...)
 	}
 	return nil
@@ -528,7 +530,9 @@ func applyCandidateProvider(
 	}
 }
 
-func candidateDiagnostics(value []api.ExternalIdentityCandidate) []api.PreparationDiagnostic {
+// CandidateDiagnostics projects detached advisory matches without selecting an ID.
+// Prepared-generation reuse uses the same projection as fresh identity resolution.
+func CandidateDiagnostics(value []api.ExternalIdentityCandidate) []api.PreparationDiagnostic {
 	candidates := make([]api.ExternalIdentityCandidate, 0, len(value))
 	for _, candidate := range value {
 		provider := api.IdentityProvider(strings.ToLower(strings.TrimSpace(string(candidate.Provider))))

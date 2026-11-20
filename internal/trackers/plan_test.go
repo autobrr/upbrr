@@ -6,6 +6,7 @@ package trackers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -695,5 +696,112 @@ func TestPreparationFailureSanitizesMessage(t *testing.T) {
 	}
 	if !errors.Is(failure, failure.Unwrap()) {
 		t.Fatal("failure did not retain its private diagnostic cause")
+	}
+}
+
+func TestDebugUploadPlanNeverSubmitsAfterActions(t *testing.T) {
+	t.Parallel()
+	for _, decisionResolver := range []bool{false, true} {
+		for _, confirmed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("decision=%t/confirmed=%t", decisionResolver, confirmed), func(t *testing.T) {
+				t.Parallel()
+				var submissions atomic.Int32
+				submit := func(context.Context) (api.UploadSummary, error) {
+					submissions.Add(1)
+					return api.UploadSummary{Uploaded: 1}, errors.New("unexpected tracker submission")
+				}
+				input := PreparationInput{
+					Intent:        PreparationIntentUpload,
+					Tracker:       "EXAMPLE",
+					ExecutionMode: api.WorkflowExecutionModeDebug,
+				}
+				plan, failure := PrepareAdapter(t.Context(), input, nil, func(context.Context, PreparationInput) (PreparedOperation, error) {
+					preview := api.TrackerDryRunEntry{
+						Tracker:         "EXAMPLE",
+						Payload:         map[string]string{"stage": "initial"},
+						RequiredActions: []api.RequiredAction{{Kind: api.RequiredActionResolveTrackerPreparation}},
+					}
+					replacement := func() PreparedOperation {
+						return NewPreparedOperation(api.TrackerDryRunEntry{Tracker: "EXAMPLE", Payload: map[string]string{"stage": "resolved"}}, submit, nil)
+					}
+					if decisionResolver {
+						return NewPreparedOperationWithDecisionResolver(preview, submit, nil, func(context.Context, bool) (PreparedOperation, error) { return replacement(), nil }), nil
+					}
+					return NewPreparedOperationWithResolver(preview, submit, nil, func(context.Context) (PreparedOperation, error) { return replacement(), nil }), nil
+				})
+				if failure != nil {
+					t.Fatalf("prepare: %v", failure)
+				}
+				input.ExecutionMode = api.WorkflowExecutionModeNormal
+				assertBlocked := func(p TrackerPlan) {
+					t.Helper()
+					for range 2 {
+						summary, err := p.Submit(t.Context())
+						if !errors.Is(err, ErrPlanNotSubmittable) || submission.OutcomeOf(err) != submission.NotSent || summary.Uploaded != 0 || len(summary.UploadedTorrents) != 0 {
+							t.Fatalf("debug submission outcome: uploaded=%d err=%v", summary.Uploaded, err)
+						}
+					}
+				}
+				assertBlocked(plan)
+				resolved, err := plan.ResolveAction(t.Context(), api.RequiredActionResolveTrackerPreparation, confirmed)
+				if err != nil {
+					t.Fatalf("resolve: %v", err)
+				}
+				defer func() { _ = resolved.Release() }()
+				wantStage := "resolved"
+				if !decisionResolver && confirmed {
+					wantStage = "initial"
+				}
+				if resolved.DryRun().Payload["stage"] != wantStage {
+					t.Fatalf("payload stage = %q", resolved.DryRun().Payload["stage"])
+				}
+				assertBlocked(resolved)
+				if submissions.Load() != 0 {
+					t.Fatalf("submission callbacks = %d", submissions.Load())
+				}
+			})
+		}
+	}
+}
+
+func TestPrepareAdapterRetainsDiagnosticPayloadWithoutSubmission(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []api.WorkflowExecutionMode{api.WorkflowExecutionModeNormal, api.WorkflowExecutionModeDebug} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			var releases atomic.Int32
+			plan, failure := PrepareAdapter(t.Context(), PreparationInput{
+				Intent:        PreparationIntentUpload,
+				Tracker:       "EXAMPLE",
+				ExecutionMode: mode,
+			}, nil, func(context.Context, PreparationInput) (PreparedOperation, error) {
+				return NewPreparedOperation(api.TrackerDryRunEntry{
+					Tracker: "EXAMPLE",
+					Status:  "blocked",
+					Payload: map[string]string{"name": "Example.Release.2026-GRP"},
+				}, nil, func() error { releases.Add(1); return nil }), nil
+			})
+			if mode == api.WorkflowExecutionModeNormal {
+				if failure == nil || releases.Load() != 1 {
+					t.Fatalf("missing-submission rejection: failure=%v releases=%d", failure, releases.Load())
+				}
+				return
+			}
+			if failure != nil {
+				t.Fatalf("diagnostic preparation: %v", failure)
+			}
+			if plan.DryRun().Status != "blocked" || plan.DryRun().Payload["name"] != "Example.Release.2026-GRP" {
+				t.Fatal("diagnostic payload not retained")
+			}
+			if _, err := plan.Submit(t.Context()); !errors.Is(err, ErrPlanNotSubmittable) || submission.OutcomeOf(err) != submission.NotSent {
+				t.Fatalf("diagnostic submit: %v", err)
+			}
+			if releases.Load() != 0 {
+				t.Fatal("diagnostic resources released before inspection")
+			}
+			if err := plan.Release(); err != nil || releases.Load() != 1 {
+				t.Fatalf("diagnostic cleanup: err=%v releases=%d", err, releases.Load())
+			}
+		})
 	}
 }

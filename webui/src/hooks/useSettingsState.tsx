@@ -309,12 +309,7 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     EmbyDir: { key: "EmbyDir", advanced: true },
     EmbyTVDir: { key: "EmbyTVDir", advanced: true },
   },
-  TorrentCreation: {
-    PreferMax16: {
-      key: "PreferMax16",
-      label: "Prefer reusable torrents up to 16 MiB",
-    },
-  },
+  TorrentCreation: {},
   PostUpload: {
     InjectDelay: { key: "InjectDelay", advanced: true },
     MaxConcurrentTrackers: { key: "MaxConcurrentTrackers", advanced: true },

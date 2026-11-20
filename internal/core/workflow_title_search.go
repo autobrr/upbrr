@@ -84,6 +84,10 @@ func (b workflowPreflightBuilder) assessTitleSearchRules(
 				return action.Kind != api.RequiredActionAuthorizeRules && action.Status != api.RequiredActionStatusResolved
 			})
 		}
+		questionnaire := projection.Questionnaire
+		questionnaireActions := slices.DeleteFunc(slices.Clone(projection.RequiredActions), func(action api.RequiredAction) bool {
+			return action.Kind != api.RequiredActionAnswerQuestionnaire || action.Status == api.RequiredActionStatusResolved
+		})
 		if err := trackers.ApplyProjectionRuleFailures(
 			projection,
 			failures,
@@ -92,6 +96,18 @@ func (b workflowPreflightBuilder) assessTitleSearchRules(
 			b.logger,
 		); err != nil {
 			return subject, initial, fmt.Errorf("tracker preflight: title-evidence rule authority: %w", err)
+		}
+		// Title evidence cannot satisfy required construction inputs that strict
+		// rule projection omits from normal-mode correction controls.
+		if api.NormalizeWorkflowExecutionMode(initial.ExecutionMode) == api.WorkflowExecutionModeDebug && len(questionnaireActions) > 0 {
+			projection.Questionnaire = questionnaire
+			projection.RequiredActions = slices.DeleteFunc(projection.RequiredActions, func(action api.RequiredAction) bool {
+				return action.Kind == api.RequiredActionAnswerQuestionnaire
+			})
+			projection.RequiredActions = append(projection.RequiredActions, questionnaireActions...)
+		}
+		if hasNonRuleProjectionBlock(*projection) {
+			projection.DiagnosticReady = false
 		}
 	}
 	return subject, initial, nil

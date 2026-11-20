@@ -45,13 +45,11 @@ func (s *Service) discoverClientEvidence(
 	fileList []string,
 	discType string,
 ) (clientdiscovery.Evidence, error) {
-	if s.clients == nil {
-		if input.Search.Skip {
-			return clientdiscovery.Evidence{Disposition: clientdiscovery.DispositionSkipped}, nil
-		}
-		return clientdiscovery.Evidence{Disposition: clientdiscovery.DispositionUnavailable}, nil
+	discovery := s.clients
+	if discovery == nil {
+		discovery = clientdiscovery.New(nil, s.logger)
 	}
-	evidence, err := s.clients.Discover(ctx, clientdiscovery.SearchInput{
+	evidence, err := discovery.Discover(ctx, clientdiscovery.SearchInput{
 		SourcePath:   sourcePath,
 		FileList:     fileList,
 		DiscType:     discType,

@@ -441,9 +441,9 @@ func commitSourceScopedMetadataTx(ctx context.Context, tx *sql.Tx, metadata api.
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO external_metadata (
 			source_path, generation, tmdb_json, imdb_json, tvdb_json,
-			tvmaze_json, anilist_json, bluray_json, imported_screenshot_evidence_json, updated_at
+			tvmaze_json, anilist_json, bluray_json, imported_screenshot_evidence_json, identity_candidates_json, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
 			generation = excluded.generation,
 			tmdb_json = excluded.tmdb_json,
@@ -453,6 +453,7 @@ func commitSourceScopedMetadataTx(ctx context.Context, tx *sql.Tx, metadata api.
 			anilist_json = excluded.anilist_json,
 			bluray_json = excluded.bluray_json,
 			imported_screenshot_evidence_json = excluded.imported_screenshot_evidence_json,
+			identity_candidates_json = excluded.identity_candidates_json,
 			updated_at = excluded.updated_at
 	`,
 		metadata.SourcePath,
@@ -464,6 +465,7 @@ func commitSourceScopedMetadataTx(ctx context.Context, tx *sql.Tx, metadata api.
 		encodeOptionalJSON(metadata.AniList),
 		encodeOptionalJSON(metadata.Bluray),
 		encodeOptionalJSON(metadata.ImportedScreenshotEvidence),
+		encodeOptionalJSON(metadata.IdentityCandidates),
 		updatedAt,
 	)
 	if err != nil {
@@ -562,7 +564,7 @@ func loadSourceScopedMetadataTx(
 ) (api.SourceScopedMetadata, error) {
 	row := tx.QueryRowContext(ctx, `
 		SELECT generation, tmdb_json, imdb_json, tvdb_json, tvmaze_json,
-			anilist_json, bluray_json, imported_screenshot_evidence_json, updated_at
+			anilist_json, bluray_json, imported_screenshot_evidence_json, identity_candidates_json, updated_at
 		FROM external_metadata
 		WHERE source_path = ?
 	`, sourcePath)
@@ -575,6 +577,7 @@ func loadSourceScopedMetadataTx(
 	var anilistJSON string
 	var blurayJSON string
 	var importedScreenshotJSON string
+	var candidatesJSON string
 	var updatedAt string
 	if err := row.Scan(
 		&generation,
@@ -585,6 +588,7 @@ func loadSourceScopedMetadataTx(
 		&anilistJSON,
 		&blurayJSON,
 		&importedScreenshotJSON,
+		&candidatesJSON,
 		&updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -617,6 +621,11 @@ func loadSourceScopedMetadataTx(
 	}
 	if metadata.ImportedScreenshotEvidence, err = decodeOptionalJSON[api.ImportedScreenshotEvidence](importedScreenshotJSON); err != nil {
 		return api.SourceScopedMetadata{}, fmt.Errorf("db load prepared release: decode imported screenshot evidence: %w", err)
+	}
+	if candidates, decodeErr := decodeOptionalJSON[[]api.ExternalIdentityCandidate](candidatesJSON); decodeErr != nil {
+		return api.SourceScopedMetadata{}, fmt.Errorf("db load prepared release: decode identity candidates: %w", decodeErr)
+	} else if candidates != nil {
+		metadata.IdentityCandidates = *candidates
 	}
 	parsedUpdatedAt, err := time.Parse(time.RFC3339Nano, updatedAt)
 	if err != nil {

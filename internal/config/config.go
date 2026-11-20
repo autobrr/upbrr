@@ -273,9 +273,8 @@ type ArrIntegrationConfig struct {
 // RehashCooldown delays rehash-dependent tracker submissions by that many
 // seconds after all reusable tracker submissions finish; negative values act as zero.
 type TorrentCreationConfig struct {
-	MkbrrThreads   int  `yaml:"mkbrr_threads"`
-	PreferMax16    bool `yaml:"prefer_max_16_torrent"`
-	RehashCooldown int  `yaml:"rehash_cooldown"`
+	MkbrrThreads   int `yaml:"mkbrr_threads"`
+	RehashCooldown int `yaml:"rehash_cooldown"`
 }
 
 type PostUploadConfig struct {

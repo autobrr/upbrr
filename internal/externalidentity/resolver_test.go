@@ -79,6 +79,9 @@ func TestResolvePromotesProviderEvidenceAndKeepsCandidateListsDiagnostic(t *test
 	if len(result.Diagnostics) != 1 || len(result.Diagnostics[0].Candidates) != 1 || result.Diagnostics[0].Candidates[0].ID != 7654321 {
 		t.Fatalf("diagnostics = %#v", result.Diagnostics)
 	}
+	if len(result.ProviderMetadata.IdentityCandidates) != 1 || result.ProviderMetadata.IdentityCandidates[0].ID != 7654321 {
+		t.Fatalf("provider candidate evidence was not retained for generation persistence: %+v", result.ProviderMetadata)
+	}
 	if result.Identity.TMDBID == result.Diagnostics[0].Candidates[0].ID {
 		t.Fatal("diagnostic candidate became canonical identity")
 	}

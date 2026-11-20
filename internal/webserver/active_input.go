@@ -18,12 +18,31 @@ import (
 type activeInputCapability interface {
 	GetActiveInput(context.Context, string) (api.ActiveInputSnapshot, error)
 	OpenActiveInput(context.Context, string, api.OpenActiveInputRequest) (api.ActiveInputSnapshot, error)
+	CancelActiveInputOpen(context.Context, string, api.CancelActiveInputOpenRequest) (api.ActiveInputSnapshot, error)
 	ReleaseActiveInput(context.Context, string, api.ReleaseActiveInputRequest) (api.ActiveInputSnapshot, error)
 	RecoverLegacyActiveInput(context.Context, string, api.RecoverLegacyActiveInputRequest) (api.ActiveInputSnapshot, error)
 	ReconcileActiveInput(context.Context, string, api.ReconcileActiveInputRequest) (api.ActiveInputSnapshot, error)
 }
 
 func (s *Server) registerActiveInputRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/app/CancelActiveInputOpen", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var request api.CancelActiveInputOpenRequest
+		if err := decodeJSON(r, &request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := request.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		s.withActiveInput(w, r, func(ctx context.Context, capability activeInputCapability) (api.ActiveInputSnapshot, error) {
+			return capability.CancelActiveInputOpen(ctx, current.ID, request)
+		})
+	}))
 	mux.HandleFunc("/api/app/GetActiveInput", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		if r.Method != http.MethodGet {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

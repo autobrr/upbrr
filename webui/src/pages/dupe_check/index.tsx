@@ -259,6 +259,7 @@ function WorkflowDupeAssessmentView({
   acknowledgeRules(tracker: string, acknowledged: boolean): Promise<boolean>;
   setIgnored(tracker: string, ignored: boolean): void;
 }>) {
+  const debugMode = projections?.executionMode === "debug";
   const projectionsByTracker = new Map(
     (projections?.projections || []).map((projection) => [projection.trackerId, projection]),
   );
@@ -493,22 +494,26 @@ function WorkflowDupeAssessmentView({
             {canOverride ? (
               <label className="inline-flex items-center gap-2 text-xs font-semibold">
                 <span>
-                  {result?.requiresStaffToken
-                    ? "I have the appropriate staff-issued token for this upload"
-                    : riskAcknowledgement
-                      ? "Acknowledge tracker policy risk"
-                      : "Ignore duplicate match"}
+                  {debugMode
+                    ? "Ignore duplicate evidence for diagnostics (no tracker upload)"
+                    : result?.requiresStaffToken
+                      ? "I have the appropriate staff-issued token for this upload"
+                      : riskAcknowledgement
+                        ? "Acknowledge tracker policy risk"
+                        : "Ignore duplicate match"}
                 </span>
                 <Switch
                   aria-label={
-                    result?.requiresStaffToken
-                      ? `Confirm staff-issued token for ${trackerID}`
-                      : riskAcknowledgement
-                        ? `Acknowledge dupe risk for ${trackerID}`
-                        : `Ignore dupes for ${trackerID}`
+                    debugMode
+                      ? `Ignore duplicate evidence for ${trackerID} (debug only)`
+                      : result?.requiresStaffToken
+                        ? `Confirm staff-issued token for ${trackerID}`
+                        : riskAcknowledgement
+                          ? `Acknowledge dupe risk for ${trackerID}`
+                          : `Ignore dupes for ${trackerID}`
                   }
                   checked={
-                    result?.requiresStaffToken
+                    !debugMode && result?.requiresStaffToken
                       ? result.decision === "ignored" && result.staffTokenConfirmed === true
                       : result?.decision === "ignored"
                   }

@@ -85,12 +85,43 @@ func formatCLIError(err error) string {
 		}
 		failure := operationErr.Failure()
 		message := logging.SanitizeMessage(failure.Message)
-		if failure.Recovery != "" && failure.Recovery != api.OperationRecoveryNone {
-			return fmt.Sprintf("%s (recovery: %s)", message, failure.Recovery)
+		if guidance := cliRecoveryGuidance(failure); guidance != "" {
+			return fmt.Sprintf("%s Next step: %s", message, guidance)
 		}
 		return message
 	}
 	return logging.SanitizeMessage(err.Error())
+}
+
+// cliRecoveryGuidance explains caller actions without granting retry authority
+// for an external operation whose outcome is still unknown.
+func cliRecoveryGuidance(failure api.OperationFailure) string {
+	switch failure.Recovery {
+	case api.OperationRecoveryEditInput:
+		return "correct the input options or source path before running this command again."
+	case api.OperationRecoveryConfirm:
+		if failure.Code == api.OperationFailureUnknownOutcome {
+			return "Verify the outcome on the tracker, image host or torrent client before confirming it did not complete. Do not retry while its outcome is uncertain."
+		}
+		return "rerun interactively or with --unattended_confirm/--uac to review the required confirmation."
+	case api.OperationRecoveryRefreshRelease, api.OperationRecoveryReprepare:
+		return "reopen the source and prepare it again before continuing."
+	case api.OperationRecoveryCompletePrerequisite:
+		return "complete the reported prerequisite before retrying."
+	case api.OperationRecoveryAuthenticateTrackers:
+		return "authenticate the affected trackers through Tracker Auth in the WebUI before retrying."
+	case api.OperationRecoverySelectTrackers:
+		return "select eligible trackers with --trackers before running this command again."
+	case api.OperationRecoveryReviewAgain:
+		return "reload the current input and review it again before continuing."
+	case api.OperationRecoveryRetry:
+		if failure.Operation == api.OperationKindClientInjection {
+			return "retry only client delivery using the registered torrent; do not repeat successful tracker uploads."
+		}
+		return "resolve the reported problem before retrying the failed operation."
+	case "", api.OperationRecoveryNone:
+	}
+	return ""
 }
 
 func printCLIWarning(output io.Writer, warning string) {

@@ -33,6 +33,7 @@ const (
 			anilist_json TEXT NOT NULL DEFAULT "",
 			bluray_json TEXT NOT NULL DEFAULT "",
 			imported_screenshot_evidence_json TEXT NOT NULL DEFAULT "",
+			identity_candidates_json TEXT NOT NULL DEFAULT "",
 			updated_at TEXT NOT NULL
 		)
 	`
@@ -60,6 +61,11 @@ type migrationExecutor interface {
 //     update legacyVersionToMigrationIDs only if the old integer user_version
 //     bridge mapping also changed historically.
 var migrationRegistry = []migrationStep{
+	{
+		id:        "2026_11_identity_candidates",
+		dependsOn: []string{"2026_07_add_canonical_release_generations"},
+		apply:     migrateIdentityCandidates,
+	},
 	{
 		id: "2026_11_structured_workflow_storage",
 		dependsOn: []string{

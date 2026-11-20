@@ -16,7 +16,7 @@ import (
 )
 
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
-const GeneralDuplicatePolicyID = "general/duplicate/v10"
+const GeneralDuplicatePolicyID = "general/duplicate/v13"
 
 // DuplicateSearchContractID versions authoritative search scope and completion semantics.
 // Projection/catalog fingerprints and persisted private evidence carry this ID so older
@@ -71,7 +71,8 @@ type PreparationInput struct {
 	validationRegistry *Registry
 	// Intent selects the maximum preparation depth for this invocation.
 	Intent PreparationIntent
-	// ExecutionMode controls projection-time policy waivers. Empty means normal.
+	// ExecutionMode permits diagnostic preparation while unconditionally suppressing
+	// tracker submission in debug mode. Empty means normal.
 	ExecutionMode api.WorkflowExecutionMode
 	// Tracker is the normalized tracker name receiving the upload.
 	Tracker string

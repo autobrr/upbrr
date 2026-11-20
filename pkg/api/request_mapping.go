@@ -54,6 +54,9 @@ func MapPreparationRequest(request Request, intent PreparationIntent) (PrepareIn
 			ForceRecheck:       cloneBool(request.ClientOverrides.ForceRecheck),
 		},
 	}
+	if request.TorrentOverrides.InfoHash != nil {
+		input.Search.InfoHash = *request.TorrentOverrides.InfoHash
+	}
 	var err error
 	input.Instructions.Bluray, err = request.Bluray.Normalize()
 	if err != nil {

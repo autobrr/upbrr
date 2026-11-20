@@ -7,8 +7,11 @@ import type {
   AudioAnalysisInstructions,
   ContinueReleaseWorkflowRequest,
   FramePreview,
+  ComparisonInstructions,
+  ComparisonSourceDiscovery,
   MediaPlan,
   OpenActiveInputRequest,
+  CancelActiveInputOpenRequest,
   Operation,
   ReconcileActiveInputRequest,
   RecoverLegacyActiveInputRequest,
@@ -24,6 +27,11 @@ import type { ProviderSearchResult } from "../types";
 export type ActiveInputPorts = Readonly<{
   get(signal: AbortSignal): Promise<ActiveInputSnapshot>;
   open(request: OpenActiveInputRequest, signal: AbortSignal): Promise<ActiveInputSnapshot>;
+  /** Cancels and joins only verification still owned by this exact open request. */
+  cancelOpen(
+    request: CancelActiveInputOpenRequest,
+    signal: AbortSignal,
+  ): Promise<ActiveInputSnapshot>;
   release(request: ReleaseActiveInputRequest, signal: AbortSignal): Promise<ActiveInputSnapshot>;
   recover(
     request: RecoverLegacyActiveInputRequest,
@@ -104,7 +112,23 @@ export type ReleaseWorkflowPorts = Readonly<{
     timestampSeconds: number,
     idempotencyKey: string,
     signal: AbortSignal,
+    comparisonSourceID?: string,
+    comparisonStepDirection?: -1 | 0 | 1,
+    startingPreviewID?: string,
   ): Promise<FramePreview>;
+  editComparisons(
+    current: ReleaseWorkflowCurrent,
+    instructions: ComparisonInstructions,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  discoverComparisonSource(
+    current: ReleaseWorkflowCurrent,
+    sourceID: string,
+    path: string,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ComparisonSourceDiscovery>;
   setMediaSelection(
     current: ReleaseWorkflowCurrent,
     artifactIDs: readonly string[],

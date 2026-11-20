@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -54,6 +55,7 @@ func (b workflowMediaBuilder) mediaRegistry() *trackers.Registry {
 }
 
 // restoredNativeImageAttempts restores combined native and ordinary coverage.
+// Selected main comparison cells can also satisfy the screenshot minimum.
 // The ordinary single-host path remains authoritative without native results.
 func (b workflowMediaBuilder) restoredNativeImageAttempts(
 	snapshot api.MediaArtifactSet,
@@ -110,6 +112,7 @@ func (b workflowMediaBuilder) restoredNativeImageAttempts(
 			selectedMenus++
 		}
 	}
+	mainComparisonImages := releaseworkflow.ComparisonMainScreenshotIDs(snapshot.Comparisons)
 	nativePresent := false
 	coveredScreenshots, coveredMenus := 0, 0
 	for _, sourceID := range ordered {
@@ -124,6 +127,10 @@ func (b workflowMediaBuilder) restoredNativeImageAttempts(
 			coveredScreenshots++
 		case api.MediaArtifactDVDMenu:
 			coveredMenus++
+		case api.MediaArtifactComparison:
+			if _, main := mainComparisonImages[sourceID]; main {
+				coveredScreenshots++
+			}
 		case api.MediaArtifactHostedImage:
 			continue
 		}
@@ -274,7 +281,7 @@ func (m *mediaModule) uploadImagesWithURLImports(
 		for _, batch := range batches {
 			resolvedTarget := batch.target
 			links, err := m.uploadImagesToTarget(ctx, meta, resolvedTarget, batch.images, retained, blocked, false)
-			if failure, ok := api.AsOperationFailure(err); ok && failure.Code == api.OperationFailureUnknownOutcome {
+			if imageUploadOutcomeUnresolved(ctx, err) {
 				return result, err
 			}
 			var readyPaths, missingPaths []string

@@ -72,6 +72,16 @@ func TestLSTResourceLanguageScope(t *testing.T) {
 	if !reflect.DeepEqual(before, subject.LanguageFacts) || key != trackers.LanguageQuestionKey(subject, "test") {
 		t.Fatal("canonical evidence mutated")
 	}
+	subject.LanguageFacts = mediafacts.ResolveLanguages(api.MediaFacts{
+		OriginalLanguage:      "ja",
+		TitleLanguages:        []string{"ja", "en"},
+		Tracks:                subject.LanguageFacts.Tracks,
+		TrackCoverageComplete: true,
+	})
+	resource := resourceLanguageFacts(subject, "A", subject.LanguageFacts.Tracks[:2])
+	if !resource.HasEnglishDub() || resource.HasOriginalAudio() {
+		t.Fatalf("resource projection lost definitive Japanese original: %#v", resource)
+	}
 	subject.LanguageFacts.Tracks[2].Languages = nil
 	failures = languageAssessment(subject)
 	if !slices.ContainsFunc(failures, func(f api.RuleFailure) bool {

@@ -62,7 +62,7 @@ type workflowHybridUploadValidator struct {
 	failures []api.RuleFailure
 }
 
-func (v *workflowHybridUploadValidator) PrepareRetainedUploadPlan(ctx context.Context, subject api.UploadSubject, projections []api.TrackerReleaseProjection) (workflowRetainedUploadPlan, error) {
+func (v *workflowHybridUploadValidator) PrepareRetainedUploadPlan(ctx context.Context, subject api.UploadSubject, projections []api.TrackerReleaseProjection, mode api.WorkflowExecutionMode) (workflowRetainedUploadPlan, error) {
 	v.subject = subject
 	body, _ := subject.TrackerDescriptionOverride("LST")
 	if err := lst.Profile().Site.ValidateFinalDescription(subject, body, "MediaInfo", ""); err != nil {
@@ -82,7 +82,7 @@ func (v *workflowHybridUploadValidator) PrepareRetainedUploadPlan(ctx context.Co
 			return nil, fmt.Errorf("unacknowledged LST rule %s: %s", failure.Rule, failure.Reason)
 		}
 	}
-	return v.workflowRetainedUploadServiceFake.PrepareRetainedUploadPlan(ctx, subject, projections)
+	return v.workflowRetainedUploadServiceFake.PrepareRetainedUploadPlan(ctx, subject, projections, mode)
 }
 
 func requireWorkflowHybridFinding(t *testing.T, failures []api.RuleFailure, disposition api.RuleDisposition) {

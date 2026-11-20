@@ -101,6 +101,27 @@ func TestProfileNameParity(t *testing.T) {
 			},
 			want: "Example Show 2026-02-03 GERMAN 1080p WEB-DL H.264-GRP",
 		},
+		{
+			name: "seasonless part",
+			meta: api.UploadSubject{
+Type: "WEBDL",
+ Tag: "-GRP",
+ Release: api.ReleaseInfo{Title: "Example Show"},
+ EpisodeCoverage: api.EpisodeCoverage{Part: "Part.1"},
+},
+			want: "Example Show Part.1 WEB-DL-GRP",
+		},
+		{
+			name: "dated part",
+			meta: api.UploadSubject{
+Type: "WEBDL",
+ Tag: "-GRP",
+ Release: api.ReleaseInfo{Title: "Example Show"},
+ DailyEpisodeDate: "2026-02-03",
+ EpisodeCoverage: api.EpisodeCoverage{Part: "Part.1"},
+},
+			want: "Example Show 2026-02-03 Part.1 WEB-DL-GRP",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

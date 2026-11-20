@@ -242,7 +242,7 @@ func TestServicePreparationValidatesExactCombinedWarningSet(t *testing.T) {
 				UploadReady:                  true,
 				WaivableRuleFingerprint:      fingerprint,
 				RuleAuthorizationFingerprint: fingerprint,
-			}})
+			}}, api.WorkflowExecutionModeNormal)
 			if err != nil {
 				t.Fatal(err)
 			}

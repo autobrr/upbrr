@@ -43,6 +43,16 @@ func normalizePrepareInput(input api.PrepareInput) (normalizedPrepareInput, erro
 	input.Instructions.Playlist.Selected = normalizePlaylistSelection(input.Instructions.Playlist.Selected)
 	input.Instructions.TrackerIDs = normalizeTrackerIDs(input.Instructions.TrackerIDs)
 	input.Search.Client = normalizeOptionalString(input.Search.Client)
+	input.Search.InfoHash = strings.ToLower(strings.TrimSpace(input.Search.InfoHash))
+	if input.Search.InfoHash != "" {
+		decoded, decodeErr := hex.DecodeString(input.Search.InfoHash)
+		if decodeErr != nil || len(decoded) != 20 {
+			return normalizedPrepareInput{}, fmt.Errorf(
+				"prepared release: infohash must be a 40-character hexadecimal v1 hash: %w",
+				internalerrors.ErrInvalidInput,
+			)
+		}
+	}
 	input.MetadataRequirements, err = input.MetadataRequirements.Normalize()
 	if err != nil {
 		return normalizedPrepareInput{}, fmt.Errorf("prepared release: normalize metadata requirements: %w", err)
@@ -295,14 +305,21 @@ func preparationCompatibility(input api.PrepareInput, sourceFingerprint string, 
 	if err != nil {
 		return api.PreparationCompatibility{}, fmt.Errorf("prepared release: fingerprint fact instructions: %w", err)
 	}
+	infoHashPolicyVersion := 0
+	if input.Search.InfoHash != "" {
+		infoHashPolicyVersion = 2
+	}
 	policy, err := fingerprintJSON(struct {
 		Policy               api.PreparationPolicy
 		Search               api.ClientSearchPolicy
 		MetadataRequirements api.MetadataRequirementSet
+		// Refresh old requested-hash metadata for source validation and wrapper lookup.
+		InfoHashPolicyVersion int `json:",omitempty"`
 	}{
-		Policy:               input.Policy,
-		Search:               input.Search,
-		MetadataRequirements: input.MetadataRequirements,
+		Policy:                input.Policy,
+		Search:                input.Search,
+		MetadataRequirements:  input.MetadataRequirements,
+		InfoHashPolicyVersion: infoHashPolicyVersion,
 	})
 	if err != nil {
 		return api.PreparationCompatibility{}, fmt.Errorf("prepared release: fingerprint policy: %w", err)

@@ -33,7 +33,7 @@ Capability chips show whether the tracker supports cookie import, login, automat
 | **Submit 2FA**     | Completes an active manual 2FA challenge when the code field appears.                                            |
 | **Delete Auth**    | Deletes stored cookies and tracker-managed auth state; tracker configuration remains.                            |
 
-Automatic relogin uses saved tracker credentials only when the backend capability supports it. Never share cookie files, 2FA codes, challenge details, or auth errors that may contain private tracker information.
+Automatic relogin uses saved tracker credentials only when the backend capability supports it. Upload preflight and **Check Auth** can reuse or refresh a session, log in automatically, use a configured TOTP, and update stored authentication state. Confirmed-invalid sessions can be removed. Manual login or 2FA that automatic recovery cannot complete requires this page before retrying preparation. Never share cookie files, 2FA codes, challenge details, or auth errors that may contain private tracker information.
 
 ## Export and import cookies
 

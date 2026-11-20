@@ -529,6 +529,15 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	if err != nil {
 		return preparationstate.State{}, fmt.Errorf("metadata: package inventory: %w", err)
 	}
+	if meta.TVPack {
+		meta.EpisodeCoverage = seasonep.Coverage(
+			meta.SeasonInt,
+			meta.SeasonInt > 0 || meta.HasExplicitSeasonZero(),
+			primary,
+			meta.PackageInventory.Files,
+			meta.PackageInventory.Status,
+		)
+	}
 	applyDVDCapacity(&meta)
 	logger.Debugf("metadata: source size %d bytes", size)
 

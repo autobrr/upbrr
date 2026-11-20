@@ -188,6 +188,31 @@ func TestAitherMultilingualSourceAnswerReachesStructuredName(t *testing.T) {
 	}
 }
 
+func TestAitherOriginalMultilingualMarkerRetainsBalanceReview(t *testing.T) {
+	subject := api.UploadSubject{Type: "ENCODE", LanguageFacts: aitherTestLanguageFacts("Japanese", []string{"mul"}, []string{"English"})}
+	subject.LanguageFacts.Tracks[0].AudioOrigin = api.TrackAudioOriginal
+	validation := api.NewTrackerValidationSubject(subject, "AITHER")
+	key := trackers.LanguageQuestionKey(validation, "multilingual_balance_audio-0")
+	assertAitherFailure(t, languageAssessment(validation), "language_multilingual_balance", api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial)
+	questionnaire := languageQuestionnaire(trackers.PreparationInput{Meta: subject})
+	if questionnaire == nil || !slices.ContainsFunc(questionnaire.Fields, func(field api.TrackerQuestionnaireField) bool {
+		return field.Key == key && slices.Equal(field.Options, []string{"evenly_split", "unresolved"})
+	}) {
+		t.Fatalf("multilingual marker bypassed balance review or offered an unidentified predominant language: %+v", questionnaire)
+	}
+	subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"AITHER": {key: "evenly_split"}}
+	if got := aitherLanguage(subject); got != "MULTIPLE LANGUAGES" {
+		t.Fatalf("confirmed evenly split soundtrack marker = %q", got)
+	}
+	if failures := languageAssessment(api.NewTrackerValidationSubject(subject, "AITHER")); len(failures) != 0 {
+		t.Fatalf("confirmed original evenly split soundtrack blocked: %+v", failures)
+	}
+	subject.TrackerQuestionnaireAnswers["AITHER"][key] = "predominant:mul"
+	if got := aitherLanguage(subject); got != "" {
+		t.Fatalf("multilingual marker accepted as a predominant language: %q", got)
+	}
+}
+
 func TestAitherProjectionRetainsMultilingualBalanceReview(t *testing.T) {
 	mediaInfo := filepath.Join(t.TempDir(), "mediainfo.txt")
 	if err := os.WriteFile(mediaInfo, []byte("prepared media"), 0o600); err != nil {
@@ -258,11 +283,16 @@ func TestAitherProjectionRetainsMultilingualBalanceReview(t *testing.T) {
 		if projection.Questionnaire[0].NeedsReview != (test.answer == "unresolved" && test.mode != api.WorkflowExecutionModeDebug) {
 			t.Fatalf("balance correction flag ignored execution mode: %+v", projection)
 		}
-		if (test.answer == "" || test.answer == "unresolved") && test.mode != api.WorkflowExecutionModeDebug {
+		switch {
+		case (test.answer == "" || test.answer == "unresolved") && test.mode != api.WorkflowExecutionModeDebug:
 			if projection.Readiness != api.ReadinessStatusBlocked || len(projection.RequiredActions) != 1 || projection.UploadReady {
 				t.Fatalf("unresolved balance lost corrective action: %+v", projection)
 			}
-		} else if !projection.UploadReady {
+		case test.mode == api.WorkflowExecutionModeDebug && test.answer == "unresolved":
+			if projection.UploadReady || !projection.DiagnosticReady || projection.Readiness != api.ReadinessStatusBlocked || len(projection.RequiredActions) != 0 {
+				t.Fatalf("diagnostic balance lost actual outcome or constructibility: %+v", projection)
+			}
+		case !projection.UploadReady:
 			t.Fatalf("resolved balance did not recover: %+v", projection)
 		}
 	}

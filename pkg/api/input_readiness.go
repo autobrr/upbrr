@@ -155,6 +155,14 @@ type InputReadinessSnapshot struct {
 	CreatedAt               time.Time                         `json:"createdAt" ts_type:"string"`
 }
 
+// InputReviewContext retains display-only correction evidence while refreshed
+// preparation or readiness is incomplete. It grants no prepared-release or upload authority.
+type InputReviewContext struct {
+	Release            PreparedRelease              `json:"release"`
+	Fields             []InputReadinessFieldOutcome `json:"fields,omitempty"`
+	SelectedTrackerIDs []TrackerID                  `json:"selectedTrackerIds,omitempty"`
+}
+
 // Validate verifies snapshot identity and its exact local-input bindings.
 func (s InputReadinessSnapshot) Validate() error {
 	if err := validateSnapshotIdentity(string(s.ID), s.Revision, s.CreatedAt); err != nil {

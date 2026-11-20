@@ -1,0 +1,82 @@
+name: logging count report
+
+on:
+  workflow_run:
+    workflows: [logpolicy]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  analyze:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      targets: ${{ steps.resolve.outputs.targets }}
+      reports: ${{ steps.count.outputs.reports }}
+    steps:
+      # workflow_sha is this trusted default-branch workflow, never the PR head.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Resolve current PRs
+        id: resolve
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const {resolve} = require('./scripts/ci/logpolicy-report.cjs');
+            core.setOutput('targets', JSON.stringify(await resolve(github, context)));
+      - uses: actions/setup-go@v6
+        if: steps.resolve.outputs.targets != '[]'
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build trusted analyzer
+        if: steps.resolve.outputs.targets != '[]'
+        run: go build -o "$RUNNER_TEMP/logpolicy" ./cmd/logpolicy
+      - name: Analyze PR source as data
+        id: count
+        if: steps.resolve.outputs.targets != '[]'
+        env:
+          LOGPOLICY_TARGETS: ${{ steps.resolve.outputs.targets }}
+          LOGPOLICY_BINARY: ${{ runner.temp }}/logpolicy
+        run: node scripts/ci/logpolicy-report.cjs
+
+  publish:
+    needs: analyze
+    if: always() && !cancelled() && needs.analyze.outputs.targets != '' && needs.analyze.outputs.targets != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    # Serialize all comment writes, including fork PRs and rerun attempts. Never
+    # cancel a publisher in flight; stale queued results are checked in code.
+    concurrency:
+      group: logpolicy-comment-${{ github.repository }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Update owned logging comment
+        uses: actions/github-script@v8
+        env:
+          LOGPOLICY_TARGETS: ${{ needs.analyze.outputs.targets }}
+          LOGPOLICY_REPORTS: ${{ needs.analyze.outputs.reports }}
+        with:
+          script: |
+            const {publish} = require('./scripts/ci/logpolicy-report.cjs');
+            const reports = process.env.LOGPOLICY_REPORTS
+              ? JSON.parse(process.env.LOGPOLICY_REPORTS)
+              : JSON.parse(process.env.LOGPOLICY_TARGETS).map(target => ({...target, status: 'failed'}));
+            await publish(github, context, reports);

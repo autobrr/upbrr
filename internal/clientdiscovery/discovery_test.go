@@ -9,6 +9,7 @@ import (
 	"slices"
 	"testing"
 
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -60,16 +61,20 @@ func TestDiscoverNormalizesAndDetachesCurrentEvidence(t *testing.T) {
 	}}
 	files := []string{"Example.Release.2026.mkv"}
 	evidence, err := New(client, api.NopLogger{}).Discover(context.Background(), SearchInput{
-		SourcePath:   " Example.Release.2026 ",
-		FileList:     files,
-		DiscType:     " BDMV ",
-		Policy:       api.ClientSearchPolicy{Client: &clientName},
+		SourcePath: " Example.Release.2026 ",
+		FileList:   files,
+		DiscType:   " BDMV ",
+		Policy: api.ClientSearchPolicy{
+			Skip:     true,
+			Client:   &clientName,
+			InfoHash: "requested-hash",
+		},
 		ForceRecheck: &force,
 	})
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
-	if client.calls != 1 || client.input.SourcePath != "Example.Release.2026" || client.input.DiscType != "BDMV" {
+	if client.calls != 1 || client.input.SourcePath != "Example.Release.2026" || client.input.DiscType != "BDMV" || client.input.InfoHash != "requested-hash" {
 		t.Fatalf("client input = %#v calls=%d", client.input, client.calls)
 	}
 	if client.input.ClientOverrides.Client == nil || *client.input.ClientOverrides.Client != "qbit" {
@@ -121,6 +126,12 @@ func TestDiscoverDegradesSearchErrorsAndPreservesCancellation(t *testing.T) {
 	)
 	if err != nil || evidence.Disposition != DispositionUnavailable {
 		t.Fatalf("search evidence=%#v err=%v", evidence, err)
+	}
+	_, err = New(&recordingClient{err: errors.Join(internalerrors.ErrClientRecheckFailed, searchErr)}, api.NopLogger{}).Discover(
+		context.Background(), SearchInput{SourcePath: "Example.Release.2026.mkv", ForceRecheck: new(true)},
+	)
+	if !errors.Is(err, internalerrors.ErrClientRecheckFailed) || !errors.Is(err, searchErr) {
+		t.Fatalf("explicit recheck failure lost its cause: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	client := &recordingClient{err: searchErr, cancel: cancel}

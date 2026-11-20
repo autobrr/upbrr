@@ -32,7 +32,7 @@ const (
 )
 
 var (
-	// ErrPlanNotSubmittable indicates that a plan has no upload action.
+	// ErrPlanNotSubmittable indicates that a plan does not authorize tracker submission.
 	ErrPlanNotSubmittable = errors.New("tracker plan is not submittable")
 	// ErrPlanAlreadyUsed indicates that an upload plan already authorized one submission attempt.
 	ErrPlanAlreadyUsed = errors.New("tracker plan already submitted")
@@ -134,12 +134,13 @@ type planState struct {
 // TrackerPlan is an immutable operation-scoped adapter plan. Its private state
 // authorizes at most one submission and releases owned resources exactly once.
 type TrackerPlan struct {
-	liveTest    *api.LiveTestPolicy
-	tracker     string
-	intent      PreparationIntent
-	description DescriptionResult
-	dryRun      api.TrackerDryRunEntry
-	state       *planState
+	liveTest      *api.LiveTestPolicy
+	executionMode api.WorkflowExecutionMode
+	tracker       string
+	intent        PreparationIntent
+	description   DescriptionResult
+	dryRun        api.TrackerDryRunEntry
+	state         *planState
 }
 
 // PreparedOperation contains one immutable payload preview and the behavior
@@ -282,7 +283,7 @@ func PrepareAdapter(
 }
 
 func preparedUploadPlan(input PreparationInput, operation PreparedOperation) (TrackerPlan, *PreparationFailure) {
-	if operation.submit == nil {
+	if operation.submit == nil && api.NormalizeWorkflowExecutionMode(input.ExecutionMode) != api.WorkflowExecutionModeDebug {
 		cleanupErr := error(nil)
 		if operation.release != nil {
 			cleanupErr = operation.release()
@@ -297,6 +298,7 @@ func preparedUploadPlan(input PreparationInput, operation PreparedOperation) (Tr
 		return TrackerPlan{}, projectionPreparationFailure(input.Tracker, operation, err)
 	}
 	plan := NewUploadPlan(input.Tracker, operation.preview, operation.submit, operation.release)
+	plan = plan.withExecutionMode(input.ExecutionMode)
 	if operation.resolve != nil {
 		plan.state.resolve = func(ctx context.Context) (TrackerPlan, *PreparationFailure) {
 			next, err := operation.resolve(ctx)
@@ -355,12 +357,12 @@ func (p TrackerPlan) DryRun() api.TrackerDryRunEntry { return cloneTrackerDryRun
 
 // Submit invokes the upload action at most once. The first accepted call consumes
 // the submission attempt before invoking the callback, even when it returns an
-// error.
+// error. Debug plans always reject submission, including resolved replacements.
 func (p TrackerPlan) Submit(ctx context.Context) (api.UploadSummary, error) {
 	if err := p.liveTest.RejectMutation(api.OperationKindUploadExecute); err != nil {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, fmt.Errorf("live-test tracker submission: %w", err))
 	}
-	if p.state == nil || p.intent != PreparationIntentUpload {
+	if p.state == nil || p.intent != PreparationIntentUpload || p.executionMode == api.WorkflowExecutionModeDebug {
 		return api.UploadSummary{}, submission.NewError(submission.NotSent, ErrPlanNotSubmittable)
 	}
 	p.state.mu.Lock()
@@ -429,7 +431,7 @@ func (p TrackerPlan) ResolveAction(
 		if failure != nil {
 			return TrackerPlan{}, failure
 		}
-		return resolved.withLiveTestPolicy(p.liveTest), nil
+		return resolved.withLiveTestPolicy(p.liveTest).withExecutionMode(p.executionMode), nil
 	}
 	if confirmed {
 		p.state.resolved = true
@@ -460,7 +462,15 @@ func (p TrackerPlan) ResolveAction(
 	if failure != nil {
 		return TrackerPlan{}, failure
 	}
-	return resolved.withLiveTestPolicy(p.liveTest), nil
+	return resolved.withLiveTestPolicy(p.liveTest).withExecutionMode(p.executionMode), nil
+}
+
+// withExecutionMode can restrict a plan to diagnostics, never restore submission.
+func (p TrackerPlan) withExecutionMode(mode api.WorkflowExecutionMode) TrackerPlan {
+	if p.executionMode != api.WorkflowExecutionModeDebug {
+		p.executionMode = api.NormalizeWorkflowExecutionMode(mode)
+	}
+	return p
 }
 
 func (p TrackerPlan) withLiveTestPolicy(policy *api.LiveTestPolicy) TrackerPlan {

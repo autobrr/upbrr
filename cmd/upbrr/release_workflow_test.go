@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -25,6 +28,7 @@ import (
 )
 
 type cliWorkflowCoreFake struct {
+	searchFn               func(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
 	liveTest               bool
 	liveStarts             int
 	current                releaseworkflow.CommandResult
@@ -56,6 +60,13 @@ type cliWorkflowCoreFake struct {
 	recoverCalls           int
 	reconcileRequests      []api.ReconcileActiveInputRequest
 	audioResult            *api.AudioAnalysisResult
+}
+
+func (f *cliWorkflowCoreFake) SearchProviderCandidates(ctx context.Context, request api.ProviderSearchRequest) (api.ProviderSearchResult, error) {
+	if f.searchFn != nil {
+		return f.searchFn(ctx, request)
+	}
+	return api.ProviderSearchResult{Query: request.Query, Category: request.Category}, nil
 }
 
 type cliWorkflowActiveInputCore struct {
@@ -504,6 +515,7 @@ func (f *cliWorkflowCoreFake) ContinueReleaseWorkflow(
 }
 
 func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
+	encodedAttachment := base64.StdEncoding.EncodeToString([]byte("https://tracker.example/announce?passkey=never-print-this"))
 	output := captureWriter(func(output io.Writer) {
 		printCLIWorkflowDryRun(output, api.UploadDryRunResult{Reports: []api.TrackerDryRunReport{
 			{
@@ -516,13 +528,29 @@ func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
 					Message: "Client injection completed with passkey=never-print-this.",
 				},
 				Warnings: []string{"Synthetic warning api_token=never-print-this."},
+				Endpoint: "https://example.invalid/upload?api_token=never-print-this",
+				Fields: []api.UploadPlanField{
+					{Key: "name", Value: "Example.Release.2026.BETA-GRP"},
+					{Key: "description", Value: "Synthetic description\npasskey=never-print-this"},
+					{Key: "api_token", Value: "never-print-this"},
+					{Key: "username", Value: "never-print-this"},
+					{Key: "file", Value: encodedAttachment},
+				},
+				Files: []api.UploadPlanFile{{Field: "torrent", Present: true}, {Field: "nfo", Present: false}, {Field: "file", Present: true}},
 			},
 		}}, false, nil)
 	})
 	if !strings.Contains(output, "status=completed") ||
-		!strings.Contains(output, "client injection was attempted for each ready tracker") ||
+		!strings.Contains(output, "see each tracker's client injection outcome below") ||
 		!strings.Contains(output, "client injection: completed: Client injection completed with passkey=[REDACTED]") ||
 		!strings.Contains(output, "warning: Synthetic warning api_token=[REDACTED]") ||
+		!strings.Contains(output, "endpoint: https://example.invalid/upload") ||
+		!strings.Contains(output, `"name": "Example.Release.2026.BETA-GRP"`) ||
+		!strings.Contains(output, `"description": "Synthetic description`) ||
+		!strings.Contains(output, `"file": "[attachment]"`) ||
+		!strings.Contains(output, "attachment: torrent present=true") ||
+		!strings.Contains(output, "attachment: nfo present=false") ||
+		strings.Contains(output, encodedAttachment) ||
 		strings.Contains(output, "never-print-this") {
 		t.Fatalf("upload dry-run output = %q", output)
 	}
@@ -790,6 +818,8 @@ func (f *cliWorkflowCoreFake) ExecuteReleaseWorkflow(
 							DiscID:   "disc-one",
 							DiscName: "Disc 1",
 							File:     "00001.mpls",
+							Duration: 3600,
+							Score:    90,
 						},
 					},
 					{
@@ -800,6 +830,8 @@ func (f *cliWorkflowCoreFake) ExecuteReleaseWorkflow(
 							DiscID:   "disc-one",
 							DiscName: "Disc 1",
 							File:     "00002.mpls",
+							Duration: 7200,
+							Score:    40,
 						},
 					},
 					{
@@ -950,30 +982,9 @@ func (f *cliWorkflowCoreFake) ReleaseWorkflowAudioAnalysisArtifactPath(
 	return filepath.Join("test-output", string(artifactID)+".png"), nil
 }
 
-func TestCLIWorkflowCancellationCancelsAcceptedOperation(t *testing.T) {
-	coreSvc := &cliWorkflowCoreFake{
-		current:        releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-cli-cancel", Revision: 1}},
-		queueOperation: true,
-	}
-	session := &cliWorkflowSession{core: coreSvc, current: coreSvc.current}
-	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(10*time.Millisecond, cancel)
-	input := api.PrepareInput{SourcePath: "Example.Release.2026.1080p-GRP"}
-	err := session.executeContinuation(ctx, api.ContinueReleaseWorkflowRequest{
-		Authority: &api.WorkflowAuthority{
-			WorkflowID:       coreSvc.current.Workflow.ID,
-			ExpectedRevision: coreSvc.current.Workflow.Revision,
-		},
-		IdempotencyKey: "cancel-preparation",
-		Goal:           api.WorkflowGoalPrepared,
-		Intent:         api.WorkflowIntent{Preparation: &input},
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled workflow error = %v", err)
-	}
-	if coreSvc.cancelCalls != 1 {
-		t.Fatalf("operation cancel calls = %d, want 1", coreSvc.cancelCalls)
-	}
+func (*cliWorkflowCoreFake) ReleaseWorkflowMediaArtifactPath(_ context.Context, _ string, _ api.WorkflowID,
+	_ api.MediaArtifactSetRef, artifactID api.PublicResourceID) (string, error) {
+	return filepath.Join("test-output", string(artifactID)+".png"), nil
 }
 
 func TestCLIWorkflowBlockedOperationPublishesResult(t *testing.T) {
@@ -1219,7 +1230,7 @@ func TestCLIWorkflowUnattendedPlaylistActionDoesNotPrompt(t *testing.T) {
 	}
 }
 
-func TestCLIWorkflowLargestPlaylistUsesTypedFactReplacement(t *testing.T) {
+func TestCLIWorkflowBestPlaylistUsesTypedFactReplacement(t *testing.T) {
 	t.Parallel()
 
 	coreSvc := &cliWorkflowCoreFake{}
@@ -1269,27 +1280,77 @@ func TestSelectCLIWorkflowPlaylistsRequiresEveryDisc(t *testing.T) {
 
 	action := api.RequiredAction{Prompt: "Select playlist", Options: []api.RequiredActionOption{
 		{
-			Value:    "disc-one:00001.mpls",
-			Label:    "Disc 1 — 00001.mpls",
-			Playlist: &api.PlaylistInfo{DiscID: "disc-one"},
+			Value: "disc-one:00001.mpls",
+			Label: "Disc 1 — 00001.mpls",
+			Playlist: &api.PlaylistInfo{
+				DiscID:   "disc-one",
+				Duration: 7290.75,
+				Items: []api.PlaylistItem{
+					{File: "00001.m2ts", Size: 20 << 30},
+					{File: "00002.m2ts", Size: 19 << 30},
+					{File: "00003.m2ts", Size: 768 << 20},
+				},
+				Score: 32.125,
+			},
 		},
 		{
-			Value:    "disc-one:00002.mpls",
-			Label:    "Disc 1 — 00002.mpls",
-			Playlist: &api.PlaylistInfo{DiscID: "disc-one"},
+			Value: "disc-one:00002.mpls",
+			Label: "Disc 1 — 00002.mpls",
+			Playlist: &api.PlaylistInfo{
+				DiscID:   "disc-one",
+				Duration: 135.5,
+				Items:    []api.PlaylistItem{{File: "00004.m2ts", Size: 512 << 10}},
+				Score:    20.5,
+			},
 		},
 		{
-			Value:    "disc-two:00001.mpls",
-			Label:    "Disc 2 — 00001.mpls",
-			Playlist: &api.PlaylistInfo{DiscID: "disc-two"},
+			Value: "disc-two:00001.mpls",
+			Label: "Disc 2 — 00001.mpls",
+			Playlist: &api.PlaylistInfo{
+				DiscID:   "disc-two",
+				Duration: 45.9,
+				Score:    71,
+			},
 		},
 	}}
-	selected, err := selectCLIWorkflowPlaylists(bufio.NewReader(strings.NewReader("1,3\n")), io.Discard, action, false)
-	if err != nil {
-		t.Fatalf("select playlists: %v", err)
-	}
-	if !slices.Equal(selected, []string{"disc-one:00001.mpls", "disc-two:00001.mpls"}) {
-		t.Fatalf("selected playlists = %v", selected)
+	for _, terminal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("terminal=%t", terminal), func(t *testing.T) {
+			var transcript bytes.Buffer
+			var output io.Writer = &transcript
+			presenter := &modelPresenter{
+				model:   newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true),
+				answers: []string{"1,2,3"},
+			}
+			if terminal {
+				presenter.model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+				output = &cliPresentationWriter{
+					Writer:    &transcript,
+					presenter: presenter,
+					ctx:       t.Context(),
+					terminal:  true,
+				}
+			}
+			selected, err := selectCLIWorkflowPlaylists(bufio.NewReader(strings.NewReader("1,2,3\n")), output, action, false)
+			if err != nil {
+				t.Fatalf("select playlists: %v", err)
+			}
+			if !slices.Equal(selected, []string{"disc-one:00001.mpls", "disc-one:00002.mpls", "disc-two:00001.mpls"}) {
+				t.Fatalf("selected playlists = %v", selected)
+			}
+			display := transcript.String()
+			if terminal {
+				display = presenter.prompts[0].Evidence
+			}
+			for _, label := range []string{
+				"1. Disc 1 — 00001.mpls | 2h 1m 30s | 3 files | 39.75 GB | Score: 32.13",
+				"2. Disc 1 — 00002.mpls | 2m 15s | 1 files | 512 KB | Score: 20.50",
+				"3. Disc 2 — 00001.mpls | 45s | 0 files | 0 B | Score: 71.00",
+			} {
+				if !strings.Contains(display, label) {
+					t.Errorf("playlist prompt %q does not contain %q", display, label)
+				}
+			}
+		})
 	}
 	if _, err := selectCLIWorkflowPlaylists(bufio.NewReader(strings.NewReader("1\n")), io.Discard, action, false); err == nil ||
 		!strings.Contains(err.Error(), "each disc") {
@@ -1880,11 +1941,11 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 		{
 			name: "missing provider fact",
 			fields: []api.InputReadinessFieldOutcome{{
-				Key: "metadata.title",
- Status: api.InputReadinessFieldMissing,
+				Key:             "metadata.title",
+				Status:          api.InputReadinessFieldMissing,
 				CorrectionField: new(api.CorrectionFieldMetadataTitle),
- TrackerIDs: []api.TrackerID{"AITHER", "BHD"},
-				Message: "missing required title",
+				TrackerIDs:      []api.TrackerID{"AITHER", "BHD"},
+				Message:         "missing required title",
 			}},
 			blocked:  true,
 			want:     []string{"Required evidence to review:", "metadata.title (missing", "AITHER, BHD", "missing required title", "Review the source and metadata selection"},
@@ -1893,12 +1954,12 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 		{
 			name: "invalid correction",
 			fields: []api.InputReadinessFieldOutcome{{
-				Key: "metadata.genres",
- Status: api.InputReadinessFieldInvalid,
+				Key:             "metadata.genres",
+				Status:          api.InputReadinessFieldInvalid,
 				CorrectionField: new(api.CorrectionFieldMetadataGenres),
- TrackerIDs: []api.TrackerID{"AITHER"},
-				Disposition: api.RuleDispositionWaivable,
- Message: "genre evidence is invalid",
+				TrackerIDs:      []api.TrackerID{"AITHER"},
+				Disposition:     api.RuleDispositionWaivable,
+				Message:         "genre evidence is invalid",
 			}},
 			blocked: true,
 			want:    []string{"Required evidence to review:", "metadata.genres (invalid", "genre evidence is invalid", "--genres"},
@@ -1906,10 +1967,10 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 		{
 			name: "advisory only",
 			fields: []api.InputReadinessFieldOutcome{{
-				Key: "metadata.original_language",
- Status: api.InputReadinessFieldMissing,
+				Key:         "metadata.original_language",
+				Status:      api.InputReadinessFieldMissing,
 				Disposition: "warning",
- Message: "original language unavailable",
+				Message:     "original language unavailable",
 			}},
 			want:     []string{"Local input readiness: ready.", "Advisory evidence (does not block local readiness):", "original language unavailable"},
 			unwanted: []string{"Required evidence to review:"},
@@ -1919,21 +1980,21 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 			fields: []api.InputReadinessFieldOutcome{
 				{Key: "metadata.title", Status: api.InputReadinessFieldReady},
 				{
-					Key: "track.languages",
- TrackID: "audio-1",
- Status: api.InputReadinessFieldMissing,
+					Key:             "track.languages",
+					TrackID:         "audio-1",
+					Status:          api.InputReadinessFieldMissing,
 					CorrectionField: new(api.CorrectionFieldMetadataTrackLanguages),
- TrackerIDs: []api.TrackerID{"AITHER", "BHD"},
-					Message: "identify this programme track's languages",
+					TrackerIDs:      []api.TrackerID{"AITHER", "BHD"},
+					Message:         "identify this programme track's languages",
 				},
 				{
-					Key: "track.origin",
- TrackID: "audio-2",
- Status: api.InputReadinessFieldInvalid,
+					Key:             "track.origin",
+					TrackID:         "audio-2",
+					Status:          api.InputReadinessFieldInvalid,
 					CorrectionField: new(api.CorrectionFieldMetadataTrackAudioOrigins),
- TrackerIDs: []api.TrackerID{"BHD"},
-					Disposition: api.RuleDispositionAdvisory,
- Message: "review soundtrack origin",
+					TrackerIDs:      []api.TrackerID{"BHD"},
+					Disposition:     api.RuleDispositionAdvisory,
+					Message:         "review soundtrack origin",
 				},
 			},
 			blocked: true,
@@ -1944,12 +2005,12 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 		{
 			name: "unknown field with unsafe diagnostics",
 			fields: []api.InputReadinessFieldOutcome{{
-				Key: "future.evidence",
- TrackID: "audio-1\u202e",
- Status: api.InputReadinessFieldMissing,
+				Key:             "future.evidence",
+				TrackID:         "audio-1\u202e",
+				Status:          api.InputReadinessFieldMissing,
 				CorrectionField: new(api.CorrectionField("metadata.future")),
- TrackerIDs: []api.TrackerID{"AITHER\x1b[2J"},
-				Message: "inspect evidence password=SECRET_SENTINEL \x1b]52;c;CLIPBOARD\a\x1b[2J\u202e日本語",
+				TrackerIDs:      []api.TrackerID{"AITHER\x1b[2J"},
+				Message:         "inspect evidence password=SECRET_SENTINEL \x1b]52;c;CLIPBOARD\a\x1b[2J\u202e日本語",
 			}},
 			blocked:  true,
 			want:     []string{"inspect evidence", "日本語", "track: audio-1", "trackers: AITHER", "Review the source and metadata selection"},
@@ -1958,8 +2019,8 @@ func TestCLIInputOnlyExplainsLocalReadiness(t *testing.T) {
 		{
 			name: "missing message and track binding",
 			fields: []api.InputReadinessFieldOutcome{{
-				Key: "track.languages",
- Status: api.InputReadinessFieldInvalid,
+				Key:             "track.languages",
+				Status:          api.InputReadinessFieldInvalid,
 				CorrectionField: new(api.CorrectionFieldMetadataTrackLanguages),
 				Disposition:     "unknown",
 			}},

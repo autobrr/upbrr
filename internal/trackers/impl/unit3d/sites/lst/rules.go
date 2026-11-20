@@ -246,6 +246,7 @@ func resourceLanguageFacts(subject api.TrackerValidationSubject, resource string
 	}
 	facts.OriginalLanguages = slices.Clone(canonical.OriginalLanguages)
 	facts.OriginalLanguagesKnown = canonical.OriginalLanguagesKnown
+	facts.OriginalLanguageDefinitive = canonical.OriginalLanguageDefinitive
 	if canonical.ProgrammeStatus == api.MetadataEvidenceStatusContradictory {
 		facts.ProgrammeStatus = api.MetadataEvidenceStatusContradictory
 	} else if len(canonical.ProgrammeLanguages) == 0 && canonical.ProgrammeStatus == api.MetadataEvidenceStatusPartial && !facts.AudioAbsent {
@@ -277,8 +278,7 @@ func resourceLanguageFacts(subject api.TrackerValidationSubject, resource string
 }
 
 func resourceNeedsEnglishSubtitles(facts api.LanguageFacts) bool {
-	return facts.OriginalLanguagesKnown && !languageutil.ContainsLanguage(facts.OriginalLanguages, "English") &&
-		!languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
+	return trackers.ForeignLanguageContent(facts) &&
 		(facts.ProgrammeStatus == api.MetadataEvidenceStatusContradictory || !languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English")) &&
 		(facts.SubtitleStatus == api.MetadataEvidenceStatusContradictory || !languageutil.ContainsLanguage(facts.SubtitleLanguages, "English"))
 }

@@ -62,6 +62,8 @@ The current API registers these top-level resources:
 
 Methods, request bodies, response schemas, status codes, idempotency rules, and nested workflow routes can change as the alpha API evolves. Generate clients from the OpenAPI document shipped with the binary you run.
 
+Upload requests can supply `torrent.infoHash` to select an existing client torrent for metadata discovery and validated reuse. Lookup tries the default client before other available clients, overriding configured search lists, `none` selectors and `preparation.clientSearch.skip`. A named `preparation.clientSearch.client` still restricts lookup to that client; a miss identifies that client in the error and falls back to ordinary discovery. The only-ID, keep-images and client-injection policies remain unchanged. See [Client and torrent](../cli/index.md#client-and-torrent) for rehash, reuse-only and source-validation behavior.
+
 ### Tracker questionnaires
 
 The `trackers_projected` workflow goal prepares selected tracker names and questionnaire requirements before duplicate assessment. Read each tracker's returned questionnaire schema and current answers rather than hard-coding field names or assuming all trackers ask the same questions. Requirements can depend on the prepared release, saved answers, or later tracker lookup results.
@@ -117,7 +119,7 @@ Workflow writes use the general API concurrency and idempotency headers document
 
 See [Audio analysis](../workflow/audio-analysis.md) for user-facing behavior. Use the embedded OpenAPI schemas for request and response fields.
 
-One active input is shared by all processes using the same database. Reads do not acquire its lease or recover interrupted work. Startup waits for prior-process leases to expire, preserves completed work, and marks unfinished operations interrupted without replaying external work. It abandons unresolved prior-process effects without verifying their remote outcome; check the tracker or torrent client before explicitly retrying an interrupted stage. Unknown external outcomes during the running process still require reconciliation before another submission. If a continuation or workflow command returns a revision conflict, fetch the current workflow and review its required actions before sending a new command; do not replay a write with the old revision.
+One active input is shared by all processes using the same database. Reads do not acquire its lease or recover interrupted work. Startup waits for prior-process leases to expire, preserves completed work, and marks unfinished operations interrupted without replaying external work. It preserves uncertain external outcomes and their retry protection for reconciliation; check the tracker or torrent client before explicitly retrying an interrupted stage. Unknown external outcomes during the running process still require reconciliation before another submission. If a continuation or workflow command returns a revision conflict, fetch the current workflow and review its required actions before sending a new command; do not replay a write with the old revision.
 
 A forced-preparation continuation returns `preparationOperationId` when it accepts that preparation operation. Passive reads and responses returning an already active operation omit it. To associate cancellation with that request, require this ID to match the returned operation; a newly observed operation can belong to another tab or process.
 
@@ -151,3 +153,26 @@ Release-name corrections keep `Edition` separate from `Presentation` and `Releas
 Presentation accepts `IMAX`, `Open Matte`, or `IMAX Open Matte`. Release features accept multiple supported feature IDs; see [the CLI reference](../cli/index.md) for the vocabulary. Unknown values are rejected. Editing Edition preserves independent corrections. Complete recognized legacy compounds such as `Director's Cut / Hybrid` are separated into those fields, while opaque custom wording is preserved. Explicit independent values take precedence over compound-derived values.
 
 Generated annotations appear immediately after Edition, or in its position when Edition is absent, subject to tracker-specific naming rules. Complete release-name overrides retain the existing optional and mandatory tracker-name policy behavior, including rejection or rebuilding where required.
+
+### Comparison programme discovery
+
+`POST /api/v1/workflows/{workflowId}/media/comparisons/sources/discover` accepts the current workflow context, `sourceId`, optional current `media` reference and a server-local `path`. It requires workflow write access and the current revision. For the main column, an empty path uses the exact prepared input. Discovery returns path-free candidates and a fingerprint without changing the workflow or media revision.
+
+Configure comparisons with `videoSources`: retain `id` and `path` for regular files; disc selections also require `programme.kind` (`dvd` or `bluray`), `discId`, `candidateId`, `discoveryFingerprint` and the default `angle` (`1`, or omitted). Every disc column needs an explicit candidate. Configuration independently checks the discovery fingerprint; stale or unsupported selections leave the applied plan intact. Candidate ranking does not select a programme automatically.
+
+Manual `frameSelections` contain `rowId`, `sourceId` and an unexpired `previewId` from the same owner, workflow, revision and media set. Only configuration accepts these selections; approval cannot apply pending preview choices. Canonical observed identities in responses identify native frame occurrences and are never client replay authority. `captureAfterMatch: false` retains selected observations before image capture; omitted or true preserves match-and-capture behavior. Applied observations survive restart without recalibration. Existing CLI comparison options still import prepared images.
+
+Comparison `preferences.scanMode` accepts `fast` (the default Quick Scan) or `deep`. `count` selects 1�16 rows; omitted or zero retains the four-row default before target validation. `motionCount`, `darkCount` and `flatCount` are independent whole-row targets from zero to the row count, and one qualified row can satisfy several targets. `selectionWindow` accepts optional main-programme `start`, `end` and `excluded` intervals in seconds. Scene ranking belongs to the main input in both modes; secondaries receive bounded native-picture and picture-type checks. Responses include coverage, selected-row evidence and qualified deficits.
+
+The comparison plan's `screenshotSizing` controls generated video captures and previews.
+
+| Value                                 | Output                                                                                                                        |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `fit` (default when omitted or empty) | Scale proportionally to fit the main input's display dimensions, with centered black padding as needed.                       |
+| `resize`                              | Scale proportionally to fit within the main input's display dimensions without padding. Output dimensions can vary by column. |
+| `crop`                                | Scale proportionally to fill the main input's display dimensions, then center-crop any excess.                                |
+| `source`                              | Use each source picture's own display dimensions.                                                                             |
+
+If supplied, `sizeReferenceSourceId` must identify the main source. Leave `resizeLargerOnly` and `resizeSmaller` unset or `false`. Imported pixels remain unchanged.
+
+Prepared display `comparisonSourceCapabilities` and configured source `capabilities` expose `programmeSelectionRequired` and `toneMappingAvailable` from backend source facts. Regular-file discovery returns an empty candidate array. Omitting a comparison source’s `toneMap` inherits the normal screenshot setting; explicit `true` or `false` overrides it, and omission restores inheritance. Tone mapping applies only to HDR video.

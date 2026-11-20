@@ -93,6 +93,7 @@ export type OperationFailure = {
 };
 
 export type SourceScopedMetadata = {
+  IdentityCandidates?: ExternalIdentityCandidate[];
   SourcePath: string;
   Generation: number;
   TMDB?: TMDBMetadata | null;
@@ -180,7 +181,17 @@ export type NamingFacts = {
   Personal: boolean;
 };
 
+/** Pack identity and included members; complete evidence does not prove a complete season. */
+export type EpisodeCoverage = {
+  SeasonKnown?: boolean;
+  CompleteSeason?: boolean;
+  Part: string;
+  Episodes: number[];
+  Status: string;
+};
+
 export type EpisodeFacts = {
+  Coverage?: EpisodeCoverage;
   MultipleEpisodes: boolean;
   Season: number;
   Episode: number;
@@ -508,6 +519,7 @@ export type TMDBMetadata = {
   LastAirDate: string;
   OriginCountry: string[];
   OriginalLanguage: string;
+  SpokenLanguages?: string[];
   Overview: string;
   Poster: string;
   TMDBPosterPath: string;
@@ -611,6 +623,7 @@ export type IMDBMetadata = {
   SoundMixes: string[];
   TVYear: number;
   OriginalLanguage: string;
+  SpokenLanguages?: string[];
 };
 
 export type TVDBMetadata = {
@@ -954,6 +967,7 @@ export type ProviderDisplay =
   | (ProviderDisplayBase & { Provider: "mal"; Details: { AniList: AniListMetadata } });
 
 export type PreparedReleaseDisplay = {
+  comparisonSourceCapabilities?: import("./api/generated/release-workflow").ComparisonSourceCapabilities;
   /** Available TVDB naming data owns TV year even when no qualifier is selected. */
   TVDBNamingAvailable?: boolean;
   CanKeepFolder?: boolean;
@@ -1171,7 +1185,7 @@ export type ImageHostWarning = {
 };
 
 /** Image category shared by capture, selection, upload, and menu workflows. */
-export type ScreenshotPurpose = "preview" | "final" | "menu";
+export type ScreenshotPurpose = "preview" | "final" | "menu" | "comparison";
 
 export type ScreenshotSelection = {
   /** Prepared disc identity; omitted only by legacy single-disc callers. */

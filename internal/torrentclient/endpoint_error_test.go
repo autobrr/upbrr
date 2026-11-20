@@ -216,7 +216,7 @@ func TestClientEndpointRetriedExportFailure(t *testing.T) {
 		cfg.MainSettings.DBPath = filepath.Join(t.TempDir(), "upbrr.db")
 		service := NewService(cfg, logger)
 		client := qbittorrent.NewClient(qbittorrent.Config{Host: endpoint, RetryAttempts: 1})
-		_, err := service.selectValidTorrent(context.Background(), api.ClientSubject{SourcePath: filepath.Join(t.TempDir(), "Example.Movie.2026.mkv")}, []api.TorrentMatch{{Hash: strings.Repeat("a", 40)}}, nil, pieceConstraints{}, client, nil, endpoint, false)
+		_, err := service.selectValidTorrent(context.Background(), api.ClientSubject{SourcePath: filepath.Join(t.TempDir(), "Example.Movie.2026.mkv")}, []api.TorrentMatch{{Hash: strings.Repeat("a", 40)}}, nil, client, nil, endpoint, false)
 		if err != nil {
 			t.Fatal(err)
 		}

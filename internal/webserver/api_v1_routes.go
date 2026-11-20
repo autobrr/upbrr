@@ -310,6 +310,28 @@ func (s *Server) handleAPIV1WorkflowResource(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	if len(segments) == 5 && segments[1] == "media" && segments[2] == "comparisons" && segments[3] == "sources" && segments[4] == "discover" {
+		var request api.DiscoverReleaseWorkflowComparisonSourceRequest
+		if !decodeAPIV1JSON(w, r, &request) {
+			return
+		}
+		request.ReleaseWorkflowCommandContext = api.ReleaseWorkflowCommandContext{
+			WorkflowID:       workflowID,
+			ExpectedRevision: revision,
+			IdempotencyKey:   idempotencyKey,
+		}
+		if err := request.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		result, err := s.backend.discoverReleaseWorkflowComparisonSource(r.Context(), principal.OwnerID, request)
+		if err != nil {
+			writeAPIV1WorkflowError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	if len(segments) == 3 && segments[1] == "media" && segments[2] == "previews" {
 		var request api.PreviewReleaseWorkflowFrameRequest
 		if !decodeAPIV1JSON(w, r, &request) {
@@ -331,6 +353,8 @@ func (s *Server) handleAPIV1WorkflowResource(w http.ResponseWriter, r *http.Requ
 			revision,
 			request.DiscID,
 			request.TimestampSeconds,
+			request.ComparisonSourceID,
+			request.ComparisonStepDirection, api.PublicResourceID(r.URL.Query().Get("previewId")),
 		)
 		if err != nil {
 			writeAPIV1WorkflowError(w, err)
@@ -538,6 +562,13 @@ func (s *Server) apiV1WorkflowCommand(
 		return mapAPIV1WorkflowRequest(w, request)
 	case len(segments) == 2 && segments[1] == "audio-analysis":
 		var request api.AnalyzeReleaseWorkflowAudioRequest
+		if !decodeAPIV1JSON(w, r, &request) {
+			return nil, false
+		}
+		request.ReleaseWorkflowCommandContext = commandContext
+		return mapAPIV1WorkflowRequest(w, request)
+	case len(segments) == 3 && segments[1] == "media" && segments[2] == "comparisons":
+		var request api.EditReleaseWorkflowComparisonsRequest
 		if !decodeAPIV1JSON(w, r, &request) {
 			return nil, false
 		}

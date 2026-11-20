@@ -47,7 +47,7 @@ const workflowPrivateVaultCleanupInterval = time.Hour
 // Core composes the upload, prepared-release, duplicate-check, media,
 // description, and history capabilities over one dependency snapshot. It owns
 // the repository only when construction opened that repository internally.
-// Operation contexts are per call and are not retained by Core.
+// Input verification cancellation is retained only until admission completes.
 type Core struct {
 	liveTest         *api.LiveTestPolicy
 	logger           api.Logger
@@ -62,6 +62,8 @@ type Core struct {
 	workflow                 *releaseworkflow.Module
 	media                    *mediaModule
 	searchProviderCandidates func(context.Context, api.ProviderSearchRequest) (api.ProviderSearchResult, error)
+	inputOpenMu              sync.Mutex
+	inputOpens               map[inputOpenKey]map[*pendingInputOpen]struct{}
 }
 
 func applyMetadataDefaults(input api.PrepareInput, configured config.MetadataConfig) api.PrepareInput {
@@ -492,7 +494,7 @@ func newCoreWithHooks(
 		workflowPrivateResources = vault
 		workflowPrivateVault = vault
 	}
-	e2eOptions := e2eReleaseWorkflowOptions()
+	e2eOptions := e2eReleaseWorkflowOptions(repoOwner)
 	var reusableImageInventory workflowReusableTrackerImageInventory
 	if inventory, ok := services.Screenshots.(workflowReusableTrackerImageInventory); ok {
 		reusableImageInventory = inventory

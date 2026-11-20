@@ -186,6 +186,9 @@ func (m *cliTUIModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case cliBridgeUpdate:
 		if msg.view != nil && msg.view.Epoch >= m.view.Epoch && msg.view.Item >= m.view.Item &&
 			(msg.view.WorkflowID != m.view.WorkflowID || msg.view.Revision >= m.view.Revision) {
+			if msg.view.Epoch > m.view.Epoch || msg.view.Item > m.view.Item {
+				m.panels[cliPanelFlow].GotoBottom()
+			}
 			if m.question != nil && m.question.prompt.WorkflowID != "" &&
 				(m.question.prompt.WorkflowID != msg.view.WorkflowID || m.question.prompt.Revision != msg.view.Revision) {
 				answer := cliPromptAnswer(m.question.prompt, "", false)
@@ -573,6 +576,9 @@ func (m *cliTUIModel) refreshPanels() {
 			fmt.Fprintf(&trackers, " (%s)", strings.Join(strings.Fields(lane.Reason), " "))
 		}
 		trackers.WriteByte('\n')
+		if lane.ShowDetail && lane.Detail != "" {
+			fmt.Fprintf(&trackers, "  %s\n", lane.Detail)
+		}
 	}
 	m.panels[cliPanelTrackers].SetContent(trackers.String())
 	m.panels[cliPanelRelease].SetContent(strings.TrimSpace(m.view.Summary))

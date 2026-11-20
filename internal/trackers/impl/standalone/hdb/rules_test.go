@@ -71,8 +71,8 @@ func TestHDBForcedSubtitleDefaultUsesInspectedTracks(t *testing.T) {
 		status                           api.MetadataEvidenceStatus
 	}{
 		{"full subtitles do not prove forced need", false, true, true, api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial},
-		{"forced track not default", true, false, true, api.RuleDispositionStrict, api.MetadataEvidenceStatusComplete},
-		{"forced track unknown default", true, false, false, api.RuleDispositionStrict, api.MetadataEvidenceStatusPartial},
+		{"forced track not default", true, false, true, api.RuleDispositionWaivable, api.MetadataEvidenceStatusComplete},
+		{"forced track unknown default", true, false, false, api.RuleDispositionWaivable, api.MetadataEvidenceStatusPartial},
 		{"forced track default", true, true, true, "", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -95,6 +95,37 @@ func TestHDBForcedSubtitleDefaultUsesInspectedTracks(t *testing.T) {
 				return
 			}
 			requireHDBValidationFailure(t, failures, "language_foreign_dialogue_subtitles", test.disposition, test.status)
+			if test.disposition != api.RuleDispositionWaivable {
+				return
+			}
+			if blocking, err := trackers.FirstBlockingRuleFailure("HDB", failures, api.WorkflowExecutionModeNormal, nil); err != nil || blocking == nil {
+				t.Fatalf("subtitle warning did not require approval: blocking=%+v err=%v", blocking, err)
+			}
+			fingerprint, err := trackers.WaivableRuleFailureFingerprint("HDB", failures)
+			if err != nil {
+				t.Fatal(err)
+			}
+			projection := &api.TrackerReleaseProjection{
+				WaivableRuleFingerprint:      fingerprint,
+				RuleAuthorizationFingerprint: fingerprint,
+			}
+			if blocking, err := trackers.FirstBlockingRuleFailure("HDB", failures, api.WorkflowExecutionModeNormal, projection); err != nil || blocking != nil {
+				t.Fatalf("approved subtitle warning blocked: blocking=%+v err=%v", blocking, err)
+			}
+			changedSource := subject
+			changedSource.SourcePath = "changed-hdb-language"
+			if blocking, err := trackers.FirstBlockingRuleFailure("HDB", languageAssessment(changedSource), api.WorkflowExecutionModeNormal, projection); err != nil || blocking == nil {
+				t.Fatalf("changed source retained approval: blocking=%+v err=%v", blocking, err)
+			}
+			changedGeneration := subject
+			changedGeneration.Identity.Generation++
+			if blocking, err := trackers.FirstBlockingRuleFailure("HDB", languageAssessment(changedGeneration), api.WorkflowExecutionModeNormal, projection); err != nil || blocking == nil {
+				t.Fatalf("changed generation retained approval: blocking=%+v err=%v", blocking, err)
+			}
+			subject.LanguageFacts.Tracks[len(subject.LanguageFacts.Tracks)-1].ID = "changed-subtitle"
+			if blocking, err := trackers.FirstBlockingRuleFailure("HDB", languageAssessment(subject), api.WorkflowExecutionModeNormal, projection); err != nil || blocking == nil {
+				t.Fatalf("changed subtitle evidence retained approval: blocking=%+v err=%v", blocking, err)
+			}
 		})
 	}
 }

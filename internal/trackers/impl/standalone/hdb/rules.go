@@ -35,8 +35,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 			trackers.LanguageUnresolved,
 		))
 	}
-	if !animated && (!remux || facts.HasOriginalAudio()) && facts.OriginalLanguagesKnown &&
-		!languageutil.ContainsLanguage(facts.OriginalLanguages, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, "ZXX") &&
+	if !animated && (!remux || facts.HasOriginalAudio()) && trackers.ForeignLanguageContent(facts) &&
 		languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English") {
 		englishSubject := subject
 		englishSubject.LanguageFacts.Tracks = nil
@@ -73,19 +72,22 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 	if needsForeignDialogueReview(subject.LanguageFacts) {
 		hasForced, defaultPresent, unknownDefault := forcedDefaultSubtitleEvidence(subject.LanguageFacts)
 		if !defaultPresent {
-			outcome := trackers.LanguageAdvisory
+			disposition := api.RuleDispositionAdvisory
+			status := api.MetadataEvidenceStatusPartial
 			reason := "if foreign dialogue requires subtitles, include a forced/default subtitle track; dialogue coverage cannot be established from track metadata alone"
 			if hasForced {
-				outcome = trackers.LanguageProhibited
+				disposition = api.RuleDispositionWaivable
+				status = api.MetadataEvidenceStatusComplete
 				reason = "the inspected forced subtitles must include a default track"
 				if unknownDefault {
-					outcome = trackers.LanguageUnresolved
+					status = api.MetadataEvidenceStatusPartial
 					reason = "the default flag of the inspected forced subtitles is unresolved"
 				}
 			}
-			failure := trackers.LanguageRuleFailure(subject, "foreign_dialogue_subtitles", reason, outcome)
-			if !hasForced {
-				failure.EvidenceStatus = api.MetadataEvidenceStatusPartial
+			failure := trackers.NewEvidenceRuleFailure("language_foreign_dialogue_subtitles", reason, disposition, status)
+			failure.DebugBypass = true
+			if hasForced {
+				failure.EvidenceFingerprint = api.WorkflowFingerprint(trackers.LanguageQuestionKey(subject, "foreign_dialogue_subtitles"))
 			}
 			failures = append(failures, failure)
 		}

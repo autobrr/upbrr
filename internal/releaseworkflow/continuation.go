@@ -43,6 +43,9 @@ func projectWorkflowContinuationForState(
 		}
 	}
 	return api.WorkflowContinuation{
+		DuplicateReusePending: state != nil && state.PendingDuplicateReuse != nil,
+		ComparisonRestorePending: state != nil && state.ComparisonMedia != nil && current.Media == nil &&
+			current.Workflow.Status != api.WorkflowStatusCanceled && current.Workflow.Status != api.WorkflowStatusCompleted,
 		Lifecycle:       lifecycle,
 		Disposition:     disposition,
 		Refs:            exactRefs(current.Workflow),

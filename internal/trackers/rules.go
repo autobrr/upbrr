@@ -207,7 +207,9 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	}
 
 	if rules.BlockSingleFileFolder && hasSingleFileFolder(meta) {
-		addStrict("block_single_file_folder", "single-file folders are not allowed")
+		failure := NewRuleFailure("block_single_file_folder", "single-file folders are not allowed", api.RuleDispositionStrict)
+		failure.DebugBypass = true
+		failures = append(failures, failure)
 	}
 
 	if len(rules.BlockGroups) > 0 {

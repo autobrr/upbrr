@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -114,7 +115,7 @@ func (r *nativeEffectReporter) Complete(_ context.Context, _ api.WorkflowExterna
 }
 
 func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.T) {
-	for _, scenario := range []string{"mixed", "shared failed host", "protected source", "native only", "saved only", "approved", "excluded retained", "partial native", "known failure", "unknown", "explicit host", "credential change"} {
+	for _, scenario := range []string{"mixed", "shared failed host", "protected source", "native only", "saved only", "approved", "excluded retained", "partial native", "known failure", "unknown", "interrupted", "explicit host", "credential change"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := t.Context()
 			source := filepath.Join(t.TempDir(), "Example.Release.mkv")
@@ -174,6 +175,9 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 			}
 			if scenario == "partial native" {
 				hosting.failSource = "https://unapproved.example/second.png"
+			}
+			if scenario == "interrupted" {
+				hosting.importErr = context.Canceled
 			}
 			if scenario == "unknown" {
 				hosting.importErr = api.NewOperationError(api.OperationFailure{
@@ -302,6 +306,12 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 			})
 			ctx = api.WithWorkflowExternalEffectReporter(ctx, reporter)
 			published, publishedPrivate, attempts, err := builder.UploadImages(ctx, release, projections, snapshot, retained, ids, explicit, false, nil, time.Now())
+			if scenario == "interrupted" {
+				if !errors.Is(err, context.Canceled) || reporter.completed || hosting.uploads != 0 {
+					t.Fatalf("interrupted import authorized fallback or completion: %v", err)
+				}
+				return
+			}
 			if scenario == "unknown" {
 				if failure, ok := api.AsOperationFailure(err); !ok || failure.Code != api.OperationFailureUnknownOutcome || reporter.completed || hosting.uploads != 0 {
 					t.Fatal("uncertain import authorized fallback or completion")
@@ -379,7 +389,7 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 				if resolveErr != nil {
 					t.Fatal(resolveErr)
 				}
-				meta.ExactMedia, err = resolveWorkflowExactMedia(private, published)
+				meta.ExactMedia, err = resolveWorkflowExactMedia(t.Context(), private, published, cfg.ScreenshotHandling)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -457,6 +467,60 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 					t.Fatalf("published native result was reimported after reload: %v", reuseErr)
 				}
 				assertHostedSourceCoverage(t, reusedAttempts, trackerIDs, ids)
+			}
+			if scenario == "mixed" {
+				comparisonID := ids[1]
+				digest := strings.Repeat("a", 64)
+				published.Comparisons = &api.ComparisonPlan{
+					Imported: true,
+					Sources: []api.ComparisonSource{
+						{
+							ID:       "main",
+							Label:    "Main",
+							Imported: true,
+						},
+						{
+							ID:       "other",
+							Label:    "Other",
+							Imported: true,
+						},
+					},
+					MainSourceID:         "main",
+					ReuseMainScreenshots: true,
+					Rows: []api.ComparisonRow{{ID: "row", Cells: []api.ComparisonCell{
+						{
+							SourceID:      "main",
+							ArtifactID:    comparisonID,
+							ContentSHA256: digest,
+						},
+						{
+							SourceID:      "other",
+							ArtifactID:    "other-image",
+							ContentSHA256: strings.Repeat("b", 64),
+						},
+					}}},
+				}
+				for i := range published.Artifacts {
+					artifact := &published.Artifacts[i]
+					switch {
+					case artifact.ID == comparisonID:
+						artifact.Kind, artifact.Purpose = api.MediaArtifactComparison, api.ScreenshotPurposeComparison
+						image := private.ArtifactImages[artifact.ID]
+						image.Purpose, image.ContentSHA256 = api.ScreenshotPurposeComparison, digest
+						private.ArtifactImages[artifact.ID] = image
+					case artifact.Kind == api.MediaArtifactHostedImage && private.HostedSources[artifact.ID] == comparisonID:
+						artifact.Purpose = api.ScreenshotPurposeComparison
+						link := private.HostedImages[artifact.ID]
+						link.Purpose, link.ContentSHA256 = api.ScreenshotPurposeComparison, digest
+						private.HostedImages[artifact.ID] = link
+					}
+				}
+				selected := map[api.PublicResourceID]struct{}{remoteID: {}, comparisonID: {}}
+				restored, ok := builder.restoredNativeImageAttempts(published, private, projections.Projections[0], api.UploadSubject{}, selected, selected, ids)
+				if !ok {
+					t.Fatal("selected main comparison did not count toward restored mixed GPW coverage")
+				}
+				assertHostedSourceCoverage(t, restored, trackerIDs[:1], ids)
 			}
 			if scenario == "native only" {
 				// SQL must restore original source authority even when native output

@@ -182,6 +182,18 @@ func InitializeRuntimeConfigActivation(
 		return api.ConfigActivation{}, fmt.Errorf("load config activation: %w", err)
 	}
 	changed := activation.Fingerprint != "" && activation.Fingerprint != fingerprint
+	impacts := []api.ConfigImpactDetail{{Kind: api.ConfigImpactProvider}}
+	if changed {
+		legacy, legacyErr := config.LegacyEffectiveConfigFingerprint(runtimeCfg)
+		if legacyErr != nil {
+			return api.ConfigActivation{}, fmt.Errorf("fingerprint legacy runtime config: %w", legacyErr)
+		}
+		if activation.Fingerprint == legacy {
+			// Exact old-format identity proves that only comparison semantics changed.
+			// Unknown configuration drift retains conservative provider invalidation.
+			impacts = nil
+		}
+	}
 	started := time.Now()
 	deadline := started.Add(time.Minute + 5*time.Second)
 	attempts := 0
@@ -195,7 +207,7 @@ func InitializeRuntimeConfigActivation(
 		var activationErr error
 		if changed {
 			stage = "reconcile"
-			next, activationErr = repo.ReconcileConfigActivation(ctx, snapshot, activation, fingerprint, releaseworkflow.ApplyConfigImpact)
+			next, activationErr = repo.ReconcileConfigActivationWithImpacts(ctx, snapshot, activation, fingerprint, impacts, releaseworkflow.ApplyConfigImpact)
 		} else {
 			next, activationErr = repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
 		}
@@ -520,7 +532,7 @@ func (a *RuntimeActivator) activateResultLocked(
 		return api.ConfigActivation{}, activationError(ActivationStageNormalize, err)
 	}
 	storedChanged := !storedKnown || !configValueEqual(*stored, currentStored)
-	effectiveChanged := !configValueEqual(*runtimeCfg, currentRuntime)
+	effectiveChanged := !configValueEqual(config.WorkflowConfigForComparison(*runtimeCfg), config.WorkflowConfigForComparison(currentRuntime))
 	activation, activationKnown, err := a.currentActivation(ctx)
 	if err != nil {
 		return api.ConfigActivation{}, activationError(ActivationStagePersist, err)

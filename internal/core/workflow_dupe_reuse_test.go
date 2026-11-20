@@ -878,3 +878,61 @@ func TestEquivalentMetadataRebindPreservesOnlyCurrentCertifiedAuthority(t *testi
 		})
 	}
 }
+
+func TestWorkflowDupeReuseSelectionChanges(t *testing.T) {
+	t.Parallel()
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expired), func(t *testing.T) {
+			t.Parallel()
+			f := newWorkflowDupeReuseFixture(t)
+			f.reuse.QuestionnaireOnly = true
+			f.reuse.InvalidatedTrackers = nil
+			// Remove a duplicate lane and a failed lane; add one unsearched tracker.
+			f.reuse.Assessment.Results[3].Status = api.StageStatusFailed
+			f.reuse.Assessment.Results[3].Decision = api.DupeDecisionPending
+			f.projections.Projections = slices.Clone(f.projections.Projections[1:3])
+			added := f.projections.Projections[0]
+			added.TrackerID = "EPSILON"
+			f.projections.Projections = append(f.projections.Projections, added)
+			preflight := f.preflight.Results[0]
+			preflight.TrackerID = "EPSILON"
+			f.preflight.Results = append(f.preflight.Results, preflight)
+			if expired {
+				f.now = f.reuse.Assessment.ExpiresAt
+			}
+			assessment, evidence := f.build(t)
+			wantCalls := 1
+			if expired {
+				wantCalls = 2
+			}
+			if f.service.calls["ALPHA"] != 1 || f.service.calls["DELTA"] != 1 ||
+				f.service.calls["BETA"] != wantCalls || f.service.calls["GAMMA"] != wantCalls || f.service.calls["EPSILON"] != 1 {
+				t.Fatalf("selection searched unrelated lanes: %v", f.service.calls)
+			}
+			if !expired && (!assessment.ExpiresAt.Equal(f.reuse.Assessment.ExpiresAt) ||
+				!assessment.Results[0].CheckedAt.Equal(f.reuse.Assessment.Results[1].CheckedAt) ||
+				!assessment.Results[0].FreshUntil.Equal(f.reuse.Assessment.Results[1].FreshUntil)) {
+				t.Fatal("selection renewed retained evidence")
+			}
+			bound, ok := evidence.Assessment.(dupechecking.Assessment)
+			if !ok {
+				t.Fatal("missing private evidence")
+			}
+			for _, removed := range []string{"ALPHA", "DELTA"} {
+				if _, exists := bound.Decision(removed); exists {
+					t.Fatalf("removed %s retained private authority", removed)
+				}
+			}
+			// Once removal is committed, re-adding that tracker needs its own check.
+			assessment.ReleaseRef = f.projections.ReleaseRef
+			f.reuse.Assessment, f.reuse.Projections, f.reuse.PrivateEvidence = assessment, f.projections, evidence
+			readded := added
+			readded.TrackerID = "ALPHA"
+			f.projections.Projections = append(slices.Clone(f.projections.Projections), readded)
+			f.build(t)
+			if f.service.calls["ALPHA"] != 2 || f.service.calls["BETA"] != wantCalls || f.service.calls["EPSILON"] != 1 {
+				t.Fatalf("re-add searched unchanged lanes: %v", f.service.calls)
+			}
+		})
+	}
+}

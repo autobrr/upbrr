@@ -46,7 +46,7 @@ func (d *Definition) ProjectionQuestionnaire(input trackers.PreparationInput) *a
 
 func azDialectLanguages(subject api.TrackerValidationSubject) []string {
 	facts := subject.LanguageFacts
-	if !facts.OriginalLanguagesKnown || trackers.ProgrammeLanguageStatus(subject) != api.MetadataEvidenceStatusComplete ||
+	if !facts.OriginalLanguagesKnown || trackers.ProgrammeAudioStatus(subject) != api.MetadataEvidenceStatusComplete ||
 		(strings.EqualFold(subject.Type, "REMUX") && (facts.HasOriginalAudio() || languageutil.ContainsLanguage(facts.ProgrammeLanguages, "English"))) {
 		return nil
 	}
@@ -57,7 +57,8 @@ func azDialectLanguages(subject api.TrackerValidationSubject) []string {
 			continue
 		}
 		for _, language := range track.Languages {
-			if !languageutil.SameLanguage(language, "English") && !languageutil.ContainsLanguage(facts.OriginalLanguages, language) &&
+			if !languageutil.SameLanguage(language, "English") &&
+				(facts.ProgrammeAudioOrigin(track) == api.TrackAudioDubbed || !languageutil.ContainsLanguage(facts.OriginalLanguages, language)) &&
 				!languageutil.ContainsLanguage(dialects, language) {
 				dialects = append(dialects, language)
 			}

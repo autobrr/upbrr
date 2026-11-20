@@ -133,6 +133,19 @@ func (r *SQLiteRepository) ReconcileConfigActivation(
 	ctx context.Context, expectedConfig json.RawMessage, expected api.ConfigActivation,
 	nextFingerprint api.WorkflowFingerprint, transform ConfigActivationWorkflowTransform,
 ) (api.ConfigActivation, error) {
+	return r.ReconcileConfigActivationWithImpacts(ctx, expectedConfig, expected, nextFingerprint,
+		[]api.ConfigImpactDetail{{Kind: api.ConfigImpactProvider}}, transform)
+}
+
+// ReconcileConfigActivationWithImpacts uses the startup reconciliation fences
+// with caller-classified impacts. Empty impacts are appropriate only for a proven
+// comparison-format change: runtime authority advances, but workflow evidence and
+// the input revision are preserved. Snapshot checks, leases and uncertain external
+// outcomes still gate the transition.
+func (r *SQLiteRepository) ReconcileConfigActivationWithImpacts(
+	ctx context.Context, expectedConfig json.RawMessage, expected api.ConfigActivation,
+	nextFingerprint api.WorkflowFingerprint, impacts []api.ConfigImpactDetail, transform ConfigActivationWorkflowTransform,
+) (api.ConfigActivation, error) {
 	if r == nil || r.db == nil {
 		return api.ConfigActivation{}, errors.New("db: repository not initialized")
 	}
@@ -159,8 +172,7 @@ func (r *SQLiteRepository) ReconcileConfigActivation(
 		if err != nil {
 			return err
 		}
-		impacts := []api.ConfigImpactDetail{{Kind: api.ConfigImpactProvider}}
-		if slot.State == api.ActiveInputActive || (slot.InputID != "" && slot.WorkflowID != "") {
+		if len(impacts) > 0 && (slot.State == api.ActiveInputActive || (slot.InputID != "" && slot.WorkflowID != "")) {
 			if transform == nil {
 				return errors.New("db: config activation workflow transform is required")
 			}

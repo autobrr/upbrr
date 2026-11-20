@@ -27,7 +27,7 @@ func Profile() standalone.Profile {
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
 		ProjectionQuestionnaire: projectionQuestionnaire,
-		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/tvc/v3", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/tvc/v5", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 			if input.RequestedName != nil {
 				return trackers.ResolvedReleaseNames{Upload: strings.TrimSpace(*input.RequestedName)}, nil
 			}

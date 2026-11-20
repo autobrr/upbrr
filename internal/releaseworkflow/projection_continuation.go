@@ -34,18 +34,12 @@ func (m *Module) continueTrackerProjection(
 			return CommandResult{}, projectionPreparationRequired()
 		}
 	}
-	if checker, ok := m.trackerProjector.(TrackerProjectionCatalogChecker); ok && current.Projections != nil {
-		catalogCurrent := false
-		if current.Catalog != nil {
-			var err error
-			catalogCurrent, err = checker.CatalogCurrent(*current.Catalog)
-			if err != nil {
-				return CommandResult{}, fmt.Errorf("release workflow check projection catalog: %w", err)
-			}
-		}
-		if !catalogCurrent {
-			current.Projections = nil
-		}
+	staleCatalog, err := m.projectionCatalogStale(current)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if staleCatalog {
+		current.Projections = nil
 	}
 	if continuationGoalReached(current, request) {
 		// Even a retained projection must still have live exact-generation authority.

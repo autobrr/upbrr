@@ -6,7 +6,7 @@ Scoped rules for the shared duplicate-search coordinator and evaluator. Root, `i
 
 - Keep protocol search, normalization, policy, evaluation, and presentation separate. Adapters return evidence; this package normalizes and evaluates it; tracker definitions own tracker policy.
 - Compare candidates for the same work and overlapping content scope. Exact release-name or primary-video identity blocks before slot inference.
-- Existing `in_client` evidence always hard-blocks that tracker. Never override, waive, reclassify, or bypass it, including in debug mode.
+- Existing `in_client` evidence always hard-blocks tracker submission. Never override, waive, or reclassify that outcome. Debug may continue diagnostic media, descriptions, and payload inspection while retaining the blocked outcome and never granting submission authority.
 - Treat known differences as distinct release variants, not potential duplicates:
   - different content scope, date, season, or episode;
   - different resolution;
