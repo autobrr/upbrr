@@ -235,6 +235,8 @@ type TrackerDuplicateTarget struct {
 type TrackerArtifactRequirements struct {
 	// ScreenshotCount is the minimum number of selected normal screenshots.
 	ScreenshotCount int `json:"screenshotCount"`
+	// LocalScreenshotsOnly requires selected captures without hosted variants.
+	LocalScreenshotsOnly bool `json:"localScreenshotsOnly,omitempty"`
 	// DVDMenuCount is a tracker-declared minimum, not an automatic-capture cap.
 	DVDMenuCount          int      `json:"dvdMenuCount"`
 	MediaInfo             bool     `json:"mediaInfo"`
@@ -580,8 +582,8 @@ type MediaArtifact struct {
 	SizeBytes        int64             `json:"sizeBytes,omitempty"`
 	Host             string            `json:"host,omitempty"`
 	URL              string            `json:"url,omitempty"`
-	// SourceUnavailable identifies a restored hosted link whose local image could
-	// not be verified. It remains removable without becoming an upload candidate.
+	// SourceUnavailable identifies missing local content on a restored screenshot
+	// or hosted link. Hosted links can still be reused without their local bytes.
 	SourceUnavailable bool `json:"sourceUnavailable,omitempty"`
 }
 

@@ -509,7 +509,7 @@ type TrackerAnswerSchemaProvider interface {
 	TrackerAnswerSchema(PreparationInput) *api.TrackerQuestionnaire
 }
 
-// UploadArtifactPolicy declares tracker torrent personalization fields.
+// UploadArtifactPolicy declares tracker torrent packaging and personalization.
 type UploadArtifactPolicy struct {
 	// Source replaces the torrent info dictionary's private-tracker source field.
 	Source string
@@ -519,6 +519,8 @@ type UploadArtifactPolicy struct {
 	UseMyAnnounce bool
 	// RequireAnnounce prevents artifact preparation without an announce URL.
 	RequireAnnounce bool
+	// IncludeMatchingSubtitles keeps matching .srt sidecars in single-tracker movie folder uploads.
+	IncludeMatchingSubtitles bool
 }
 
 // UploadArtifactPolicyProvider declares tracker-owned personalization policy.
@@ -942,6 +944,8 @@ type ClaimPolicyProvider interface {
 // WorkflowMediaRequirements declares tracker-owned media minimums and reuse policy.
 // Capture preferences and global caps do not belong here.
 type WorkflowMediaRequirements struct {
+	// LocalScreenshotCount is the minimum for trackers that accept local screenshots only.
+	LocalScreenshotCount int
 	// DVDMenuCount is the minimum selected DVD-menu image count.
 	DVDMenuCount int
 	// AllowImportedScreenshotReferences permits current, host-compatible imported

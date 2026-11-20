@@ -979,7 +979,7 @@ enqueue:
 	}
 }
 
-// submissionFenceAuthority binds one exact prepared submission scope to the
+// submissionFenceAuthority binds the verified base submission scope to the
 // canonical registered tracker site. Tracker credentials deliberately do not
 // participate in the site identity.
 func (s *Service) submissionFenceAuthority(

@@ -601,6 +601,13 @@ func TestEveryTrackerProjectsScreenshotDefaultAndOverride(t *testing.T) {
 				if mode.UsesImages() {
 					want = test.want
 				}
+				localOnly := projection.TrackerID == "ASC"
+				if localOnly {
+					want = max(want, 2)
+				}
+				if projection.Artifacts.LocalScreenshotsOnly != localOnly {
+					t.Errorf("tracker %s local screenshots only = %t, want %t", projection.TrackerID, projection.Artifacts.LocalScreenshotsOnly, localOnly)
+				}
 				if projection.Artifacts.ScreenshotCount != want {
 					t.Errorf("tracker %s screenshot count = %d, want %d", projection.TrackerID, projection.Artifacts.ScreenshotCount, want)
 				}
@@ -740,8 +747,12 @@ func TestNewRegistryOwnsUploadArtifactPolicies(t *testing.T) {
 	want := map[string]trackers.UploadArtifactPolicy{
 		"ACM": {Source: "AsianCinema"},
 		"AR":  {Source: "AlphaRatio", RequireAnnounce: true},
-		"ASC": {Source: "ASC", RequireAnnounce: true},
-		"AZ":  {Source: "AvistaZ", DefaultAnnounce: "https://tracker.avistaz.to/announce"},
+		"ASC": {
+			Source:                   "ASC",
+			RequireAnnounce:          true,
+			IncludeMatchingSubtitles: true,
+		},
+		"AZ": {Source: "AvistaZ", DefaultAnnounce: "https://tracker.avistaz.to/announce"},
 		"BHDTV": {
 			Source:          "BIT-HDTV",
 			UseMyAnnounce:   true,
@@ -991,7 +1002,7 @@ func TestNewRegistryIncludesAuthResolvers(t *testing.T) {
 			wantMode = "form_upload"
 		}
 		wantLogin := slices.Contains([]string{"AR", "BTN", "FF", "FL", "PTP", "RTF"}, tracker)
-		wantResolver := slices.Contains([]string{"AR", "AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF"}, tracker)
+		wantResolver := slices.Contains([]string{"AR", "ASC", "AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF"}, tracker)
 		want2FA := tracker == "BTN" || tracker == "PTP"
 		capability, ok := registry.LookupAuthCapability(tracker)
 		if !ok || capability.TrackerID != tracker || capability.SupportsLogin != wantLogin {

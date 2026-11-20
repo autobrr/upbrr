@@ -211,6 +211,10 @@ func resolveDescriptionAssets(
 	if registry == nil {
 		registry = preloadedRegistry(preloaded)
 	}
+	localOnly := meta.ExactMedia != nil && usesLocalScreenshots(registry, tracker)
+	if localOnly {
+		meta.ExactMedia = localDescriptionMedia(meta.ExactMedia)
+	}
 	if err := ctx.Err(); err != nil {
 		return DescriptionAssets{}, fmt.Errorf("trackers: resolve description assets canceled: %w", err)
 	}
@@ -246,9 +250,17 @@ func resolveDescriptionAssets(
 	}
 
 	description, overridden, final := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded, registry)
-	slots, screenshots, err := resolveDescriptionScreenshots(ctx, tracker, meta, repo, logger, preloaded, registry)
-	if err != nil {
-		return DescriptionAssets{}, fmt.Errorf("trackers: resolve required description screenshots: %w", err)
+	var slots []api.ScreenshotSlot
+	var screenshots []api.ScreenshotImage
+	if localOnly {
+		// Shared preload slots can contain hosted variants for another tracker.
+		screenshots = meta.ExactMedia.Screenshots
+	} else {
+		var err error
+		slots, screenshots, err = resolveDescriptionScreenshots(ctx, tracker, meta, repo, logger, preloaded, registry)
+		if err != nil {
+			return DescriptionAssets{}, fmt.Errorf("trackers: resolve required description screenshots: %w", err)
+		}
 	}
 	if logger != nil {
 		logger.Tracef("trackers: description assets resolved desc_len=%d screenshots=%d", len(strings.TrimSpace(description)), len(screenshots))
@@ -459,6 +471,32 @@ func exactDescriptionMedia(
 		menuImages = append(menuImages, image)
 	}
 	return menuImages, screenshots
+}
+
+func localDescriptionMedia(exact *api.ExactMediaAssets) *api.ExactMediaAssets {
+	if exact == nil {
+		return nil
+	}
+	exact = exact.Clone()
+	exact.Screenshots = slices.DeleteFunc(exact.Screenshots, func(image api.ScreenshotImage) bool {
+		return image.SourceUnavailable
+	})
+	exact.ScreenshotUploads = nil
+	exact.DVDMenuUploads = nil
+	exact.Comparisons = nil
+	exact.ComparisonImages = nil
+	exact.ComparisonUploads = nil
+	exact.AudioUploads = nil
+	exact.AudioUploadHosts = nil
+	exact.HDRUploads = nil
+	exact.HDRUploadHosts = nil
+	exact.ImageHostUploadSkipped = true
+	for index := range exact.Screenshots {
+		image := &exact.Screenshots[index]
+		image.Host, image.ImgURL, image.RawURL, image.WebURL = "", "", "", ""
+		image.UploadedAt = time.Time{}
+	}
+	return exact
 }
 
 func exactUploadedVariant(tracker string, imagePath string, uploads []api.UploadedImageLink, selectedHost string) (api.UploadedImageLink, bool) {

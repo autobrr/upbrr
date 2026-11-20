@@ -2035,6 +2035,66 @@ func TestResolveDescriptionAssetsFailsOnSelectedUploadMismatch(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsKeepsLocalCapturesAcrossMixedTrackerPreload(t *testing.T) {
+	t.Parallel()
+
+	registry := descriptionAssetsTestRegistry(t)
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:             "LOCAL",
+		Definition:       stubDefinition{name: "LOCAL"},
+		DescriptionGroup: "local",
+		WorkflowMedia:    &WorkflowMediaRequirements{LocalScreenshotCount: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	imagePath := filepath.Join(root, "screen-1.png")
+	secondPath := filepath.Join(root, "screen-2.png")
+	missingPath := filepath.Join(root, "missing-screen.png")
+	const hostedURL = "https://img.example.invalid/screen.png"
+	const comparisonURL = "https://images.example.invalid/row-1-source-1.png"
+	exact := comparisonDescriptionFixture(t)
+	exact.Screenshots = []api.ScreenshotImage{
+		{
+			Path:              missingPath,
+			Purpose:           api.ScreenshotPurposeFinal,
+			SourceUnavailable: true,
+		},
+		{Path: imagePath, Purpose: api.ScreenshotPurposeFinal},
+		{Path: secondPath, Purpose: api.ScreenshotPurposeFinal},
+	}
+	exact.ScreenshotUploads = []api.UploadedImageLink{{
+		ImagePath:  missingPath,
+		Host:       "pixhost",
+		UsageScope: "tracker:HHD",
+		RawURL:     hostedURL,
+	}}
+	meta := api.UploadSubject{
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv"),
+		ExactMedia: exact,
+	}
+	repo := &stubRepo{descriptionOverride: "Saved release description", overrideGroupKey: "local"}
+	preloaded, err := preloadDescriptionAssetData(t.Context(), meta, repo, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := resolveDescriptionAssets(t.Context(), "LOCAL", meta, repo, api.NopLogger{}, preloaded, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local.Description != repo.descriptionOverride || repo.overrideCalls != 1 || len(local.Screenshots) != 2 ||
+		local.Screenshots[0].Path != imagePath || local.Screenshots[1].Path != secondPath {
+		t.Fatalf("local description assets = %#v", local)
+	}
+	hosted, err := resolveDescriptionAssets(t.Context(), "HHD", meta, repo, api.NopLogger{}, preloaded, registry)
+	if err != nil || len(hosted.Screenshots) != 1 || hosted.Screenshots[0].RawURL != hostedURL || hosted.Screenshots[0].Path != missingPath {
+		t.Fatalf("hosted description assets = %#v, error = %v", hosted, err)
+	}
+	if !strings.Contains(hosted.Description, comparisonURL) {
+		t.Fatalf("hosted description lost the reviewed comparison: %q", hosted.Description)
+	}
+}
+
 func TestResolveDescriptionAssetsAttachesExactUploadedVariants(t *testing.T) {
 	t.Parallel()
 

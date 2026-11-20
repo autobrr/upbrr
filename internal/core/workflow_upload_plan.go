@@ -21,7 +21,9 @@ import (
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/logging"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -67,6 +69,7 @@ type workflowUploadPlanBuilder struct {
 	config   config.Config
 	resolver workflowDescriptionSubjectResolver
 	trackers workflowRetainedUploadService
+	registry workflowTrackerDescriptorRegistry
 	torrents api.TorrentService
 	clients  api.ClientService
 }
@@ -93,6 +96,7 @@ func newWorkflowUploadPlanBuilder(
 	service api.TrackerService,
 	torrents api.TorrentService,
 	clients api.ClientService,
+	registry workflowTrackerDescriptorRegistry,
 	liveTest ...*api.LiveTestPolicy,
 ) workflowUploadPlanBuilder {
 	retained, _ := service.(workflowRetainedUploadService)
@@ -103,6 +107,7 @@ func newWorkflowUploadPlanBuilder(
 		config:   cfg,
 		resolver: resolver,
 		trackers: retained,
+		registry: registry,
 		torrents: torrents,
 		clients:  clients,
 	}
@@ -328,7 +333,7 @@ func (b workflowUploadPlanBuilder) Build(
 	skipImageUpload := true
 	subject.ImageHostOverrides.SkipUpload = &skipImageUpload
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)
-	torrentSubject := workflowSubmissionTorrentSubject(subject)
+	torrentSubject := workflowSubmissionTorrentSubjectWithSubtitles(subject, b.registry)
 	torrentSubject.ForceRecheck = descriptionInstructions.Client.ForceRecheck != nil && *descriptionInstructions.Client.ForceRecheck
 	torrentSubject.Trackers = workflowProjectionTrackerNames(eligible)
 	torrentSubject.SkipIfRehashTrackers = workflowSkipIfRehashTrackers(b.config, eligible)
@@ -340,7 +345,15 @@ func (b workflowUploadPlanBuilder) Build(
 		}
 		sourceManifest = &subject.SourceManifest
 		torrentSubject.DeferGenerationPublication = true
-		identity, identityErr := workflowSubmissionContentIdentity(torrentSubject, subject.SourceIdentity)
+		baseTorrentSubject := workflowSubmissionTorrentSubject(subject)
+		if len(torrentSubject.FileList) != len(baseTorrentSubject.FileList) {
+			if _, err := workflowSubmissionContentIdentity(torrentSubject, subject.SourceIdentity); err != nil {
+				return api.UploadPlan{}, nil, err
+			}
+		}
+		// Sidecar packaging can vary with the tracker selection. Use the base
+		// scope for the global fence so concurrent variants cannot bypass it.
+		identity, identityErr := workflowSubmissionContentIdentity(baseTorrentSubject, subject.SourceIdentity)
 		if identityErr != nil {
 			return api.UploadPlan{}, nil, identityErr
 		}
@@ -416,7 +429,7 @@ func (b workflowUploadPlanBuilder) Build(
 	}
 	clientSubject := api.ClientSubject{
 		SourcePath:      subject.SourcePath,
-		FileList:        append([]string(nil), subject.FileList...),
+		FileList:        append([]string(nil), torrentSubject.FileList...),
 		DiscType:        subject.DiscType,
 		KeepFolder:      subject.KeepFolder,
 		ClientOverrides: descriptionInstructions.Client,
@@ -633,6 +646,42 @@ func (b workflowUploadPlanBuilder) prepareWorkflowTorrent(
 		return api.TorrentResult{}, fmt.Errorf("prepare torrent: %w", err)
 	}
 	return result, nil
+}
+
+// workflowSubmissionTorrentSubjectWithSubtitles widens the verified file scope
+// only for a single tracker that opts into subtitle sidecars.
+func workflowSubmissionTorrentSubjectWithSubtitles(subject api.UploadSubject, registry workflowTrackerDescriptorRegistry) api.TorrentSubject {
+	torrentSubject := workflowSubmissionTorrentSubject(subject)
+	if registry == nil || len(subject.Trackers) != 1 || !subject.KeepFolder ||
+		subject.Identity.Category != api.CanonicalCategoryMovie || len(subject.FileList) != 1 ||
+		subject.DiscType != "" || !filesystem.IsVideoFile(subject.FileList[0]) {
+		return torrentSubject
+	}
+	descriptor, ok := registry.LookupDescriptor(subject.Trackers[0])
+	if !ok || descriptor.UploadArtifact == nil || !descriptor.UploadArtifact.IncludeMatchingSubtitles {
+		return torrentSubject
+	}
+
+	root := filepath.Clean(subject.SourcePath)
+	video := subject.FileList[0]
+	if !pathutil.SamePath(filepath.Dir(video), root) {
+		return torrentSubject
+	}
+	stem := strings.TrimSuffix(filepath.Base(video), filepath.Ext(video))
+	var subtitles []string
+	for _, entry := range subject.SourceManifest.Entries {
+		if entry.Type != api.SourceEntryTypeFile || !pathutil.SamePath(filepath.Dir(entry.Path), root) {
+			continue
+		}
+		ext := filepath.Ext(entry.Path)
+		name := strings.TrimSuffix(filepath.Base(entry.Path), ext)
+		if strings.EqualFold(ext, ".srt") && (name == stem || strings.HasPrefix(name, stem+".")) {
+			subtitles = append(subtitles, entry.Path)
+		}
+	}
+	slices.Sort(subtitles)
+	torrentSubject.FileList = append(torrentSubject.FileList, subtitles...)
+	return torrentSubject
 }
 
 func workflowSubmissionContentIdentity(

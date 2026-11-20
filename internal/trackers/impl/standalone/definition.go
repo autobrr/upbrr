@@ -91,6 +91,11 @@ func (d *Definition) UploadContentMode() trackers.UploadContentMode {
 	return d.profile.UploadContentMode
 }
 
+// WorkflowMediaRequirements returns tracker-owned media requirements.
+func (d *Definition) WorkflowMediaRequirements() *trackers.WorkflowMediaRequirements {
+	return cloneValue(d.profile.WorkflowMedia)
+}
+
 // UsesMenuImages reports whether the description consumes selected DVD menus.
 func (d *Definition) UsesMenuImages() bool { return d.profile.UsesMenuImages }
 
@@ -224,6 +229,7 @@ func (d *Definition) AuthPolicy() *trackers.AuthPolicy { return cloneValue(d.pro
 func (d *Definition) AuthStateManager() trackers.AuthStateManager { return d.profile.AuthStateManager }
 
 func cloneProfile(profile Profile) Profile {
+	profile.WorkflowMedia = cloneValue(profile.WorkflowMedia)
 	profile.Rules = cloneRules(profile.Rules)
 	profile.ClaimPolicy = cloneValue(profile.ClaimPolicy)
 	profile.DataPolicy = cloneValue(profile.DataPolicy)

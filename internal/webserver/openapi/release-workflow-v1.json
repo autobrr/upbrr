@@ -12388,6 +12388,9 @@
           "imageHosting": {
             "type": "boolean"
           },
+          "localScreenshotsOnly": {
+            "type": "boolean"
+          },
           "mediaInfo": {
             "type": "boolean"
           },

@@ -1416,6 +1416,11 @@ func (b workflowMediaBuilder) RestoreCompatible(
 		snapshot.RequirementsFingerprint = requirements
 		retained = cloneWorkflowMediaPrivateArtifacts(retained)
 		refreshMediaProcessing(&snapshot, retained)
+		if slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+			return projection.Artifacts.LocalScreenshotsOnly
+		}) {
+			refreshLocalScreenshotAvailability(&snapshot, retained)
+		}
 		if attempts, prepared := b.restoredHostedImageAttempts(ctx, release, snapshot, retained, projections.Projections); prepared {
 			snapshot.HostAttempts = slices.DeleteFunc(snapshot.HostAttempts, func(attempt api.HostedImageAttempt) bool {
 				return attempt.Status == api.StageStatusCompleted
@@ -1632,7 +1637,8 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 	}
 	attempts := make([]api.HostedImageAttempt, 0, len(projections))
 	for _, projection := range projections {
-		if projection.Artifacts.ScreenshotCount <= 0 && projection.Artifacts.DVDMenuCount <= 0 && len(comparisonCells) == 0 {
+		if projection.Artifacts.LocalScreenshotsOnly ||
+			(projection.Artifacts.ScreenshotCount <= 0 && projection.Artifacts.DVDMenuCount <= 0 && len(comparisonCells) == 0) {
 			continue
 		}
 		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
@@ -1864,7 +1870,7 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 	assigned := make(map[string]struct{})
 	for _, projection := range projections {
 		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
-		if tracker == "" || projection.Artifacts.ScreenshotCount <= 0 && len(comparisonCells) == 0 {
+		if tracker == "" || projection.Artifacts.LocalScreenshotsOnly || (projection.Artifacts.ScreenshotCount <= 0 && len(comparisonCells) == 0) {
 			continue
 		}
 		trackerConfig, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, tracker)
@@ -2366,8 +2372,11 @@ func (b workflowMediaBuilder) UploadImages(
 	if err := verifyWorkflowComparisons(ctx, snapshot, retained, &b.config.ScreenshotHandling); err != nil {
 		return api.MediaArtifactSet{}, nil, nil, err
 	}
+	localOnlySelection := len(projections.Projections) > 0 && !slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+		return !projection.Artifacts.LocalScreenshotsOnly
+	})
 	failedHost := slices.Contains(snapshot.FailedHosts, host)
-	if failedHost && !retry {
+	if !localOnlySelection && failedHost && !retry {
 		return api.MediaArtifactSet{}, nil, nil, errors.New("failed image host requires explicit retry")
 	}
 	selected := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
@@ -2400,6 +2409,9 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	if len(images) != len(artifactIDs) {
 		return api.MediaArtifactSet{}, nil, nil, errors.New("workflow media upload selection is incomplete")
+	}
+	if localOnlySelection {
+		return snapshot, retained, nil, nil
 	}
 	trackerNames := make([]string, 0, len(projections.Projections))
 	for _, projection := range projections.Projections {
@@ -3301,6 +3313,22 @@ func refreshMediaProcessing(snapshot *api.MediaArtifactSet, retained workflowMed
 		if artifact.Processing != nil {
 			artifact.Processing = verifiedScreenshotProcessing(retained.ArtifactImages[artifact.ID])
 		}
+	}
+}
+
+func refreshLocalScreenshotAvailability(snapshot *api.MediaArtifactSet, retained workflowMediaPrivateArtifacts) {
+	for index := range snapshot.Artifacts {
+		artifact := &snapshot.Artifacts[index]
+		if artifact.Kind != api.MediaArtifactScreenshot || artifact.Purpose != api.ScreenshotPurposeFinal {
+			continue
+		}
+		image, err := retained.imageForArtifact(*snapshot, artifact.ID)
+		if err != nil {
+			artifact.SourceUnavailable = true
+			continue
+		}
+		info, err := os.Stat(image.Path)
+		artifact.SourceUnavailable = err != nil || !info.Mode().IsRegular() || info.Size() == 0
 	}
 }
 

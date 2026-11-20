@@ -291,7 +291,7 @@ Client and Torrent:
   -skip_auto_torrent, --skip_auto_torrent, -sat
       Skip initial torrent-client discovery; BASE reuse still checks clients before hashing
   -keep-folder, --keep-folder, -kf
-      Keep the supplied folder around one movie or episode video, excluding sidecars
+      Keep the supplied folder around one movie or episode video; matching SRTs are included where supported
   -onlyID, --onlyID
       Only grab tracker metadata IDs
   -infohash, --infohash string

@@ -252,16 +252,16 @@
     "sha256": "6ed55541d2c3733d026f7929794576859886e92e3240edf76148ffa757fda99e"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildDescription": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "9d36eb71b8c179acbb74b60a4d858fb72586932d76b4c3d55d6198c39491bd9c"
+    "reason": "Filter foreign image tags and local MediaInfo paths from generated descriptions. Title, metadata and reviewed-description handling use the existing precedence.",
+    "sha256": "e5ae2b9e994d9b535cad7ef0aa161dcbfe0c98b07b23418b03f934e973791fee"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildProductionCompanies": {
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
     "sha256": "f6c4bf12abd9155d8c0414b1f28490bf2e4dd0ade2a17322fd9b7970429d7e9c"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildRatingsBBCode": {
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed",
-    "sha256": "981fdb523546170574c1b9316a53e5c93fac63b86b0843aed4d99e125ccf7baf"
+    "reason": "Render provider rating sources as text with their existing provider identity links. This presentation does not select manually correctable metadata.",
+    "sha256": "1671160591f7eb7d7a0a34947b03e609a5189f06809063845b22181200550bbf"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildTechnicalSheet": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
@@ -272,12 +272,12 @@
     "sha256": "ef548baac570e012dc68169000ee63509250c93e718190107a62591d2ad1917d"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:buildASCSearchURL": {
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged.",
-    "sha256": "f830ae9440368026839c0f2df010fefebf460abe8b0a18d99bfd574cc6ca4040"
+    "reason": "Encodes the resolved query and page without selecting metadata or introducing fallbacks.",
+    "sha256": "c7021d6a3dede7db3607026b7581811e23f30205a0d67b8aaa895f69b1f21012"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:dupeSearcher.Search": {
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged. Operation-local logger binding leaves these selectors and search filters unchanged.",
-    "sha256": "9d980e208aca3b561e6a3a3050b96017f514e532b534bb7d14c9aba2bf8c8014"
+    "reason": "The migrated listing uses the resolved IMDb ID for non-anime and the existing effective title helper for anime. Manual title overrides and clears retain authority.",
+    "sha256": "85c9b2e10f05024d7cadbbe2b938b5ee728e5f8ee347b21ed5da53f7f04e195c"
   },
   "internal/trackers/impl/standalone/asc/dupe.go:resolveASCTitle": {
     "reason": "Finalized/manual title precedence remains intact; missing titles never fall back to the local source path.",
@@ -331,49 +331,37 @@
     "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
     "sha256": "c31c114245d785d79ff5c2f0b1e48b2d51355ada74ac0dc51a183b6676834a0c"
   },
+  "internal/trackers/impl/standalone/asc/payload.go:buildPayload": {
+    "reason": "The migrated form uses the same finalized year, provider identity and explicit questionnaire answer precedence as ASC metadata helpers.",
+    "sha256": "0da7f1b7bd8fe8d9d989c7ab3450a139d2d884436e92f0e010985a93aa6af2d6"
+  },
   "internal/trackers/impl/standalone/asc/profile.go:Profile": {
-    "reason": "Partial-season review-fix audit: provider/manual title and year precedence and currentness guards remain unchanged; part placement and versioned naming omissions preserve canonical coverage.",
-    "sha256": "e4d9601f70baf80257409a8cd5411ab2379e07199c21fa2aed624563f2492d8e"
+    "reason": "The migrated origin, local screenshots, and subtitle policy leave release-name and metadata selectors unchanged.",
+    "sha256": "2bd622f16ad24bc9ef0837261bc0ebb4cc3a37315aa64617e40760db8f0bc1cb"
   },
   "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
     "reason": "Retains answered controls and displays the same resolved values as upload. Nonempty questionnaire overview/genre answers precede localized and base provider defaults; manual genres still bypass localized genres, and blank answers preserve existing fallbacks.",
     "sha256": "294d2795f2333bc431df9aecd21e73a87f39747d30cdca1293a18eaa9007c2c3"
   },
-  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAnimeAudioLanguage": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "e586016f1fd04e44d9f4b8fc919fd51255d07283c7e4979f9a3987ad2998a20c"
-  },
-  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAnimeLanguage": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "f5586708266a65f98c1d2b3ad620395ba4f3a0b3a1d99ea12b18e728f07b4936"
-  },
   "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAudio": {
     "reason": "Language-identity review: finalized language comparisons preserve manual values and explicit clears; existing provider priority, source guards, work-origin country taxonomy and naming overrides remain unchanged. Existing precedence and source-bound language tests cover these boundaries.",
-    "sha256": "8b01840b7b4eb6b939d41ed1f8d9a7628dd44bdcf31028a5674361b20c30bb4b"
+    "sha256": "5ae5b631332e2e249a52a0d2411e0fa3c16d26064c9e9c0ea9d1a2cac5663557"
   },
   "internal/trackers/impl/standalone/asc/taxonomy.go:resolveLanguage": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "62a39d1d4981eae700c9deb69aa2be7e650bc37397ac152a25ccb29203915857"
-  },
-  "internal/trackers/impl/standalone/asc/upload.go:buildPayload": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "a7f5860f543862cb27bae94cac7667654dd6e7cd89150aa084af3a5c7f6aee25"
+    "sha256": "90cd0b8f664d84b0c0f009a4d80f3e9781ed7a23a591be84a946d4b2fe6d8d8a"
   },
   "internal/trackers/impl/standalone/asc/upload.go:prepareUpload": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "7876269547cf64d970a9a62c5bedff673618a9295caa690c96d314d3d9a05b99"
-  },
-  "internal/trackers/impl/standalone/asc/upload.go:prepareUploadState": {
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "070486d7f89d03140909ffaeb2a352b8d26af988cb0b8b033d1b2f2b1f4b2036"
+    "sha256": "567b5ed1d205b7ddf9f7d00ccda82a69846b234f4425769941d1d9706ffbbb92"
   },
   "internal/trackers/impl/standalone/asc/validation.go:validatePayloadFields": {
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers.",
-    "sha256": "4bb647cc901e533a1ca7945b5c7778c5fe81b4c920fa3076c1ff1557355b1798"
+    "sha256": "14da478586ead038f0655b7c0341efc516dc710e37fb297566213dc8c87ea8f4"
   },
   "internal/trackers/impl/standalone/asc/validation.go:validationPolicy": {
     "reason": "Questionnaire gating review: genre and overview retain explicit-answer precedence over existing finalized metadata fallbacks. Missing IMDb and poster remain independent strict failures.",
-    "sha256": "6872b678427d185bf74b0a352c1b3b4a8f40a858fb9aac15a40eb2874ed853a4"
+    "sha256": "b2dfe140c543bd8dced300da9319efacff82afcfc2571dacaa33d861956398ff"
   },
   "internal/trackers/impl/standalone/bhd/name.go:applyBHDNameQualifiers": {
     "reason": "Preserves manual alternate titles, title components and year authority. TV year decisions use current source/generation-bound matching TVDB disambiguation independently of centrally selected IMDb titles and movie years.",

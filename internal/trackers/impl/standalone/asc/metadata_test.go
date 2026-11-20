@@ -62,13 +62,13 @@ func TestResolveResolutionUsesResolvedFactOnly(t *testing.T) {
 func TestResolveContainerUsesResolvedFactOnly(t *testing.T) {
 	t.Parallel()
 
-	if got := resolveContainer(api.UploadSubject{Container: "mkv", VideoPath: "example.mp4"}); got != "6" {
+	if got := resolveContainer(api.UploadSubject{Container: "mkv", VideoPath: "example.mp4"}); got != "92" {
 		t.Fatalf("resolved container = %q", got)
 	}
 	if got := resolveContainer(api.UploadSubject{VideoPath: "example.mkv", SourcePath: "example.mp4"}); got != "" {
 		t.Fatalf("path-only container = %q", got)
 	}
-	if got := resolveContainer(api.UploadSubject{DiscType: "BDMV"}); got != "5" {
+	if got := resolveContainer(api.UploadSubject{DiscType: "BDMV"}); got != "91" {
 		t.Fatalf("disc container = %q", got)
 	}
 }
@@ -160,7 +160,7 @@ func TestResolveLanguageAcceptsManualCanonicalDisplayName(t *testing.T) {
 	meta.EffectiveMetadata.OriginalLanguage = "pt-BR"
 	meta.AudioLanguages = []string{"Portuguese [pt-BR]"}
 	meta.SubtitleLanguages = []string{"Portuguese [pt-BR] (Forced)"}
-	if resolveLanguage(meta) != "8" || resolveAudio(meta) != "4" || resolveSubtitle(meta) != "Embutida" {
+	if resolveLanguage(meta) != "8" || resolveAudio(meta) != audioNational || !hasPortugueseSubtitles(meta) {
 		t.Fatal("regional Portuguese lost its language, audio or subtitle mapping")
 	}
 }
