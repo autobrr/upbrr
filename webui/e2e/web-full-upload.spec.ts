@@ -694,8 +694,8 @@ test("embedded video comparisons match three native sources and retain reviewed 
       const encode = comparison.getByRole("group", { name: "Encode · column 2", exact: true });
       await encode.getByRole("checkbox", { name: "I", exact: true }).check();
       await encode.getByLabel("Column label", { exact: true }).fill("Encode [HDR]");
-      await openComparisonDisclosure(comparison, "Comparison actions");
       const findScenes = comparison.getByRole("button", { name: "Find matching scenes" });
+      const applySetup = comparison.getByRole("button", { name: "Apply comparison setup" });
       await expect(findScenes).toBeDisabled();
       const invalidLabel = comparison.getByText("Invalid label in column 2.", { exact: false });
       await expect(invalidLabel).toBeVisible();
@@ -704,9 +704,15 @@ test("embedded video comparisons match three native sources and retain reviewed 
         .getByRole("group", { name: "Encode [HDR] · column 2", exact: true })
         .getByLabel("Column label", { exact: true })
         .fill("Encode");
-      await openComparisonDisclosure(comparison, "Comparison actions");
       await expect(invalidLabel).toHaveCount(0);
-      await findScenes.click();
+      await expect(findScenes).toBeDisabled();
+      await applySetup.click();
+      await expect(findScenes).toBeEnabled();
+      await comparison.getByRole("button", { name: "Hide comparison settings" }).click();
+      await applySetup.focus();
+      await page.keyboard.press("Tab");
+      await expect(findScenes).toBeFocused();
+      await page.keyboard.press("Enter");
       await expect
         .poll(async () => {
           const plan = (await snapshot()).current?.media?.comparisons;
@@ -743,9 +749,8 @@ test("embedded video comparisons match three native sources and retain reviewed 
       });
       const seek = encodePreview.getByLabel("Approximate frame seek · Encode", { exact: true });
       const seconds = comparison.getByLabel("Preview seconds · Encode", { exact: true });
-      await expect(
-        comparison.getByRole("button", { name: "Apply comparison setup" }),
-      ).toBeEnabled();
+      await expect(applySetup).toBeEnabled();
+      await comparison.getByRole("button", { name: "Show comparison settings" }).click();
       await openComparisonPreview(comparison, "Encode");
       await expect(seek).toBeEnabled();
       await seek.fill("11");
@@ -760,10 +765,9 @@ test("embedded video comparisons match three native sources and retain reviewed 
       await comparison
         .getByRole("spinbutton", { name: "Flat scenes (rows)", exact: true })
         .fill("1");
-      await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
-      await expect(
-        comparison.getByRole("button", { name: "Apply comparison setup" }),
-      ).toBeEnabled();
+      await expect(findScenes).toBeDisabled();
+      await applySetup.click();
+      await expect(findScenes).toBeEnabled();
       await openComparisonPreview(comparison, "Encode");
       await expect(
         encodePreview.getByRole("img", { name: "Encode comparison preview", exact: true }),

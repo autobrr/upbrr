@@ -1398,12 +1398,6 @@ function ComparisonWorkspace({
                     {!draft.imported && (
                       <>
                         <Button
-                          disabled={!validSetup || draft.sources.length < 2 || pendingFrames}
-                          onClick={() => void submit("match")}
-                        >
-                          Find matching scenes
-                        </Button>
-                        <Button
                           className="max-w-full"
                           disabled={draft.sources.length < 2}
                           onClick={addManualRow}
@@ -1474,7 +1468,9 @@ function ComparisonWorkspace({
                             : !rowCount
                               ? draft.imported
                                 ? "Import prepared comparison images to start review."
-                                : "Add comparison videos, then find matching scenes or add a manual row."
+                                : !view.plan || sourceCount < 2
+                                  ? "Add comparison videos and apply the setup before finding matching scenes."
+                                  : "Find matching scenes or add a manual row."
                               : allRowsExcluded
                                 ? "Use Row and image corrections to include a row again."
                                 : !hasImages
@@ -1482,13 +1478,23 @@ function ComparisonWorkspace({
                                   : "Open each image at full size and check the row before approving."}
                   </p>
                 </div>
-                <Button
-                  variant={dirty || !view.plan ? "primary" : "secondary"}
-                  disabled={blocked || !validSetup}
-                  onClick={() => void submit("configure")}
-                >
-                  Apply comparison setup
-                </Button>
+                <div className="flex min-w-0 flex-wrap gap-2 [&>button]:max-w-full [&>button]:whitespace-normal">
+                  <Button
+                    variant={dirty || !view.plan ? "primary" : "secondary"}
+                    disabled={blocked || !validSetup}
+                    onClick={() => void submit("configure")}
+                  >
+                    Apply comparison setup
+                  </Button>
+                  {!draft.imported && (
+                    <Button
+                      disabled={blocked || !validSetup || !view.plan || dirty || sourceCount < 2}
+                      onClick={() => void submit("match")}
+                    >
+                      Find matching scenes
+                    </Button>
+                  )}
+                </div>
               </div>
               <section
                 aria-labelledby={reviewID}

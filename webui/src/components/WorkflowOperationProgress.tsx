@@ -155,21 +155,23 @@ export function WorkflowOperationProgress({
               {comparisonItem?.message || comparisonItem?.status || "Overall progress only"}
             </span>
           </div>
-          {comparisonItem && (
-            <div
-              aria-label="Comparison task progress"
-              aria-valuemax={100}
-              aria-valuemin={0}
-              aria-valuenow={itemProgress}
-              className="h-1.5 w-full overflow-hidden rounded-full bg-secondary"
-              role="progressbar"
-            >
+          <div className="h-1.5">
+            {comparisonItem && (
               <div
-                className="h-full bg-primary motion-safe:transition-[width]"
-                style={{ width: `${itemProgress ?? 0}%` }}
-              />
-            </div>
-          )}
+                aria-label="Comparison task progress"
+                aria-valuemax={100}
+                aria-valuemin={0}
+                aria-valuenow={itemProgress}
+                className="h-full w-full overflow-hidden rounded-full bg-secondary"
+                role="progressbar"
+              >
+                <div
+                  className="h-full bg-primary motion-safe:transition-[width]"
+                  style={{ width: `${itemProgress ?? 0}%` }}
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
       {recovery ? <p className="text-muted-foreground text-sm">{recovery}</p> : null}

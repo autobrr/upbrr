@@ -353,7 +353,7 @@ it("converts saved scene percentages into fixed row targets and rejects invalid 
   });
 });
 
-it("blocks matching and capturing until the column label is corrected", () => {
+it("blocks capture for invalid labels and matching for unapplied label changes", () => {
   const plan = comparisonPlan(false);
   const facet = comparisonFacet({
     ...plan,
@@ -375,8 +375,10 @@ it("blocks matching and capturing until the column label is corrected", () => {
   expect(screen.getByRole("button", { name: "Recapture row 1" })).toBeDisabled();
   fireEvent.change(label, { target: { value: "Encode HDR" } });
   expect(label).toBeValid();
-  expect(match).toBeEnabled();
   expect(capture).toBeEnabled();
+  expect(match).toBeDisabled();
+  fireEvent.change(label, { target: { value: "Encode" } });
+  expect(match).toBeEnabled();
 });
 
 it("returns to the entry actions after removing an unapplied setup", async () => {
