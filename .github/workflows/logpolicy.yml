@@ -27,3 +27,7 @@ jobs:
 
       - name: Run logging policy checker
         run: go run ./cmd/logpolicy
+
+      - name: Test logging report publisher
+        if: always()
+        run: node --test scripts/ci/logpolicy-report.test.cjs

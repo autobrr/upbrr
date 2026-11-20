@@ -435,6 +435,46 @@ Keep log levels purposeful.
 - `DEBUG` should include richer decision-making context useful for developer troubleshooting.
 - `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
 
+The logging CI also maintains one `github-actions[bot]` PR comment with added
+Go logging statements by level and the analyzed head/base commits. It counts
+the added side of the complete merge-base diff, including edited multiline
+calls once; removals never subtract. Comments and string contents alone do not
+count. A trailing-comment edit re-adds its code line, so an actual logging call
+on that line counts. These are source-statement counts, not runtime volume. The existing policy check
+remains authoritative for logging-policy failures. An analysis error is reported
+as unavailable, never as zero.
+
+The separate `workflow_run` reporter builds its analyzer from the trusted
+default-branch revision and type-checks PR source in a read-only job without
+running PR tests or binaries. Only a separate serialized publisher has comment
+write access; it consumes validated numeric results, not PR artifacts or code.
+Both fork and repository PRs use the same path. Head/base and rerun checks stop
+older results replacing newer reports. GitHub has no atomic head condition for
+comment updates, so a concurrent push can briefly stale a report; a post-write
+check marks it outdated and removes its counts. The report starts operating once
+its workflow is on the default branch. Rerunning `logpolicy` recomputes it.
+
+For a local added-statement report, check out the head and run:
+
+```sh
+go run ./cmd/logpolicy --source . --added-base <full-base-sha> --added-head <full-head-sha>
+node --test scripts/ci/logpolicy-report.test.cjs
+```
+
+The analyzer uses Go's type information to recognize the project logger
+contract, including narrower logging-only interfaces, rather than
+matching arbitrary `Infof`/`Errorf` methods. Shared files remain available in each
+matching build context; a call recognized in any context counts once. Changed Go
+sources must type-check in a supported Linux, Windows or macOS build context,
+with the repository’s `e2e`
+tag included. A changed file excluded by every analyzed context (including
+unsupported-platform and other custom-tag-only files) makes the entire report
+unavailable; it is never silently dropped from a supposedly complete total.
+Unavailable dependencies and type errors also fail analysis. Workflow logs
+identify the failed stage and a safe error category. Analyzer failures include
+the build OS/tag and error count where available; raw subprocess diagnostics
+and source text are deliberately withheld.
+
 ### Sensitive information
 
 - Redact credentials at the logging boundary. Before sharing logs or failure artifacts, inspect them and remove remaining credentials, cookies, tokens, private URLs and unrelated personal information; automatic redaction is not a guarantee.
