@@ -34,21 +34,24 @@ func TestRenderComparisonPreviewFormats(t *testing.T) {
 		{"align", strings.NewReplacer("[center]", "[align=center]", "[/center]", "[/align]").Replace(centered), "Main input"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			preview := urlPrefix + "thumb"
-			rendered := description.RenderWithImagePreviews(tc.raw, map[string]string{urls[0]: preview})
-			_, target, found := strings.Cut(rendered, `href="`+urls[0]+`">`)
-			imageMarkup, _, _ := strings.Cut(target, "</a>")
+			const preview = urlPrefix + "thumb.png"
+			raw := tc.raw + "\n[img]" + urls[0] + "[/img]"
+			rendered := description.RenderWithImagePreviews(raw, map[string]string{urls[0]: preview})
 			if strings.Count(rendered, `class="comparison__row"`) != 5 ||
 				strings.Count(rendered, `class="comparison__image"`) != 15 ||
 				!strings.Contains(rendered, `class="comparison__figcaption">`+tc.want+`</figcaption>`) ||
-				!found || !strings.Contains(imageMarkup, `src="`+preview+`"`) {
-				t.Fatalf("expected five rows, three labelled alternatives and paired preview/full URLs: %s", rendered)
+				strings.Count(rendered, `src="`+preview+`"`) != 1 {
+				t.Fatalf("expected five rows, three labelled alternatives and one ordinary thumbnail: %s", rendered)
 			}
 			last := -1
 			for _, u := range urls {
-				next := strings.Index(rendered, `href="`+u+`"`)
+				next := strings.Index(rendered, `href="`+u+`"><img`)
 				if next <= last {
 					t.Fatalf("comparison image %q was lost or reordered", u)
+				}
+				imageMarkup, _, _ := strings.Cut(rendered[next:], "</a>")
+				if !strings.Contains(imageMarkup, `src="`+u+`"`) {
+					t.Fatalf("comparison image %q must use its original source: %s", u, imageMarkup)
 				}
 				last = next
 			}
