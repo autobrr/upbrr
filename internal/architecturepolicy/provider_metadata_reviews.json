@@ -1440,8 +1440,8 @@
     "sha256": "9bf5af60a7fdb181c45d0a612062c0e780ccfa2a409a065a37609f33bce87b7c"
   },
   "internal/trackers/impl/unit3d/sites/lst/source_validation.go:sourceValidationFailures": {
-    "reason": "Reviewed builders and downstream consumers together. Unknown source history is guidance; measured findings use existing evidence-bound warnings. Current-source provider checks, manual metadata precedence, independent prohibited-source and payload contracts remain explicit.",
-    "sha256": "e3fb973e891ec2739ae27e111a9e9f59894c63be7b5fe0bc9390bd2f78d0e21a"
+    "reason": "Reviewed diagnostic resource labels only. Unknown source history is guidance; measured findings remain evidence-bound warnings. Labels change reason text, not inspected facts, current-source provider checks, manual metadata precedence, prohibited-source or payload contracts.",
+    "sha256": "33950703bc87ad3ce8615a4b8368f1213e7caf059fa3e3dd7676e1d58a5334d2"
   },
   "internal/trackers/impl/unit3d/sites/lst/validation.go:validationPolicy": {
     "reason": "LST audio eligibility review: only the policy ID changes here. Six-channel FLAC with no reported layout uses a local 5.1 assumption and one advisory, preserving measured facts, anime classification and explicit-layout checks. Provider consumers, manual metadata precedence, source/generation binding and independent validation remain unchanged.",
