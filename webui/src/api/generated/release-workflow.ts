@@ -315,6 +315,232 @@ export type ClientSearchPolicy = Readonly<{
   Skip: boolean;
 }>;
 
+export type ComparisonAnalysisSummary = Readonly<{
+  complete: boolean;
+  coveredSeconds: number;
+  durationSeconds: number;
+  eligibleSeconds: number;
+  excluded?: readonly ComparisonTimeInterval[];
+  profile: string;
+  rankingComplete: boolean;
+  reasons?: readonly string[];
+  requestedSeconds: number;
+  scanMode: string;
+  selection: ComparisonTimeInterval;
+  version: number;
+}>;
+
+export type ComparisonAnchor = Readonly<{
+  mainSeconds: number;
+  sourceId: string;
+  sourceSeconds: number;
+}>;
+
+export type ComparisonCell = Readonly<{
+  artifactId?: PublicResourceID;
+  confidence?: number | null;
+  contentSha256?: string;
+  frameNumber?: number | null;
+  observedIdentity?: ComparisonFrameIdentity | null;
+  observedPts?: number | null;
+  pictureType?: string;
+  sourceId: string;
+  timeBaseDenominator?: number;
+  timeBaseNumerator?: number;
+  timestampSeconds?: number | null;
+  warning?: string;
+}>;
+
+export type ComparisonFrameIdentity = Readonly<{
+  inputFingerprint: string;
+  occurrence: string;
+  pts: number;
+  streamId: string;
+  timeBaseDenominator: number;
+  timeBaseNumerator: number;
+  version: number;
+}>;
+
+export type ComparisonFrameSelection = Readonly<{
+  previewId: PublicResourceID;
+  rowId: string;
+  sourceId: string;
+}>;
+
+export type ComparisonInstructions = Readonly<{
+  action: string;
+  attachments?: readonly MediaAttachment[];
+  captureAfterMatch?: boolean | null;
+  expectedFingerprint?: WorkflowFingerprint;
+  frameSelections?: readonly ComparisonFrameSelection[];
+  plan: ComparisonPlan;
+  videoSources?: readonly ComparisonVideoSelection[];
+}>;
+
+export type ComparisonPlan = Readonly<{
+  analysis?: ComparisonAnalysisSummary | null;
+  anchors?: readonly ComparisonAnchor[];
+  approvedFingerprint?: WorkflowFingerprint;
+  fingerprint: WorkflowFingerprint;
+  imported: boolean;
+  mainSourceId: string;
+  preferences: ComparisonPreferences;
+  problems?: readonly ComparisonProblem[];
+  renderPolicyVersion?: number;
+  resizeLargerOnly?: boolean;
+  resizeSmaller?: boolean;
+  reuseMainScreenshots: boolean;
+  rows: readonly ComparisonRow[];
+  sceneMix?: ComparisonSceneMix | null;
+  screenshotSizing?: string;
+  sizeReferenceSourceId?: string;
+  sources: readonly ComparisonSource[];
+  warnings?: readonly string[];
+}>;
+
+export type ComparisonPreferences = Readonly<{
+  count: number;
+  darkCount?: number | null;
+  darkPercent: number;
+  flatCount?: number;
+  motionCount?: number | null;
+  motionPercent: number;
+  scanMode?: string;
+  selectionWindow?: ComparisonSelectionWindow | null;
+}>;
+
+export type ComparisonProblem = Readonly<{
+  code?: string;
+  message: string;
+  rowId?: string;
+  sourceId?: string;
+}>;
+
+export type ComparisonProgrammeCandidate = Readonly<{
+  discId: string;
+  discName: string;
+  durationSeconds: number;
+  id: string;
+  kind: string;
+  label: string;
+  limitation?: string;
+  rank: number;
+  reason?: string;
+  supported: boolean;
+}>;
+
+export type ComparisonProgrammeSelection = Readonly<{
+  angle?: number;
+  candidateId: string;
+  discId: string;
+  discoveryFingerprint: string;
+  kind: string;
+}>;
+
+export type ComparisonRow = Readonly<{
+  cells: readonly ComparisonCell[];
+  evidence?: ComparisonSceneEvidence | null;
+  excluded: boolean;
+  id: string;
+  scene?: string;
+}>;
+
+export type ComparisonSceneCategory = Readonly<{
+  reason?: string;
+  score: number;
+  state: string;
+  supportEndSeconds: number;
+  supportSeconds: number;
+  supportStartSeconds: number;
+}>;
+
+export type ComparisonSceneEvidence = Readonly<{
+  active: ComparisonSceneRegion;
+  blurredContrast: number;
+  dark: ComparisonSceneCategory;
+  darkFraction: number;
+  eligible: boolean;
+  flat: ComparisonSceneCategory;
+  flatArea: number;
+  flatDeviation: number;
+  height: number;
+  mean: number;
+  motion: ComparisonSceneCategory;
+  movingSupport: number;
+  nearBlackFraction: number;
+  originalContrast: number;
+  profile: string;
+  reason?: string;
+  regions?: readonly ComparisonSceneRegion[];
+  reliableSupport: number;
+  renderer: string;
+  width: number;
+}>;
+
+export type ComparisonSceneMix = Readonly<{
+  achievedDark: number;
+  achievedFlat?: number;
+  achievedMotion: number;
+  requestedDark: number;
+  requestedFlat?: number;
+  requestedMotion: number;
+}>;
+
+export type ComparisonSceneRegion = Readonly<{
+  area: number;
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+}>;
+
+export type ComparisonSelectionWindow = Readonly<{
+  end?: number | null;
+  excluded?: readonly ComparisonTimeInterval[];
+  start?: number | null;
+}>;
+
+export type ComparisonSource = Readonly<{
+  allowedFrameTypes?: readonly string[];
+  capabilities?: ComparisonSourceCapabilities | null;
+  durationSeconds?: number;
+  fingerprint?: string;
+  frameRate?: number;
+  frameRateDenominator?: number;
+  frameRateNumerator?: number;
+  height?: number;
+  id: string;
+  imported: boolean;
+  label: string;
+  overlay: boolean;
+  preferBFrames?: boolean;
+  programme?: ComparisonProgrammeCandidate | null;
+  toneMap?: boolean | null;
+  width?: number;
+}>;
+
+export type ComparisonSourceCapabilities = Readonly<{
+  programmeSelectionRequired: boolean;
+  toneMappingAvailable: boolean;
+}>;
+
+export type ComparisonSourceDiscovery = Readonly<{
+  candidates: readonly ComparisonProgrammeCandidate[];
+  fingerprint: string;
+  sourceId: string;
+}>;
+
+export type ComparisonTimeInterval = Readonly<{
+  end: number;
+  start: number;
+}>;
+
+export type ComparisonVideoSelection = Readonly<{
+  id: string;
+  path: string;
+  programme?: ComparisonProgrammeSelection | null;
+}>;
+
 export type ContentBinding = Readonly<{
   category: CanonicalCategory;
   providerIds: ProviderIDSet;
@@ -457,6 +683,15 @@ export type DiscReportFacts = Readonly<{
   Summary: string;
 }>;
 
+export type DiscoverReleaseWorkflowComparisonSourceRequest = Readonly<{
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  media?: MediaArtifactSetRef | null;
+  path: string;
+  sourceId: string;
+  workflowId: WorkflowID;
+}>;
+
 export type DupeAssessment = Readonly<{
   checkOrdinal?: number;
   createdAt: string;
@@ -557,6 +792,14 @@ export type DupeSearchEvidence = Readonly<{
   wrongWorkCount?: number;
 }>;
 
+export type EditReleaseWorkflowComparisonsRequest = Readonly<{
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  instructions: ComparisonInstructions;
+  media?: MediaArtifactSetRef | null;
+  workflowId: WorkflowID;
+}>;
+
 export type EditionDisplayPart = Readonly<{
   Feature?: ReleaseFeature;
   Text: string;
@@ -653,13 +896,20 @@ export type FailedTrackerRetryRef = Readonly<{
 }>;
 
 export type FramePreview = Readonly<{
+  comparisonSourceId?: string;
   contentUrl: string;
   discId?: string;
   discName?: string;
   expiresAt: string;
   id: PublicResourceID;
+  media?: MediaArtifactSetRef | null;
+  observedIdentity?: ComparisonFrameIdentity | null;
+  observedPts?: number | null;
+  pictureType?: string;
   processing?: ScreenshotProcessing | null;
   release: ReleaseSnapshotRef;
+  timeBaseDenominator?: number;
+  timeBaseNumerator?: number;
   timestampSeconds: number;
   workflowId: WorkflowID;
   workflowRevision: WorkflowRevision;
@@ -1199,6 +1449,7 @@ export type MediaArtifactSet = Readonly<{
   artifacts: readonly MediaArtifact[];
   automaticScreenshotSelection?: boolean;
   captureFingerprint: WorkflowFingerprint;
+  comparisons?: ComparisonPlan | null;
   createdAt: string;
   failedHosts?: readonly string[];
   failures?: readonly WorkflowFailure[];
@@ -1520,6 +1771,7 @@ export type Operation = Readonly<{
 export type OperationFailure = Readonly<{
   AudioAnalysisCode?: AudioAnalysisFailureCode;
   Code: OperationFailureCode;
+  ComparisonReason?: string;
   HDRAnalysisCode?: HDRAnalysisFailureCode;
   Message: string;
   Operation: OperationKind;
@@ -1630,10 +1882,13 @@ export type PreparedReleaseDisplay = Readonly<{
   ReleaseName: string;
   TVDBNamingAvailable?: boolean;
   TrackerData: readonly TrackerPreview[];
+  comparisonSourceCapabilities?: ComparisonSourceCapabilities | null;
   hdrTargets?: readonly HDRAnalysisTarget[];
 }>;
 
 export type PreviewReleaseWorkflowFrameRequest = Readonly<{
+  comparisonSourceId?: string;
+  comparisonStepDirection?: number;
   discId?: string;
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
@@ -1991,6 +2246,11 @@ export type ReleaseWorkflowUploadClientSearch = Readonly<{
   skip?: boolean | null;
 }>;
 
+export type ReleaseWorkflowUploadComparisonApproval = Readonly<{
+  confirmed: boolean;
+  expectedFingerprint: WorkflowFingerprint;
+}>;
+
 export type ReleaseWorkflowUploadConfirmation = Readonly<{
   confirmed: boolean;
 }>;
@@ -2055,9 +2315,10 @@ export type ReleaseWorkflowUploadFeedback = Readonly<{
   response: ReleaseWorkflowUploadFeedbackResponse;
 }>;
 
-export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "trackerPreparation" | "duplicateReview" | "trackerApproval" | "uploadApproval" | "reprepare" | "reconciliation";
+export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "trackerPreparation" | "duplicateReview" | "trackerApproval" | "comparisonApproval" | "uploadApproval" | "reprepare" | "reconciliation";
 
 export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
+  comparisonApproval?: ReleaseWorkflowUploadComparisonApproval | null;
   duplicateReview?: ReleaseWorkflowUploadDuplicateReview | null;
   kind: ReleaseWorkflowUploadFeedbackKind;
   metadataSelection?: ReleaseWorkflowUploadMetadataSelection | null;
@@ -2178,6 +2439,7 @@ export type ReleaseWorkflowUploadScreenshots = Readonly<{
   artifactIds?: readonly PublicResourceID[];
   comparisonPaths?: readonly string[];
   comparisonPrimaryIndex?: number | null;
+  comparisonReuseMain?: boolean;
   count?: number | null;
   countIsDefault?: boolean;
   frames?: readonly number[];
@@ -3329,6 +3591,7 @@ export type WorkflowAuthority = Readonly<{
 
 export type WorkflowContinuation = Readonly<{
   availableGoals: readonly GoalAvailability[];
+  comparisonRestorePending?: boolean;
   disposition: WorkflowDisposition;
   duplicateReusePending?: boolean;
   events?: readonly WorkflowEvent[];

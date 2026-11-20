@@ -17,6 +17,7 @@ import type { ApplicationInfo, MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
 import type {
   ActiveInputSnapshot,
+  ComparisonInstructions,
   ContinueReleaseWorkflowRequest,
   DescriptionInstructions,
   HDRAnalysisInstructions,
@@ -283,6 +284,8 @@ type WorkflowStageFixtures = Readonly<{
 }>;
 
 type TestWorkflowPorts = ReleaseSessionPorts["workflow"] & WorkflowStageFixtures;
+
+const unboundMediaPlanRevision = -1;
 
 const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflowPorts => {
   const currentByWorkflow = new Map<string, ReleaseWorkflowCurrent>();
@@ -602,8 +605,8 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
         id: `${workflowID}-media-plan`,
         workflowId: workflowID,
         revision: 1,
-        release: { id: `${workflowID}-release`, revision: 1 },
-        projectionSet: { id: `${workflowID}-projections`, revision: 1 },
+        release: { id: `${workflowID}-release`, revision: unboundMediaPlanRevision },
+        projectionSet: { id: `${workflowID}-projections`, revision: unboundMediaPlanRevision },
         durationSeconds: 120,
         frameRate: 24,
         suggestedSelections: [],
@@ -627,6 +630,12 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
       sizeBytes: file.size,
     }),
     attachMedia: async (current) => current,
+    editComparisons: async (current) => current,
+    discoverComparisonSource: async (_current, sourceID) => ({
+      sourceId: sourceID,
+      fingerprint: "discovery",
+      candidates: [],
+    }),
     uploadImages: async (current) => current,
     retryImageHost: async (current) => current,
     removeHostedImages: async (current) => current,
@@ -647,6 +656,21 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     continue: overrides.continue || continueWorkflow,
     create: async (...args) => remember(await configured.create(...args)),
     current: async (...args) => remember(await configured.current(...args)),
+    mediaPlan: async (workflowID, signal) => {
+      const authority = currentByWorkflow.get(workflowID)?.workflow;
+      const plan = await configured.mediaPlan(workflowID, signal);
+      return {
+        ...plan,
+        release:
+          plan.release.revision === unboundMediaPlanRevision && authority?.release
+            ? authority.release
+            : plan.release,
+        projectionSet:
+          plan.projectionSet.revision === unboundMediaPlanRevision && authority?.trackerProjections
+            ? authority.trackerProjections
+            : plan.projectionSet,
+      };
+    },
     prepare: async (...args) => remember(await configured.prepare(...args)),
     selectCandidate: async (...args) => remember(await configured.selectCandidate(...args)),
     replaceFacts: async (...args) => remember(await configured.replaceFacts(...args)),
@@ -654,6 +678,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     reorderMedia: async (...args) => remember(await configured.reorderMedia(...args)),
     deleteMedia: async (...args) => remember(await configured.deleteMedia(...args)),
     attachMedia: async (...args) => remember(await configured.attachMedia(...args)),
+    editComparisons: async (...args) => remember(await configured.editComparisons(...args)),
     analyzeHDR: async (...args) => remember(await configured.analyzeHDR(...args)),
     selectHDRComparison: async (...args) => remember(await configured.selectHDRComparison(...args)),
     setHDRAnalysisEnabled: async (...args) =>
@@ -889,6 +914,21 @@ describe("tracker workflow capabilities", () => {
     expect(access.upload.available).toBe(false);
     expect(access.screenshots.available).toBe(false);
     expect(access.descriptions.available).toBe(false);
+    const local = routeAccess(
+      {
+        ...continuation,
+        availableGoals: [
+          ...continuation.availableGoals,
+          { goal: "trackers_projected", available: true },
+        ],
+      },
+      false,
+      { needsImages: true, needsDescriptions: true },
+    );
+    expect(local.screenshots.available).toBe(true);
+    expect(local.menuImages.available).toBe(false);
+    expect(local.uploadedImages.available).toBe(false);
+    expect(local.descriptions.available).toBe(false);
   });
 
   it("opens only applicable pages and keeps tracker-scoped content failures local", () => {
@@ -907,7 +947,8 @@ describe("tracker workflow capabilities", () => {
       })),
     });
     const none = routeAccess(available(), false, { needsImages: false, needsDescriptions: false });
-    expect(none.screenshots.available).toBe(false);
+    expect(none.screenshots.available).toBe(true);
+    expect(none.uploadedImages.available).toBe(false);
     expect(none.descriptions.available).toBe(false);
     expect(none.upload.available).toBe(true);
 
@@ -954,7 +995,7 @@ describe("tracker workflow capabilities", () => {
     expect(noLongerApplicable.duplicates.reasonCode).toBe("operation_active");
     expect(noLongerApplicable.trackerData.reasonCode).toBeUndefined();
     expect(noLongerApplicable.trackerData.reason).toBe("No tracker data is available.");
-    expect(noLongerApplicable.screenshots.reasonCode).toBeUndefined();
+    expect(noLongerApplicable.screenshots.reasonCode).toBe("operation_active");
     expect(noLongerApplicable.uploadedImages.reasonCode).toBeUndefined();
     expect(noLongerApplicable.descriptions.reasonCode).toBeUndefined();
   });
@@ -1914,8 +1955,8 @@ describe("useReleaseSession", () => {
       id: `${workflowID}-media-plan`,
       workflowId: workflowID,
       revision: 1,
-      release: { id: `${workflowID}-release`, revision: 1 },
-      projectionSet: { id: `${workflowID}-projections`, revision: 1 },
+      release: { id: `${workflowID}-release`, revision: unboundMediaPlanRevision },
+      projectionSet: { id: `${workflowID}-projections`, revision: unboundMediaPlanRevision },
       durationSeconds: 120,
       frameRate: 24,
       suggestedSelections: [],
@@ -8085,6 +8126,103 @@ describe("useReleaseSession", () => {
     expect(result.current.screenshots.view.error).toBe("");
   });
 
+  it.each([
+    ["uses an adoption for the same tracker projection", "media"],
+    ["ignores a plan for an older tracker projection", "browser"],
+    ["ignores a plan for an older duplicate decision", "duplicates"],
+    ["ignores a plan for a newer projection the browser hasn't received", "server"],
+    ["ignores a plan for a newer workflow revision the browser hasn't received", "server revision"],
+  ])("%s when authority advances during the plan request", async (_, change) => {
+    const projectionChanged = change === "browser";
+    const serverChanged = change.startsWith("server");
+    const sourcePath = "C:\\media\\Example";
+    const plan = {
+      ...(await workflowPorts().mediaPlan("workflow-new", new AbortController().signal)),
+      autoAdoptSavedImages: true,
+      savedTrackerImages: [
+        { trackerId: "AITHER", host: "imgbb", url: "https://images.example.invalid/saved.png" },
+      ],
+    };
+    const pending = createDeferred<typeof plan>();
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const analyzeAudio = async (
+      current: ReleaseWorkflowCurrent,
+    ): Promise<ReleaseWorkflowCurrent> => {
+      const revision = current.workflow.revision + 1;
+      const media = { id: "adopted-media", revision };
+      const projectionSet = projectionChanged
+        ? { id: "new-projections", revision }
+        : current.workflow.trackerProjections!;
+      return {
+        ...current,
+        workflow: {
+          ...current.workflow,
+          revision,
+          media,
+          trackerProjections: projectionSet,
+          ...(change === "duplicates" && { dupes: { id: "new-dupes", revision } }),
+        },
+        media: {
+          ...media,
+          savedImagePlanId: change === "media" ? plan.id : undefined,
+          workflowId: current.workflow.id,
+          release: current.workflow.release!,
+          releaseRef: { SourcePath: sourcePath, Generation: 1 },
+          projectionSet,
+          captureFingerprint: "5".repeat(64),
+          requirementsFingerprint: "6".repeat(64),
+          imageRequirementsPrepared: false,
+          artifacts: [],
+          status: "completed",
+          createdAt: plan.createdAt,
+        },
+      };
+    };
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({ mediaPlan: () => pending.promise, analyzeAudio, captureMedia }),
+        }),
+      ),
+    });
+    await selectAndPrepare(result, sourcePath);
+    const browserRevision = result.current.workflow.view.current!.workflow.revision;
+    let load!: Promise<boolean>;
+    act(() => {
+      load = result.current.screenshots.load();
+    });
+    if (!serverChanged) {
+      await act(() =>
+        result.current.audioAnalysis.generate({
+          resourceID: "resource-one",
+          selection: "primary",
+          trackIDs: ["audio-main"],
+          variants: ["waveform"],
+        }),
+      );
+    }
+    expect(result.current.workflow.view.current?.media?.savedImagePlanId).toBe(
+      change === "media" ? plan.id : undefined,
+    );
+    pending.resolve({
+      ...plan,
+      revision: change === "server revision" ? browserRevision + 1 : browserRevision,
+      ...(change === "server" && {
+        projectionSet: { id: "server-new-projections", revision: browserRevision },
+      }),
+    });
+    await act(async () => expect(await load).toBe(change === "media"));
+    expect(captureMedia).not.toHaveBeenCalled();
+    expect(result.current.screenshots.view.plan?.SavedImagePlanID).toBe(
+      change === "media" ? plan.id : undefined,
+    );
+    expect(result.current.screenshots.view.error).toBe(
+      serverChanged
+        ? "The prepared release or eligible trackers changed. Load suggestions again."
+        : "",
+    );
+  });
+
   it.each(["initial", "externally observed", "newer cancellation"])(
     "restores %s cancellation after delayed image adoption is rejected",
     async (timing) => {
@@ -8537,8 +8675,8 @@ describe("useReleaseSession", () => {
               id: "media-plan-1",
               workflowId: workflowID,
               revision: 4,
-              release: { id: "release-1", revision: 1 },
-              projectionSet: { id: "projections-1", revision: 1 },
+              release: { id: "release-1", revision: unboundMediaPlanRevision },
+              projectionSet: { id: "projections-1", revision: unboundMediaPlanRevision },
               durationSeconds: 60,
               frameRate: 24,
               discType: "BDMV",
@@ -9670,6 +9808,310 @@ describe("useReleaseSession", () => {
 });
 
 describe("saved-image plan authority", () => {
+  const comparisonMedia = (
+    current: ReleaseWorkflowCurrent,
+    imported: boolean,
+  ): NonNullable<ReleaseWorkflowCurrent["media"]> => ({
+    id: "retained-media",
+    workflowId: current.workflow.id,
+    revision: 8,
+    release: current.workflow.release!,
+    releaseRef: { SourcePath: current.release!.release.Source.SourcePath, Generation: 1 },
+    projectionSet: { id: "projections-1", revision: 1 },
+    captureFingerprint: "capture",
+    requirementsFingerprint: "requirements",
+    imageRequirementsPrepared: false,
+    artifacts: [],
+    status: "completed",
+    createdAt: "2026-11-13T00:00:00Z",
+    comparisons: {
+      imported,
+      sources: ["Source", "Encode"].map((label, index) => ({
+        id: String(index + 1),
+        label,
+        imported,
+        overlay: false,
+      })),
+      rows: [],
+      mainSourceId: "1",
+      reuseMainScreenshots: false,
+      preferences: { count: 1, darkPercent: 0, motionPercent: 0 },
+      fingerprint: "restored-content",
+    },
+  });
+
+  it("scopes comparison errors to the active command after a successful preview", async () => {
+    const previewRequest = vi.fn();
+    const prepared = workflowCurrentFromPreview(
+      workflowCurrent("comparison-preview", 8),
+      preview("Example.mkv", 1),
+    );
+    const current: ReleaseWorkflowCurrent = {
+      ...prepared,
+      workflow: { ...prepared.workflow, media: { id: "retained-media", revision: 8 } },
+      media: comparisonMedia(prepared, false),
+    };
+    const failure = {
+      Code: "invalid_input",
+      Operation: "media",
+      Message: "Correct the comparison mapping.",
+      Recovery: "edit_input",
+    };
+    const pendingEdit = createDeferred<void>();
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: current.workflow.id,
+          workflow: workflowPorts({
+            current: async () => current,
+            editComparisons: async () => {
+              await pendingEdit.promise;
+              throw { failure };
+            },
+            previewFrame: async (
+              value,
+              _disc,
+              seconds,
+              _command,
+              _signal,
+              sourceID,
+              step,
+              from,
+            ) => {
+              previewRequest(seconds, step, from);
+              return {
+                id: "preview",
+                workflowId: value.workflow.id,
+                workflowRevision: value.workflow.revision,
+                release: value.workflow.release!,
+                timestampSeconds: 1.04,
+                comparisonSourceId: sourceID,
+                contentUrl: "/preview.png",
+                expiresAt: "2026-11-13T01:00:00Z",
+              };
+            },
+          }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.screenshots.comparisons.view.plan).not.toBeNull());
+    let edit: Promise<boolean>;
+    act(() => {
+      edit = result.current.screenshots.comparisons.edit({
+        action: "configure",
+        plan: current.media!.comparisons!,
+      });
+    });
+    await waitFor(() => expect(result.current.screenshots.view.activeAction).toBe("comparison"));
+    expect(result.current.screenshots.view.status).toBe("running");
+    expect(result.current.screenshots.comparisons.view.busy).toBe(true);
+    await act(async () => {
+      pendingEdit.resolve();
+      expect(await edit!).toBe(false);
+    });
+    expect(result.current.screenshots.comparisons.view.error).toBe(failure.Message);
+    await act(async () => {
+      expect(await result.current.screenshots.comparisons.preview("1", 1.01, 1)).not.toBeNull();
+    });
+    expect(previewRequest.mock.calls).toEqual([[1.01, 1, undefined]]);
+    expect(result.current.screenshots.comparisons.view.error).toBe("");
+  });
+
+  it.each(["edit", "import"] as const)(
+    "retains comparison errors after context projection for %s",
+    async (action) => {
+      let current = workflowCurrentFromPreview(
+        workflowCurrent(`comparison-projection-${action}`, 7),
+        preview("Example.mkv", 1),
+      );
+      current = { ...current, projections: undefined, media: undefined };
+      const plan = comparisonMedia(current, action === "import").comparisons!;
+      const failure = {
+        Code: "invalid_input",
+        Operation: "media",
+        Message: "Correct the comparison mapping.",
+        Recovery: "edit_input",
+      };
+      const { result } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: current.workflow.id,
+            workflow: workflowPorts({
+              current: async () => current,
+              continue: async () => {
+                current = { ...current, workflow: { ...current.workflow, revision: 8 } };
+                return current;
+              },
+              editComparisons: async () => {
+                throw { failure };
+              },
+            }),
+          }),
+        ),
+      });
+      await waitFor(() => expect(result.current.workflow.view.current?.workflow.revision).toBe(7));
+      await act(() => result.current.duplicates.chooseTrackers(["HDS"]));
+      await act(async () => {
+        const accepted =
+          action === "edit"
+            ? await result.current.screenshots.comparisons.edit({ action: "configure", plan })
+            : await result.current.screenshots.comparisons.importImages(
+                [new File(["png"], "comparison.png", { type: "image/png" })],
+                plan,
+              );
+        expect(accepted).toBe(false);
+      });
+      expect(result.current.workflow.view.current?.workflow.revision).toBe(8);
+      expect(result.current.screenshots.comparisons.view.error).toBe(failure.Message);
+    },
+  );
+
+  it("replaces only the selected duplicate-mapped imported image", async () => {
+    const prepared = workflowCurrentFromPreview(
+      workflowCurrent("comparison-replacement", 8),
+      preview("Example.mkv", 1),
+    );
+    const media = comparisonMedia(prepared, true);
+    const plan = {
+      ...media.comparisons!,
+      rows: [
+        {
+          id: "row",
+          excluded: false,
+          cells: [
+            { sourceId: "1", artifactId: "first" },
+            { sourceId: "1", artifactId: "second" },
+          ],
+        },
+      ],
+    };
+    const current: ReleaseWorkflowCurrent = {
+      ...prepared,
+      workflow: { ...prepared.workflow, media: { id: "retained-media", revision: 8 } },
+      media: { ...media, comparisons: plan },
+    };
+    const edit = vi.fn<ReleaseSessionPorts["workflow"]["editComparisons"]>(async () => current);
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: current.workflow.id,
+          workflow: workflowPorts({ current: async () => current, editComparisons: edit }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.screenshots.comparisons.view.plan).not.toBeNull());
+    await act(() =>
+      result.current.screenshots.comparisons.importImages(
+        [new File(["png"], "replacement.png", { type: "image/png" })],
+        plan,
+        { rowID: "row", sourceID: "1", artifactID: "first" },
+      ),
+    );
+    const instructions = edit.mock.calls[0]?.[1];
+    expect(instructions?.plan.rows[0]?.cells.map((cell) => cell.artifactId)).toEqual([
+      "second",
+      "resource-replacement.png",
+    ]);
+  });
+
+  it("restores comparisons before dupes without ordinary planning or hosting", async () => {
+    const workflowID = "workflow-reopened-comparisons";
+    let current = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 7),
+      preview("C:\\media\\Example.Release.2026.mkv", 1),
+    );
+    current = {
+      ...current,
+      continuation: {
+        ...current.continuation,
+        comparisonRestorePending: true,
+        availableGoals: [
+          ...current.continuation.availableGoals.filter(
+            (goal) => goal.goal !== "media_ready" && goal.goal !== "trackers_projected",
+          ),
+          { goal: "trackers_projected", available: true },
+          { goal: "media_ready", available: false, reason: "Run duplicate checking first." },
+        ],
+      },
+    };
+    const events: string[] = [];
+    const captureMedia = vi.fn(async (value: ReleaseWorkflowCurrent) => value);
+    const uploadImages = vi.fn(async (value: ReleaseWorkflowCurrent) => value);
+    const baseMediaPlan = workflowPorts().mediaPlan;
+    const continueWorkflow = vi.fn(async (request: ContinueReleaseWorkflowRequest) => {
+      events.push("project");
+      expect(request.goal).toBe("trackers_projected");
+      expect(request.intent.media).toBeUndefined();
+      return current;
+    });
+    const edit = vi.fn(
+      async (_value: ReleaseWorkflowCurrent, instructions: ComparisonInstructions) => {
+        events.push("restore");
+        expect(instructions.action).toBe("restore");
+        expect(instructions.plan.sources).toEqual([]);
+        current = {
+          ...current,
+          workflow: {
+            ...current.workflow,
+            revision: 8,
+            media: { id: "retained-media", revision: 8 },
+          },
+          continuation: { ...current.continuation, comparisonRestorePending: false },
+          media: comparisonMedia(current, true),
+        };
+        return current;
+      },
+    );
+    const ports = portsFor({
+      resumeWorkflowID: workflowID,
+      workflow: workflowPorts({
+        current: async () => current,
+        continue: continueWorkflow,
+        editComparisons: edit,
+        captureMedia,
+        uploadImages,
+        mediaPlan: async (...args) => {
+          events.push("plan");
+          return baseMediaPlan(...args);
+        },
+      }),
+    });
+    function RestoredScreenshots() {
+      const session = useReleaseSession();
+      return (
+        <ScreenshotsPage
+          facet={session.screenshots}
+          setLightboxImage={vi.fn()}
+          setLightboxAlt={vi.fn()}
+        />
+      );
+    }
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: ({ children }) => (
+        <ReleaseSessionProvider ports={ports}>
+          {children}
+          <RestoredScreenshots />
+        </ReleaseSessionProvider>
+      ),
+    });
+    await waitFor(() =>
+      expect(result.current.screenshots.comparisons.view.restorePending).toBe(true),
+    );
+    await act(() => result.current.duplicates.chooseTrackers(["HDS"]));
+    await act(async () => {
+      screen.getByRole("button", { name: "Restore retained comparisons" }).click();
+    });
+    await waitFor(() => expect(result.current.screenshots.comparisons.view.plan).not.toBeNull());
+    expect(events).toEqual(["project", "restore"]);
+    expect(result.current.screenshots.view.plan).toBeNull();
+    expect(
+      result.current.screenshots.comparisons.view.plan?.sources.map((source) => source.label),
+    ).toEqual(["Source", "Encode"]);
+    expect(result.current.screenshots.view.autoLoadPlan).toBe(false);
+    expect(captureMedia).not.toHaveBeenCalled();
+    expect(uploadImages).not.toHaveBeenCalled();
+  });
+
   it.each([
     "metadata refresh",
     "tracker reassessment",
@@ -9695,8 +10137,14 @@ describe("saved-image plan authority", () => {
         id: planID,
         workflowId: workflowID,
         revision: 1,
-        release: { id: "release-one", revision: 1 },
-        projectionSet: { id: "projections-one", revision: 1 },
+        release: externalSnapshot.current?.workflow.release ?? {
+          id: "release-one",
+          revision: unboundMediaPlanRevision,
+        },
+        projectionSet: externalSnapshot.current?.workflow.trackerProjections ?? {
+          id: "projections-one",
+          revision: unboundMediaPlanRevision,
+        },
         durationSeconds: 120,
         frameRate: 24,
         suggestedSelections: [

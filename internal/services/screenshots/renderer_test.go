@@ -288,6 +288,12 @@ func TestRenderRejectsInvalidOutputsAndStopsAtTerminalFailures(t *testing.T) {
 			attempts: 1,
 		},
 		{
+			name:     "bounded decoder limit",
+			reply:    renderReply{err: comparisonDecoderLimit("decoder_output_limit")},
+			want:     errComparisonDecoderLimit,
+			attempts: 1,
+		},
+		{
 			name:     "cancellation after image",
 			reply:    renderReply{payload: valid},
 			cancel:   true,

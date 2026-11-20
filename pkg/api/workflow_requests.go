@@ -6,6 +6,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -138,6 +139,12 @@ func (r GetReleaseWorkflowMediaPlanRequest) Validate() error {
 // PreviewReleaseWorkflowFrameRequest creates a non-authoritative frame preview.
 type PreviewReleaseWorkflowFrameRequest struct {
 	ReleaseWorkflowCommandContext
+	// ComparisonSourceID selects an additional retained comparison column.
+	// It never replaces the prepared release or its ordinary screenshot source.
+	ComparisonSourceID string `json:"comparisonSourceId,omitempty"`
+	// ComparisonStepDirection selects the preceding (-1) or following (+1)
+	// decoded frame instead of deriving a step from average frame rate.
+	ComparisonStepDirection int `json:"comparisonStepDirection,omitempty"`
 	// DiscID is required for multi-disc previews and optional for single-disc compatibility.
 	DiscID           string  `json:"discId,omitempty"`
 	TimestampSeconds float64 `json:"timestampSeconds"`
@@ -148,8 +155,11 @@ func (r PreviewReleaseWorkflowFrameRequest) Validate() error {
 	if err := r.ReleaseWorkflowCommandContext.Validate(); err != nil {
 		return err
 	}
-	if r.TimestampSeconds < 0 {
+	if r.TimestampSeconds < 0 || math.IsNaN(r.TimestampSeconds) || math.IsInf(r.TimestampSeconds, 0) {
 		return errors.New("frame preview timestamp must not be negative")
+	}
+	if r.ComparisonStepDirection < -1 || r.ComparisonStepDirection > 1 || r.ComparisonStepDirection != 0 && r.ComparisonSourceID == "" {
+		return errors.New("comparison frame step requires a comparison source and direction -1 or 1")
 	}
 	return nil
 }

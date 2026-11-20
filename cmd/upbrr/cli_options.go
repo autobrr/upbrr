@@ -142,6 +142,7 @@ type cliOptions struct {
 	ManualFrames               string
 	Comparison                 string
 	ComparisonIndex            int
+	ComparisonReuseMain        bool
 	MenuImages                 string
 	GetDVDMenus                bool
 	HDRResumeWorkflow          string
@@ -328,8 +329,9 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.ManualFrames, "mf", "", "Comma-separated frame numbers to use for screenshots")
 	fs.StringVar(&opts.Comparison, "comparison", "", "Comparison folder path or comma-separated paths")
 	fs.StringVar(&opts.Comparison, "comps", "", "Comparison folder path or comma-separated paths")
-	fs.IntVar(&opts.ComparisonIndex, "comparison_index", 0, "Primary comparison index")
-	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Primary comparison index")
+	fs.IntVar(&opts.ComparisonIndex, "comparison_index", 0, "Main source group number from comparison image names")
+	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Main source group number from comparison image names")
+	fs.BoolVar(&opts.ComparisonReuseMain, "comparison-use-main-screenshots", false, "Use the main comparison column as normal screenshots")
 	fs.StringVar(&opts.MenuImages, "menu-images", "", "Path to manually captured disc menu screenshots (Disc releases only)")
 	fs.BoolVar(&opts.GetDVDMenus, "get-dvd-menus", false, "Capture distinct menus from an extracted DVD VIDEO_TS (requires compatible FFmpeg)")
 	fs.StringVar(&opts.HDRResumeWorkflow, "hdr-resume-workflow", "", "Resume HDR output in an exact retained active CLI workflow")
@@ -973,6 +975,7 @@ func cliHelpSections(name string) []helpSection {
 			"manual_frames",
 			"comparison",
 			"comparison_index",
+			"comparison-use-main-screenshots",
 			"menu-images",
 			"get-dvd-menus",
 			"imghost",
@@ -1683,6 +1686,9 @@ func buildScreenshotOverrides(opts cliOptions, visited map[string]bool) api.Scre
 	if visited["comparison_index"] {
 		value := opts.ComparisonIndex
 		overrides.ComparisonPrimaryIndex = &value
+	}
+	if visited["comparison-use-main-screenshots"] {
+		overrides.ComparisonReuseMain = opts.ComparisonReuseMain
 	}
 	return overrides
 }

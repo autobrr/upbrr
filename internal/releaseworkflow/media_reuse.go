@@ -112,7 +112,7 @@ func (m *Module) logMediaInventory(ctx context.Context, stage string, artifacts 
 			)
 		}
 		switch artifact.Kind {
-		case api.MediaArtifactScreenshot, api.MediaArtifactDVDMenu:
+		case api.MediaArtifactScreenshot, api.MediaArtifactDVDMenu, api.MediaArtifactComparison:
 			localImages++
 			if artifact.Selected {
 				selectedLocalImages++

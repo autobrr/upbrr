@@ -84,8 +84,8 @@ func TestReusableMediaMaterializationRestoresDecodedFormat(t *testing.T) {
 					t.Fatalf("reinspection changed capture identity: err=%v", err)
 				}
 				artifact := publicMediaArtifact(fingerprint, "restored-screenshot", 0, api.MediaArtifactScreenshot, api.ScreenshotPurposeFinal, got)
-				exact, err := resolveWorkflowExactMedia(workflowMediaPrivateArtifacts{Screenshots: []api.ScreenshotImage{got}},
-					api.MediaArtifactSet{Artifacts: []api.MediaArtifact{artifact}})
+				exact, err := resolveWorkflowExactMedia(t.Context(), workflowMediaPrivateArtifacts{Screenshots: []api.ScreenshotImage{got}},
+					api.MediaArtifactSet{Artifacts: []api.MediaArtifact{artifact}}, config.ScreenshotHandlingConfig{})
 				if err != nil || len(exact.Screenshots) != 1 || exact.Screenshots[0].Format != wantFormat {
 					t.Fatalf("exact media lost restored evidence: err=%v", err)
 				}

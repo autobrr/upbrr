@@ -305,6 +305,11 @@ func resolveDescriptionAssets(
 			})
 		})
 		description = strings.TrimSpace(strings.Join([]string{description, hdrBlock}, "\n\n"))
+		comparisonBlock, comparisonErr := exactComparisonDescriptionBlock(tracker, meta.ExactMedia)
+		if comparisonErr != nil {
+			return DescriptionAssets{}, comparisonErr
+		}
+		description = replaceComparisonDescriptionBlock(description, comparisonBlock)
 	}
 	hasDescription := strings.TrimSpace(description) != ""
 	return DescriptionAssets{
@@ -478,6 +483,9 @@ func localDescriptionMedia(exact *api.ExactMediaAssets) *api.ExactMediaAssets {
 	})
 	exact.ScreenshotUploads = nil
 	exact.DVDMenuUploads = nil
+	exact.Comparisons = nil
+	exact.ComparisonImages = nil
+	exact.ComparisonUploads = nil
 	exact.AudioUploads = nil
 	exact.AudioUploadHosts = nil
 	exact.HDRUploads = nil

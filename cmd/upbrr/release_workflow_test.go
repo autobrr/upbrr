@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -816,6 +818,8 @@ func (f *cliWorkflowCoreFake) ExecuteReleaseWorkflow(
 							DiscID:   "disc-one",
 							DiscName: "Disc 1",
 							File:     "00001.mpls",
+							Duration: 3600,
+							Score:    90,
 						},
 					},
 					{
@@ -826,6 +830,8 @@ func (f *cliWorkflowCoreFake) ExecuteReleaseWorkflow(
 							DiscID:   "disc-one",
 							DiscName: "Disc 1",
 							File:     "00002.mpls",
+							Duration: 7200,
+							Score:    40,
 						},
 					},
 					{
@@ -973,6 +979,11 @@ func (f *cliWorkflowCoreFake) ReleaseWorkflowAudioAnalysisArtifactPath(
 	if artifactID == "stats-cli" {
 		return filepath.Join("test-output", "stats-cli.txt"), nil
 	}
+	return filepath.Join("test-output", string(artifactID)+".png"), nil
+}
+
+func (*cliWorkflowCoreFake) ReleaseWorkflowMediaArtifactPath(_ context.Context, _ string, _ api.WorkflowID,
+	_ api.MediaArtifactSetRef, artifactID api.PublicResourceID) (string, error) {
 	return filepath.Join("test-output", string(artifactID)+".png"), nil
 }
 
@@ -1219,7 +1230,7 @@ func TestCLIWorkflowUnattendedPlaylistActionDoesNotPrompt(t *testing.T) {
 	}
 }
 
-func TestCLIWorkflowLargestPlaylistUsesTypedFactReplacement(t *testing.T) {
+func TestCLIWorkflowBestPlaylistUsesTypedFactReplacement(t *testing.T) {
 	t.Parallel()
 
 	coreSvc := &cliWorkflowCoreFake{}
@@ -1269,27 +1280,77 @@ func TestSelectCLIWorkflowPlaylistsRequiresEveryDisc(t *testing.T) {
 
 	action := api.RequiredAction{Prompt: "Select playlist", Options: []api.RequiredActionOption{
 		{
-			Value:    "disc-one:00001.mpls",
-			Label:    "Disc 1 — 00001.mpls",
-			Playlist: &api.PlaylistInfo{DiscID: "disc-one"},
+			Value: "disc-one:00001.mpls",
+			Label: "Disc 1 — 00001.mpls",
+			Playlist: &api.PlaylistInfo{
+				DiscID:   "disc-one",
+				Duration: 7290.75,
+				Items: []api.PlaylistItem{
+					{File: "00001.m2ts", Size: 20 << 30},
+					{File: "00002.m2ts", Size: 19 << 30},
+					{File: "00003.m2ts", Size: 768 << 20},
+				},
+				Score: 32.125,
+			},
 		},
 		{
-			Value:    "disc-one:00002.mpls",
-			Label:    "Disc 1 — 00002.mpls",
-			Playlist: &api.PlaylistInfo{DiscID: "disc-one"},
+			Value: "disc-one:00002.mpls",
+			Label: "Disc 1 — 00002.mpls",
+			Playlist: &api.PlaylistInfo{
+				DiscID:   "disc-one",
+				Duration: 135.5,
+				Items:    []api.PlaylistItem{{File: "00004.m2ts", Size: 512 << 10}},
+				Score:    20.5,
+			},
 		},
 		{
-			Value:    "disc-two:00001.mpls",
-			Label:    "Disc 2 — 00001.mpls",
-			Playlist: &api.PlaylistInfo{DiscID: "disc-two"},
+			Value: "disc-two:00001.mpls",
+			Label: "Disc 2 — 00001.mpls",
+			Playlist: &api.PlaylistInfo{
+				DiscID:   "disc-two",
+				Duration: 45.9,
+				Score:    71,
+			},
 		},
 	}}
-	selected, err := selectCLIWorkflowPlaylists(bufio.NewReader(strings.NewReader("1,3\n")), io.Discard, action, false)
-	if err != nil {
-		t.Fatalf("select playlists: %v", err)
-	}
-	if !slices.Equal(selected, []string{"disc-one:00001.mpls", "disc-two:00001.mpls"}) {
-		t.Fatalf("selected playlists = %v", selected)
+	for _, terminal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("terminal=%t", terminal), func(t *testing.T) {
+			var transcript bytes.Buffer
+			var output io.Writer = &transcript
+			presenter := &modelPresenter{
+				model:   newCLITUIModel(t.Context(), newCLITUIBridge(), func() {}, nil, nil, false, false, true),
+				answers: []string{"1,2,3"},
+			}
+			if terminal {
+				presenter.model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+				output = &cliPresentationWriter{
+					Writer:    &transcript,
+					presenter: presenter,
+					ctx:       t.Context(),
+					terminal:  true,
+				}
+			}
+			selected, err := selectCLIWorkflowPlaylists(bufio.NewReader(strings.NewReader("1,2,3\n")), output, action, false)
+			if err != nil {
+				t.Fatalf("select playlists: %v", err)
+			}
+			if !slices.Equal(selected, []string{"disc-one:00001.mpls", "disc-one:00002.mpls", "disc-two:00001.mpls"}) {
+				t.Fatalf("selected playlists = %v", selected)
+			}
+			display := transcript.String()
+			if terminal {
+				display = presenter.prompts[0].Evidence
+			}
+			for _, label := range []string{
+				"1. Disc 1 — 00001.mpls | 2h 1m 30s | 3 files | 39.75 GB | Score: 32.13",
+				"2. Disc 1 — 00002.mpls | 2m 15s | 1 files | 512 KB | Score: 20.50",
+				"3. Disc 2 — 00001.mpls | 45s | 0 files | 0 B | Score: 71.00",
+			} {
+				if !strings.Contains(display, label) {
+					t.Errorf("playlist prompt %q does not contain %q", display, label)
+				}
+			}
+		})
 	}
 	if _, err := selectCLIWorkflowPlaylists(bufio.NewReader(strings.NewReader("1\n")), io.Discard, action, false); err == nil ||
 		!strings.Contains(err.Error(), "each disc") {

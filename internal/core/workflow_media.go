@@ -40,11 +40,12 @@ type workflowMediaSubjectResolver interface {
 }
 
 type workflowMediaBuilder struct {
-	config      config.Config
-	resolver    workflowMediaSubjectResolver
-	screenshots mediaScreenshotService
-	dvdMenus    mediaDVDMenuService
-	media       *mediaModule
+	comparisonRenderer comparisonFrameRenderer
+	config             config.Config
+	resolver           workflowMediaSubjectResolver
+	screenshots        mediaScreenshotService
+	dvdMenus           mediaDVDMenuService
+	media              *mediaModule
 }
 
 var errReusableMediaUnavailable = errors.New("workflow media reusable artifact is unavailable")
@@ -168,20 +169,25 @@ type workflowLegacyImageFormat struct {
 }
 
 type workflowMediaPrivateArtifacts struct {
-	Screenshots        []api.ScreenshotImage
-	DVDMenus           []api.DVDMenuCaptureImage
-	ArtifactImages     map[api.PublicResourceID]api.ScreenshotImage
-	DVDMenuImages      map[api.PublicResourceID]api.DVDMenuCaptureImage
-	HostedImages       map[api.PublicResourceID]api.UploadedImageLink
-	HostedSources      map[api.PublicResourceID]api.PublicResourceID
-	screenshotService  mediaScreenshotService
-	screenshotSubject  api.ScreenshotSubject
-	dvdMenuService     mediaDVDMenuService
-	dvdMenuSubject     api.DVDMenuSubject
-	hostedRepository   mediaRepository
-	mediaReuse         api.MediaReuseRepository
-	legacyImageFormats map[string]workflowLegacyImageFormat
-	commitState        *workflowMediaCommitState
+	ComparisonAnalysisExecutable string `json:"comparisonAnalysisExecutable,omitempty"`
+	ComparisonInventory          *comparisonSceneInventory
+	ComparisonSources            map[string]workflowComparisonSource
+	ComparisonCaptions           map[api.PublicResourceID]int
+	ComparisonRenderSettings     map[api.PublicResourceID]api.WorkflowFingerprint
+	Screenshots                  []api.ScreenshotImage
+	DVDMenus                     []api.DVDMenuCaptureImage
+	ArtifactImages               map[api.PublicResourceID]api.ScreenshotImage
+	DVDMenuImages                map[api.PublicResourceID]api.DVDMenuCaptureImage
+	HostedImages                 map[api.PublicResourceID]api.UploadedImageLink
+	HostedSources                map[api.PublicResourceID]api.PublicResourceID
+	screenshotService            mediaScreenshotService
+	screenshotSubject            api.ScreenshotSubject
+	dvdMenuService               mediaDVDMenuService
+	dvdMenuSubject               api.DVDMenuSubject
+	hostedRepository             mediaRepository
+	mediaReuse                   api.MediaReuseRepository
+	legacyImageFormats           map[string]workflowLegacyImageFormat
+	commitState                  *workflowMediaCommitState
 }
 
 // recordLegacyImageFormat retains exact old labels only for description compatibility.
@@ -254,17 +260,22 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		deleted[artifactID] = struct{}{}
 	}
 	result := workflowMediaPrivateArtifacts{
-		screenshotService:  a.screenshotService,
-		screenshotSubject:  a.screenshotSubject,
-		dvdMenuService:     a.dvdMenuService,
-		dvdMenuSubject:     a.dvdMenuSubject,
-		hostedRepository:   a.hostedRepository,
-		mediaReuse:         a.mediaReuse,
-		ArtifactImages:     cloneScreenshotImageMap(a.ArtifactImages),
-		DVDMenuImages:      cloneDVDMenuImageMap(a.DVDMenuImages),
-		HostedImages:       cloneUploadedImageMap(a.HostedImages),
-		HostedSources:      cloneHostedSourceMap(a.HostedSources),
-		legacyImageFormats: maps.Clone(a.legacyImageFormats),
+		ComparisonSources:            cloneComparisonSources(a.ComparisonSources),
+		ComparisonCaptions:           maps.Clone(a.ComparisonCaptions),
+		ComparisonInventory:          cloneComparisonInventory(a.ComparisonInventory),
+		ComparisonAnalysisExecutable: a.ComparisonAnalysisExecutable,
+		ComparisonRenderSettings:     maps.Clone(a.ComparisonRenderSettings),
+		screenshotService:            a.screenshotService,
+		screenshotSubject:            a.screenshotSubject,
+		dvdMenuService:               a.dvdMenuService,
+		dvdMenuSubject:               a.dvdMenuSubject,
+		hostedRepository:             a.hostedRepository,
+		mediaReuse:                   a.mediaReuse,
+		ArtifactImages:               cloneScreenshotImageMap(a.ArtifactImages),
+		DVDMenuImages:                cloneDVDMenuImageMap(a.DVDMenuImages),
+		HostedImages:                 cloneUploadedImageMap(a.HostedImages),
+		HostedSources:                cloneHostedSourceMap(a.HostedSources),
+		legacyImageFormats:           maps.Clone(a.legacyImageFormats),
 	}
 	pending := a.pendingDeletes()
 	screenshotIndex, menuIndex := 0, 0
@@ -275,6 +286,8 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		var image api.ScreenshotImage
 		var dvdMenu api.DVDMenuCaptureImage
 		switch artifact.Kind {
+		case api.MediaArtifactComparison:
+			image = a.ArtifactImages[artifact.ID]
 		case api.MediaArtifactScreenshot:
 			if screenshotIndex >= len(a.Screenshots) {
 				return nil, errors.New("workflow media screenshot resource is incomplete")
@@ -301,6 +314,8 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 				binding: workflowMediaBindingForKind(a, artifact.Kind),
 			})
 			delete(result.ArtifactImages, artifact.ID)
+			delete(result.ComparisonCaptions, artifact.ID)
+			delete(result.ComparisonRenderSettings, artifact.ID)
 			delete(result.DVDMenuImages, artifact.ID)
 			continue
 		}
@@ -309,7 +324,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 			result.Screenshots = append(result.Screenshots, image)
 		case api.MediaArtifactDVDMenu:
 			result.DVDMenus = append(result.DVDMenus, dvdMenu)
-		case api.MediaArtifactHostedImage:
+		case api.MediaArtifactHostedImage, api.MediaArtifactComparison:
 		}
 	}
 	for hostedID, sourceID := range result.HostedSources {
@@ -344,6 +359,11 @@ func (a workflowMediaPrivateArtifacts) Commit(ctx context.Context) error {
 		deletion := a.commitState.pending[0]
 		var err error
 		switch deletion.kind {
+		case api.MediaArtifactComparison:
+			err = os.Remove(deletion.path)
+			if errors.Is(err, os.ErrNotExist) {
+				err = nil
+			}
 		case api.MediaArtifactScreenshot:
 			if a.screenshotService == nil {
 				return errors.New("workflow screenshot deletion service is unavailable")
@@ -395,6 +415,10 @@ func (a workflowMediaPrivateArtifacts) imageForArtifact(
 	screenshotIndex, menuIndex := 0, 0
 	for _, artifact := range snapshot.Artifacts {
 		switch artifact.Kind {
+		case api.MediaArtifactComparison:
+			if artifact.ID == artifactID {
+				return api.ScreenshotImage{}, errors.New("workflow comparison image is unavailable")
+			}
 		case api.MediaArtifactScreenshot:
 			if screenshotIndex >= len(a.Screenshots) {
 				return api.ScreenshotImage{}, errors.New("workflow media screenshot resource is incomplete")
@@ -443,7 +467,7 @@ func indexWorkflowMediaArtifacts(a *workflowMediaPrivateArtifacts, snapshot api.
 				a.DVDMenuImages[artifact.ID] = a.DVDMenus[menuIndex]
 			}
 			menuIndex++
-		case api.MediaArtifactHostedImage:
+		case api.MediaArtifactHostedImage, api.MediaArtifactComparison:
 		}
 	}
 }
@@ -474,20 +498,25 @@ func cloneHostedSourceMap(values map[api.PublicResourceID]api.PublicResourceID) 
 
 func cloneWorkflowMediaPrivateArtifacts(value workflowMediaPrivateArtifacts) workflowMediaPrivateArtifacts {
 	return workflowMediaPrivateArtifacts{
-		Screenshots:        append([]api.ScreenshotImage(nil), value.Screenshots...),
-		DVDMenus:           append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),
-		ArtifactImages:     cloneScreenshotImageMap(value.ArtifactImages),
-		DVDMenuImages:      cloneDVDMenuImageMap(value.DVDMenuImages),
-		HostedImages:       cloneUploadedImageMap(value.HostedImages),
-		HostedSources:      cloneHostedSourceMap(value.HostedSources),
-		legacyImageFormats: maps.Clone(value.legacyImageFormats),
-		screenshotService:  value.screenshotService,
-		screenshotSubject:  value.screenshotSubject,
-		dvdMenuService:     value.dvdMenuService,
-		dvdMenuSubject:     value.dvdMenuSubject,
-		hostedRepository:   value.hostedRepository,
-		mediaReuse:         value.mediaReuse,
-		commitState:        &workflowMediaCommitState{pending: value.pendingDeletes()},
+		ComparisonSources:            cloneComparisonSources(value.ComparisonSources),
+		ComparisonCaptions:           maps.Clone(value.ComparisonCaptions),
+		ComparisonInventory:          cloneComparisonInventory(value.ComparisonInventory),
+		ComparisonAnalysisExecutable: value.ComparisonAnalysisExecutable,
+		ComparisonRenderSettings:     maps.Clone(value.ComparisonRenderSettings),
+		Screenshots:                  append([]api.ScreenshotImage(nil), value.Screenshots...),
+		DVDMenus:                     append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),
+		ArtifactImages:               cloneScreenshotImageMap(value.ArtifactImages),
+		DVDMenuImages:                cloneDVDMenuImageMap(value.DVDMenuImages),
+		HostedImages:                 cloneUploadedImageMap(value.HostedImages),
+		HostedSources:                cloneHostedSourceMap(value.HostedSources),
+		legacyImageFormats:           maps.Clone(value.legacyImageFormats),
+		screenshotService:            value.screenshotService,
+		screenshotSubject:            value.screenshotSubject,
+		dvdMenuService:               value.dvdMenuService,
+		dvdMenuSubject:               value.dvdMenuSubject,
+		hostedRepository:             value.hostedRepository,
+		mediaReuse:                   value.mediaReuse,
+		commitState:                  &workflowMediaCommitState{pending: value.pendingDeletes()},
 	}
 }
 
@@ -540,6 +569,8 @@ func (b workflowMediaBuilder) Build(
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
 	case api.ScreenshotPurposeAudioAnalysis, api.ScreenshotPurposeHDRAnalysis:
 		return api.MediaArtifactSet{}, nil, errors.New("workflow media capture: analysis is not a screenshot purpose")
+	case api.ScreenshotPurposeComparison:
+		return api.MediaArtifactSet{}, nil, errors.New("workflow media capture: use the structured comparison capture workflow")
 	default:
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
 	}
@@ -837,11 +868,16 @@ func (b workflowMediaBuilder) Build(
 
 func applyWorkflowMediaMinimums(snapshot *api.MediaArtifactSet, requiredScreenshots, requiredMenus int) {
 	selectedScreenshots, selectedMenus := 0, 0
+	mainComparisons := releaseworkflow.ComparisonMainScreenshotIDs(snapshot.Comparisons)
 	for _, artifact := range snapshot.Artifacts {
 		if !artifact.Selected {
 			continue
 		}
 		switch artifact.Kind {
+		case api.MediaArtifactComparison:
+			if _, main := mainComparisons[artifact.ID]; main {
+				selectedScreenshots++
+			}
 		case api.MediaArtifactScreenshot:
 			selectedScreenshots++
 		case api.MediaArtifactDVDMenu:
@@ -1563,28 +1599,46 @@ func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
 	if b.media == nil || b.media.registry == nil {
 		return nil, false
 	}
+	if !releaseworkflow.ComparisonMediaReviewSatisfied(snapshot) {
+		return nil, false
+	}
 	requiredScreenshots, requiredMenus := projectedMediaRequirements(projections)
+	comparisonCells := workflowComparisonCells(snapshot.Comparisons)
+	mainComparisonImages := releaseworkflow.ComparisonMainScreenshotIDs(snapshot.Comparisons)
 	selectedSources := make(map[api.PublicResourceID]struct{})
 	selectedArtifactIDs := make([]api.PublicResourceID, 0, len(snapshot.Artifacts))
 	selectedScreenshots, selectedMenus := 0, 0
 	for _, artifact := range snapshot.Artifacts {
-		if !artifact.Selected || (artifact.Kind != api.MediaArtifactScreenshot && artifact.Kind != api.MediaArtifactDVDMenu) {
+		if !artifact.Selected {
+			continue
+		}
+		switch artifact.Kind {
+		case api.MediaArtifactScreenshot:
+			selectedScreenshots++
+		case api.MediaArtifactDVDMenu:
+			selectedMenus++
+		case api.MediaArtifactComparison:
+			if _, active := comparisonCells[artifact.ID]; !active {
+				continue
+			}
+			if _, main := mainComparisonImages[artifact.ID]; main {
+				selectedScreenshots++
+			}
+		case api.MediaArtifactHostedImage:
+			continue
+		default:
 			continue
 		}
 		selectedSources[artifact.ID] = struct{}{}
 		selectedArtifactIDs = append(selectedArtifactIDs, artifact.ID)
-		if artifact.Kind == api.MediaArtifactScreenshot {
-			selectedScreenshots++
-		} else {
-			selectedMenus++
-		}
 	}
 	if selectedScreenshots < requiredScreenshots || selectedMenus < requiredMenus {
 		return nil, false
 	}
 	attempts := make([]api.HostedImageAttempt, 0, len(projections))
 	for _, projection := range projections {
-		if projection.Artifacts.LocalScreenshotsOnly || (projection.Artifacts.ScreenshotCount <= 0 && projection.Artifacts.DVDMenuCount <= 0) {
+		if projection.Artifacts.LocalScreenshotsOnly ||
+			(projection.Artifacts.ScreenshotCount <= 0 && projection.Artifacts.DVDMenuCount <= 0 && len(comparisonCells) == 0) {
 			continue
 		}
 		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
@@ -1695,6 +1749,7 @@ func (b workflowMediaBuilder) restoredHostedImageAttempt(
 		results = append(results, candidate.artifact)
 	}
 	coveredScreenshots, selectedMenus, coveredMenus := 0, 0, 0
+	mainComparisonImages := releaseworkflow.ComparisonMainScreenshotIDs(snapshot.Comparisons)
 	for _, artifact := range snapshot.Artifacts {
 		if _, selected := selectedSources[artifact.ID]; !selected {
 			continue
@@ -1709,6 +1764,13 @@ func (b workflowMediaBuilder) restoredHostedImageAttempt(
 			selectedMenus++
 			if covered {
 				coveredMenus++
+			}
+		case api.MediaArtifactComparison:
+			if !covered {
+				return api.HostedImageAttempt{}, false
+			}
+			if _, main := mainComparisonImages[artifact.ID]; main {
+				coveredScreenshots++
 			}
 		case api.MediaArtifactHostedImage:
 		}
@@ -1774,6 +1836,8 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 	type hostScope struct{ host, scope string }
 	sources := make(map[hostScope]map[api.PublicResourceID]struct{})
 	ordered := make([]hostScope, 0)
+	comparisonCells := workflowComparisonCells(snapshot.Comparisons)
+	mainComparisonImages := releaseworkflow.ComparisonMainScreenshotIDs(snapshot.Comparisons)
 	selectedKinds := make(map[api.PublicResourceID]api.MediaArtifactKind, len(selected))
 	for _, artifact := range snapshot.Artifacts {
 		if _, ok := selected[artifact.ID]; ok {
@@ -1806,7 +1870,7 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 	assigned := make(map[string]struct{})
 	for _, projection := range projections {
 		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
-		if tracker == "" || projection.Artifacts.LocalScreenshotsOnly || projection.Artifacts.ScreenshotCount <= 0 {
+		if tracker == "" || projection.Artifacts.LocalScreenshotsOnly || (projection.Artifacts.ScreenshotCount <= 0 && len(comparisonCells) == 0) {
 			continue
 		}
 		trackerConfig, _ := config.TrackerConfigByName(b.config.Trackers.Trackers, tracker)
@@ -1833,8 +1897,11 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 			}
 		}
 		for sourceID, kind := range selectedKinds {
-			if kind != api.MediaArtifactScreenshot && kind != api.MediaArtifactDVDMenu {
+			if kind != api.MediaArtifactScreenshot && kind != api.MediaArtifactDVDMenu && kind != api.MediaArtifactComparison {
 				continue
+			}
+			if _, comparison := comparisonCells[sourceID]; comparison {
+				eligibleSources[sourceID] = struct{}{}
 			}
 			if _, hosted := hostedSources[sourceID]; !hosted {
 				eligibleSources[sourceID] = struct{}{}
@@ -1851,13 +1918,23 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 					coveredScreenshots++
 				case api.MediaArtifactDVDMenu:
 					coveredMenus++
+				case api.MediaArtifactComparison:
+					if _, main := mainComparisonImages[sourceID]; main {
+						coveredScreenshots++
+					}
 				case api.MediaArtifactHostedImage:
 				}
 			}
 			if coveredScreenshots < projection.Artifacts.ScreenshotCount || coveredMenus < selectedMenus {
 				continue
 			}
-			missingSelected := coveredScreenshots+coveredMenus < len(eligibleSources)
+			missingSelected := false
+			for sourceID := range eligibleSources {
+				if _, covered := sources[key][sourceID]; !covered {
+					missingSelected = true
+					break
+				}
+			}
 			canUploadHere := imagehostpolicy.IsUploadHost(key.host) && slices.ContainsFunc(targets, func(target trackers.ImageUploadTarget) bool {
 				return strings.EqualFold(target.Host, key.host) && normalizeImageUploadUsageScope(target.UsageScope) == key.scope &&
 					slices.ContainsFunc(target.Trackers, func(candidate string) bool {
@@ -1912,12 +1989,29 @@ func (b workflowMediaBuilder) preferReusableImageTargets(
 	return preferred, nil
 }
 
+func workflowComparisonCells(plan *api.ComparisonPlan) map[api.PublicResourceID]api.ComparisonCell {
+	if plan == nil {
+		return nil
+	}
+	cells := make(map[api.PublicResourceID]api.ComparisonCell)
+	for _, row := range plan.Rows {
+		if row.Excluded {
+			continue
+		}
+		for _, cell := range row.Cells {
+			cells[cell.ArtifactID] = cell
+		}
+	}
+	return cells
+}
+
 func (b workflowMediaBuilder) retainedHostedImageCandidates(
 	snapshot api.MediaArtifactSet,
 	retained workflowMediaPrivateArtifacts,
 	selectedSources map[api.PublicResourceID]struct{},
 ) []retainedHostedImageCandidate {
 	candidates := make([]retainedHostedImageCandidate, 0, len(retained.HostedImages))
+	comparisonCells := workflowComparisonCells(snapshot.Comparisons)
 	for _, artifact := range snapshot.Artifacts {
 		if artifact.Kind != api.MediaArtifactHostedImage || !artifact.Selected {
 			continue
@@ -1931,6 +2025,17 @@ func (b workflowMediaBuilder) retainedHostedImageCandidates(
 			continue
 		}
 		if _, selected := selectedSources[sourceID]; !selected {
+			continue
+		}
+		if cell, comparison := comparisonCells[sourceID]; comparison {
+			image, exists := retained.ArtifactImages[sourceID]
+			if !exists || artifact.Purpose != api.ScreenshotPurposeComparison || image.Purpose != api.ScreenshotPurposeComparison ||
+				link.Purpose != api.ScreenshotPurposeComparison || cell.ContentSHA256 == "" ||
+				image.ContentSHA256 != cell.ContentSHA256 || link.ContentSHA256 != cell.ContentSHA256 ||
+				!strings.EqualFold(normalizedUploadImagePath(image.Path), normalizedUploadImagePath(link.ImagePath)) {
+				continue
+			}
+		} else if artifact.Purpose == api.ScreenshotPurposeComparison || link.Purpose == api.ScreenshotPurposeComparison {
 			continue
 		}
 		accountScope, err := workflowMediaHostAccountScope(b.config, link.Host)
@@ -1956,6 +2061,7 @@ func (b workflowMediaBuilder) retainedHostedImageLinks(
 ) ([]api.UploadedImageLink, []api.UploadedImageLink, []api.PublicResourceID) {
 	links := make([]api.UploadedImageLink, 0, len(retained.HostedImages))
 	valid := make(map[api.PublicResourceID]struct{}, len(retained.HostedImages))
+	comparisonCells := workflowComparisonCells(snapshot.Comparisons)
 	for _, candidate := range b.retainedHostedImageCandidates(snapshot, retained, selectedSources) {
 		pathKey := strings.ToLower(normalizedUploadImagePath(candidate.link.ImagePath))
 		if pathKey == "" || sourceByPath[pathKey] != candidate.sourceID {
@@ -2000,7 +2106,8 @@ func (b workflowMediaBuilder) retainedHostedImageLinks(
 			scopeErr == nil && link.AccountScope == accountScope &&
 			strings.EqualFold(normalizedUploadImagePath(link.ImagePath), normalizedUploadImagePath(currentPath)) &&
 			(!hostMatched || scopeMatched)
-		if validAssociation {
+		_, comparison := comparisonCells[sourceID]
+		if validAssociation && !comparison {
 			continue
 		}
 		if artifact.Selected {
@@ -2162,7 +2269,7 @@ func rebuildWorkflowMediaLocalSlices(a *workflowMediaPrivateArtifacts, snapshot 
 				menu = api.DVDMenuCaptureImage{ScreenshotImage: image}
 			}
 			a.DVDMenus = append(a.DVDMenus, menu)
-		case api.MediaArtifactHostedImage:
+		case api.MediaArtifactHostedImage, api.MediaArtifactComparison:
 		}
 	}
 }
@@ -2262,6 +2369,9 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	retained = cloneWorkflowMediaPrivateArtifacts(retained)
 	host = strings.ToLower(strings.TrimSpace(host))
+	if err := verifyWorkflowComparisons(ctx, snapshot, retained, &b.config.ScreenshotHandling); err != nil {
+		return api.MediaArtifactSet{}, nil, nil, err
+	}
 	localOnlySelection := len(projections.Projections) > 0 && !slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
 		return !projection.Artifacts.LocalScreenshotsOnly
 	})
@@ -2281,7 +2391,7 @@ func (b workflowMediaBuilder) UploadImages(
 		if _, requested := selected[artifact.ID]; !requested {
 			continue
 		}
-		if artifact.Kind != api.MediaArtifactScreenshot && artifact.Kind != api.MediaArtifactDVDMenu {
+		if artifact.Kind != api.MediaArtifactScreenshot && artifact.Kind != api.MediaArtifactDVDMenu && artifact.Kind != api.MediaArtifactComparison {
 			return api.MediaArtifactSet{}, nil, nil, errors.New("only local workflow media can be hosted")
 		}
 		if !artifact.Selected {
@@ -2533,11 +2643,6 @@ func (b workflowMediaBuilder) UploadImages(
 			currentFailures = append(currentFailures, hostedImageFailure(api.TrackerID(tracker), failure.Host, failure.Message))
 		}
 	}
-	if retry {
-		reconcileRetriedImageHostFailures(&snapshot, projections.Projections, attempts, currentFailures)
-	} else {
-		snapshot.Failures = append(snapshot.Failures, currentFailures...)
-	}
 	failedHosts := make(map[string]struct{}, len(snapshot.FailedHosts)+len(result.FailedHosts))
 	for _, failed := range snapshot.FailedHosts {
 		failedHosts[strings.ToLower(strings.TrimSpace(failed))] = struct{}{}
@@ -2552,6 +2657,11 @@ func (b workflowMediaBuilder) UploadImages(
 		delete(failedHosts, host)
 	}
 	snapshot.FailedHosts = sortedMapKeys(failedHosts)
+	if retry {
+		reconcileRetriedImageHostFailures(&snapshot, projections.Projections, attempts, currentFailures)
+	} else {
+		snapshot.Failures = append(snapshot.Failures, currentFailures...)
+	}
 	snapshot.Artifacts = slices.Clone(snapshot.Artifacts)
 	refreshMediaProcessing(&snapshot, retained)
 	return snapshot, retained, attempts, nil
@@ -2893,10 +3003,6 @@ func reconcileRetriedImageHostFailures(
 	attempts []api.HostedImageAttempt,
 	currentFailures []api.WorkflowFailure,
 ) {
-	artifacts := make(map[api.PublicResourceID]api.MediaArtifact, len(snapshot.Artifacts))
-	for _, artifact := range snapshot.Artifacts {
-		artifacts[artifact.ID] = artifact
-	}
 	allAttempts := make([]api.HostedImageAttempt, 0, len(snapshot.HostAttempts)+len(attempts))
 	allAttempts = append(allAttempts, snapshot.HostAttempts...)
 	allAttempts = append(allAttempts, attempts...)
@@ -2913,28 +3019,14 @@ func reconcileRetriedImageHostFailures(
 	satisfied := make(map[string]struct{}, len(projections))
 	for _, projection := range projections {
 		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
-		required := projection.Artifacts.ScreenshotCount
 		if tracker == "" || !slices.ContainsFunc(attempts, func(attempt api.HostedImageAttempt) bool {
 			return attempt.Status == api.StageStatusCompleted && attemptApplies(attempt, tracker)
 		}) {
 			continue
 		}
-		sources := make(map[api.PublicResourceID]struct{}, required)
-		for _, attempt := range allAttempts {
-			if !attemptApplies(attempt, tracker) {
-				continue
-			}
-			for _, result := range attempt.Results {
-				hosted, hostedOK := artifacts[result.ID]
-				source, sourceOK := artifacts[api.PublicResourceID(strings.TrimSpace(hosted.Source))]
-				if hostedOK && sourceOK && hosted.Selected && hosted.Kind == api.MediaArtifactHostedImage &&
-					hosted.Purpose == api.ScreenshotPurposeFinal && source.Selected &&
-					source.Kind == api.MediaArtifactScreenshot && source.Purpose == api.ScreenshotPurposeFinal {
-					sources[source.ID] = struct{}{}
-				}
-			}
-		}
-		if len(sources) >= required {
+		coverage := *snapshot
+		coverage.HostAttempts = allAttempts
+		if releaseworkflow.HostedScreenshotRequirementsMet(coverage, []api.TrackerReleaseProjection{projection}) {
 			satisfied[tracker] = struct{}{}
 		}
 	}

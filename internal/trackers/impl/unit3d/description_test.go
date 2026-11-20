@@ -373,6 +373,8 @@ func TestBuildUnit3DDescriptionSkipsTonemapHeaderForNonHDR(t *testing.T) {
 func TestBuildUnit3DDescriptionFinalizesUnit3DBBCode(t *testing.T) {
 	meta := api.UploadSubject{}
 	kept := "[hide=Extras]notes[/hide]\n[user]name[/user]\n[comparison=Source, Encode]https://img.example/a.png https://img.example/b.png[/comparison]"
+	const generated = "[comparison=Generated, Reference]\nhttps://images.example.invalid/a.png\nhttps://images.example.invalid/b.png\n[/comparison]"
+	kept += "\n[spoiler=source_comparisons]\n" + generated + "\n[/spoiler]"
 
 	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
 	if err != nil {
@@ -389,6 +391,9 @@ func TestBuildUnit3DDescriptionFinalizesUnit3DBBCode(t *testing.T) {
 	}
 	if !strings.Contains(result, "https://img.example/a.png https://img.example/b.png[/comparison]") {
 		t.Fatalf("expected comparison images preserved, got %q", result)
+	}
+	if !strings.Contains(result, generated) || strings.Contains(result, "[spoiler=source_comparisons]") {
+		t.Fatalf("generated comparison was not emitted directly: %q", result)
 	}
 }
 
