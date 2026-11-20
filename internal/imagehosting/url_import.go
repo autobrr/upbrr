@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -24,7 +25,7 @@ import (
 // ImportURLs executes a registered tracker protocol for selected remote images.
 // Only the workflow image stage supplies original source URLs; Upload remains
 // the ordinary file-upload route and cannot select this capability implicitly.
-// Protected source-only URLs require ordinary hosting of the existing local image.
+// Protected or credential-bearing URLs require ordinary hosting of the local image.
 // Post-import verification failures retain the accepted URL in the private cause
 // and require confirmation before another mutation.
 func (s *Service) ImportURLs(
@@ -44,28 +45,25 @@ func (s *Service) ImportURLs(
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: resolve import account: %w", err)
 	}
-	root, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
-	if err != nil {
-		return nil, fmt.Errorf("image hosting: resolve import root: %w", err)
-	}
-	dir, _, err := paths.ReleaseTempDirFor(root, meta.SourcePath, api.ReleaseInfo{})
-	if err != nil {
-		return nil, fmt.Errorf("image hosting: resolve import directory: %w", err)
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("image hosting: create import directory: %w", err)
-	}
+	var dir string
 	var results []api.UploadedImageLink
 	for _, image := range images {
 		if err := ctx.Err(); err != nil {
 			return results, fmt.Errorf("image hosting: import canceled: %w", err)
 		}
-		source := imagehost.DirectImageURL(image.RawURL)
-		if source == "" {
-			return results, errors.New("image URL import requires an original source")
+		source, err := nativeImageImportSource(image.RawURL)
+		if err != nil {
+			return results, err
 		}
-		if imagehost.IsSourceOnlyURL(source) {
-			return results, errors.New("protected image sources require ordinary hosting")
+		if dir == "" {
+			root, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
+			if err != nil {
+				return results, fmt.Errorf("image hosting: resolve import root: %w", err)
+			}
+			dir, _, err = paths.ReleaseTempDirFor(root, meta.SourcePath, api.ReleaseInfo{})
+			if err != nil {
+				return results, fmt.Errorf("image hosting: resolve import directory: %w", err)
+			}
 		}
 		digest, err := imageevidence.Digest(image.Path)
 		if err != nil {
@@ -126,6 +124,25 @@ func (s *Service) ImportURLs(
 	}
 	s.logger.Infof("image hosting: image import completed host=%s tracker=%s state=completed count=%d", host, tracker, len(results))
 	return results, nil
+}
+
+// nativeImageImportSource checks both URL forms because normalization can change
+// or unwrap the source. Do not return the URL or parse error for refused inputs.
+func nativeImageImportSource(rawURL string) (string, error) {
+	source := imagehost.DirectImageURL(rawURL)
+	if source == "" {
+		return "", errors.New("image URL import requires an original source")
+	}
+	for _, candidate := range []string{strings.TrimSpace(rawURL), source} {
+		parsed, err := url.Parse(candidate)
+		if err != nil || parsed.User != nil {
+			return "", errors.New("image URL import requires a valid credential-free source")
+		}
+	}
+	if imagehost.IsSourceOnlyURL(source) {
+		return "", errors.New("protected image sources require ordinary hosting")
+	}
+	return source, nil
 }
 
 // importImageURL shares the live-test mutation guard with ordinary uploads.

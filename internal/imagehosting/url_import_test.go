@@ -26,6 +26,23 @@ type importImageTransport func(*http.Request) (*http.Response, error)
 
 func (f importImageTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestNativeImageImportSourceRejectsURLUserInfo(t *testing.T) {
+	clean := url.URL{
+		Scheme: "https",
+		Host:   "example.invalid",
+		Path:   "/image.png",
+	}
+	if got, err := nativeImageImportSource(clean.String()); err != nil || got != clean.String() {
+		t.Fatal("clean source should remain eligible")
+	}
+	marked := clean
+	marked.User = url.User("synthetic")
+	if got, err := nativeImageImportSource(marked.String()); got != "" || err == nil ||
+		err.Error() != "image URL import requires a valid credential-free source" {
+		t.Fatal("user information should be rejected without echoing the source")
+	}
+}
+
 func TestURLImportBindsBothRemoteImagesBeforePersistence(t *testing.T) {
 	var imageBytes bytes.Buffer
 	if err := png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
