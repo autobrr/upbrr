@@ -10,8 +10,8 @@ require (
 	github.com/Audionut/go-hdr10-plus v0.0.0
 	github.com/Audionut/go-hdr10-plus/integration/bdinfo v0.0.0-20261028071522-2fff01f2f5bc
 	github.com/at-wat/ebml-go v0.19.4
+	github.com/autobrr/go-bdinfo v0.4.3-0.20261116065354-69b06c7c9f7d
 	github.com/asticode/go-astits v1.16.0
-	github.com/autobrr/go-bdinfo v0.4.2
 	github.com/autobrr/go-mediainfo v0.8.1-0.20261020113756-56fa5814c646
 	github.com/autobrr/go-qbittorrent v1.19.0
 	github.com/autobrr/go-torrent v1.1.1
@@ -75,7 +75,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/autobrr/go-bdinfo => github.com/Audionut/go-bdinfo v0.2.1-0.20261102071325-7f70eb12438a
 
 replace github.com/Audionut/go-hdr10-plus => github.com/Audionut/go-hdr10-plus v0.0.0-20261012140645-34d94903fa8c
