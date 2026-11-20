@@ -18,7 +18,7 @@ type comparisonPreviewImage struct {
 }
 
 // Without whitespace a comma belongs to the URL, including embedded query URLs.
-var comparisonURLSeparator = regexp.MustCompile(`(?i),\s+(https?://)`)
+var comparisonURLSeparator = regexp.MustCompile(`(?i),(\s+)(https?://)`)
 
 // Native comparison tags provide source order explicitly. Keep incomplete or
 // invalid blocks in the ordinary renderer instead of shifting their columns.
@@ -62,7 +62,7 @@ func nativeComparisonImages(nodes []*bbcode.BBCodeNode, columns int) []compariso
 			if !ok {
 				return nil
 			}
-			images, ok = appendNativeComparisonURLs(images, value)
+			images, ok = appendNativeComparisonURLs(images, comparisonURLSeparator.ReplaceAllString(value, "${1}${2}"))
 			if !ok {
 				return nil
 			}
@@ -87,7 +87,7 @@ func nativeComparisonImages(nodes []*bbcode.BBCodeNode, columns int) []compariso
 }
 
 func appendNativeComparisonURLs(images []comparisonPreviewImage, text string) ([]comparisonPreviewImage, bool) {
-	for value := range strings.FieldsSeq(comparisonURLSeparator.ReplaceAllString(text, " ${1}")) {
+	for value := range strings.FieldsSeq(text) {
 		if !absoluteComparisonURL(value) {
 			return nil, false
 		}
@@ -118,7 +118,7 @@ func compileCenteredComparison(node *bbcode.BBCodeNode) *bbcode.HTMLTag {
 		return nil
 	}
 	sources := comparisonLabels(header, " | ")
-	if len(sources) < 2 || conflictsWithCollapsedComparison(node, sources) {
+	if len(sources) < 2 || conflictsWithParentComparison(node, sources) {
 		return nil
 	}
 	if images := comparisonRows(node.Children[1:], len(sources), false); len(images) > 0 {
@@ -127,22 +127,34 @@ func compileCenteredComparison(node *bbcode.BBCodeNode) *bbcode.HTMLTag {
 	return nil
 }
 
-// A rejected comparison's leading wrapper must not reinterpret conflicting source order.
-func conflictsWithCollapsedComparison(node *bbcode.BBCodeNode, sources []string) bool {
+// A centered child cannot override recognized parent comparison labels.
+func conflictsWithParentComparison(node *bbcode.BBCodeNode, sources []string) bool {
 	if node.Parent == nil {
 		return false
 	}
 	opening := node.Parent.GetOpeningTag()
-	if opening == nil || (opening.Name != "spoiler" && opening.Name != "hide") {
+	if opening == nil {
 		return false
 	}
-	for _, child := range node.Parent.Children {
-		if !isBlankComparisonText(child) {
-			labels := comparisonLabels(descriptionTagLabel(opening), " vs ")
-			return child == node && len(labels) >= 2 && !slices.Equal(labels, sources)
+	sep := ","
+	switch opening.Name {
+	case "comparison":
+	case "spoiler", "hide":
+		sep = " vs "
+		// An unrelated spoiler can still contain an independent comparison.
+		for _, child := range node.Parent.Children {
+			if !isBlankComparisonText(child) {
+				if child != node {
+					return false
+				}
+				break
+			}
 		}
+	default:
+		return false
 	}
-	return false
+	labels := comparisonLabels(descriptionTagLabel(opening), sep)
+	return len(labels) >= 2 && !slices.Equal(labels, sources)
 }
 
 func compileCollapsedComparison(node *bbcode.BBCodeNode) *bbcode.HTMLTag {
@@ -176,6 +188,11 @@ func comparisonRows(nodes []*bbcode.BBCodeNode, columns int, nativeURLs bool) []
 			value, ok := node.Value.(string)
 			if !ok {
 				return nil
+			}
+			if nativeURLs {
+				// Strip commas used as separators before splitting lines, but
+				// keep the delimiter's whitespace and its row boundaries.
+				value = comparisonURLSeparator.ReplaceAllString(value, "${1}${2}")
 			}
 			for {
 				line, rest, newline := strings.Cut(value, "\n")
@@ -279,7 +296,8 @@ func comparisonLabels(value, sep string) []string {
 func descriptionTagLabel(opening *bbcode.BBOpeningTag) string {
 	label := opening.Value
 	// Unquoted labels may contain spaces; the lexer treats later words as arguments.
-	if _, value, ok := strings.Cut(opening.Raw, "="); ok {
+	name, value, assigned := strings.Cut(strings.TrimPrefix(opening.Raw, "["), "=")
+	if assigned && strings.EqualFold(strings.TrimSpace(name), opening.Name) {
 		value = strings.TrimSpace(value)
 		if !strings.HasPrefix(value, "\"") && !strings.HasPrefix(value, "'") {
 			label = strings.TrimSpace(strings.TrimSuffix(value, "]"))

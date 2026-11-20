@@ -140,6 +140,7 @@ func TestRenderNativeCenteredBareRowsPreserveBoundaries(t *testing.T) {
 	}{
 		{"flat list", strings.Join([]string{a, b, c, d}, ", "), 2},
 		{"one per line", strings.Join([]string{a, b, c, d}, "\n"), 2},
+		{"one per line with comma delimiters", strings.Join([]string{a, b, c, d}, ",\n"), 2},
 		{"complete rows", a + " " + b + "\n" + c + " " + d, 2},
 		{"mixed rows", a + " " + b + "\n" + c + "\n" + d, 0},
 	} {
@@ -147,6 +148,31 @@ func TestRenderNativeCenteredBareRowsPreserveBoundaries(t *testing.T) {
 			got := description.Render("[comparison=A,B][center]" + tc.body + "[/center][/comparison]")
 			if count := strings.Count(got, `class="comparison__row"`); count != tc.rows {
 				t.Fatalf("comparison rows = %d, want %d: %s", count, tc.rows, got)
+			}
+			if tc.rows != 0 {
+				for _, url := range []string{a, b, c, d} {
+					if !strings.Contains(got, `href="`+url+`"`) || !strings.Contains(got, `src="`+url+`"`) {
+						t.Fatalf("comparison did not preserve %q as an image URL: %s", url, got)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRenderComparisonOuterLabelsPreventWrongSourceAssignments(t *testing.T) {
+	const img = "[img]https://images.example.invalid/frame.png[/img]"
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"conflicting centered source order", "[comparison=A,B][center]B | A\n" + img + img + "[/center][/comparison]"},
+		{"named spoiler argument is not its label", "[spoiler note=A vs B]" + img + img + "[/spoiler]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := description.Render(tc.raw)
+			if strings.Contains(rendered, `class="comparison"`) || strings.Count(rendered, "<img ") != 2 {
+				t.Fatalf("must keep ordinary images instead of inventing source assignments: %s", rendered)
 			}
 		})
 	}
