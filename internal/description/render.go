@@ -5,6 +5,7 @@ package description
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	xhtml "golang.org/x/net/html"
@@ -33,8 +34,8 @@ func Render(raw string) string {
 	return sanitizeHTML(renderBBCode(trimmed))
 }
 
-// RenderWithImagePreviews substitutes known hosted thumbnails only in rendered
-// image sources. The raw description and full-size link targets remain intact.
+// RenderWithImagePreviews substitutes known hosted thumbnails for images outside
+// the comparison view. The raw description and link targets remain intact.
 func RenderWithImagePreviews(raw string, previews map[string]string) string {
 	rendered := Render(raw)
 	if rendered == "" || len(previews) == 0 {
@@ -48,6 +49,11 @@ func RenderWithImagePreviews(raw string, previews map[string]string) string {
 	var visit func(*xhtml.Node)
 	visit = func(node *xhtml.Node) {
 		if node.Type == xhtml.ElementNode && node.Data == "img" {
+			for _, attr := range node.Attr {
+				if attr.Key == "class" && slices.Contains(strings.Fields(attr.Val), "comparison__image") {
+					return
+				}
+			}
 			for idx := range node.Attr {
 				attr := &node.Attr[idx]
 				if attr.Key != "src" {

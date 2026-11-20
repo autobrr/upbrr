@@ -267,6 +267,11 @@ function AppShell() {
         <WorkflowRequiredActions
           continuation={releaseSession.workflow.view.current?.continuation}
           onScreenshotsPage={activeTab === "screenshots"}
+          deferredMediaActions={
+            activeTab === "dupes"
+              ? releaseSession.workflow.view.current?.media?.requiredActions
+              : undefined
+          }
           onConfirm={(action, confirmed) =>
             void releaseSession.workflow.confirmAction(action, confirmed)
           }

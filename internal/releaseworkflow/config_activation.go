@@ -67,6 +67,7 @@ func ApplyConfigImpact(record api.ReleaseWorkflowStateRecord, impact api.ConfigI
 	default:
 		return api.ReleaseWorkflowStateRecord{}, errors.New("release workflow: unknown config impact")
 	}
+	removeOrphanedMediaPreparationActions(&state)
 	state.Workflow.Revision++
 	state.Workflow.UpdatedAt = nextConfigActivationTime(state.Workflow.UpdatedAt)
 	if err := state.Workflow.Validate(); err != nil {

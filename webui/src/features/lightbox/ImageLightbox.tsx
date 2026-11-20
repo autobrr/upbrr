@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { normalizeExternalHTTPURL } from "../../utils/externalLinks";
 
 /** Keeps shared preview state and a stable dismissal callback across route changes. */
 export function useImageLightbox() {
@@ -23,6 +24,7 @@ export function ImageLightbox({
 }: Readonly<{ image: string; alt: string; onClose: () => void }>) {
   const opener = useRef<HTMLElement | null>(null);
   const [failed, setFailed] = useState(false);
+  const failedImageLink = failed ? normalizeExternalHTTPURL(image) : null;
   useEffect(() => {
     if (!image) return;
     window.addEventListener("popstate", onClose);
@@ -33,6 +35,7 @@ export function ImageLightbox({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[9999] bg-black/70" />
         <Dialog.Content
+          data-image-lightbox
           className="fixed top-2 left-2 z-[10000] flex h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] flex-col gap-2 overflow-hidden rounded-[18px] border border-foreground/10 bg-card/90 p-2"
           onOpenAutoFocus={() => {
             opener.current =
@@ -55,7 +58,14 @@ export function ImageLightbox({
             tabIndex={0}
           >
             {failed ? (
-              <p role="status">Image could not be loaded.</p>
+              <>
+                <p role="status">Image could not be loaded.</p>
+                {failedImageLink && (
+                  <a className="underline" href={failedImageLink} target="_blank" rel="noreferrer">
+                    Open original link
+                  </a>
+                )}
+              </>
             ) : (
               <img
                 className="mx-auto h-auto max-w-none"
