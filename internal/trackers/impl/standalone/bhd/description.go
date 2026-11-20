@@ -9,14 +9,13 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers.DescriptionAssets) string {
+func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets) string {
 	base := strings.TrimSpace(assets.Description)
 	if assets.Final {
 		return base
@@ -44,7 +43,7 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 	}
 
 	parts := make([]string, 0, 5)
-	if discSection := buildDiscSection(meta, cfg.MainSettings.DBPath); discSection != "" {
+	if discSection := buildDiscSection(meta); discSection != "" {
 		parts = append(parts, discSection)
 	}
 	if descriptionBody != "" {
@@ -63,7 +62,7 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
-func buildDiscSection(meta api.UploadSubject, dbPath string) string {
+func buildDiscSection(meta api.UploadSubject) string {
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "DVD":
 		media := metautil.FirstNonEmptyTrimmed(trackers.ReadDVDVOBMediaInfo(meta), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
@@ -72,11 +71,27 @@ func buildDiscSection(meta api.UploadSubject, dbPath string) string {
 		}
 		return fmt.Sprintf("[spoiler=VOB MediaInfo][code]%s[/code][/spoiler]", media)
 	case "BDMV":
-		text, _ := trackers.ReadBDInfo(dbPath, meta)
-		if text == "" {
+		// The primary report goes in the dedicated technical attachment.
+		// Retain other reports by identity, even if their text is identical.
+		var reports []string
+		for _, disc := range meta.Disc.Items {
+			for _, report := range disc.Reports {
+				if disc.ID == meta.Disc.PrimaryDiscID && report.Playlist.ID == meta.Disc.PrimaryReportID {
+					continue
+				}
+				if summary := strings.TrimSpace(report.Summary); summary != "" {
+					heading := safeDiscLabel(disc.Name)
+					if file := safeDiscLabel(report.Playlist.File); file != "" {
+						heading = strings.TrimSpace(heading + " — " + file)
+					}
+					reports = append(reports, strings.TrimSpace(heading+"\n"+summary))
+				}
+			}
+		}
+		if len(reports) == 0 {
 			return ""
 		}
-		return fmt.Sprintf("[spoiler=BDINFO][code]%s[/code][/spoiler]", text)
+		return fmt.Sprintf("[spoiler=BDINFO][code]%s[/code][/spoiler]", strings.Join(reports, "\n\n"))
 	default:
 		return ""
 	}

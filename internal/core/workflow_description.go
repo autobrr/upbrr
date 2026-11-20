@@ -20,7 +20,7 @@ import (
 )
 
 // workflowDescriptionRendererVersion invalidates generated output when composition changes.
-const workflowDescriptionRendererVersion = "description-renderer-v7-comparison-urls"
+const workflowDescriptionRendererVersion = "description-renderer-v8-bhd-primary-bdinfo"
 
 type workflowDescriptionSubjectResolver interface {
 	ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)

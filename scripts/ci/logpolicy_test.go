@@ -65,7 +65,7 @@ func TestLoggingReportTrustBoundary(t *testing.T) {
 	if got, ok := trigger["workflows"].([]any); !ok || len(got) != 1 || got[0] != "logpolicy" {
 		t.Fatal("reporter must follow the policy workflow only")
 	}
-	if reporter.Jobs["analyze"].Permissions["issues"] != "" || reporter.Jobs["publish"].Permissions["issues"] != "write" ||
+	if reporter.Jobs["analyze"].Permissions["issues"] != "" || reporter.Jobs["publish"].Permissions["pull-requests"] != "write" ||
 		reporter.Jobs["publish"].Needs != "analyze" {
 		t.Fatal("only the separate publisher may write comments")
 	}
@@ -73,9 +73,9 @@ func TestLoggingReportTrustBoundary(t *testing.T) {
 	if writer.Concurrency.Group != "logpolicy-comment-${{ github.repository }}" || writer.Concurrency.CancelInProgress || writer.Concurrency.Queue != "max" {
 		t.Fatal("comment writes must serialize without interrupting an in-flight writer")
 	}
-	for _, job := range reporter.Jobs {
+	for name, job := range reporter.Jobs {
 		for permission, value := range job.Permissions {
-			if value != "read" && (permission != "issues" || value != "write") {
+			if value != "read" && (name != "publish" || permission != "pull-requests" || value != "write") {
 				t.Fatal("unexpected reporter write permission")
 			}
 		}
