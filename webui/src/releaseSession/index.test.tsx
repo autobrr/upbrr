@@ -40,6 +40,7 @@ import BlurayCandidatesPage from "../pages/bluray_candidates";
 import type { ReleaseSessionPorts } from "./ports";
 import { setAppRequestHandlerForTests } from "../api/client";
 import { productionReleaseSessionPorts } from "./production";
+import { workflowDescriptionScreenshotLimit } from "./projections";
 
 afterEach(() => window.sessionStorage.removeItem("upbrr.cancellingReleaseOperation"));
 
@@ -5957,6 +5958,54 @@ describe("useReleaseSession", () => {
       expect(await result.current.uploadedImages.upload()).toBe(true);
     });
     expect(uploadImages).toHaveBeenCalledOnce();
+    const hosted = result.current.workflow.view.current!;
+    expect(
+      workflowDescriptionScreenshotLimit({
+        ...hosted,
+        media: {
+          ...hosted.media!,
+          artifacts: [
+            ...hosted.media!.artifacts,
+            {
+              id: "main-image",
+              kind: "comparison",
+              purpose: "comparison",
+              selected: true,
+              order: 4,
+            },
+            {
+              id: "other-image",
+              kind: "comparison",
+              purpose: "comparison",
+              selected: true,
+              order: 5,
+            },
+          ],
+          comparisons: {
+            imported: true,
+            fingerprint: "7".repeat(64),
+            approvedFingerprint: "7".repeat(64),
+            mainSourceId: "main",
+            reuseMainScreenshots: true,
+            preferences: { count: 1, motionPercent: 0, darkPercent: 0 },
+            sources: [
+              { id: "main", label: "Main", imported: true, overlay: false },
+              { id: "other", label: "Other", imported: true, overlay: false },
+            ],
+            rows: [
+              {
+                id: "row",
+                excluded: false,
+                cells: [
+                  { sourceId: "main", artifactId: "main-image" },
+                  { sourceId: "other", artifactId: "other-image" },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    ).toBe(0);
     await act(() => result.current.descriptions.load());
     await act(() => result.current.upload.start());
 

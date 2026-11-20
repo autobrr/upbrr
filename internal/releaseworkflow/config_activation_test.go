@@ -6,6 +6,7 @@ package releaseworkflow
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -263,6 +264,19 @@ func TestApplyConfigImpactImageHostingWithdrawsCurrentMedia(t *testing.T) {
 	selection := api.TrackerSelectionRef{ID: "selection", Revision: 1}
 	projections := api.TrackerReleaseProjectionSetRef{ID: "projections", Revision: 1}
 	media := api.MediaArtifactSetRef{ID: "media", Revision: 1}
+	action := func(id api.RequiredActionID, kind api.RequiredActionKind) api.RequiredAction {
+		return api.RequiredAction{
+			ID:               id,
+			Kind:             kind,
+			Status:           api.RequiredActionStatusPending,
+			WorkflowRevision: 4,
+			CreatedAt:        now,
+		}
+	}
+	images := action("media-input", api.RequiredActionProvideTrackerInput)
+	review := action("comparison-review", api.RequiredActionReviewComparisons)
+	reconcile := action("media-reconciliation", api.RequiredActionReconcileSubmission)
+	tracker := action("tracker-input", api.RequiredActionProvideTrackerInput)
 	state := State{
 		OwnerID: "owner",
 		Workflow: api.ReleaseWorkflow{
@@ -275,11 +289,18 @@ func TestApplyConfigImpactImageHostingWithdrawsCurrentMedia(t *testing.T) {
 			Selection:          &selection,
 			TrackerProjections: &projections,
 			Media:              &media,
-			Status:             api.WorkflowStatusActive,
+			Status:             api.WorkflowStatusBlocked,
+			RequiredActions:    []api.RequiredAction{images, review, reconcile, tracker},
 			CreatedAt:          now,
 			UpdatedAt:          now,
 		},
-		Media: map[api.MediaArtifactSetID]api.MediaArtifactSet{"media": {ID: "media", Revision: 1}},
+		Media: map[api.MediaArtifactSetID]api.MediaArtifactSet{
+			"media": {
+				ID:              "media",
+				Revision:        1,
+				RequiredActions: []api.RequiredAction{images, review, reconcile},
+			},
+		},
 	}
 	record, err := workflowStateRecord("owner", state)
 	if err != nil {
@@ -295,5 +316,10 @@ func TestApplyConfigImpactImageHostingWithdrawsCurrentMedia(t *testing.T) {
 	}
 	if result.Workflow.Media != nil || result.Media["media"].ID != "media" {
 		t.Fatalf("host impact media authority = %#v; retained media = %#v", result.Workflow.Media, result.Media)
+	}
+	if !slices.EqualFunc(result.Workflow.RequiredActions, []api.RequiredAction{reconcile, tracker}, func(a, b api.RequiredAction) bool {
+		return a.ID == b.ID
+	}) || result.Workflow.Status != api.WorkflowStatusBlocked {
+		t.Fatalf("host impact did not retire only obsolete media actions: %#v", result.Workflow.RequiredActions)
 	}
 }

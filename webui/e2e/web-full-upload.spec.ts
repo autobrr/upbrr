@@ -397,6 +397,50 @@ test("embedded comparison imports retain complete rows and require review before
         .filter((artifact) => artifact.kind === "screenshot")
         .map((artifact) => artifact.id),
     ).toEqual(normalIDs);
+
+    const publishedLinks = (media: typeof retained) =>
+      media.artifacts
+        .filter((artifact) => artifact.kind === "hosted_image" && artifact.selected)
+        .map((artifact) => artifact.url)
+        .toSorted();
+    const urls = publishedLinks(retained);
+    expect(urls).toHaveLength(cellIDs.length + normalIDs.length);
+    const imageUploads = workspace.fake.counters.imageUploads;
+    await page.getByRole("button", { name: "Unselect Screenshot 1", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Select Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    const continueRoute = "**/api/app/ContinueReleaseWorkflow";
+    await page.route(continueRoute, async (route) => {
+      const body = route.request().postDataJSON() as ContinueReleaseWorkflowRequest;
+      if (body.goal === "duplicates_decided") {
+        await route.continue({
+          postData: { ...body, intent: { ...body.intent, duplicateCheckCount: 2 } },
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
+    const rechecked = await runDuplicateCheck(page);
+    expect(rechecked.dupes?.checkOrdinal).toBe(2);
+    await page.unroute(continueRoute);
+    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
+    await expect
+      .poll(async () => (await snapshot()).current?.media?.comparisons?.approvedFingerprint)
+      .toBe(retained.comparisons!.fingerprint);
+    const restored = (await snapshot()).current!.media!;
+    expect(
+      restored.artifacts
+        .filter((artifact) => artifact.kind === "screenshot")
+        .map(({ id, selected }) => ({ id, selected })),
+    ).toEqual(normalIDs.map((id) => ({ id, selected: false })));
+    expect(publishedLinks(restored)).toEqual(urls);
+    await page.getByRole("button", { name: "Select Screenshot 1", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Unselect Screenshot 1", exact: true }),
+    ).toBeEnabled();
+    expect(workspace.fake.counters.imageUploads).toBe(imageUploads);
   } finally {
     await app.stop();
     await workspace.cleanup();

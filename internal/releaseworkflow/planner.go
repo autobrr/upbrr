@@ -599,8 +599,9 @@ func (m *Module) resolveContinuationAnswer(
 		if action.Status != api.RequiredActionStatusPending {
 			continue
 		}
-		if action.Kind == api.RequiredActionReviewComparisons && workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalDuplicatesDecided) {
-			// Image review gates hosting, not refresh of earlier tracker evidence.
+		if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalDuplicatesDecided) &&
+			(action.Kind == api.RequiredActionReviewComparisons || isMediaPreparationAction(current.Media, action)) {
+			// Earlier stages can refresh their evidence while media still needs work.
 			continue
 		}
 		if action.Kind == api.RequiredActionReviewDuplicates && duplicateSearchModeChanged(current.Dupes, request.Intent.SkipRemoteDuplicates) {
@@ -700,10 +701,8 @@ func continuationIntentResolvesAction(intent api.WorkflowIntent, current Command
 		if len(intent.TrackerInputAnswers[action.TrackerID]) > 0 {
 			return true
 		}
-		if action.TrackerID == "" && intent.Media != nil && current.Media != nil {
-			return slices.ContainsFunc(current.Media.RequiredActions, func(mediaAction api.RequiredAction) bool {
-				return mediaAction.ID == action.ID
-			})
+		if intent.Media != nil && isMediaPreparationAction(current.Media, action) {
+			return true
 		}
 		_, ok := intent.ProjectionInstructions[action.TrackerID]
 		return ok

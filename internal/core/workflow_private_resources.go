@@ -107,6 +107,7 @@ type persistedWorkflowMediaArtifacts struct {
 	ComparisonAnalysisExecutable string                                           `json:"comparisonAnalysisExecutable,omitempty"`
 	ComparisonInventory          *comparisonSceneInventory                        `json:"comparisonInventory,omitempty"`
 	HostedAccountScopes          map[api.PublicResourceID]string                  `json:"hostedAccountScopes,omitempty"`
+	ImageHostingScope            string                                           `json:"imageHostingScope,omitempty"`
 	ComparisonSources            map[string]workflowComparisonSource              `json:"comparisonSources,omitempty"`
 	ComparisonCaptions           map[api.PublicResourceID]int                     `json:"comparisonCaptions,omitempty"`
 	ComparisonRenderSettings     map[api.PublicResourceID]api.WorkflowFingerprint `json:"comparisonRenderSettings,omitempty"`
@@ -150,6 +151,7 @@ func (a workflowMediaPrivateArtifacts) MarshalPrivateResource() (string, []byte,
 	}
 	payload, err := json.Marshal(persistedWorkflowMediaArtifacts{
 		HostedAccountScopes:          accountScopes,
+		ImageHostingScope:            a.imageHostingScope,
 		ComparisonSources:            a.ComparisonSources,
 		ComparisonCaptions:           a.ComparisonCaptions,
 		ComparisonInventory:          cloneComparisonInventory(a.ComparisonInventory),
@@ -228,6 +230,7 @@ func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload [
 		ArtifactImages:               cloneScreenshotImageMap(persisted.ArtifactImages),
 		HostedImages:                 cloneUploadedImageMap(persisted.HostedImages),
 		HostedSources:                cloneHostedSourceMap(persisted.HostedSources),
+		imageHostingScope:            persisted.ImageHostingScope,
 		screenshotService:            builder.screenshots,
 		screenshotSubject:            persisted.ScreenshotSubject,
 		dvdMenuService:               builder.dvdMenus,

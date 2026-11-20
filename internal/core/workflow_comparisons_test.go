@@ -122,6 +122,120 @@ func TestComparisonApprovalBindsRetainedPixelsAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestComparisonRestoreKeepsCompatiblePublishedLinkWithoutLocalScreenshot(t *testing.T) {
+	t.Parallel()
+
+	media, retained := testComparisonDescriptionMedia(t, false)
+	media.WorkflowID = "workflow"
+	media.Release = api.ReleaseSnapshotRef{ID: "release", Revision: 1}
+	media.ReleaseRef = api.ReleaseRef{SourcePath: filepath.Join(t.TempDir(), "Example.Movie.mkv"), Generation: 1}
+	media.AutomaticScreenshotSelection = true
+	media.FailedHosts = []string{"imgbox"}
+	projections := api.TrackerReleaseProjectionSet{WorkflowID: media.WorkflowID, Release: media.Release}
+	b := workflowMediaBuilder{media: &mediaModule{}}
+	scope, err := workflowMediaHostAccountScope(b.config, "pixhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "hosted-ordinary"
+	const source = "missing-ordinary"
+	const url = "https://images.invalid/screenshot.png"
+	media.Artifacts = append(media.Artifacts, api.MediaArtifact{
+		ID:                id,
+		Kind:              api.MediaArtifactHostedImage,
+		Purpose:           api.ScreenshotPurposeFinal,
+		Selected:          true,
+		Source:            source,
+		SourceUnavailable: true,
+		Host:              "pixhost",
+		URL:               url,
+	})
+	retained.HostedSources[id] = source
+	retained.HostedImages[id] = api.UploadedImageLink{
+		Host:         "pixhost",
+		AccountScope: scope,
+		ImgURL:       url,
+	}
+	retained.imageHostingScope, err = workflowMediaHostAccountScope(b.config, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, payload, err := retained.MarshalPrivateResource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, err = decodeWorkflowMediaPrivateArtifacts(b, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, value, err := b.RestoreComparisons(t.Context(), media.ReleaseRef, projections, media, retained, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := slices.IndexFunc(restored.Artifacts, func(artifact api.MediaArtifact) bool { return artifact.ID == id })
+	restoredPrivate, ok := value.(workflowMediaPrivateArtifacts)
+	if !ok || index < 0 || restored.Artifacts[index].URL != url || !restored.Artifacts[index].SourceUnavailable ||
+		restored.ImageRequirementsPrepared || !restored.AutomaticScreenshotSelection || restoredPrivate.HostedSources[id] != source {
+		t.Fatalf("restoration lost the published URL or treated it as a local screenshot: %#v", restored.Artifacts)
+	}
+	if !slices.Equal(restored.FailedHosts, media.FailedHosts) {
+		t.Fatalf("restoration made a failed host eligible for automatic retry: %#v", restored.FailedHosts)
+	}
+
+	binding := api.PreparedMediaBinding{
+		SourcePath:               media.ReleaseRef.SourcePath,
+		PreparedMediaFingerprint: "prepared-media",
+		PreparedGeneration:       media.ReleaseRef.Generation,
+		CompatibilityKey:         api.MediaCompatibilityKey(workflowMediaTestSHA256("verified source")),
+	}
+	missing := api.ScreenshotImage{
+		Path:    filepath.Join(t.TempDir(), "missing.png"),
+		Purpose: api.ScreenshotPurposeFinal,
+	}
+	fingerprint, err := workflowMediaReuseCaptureFingerprint(b.config, binding.CompatibilityKey, api.MediaArtifactScreenshot, missing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := retained.HostedImages[id]
+	link.ImagePath = missing.Path
+	retained.HostedImages[id] = link
+	retained.ArtifactImages[source] = missing
+	// The prior URL was selected even though the local screenshot was not.
+	media.Artifacts[len(media.Artifacts)-1].SourceUnavailable = false
+	media.Artifacts = append(media.Artifacts, api.MediaArtifact{
+		ID:      source,
+		Kind:    api.MediaArtifactScreenshot,
+		Purpose: api.ScreenshotPurposeFinal,
+	})
+	repo := &reusableWorkflowMediaRepository{assets: []api.ReusableMediaAsset{{
+		Binding:            binding,
+		CompatibilityKey:   binding.CompatibilityKey,
+		CaptureFingerprint: fingerprint,
+		ContentSHA256:      workflowMediaTestSHA256("missing screenshot bytes"),
+		Kind:               api.MediaArtifactScreenshot,
+		Image:              missing,
+		HostedLinks:        []api.UploadedImageLink{link},
+	}}}
+	b.resolver = workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{MediaBinding: binding}}
+	b.media.repo = repo
+	b.media.mediaReuse = repo
+	restored, _, err = b.RestoreComparisons(t.Context(), media.ReleaseRef, projections, media, retained, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	index = slices.IndexFunc(restored.Artifacts, func(artifact api.MediaArtifact) bool { return artifact.ID == id })
+	if index < 0 || !restored.Artifacts[index].Selected || !restored.Artifacts[index].SourceUnavailable ||
+		restored.Artifacts[index].URL != url || countMediaArtifacts(restored.Artifacts, api.MediaArtifactScreenshot) != 0 {
+		t.Fatalf("newly missing screenshot lost or promoted its published URL: %#v", restored.Artifacts)
+	}
+	b.config.ImageHosting.Host1 = "ptpimg"
+	restored, _, err = b.RestoreComparisons(t.Context(), media.ReleaseRef, projections, media, retained, time.Now())
+	if err != nil || len(restored.FailedHosts) != 0 ||
+		slices.ContainsFunc(restored.Artifacts, func(artifact api.MediaArtifact) bool { return artifact.ID == id }) {
+		t.Fatalf("restoration retained a link from a prior host scope: %#v, %v", restored.Artifacts, err)
+	}
+}
+
 func TestComparisonInheritedToneMapChangeRetainsFramesForRecapture(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("native HDR comparison fixture requires ffmpeg")

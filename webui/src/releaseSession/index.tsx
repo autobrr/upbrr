@@ -65,7 +65,7 @@ import {
   preparationWithoutFactCorrections,
   sameNames,
   workflowDescriptionImageHostOverrides,
-  workflowDescriptionScreenshotCount,
+  workflowDescriptionScreenshotLimit,
   workflowFactInstructions,
   workflowPreparationIntent,
   workflowPrepareInput,
@@ -2977,7 +2977,7 @@ export function ReleaseSessionProvider({
     questionnaireAnswers: state.questionnaireAnswers,
     options: {
       RunLogLevel: state.uploadOptions.runLogLevel,
-      Screens: workflowDescriptionScreenshotCount(current),
+      Screens: workflowDescriptionScreenshotLimit(current),
       NoSeed: uploadOptions.noSeed,
       AudioAnalysis: false,
       AudioTracks: "primary",
