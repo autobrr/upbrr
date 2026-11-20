@@ -128,28 +128,25 @@ describe("RenderedDescription external links", () => {
   });
 
   it.each([
-    [
-      "https://images.example.invalid/full.png?size=original",
-      "https://images.example.invalid/full.png?size=original",
-    ],
-    [
-      "https://images.example.invalid/gallery/card?name=full.png",
-      "https://images.example.invalid/thumb.png",
-    ],
-  ])("uses a direct comparison link, not a gallery URL or query suffix (%s)", (href, expected) => {
-    const onImageOpen = vi.fn();
-    render(
-      <RenderedDescription
-        html={`<div class="comparison"><a href="${href}"><img class="comparison__image" src="https://images.example.invalid/thumb.png" alt="Source"></a></div>`}
-        onImageOpen={onImageOpen}
-      />,
-    );
-    fireEvent(
-      screen.getByRole("img", { name: "Source" }),
-      new MouseEvent("auxclick", { bubbles: true, cancelable: true }),
-    );
-    expect(onImageOpen).toHaveBeenCalledWith(expected, "Source");
-  });
+    ["comparison__image--linked", "https://images.example.invalid/by-id?id=42"],
+    ["", "https://images.example.invalid/thumb.png"],
+  ])(
+    "accepts extensionless full URLs only for marked comparison images (%s)",
+    (marker, expected) => {
+      const onImageOpen = vi.fn();
+      render(
+        <RenderedDescription
+          html={`<div class="comparison"><a href="https://images.example.invalid/by-id?id=42"><img class="comparison__image ${marker}" src="https://images.example.invalid/thumb.png" alt="Source"></a></div>`}
+          onImageOpen={onImageOpen}
+        />,
+      );
+      fireEvent(
+        screen.getByRole("img", { name: "Source" }),
+        new MouseEvent("auxclick", { bubbles: true, cancelable: true }),
+      );
+      expect(onImageOpen).toHaveBeenCalledWith(expected, "Source");
+    },
+  );
 
   it.each(["/relative.png", "data:image/png;base64,AAAA", "javascript:alert(1)"])(
     "does not grant lightbox authority to an unmapped unsafe image (%s)",
@@ -187,13 +184,20 @@ it("switches every row together, wraps on arrows, and opens the selected full im
     ).flat(),
   );
   const onImageOpen = vi.fn();
-  const { container, unmount } = render(
-    <RenderedDescription
-      html={comparison.repeat(2)}
-      imagePreviews={imagePreviews}
-      onImageOpen={onImageOpen}
-    />,
+  const view = (open: typeof onImageOpen) => (
+    <>
+      <button>Outside comparison</button>
+      <RenderedDescription
+        html={comparison.repeat(2)}
+        imagePreviews={{ ...imagePreviews }}
+        onImageOpen={open}
+      />
+      <div role="dialog" data-image-lightbox>
+        <button>Close image</button>
+      </div>
+    </>
   );
+  const { container, rerender, unmount } = render(view(vi.fn()));
   const [first, second] = container.querySelectorAll("details");
   const summary = within(first).getByText("Show");
   first.open = true;
@@ -207,6 +211,9 @@ it("switches every row together, wraps on arrows, and opens the selected full im
   fireEvent.mouseMove(first.querySelector(".comparison__screenshots")!, {
     clientX: window.innerWidth / 2,
   });
+  expect(visible()).toEqual(labelsFor("Source 2"));
+  rerender(view(onImageOpen));
+  expect(first).toBeInTheDocument();
   expect(visible()).toEqual(labelsFor("Source 2"));
   fireEvent.keyDown(summary, { key: "ArrowRight" });
   expect(visible()).toEqual(labelsFor("Source 3"));
@@ -224,6 +231,13 @@ it("switches every row together, wraps on arrows, and opens the selected full im
   expect(summary).toHaveFocus();
   second.open = true;
   expect(visible(second)).toEqual(labelsFor("Main input"));
+  const secondSummary = second.querySelector("summary")!;
+  secondSummary.focus();
+  screen.getByRole("button", { name: "Close image" }).focus();
+  expect(second.open).toBe(true);
+  secondSummary.focus();
+  screen.getByRole("button", { name: "Outside comparison" }).focus();
+  expect(second.open).toBe(false);
   unmount();
 
   function labelsFor(source: string) {

@@ -34,15 +34,15 @@ func compileComparison(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 func nativeComparisonImages(nodes []*bbcode.BBCodeNode, columns int) []comparisonPreviewImage {
 	// Some native descriptions put a single alignment wrapper around their images.
 	content := slices.DeleteFunc(slices.Clone(nodes), isBlankComparisonText)
-	if len(content) == 1 && content[0].ClosingTag != nil && resolveAlignment(content[0]) == "center" {
+	if len(content) == 1 && isCenteredComparisonWrapper(content[0]) {
 		content = content[0].Children
-		// With tagged images, distinguish explicit complete rows from the
-		// native one-image-per-line form. Do not flatten mixed row sizes.
+		// A text-only wrapper is a flat URL list. With tagged images, preserve
+		// complete rows or one-image-per-line links, but do not mix row sizes.
 		if len(content) != 1 || content[0].ID != bbcode.TEXT {
-			if rows := comparisonRows(content, columns); len(rows) > 0 {
+			if rows := comparisonRows(content, columns, true); len(rows) > 0 {
 				return rows
 			}
-			if images := comparisonRows(content, 1); len(images)%columns == 0 {
+			if images := comparisonRows(content, 1, true); len(images)%columns == 0 {
 				return images
 			}
 			return nil
@@ -53,14 +53,16 @@ func nativeComparisonImages(nodes []*bbcode.BBCodeNode, columns int) []compariso
 	for _, child := range content {
 		switch {
 		case child.ID == bbcode.TEXT:
-			for value := range strings.FieldsSeq(comparisonURLSeparator.ReplaceAllString(child.Value.(string), " ${1}")) {
-				if !absoluteComparisonURL(value) {
-					return nil
-				}
-				images = append(images, comparisonPreviewImage{src: value, full: value})
+			value, ok := child.Value.(string)
+			if !ok {
+				return nil
 			}
-		case child.ClosingTag != nil && resolveAlignment(child) == "center":
-			row := comparisonRows(child.Children, columns)
+			images, ok = appendNativeComparisonURLs(images, value)
+			if !ok {
+				return nil
+			}
+		case isCenteredComparisonWrapper(child):
+			row := comparisonRows(child.Children, columns, true)
 			if len(images)%columns != 0 || len(row) != columns {
 				return nil
 			}
@@ -79,10 +81,26 @@ func nativeComparisonImages(nodes []*bbcode.BBCodeNode, columns int) []compariso
 	return images
 }
 
+func appendNativeComparisonURLs(images []comparisonPreviewImage, text string) ([]comparisonPreviewImage, bool) {
+	for value := range strings.FieldsSeq(comparisonURLSeparator.ReplaceAllString(text, " ${1}")) {
+		if !absoluteComparisonURL(value) {
+			return nil, false
+		}
+		images = append(images, comparisonPreviewImage{src: value, full: value})
+	}
+	return images, true
+}
+
+func isCenteredComparisonWrapper(node *bbcode.BBCodeNode) bool {
+	opening := node.GetOpeningTag()
+	return node.ClosingTag != nil && opening != nil && (opening.Name == "center" || opening.Name == "align") &&
+		resolveAlignment(node) == "center"
+}
+
 // The tracker conversions label sources and delimit each complete row with a
 // newline. Mixed content or incomplete rows are not evidence of a comparison.
 func compileCenteredComparison(node *bbcode.BBCodeNode) *bbcode.HTMLTag {
-	if node.ClosingTag == nil || resolveAlignment(node) != "center" || len(node.Children) == 0 {
+	if !isCenteredComparisonWrapper(node) || len(node.Children) == 0 {
 		return nil
 	}
 	first := node.Children[0]
@@ -95,13 +113,31 @@ func compileCenteredComparison(node *bbcode.BBCodeNode) *bbcode.HTMLTag {
 		return nil
 	}
 	sources := comparisonLabels(header, " | ")
-	if len(sources) < 2 {
+	if len(sources) < 2 || conflictsWithCollapsedComparison(node, sources) {
 		return nil
 	}
-	if images := comparisonRows(node.Children[1:], len(sources)); len(images) > 0 {
+	if images := comparisonRows(node.Children[1:], len(sources), false); len(images) > 0 {
 		return renderComparison(sources, images)
 	}
 	return nil
+}
+
+// A rejected comparison's leading wrapper must not reinterpret conflicting source order.
+func conflictsWithCollapsedComparison(node *bbcode.BBCodeNode, sources []string) bool {
+	if node.Parent == nil {
+		return false
+	}
+	opening := node.Parent.GetOpeningTag()
+	if opening == nil || (opening.Name != "spoiler" && opening.Name != "hide") {
+		return false
+	}
+	for _, child := range node.Parent.Children {
+		if !isBlankComparisonText(child) {
+			labels := comparisonLabels(descriptionTagLabel(opening), " vs ")
+			return child == node && len(labels) >= 2 && !slices.Equal(labels, sources)
+		}
+	}
+	return false
 }
 
 func compileCollapsedComparison(node *bbcode.BBCodeNode) *bbcode.HTMLTag {
@@ -113,41 +149,58 @@ func compileCollapsedComparison(node *bbcode.BBCodeNode) *bbcode.HTMLTag {
 	for len(children) > 0 && isBlankComparisonText(children[0]) {
 		children = children[1:]
 	}
-	if len(children) > 0 && resolveAlignment(children[0]) == "center" {
+	if len(children) > 0 && isCenteredComparisonWrapper(children[0]) {
 		header := children[0]
-		if header.ClosingTag == nil || len(header.Children) != 1 || header.Children[0].ID != bbcode.TEXT ||
+		if len(header.Children) != 1 || header.Children[0].ID != bbcode.TEXT ||
 			!slices.Equal(sources, comparisonLabels(bbcode.CompileText(header), " | ")) {
 			return nil
 		}
 		children = children[1:]
 	}
-	if images := comparisonRows(children, len(sources)); len(images) > 0 {
+	if images := comparisonRows(children, len(sources), false); len(images) > 0 {
 		return renderComparison(sources, images)
 	}
 	return nil
 }
 
-func comparisonRows(nodes []*bbcode.BBCodeNode, columns int) []comparisonPreviewImage {
+func comparisonRows(nodes []*bbcode.BBCodeNode, columns int, nativeURLs bool) []comparisonPreviewImage {
 	var images []comparisonPreviewImage
-	count := 0
+	rowStart := 0
 	for _, node := range nodes {
-		if isBlankComparisonText(node) {
-			if count > 0 && strings.Contains(bbcode.CompileText(node), "\n") {
-				if count != columns {
+		if node.ID == bbcode.TEXT {
+			value, ok := node.Value.(string)
+			if !ok {
+				return nil
+			}
+			for {
+				line, rest, newline := strings.Cut(value, "\n")
+				if strings.TrimSpace(line) != "" {
+					if !nativeURLs {
+						return nil
+					}
+					images, ok = appendNativeComparisonURLs(images, line)
+					if !ok || len(images)-rowStart > columns {
+						return nil
+					}
+				}
+				if !newline {
+					break
+				}
+				if count := len(images) - rowStart; count != 0 && count != columns {
 					return nil
 				}
-				count = 0
+				rowStart = len(images)
+				value = rest
 			}
 			continue
 		}
 		image, ok := comparisonImage(node)
-		if !ok || count == columns {
+		if !ok || len(images)-rowStart == columns {
 			return nil
 		}
 		images = append(images, image)
-		count++
 	}
-	if count > 0 && count != columns {
+	if count := len(images) - rowStart; count != 0 && count != columns {
 		return nil
 	}
 	return images
@@ -159,12 +212,25 @@ func comparisonImage(node *bbcode.BBCodeNode) (comparisonPreviewImage, bool) {
 		return comparisonPreviewImage{}, false
 	}
 	var full string
-	if opening.Name == "url" && len(node.Children) == 1 {
+	if opening.Name == "url" {
 		full = opening.Value
 		if !absoluteComparisonURL(full) {
 			return comparisonPreviewImage{}, false
 		}
-		node = node.Children[0]
+		var image *bbcode.BBCodeNode
+		for _, child := range node.Children {
+			if isBlankComparisonText(child) {
+				continue
+			}
+			if image != nil {
+				return comparisonPreviewImage{}, false
+			}
+			image = child
+		}
+		if image == nil {
+			return comparisonPreviewImage{}, false
+		}
+		node = image
 		opening = node.GetOpeningTag()
 	}
 	if opening == nil || node.ClosingTag == nil || opening.Name != "img" {
@@ -190,7 +256,8 @@ func absoluteComparisonURL(value string) bool {
 }
 
 func isBlankComparisonText(node *bbcode.BBCodeNode) bool {
-	return node.ID == bbcode.TEXT && strings.TrimSpace(node.Value.(string)) == ""
+	value, ok := node.Value.(string)
+	return node.ID == bbcode.TEXT && ok && strings.TrimSpace(value) == ""
 }
 
 func comparisonLabels(value, sep string) []string {
@@ -268,6 +335,9 @@ func renderComparison(sources []string, images []comparisonPreviewImage) *bbcode
 			img := comparisonElement("img", "comparison__image")
 			img.Attrs["src"] = images[i].src
 			img.Attrs["alt"] = sources[colIndex]
+			if images[i].full != images[i].src {
+				img.Attrs["class"] += " comparison__image--linked"
+			}
 			link := bbcode.NewHTMLTag("")
 			link.Name = "a"
 			link.Attrs["href"] = images[i].full

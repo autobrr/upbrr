@@ -33,6 +33,7 @@ export function ImageLightbox({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[9999] bg-black/70" />
         <Dialog.Content
+          data-image-lightbox
           className="fixed top-2 left-2 z-[10000] flex h-[calc(100dvh-1rem)] w-[calc(100%-1rem)] flex-col gap-2 overflow-hidden rounded-[18px] border border-foreground/10 bg-card/90 p-2"
           onOpenAutoFocus={() => {
             opener.current =

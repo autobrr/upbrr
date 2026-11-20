@@ -36,10 +36,12 @@ func TestRenderComparisonPreviewFormats(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			preview := urlPrefix + "thumb"
 			rendered := description.RenderWithImagePreviews(tc.raw, map[string]string{urls[0]: preview})
+			_, target, found := strings.Cut(rendered, `href="`+urls[0]+`">`)
+			imageMarkup, _, _ := strings.Cut(target, "</a>")
 			if strings.Count(rendered, `class="comparison__row"`) != 5 ||
 				strings.Count(rendered, `class="comparison__image"`) != 15 ||
 				!strings.Contains(rendered, `class="comparison__figcaption">`+tc.want+`</figcaption>`) ||
-				!strings.Contains(rendered, `href="`+urls[0]+`"`) || !strings.Contains(rendered, `src="`+preview+`"`) {
+				!found || !strings.Contains(imageMarkup, `src="`+preview+`"`) {
 				t.Fatalf("expected five rows, three labelled alternatives and paired preview/full URLs: %s", rendered)
 			}
 			last := -1
@@ -59,6 +61,8 @@ func TestRenderComparisonPreviewKeepsIncompleteAndUnrelatedContent(t *testing.T)
 	for _, raw := range []string{
 		"[center]" + image + image + "[/center]",
 		"[spoiler=A vs B][center]A | Other[/center]\n" + image + image + "[/spoiler]",
+		"[spoiler=A vs B][center]B | A\n" + image + image + "[/center][/spoiler]",
+		"[comparison=A,B][url=https://images.example.invalid/album align=center]" + image + image + "[/url][/comparison]",
 		"[center]A | B\n" + image + "\n" + image + image + "[/center]",
 		"[comparison=A,,B]" + image + image + "[/comparison]",
 		"[comparison=A,B][center]" + image + "\n" + image + image + image + "[/center][/comparison]",
@@ -89,6 +93,7 @@ func TestRenderNativeComparisonSupportsPTPCenteredRows(t *testing.T) {
 	for _, body := range []string{
 		"[center]" + first + "\n" + second + "\n" + first + "\n" + second + "[/center]",
 		"[center]" + row + "[/center]\n[align=center]" + row + "[/align]",
+		"[center]" + base + "first.png\n" + second + "\n" + base + "first.png\n" + second + "[/center]",
 	} {
 		rendered := description.Render("[comparison=Source, Encode]\n" + body + "\n[/comparison]")
 		if strings.Count(rendered, `class="comparison__row"`) != 2 ||
@@ -96,5 +101,16 @@ func TestRenderNativeComparisonSupportsPTPCenteredRows(t *testing.T) {
 			strings.Count(rendered, `src="`+base+`thumb.png"`) != 2 {
 			t.Fatalf("centered native rows lost comparison mappings: %s", rendered)
 		}
+	}
+}
+
+func TestRenderComparisonKeepsExplicitFullImageLink(t *testing.T) {
+	const host = "https://images.example.invalid/"
+	raw := "[comparison=Main, Encode][url=" + host + "by-id?image=42]\n[img]" + host + "thumb.png[/img]\n[/url]" +
+		"[img]" + host + "encode.png[/img][/comparison]"
+	rendered := description.Render(raw)
+	if !strings.Contains(rendered, `href="`+host+`by-id?image=42"`) ||
+		!strings.Contains(rendered, `class="comparison__image comparison__image--linked"`) {
+		t.Fatalf("comparison lost its explicit image link: %s", rendered)
 	}
 }

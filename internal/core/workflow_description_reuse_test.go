@@ -597,6 +597,7 @@ func TestWorkflowDescriptionReuseRefreshesLegacyRendererAndKeepsFinalEdits(t *te
 		"description-renderer-v6-bhd-primary-bdinfo",
 		"description-renderer-v7-comparison-urls",
 		"description-renderer-v8-bhd-primary-bdinfo",
+		"description-renderer-v9-comparison-previews",
 	} {
 		for _, mode := range []string{"generated", "mixed", "final"} {
 			t.Run(renderer+"/"+mode, func(t *testing.T) {

@@ -4097,7 +4097,7 @@ test("embedded rendered descriptions open HDR images and switch comparison sourc
         body: `<svg xmlns="http://www.w3.org/2000/svg" width="${wide ? 600 : 400}" height="180"><rect width="100%" height="100%" fill="#5975a9"/></svg>`,
       });
     });
-    await page.setViewportSize({ width: 1000, height: 900 });
+    await page.setViewportSize({ width: 1000, height: 600 });
     const sources = ["Main input", "Source 2", "Source 3"];
     const images = Array.from({ length: 5 }, (_, row) =>
       sources.map((_, source) => `https://images.example.invalid/comp/${row}-${source}.png`),
@@ -4141,6 +4141,13 @@ test("embedded rendered descriptions open HDR images and switch comparison sourc
     await expect(activeImages("Main input")).toHaveCount(5);
     await close.press("ArrowLeft");
     await expect(activeImages("Source 3")).toHaveCount(5);
+    const screenshots = comparison.locator(".comparison__screenshots");
+    await screenshots.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(activeImages("Source 3").first()).not.toBeInViewport();
+    await expect(comparison.locator("figcaption:visible")).toBeInViewport();
+    await expect(comparison.locator("figcaption:visible")).toHaveText("Source 3");
     await close.press("Escape");
     await expect(comparison.getByText("Show", { exact: true })).toBeFocused();
     await expect(rawEditor).toHaveValue(raw);

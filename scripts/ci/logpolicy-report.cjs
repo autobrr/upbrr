@@ -113,9 +113,6 @@ function analyze(targets, binary, repository, temporary) {
 function bodyFor(report) {
   const identity = `<!-- logpolicy-run:${report.runId}:${report.attempt}:${report.base}:${report.head} -->`;
   const header = `${marker}\n${identity}\n### Added logging statements\n\nAnalyzed commit: \`${report.head}\` (base \`${report.base}\`).\n\n`;
-  if (report.status !== 'ok') {
-    return header + '**Analysis unavailable. No counts were produced.** Check the logging report workflow. Logging-policy validation has its own unchanged check.';
-  }
   const rows = levels.map(level => `| ${level} | ${report.counts[level]} |`).join('\n');
   const total = levels.reduce((sum, level) => sum + report.counts[level], 0);
   return header + `Go logging source statements on the added side of the full PR diff; not runtime log volume. Edits count once per affected call, removals do not subtract, and comments or strings alone do not count. Editing a trailing comment re-adds its code line, so an actual logging call on that line counts.\n\n| Level | Added |\n| --- | ---: |\n${rows}\n| **Total** | **${total}** |\n\nLogging-policy validation is reported separately.`;
@@ -146,8 +143,12 @@ async function publish(github, context, reports) {
     validateReport(report);
     assert(report.runId === run.id && report.head === run.head_sha && report.attempt === context.payload.workflow_run.run_attempt,
       'Report is not bound to the triggering run');
+    // Analysis failures remain visible in CI and are never reported as zero.
+    if (report.status !== 'ok') continue;
     const comments = await github.paginate(github.rest.issues.listComments, { ...context.repo, issue_number: report.number, per_page: 100 });
     const owned = comments.find(comment => comment.user?.id === botId && comment.user.type === 'Bot' && comment.body?.startsWith(marker + '\n'));
+    // Zero results can clear stale counts, but never start a new comment.
+    if (!owned && !levels.some(level => report.counts[level] > 0)) continue;
     if (owned && newerComment(owned.body, report)) continue;
     // GitHub has no atomic PR-head precondition for comment writes. Serialize
     // writers and check both revisions just before writing, then check again.

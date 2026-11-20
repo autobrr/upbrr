@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { type MouseEvent as ReactMouseEvent, useEffect, useRef } from "react";
+import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef } from "react";
 import { handleExternalLinkClick } from "../utils/externalLinks";
 import "./rendered-description.css";
 
@@ -33,6 +33,7 @@ const handleRenderedDescriptionLinkClick = (event: ReactMouseEvent<HTMLElement>)
 
 /** Displays server-sanitized markup and opens valid HTTP(S) image URLs through the optional lightbox callback. */
 export default function RenderedDescription({ html, imagePreviews, onImageOpen }: Props) {
+  const renderedMarkup = useMemo(() => ({ __html: html }), [html]);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   const handleLinkClick = (event: ReactMouseEvent<HTMLElement>) => {
@@ -72,7 +73,8 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
         const linkedComparisonImage =
           anchor &&
           image.matches(".comparison .comparison__image") &&
-          /^https?:\/\/[^/?#]+\/[^?#]*\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(anchor);
+          (image.classList.contains("comparison__image--linked") ||
+            /^https?:\/\/[^/?#]+\/[^?#]*\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(anchor));
         const full =
           anchor && (imagePreviews?.[anchor] === source || linkedComparisonImage)
             ? anchor
@@ -179,11 +181,25 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
         summary.textContent = details.open ? "Close" : "Show";
       };
 
+      const handleFocusOut = (event: FocusEvent) => {
+        const next = event.relatedTarget;
+        // The portaled image lightbox restores focus to its opener inside this disclosure.
+        if (
+          details.open &&
+          next instanceof Element &&
+          !details.contains(next) &&
+          !next.closest("[data-image-lightbox]")
+        ) {
+          details.open = false;
+        }
+      };
+
       // Native details grouping keeps a single comparison overlay open, even across previews.
       details.name = "rendered-description-comparison";
 
       details.addEventListener("toggle", syncDisclosure);
       details.addEventListener("keydown", handleKeyDown);
+      details.addEventListener("focusout", handleFocusOut);
       screenshots.addEventListener("mousemove", handleMouseMove);
       syncDisclosure();
       applyColumn(1);
@@ -191,6 +207,7 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
       cleanups.push(() => {
         details.removeEventListener("toggle", syncDisclosure);
         details.removeEventListener("keydown", handleKeyDown);
+        details.removeEventListener("focusout", handleFocusOut);
         screenshots.removeEventListener("mousemove", handleMouseMove);
       });
     });
@@ -206,7 +223,7 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
       className="tracker-description rendered whitespace-pre-wrap text-muted-foreground leading-relaxed"
       onAuxClick={handleLinkClick}
       onClick={handleLinkClick}
-      dangerouslySetInnerHTML={{ __html: html }}
+      dangerouslySetInnerHTML={renderedMarkup}
     />
   );
 }
