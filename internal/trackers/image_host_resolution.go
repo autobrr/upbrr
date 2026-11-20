@@ -263,15 +263,6 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	}
 	links, _ := uploadedImagesFromSource(ctx, meta, repo, preloaded)
 	filterNativeSlotVariants(slots, links, appCfg, registry, meta.MediaBinding)
-	nativeSelection := false
-	for _, slot := range slots {
-		for _, variant := range slot.Variants {
-			_, capability := ImageURLImportForScope(registry, variant.Host, variant.UsageScope)
-			if capability != nil && variant.UsageScope == trackerImageUsageScope(tracker) {
-				nativeSelection = true
-			}
-		}
-	}
 	records := meta.TrackerData
 	if preloaded != nil && len(preloaded.trackerRecords) > 0 {
 		records = preloaded.trackerRecords
@@ -346,6 +337,14 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		}
 		selectionPolicy = reusableImageHostSelectionPolicy(policy, preferredHosts...)
 	}
+
+	scope := trackerImageUsageScope(tracker)
+	nativeSelection := slices.ContainsFunc(slots, func(slot api.ScreenshotSlot) bool {
+		return slot.RenderInScreenshots && slices.ContainsFunc(slot.Variants, func(variant api.ScreenshotSlotVariant) bool {
+			_, capability := ImageURLImportForScope(registry, variant.Host, variant.UsageScope)
+			return capability != nil && variant.UsageScope == scope
+		})
+	})
 
 	if screenshots, host, usageScope, err := selectScreenshotsFromSlots(
 		tracker,
@@ -985,8 +984,13 @@ func reusableFallbackImageURLs(urls []string, registry *Registry) []string {
 	if len(nativeHosts) == 0 {
 		return urls
 	}
-	return slices.DeleteFunc(slices.Clone(urls), func(url string) bool {
-		_, native := nativeHosts[imagehost.ExtractHost(imagehost.DirectImageURL(url))]
+	return slices.DeleteFunc(slices.Clone(urls), func(rawURL string) bool {
+		direct := imagehost.DirectImageURL(rawURL)
+		if parsed, err := url.Parse(direct); err == nil && parsed.Port() != "" {
+			parsed.Host = strings.TrimSuffix(parsed.Host, ":"+parsed.Port())
+			direct = parsed.String()
+		}
+		_, native := nativeHosts[imagehost.ExtractHost(direct)]
 		return native
 	})
 }

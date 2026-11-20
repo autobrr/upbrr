@@ -423,7 +423,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
 		}
-		assets, err := resolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, logger, trackerPreloaded)
+		assets, err := resolveDescriptionAssets(ctx, tracker, trackerMeta, s.cfg, s.repo, logger, trackerPreloaded)
 		if err != nil {
 			logger.Warnf("trackers: preparation assets failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, err)

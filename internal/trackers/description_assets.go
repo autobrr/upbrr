@@ -16,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/bbcode/comparison"
+	"github.com/autobrr/upbrr/internal/config"
 	descriptiontext "github.com/autobrr/upbrr/internal/description"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
@@ -175,6 +176,7 @@ func normalizeDescriptionOverrideGroupKey(groupKey string) string {
 // ordered persisted screenshot assets. With no repository or source path it
 // resolves prepared/request description text only; required screenshot-slot
 // failures abort the result while optional description lookups fall back.
+// Without tracker configuration, stored account-bound variants are not eligible.
 func ResolveDescriptionAssets(
 	ctx context.Context,
 	tracker string,
@@ -183,7 +185,7 @@ func ResolveDescriptionAssets(
 	logger api.Logger,
 	registries ...*Registry,
 ) (DescriptionAssets, error) {
-	return resolveDescriptionAssets(ctx, tracker, meta, repo, logger, nil, registries...)
+	return resolveDescriptionAssets(ctx, tracker, meta, config.Config{}, repo, logger, nil, registries...)
 }
 
 // LogDescriptionAssetResolutionFailure records a redacted tracker asset-resolution failure.
@@ -202,6 +204,7 @@ func resolveDescriptionAssets(
 	ctx context.Context,
 	tracker string,
 	meta api.UploadSubject,
+	cfg config.Config,
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
@@ -246,7 +249,7 @@ func resolveDescriptionAssets(
 	}
 
 	description, overridden, final := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded, registry)
-	slots, screenshots, err := resolveDescriptionScreenshots(ctx, tracker, meta, repo, logger, preloaded, registry)
+	slots, screenshots, err := resolveDescriptionScreenshots(ctx, tracker, meta, cfg, repo, logger, preloaded, registry)
 	if err != nil {
 		return DescriptionAssets{}, fmt.Errorf("trackers: resolve required description screenshots: %w", err)
 	}
@@ -912,6 +915,7 @@ func resolveDescriptionScreenshots(
 	ctx context.Context,
 	tracker string,
 	meta api.UploadSubject,
+	cfg config.Config,
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
@@ -930,6 +934,11 @@ func resolveDescriptionScreenshots(
 		records = preloaded.trackerRecords
 	}
 	attachNativeSourceURLsToSlots(slots, records, selectionPolicy)
+	if len(slots) > 0 && registry != nil && (preloaded != nil || repo != nil) {
+		// Without matching upload evidence, ordinary images remain eligible.
+		uploads, _ := uploadedImagesFromSource(ctx, meta, repo, preloaded)
+		filterNativeSlotVariants(slots, uploads, cfg, registry, meta.MediaBinding)
+	}
 	images, _, _, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy)
 	if err != nil {
 		return nil, nil, fmt.Errorf("trackers: resolve screenshot slots for %s: %w", strings.TrimSpace(tracker), err)

@@ -13,7 +13,7 @@ import (
 
 func TestNativeSlotsRequireCurrentAccountRecordAndExactBinding(t *testing.T) {
 	registry := NewRegistry()
-	policy := &ImageHostPolicy{AllowedHosts: []string{"kshare", "pixhost"}, URLImport: &ImageURLImportCapability{
+	policy := &ImageHostPolicy{AllowedHosts: []string{"kshare", "pixhost", "imgbb"}, URLImport: &ImageURLImportCapability{
 		ID:         "gpw-native-v1",
 		Host:       "kshare",
 		UsageScope: "tracker:GPW",
@@ -101,15 +101,13 @@ func TestNativeSlotsRequireCurrentAccountRecordAndExactBinding(t *testing.T) {
 	if NativeImageLinkCurrent(cfg, registry, normalized) {
 		t.Fatal("normalized native scope bypassed account validation")
 	}
-	// A bare old-account URL never substitutes for an exact slot variant.
-	publicURL := "https://pixhost.to/public.png"
-	fallback, host := resolveTrackerScreenshotsForAllowedHost(
-		reusableFallbackImageURLs([]string{link.RawURL, publicURL}, registry),
-		imageHostPolicy{preferred: []string{"kshare", "pixhost"}},
-	)
-	if len(fallback) != 1 || host != "pixhost" || fallback[0].RawURL != publicURL {
-		t.Fatalf("description fallback reused a native URL or lost the ordinary one: %s", host)
-	}
+	t.Run("bare fallback", func(t *testing.T) {
+		publicURL := "https://pixhost.to/public.png"
+		fallback := reusableFallbackImageURLs([]string{link.RawURL, "https://kshare.club:443/image.png", publicURL}, registry)
+		if len(fallback) != 1 || fallback[0] != publicURL {
+			t.Fatalf("expected only the ordinary fallback, got %v", fallback)
+		}
+	})
 	// The description consumes both hosts for a mixed native/local selection.
 	other := filepath.Join(t.TempDir(), "local.png")
 	exact := &api.ExactMediaAssets{
@@ -141,4 +139,42 @@ func TestNativeSlotsRequireCurrentAccountRecordAndExactBinding(t *testing.T) {
 	if err != nil || len(resolved.screenshots) != 2 {
 		t.Fatalf("description could not consume mixed retained results without writes: %v", err)
 	}
+	t.Run("description reader checks the current account", func(t *testing.T) {
+		assets := clonePreloadedDescriptionAssetData(preloaded)
+		publicURL := "https://pixhost.to/replacement.png"
+		assets.screenshotSlots[0].Variants = append(assets.screenshotSlots[0].Variants, api.ScreenshotSlotVariant{
+			ImagePath:  imagePath,
+			Host:       "pixhost",
+			UsageScope: "global",
+			RawURL:     publicURL,
+		})
+
+		rotated := cfg
+		rotated.Trackers.Trackers = map[string]config.TrackerConfig{"GPW": {APIKey: "synthetic-replacement"}}
+		_, images, err := resolveDescriptionScreenshots(t.Context(), "GPW", meta, rotated, nil, api.NopLogger{}, assets, registry)
+		if err != nil || len(images) != 2 || images[0].RawURL != publicURL {
+			t.Fatalf("description did not retain the ordinary replacement: %v, %v", images, err)
+		}
+		_, images, err = resolveDescriptionScreenshots(t.Context(), "GPW", meta, cfg, nil, api.NopLogger{}, assets, registry)
+		if err != nil || len(images) != 2 || images[0].RawURL != link.RawURL {
+			t.Fatalf("reader removed the current native link or mutated reusable slots: %v, %v", images, err)
+		}
+	})
+	t.Run("non-renderable native slot cannot authorize mixed selection", func(t *testing.T) {
+		assets := clonePreloadedDescriptionAssetData(preloaded)
+		assets.screenshotSlots[0].RenderInScreenshots = false
+		assets.screenshotSlots = append(assets.screenshotSlots, api.ScreenshotSlot{
+			SlotOrder:           2,
+			RenderInScreenshots: true,
+			Variants: []api.ScreenshotSlotVariant{{
+				Host:       "imgbb",
+				UsageScope: "global",
+				RawURL:     "https://i.ibb.co/sample/other.png",
+			}},
+		})
+		resolved, err := ensureDescriptionImageHostWithDataAndRegistry(t.Context(), "GPW", meta, cfg, config.TrackerConfig{}, &stubRepo{}, nil, api.NopLogger{}, registry, assets)
+		if err != nil || len(resolved.screenshots) != 0 || resolved.feedback.Status != "warning" {
+			t.Fatalf("non-renderable slot changed the ordinary hosting policy: %v, %v", resolved, err)
+		}
+	})
 }
