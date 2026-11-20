@@ -8,13 +8,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -516,6 +519,80 @@ func TestRankCandidates(t *testing.T) {
 	}
 	if candidates[0].IMDbID != 1 {
 		t.Fatalf("expected IMDbID 1, got %d", candidates[0].IMDbID)
+	}
+	for _, test := range []struct {
+		year, requested int
+		want            float64
+	}{
+		{2020, 2020, 1.2},
+		{2019, 2020, 1.05},
+		{0, 2020, 1},
+		{2020, 0, 1},
+		{0, 0, 1},
+	} {
+		getMapFromMap(getMapFromMap(results[0], "node"), "title")["releaseYear"] = map[string]any{"year": test.year}
+		got := rankCandidates(results[:1], "Example Title", test.requested)
+		if len(got) != 1 || math.Abs(got[0].Similarity-test.want) > 1e-10 {
+			t.Fatalf("candidate year %d requested %d: %+v, want %v", test.year, test.requested, got, test.want)
+		}
+	}
+}
+
+func TestSearchYearRankingPreservesIdentityConfidence(t *testing.T) {
+	for _, test := range []struct {
+		title    string
+		year     int
+		selected bool
+	}{
+		{"Example Story", 2026, false},
+		{"Example Story", 0, false},
+		{"Example Story", 1960, false},
+		{"Example Story", 2025, false},
+		{"Example Movie", 2026, true},
+		{"Example Movie", 2025, true},
+	} {
+		t.Run(test.title+strconv.Itoa(test.year), func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":{"advancedTitleSearch":{"edges":[
+					{"node":{"title":{"id":"tt0555001","titleText":{"text":%q},"releaseYear":{"year":%d},"titleType":{"text":"Movie"}}}},
+					{"node":{"title":{"id":"tt0555002","titleText":{"text":"Example Film"},"releaseYear":{"year":1960},"titleType":{"text":"Movie"}}}}
+				]}}}`, test.title, test.year)
+			}))
+			defer server.Close()
+			client := NewClient(server.Client(), nil)
+			client.baseURL = server.URL
+			result, err := client.Search(t.Context(), SearchInput{
+				Filename:   "Example Movie",
+				Category:   "MOVIE",
+				SearchYear: 2026,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.selected {
+				if result.IMDbID != 555001 || !result.AutoSelected {
+					t.Fatalf("confident result was not selected: %+v", result)
+				}
+				return
+			}
+			if result.IMDbID != 0 || result.AutoSelected || len(result.Candidates) != 2 {
+				t.Fatalf("ranking must not grant identity confidence: %+v", result)
+			}
+			want := metautil.SimilarityRatio("example movie", "example story")
+			if test.year == 2026 {
+				want += 0.2
+				if result.Candidates[0].IMDbID != 555001 {
+					t.Fatal("matching-year candidate did not outrank the closer title")
+				}
+			}
+			for _, candidate := range result.Candidates {
+				if candidate.IMDbID == 555001 && math.Abs(candidate.Similarity-want) > 1e-10 {
+					t.Fatalf("ranking score = %v, want %v", candidate.Similarity, want)
+				}
+			}
+		})
 	}
 }
 
