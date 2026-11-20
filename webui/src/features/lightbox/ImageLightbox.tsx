@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { normalizeExternalHTTPURL } from "../../utils/externalLinks";
 
 /** Keeps shared preview state and a stable dismissal callback across route changes. */
 export function useImageLightbox() {
@@ -23,6 +24,7 @@ export function ImageLightbox({
 }: Readonly<{ image: string; alt: string; onClose: () => void }>) {
   const opener = useRef<HTMLElement | null>(null);
   const [failed, setFailed] = useState(false);
+  const failedImageLink = failed ? normalizeExternalHTTPURL(image) : null;
   useEffect(() => {
     if (!image) return;
     window.addEventListener("popstate", onClose);
@@ -56,7 +58,14 @@ export function ImageLightbox({
             tabIndex={0}
           >
             {failed ? (
-              <p role="status">Image could not be loaded.</p>
+              <>
+                <p role="status">Image could not be loaded.</p>
+                {failedImageLink && (
+                  <a className="underline" href={failedImageLink} target="_blank" rel="noreferrer">
+                    Open original link
+                  </a>
+                )}
+              </>
             ) : (
               <img
                 className="mx-auto h-auto max-w-none"

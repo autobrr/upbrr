@@ -350,8 +350,14 @@ func extractHTMLEntities(value string) (string, []codeBlockPlaceholder) {
 		placeholderPrefix += "_"
 	}
 	entities := make([]codeBlockPlaceholder, 0)
+	tokens := make(map[string]string)
 	normalized := htmlEntityPattern.ReplaceAllStringFunc(value, func(match string) string {
+		// Repeated entities must compare as equal in labels before restoration.
+		if token, ok := tokens[match]; ok {
+			return token
+		}
 		token := placeholderPrefix + strconv.Itoa(len(entities)) + "_END"
+		tokens[match] = token
 		entities = append(entities, codeBlockPlaceholder{token: token, value: match})
 		return token
 	})

@@ -114,3 +114,57 @@ func TestRenderComparisonKeepsExplicitFullImageLink(t *testing.T) {
 		t.Fatalf("comparison lost its explicit image link: %s", rendered)
 	}
 }
+
+func TestRenderNativeComparisonDoesNotSplitQueryURL(t *testing.T) {
+	const full = "https://images.example.invalid/frame?refs=one,https://images.example.invalid/ref.png"
+	const second = "https://images.example.invalid/second.png"
+	render := func(body string) string {
+		return description.Render("[comparison=A,B]" + body + "[/comparison]")
+	}
+	if got := render(full); strings.Contains(got, `class="comparison"`) || !strings.Contains(got, full) {
+		t.Fatalf("one URL must not produce two source images: %s", got)
+	}
+	if got := render(full + ", " + second); strings.Count(got, `class="comparison__image"`) != 2 ||
+		!strings.Contains(got, `href="`+full+`"`) || !strings.Contains(got, `href="`+second+`"`) {
+		t.Fatalf("comparison changed an intact query URL: %s", got)
+	}
+}
+
+func TestRenderNativeCenteredBareRowsPreserveBoundaries(t *testing.T) {
+	const host = "https://images.example.invalid/"
+	a, b, c, d := host+"a.png", host+"b.png", host+"c.png", host+"d.png"
+	for _, tc := range []struct {
+		name string
+		body string
+		rows int
+	}{
+		{"flat list", strings.Join([]string{a, b, c, d}, ", "), 2},
+		{"one per line", strings.Join([]string{a, b, c, d}, "\n"), 2},
+		{"complete rows", a + " " + b + "\n" + c + " " + d, 2},
+		{"mixed rows", a + " " + b + "\n" + c + "\n" + d, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := description.Render("[comparison=A,B][center]" + tc.body + "[/center][/comparison]")
+			if count := strings.Count(got, `class="comparison__row"`); count != tc.rows {
+				t.Fatalf("comparison rows = %d, want %d: %s", count, tc.rows, got)
+			}
+		})
+	}
+}
+
+func TestRenderCollapsedComparisonEntityLabels(t *testing.T) {
+	const source = "[img]https://images.example.invalid/frame.png[/img]"
+	for _, tc := range []struct {
+		header       string
+		isComparison bool
+	}{
+		{"A&amp;Z | B", true},
+		{"B | A&amp;Z", false},
+		{"A&amp;Y | B", false},
+	} {
+		got := description.Render("[spoiler=A&amp;Z vs B][center]" + tc.header + "[/center]\n" + source + source + "[/spoiler]")
+		if strings.Contains(got, `class="comparison"`) != tc.isComparison || !strings.Contains(got, "A&amp;") {
+			t.Fatalf("unexpected comparison for header %q: %s", tc.header, got)
+		}
+	}
+}

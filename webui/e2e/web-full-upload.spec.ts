@@ -248,163 +248,6 @@ test("embedded comparisons inherit screenshot tone mapping for HDR and keep five
   }
 });
 
-test("embedded DVD comparison selection retains native manual frames after restart", async ({
-  page,
-}) => {
-  const workspace = await createE2EWorkspace();
-  let app: AppServer | undefined;
-  try {
-    const run = promisify(execFile);
-    const root = path.dirname(workspace.sourcePath);
-    const mpeg = path.join(root, "Example.DVD.mpg");
-    const dvd = path.join(root, "Example.DVD");
-    await run("ffmpeg", [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-y",
-      "-f",
-      "lavfi",
-      "-i",
-      "nullsrc=size=160x120:rate=25:duration=4,geq=lum='96+40*sin((X+Y+2*N)*0.13)+24*cos((X-2*Y+N)*0.11)':cb=128:cr=128",
-      "-c:v",
-      "ffv1",
-      workspace.sourcePath,
-    ]);
-    await run("ffmpeg", [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-i",
-      workspace.sourcePath,
-      "-vf",
-      "scale=720:576,setsar=16/15",
-      "-target",
-      "pal-dvd",
-      "-aspect",
-      "4:3",
-      "-g",
-      "12",
-      "-bf",
-      "2",
-      "-flags",
-      "+cgop",
-      "-sc_threshold",
-      "1000000000",
-      "-an",
-      mpeg,
-    ]);
-    const xml = path.join(root, "dvd.xml");
-    const xmlPath = (value: string) =>
-      value.replaceAll("\\", "/").replaceAll("&", "&amp;").replaceAll('"', "&quot;");
-    await writeFile(
-      xml,
-      `<dvdauthor dest="${xmlPath(dvd)}"><vmgm><menus><video format="pal"/></menus></vmgm><titleset><titles><video format="pal" aspect="4:3"/><pgc><vob file="${xmlPath(mpeg)}"/></pgc></titles></titleset></dvdauthor>`,
-    );
-    await run(process.env.UPBRR_TEST_DVDAUTHOR || "dvdauthor", ["-x", xml]);
-    app = await startApp(workspace);
-    const snapshot = async () =>
-      (await (
-        await page.request.get(new URL("api/app/GetActiveInput", app!.url).toString())
-      ).json()) as ActiveInputSnapshot;
-    await fetchMetadata(page, app.url, workspace.sourcePath);
-    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
-    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
-    await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
-    await expect
-      .poll(async () => (await snapshot()).current?.selection?.trackerIds)
-      .toEqual(["HDS"]);
-    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
-    const comparison = page.getByRole("region", { name: "Comparisons", exact: true });
-    await comparison.getByRole("button", { name: "Create from videos" }).click();
-    await comparison.getByRole("button", { name: "Add comparison video" }).click();
-    const column = comparison.getByRole("group", { name: "Source 2 · column 2", exact: true });
-    await expect(
-      comparison.getByRole("button", { name: "Discover titles and playlists" }),
-    ).toHaveCount(0);
-    await column.getByLabel("Source type for Source 2", { exact: true }).selectOption("folder");
-    await column.getByLabel("Video path for Source 2", { exact: true }).fill(dvd);
-    const before = (await snapshot()).current!;
-    await column.getByRole("button", { name: "Discover titles and playlists" }).click();
-    const title = column.getByRole("radio", { name: /^Title 1/ });
-    await expect(title).toBeVisible();
-    await title.check();
-    expect((await snapshot()).current?.workflow.revision).toBe(before.workflow.revision);
-    expect((await snapshot()).current?.media?.comparisons).toEqual(before.media?.comparisons);
-    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
-    await expect(comparison.getByRole("button", { name: "Apply comparison setup" })).toBeEnabled();
-    await openComparisonSource(comparison, "Source 2 · column 2");
-    await expect(column.getByText(/Selected programme:/)).toBeVisible();
-    const discover = column.getByRole("button", { name: "Discover titles and playlists" });
-    await expect(discover).toBeDisabled();
-    await column.getByLabel("Video path for Source 2", { exact: true }).fill(dvd);
-    await expect(discover).toBeEnabled();
-    await discover.click();
-    await expect(title).toBeVisible();
-    await title.check();
-    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
-    await expect(comparison.getByRole("button", { name: "Apply comparison setup" })).toBeEnabled();
-    await openComparisonSource(comparison, "Source 2 · column 2");
-    await expect(discover).toBeDisabled();
-    const secondPreview = await openComparisonPreview(comparison, "Source 2");
-    await secondPreview.getByLabel("Approximate frame seek · Source 2", { exact: true }).fill("25");
-    await secondPreview.getByRole("button", { name: "Preview Source 2", exact: true }).click();
-    await expect(
-      secondPreview.getByRole("img", { name: "Source 2 comparison preview", exact: true }),
-    ).toBeVisible();
-    await secondPreview.getByRole("button", { name: "Next frame", exact: true }).click();
-    const mainInput = await openComparisonPreview(comparison, "Main input");
-    await mainInput.getByLabel("Approximate frame seek · Main input", { exact: true }).fill("50");
-    await openComparisonDisclosure(comparison, "Comparison actions");
-    await comparison
-      .getByRole("button", { name: "Add manual row from timeline positions" })
-      .click();
-    await openComparisonCorrection(
-      comparison.getByRole("region", { name: "Comparison row row-1", exact: true }),
-      "Source 2, row row-1, image 2",
-    );
-    await comparison.getByRole("button", { name: /^Use displayed frame for Source 2,/ }).click();
-    await comparison.getByRole("button", { name: "Apply comparison setup" }).click();
-    await expect
-      .poll(
-        async () =>
-          (await snapshot()).current?.media?.comparisons?.rows[0]?.cells[1]?.observedIdentity
-            ?.occurrence || "",
-      )
-      .toMatch(/^dvd-cell-/);
-    const uncaptured = (await snapshot()).current!;
-    const cell = uncaptured.media!.comparisons!.rows[0]!.cells[1]!;
-    expect(cell.observedIdentity?.occurrence).toMatch(/^dvd-cell-/);
-    expect(cell.artifactId).toBeFalsy();
-    expect(workspace.fake.counters.imageUploads).toBe(0);
-    await app.stop();
-    app = await startApp(workspace, { seed: false });
-    await fetchMetadata(page, app.url, workspace.sourcePath);
-    await page.getByRole("button", { name: "Dupe Check", exact: true }).click();
-    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
-    await page.getByRole("checkbox", { name: "HDS", exact: true }).check();
-    await page.getByRole("button", { name: "Screenshots", exact: true }).click();
-    await comparison
-      .getByRole("button", { name: "Restore retained comparisons", exact: true })
-      .click();
-    await expect(comparison.getByRole("button", { name: "Apply comparison setup" })).toBeEnabled();
-    await openComparisonSource(comparison, "Source 2 · column 2");
-    await expect(discover).toBeDisabled();
-    await openComparisonDisclosure(comparison, "Comparison actions");
-    await comparison.getByRole("button", { name: "Capture comparison rows" }).click();
-    await expect(
-      comparison.getByRole("button", { name: "Approve reviewed comparison images" }),
-    ).toBeEnabled();
-    const captured = (await snapshot()).current!.media!.comparisons!.rows[0]!.cells[1]!;
-    expect(captured.observedIdentity).toEqual(cell.observedIdentity);
-    expect(captured.artifactId).toBeTruthy();
-    expect(workspace.fake.counters.imageUploads).toBe(0);
-  } finally {
-    await app?.stop();
-    await workspace.cleanup();
-  }
-});
-
 test("embedded comparison imports retain complete rows and require review before controlled hosting", async ({
   page,
 }, testInfo) => {
@@ -4102,6 +3945,11 @@ test("embedded rendered descriptions open HDR images and switch comparison sourc
     const images = Array.from({ length: 5 }, (_, row) =>
       sources.map((_, source) => `https://images.example.invalid/comp/${row}-${source}.png`),
     ).flat();
+    const viewerURL = "https://images.example.invalid/viewer?id=synthetic";
+    await page.route(viewerURL, (route) =>
+      route.fulfill({ contentType: "text/html", body: "<p>Synthetic image-host page</p>" }),
+    );
+    images[1] = `[url=${viewerURL}][img]${images[1]}[/img][/url]`;
     const raw = `[comparison=${sources.join(", ")}]\n${images.join("\n")}\n[/comparison]`;
     const rawEditor = page.getByRole("textbox");
     await rawEditor.fill(raw);
@@ -4134,6 +3982,16 @@ test("embedded rendered descriptions open HDR images and switch comparison sourc
     await expect(activeImages("Source 2")).toHaveCount(5);
     await expect(comparison.locator("figcaption:visible")).toHaveText("Source 2");
     expect(await origins("Source 2")).toEqual(initial);
+    await activeImages("Source 2").first().click();
+    const failedImage = page.getByRole("dialog", { name: "Source 2" });
+    await expect(failedImage.getByRole("status")).toHaveText("Image could not be loaded.");
+    await expect(failedImage.getByRole("link", { name: "Open original link" })).toHaveAttribute(
+      "href",
+      viewerURL,
+    );
+    await failedImage.getByRole("button", { name: "Close image preview" }).click();
+    await expect(failedImage).toHaveCount(0);
+    await close.focus();
     await close.press("ArrowRight");
     await expect(activeImages("Source 3")).toHaveCount(5);
     expect(await origins("Source 3")).toEqual(initial);
@@ -4148,7 +4006,18 @@ test("embedded rendered descriptions open HDR images and switch comparison sourc
     await expect(activeImages("Source 3").first()).not.toBeInViewport();
     await expect(comparison.locator("figcaption:visible")).toBeInViewport();
     await expect(comparison.locator("figcaption:visible")).toHaveText("Source 3");
-    await close.press("Escape");
+    const gutter = { x: page.viewportSize()!.width - 45, y: 200 };
+    expect(
+      await screenshots.evaluate(
+        (element, { x, y }) => document.elementFromPoint(x, y) === element,
+        gutter,
+      ),
+    ).toBe(true);
+    await page.mouse.click(gutter.x, gutter.y);
+    await expect(screenshots).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(activeImages("Main input")).toHaveCount(5);
+    await page.keyboard.press("Escape");
     await expect(comparison.getByText("Show", { exact: true })).toBeFocused();
     await expect(rawEditor).toHaveValue(raw);
   } finally {

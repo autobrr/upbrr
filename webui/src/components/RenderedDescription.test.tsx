@@ -226,7 +226,11 @@ it("switches every row together, wraps on arrows, and opens the selected full im
     activeImage.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true })),
   ).toBe(false);
   expect(onImageOpen).toHaveBeenCalledWith(full(0, 2), "Source 3, row 1");
-  fireEvent.keyDown(summary, { key: "Escape" });
+  const overlay = first.querySelector<HTMLElement>(".comparison__screenshots")!;
+  overlay.focus();
+  expect(overlay).toHaveFocus();
+  expect(first.open).toBe(true);
+  fireEvent.keyDown(overlay, { key: "Escape" });
   expect(first.open).toBe(false);
   expect(summary).toHaveFocus();
   second.open = true;

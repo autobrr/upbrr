@@ -196,6 +196,9 @@ export default function RenderedDescription({ html, imagePreviews, onImageOpen }
 
       // Native details grouping keeps a single comparison overlay open, even across previews.
       details.name = "rendered-description-comparison";
+      // Clicking the scrollable background should focus inside the disclosure
+      // without adding a tab stop ahead of its image links.
+      screenshots.tabIndex = -1;
 
       details.addEventListener("toggle", syncDisclosure);
       details.addEventListener("keydown", handleKeyDown);

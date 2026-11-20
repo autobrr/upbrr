@@ -17,7 +17,8 @@ type comparisonPreviewImage struct {
 	full string
 }
 
-var comparisonURLSeparator = regexp.MustCompile(`(?i),\s*(https?://)`)
+// Without whitespace a comma belongs to the URL, including embedded query URLs.
+var comparisonURLSeparator = regexp.MustCompile(`(?i),\s+(https?://)`)
 
 // Native comparison tags provide source order explicitly. Keep incomplete or
 // invalid blocks in the ordinary renderer instead of shifting their columns.
@@ -36,9 +37,13 @@ func nativeComparisonImages(nodes []*bbcode.BBCodeNode, columns int) []compariso
 	content := slices.DeleteFunc(slices.Clone(nodes), isBlankComparisonText)
 	if len(content) == 1 && isCenteredComparisonWrapper(content[0]) {
 		content = content[0].Children
-		// A text-only wrapper is a flat URL list. With tagged images, preserve
-		// complete rows or one-image-per-line links, but do not mix row sizes.
-		if len(content) != 1 || content[0].ID != bbcode.TEXT {
+		var raw string
+		if len(content) == 1 && content[0].ID == bbcode.TEXT {
+			raw, _ = content[0].Value.(string)
+		}
+		// A flat native URL list is valid on one line. Multiline or tagged
+		// content must use complete rows or one image per line consistently.
+		if raw == "" || strings.Contains(strings.TrimSpace(raw), "\n") {
 			if rows := comparisonRows(content, columns, true); len(rows) > 0 {
 				return rows
 			}
