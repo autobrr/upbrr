@@ -944,7 +944,7 @@ func resolveDescriptionScreenshots(
 		return slots, nil, nil
 	}
 
-	urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry)
+	urls := reusableFallbackImageURLs(resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry), registry)
 	if logger != nil {
 		logger.Tracef("trackers: description assets screenshots source=tracker_urls tracker=%s urls=%d", strings.TrimSpace(tracker), len(urls))
 	}

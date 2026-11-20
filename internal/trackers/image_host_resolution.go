@@ -326,7 +326,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 				usageScope:  usageScope,
 			}, nil
 		}
-		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry)
+		urls := reusableFallbackImageURLs(resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry), registry)
 		screenshots = resolveTrackerScreenshotsWithPolicy(urls, selectionPolicy)
 		if len(screenshots) > 0 {
 			feedback.SelectedHost = strings.ToLower(strings.TrimSpace(screenshots[0].Host))
@@ -415,7 +415,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		sourceImages = slotSourceImagesForRehost(slots)
 	}
 	if len(sourceImages) == 0 {
-		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry)
+		urls := reusableFallbackImageURLs(resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded, registry), registry)
 		if screenshots, host := resolveTrackerScreenshotsForAllowedHost(
 			urls,
 			selectionPolicy,
@@ -968,6 +968,27 @@ func uploadAttemptHosts(policy imageHostPolicy, preferredHosts ...string) []stri
 		return candidates
 	}
 	return candidates[:1]
+}
+
+// Bare metadata URLs cannot prove account authority for native destinations.
+func reusableFallbackImageURLs(urls []string, registry *Registry) []string {
+	if registry == nil || len(urls) == 0 {
+		return urls
+	}
+	nativeHosts := make(map[string]struct{})
+	for _, tracker := range registry.Names() {
+		policy, ok := registry.LookupImageHostPolicy(tracker)
+		if ok && policy.URLImport != nil {
+			nativeHosts[policy.URLImport.Host] = struct{}{}
+		}
+	}
+	if len(nativeHosts) == 0 {
+		return urls
+	}
+	return slices.DeleteFunc(slices.Clone(urls), func(url string) bool {
+		_, native := nativeHosts[imagehost.ExtractHost(imagehost.DirectImageURL(url))]
+		return native
+	})
 }
 
 func resolveTrackerScreenshotsForAllowedHost(urls []string, policy imageHostPolicy) ([]api.ScreenshotImage, string) {

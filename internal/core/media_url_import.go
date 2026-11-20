@@ -118,6 +118,9 @@ func (b workflowMediaBuilder) restoredNativeImageAttempts(
 	for _, sourceID := range ordered {
 		candidate, covered := bySource[sourceID]
 		if !covered {
+			if kinds[sourceID] == api.MediaArtifactComparison {
+				return nil, false
+			}
 			continue
 		}
 		link := candidate.link

@@ -1422,6 +1422,18 @@ func (b workflowMediaBuilder) RestoreCompatible(
 			})
 			snapshot.HostAttempts = append(snapshot.HostAttempts, attempts...)
 			snapshot.ImageRequirementsPrepared = true
+		} else {
+			// Incomplete coverage can reflect a projection change, not invalidated account authority.
+			priorCount := len(snapshot.HostAttempts)
+			snapshot.HostAttempts = slices.DeleteFunc(snapshot.HostAttempts, func(attempt api.HostedImageAttempt) bool {
+				return attempt.Status == api.StageStatusCompleted && slices.ContainsFunc(attempt.Results, func(result api.MediaArtifact) bool {
+					link, ok := retained.HostedImages[result.ID]
+					return ok && !trackers.NativeImageLinkCurrent(b.config, b.mediaRegistry(), link)
+				})
+			})
+			if len(snapshot.HostAttempts) != priorCount && !snapshot.ImageHostUploadSkipped {
+				snapshot.ImageRequirementsPrepared = false
+			}
 		}
 		return snapshot, retained, nil
 	}

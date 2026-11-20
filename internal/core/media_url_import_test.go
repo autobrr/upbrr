@@ -202,7 +202,7 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 			}
 			projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "GPW", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}}, {TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}}}}
 			trackerIDs := []api.TrackerID{"GPW", "ONE"}
-			if scenario == "native only" || scenario == "saved only" {
+			if scenario == "native only" || scenario == "saved only" || scenario == "credential change" {
 				projections.Projections = projections.Projections[:1]
 				trackerIDs = trackerIDs[:1]
 			}
@@ -448,6 +448,21 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 				if candidates := builder.retainedHostedImageCandidates(published, private, map[api.PublicResourceID]struct{}{remoteID: {}}); slices.ContainsFunc(candidates, func(c retainedHostedImageCandidate) bool { return c.link.Host == "kshare" }) {
 					t.Fatal("retained artifacts bypassed credential check")
 				}
+				published.ImageRequirementsPrepared = true
+				published.HostAttempts = attempts
+				for _, skip := range []bool{false, true} {
+					published.ImageHostUploadSkipped = skip
+					restored, _, err := builder.RestoreCompatible(t.Context(), release, projections, &published, private, time.Now())
+					if err != nil {
+						t.Fatal(err)
+					}
+					if restored.ImageRequirementsPrepared != skip || restored.ImageHostUploadSkipped != skip ||
+						slices.ContainsFunc(restored.HostAttempts, func(attempt api.HostedImageAttempt) bool {
+							return attempt.Status == api.StageStatusCompleted && attempt.Host == "kshare"
+						}) {
+						t.Fatalf("restore kept stale hosted readiness after an account change (skip=%v)", skip)
+					}
+				}
 			}
 			if scenario == "mixed" || scenario == "partial native" || scenario == "native only" {
 				// RestoreCompatible must rebuild combined host attempts directly,
@@ -521,6 +536,20 @@ func TestWorkflowNativeImportRunsBeforeGenericAndRetainsExactResults(t *testing.
 					t.Fatal("selected main comparison did not count toward restored mixed GPW coverage")
 				}
 				assertHostedSourceCoverage(t, restored, trackerIDs[:1], ids)
+				// A comparison link scoped to another tracker is not eligible
+				// for restoring the mixed GPW result, even with enough screenshots.
+				for id, link := range private.HostedImages {
+					if private.HostedSources[id] == comparisonID {
+						link.UsageScope = "tracker:ONE"
+						private.HostedImages[id] = link
+					}
+				}
+				projection := projections.Projections[0]
+				projection.Artifacts.ScreenshotCount = 1
+				if _, ok := builder.restoredNativeImageAttempts(published, private, projection, api.UploadSubject{}, selected,
+					map[api.PublicResourceID]struct{}{remoteID: {}}, ids); ok {
+					t.Fatal("mixed restore accepted an uncovered selected comparison cell")
+				}
 			}
 			if scenario == "native only" {
 				// SQL must restore original source authority even when native output

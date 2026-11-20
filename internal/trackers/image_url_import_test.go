@@ -101,6 +101,15 @@ func TestNativeSlotsRequireCurrentAccountRecordAndExactBinding(t *testing.T) {
 	if NativeImageLinkCurrent(cfg, registry, normalized) {
 		t.Fatal("normalized native scope bypassed account validation")
 	}
+	// A bare old-account URL never substitutes for an exact slot variant.
+	publicURL := "https://pixhost.to/public.png"
+	fallback, host := resolveTrackerScreenshotsForAllowedHost(
+		reusableFallbackImageURLs([]string{link.RawURL, publicURL}, registry),
+		imageHostPolicy{preferred: []string{"kshare", "pixhost"}},
+	)
+	if len(fallback) != 1 || host != "pixhost" || fallback[0].RawURL != publicURL {
+		t.Fatalf("description fallback reused a native URL or lost the ordinary one: %s", host)
+	}
 	// The description consumes both hosts for a mixed native/local selection.
 	other := filepath.Join(t.TempDir(), "local.png")
 	exact := &api.ExactMediaAssets{
