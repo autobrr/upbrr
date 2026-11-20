@@ -1345,7 +1345,12 @@ func cloneScreenshotSlots(slots []api.ScreenshotSlot) []api.ScreenshotSlot {
 	return cloned
 }
 
-func selectScreenshotsFromSlots(tracker string, slots []api.ScreenshotSlot, policy imageHostPolicy) ([]api.ScreenshotImage, string, string, error) {
+func selectScreenshotsFromSlots(
+	tracker string,
+	slots []api.ScreenshotSlot,
+	policy imageHostPolicy,
+	registry *Registry,
+) ([]api.ScreenshotImage, string, string, error) {
 	renderable := renderableSlots(slots)
 	if len(renderable) == 0 {
 		return nil, "", "", nil
@@ -1354,8 +1359,9 @@ func selectScreenshotsFromSlots(tracker string, slots []api.ScreenshotSlot, poli
 	results := make([]api.ScreenshotImage, 0, len(renderable))
 	resolvedHosts := make([]string, 0, len(renderable))
 	resolvedScopes := make([]string, 0, len(renderable))
+	nativeHosts := nativeImageFallbackHosts(registry)
 	for _, slot := range renderable {
-		image, host, scope, ok := selectSlotImageForTracker(slot, tracker, policy)
+		image, host, scope, ok := selectSlotImageForTracker(slot, tracker, policy, nativeHosts)
 		if !ok {
 			if len(policy.allowed) > 0 {
 				return nil, "", "", fmt.Errorf("missing eligible screenshot variant for slot %d (%s)", slot.SlotOrder, slotIdentity(slot))
@@ -1388,15 +1394,21 @@ func renderableSlots(slots []api.ScreenshotSlot) []api.ScreenshotSlot {
 	return results
 }
 
-func selectSlotImageForTracker(slot api.ScreenshotSlot, tracker string, policy imageHostPolicy) (api.ScreenshotImage, string, string, bool) {
+func selectSlotImageForTracker(
+	slot api.ScreenshotSlot,
+	tracker string,
+	policy imageHostPolicy,
+	nativeHosts map[string]struct{},
+) (api.ScreenshotImage, string, string, bool) {
 	if image, host, scope, ok := selectVariantForSlot(slot, tracker, policy); ok {
 		return image, host, scope, true
 	}
 
 	directURL := imagehost.DirectImageURL(slot.OriginalURL)
 	host := strings.TrimSpace(imagehost.ExtractHost(directURL))
-	if directURL != "" && host != "" && reusableSourceImageURL(directURL, policy) && !hostInList(host, policy.failed) &&
-		(len(policy.allowed) == 0 || hostAllowed(host, policy.allowed)) {
+	// A bare original cannot substitute for a scoped upload record.
+	if directURL != "" && host != "" && !bareNativeImageURL(directURL, nativeHosts) &&
+		reusableSourceImageURL(directURL, policy) && !hostInList(host, policy.failed) && (len(policy.allowed) == 0 || hostAllowed(host, policy.allowed)) {
 		return api.ScreenshotImage{
 			DiscID: slot.DiscID,
 			Path:   strings.TrimSpace(slot.ImagePath),

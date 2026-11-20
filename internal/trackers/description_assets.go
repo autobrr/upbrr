@@ -939,7 +939,7 @@ func resolveDescriptionScreenshots(
 		uploads, _ := uploadedImagesFromSource(ctx, meta, repo, preloaded)
 		filterNativeSlotVariants(slots, uploads, cfg, registry, meta.MediaBinding)
 	}
-	images, _, _, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy)
+	images, _, _, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy, registry)
 	if err != nil {
 		return nil, nil, fmt.Errorf("trackers: resolve screenshot slots for %s: %w", strings.TrimSpace(tracker), err)
 	}

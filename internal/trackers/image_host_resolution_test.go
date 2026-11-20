@@ -541,11 +541,11 @@ func TestOriginTrackerMatchesSelectedLocalSourceScreenshot(t *testing.T) {
 		RawURL: rawURL,
 		ImgURL: rawURL,
 	}}
-	selected, _, _, err := selectScreenshotsFromSlots("AITHER", slots, policy)
+	selected, _, _, err := selectScreenshotsFromSlots("AITHER", slots, policy, nil)
 	if err != nil || len(selected) != 1 || selected[0].RawURL != "https://example.org/shot.png" || selected[0].Path != imagePath {
 		t.Fatalf("selected native screenshot = %#v, err=%v", selected, err)
 	}
-	other, _, _, err := selectScreenshotsFromSlots("TL", slots, imageHostPolicy{})
+	other, _, _, err := selectScreenshotsFromSlots("TL", slots, imageHostPolicy{}, nil)
 	if err != nil || len(other) != 1 || other[0].RawURL != "https://example.org/shot.png" {
 		t.Fatalf("another tracker did not reuse the direct image link: %#v, err=%v", other, err)
 	}
@@ -566,11 +566,11 @@ func TestOriginTrackerSelectsAuthorizedProxyWhenDirectScreenshotIsPrivate(t *tes
 		RawURL:     rawURL,
 		ImgURL:     rawURL,
 	}}
-	selected, host, _, err := selectScreenshotsFromSlots("AITHER", slots, policy)
+	selected, host, _, err := selectScreenshotsFromSlots("AITHER", slots, policy, nil)
 	if err != nil || len(selected) != 1 || selected[0].RawURL != rawURL || selected[0].Path != imagePath || host != "wsrv.nl" {
 		t.Fatalf("selected authorized proxy = %#v, host=%q, err=%v", selected, host, err)
 	}
-	if _, _, _, ok := selectSlotImageForTracker(slots[0], "TL", imageHostPolicy{}); ok {
+	if _, _, _, ok := selectSlotImageForTracker(slots[0], "TL", imageHostPolicy{}, nil); ok {
 		t.Fatal("cross-tracker proxy was selected")
 	}
 }

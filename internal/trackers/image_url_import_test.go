@@ -141,17 +141,23 @@ func TestNativeSlotsRequireCurrentAccountRecordAndExactBinding(t *testing.T) {
 	}
 	t.Run("description reader checks the current account", func(t *testing.T) {
 		assets := clonePreloadedDescriptionAssetData(preloaded)
-		publicURL := "https://pixhost.to/replacement.png"
+		assets.screenshotSlots[0].OriginalURL = link.RawURL
+		rotated := cfg
+		rotated.Trackers.Trackers = map[string]config.TrackerConfig{"GPW": {APIKey: "synthetic-replacement"}}
+		_, images, err := resolveDescriptionScreenshots(t.Context(), "GPW", meta, rotated, nil, api.NopLogger{}, assets, registry)
+		if err == nil || len(images) != 0 {
+			t.Fatalf("description reused an unverified native original: %v, %v", images, err)
+		}
+
+		publicURL := "https://kshare.club/public.png"
 		assets.screenshotSlots[0].Variants = append(assets.screenshotSlots[0].Variants, api.ScreenshotSlotVariant{
 			ImagePath:  imagePath,
-			Host:       "pixhost",
+			Host:       "kshare",
 			UsageScope: "global",
 			RawURL:     publicURL,
 		})
 
-		rotated := cfg
-		rotated.Trackers.Trackers = map[string]config.TrackerConfig{"GPW": {APIKey: "synthetic-replacement"}}
-		_, images, err := resolveDescriptionScreenshots(t.Context(), "GPW", meta, rotated, nil, api.NopLogger{}, assets, registry)
+		_, images, err = resolveDescriptionScreenshots(t.Context(), "GPW", meta, rotated, nil, api.NopLogger{}, assets, registry)
 		if err != nil || len(images) != 2 || images[0].RawURL != publicURL {
 			t.Fatalf("description did not retain the ordinary replacement: %v, %v", images, err)
 		}

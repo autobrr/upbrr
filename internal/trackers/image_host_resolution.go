@@ -307,7 +307,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	if !policy.required {
 		selectionPolicy = optionalImageHostSelectionPolicy(policy, preferredHosts...)
 		preferredHost := preferredHost(selectionPolicy)
-		screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy)
+		screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy, registry)
 		if err == nil && len(screenshots) > 0 {
 			feedback.SelectedHost = host
 			feedback.Message = buildReuseMessage(tracker, host, usageScope, false)
@@ -350,6 +350,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		tracker,
 		slots,
 		selectionPolicy,
+		registry,
 	); err == nil && len(screenshots) > 0 &&
 		(reusableSelectionMatchesPolicy(host, selectionPolicy) || nativeSelection && host == mixedSlotResolutionValue && trackerCfg.ImageHost == "" && (meta.ImageHostOverrides.PreferredHost == nil || *meta.ImageHostOverrides.PreferredHost == "")) {
 		feedback.SelectedHost = host
@@ -456,7 +457,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 
 	if images == nil {
 		fallbackPolicy := effectiveImageHostSelectionPolicy(policy, preferredHosts...)
-		if screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, fallbackPolicy); err == nil && len(screenshots) > 0 {
+		if screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, fallbackPolicy, registry); err == nil && len(screenshots) > 0 {
 			feedback.SelectedHost = host
 			feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(selectionPolicy))
 			return descriptionImageHostResolution{
@@ -522,7 +523,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		if summary.FallbackMatched > 0 && logger != nil {
 			logger.Debugf("trackers: image host resolution applied ordered slot fallback tracker=%s host=%s matched=%d", tracker, host, summary.FallbackMatched)
 		}
-		screenshots, _, _, err := selectScreenshotsFromSlots(tracker, candidateSlots, selectionPolicy)
+		screenshots, _, _, err := selectScreenshotsFromSlots(tracker, candidateSlots, selectionPolicy, registry)
 		if err != nil {
 			cleanupUploadedImages(ctx, repo, meta.MediaBinding, uploaded, logger)
 			lastErr = err
@@ -971,8 +972,21 @@ func uploadAttemptHosts(policy imageHostPolicy, preferredHosts ...string) []stri
 
 // Bare metadata URLs cannot prove account authority for native destinations.
 func reusableFallbackImageURLs(urls []string, registry *Registry) []string {
-	if registry == nil || len(urls) == 0 {
+	if len(urls) == 0 {
 		return urls
+	}
+	nativeHosts := nativeImageFallbackHosts(registry)
+	if len(nativeHosts) == 0 {
+		return urls
+	}
+	return slices.DeleteFunc(slices.Clone(urls), func(rawURL string) bool {
+		return bareNativeImageURL(imagehost.DirectImageURL(rawURL), nativeHosts)
+	})
+}
+
+func nativeImageFallbackHosts(registry *Registry) map[string]struct{} {
+	if registry == nil {
+		return nil
 	}
 	nativeHosts := make(map[string]struct{})
 	for _, tracker := range registry.Names() {
@@ -981,18 +995,19 @@ func reusableFallbackImageURLs(urls []string, registry *Registry) []string {
 			nativeHosts[policy.URLImport.Host] = struct{}{}
 		}
 	}
+	return nativeHosts
+}
+
+func bareNativeImageURL(directURL string, nativeHosts map[string]struct{}) bool {
 	if len(nativeHosts) == 0 {
-		return urls
+		return false
 	}
-	return slices.DeleteFunc(slices.Clone(urls), func(rawURL string) bool {
-		direct := imagehost.DirectImageURL(rawURL)
-		if parsed, err := url.Parse(direct); err == nil && parsed.Port() != "" {
-			parsed.Host = strings.TrimSuffix(parsed.Host, ":"+parsed.Port())
-			direct = parsed.String()
-		}
-		_, native := nativeHosts[imagehost.ExtractHost(direct)]
-		return native
-	})
+	if parsed, err := url.Parse(directURL); err == nil && parsed.Port() != "" {
+		parsed.Host = strings.TrimSuffix(parsed.Host, ":"+parsed.Port())
+		directURL = parsed.String()
+	}
+	_, native := nativeHosts[imagehost.ExtractHost(directURL)]
+	return native
 }
 
 func resolveTrackerScreenshotsForAllowedHost(urls []string, policy imageHostPolicy) ([]api.ScreenshotImage, string) {
