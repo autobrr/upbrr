@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { expect, type Locator, type Page, type Response } from "@playwright/test";
+import { expect, type APIResponse, type Locator, type Page, type Response } from "@playwright/test";
 import type {
   ActiveInputSnapshot,
   ContinueReleaseWorkflowRequest,
@@ -1126,12 +1126,16 @@ test("provider search inspects and stages a candidate before Refresh metadata", 
   }
 });
 
-const activeInputFromResponse = async (response: Response): Promise<ActiveInputSnapshot> => {
+const activeInputFromResponse = async (
+  response: Response | APIResponse,
+): Promise<ActiveInputSnapshot> => {
   expect(response.ok()).toBe(true);
   return (await response.json()) as ActiveInputSnapshot;
 };
 
-const activeCurrentFromResponse = async (response: Response): Promise<ReleaseWorkflowCurrent> => {
+const activeCurrentFromResponse = async (
+  response: Response | APIResponse,
+): Promise<ReleaseWorkflowCurrent> => {
   const snapshot = await activeInputFromResponse(response);
   if (!snapshot.current) throw new Error("active input response did not include a workflow");
   return snapshot.current;
@@ -1599,9 +1603,11 @@ for (const { tracker, emptyDescription } of [
           expect((await saved).ok()).toBe(true);
           await expect(page.getByText("Description saved.", { exact: true })).toBeVisible();
 
-          const reloaded = waitForAppMethod(page, "GetActiveInput");
           await page.reload();
-          const current = await activeCurrentFromResponse(await reloaded);
+          // Read after navigation so a response from the previous document cannot win.
+          const current = await activeCurrentFromResponse(
+            await page.request.get(`${app.url}/api/app/GetActiveInput`),
+          );
           expect(current.descriptions?.descriptions).toEqual([
             expect.objectContaining({
               groupKey: "ant",

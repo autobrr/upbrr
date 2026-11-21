@@ -21,7 +21,7 @@ func TestSourceOnlySlotVariantDoesNotBlockRehost(t *testing.T) {
 		}},
 	}
 	policy := imageHostPolicy{allowed: []string{"imgbb"}}
-	if _, _, _, ok := selectSlotImageForTracker(slot, "ALPHA", policy); ok {
+	if _, _, _, ok := selectSlotImageForTracker(slot, "ALPHA", policy, nil); ok {
 		t.Fatal("source-only slot variant selected as hosted image")
 	}
 	if allRenderableSlotsHaveEligibleVariant([]api.ScreenshotSlot{slot}, "ALPHA", policy) {

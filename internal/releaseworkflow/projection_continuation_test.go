@@ -149,6 +149,8 @@ func questionnaireTestPreparer() ReleasePreparerFunc {
 			Year:   2026,
 		}
 		meta.MediaInfoTextPath = filepath.Join(filepath.Dir(input.Release.SourcePath), "mediainfo.txt")
+		// Keep this questionnaire fixture constructible under GPW's finalized-media policy.
+		meta.VideoCodec, meta.Container = "AVC", "mkv"
 		meta.LanguageFacts = api.LanguageFacts{
 			OriginalLanguages:      []string{"English"},
 			OriginalLanguagesKnown: true,
@@ -295,15 +297,15 @@ func TestProjectionContinuationANTMissingTagsPublishesBlockedQuestion(t *testing
 			Assessments:       api.ReleaseAssessments{MediaInfoUniqueID: api.UniqueIDStatusPresent},
 			SourcePath:        input.Release.SourcePath,
 			MediaInfoTextPath: filepath.Join(filepath.Dir(input.Release.SourcePath), "mediainfo.txt"),
-			ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
-TMDBID: 123,
- Title: "Example Movie",
- Year: 2026,
-}},
-			ReleaseName:       "Example.Movie.2026.1080p.BluRay.x264-GRP",
-			Source:            "BluRay",
-			Type:              "ENCODE",
-			Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
+			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+				TMDBID: 123,
+				Title:  "Example Movie",
+				Year:   2026,
+			}},
+			ReleaseName: "Example.Movie.2026.1080p.BluRay.x264-GRP",
+			Source:      "BluRay",
+			Type:        "ENCODE",
+			Identity:    api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
 			Release: api.ReleaseInfo{
 				Title:      "Example Movie",
 				Year:       2026,
@@ -360,16 +362,16 @@ func TestProjectionContinuationCanCancelWithoutPublishing(t *testing.T) {
 	module, _ := newTestModule(t, testPreparer(), WithTrackerProjectionBuilder(projector))
 	current := executeCommand(t, module, CreateWorkflowCommand{})
 	current = executeCommand(t, module, PrepareReleaseCommand{
-WorkflowID: current.Workflow.ID,
- ExpectedRevision: current.Workflow.Revision,
- Input: api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Movie.mkv")},
-})
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Movie.mkv")},
+	})
 	updated, err := module.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
-Authority: &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision},
- IdempotencyKey: "cancel-projection",
- Goal: api.WorkflowGoalTrackersProjected,
- Intent: api.WorkflowIntent{TrackerIDs: []api.TrackerID{"ALPHA"}},
-})
+		Authority:      &api.WorkflowAuthority{WorkflowID: current.Workflow.ID, ExpectedRevision: current.Workflow.Revision},
+		IdempotencyKey: "cancel-projection",
+		Goal:           api.WorkflowGoalTrackersProjected,
+		Intent:         api.WorkflowIntent{TrackerIDs: []api.TrackerID{"ALPHA"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

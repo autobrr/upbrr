@@ -30,12 +30,14 @@ import (
 
 // Service coordinates configured image-host uploaders and image persistence.
 type Service struct {
-	cfg       config.Config
-	logger    api.Logger
-	repo      repository
-	client    *http.Client
-	uploaders map[string]uploader
-	registry  *trackers.Registry
+	cfg              config.Config
+	logger           api.Logger
+	repo             repository
+	client           *http.Client
+	uploaders        map[string]uploader
+	registry         *trackers.Registry
+	liveImageJournal *imageEffectJournal
+	liveImageLimit   int
 }
 
 type uploadAggregateError struct {
@@ -129,7 +131,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 			comparisonPaths = append(comparisonPaths, strings.TrimSpace(upload.ImagePath))
 			return true
 		}
-		return upload.Purpose.IsAnalysis()
+		return upload.Purpose.IsAnalysis() || !trackers.NativeImageLinkCurrent(s.cfg, s.registry, upload)
 	})
 	isComparisonPath := func(candidate string) bool {
 		return slices.ContainsFunc(comparisonPaths, func(comparison string) bool { return pathutil.SamePath(comparison, candidate) })

@@ -26,6 +26,8 @@ type imageHostPolicy struct {
 
 // ImageUploadTarget identifies one host upload required by a tracker set.
 type ImageUploadTarget struct {
+	// ImportID selects the registered URL protocol for a private workflow target.
+	ImportID string
 	// Host is the normalized uploader name.
 	Host string
 	// UsageScope groups uploads that may share one hosted variant.

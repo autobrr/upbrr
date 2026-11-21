@@ -251,8 +251,22 @@ func TestGPWConstructibilityPolicyDocumentsTaxonomyFallbacks(t *testing.T) {
 	t.Parallel()
 
 	subject := api.TrackerValidationSubject{MediaInfoTextReady: true}
+	if failures := validationPolicyFailuresForTest(t, "GPW", subject); len(failures) == 0 {
+		t.Fatal("GPW accepted missing codec/container facts")
+	}
+	subject.VideoEncode = "Hi10P"
+	subject.Container = "MKV"
+	if failures := validationPolicyFailuresForTest(t, "GPW", subject); len(failures) == 0 {
+		t.Fatal("GPW treated profile-only evidence as a codec")
+	}
+	subject.VideoCodec = "AVC"
 	if failures := validationPolicyFailuresForTest(t, "GPW", subject); len(failures) != 0 {
-		t.Fatalf("GPW explicit taxonomy fallbacks must remain constructible: %#v", failures)
+		t.Fatalf("profile-only encoder blocked measured codec: %#v", failures)
+	}
+	subject.VideoCodec = "VC-1"
+	subject.Container = "Example Container"
+	if failures := validationPolicyFailuresForTest(t, "GPW", subject); len(failures) != 0 {
+		t.Fatalf("usable Other details rejected: %#v", failures)
 	}
 }
 

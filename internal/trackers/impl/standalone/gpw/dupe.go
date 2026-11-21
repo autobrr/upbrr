@@ -6,6 +6,7 @@ package gpw
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -72,14 +73,27 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.Failed(dupe.FailureResponseStatus, "GPW search failed", nil)
 	}
 	var payload struct {
-		Status   int              `json:"status"`
+		Status   json.RawMessage  `json:"status"`
+		Error    string           `json:"error"`
 		Response []map[string]any `json:"response"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return dupe.Failed(dupe.FailureResponseParse, "GPW search failed", err)
 	}
-	if payload.Status != http.StatusOK {
+	// GPW reports an absent title as an API failure with an explicit empty
+	// array. Do not interpret other API failures as a completed search.
+	if string(payload.Status) != "200" {
+		var status string
+		if resp.StatusCode != http.StatusOK ||
+			json.Unmarshal(payload.Status, &status) != nil || status != "failure" ||
+			payload.Error != "Torrent not found" || payload.Response == nil || len(payload.Response) != 0 {
+			return dupe.Failed(dupe.FailureResponseStatus, "GPW api rejected search", nil)
+		}
+	} else if payload.Error != "" {
 		return dupe.Failed(dupe.FailureResponseStatus, "GPW api rejected search", nil)
+	}
+	if payload.Response == nil {
+		return dupe.Failed(dupe.FailureResponseParse, "GPW search failed", errors.New("missing GPW response array"))
 	}
 	entries := make([]api.DupeEntry, 0, len(payload.Response))
 	for _, item := range payload.Response {

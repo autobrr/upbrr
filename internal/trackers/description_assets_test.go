@@ -2064,7 +2064,7 @@ func TestResolveDescriptionAssetsAttachesExactUploadedVariants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preload exact assets: %v", err)
 	}
-	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, repo, api.NopLogger{}, preloaded, registry)
+	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, config.Config{}, repo, api.NopLogger{}, preloaded, registry)
 	if err != nil {
 		t.Fatalf("resolve exact assets: %v", err)
 	}
@@ -2195,7 +2195,7 @@ func TestResolveDescriptionAssetsKeepsExactScreenshotsAndMenusSeparate(t *testin
 	if err != nil {
 		t.Fatalf("preload exact media: %v", err)
 	}
-	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, nil, api.NopLogger{}, preloaded, registry)
+	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, config.Config{}, nil, api.NopLogger{}, preloaded, registry)
 	if err != nil {
 		t.Fatalf("resolve exact media: %v", err)
 	}
@@ -2234,7 +2234,7 @@ func TestResolveDescriptionAssetsExactEmptyIsAuthoritative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preload exact empty media: %v", err)
 	}
-	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, repo, api.NopLogger{}, preloaded, registry)
+	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, config.Config{}, repo, api.NopLogger{}, preloaded, registry)
 	if err != nil {
 		t.Fatalf("resolve exact empty media: %v", err)
 	}
@@ -4631,7 +4631,7 @@ func TestResolveDescriptionAssetsKeepsFinalSourceScopedToGroup(t *testing.T) {
 	registry := descriptionAssetsTestRegistry(t)
 	for _, preloaded := range []*preloadedDescriptionAssetData{nil, {}} {
 		for _, tracker := range []string{"AITHER", "BLU"} {
-			assets, err := resolveDescriptionAssets(t.Context(), tracker, meta, nil, api.NopLogger{}, preloaded, registry)
+			assets, err := resolveDescriptionAssets(t.Context(), tracker, meta, config.Config{}, nil, api.NopLogger{}, preloaded, registry)
 			if err != nil {
 				t.Fatal(err)
 			}
