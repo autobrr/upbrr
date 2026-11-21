@@ -1409,7 +1409,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			cached.SeriesStatus = new(status)
 			metadata.TMDB = &cached
 		} else {
-			logger.Debugf("metadata: tmdb series status lookup failed: %v", err)
+			logger.Debugf("metadata: tmdb series status lookup failed: %s", redaction.RedactValue(err.Error(), nil))
 		}
 	}
 
