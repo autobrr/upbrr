@@ -2512,6 +2512,8 @@ type TMDBMetadata struct {
 
 	// LogoLanguagePreference identifies the order used for the retained artwork.
 	LogoLanguagePreference string `json:",omitempty"`
+	// LogoLookupPending records a failed reselection without discarding retained artwork.
+	LogoLookupPending bool `json:",omitempty"`
 }
 
 type TMDBLocalizedData struct {

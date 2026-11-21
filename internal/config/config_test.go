@@ -1441,3 +1441,47 @@ func TestRetiredTorrentPreferenceImport(t *testing.T) {
 		})
 	}
 }
+
+func TestPTPScreenshotSpacingDefaultsAndRoundTrips(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{"existing config", "", true},
+		{"disabled", "    screenshot_blank_line: false\n", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var cfg Config
+			if err := yaml.Unmarshal([]byte("trackers:\n  PTP:\n    username: example\n"+c.value), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := MergeMissingTrackerDefaults(&cfg); err != nil {
+				t.Fatal(err)
+			}
+			payload, err := json.Marshal(cfg.Trackers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var settings TrackersConfig
+			if err := json.Unmarshal(payload, &settings); err != nil {
+				t.Fatal(err)
+			}
+			serialized, err := yaml.Marshal(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var loaded TrackersConfig
+			if err := yaml.Unmarshal(serialized, &loaded); err != nil {
+				t.Fatal(err)
+			}
+			ptp := loaded.Trackers["PTP"]
+			if ptp.ScreenshotBlankLine == nil || *ptp.ScreenshotBlankLine != c.want || ptp.Username != "example" {
+				t.Fatalf("PTP spacing or unrelated tracker settings changed during round trip: enabled=%v", ptp.ScreenshotBlankLineEnabled())
+			}
+			if loaded.Trackers["BTN"].ScreenshotBlankLine != nil {
+				t.Fatal("PTP setting leaked into unrelated tracker")
+			}
+		})
+	}
+}

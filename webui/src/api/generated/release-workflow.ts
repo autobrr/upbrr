@@ -2802,6 +2802,7 @@ export type TMDBMetadata = Readonly<{
   Logo: string;
   LogoLanguagePreference?: string;
   LogoLookupAttempted: boolean;
+  LogoLookupPending?: boolean;
   MALID: number;
   MismatchedIMDbID: number;
   Networks: readonly TMDBNetwork[];

@@ -90,6 +90,8 @@ Environment-only changes can make CLI workflow startup differ from the active da
 
 Fields shown for each tracker come from the active tracker catalog. Configure only fields presented for that tracker.
 
+Where **Blank line between generated screenshots** is available, it is on by default. Turning it off keeps each generated screenshot on its own line without an empty line between images. It does not change reviewed descriptions or paragraph spacing. In YAML, set `screenshot_blank_line: false` under the relevant tracker entry.
+
 See the [Web UI Settings reference](../web-ui/settings/index.md) for section-by-section field behavior.
 
 ## Import configuration
@@ -168,5 +170,6 @@ first occurrence; unsupported entries are reported and ignored.
 
 For example, `logo_language: "pt-BR,ja"` tries Portuguese, then Japanese, then English, then
 language-neutral artwork. An empty setting tries English and then language-neutral artwork.
-If no matching logo exists, the description has no TMDB logo. TMDB does not distinguish
-Brazilian and European Portuguese logos by these language tags.
+If no matching logo exists, the description has no TMDB logo. If a lookup fails after changing
+your preference, upbrr keeps the previous logo and retries the next time you prepare the release.
+TMDB does not distinguish Brazilian and European Portuguese logos by these language tags.

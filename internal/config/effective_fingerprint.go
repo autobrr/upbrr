@@ -82,5 +82,21 @@ func TrackerConfigForComparison(cfg TrackerConfig) TrackerConfig {
 	cfg.LoginAnswer = ""
 	cfg.UserID = ""
 	cfg.Internal = false
+	if cfg.ScreenshotBlankLineEnabled() {
+		cfg.ScreenshotBlankLine = nil
+	}
 	return cfg
+}
+
+// WithoutScreenshotSpacing omits render-only spacing from comparisons that
+// track source compatibility or non-description tracker changes.
+func (t TrackersConfig) WithoutScreenshotSpacing() TrackersConfig {
+	t.Trackers = maps.Clone(t.Trackers)
+	for name, tracker := range t.Trackers {
+		if tracker.ScreenshotBlankLine != nil {
+			tracker.ScreenshotBlankLine = nil
+			t.Trackers[name] = tracker
+		}
+	}
+	return t
 }

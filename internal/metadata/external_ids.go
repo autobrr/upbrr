@@ -1416,20 +1416,21 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	// Replay just the image evidence, without re-collecting the title or its siblings.
 	if canSelectLogo && (tmdbMetadataFetchedID != downstreamIDs.TMDBID || tmdbErr != nil) &&
 		usableTMDBMetadata(metadata.TMDB, downstreamIDs.TMDBID, downstreamIDs.Category) &&
-		(metadata.TMDB.LogoLanguagePreference != logoPreference ||
+		(metadata.TMDB.LogoLookupPending || metadata.TMDB.LogoLanguagePreference != logoPreference ||
 			!keepProvider(effectiveOverrides.KeepTMDB) && metadata.TMDB.Logo == "" && !metadata.TMDB.LogoLookupAttempted) {
 		logo, name, err := logoClient.SelectLogo(ctx, downstreamIDs.TMDBID, string(downstreamIDs.Category), logoLanguages)
 		if ctx.Err() != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: logo selection canceled: %w", ctx.Err())
 		}
+		retained := *metadata.TMDB
+		retained.LogoLookupPending = err != nil
 		if err != nil {
 			logger.Warnf("metadata: TMDB logo lookup failed: %s", redaction.RedactValue(err.Error(), nil))
 		} else {
-			retained := *metadata.TMDB
 			retained.Logo, retained.TMDBLogo, retained.LogoLookupAttempted = logo, name, true
 			retained.LogoLanguagePreference = logoPreference
-			metadata.TMDB = &retained
 		}
+		metadata.TMDB = &retained
 	}
 	meta = s.applyTVEpisodeMetadata(ctx, meta, &downstreamIDs, &metadata, tmdbClient, tvdbClient, tvmazeClient)
 	ids.Category = downstreamIDs.Category

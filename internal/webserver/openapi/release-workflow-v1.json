@@ -11638,6 +11638,9 @@
           "LogoLookupAttempted": {
             "type": "boolean"
           },
+          "LogoLookupPending": {
+            "type": "boolean"
+          },
           "MALID": {
             "type": "integer"
           },

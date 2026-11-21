@@ -4,6 +4,7 @@
 package ptp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -24,6 +25,7 @@ func TestPrepareDescriptionScreenshotSpacing(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name   string
+		config config.TrackerConfig
 		assets trackers.DescriptionAssets
 		want   string
 	}{
@@ -31,6 +33,12 @@ func TestPrepareDescriptionScreenshotSpacing(t *testing.T) {
 			name:   "multiple screenshots leave one blank line",
 			assets: trackers.DescriptionAssets{Description: notes, Screenshots: images},
 			want:   notes + "\n\n" + shots,
+		},
+		{
+			name:   "disabled blank line only changes generated screenshots",
+			config: config.TrackerConfig{ScreenshotBlankLine: new(false)},
+			assets: trackers.DescriptionAssets{Description: notes, Screenshots: images},
+			want:   notes + "\n\n" + strings.ReplaceAll(shots, "\n\n", "\n"),
 		},
 		{
 			name:   "single screenshot stays below the minimum",
@@ -43,7 +51,8 @@ func TestPrepareDescriptionScreenshotSpacing(t *testing.T) {
 			want:   notes,
 		},
 		{
-			name: "final description keeps reviewed spacing",
+			name:   "final description keeps reviewed spacing",
+			config: config.TrackerConfig{ScreenshotBlankLine: new(false)},
 			assets: trackers.DescriptionAssets{
 				Description: final,
 				Screenshots: images,
@@ -53,7 +62,7 @@ func TestPrepareDescriptionScreenshotSpacing(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := prepareDescription(t.Context(), trackers.PreparationInput{Assets: &test.assets})
+			got, err := prepareDescription(t.Context(), trackers.PreparationInput{TrackerConfig: test.config, Assets: &test.assets})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -63,8 +72,14 @@ func TestPrepareDescriptionScreenshotSpacing(t *testing.T) {
 		})
 	}
 	const rendered = `<img src="https://pixhost.to/1.png" /><br /><br /><img src="https://pixhost.to/2.png" /><br /><br /><img src="https://pixhost.to/3.png" />`
-	if got := description.Render(buildScreenshotSection(api.UploadSubject{}, images)); got != rendered {
-		t.Fatalf("rendered screenshots = %q, want %q", got, rendered)
+	for _, blankLine := range []bool{false, true} {
+		want := rendered
+		if !blankLine {
+			want = strings.ReplaceAll(want, "<br /><br />", "<br />")
+		}
+		if got := description.Render(buildScreenshotSection(api.UploadSubject{}, images, blankLine)); got != want {
+			t.Fatalf("rendered screenshots = %q, want %q", got, want)
+		}
 	}
 	if got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{
 		Description: final,
