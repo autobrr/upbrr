@@ -160,3 +160,16 @@ The Web UI can import and export configuration from **Settings**.
 - Use a dry run after changes to tracker, image-host, torrent, or client behavior.
 
 Web listen settings have separate precedence and storage. See [Web server and reverse proxy](./web-server.md).
+
+## TMDB logo languages
+
+Set `description_settings.logo_language` to a comma- or semicolon-separated list of preferred
+two-letter language codes, in order. Matching is case-insensitive. Regional values such as
+`PT-BR` select the base language (`pt`) for logos only. Duplicate codes are ignored after their
+first occurrence; unsupported entries are reported and ignored.
+
+For example, `logo_language: "pt-BR,ja"` tries Portuguese, then Japanese, then English, then
+language-neutral artwork. An empty setting tries English and then language-neutral artwork.
+If no matching logo exists, the description has no TMDB logo. If a lookup fails, upbrr keeps any
+previous logo and retries the next time you prepare the release.
+TMDB does not distinguish Brazilian and European Portuguese logos by these language tags.

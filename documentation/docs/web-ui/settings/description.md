@@ -13,7 +13,7 @@ Use **Settings → Description** to control shared description builders. Tracker
 | --------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Include title logo**                  | Off     | Adds a TMDB logo when one is available. Requires TMDB enrichment.                                                                                                      |
 | **Logo width (pixels)**                 | `300`   | Sets the rendered logo width; non-positive values resolve to `300`.                                                                                                    |
-| **Preferred logo languages**            | Empty   | Supplies preferred TMDB logo languages.                                                                                                                                |
+| **Preferred logo languages**            | Empty   | Select languages in order for TMDB artwork. English and language-neutral artwork are fallbacks.                                                                        |
 | **Screenshot thumbnail width (pixels)** | `350`   | Sets shared screenshot and disc-menu thumbnail width; non-positive values resolve to `350`.                                                                            |
 | **Screenshots per description row**     | Empty   | Sets images per shared description row. Empty, invalid, or non-positive values use `2`.                                                                                |
 | **Include Blu-ray.com cover images**    | Off     | Adds selected blu-ray.com cover images when available.                                                                                                                 |
@@ -48,3 +48,10 @@ Legacy pack layout and description limit values are retained for configuration c
 ## Verify the change
 
 Save, prepare `Example.Release.2026.1080p-GRP`, generate its descriptions, and inspect every tracker tab. Artwork options need matching provider data; an empty result does not necessarily mean the setting failed.
+
+Select languages in preference order. To move a language to the end, remove it and select it again.
+Searching for **Brazil** or **Brazilian Portuguese** selects Portuguese (`pt`). TMDB tags logo images with base
+language codes, so this cannot distinguish Brazilian from European Portuguese artwork.
+
+The selection applies when you next prepare the input or refresh its artwork. It does not change
+the languages requested for titles or other localized metadata. See the [config-file setting](../../configuration/index.md#tmdb-logo-languages).

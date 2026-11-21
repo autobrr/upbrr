@@ -247,7 +247,11 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	// and WebUI calls carry their resolved selection directly and remain reusable.
 	reuseAllowed := layout.DiscType != "BDMV" || input.Instructions.Playlist.Set
 	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
-	if hasCurrent && reuseAllowed && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
+	tmdb := current.ProviderMetadata.TMDB
+	// A failed logo lookup must not pin the fallback artwork in an otherwise
+	// compatible generation. Exact-generation consumers can still use it.
+	retryLogo := tmdb != nil && tmdb.LogoLookupPending && !input.RequirePrepared
+	if hasCurrent && reuseAllowed && !retryLogo && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
 		!input.Controls.CaptureHDRMetadata && input.Controls.BlurayDetails == nil &&
 		(input.ExternalFreshness != api.ExternalFreshnessLoad || input.RequirePrepared) &&
 		current.Compatibility == compatibility {

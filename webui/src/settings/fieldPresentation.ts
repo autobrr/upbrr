@@ -186,7 +186,7 @@ export const settingsFieldPresentation: Record<string, Record<string, Presentati
     ),
     LogoLanguage: field(
       "Preferred logo languages",
-      "Comma- or semicolon-separated TMDB language codes for logo lookup. Empty leaves the normal provider selection in place.",
+      "Choose logo languages in priority order. To move one to the end, remove and select it again. English and language-neutral artwork are used next. Brazilian Portuguese selects Portuguese artwork, not Brazil-specific artwork.",
     ),
     ThumbnailSize: field(
       "Screenshot thumbnail width (pixels)",

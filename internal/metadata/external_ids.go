@@ -25,6 +25,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/metadata/evidence"
@@ -69,6 +70,10 @@ type TMDBClient interface {
 // AniListClient is the keyless AniList metadata surface used by external-ID resolution.
 type AniListClient interface {
 	FetchAniListMetadata(ctx context.Context, malID int) (tmdb.AniListMetadataResult, error)
+}
+
+type logoArtworkClient interface {
+	SelectLogo(context.Context, int, string, []string) (string, string, error)
 }
 
 type seriesExternalIDsClient interface {
@@ -726,6 +731,13 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return shouldUseTVDBForCategory(meta, ids)
 	}
 
+	logoLanguages, unsupportedLogoLanguages := config.ParseLogoLanguages(s.cfg.Description.LogoLanguage)
+	logoPreference := strings.Join(logoLanguages, ",")
+	if len(unsupportedLogoLanguages) > 0 {
+		ignored := redaction.RedactValue(strings.Join(unsupportedLogoLanguages, ", "), nil)
+		logger.Warnf("metadata: unsupported description_settings.logo_language entries ignored: %s", ignored)
+	}
+	logoClient, canSelectLogo := tmdbClient.(logoArtworkClient)
 	tmdbLogoFetchAttempted := false
 	tmdbMetadataFetchedID := 0
 	imdbMetadataFetchedID := 0
@@ -768,7 +780,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTMDB) {
 			return true
 		}
-		return strings.TrimSpace(metadata.TMDB.Logo) == "" && !metadata.TMDB.LogoLookupAttempted && !tmdbLogoFetchAttempted
+		return !canSelectLogo && strings.TrimSpace(metadata.TMDB.Logo) == "" && !metadata.TMDB.LogoLookupAttempted && !tmdbLogoFetchAttempted
 	}
 	imdbSpecialSeason, imdbSpecialEpisode := meta.HasExplicitSeasonZero(), meta.EpisodeInt
 	manualSeason, manualEpisode, manualSeasonSet := manualSeasonEpisodeInstructionValues(meta.ReleaseNameOverrides)
@@ -935,7 +947,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 					ManualLanguage:  "",
 					SkipAnimeLookup: overrideMAL || clearedMAL,
 					AddLogo:         true,
-					LogoLanguages:   descriptionLogoLanguages(s.cfg.Description.LogoLanguage),
+					LogoLanguages:   logoLanguages,
 					Filename:        filename,
 					Debug:           false,
 				})
@@ -1141,6 +1153,23 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			if tmdbAccepted {
 				tmdbMetadataRejected = false
 				metadata.TMDB = mapTMDBMetadata(ids, *tmdbResult)
+				if metadata.TMDB != nil {
+					metadata.TMDB.LogoLanguagePreference = logoPreference
+					// This fetch always requests artwork; an empty successful result is reusable.
+					metadata.TMDB.LogoLookupPending = canSelectLogo && !tmdbResult.LogoLookupAttempted
+					if metadata.TMDB.LogoLookupPending {
+						previous := retainedMetadata.TMDB
+						artworkCategory := ids.Category
+						if artworkCategory == "" {
+							artworkCategory = api.CanonicalCategoryMovie // TMDB defaults an unspecified category to movies.
+						}
+						if usableTMDBMetadata(previous, ids.TMDBID, artworkCategory) &&
+							sourceScopedMetadataMatches(retainedMetadata.SourcePath, ids.SourcePath) {
+							metadata.TMDB.Logo, metadata.TMDB.TMDBLogo = previous.Logo, previous.TMDBLogo
+							metadata.TMDB.LogoLanguagePreference = previous.LogoLanguagePreference
+						}
+					}
+				}
 				if tmdbLinksAgree && !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && tmdbResult.IMDbID != 0 && tmdbResult.IMDbID != rejectedTVDBIMDbID &&
 					tmdbResult.IMDbID != unverifiedTVDBIMDbID {
 					applyLinkedProviderID(&ids.IMDBID, &ids.Provenance.IMDB, &ids.Dependencies.IMDB, tmdbResult.IMDbID,
@@ -1396,6 +1425,26 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 	if tvmazeMetadataRejected {
 		downstreamIDs.TVmazeID = 0
+	}
+	// Retained title facts may carry a logo selected using earlier preferences.
+	// Replay just the image evidence, without re-collecting the title or its siblings.
+	if canSelectLogo && (tmdbMetadataFetchedID != downstreamIDs.TMDBID || tmdbErr != nil) &&
+		usableTMDBMetadata(metadata.TMDB, downstreamIDs.TMDBID, downstreamIDs.Category) &&
+		(metadata.TMDB.LogoLookupPending || metadata.TMDB.LogoLanguagePreference != logoPreference ||
+			!keepProvider(effectiveOverrides.KeepTMDB) && metadata.TMDB.Logo == "" && !metadata.TMDB.LogoLookupAttempted) {
+		logo, name, err := logoClient.SelectLogo(ctx, downstreamIDs.TMDBID, string(downstreamIDs.Category), logoLanguages)
+		if ctx.Err() != nil {
+			return preparationstate.State{}, fmt.Errorf("metadata: logo selection canceled: %w", ctx.Err())
+		}
+		retained := *metadata.TMDB
+		retained.LogoLookupPending = err != nil
+		if err != nil {
+			logger.Warnf("metadata: TMDB logo lookup failed: %s", redaction.RedactValue(err.Error(), nil))
+		} else {
+			retained.Logo, retained.TMDBLogo, retained.LogoLookupAttempted = logo, name, true
+			retained.LogoLanguagePreference = logoPreference
+		}
+		metadata.TMDB = &retained
 	}
 	meta = s.applyTVEpisodeMetadata(ctx, meta, &downstreamIDs, &metadata, tmdbClient, tvdbClient, tvmazeClient)
 	ids.Category = downstreamIDs.Category
@@ -2509,20 +2558,6 @@ func formatOptionalInt(value int) string {
 		return ""
 	}
 	return strconv.Itoa(value)
-}
-
-func descriptionLogoLanguages(value string) []string {
-	parts := strings.FieldsFunc(value, func(r rune) bool {
-		return r == ',' || r == ';'
-	})
-	languages := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			languages = append(languages, trimmed)
-		}
-	}
-	return languages
 }
 
 func mapTMDBMetadata(ids api.ExternalIdentity, result tmdb.MetadataResult) *api.TMDBMetadata {
