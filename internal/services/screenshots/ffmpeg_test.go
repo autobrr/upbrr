@@ -73,10 +73,10 @@ func TestParseShowInfoFrameType(t *testing.T) {
 func TestOverlayReportsSourceHDRFacts(t *testing.T) {
 	source := func(profile string, formats ...api.HDRFormat) api.HDRFacts {
 		return api.HDRFacts{
-			Formats: formats,
- DolbyVisionProfile: profile,
-			Origin: api.HDREvidenceMediaInfo,
- Status: api.HDREvidenceComplete,
+			Formats:            formats,
+			DolbyVisionProfile: profile,
+			Origin:             api.HDREvidenceMediaInfo,
+			Status:             api.HDREvidenceComplete,
 		}
 	}
 	p8 := source("8.1", api.HDRFormatDolbyVision, api.HDRFormatHDR10)
@@ -104,110 +104,110 @@ func TestOverlayReportsSourceHDRFacts(t *testing.T) {
 		want  string
 	}{
 		{
-name: "HLG",
- facts: source("", api.HDRFormatHLG),
- want: "HLG",
-},
+			name:  "HLG",
+			facts: source("", api.HDRFormatHLG),
+			want:  "HLG",
+		},
 		{
-name: "HDR10",
- facts: source("", api.HDRFormatHDR10),
- want: "HDR10",
-},
+			name:  "HDR10",
+			facts: source("", api.HDRFormatHDR10),
+			want:  "HDR10",
+		},
 		{
-name: "HDR10 plus",
- facts: source("", api.HDRFormatHDR10Plus),
- want: "HDR10+",
-},
+			name:  "HDR10 plus",
+			facts: source("", api.HDRFormatHDR10Plus),
+			want:  "HDR10+",
+		},
 		{
-name: "PQ10",
- facts: source("", api.HDRFormatPQ10),
- want: "PQ10",
-},
+			name:  "PQ10",
+			facts: source("", api.HDRFormatPQ10),
+			want:  "PQ10",
+		},
 		{
-name: "HDR Vivid",
- facts: source("", api.HDRFormatHDRVivid),
- want: "HDR Vivid",
-},
+			name:  "HDR Vivid",
+			facts: source("", api.HDRFormatHDRVivid),
+			want:  "HDR Vivid",
+		},
 		{
-name: "wide gamut",
- facts: source("", api.HDRFormatWCG),
- want: "Wide colour gamut",
-},
+			name:  "wide gamut",
+			facts: source("", api.HDRFormatWCG),
+			want:  "Wide colour gamut",
+		},
 		{
-name: "profile5",
- facts: bdinfo,
- want: "Dolby Vision Profile 5",
-},
+			name:  "profile5",
+			facts: bdinfo,
+			want:  "Dolby Vision Profile 5",
+		},
 		{
-name: "profile8.1 HDR10 layer",
- facts: p8,
- want: "Dolby Vision Profile 8.1 + HDR10 (compatible)",
-},
+			name:  "profile8.1 HDR10 layer",
+			facts: p8,
+			want:  "Dolby Vision Profile 8.1 + HDR10 (compatible)",
+		},
 		{
-name: "profile7 HDR10plus compatibility",
- facts: p7,
- want: "Dolby Vision Profile 7 + HDR10+ (compatible)",
-},
+			name:  "profile7 HDR10plus compatibility",
+			facts: p7,
+			want:  "Dolby Vision Profile 7 + HDR10+ (compatible)",
+		},
 		{
-name: "profile8 HDR10plus compatibility",
- facts: p8Plus,
- want: "Dolby Vision Profile 8 + HDR10+ (compatible)",
-},
+			name:  "profile8 HDR10plus compatibility",
+			facts: p8Plus,
+			want:  "Dolby Vision Profile 8 + HDR10+ (compatible)",
+		},
 		{
-name: "profile8.4 HLG compatibility",
- facts: hlgDV,
- want: "Dolby Vision Profile 8.4 + HLG (compatible)",
-},
+			name:  "profile8.4 HLG compatibility",
+			facts: hlgDV,
+			want:  "Dolby Vision Profile 8.4 + HLG (compatible)",
+		},
 		{
-name: "profile unknown",
- facts: source("", api.HDRFormatDolbyVision),
- want: "Dolby Vision (profile unknown)",
-},
+			name:  "profile unknown",
+			facts: source("", api.HDRFormatDolbyVision),
+			want:  "Dolby Vision (profile unknown)",
+		},
 		{
-name: "profile escaping rejected",
- facts: source("5':%{n},drawtext=bad\\", api.HDRFormatDolbyVision),
- want: "Dolby Vision (profile unknown)",
-},
+			name:  "profile escaping rejected",
+			facts: source("5':%{n},drawtext=bad\\", api.HDRFormatDolbyVision),
+			want:  "Dolby Vision (profile unknown)",
+		},
 		{
-name: "orphan profile ignored",
- facts: source("5", api.HDRFormatHDR10),
- want: "HDR10",
-},
+			name:  "orphan profile ignored",
+			facts: source("5", api.HDRFormatHDR10),
+			want:  "HDR10",
+		},
 		{name: "absent facts", want: "HDR type unknown"},
 		{
-name: "missing evidence",
- facts: missing,
- want: "HDR type unknown",
-},
+			name:  "missing evidence",
+			facts: missing,
+			want:  "HDR type unknown",
+		},
 		{
-name: "unknown format escaping rejected",
- facts: source("", "unrecognized':%{n},drawtext=bad"),
- want: "HDR type unknown",
-},
+			name:  "unknown format escaping rejected",
+			facts: source("", "unrecognized':%{n},drawtext=bad"),
+			want:  "HDR type unknown",
+		},
 		{
-name: "partial source",
- facts: partial,
- want: "HLG (incomplete evidence)",
-},
+			name:  "partial source",
+			facts: partial,
+			want:  "HLG (incomplete evidence)",
+		},
 		{
-name: "conflict retains source facts",
- facts: conflict,
- want: "HDR10 (conflicting evidence)",
-},
+			name:  "conflict retains source facts",
+			facts: conflict,
+			want:  "HDR10 (conflicting evidence)",
+		},
 		{
-name: "compatibility without source type",
- facts: fallbackOnly,
- want: "HDR type unknown + HDR10 (compatible)",
-},
+			name:  "compatibility without source type",
+			facts: fallbackOnly,
+			want:  "HDR type unknown + HDR10 (compatible)",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := overlayFilters(captureRequest{
-				InputPath: "Example.DV.Profile5.HLG.mkv",
- Timestamp: 0.5,
- FrameRate: 24,
-				ToneMap: true,
- UseLibplacebo: true,
- HDRFacts: test.facts,
+				InputPath:     "Example.DV.Profile5.HLG.mkv",
+				Timestamp:     0.5,
+				FrameRate:     24,
+				ToneMap:       true,
+				UseLibplacebo: true,
+				HDRFacts:      test.facts,
 			})
 			want := []string{
 				"drawtext=text='Frame Number\\: 12':fontcolor=white:fontsize=18:x=10:y=10:box=1:boxcolor=black@0.5",
@@ -563,6 +563,28 @@ func TestFFmpegFrameCorruptionIndicators(t *testing.T) {
 	}
 }
 
+func TestFFmpegInputFormatIsScopedToSelectedDVDVOB(t *testing.T) {
+	const path = "video.vob"
+	ordinary := screenshotInputArgs(path, "", false)
+	if !slices.Equal(ordinary, []string{"-i", path}) {
+		t.Fatalf("standalone file lost format autodetection: %v", ordinary)
+	}
+	dvd := screenshotInputArgs(path, "", true)
+	if !slices.Equal(dvd, []string{"-f", "mpeg", "-i", path}) {
+		t.Fatalf("DVD VOB does not select the MPEG program stream demuxer: %v", dvd)
+	}
+}
+
+func TestFFmpegInputOpeningFailureIsNotFrameCorruption(t *testing.T) {
+	diagnostic := "[in#0 @ 0x123] Error opening input: Invalid data found when processing input"
+	if err := ffmpegFrameCorruptionError([]byte(diagnostic)); err != nil {
+		t.Fatalf("input opening error misclassified as frame corruption: %v", err)
+	}
+	if err := ffmpegFrameCorruptionError([]byte(diagnostic + "\ncorrupt decoded frame in stream 0")); !errors.Is(err, internalerrors.ErrFrameCorruption) {
+		t.Fatalf("decoded corruption was discarded: %v", err)
+	}
+}
+
 func TestProbeVideoDurationCancellationPrecedesCorruption(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	runner := &cancelingResultRunner{
@@ -573,7 +595,7 @@ func TestProbeVideoDurationCancellationPrecedesCorruption(t *testing.T) {
 		},
 	}
 
-	_, err := probeVideoDuration(ctx, runner, "ffmpeg", "example.vob")
+	_, err := probeVideoDuration(ctx, runner, "ffmpeg", "example.vob", true)
 	if !errors.Is(err, ctx.Err()) {
 		t.Fatalf("duration probe error = %v, want %v", err, ctx.Err())
 	}

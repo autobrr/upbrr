@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -156,5 +157,109 @@ func TestNativeScreenshotVideoAndCoverSelection(t *testing.T) {
 		if decoded.Bounds() != want {
 			t.Fatalf("cover_only=%t captured geometry=%v want=%v", coverOnly, decoded.Bounds(), want)
 		}
+	}
+}
+
+func TestNativeDVDScreenshotWithZeroPrefixedVOB(t *testing.T) {
+	if os.Getenv("UPBRR_SCREENSHOT_NATIVE_TEST") != "1" {
+		t.Skip("set UPBRR_SCREENSHOT_NATIVE_TEST=1 for real FFmpeg checks")
+	}
+	executable, err := resolveFFmpeg()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	videoTS := filepath.Join(root, "VIDEO_TS")
+	if err := os.Mkdir(videoTS, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range []struct{ name, color string }{
+		{"VTS_01_1.VOB", "red"},
+		{"VTS_01_2.VOB", "blue"},
+	} {
+		path := filepath.Join(videoTS, fixture.name)
+		if fixture.color == "red" {
+			path = filepath.Join(root, "prefix-source.vob")
+		}
+		result, err := (commandRunner{}).Run(t.Context(), executable, []string{
+			"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+			"color=" + fixture.color + ":size=720x576:rate=25:duration=3",
+			"-c:v", "mpeg2video", "-f", "dvd", path,
+		}, "")
+		if err != nil {
+			t.Fatalf("generate VOB: %s", ffmpegResultPreview(result, err))
+		}
+		if fixture.color == "red" {
+			payload, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dst, err := os.OpenFile(filepath.Join(videoTS, fixture.name), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The zero-filled prefix exceeds FFmpeg's default format probe budget.
+			_, err = dst.WriteAt(payload, 34<<20)
+			closeErr := dst.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if closeErr != nil {
+				t.Fatal(closeErr)
+			}
+		}
+	}
+	mediaInfo := filepath.Join(root, "mediainfo.json")
+	if err := os.WriteFile(mediaInfo, []byte(`{"media":{"track":[{"@type":"General","Duration":"6"},{"@type":"Video","FrameRate":"25.000"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), commandRunner{})
+	subject := api.ScreenshotSubject{
+		SourcePath:        root,
+		DiscType:          "DVD",
+		MediaInfoJSONPath: mediaInfo,
+	}
+	for _, tc := range []struct {
+		name    string
+		second  float64
+		wantRed bool
+	}{
+		{
+			name:    "zero-prefixed segment",
+			second:  1,
+			wantRed: true,
+		},
+		{
+			name:   "ordinary segment",
+			second: 4,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertFrame := func(payload []byte) {
+				t.Helper()
+				frame, _, err := image.Decode(bytes.NewReader(payload))
+				if err != nil {
+					t.Fatal(err)
+				}
+				red, _, blue, _ := frame.At(frame.Bounds().Dx()/2, frame.Bounds().Dy()/2).RGBA()
+				if (tc.wantRed && red < 0x8000) || (!tc.wantRed && blue < 0x8000) {
+					t.Fatalf("wrong segment or unusable frame: red=%d blue=%d", red, blue)
+				}
+			}
+			preview, err := service.PreviewFrame(t.Context(), subject, "", tc.second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertFrame(preview.ImageBytes)
+			capture, err := service.Capture(t.Context(), subject, []api.ScreenshotSelection{{TimestampSeconds: tc.second}}, api.ScreenshotPurposeFinal)
+			if err != nil || len(capture.Images) != 1 {
+				t.Fatalf("capture: got %d images, err=%v", len(capture.Images), err)
+			}
+			payload, err := os.ReadFile(capture.Images[0].Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertFrame(payload)
+		})
 	}
 }
