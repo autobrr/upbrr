@@ -894,6 +894,18 @@ export default function SettingsPage(props: Props) {
           </div>
         ) : null}
 
+        <p role="status" className={settingsSaved ? "mb-3 text-status-success" : undefined}>
+          {settingsSaved}
+        </p>
+        <p
+          role="alert"
+          className={
+            settingsError ? "mb-3 text-destructive-text [overflow-wrap:anywhere]" : undefined
+          }
+        >
+          {settingsError}
+        </p>
+
         <div className="grid grid-cols-[180px_minmax(0,1fr)] gap-6 max-[960px]:grid-cols-1">
           <nav
             className="settings-tags sticky top-4 flex flex-col gap-1 self-start max-[960px]:static max-[960px]:flex-row max-[960px]:flex-wrap"
@@ -1003,11 +1015,6 @@ export default function SettingsPage(props: Props) {
             )}
           </div>
         </div>
-
-        {settingsSaved ? (
-          <p className="mt-[9px] text-[var(--status-success)]">{settingsSaved}</p>
-        ) : null}
-        {settingsError ? <p className={pageStyle.error}>{settingsError}</p> : null}
       </section>
 
       <AlertDialog.Root
