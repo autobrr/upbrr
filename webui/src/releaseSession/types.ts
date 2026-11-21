@@ -475,6 +475,7 @@ export type DescriptionsFacet = Readonly<{
     revision: number;
     status: FacetStatus;
     artifact?: DescriptionSet | null;
+    mainContext?: string;
     rawByGroup: Readonly<Record<string, string>>;
     renderedByGroup: Readonly<Record<string, string>>;
     dirtyGroups: readonly string[];
@@ -485,6 +486,8 @@ export type DescriptionsFacet = Readonly<{
   load(): Promise<boolean>;
   edit(groupKey: string, raw: string): void;
   render(groupKey: string): Promise<boolean>;
+  renderMain(source: string, signal: AbortSignal): Promise<string>;
+  saveMain(source: string): Promise<boolean>;
   save(groupKey: string): Promise<boolean>;
   reset(groupKey: string): Promise<boolean>;
 }>;

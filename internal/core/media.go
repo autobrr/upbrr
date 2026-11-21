@@ -747,7 +747,13 @@ func (m *mediaModule) uploadImagesToTarget(
 		return image.Purpose.IsAnalysis()
 	})
 	progressCtx = api.WithImageUploadProgressTarget(ctx, progressTarget)
-	if len(missing) == 0 || (meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped) {
+	skipUpload := meta.ExactMedia != nil && meta.ExactMedia.ImageHostUploadSkipped
+	reuseAnalysisOnly, _ := ctx.Value(descriptionAnalysisReuseOnlyKey{}).(bool)
+	if reuseAnalysisOnly && strictAnalysisBatch && len(missing) > 0 && !skipUpload {
+		emitCoreImageUploadProgress(progressCtx, progressTarget, api.ImageUploadProgressFailed, 0, 0, 0, "Saved analysis images are unavailable.")
+		return nil, errors.New("saved analysis images are unavailable; regenerate descriptions before editing")
+	}
+	if len(missing) == 0 || skipUpload {
 		message := fmt.Sprintf("Using %d already hosted images; no new upload is needed.", len(results))
 		if len(missing) > 0 {
 			message = fmt.Sprintf("New image uploads were skipped by request; %d of %d selected images are already hosted.", len(results), len(images))

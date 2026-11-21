@@ -116,6 +116,10 @@ func workflowDescriptionFingerprints(
 	return inputFingerprint, templateFingerprint, nil
 }
 
+// descriptionAnalysisReuseOnlyKey scopes the no-new-analysis-upload rule to
+// calls made by a description edit, without changing the retained hosting choice.
+type descriptionAnalysisReuseOnlyKey struct{}
+
 func (b workflowDescriptionBuilder) Build(
 	ctx context.Context,
 	release api.ReleaseRef,
@@ -160,16 +164,22 @@ func (b workflowDescriptionBuilder) Build(
 	trackerNames := workflowProjectionTrackerNames(descriptionTargets)
 	if len(descriptionTargets) == 0 {
 		return api.DescriptionSet{
+			MainSource:          instructions.MainSource,
 			InputFingerprint:    inputFingerprint,
 			TemplateFingerprint: templateFingerprint,
 			Descriptions:        []api.RenderedDescription{},
 			Status:              api.StageStatusSkipped,
 		}, nil
 	}
-	if err := b.uploadAudioDescriptionImages(ctx, subject, trackerNames); err != nil {
+	analysisCtx := ctx
+	resources, _ := privateMedia.(releaseworkflow.DescriptionResources)
+	if resources.ReuseImagesOnly {
+		analysisCtx = context.WithValue(ctx, descriptionAnalysisReuseOnlyKey{}, true)
+	}
+	if err := b.uploadAudioDescriptionImages(analysisCtx, subject, trackerNames); err != nil {
 		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload audio analysis images: %w", err)
 	}
-	if err := b.uploadHDRDescriptionImages(ctx, subject, trackerNames); err != nil {
+	if err := b.uploadHDRDescriptionImages(analysisCtx, subject, trackerNames); err != nil {
 		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload HDR analysis images: %w", err)
 	}
 	for _, projection := range descriptionTargets {
@@ -183,11 +193,14 @@ func (b workflowDescriptionBuilder) Build(
 			Message: "Description generation queued.",
 		})
 	}
-	preview, err := b.trackers.BuildPreparation(ctx, api.NewDescriptionSubject(subject), trackerNames)
+	descriptionSubject := api.NewDescriptionSubject(subject)
+	descriptionSubject.ReuseImagesOnly = resources.ReuseImagesOnly
+	preview, err := b.trackers.BuildPreparation(ctx, descriptionSubject, trackerNames)
 	if err != nil {
 		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: build tracker preparation: %w", err)
 	}
 	snapshot := api.DescriptionSet{
+		MainSource:          instructions.MainSource,
 		InputFingerprint:    inputFingerprint,
 		TemplateFingerprint: templateFingerprint,
 		Descriptions:        make([]api.RenderedDescription, 0, len(preview.Descriptions)),
@@ -667,6 +680,7 @@ func (b workflowDescriptionBuilder) resolveSubject(
 		Trackers:               trackerNames,
 		QuestionnaireAnswers:   questionnaire,
 		DescriptionGroups:      groups,
+		DescriptionOverride:    mainDescriptionSource(instructions),
 		TrackerConfigOverrides: instructions.TrackerConfig,
 		TrackerSiteOverrides:   instructions.TrackerSite,
 		ClientOverrides:        instructions.Client,
@@ -679,6 +693,13 @@ func (b workflowDescriptionBuilder) resolveSubject(
 	}
 	subject.Trackers = trackerNames
 	return subject, nil
+}
+
+func mainDescriptionSource(instructions api.DescriptionInstructions) string {
+	if instructions.MainSource == nil {
+		return ""
+	}
+	return *instructions.MainSource
 }
 
 func workflowProjectionTrackerNames(projections []api.TrackerReleaseProjection) []string {

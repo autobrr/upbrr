@@ -926,7 +926,7 @@ func (f *descriptionBuilderFake) Fingerprints(
 	release api.ReleaseRef,
 	projections api.TrackerReleaseProjectionSet,
 	media api.MediaArtifactSet,
-	_ any,
+	private any,
 	instructions api.DescriptionInstructions,
 ) (api.WorkflowFingerprint, api.WorkflowFingerprint, error) {
 	input, err := api.CanonicalWorkflowFingerprint(struct {
@@ -943,7 +943,24 @@ func (f *descriptionBuilderFake) Fingerprints(
 	if err != nil {
 		return "", "", fmt.Errorf("description input fingerprint: %w", err)
 	}
+	if resources, ok := private.(DescriptionResources); ok && len(resources.HDRArtifacts) > 0 {
+		input = testDescriptionFingerprintWithHDR(f.testing, input, resources.HDRArtifacts)
+	}
 	return input, testFingerprint(f.testing, "description-template"), nil
+}
+
+func testDescriptionFingerprintWithHDR(
+	t *testing.T, input api.WorkflowFingerprint, evidence map[api.TrackerID][]api.HDRArtifactEvidence,
+) api.WorkflowFingerprint {
+	t.Helper()
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+		Input    api.WorkflowFingerprint
+		Evidence map[api.TrackerID][]api.HDRArtifactEvidence
+	}{input, evidence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fingerprint
 }
 
 func (f *descriptionBuilderFake) Build(
@@ -979,6 +996,9 @@ func (f *descriptionBuilderFake) Build(
 	rendered := make([]api.RenderedDescription, 0, len(groups))
 	for _, group := range groups {
 		source := "Example description for " + group + "."
+		if instructions.MainSource != nil && *instructions.MainSource != "" {
+			source += "\n" + *instructions.MainSource
+		}
 		if override, exists := overrides[strings.ToLower(group)]; exists {
 			source = override
 		}

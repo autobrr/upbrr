@@ -3046,6 +3046,24 @@ export function ReleaseSessionProvider({
     }
   };
 
+  const saveMainDescription = (source: string): Promise<boolean> => {
+    const replacedDrafts = state.descriptions.rawByGroup;
+    return runBackendWorkflow(
+      (current, commandID, signal) =>
+        activePorts.workflow.saveMainDescription(current, source, commandID, signal),
+      {
+        onSuccess: () => dispatch({ type: "description_main_saved", replacedDrafts }),
+        onError: (error) =>
+          dispatch({
+            type: "description_main_save_failed",
+            error:
+              operationFailureFromError(error)?.Message ||
+              "Main description was not saved. Retry the request.",
+          }),
+      },
+    );
+  };
+
   const saveDescription = async (groupKey: string, reset: boolean): Promise<boolean> => {
     const key = groupKey.trim();
     if (!key || !workflowView.current?.descriptions) return false;
@@ -4632,6 +4650,9 @@ export function ReleaseSessionProvider({
         revision: state.descriptions.revision,
         status: workflowView.status,
         artifact: workflowView.current?.descriptions || null,
+        mainContext: workflowView.current?.release
+          ? `${workflowView.current.workflow.id}:${workflowView.current.release.release.Generation}`
+          : undefined,
         rawByGroup: state.descriptions.rawByGroup,
         renderedByGroup: state.descriptions.renderedByGroup,
         dirtyGroups: state.descriptions.dirtyGroups,
@@ -4642,6 +4663,8 @@ export function ReleaseSessionProvider({
       load: loadDescriptions,
       edit: (groupKey, raw) => dispatch({ type: "description_edited", groupKey, raw }),
       render: renderDescription,
+      renderMain: (source, signal) => activePorts.descriptions.render(source, {}, signal),
+      saveMain: saveMainDescription,
       save: (groupKey) => saveDescription(groupKey, false),
       reset: (groupKey) => saveDescription(groupKey, true),
     },

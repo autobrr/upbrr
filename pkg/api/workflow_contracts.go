@@ -650,6 +650,8 @@ type DescriptionOverrideInput struct {
 // DescriptionInstructions are transport-safe generation choices. Canonical
 // templates and generated output remain backend-owned workflow state.
 type DescriptionInstructions struct {
+	// MainSource is saved shared input, distinct from generated or final group output.
+	MainSource           *string                         `json:"mainSource,omitempty"`
 	Overrides            []DescriptionOverrideInput      `json:"overrides,omitempty"`
 	QuestionnaireAnswers map[TrackerID]map[string]string `json:"questionnaireAnswers,omitempty"`
 	Options              UploadOptions                   `json:"options"`
@@ -680,6 +682,8 @@ type DescriptionTrackerResult struct {
 
 // DescriptionSet retains descriptions for exact release, projection, and media revisions.
 type DescriptionSet struct {
+	// MainSource is the saved shared editor text, including an explicit empty save.
+	MainSource *string `json:"mainSource,omitempty"`
 	// HDRArtifacts is server-owned evidence from this exact description generation.
 	HDRArtifacts        map[TrackerID][]HDRArtifactEvidence `json:"hdrArtifacts,omitempty"`
 	ID                  DescriptionSetID                    `json:"id"`

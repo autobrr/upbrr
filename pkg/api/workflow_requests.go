@@ -451,6 +451,28 @@ func (r GenerateReleaseWorkflowDescriptionsRequest) Validate() error {
 	return r.ReleaseWorkflowCommandContext.Validate()
 }
 
+// SaveReleaseWorkflowMainDescriptionRequest reapplies one shared input to the selected description groups.
+type SaveReleaseWorkflowMainDescriptionRequest struct {
+	ReleaseWorkflowCommandContext
+	Descriptions DescriptionSetRef `json:"descriptions"`
+	// Source is required; an empty string clears the shared content.
+	Source *string `json:"source" ts_type:"string"`
+}
+
+// Validate verifies the bound description revision and an explicitly supplied source.
+func (r SaveReleaseWorkflowMainDescriptionRequest) Validate() error {
+	if err := r.ReleaseWorkflowCommandContext.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(r.Descriptions.ID)) == "" || r.Descriptions.Revision == 0 {
+		return errors.New("exact description set is required")
+	}
+	if r.Source == nil {
+		return errors.New("main description source is required")
+	}
+	return nil
+}
+
 // SaveReleaseWorkflowDescriptionOverrideRequest saves one exact description group.
 type SaveReleaseWorkflowDescriptionOverrideRequest struct {
 	ReleaseWorkflowCommandContext

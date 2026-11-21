@@ -237,6 +237,7 @@ func contractRoots() []reflect.Type {
 		api.UploadReleaseWorkflowImagesRequest{},
 		api.RemoveReleaseWorkflowHostedImagesRequest{},
 		api.RetryReleaseWorkflowImageHostRequest{},
+		api.SaveReleaseWorkflowMainDescriptionRequest{},
 		api.SaveReleaseWorkflowDescriptionOverrideRequest{},
 		api.ResetReleaseWorkflowDescriptionOverrideRequest{},
 		api.RetryReleaseWorkflowUploadRequest{},
@@ -1434,6 +1435,10 @@ func (b *schemaBuilder) definition(value reflect.Type) *schema {
 	case reflect.Struct:
 		result := &schema{Type: "object", Properties: map[string]*schema{}}
 		b.addFields(result, value)
+		if value == reflect.TypeFor[api.SaveReleaseWorkflowMainDescriptionRequest]() {
+			// The pointer distinguishes an omitted source from an explicit empty save.
+			result.Required = append(result.Required, "source")
+		}
 		sort.Strings(result.Required)
 		return result
 	case reflect.String, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,

@@ -43,6 +43,7 @@ import type {
   RetryReleaseWorkflowImageHostRequest,
   RetryReleaseWorkflowUploadRequest,
   SaveReleaseWorkflowDescriptionOverrideRequest,
+  SaveReleaseWorkflowMainDescriptionRequest,
   SetReleaseWorkflowMediaSelectionRequest,
   SetReleaseWorkflowAudioAnalysisEnabledRequest,
   SetReleaseWorkflowHDRAnalysisEnabledRequest,
@@ -277,6 +278,8 @@ export const releaseWorkflowClient = {
     });
     return withBasePath(`/api/app/release-workflow-media?${query.toString()}`);
   },
+  saveMainDescription: (command: SaveReleaseWorkflowMainDescriptionRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("SaveReleaseWorkflowMainDescription", command, { signal }),
   saveDescriptionOverride: (
     command: SaveReleaseWorkflowDescriptionOverrideRequest,
     signal?: AbortSignal,

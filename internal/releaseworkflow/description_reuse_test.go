@@ -67,6 +67,178 @@ func TestDescriptionCacheFailureAllowsNewKeyRetryAtOriginalRevision(t *testing.T
 	}
 }
 
+func TestSaveMainDescriptionPublishesOneCompleteRevision(t *testing.T) {
+	t.Parallel()
+	module, memory, _ := newCompositeUploadTestModule(t)
+	repository := &descriptionAtomicRepositoryFake{MemoryRepository: memory}
+	module.repository = repository
+	module.descriptionBuilder = descriptionAtomicBuilderFake{&descriptionBuilderFake{testing: t}}
+	started, err := module.StartUpload(t.Context(), testOwnerID,
+		compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "main-description-atomic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	current := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA"}, "approve-main-description")
+	if current.Descriptions == nil || repository.reusable == nil || len(current.Descriptions.Descriptions) == 0 {
+		t.Fatalf("fixture lacks selected description groups: %#v", current.Descriptions)
+	}
+	saveGroup := executeCommand(t, module, SaveDescriptionOverrideCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Descriptions:     *current.Workflow.Descriptions,
+		GroupKey:         current.Descriptions.Descriptions[0].GroupKey,
+		Source:           "Old group edit",
+		IdempotencyKey:   "before-main-edit",
+	})
+	request := SaveMainDescriptionCommand{
+		WorkflowID:       saveGroup.Workflow.ID,
+		ExpectedRevision: saveGroup.Workflow.Revision,
+		Descriptions:     *saveGroup.Workflow.Descriptions,
+		Source:           "  [b]New shared text[/b]\n",
+		IdempotencyKey:   "main-save-fails",
+	}
+	repository.failCache = true
+	if _, err := module.Execute(t.Context(), testOwnerID, request); err == nil {
+		t.Fatal("cache failure allowed publishing the main editor source")
+	}
+	before, err := module.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil || before.Descriptions.MainSource != nil || before.Workflow.Revision != saveGroup.Workflow.Revision {
+		t.Fatalf("failed main save changed current workflow: %#v, %v", before, err)
+	}
+	repository.failCache = false
+	request.IdempotencyKey = "main-save"
+	saved := executeCommand(t, module, request)
+	if saved.Descriptions.MainSource == nil || *saved.Descriptions.MainSource != request.Source ||
+		len(saved.Descriptions.Descriptions) != len(current.Descriptions.Descriptions) || saved.Workflow.DryRun != nil {
+		t.Fatalf("main save did not atomically supersede the current descriptions: %#v", saved.Descriptions)
+	}
+	for _, output := range saved.Descriptions.Descriptions {
+		want := "Example description for " + output.GroupKey + ".\n" + request.Source
+		if output.Source != want {
+			t.Fatalf("group output not regenerated from shared input: %q, want %q", output.Source, want)
+		}
+	}
+	repeated := executeCommand(t, module, request)
+	if repeated.Descriptions.ID != saved.Descriptions.ID {
+		t.Fatal("idempotent save published another revision")
+	}
+	group := saved.Descriptions.Descriptions[0]
+	const finalSource = "Final group edit"
+	groupSaved := executeCommand(t, module, SaveDescriptionOverrideCommand{
+		WorkflowID:       saved.Workflow.ID,
+		ExpectedRevision: saved.Workflow.Revision,
+		Descriptions:     *saved.Workflow.Descriptions,
+		GroupKey:         group.GroupKey,
+		Source:           finalSource,
+		IdempotencyKey:   "group-after-main",
+	})
+	retained, err := module.private.Get(testOwnerID, groupSaved.Workflow.ID, descriptionPrivateResourceID(groupSaved.Descriptions.ID), module.clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshInputs, ok := retained.(api.DescriptionInstructions)
+	if !ok {
+		t.Fatalf("saved description inputs have type %T", retained)
+	}
+	refreshInputs.MainSource, refreshInputs.Overrides = nil, nil
+	compatible := executeCommand(t, module, GenerateDescriptionsCommand{
+		WorkflowID:       groupSaved.Workflow.ID,
+		ExpectedRevision: groupSaved.Workflow.Revision,
+		Instructions:     refreshInputs,
+		IdempotencyKey:   "compatible-refresh",
+	})
+	if got := compatible.Descriptions.Descriptions[0].Source; got != finalSource {
+		t.Fatalf("compatible refresh did not keep the saved group edit: %q", got)
+	}
+	// Give the same saved group a validated current HDR association. A no-op
+	// refresh must compare that same evidence, not treat it as a dependency change.
+	withHDR, err := memory.Load(t.Context(), testOwnerID, compatible.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdrFixture := hdrQuestionnaireState()
+	analysisRef := hdrFixture.Workflow.HDRAnalysis
+	analysis := hdrFixture.HDRAnalyses[analysisRef.ID]
+	description := withHDR.Descriptions[compatible.Descriptions.ID]
+	analysis.Release = description.ReleaseRef
+	withHDR.Workflow.HDRAnalysisEnabled, withHDR.Workflow.HDRAnalysis = true, analysisRef
+	withHDR.HDRAnalyses = map[api.HDRAnalysisResultID]api.HDRAnalysisResult{analysisRef.ID: analysis}
+	description.HDRArtifacts = map[api.TrackerID][]api.HDRArtifactEvidence{
+		group.TrackerIDs[0]: hdrFixture.Descriptions[hdrFixture.Workflow.Descriptions.ID].HDRArtifacts["LST"],
+	}
+	description.InputFingerprint = testDescriptionFingerprintWithHDR(t, description.InputFingerprint, description.HDRArtifacts)
+	withHDR.Descriptions[description.ID] = description
+	if len(currentDescriptionHDRArtifacts(&withHDR)) != 1 {
+		t.Fatal("fixture lacks a current HDR association")
+	}
+	result, err := module.generateDescriptions(t.Context(), testOwnerID, &withHDR, withHDR.Workflow.Revision+1, module.clock.Now(),
+		GenerateDescriptionsCommand{Instructions: refreshInputs})
+	if err != nil || result.Descriptions == nil || result.Descriptions.ID != description.ID || result.Descriptions.Descriptions[0].Source != finalSource {
+		t.Fatalf("exact HDR refresh did not keep the saved group and its evidence: %#v, %v", result.Descriptions, err)
+	}
+	refreshInputs.TemplateVersion = "regenerated"
+	regenerated := executeCommand(t, module, GenerateDescriptionsCommand{
+		WorkflowID:       compatible.Workflow.ID,
+		ExpectedRevision: compatible.Workflow.Revision,
+		Instructions:     refreshInputs,
+		IdempotencyKey:   "main-retained-regenerate",
+	})
+	if regenerated.Descriptions.MainSource == nil || *regenerated.Descriptions.MainSource != request.Source {
+		t.Fatal("generating descriptions without a new source lost the saved main input")
+	}
+	if actual := regenerated.Descriptions.Descriptions[0].Source; actual != "Example description for "+group.GroupKey+".\n"+request.Source {
+		t.Fatalf("incompatible refresh did not rebuild the group from shared input: %q", actual)
+	}
+	request.ExpectedRevision = regenerated.Workflow.Revision
+	request.Descriptions = *regenerated.Workflow.Descriptions
+	request.Source, request.IdempotencyKey = "", "main-save-empty"
+	cleared := executeCommand(t, module, request)
+	if cleared.Descriptions.MainSource == nil || *cleared.Descriptions.MainSource != "" {
+		t.Fatal("clearing source was not explicit in the saved description snapshot")
+	}
+	for _, output := range cleared.Descriptions.Descriptions {
+		if want := "Example description for " + output.GroupKey + "."; output.Source != want {
+			t.Fatalf("clearing the main source did not restore the default: %q, want %q", output.Source, want)
+		}
+	}
+}
+
+func TestMainDescriptionOnlySupersedesSelectedTrackerOverrides(t *testing.T) {
+	projections := []api.TrackerReleaseProjection{testProjection(t, "ALPHA", "Example")}
+	projections[0].Artifacts.Description = true
+	projections[0].DescriptionGroup = "specific"
+	groups := []api.RenderedDescription{{GroupKey: "specific|selected-image-host", TrackerIDs: []api.TrackerID{"ALPHA"}}}
+	overrides := []api.DescriptionOverrideInput{
+		{
+			GroupKey:   "specific|selected-image-host",
+			Source:     "split this",
+			Final:      true,
+			TrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
+		},
+		{GroupKey: "specific", Source: "old group-wide draft"},
+		{
+			GroupKey:   "unrelated",
+			Source:     "keep this",
+			Final:      true,
+			TrackerIDs: []api.TrackerID{"GAMMA"},
+		},
+	}
+	want := []api.DescriptionOverrideInput{
+		{
+			GroupKey:   "specific|selected-image-host",
+			Source:     "split this",
+			Final:      true,
+			TrackerIDs: []api.TrackerID{"BETA"},
+		},
+		overrides[2],
+	}
+	got := descriptionOverridesOutsideMainTargets(overrides, projections, groups)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("main save replaced unrelated overrides: got %#v, want %#v", got, want)
+	}
+}
+
 type descriptionAtomicRepositoryFake struct {
 	*MemoryRepository
 	failCache bool

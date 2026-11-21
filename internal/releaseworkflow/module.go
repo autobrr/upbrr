@@ -505,7 +505,9 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 			return CommandResult{}, err
 		}
 	}
-	if err := m.prepareReusableDescriptions(commitCtx, ownerID, &state, result.Descriptions, now); err != nil {
+	generate, regenerating := command.(GenerateDescriptionsCommand)
+	preservePriorOverrides := regenerating && generate.Instructions.MainSource == nil && len(generate.Instructions.Overrides) == 0
+	if err := m.prepareReusableDescriptions(commitCtx, ownerID, &state, result.Descriptions, now, preservePriorOverrides); err != nil {
 		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, err
 	}
@@ -3840,6 +3842,8 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case GenerateDescriptionsCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case SaveMainDescriptionCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case SaveDescriptionOverrideCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case ResetDescriptionOverrideCommand:
@@ -3946,10 +3950,12 @@ func (m *Module) apply(
 		return m.removeHostedImages(ctx, ownerID, state, nextRevision, now, typed)
 	case GenerateDescriptionsCommand:
 		return m.generateDescriptions(ctx, ownerID, state, nextRevision, now, typed)
+	case SaveMainDescriptionCommand:
+		return m.mutateDescriptionOverride(ctx, ownerID, state, nextRevision, now, typed.Descriptions, "", &typed.Source, true)
 	case SaveDescriptionOverrideCommand:
-		return m.mutateDescriptionOverride(ctx, ownerID, state, nextRevision, now, typed.Descriptions, typed.GroupKey, &typed.Source)
+		return m.mutateDescriptionOverride(ctx, ownerID, state, nextRevision, now, typed.Descriptions, typed.GroupKey, &typed.Source, false)
 	case ResetDescriptionOverrideCommand:
-		return m.mutateDescriptionOverride(ctx, ownerID, state, nextRevision, now, typed.Descriptions, typed.GroupKey, nil)
+		return m.mutateDescriptionOverride(ctx, ownerID, state, nextRevision, now, typed.Descriptions, typed.GroupKey, nil, false)
 	case DryRunUploadsCommand:
 		return m.dryRunUploads(ctx, ownerID, state, nextRevision, now, typed)
 	case ExecuteUploadsCommand:
@@ -7389,12 +7395,42 @@ func (m *Module) generateDescriptions(
 	if err != nil {
 		return CommandResult{}, err
 	}
+	requestedInstructions := command.Instructions
+	var retainedMainSource *string
+	fingerprintMedia, restoreMedia := privateMedia, privateMedia
+	if command.Instructions.MainSource == nil && workflow.Descriptions != nil {
+		if current, ok := state.Descriptions[workflow.Descriptions.ID]; ok && current.Release == *workflow.Release && current.MainSource != nil {
+			retainedMainSource = new(*current.MainSource)
+			command.Instructions.MainSource = retainedMainSource
+			resources, wrapped := privateMedia.(DescriptionResources)
+			if !wrapped {
+				resources.Media = privateMedia
+			}
+			resources.RetainedMainSource = retainedMainSource
+			restoreMedia = resources
+			// Compare the current final groups with the same validated associations
+			// they used when saved. Never carry these into a changed build.
+			resources.HDRArtifacts = currentDescriptionHDRArtifacts(state)
+			fingerprintMedia = resources
+			if len(command.Instructions.Overrides) == 0 {
+				private, err := m.private.Get(ownerID, workflow.ID, descriptionPrivateResourceID(current.ID), now)
+				if err != nil {
+					return CommandResult{}, fmt.Errorf("release workflow retain saved description inputs: %w", err)
+				}
+				retained, ok := private.(api.DescriptionInstructions)
+				if !ok {
+					return CommandResult{}, ErrPrivateResourceUnavailable
+				}
+				command.Instructions.Overrides = cloneDescriptionInstructions(retained).Overrides
+			}
+		}
+	}
 	inputFingerprint, templateFingerprint, err := m.descriptionBuilder.Fingerprints(
 		ctx,
 		projections.ReleaseRef,
 		descriptionProjections,
 		media,
-		privateMedia,
+		fingerprintMedia,
 		command.Instructions,
 	)
 	if err != nil {
@@ -7408,24 +7444,36 @@ func (m *Module) generateDescriptions(
 			return CommandResult{Descriptions: &current}, nil
 		}
 	}
+	// Carried group edits may prove an exact no-op above, but a changed
+	// build can recover them only through the reusable description check.
+	command.Instructions = requestedInstructions
+	refingerprint := retainedMainSource != nil
 	var snapshot api.DescriptionSet
 	if restorer, ok := m.descriptionBuilder.(ReusableDescriptionBuilder); ok {
 		var instructions api.DescriptionInstructions
 		snapshot, instructions, err = restorer.RestoreCompatibleDescriptions(
-			ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, command.Instructions,
+			ctx, projections.ReleaseRef, descriptionProjections, media, restoreMedia, command.Instructions,
 		)
 		if err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow restore descriptions: %w", err)
 		}
-		if snapshot.Status != "" {
+		if snapshot.Status != "" || instructions.MainSource != command.Instructions.MainSource {
 			command.Instructions = instructions
-			inputFingerprint, templateFingerprint, err = m.descriptionBuilder.Fingerprints(
-				ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, instructions,
-			)
-			if err != nil {
-				return CommandResult{}, fmt.Errorf("release workflow fingerprint restored descriptions: %w", err)
+			refingerprint = true
+			if snapshot.Status != "" {
+				logging.FromContext(ctx, m.logger).Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
 			}
-			logging.FromContext(ctx, m.logger).Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
+		}
+	}
+	if command.Instructions.MainSource == nil {
+		command.Instructions.MainSource = retainedMainSource
+	}
+	if refingerprint {
+		inputFingerprint, templateFingerprint, err = m.descriptionBuilder.Fingerprints(
+			ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, command.Instructions,
+		)
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow fingerprint restored descriptions: %w", err)
 		}
 	}
 	if snapshot.Status == "" {
@@ -7439,6 +7487,7 @@ func (m *Module) generateDescriptions(
 	if snapshot.InputFingerprint != inputFingerprint || snapshot.TemplateFingerprint != templateFingerprint {
 		return CommandResult{}, errors.New("release workflow build descriptions: dependency fingerprint mismatch")
 	}
+	snapshot.MainSource = command.Instructions.MainSource
 	snapshot.TrackerApproval = targets.TrackerApproval()
 	if err := validateDescriptionBuild(descriptionProjections, snapshot); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build descriptions: %w", err)
@@ -7463,6 +7512,9 @@ func (m *Module) generateDescriptions(
 
 func cloneDescriptionInstructions(input api.DescriptionInstructions) api.DescriptionInstructions {
 	cloned := input
+	if input.MainSource != nil {
+		cloned.MainSource = new(*input.MainSource)
+	}
 	cloned.Overrides = append([]api.DescriptionOverrideInput(nil), input.Overrides...)
 	for index := range cloned.Overrides {
 		cloned.Overrides[index].TrackerIDs = slices.Clone(input.Overrides[index].TrackerIDs)
@@ -7506,12 +7558,13 @@ func (m *Module) mutateDescriptionOverride(
 	descriptionsRef api.DescriptionSetRef,
 	groupKey string,
 	source *string,
+	main bool,
 ) (CommandResult, error) {
 	if m.descriptionBuilder == nil {
 		return CommandResult{}, fmt.Errorf("%w: description builder is unavailable", ErrInvalidTransition)
 	}
 	groupKey = strings.TrimSpace(groupKey)
-	if groupKey == "" {
+	if groupKey == "" && !main {
 		return CommandResult{}, fmt.Errorf("%w: description group key is required", ErrInvalidTransition)
 	}
 	workflow := state.Workflow
@@ -7536,7 +7589,7 @@ func (m *Module) mutateDescriptionOverride(
 			break
 		}
 	}
-	if targetIndex < 0 {
+	if targetIndex < 0 && !main {
 		return CommandResult{}, fmt.Errorf("%w: description group is unavailable", ErrInvalidTransition)
 	}
 	privateInputs, err := m.private.Get(ownerID, workflow.ID, descriptionPrivateResourceID(current.ID), now)
@@ -7548,36 +7601,36 @@ func (m *Module) mutateDescriptionOverride(
 		return CommandResult{}, ErrPrivateResourceUnavailable
 	}
 	instructions = cloneDescriptionInstructions(instructions)
-	matchedOverride := false
-	overrides := make([]api.DescriptionOverrideInput, 0, len(instructions.Overrides)+1)
-	for _, override := range instructions.Overrides {
-		if strings.EqualFold(strings.TrimSpace(override.GroupKey), groupKey) {
-			matchedOverride = true
-			if source != nil {
-				overrides = append(overrides, api.DescriptionOverrideInput{
-					GroupKey:   groupKey,
-					Source:     *source,
-					Final:      true,
-					TrackerIDs: slices.Clone(current.Descriptions[targetIndex].TrackerIDs),
-				})
+	if main {
+		instructions.MainSource = new(*source)
+	} else {
+		matchedOverride := false
+		overrides := make([]api.DescriptionOverrideInput, 0, len(instructions.Overrides)+1)
+		for _, override := range instructions.Overrides {
+			if strings.EqualFold(strings.TrimSpace(override.GroupKey), groupKey) {
+				matchedOverride = true
+				if source != nil {
+					overrides = append(overrides, api.DescriptionOverrideInput{
+						GroupKey:   groupKey,
+						Source:     *source,
+						Final:      true,
+						TrackerIDs: slices.Clone(current.Descriptions[targetIndex].TrackerIDs),
+					})
+				}
+				continue
 			}
-			continue
+			overrides = append(overrides, override)
 		}
-		overrides = append(overrides, override)
+		if source != nil && !matchedOverride {
+			overrides = append(overrides, api.DescriptionOverrideInput{
+				GroupKey:   groupKey,
+				Source:     *source,
+				Final:      true,
+				TrackerIDs: slices.Clone(current.Descriptions[targetIndex].TrackerIDs),
+			})
+		}
+		instructions.Overrides = overrides
 	}
-	if source != nil && !matchedOverride {
-		overrides = append(overrides, api.DescriptionOverrideInput{
-			GroupKey:   groupKey,
-			Source:     *source,
-			Final:      true,
-			TrackerIDs: slices.Clone(current.Descriptions[targetIndex].TrackerIDs),
-		})
-	}
-	instructions.Overrides = overrides
-	if err := instructions.Validate(); err != nil {
-		return CommandResult{}, fmt.Errorf("release workflow validate description override: %w", err)
-	}
-
 	privateMedia, err := m.private.Get(ownerID, workflow.ID, mediaPrivateResourceID(media.ID), now)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow load media artifacts for description override: %w", err)
@@ -7587,12 +7640,13 @@ func (m *Module) mutateDescriptionOverride(
 		return CommandResult{}, err
 	}
 	retainedHDRArtifacts := currentDescriptionHDRArtifacts(state)
-	if len(retainedHDRArtifacts) > 0 {
+	if len(retainedHDRArtifacts) > 0 || main {
 		resources, wrapped := privateMedia.(DescriptionResources)
 		if !wrapped {
 			resources.Media = privateMedia
 		}
 		resources.HDRArtifacts = retainedHDRArtifacts
+		resources.ReuseImagesOnly = main
 		privateMedia = resources
 	}
 	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageDescriptions, now)
@@ -7600,6 +7654,12 @@ func (m *Module) mutateDescriptionOverride(
 		return CommandResult{}, err
 	}
 	descriptionProjections := targets.Projections()
+	if main {
+		instructions.Overrides = descriptionOverridesOutsideMainTargets(instructions.Overrides, descriptionProjections.Projections, current.Descriptions)
+	}
+	if err := instructions.Validate(); err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow validate description override: %w", err)
+	}
 	rebuilt, err := m.descriptionBuilder.Build(
 		ctx,
 		projections.ReleaseRef,
@@ -7612,67 +7672,83 @@ func (m *Module) mutateDescriptionOverride(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow rebuild description group: %w", err)
 	}
-	var rebuiltTarget *api.RenderedDescription
-	for index := range rebuilt.Descriptions {
-		if strings.EqualFold(strings.TrimSpace(rebuilt.Descriptions[index].GroupKey), groupKey) {
-			rebuiltTarget = &rebuilt.Descriptions[index]
-			break
+	updated := rebuilt
+	if main {
+		incompleteTarget := slices.ContainsFunc(rebuilt.TrackerResults, func(result api.DescriptionTrackerResult) bool {
+			return result.Status != api.StageStatusCompleted
+		})
+		if rebuilt.Status != api.StageStatusCompleted || len(rebuilt.Failures) != 0 ||
+			len(rebuilt.RequiredActions) != 0 || len(rebuilt.Descriptions) == 0 || incompleteTarget {
+			return CommandResult{}, fmt.Errorf(
+				"%w: main description was not saved because not all selected descriptions could be generated",
+				ErrInvalidTransition,
+			)
 		}
-	}
-	if rebuiltTarget == nil {
-		return CommandResult{}, fmt.Errorf("release workflow rebuild description group: %w", ErrPrivateResourceUnavailable)
-	}
-
-	updated := current
-	updated.HDRArtifacts = retainedHDRArtifacts
-	updated.Descriptions = append([]api.RenderedDescription(nil), current.Descriptions...)
-	updated.Descriptions[targetIndex] = *rebuiltTarget
-	updated.InputFingerprint = rebuilt.InputFingerprint
-	updated.TemplateFingerprint = rebuilt.TemplateFingerprint
-	updated.TrackerApproval = targets.TrackerApproval()
-	targetTrackers := make(map[api.TrackerID]struct{}, len(rebuiltTarget.TrackerIDs))
-	for _, trackerID := range rebuiltTarget.TrackerIDs {
-		targetTrackers[trackerID] = struct{}{}
-		delete(updated.HDRArtifacts, trackerID)
-		if artifacts := rebuilt.HDRArtifacts[trackerID]; len(artifacts) > 0 {
-			if updated.HDRArtifacts == nil {
-				updated.HDRArtifacts = make(map[api.TrackerID][]api.HDRArtifactEvidence)
+		updated.MainSource = instructions.MainSource
+		updated.TrackerApproval = targets.TrackerApproval()
+	} else {
+		var rebuiltTarget *api.RenderedDescription
+		for index := range rebuilt.Descriptions {
+			if strings.EqualFold(strings.TrimSpace(rebuilt.Descriptions[index].GroupKey), groupKey) {
+				rebuiltTarget = &rebuilt.Descriptions[index]
+				break
 			}
-			updated.HDRArtifacts[trackerID] = artifacts
 		}
-	}
-	updated.TrackerResults = make([]api.DescriptionTrackerResult, 0, len(current.TrackerResults))
-	for _, result := range current.TrackerResults {
-		if _, target := targetTrackers[result.TrackerID]; !target {
-			updated.TrackerResults = append(updated.TrackerResults, result)
+		if rebuiltTarget == nil {
+			return CommandResult{}, fmt.Errorf("release workflow rebuild description group: %w", ErrPrivateResourceUnavailable)
 		}
-	}
-	for _, result := range rebuilt.TrackerResults {
-		if _, target := targetTrackers[result.TrackerID]; target {
-			updated.TrackerResults = append(updated.TrackerResults, result)
+
+		updated = current
+		updated.HDRArtifacts = retainedHDRArtifacts
+		updated.Descriptions = append([]api.RenderedDescription(nil), current.Descriptions...)
+		updated.Descriptions[targetIndex] = *rebuiltTarget
+		updated.InputFingerprint = rebuilt.InputFingerprint
+		updated.TemplateFingerprint = rebuilt.TemplateFingerprint
+		updated.TrackerApproval = targets.TrackerApproval()
+		targetTrackers := make(map[api.TrackerID]struct{}, len(rebuiltTarget.TrackerIDs))
+		for _, trackerID := range rebuiltTarget.TrackerIDs {
+			targetTrackers[trackerID] = struct{}{}
+			delete(updated.HDRArtifacts, trackerID)
+			if artifacts := rebuilt.HDRArtifacts[trackerID]; len(artifacts) > 0 {
+				if updated.HDRArtifacts == nil {
+					updated.HDRArtifacts = make(map[api.TrackerID][]api.HDRArtifactEvidence)
+				}
+				updated.HDRArtifacts[trackerID] = artifacts
+			}
 		}
-	}
-	updated.Failures = make([]api.WorkflowFailure, 0, len(current.Failures)+len(rebuilt.Failures))
-	for _, failure := range current.Failures {
-		if _, target := targetTrackers[failure.TrackerID]; !target {
-			updated.Failures = append(updated.Failures, failure)
+		updated.TrackerResults = make([]api.DescriptionTrackerResult, 0, len(current.TrackerResults))
+		for _, result := range current.TrackerResults {
+			if _, target := targetTrackers[result.TrackerID]; !target {
+				updated.TrackerResults = append(updated.TrackerResults, result)
+			}
 		}
-	}
-	for _, failure := range rebuilt.Failures {
-		if _, target := targetTrackers[failure.TrackerID]; target {
-			updated.Failures = append(updated.Failures, failure)
+		for _, result := range rebuilt.TrackerResults {
+			if _, target := targetTrackers[result.TrackerID]; target {
+				updated.TrackerResults = append(updated.TrackerResults, result)
+			}
 		}
-	}
-	updated.RequiredActions = nil
-	switch {
-	case len(updated.Descriptions) == 0 && len(updated.Failures) > 0:
-		updated.Status = api.StageStatusFailed
-	case len(updated.Descriptions) == 0:
-		updated.Status = api.StageStatusSkipped
-	case len(updated.Failures) > 0:
-		updated.Status = api.StageStatusBlocked
-	default:
-		updated.Status = api.StageStatusCompleted
+		updated.Failures = make([]api.WorkflowFailure, 0, len(current.Failures)+len(rebuilt.Failures))
+		for _, failure := range current.Failures {
+			if _, target := targetTrackers[failure.TrackerID]; !target {
+				updated.Failures = append(updated.Failures, failure)
+			}
+		}
+		for _, failure := range rebuilt.Failures {
+			if _, target := targetTrackers[failure.TrackerID]; target {
+				updated.Failures = append(updated.Failures, failure)
+			}
+		}
+		updated.RequiredActions = nil
+		switch {
+		case len(updated.Descriptions) == 0 && len(updated.Failures) > 0:
+			updated.Status = api.StageStatusFailed
+		case len(updated.Descriptions) == 0:
+			updated.Status = api.StageStatusSkipped
+		case len(updated.Failures) > 0:
+			updated.Status = api.StageStatusBlocked
+		default:
+			updated.Status = api.StageStatusCompleted
+		}
 	}
 	if err := validateDescriptionBuild(descriptionProjections, updated); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow validate description group mutation: %w", err)
@@ -7693,6 +7769,53 @@ func (m *Module) mutateDescriptionOverride(
 		}
 	}
 	return result, nil
+}
+
+// descriptionOverridesOutsideMainTargets removes superseded group sources while
+// retaining explicit final edits for tracker memberships outside the current save.
+func descriptionOverridesOutsideMainTargets(
+	overrides []api.DescriptionOverrideInput,
+	projections []api.TrackerReleaseProjection,
+	groups []api.RenderedDescription,
+) []api.DescriptionOverrideInput {
+	trackerTargets := make(map[api.TrackerID]struct{}, len(projections))
+	groupTargets := make(map[string]struct{})
+	base := func(key string) string {
+		return strings.ToUpper(strings.TrimSpace(strings.SplitN(key, "|", 2)[0]))
+	}
+	for _, projection := range projections {
+		if projection.Artifacts.Description {
+			trackerTargets[normalizeDownstreamTrackerID(projection.TrackerID)] = struct{}{}
+			groupTargets[base(projection.DescriptionGroup)] = struct{}{}
+		}
+	}
+	for _, group := range groups {
+		if slices.ContainsFunc(group.TrackerIDs, func(id api.TrackerID) bool {
+			_, selected := trackerTargets[normalizeDownstreamTrackerID(id)]
+			return selected
+		}) {
+			groupTargets[base(group.GroupKey)] = struct{}{}
+		}
+	}
+	outside := make([]api.DescriptionOverrideInput, 0, len(overrides))
+	for _, override := range overrides {
+		if len(override.TrackerIDs) == 0 {
+			key := base(override.GroupKey)
+			if _, selected := groupTargets[key]; selected || key == "DEFAULT" {
+				continue
+			}
+		} else {
+			override.TrackerIDs = slices.DeleteFunc(override.TrackerIDs, func(id api.TrackerID) bool {
+				_, selected := trackerTargets[normalizeDownstreamTrackerID(id)]
+				return selected
+			})
+			if len(override.TrackerIDs) == 0 {
+				continue
+			}
+		}
+		outside = append(outside, override)
+	}
+	return outside
 }
 
 func validateDescriptionBuild(projections api.TrackerReleaseProjectionSet, snapshot api.DescriptionSet) error {

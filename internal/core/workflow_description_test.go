@@ -73,6 +73,28 @@ func TestWorkflowDescriptionUploadsAudioOnlyThroughAudioChannel(t *testing.T) {
 	}
 }
 
+func TestMainDescriptionEditDoesNotUploadMissingAnalysisImages(t *testing.T) {
+	t.Parallel()
+	uploads := &descriptionAudioHostFake{}
+	builder := workflowDescriptionBuilder{media: &mediaModule{
+		cfg:      config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbb"}},
+		logger:   api.NopLogger{},
+		registry: mediaImageHostRegistry(t),
+		images:   uploads,
+	}}
+	subject := api.UploadSubject{ExactMedia: &api.ExactMediaAssets{
+		AudioAnalysis: &api.AudioAnalysisRef{ID: "analysis-1", Revision: 1},
+		AudioTracks: []api.AudioDescriptionTrack{{Ordinal: 1, Images: []api.ScreenshotImage{{
+			Path: filepath.Join(t.TempDir(), "waveform.png"), Purpose: api.ScreenshotPurposeAudioAnalysis,
+		}}}},
+	}}
+	ctx := context.WithValue(t.Context(), descriptionAnalysisReuseOnlyKey{}, true)
+	err := builder.uploadAudioDescriptionImages(ctx, subject, []string{"ONE"})
+	if err == nil || len(uploads.images) != 0 || len(subject.ExactMedia.AudioUploads) != 0 || subject.ExactMedia.ImageHostUploadSkipped {
+		t.Fatalf("main edit hid missing retained analysis or changed upload authority: uploads=%d, err=%v", len(uploads.images), err)
+	}
+}
+
 func TestWorkflowDescriptionKeepsDistinctAudioHostsPerTracker(t *testing.T) {
 	t.Parallel()
 	imagePath := filepath.Join(t.TempDir(), "waveform.png")

@@ -8,6 +8,7 @@ import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { DescriptionsFacet } from "../../releaseSession/types";
+import MainDescriptionEditor from "./MainDescriptionEditor";
 
 type Props = {
   facet: DescriptionsFacet;
@@ -35,7 +36,13 @@ export default function DescriptionBuilderPage(props: Props) {
   } = props;
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const { view } = facet;
-  const groups = view.artifact?.descriptions || [];
+  const artifact = view.artifact;
+  const groups = artifact?.descriptions || [];
+  const mainContext = view.mainContext;
+  const mainArtifact =
+    artifact && `${artifact.workflowId}:${artifact.releaseRef.Generation}` === mainContext
+      ? artifact
+      : null;
   const builderLoading = view.status === "running";
   const builderError = view.error;
   const builderSaved = view.notice;
@@ -46,8 +53,7 @@ export default function DescriptionBuilderPage(props: Props) {
         <p className={pageStyle.eyebrow}>Description Builder</p>
         <h1>Customize Description</h1>
         <p className={pageStyle.subtitle}>
-          Edit tracker-group raw descriptions here. Tracker-specific formatting is applied from this
-          builder.
+          Edit shared content or adjust individual tracker-group descriptions.
         </p>
       </header>
 
@@ -70,8 +76,26 @@ export default function DescriptionBuilderPage(props: Props) {
         </button>
       </section>
 
-      {builderError ? <p className={pageStyle.error}>{builderError}</p> : null}
-      {builderSaved ? <p className="mt-[9px] text-status-success">{builderSaved}</p> : null}
+      {builderError ? (
+        <p className={pageStyle.error} role="alert">
+          {builderError}
+        </p>
+      ) : null}
+      {builderSaved ? (
+        <p className="mt-[9px] text-status-success" role="status">
+          {builderSaved}
+        </p>
+      ) : null}
+
+      {mainContext && sourcePath.trim() ? (
+        <MainDescriptionEditor
+          key={JSON.stringify([sourcePath, mainContext])}
+          facet={facet}
+          savedSource={mainArtifact?.mainSource ?? ""}
+          canSave={Boolean(mainArtifact?.descriptions.length)}
+          onImageOpen={onImageOpen}
+        />
+      ) : null}
 
       {builderLoading && groups.length === 0 ? (
         <section className={pageStyle.panel}>

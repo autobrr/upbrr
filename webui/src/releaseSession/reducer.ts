@@ -363,6 +363,11 @@ export type SessionAction =
   | Readonly<{ type: "description_edited"; groupKey: string; raw: string }>
   | Readonly<{ type: "description_dirty_cleared"; groupKey?: string; notice?: string }>
   | Readonly<{
+      type: "description_main_saved";
+      replacedDrafts: DescriptionState["rawByGroup"];
+    }>
+  | Readonly<{ type: "description_main_save_failed"; error: string }>
+  | Readonly<{
       type: "description_rendered";
       sessionRevision: number;
       revision: number;
@@ -2101,6 +2106,29 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
             ? state.descriptions.dirtyGroups.filter((key) => key !== groupKey)
             : [],
           notice: action.notice || "",
+        },
+      };
+    }
+    case "description_main_save_failed":
+      return {
+        ...state,
+        descriptions: { ...state.descriptions, notice: "", error: action.error },
+      };
+    case "description_main_saved": {
+      const retainDraft = (key: string) =>
+        state.descriptions.rawByGroup[key] !== action.replacedDrafts[key];
+      return {
+        ...state,
+        descriptions: {
+          ...state.descriptions,
+          inputRevision: state.descriptions.inputRevision + 1,
+          rawByGroup: Object.fromEntries(
+            Object.entries(state.descriptions.rawByGroup).filter(([key]) => retainDraft(key)),
+          ),
+          renderedByGroup: {},
+          dirtyGroups: state.descriptions.dirtyGroups.filter(retainDraft),
+          notice: "Main description saved and applied to the selected trackers.",
+          error: "",
         },
       };
     }
