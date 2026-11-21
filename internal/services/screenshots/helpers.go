@@ -30,6 +30,7 @@ type videoInfo struct {
 	HDRFacts        api.HDRFacts
 	Playlist        string
 	SourcePath      string
+	DVDVOB          bool
 	DurationSeconds float64
 	FrameRate       float64
 	Width           int
@@ -173,6 +174,7 @@ func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot s
 			return info, err
 		}
 		info.SourcePath = vobs[0].path
+		info.DVDVOB = true
 		info.Segments = buildVideoSegments(vobs)
 		logger.Tracef("screenshots: DVD source selected path=%s segments=%d", info.SourcePath, len(info.Segments))
 	}
@@ -876,7 +878,7 @@ func resolveDVDVideoSegmentTimings(
 	}
 	start := 0.0
 	for idx := range segments {
-		duration, err := probeVideoDuration(ctx, runner, cmdPath, segments[idx].SourcePath)
+		duration, err := probeVideoDuration(ctx, runner, cmdPath, segments[idx].SourcePath, true)
 		if err != nil {
 			return fmt.Errorf("screenshots: probe DVD segment %d duration: %w", idx+1, err)
 		}

@@ -141,6 +141,7 @@ type captureRequest struct {
 	TimelineOffset   float64
 	InspectFrame     bool
 	Playlist         string
+	DVDVOB           bool
 	InputPath        string
 	OutputPath       string
 	Timestamp        float64
@@ -190,7 +191,6 @@ var (
 
 var ffmpegFrameCorruptionIndicators = []string{
 	"error while decoding",
-	"invalid data found when processing input",
 	"non-existing pps",
 	"incomplete frame",
 	"corrupt decoded frame",
@@ -292,19 +292,15 @@ func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req c
 // The bundled distribution does not include ffprobe, so FFmpeg performs the
 // equivalent header probe with a zero-length null output. It returns seconds
 // and rejects missing, malformed, or non-positive duration metadata.
-func probeVideoDuration(ctx context.Context, runner Runner, cmdPath, inputPath string) (float64, error) {
+func probeVideoDuration(ctx context.Context, runner Runner, cmdPath, inputPath string, dvdVOB bool) (float64, error) {
 	if strings.TrimSpace(inputPath) == "" {
 		return 0, errors.New("screenshots: duration probe input path required")
 	}
-	args := []string{
-		"-hide_banner",
-		"-loglevel", "info",
-		"-i", inputPath,
-		"-map", "0:v:0",
-		"-t", "0",
-		"-f", "null",
-		"-",
-	}
+	args := slices.Concat(
+		[]string{"-hide_banner", "-loglevel", "info"},
+		screenshotInputArgs(inputPath, "", dvdVOB),
+		[]string{"-map", "0:v:0", "-t", "0", "-f", "null", "-"},
+	)
 	result, err := runner.Run(ctx, cmdPath, args, "")
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return 0, fmt.Errorf("screenshots: ffmpeg duration probe canceled: %w", ctxErr)
@@ -393,6 +389,11 @@ func ffmpegFrameCorruptionError(stderr []byte) error {
 			return fmt.Errorf("screenshots: %w: ffmpeg reported %q", internalerrors.ErrFrameCorruption, indicator)
 		}
 	}
+	// The generic invalid-data text also occurs before FFmpeg opens a demuxer.
+	const invalidData = "invalid data found when processing input"
+	if strings.Contains(diagnostics, invalidData) && !strings.Contains(diagnostics, "error opening input") {
+		return fmt.Errorf("screenshots: %w: ffmpeg reported %q", internalerrors.ErrFrameCorruption, invalidData)
+	}
 	return nil
 }
 
@@ -407,7 +408,7 @@ func buildFFmpegArgs(req captureRequest, useLibplacebo bool) []string {
 	// Software decoding preserves decoded Dolby Vision metadata and avoids making
 	// optional CUDA/X11 decoding a prerequisite for either entrypoint.
 	args = append(args, "-ss", fmt.Sprintf("%.3f", req.Timestamp))
-	args = append(args, screenshotInputArgs(req.InputPath, req.Playlist)...)
+	args = append(args, screenshotInputArgs(req.InputPath, req.Playlist, req.DVDVOB)...)
 	if req.Playlist == "" {
 		// Prefer actual video; keep automatic selection for cover-only inputs.
 		args = append(args, "-map", "0:V:0?")
@@ -657,11 +658,14 @@ func digitsOnly(value string) int {
 	return int(parseFloat(buf.String()))
 }
 
-// screenshotInputArgs keeps protocol options before -i. An empty playlist
-// preserves ordinary-file and extracted-disc capture behavior.
-func screenshotInputArgs(source, playlist string) []string {
+// screenshotInputArgs keeps demuxer options before -i. The MPEG program
+// stream demuxer avoids format detection for VOBs selected from a DVD.
+func screenshotInputArgs(source, playlist string, dvdVOB bool) []string {
 	if playlist != "" {
 		return []string{"-playlist", playlist, "-i", "bluray:" + source, "-map", "0:v:0"}
+	}
+	if dvdVOB {
+		return []string{"-f", "mpeg", "-i", source}
 	}
 	return []string{"-i", source}
 }

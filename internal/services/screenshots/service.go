@@ -288,7 +288,7 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 				info.SourcePath,
 				redaction.RedactValue(resolveErr.Error(), nil),
 			)
-		} else if duration, probeErr := probeVideoDuration(ctx, s.runner, cmd, info.SourcePath); probeErr != nil {
+		} else if duration, probeErr := probeVideoDuration(ctx, s.runner, cmd, info.SourcePath, info.DVDVOB); probeErr != nil {
 			if ctx.Err() != nil {
 				return api.ScreenshotPlan{}, fmt.Errorf("screenshots: duration fallback canceled: %w", ctx.Err())
 			}
@@ -620,6 +620,7 @@ func (s *Service) captureDisc(
 				capture := captureRequest{
 					HDRFacts:      info.HDRFacts,
 					Playlist:      info.Playlist,
+					DVDVOB:        info.DVDVOB,
 					InputPath:     candidate.SourcePath,
 					OutputPath:    output,
 					Timestamp:     candidate.Timestamp,
@@ -887,6 +888,7 @@ func (s *Service) previewDisc(
 			WidthScale:     info.WidthScale,
 			HeightScale:    info.HeightScale,
 			Playlist:       info.Playlist,
+			DVDVOB:         info.DVDVOB,
 			InputPath:      candidate.SourcePath,
 			Timestamp:      candidate.Timestamp,
 			ToneMap:        shouldTonemap(meta, s.cfg),
