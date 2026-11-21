@@ -1155,6 +1155,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				metadata.TMDB = mapTMDBMetadata(ids, *tmdbResult)
 				if metadata.TMDB != nil {
 					metadata.TMDB.LogoLanguagePreference = logoPreference
+					// This fetch always requests artwork; an empty successful result is reusable.
+					metadata.TMDB.LogoLookupPending = canSelectLogo && !tmdbResult.LogoLookupAttempted
 				}
 				if tmdbLinksAgree && !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && tmdbResult.IMDbID != 0 && tmdbResult.IMDbID != rejectedTVDBIMDbID &&
 					tmdbResult.IMDbID != unverifiedTVDBIMDbID {

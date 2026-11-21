@@ -332,6 +332,31 @@ func TestAttemptRetriesSuccessfulArtifactButRetainsFailure(t *testing.T) {
 	}
 }
 
+func TestRetryFailedJSONAttemptsOncePerCollection(t *testing.T) {
+	t.Parallel()
+	store := &memoryEvidenceStore{}
+	source := filepath.Join(t.TempDir(), "Example.Release.mkv")
+	unavailable := errors.New("artwork unavailable")
+	calls := 0
+	fetch := func() error {
+		calls++
+		return unavailable
+	}
+	for range 2 {
+		ctx, _ := WithScope(t.Context(), store, source, "fingerprint", api.ExternalFreshnessReuse, nil)
+		var response map[string]string
+		if err := RetryFailedJSON(ctx, "provider.artwork", 11, &response, nil, nil, fetch); !errors.Is(err, unavailable) {
+			t.Fatalf("first lookup in collection = %v", err)
+		}
+		if err := RetryFailedJSON(ctx, "provider.artwork", 11, &response, nil, nil, fetch); !errors.Is(err, ErrSuppressed) {
+			t.Fatalf("repeated lookup in one collection = %v", err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("artwork requests = %d, want 2", calls)
+	}
+}
+
 func TestLookupWithoutRepositoryPreservesDirectClient(t *testing.T) {
 	t.Parallel()
 	ctx, scope := WithScope(t.Context(), nil, "", "", api.ExternalFreshnessReuse, nil)

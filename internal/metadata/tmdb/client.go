@@ -623,7 +623,10 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		return c.uncachedJSON(ctx, path, params, target)
 	}
 	domain := "tmdb.response.v1"
+	lookup := evidence.JSON
 	switch target.(type) {
+	case *imagesResponse:
+		lookup = evidence.RetryFailedJSON
 	case *episodeDetailsResponse:
 		// Older typed evidence erased absent seasons into zero.
 		domain = "tmdb.episode-response.v2"
@@ -631,7 +634,7 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		// Older typed evidence discarded the spoken-language collection.
 		domain = "tmdb.media-response.v2"
 	}
-	err := evidence.JSON(
+	err := lookup(
 		ctx,
 		domain,
 		[]any{c.baseURL, c.apiKey, path, params},

@@ -22,11 +22,21 @@ type jsonResult struct {
 // genuine empty result rather than a failed request. An optional endpoint-owned
 // empty predicate classifies decoded collections that carry non-result metadata.
 func JSON(ctx context.Context, domain string, query, target any, notFound error, empty func() bool, fetch func() error) error {
+	return lookupJSON(ctx, domain, query, target, notFound, empty, fetch, reuseEvidence)
+}
+
+// RetryFailedJSON is like JSON, but retries a failed response once per collection.
+// Use it only when an optional lookup can recover without changing source identity.
+func RetryFailedJSON(ctx context.Context, domain string, query, target any, notFound error, empty func() bool, fetch func() error) error {
+	return lookupJSON(ctx, domain, query, target, notFound, empty, fetch, retryFailedFetch)
+}
+
+func lookupJSON(ctx context.Context, domain string, query, target any, notFound error, empty func() bool, fetch func() error, retry retryPolicy) error {
 	if !Enabled(ctx) {
 		_, err := observeFetch(ctx, domain, func() (bool, error) { err := fetch(); return err == nil, err })
 		return err
 	}
-	result, err := Lookup(ctx, domain, []any{query, fmt.Sprintf("%T", target)}, func() (jsonResult, error) {
+	result, err := lookup(ctx, domain, []any{query, fmt.Sprintf("%T", target)}, func() (jsonResult, error) {
 		if err := fetch(); err != nil {
 			if notFound != nil && errors.Is(err, notFound) {
 				return jsonResult{NotFound: true}, nil
@@ -46,7 +56,7 @@ func JSON(ctx context.Context, domain string, query, target any, notFound error,
 			return empty()
 		}
 		return emptyJSON(value.Data)
-	})
+	}, retry)
 	if err != nil {
 		return err
 	}

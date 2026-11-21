@@ -6,8 +6,11 @@ package metadata
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -141,5 +144,62 @@ func TestOrdinaryPreparationRetriesFailedLogoPreferenceAfterRestart(t *testing.T
 	}
 	if reused.Release.Generation != recovered.Release.Generation || client.calls != 2 || client.metaCalls != 1 {
 		t.Fatalf("successful retry did not restore reuse: generation=%d, artwork calls=%d, title calls=%d", reused.Release.Generation, client.calls, client.metaCalls)
+	}
+}
+
+func TestOrdinaryPreparationRetriesOnlyFailedInitialLogoLookup(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		firstImage   int
+		wantLogo     string
+		wantRequests int
+	}{
+		{"failed image request", http.StatusServiceUnavailable, "en.png", 2},
+		{"successful empty result", http.StatusOK, "", 1},
+		{"missing image asset", http.StatusNotFound, "", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newCorrectionEvidenceFixture(t)
+			fixture.input.ExternalFreshness = api.ExternalFreshnessReuse
+			fixture.input.Instructions.Identity.KeepTMDB = new(true)
+			const imagePath = "/3/tv/555001/images"
+			const titlePath = "/3/tv/555001"
+			base := fixture.http.Transport
+			imageRequests := 0
+			fixture.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path != imagePath {
+					return base.RoundTrip(r)
+				}
+				imageRequests++
+				status, body := tc.firstImage, `{"logos":[]}`
+				if imageRequests > 1 {
+					status, body = http.StatusOK, `{"logos":[{"file_path":"/en.png","iso_639_1":"en"}]}`
+				}
+				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+
+			module, _ := fixture.open(t)
+			first, err := module.Prepare(t.Context(), fixture.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := first.Release.ProviderMetadata.TMDB; got == nil || got.TMDBLogo != "" || imageRequests != 1 {
+				t.Fatalf("initial preparation did not accept the title without a logo: metadata=%+v image requests=%d", got, imageRequests)
+			}
+			beforeTitleRequests := fixture.requests()[titlePath]
+			next, err := module.Prepare(t.Context(), fixture.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retried := tc.wantRequests > 1
+			if got := next.Release.ProviderMetadata.TMDB; got == nil || got.TMDBLogo != tc.wantLogo ||
+				imageRequests != tc.wantRequests || (next.Release.Generation != first.Release.Generation) != retried {
+				t.Fatalf("next preparation: metadata=%+v image requests=%d generation=%d; want logo %q, retried=%t",
+					got, imageRequests, next.Release.Generation, tc.wantLogo, retried)
+			}
+			if titleRequests := fixture.requests()[titlePath]; titleRequests != beforeTitleRequests {
+				t.Errorf("logo retry fetched the title again: title requests = %d, want %d", titleRequests, beforeTitleRequests)
+			}
+		})
 	}
 }

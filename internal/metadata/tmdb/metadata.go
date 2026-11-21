@@ -6,6 +6,7 @@ package tmdb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -657,7 +658,8 @@ func (c *Client) SelectLogo(ctx context.Context, id int, category string, langua
 		kind = "tv"
 	}
 	var images imagesResponse
-	if err := c.getJSON(ctx, fmt.Sprintf("/%s/%d/images", kind, id), map[string]string{"api_key": c.apiKey}, &images); err != nil {
+	path := fmt.Sprintf("/%s/%d/images", kind, id)
+	if err := c.getJSON(ctx, path, map[string]string{"api_key": c.apiKey}, &images); err != nil && !errors.Is(err, errNotFound) {
 		return "", "", err
 	}
 	logo, name := selectLogo(images.Logos, languages)

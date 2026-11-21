@@ -25,6 +25,14 @@ import (
 // error is deliberately not persisted because provider errors can contain secrets.
 var ErrSuppressed = errors.New("previous metadata lookup failed; remove the release from History to retry")
 
+type retryPolicy uint8
+
+const (
+	reuseEvidence retryPolicy = iota
+	retrySuccessfulFetch
+	retryFailedFetch
+)
+
 type contextKey struct{}
 
 type queryState struct {
@@ -87,13 +95,13 @@ func (s *Scope) fail(err error) {
 // results remain suppressed without replaying the partial value.
 // query is hashed before persistence and must contain every lookup-affecting input.
 func Lookup[T any](ctx context.Context, domain string, query any, fetch func() (T, error), empty func(T) bool) (T, error) {
-	return lookup(ctx, domain, query, fetch, empty, false)
+	return lookup(ctx, domain, query, fetch, empty, reuseEvidence)
 }
 
 // Attempt retries a missing local artifact after a previously successful fetch,
 // while retaining completed failures. Callers check artifact existence first.
 func Attempt(ctx context.Context, domain string, query any, fetch func() error) error {
-	_, err := lookup(ctx, domain, query, func() (bool, error) { err := fetch(); return err == nil, err }, nil, true)
+	_, err := lookup(ctx, domain, query, func() (bool, error) { err := fetch(); return err == nil, err }, nil, retrySuccessfulFetch)
 	return err
 }
 
@@ -150,7 +158,7 @@ func retained(ctx context.Context, domain string, query any) (api.MetadataEviden
 	return record, scope, true
 }
 
-func lookup[T any](ctx context.Context, domain string, query any, fetch func() (T, error), empty func(T) bool, retrySuccess bool) (T, error) {
+func lookup[T any](ctx context.Context, domain string, query any, fetch func() (T, error), empty func(T) bool, retry retryPolicy) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {
 		return zero, fmt.Errorf("metadata evidence canceled: %w", err)
@@ -185,10 +193,11 @@ func lookup[T any](ctx context.Context, domain string, query any, fetch func() (
 		return zero, fmt.Errorf("load metadata evidence: %w", err)
 	}
 	if err == nil {
-		refresh := retrySuccess ||
+		retryFailure := !seen && retry == retryFailedFetch && record.Outcome == api.MetadataEvidenceFailed
+		refresh := retry == retrySuccessfulFetch || retryFailure ||
 			!seen &&
 				(scope.freshness.RequiresRefresh() && refreshesProviderDomain(domain) || (scope.freshness == api.ExternalFreshnessLoad && record.Outcome == api.MetadataEvidenceEmpty))
-		if record.Outcome == api.MetadataEvidenceFailed {
+		if record.Outcome == api.MetadataEvidenceFailed && !retryFailure {
 			progress.Retained(ctx, true)
 			if scope.logger != nil {
 				scope.logger.Tracef("metadata: evidence domain=%s decision=retain_failed", domain)
