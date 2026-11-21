@@ -82,6 +82,7 @@ func cloneEmbeddedTrackerConfig(tracker TrackerConfig) TrackerConfig {
 	tracker.PersonalReleaseGroups = slices.Clone(tracker.PersonalReleaseGroups)
 	tracker.InternalGroups = slices.Clone(tracker.InternalGroups)
 	tracker.InjectDelay = cloneDefaultPointer(tracker.InjectDelay)
+	tracker.ScreenshotBlankLine = cloneDefaultPointer(tracker.ScreenshotBlankLine)
 	tracker.Unknown = cloneDefaultUnknownMap(tracker.Unknown)
 	return tracker
 }

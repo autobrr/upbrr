@@ -342,6 +342,7 @@ type TrackerConfig struct {
 	SkipIfRehash        bool   `yaml:"skip_if_rehash" json:"SkipIfRehash"`
 	PTGenAPI            string `yaml:"ptgen_api" json:"PTGenAPI"`
 	AddWebSourceToDesc  bool   `yaml:"add_web_source_to_desc" json:"AddWebSourceToDesc"`
+	ScreenshotBlankLine *bool  `yaml:"screenshot_blank_line,omitempty" json:"ScreenshotBlankLine,omitempty"`
 	UseMetadataName     bool   `yaml:"use_metadata_name" json:"UseMetadataName"`
 	InjectDelay         *int   `yaml:"inject_delay" json:"InjectDelay"`
 	ImageCount          int    `yaml:"image_count" json:"ImageCount"`
@@ -359,6 +360,11 @@ type TrackerConfig struct {
 	PersonalReleaseGroups CSVList        `yaml:"personal_release_groups" json:"PersonalReleaseGroups"`
 	InternalGroups        CSVList        `yaml:"internal_groups" json:"InternalGroups"`
 	Unknown               map[string]any `yaml:"-" json:"-"`
+}
+
+// ScreenshotBlankLineEnabled preserves the original spacing when the setting is absent.
+func (c TrackerConfig) ScreenshotBlankLineEnabled() bool {
+	return c.ScreenshotBlankLine == nil || *c.ScreenshotBlankLine
 }
 
 type trackerConfigAlias TrackerConfig
@@ -1244,6 +1250,11 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 			cfg.Trackers.Trackers[trackerName] = cloneEmbeddedTrackerConfig(trackerCfg)
 			report.markChanged("Trackers")
 			continue
+		}
+		if trackerCfg.ScreenshotBlankLine != nil && existing.ScreenshotBlankLine == nil {
+			existing.ScreenshotBlankLine = cloneDefaultPointer(trackerCfg.ScreenshotBlankLine)
+			cfg.Trackers.Trackers[existingName] = existing
+			report.markChanged("Trackers")
 		}
 		if asciiEqualFold(trackerName, "CZT") {
 			if strings.TrimSpace(existing.APIKey) != "" || strings.TrimSpace(existing.AnnounceURL) != "" {
