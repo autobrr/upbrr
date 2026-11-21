@@ -918,8 +918,11 @@ type ExternalIdentityCandidate struct {
 	Overview      string
 	PosterURL     string
 	Similarity    float64
-	Directors     []string
-	Cast          []string
+	// TentativeConfidence is the IMDb identity score of a weak suggestion.
+	// It excludes ranking-only bonuses; nil denotes an ordinary candidate.
+	TentativeConfidence *float64 `json:",omitempty"`
+	Directors           []string
+	Cast                []string
 	// CastSource identifies verified billing order or the provider's curated principal credits.
 	CastSource     string
 	RuntimeMinutes int

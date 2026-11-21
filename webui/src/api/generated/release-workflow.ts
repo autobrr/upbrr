@@ -884,6 +884,7 @@ export type ExternalIdentityCandidate = Readonly<{
   RuntimeKind: string;
   RuntimeMinutes: number;
   Similarity: number;
+  TentativeConfidence?: number | null;
   Title: string;
   Year: number;
 }>;
