@@ -39,6 +39,17 @@ func TestSAMReviewUsesInternationalTitleWithYearAndVerifiedAudioMarker(t *testin
 		{"verified English title from IMDb", [][]string{{"Japanese"}}, "", 2026, "", false, ""},
 		{"verified TVDB title replaces the provider default", [][]string{{"Japanese"}}, "", 2026, "", false, "tvdb"},
 		{"verified AniList movie title", [][]string{{"Japanese"}}, "", 2026, "", false, "anilist"},
+		{"English original title without translations", [][]string{{"English"}}, "", 2026, "", false, "original"},
+		{"missing English title", [][]string{{"Japanese"}}, "", 2026, "", false, "missing"},
+		{"stale English title", [][]string{{"Japanese"}}, "", 2026, "", false, "stale"},
+		{"explicit title clear", [][]string{{"Japanese"}}, "", 2026, "", false, "clear"},
+		{"explicit English title is cleaned", [][]string{{"Japanese"}}, "", 2026, "", false, "manual"},
+		{"opaque override is rebuilt from the English title", [][]string{{"Japanese"}}, "", 2026, "", false, "opaque"},
+		{"bracketed AKA suffix", [][]string{{"Japanese"}}, "", 2026, "", false, "bracket"},
+		{"dash before AKA suffix", [][]string{{"Japanese"}}, "", 2026, "", false, "dash"},
+		{"compact em dash before AKA suffix", [][]string{{"Japanese"}}, "", 2026, "", false, "compact"},
+		{"nonbreaking space before AKA suffix", [][]string{{"Japanese"}}, "", 2026, "", false, "nbsp"},
+		{"terminal AKA is part of the primary title", [][]string{{"Japanese"}}, "", 2026, "", false, "terminal"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			binding := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
@@ -100,6 +111,7 @@ func TestSAMReviewUsesInternationalTitleWithYearAndVerifiedAudioMarker(t *testin
 								Value:   "AKA Localized Series",
 								Present: true,
 								Join:    " ",
+								Manual:  true,
 							},
 							{
 								Role:    api.NameRoleEpisode,
@@ -135,10 +147,44 @@ func TestSAMReviewUsesInternationalTitleWithYearAndVerifiedAudioMarker(t *testin
 				},
 			}
 			episode := " S01E02"
+			wantTitle := "Example Series"
 			switch test.locale {
+			case "original":
+				data := input.Meta.ProviderMetadata.TMDB
+				data.LocalizedTitles = nil
+				data.OriginalLanguage = "en"
+				data.OriginalTitle = "Example Series"
+			case "missing":
+				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = nil
+			case "stale":
+				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = map[string]string{"en-US": "Old English Title"}
+				input.Meta.ProviderMetadata.Generation++
+			case "clear":
+				input.Meta.EffectiveMetadata.TitleProvenance = api.FactProvenanceManualEmpty
+			case "manual":
+				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = nil
+				document := input.Meta.GeneratedName
+				document.Components[0].Value = "Example  Series (A.K.A.: Translated Title)"
+				document.Components[0].Manual = true
+				input.Meta.ReleaseName = document.Render().Name
+			case "opaque":
+				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = map[string]string{"en-US": "Example Series (2026) aka Translated Title"}
+				input.RequestedUploadName = new("Requested Title AKA Translation 2025 720p-GRP")
+			case "bracket":
+				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = map[string]string{"en-US": "Example, Inc. [AKA: Translated Title]"}
+				wantTitle = "Example, Inc."
+			case "dash":
+				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = map[string]string{"en-US": "Example Series - AKA Translated Title"}
+			case "compact":
+				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = map[string]string{"en-US": "Example Series—AKA: Translated Title"}
+			case "nbsp":
+				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = map[string]string{"en-US": "Example Series\u00a0AKA\u00a0Translated Title"}
+			case "terminal":
+				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = map[string]string{"en-US": "Example Series AKA"}
+				wantTitle = "Example Series AKA"
 			case "tvdb":
 				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = map[string]string{"en-US": "Other English Title"}
-				input.Meta.ProviderMetadata.TVDB.NameEnglish = "Example Series"
+				input.Meta.ProviderMetadata.TVDB.NameEnglish = "Example Series (2026)"
 			case "anilist":
 				input.Meta.ProviderMetadata.TMDB.LocalizedTitles = nil
 				input.Meta.ProviderMetadata.TMDB.Category = "MOVIE"
@@ -176,6 +222,13 @@ func TestSAMReviewUsesInternationalTitleWithYearAndVerifiedAudioMarker(t *testin
 				}
 			}
 			prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(input, binding)
+			if test.locale == "missing" || test.locale == "stale" || test.locale == "clear" {
+				rule, ok := errors.AsType[*trackers.NameRuleError](failure)
+				if !ok || rule.Role != api.NameRoleTitle || (test.locale != "stale" && rule.Rule != "sam_english_title") {
+					t.Fatalf("unverified title did not block the name as expected: %v", failure.Unwrap())
+				}
+				return
+			}
 			if test.year == 0 {
 				rule, ok := errors.AsType[*trackers.NameRuleError](failure)
 				if !ok || rule.Role != api.NameRoleYear {
@@ -187,7 +240,7 @@ func TestSAMReviewUsesInternationalTitleWithYearAndVerifiedAudioMarker(t *testin
 				t.Fatalf("%v: %v", failure, failure.Unwrap())
 			}
 			name, err := prepared.ReviewedUploadName()
-			want := "Example Series 2026" + episode + " 1080p WEB-DL" + test.marker + "-GRP"
+			want := wantTitle + " 2026" + episode + " 1080p WEB-DL" + test.marker + "-GRP"
 			if err != nil || name != want || prepared.Projection.DuplicateCriteria.Name != want {
 				t.Fatalf("upload = %q, search = %q, err = %v, want %q", name, prepared.Projection.DuplicateCriteria.Name, err, want)
 			}

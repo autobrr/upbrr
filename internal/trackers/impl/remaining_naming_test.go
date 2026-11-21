@@ -74,10 +74,11 @@ func TestGeneratedDVDRipNamesIncludeResolutionAndOmitDVDSourceAcrossTrackers(t *
 						Year:   2026,
 					},
 					TMDB: &api.TMDBMetadata{
-						Category: "MOVIE",
-						TMDBID:   4242,
-						Title:    "Example Movie",
-						Year:     2026,
+						Category:         "MOVIE",
+						TMDBID:           4242,
+						Title:            "Example Movie",
+						OriginalLanguage: "en",
+						Year:             2026,
 					},
 				},
 				Release: api.ReleaseInfo{

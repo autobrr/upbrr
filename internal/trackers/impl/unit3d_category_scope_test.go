@@ -17,6 +17,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -293,6 +294,25 @@ func addSAMCategoryScopeEvidence(meta *api.UploadSubject) {
 			TVDB:       &api.TVDBMetadata{TVDBID: 321, Status: "Ended"},
 		}
 	}
+	meta.Identity.SourcePath, meta.Identity.Generation = meta.SourcePath, 1
+	meta.ProviderMetadata.SourcePath, meta.ProviderMetadata.Generation = meta.SourcePath, 1
+	meta.ProviderMetadata.TMDB = &api.TMDBMetadata{
+		TMDBID:           meta.Identity.TMDBID,
+		Category:         string(meta.Identity.Category),
+		Title:            meta.Release.Title,
+		OriginalLanguage: "en",
+	}
+	name := metadata.BuildReleaseName(api.ReleaseNameRequest{
+		Category:    string(meta.Identity.Category),
+		Title:       meta.Release.Title,
+		Year:        meta.Release.Year,
+		Type:        meta.Type,
+		Resolution:  meta.Release.Resolution,
+		Source:      meta.Source,
+		VideoEncode: meta.VideoCodec,
+		Tag:         "-" + meta.Tag,
+	}, nil)
+	meta.ReleaseName, meta.GeneratedName = name.Name, name.GeneratedName
 	meta.PackageInventory = api.PackageInventory{Status: api.MetadataEvidenceStatusComplete, Files: files}
 	media := api.MediaFacts{
 		OriginalLanguage:      "en",
@@ -391,8 +411,10 @@ func TestUnit3DCategoryScopeInvalidatesNarrowSearchAuthority(t *testing.T) {
 	t.Parallel()
 
 	registry := MustNewRegistry()
+	subject := unit3DCategoryScopeSubject(t, api.CanonicalCategoryTV)
+	addSAMCategoryScopeEvidence(&subject)
 	projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
-		Tracker: "SAM", Meta: unit3DCategoryScopeSubject(t, api.CanonicalCategoryTV),
+		Tracker: "SAM", Meta: subject,
 	}, "", "", "")
 	if failure != nil {
 		t.Fatal(failure)

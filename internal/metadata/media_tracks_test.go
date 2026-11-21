@@ -64,6 +64,7 @@ func TestSAMFormatsCorrectedAudioWithoutOverridingExplicitNameChoices(t *testing
 						Title:            "Example",
 						Year:             2026,
 						OriginalLanguage: "ja",
+						LocalizedTitles:  map[string]string{"en-US": "Example"},
 					},
 				},
 			}

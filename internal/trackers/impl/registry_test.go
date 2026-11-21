@@ -413,9 +413,13 @@ func TestRegistryProjectsVersionedReleaseNamesForEveryBuiltIn(t *testing.T) {
 			if !ok {
 				t.Fatalf("descriptor missing")
 			}
+			namingSubject := subject
+			if name == "SAM" {
+				namingSubject = providerNameSubject(api.CanonicalCategoryMovie)
+			}
 			projection, failure := registry.ProjectRelease(context.Background(), trackers.PreparationInput{
 				Tracker: name,
-				Meta:    subject,
+				Meta:    namingSubject,
 			}, "", "", "")
 			if failure != nil {
 				t.Fatalf("project release: %v", failure)

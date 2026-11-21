@@ -1535,9 +1535,9 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input",
     "sha256": "4d2bbdc68a8798ee6fa3b4ddf29fa6ac56818e031d69ccce3613a24e3a600b54"
   },
-  "internal/trackers/impl/unit3d/sites/sam/name.go:applySAMEnglishTitle": {
-    "reason": "Manual title metadata and components take precedence. Reads current matched TVDB, TMDB, or IMDb English title evidence, then uses a verified MAL-matched AniList English title for movies only.",
-    "sha256": "90768b78476da89b29c120e99304bf38bc6c72720102b9ac812c68d7f9600008"
+  "internal/trackers/impl/unit3d/sites/sam/name.go:applySAMTitle": {
+    "reason": "Treats an explicit title correction as the English title. Automatic naming requires matched English evidence. Removes alternate-title presentation without changing the prepared metadata or its manual corrections.",
+    "sha256": "eccc38522fa9be01fefcc95a16fd3ec3f85717d69b2deab42d88fce9bd62958e"
   },
   "internal/trackers/impl/unit3d/sites/sam/name.go:applySAMYear": {
     "reason": "An explicit manual clear remains absent and prevents an automatic SAM name. Fallback to TMDB requires the prepared source, selected ID, and canonical category.",
@@ -1546,6 +1546,10 @@
   "internal/trackers/impl/unit3d/sites/sam/name.go:currentSAMTMDB": {
     "reason": "Filters provider evidence by prepared source, generation, selected TMDB ID, and canonical category. Callers apply manual title and year authority.",
     "sha256": "7d66cf2fbf408f6832558ba20bff796e37f7877ecc0793747f77f7c8ac23f775"
+  },
+  "internal/trackers/impl/unit3d/sites/sam/name.go:samEnglishTitle": {
+    "reason": "Reads current matched TVDB, TMDB, or IMDb English title evidence, then a MAL-matched AniList movie title. The caller preserves explicit title corrections. The TMDB original title is eligible when the provider identifies its language as English.",
+    "sha256": "5d261fa5efdf24d60a340a88d748a991354ed4cc4874c79f2a08aa8f2948d107"
   },
   "internal/trackers/impl/unit3d/sites/sam/name.go:samIMDBEnglishTitle": {
     "reason": "Accepts a unique unqualified English title, preferring the US listing. The caller checks source, generation, selected IMDb ID and manual title precedence.",

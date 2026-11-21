@@ -271,8 +271,12 @@ func TestRegistryCanonicalNamingManualAuthority(t *testing.T) {
 				}
 				requested := "Manual Hybrid REPACK2 3D Complete Name"
 				reviewed := prepareProviderName(t, registry, tracker, subject, &requested)
-				if reviewed.Projection.UploadReleaseName != requested {
-					t.Errorf("complete name changed to %q", reviewed.Projection.UploadReleaseName)
+				want := requested
+				if tracker == "SAM" {
+					want = prepared.Projection.UploadReleaseName
+				}
+				if reviewed.Projection.UploadReleaseName != want {
+					t.Errorf("complete name = %q, want %q", reviewed.Projection.UploadReleaseName, want)
 				}
 				if reviewed.Projection.DuplicateCriteria.Name != prepared.Projection.DuplicateCriteria.Name {
 					t.Error("complete-name edit changed automatic search contract")

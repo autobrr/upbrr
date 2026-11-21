@@ -5,6 +5,7 @@ package sam
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,19 +18,28 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Match an explicit AKA separator followed by a title. Match punctuation in
+// the separator separately from punctuation that belongs to the English title.
+var samAKASeparator = regexp.MustCompile(
+	`(?i)(?: *[-–—] *(?:[(\[] *)?| *[(\[] *| +|[._]+)` +
+		`(?:aka|a\.k\.a\.?)[- ._:–—]+[^- ._:)\]–—]`,
+)
+
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/sam/v4", trackers.StructuredNamePolicy{Defaults: applyNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/sam/v5", trackers.StructuredNamePolicy{
+		Defaults:  applyNameDefaults,
+		Mandatory: applySAMTitle,
+		Authority: []trackers.NameAuthority{
+			{Role: api.NameRoleTitle, Aspect: trackers.NameValue},
+			{Role: api.NameRoleAlternateTitle, Aspect: trackers.NamePresence},
+		},
+		Opaque: trackers.OpaqueNameRebuild,
+	})
 }
 
 func applyNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig) error {
 	if err := unit3d.ApplyLocalizedNameFormatting(editor, meta); err != nil {
 		return fmt.Errorf("format SAM name: %w", err)
-	}
-	if err := applySAMEnglishTitle(editor, meta); err != nil {
-		return err
-	}
-	if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
-		return fmt.Errorf("omit SAM alternate title: %w", err)
 	}
 	if err := applySAMYear(editor, meta); err != nil {
 		return err
@@ -56,13 +66,52 @@ func applyNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg 
 	return nil
 }
 
-func applySAMEnglishTitle(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	title, ok := editor.Component(api.NameRoleTitle)
-	if !ok || !title.Present || title.Manual || meta.EffectiveMetadata.TitleProvenance.IsManual() {
-		return nil
+func applySAMTitle(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	component, ok := editor.Component(api.NameRoleTitle)
+	if !ok || !component.Present || meta.EffectiveMetadata.TitleProvenance == api.FactProvenanceManualEmpty {
+		return missingSAMTitle()
 	}
+	manual := component.Manual || meta.EffectiveMetadata.TitleProvenance.IsManual()
+	var title string
+	if manual {
+		title = component.Value
+	} else {
+		title = samEnglishTitle(meta)
+	}
+	title = strings.Join(strings.Fields(title), " ")
+	if separator := samAKASeparator.FindStringIndex(title); separator != nil {
+		title = strings.TrimSpace(title[:separator[0]])
+	}
+	if !manual && meta.Identity.Category == api.CanonicalCategoryTV {
+		component, _ := editor.Component(api.NameRoleYear)
+		year, _ := strconv.Atoi(metautil.FirstNonEmptyTrimmed(component.Value, component.AvailableValue))
+		title = metautil.TrimTrailingParentheticalYear(title, year)
+	}
+	if title == "" {
+		return missingSAMTitle()
+	}
+	if alternate, ok := editor.Component(api.NameRoleAlternateTitle); ok && alternate.Present {
+		if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
+			return fmt.Errorf("omit SAM alternate title: %w", err)
+		}
+	}
+	if err := editor.Set(api.NameRoleTitle, title); err != nil {
+		return fmt.Errorf("set SAM English title: %w", err)
+	}
+	return nil
+}
+
+func missingSAMTitle() *trackers.NameRuleError {
+	return &trackers.NameRuleError{
+		Rule:   "sam_english_title",
+		Role:   api.NameRoleTitle,
+		Reason: "SAM requires the English international title. Check the selected provider records, then refresh metadata and prepare the release again.",
+	}
+}
+
+func samEnglishTitle(meta api.UploadSubject) string {
 	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
-		return nil
+		return ""
 	}
 	english := ""
 	if tvdb := meta.ProviderMetadata.TVDB; meta.Identity.Category == api.CanonicalCategoryTV && tvdb != nil &&
@@ -71,6 +120,9 @@ func applySAMEnglishTitle(editor *trackers.NameEditor, meta api.UploadSubject) e
 	}
 	if data := currentSAMTMDB(meta.SourcePath, meta.Identity, meta.ProviderMetadata); english == "" && data != nil {
 		english = samTMDBEnglishTitle(data.LocalizedTitles)
+		if english == "" && languageutil.SameLanguage(data.OriginalLanguage, "en") {
+			english = metautil.FirstNonEmptyTrimmed(data.OriginalTitle, data.Title)
+		}
 	}
 	if data := meta.ProviderMetadata.IMDB; english == "" && data != nil && meta.Identity.IMDBID > 0 && data.IMDBID == meta.Identity.IMDBID {
 		english = samIMDBEnglishTitle(data.Akas)
@@ -79,12 +131,7 @@ func applySAMEnglishTitle(editor *trackers.NameEditor, meta api.UploadSubject) e
 		meta.Identity.MALID > 0 && data.MALID == meta.Identity.MALID && strings.EqualFold(strings.TrimSpace(data.Format), "MOVIE") {
 		english = strings.TrimSpace(data.TitleEnglish)
 	}
-	if english != "" {
-		if err := editor.Set(api.NameRoleTitle, english); err != nil {
-			return fmt.Errorf("set SAM English title: %w", err)
-		}
-	}
-	return nil
+	return english
 }
 
 func samTMDBEnglishTitle(titles map[string]string) string {
