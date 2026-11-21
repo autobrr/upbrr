@@ -2509,6 +2509,11 @@ type TMDBMetadata struct {
 	// SpokenLanguages is the normalized automatic title-level dialogue-language set.
 	// It does not identify release tracks or override explicit corrections.
 	SpokenLanguages []string `json:",omitempty"`
+
+	// LogoLanguagePreference identifies the order used for the retained artwork.
+	LogoLanguagePreference string `json:",omitempty"`
+	// LogoLookupPending records a failed artwork lookup that ordinary preparation can retry.
+	LogoLookupPending bool `json:",omitempty"`
 }
 
 type TMDBLocalizedData struct {

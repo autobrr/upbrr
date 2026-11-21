@@ -1515,7 +1515,7 @@ func newCorrectionEvidenceFixtureForSource(t *testing.T, filename string) *corre
 	return fixture
 }
 
-func (f *correctionEvidenceFixture) open(t *testing.T) (*preparedrelease.Module, *db.SQLiteRepository) {
+func (f *correctionEvidenceFixture) open(t *testing.T, overrides ...Option) (*preparedrelease.Module, *db.SQLiteRepository) {
 	t.Helper()
 	repo, err := db.OpenContext(t.Context(), f.dbPath)
 	if err != nil {
@@ -1529,12 +1529,14 @@ func (f *correctionEvidenceFixture) open(t *testing.T) (*preparedrelease.Module,
 	if mediaInfo == nil {
 		mediaInfo = &stubMediaInfo{}
 	}
-	service := newTestService(t, repo,
+	options := []Option{
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: f.dbPath}}),
 		WithMediaInfoExporter(mediaInfo),
 		WithSceneDetector(newSRRDBDetector(f.http, "https://scene.example.invalid", "", "")),
 		WithTMDBClient(tmdb.NewClient(f.http, nil, "synthetic-api-key")),
-		WithIMDBClient(f.imdb), WithTVDBClient(f.tvdb), WithTVmazeClient(f.tvmaze))
+		WithIMDBClient(f.imdb), WithTVDBClient(f.tvdb), WithTVmazeClient(f.tvmaze),
+	}
+	service := newTestService(t, repo, slices.Concat(options, overrides)...)
 	collector, err := preparedrelease.NewEvidenceCollector(service)
 	if err != nil {
 		t.Fatal(err)
