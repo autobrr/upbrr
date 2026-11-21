@@ -24,15 +24,7 @@ func languageAssessment(subject api.TrackerValidationSubject) []api.RuleFailure 
 		return nil
 	}
 	var failures []api.RuleFailure
-	resources := map[string][]api.MediaTrackFacts{}
-	for _, track := range subject.LanguageFacts.Tracks {
-		resources[track.ResourceID] = append(resources[track.ResourceID], track)
-	}
-	for _, file := range subject.MediaFileFacts.Files {
-		if _, ok := resources[file.ResourceID]; !ok {
-			resources[file.ResourceID] = nil
-		}
-	}
+	resources := languageResources(subject)
 	if len(resources) == 0 {
 		resources[""] = nil
 	}
@@ -195,14 +187,44 @@ func bindPresentationWarning(failure *api.RuleFailure, subject api.TrackerValida
 	})
 }
 
+func languageResources(subject api.TrackerValidationSubject) map[string][]api.MediaTrackFacts {
+	resources := map[string][]api.MediaTrackFacts{}
+	for _, track := range subject.LanguageFacts.Tracks {
+		resources[track.ResourceID] = append(resources[track.ResourceID], track)
+	}
+	for _, file := range languageResourceFiles(subject) {
+		if _, ok := resources[file.ResourceID]; !ok {
+			resources[file.ResourceID] = nil
+		}
+	}
+	return resources
+}
+
+func languageResourceFiles(subject api.TrackerValidationSubject) []api.MediaFileFact {
+	files := subject.MediaFileFacts.Files
+	tracks := subject.LanguageFacts.Tracks
+	if subject.MediaFileFacts.ExpectedFileCount != 1 || len(files) != 1 || len(tracks) == 0 {
+		return files
+	}
+	file := files[0]
+	resource := tracks[0].ResourceID
+	// A sole aggregate fallback does not supply separate inspected language coverage.
+	if file.Primary && file.ResourceID == "" && file.AudioStatus == "" && file.SubtitleStatus == "" && resource != "" &&
+		!slices.ContainsFunc(tracks, func(track api.MediaTrackFacts) bool { return track.ResourceID != resource }) {
+		return nil
+	}
+	return files
+}
+
 // resourceLanguageFacts keeps resource eligibility separate from canonical answer identity.
 func resourceLanguageFacts(subject api.TrackerValidationSubject, resource string, tracks []api.MediaTrackFacts) api.LanguageFacts {
 	canonical := subject.LanguageFacts
 	media := api.MediaFacts{Tracks: tracks, TrackCoverageComplete: canonical.TrackCoverageComplete}
 	var file *api.MediaFileFact
-	for i := range subject.MediaFileFacts.Files {
-		if subject.MediaFileFacts.Files[i].ResourceID == resource {
-			file = &subject.MediaFileFacts.Files[i]
+	files := languageResourceFiles(subject)
+	for i := range files {
+		if files[i].ResourceID == resource {
+			file = &files[i]
 			break
 		}
 	}
@@ -227,7 +249,7 @@ func resourceLanguageFacts(subject api.TrackerValidationSubject, resource string
 			singleResource = false
 		}
 	}
-	for _, candidate := range subject.MediaFileFacts.Files {
+	for _, candidate := range files {
 		if candidate.ResourceID != resource {
 			singleResource = false
 		}
@@ -287,15 +309,7 @@ func resourceTitleSearchRequired(subject api.TrackerValidationSubject) bool {
 	if trackers.IsFullDiscUpload(subject.DiscType, subject.Type) {
 		return false
 	}
-	resources := map[string][]api.MediaTrackFacts{}
-	for _, track := range subject.LanguageFacts.Tracks {
-		resources[track.ResourceID] = append(resources[track.ResourceID], track)
-	}
-	for _, file := range subject.MediaFileFacts.Files {
-		if _, ok := resources[file.ResourceID]; !ok {
-			resources[file.ResourceID] = nil
-		}
-	}
+	resources := languageResources(subject)
 	for resource, tracks := range resources {
 		facts := resourceLanguageFacts(subject, resource, tracks)
 		if resourceNeedsEnglishSubtitles(facts) && facts.ProgrammeStatus == api.MetadataEvidenceStatusComplete &&
