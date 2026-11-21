@@ -1425,18 +1425,24 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			return preparationstate.State{}, err
 		}
 	}
-	// A final name fallback or reverse lookup can discover TVDB after the earlier
-	// sibling pass. Reconcile newly linked resources before publishing this generation.
-	for range 3 {
-		applyTVDBLinks()
-		resolveTMDBFromProviderIDs()
-		after := [5]int{ids.TMDBID, ids.IMDBID, ids.TVDBID, ids.TVmazeID, ids.MALID}
-		if lastFetchIDs == after || !shouldRunFetchPass() {
-			break
+	// A name fallback or reverse lookup can discover new sibling links. Bound the
+	// follow-up work and stop when no new IDs need fetching.
+	reconcileSiblingLinks := func() error {
+		for range 3 {
+			applyTVDBLinks()
+			resolveTMDBFromProviderIDs()
+			after := [5]int{ids.TMDBID, ids.IMDBID, ids.TVDBID, ids.TVmazeID, ids.MALID}
+			if lastFetchIDs == after || !shouldRunFetchPass() {
+				break
+			}
+			if err := runFetchPass(false); err != nil {
+				return err
+			}
 		}
-		if err := runFetchPass(false); err != nil {
-			return preparationstate.State{}, err
-		}
+		return nil
+	}
+	if err := reconcileSiblingLinks(); err != nil {
+		return preparationstate.State{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return preparationstate.State{}, fmt.Errorf("metadata: provider reconciliation canceled: %w", err)
@@ -1469,10 +1475,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			tvdbIMDbConflict = slices.ContainsFunc(links.Links, func(link api.TVDBRemoteLink) bool {
 				return link.Provider == api.IdentityProviderIMDB && link.State == "conflicting"
 			})
-			if links.Status == api.MetadataEvidenceStatusComplete && !tvdbSiblingLinksMismatch(links, tvdbSiblingTargets(&ids, effectiveOverrides)) {
+			if links.Status == api.MetadataEvidenceStatusComplete || links.Status == api.MetadataEvidenceStatusContradictory {
+				independent := links.Status == api.MetadataEvidenceStatusComplete && independentlyResolved(ids.TVDBID, ids.Dependencies.TVDB) &&
+					!tvdbSiblingLinksMismatch(links, tvdbSiblingTargets(&ids, effectiveOverrides))
 				for _, link := range links.Links {
 					if link.Provider == api.IdentityProviderIMDB && link.State == "valid" {
-						linkedIMDb = append(linkedIMDb, imdbCorroboration{link.ID, independentlyResolved(ids.TVDBID, ids.Dependencies.TVDB)})
+						linkedIMDb = append(linkedIMDb, imdbCorroboration{link.ID, independent})
 						break // Duplicate TVDB links are not independent.
 					}
 				}
@@ -1501,18 +1509,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				confirmedTentativeIMDb = true
 				if ids.TMDBID == 0 {
 					tmdbCategoryPref = normalizeCategory(string(category))
-					resolveTMDBFromProviderIDs()
 				}
-				if shouldRunFetchPass() {
-					if err := runFetchPass(false); err != nil {
-						return preparationstate.State{}, err
-					}
-					// The TMDB pass can discover a MAL ID after the normal follow-ups.
-					if shouldFetchAniList() {
-						if err := runFetchPass(false); err != nil {
-							return preparationstate.State{}, err
-						}
-					}
+				// New sibling IDs enrich the generation, but never vote on the IMDb ID that led to them.
+				if err := reconcileSiblingLinks(); err != nil {
+					return preparationstate.State{}, err
 				}
 			}
 		}

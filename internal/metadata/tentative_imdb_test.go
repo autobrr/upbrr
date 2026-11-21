@@ -261,6 +261,21 @@ func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
 			tvdbLinks: api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusContradictory, Links: []api.TVDBRemoteLink{{Provider: api.IdentityProviderMAL, State: "conflicting"}}},
 		},
 		{
+			name: "unrelated TVDB contradiction does not hide a disagreeing IMDb link",
+			category: "tv",
+			imdbType: "tvSeries",
+			tmdbIMDb: 555001,
+			wantTMDB: 42,
+			tvdbLinks: api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusContradictory, Links: []api.TVDBRemoteLink{
+				{
+					Provider: api.IdentityProviderIMDB,
+					State: "valid",
+					ID: 555002,
+				},
+				{Provider: api.IdentityProviderMAL, State: "conflicting"},
+			}},
+		},
+		{
 			name:      "TVDB sibling mismatch is not an independent vote",
 			category:  "tv",
 			imdbType:  "tvSeries",
@@ -368,7 +383,7 @@ func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
 	const imdbText = "tt0555001"
 	for _, tc := range []struct {
 		name, tvmazeIMDb string
-		wantTVmaze int
+		wantTVmaze, linkedTMDB int
 	}{
 		{
 			name: "matching raw IMDb link",
@@ -378,6 +393,12 @@ func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
 		{
 			name: "contradictory raw IMDb link despite matching search result",
 			tvmazeIMDb: "tt0555009",
+		},
+		{
+			name: "late TVDB siblings supply a TMDB record in the same generation",
+			tvmazeIMDb: imdbText,
+			wantTVmaze: tvmazeID,
+			linkedTMDB: 42,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -400,6 +421,20 @@ func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
 				},
 				seriesMetadata: tvdb.SeriesMetadata{TVDBID: tvdbID, Name: "Example"},
 			}
+			if tc.linkedTMDB != 0 {
+				tvdbClient.seriesMetadata.RemoteLinks = api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusComplete, Links: []api.TVDBRemoteLink{
+					{
+						Provider: api.IdentityProviderIMDB,
+						State: "valid",
+						ID: imdbID,
+					},
+					{
+						Provider: api.IdentityProviderTMDB,
+						State: "valid",
+						ID: tc.linkedTMDB,
+					},
+				}}
+			}
 			tvmazeClient := &stubTVmaze{searchFn: func(input tvmaze.SearchInput) tvmaze.SearchResult {
 				if input.ImdbID != imdbText || !input.StrictIDOnly || input.AllowNameFallback {
 					return tvmaze.SearchResult{}
@@ -414,7 +449,7 @@ func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
 					}},
 				}
 			}}
-			service := newTestService(t, &fakeRepo{}, WithIMDBClient(imdbClient), WithTMDBClient(&stubTMDB{}),
+			service := newTestService(t, &fakeRepo{}, WithIMDBClient(imdbClient), WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{Title: "Example", ExternalIMDbID: imdbID}}),
 				WithTVDBClient(tvdbClient), WithTVmazeClient(tvmazeClient),
 				WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, IMDBID: imdbID}}))
 			got, err := service.resolveExternalIdentity(t.Context(), preparationstate.State{
@@ -426,8 +461,12 @@ func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if id := got.Identity; id.IMDBID != imdbID || id.TMDBID != 0 || id.TVDBID != tvdbID || id.TVmazeID != tc.wantTVmaze {
-				t.Fatalf("IMDb=%d TMDB=%d TVDB=%d TVmaze=%d, want %d/0/%d/%d", id.IMDBID, id.TMDBID, id.TVDBID, id.TVmazeID, imdbID, tvdbID, tc.wantTVmaze)
+			if id := got.Identity; id.IMDBID != imdbID || id.TMDBID != tc.linkedTMDB || id.TVDBID != tvdbID || id.TVmazeID != tc.wantTVmaze {
+				t.Fatalf("IMDb=%d TMDB=%d TVDB=%d TVmaze=%d, want %d/%d/%d/%d", id.IMDBID, id.TMDBID, id.TVDBID, id.TVmazeID, imdbID, tc.linkedTMDB, tvdbID, tc.wantTVmaze)
+			}
+			if tc.linkedTMDB != 0 && (got.ProviderMetadata.TMDB == nil ||
+				got.ProviderMetadata.TMDB.TMDBID != tc.linkedTMDB || got.Identity.Dependencies.TMDB.TVDBID != tvdbID) {
+				t.Fatalf("missing dependent TMDB metadata: %+v; identity=%+v", got.ProviderMetadata.TMDB, got.Identity)
 			}
 			if (got.ProviderMetadata.TVmaze != nil) != (tc.wantTVmaze != 0) {
 				t.Fatalf("unexpected TVmaze metadata after confirming IMDb: %+v", got.ProviderMetadata.TVmaze)
