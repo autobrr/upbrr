@@ -232,26 +232,26 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 
 	trackerTMDB, trackerIMDB, trackerTVDB, trackerMAL := resolveTrackerIDs(meta.TrackerData)
 	if !overrideTMDB && !clearedTMDB {
-		applyResolvedID(&ids.TMDBID, &ids.Provenance.TMDB, trackerTMDB, "tracker")
+		applyDirectProviderID(&ids.TMDBID, &ids.Provenance.TMDB, &ids.Dependencies.TMDB, trackerTMDB, "tracker")
 	}
 	if !overrideIMDB && !clearedIMDB {
 		applyResolvedID(&ids.IMDBID, &ids.Provenance.IMDB, trackerIMDB, "tracker")
 	}
 	if !overrideTVDB && !clearedTVDB {
-		applyResolvedID(&ids.TVDBID, &ids.Provenance.TVDB, trackerTVDB, "tracker")
+		applyDirectProviderID(&ids.TVDBID, &ids.Provenance.TVDB, &ids.Dependencies.TVDB, trackerTVDB, "tracker")
 	}
 	if !overrideMAL && !clearedMAL {
 		applyResolvedID(&ids.MALID, &ids.Provenance.MAL, trackerMAL, "tracker")
 	}
 
 	if !overrideTMDB && !clearedTMDB {
-		applyResolvedID(&ids.TMDBID, &ids.Provenance.TMDB, meta.MediaInfoTMDBID, "mediainfo")
+		applyDirectProviderID(&ids.TMDBID, &ids.Provenance.TMDB, &ids.Dependencies.TMDB, meta.MediaInfoTMDBID, "mediainfo")
 	}
 	if !overrideIMDB && !clearedIMDB {
 		applyResolvedID(&ids.IMDBID, &ids.Provenance.IMDB, meta.MediaInfoIMDBID, "mediainfo")
 	}
 	if !overrideTVDB && !clearedTVDB {
-		applyResolvedID(&ids.TVDBID, &ids.Provenance.TVDB, meta.MediaInfoTVDBID, "mediainfo")
+		applyDirectProviderID(&ids.TVDBID, &ids.Provenance.TVDB, &ids.Dependencies.TVDB, meta.MediaInfoTVDBID, "mediainfo")
 	}
 
 	if !overrideTMDB && !clearedTMDB {
@@ -272,17 +272,18 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	if !overrideMAL && !clearedMAL && applyResolvedID(&ids.MALID, &ids.Provenance.MAL, meta.MALID, "prepared") {
 		ids.Dependencies.MAL = api.IdentityDependency{ID: ids.MALID}
 	}
+	arrSource := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr")
 	if !overrideTMDB && !clearedTMDB {
-		applyResolvedID(&ids.TMDBID, &ids.Provenance.TMDB, meta.ArrTMDBID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
+		applyDirectProviderID(&ids.TMDBID, &ids.Provenance.TMDB, &ids.Dependencies.TMDB, meta.ArrTMDBID, arrSource)
 	}
 	if !overrideIMDB && !clearedIMDB {
-		applyResolvedID(&ids.IMDBID, &ids.Provenance.IMDB, meta.ArrIMDBID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
+		applyResolvedID(&ids.IMDBID, &ids.Provenance.IMDB, meta.ArrIMDBID, arrSource)
 	}
 	if !overrideTVDB && !clearedTVDB {
-		applyResolvedID(&ids.TVDBID, &ids.Provenance.TVDB, meta.ArrTVDBID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
+		applyDirectProviderID(&ids.TVDBID, &ids.Provenance.TVDB, &ids.Dependencies.TVDB, meta.ArrTVDBID, arrSource)
 	}
 	if !overrideTVmaze && !clearedTVmaze {
-		applyResolvedID(&ids.TVmazeID, &ids.Provenance.TVmaze, meta.ArrTVmazeID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
+		applyDirectProviderID(&ids.TVmazeID, &ids.Provenance.TVmaze, &ids.Dependencies.TVmaze, meta.ArrTVmazeID, arrSource)
 	}
 	hasExplicitProviderAnchor := hasPositiveProviderOverride(effectiveOverrides)
 	if hasExplicitProviderAnchor {
@@ -611,6 +612,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 		return true
 	}
+	confirmedTentativeIMDb := false
 	lastTMDBLookupIMDB := 0
 	lastTMDBLookupTVDB := 0
 	resolveTMDBFromProviderIDs := func() {
@@ -642,7 +644,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		})
 		if err != nil {
 			logger.Warnf("metadata: tmdb external lookup failed: %v", err)
-		} else if result.TMDBID != 0 && (!result.FilenameSearch || !hasExplicitProviderAnchor && (ids.TVDBID == 0 || !shouldUseTVDBForCategory(meta, ids))) && acceptTMDBCategory(result.Category) {
+		} else if result.TMDBID != 0 &&
+			(!result.FilenameSearch || !confirmedTentativeIMDb && !hasExplicitProviderAnchor && (ids.TVDBID == 0 || !shouldUseTVDBForCategory(meta, ids))) &&
+			(!confirmedTentativeIMDb || normalizeCategory(result.Category) == normalizeCategory(string(ids.Category))) &&
+			(confirmedTentativeIMDb || acceptTMDBCategory(result.Category)) {
 			inputs := api.IdentityDependency{}
 			if !result.FilenameSearch {
 				inputs.IMDBID = ids.IMDBID
@@ -1111,6 +1116,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 
 		tmdbAccepted := tmdbResult != nil && tmdbMetadataMatchesExplicitIDs(effectiveOverrides, *tmdbResult, &meta)
+		if tmdbAccepted && confirmedTentativeIMDb && !providerIDMatchesExplicit(&ids.IMDBID, tmdbResult.ExternalIMDbID) {
+			appendIdentityCorrectionWarning(&meta, "TMDB metadata conflicts with the corroborated IMDb ID and was ignored.")
+			tmdbAccepted = false
+		}
 		tvmazeAccepted := tvmazeResult != nil && tvmazeMetadataMatchesExplicitIDs(effectiveOverrides, *tvmazeResult, &meta)
 		candidateTMDBLinks := acceptedTMDBLinks
 		candidateTVmazeLinks := acceptedTVmazeLinks
@@ -1443,28 +1452,52 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if hasAcceptedTVmazeLinks && acceptedTVmazeID == ids.TVmazeID {
 			linkedIMDb = append(linkedIMDb, imdbCorroboration{acceptedTVmazeLinks.IMDBID, independentlyResolved(ids.TVmazeID, ids.Dependencies.TVmaze)})
 		}
-		if metadata.TVDB != nil && metadata.TVDB.TVDBID == ids.TVDBID && metadata.TVDB.RemoteLinks.Status == api.MetadataEvidenceStatusComplete {
-			for _, link := range metadata.TVDB.RemoteLinks.Links {
-				if link.State == "valid" && link.Provider == api.IdentityProviderIMDB {
-					linkedIMDb = append(linkedIMDb, imdbCorroboration{link.ID, independentlyResolved(ids.TVDBID, ids.Dependencies.TVDB)})
-					break
+		tvdbIMDbConflict := false
+		if ids.TVDBID > 0 && shouldUseTVDBForCategory(meta, ids) && metadata.TVDB != nil && metadata.TVDB.TVDBID == ids.TVDBID {
+			links := metadata.TVDB.RemoteLinks
+			if !tvdbSiblingLinksMismatch(links, tvdbSiblingTargets(&ids, effectiveOverrides)) {
+				for _, link := range links.Links {
+					if link.Provider != api.IdentityProviderIMDB {
+						continue
+					}
+					tvdbIMDbConflict = tvdbIMDbConflict || link.State == "conflicting"
+					if links.Status == api.MetadataEvidenceStatusComplete && link.State == "valid" {
+						linkedIMDb = append(linkedIMDb, imdbCorroboration{link.ID, independentlyResolved(ids.TVDBID, ids.Dependencies.TVDB)})
+						break // Duplicate TVDB links are not independent.
+					}
 				}
 			}
 		}
 		if scene.IsScene {
 			linkedIMDb = append(linkedIMDb, imdbCorroboration{scene.IMDBID, true})
 		}
-		if confirmed := corroboratedIMDb(candidates.IMDB[0].ID, linkedIMDb); confirmed != 0 {
+		if confirmed := corroboratedIMDb(candidates.IMDB[0].ID, linkedIMDb); confirmed != 0 && !tvdbIMDbConflict {
 			info, err := imdbClient.GetInfo(ctx, formatIMDbID(confirmed), "", false)
 			if ctx.Err() != nil {
 				return preparationstate.State{}, fmt.Errorf("metadata: IMDb corroboration canceled: %w", ctx.Err())
 			}
-			if err == nil && metautil.ParseIMDbNumeric(info.IMDbID) == confirmed && verifiedIMDbCategory(info.Type, ids.Category) {
+			category := ids.Category
+			if normalizeCategory(string(category)) == "" {
+				category = api.CanonicalCategoryMovie
+			}
+			if err == nil && metautil.ParseIMDbNumeric(info.IMDbID) == confirmed && verifiedIMDbCategory(info.Type, category) {
+				ids.Category = category
 				ids.IMDBID = confirmed
 				ids.Provenance.IMDB = api.IdentityProvenanceProvider
 				ids.Dependencies.IMDB = api.IdentityDependency{ID: confirmed}
 				metadata.IMDB = mapIMDBMetadata(info)
+				imdbMetadataFetchedID = confirmed
 				imdbErr = nil
+				confirmedTentativeIMDb = true
+				if ids.TMDBID == 0 {
+					tmdbCategoryPref = normalizeCategory(string(category))
+					resolveTMDBFromProviderIDs()
+					if ids.TMDBID != 0 {
+						if err := runFetchPass(false); err != nil {
+							return preparationstate.State{}, err
+						}
+					}
+				}
 			}
 		}
 		if ids.IMDBID == 0 {
@@ -1933,6 +1966,13 @@ func invalidateIdentityDependencies(ids *api.ExternalIdentity, invalidateUnrecor
 		}
 	}
 	return invalidated
+}
+
+// applyDirectProviderID records the lineage of an independently supplied ID.
+func applyDirectProviderID(target *int, provenance *api.IdentityProvenance, dependency *api.IdentityDependency, value int, origin string) {
+	if applyResolvedID(target, provenance, value, origin) {
+		*dependency = api.IdentityDependency{ID: value}
+	}
 }
 
 // applyLinkedProviderID records lookup inputs only when value fills an empty ID.

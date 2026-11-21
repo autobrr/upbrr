@@ -98,6 +98,16 @@ func tvdbSiblingTargets(ids *api.ExternalIdentity, overrides api.ExternalIDOverr
 	return targets
 }
 
+// tvdbSiblingLinksMismatch rejects links to a different selected resource.
+func tvdbSiblingLinksMismatch(links api.TVDBRemoteLinks, targets map[api.IdentityProvider]tvdbSiblingTarget) bool {
+	for _, link := range links.Links {
+		if target, ok := targets[link.Provider]; ok && link.State == "valid" && *target.id > 0 && *target.id != link.ID {
+			return true
+		}
+	}
+	return false
+}
+
 // applyTVDBSeriesLinks fills missing siblings only when series evidence agrees with current identities.
 // Independently selected IDs and explicit clears remain authoritative, including on conflicting links.
 // A link that failed IMDb verification remains raw evidence without being reapplied in this collection.
@@ -116,16 +126,12 @@ func applyTVDBSeriesLinks(
 		return
 	}
 	targets := tvdbSiblingTargets(ids, overrides)
-	conflict := links.Status == api.MetadataEvidenceStatusContradictory
 	for _, link := range links.Links {
 		if link.State == "malformed" {
 			appendIdentityCorrectionWarning(meta, "TVDB returned a malformed series remote ID; inspect provider candidates or correct the ID.")
 		}
-		if target, ok := targets[link.Provider]; ok && link.State == "valid" && *target.id > 0 && *target.id != link.ID {
-			conflict = true
-		}
 	}
-	if conflict {
+	if links.Status == api.MetadataEvidenceStatusContradictory || tvdbSiblingLinksMismatch(links, targets) {
 		appendIdentityCorrectionWarning(
 			meta,
 			"TVDB series remote IDs conflict with the selected provider identities. Correct the conflicting IDs before resolving missing siblings.",

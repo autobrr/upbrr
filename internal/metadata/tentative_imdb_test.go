@@ -15,7 +15,9 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/metadata/imdb"
+	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/metadata/tvdb"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -179,6 +181,151 @@ func TestPreparedTentativeIMDbKeepsIndependentEvidenceAcrossRestart(t *testing.T
 						t.Fatalf("after correction %+v: IMDb %d, want %d", step.patch, got.Identity.IMDBID, step.want)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, category, imdbType                        string
+		tmdbID, tmdbIMDb, sceneIMDb, wantIMDb, wantTMDB int
+		tvdbLinks                                       api.TVDBRemoteLinks
+	}{
+		{
+			name:     "MediaInfo identifies TMDB independently",
+			category: "movie",
+			imdbType: "movie",
+			tmdbID:   42,
+			tmdbIMDb: 555001,
+			wantIMDb: 555001,
+			wantTMDB: 42,
+		},
+		{
+			name:      "unknown category defaults to movie before dependent lookup",
+			imdbType:  "movie",
+			sceneIMDb: 555001,
+			wantIMDb:  555001,
+			wantTMDB:  42,
+		},
+		{
+			name:      "late TMDB resource contradicts the corroborated IMDb ID",
+			imdbType:  "movie",
+			sceneIMDb: 555001,
+			tmdbIMDb:  555009,
+			wantIMDb:  555001,
+		},
+		{
+			name:     "no dependent lookup before confirmation",
+			imdbType: "movie",
+		},
+		{
+			name:      "unknown category does not confirm a series",
+			imdbType:  "tvSeries",
+			sceneIMDb: 555001,
+		},
+		{
+			name:      "IMDb-specific TVDB contradiction blocks confirmation",
+			category:  "tv",
+			imdbType:  "tvSeries",
+			tmdbIMDb:  555001,
+			wantTMDB:  42,
+			tvdbLinks: api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusContradictory, Links: []api.TVDBRemoteLink{{Provider: api.IdentityProviderIMDB, State: "conflicting"}}},
+		},
+		{
+			name:      "unrelated TVDB contradiction does not block confirmation",
+			category:  "tv",
+			imdbType:  "tvSeries",
+			tmdbIMDb:  555001,
+			wantIMDb:  555001,
+			wantTMDB:  42,
+			tvdbLinks: api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusContradictory, Links: []api.TVDBRemoteLink{{Provider: api.IdentityProviderMAL, State: "conflicting"}}},
+		},
+		{
+			name:      "TVDB sibling mismatch is not an independent vote",
+			category:  "tv",
+			imdbType:  "tvSeries",
+			sceneIMDb: 555002,
+			wantTMDB:  42,
+			tvdbLinks: api.TVDBRemoteLinks{Status: api.MetadataEvidenceStatusComplete, Links: []api.TVDBRemoteLink{
+				{
+					Provider: api.IdentityProviderTMDB,
+					State:    "valid",
+					ID:       99,
+				},
+				{
+					Provider: api.IdentityProviderIMDB,
+					State:    "valid",
+					ID:       555002,
+				},
+			}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			imdbClient := &stubIMDB{
+				searchResult: imdb.SearchResult{Tentative: true, Candidates: []imdb.Candidate{{IMDbID: 555001, Confidence: .3}}},
+				infoFn: func(id string) imdb.Info {
+					return imdb.Info{
+						IMDbID: id,
+						Type:   tc.imdbType,
+						Title:  "Example",
+					}
+				},
+			}
+			tmdbClient := &stubTMDB{
+				findFn: func(input tmdb.FindInput) (tmdb.FindResult, error) {
+					if input.IMDbID != "" && input.IMDbID != "tt0555001" {
+						t.Fatalf("unexpected IMDb-keyed TMDB lookup for %s", input.IMDbID)
+					}
+					if input.IMDbID == "tt0555001" {
+						return tmdb.FindResult{TMDBID: 42, Category: "movie"}, nil
+					}
+					return tmdb.FindResult{}, nil
+				},
+				metadata: tmdb.MetadataResult{
+					Title:          "Example",
+					IMDbID:         tc.tmdbIMDb,
+					ExternalIMDbID: tc.tmdbIMDb,
+				},
+			}
+			if tc.category == "tv" {
+				tmdbClient.searchOutcome = tmdb.SearchOutcome{TMDBID: 42, Category: "tv"}
+			}
+			tvdbClient := &stubTVDB{}
+			if tc.tvdbLinks.Status != "" {
+				tvdbClient.searchResults = []tvdb.SeriesSearchResult{{
+					TVDBID: 73,
+					Name:   "Example",
+					Year:   "2026",
+				}}
+				tvdbClient.seriesMetadata = tvdb.SeriesMetadata{
+					TVDBID:      73,
+					Name:        "Example",
+					RemoteLinks: tc.tvdbLinks,
+				}
+			}
+			scene := staticSceneDetector{result: SceneResult{IsScene: tc.sceneIMDb != 0, IMDBID: tc.sceneIMDb}}
+			service := newTestService(t, &fakeRepo{}, WithIMDBClient(imdbClient), WithTMDBClient(tmdbClient),
+				WithTVDBClient(tvdbClient), WithTVmazeClient(&stubTVmaze{}), WithSceneDetector(scene))
+			got, err := service.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath:        filepath.Join(t.TempDir(), "Example.2026.mkv"),
+				Filename:          "Example",
+				Release:           api.ReleaseInfo{Title: "Example", Year: 2026},
+				MediaInfoCategory: tc.category,
+				MediaInfoTMDBID:   tc.tmdbID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Identity.IMDBID != tc.wantIMDb || got.Identity.TMDBID != tc.wantTMDB {
+				t.Fatalf("IMDb = %d, TMDB = %d; want %d, %d", got.Identity.IMDBID, got.Identity.TMDBID, tc.wantIMDb, tc.wantTMDB)
+			}
+			if tc.tvdbLinks.Status != "" && got.Identity.TVDBID != 73 {
+				t.Fatalf("TVDB evidence was not collected: %+v", got.Identity)
+			}
+			if tc.category == "" && tc.wantTMDB != 0 &&
+				(got.Identity.Dependencies.TMDB.IMDBID != tc.wantIMDb || got.ProviderMetadata.TMDB == nil || imdbClient.infoCalls != 1) {
+				t.Fatalf("late TMDB lookup is not derived from one verified IMDb read: %+v; reads=%d", got.Identity, imdbClient.infoCalls)
 			}
 		})
 	}
