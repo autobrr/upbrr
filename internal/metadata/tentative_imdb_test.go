@@ -17,6 +17,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/imdb"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/metadata/tvdb"
+	"github.com/autobrr/upbrr/internal/metadata/tvmaze"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -357,6 +358,79 @@ func TestTentativeIMDbUsesVerifiedProviderEvidence(t *testing.T) {
 				}
 			} else if tmdbClient.anilistCalls != 0 {
 				t.Fatalf("fetched AniList without an accepted MAL link: %v", tmdbClient.anilistInputs)
+			}
+		})
+	}
+}
+
+func TestConfirmedTentativeIMDbResolvesTVProvidersWithoutTMDB(t *testing.T) {
+	const imdbID, tvdbID, tvmazeID = 555001, 73, 81
+	const imdbText = "tt0555001"
+	for _, tc := range []struct {
+		name, tvmazeIMDb string
+		wantTVmaze int
+	}{
+		{
+			name: "matching raw IMDb link",
+			tvmazeIMDb: imdbText,
+			wantTVmaze: tvmazeID,
+		},
+		{
+			name: "contradictory raw IMDb link despite matching search result",
+			tvmazeIMDb: "tt0555009",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			imdbClient := &stubIMDB{
+				searchResult: imdb.SearchResult{Tentative: true, Candidates: []imdb.Candidate{{IMDbID: imdbID, Confidence: .3}}},
+				infoFn: func(id string) imdb.Info {
+					return imdb.Info{
+						IMDbID: id,
+						Type: "tvSeries",
+						Title: "Example",
+					}
+				},
+			}
+			tvdbClient := &stubTVDB{
+				externalFn: func(imdb string) (int, string, error) {
+					if imdb == imdbText {
+						return tvdbID, "Example", nil
+					}
+					return 0, "", nil
+				},
+				seriesMetadata: tvdb.SeriesMetadata{TVDBID: tvdbID, Name: "Example"},
+			}
+			tvmazeClient := &stubTVmaze{searchFn: func(input tvmaze.SearchInput) tvmaze.SearchResult {
+				if input.ImdbID != imdbText || !input.StrictIDOnly || input.AllowNameFallback {
+					return tvmaze.SearchResult{}
+				}
+				return tvmaze.SearchResult{
+					SelectedID: tvmazeID,
+					IMDBID: imdbID,
+					Candidates: []tvmaze.Candidate{{
+						ID: tvmazeID,
+						Name: "Example",
+						Externals: tvmaze.Externals{IMDB: tc.tvmazeIMDb},
+					}},
+				}
+			}}
+			service := newTestService(t, &fakeRepo{}, WithIMDBClient(imdbClient), WithTMDBClient(&stubTMDB{}),
+				WithTVDBClient(tvdbClient), WithTVmazeClient(tvmazeClient),
+				WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, IMDBID: imdbID}}))
+			got, err := service.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath: filepath.Join(t.TempDir(), "Example.2026.S01E01.mkv"),
+				Filename: "Example",
+				Release: api.ReleaseInfo{Title: "Example", Year: 2026},
+				MediaInfoCategory: "tv",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if id := got.Identity; id.IMDBID != imdbID || id.TMDBID != 0 || id.TVDBID != tvdbID || id.TVmazeID != tc.wantTVmaze {
+				t.Fatalf("IMDb=%d TMDB=%d TVDB=%d TVmaze=%d, want %d/0/%d/%d", id.IMDBID, id.TMDBID, id.TVDBID, id.TVmazeID, imdbID, tvdbID, tc.wantTVmaze)
+			}
+			if (got.ProviderMetadata.TVmaze != nil) != (tc.wantTVmaze != 0) {
+				t.Fatalf("unexpected TVmaze metadata after confirming IMDb: %+v", got.ProviderMetadata.TVmaze)
 			}
 		})
 	}

@@ -302,14 +302,35 @@ func BenchmarkConnectionTestNestedEmptyNotices(b *testing.B) {
 func TestQbitProbeLoginProxyAndTLS(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, loginBody, code string
-		proxy, insecure       bool
+		name, loginBody, code      string
+		loginStatus, versionStatus int
+		proxy, insecure, noCookie  bool
 	}{
 		{
 			name:      "direct",
 			loginBody: "Ok.",
 			code:      "success",
 			insecure:  true,
+		},
+		{
+			name:        "no content with session",
+			loginStatus: http.StatusNoContent,
+			code:        "success",
+			insecure:    true,
+		},
+		{
+			name:        "no content without session",
+			loginStatus: http.StatusNoContent,
+			code:        "unexpected_response",
+			insecure:    true,
+			noCookie:    true,
+		},
+		{
+			name:          "no content does not identify app version",
+			loginStatus:   http.StatusNoContent,
+			versionStatus: http.StatusNoContent,
+			code:          "unexpected_response",
+			insecure:      true,
 		},
 		{
 			name:      "rejected",
@@ -347,11 +368,17 @@ func TestQbitProbeLoginProxyAndTLS(t *testing.T) {
 					if r.Method != http.MethodPost || r.ParseForm() != nil || r.Form.Get("username") != "synthetic-user" || r.Form.Get("password") != "synthetic-password" {
 						t.Error("login did not use the draft credentials")
 					}
-					http.SetCookie(w, &http.Cookie{
-						Name:  "SID",
-						Value: "synthetic-session",
-						Path:  "/",
-					})
+					if !tc.noCookie {
+						http.SetCookie(w, &http.Cookie{
+							Name:  "SID",
+							Value: "synthetic-session",
+							Path:  "/",
+						})
+					}
+					if tc.loginStatus != 0 {
+						w.WriteHeader(tc.loginStatus)
+						return
+					}
 					_, _ = io.WriteString(w, tc.loginBody)
 				case "/base/api/v2/app/version":
 					versions.Add(1)
@@ -366,6 +393,10 @@ func TestQbitProbeLoginProxyAndTLS(t *testing.T) {
 						if _, err := r.Cookie("SID"); err != nil {
 							t.Error("version request lacked the login session")
 						}
+					}
+					if tc.versionStatus != 0 {
+						w.WriteHeader(tc.versionStatus)
+						return
 					}
 					_, _ = io.WriteString(w, "v5.0.0")
 				default:
@@ -390,11 +421,12 @@ func TestQbitProbeLoginProxyAndTLS(t *testing.T) {
 			if got.Code != tc.code {
 				t.Fatalf("probe outcome: %s", got.Code)
 			}
-			if tc.code == "success" && versions.Load() != 1 {
-				t.Fatal("success without the authenticated version request")
+			var wantVersions int32
+			if tc.code == "success" || tc.versionStatus != 0 {
+				wantVersions = 1
 			}
-			if tc.code != "success" && versions.Load() != 0 {
-				t.Fatal("version requested after rejected/unverified login")
+			if got := versions.Load(); got != wantVersions {
+				t.Fatalf("version requests = %d, want %d", got, wantVersions)
 			}
 			if tc.proxy && logins.Load() != 0 {
 				t.Fatal("proxy used direct login")

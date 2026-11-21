@@ -1120,7 +1120,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 
 		tmdbAccepted := tmdbResult != nil && tmdbMetadataMatchesExplicitIDs(effectiveOverrides, *tmdbResult, &meta)
-		if tmdbAccepted && confirmedTentativeIMDb && !providerIDMatchesExplicit(&ids.IMDBID, tmdbResult.ExternalIMDbID) {
+		if tmdbAccepted && confirmedTentativeIMDb && !overrideTMDB && !providerIDMatchesExplicit(&ids.IMDBID, tmdbResult.ExternalIMDbID) {
 			appendIdentityCorrectionWarning(&meta, "TMDB metadata conflicts with the corroborated IMDb ID and was ignored.")
 			tmdbAccepted = false
 		}
@@ -1136,9 +1136,15 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			candidateHasTMDBLinks = true
 		}
 		if tvmazeAccepted {
-			acceptedTVmazeID = tvmazeResult.SelectedID
-			candidateTVmazeLinks = tvmazeResultExternalLinks(*tvmazeResult)
-			candidateHasTVmazeLinks = true
+			links := tvmazeResultExternalLinks(*tvmazeResult)
+			if confirmedTentativeIMDb && !overrideTVmaze && !providerIDMatchesExplicit(&ids.IMDBID, links.IMDBID) {
+				appendIdentityCorrectionWarning(&meta, "TVmaze metadata conflicts with the corroborated IMDb ID and was ignored.")
+				tvmazeAccepted = false
+			} else {
+				acceptedTVmazeID = tvmazeResult.SelectedID
+				candidateTVmazeLinks = links
+				candidateHasTVmazeLinks = true
+			}
 		}
 		linksConflict := hasExplicitProviderAnchor && candidateHasTMDBLinks && candidateHasTVmazeLinks &&
 			providerExternalLinksConflict(candidateTMDBLinks, candidateTVmazeLinks)
@@ -1496,15 +1502,15 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				if ids.TMDBID == 0 {
 					tmdbCategoryPref = normalizeCategory(string(category))
 					resolveTMDBFromProviderIDs()
-					if ids.TMDBID != 0 {
+				}
+				if shouldRunFetchPass() {
+					if err := runFetchPass(false); err != nil {
+						return preparationstate.State{}, err
+					}
+					// The TMDB pass can discover a MAL ID after the normal follow-ups.
+					if shouldFetchAniList() {
 						if err := runFetchPass(false); err != nil {
 							return preparationstate.State{}, err
-						}
-						// The TMDB pass can discover a MAL ID after the normal follow-ups.
-						if shouldFetchAniList() {
-							if err := runFetchPass(false); err != nil {
-								return preparationstate.State{}, err
-							}
 						}
 					}
 				}
